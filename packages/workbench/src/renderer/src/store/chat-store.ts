@@ -22,6 +22,7 @@ import { getProvider } from '../agent/registry'
 import i18n from '../i18n'
 import { applyTheme, applyUiFontScale, applyUiFontFamily } from '../lib/apply-theme'
 import { applyAppearance } from '../lib/apply-appearance'
+import { applyShortcutsSettings } from '../lib/shortcuts-runtime'
 import { formatWorkspacePickerError } from '../lib/format-workspace-picker-error'
 import { formatRuntimeError, getRuntimeErrorCode } from '../lib/format-runtime-error'
 import {
@@ -1432,6 +1433,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         applyUiFontScale(settings.uiFontScale)
         applyUiFontFamily(settings.uiFontFamily)
         applyAppearance(settings.appearance)
+        applyShortcutsSettings(settings.shortcuts)
         // Theme is on the DOM — tell main to reveal the hidden window (the
         // window stays hidden until now to avoid a light-palette flash).
         void window.dsGui.notifyAppearanceApplied?.()

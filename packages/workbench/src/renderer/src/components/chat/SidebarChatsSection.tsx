@@ -41,7 +41,6 @@ export function SidebarChatsSection({
   const threads = useChatStore((s) => s.threads)
   const activeThreadId = useChatStore((s) => s.activeThreadId)
   const pinnedThreadIds = useChatStore((s) => s.pinnedThreadIds)
-  const searchQuery = useChatStore((s) => s.sidebarSearchQuery)
   const busy = useChatStore((s) => s.busy)
   const watchTurnCompletion = useChatStore((s) => s.watchTurnCompletion)
   const unreadThreadIds = useChatStore((s) => s.unreadThreadIds)
@@ -78,15 +77,9 @@ export function SidebarChatsSection({
       .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
   }, [threads, pinnedSet])
 
-  const filteredChats = useMemo(() => {
-    const query = searchQuery.trim().toLowerCase()
-    if (!query) return chatsThreads
-    return chatsThreads.filter((thread) => thread.title.toLowerCase().includes(query))
-  }, [chatsThreads, searchQuery])
-
-  const hasOverflow = !selectMode && filteredChats.length > CHATS_VISIBLE_LIMIT
+  const hasOverflow = !selectMode && chatsThreads.length > CHATS_VISIBLE_LIMIT
   const visibleChats =
-    selectMode || expanded ? filteredChats : filteredChats.slice(0, CHATS_VISIBLE_LIMIT)
+    selectMode || expanded ? chatsThreads : chatsThreads.slice(0, CHATS_VISIBLE_LIMIT)
 
   const allVisibleSelected =
     visibleChats.length > 0 && visibleChats.every((thread) => selectedIds.has(thread.id))
@@ -106,7 +99,7 @@ export function SidebarChatsSection({
   useEffect(() => {
     setSelectedIds((prev) => {
       if (prev.size === 0) return prev
-      const alive = new Set(filteredChats.map((thread) => thread.id))
+      const alive = new Set(chatsThreads.map((thread) => thread.id))
       let changed = false
       const next = new Set<string>()
       for (const id of prev) {
@@ -115,7 +108,7 @@ export function SidebarChatsSection({
       }
       return changed ? next : prev
     })
-  }, [filteredChats])
+  }, [chatsThreads])
 
   const enterSelectMode = (): void => {
     setMenuOpen(false)
@@ -189,7 +182,7 @@ export function SidebarChatsSection({
   }
 
   const handleDeleteSelected = (): void => {
-    const targets = filteredChats.filter((thread) => selectedIds.has(thread.id))
+    const targets = chatsThreads.filter((thread) => selectedIds.has(thread.id))
     if (targets.length === 0) return
     const ok = window.confirm(t('sidebarChatsDeleteSelectedConfirm', { count: targets.length }))
     if (!ok) return
@@ -198,11 +191,11 @@ export function SidebarChatsSection({
 
   const handleClearAll = (): void => {
     setMenuOpen(false)
-    if (filteredChats.length === 0) return
-    const ok = window.confirm(t('sidebarChatsClearAllConfirm', { count: filteredChats.length }))
+    if (chatsThreads.length === 0) return
+    const ok = window.confirm(t('sidebarChatsClearAllConfirm', { count: chatsThreads.length }))
     if (!ok) return
     setCollapsed(false)
-    void deleteThreads(filteredChats)
+    void deleteThreads(chatsThreads)
   }
 
   return (
@@ -288,7 +281,7 @@ export function SidebarChatsSection({
                 <div className="ds-glass absolute right-0 top-full z-50 mt-1 w-40 overflow-hidden rounded-lg py-1">
                   <button
                     type="button"
-                    disabled={filteredChats.length === 0}
+                    disabled={chatsThreads.length === 0}
                     onClick={enterSelectMode}
                     className="flex w-full items-center gap-2 px-3 py-2 text-left text-[12px] text-ds-ink hover:bg-ds-hover disabled:opacity-40"
                   >
@@ -297,7 +290,7 @@ export function SidebarChatsSection({
                   </button>
                   <button
                     type="button"
-                    disabled={filteredChats.length === 0 || batchBusy}
+                    disabled={chatsThreads.length === 0 || batchBusy}
                     onClick={handleClearAll}
                     className="flex w-full items-center gap-2 px-3 py-2 text-left text-[12px] text-red-600 hover:bg-red-50 disabled:opacity-40 dark:text-red-400 dark:hover:bg-red-950/20"
                   >
@@ -313,7 +306,7 @@ export function SidebarChatsSection({
 
       {collapsed && !selectMode ? null : (
         <div className="ds-sidebar-chats-list ds-scroll-surface min-h-0 flex-1 overflow-y-auto overscroll-contain">
-          {filteredChats.length === 0 ? (
+          {chatsThreads.length === 0 ? (
             <div className="px-2.5 py-2 text-[13px] text-ds-faint">{t('sidebarChatsEmpty')}</div>
           ) : (
             <div className="ds-sidebar-thread-list px-1.5 pb-1">
@@ -355,7 +348,7 @@ export function SidebarChatsSection({
                   {expanded
                     ? t('sidebarWorkspaceShowLess')
                     : t('sidebarChatsShowMore', {
-                        count: filteredChats.length - CHATS_VISIBLE_LIMIT
+                        count: chatsThreads.length - CHATS_VISIBLE_LIMIT
                       })}
                 </button>
               ) : null}

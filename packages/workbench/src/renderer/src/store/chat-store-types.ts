@@ -35,6 +35,7 @@ export type SendMessageOverrides = {
 export type SettingsRouteSection =
   | 'general'
   | 'appearance'
+  | 'shortcuts'
   | 'models'
   | 'permissions'
   | 'hooks'

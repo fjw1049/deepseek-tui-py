@@ -30,7 +30,6 @@ export function SidebarPinnedSection({
   const activeThreadId = useChatStore((s) => s.activeThreadId)
   const pinnedThreadIds = useChatStore((s) => s.pinnedThreadIds)
   const hiddenWorkspacePaths = useChatStore((s) => s.hiddenWorkspacePaths)
-  const searchQuery = useChatStore((s) => s.sidebarSearchQuery)
   const collapsed = useChatStore((s) => s.pinnedCollapsed)
   const setCollapsed = useChatStore((s) => s.setPinnedCollapsed)
   const busy = useChatStore((s) => s.busy)
@@ -39,8 +38,7 @@ export function SidebarPinnedSection({
   const activeThreadBlocks = useChatStore((s) => s.blocks)
   const { threadIds: threadsWithActiveTasks, taskIds: activeTaskIds } = useThreadsWithActiveTasks()
   const [deletingThreadIds, setDeletingThreadIds] = useState<Record<string, boolean>>({})
-  const searching = searchQuery.trim().length > 0
-  const sectionCollapsed = searching ? false : collapsed
+  const sectionCollapsed = collapsed
 
   const pinnedSet = useMemo(() => new Set(pinnedThreadIds), [pinnedThreadIds])
 
@@ -61,13 +59,7 @@ export function SidebarPinnedSection({
       })
   }, [threads, pinnedThreadIds, hiddenWorkspacePaths])
 
-  const filteredPinnedThreads = useMemo(() => {
-    const query = searchQuery.trim().toLowerCase()
-    if (!query) return pinnedThreads
-    return pinnedThreads.filter((thread) => thread.title.toLowerCase().includes(query))
-  }, [pinnedThreads, searchQuery])
-
-  if (filteredPinnedThreads.length === 0) return null
+  if (pinnedThreads.length === 0) return null
 
   const handleDeleteThread = async (thread: NormalizedThread): Promise<void> => {
     const threadId = thread.id.trim()
@@ -106,7 +98,7 @@ export function SidebarPinnedSection({
       {sectionCollapsed ? null : (
         <div className="ds-sidebar-pinned-list ds-scroll-surface min-h-0 overflow-y-auto overscroll-contain">
           <div className="ds-sidebar-thread-list px-1.5 pb-1">
-            {filteredPinnedThreads.map((thread) => (
+            {pinnedThreads.map((thread) => (
               <ThreadRow
                 key={thread.id}
                 thread={thread}

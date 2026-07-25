@@ -7,6 +7,7 @@ import {
   toggleGitCommitPath as toggleGitCommitPathSelection,
   workspaceKey
 } from '../lib/git-commit-selection'
+import { applyShortcutsSettings } from '../lib/shortcuts-runtime'
 import { resolveActiveThreadWorkspace } from '../lib/workspace-path'
 import type { ChatState, ChatStoreGet, ChatStoreSet, LegacySettingsRouteSection, PluginHostRoute, SettingsRouteSection } from './chat-store-types'
 
@@ -224,6 +225,7 @@ export function createAppActions(options: CreateAppActionsOptions): Pick<
       applyUiFontScale(settings.uiFontScale)
       applyUiFontFamily(settings.uiFontFamily)
       applyAppearance(settings.appearance)
+      applyShortcutsSettings(settings.shortcuts)
       set({
         providerId: settings.agentProvider,
         workspaceRoot,

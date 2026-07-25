@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactElement } from 'react'
+import { useEffect, useState, type ReactElement } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   Blocks,
@@ -15,7 +15,9 @@ import {
   Sparkles
 } from 'lucide-react'
 import type { NormalizedThread } from '../../agent/types'
+import { OPEN_SIDEBAR_SEARCH_EVENT } from '../../lib/shortcuts-runtime'
 import { useChatStore, type SettingsRouteSection } from '../../store/chat-store'
+import { ConversationSearchModal } from './ConversationSearchModal'
 import { SidebarProjectsColumn } from './SidebarProjectsSection'
 import { SidebarPinnedSection } from './SidebarPinnedSection'
 import { SidebarChatsSection } from './SidebarChatsSection'
@@ -72,10 +74,7 @@ export function Sidebar({
   const unreadThreadIds = useChatStore((s) => s.unreadThreadIds)
   const pinnedThreadIds = useChatStore((s) => s.pinnedThreadIds)
   const togglePin = useChatStore((s) => s.togglePin)
-  const searchQuery = useChatStore((s) => s.sidebarSearchQuery)
-  const setSearchQuery = useChatStore((s) => s.setSidebarSearchQuery)
-  const searchInputRef = useRef<HTMLInputElement>(null)
-  const [searchOpen, setSearchOpen] = useState(false)
+  const [searchModalOpen, setSearchModalOpen] = useState(false)
   const automationActive = route === 'automation'
   const channelsActive = route === 'channels'
   const pluginsActive = route === 'plugins'
@@ -87,7 +86,6 @@ export function Sidebar({
     if (window.localStorage.getItem(EXTENSIONS_OPEN_KEY) === '1') return true
     return false
   })
-  const searchExpanded = searchOpen || searchQuery.trim().length > 0
 
   useEffect(() => {
     if (!extensionsActive) return
@@ -96,9 +94,12 @@ export function Sidebar({
   }, [extensionsActive])
 
   useEffect(() => {
-    if (!searchExpanded) return
-    searchInputRef.current?.focus()
-  }, [searchExpanded])
+    const onOpenSearch = (): void => {
+      setSearchModalOpen(true)
+    }
+    window.addEventListener(OPEN_SIDEBAR_SEARCH_EVENT, onOpenSearch)
+    return () => window.removeEventListener(OPEN_SIDEBAR_SEARCH_EVENT, onOpenSearch)
+  }, [])
 
   const toggleExtensions = (): void => {
     setExtensionsOpen((prev) => {
@@ -106,11 +107,6 @@ export function Sidebar({
       persistExtensionsOpen(next)
       return next
     })
-  }
-
-  const collapseSearch = (): void => {
-    setSearchQuery('')
-    setSearchOpen(false)
   }
 
   return (
@@ -127,42 +123,6 @@ export function Sidebar({
             >
               <PanelLeftClose className="h-4 w-4" strokeWidth={1.85} />
             </button>
-            {searchExpanded ? (
-              <label className="ds-sidebar-titlebar-search ds-no-drag relative min-w-0 flex-1">
-                <Search
-                  className="pointer-events-none absolute left-2 top-1/2 h-3 w-3 -translate-y-1/2 text-ds-faint"
-                  strokeWidth={2}
-                  aria-hidden
-                />
-                <input
-                  ref={searchInputRef}
-                  type="search"
-                  value={searchQuery}
-                  onChange={(event) => setSearchQuery(event.target.value)}
-                  onBlur={() => {
-                    if (!searchQuery.trim()) setSearchOpen(false)
-                  }}
-                  onKeyDown={(event) => {
-                    if (event.key !== 'Escape') return
-                    event.preventDefault()
-                    collapseSearch()
-                  }}
-                  placeholder={t('sidebarSearchAll')}
-                  aria-label={t('sidebarSearchAll')}
-                  className="ds-sidebar-search ds-sidebar-search--inline ds-sidebar-search--titlebar w-full pl-7"
-                />
-              </label>
-            ) : (
-              <button
-                type="button"
-                onClick={() => setSearchOpen(true)}
-                className="ds-sidebar-toggle-button ds-no-drag shrink-0"
-                aria-label={t('sidebarSearchAll')}
-                title={t('sidebarSearchAll')}
-              >
-                <Search className="h-4 w-4" strokeWidth={1.85} />
-              </button>
-            )}
           </div>
         </div>
 
@@ -175,6 +135,13 @@ export function Sidebar({
             disabledHint={t('runtimeActionNeedsConnection')}
             shortcut="⌘N"
             variant="action"
+          />
+          <SidebarLink
+            icon={<Search className="h-4 w-4" strokeWidth={1.9} />}
+            label={t('conversationSearchNav')}
+            onClick={() => setSearchModalOpen(true)}
+            shortcut="⌘K"
+            variant="flat"
           />
 
           <SidebarLink
@@ -299,6 +266,13 @@ export function Sidebar({
           variant="footer"
         />
       </div>
+
+      <ConversationSearchModal
+        open={searchModalOpen}
+        threads={threads}
+        onClose={() => setSearchModalOpen(false)}
+        onSelectThread={onSelectThread}
+      />
     </aside>
   )
 }

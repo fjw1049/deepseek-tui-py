@@ -1,0 +1,287 @@
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type ReactElement
+} from 'react'
+import { createPortal } from 'react-dom'
+import { useTranslation } from 'react-i18next'
+import { Clock, CornerDownLeft, Folder, MessageSquare, Search, X } from 'lucide-react'
+import { formatShortcutLabel } from '@shared/shortcuts'
+import type { NormalizedThread } from '../../agent/types'
+import {
+  pushConversationSearchHistory,
+  readConversationSearchHistory
+} from '../../lib/conversation-search-history'
+import { formatRelativeTime } from '../../lib/format-relative-time'
+import { workspaceLabelFromPath } from '../../lib/workspace-label'
+
+type Props = {
+  open: boolean
+  threads: NormalizedThread[]
+  onClose: () => void
+  onSelectThread: (id: string) => void
+}
+
+function threadMatchesQuery(thread: NormalizedThread, query: string): boolean {
+  const q = query.trim().toLowerCase()
+  if (!q) return false
+  if (thread.title.toLowerCase().includes(q)) return true
+  const workspace = thread.workspace?.trim()
+  if (!workspace) return false
+  if (workspace.toLowerCase().includes(q)) return true
+  return workspaceLabelFromPath(workspace).toLowerCase().includes(q)
+}
+
+export function ConversationSearchModal({
+  open,
+  threads,
+  onClose,
+  onSelectThread
+}: Props): ReactElement | null {
+  const { t, i18n } = useTranslation('common')
+  const inputRef = useRef<HTMLInputElement>(null)
+  const [query, setQuery] = useState('')
+  const [history, setHistory] = useState<string[]>(() => readConversationSearchHistory())
+  const [activeIndex, setActiveIndex] = useState(0)
+
+  const results = useMemo(() => {
+    const q = query.trim()
+    if (!q) return [] as NormalizedThread[]
+    return threads
+      .filter((thread) => threadMatchesQuery(thread, q))
+      .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
+      .slice(0, 50)
+  }, [threads, query])
+
+  const showingHistory = query.trim().length === 0
+  const rowCount = showingHistory ? history.length : results.length
+
+  useEffect(() => {
+    if (!open) return
+    setQuery('')
+    setHistory(readConversationSearchHistory())
+    setActiveIndex(0)
+    const timer = window.setTimeout(() => inputRef.current?.focus(), 0)
+    return () => window.clearTimeout(timer)
+  }, [open])
+
+  useEffect(() => {
+    setActiveIndex(0)
+  }, [query, showingHistory])
+
+  useEffect(() => {
+    if (!open) return
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        onClose()
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [open, onClose])
+
+  const selectThread = useCallback(
+    (threadId: string, recordQuery: string) => {
+      const trimmed = recordQuery.trim()
+      if (trimmed) {
+        setHistory(pushConversationSearchHistory(trimmed))
+      }
+      onSelectThread(threadId)
+      onClose()
+    },
+    [onClose, onSelectThread]
+  )
+
+  const applyHistoryQuery = useCallback((value: string) => {
+    setQuery(value)
+    setActiveIndex(0)
+    inputRef.current?.focus()
+  }, [])
+
+  const onInputKeyDown = (event: ReactKeyboardEvent<HTMLInputElement>): void => {
+    if (event.key === 'ArrowDown') {
+      if (rowCount === 0) return
+      event.preventDefault()
+      setActiveIndex((index) => (index + 1) % rowCount)
+      return
+    }
+    if (event.key === 'ArrowUp') {
+      if (rowCount === 0) return
+      event.preventDefault()
+      setActiveIndex((index) => (index - 1 + rowCount) % rowCount)
+      return
+    }
+    if (event.key !== 'Enter') return
+    event.preventDefault()
+    if (showingHistory) {
+      const item = history[activeIndex]
+      if (item) applyHistoryQuery(item)
+      return
+    }
+    const thread = results[activeIndex]
+    if (thread) selectThread(thread.id, query)
+  }
+
+  if (!open) return null
+
+  const shortcutLabel = formatShortcutLabel({ key: 'k' })
+
+  return createPortal(
+    <div
+      className="ds-search-modal-root"
+      role="presentation"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose()
+      }}
+    >
+      <div
+        className="ds-search-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-label={t('conversationSearchTitle')}
+      >
+        <div className="ds-search-modal__header">
+          <Search className="ds-search-modal__search-icon" strokeWidth={1.75} aria-hidden />
+          <input
+            ref={inputRef}
+            type="search"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            onKeyDown={onInputKeyDown}
+            placeholder={t('conversationSearchPlaceholder')}
+            aria-label={t('conversationSearchPlaceholder')}
+            className="ds-search-modal__input"
+            autoComplete="off"
+            spellCheck={false}
+          />
+          <kbd className="ds-search-modal__badge" aria-label={shortcutLabel}>
+            {shortcutLabel}
+          </kbd>
+          <button
+            type="button"
+            className="ds-search-modal__close"
+            onClick={onClose}
+            aria-label={t('conversationSearchClose')}
+          >
+            <X className="h-3.5 w-3.5" strokeWidth={2} />
+          </button>
+        </div>
+
+        <div
+          className={`ds-search-modal__body${
+            (showingHistory && history.length === 0) || (!showingHistory && results.length === 0)
+              ? ' ds-search-modal__body--empty'
+              : ''
+          }`}
+        >
+          {showingHistory ? (
+            history.length === 0 ? (
+              <div className="ds-search-modal__empty">
+                <Search className="ds-search-modal__empty-icon" strokeWidth={1.5} aria-hidden />
+                <p className="ds-search-modal__empty-title">{t('conversationSearchNoHistory')}</p>
+                <p className="ds-search-modal__empty-hint">{t('conversationSearchHint')}</p>
+              </div>
+            ) : (
+              <>
+                <div className="ds-search-modal__section">{t('conversationSearchRecent')}</div>
+                <ul className="ds-search-modal__list" role="listbox">
+                  {history.map((item, index) => {
+                    const active = index === activeIndex
+                    return (
+                      <li key={`${item}-${index}`}>
+                        <button
+                          type="button"
+                          role="option"
+                          aria-selected={active}
+                          className={`ds-search-modal__row ${
+                            active ? 'ds-search-modal__row--active' : ''
+                          }`}
+                          onMouseEnter={() => setActiveIndex(index)}
+                          onClick={() => applyHistoryQuery(item)}
+                        >
+                          <span className="ds-search-modal__row-icon-wrap" aria-hidden>
+                            <MessageSquare strokeWidth={1.7} />
+                          </span>
+                          <span className="ds-search-modal__row-main">
+                            <span className="ds-search-modal__row-title">{item}</span>
+                          </span>
+                          {active ? (
+                            <CornerDownLeft
+                              className="ds-search-modal__enter"
+                              strokeWidth={1.75}
+                              aria-hidden
+                            />
+                          ) : null}
+                        </button>
+                      </li>
+                    )
+                  })}
+                </ul>
+              </>
+            )
+          ) : results.length === 0 ? (
+            <div className="ds-search-modal__empty">
+              <Search className="ds-search-modal__empty-icon" strokeWidth={1.5} aria-hidden />
+              <p className="ds-search-modal__empty-title">{t('conversationSearchNoResults')}</p>
+              <p className="ds-search-modal__empty-hint">{t('conversationSearchHint')}</p>
+            </div>
+          ) : (
+            <ul className="ds-search-modal__list" role="listbox">
+              {results.map((thread, index) => {
+                const workspace = thread.workspace?.trim()
+                const folder = workspace ? workspaceLabelFromPath(workspace) : ''
+                const active = index === activeIndex
+                return (
+                  <li key={thread.id}>
+                    <button
+                      type="button"
+                      role="option"
+                      aria-selected={active}
+                      className={`ds-search-modal__row ${
+                        active ? 'ds-search-modal__row--active' : ''
+                      }`}
+                      onMouseEnter={() => setActiveIndex(index)}
+                      onClick={() => selectThread(thread.id, query)}
+                    >
+                      <span className="ds-search-modal__row-icon-wrap" aria-hidden>
+                        <MessageSquare strokeWidth={1.7} />
+                      </span>
+                      <span className="ds-search-modal__row-main">
+                        <span className="ds-search-modal__row-title">{thread.title}</span>
+                        <span className="ds-search-modal__row-meta">
+                          {folder ? (
+                            <span className="ds-search-modal__meta-chip">
+                              <Folder strokeWidth={1.8} aria-hidden />
+                              {folder}
+                            </span>
+                          ) : null}
+                          <span className="ds-search-modal__meta-chip">
+                            <Clock strokeWidth={1.8} aria-hidden />
+                            {formatRelativeTime(thread.updatedAt, i18n.language)}
+                          </span>
+                        </span>
+                      </span>
+                      {active ? (
+                        <CornerDownLeft
+                          className="ds-search-modal__enter"
+                          strokeWidth={1.75}
+                          aria-hidden
+                        />
+                      ) : null}
+                    </button>
+                  </li>
+                )
+              })}
+            </ul>
+          )}
+        </div>
+      </div>
+    </div>,
+    document.body
+  )
+}

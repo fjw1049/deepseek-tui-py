@@ -11,6 +11,7 @@ import {
   sandboxModeForApprovalPolicy,
   type ApprovalPolicy
 } from '@shared/app-settings'
+import { OPEN_APPROVAL_POLICY_EVENT } from '../../lib/shortcuts-runtime'
 import { useChatStore } from '../../store/chat-store'
 
 /**
@@ -71,6 +72,15 @@ export function ComposerApprovalPolicySelector({
     document.addEventListener('mousedown', onPointerDown)
     return () => document.removeEventListener('mousedown', onPointerDown)
   }, [open, setMenuOpen])
+
+  useEffect(() => {
+    const onOpenMenu = (): void => {
+      if (disabled) return
+      setMenuOpen(true)
+    }
+    window.addEventListener(OPEN_APPROVAL_POLICY_EVENT, onOpenMenu)
+    return () => window.removeEventListener(OPEN_APPROVAL_POLICY_EVENT, onOpenMenu)
+  }, [disabled, setMenuOpen])
 
   const triggerLabel =
     policy === 'auto'

@@ -9,6 +9,7 @@ import {
   screen,
   session
 } from 'electron'
+import { installAppMenu } from './app-menu'
 import { existsSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
@@ -40,6 +41,7 @@ import {
 import {
   mergeAppearanceSettings,
   mergeClawSettings,
+  mergeShortcutsSettings,
   normalizeAppSettings,
   type AppSettingsPatch,
   type AppSettingsV1
@@ -860,6 +862,10 @@ app.whenReady().then(async () => {
   emitStartupPhase('app-ready')
   if (!gotSingleInstanceLock) return
 
+  // Free ⌘Q for in-app shortcuts (approval policy); quit becomes ⌘⇧Q.
+  installAppMenu()
+  traceStartup('app menu installed')
+
   traceStartup('install webview guards:start')
   installDevPreviewWebviewGuards()
   installMediaPermissionHandler()
@@ -913,6 +919,7 @@ app.whenReady().then(async () => {
       claw: mergeClawSettings(prev.claw, partial.claw),
       guiUpdate: { ...prev.guiUpdate, ...(partial.guiUpdate ?? {}) },
       appearance: mergeAppearanceSettings(prev.appearance, partial.appearance),
+      shortcuts: mergeShortcutsSettings(prev.shortcuts, partial.shortcuts),
       agentProvider: 'deepseek-runtime'
     })
     if (prev.log.enabled !== next.log.enabled || prev.log.retentionDays !== next.log.retentionDays) {

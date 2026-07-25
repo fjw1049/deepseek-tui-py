@@ -14,6 +14,7 @@ import {
   revealWorkspacePathInFolder
 } from '../../lib/open-workspace-path'
 import { copyableRelativePath } from '../../lib/sidebar-chrome'
+import { isShortcutEnabled } from '../../lib/shortcuts-runtime'
 import {
   buildWorkspaceChangePatchMap,
   lookupPatchForPath
@@ -313,6 +314,8 @@ export function WorkspaceEditorPanel({ workspaceRoot, blocks }: Props): ReactEle
     if (!editingTabId) return
     const onKey = (event: KeyboardEvent): void => {
       if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== 's') return
+      if (event.altKey || event.shiftKey) return
+      if (!isShortcutEnabled('saveFile')) return
       const target = event.target as HTMLElement | null
       if (!target?.closest('.ds-workspace-editor-pane')) return
       event.preventDefault()

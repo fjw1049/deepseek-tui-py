@@ -8,6 +8,7 @@ import {
   CUSTOM_MODEL_CONTEXT_WINDOW_MIN,
   mergeAppearanceSettings,
   mergeClawSettings,
+  mergeShortcutsSettings,
   normalizeCustomModelContextWindow,
   sandboxModeForApprovalPolicy,
   type AppearancePatchV1,
@@ -18,8 +19,15 @@ import {
   DEFAULT_ASR_MODEL,
   type AsrSettingsV1,
   type CustomEndpointV1,
-  type EndpointProtocol
+  type EndpointProtocol,
+  type ShortcutsPatchV1
 } from '@shared/app-settings'
+import {
+  SHORTCUT_CATALOG,
+  formatShortcutLabel,
+  shortcutChordTokens,
+  type ShortcutChord
+} from '@shared/shortcuts'
 import {
   Anchor,
   Box,
@@ -29,6 +37,7 @@ import {
   EyeOff,
   FolderOpen,
   Globe,
+  Keyboard,
   Loader2,
   Palette,
   Plus,
@@ -44,6 +53,7 @@ import {
 import type { PetManifestEntry } from '@shared/pet-manifest'
 import { applyTheme, applyUiFontScale, applyUiFontFamily } from '../lib/apply-theme'
 import { applyAppearance } from '../lib/apply-appearance'
+import { applyShortcutsSettings } from '../lib/shortcuts-runtime'
 import { formatWorkspacePickerError } from '../lib/format-workspace-picker-error'
 import {
   readPetEnabled,
@@ -73,7 +83,16 @@ type SaveStatus = 'idle' | 'saving' | 'saved' | 'error'
 type SettingsPatch = Partial<
   Omit<
     AppSettingsV1,
-    'deepseek' | 'log' | 'notifications' | 'skills' | 'memory' | 'claw' | 'guiUpdate' | 'customEndpoints' | 'appearance'
+    | 'deepseek'
+    | 'log'
+    | 'notifications'
+    | 'skills'
+    | 'memory'
+    | 'claw'
+    | 'guiUpdate'
+    | 'customEndpoints'
+    | 'appearance'
+    | 'shortcuts'
   >
 > & {
   deepseek?: Partial<AppSettingsV1['deepseek']>
@@ -84,6 +103,7 @@ type SettingsPatch = Partial<
   guiUpdate?: Partial<AppSettingsV1['guiUpdate']>
   customEndpoints?: AppSettingsV1['customEndpoints']
   appearance?: AppearancePatchV1
+  shortcuts?: ShortcutsPatchV1
 }
 type InlineNotice = {
   tone: 'success' | 'error' | 'info'
@@ -132,7 +152,8 @@ function mergeSettings(current: AppSettingsV1, patch: SettingsPatch): AppSetting
       ...current.guiUpdate,
       ...(patch.guiUpdate ?? {})
     },
-    appearance: mergeAppearanceSettings(current.appearance, patch.appearance)
+    appearance: mergeAppearanceSettings(current.appearance, patch.appearance),
+    shortcuts: mergeShortcutsSettings(current.shortcuts, patch.shortcuts)
   }
 }
 
@@ -190,6 +211,7 @@ export function SettingsView(): ReactElement {
   const formUiFontScale = form?.uiFontScale
   const formUiFontFamily = form?.uiFontFamily
   const formAppearance = form?.appearance
+  const formShortcuts = form?.shortcuts
   const formWorkspaceRoot = form?.workspaceRoot
   const formPort = form?.deepseek.port
 
@@ -363,6 +385,11 @@ export function SettingsView(): ReactElement {
     if (!formAppearance) return
     applyAppearance(formAppearance)
   }, [formAppearance])
+
+  useEffect(() => {
+    if (!formShortcuts) return
+    applyShortcutsSettings(formShortcuts)
+  }, [formShortcuts])
 
   useEffect(() => {
     if (!form || initializedCategory.current) return
@@ -586,6 +613,14 @@ export function SettingsView(): ReactElement {
             <Palette className="h-4 w-4 shrink-0 opacity-70" strokeWidth={1.75} />
             {t('appearance')}
           </button>
+          <button
+            type="button"
+            className={catCls('shortcuts')}
+            onClick={() => openSettings('shortcuts')}
+          >
+            <Keyboard className="h-4 w-4 shrink-0 opacity-70" strokeWidth={1.75} />
+            {t('shortcuts')}
+          </button>
           <button type="button" className={catCls('models')} onClick={() => openSettings('models')}>
             <Box className="h-4 w-4 shrink-0 opacity-70" strokeWidth={1.75} />
             {t('models')}
@@ -625,7 +660,11 @@ export function SettingsView(): ReactElement {
           <div className="mb-8 flex items-start justify-between gap-4">
             <div>
               <h1 className="text-2xl font-semibold tracking-tight text-ds-ink">
-                {category === 'models' ? t('models') : t('title')}
+                {category === 'models'
+                  ? t('models')
+                  : category === 'shortcuts'
+                    ? t('shortcuts')
+                    : t('title')}
               </h1>
               <p className="mt-1 text-[14px] text-ds-muted">{t('subtitle')}</p>
             </div>
@@ -837,6 +876,41 @@ export function SettingsView(): ReactElement {
 
           {category === 'appearance' && (
             <AppearanceSettingsPanel form={form} onPatch={(patch) => update(patch)} />
+          )}
+
+          {category === 'shortcuts' && (
+            <SettingsCard title={t('shortcutsSection')}>
+              {SHORTCUT_CATALOG.map((item) => {
+                const enabled = form.shortcuts[item.id]?.enabled !== false
+                const label = formatShortcutLabel(item.chord)
+                return (
+                  <div
+                    key={item.id}
+                    className={`ds-shortcut-row flex items-center gap-4 px-3.5 py-3.5 transition-opacity duration-150 ${
+                      enabled ? '' : 'opacity-45'
+                    }`}
+                  >
+                    <div className="min-w-0 flex-1">
+                      <div className="text-[15px] font-medium tracking-[-0.01em] text-ds-ink">
+                        {t(`shortcut_${item.id}_title`)}
+                      </div>
+                      <div className="mt-0.5 text-[12px] leading-snug text-ds-muted">
+                        {t(`shortcut_${item.id}_desc`)}
+                      </div>
+                    </div>
+                    <ShortcutKeycaps chord={item.chord} label={label} />
+                    <Toggle
+                      checked={enabled}
+                      onChange={(next) =>
+                        update({
+                          shortcuts: { [item.id]: { enabled: next } } as ShortcutsPatchV1
+                        })
+                      }
+                    />
+                  </div>
+                )
+              })}
+            </SettingsCard>
           )}
 
           {category === 'models' && (
@@ -2254,6 +2328,28 @@ function CustomEndpointsPanel({
           </div>
         ) : null}
       </EndpointConfigSheet>
+    </div>
+  )
+}
+
+function ShortcutKeycaps({
+  chord,
+  label
+}: {
+  chord: ShortcutChord
+  label: string
+}): ReactElement {
+  const tokens = shortcutChordTokens(chord)
+  return (
+    <div className="ds-shortcut-keys shrink-0" aria-label={label}>
+      {tokens.map((token, index) => (
+        <kbd
+          key={`${token}-${index}`}
+          className={`ds-keycap${token.length > 1 ? ' ds-keycap--wide' : ''}`}
+        >
+          {token}
+        </kbd>
+      ))}
     </div>
   )
 }

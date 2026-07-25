@@ -4,6 +4,13 @@ import {
   type AppearancePatchV1,
   type AppearanceSettingsV1
 } from './appearance'
+import {
+  defaultShortcutsSettings,
+  mergeShortcutsSettings,
+  normalizeShortcutsSettings,
+  type ShortcutsPatchV1,
+  type ShortcutsSettingsV1
+} from './shortcuts'
 
 export const GUI_UPDATE_CHANNELS = ['frontier', 'stable'] as const
 export type GuiUpdateChannel = (typeof GUI_UPDATE_CHANNELS)[number]
@@ -294,12 +301,21 @@ export type AppSettingsV1 = {
   claw: ClawSettingsV1
   guiUpdate: GuiUpdateConfigV1
   appearance: AppearanceSettingsV1
+  shortcuts: ShortcutsSettingsV1
 }
 
 export type AppSettingsPatch = Partial<
   Omit<
     AppSettingsV1,
-    'deepseek' | 'log' | 'notifications' | 'skills' | 'claw' | 'guiUpdate' | 'customEndpoints' | 'appearance'
+    | 'deepseek'
+    | 'log'
+    | 'notifications'
+    | 'skills'
+    | 'claw'
+    | 'guiUpdate'
+    | 'customEndpoints'
+    | 'appearance'
+    | 'shortcuts'
   >
 > & {
   deepseek?: Partial<DeepseekSettingsV1>
@@ -311,6 +327,7 @@ export type AppSettingsPatch = Partial<
   guiUpdate?: Partial<GuiUpdateConfigV1>
   customEndpoints?: CustomEndpointV1[]
   appearance?: AppearancePatchV1
+  shortcuts?: ShortcutsPatchV1
 }
 
 export const CLAW_CURRENT_USER_REQUEST_HEADING = '[Current user request]'
@@ -997,6 +1014,7 @@ export function normalizeAppSettings(settings: AppSettingsV1): AppSettingsV1 {
     claw?: ClawSettingsPatchV1
     guiUpdate?: Partial<GuiUpdateConfigV1>
     appearance?: AppearancePatchV1
+    shortcuts?: ShortcutsPatchV1 | ShortcutsSettingsV1
   }
   const claw = normalizeClawSettings(maybeSettings.claw)
   return {
@@ -1021,9 +1039,21 @@ export function normalizeAppSettings(settings: AppSettingsV1): AppSettingsV1 {
         maybeSettings.guiUpdate?.channel ?? DEFAULT_GUI_UPDATE_CHANNEL
       )
     },
-    appearance: normalizeAppearanceSettings(maybeSettings.appearance)
+    appearance: normalizeAppearanceSettings(maybeSettings.appearance),
+    shortcuts: normalizeShortcutsSettings(maybeSettings.shortcuts)
   }
 }
 
-export { mergeAppearanceSettings, normalizeAppearanceSettings }
-export type { AppearancePatchV1, AppearanceSettingsV1 }
+export {
+  defaultShortcutsSettings,
+  mergeAppearanceSettings,
+  mergeShortcutsSettings,
+  normalizeAppearanceSettings,
+  normalizeShortcutsSettings
+}
+export type {
+  AppearancePatchV1,
+  AppearanceSettingsV1,
+  ShortcutsPatchV1,
+  ShortcutsSettingsV1
+}

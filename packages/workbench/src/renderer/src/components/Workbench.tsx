@@ -29,6 +29,15 @@ import {
 import { closeAllTerminalSessions } from '../store/terminal-session-store'
 import { useWorkspaceEditorStore } from '../store/workspace-editor-store'
 import { isChatsWorkspace, resolveActiveThreadWorkspace, resolveThreadFilesystemRoot } from '../lib/workspace-path'
+import {
+  isShortcutEnabled,
+  requestOpenApprovalPolicyMenu,
+  requestOpenSidebarSearch
+} from '../lib/shortcuts-runtime'
+import {
+  findMatchedShortcut,
+  isEditableKeyboardTarget
+} from '@shared/shortcuts'
 import { AppTerminalPanel } from './AppTerminalPanel'
 import { Sidebar } from './chat/Sidebar'
 import { SidebarExpandDroplet } from './chat/SidebarExpandDroplet'
@@ -202,6 +211,7 @@ export function Workbench(): ReactElement {
     activeThreadId,
     selectThread,
     createThread,
+    chooseWorkspace,
     blocks,
     liveReasoning,
     liveAssistant,
@@ -234,6 +244,7 @@ export function Workbench(): ReactElement {
       activeThreadId: s.activeThreadId,
       selectThread: s.selectThread,
       createThread: s.createThread,
+      chooseWorkspace: s.chooseWorkspace,
       blocks: s.blocks,
       liveReasoning: s.liveReasoning,
       liveAssistant: s.liveAssistant,
@@ -423,6 +434,19 @@ export function Workbench(): ReactElement {
     }
     setRightSidebarOpen(false)
   }, [rightSidebarCollapsed, rightSidebarOpen])
+
+  const toggleTerminalPanel = useCallback((): void => {
+    if (!activeWorkspaceRoot.trim()) return
+    if (bottomTerminalOpen) {
+      setBottomTerminalOpen(false)
+      return
+    }
+    // Bottom terminal and the right-sidebar terminal tab share one global xterm
+    // session store, so only one may mount at a time: hand the mount over by
+    // steering the sidebar off its terminal tab before opening the bottom panel.
+    if (terminalSidebarOpen) closeRightSidebar()
+    setBottomTerminalOpen(true)
+  }, [activeWorkspaceRoot, bottomTerminalOpen, closeRightSidebar, terminalSidebarOpen])
 
   const toggleRightSidebarMaximize = useCallback((): void => {
     const mainWidth = readMainRowWidth(
@@ -649,10 +673,14 @@ export function Workbench(): ReactElement {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
-      const target = e.target as HTMLElement | null
-      const typing = Boolean(target?.closest('input, textarea, [contenteditable="true"]'))
+      const matched = findMatchedShortcut(e)
+      if (!matched) return
+      // saveFile is handled inside the workspace editor (scoped to the pane).
+      if (matched.id === 'saveFile') return
+      if (!isShortcutEnabled(matched.id)) return
+      if (matched.ignoreWhenTyping && isEditableKeyboardTarget(e.target)) return
 
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'n') {
+      if (matched.id === 'newConversation') {
         e.preventDefault()
         setRoute('chat')
         // Mirror the New Agent button: project-active → inherit; else → chats.
@@ -675,14 +703,47 @@ export function Workbench(): ReactElement {
         return
       }
 
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'b' && !typing) {
+      if (matched.id === 'searchConversations') {
+        e.preventDefault()
+        setLeftSidebarCollapsed(false)
+        requestOpenSidebarSearch()
+        return
+      }
+
+      if (matched.id === 'importProject') {
+        e.preventDefault()
+        void chooseWorkspace()
+        return
+      }
+
+      if (matched.id === 'toggleLeftSidebar') {
         e.preventDefault()
         setLeftSidebarCollapsed((current) => !current)
+        return
+      }
+
+      if (matched.id === 'toggleRightPanel') {
+        e.preventDefault()
+        toggleRightSidebar()
+        return
+      }
+
+      if (matched.id === 'approvalPolicyMenu') {
+        e.preventDefault()
+        setRoute('chat')
+        requestOpenApprovalPolicyMenu()
+        return
+      }
+
+      if (matched.id === 'openTerminal') {
+        e.preventDefault()
+        setRoute('chat')
+        toggleTerminalPanel()
       }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [createThread, setRoute])
+  }, [chooseWorkspace, createThread, setRoute, toggleRightSidebar, toggleTerminalPanel])
 
   useEffect(() => {
     const sync = (): void => {
@@ -762,19 +823,6 @@ export function Workbench(): ReactElement {
       return
     }
     openRightSidebar('preview')
-  }
-
-  const toggleTerminalPanel = (): void => {
-    if (!activeWorkspaceRoot.trim()) return
-    if (bottomTerminalOpen) {
-      setBottomTerminalOpen(false)
-      return
-    }
-    // Bottom terminal and the right-sidebar terminal tab share one global xterm
-    // session store, so only one may mount at a time: hand the mount over by
-    // steering the sidebar off its terminal tab before opening the bottom panel.
-    if (terminalSidebarOpen) closeRightSidebar()
-    setBottomTerminalOpen(true)
   }
 
   const openDevPreview = (): void => {

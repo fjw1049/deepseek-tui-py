@@ -5,12 +5,15 @@ import {
   DEFAULT_DEEPSEEK_BASE_URL,
   defaultClawSettings,
   defaultMemorySettings,
+  defaultShortcutsSettings,
   defaultWorkbenchSkills,
   mergeClawSettings,
   mergeMemorySettings,
+  mergeShortcutsSettings,
   normalizeAppSettings,
   normalizeCustomEndpoints,
   normalizeMemorySettings,
+  normalizeShortcutsSettings,
   normalizeWorkbenchSkills,
   type AppSettingsPatch,
   type AppSettingsV1,
@@ -158,7 +161,8 @@ const defaultSettings = (): AppSettingsV1 => ({
     channel: 'frontier'
   },
   claw: defaultClawSettings(),
-  appearance: defaultAppearanceSettings()
+  appearance: defaultAppearanceSettings(),
+  shortcuts: defaultShortcutsSettings()
 })
 
 function buildMergedSettings(parsed: Partial<AppSettingsV1>): AppSettingsV1 {
@@ -175,6 +179,7 @@ function buildMergedSettings(parsed: Partial<AppSettingsV1>): AppSettingsV1 {
     claw: mergeClawSettings(defaults.claw, parsed.claw),
     guiUpdate: { ...defaults.guiUpdate, ...parsed.guiUpdate },
     appearance: normalizeAppearanceSettings(parsed.appearance),
+    shortcuts: normalizeShortcutsSettings(parsed.shortcuts),
     agentProvider: 'deepseek-runtime'
   }
 }
@@ -282,6 +287,7 @@ export class JsonSettingsStore {
       claw: mergeClawSettings(cur.claw, partial.claw),
       guiUpdate: { ...cur.guiUpdate, ...(partial.guiUpdate ?? {}) },
       appearance: mergeAppearanceSettings(cur.appearance, partial.appearance),
+      shortcuts: mergeShortcutsSettings(cur.shortcuts, partial.shortcuts),
       agentProvider: 'deepseek-runtime'
     })
     await this.save(next)

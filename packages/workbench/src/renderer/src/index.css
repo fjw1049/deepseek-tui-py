@@ -2547,6 +2547,400 @@ samp {
   box-shadow: var(--ds-shadow-chip);
 }
 
+/* Settings → Shortcuts: macOS-style discrete keycaps */
+.ds-shortcut-keys {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.ds-keycap {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 5px;
+  border-radius: 5px;
+  border: 1px solid color-mix(in srgb, var(--ds-border-strong) 70%, transparent);
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--ds-chip-bg) 92%, white) 0%,
+      var(--ds-kbd-bg) 100%
+    );
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.55),
+    0 1px 0 rgba(0, 0, 0, 0.04);
+  color: var(--ds-ink);
+  font-family: var(--font-ui);
+  font-size: 11px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.01em;
+  line-height: 1;
+}
+
+.ds-keycap--wide {
+  min-width: 28px;
+  padding: 0 7px;
+  font-size: 10.5px;
+  font-weight: 500;
+}
+
+[data-theme='dark'] .ds-keycap {
+  border-color: color-mix(in srgb, var(--ds-border-strong) 85%, transparent);
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--ds-chip-bg) 88%, white) 0%,
+      var(--ds-kbd-bg) 100%
+    );
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    0 1px 0 rgba(0, 0, 0, 0.25);
+}
+
+/* Conversation search — macOS Spotlight / system sheet */
+.ds-search-modal-root {
+  --search-label: rgba(0, 0, 0, 0.85);
+  --search-secondary: rgba(60, 60, 67, 0.6);
+  --search-tertiary: rgba(60, 60, 67, 0.36);
+  --search-fill: rgba(120, 120, 128, 0.12);
+  --search-fill-hover: rgba(120, 120, 128, 0.1);
+  --search-sep: rgba(0, 0, 0, 0.08);
+  --search-select: rgba(0, 122, 255, 0.12);
+  --search-select-strong: #007aff;
+  --search-surface: #ffffff;
+  --search-elevated: #f2f2f7;
+
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: min(11vh, 88px) 20px 28px;
+  background: rgba(0, 0, 0, 0.28);
+}
+
+[data-theme='dark'] .ds-search-modal-root {
+  --search-label: rgba(255, 255, 255, 0.92);
+  --search-secondary: rgba(235, 235, 245, 0.6);
+  --search-tertiary: rgba(235, 235, 245, 0.35);
+  --search-fill: rgba(120, 120, 128, 0.28);
+  --search-fill-hover: rgba(120, 120, 128, 0.22);
+  --search-sep: rgba(255, 255, 255, 0.1);
+  --search-select: rgba(10, 132, 255, 0.28);
+  --search-select-strong: #0a84ff;
+  --search-surface: #1c1c1e;
+  --search-elevated: #2c2c2e;
+  background: rgba(0, 0, 0, 0.45);
+}
+
+.ds-search-modal {
+  width: min(720px, 100%);
+  height: min(72vh, 640px);
+  max-height: min(72vh, 640px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: 16px;
+  border: 0.5px solid var(--search-sep);
+  background: var(--search-surface);
+  box-shadow:
+    0 0 0 0.5px rgba(0, 0, 0, 0.04),
+    0 22px 70px rgba(0, 0, 0, 0.22),
+    0 8px 24px rgba(0, 0, 0, 0.08);
+}
+
+[data-theme='dark'] .ds-search-modal {
+  box-shadow:
+    0 0 0 0.5px rgba(255, 255, 255, 0.06),
+    0 28px 80px rgba(0, 0, 0, 0.55);
+}
+
+.ds-search-modal__header {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+  padding: 16px 16px 15px 18px;
+}
+
+.ds-search-modal__header::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    var(--search-sep) 12%,
+    var(--search-sep) 88%,
+    transparent 100%
+  );
+}
+
+.ds-search-modal__search-icon {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  color: var(--search-tertiary);
+}
+
+.ds-search-modal__input {
+  min-width: 0;
+  flex: 1;
+  border: 0;
+  outline: none;
+  box-shadow: none;
+  background: transparent;
+  color: var(--search-label);
+  font-family: var(--font-ui), -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, sans-serif;
+  font-size: 17px;
+  font-weight: 400;
+  letter-spacing: -0.022em;
+  line-height: 1.3;
+  caret-color: var(--search-select-strong);
+}
+
+.ds-search-modal__input:focus,
+.ds-search-modal__input:focus-visible {
+  outline: none;
+  box-shadow: none;
+  border: 0;
+}
+
+.ds-search-modal__input::placeholder {
+  color: var(--search-tertiary);
+  font-weight: 400;
+}
+
+.ds-search-modal__input::-webkit-search-cancel-button {
+  display: none;
+}
+
+.ds-search-modal__badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  height: 22px;
+  padding: 0 7px;
+  border-radius: 6px;
+  border: 0.5px solid var(--search-sep);
+  background: var(--search-fill);
+  color: var(--search-secondary);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.01em;
+  line-height: 1;
+}
+
+.ds-search-modal__close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  flex-shrink: 0;
+  margin-left: 2px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--search-fill);
+  color: var(--search-secondary);
+  cursor: pointer;
+  transition:
+    background 120ms cubic-bezier(0.23, 1, 0.32, 1),
+    transform 100ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.ds-search-modal__close:hover {
+  background: rgba(120, 120, 128, 0.22);
+  color: var(--search-label);
+}
+
+.ds-search-modal__close:active {
+  transform: scale(0.94);
+}
+
+.ds-search-modal__body {
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
+  padding: 8px 10px 12px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(120, 120, 128, 0.35) transparent;
+}
+
+.ds-search-modal__body--empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ds-search-modal__section {
+  padding: 10px 12px 6px;
+  color: var(--search-tertiary);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.ds-search-modal__empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 24px 28px;
+  text-align: center;
+}
+
+.ds-search-modal__empty-icon {
+  width: 28px;
+  height: 28px;
+  margin-bottom: 4px;
+  color: var(--search-tertiary);
+  opacity: 0.85;
+}
+
+.ds-search-modal__empty-title {
+  margin: 0;
+  color: var(--search-secondary);
+  font-size: 15px;
+  font-weight: 500;
+  letter-spacing: -0.02em;
+  line-height: 1.35;
+}
+
+.ds-search-modal__empty-hint {
+  margin: 0;
+  max-width: 280px;
+  color: var(--search-tertiary);
+  font-size: 13px;
+  font-weight: 400;
+  letter-spacing: -0.01em;
+  line-height: 1.4;
+}
+
+.ds-search-modal__list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ds-search-modal__row {
+  display: flex;
+  width: 100%;
+  min-height: 44px;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background 90ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.ds-search-modal__row:hover {
+  background: var(--search-fill-hover);
+}
+
+.ds-search-modal__row--active,
+.ds-search-modal__row--active:hover {
+  background: var(--search-select);
+}
+
+.ds-search-modal__row--active .ds-search-modal__row-icon-wrap {
+  background: color-mix(in srgb, var(--search-select-strong) 16%, transparent);
+  color: var(--search-select-strong);
+}
+
+.ds-search-modal__row-icon-wrap {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  border-radius: 8px;
+  background: var(--search-elevated);
+  color: var(--search-secondary);
+}
+
+.ds-search-modal__row-icon-wrap svg {
+  width: 16px;
+  height: 16px;
+}
+
+.ds-search-modal__row-main {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.ds-search-modal__row-title {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--search-label);
+  font-size: 15px;
+  font-weight: 500;
+  letter-spacing: -0.022em;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ds-search-modal__row-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  color: var(--search-tertiary);
+  font-size: 12px;
+  font-weight: 400;
+  letter-spacing: -0.01em;
+  line-height: 1.3;
+}
+
+.ds-search-modal__meta-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.ds-search-modal__meta-chip svg {
+  width: 11px;
+  height: 11px;
+  flex-shrink: 0;
+  opacity: 0.9;
+}
+
+.ds-search-modal__enter {
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+  margin-right: 2px;
+  color: var(--search-tertiary);
+}
+
+.ds-search-modal__row--active .ds-search-modal__enter {
+  color: var(--search-select-strong);
+  opacity: 0.85;
+}
+
 .ds-markdown {
   color: var(--ds-text);
   font-family: var(--font-ui);

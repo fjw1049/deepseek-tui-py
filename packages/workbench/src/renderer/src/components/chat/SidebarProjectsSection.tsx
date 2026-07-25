@@ -129,9 +129,7 @@ function SidebarProjectsToolbar({
 }: ProjectsToolbarProps): ReactElement {
   const collapsed = useChatStore((s) => s.projectsCollapsed)
   const setCollapsed = useChatStore((s) => s.setProjectsCollapsed)
-  const searchQuery = useChatStore((s) => s.sidebarSearchQuery)
-  const searching = searchQuery.trim().length > 0
-  const sectionCollapsed = searching || selectMode ? false : collapsed
+  const sectionCollapsed = selectMode ? false : collapsed
   const [menuOpen, setMenuOpen] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
 
@@ -284,7 +282,6 @@ export function SidebarProjectsColumn({
 }: SidebarProjectsColumnProps): ReactElement {
   const projectsCollapsed = useChatStore((s) => s.projectsCollapsed)
   const setProjectsCollapsed = useChatStore((s) => s.setProjectsCollapsed)
-  const searchQuery = useChatStore((s) => s.sidebarSearchQuery)
   const hiddenWorkspacePaths = useChatStore((s) => s.hiddenWorkspacePaths)
   const [selectMode, setSelectMode] = useState(false)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set())
@@ -293,7 +290,6 @@ export function SidebarProjectsColumn({
   const pinnedSet = useMemo(() => new Set(pinnedThreadIds), [pinnedThreadIds])
 
   const projectThreads = useMemo(() => {
-    const query = searchQuery.trim().toLowerCase()
     return threads
       .filter((th) => {
         if (isInternalTemporaryWorkspace(th.workspace)) return false
@@ -302,20 +298,14 @@ export function SidebarProjectsColumn({
         if (pinnedSet.has(th.id)) return false
         const key = normalizeWorkspaceRoot(th.workspace)
         if (!key || isWorkspaceHidden(key, hiddenWorkspacePaths)) return false
-        if (!query) return true
-        const folderName = workspaceLabelFromPath(key).toLowerCase()
-        return (
-          folderName.includes(query) ||
-          key.toLowerCase().includes(query) ||
-          th.title.toLowerCase().includes(query)
-        )
+        return true
       })
       .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
-  }, [threads, pinnedSet, hiddenWorkspacePaths, searchQuery])
+  }, [threads, pinnedSet, hiddenWorkspacePaths])
 
   const allSelected =
     projectThreads.length > 0 && projectThreads.every((thread) => selectedIds.has(thread.id))
-  const projectsHidden = projectsCollapsed && !searchQuery.trim() && !selectMode
+  const projectsHidden = projectsCollapsed && !selectMode
 
   useEffect(() => {
     setSelectedIds((prev) => {
@@ -479,7 +469,6 @@ function SidebarProjectsSection({
     loading: boolean
     branch: string | null
   } | null>(null)
-  const searchQuery = useChatStore((s) => s.sidebarSearchQuery)
   const hiddenWorkspacePaths = useChatStore((s) => s.hiddenWorkspacePaths)
   const sidebarLabelColors = useChatStore((s) => s.sidebarLabelColors)
   const setSidebarLabelColor = useChatStore((s) => s.setSidebarLabelColor)
@@ -543,24 +532,6 @@ function SidebarProjectsSection({
       return workspaceLabelFromPath(pathA).localeCompare(workspaceLabelFromPath(pathB))
     })
   }, [threads, workspaceRoot, pinnedSet, hiddenWorkspacePaths])
-
-  const filteredGroups = useMemo(() => {
-    const query = searchQuery.trim().toLowerCase()
-    if (!query) return groups
-
-    const result: WorkspaceGroup[] = []
-    for (const [workspacePath, list] of groups) {
-      const folderName = workspaceLabelFromPath(workspacePath).toLowerCase()
-      const pathMatch = folderName.includes(query) || workspacePath.toLowerCase().includes(query)
-      const matchingThreads = list.filter((thread) => thread.title.toLowerCase().includes(query))
-      if (pathMatch) {
-        result.push([workspacePath, list])
-      } else if (matchingThreads.length > 0) {
-        result.push([workspacePath, matchingThreads])
-      }
-    }
-    return result
-  }, [groups, searchQuery])
 
   const handleDeleteThread = async (thread: NormalizedThread): Promise<void> => {
     const threadId = thread.id.trim()
@@ -734,8 +705,7 @@ function SidebarProjectsSection({
 
   const renderWorkspace = ([workspacePath, list]: WorkspaceGroup): ReactElement => {
     const folderName = workspaceLabelFromPath(workspacePath)
-    const searching = searchQuery.trim().length > 0
-    const isCollapsed = searching || selectionMode ? false : collapsed[workspacePath] !== false
+    const isCollapsed = selectionMode ? false : collapsed[workspacePath] !== false
     const sortedThreads = [...list].sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
     const workspaceExpanded = expandedWorkspaces[workspacePath] === true
     const hasOverflow = !selectionMode && sortedThreads.length > 5
@@ -875,14 +845,14 @@ function SidebarProjectsSection({
   }
 
   const noProjects = groups.length === 0
-  const noVisible = filteredGroups.length === 0
+  const noVisible = groups.length === 0
 
   return (
     <div className="ds-no-drag shrink-0 px-1 pt-1">
       <div className="ds-sidebar-projects-panel">
         <div className="px-1.5 pb-2 pt-1">
-          {filteredGroups.length > 0 ? (
-            <div className="mb-1">{filteredGroups.map(renderWorkspace)}</div>
+          {groups.length > 0 ? (
+            <div className="mb-1">{groups.map(renderWorkspace)}</div>
           ) : null}
 
           {noVisible ? (
