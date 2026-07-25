@@ -1,4 +1,4 @@
-import { DEFAULT_ASR_BASE_URL } from '../../shared/app-settings'
+import { resolveAsrTranscriptionEndpoint } from '../../shared/asr-config'
 
 export type TranscribeAudioInput = {
   apiKey: string
@@ -13,6 +13,36 @@ export type TranscribeAudioResult =
   | { ok: true; text: string }
   | { ok: false; message: string }
 
+type ApiErrorPayload = {
+  text?: string
+  error?: { message?: string } | string
+  message?: string
+  status?: number
+  path?: string
+}
+
+function formatTranscriptionFailure(status: number, bodyText: string, payload: ApiErrorPayload | null): string {
+  const nested = payload?.error
+  if (typeof nested === 'object' && nested?.message?.trim()) {
+    return nested.message.trim()
+  }
+  if (typeof payload?.message === 'string' && payload.message.trim()) {
+    return payload.message.trim()
+  }
+  const errorLabel = typeof nested === 'string' ? nested : payload?.error
+  if (typeof errorLabel === 'string' && errorLabel.trim() && payload?.status) {
+    return `语音识别失败 (${payload.status} ${errorLabel.trim()})`
+  }
+  if (bodyText.trim().startsWith('{')) {
+    return `语音识别失败 (${status})`
+  }
+  const trimmed = bodyText.trim()
+  if (trimmed) {
+    return trimmed.length > 160 ? `语音识别失败 (${status})` : trimmed
+  }
+  return `语音识别失败 (${status})`
+}
+
 export async function transcribeAudio(input: TranscribeAudioInput): Promise<TranscribeAudioResult> {
   const apiKey = input.apiKey.trim()
   if (!apiKey) {
@@ -22,7 +52,7 @@ export async function transcribeAudio(input: TranscribeAudioInput): Promise<Tran
     return { ok: false, message: 'Recording is empty.' }
   }
 
-  const endpoint = (input.baseUrl?.trim() || DEFAULT_ASR_BASE_URL).replace(/\/+$/, '')
+  const endpoint = resolveAsrTranscriptionEndpoint(input.baseUrl)
 
   const form = new FormData()
   form.append('model', input.model.trim() || 'glm-asr-2512')
@@ -44,19 +74,15 @@ export async function transcribeAudio(input: TranscribeAudioInput): Promise<Tran
   }
 
   const bodyText = await response.text()
-  let payload: { text?: string; error?: { message?: string } } | null = null
+  let payload: ApiErrorPayload | null = null
   try {
-    payload = JSON.parse(bodyText) as { text?: string; error?: { message?: string } }
+    payload = JSON.parse(bodyText) as ApiErrorPayload
   } catch {
     payload = null
   }
 
   if (!response.ok) {
-    const message =
-      payload?.error?.message?.trim() ||
-      bodyText.trim() ||
-      `Transcription failed (${response.status}).`
-    return { ok: false, message }
+    return { ok: false, message: formatTranscriptionFailure(response.status, bodyText, payload) }
   }
 
   const text = payload?.text?.trim() ?? ''

@@ -7,6 +7,7 @@ import {
   useState,
   type ReactElement
 } from 'react'
+import type { Notice, NoticeTone } from '../extensions/marketplace-shared'
 import {
   Bot,
   CheckCircle2,
@@ -173,7 +174,7 @@ type Props = {
   }>
   onApplyPetSlashCommand?: (command: string) => boolean
   filterPetSlashCommands?: (query: string) => PetSlashMenuItem[]
-  onNoticeChange?: (notice: string | null) => void
+  onNoticeChange?: (notice: Notice | null) => void
 }
 
 type SlashCommandId = ComposerMode | ComposerActionCommandId
@@ -273,7 +274,7 @@ export function FloatingComposer({
   const [connectorsLoaded, setConnectorsLoaded] = useState(false)
   const [connectorQuery, setConnectorQuery] = useState('')
   const [connectorSection, setConnectorSection] = useState<ComposerConnectorSection>('builtin')
-  const [attachNotice, setAttachNotice] = useState<string | null>(null)
+  const [attachNotice, setAttachNotice] = useState<Notice | null>(null)
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([])
   // Simulated-upload interval handles keyed by attachment id, cleared on remove,
   // send, and unmount so no timer fires setState on an unmounted component.
@@ -601,6 +602,24 @@ export function FloatingComposer({
     return () => document.removeEventListener('mousedown', onPointerDown)
   }, [plusMenuOpen])
 
+  useEffect(() => {
+    const shell = shellRef.current
+    if (!shell) return
+    const onOpen = (): void => {
+      shell.classList.add('ds-composer-model-picker-open')
+    }
+    const onClose = (): void => {
+      shell.classList.remove('ds-composer-model-picker-open')
+    }
+    shell.addEventListener('model-picker-open', onOpen)
+    shell.addEventListener('model-picker-close', onClose)
+    return () => {
+      shell.removeEventListener('model-picker-open', onOpen)
+      shell.removeEventListener('model-picker-close', onClose)
+      shell.classList.remove('ds-composer-model-picker-open')
+    }
+  }, [])
+
   // When the runtime transitions from offline→ready, invalidate the cached
   // skills/connectors lists. Without this, a user who opened the `+` menu
   // before the runtime connected would see "no skills" / "no connectors"
@@ -819,6 +838,10 @@ export function FloatingComposer({
     setAttachNotice(null)
   }
 
+  const showAttachNotice = (message: string, tone: NoticeTone = 'error'): void => {
+    setAttachNotice({ message, tone })
+  }
+
   const handleTranscribeRef = useRef<(audio: RecordedAudio | null) => void>(() => {})
 
   const audioRecorder = useAudioRecorder({
@@ -840,7 +863,7 @@ export function FloatingComposer({
   const transcribeRecordedAudio = async (audio: RecordedAudio): Promise<void> => {
     if (typeof window.dsGui === 'undefined' || typeof window.dsGui.transcribeAudio !== 'function') {
       resetVoiceSession()
-      setAttachNotice(t('composerVoiceNeedRestart'))
+      showAttachNotice(t('composerVoiceNeedRestart'), 'info')
       return
     }
     setVoicePhase('transcribing')
@@ -852,7 +875,7 @@ export function FloatingComposer({
     })
     resetVoiceSession()
     if (!result.ok) {
-      setAttachNotice(result.message)
+      showAttachNotice(result.message)
       return
     }
     setInput(joinSpeechText(speechBaseRef.current, result.text))
@@ -862,7 +885,7 @@ export function FloatingComposer({
   const handleTranscribe = (audio: RecordedAudio | null): void => {
     if (!audio) {
       resetVoiceSession()
-      setAttachNotice(t('composerVoiceEmpty'))
+      showAttachNotice(t('composerVoiceEmpty'))
       return
     }
     void transcribeRecordedAudio(audio)
@@ -899,12 +922,12 @@ export function FloatingComposer({
     if (!canCompose) return
 
     if (!isMediaCaptureSupported()) {
-      setAttachNotice(t('composerVoiceErrorUnavailable'))
+      showAttachNotice(t('composerVoiceErrorUnavailable'))
       return
     }
 
     if (!isComposerVoiceBridgeReady()) {
-      setAttachNotice(t('composerVoiceNeedRestart'))
+      showAttachNotice(t('composerVoiceNeedRestart'), 'info')
       return
     }
 
@@ -912,14 +935,14 @@ export function FloatingComposer({
     try {
       config = await loadComposerAsrConfig()
     } catch {
-      setAttachNotice(t('composerVoiceNeedsKey'))
+      showAttachNotice(t('composerVoiceNeedsKey'), 'info')
       return
     }
 
     const configured = !!config?.apiKey.trim()
     setAsrConfigured(configured)
     if (!configured) {
-      setAttachNotice(t('composerVoiceNeedsKey'))
+      showAttachNotice(t('composerVoiceNeedsKey'), 'info')
       return
     }
 
@@ -928,7 +951,7 @@ export function FloatingComposer({
     clearAttachNotice()
     const started = await startRecordingRef.current()
     if (!started.ok) {
-      setAttachNotice(
+      showAttachNotice(
         started.reason === 'denied'
           ? t('composerVoiceErrorNotAllowed')
           : t('composerVoiceErrorDevice')
@@ -1003,11 +1026,11 @@ export function FloatingComposer({
   const pickAttachments = async (): Promise<void> => {
     clearAttachNotice()
     if (typeof window.dsGui === 'undefined') {
-      setAttachNotice(t('preloadBridgeMissing'))
+      showAttachNotice(t('preloadBridgeMissing'), 'info')
       return
     }
     if (typeof window.dsGui.pickWorkspaceFiles !== 'function') {
-      setAttachNotice(t('composerAttachNeedRestart'))
+      showAttachNotice(t('composerAttachNeedRestart'), 'info')
       return
     }
     const result = await window.dsGui.pickWorkspaceFiles({
@@ -1015,7 +1038,7 @@ export function FloatingComposer({
       workspaceRoot: effectiveWorkspaceRoot || undefined
     })
     if (!result.ok) {
-      setAttachNotice(result.message ?? t('composerAttachFailed'))
+      showAttachNotice(result.message ?? t('composerAttachFailed'))
       return
     }
     if (result.files.length === 0) return
@@ -1108,7 +1131,7 @@ export function FloatingComposer({
       return
     }
     if (isUnknownComposerSlashCommand(input)) {
-      setAttachNotice(t('composerCommandUnknown'))
+      showAttachNotice(t('composerCommandUnknown'))
       return
     }
     const body = buildOutboundMessage(attachments, input)

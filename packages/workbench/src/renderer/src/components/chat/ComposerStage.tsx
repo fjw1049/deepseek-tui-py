@@ -4,7 +4,9 @@ import { useTranslation } from 'react-i18next'
 
 import { usePetController } from '../../hooks/use-pet-controller'
 import { filterPetSlashMenu, PET_SLASH_MENU } from '../../lib/pet/pet-slash-commands'
+import { useNoticeAutoDismiss, type Notice } from '../extensions/marketplace-shared'
 import { PetMascotDock } from '../pet/PetMascotDock'
+import { ComposerNoticeToast } from './composer-notice'
 import { FloatingComposer } from './FloatingComposer'
 import { ProcessTray } from './ProcessTray'
 
@@ -13,7 +15,8 @@ type Props = ComponentProps<typeof FloatingComposer>
 export function ComposerStage(props: Props): ReactElement {
   const { t } = useTranslation('common')
   const pet = usePetController()
-  const [composerNotice, setComposerNotice] = useState<string | null>(null)
+  const [composerNotice, setComposerNotice] = useState<Notice | null>(null)
+  useNoticeAutoDismiss(composerNotice, setComposerNotice)
 
   const petSlashCommands = useMemo(
     () =>
@@ -56,9 +59,7 @@ export function ComposerStage(props: Props): ReactElement {
       </div>
       {composerNotice ? (
         <div className="ds-chat-stage mb-1.5 flex w-full justify-center px-3 sm:px-4">
-          <p className="max-w-[min(100%,560px)] text-center text-[12px] leading-5 text-ds-faint">
-            {composerNotice}
-          </p>
+          <ComposerNoticeToast notice={composerNotice} />
         </div>
       ) : null}
       <FloatingComposer

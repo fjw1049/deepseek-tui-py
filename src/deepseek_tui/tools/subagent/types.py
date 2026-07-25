@@ -119,7 +119,6 @@ def max_tokens_for_subagent_type(agent_type: SubAgentType) -> int:
 # includes write/shell/agent_spawn tools, so it cannot serve a read-only type.
 _SUBAGENT_READ_TOOLS = frozenset({
     "read_file", "list_dir", "grep_files", "file_search", "project_map",
-    "diagnostics",
     "git_status", "git_diff", "git_log", "git_show", "git_blame",
     "github_issue_context", "github_pr_context",
     "web_search", "fetch_url",

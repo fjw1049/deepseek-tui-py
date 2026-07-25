@@ -31,7 +31,6 @@ _FOCUS_REGISTRY_TOOLS = frozenset(
         "grep_files",
         "file_search",
         "project_map",
-        "diagnostics",
         "git_status",
         "git_diff",
         "git_log",

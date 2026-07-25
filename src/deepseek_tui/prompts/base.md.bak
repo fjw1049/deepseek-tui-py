@@ -118,12 +118,12 @@ When context is deep (past a soft seam), cache conclusions in concise inline sum
 - **Shell**: `task_shell_start` + `task_shell_wait` for long-running commands, diagnostics, tests, searches, and servers; `exec_shell` for bounded cancellable foreground commands or background jobs (`background: true`), `exec_shell_interact` for PTY input. Background jobs are collected with `agent_result` (process_id, `block: true` — a non-blocking peek only reports `status: running`) and cancelled with `agent_cancel`. If foreground `exec_shell` times out, the process was killed; rerun long work with `task_shell_start` or `exec_shell` using `background: true`.
 - **Task evidence**: `task_gate_run` for verification gates; `github_issue_context` / `github_pr_context` (read-only); `github_comment` / `github_close` (approval + evidence required); `automation_*` scheduling tools.
 - **Structured search**: `grep_files`, `file_search`, `web_search`, `fetch_url`.
-- **Git / diag / tests**: `git_status`, `git_diff`, `git_show`, `git_log`, `git_blame`, `diagnostics`, `run_tests`.
+- **Git / tests**: `git_status`, `git_diff`, `git_show`, `git_log`, `git_blame`, `run_tests`.
 - **Sub-agents**: `agent_spawn`, `agent_result`, `agent_cancel`, `agent_list`, `agent_wait`, `agent_send_input`, `resume_agent`.
 - **Skills**: `load_skill` (#434) — when the user names a skill or the task matches one in the `## Skills` section above, call this with the skill id to pull its `SKILL.md` body and companion-file list into context in one tool call. Faster than `read_file` + `list_dir`.
 - **Other**: `request_user_input`, `tool_search_tool_regex`, `tool_search_tool_bm25` (deferred tool discovery).
 
-Tools not listed above — `git_*`, `github_*`, `diagnostics`, `project_map`, `validate_data`, `run_tests`, `code_execution`, `workflow`, `task_gate_run`, `task_shell_*`, MCP read tools — are deferred by default: find them with `tool_search_tool_bm25` / `tool_search_tool_regex`, or just call them and they activate automatically.
+Tools not listed above — `git_*`, `github_*`, `project_map`, `run_tests`, `code_execution`, `workflow`, `task_gate_run`, `task_shell_*`, MCP read tools — are deferred by default: find them with `tool_search_tool_bm25` / `tool_search_tool_regex`, or just call them and they activate automatically.
 
 Multiple `tool_calls` in one turn run in parallel. `web_search` returns `ref_id`s — cite as `(ref_id)`.
 

@@ -544,7 +544,7 @@ def build_default_registry(config: Config | None = None, *, mode: str = "agent")
         McpGetPromptTool,
         ReadMcpResourceTool,
     )
-    from deepseek_tui.tools.patch import DiagnosticsTool, ProjectMapTool
+    from deepseek_tui.tools.patch import ProjectMapTool
     from deepseek_tui.tools.search import FileSearchTool, GrepFilesTool
     from deepseek_tui.tools.shell import (
         ExecShellInteractTool,
@@ -575,7 +575,7 @@ def build_default_registry(config: Config | None = None, *, mode: str = "agent")
         TodoWriteTool,
     )
     from deepseek_tui.tools.user_input import RequestUserInputTool, RetrieveToolResultTool
-    from deepseek_tui.tools.validation import RevertTurnTool, RunTestsTool, ValidateDataTool
+    from deepseek_tui.tools.validation import RunTestsTool
     from deepseek_tui.tools.web import FetchUrlTool, WebSearchTool
 
     cfg = config or Config()
@@ -591,7 +591,6 @@ def build_default_registry(config: Config | None = None, *, mode: str = "agent")
         GitLogTool(),
         GitShowTool(),
         GitBlameTool(),
-        DiagnosticsTool(),
         ProjectMapTool(),
         RetrieveToolResultTool(),
         TodoListTool(),
@@ -692,10 +691,7 @@ def build_default_registry(config: Config | None = None, *, mode: str = "agent")
     # Engine-intercepted special tools (always active)
     registry.register(RequestUserInputTool())
 
-    registry.register(ValidateDataTool())
     registry.register(RunTestsTool())
-    if mode != "plan":
-        registry.register(RevertTurnTool())
 
     return registry
 

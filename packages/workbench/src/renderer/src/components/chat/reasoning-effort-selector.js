@@ -48,6 +48,9 @@ class ChatGPTModelSelector extends HTMLElement {
   #onDocPointerDown = (e) => {
     if (!e.composedPath().includes(this)) this.#close();
   };
+  #setPickerOpen(open) {
+    this.dispatchEvent(new CustomEvent(open ? 'model-picker-open' : 'model-picker-close', { bubbles: true }));
+  };
   #onMotionPrefChange = () => {
     if (this.#open) this.#startSparkles();
     if (this.#reducedMotion.matches) this.#stopConfetti();
@@ -81,6 +84,9 @@ class ChatGPTModelSelector extends HTMLElement {
           0.99 30.2%, 1.02 37%, 1.015 45%, 1.005 58%, 1);
         display: inline-block;
         position: relative;
+        width: max-content;
+        max-width: 220px;
+        vertical-align: middle;
         font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
         -webkit-font-smoothing: antialiased;
         font-variant-numeric: tabular-nums;
@@ -716,6 +722,7 @@ class ChatGPTModelSelector extends HTMLElement {
     clearTimeout(this.#closeTimer);
     clearTimeout(this.#snapTimer);
     this.#open = false;
+    this.#setPickerOpen(false);
     this.#dragging = false;
     this.#activePointer = null;
     this.#dragGeom = null;
@@ -961,6 +968,7 @@ class ChatGPTModelSelector extends HTMLElement {
 
   #openPopover() {
     this.#open = true;
+    this.#setPickerOpen(true);
     this.$pill.setAttribute('aria-expanded', 'true');
     const pop = this.$popover;
     const hostLeft = this.getBoundingClientRect().left;
@@ -981,6 +989,7 @@ class ChatGPTModelSelector extends HTMLElement {
   #close() {
     if (!this.#open) return;
     this.#open = false;
+    this.#setPickerOpen(false);
     this.$pill.setAttribute('aria-expanded', 'false');
     const active = this.shadowRoot.activeElement;
     if (active && this.$popover.contains(active)) this.$pill.focus();

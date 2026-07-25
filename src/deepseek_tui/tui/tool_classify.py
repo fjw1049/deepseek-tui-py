@@ -77,9 +77,7 @@ _INLINE_TOOLS: dict[str, tuple[str, str]] = {
     "read_mcp_resource": ("◇", "mcp"),
     "mcp_get_prompt": ("◇", "mcp"),
     # Validation / misc
-    "validate_data": ("◇", "validate"),
     "run_tests": ("◇", "test"),
-    "diagnostics": ("◇", "diag"),
     "current_time": ("◇", "time"),
     "request_user_input": ("◇", "input"),
     "retrieve_tool_result": ("◇", "retrieve"),
@@ -102,8 +100,6 @@ _BLOCK_TOOLS: dict[str, tuple[str, str]] = {
     "github_close": ("◈", "close"),
     # Workflow
     "workflow": ("▶", "workflow"),
-    # Revert
-    "revert_turn": ("⊘", "revert"),
     # Structured output
     "structured_output": ("◇", "output"),
     # Automation (write)

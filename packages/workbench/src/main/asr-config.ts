@@ -1,7 +1,7 @@
 import { readFile, writeFile } from 'node:fs/promises'
 import { DEFAULT_ASR_BASE_URL, DEFAULT_ASR_MODEL, type AsrSettingsV1 } from '../shared/app-settings'
-import { parseAsrSettingsFromToml } from '../shared/asr-config'
-import { upsertTomlSections } from '../shared/toml-section'
+import { parseAsrSettingsFromToml, normalizeAsrBaseUrlForDisplay } from '../shared/asr-config'
+import { readTomlString, upsertTomlSections } from '../shared/toml-section'
 import { resolveDeepseekConfigPath } from './deepseek-paths'
 
 function emptyAsrConfig(): AsrSettingsV1 {
@@ -36,7 +36,7 @@ async function writeConfigAt(path: string, config: AsrSettingsV1): Promise<void>
 
   const apiKey = config.apiKey.trim()
   const model = config.model.trim() || DEFAULT_ASR_MODEL
-  const baseUrl = config.baseUrl.trim() || DEFAULT_ASR_BASE_URL
+  const baseUrl = normalizeAsrBaseUrlForDisplay(config.baseUrl.trim() || DEFAULT_ASR_BASE_URL)
   const next = upsertTomlSections(content, {
     asr: {
       api_key: apiKey,
@@ -55,10 +55,20 @@ export async function readAsrConfigFile(): Promise<{
 }> {
   const path = resolveDeepseekConfigPath()
   const content = await readConfigContent(path)
+  const config = content == null ? emptyAsrConfig() : parseAsrFromConfigToml(content)
+
+  if (content != null) {
+    const rawBaseUrl = readTomlString(content, 'base_url', { section: 'asr' }) ?? ''
+    const normalizedBaseUrl = normalizeAsrBaseUrlForDisplay(rawBaseUrl)
+    if (rawBaseUrl.replace(/\/+$/, '') !== normalizedBaseUrl) {
+      await writeConfigAt(path, { ...config, baseUrl: normalizedBaseUrl })
+    }
+  }
+
   return {
     path,
     exists: content != null,
-    config: content == null ? emptyAsrConfig() : parseAsrFromConfigToml(content)
+    config
   }
 }
 

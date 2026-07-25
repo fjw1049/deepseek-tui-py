@@ -651,7 +651,7 @@ flowchart TD
     <tr><td rowspan="3">其它</td><td><code>automation.py</code></td><td>automation_create/run/...（8 个）</td><td>features.automations</td></tr>
     <tr><td><code>time_tools.py</code></td><td>current_time</td><td>features.automations</td></tr>
     <tr><td><code>user_input.py</code></td><td>request_user_input / retrieve_tool_result</td><td>—</td></tr>
-    <tr><td>校验</td><td><code>validation.py</code></td><td>validate_data / run_tests / revert_turn<br/>（+ StructuredOutputTool 仅子 agent 用）</td><td>—</td></tr>
+    <tr><td>校验</td><td><code>validation.py</code></td><td>run_tests<br/>（+ StructuredOutputTool 仅子 agent 用）</td><td>—</td></tr>
     <tr><td>编码</td><td><code>encoding.py</code></td><td>DeprecatingAliasTool + 工具名编解码</td><td>—</td></tr>
     <tr><td>并行</td><td><code>runtime.py</code></td><td>MultiToolUseParallelTool</td><td>—</td></tr>
   </table>

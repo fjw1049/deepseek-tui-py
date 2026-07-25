@@ -22,38 +22,6 @@ from deepseek_tui.tools.registry import ToolContext
 logger = logging.getLogger(__name__)
 
 
-class DiagnosticsTool(ToolSpec):
-    def name(self) -> str:
-        return "diagnostics"
-
-    def description(self) -> str:
-        return "Collect environment diagnostics for debugging."
-
-    def input_schema(self) -> dict[str, Any]:
-        return {"type": "object", "properties": {}}
-
-    def capabilities(self) -> list[ToolCapability]:
-        return [ToolCapability.READ_ONLY]
-
-    async def execute(
-        self, input_data: dict[str, Any], context: ToolContext
-    ) -> ToolResult:
-        import platform
-        import sys
-
-        info = {
-            "python": sys.version,
-            "platform": platform.platform(),
-            "cwd": str(context.working_directory),
-        }
-        lines = [f"{k}: {v}" for k, v in info.items()]
-        return ToolResult(
-            success=True,
-            content="\n".join(lines),
-            metadata=info,
-        )
-
-
 class ProjectMapTool(ToolSpec):
     def name(self) -> str:
         return "project_map"

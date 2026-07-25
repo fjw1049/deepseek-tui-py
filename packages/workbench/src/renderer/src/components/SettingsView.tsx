@@ -14,6 +14,8 @@ import {
   type ApprovalPolicy,
   type AppSettingsV1,
   type ClawSettingsPatchV1,
+  DEFAULT_ASR_BASE_URL,
+  DEFAULT_ASR_MODEL,
   type AsrSettingsV1,
   type CustomEndpointV1,
   type EndpointProtocol
@@ -152,8 +154,8 @@ export function SettingsView(): ReactElement {
   const [form, setForm] = useState<AppSettingsV1 | null>(null)
   const [asrForm, setAsrForm] = useState<AsrSettingsV1>({
     apiKey: '',
-    model: 'glm-asr-2512',
-    baseUrl: 'https://open.bigmodel.cn/api/paas/v4/audio/transcriptions'
+    model: DEFAULT_ASR_MODEL,
+    baseUrl: DEFAULT_ASR_BASE_URL
   })
   const [asrConfigPath, setAsrConfigPath] = useState('~/.deepseek/config.toml')
   const [loadError, setLoadError] = useState<string | null>(null)

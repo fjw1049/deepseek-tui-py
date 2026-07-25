@@ -1462,7 +1462,6 @@ ANALYSIS_ONLY_TOOLS: frozenset[str] = frozenset(
         "git_log",
         "git_show",
         "git_blame",
-        "diagnostics",
         "project_map",
         "retrieve_tool_result",
         "checklist_list",
