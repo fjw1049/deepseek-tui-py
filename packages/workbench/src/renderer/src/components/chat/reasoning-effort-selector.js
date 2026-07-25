@@ -87,11 +87,15 @@ class ChatGPTModelSelector extends HTMLElement {
         width: max-content;
         max-width: 220px;
         vertical-align: middle;
+        z-index: 1;
         font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
         -webkit-font-smoothing: antialiased;
         font-variant-numeric: tabular-nums;
         user-select: none;
         -webkit-user-select: none;
+      }
+      :host(:has(.pill[aria-expanded="true"])) {
+        z-index: 40;
       }
       * { box-sizing: border-box; }
       button {

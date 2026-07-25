@@ -43,10 +43,9 @@ export function ComposerStage(props: Props): ReactElement {
             <ProcessTray />
           </div>
         </div>
-        {/* The pet is decorative and doesn't block reading, so it overlays the
-            area above the input instead of reserving a row — letting content
-            extend down to just above the composer. */}
-        <div className="pointer-events-none absolute bottom-0 right-0 z-[5]">
+        {/* Decorative only: sit behind the composer (z-0) and ignore hits so the
+            model picker popover above the input stays clickable on the right. */}
+        <div className="pointer-events-none absolute bottom-0 right-0 z-0">
           <PetMascotDock
             visible
             status={pet.status}

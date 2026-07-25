@@ -398,12 +398,15 @@ samp {
 }
 
 /* backdrop-filter on the frosted composer creates a containing block that breaks
-   the model picker popover anchor — drop blur only while the menu is open. */
+   the model picker popover anchor — drop blur only while the menu is open.
+   Raise z-index so the upward popover stacks above the decorative pet dock. */
 .ds-chat-composer:not(.ds-composer-empty).ds-composer-model-picker-open,
 .ds-composer-shell.ds-composer-model-picker-open {
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
   overflow: visible;
+  position: relative;
+  z-index: 30;
 }
 
 .ds-composer-shell::before,
@@ -4098,6 +4101,7 @@ summary,
   height: 48px;
   overflow: hidden;
   position: relative;
+  pointer-events: none;
 }
 
 .pet-mascot-shell {
@@ -4106,6 +4110,7 @@ summary,
   margin-right: clamp(12px, 4vw, 48px);
   width: min(30%, 280px);
   min-width: 168px;
+  pointer-events: none;
 }
 
 @media (max-width: 640px) {
