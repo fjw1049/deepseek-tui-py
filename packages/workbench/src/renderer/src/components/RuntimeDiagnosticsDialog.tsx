@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useMemo, useState, type ReactElement } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from 'react'
 import { useTranslation } from 'react-i18next'
+import { useLightDismiss } from '../hooks/use-light-dismiss'
 import {
   AlertTriangle,
   CheckCircle2,
@@ -243,6 +244,13 @@ export function RuntimeDiagnosticsDialog({
     }
   }, [diagnostics?.runtime.workspaceStatus?.body])
 
+  const panelRef = useRef<HTMLDivElement | null>(null)
+  useLightDismiss({
+    open,
+    onDismiss: onClose,
+    refs: [panelRef]
+  })
+
   if (!open) return null
 
   const issues = diagnostics?.issues ?? []
@@ -254,8 +262,17 @@ export function RuntimeDiagnosticsDialog({
     : '-'
 
   return (
-    <div className="ds-modal-backdrop ds-no-drag fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div className="ds-modal-surface flex max-h-[92vh] w-full max-w-5xl flex-col overflow-hidden rounded-[14px]">
+    <div
+      className="ds-modal-backdrop ds-no-drag fixed inset-0 z-50 flex items-center justify-center p-4"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose()
+      }}
+    >
+      <div
+        ref={panelRef}
+        className="ds-modal-surface flex max-h-[92vh] w-full max-w-5xl flex-col overflow-hidden rounded-[14px]"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
         <header className="flex shrink-0 items-start justify-between gap-4 border-b border-ds-border px-5 py-4">
           <div className="min-w-0">
             <div className="flex items-center gap-2">

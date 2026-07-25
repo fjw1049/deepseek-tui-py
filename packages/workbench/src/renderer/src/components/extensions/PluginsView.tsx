@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Loader2, Plus, RefreshCw, Search } from 'lucide-react'
 import { WORKBENCH_FEATURES } from '@shared/workbench-features'
+import { useLightDismiss } from '../../hooks/use-light-dismiss'
 import { useChatStore } from '../../store/chat-store'
 import { useNoticeAutoDismiss, type Notice } from './marketplace-shared'
 import { NoticeView } from './marketplace-ui'
@@ -45,16 +46,11 @@ export function PluginsView(): ReactElement {
   const [marketplacesLoading, setMarketplacesLoading] = useState(false)
   const [busyMarketplace, setBusyMarketplace] = useState<string | null>(null)
 
-  useEffect(() => {
-    if (!installOpen) return
-    const handleClick = (event: MouseEvent): void => {
-      if (installMenuRef.current && !installMenuRef.current.contains(event.target as Node)) {
-        setInstallOpen(false)
-      }
-    }
-    window.addEventListener('mousedown', handleClick)
-    return () => window.removeEventListener('mousedown', handleClick)
-  }, [installOpen])
+  useLightDismiss({
+    open: installOpen,
+    onDismiss: () => setInstallOpen(false),
+    refs: [installMenuRef]
+  })
 
   const refresh = useCallback(
     async (announce = false): Promise<void> => {

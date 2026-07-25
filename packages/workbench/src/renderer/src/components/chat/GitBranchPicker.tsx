@@ -12,6 +12,7 @@ import { createPortal } from 'react-dom'
 import { AlertCircle, Check, ChevronDown, GitBranch, History, Loader2, Search } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { useGitBranches } from '../../hooks/use-git-branches'
+import { useLightDismiss } from '../../hooks/use-light-dismiss'
 import { GitLogDialog } from './GitLogDialog'
 
 type Props = {
@@ -119,23 +120,11 @@ export function GitBranchPicker({
     }
   }, [open, updateMenuPosition])
 
-  useEffect(() => {
-    if (!open) return
-    const onPointerDown = (event: PointerEvent): void => {
-      const target = event.target
-      if (!(target instanceof Node)) return
-      if (wrapRef.current?.contains(target)) return
-      if (menuRef.current?.contains(target)) return
-      setOpen(false)
-    }
-    const timer = window.setTimeout(() => {
-      window.addEventListener('pointerdown', onPointerDown, true)
-    }, 0)
-    return () => {
-      window.clearTimeout(timer)
-      window.removeEventListener('pointerdown', onPointerDown, true)
-    }
-  }, [open])
+  useLightDismiss({
+    open,
+    onDismiss: () => setOpen(false),
+    refs: [wrapRef, menuRef]
+  })
 
   const branches = useMemo(() => (result?.ok ? result.branches : []), [result])
   const filteredBranches = useMemo(() => {

@@ -66,6 +66,7 @@ import {
   useAudioRecorder,
   type RecordedAudio
 } from '../../hooks/use-audio-recorder'
+import { useLightDismiss } from '../../hooks/use-light-dismiss'
 import {
   isComposerVoiceBridgeReady,
   isMediaCaptureSupported,
@@ -254,6 +255,7 @@ export function FloatingComposer({
   const sendMessage = useChatStore((s) => s.sendMessage)
   const textareaRef = useRef<HTMLTextAreaElement | null>(null)
   const shellRef = useRef<HTMLDivElement | null>(null)
+  const plusMenuRef = useRef<HTMLDivElement | null>(null)
   const composingRef = useRef(false)
   const speechBaseRef = useRef('')
   const [voicePhase, setVoicePhase] = useState<ComposerVoicePhase>('idle')
@@ -590,17 +592,11 @@ export function FloatingComposer({
     setSelectedCommandIndex(0)
   }, [petSlashQuery, slashQuery])
 
-  useEffect(() => {
-    if (!plusMenuOpen) return
-    const onPointerDown = (event: MouseEvent): void => {
-      const target = event.target
-      if (!(target instanceof Node) || !shellRef.current?.contains(target)) {
-        setPlusMenuOpen(false)
-      }
-    }
-    document.addEventListener('mousedown', onPointerDown)
-    return () => document.removeEventListener('mousedown', onPointerDown)
-  }, [plusMenuOpen])
+  useLightDismiss({
+    open: plusMenuOpen,
+    onDismiss: () => setPlusMenuOpen(false),
+    refs: [plusMenuRef]
+  })
 
   useEffect(() => {
     const shell = shellRef.current
@@ -1573,10 +1569,11 @@ export function FloatingComposer({
           />
 
           <div className={`flex items-center gap-2 pl-3 pr-1 ${stageCentered ? 'pb-0' : 'pb-0'}`}>
-            <div className="relative">
+            <div ref={plusMenuRef} className="relative">
               <button
                 type="button"
                 disabled={!canCompose}
+                aria-expanded={plusMenuOpen}
                 onClick={() => {
                   setActiveCommand(null)
                   clearAttachNotice()

@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { EditorInfo } from '@shared/editor'
 import { Check, ChevronDown, Code2, FolderOpen, Terminal } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
+import { useLightDismiss } from '../hooks/use-light-dismiss'
 import { readPreferredEditorId, writePreferredEditorId } from '../lib/editor-preferences'
 
 function EditorGlyph({
@@ -83,26 +84,11 @@ export function DefaultEditorPicker(): ReactElement {
     }
   }, [])
 
-  useEffect(() => {
-    if (!editorMenuOpen) return
-    const onPointerDown = (event: PointerEvent): void => {
-      const target = event.target
-      if (target instanceof Node && editorMenuRef.current?.contains(target)) return
-      setEditorMenuOpen(false)
-    }
-    const onKeyDown = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') {
-        event.preventDefault()
-        setEditorMenuOpen(false)
-      }
-    }
-    window.addEventListener('pointerdown', onPointerDown)
-    window.addEventListener('keydown', onKeyDown)
-    return () => {
-      window.removeEventListener('pointerdown', onPointerDown)
-      window.removeEventListener('keydown', onKeyDown)
-    }
-  }, [editorMenuOpen])
+  useLightDismiss({
+    open: editorMenuOpen,
+    onDismiss: () => setEditorMenuOpen(false),
+    refs: [editorMenuRef]
+  })
 
   const chooseEditor = (editor: EditorInfo): void => {
     setSelectedEditorId(editor.id)

@@ -1,5 +1,9 @@
 import { useEffect, useMemo, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
+import {
+  beginLightDismissShell,
+  endLightDismissShell
+} from '../../hooks/use-light-dismiss'
 import './reasoning-effort-selector.js'
 
 const EFFORT_TO_INDEX: Record<string, number> = {
@@ -116,6 +120,31 @@ export function ReasoningEffortSelector({
     }
     el.addEventListener('change', handler)
     return () => el.removeEventListener('change', handler)
+  }, [])
+
+  // Unlock Electron drag chrome while the web-component popover is open so
+  // blank clicks reach its document pointerdown listener.
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    let held = false
+    const onOpen = (): void => {
+      if (held) return
+      held = true
+      beginLightDismissShell()
+    }
+    const onClose = (): void => {
+      if (!held) return
+      held = false
+      endLightDismissShell()
+    }
+    el.addEventListener('model-picker-open', onOpen)
+    el.addEventListener('model-picker-close', onClose)
+    return () => {
+      el.removeEventListener('model-picker-open', onOpen)
+      el.removeEventListener('model-picker-close', onClose)
+      onClose()
+    }
   }, [])
 
   return <reasoning-effort-selector ref={ref} className="ds-no-drag" value={String(index)} model={model} />

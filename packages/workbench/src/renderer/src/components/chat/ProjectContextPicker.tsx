@@ -11,6 +11,7 @@ import {
 import { createPortal } from 'react-dom'
 import { Check, ChevronDown, Folder, Import, LayoutGrid, Loader2, Plus, Search } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
+import { useLightDismiss } from '../../hooks/use-light-dismiss'
 import { useChatStore } from '../../store/chat-store'
 import { workspaceLabelFromPath } from '../../lib/workspace-label'
 import {
@@ -170,23 +171,11 @@ export function ProjectContextPicker({
     }
   }, [open, updateMenuPosition])
 
-  useEffect(() => {
-    if (!open) return
-    const onPointerDown = (event: PointerEvent): void => {
-      const target = event.target
-      if (!(target instanceof Node)) return
-      if (wrapRef.current?.contains(target)) return
-      if (menuRef.current?.contains(target)) return
-      setOpen(false)
-    }
-    const timer = window.setTimeout(() => {
-      window.addEventListener('pointerdown', onPointerDown, true)
-    }, 0)
-    return () => {
-      window.clearTimeout(timer)
-      window.removeEventListener('pointerdown', onPointerDown, true)
-    }
-  }, [open])
+  useLightDismiss({
+    open,
+    onDismiss: () => setOpen(false),
+    refs: [wrapRef, menuRef]
+  })
 
   const selectProject = async (path: string): Promise<void> => {
     if (!runtimeReady || acting) return

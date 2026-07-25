@@ -18,6 +18,7 @@ import {
   snapshotFromContextBreakdown,
   type ContextBreakdownJson
 } from '../../lib/estimate-context-usage'
+import { useLightDismiss } from '../../hooks/use-light-dismiss'
 
 type Props = {
   blocks: ChatBlock[]
@@ -178,23 +179,11 @@ export function ContextUsageMeter({
     }
   }, [open, updatePanelPosition])
 
-  useEffect(() => {
-    if (!open) return
-    const onPointerDown = (event: PointerEvent): void => {
-      const target = event.target
-      if (!(target instanceof Node)) return
-      if (buttonRef.current?.contains(target)) return
-      if (panelRef.current?.contains(target)) return
-      setOpen(false)
-    }
-    const timer = window.setTimeout(() => {
-      window.addEventListener('pointerdown', onPointerDown, true)
-    }, 0)
-    return () => {
-      window.clearTimeout(timer)
-      window.removeEventListener('pointerdown', onPointerDown, true)
-    }
-  }, [open])
+  useLightDismiss({
+    open,
+    onDismiss: () => setOpen(false),
+    refs: [buttonRef, panelRef]
+  })
 
   useEffect(() => {
     setOpen(false)

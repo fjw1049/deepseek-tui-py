@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactElement } from 'react'
+import { useLayoutEffect, useRef, useState, type CSSProperties, type ReactElement } from 'react'
 import { createPortal } from 'react-dom'
 import {
   Copy,
@@ -13,6 +13,7 @@ import {
   Trash2
 } from 'lucide-react'
 import { ContextMenuColorBar } from './ContextMenuColorBar'
+import { useLightDismiss } from '../../hooks/use-light-dismiss'
 import { usePreferredEditorLabel } from '../../hooks/use-preferred-editor-label'
 import type { SidebarLabelColor } from '../../lib/sidebar-chrome'
 
@@ -95,25 +96,11 @@ export function ThreadContextMenu({
     setStyle({ position: 'fixed', left, top, width: MENU_WIDTH, zIndex: 130 })
   }, [x, y, openUp, editorLabel])
 
-  useEffect(() => {
-    const onPointerDown = (event: PointerEvent): void => {
-      const target = event.target
-      if (target instanceof Node && menuRef.current?.contains(target)) return
-      onClose()
-    }
-    const onKeyDown = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') onClose()
-    }
-    const timer = window.setTimeout(() => {
-      window.addEventListener('pointerdown', onPointerDown, true)
-    }, 0)
-    window.addEventListener('keydown', onKeyDown, true)
-    return () => {
-      window.clearTimeout(timer)
-      window.removeEventListener('pointerdown', onPointerDown, true)
-      window.removeEventListener('keydown', onKeyDown, true)
-    }
-  }, [onClose])
+  useLightDismiss({
+    open: true,
+    onDismiss: onClose,
+    refs: [menuRef]
+  })
 
   const run = (action: ThreadContextMenuAction): void => {
     onAction(action)

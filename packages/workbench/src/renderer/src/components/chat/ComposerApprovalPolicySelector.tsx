@@ -11,6 +11,7 @@ import {
   sandboxModeForApprovalPolicy,
   type ApprovalPolicy
 } from '@shared/app-settings'
+import { useLightDismiss } from '../../hooks/use-light-dismiss'
 import { OPEN_APPROVAL_POLICY_EVENT } from '../../lib/shortcuts-runtime'
 import { useChatStore } from '../../store/chat-store'
 
@@ -61,17 +62,12 @@ export function ComposerApprovalPolicySelector({
     void refreshPolicy()
   }, [open, refreshPolicy])
 
-  useEffect(() => {
-    if (!open) return
-    const onPointerDown = (event: MouseEvent): void => {
-      const target = event.target
-      if (!(target instanceof Node) || !wrapRef.current?.contains(target)) {
-        setMenuOpen(false)
-      }
-    }
-    document.addEventListener('mousedown', onPointerDown)
-    return () => document.removeEventListener('mousedown', onPointerDown)
-  }, [open, setMenuOpen])
+  useLightDismiss({
+    open,
+    onDismiss: () => setMenuOpen(false),
+    refs: [wrapRef],
+    enabled: !disabled
+  })
 
   useEffect(() => {
     const onOpenMenu = (): void => {

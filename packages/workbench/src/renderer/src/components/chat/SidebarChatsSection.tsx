@@ -11,6 +11,7 @@ import {
   X
 } from 'lucide-react'
 import type { NormalizedThread } from '../../agent/types'
+import { useLightDismiss } from '../../hooks/use-light-dismiss'
 import { useThreadsWithActiveTasks } from '../../hooks/use-thread-tasks'
 import { extractTasksFromBlocks } from '../../lib/extract-tasks-from-blocks'
 import { useChatStore } from '../../store/chat-store'
@@ -84,16 +85,11 @@ export function SidebarChatsSection({
   const allVisibleSelected =
     visibleChats.length > 0 && visibleChats.every((thread) => selectedIds.has(thread.id))
 
-  useEffect(() => {
-    if (!menuOpen) return
-    const onPointerDown = (event: MouseEvent): void => {
-      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
-        setMenuOpen(false)
-      }
-    }
-    window.addEventListener('mousedown', onPointerDown)
-    return () => window.removeEventListener('mousedown', onPointerDown)
-  }, [menuOpen])
+  useLightDismiss({
+    open: menuOpen,
+    onDismiss: () => setMenuOpen(false),
+    refs: [menuRef]
+  })
 
   // Drop selections for threads that disappeared.
   useEffect(() => {

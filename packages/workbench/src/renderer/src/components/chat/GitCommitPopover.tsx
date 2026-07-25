@@ -24,6 +24,7 @@ import { useShallow } from 'zustand/react/shallow'
 import type { GitWorkingChangeFile, GitWorkingChangeStage } from '@shared/git-working-changes'
 import { countDiffStats, formatFilePathForDisplay } from '../../lib/diff-stats'
 import { resolveGitCommitPaths } from '../../lib/git-commit-selection'
+import { useLightDismiss } from '../../hooks/use-light-dismiss'
 import { useChatStore } from '../../store/chat-store'
 import { ChangeDiffStatsLabel } from '../ChangeDiffStatsLabel'
 
@@ -79,6 +80,7 @@ export function GitCommitPopover({
   const [generating, setGenerating] = useState(false)
   const dialogRef = useRef<HTMLDivElement | null>(null)
   const anchorRef = useRef<HTMLDivElement | null>(null)
+  const moreMenuRef = useRef<HTMLDivElement | null>(null)
   const endPointerDragRef = useRef<(() => void) | null>(null)
   const [dialogPos, setDialogPos] = useState<{ x: number; y: number } | null>(null)
   const [manualRefreshing, setManualRefreshing] = useState(false)
@@ -304,24 +306,30 @@ export function GitCommitPopover({
     setError(null)
   }, [])
 
-  useEffect(() => {
-    if (!open) return
-    const onKeyDown = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') {
-        event.preventDefault()
-        close()
-      }
-    }
-    window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
-  }, [close, open])
+  useLightDismiss({
+    open: menuOpen,
+    onDismiss: () => setMenuOpen(false),
+    refs: [moreMenuRef]
+  })
+
+  useLightDismiss({
+    open,
+    onDismiss: close,
+    refs: [dialogRef]
+  })
 
   const dialog =
     open && typeof document !== 'undefined' ? (
-      <div className="ds-modal-backdrop-clear ds-no-drag fixed inset-0 z-[80] pointer-events-none">
+      <div
+        className="ds-modal-backdrop-clear ds-no-drag fixed inset-0 z-[80]"
+        onMouseDown={(event) => {
+          if (event.target === event.currentTarget) close()
+        }}
+      >
         <div
           ref={dialogRef}
           className="ds-modal-surface pointer-events-auto fixed flex w-[min(100vw-24px,32rem)] max-h-[min(88vh,680px)] flex-col overflow-hidden rounded-[14px]"
+          onMouseDown={(event) => event.stopPropagation()}
           style={
             dialogPos
               ? { left: dialogPos.x, top: dialogPos.y }
@@ -589,19 +597,22 @@ export function GitCommitPopover({
           <GitCommitHorizontal className="h-4 w-4 shrink-0" strokeWidth={1.85} />
           <span className="min-w-0 flex-1 truncate">{t('operationDockCommit')}</span>
         </button>
-        <button
-          type="button"
-          className="relative shrink-0 rounded-md p-0.5 text-ds-faint transition hover:bg-ds-hover/70 hover:text-ds-ink"
-          aria-label={t('operationDockGitMore')}
-          onClick={(event) => {
-            event.stopPropagation()
-            setOpen(false)
-            setMenuOpen((value) => !value)
-          }}
-        >
-          <MoreHorizontal className="h-4 w-4" strokeWidth={1.9} />
+        <div ref={moreMenuRef} className="relative shrink-0">
+          <button
+            type="button"
+            className="rounded-md p-0.5 text-ds-faint transition hover:bg-ds-hover/70 hover:text-ds-ink"
+            aria-label={t('operationDockGitMore')}
+            aria-expanded={menuOpen}
+            onClick={(event) => {
+              event.stopPropagation()
+              setOpen(false)
+              setMenuOpen((value) => !value)
+            }}
+          >
+            <MoreHorizontal className="h-4 w-4" strokeWidth={1.9} />
+          </button>
           {menu}
-        </button>
+        </div>
       </div>
 
       {typeof document !== 'undefined' ? createPortal(dialog, document.body) : null}

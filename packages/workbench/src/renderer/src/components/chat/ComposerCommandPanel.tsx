@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState, type ReactElement } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactElement } from 'react'
+import { useLightDismiss } from '../../hooks/use-light-dismiss'
 import {
   ChevronRight,
   ExternalLink,
@@ -90,6 +91,12 @@ function NoticeView({ notice }: { notice: Notice | null }): ReactElement | null 
 export function ComposerCommandPanel(props: Props): ReactElement {
   const { t } = useTranslation('common')
   const { command, onClose } = props
+  const panelRef = useRef<HTMLDivElement | null>(null)
+  useLightDismiss({
+    open: true,
+    onDismiss: onClose,
+    refs: [panelRef]
+  })
   const titles: Record<ComposerActionCommandId, string> = {
     model: t('composerCommandModelTitle'),
     context: t('composerCommandContextTitle'),
@@ -101,7 +108,10 @@ export function ComposerCommandPanel(props: Props): ReactElement {
     hooks: t('composerCommandHooksTitle')
   }
   return (
-    <div className="ds-composer-command-popover absolute bottom-full left-[calc(50%-64px)] z-40 max-h-[min(500px,58vh)] w-[calc(100%_-_24px)] max-w-[680px] -translate-x-1/2 overflow-hidden rounded-t-[22px] rounded-b-[14px] shadow-[0_22px_60px_rgba(15,23,42,0.18)]">
+    <div
+      ref={panelRef}
+      className="ds-composer-command-popover absolute bottom-full left-[calc(50%-64px)] z-40 max-h-[min(500px,58vh)] w-[calc(100%_-_24px)] max-w-[680px] -translate-x-1/2 overflow-hidden rounded-t-[22px] rounded-b-[14px] shadow-[0_22px_60px_rgba(15,23,42,0.18)]"
+    >
       <PanelHeader title={titles[command]} subtitle={`/${command}`} onClose={onClose} />
       <div className="ds-scroll-surface max-h-[min(450px,52vh)] overflow-y-auto p-4">
         {command === 'model' ? <ModelPanel {...props} /> : null}

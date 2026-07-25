@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState, type ReactElement, type ReactNode } from 'react'
+import { useRef, useState, type ReactElement, type ReactNode } from 'react'
 import { MoreHorizontal } from 'lucide-react'
+import { useLightDismiss } from '../../hooks/use-light-dismiss'
 
 export type ExtensionsMenuItem = {
   label: string
@@ -18,16 +19,11 @@ export function ExtensionsToolbar({ children, menuItems }: Props): ReactElement 
   const [open, setOpen] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
 
-  useEffect(() => {
-    if (!open) return
-    const handleClick = (event: MouseEvent): void => {
-      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
-        setOpen(false)
-      }
-    }
-    window.addEventListener('mousedown', handleClick)
-    return () => window.removeEventListener('mousedown', handleClick)
-  }, [open])
+  useLightDismiss({
+    open,
+    onDismiss: () => setOpen(false),
+    refs: [menuRef]
+  })
 
   const hasMenu = menuItems.length > 0
 

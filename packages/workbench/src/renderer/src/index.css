@@ -2622,6 +2622,8 @@ samp {
   justify-content: center;
   padding: min(11vh, 88px) 20px 28px;
   background: rgba(0, 0, 0, 0.28);
+  /* Electron drag regions swallow backdrop clicks without this. */
+  -webkit-app-region: no-drag;
 }
 
 [data-theme='dark'] .ds-search-modal-root {
@@ -4488,6 +4490,28 @@ summary,
 }
 
 .ds-no-drag {
+  -webkit-app-region: no-drag;
+}
+
+/*
+ * While a light-dismiss menu/popover is open, unlock Electron drag regions so
+ * blank chrome clicks reach JS (otherwise -webkit-app-region: drag swallows
+ * pointer events and outside-click dismiss appears broken).
+ */
+html.ds-light-dismiss-active,
+html.ds-light-dismiss-active body,
+html.ds-light-dismiss-active #root,
+html.ds-light-dismiss-active .ds-drag {
+  -webkit-app-region: no-drag !important;
+}
+
+/* Fullscreen overlays must receive pointer events over drag chrome. */
+.ds-expand-overlay,
+.ds-mermaid-fullscreen,
+.ds-code-fullscreen,
+.ds-subagent-dialog,
+.ds-modal-backdrop,
+.ds-modal-backdrop-clear {
   -webkit-app-region: no-drag;
 }
 

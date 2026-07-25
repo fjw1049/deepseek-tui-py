@@ -198,7 +198,7 @@ export function ResizableFullscreenDialog({
 
   return createPortal(
     <div
-      className={`${overlayClassName} ds-expand-overlay`}
+      className={`${overlayClassName} ds-expand-overlay ds-no-drag`}
       data-streamdown={dataAttr}
       role="dialog"
       aria-modal="true"

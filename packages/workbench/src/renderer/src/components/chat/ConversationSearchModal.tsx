@@ -133,7 +133,7 @@ export function ConversationSearchModal({
 
   return createPortal(
     <div
-      className="ds-search-modal-root"
+      className="ds-search-modal-root ds-no-drag"
       role="presentation"
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) onClose()

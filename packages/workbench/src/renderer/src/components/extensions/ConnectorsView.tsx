@@ -11,6 +11,7 @@ import {
   setMcpServerEnabled,
   type McpServerEntry
 } from '../../lib/mcp-json-merge'
+import { useLightDismiss } from '../../hooks/use-light-dismiss'
 import { reloadMcpWithRuntime } from '../../lib/settings-reload'
 import { loadInstalledPlugins, saveInstalledPlugins, storageKey, useNoticeAutoDismiss, type Notice } from './marketplace-shared'
 import { NoticeView } from './marketplace-ui'
@@ -49,17 +50,11 @@ export function ConnectorsView(): ReactElement {
   const mcpWriteLockRef = useRef<Promise<unknown>>(Promise.resolve())
   const menuRef = useRef<HTMLDivElement>(null)
 
-  // Close the create dropdown when clicking anywhere outside it.
-  useEffect(() => {
-    if (!menuOpen) return
-    const handleClick = (event: MouseEvent): void => {
-      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
-        setMenuOpen(false)
-      }
-    }
-    window.addEventListener('mousedown', handleClick)
-    return () => window.removeEventListener('mousedown', handleClick)
-  }, [menuOpen])
+  useLightDismiss({
+    open: menuOpen,
+    onDismiss: () => setMenuOpen(false),
+    refs: [menuRef]
+  })
 
   const withMcpWriteLock = useCallback(<T,>(task: () => Promise<T>): Promise<T> => {
     const run = mcpWriteLockRef.current.then(task, task)
