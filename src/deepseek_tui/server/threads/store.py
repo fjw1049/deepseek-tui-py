@@ -39,6 +39,7 @@ class RuntimeThreadStore:
     """File-based store: threads/turns/items as individual JSON, events as JSONL."""
 
     def __init__(self, root: Path) -> None:
+        self._root = root
         self._threads_dir = root / "threads"
         self._turns_dir = root / "turns"
         self._items_dir = root / "items"
@@ -68,6 +69,10 @@ class RuntimeThreadStore:
         self._event_write_locks: dict[str, asyncio.Lock] = {}
         self._events_since_checkpoint = 0
         self._last_checkpoint_at = time.monotonic()
+
+    @property
+    def root(self) -> Path:
+        return self._root
 
     CHECKPOINT_EVENT_INTERVAL = 16
     CHECKPOINT_MAX_INTERVAL_S = 0.5
@@ -102,6 +107,68 @@ class RuntimeThreadStore:
 
     def delete_item(self, item_id: str) -> None:
         self._item_path(item_id).unlink(missing_ok=True)
+
+    def delete_thread(self, thread_id: str) -> None:
+        self._thread_path(thread_id).unlink(missing_ok=True)
+
+    def delete_events(self, thread_id: str) -> None:
+        self._events_path(thread_id).unlink(missing_ok=True)
+
+    def iter_turns(self) -> list[TurnRecord]:
+        out: list[TurnRecord] = []
+        if not self._turns_dir.exists():
+            return out
+        for path in self._turns_dir.glob("*.json"):
+            record = self._load_listing_record(path, TurnRecord)
+            if record is not None:
+                out.append(record)
+        return out
+
+    def iter_items(self) -> list[TurnItemRecord]:
+        out: list[TurnItemRecord] = []
+        if not self._items_dir.exists():
+            return out
+        for path in self._items_dir.glob("*.json"):
+            record = self._load_listing_record(path, TurnItemRecord)
+            if record is not None:
+                out.append(record)
+        return out
+
+    def compact_events(self, thread_id: str, *, drop_noisy: bool = True) -> int:
+        """Rewrite a thread's event log, dropping noisy delta events.
+
+        Returns the number of events removed. Conversation items are untouched.
+        """
+        from deepseek_tui.server.data_inventory import is_noisy_event_name
+
+        path = self._events_path(thread_id)
+        if not path.exists():
+            return 0
+        kept: list[RuntimeEventRecord] = []
+        removed = 0
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            try:
+                record = RuntimeEventRecord.model_validate_json(line)
+            except Exception:  # noqa: BLE001
+                removed += 1
+                continue
+            if drop_noisy and is_noisy_event_name(record.event):
+                removed += 1
+                continue
+            kept.append(record)
+        if removed == 0:
+            return 0
+        if not kept:
+            path.unlink(missing_ok=True)
+            return removed
+        tmp = path.with_suffix(".jsonl.tmp")
+        with tmp.open("w", encoding="utf-8") as f:
+            for record in kept:
+                f.write(record.model_dump_json() + "\n")
+        tmp.replace(path)
+        return removed
 
     def load_thread(self, thread_id: str) -> ThreadRecord:
         path = self._thread_path(thread_id)
@@ -240,6 +307,18 @@ class RuntimeThreadStore:
                     self._events_since_checkpoint = 0
                     self._last_checkpoint_at = now
 
+            stored_payload = payload
+            from deepseek_tui.server.data_inventory import (
+                EVENT_DELTA_PAYLOAD_MAX_CHARS,
+                is_noisy_event_name,
+                truncate_event_payload,
+            )
+
+            if is_noisy_event_name(event):
+                stored_payload = truncate_event_payload(
+                    payload, max_chars=EVENT_DELTA_PAYLOAD_MAX_CHARS
+                )
+
             record = RuntimeEventRecord(
                 schema_version=CURRENT_RUNTIME_SCHEMA_VERSION,
                 seq=seq,
@@ -248,7 +327,7 @@ class RuntimeThreadStore:
                 turn_id=turn_id,
                 item_id=item_id,
                 event=event,
-                payload=payload,
+                payload=stored_payload,
             )
 
             path = self._events_path(thread_id)

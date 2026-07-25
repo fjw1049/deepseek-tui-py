@@ -1432,14 +1432,121 @@ async def workspace_status(request: Request) -> dict[str, Any]:
     if runtime is None:
         raise api_error(503, "runtime not configured")
     return await runtime.workspace_status()
-"""/v1 runtime routes for DeepSeek Workbench.
 
-Routes are split by domain (health/threads/turns/events/approvals/user_inputs/
-workspace) to keep each file under ~80 LOC. ``build_runtime_api_router``
-assembles them so the public surface seen by ``attach_runtime_api`` is
-unchanged.
-"""
 
+# /v1/data — inventory + optimize / clean / clear-history for Settings.
+
+
+router_data = APIRouter(prefix="/v1/data", tags=["data"])
+
+
+class CleanStorageRequest(BaseModel):
+    older_than_days: int = Field(default=90, ge=1, le=3650)
+
+
+class DataExportRequest(BaseModel):
+    path: str
+    scope: str = Field(default="conversations")
+
+
+class DataImportRequest(BaseModel):
+    path: str
+    mode: str = Field(default="merge")
+
+
+class BackupDirectoryRequest(BaseModel):
+    directory: str
+
+
+class BackupNowRequest(BaseModel):
+    directory: str | None = None
+
+
+@router_data.get("/inventory")
+async def data_inventory(request: Request) -> dict[str, Any]:
+    mgr = manager(request)
+    return await mgr.data_inventory()
+
+
+@router_data.post("/optimize")
+async def data_optimize(request: Request) -> dict[str, Any]:
+    mgr = manager(request)
+    return await mgr.optimize_storage()
+
+
+@router_data.post("/clean")
+async def data_clean(request: Request) -> dict[str, Any]:
+    mgr = manager(request)
+    payload = await body(request)
+    req = CleanStorageRequest.model_validate(payload or {})
+    try:
+        return await mgr.clean_storage_older_than(req.older_than_days)
+    except ValueError as exc:
+        raise api_error(400, str(exc), error="validation_error") from exc
+
+
+@router_data.post("/clear-history")
+async def data_clear_history(request: Request) -> dict[str, Any]:
+    mgr = manager(request)
+    return await mgr.clear_conversation_history()
+
+
+@router_data.post("/export")
+async def data_export(request: Request) -> dict[str, Any]:
+    mgr = manager(request)
+    payload = await body(request)
+    req = DataExportRequest.model_validate(payload)
+    try:
+        return await mgr.export_data_bundle(req.path, scope=req.scope)
+    except ValueError as exc:
+        raise api_error(400, str(exc), error="validation_error") from exc
+    except OSError as exc:
+        raise api_error(500, str(exc), error="export_failed") from exc
+
+
+@router_data.post("/import")
+async def data_import(request: Request) -> dict[str, Any]:
+    mgr = manager(request)
+    payload = await body(request)
+    req = DataImportRequest.model_validate(payload)
+    try:
+        return await mgr.import_data_bundle(req.path, mode=req.mode)
+    except FileNotFoundError as exc:
+        raise api_error(404, str(exc), error="not_found") from exc
+    except ValueError as exc:
+        raise api_error(400, str(exc), error="validation_error") from exc
+    except OSError as exc:
+        raise api_error(500, str(exc), error="import_failed") from exc
+
+
+@router_data.get("/backup")
+async def data_backup_status(request: Request) -> dict[str, Any]:
+    mgr = manager(request)
+    return await mgr.backup_status()
+
+
+@router_data.post("/backup/directory")
+async def data_backup_set_directory(request: Request) -> dict[str, Any]:
+    mgr = manager(request)
+    payload = await body(request)
+    req = BackupDirectoryRequest.model_validate(payload)
+    try:
+        return await mgr.set_backup_directory(req.directory)
+    except OSError as exc:
+        raise api_error(400, str(exc), error="validation_error") from exc
+
+
+@router_data.post("/backup")
+async def data_backup_now(request: Request) -> dict[str, Any]:
+    mgr = manager(request)
+    payload = await body(request)
+    req = BackupNowRequest.model_validate(payload or {})
+    try:
+        return await mgr.create_data_backup(req.directory)
+    except ValueError as exc:
+        raise api_error(400, str(exc), error="validation_error") from exc
+    except OSError as exc:
+        raise api_error(500, str(exc), error="backup_failed") from exc
 
 
 __all__ = ["build_runtime_api_router"]
@@ -1462,6 +1569,7 @@ def build_runtime_api_router() -> APIRouter:
     router.include_router(router_turns)
     router.include_router(router_user_inputs)
     router.include_router(router_workspace)
+    router.include_router(router_data)
     router.include_router(ingress_router)
     router.include_router(automations_router)
     return router

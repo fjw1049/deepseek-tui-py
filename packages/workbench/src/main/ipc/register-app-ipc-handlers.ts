@@ -127,6 +127,7 @@ import {
   resolvePetSpritesheet
 } from '../services/pet-asset-service'
 import { usageLedgerService } from '../services/usage-ledger-service'
+import { deleteGuiDataAndExit } from '../services/gui-data-reset'
 import type { createTerminalService } from '../services/terminal-service'
 
 type TerminalService = ReturnType<typeof createTerminalService>
@@ -931,6 +932,73 @@ export function registerAppIpcHandlers(options: RegisterAppIpcHandlersOptions): 
   })
 
   ipcMain.handle('deepseek:paths:get', async () => resolveDeepseekPaths())
+
+  ipcMain.handle('deepseek:home:open-dir', async () => {
+    try {
+      const home = resolveDeepseekPaths().home
+      await mkdir(home, { recursive: true })
+      return openPathWithShell(home)
+    } catch (error) {
+      return {
+        ok: false as const,
+        message: error instanceof Error ? error.message : String(error)
+      }
+    }
+  })
+
+  ipcMain.handle('data:pick-export-path', async () => {
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
+    const options: Electron.SaveDialogOptions = {
+      title: 'Export DeepSeek data',
+      defaultPath: join(homedir(), `deepseek-export-${stamp}.zip`),
+      filters: [{ name: 'DeepSeek export', extensions: ['zip'] }]
+    }
+    const mainWindow = getMainWindow()
+    const result = mainWindow
+      ? await dialog.showSaveDialog(mainWindow, options)
+      : await dialog.showSaveDialog(options)
+    return {
+      canceled: result.canceled,
+      path: result.canceled ? null : (result.filePath ?? null)
+    }
+  })
+
+  ipcMain.handle('data:pick-import-path', async () => {
+    const options: Electron.OpenDialogOptions = {
+      title: 'Import DeepSeek data',
+      properties: ['openFile', 'dontAddToRecent'],
+      filters: [
+        { name: 'DeepSeek export', extensions: ['zip'] },
+        { name: 'All files', extensions: ['*'] }
+      ]
+    }
+    const mainWindow = getMainWindow()
+    const result = mainWindow
+      ? await dialog.showOpenDialog(mainWindow, options)
+      : await dialog.showOpenDialog(options)
+    return {
+      canceled: result.canceled,
+      path: result.canceled ? null : (result.filePaths[0] ?? null)
+    }
+  })
+
+  ipcMain.handle('data:pick-backup-directory', async () => {
+    const options: Electron.OpenDialogOptions = {
+      title: 'Select backup directory',
+      defaultPath: homedir(),
+      properties: ['openDirectory', 'createDirectory', 'dontAddToRecent']
+    }
+    const mainWindow = getMainWindow()
+    const result = mainWindow
+      ? await dialog.showOpenDialog(mainWindow, options)
+      : await dialog.showOpenDialog(options)
+    return {
+      canceled: result.canceled,
+      path: result.canceled ? null : (result.filePaths[0] ?? null)
+    }
+  })
+
+  ipcMain.handle('data:delete-and-exit', async () => deleteGuiDataAndExit())
 
   ipcMain.handle('deepseek:hooks:open-dir', async () => {
     try {

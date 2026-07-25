@@ -7,6 +7,9 @@ export type DeepseekPaths = {
   mcpPath: string
   hooksDir: string
   skillsDir: string
+  threadsDir: string
+  sessionsDir: string
+  stateDbPath: string
 }
 
 /** User-level ``~/.deepseek`` (or ``$DEEPSEEK_HOME``). */
@@ -25,7 +28,10 @@ export function resolveDeepseekPaths(): DeepseekPaths {
     configPath: join(home, 'config.toml'),
     mcpPath: join(home, 'mcp.json'),
     hooksDir: join(home, 'hooks'),
-    skillsDir: join(home, 'skills')
+    skillsDir: join(home, 'skills'),
+    threadsDir: join(home, 'threads'),
+    sessionsDir: join(home, 'sessions'),
+    stateDbPath: join(home, 'state.db')
   }
 }
 

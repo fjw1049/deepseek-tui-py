@@ -217,6 +217,30 @@ class TurnCheckpointStore:
     def delete(self, turn_id: str) -> None:
         self._path(turn_id).unlink(missing_ok=True)
 
+    def prune_older_than(self, max_age_days: int) -> int:
+        """Delete checkpoints older than ``max_age_days``. Returns count removed."""
+        if max_age_days < 1:
+            return 0
+        cutoff = time.time() - (max_age_days * 86400)
+        removed = 0
+        for path in list(self._root.glob("*.json")):
+            checkpoint = self.load(path.stem)
+            if checkpoint is None:
+                # Unreadable / corrupt — reclaim the file.
+                path.unlink(missing_ok=True)
+                removed += 1
+                continue
+            created = checkpoint.created_at or 0.0
+            if created <= 0.0:
+                try:
+                    created = path.stat().st_mtime
+                except OSError:
+                    created = 0.0
+            if created < cutoff:
+                path.unlink(missing_ok=True)
+                removed += 1
+        return removed
+
 
 class _Unresolvable:
     """Sentinel: no pre-image available (non-git workspace, none recorded)."""

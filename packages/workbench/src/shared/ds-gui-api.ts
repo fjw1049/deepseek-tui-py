@@ -356,7 +356,15 @@ export type DsGuiApi = {
     mcpPath: string
     hooksDir: string
     skillsDir: string
+    threadsDir: string
+    sessionsDir: string
+    stateDbPath: string
   }>
+  openDeepseekHomeDir: () => Promise<PathOpenResult>
+  pickDataExportPath: () => Promise<WorkspacePickResult>
+  pickDataImportPath: () => Promise<WorkspacePickResult>
+  pickBackupDirectory: () => Promise<WorkspacePickResult>
+  deleteGuiDataAndExit: () => Promise<{ ok: true } | { ok: false; message: string }>
   openHooksDir: () => Promise<PathOpenResult>
   testEndpoint: (
     protocol: EndpointProtocol,

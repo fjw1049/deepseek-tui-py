@@ -44,6 +44,7 @@ import {
   RefreshCw,
   Settings,
   Shield,
+  HardDrive,
   PawPrint,
   Pencil,
   Trash2,
@@ -70,6 +71,7 @@ import { DEFAULT_WORKSPACE_ROOT } from '@shared/workspace-defaults'
 import { normalizeWorkspaceRoot } from '../lib/workspace-path'
 import { useChatStore, type SettingsRouteSection } from '../store/chat-store'
 import { AppearanceSettingsPanel } from './settings/AppearanceSettingsPanel'
+import { DataSettingsPanel } from './settings/DataSettingsPanel'
 import { ModelUsagePanel } from './settings/ModelUsagePanel'
 import { settingsBlockButtonClass } from './settings/SettingsActionToolbar'
 import { SettingsSelect } from './settings/SettingsSelect'
@@ -633,6 +635,10 @@ export function SettingsView(): ReactElement {
             <Shield className="h-4 w-4 shrink-0 opacity-70" strokeWidth={1.75} />
             {t('permissions')}
           </button>
+          <button type="button" className={catCls('data')} onClick={() => openSettings('data')}>
+            <HardDrive className="h-4 w-4 shrink-0 opacity-70" strokeWidth={1.75} />
+            {t('data')}
+          </button>
         </nav>
         <div className="ds-no-drag mt-auto border-t border-ds-border p-3">
           <div className="flex items-center gap-2 rounded-xl px-2 py-2">
@@ -664,32 +670,38 @@ export function SettingsView(): ReactElement {
                   ? t('models')
                   : category === 'shortcuts'
                     ? t('shortcuts')
-                    : t('title')}
+                    : category === 'data'
+                      ? t('data')
+                      : t('title')}
               </h1>
-              <p className="mt-1 text-[14px] text-ds-muted">{t('subtitle')}</p>
+              <p className="mt-1 text-[14px] text-ds-muted">
+                {category === 'data' ? t('dataSubtitle') : t('subtitle')}
+              </p>
             </div>
-            <span
-              title={saveStatus === 'error' && saveError ? saveError : undefined}
-              className={`shrink-0 rounded-full px-3 py-1 text-[12px] font-medium ${
-                portError
-                  ? 'bg-amber-500/15 text-amber-700 dark:text-amber-200'
-                  : saveStatus === 'saved'
-                    ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-200'
-                    : saveStatus === 'error'
-                      ? 'bg-red-500/15 text-red-700 dark:text-red-200'
-                      : 'bg-ds-subtle text-ds-muted'
-              }`}
-            >
-              {portError
-                ? t('autoApplyBlocked')
-                : saveStatus === 'saving'
-                  ? t('applying')
-                  : saveStatus === 'saved'
-                    ? t('applied')
-                    : saveStatus === 'error'
-                      ? t('applyFailed')
-                      : t('autoApplyHint')}
-            </span>
+            {category !== 'data' ? (
+              <span
+                title={saveStatus === 'error' && saveError ? saveError : undefined}
+                className={`shrink-0 rounded-full px-3 py-1 text-[12px] font-medium ${
+                  portError
+                    ? 'bg-amber-500/15 text-amber-700 dark:text-amber-200'
+                    : saveStatus === 'saved'
+                      ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-200'
+                      : saveStatus === 'error'
+                        ? 'bg-red-500/15 text-red-700 dark:text-red-200'
+                        : 'bg-ds-subtle text-ds-muted'
+                }`}
+              >
+                {portError
+                  ? t('autoApplyBlocked')
+                  : saveStatus === 'saving'
+                    ? t('applying')
+                    : saveStatus === 'saved'
+                      ? t('applied')
+                      : saveStatus === 'error'
+                        ? t('applyFailed')
+                        : t('autoApplyHint')}
+              </span>
+            ) : null}
           </div>
 
           {category === 'general' && (
@@ -886,25 +898,25 @@ export function SettingsView(): ReactElement {
                 return (
                   <div
                     key={item.id}
-                    className={`ds-shortcut-row flex items-center gap-4 px-3.5 py-3.5 transition-opacity duration-150 ${
-                      enabled ? '' : 'opacity-45'
-                    }`}
+                    className={`transition-opacity duration-150 ${enabled ? '' : 'opacity-45'}`}
                   >
-                    <div className="min-w-0 flex-1">
-                      <div className="text-[15px] font-medium tracking-[-0.01em] text-ds-ink">
-                        {t(`shortcut_${item.id}_title`)}
-                      </div>
-                      <div className="mt-0.5 text-[12px] leading-snug text-ds-muted">
-                        {t(`shortcut_${item.id}_desc`)}
-                      </div>
-                    </div>
-                    <ShortcutKeycaps chord={item.chord} label={label} />
-                    <Toggle
-                      checked={enabled}
-                      onChange={(next) =>
-                        update({
-                          shortcuts: { [item.id]: { enabled: next } } as ShortcutsPatchV1
-                        })
+                    <SettingRow
+                      alignControl="center"
+                      controlWidth="medium"
+                      title={t(`shortcut_${item.id}_title`)}
+                      description={t(`shortcut_${item.id}_desc`)}
+                      control={
+                        <div className="flex items-center justify-end gap-3">
+                          <ShortcutKeycaps chord={item.chord} label={label} />
+                          <Toggle
+                            checked={enabled}
+                            onChange={(next) =>
+                              update({
+                                shortcuts: { [item.id]: { enabled: next } } as ShortcutsPatchV1
+                              })
+                            }
+                          />
+                        </div>
                       }
                     />
                   </div>
@@ -1155,6 +1167,8 @@ export function SettingsView(): ReactElement {
               />
             </SettingsCard>
           )}
+
+          {category === 'data' && <DataSettingsPanel />}
 
         </div>
       </div>

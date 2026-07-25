@@ -240,6 +240,18 @@ class RuntimeThreadManager:
 
         self._recover_interrupted_state()
         self._schedule_mcp_warmup()
+        self._prune_stale_checkpoints_on_boot()
+
+    def _prune_stale_checkpoints_on_boot(self) -> None:
+        """Wire SnapshotConfig.max_age_days to turn-checkpoint GC on startup."""
+        try:
+            max_age = int(getattr(self.config.snapshots, "max_age_days", 7) or 7)
+            if getattr(self.config.snapshots, "enabled", True) and max_age >= 1:
+                removed = self.checkpoints.prune_older_than(max_age)
+                if removed:
+                    logger.info("turn_checkpoints_pruned count=%d max_age_days=%d", removed, max_age)
+        except Exception:  # noqa: BLE001 — boot must not fail on GC
+            logger.debug("turn_checkpoints_prune_failed", exc_info=True)
 
     def _sync_trust_mode(self, engine: Engine, trust_mode: bool) -> None:
         """Mirror thread / turn trust onto ToolContext (TUI session parity).
@@ -763,6 +775,127 @@ class RuntimeThreadManager:
             "latest_thread_id": latest_id,
             "latest_updated_at": latest_ts.isoformat() if latest_ts else None,
         }
+
+    async def data_inventory(self) -> dict[str, Any]:
+        from deepseek_tui.server.data_inventory import collect_inventory
+
+        return collect_inventory(threads_dir=self.manager_cfg.data_dir)
+
+    async def optimize_storage(self) -> dict[str, Any]:
+        from deepseek_tui.server.data_inventory import (
+            DEFAULT_CHECKPOINT_MAX_AGE_DAYS,
+            optimize_storage,
+        )
+
+        max_age = int(
+            getattr(self.config.snapshots, "max_age_days", DEFAULT_CHECKPOINT_MAX_AGE_DAYS)
+            or DEFAULT_CHECKPOINT_MAX_AGE_DAYS
+        )
+        report = optimize_storage(
+            self.store,
+            self.checkpoints,
+            max_checkpoint_age_days=max_age,
+        )
+        return report.to_dict()
+
+    async def clean_storage_older_than(self, older_than_days: int) -> dict[str, Any]:
+        from deepseek_tui.server.data_inventory import clean_threads_older_than
+
+        # Drop active engines for threads we are about to delete.
+        threads = self.store.list_threads()
+        cutoff_ids: list[str] = []
+        from datetime import timedelta
+
+        cutoff = datetime.now(timezone.utc) - timedelta(days=older_than_days)
+        for thread in threads:
+            updated = thread.updated_at
+            if updated.tzinfo is None:
+                updated = updated.replace(tzinfo=timezone.utc)
+            if updated < cutoff:
+                cutoff_ids.append(thread.id)
+        for thread_id in cutoff_ids:
+            await self._evict_active_thread(thread_id)
+        report = clean_threads_older_than(
+            self.store,
+            self.checkpoints,
+            older_than_days=older_than_days,
+        )
+        return report.to_dict()
+
+    async def clear_conversation_history(self) -> dict[str, Any]:
+        from deepseek_tui.server.data_inventory import clear_conversation_history
+
+        async with self._active_lock:
+            active_ids = list(self._active.keys())
+        for thread_id in active_ids:
+            await self._evict_active_thread(thread_id)
+        report = clear_conversation_history(self.store, self.checkpoints)
+        return report.to_dict()
+
+    async def export_data_bundle(self, path: str, *, scope: str = "conversations") -> dict[str, Any]:
+        from deepseek_tui.server.data_bundle import export_bundle
+
+        return export_bundle(
+            Path(path),
+            scope=scope,  # type: ignore[arg-type]
+            threads_dir=self.manager_cfg.data_dir,
+        )
+
+    async def import_data_bundle(
+        self, path: str, *, mode: str = "merge"
+    ) -> dict[str, Any]:
+        from deepseek_tui.server.data_bundle import import_bundle
+
+        if mode == "replace":
+            async with self._active_lock:
+                active_ids = list(self._active.keys())
+            for thread_id in active_ids:
+                await self._evict_active_thread(thread_id)
+        return import_bundle(
+            Path(path),
+            mode=mode,  # type: ignore[arg-type]
+            threads_dir=self.manager_cfg.data_dir,
+        )
+
+    async def backup_status(self) -> dict[str, Any]:
+        from deepseek_tui.server.data_bundle import read_backup_meta
+
+        return read_backup_meta()
+
+    async def set_backup_directory(self, directory: str) -> dict[str, Any]:
+        from deepseek_tui.server.data_bundle import write_backup_meta
+
+        path = Path(directory).expanduser()
+        path.mkdir(parents=True, exist_ok=True)
+        return write_backup_meta(directory=str(path.resolve()))
+
+    async def create_data_backup(self, directory: str | None = None) -> dict[str, Any]:
+        from deepseek_tui.server.data_bundle import create_backup
+
+        return create_backup(
+            directory=directory,
+            threads_dir=self.manager_cfg.data_dir,
+        )
+
+    async def _evict_active_thread(self, thread_id: str) -> None:
+        """Cancel and drop an in-memory engine for a thread being deleted."""
+        async with self._active_lock:
+            state = self._active.pop(thread_id, None)
+            self._lru.pop(thread_id, None)
+            load_task = self._engine_load_tasks.pop(thread_id, None)
+        if load_task is not None and not load_task.done():
+            load_task.cancel()
+        if state is None:
+            return
+        try:
+            await state.handle.cancel(reason="storage_cleanup")
+        except Exception:  # noqa: BLE001
+            logger.debug("evict_cancel_failed thread_id=%s", thread_id, exc_info=True)
+        state.engine_task.cancel()
+        try:
+            await state.engine_task
+        except (asyncio.CancelledError, Exception):  # noqa: BLE001
+            pass
 
     async def fork_thread(
         self, thread_id: str, *, through_item_id: str | None = None

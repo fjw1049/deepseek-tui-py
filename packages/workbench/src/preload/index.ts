@@ -64,6 +64,11 @@ const api = {
   setEmailSecret: (password) => ipcRenderer.invoke('email:secret:set', { password }),
   clearEmailSecret: () => ipcRenderer.invoke('email:secret:clear'),
   getDeepseekPaths: () => ipcRenderer.invoke('deepseek:paths:get'),
+  openDeepseekHomeDir: () => ipcRenderer.invoke('deepseek:home:open-dir'),
+  pickDataExportPath: () => ipcRenderer.invoke('data:pick-export-path'),
+  pickDataImportPath: () => ipcRenderer.invoke('data:pick-import-path'),
+  pickBackupDirectory: () => ipcRenderer.invoke('data:pick-backup-directory'),
+  deleteGuiDataAndExit: () => ipcRenderer.invoke('data:delete-and-exit'),
   openHooksDir: () => ipcRenderer.invoke('deepseek:hooks:open-dir'),
   testEndpoint: (protocol, baseUrl, apiKey, model) =>
     ipcRenderer.invoke('endpoint:test', { protocol, baseUrl, apiKey, model }),

@@ -587,6 +587,109 @@ paths:
                     type: object
         "503":
           description: Runtime not configured
+  /v1/data/inventory:
+    get:
+      summary: Local storage inventory for Settings Data page
+      responses:
+        "200":
+          description: Paths, byte sizes, and conversation/message counts
+  /v1/data/optimize:
+    post:
+      summary: Reclaim redundant disk without deleting conversations
+      responses:
+        "200":
+          description: Optimize report with bytes_reclaimed
+  /v1/data/clean:
+    post:
+      summary: Delete conversations older than a cutoff
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                older_than_days:
+                  type: integer
+                  minimum: 1
+                  default: 90
+      responses:
+        "200":
+          description: Clean report with threads_deleted
+        "400":
+          description: Invalid older_than_days
+  /v1/data/clear-history:
+    post:
+      summary: Clear all conversations; keep skills/config/mcp/plugins
+      responses:
+        "200":
+          description: Clear-history report
+  /v1/data/export:
+    post:
+      summary: Export conversations and/or settings to a ZIP path
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [path]
+              properties:
+                path:
+                  type: string
+                scope:
+                  type: string
+                  enum: [conversations, settings, all]
+      responses:
+        "200":
+          description: Export report
+  /v1/data/import:
+    post:
+      summary: Import a ZIP export (merge or replace)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [path]
+              properties:
+                path:
+                  type: string
+                mode:
+                  type: string
+                  enum: [merge, replace]
+      responses:
+        "200":
+          description: Import report
+  /v1/data/backup:
+    get:
+      summary: Backup directory and last-backup status
+      responses:
+        "200":
+          description: Backup meta
+    post:
+      summary: Create a timestamped manual backup
+      responses:
+        "200":
+          description: Backup report
+        "400":
+          description: Backup directory not set
+  /v1/data/backup/directory:
+    post:
+      summary: Set the manual backup directory
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [directory]
+              properties:
+                directory:
+                  type: string
+      responses:
+        "200":
+          description: Updated backup meta
 components:
   parameters:
     threadId:

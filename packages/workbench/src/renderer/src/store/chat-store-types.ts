@@ -39,6 +39,7 @@ export type SettingsRouteSection =
   | 'models'
   | 'permissions'
   | 'hooks'
+  | 'data'
 
 /** @deprecated Use `models` or `general`; kept for deep-link normalization.
  * `mcp`/`skill` moved to the 应用拓展 连接器/技能 pages; old deep-links fall back to `general`. */
