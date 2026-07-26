@@ -40,7 +40,7 @@ import {
   selectPrimaryMarkdownResult
 } from '../../lib/html-preview-detection'
 import { TaskSuggestionHero, TaskSuggestionOfflineHero } from './TaskSuggestionHero'
-import { GridDots } from './GridDots'
+import { SquareGrid } from './SquareGrid'
 import type { ChatBlock, RuntimeConnectionStatus, ToolBlock } from '../../agent/types'
 import {
   countDiffStats,
@@ -879,8 +879,10 @@ function turnHasPendingRuntimeWork(turn: Turn): boolean {
   return turn.blocks.some(blockHasPendingRuntimeWork)
 }
 
+// `agent` / `agent_resume` are the current tool names; the agent_* entries are
+// legacy fallbacks for replayed history transcripts.
 const SUBAGENT_ORCHESTRATION_TOOL_RE =
-  /^(?:agent_spawn|spawn_agent|delegate_to_agent|agent_wait|wait|agent_result|agent_list)$/i
+  /^(?:agent|agent_resume|agent_spawn|spawn_agent|delegate_to_agent|agent_wait|wait|agent_result|agent_list|agent_cancel|agent_send_input)$/i
 
 function toolNameFromProcessBlock(block: Extract<ChatBlock, { kind: 'tool' }>): string {
   const metaName = typeof block.meta?.tool_name === 'string' ? block.meta.tool_name : undefined
@@ -917,15 +919,18 @@ type AssistantContentBlock = Extract<ChatBlock, { kind: 'assistant' }>
  * language- and model-independent; i18n supplies the label.
  */
 function NeutralIntentLine({
-  intent
+  intent,
+  showIndicator
 }: {
   intent: NonNullable<AssistantContentBlock['processIntent']>
+  /** True only for the newest in-progress thinking/preface row. */
+  showIndicator: boolean
 }): ReactElement {
   const { t } = useTranslation('common')
   const anchors = (intent.anchors ?? []).slice(0, 3)
   return (
     <div className="flex items-start gap-1.5 py-0.5">
-      <GridDots className="mt-1 text-ds-faint" />
+      {showIndicator ? <SquareGrid className="mt-1 text-ds-faint" /> : null}
       <p className="text-[13.5px] leading-6 text-ds-faint">
         {anchors.length > 0
           ? t('processNeutralIntentTargets', { targets: anchors.join(', ') })
@@ -933,6 +938,38 @@ function NeutralIntentLine({
       </p>
     </div>
   )
+}
+
+/** Reasoning / mid-turn preface rows that may own the live Square Grid. */
+function isThinkingIndicatorBlock(block: ChatBlock): boolean {
+  if (block.kind === 'reasoning') return true
+  if (block.kind !== 'assistant') return false
+  return block.agentSegment === 'mid_turn_preface' || block.agentSegment == null
+}
+
+/**
+ * Id of the sole process-rail row allowed to show a live thinking glyph.
+ * Null when the turn is idle, or when later work (another thought / tools)
+ * has already superseded the previous thinking step.
+ */
+export function trailingThinkingIndicatorId(
+  rows: RenderRow[],
+  processing: boolean
+): string | null {
+  if (!processing) return null
+  let sawLaterWork = false
+  for (let i = rows.length - 1; i >= 0; i -= 1) {
+    const row = rows[i]!
+    if (row.type === 'tool_batch') {
+      sawLaterWork = true
+      continue
+    }
+    if (isThinkingIndicatorBlock(row.block)) {
+      return sawLaterWork ? null : row.block.id
+    }
+    sawLaterWork = true
+  }
+  return null
 }
 
 export function placeAssistantContentBlock(
@@ -1524,9 +1561,9 @@ function HtmlPreviewStandaloneCard({
  * agent is doing right now without expanding the trace (cursor/codex pattern).
  */
 function activeRunningActionLabel(blocks: ChatBlock[]): string | undefined {
-  // Skip sub-agent orchestration tools (agent_spawn/agent_wait/…): a blocking
-  // agent_wait would otherwise hijack the header for minutes. Sub-agent progress
-  // is surfaced by the SubagentSummaryPanel instead.
+  // Skip sub-agent orchestration tools (agent/agent_resume/…): a blocking
+  // agent action="wait" would otherwise hijack the header for minutes. Sub-agent
+  // progress is surfaced by the SubagentSummaryPanel instead.
   const running = blocks.find(
     (b): b is ToolBlock =>
       b.kind === 'tool' &&
@@ -1602,7 +1639,7 @@ function WorkMetaRow({
     >
       {processing ? (
         <span className="mr-0.5 flex h-5 w-5 shrink-0 items-center justify-center">
-          <GridDots size="md" className="text-ds-faint" />
+          <SquareGrid size="md" className="text-ds-faint" />
         </span>
       ) : null}
       <span className={`min-w-0 truncate tabular-nums ${processing ? 'ds-shiny-text' : ''}`}>
@@ -2169,7 +2206,7 @@ function SubagentSummaryRow({
   )
 }
 
-/** Terminal statuses `resume_agent` accepts (manager rejects running/completed). */
+/** Terminal statuses `agent_resume` accepts (manager rejects running/completed). */
 function isResumableSubagentStatus(status: SubagentBlock['status']): boolean {
   return status === 'failed' || status === 'cancelled'
 }
@@ -2573,7 +2610,14 @@ export function clipMidTurnPrefaceText(
   return { preview: `${cut.trimEnd()}…`, clipped: true }
 }
 
-function MidTurnPrefaceLine({ text }: { text: string }): ReactElement {
+function MidTurnPrefaceLine({
+  text,
+  showIndicator
+}: {
+  text: string
+  /** True only for the newest in-progress thinking/preface row. */
+  showIndicator: boolean
+}): ReactElement {
   const { t } = useTranslation('common')
   const [expanded, setExpanded] = useState(false)
   const { preview, clipped } = clipMidTurnPrefaceText(text)
@@ -2581,7 +2625,7 @@ function MidTurnPrefaceLine({ text }: { text: string }): ReactElement {
 
   return (
     <div className="flex items-start gap-1.5 py-0.5">
-      <GridDots className="mt-1 text-ds-faint" />
+      {showIndicator ? <SquareGrid className="mt-1 text-ds-faint" /> : null}
       <div className="min-w-0 flex-1">
         <p className="whitespace-pre-wrap text-[13.5px] leading-6 text-ds-muted">{shown}</p>
         {clipped ? (
@@ -2640,6 +2684,7 @@ function ProcessStream({
   const showLiveReasoningPreview = !blocks.some(
     (block) => block.kind === 'reasoning' && block.id !== 'live-reasoning'
   )
+  const thinkingIndicatorId = trailingThinkingIndicatorId(rows, processing)
 
   return (
     <div className="ds-process-rail flex flex-col gap-1.5 pt-1">
@@ -2657,6 +2702,7 @@ function ProcessStream({
             key={row.block.id}
             block={row.block}
             processing={processing}
+            showThinkingIndicator={thinkingIndicatorId === row.block.id}
             todoSession={todoSession}
             todoEvents={todoEvents}
             subagentSummary={subagentSummary}
@@ -2673,6 +2719,7 @@ function ProcessStream({
 function ProcessStreamEntry({
   block,
   processing,
+  showThinkingIndicator = false,
   todoSession = null,
   todoEvents = [],
   subagentSummary = null,
@@ -2682,6 +2729,8 @@ function ProcessStreamEntry({
 }: {
   block: ChatBlock
   processing: boolean
+  /** Pulse Square Grid only on the newest thinking/preface row. */
+  showThinkingIndicator?: boolean
   todoSession?: TodoTurnSession | null
   todoEvents?: TodoTurnEvent[]
   subagentSummary?: SubagentTurnSummary | null
@@ -2740,13 +2789,14 @@ function ProcessStreamEntry({
       <ReasoningEntry
         block={block}
         processing={processing}
+        showIndicator={showThinkingIndicator}
         showLivePreview={showLiveReasoningPreview}
       />
     )
   }
   if (block.kind === 'assistant') {
     // The model's 承上启下 storyline line written before a tool batch. Render
-    // it like the reasoning narration line (GridDots + muted text) so it reads as
+    // it like the reasoning narration line (SquareGrid + muted text) so it reads as
     // the throughline the user follows while tools execute. When the frame
     // carries no wording yet (structured intent only), show a neutral
     // progress state derived from metadata instead of fabricating prose.
@@ -2755,9 +2805,11 @@ function ProcessStreamEntry({
     if (block.agentSegment === 'mid_turn_preface' || block.agentSegment == null) {
       if (!block.text.trim()) {
         if (!block.processIntent) return null
-        return <NeutralIntentLine intent={block.processIntent} />
+        return (
+          <NeutralIntentLine intent={block.processIntent} showIndicator={showThinkingIndicator} />
+        )
       }
-      return <MidTurnPrefaceLine text={block.text} />
+      return <MidTurnPrefaceLine text={block.text} showIndicator={showThinkingIndicator} />
     }
     // Other assistant content that landed in the work trace (interstitial
     // final-answer segments).
@@ -2801,10 +2853,13 @@ function ProcessStreamEntry({
 function ReasoningEntry({
   block,
   processing,
+  showIndicator,
   showLivePreview
 }: {
   block: Extract<ChatBlock, { kind: 'reasoning' }>
   processing: boolean
+  /** Newest thinking row only — older steps stay text-only. */
+  showIndicator: boolean
   showLivePreview: boolean
 }): ReactElement {
   const { t } = useTranslation('common')
@@ -2821,7 +2876,7 @@ function ReasoningEntry({
     return (
       <div className="ds-live-thinking py-0.5">
         <div className="flex items-center gap-1.5 text-[12px] font-medium text-ds-faint">
-          <GridDots className="text-ds-faint" />
+          <SquareGrid className="text-ds-faint" />
           <span className="ds-shiny-text">{t('thinkingNow')}</span>
         </div>
         <div className="ds-live-thinking-viewport mt-1.5">
@@ -2835,10 +2890,11 @@ function ReasoningEntry({
   }
 
   // Narration is the user-facing line — show it directly, no toggle.
+  // Indicator only on the newest step; earlier steps are text-only.
   if (narration) {
     return (
       <div className="flex items-start gap-1.5 py-0.5">
-        {isLive || processing ? <GridDots className="mt-1 text-ds-faint" /> : null}
+        {showIndicator ? <SquareGrid className="mt-1 text-ds-faint" /> : null}
         <p className="text-[13.5px] leading-6 text-ds-faint/85">{narration}</p>
       </div>
     )
@@ -2853,8 +2909,8 @@ function ReasoningEntry({
         onClick={() => setExpanded((v) => !v)}
         className="group flex w-fit items-center gap-1.5 py-0.5 text-left text-[14px] font-medium text-ds-muted transition hover:opacity-85"
       >
-        {isLive || processing ? <GridDots className="text-ds-faint" /> : null}
-        <span className={isLive ? 'ds-shiny-text' : ''}>{t('thinkingLabel')}</span>
+        {showIndicator ? <SquareGrid className="text-ds-faint" /> : null}
+        <span className={showIndicator ? 'ds-shiny-text' : ''}>{t('thinkingLabel')}</span>
         {expanded ? (
           <ChevronDown className="h-3.5 w-3.5 shrink-0 opacity-45" strokeWidth={1.8} />
         ) : (

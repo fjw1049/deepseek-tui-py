@@ -10,7 +10,8 @@ import {
   placeAssistantContentBlock,
   reasoningDetailTextFromBlocks,
   reasoningNarrationFromBlocks,
-  splitThink
+  splitThink,
+  trailingThinkingIndicatorId
 } from './MessageTimeline'
 import {
   buildToolRenderContext,
@@ -68,6 +69,9 @@ describe('splitThink', () => {
 
 describe('isSubagentOrchestrationToolName', () => {
   it('recognizes subagent orchestration tools', () => {
+    expect(isSubagentOrchestrationToolName('agent')).toBe(true)
+    expect(isSubagentOrchestrationToolName('agent_resume')).toBe(true)
+    // Legacy tool names from pre-merge history transcripts.
     expect(isSubagentOrchestrationToolName('agent_spawn')).toBe(true)
     expect(isSubagentOrchestrationToolName('agent_wait')).toBe(true)
     expect(isSubagentOrchestrationToolName('delegate_to_agent')).toBe(true)
@@ -361,11 +365,66 @@ describe('groupProcessRows', () => {
 
   it('excludes subagent orchestration tools from batching', () => {
     const blocks: ChatBlock[] = [
-      toolBlock('t1', 'agent_spawn'),
+      toolBlock('t1', 'agent'),
       toolBlock('t2', 'agent_spawn')
     ]
     const rows = groupProcessRows(blocks)
     expect(rows.every((row) => row.type === 'block')).toBe(true)
+  })
+})
+
+describe('trailingThinkingIndicatorId', () => {
+  it('returns null when the turn is idle', () => {
+    const rows = groupProcessRows([
+      { kind: 'reasoning', id: 'r1', text: 'done thinking' }
+    ])
+    expect(trailingThinkingIndicatorId(rows, false)).toBeNull()
+  })
+
+  it('keeps the indicator only on the newest trailing thought', () => {
+    const rows = groupProcessRows([
+      { kind: 'reasoning', id: 'r1', text: 'first' },
+      {
+        kind: 'assistant',
+        id: 'p1',
+        text: '获取百度热搜页面。',
+        agentSegment: 'mid_turn_preface'
+      },
+      {
+        kind: 'tool',
+        id: 't1',
+        summary: 'fetch',
+        status: 'success',
+        toolKind: 'tool_call'
+      },
+      { kind: 'reasoning', id: 'r2', text: 'second' },
+      {
+        kind: 'assistant',
+        id: 'p2',
+        text: '换 JSON 接口。',
+        agentSegment: 'mid_turn_preface'
+      }
+    ])
+    expect(trailingThinkingIndicatorId(rows, true)).toBe('p2')
+  })
+
+  it('clears the indicator once a tool follows the previous thought', () => {
+    const rows = groupProcessRows([
+      {
+        kind: 'assistant',
+        id: 'p1',
+        text: '获取百度热搜页面。',
+        agentSegment: 'mid_turn_preface'
+      },
+      {
+        kind: 'tool',
+        id: 't1',
+        summary: 'fetch',
+        status: 'running',
+        toolKind: 'tool_call'
+      }
+    ])
+    expect(trailingThinkingIndicatorId(rows, true)).toBeNull()
   })
 })
 
