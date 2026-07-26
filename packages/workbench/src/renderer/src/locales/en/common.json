@@ -927,6 +927,8 @@
   "contextRailCollapse": "Hide context",
   "contextRailExpand": "Show context",
   "operationDockSettings": "Dock settings",
+  "operationDockCollapse": "Collapse to icon rail",
+  "operationDockExpand": "Expand panel",
   "operationDockToolsTitle": "General",
   "operationDockToolOpen": "Open",
   "rightSidebarTitle": "Workspace",

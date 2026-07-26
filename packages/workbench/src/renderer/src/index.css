@@ -4905,7 +4905,7 @@ select:focus-visible,
   line-height: 1.2;
 }
 
-/* Decorative gear — hover to spin, not interactive yet. */
+/* Gear toggles full card ↔ compact icon rail. */
 .ds-operation-dock-topbar__settings {
   display: inline-flex;
   height: 1.55rem;
@@ -4914,10 +4914,12 @@ select:focus-visible,
   align-items: center;
   justify-content: center;
   border-radius: 0.5rem;
+  border: none;
+  background: transparent;
   color: var(--text-secondary);
   opacity: 0.62;
   pointer-events: auto;
-  cursor: default;
+  cursor: pointer;
   transition:
     color 0.15s ease,
     background-color 0.15s ease,
@@ -5034,6 +5036,148 @@ select:focus-visible,
   flex-direction: column;
   background: transparent;
   padding-right: clamp(0.75rem, 2cqi, 2rem);
+  transition:
+    flex-basis 220ms cubic-bezier(0.32, 0.72, 0, 1),
+    width 220ms cubic-bezier(0.32, 0.72, 0, 1),
+    padding-right 220ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+/* Compact dock: shrink the rail so chat reclaims the column. */
+.ds-operation-rail:has(.ds-operation-dock[data-compact='true']) {
+  flex-basis: 2.75rem;
+  width: 2.75rem;
+  padding-right: 0.45rem;
+}
+
+/*
+ * Compact mode — Apple-style tool strip:
+ * no nested card, no drop shadow; just icons + hairline + press feedback.
+ */
+.ds-operation-dock--compact {
+  display: flex;
+  width: 100%;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.15rem 0;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.ds-operation-dock-rail {
+  display: flex;
+  width: 100%;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.1rem;
+  padding: 0;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+}
+
+.ds-operation-dock-rail__rule {
+  width: 1rem;
+  height: 1px;
+  border-radius: 1px;
+  background: color-mix(in srgb, var(--text-primary) 14%, transparent);
+}
+
+[data-theme='dark'] .ds-operation-dock-rail__rule {
+  background: color-mix(in srgb, #fff 16%, transparent);
+}
+
+.ds-operation-dock-rail__btn {
+  display: inline-flex;
+  height: 1.85rem;
+  width: 1.85rem;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: color-mix(in srgb, var(--text-primary) 58%, transparent);
+  cursor: pointer;
+  transition:
+    color 140ms cubic-bezier(0.22, 1, 0.36, 1),
+    background-color 140ms cubic-bezier(0.22, 1, 0.36, 1),
+    transform 120ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.ds-operation-dock-rail__btn:hover:not(:disabled) {
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--text-primary) 7%, transparent);
+}
+
+.ds-operation-dock-rail__btn:active:not(:disabled) {
+  transform: scale(0.92);
+  background: color-mix(in srgb, var(--text-primary) 11%, transparent);
+}
+
+.ds-operation-dock-rail__btn:disabled {
+  cursor: default;
+  opacity: 0.32;
+}
+
+.ds-operation-dock-rail__btn[aria-pressed='true'] {
+  color: var(--ds-accent, #007aff);
+  background: color-mix(in srgb, var(--ds-accent, #007aff) 12%, transparent);
+}
+
+.ds-operation-dock-rail__btn--gear {
+  color: color-mix(in srgb, var(--text-primary) 46%, transparent);
+}
+
+.ds-operation-dock-rail__btn--gear:hover:not(:disabled) {
+  color: var(--text-primary);
+}
+
+.ds-operation-dock-rail__btn--gear:hover svg {
+  animation: ds-operation-dock-settings-spin 0.85s linear infinite;
+}
+
+/* Below md the dock sits under the transcript — use a horizontal chip. */
+@media (max-width: 767px) {
+  .ds-operation-dock--compact {
+    flex-direction: row;
+    width: fit-content;
+    max-width: 100%;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.1rem 0.15rem;
+  }
+
+  .ds-operation-dock-rail {
+    flex-direction: row;
+    width: auto;
+    gap: 0.1rem;
+  }
+
+  .ds-operation-dock-rail__rule {
+    width: 1px;
+    height: 0.9rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ds-operation-rail {
+    transition: none;
+  }
+
+  .ds-operation-dock-rail__btn {
+    transition: none;
+  }
+
+  .ds-operation-dock-rail__btn:active:not(:disabled) {
+    transform: none;
+  }
+
+  .ds-operation-dock-rail__btn--gear:hover svg {
+    animation: none;
+  }
 }
 
 .ds-chat-main-track {

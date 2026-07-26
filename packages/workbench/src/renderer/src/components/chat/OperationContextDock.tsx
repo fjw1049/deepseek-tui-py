@@ -64,6 +64,24 @@ function sessionChangePatches(blocks: ChatBlock[]): Array<string | undefined> {
 const DOCK_ROW_CLASS =
   'group flex w-full items-center gap-2.5 rounded-[10px] px-1.5 py-1.5 text-left text-[13px] leading-5 transition'
 
+const DOCK_COMPACT_STORAGE_KEY = 'deepseekgui.operationDock.compact'
+
+function readStoredDockCompact(): boolean {
+  try {
+    return window.localStorage.getItem(DOCK_COMPACT_STORAGE_KEY) === 'true'
+  } catch {
+    return false
+  }
+}
+
+function persistDockCompact(value: boolean): void {
+  try {
+    window.localStorage.setItem(DOCK_COMPACT_STORAGE_KEY, String(value))
+  } catch {
+    /* ignore persistence failures */
+  }
+}
+
 const ROW_ICON_TINTS = {
   violet: 'bg-violet-500/10 text-violet-500 group-hover:bg-violet-500/16 dark:text-violet-300',
   sky: 'bg-sky-500/10 text-sky-500 group-hover:bg-sky-500/16 dark:text-sky-300',
@@ -405,10 +423,15 @@ export function OperationContextDock({
   }
 
   const [collapsed, setCollapsed] = useState({ tools: false, git: true, process: true, tasks: true })
+  const [compact, setCompact] = useState(readStoredDockCompact)
   /** Which process todo row is expanded to full text (single-line by default). */
   const [expandedTodoKey, setExpandedTodoKey] = useState<string | null>(null)
   const toggle = (key: keyof typeof collapsed): void =>
     setCollapsed((prev) => ({ ...prev, [key]: !prev[key] }))
+  const setCompactMode = useCallback((value: boolean): void => {
+    setCompact(value)
+    persistDockCompact(value)
+  }, [])
 
   // Auto-expand a section when it gains content and auto-collapse when it
   // empties. Each effect keys on a single boolean edge so manually toggling
@@ -434,19 +457,86 @@ export function OperationContextDock({
 
   const workspaceLabel = workspaceLabelFromPath(root)
 
+  if (compact) {
+    return (
+      <div className="ds-operation-dock ds-operation-dock--compact ds-no-drag relative z-10" data-compact="true">
+        <button
+          type="button"
+          className="ds-operation-dock-rail__btn ds-operation-dock-rail__btn--gear"
+          onClick={() => setCompactMode(false)}
+          title={t('operationDockExpand')}
+          aria-label={t('operationDockExpand')}
+          aria-expanded={false}
+        >
+          <Settings className="h-[15px] w-[15px]" strokeWidth={1.75} />
+        </button>
+        <div className="ds-operation-dock-rail__rule" aria-hidden />
+        <div className="ds-operation-dock-rail" role="toolbar" aria-label={t('operationDockToolsTitle')}>
+          <button
+            type="button"
+            className="ds-operation-dock-rail__btn"
+            onClick={() => onOpenEditor?.()}
+            title={t('rightSidebarTabEditor')}
+            aria-label={t('rightSidebarTabEditor')}
+          >
+            <Code2 className="h-[15px] w-[15px]" strokeWidth={1.75} />
+          </button>
+          <button
+            type="button"
+            className="ds-operation-dock-rail__btn"
+            onClick={onTogglePreview}
+            disabled={!previewEnabled}
+            aria-pressed={previewActive}
+            title={previewEnabled ? t('rightPanelBrowser') : t('terminalWorkspaceRequired')}
+            aria-label={t('rightPanelBrowser')}
+          >
+            <Globe2 className="h-[15px] w-[15px]" strokeWidth={1.75} />
+          </button>
+          <button
+            type="button"
+            className="ds-operation-dock-rail__btn"
+            onClick={onToggleTerminalPanel}
+            disabled={!terminalPanelEnabled}
+            aria-pressed={terminalPanelOpen}
+            title={terminalPanelEnabled ? t('terminalToggle') : t('terminalWorkspaceRequired')}
+            aria-label={t('terminalPanelTitle')}
+          >
+            <Terminal className="h-[15px] w-[15px]" strokeWidth={1.75} />
+          </button>
+          <button
+            type="button"
+            className="ds-operation-dock-rail__btn"
+            onClick={openChangesPanel}
+            disabled={!hasChanges}
+            title={hasChanges ? t('operationDockOpenChanges') : t('operationDockNoChanges')}
+            aria-label={t('operationDockChanges')}
+          >
+            <FileEdit className="h-[15px] w-[15px]" strokeWidth={1.75} />
+          </button>
+        </div>
+      </div>
+    )
+  }
+
   return (
-    <div className="ds-operation-dock ds-hero-panel ds-glass ds-content-card--interactive ds-no-drag relative z-10 w-full overflow-hidden rounded-[18px]">
+    <div
+      className="ds-operation-dock ds-hero-panel ds-glass ds-content-card--interactive ds-no-drag relative z-10 w-full overflow-hidden rounded-[18px]"
+      data-compact="false"
+    >
       <div className="ds-operation-dock-topbar">
         <span className="ds-operation-dock-topbar__title min-w-0 flex-1 truncate" title={workspaceLabel}>
           {workspaceLabel}
         </span>
-        <span
+        <button
+          type="button"
           className="ds-operation-dock-topbar__settings"
-          aria-hidden
-          title={t('operationDockSettings')}
+          onClick={() => setCompactMode(true)}
+          title={t('operationDockCollapse')}
+          aria-label={t('operationDockCollapse')}
+          aria-expanded={true}
         >
           <Settings className="h-3.5 w-3.5" strokeWidth={1.9} />
-        </span>
+        </button>
       </div>
       <div className="ds-operation-dock-body px-4 py-3.5">
       <SectionHeader

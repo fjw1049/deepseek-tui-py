@@ -893,6 +893,8 @@
   "contextRailCollapse": "收起上下文",
   "contextRailExpand": "展开上下文",
   "operationDockSettings": "面板设置",
+  "operationDockCollapse": "折叠为图标条",
+  "operationDockExpand": "展开面板",
   "operationDockToolsTitle": "通用",
   "operationDockToolOpen": "已打开",
   "rightSidebarTitle": "工作区",
