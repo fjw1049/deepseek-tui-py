@@ -33,7 +33,7 @@ function findOptionLabel(
 
 function wrapperClass(disabled: boolean | undefined, extra: string): string {
   return [
-    'relative h-10 w-full min-w-0 rounded-xl border border-ds-border bg-ds-card shadow-sm',
+    'relative h-8 w-full min-w-0 rounded-lg border border-ds-border bg-ds-card shadow-sm',
     'transition focus-within:border-accent/40 focus-within:ring-1 focus-within:ring-accent/30',
     disabled ? 'cursor-not-allowed opacity-55' : '',
     extra
@@ -61,9 +61,9 @@ export function SettingsSelect({
     <div className={wrapperClass(disabled, `${selectClassName} ${wrapperClassName} ${className}`.trim())}>
       <div
         aria-hidden
-        className="pointer-events-none absolute inset-0 flex items-center justify-center px-3 pr-9"
+        className="pointer-events-none absolute inset-0 flex items-center justify-center px-2.5 pr-7"
       >
-        <span className="w-full truncate text-center text-[14px] font-medium leading-none text-ds-ink">
+        <span className="w-full truncate text-center text-[13px] font-medium leading-none text-ds-ink">
           {label}
         </span>
       </div>
@@ -76,7 +76,7 @@ export function SettingsSelect({
         {children}
       </select>
       <ChevronDown
-        className="pointer-events-none absolute right-3 top-1/2 z-[2] h-4 w-4 -translate-y-1/2 text-ds-faint"
+        className="pointer-events-none absolute right-2 top-1/2 z-[2] h-3.5 w-3.5 -translate-y-1/2 text-ds-faint"
         strokeWidth={1.75}
         aria-hidden
       />

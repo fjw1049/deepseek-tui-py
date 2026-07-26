@@ -123,7 +123,7 @@ function SettingRow({
           )
         ) : null}
       </div>
-      <div className="flex w-full min-w-0 items-center justify-end sm:ml-auto sm:max-w-[280px] sm:shrink-0">
+      <div className="flex w-full min-w-0 items-center justify-end sm:ml-auto sm:max-w-[168px] sm:shrink-0">
         {control}
       </div>
     </div>
@@ -146,7 +146,7 @@ function ActionButton({
   block?: boolean
 }): ReactElement {
   const dangerClass =
-    'inline-flex items-center justify-center gap-1.5 rounded-xl border border-red-300/80 bg-red-50 px-3 py-2 text-center text-[13px] font-medium leading-none text-red-700 shadow-sm transition hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-55 dark:border-red-800/70 dark:bg-red-950/30 dark:text-red-200 dark:hover:bg-red-950/45'
+    'inline-flex h-8 items-center justify-center gap-1.5 rounded-lg border border-red-300/80 bg-red-50 px-2.5 text-center text-[13px] font-medium leading-none text-red-700 shadow-sm transition hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-55 dark:border-red-800/70 dark:bg-red-950/30 dark:text-red-200 dark:hover:bg-red-950/45'
   const className =
     variant === 'danger'
       ? `${dangerClass}${block ? ' w-full' : ''}`
