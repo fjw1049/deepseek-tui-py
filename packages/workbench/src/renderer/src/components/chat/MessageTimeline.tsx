@@ -40,6 +40,7 @@ import {
   selectPrimaryMarkdownResult
 } from '../../lib/html-preview-detection'
 import { TaskSuggestionHero, TaskSuggestionOfflineHero } from './TaskSuggestionHero'
+import { GridDots } from './GridDots'
 import type { ChatBlock, RuntimeConnectionStatus, ToolBlock } from '../../agent/types'
 import {
   countDiffStats,
@@ -924,10 +925,7 @@ function NeutralIntentLine({
   const anchors = (intent.anchors ?? []).slice(0, 3)
   return (
     <div className="flex items-start gap-1.5 py-0.5">
-      <Bot
-        className="mt-1 h-3.5 w-3.5 shrink-0 text-ds-faint ds-work-logo-pulse"
-        strokeWidth={1.8}
-      />
+      <GridDots className="mt-1 text-ds-faint" />
       <p className="text-[13.5px] leading-6 text-ds-faint">
         {anchors.length > 0
           ? t('processNeutralIntentTargets', { targets: anchors.join(', ') })
@@ -1604,7 +1602,7 @@ function WorkMetaRow({
     >
       {processing ? (
         <span className="mr-0.5 flex h-5 w-5 shrink-0 items-center justify-center">
-          <Bot className="h-4 w-4 text-ds-faint ds-work-logo-pulse" strokeWidth={1.75} />
+          <GridDots size="md" className="text-ds-faint" />
         </span>
       ) : null}
       <span className={`min-w-0 truncate tabular-nums ${processing ? 'ds-shiny-text' : ''}`}>
@@ -2583,10 +2581,7 @@ function MidTurnPrefaceLine({ text }: { text: string }): ReactElement {
 
   return (
     <div className="flex items-start gap-1.5 py-0.5">
-      <Bot
-        className="mt-1 h-3.5 w-3.5 shrink-0 text-ds-faint ds-work-logo-pulse"
-        strokeWidth={1.8}
-      />
+      <GridDots className="mt-1 text-ds-faint" />
       <div className="min-w-0 flex-1">
         <p className="whitespace-pre-wrap text-[13.5px] leading-6 text-ds-muted">{shown}</p>
         {clipped ? (
@@ -2751,7 +2746,7 @@ function ProcessStreamEntry({
   }
   if (block.kind === 'assistant') {
     // The model's 承上启下 storyline line written before a tool batch. Render
-    // it like the reasoning narration line (Bot + muted text) so it reads as
+    // it like the reasoning narration line (GridDots + muted text) so it reads as
     // the throughline the user follows while tools execute. When the frame
     // carries no wording yet (structured intent only), show a neutral
     // progress state derived from metadata instead of fabricating prose.
@@ -2826,7 +2821,7 @@ function ReasoningEntry({
     return (
       <div className="ds-live-thinking py-0.5">
         <div className="flex items-center gap-1.5 text-[12px] font-medium text-ds-faint">
-          <Bot className="h-3.5 w-3.5 ds-work-logo-pulse" strokeWidth={1.8} />
+          <GridDots className="text-ds-faint" />
           <span className="ds-shiny-text">{t('thinkingNow')}</span>
         </div>
         <div className="ds-live-thinking-viewport mt-1.5">
@@ -2843,9 +2838,7 @@ function ReasoningEntry({
   if (narration) {
     return (
       <div className="flex items-start gap-1.5 py-0.5">
-        {isLive || processing ? (
-          <Bot className="mt-1 h-3.5 w-3.5 shrink-0 text-ds-faint ds-work-logo-pulse" strokeWidth={1.8} />
-        ) : null}
+        {isLive || processing ? <GridDots className="mt-1 text-ds-faint" /> : null}
         <p className="text-[13.5px] leading-6 text-ds-faint/85">{narration}</p>
       </div>
     )
@@ -2860,9 +2853,7 @@ function ReasoningEntry({
         onClick={() => setExpanded((v) => !v)}
         className="group flex w-fit items-center gap-1.5 py-0.5 text-left text-[14px] font-medium text-ds-muted transition hover:opacity-85"
       >
-        {isLive || processing ? (
-          <Bot className="h-3.5 w-3.5 text-ds-faint ds-work-logo-pulse" strokeWidth={1.8} />
-        ) : null}
+        {isLive || processing ? <GridDots className="text-ds-faint" /> : null}
         <span className={isLive ? 'ds-shiny-text' : ''}>{t('thinkingLabel')}</span>
         {expanded ? (
           <ChevronDown className="h-3.5 w-3.5 shrink-0 opacity-45" strokeWidth={1.8} />
