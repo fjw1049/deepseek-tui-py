@@ -2677,19 +2677,8 @@ samp {
     0 1px 0 rgba(0, 0, 0, 0.25);
 }
 
-/* Conversation search — macOS Spotlight / system sheet */
+/* Conversation search — Spotlight layout on shared modal chrome (--ds-*). */
 .ds-search-modal-root {
-  --search-label: rgba(0, 0, 0, 0.85);
-  --search-secondary: rgba(60, 60, 67, 0.6);
-  --search-tertiary: rgba(60, 60, 67, 0.36);
-  --search-fill: rgba(120, 120, 128, 0.12);
-  --search-fill-hover: rgba(120, 120, 128, 0.1);
-  --search-sep: rgba(0, 0, 0, 0.08);
-  --search-select: rgba(0, 122, 255, 0.12);
-  --search-select-strong: #007aff;
-  --search-surface: #ffffff;
-  --search-elevated: #f2f2f7;
-
   position: fixed;
   inset: 0;
   z-index: 80;
@@ -2697,56 +2686,35 @@ samp {
   align-items: flex-start;
   justify-content: center;
   padding: min(11vh, 88px) 20px 28px;
-  background: rgba(0, 0, 0, 0.28);
   /* Electron drag regions swallow backdrop clicks without this. */
   -webkit-app-region: no-drag;
-}
-
-[data-theme='dark'] .ds-search-modal-root {
-  --search-label: rgba(255, 255, 255, 0.92);
-  --search-secondary: rgba(235, 235, 245, 0.6);
-  --search-tertiary: rgba(235, 235, 245, 0.35);
-  --search-fill: rgba(120, 120, 128, 0.28);
-  --search-fill-hover: rgba(120, 120, 128, 0.22);
-  --search-sep: rgba(255, 255, 255, 0.1);
-  --search-select: rgba(10, 132, 255, 0.28);
-  --search-select-strong: #0a84ff;
-  --search-surface: #1c1c1e;
-  --search-elevated: #2c2c2e;
-  background: rgba(0, 0, 0, 0.45);
+  /* Dim only — no frosted blur behind the sheet. */
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
 }
 
 .ds-search-modal {
-  width: min(720px, 100%);
-  height: min(72vh, 640px);
+  width: min(640px, 100%);
   max-height: min(72vh, 640px);
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  border-radius: 16px;
-  border: 0.5px solid var(--search-sep);
-  background: var(--search-surface);
-  box-shadow:
-    0 0 0 0.5px rgba(0, 0, 0, 0.04),
-    0 22px 70px rgba(0, 0, 0, 0.22),
-    0 8px 24px rgba(0, 0, 0, 0.08);
-}
-
-[data-theme='dark'] .ds-search-modal {
-  box-shadow:
-    0 0 0 0.5px rgba(255, 255, 255, 0.06),
-    0 28px 80px rgba(0, 0, 0, 0.55);
+  border-radius: 22px;
+  /* Border / fill / shadow come from .ds-modal-surface; keep Spotlight sizing here. */
+  font-family: var(--font-ui);
+  will-change: transform, opacity;
 }
 
 .ds-search-modal__header {
   position: relative;
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
   flex-shrink: 0;
-  padding: 16px 16px 15px 18px;
+  padding: 18px 16px 14px 20px;
 }
 
+/* Feathered edge only — no hard rule that frames a “search bar” box. */
 .ds-search-modal__header::after {
   content: '';
   position: absolute;
@@ -2757,91 +2725,89 @@ samp {
   background: linear-gradient(
     90deg,
     transparent 0%,
-    var(--search-sep) 12%,
-    var(--search-sep) 88%,
+    color-mix(in srgb, var(--ds-border-muted) 70%, transparent) 18%,
+    color-mix(in srgb, var(--ds-border-muted) 70%, transparent) 82%,
     transparent 100%
   );
+  pointer-events: none;
 }
 
 .ds-search-modal__search-icon {
-  width: 18px;
-  height: 18px;
+  width: 17px;
+  height: 17px;
   flex-shrink: 0;
-  color: var(--search-tertiary);
+  color: var(--ds-text-faint);
+  opacity: 0.9;
 }
 
 .ds-search-modal__input {
   min-width: 0;
   flex: 1;
-  border: 0;
-  outline: none;
-  box-shadow: none;
-  background: transparent;
-  color: var(--search-label);
-  font-family: var(--font-ui), -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, sans-serif;
+  margin: 0;
+  padding: 0;
+  border: 0 !important;
+  outline: none !important;
+  box-shadow: none !important;
+  appearance: none;
+  -webkit-appearance: none;
+  background: transparent !important;
+  background-color: transparent !important;
+  color: var(--ds-text);
+  font-family: inherit;
   font-size: 17px;
   font-weight: 400;
   letter-spacing: -0.022em;
-  line-height: 1.3;
-  caret-color: var(--search-select-strong);
+  line-height: 1.35;
+  caret-color: var(--ds-accent);
 }
 
-.ds-search-modal__input:focus,
-.ds-search-modal__input:focus-visible {
-  outline: none;
-  box-shadow: none;
-  border: 0;
+/* Beat .ds-modal-surface form field chrome (border + filled control). */
+.ds-search-modal.ds-modal-surface .ds-search-modal__input,
+.ds-search-modal.ds-modal-surface .ds-search-modal__input:hover,
+.ds-search-modal.ds-modal-surface .ds-search-modal__input:focus,
+.ds-search-modal.ds-modal-surface .ds-search-modal__input:focus-visible {
+  border: 0 !important;
+  outline: none !important;
+  box-shadow: none !important;
+  background: transparent !important;
+  background-color: transparent !important;
 }
 
 .ds-search-modal__input::placeholder {
-  color: var(--search-tertiary);
+  color: var(--ds-text-faint);
   font-weight: 400;
 }
 
-.ds-search-modal__input::-webkit-search-cancel-button {
+.ds-search-modal__input::-webkit-search-decoration,
+.ds-search-modal__input::-webkit-search-cancel-button,
+.ds-search-modal__input::-webkit-search-results-button,
+.ds-search-modal__input::-webkit-search-results-decoration {
   display: none;
-}
-
-.ds-search-modal__badge {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  height: 22px;
-  padding: 0 7px;
-  border-radius: 6px;
-  border: 0.5px solid var(--search-sep);
-  background: var(--search-fill);
-  color: var(--search-secondary);
-  font-family: inherit;
-  font-size: 12px;
-  font-weight: 500;
-  font-variant-numeric: tabular-nums;
-  letter-spacing: 0.01em;
-  line-height: 1;
+  -webkit-appearance: none;
 }
 
 .ds-search-modal__close {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 26px;
-  height: 26px;
+  width: 28px;
+  height: 28px;
   flex-shrink: 0;
   margin-left: 2px;
   border: 0;
   border-radius: 50%;
-  background: var(--search-fill);
-  color: var(--search-secondary);
+  background: var(--ds-surface-subtle);
+  color: var(--ds-text-muted);
   cursor: pointer;
   transition:
     background 120ms cubic-bezier(0.23, 1, 0.32, 1),
+    color 120ms cubic-bezier(0.23, 1, 0.32, 1),
     transform 100ms cubic-bezier(0.23, 1, 0.32, 1);
 }
 
 .ds-search-modal__close:hover {
-  background: rgba(120, 120, 128, 0.22);
-  color: var(--search-label);
+  background: var(--ds-surface-hover);
+  color: var(--ds-text);
 }
 
 .ds-search-modal__close:active {
@@ -2850,22 +2816,24 @@ samp {
 
 .ds-search-modal__body {
   min-height: 0;
-  flex: 1;
+  flex: 1 1 auto;
   overflow: auto;
   padding: 8px 10px 12px;
   scrollbar-width: thin;
-  scrollbar-color: rgba(120, 120, 128, 0.35) transparent;
+  scrollbar-color: var(--ds-scrollbar-thumb) transparent;
 }
 
 .ds-search-modal__body--empty {
   display: flex;
   align-items: center;
   justify-content: center;
+  min-height: 200px;
+  flex: 0 0 auto;
 }
 
 .ds-search-modal__section {
-  padding: 10px 12px 6px;
-  color: var(--search-tertiary);
+  padding: 8px 12px 6px;
+  color: var(--ds-text-faint);
   font-size: 12px;
   font-weight: 600;
   letter-spacing: -0.01em;
@@ -2876,7 +2844,7 @@ samp {
   flex-direction: column;
   align-items: center;
   gap: 6px;
-  padding: 24px 28px;
+  padding: 28px 28px 32px;
   text-align: center;
 }
 
@@ -2884,13 +2852,13 @@ samp {
   width: 28px;
   height: 28px;
   margin-bottom: 4px;
-  color: var(--search-tertiary);
+  color: var(--ds-text-faint);
   opacity: 0.85;
 }
 
 .ds-search-modal__empty-title {
   margin: 0;
-  color: var(--search-secondary);
+  color: var(--ds-text-muted);
   font-size: 15px;
   font-weight: 500;
   letter-spacing: -0.02em;
@@ -2900,7 +2868,7 @@ samp {
 .ds-search-modal__empty-hint {
   margin: 0;
   max-width: 280px;
-  color: var(--search-tertiary);
+  color: var(--ds-text-faint);
   font-size: 13px;
   font-weight: 400;
   letter-spacing: -0.01em;
@@ -2921,7 +2889,7 @@ samp {
   gap: 12px;
   padding: 8px 12px;
   border: 0;
-  border-radius: 10px;
+  border-radius: 12px;
   background: transparent;
   color: inherit;
   text-align: left;
@@ -2930,17 +2898,17 @@ samp {
 }
 
 .ds-search-modal__row:hover {
-  background: var(--search-fill-hover);
+  background: var(--ds-surface-hover);
 }
 
 .ds-search-modal__row--active,
 .ds-search-modal__row--active:hover {
-  background: var(--search-select);
+  background: var(--ds-accent-soft);
 }
 
 .ds-search-modal__row--active .ds-search-modal__row-icon-wrap {
-  background: color-mix(in srgb, var(--search-select-strong) 16%, transparent);
-  color: var(--search-select-strong);
+  background: color-mix(in srgb, var(--ds-accent) 16%, transparent);
+  color: var(--ds-accent);
 }
 
 .ds-search-modal__row-icon-wrap {
@@ -2950,9 +2918,9 @@ samp {
   width: 32px;
   height: 32px;
   flex-shrink: 0;
-  border-radius: 8px;
-  background: var(--search-elevated);
-  color: var(--search-secondary);
+  border-radius: 9px;
+  background: var(--ds-surface-subtle);
+  color: var(--ds-text-muted);
 }
 
 .ds-search-modal__row-icon-wrap svg {
@@ -2971,7 +2939,7 @@ samp {
 .ds-search-modal__row-title {
   min-width: 0;
   overflow: hidden;
-  color: var(--search-label);
+  color: var(--ds-text);
   font-size: 15px;
   font-weight: 500;
   letter-spacing: -0.022em;
@@ -2985,7 +2953,7 @@ samp {
   flex-wrap: wrap;
   align-items: center;
   gap: 12px;
-  color: var(--search-tertiary);
+  color: var(--ds-text-faint);
   font-size: 12px;
   font-weight: 400;
   letter-spacing: -0.01em;
@@ -3011,12 +2979,12 @@ samp {
   height: 15px;
   flex-shrink: 0;
   margin-right: 2px;
-  color: var(--search-tertiary);
+  color: var(--ds-text-faint);
 }
 
 .ds-search-modal__row--active .ds-search-modal__enter {
-  color: var(--search-select-strong);
-  opacity: 0.85;
+  color: var(--ds-accent);
+  opacity: 0.9;
 }
 
 .ds-markdown {

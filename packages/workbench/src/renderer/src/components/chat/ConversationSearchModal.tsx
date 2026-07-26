@@ -10,7 +10,7 @@ import {
 import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
 import { Clock, CornerDownLeft, Folder, MessageSquare, Search, X } from 'lucide-react'
-import { formatShortcutLabel } from '@shared/shortcuts'
+import { formatShortcutLabel, shortcutChordTokens } from '@shared/shortcuts'
 import type { NormalizedThread } from '../../agent/types'
 import {
   pushConversationSearchHistory,
@@ -129,18 +129,20 @@ export function ConversationSearchModal({
 
   if (!open) return null
 
-  const shortcutLabel = formatShortcutLabel({ key: 'k' })
+  const shortcutChord = { key: 'k' } as const
+  const shortcutLabel = formatShortcutLabel(shortcutChord)
+  const shortcutTokens = shortcutChordTokens(shortcutChord)
 
   return createPortal(
     <div
-      className="ds-search-modal-root ds-no-drag"
+      className="ds-modal-backdrop ds-endpoint-sheet-backdrop ds-search-modal-root ds-no-drag"
       role="presentation"
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) onClose()
       }}
     >
       <div
-        className="ds-search-modal"
+        className="ds-modal-surface ds-endpoint-sheet ds-search-modal"
         role="dialog"
         aria-modal="true"
         aria-label={t('conversationSearchTitle')}
@@ -149,7 +151,10 @@ export function ConversationSearchModal({
           <Search className="ds-search-modal__search-icon" strokeWidth={1.75} aria-hidden />
           <input
             ref={inputRef}
-            type="search"
+            type="text"
+            inputMode="search"
+            enterKeyHint="search"
+            role="searchbox"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             onKeyDown={onInputKeyDown}
@@ -159,9 +164,16 @@ export function ConversationSearchModal({
             autoComplete="off"
             spellCheck={false}
           />
-          <kbd className="ds-search-modal__badge" aria-label={shortcutLabel}>
-            {shortcutLabel}
-          </kbd>
+          <div className="ds-shortcut-keys shrink-0" aria-label={shortcutLabel}>
+            {shortcutTokens.map((token, index) => (
+              <kbd
+                key={`${token}-${index}`}
+                className={`ds-keycap${token.length > 1 ? ' ds-keycap--wide' : ''}`}
+              >
+                {token}
+              </kbd>
+            ))}
+          </div>
           <button
             type="button"
             className="ds-search-modal__close"
