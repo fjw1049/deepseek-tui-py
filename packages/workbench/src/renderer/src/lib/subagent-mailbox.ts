@@ -21,6 +21,8 @@ export type MailboxMessageJson = {
   error?: string | null
   input_summary?: string | null
   output_summary?: string | null
+  /** Spawn assignment preview for dock / list titles. */
+  prompt?: string | null
 }
 
 export type SubagentStepKind =
@@ -48,6 +50,8 @@ export type DelegateCardState = {
   agentId: string
   agentType: string
   status: SubagentLifecycle
+  /** Spawn assignment preview (from mailbox ``started.prompt``). */
+  prompt?: string
   summary?: string
   /** Short preview lines for compact surfaces (last N step labels). */
   actions: string[]
@@ -66,6 +70,8 @@ export type FanoutCardState = {
   cardKind: 'fanout'
   agentId: string
   dispatchKind: string
+  /** Spawn assignment preview for the fanout parent (when present). */
+  prompt?: string
   workers: FanoutWorkerState[]
   /** Per-worker step history (fanout workers are not separate blocks). */
   workerSteps: Record<string, SubagentStepState[]>
@@ -87,12 +93,18 @@ export function isFanoutAgentType(agentType: string | null | undefined): boolean
   return FANOUT_AGENT_TYPES.has(normalized) || normalized.includes('fanout')
 }
 
-export function createDelegateCard(agentId: string, agentType: string): DelegateCardState {
+export function createDelegateCard(
+  agentId: string,
+  agentType: string,
+  prompt?: string | null
+): DelegateCardState {
+  const clipped = typeof prompt === 'string' ? prompt.trim() : ''
   return {
     cardKind: 'delegate',
     agentId,
     agentType,
     status: 'pending',
+    ...(clipped ? { prompt: clipped } : {}),
     actions: [],
     truncated: false,
     steps: [],
@@ -101,11 +113,17 @@ export function createDelegateCard(agentId: string, agentType: string): Delegate
   }
 }
 
-export function createFanoutCard(agentId: string, dispatchKind: string): FanoutCardState {
+export function createFanoutCard(
+  agentId: string,
+  dispatchKind: string,
+  prompt?: string | null
+): FanoutCardState {
+  const clipped = typeof prompt === 'string' ? prompt.trim() : ''
   return {
     cardKind: 'fanout',
     agentId,
     dispatchKind,
+    ...(clipped ? { prompt: clipped } : {}),
     workers: [],
     workerSteps: {},
     parentId: null,
@@ -297,10 +315,14 @@ export function applyMailboxToDelegate(
   let steps = [...card.steps]
   let status = card.status
   let summary = card.summary
+  let prompt = card.prompt
 
   switch (msg.kind) {
     case 'started':
       status = 'running'
+      if (typeof msg.prompt === 'string' && msg.prompt.trim()) {
+        prompt = msg.prompt.trim()
+      }
       steps = appendLifecycleStep(steps, 'started', '● running', undefined, msg.seq)
       break
     case 'progress':
@@ -348,6 +370,7 @@ export function applyMailboxToDelegate(
     ...card,
     status,
     summary,
+    prompt,
     steps,
     actions: preview.actions,
     truncated: preview.truncated
@@ -393,6 +416,13 @@ export function applyMailboxToFanout(
     case 'started':
       next.workers = upsertWorker(next.workers, agentId, 'running')
       next.childIds = pushUniqueChild(next.childIds, agentId)
+      if (
+        agentId === card.agentId &&
+        typeof msg.prompt === 'string' &&
+        msg.prompt.trim()
+      ) {
+        next.prompt = msg.prompt.trim()
+      }
       next.workerSteps = applyStepsToWorker(next.workerSteps, agentId, (steps) =>
         appendLifecycleStep(steps, 'started', '● running', undefined, msg.seq)
       )
@@ -519,7 +549,7 @@ export function applyMailboxMessage(
     }
     const existing = nextCards[agentId]
     if (!existing) {
-      const child = createDelegateCard(agentId, msg.agent_type ?? 'general')
+      const child = createDelegateCard(agentId, msg.agent_type ?? 'general', msg.prompt)
       child.parentId = msg.parent_id
       child.status = 'pending'
       nextCards = { ...nextCards, [agentId]: child }
@@ -549,11 +579,14 @@ export function applyMailboxMessage(
   }
   if (!card && CARD_BOOTSTRAP_KINDS.has(msg.kind)) {
     if (isFanoutAgentType(msg.agent_type)) {
-      card = createFanoutCard(agentId, msg.agent_type ?? 'fanout')
+      card = createFanoutCard(agentId, msg.agent_type ?? 'fanout', msg.prompt)
     } else {
       // Bootstrapped mid-stream cards start as running; a terminal first message
       // (completed/failed/cancelled) is corrected by applyMailboxToDelegate below.
-      card = { ...createDelegateCard(agentId, msg.agent_type ?? 'general'), status: 'running' }
+      card = {
+        ...createDelegateCard(agentId, msg.agent_type ?? 'general', msg.prompt),
+        status: 'running'
+      }
     }
   }
   if (!card) return nextCards
@@ -648,6 +681,7 @@ export function subagentCardsFromBlocks(blocks: ChatBlock[]): Record<string, Sub
         agentId: block.agentId,
         agentType: block.agentType,
         status: block.status,
+        prompt: block.prompt,
         summary: block.summary,
         actions: block.actions ?? [],
         truncated: block.truncated ?? false,
@@ -664,6 +698,7 @@ export function subagentCardsFromBlocks(blocks: ChatBlock[]): Record<string, Sub
         cardKind: 'fanout',
         agentId: block.agentId,
         dispatchKind: block.agentType,
+        prompt: block.prompt,
         workers: block.workers ?? [],
         workerSteps,
         parentId: block.parentId ?? null,
@@ -685,6 +720,7 @@ export function subagentBlockFromCard(card: SubagentCardState, createdAt?: strin
       agentId: card.agentId,
       agentType: card.agentType,
       status,
+      prompt: card.prompt,
       summary: card.summary,
       actions: card.actions,
       truncated: card.truncated,
@@ -706,6 +742,7 @@ export function subagentBlockFromCard(card: SubagentCardState, createdAt?: strin
     agentId: card.agentId,
     agentType: card.dispatchKind,
     status,
+    prompt: card.prompt,
     workers: card.workers,
     workerSteps: Object.keys(workerSteps).length > 0 ? workerSteps : undefined,
     parentId: card.parentId ?? null,

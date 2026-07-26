@@ -25,6 +25,22 @@ class MailboxMessageKind(str, Enum):
     TOKEN_USAGE = "token_usage"
 
 
+# Bound spawn prompt on ``started`` so SSE stays light while dock/list UIs
+# can still show a distinctive one-line title per sub-agent.
+_MAILBOX_PROMPT_CHARS = 500
+
+
+def _clip_mailbox_prompt(prompt: str | None) -> str | None:
+    if prompt is None:
+        return None
+    text = " ".join(prompt.split()).strip()
+    if not text:
+        return None
+    if len(text) <= _MAILBOX_PROMPT_CHARS:
+        return text
+    return text[: _MAILBOX_PROMPT_CHARS - 1].rstrip() + "…"
+
+
 @dataclass(slots=True, frozen=True)
 class MailboxMessage:
     """Structured progress envelope.
@@ -51,13 +67,18 @@ class MailboxMessage:
     # Truncated tool I/O for Workbench step-flow expand (not full payloads).
     input_summary: str | None = None
     output_summary: str | None = None
+    # Spawn assignment preview for Workbench dock / list titles.
+    prompt: str | None = None
 
     @staticmethod
-    def started(agent_id: str, agent_type: str) -> MailboxMessage:
+    def started(
+        agent_id: str, agent_type: str, prompt: str | None = None
+    ) -> MailboxMessage:
         return MailboxMessage(
             kind=MailboxMessageKind.STARTED,
             agent_id=agent_id,
             agent_type=agent_type,
+            prompt=_clip_mailbox_prompt(prompt),
         )
 
     @staticmethod

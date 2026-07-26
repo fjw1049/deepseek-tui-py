@@ -16,6 +16,7 @@ import {
   subagentCardsFromBlocks,
   type MailboxMessageJson
 } from '../lib/subagent-mailbox'
+import { applySpawnPromptsToSubagentBlocks } from '../lib/extract-subagents-from-blocks'
 import { workflowSnapshotFromToolMeta } from '../lib/workflow-snapshot'
 import { sanitizeReasoningPlaceholders } from '../lib/reasoning-text'
 import { getProvider } from '../agent/registry'
@@ -743,7 +744,7 @@ function buildThreadEventSink(
           nextBlocks[idx] = next
           return {
             ...base,
-            blocks: nextBlocks,
+            blocks: applySpawnPromptsToSubagentBlocks(nextBlocks),
             error: s.error === i18n.t('common:runtimeStreamRecovering') ? null : s.error
           }
         }
@@ -764,7 +765,7 @@ function buildThreadEventSink(
           filePath: ev.filePath,
           meta: ev.meta
         }
-        let nextBlocks = [...baseBlocks, block]
+        let nextBlocks = applySpawnPromptsToSubagentBlocks([...baseBlocks, block])
         if (snap) {
           nextBlocks = upsertWorkflowBlock(nextBlocks, {
             toolCallId: ev.itemId,
@@ -1011,15 +1012,24 @@ function buildThreadEventSink(
           const existing = blocks.find(
             (b) => b.kind === 'subagent' && b.agentId === card.agentId
           )
+          // Keep a previously backfilled spawn prompt if this mailbox event
+          // did not carry one (e.g. tool_call / progress envelopes).
           const nextBlock = subagentBlockFromCard(card, existing?.createdAt)
+          const merged =
+            !nextBlock.prompt && existing && existing.kind === 'subagent' && existing.prompt
+              ? { ...nextBlock, prompt: existing.prompt }
+              : nextBlock
           const idx = blocks.findIndex((b) => b.id === blockId)
           if (blocks === s.blocks) blocks = [...blocks]
           if (idx >= 0) {
-            blocks[idx] = nextBlock
+            blocks[idx] = merged
           } else {
-            blocks.push(nextBlock)
+            blocks.push(merged)
           }
         }
+        // Spawn tool rows often hold the assignment text before/without
+        // mailbox ``started.prompt`` — backfill so dock + summary match.
+        blocks = applySpawnPromptsToSubagentBlocks(blocks)
         return { blocks }
       })
     },

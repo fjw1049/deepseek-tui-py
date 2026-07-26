@@ -243,7 +243,9 @@ class SubAgentManager:
                     MailboxMessage.child_spawned(parent_id, agent.id)
                 )
             self._mailbox.send(
-                MailboxMessage.started(agent.id, request.agent_type.value)
+                MailboxMessage.started(
+                    agent.id, request.agent_type.value, prompt=request.prompt
+                )
             )
         agent.task = asyncio.create_task(self._drive_agent(agent))
         return snapshot
@@ -306,7 +308,9 @@ class SubAgentManager:
 
         if self._mailbox is not None:
             self._mailbox.send(
-                MailboxMessage.started(agent_id, agent.agent_type.value)
+                MailboxMessage.started(
+                    agent_id, agent.agent_type.value, prompt=agent.prompt
+                )
             )
         agent.task = asyncio.create_task(self._drive_agent(agent))
         return snapshot

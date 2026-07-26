@@ -66,6 +66,7 @@ import { UserInputBubble } from './UserInputBubble'
 import { WorkflowBlock } from './WorkflowBlock'
 import { StepFlow, lifecycleToStepStatus, type StepFlowItem } from './StepFlow'
 import { humanizeAgentType } from '../../lib/agent-type-label'
+import { subagentListTitle } from '../../lib/extract-subagents-from-blocks'
 import { subagentStepsToFlowItems } from '../../lib/subagent-mailbox'
 import {
   buildProbeBatchMeta,
@@ -2090,6 +2091,24 @@ function collectSubagentStepsByAgentId(blocks: ChatBlock[]): Record<string, Step
   return out
 }
 
+function subagentCardTitle(
+  block: Pick<SubagentBlock, 'cardKind' | 'agentId' | 'agentType' | 'prompt'>,
+  t: (key: string, opts?: Record<string, unknown>) => string
+): string {
+  const promptTitle = subagentListTitle(
+    { agentId: block.agentId, agentType: block.agentType, prompt: block.prompt },
+    72,
+    ''
+  )
+  // Prefer the spawn assignment when we have one; type-only labels are the
+  // fallback for cards that never received prompt (legacy / incomplete events).
+  if (block.prompt?.trim()) return promptTitle
+  if (block.cardKind === 'fanout') {
+    return t('subagentFanoutTitle', { kind: humanizeAgentType(block.agentType) })
+  }
+  return t('subagentDelegateTitle', { type: humanizeAgentType(block.agentType) })
+}
+
 function SubagentSummaryRow({
   block,
   scrollTargetId,
@@ -2106,6 +2125,7 @@ function SubagentSummaryRow({
   const flowItems = useMemo(() => flowItemsForSubagentBlock(block), [block])
   // Collapsed by default so many agents don't flood the timeline.
   const [stepsOpen, setStepsOpen] = useState(false)
+  const title = subagentCardTitle(block, t)
 
   return (
     <div
@@ -2118,6 +2138,7 @@ function SubagentSummaryRow({
           onClick={() => setStepsOpen((v) => !v)}
           className="flex min-w-0 flex-1 items-center gap-2 text-left"
           aria-expanded={stepsOpen}
+          title={block.prompt?.trim() || undefined}
         >
           <ChevronDown
             className={[
@@ -2126,14 +2147,8 @@ function SubagentSummaryRow({
             ].join(' ')}
             strokeWidth={1.8}
           />
-          <span className="font-semibold tracking-[-0.01em] text-ds-ink">
-            {block.cardKind === 'fanout'
-              ? t('subagentFanoutTitle', {
-                  kind: humanizeAgentType(block.agentType)
-                })
-              : t('subagentDelegateTitle', {
-                  type: humanizeAgentType(block.agentType)
-                })}
+          <span className="min-w-0 truncate font-semibold tracking-[-0.01em] text-ds-ink">
+            {title}
           </span>
           {isActive ? (
             <Loader2 className="h-3 w-3 animate-spin text-ds-muted" strokeWidth={2} />
@@ -3294,10 +3309,7 @@ function SubagentBubble({
   block: Extract<ChatBlock, { kind: 'subagent' }>
 }): ReactElement {
   const { t } = useTranslation('common')
-  const title =
-    block.cardKind === 'fanout'
-      ? t('subagentFanoutTitle', { kind: humanizeAgentType(block.agentType) })
-      : t('subagentDelegateTitle', { type: humanizeAgentType(block.agentType) })
+  const title = subagentCardTitle(block, t)
   const statusLabel = subagentStatusLabel(block.status, t)
 
   return (

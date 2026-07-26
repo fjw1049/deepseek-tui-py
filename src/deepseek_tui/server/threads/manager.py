@@ -143,6 +143,7 @@ def _mailbox_message_payload(msg: MailboxMessage) -> dict[str, Any]:
         "usage": msg.usage,
         "input_summary": msg.input_summary,
         "output_summary": msg.output_summary,
+        "prompt": msg.prompt,
     }
 
 
@@ -2961,9 +2962,19 @@ class RuntimeThreadManager:
                         item.metadata = {"tool_name": event.tool_name}
                     elif "tool_name" not in item.metadata:
                         item.metadata = {**item.metadata, "tool_name": event.tool_name}
-                    # Merge tool mutation metadata onto the item for clients.
+                    # Merge tool mutation / sub-agent identity onto the item for
+                    # clients. ``agent_id`` lets the Workbench join spawn tool
+                    # rows to mailbox cards and show the assignment prompt.
                     if isinstance(event.metadata, dict):
-                        for key in ("mutation", "mutations", "path", "occurrences"):
+                        for key in (
+                            "mutation",
+                            "mutations",
+                            "path",
+                            "occurrences",
+                            "agent_id",
+                            "agent_type",
+                            "nickname",
+                        ):
                             if key in event.metadata:
                                 item.metadata = {
                                     **item.metadata,

@@ -20,10 +20,14 @@ describe('subagent-mailbox', () => {
     const started: MailboxMessageJson = {
       kind: 'started',
       agent_id: 'agent_1',
-      agent_type: 'general'
+      agent_type: 'general',
+      prompt: 'Inspect the payment flow'
     }
     let cards = applyMailboxMessage({}, started)
     expect(cards.agent_1?.cardKind).toBe('delegate')
+    if (cards.agent_1?.cardKind === 'delegate') {
+      expect(cards.agent_1.prompt).toBe('Inspect the payment flow')
+    }
 
     const progress: MailboxMessageJson = {
       kind: 'progress',
@@ -36,7 +40,18 @@ describe('subagent-mailbox', () => {
     if (card?.cardKind === 'delegate') {
       expect(card.actions).toContain('planning')
       expect(card.status).toBe('running')
+      expect(card.prompt).toBe('Inspect the payment flow')
       expect(card.steps.some((s) => s.label === 'planning')).toBe(true)
+      const block = subagentBlockFromCard(card)
+      expect(block).toMatchObject({
+        kind: 'subagent',
+        prompt: 'Inspect the payment flow'
+      })
+      const restored = subagentCardsFromBlocks([block]).agent_1
+      expect(restored).toMatchObject({
+        cardKind: 'delegate',
+        prompt: 'Inspect the payment flow'
+      })
     }
   })
 

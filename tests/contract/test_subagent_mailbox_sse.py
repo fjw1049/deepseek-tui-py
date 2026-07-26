@@ -45,7 +45,9 @@ async def test_monitor_turn_emits_subagent_mailbox(runtime_app: object) -> None:
     async with manager._active_lock:
         manager._active[thread.id] = _ActiveThreadState(handle, stub_engine, engine_task)
 
-    msg = MailboxMessage.started("agent_sub_1", "general")
+    msg = MailboxMessage.started(
+        "agent_sub_1", "general", prompt="Read WORKSPACE_MARKER.txt"
+    )
 
     async def pump() -> None:
         await handle.emit(SubAgentMailboxEvent(seq=1, message=msg))
@@ -73,6 +75,9 @@ async def test_monitor_turn_emits_subagent_mailbox(runtime_app: object) -> None:
     assert len(mailbox_events) == 2
     assert mailbox_events[0].payload["message"]["kind"] == "started"
     assert mailbox_events[0].payload["message"]["agent_id"] == "agent_sub_1"
+    assert (
+        mailbox_events[0].payload["message"]["prompt"] == "Read WORKSPACE_MARKER.txt"
+    )
     assert mailbox_events[1].payload["message"]["status"] == "reading files"
 
 

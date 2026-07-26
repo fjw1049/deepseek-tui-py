@@ -30,6 +30,7 @@ import {
   type MailboxMessageJson,
   type SubagentCardState
 } from '../lib/subagent-mailbox'
+import { applySpawnPromptsToSubagentBlocks } from '../lib/extract-subagents-from-blocks'
 import {
   parseWorkflowProgressPayload,
   parseWorkflowSnapshot,
@@ -681,7 +682,8 @@ function readSubagentMailboxFromItem(it: TurnItemJson): MailboxMessageJson | nul
       summary: typeof msg.summary === 'string' ? msg.summary : null,
       error: typeof msg.error === 'string' ? msg.error : null,
       input_summary: typeof msg.input_summary === 'string' ? msg.input_summary : null,
-      output_summary: typeof msg.output_summary === 'string' ? msg.output_summary : null
+      output_summary: typeof msg.output_summary === 'string' ? msg.output_summary : null,
+      prompt: typeof msg.prompt === 'string' ? msg.prompt : null
     }
   } catch {
     return null
@@ -1100,6 +1102,8 @@ export class DeepseekRuntimeProvider implements AgentProvider {
         blocks.push({ kind: 'system', id: it.id, createdAt: itemCreatedAt(it), text })
       }
     }
+    // History may lack mailbox ``started.prompt``; spawn tool rows still carry it.
+    blocks = applySpawnPromptsToSubagentBlocks(blocks)
     return {
       blocks,
       latestSeq: detail.latest_seq ?? 0,

@@ -20,7 +20,6 @@ import { useDockSubagents, type DockSubagentView } from '../../hooks/use-dock-su
 import { fetchTaskDetail, useLiveTasks } from '../../hooks/use-thread-tasks'
 import { useGitWorkingChanges } from '../../hooks/use-git-working-changes'
 import { useWorkspaceDirtyGitRefresh } from '../../hooks/use-workspace-dirty-git-refresh'
-import { humanizeAgentType } from '../../lib/agent-type-label'
 import { sumDiffStats } from '../../lib/diff-stats'
 import {
   extractTasksFromBlocks,
@@ -28,7 +27,10 @@ import {
   taskListTitle,
   type TaskItemView
 } from '../../lib/extract-tasks-from-blocks'
-import { isActiveSubagentStatus } from '../../lib/extract-subagents-from-blocks'
+import {
+  isActiveSubagentStatus,
+  subagentListTitle
+} from '../../lib/extract-subagents-from-blocks'
 import { timelineToFlowItems } from '../../lib/task-step-flow'
 import { TaskRunDialog } from './TaskRunDialog'
 import { StepFlow } from './StepFlow'
@@ -147,7 +149,8 @@ function SubagentDockRow({ item }: { item: DockSubagentView }): ReactElement {
   const { t } = useTranslation('common')
   const scrollToBlock = useChatStore((s) => s.scrollToBlock)
   const active = isActiveSubagentStatus(item.status)
-  const label = humanizeAgentType(item.agentType) || t('contextRailSubagentFallback')
+  const label = subagentListTitle(item, 56, t('contextRailSubagentFallback'))
+  const fullPrompt = (item.prompt || '').replace(/\s+/g, ' ').trim()
 
   return (
     <li
@@ -159,7 +162,7 @@ function SubagentDockRow({ item }: { item: DockSubagentView }): ReactElement {
       <button
         type="button"
         onClick={() => scrollToBlock(item.id)}
-        title={t('contextRailSubagentJump')}
+        title={fullPrompt || t('contextRailSubagentJump')}
         className="flex w-full items-center gap-2 rounded-[9px] px-1.5 py-1 text-left transition-colors hover:bg-ds-hover/60"
       >
         <span

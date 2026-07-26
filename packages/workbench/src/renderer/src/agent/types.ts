@@ -155,6 +155,8 @@ export type ChatBlock =
       agentId: string
       agentType: string
       status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled'
+      /** Spawn assignment preview for dock / list titles. */
+      prompt?: string
       summary?: string
       actions?: string[]
       truncated?: boolean
@@ -275,6 +277,8 @@ export type SubagentMailboxPayload = {
     error?: string | null
     input_summary?: string | null
     output_summary?: string | null
+    /** Spawn assignment preview for dock / list titles. */
+    prompt?: string | null
   }
 }
 
