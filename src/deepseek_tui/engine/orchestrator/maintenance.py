@@ -200,8 +200,16 @@ class SessionMaintenanceMixin:
 
         Writes session_messages to a JSON file so sessions survive restarts.
         Silent on failure.
+
+        Workbench / HTTP runtime threads already persist under
+        ``~/.deepseek/threads/`` — skip the TUI ``sessions/current.json``
+        dual-write for those engines to avoid doubling disk use.
         """
         try:
+            meta = getattr(getattr(self, "tool_context", None), "metadata", None)
+            if isinstance(meta, dict) and meta.get("runtime_thread_id"):
+                return
+
             from deepseek_tui.config.paths import user_sessions_dir
 
             sessions_dir = user_sessions_dir()
