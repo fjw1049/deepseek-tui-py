@@ -1,12 +1,16 @@
 import type { MouseEvent as ReactMouseEvent, ReactElement } from 'react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
 import {
   Archive,
+  ArrowUpDown,
   Check,
   CheckSquare,
   ChevronDown,
   ChevronRight,
+  ChevronsDownUp,
+  ChevronsUpDown,
   Clock,
   Folder,
   FolderClosed,
@@ -30,6 +34,13 @@ import { extractTasksFromBlocks } from '../../lib/extract-tasks-from-blocks'
 import { useChatStore } from '../../store/chat-store'
 import { formatRelativeTimeLargestUnit } from '../../lib/format-relative-time'
 import { workspaceLabelFromPath } from '../../lib/workspace-label'
+import {
+  loadProjectSortMode,
+  persistProjectSortMode,
+  PROJECT_SORT_MODES,
+  sortProjectGroups,
+  type ProjectSortMode
+} from '../../lib/sidebar-project-sort'
 import { parseUserFocusPrefix } from '../../lib/user-focus-prefix'
 import {
   copyableRelativePath,
@@ -63,6 +74,16 @@ type SidebarProjectsSectionProps = {
   selectionMode?: boolean
   selectedIds?: Set<string>
   onToggleSelect?: (threadId: string) => void
+  /** Workspace folder collapse map — lifted so the toolbar can expand/collapse all. */
+  collapsedWorkspaces: Record<string, boolean>
+  onCollapsedWorkspacesChange: (
+    update: Record<string, boolean> | ((current: Record<string, boolean>) => Record<string, boolean>)
+  ) => void
+  expandedWorkspaces: Record<string, boolean>
+  onExpandedWorkspacesChange: (
+    update: Record<string, boolean> | ((current: Record<string, boolean>) => Record<string, boolean>)
+  ) => void
+  projectSortMode: ProjectSortMode
   onTogglePin: (threadId: string) => void
   onPickWorkspace: () => void
   onRemoveWorkspace: (workspacePath: string) => Promise<void>
@@ -77,7 +98,15 @@ type SidebarProjectsSectionProps = {
 
 type SidebarProjectsColumnProps = Omit<
   SidebarProjectsSectionProps,
-  'selectionMode' | 'selectedIds' | 'onToggleSelect' | 'locale'
+  | 'selectionMode'
+  | 'selectedIds'
+  | 'onToggleSelect'
+  | 'locale'
+  | 'collapsedWorkspaces'
+  | 'onCollapsedWorkspacesChange'
+  | 'expandedWorkspaces'
+  | 'onExpandedWorkspacesChange'
+  | 'projectSortMode'
 > & {
   locale: string
   /** Rendered above the projects header (pinned threads). */
@@ -91,15 +120,18 @@ function workspaceHasActiveThread(list: NormalizedThread[], activeThreadId: stri
   return list.some((thread) => thread.id === activeThreadId)
 }
 
-function latestWorkspaceActivity(list: NormalizedThread[]): number {
-  if (list.length === 0) return 0
-  return Math.max(...list.map((thread) => Date.parse(thread.updatedAt)))
+const PROJECT_SORT_LABEL_KEYS: Record<ProjectSortMode, string> = {
+  recent: 'sidebarProjectsSortRecent',
+  name_asc: 'sidebarProjectsSortNameAsc',
+  thread_count: 'sidebarProjectsSortThreadCount',
+  created: 'sidebarProjectsSortCreated'
 }
 
 type ProjectsToolbarProps = {
   workspaceRoot: string
   onPickWorkspace: () => void
   projectThreadCount: number
+  workspaceCount: number
   selectMode: boolean
   selectedCount: number
   allSelected: boolean
@@ -108,7 +140,11 @@ type ProjectsToolbarProps = {
   onDeleteSelected: () => void
   onExitSelectMode: () => void
   onEnterSelectMode: () => void
+  onExpandAll: () => void
+  onCollapseAll: () => void
   onClearAll: () => void
+  projectSortMode: ProjectSortMode
+  onProjectSortModeChange: (mode: ProjectSortMode) => void
   t: (k: string, opts?: Record<string, unknown>) => string
 }
 
@@ -117,6 +153,7 @@ function SidebarProjectsToolbar({
   workspaceRoot,
   onPickWorkspace,
   projectThreadCount,
+  workspaceCount,
   selectMode,
   selectedCount,
   allSelected,
@@ -125,20 +162,57 @@ function SidebarProjectsToolbar({
   onDeleteSelected,
   onExitSelectMode,
   onEnterSelectMode,
+  onExpandAll,
+  onCollapseAll,
   onClearAll,
+  projectSortMode,
+  onProjectSortModeChange,
   t
 }: ProjectsToolbarProps): ReactElement {
   const collapsed = useChatStore((s) => s.projectsCollapsed)
   const setCollapsed = useChatStore((s) => s.setProjectsCollapsed)
   const sectionCollapsed = selectMode ? false : collapsed
   const [menuOpen, setMenuOpen] = useState(false)
+  /**
+   * Overflow menus portal to document.body: `.ds-sidebar-shell { overflow: hidden }`
+   * would clip a rightward flyout. Anchored under the ⋯ icon, opening down-right.
+   */
+  const [menuPos, setMenuPos] = useState<{ top: number; left: number } | null>(null)
+  const [sortSubmenuOpen, setSortSubmenuOpen] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
+  const menuButtonRef = useRef<HTMLButtonElement>(null)
+  const menuPanelRef = useRef<HTMLDivElement>(null)
+
+  const closeMenu = (): void => {
+    setMenuOpen(false)
+    setMenuPos(null)
+    setSortSubmenuOpen(false)
+  }
+
+  useLayoutEffect(() => {
+    if (!menuOpen || !menuButtonRef.current) {
+      setMenuPos(null)
+      return
+    }
+    const scale =
+      parseFloat(
+        getComputedStyle(document.documentElement).getPropertyValue('--ds-ui-scale')
+      ) || 1
+    const rect = menuButtonRef.current.getBoundingClientRect()
+    setMenuPos({
+      top: rect.bottom / scale + 4,
+      left: rect.left / scale
+    })
+  }, [menuOpen])
 
   useLightDismiss({
     open: menuOpen,
-    onDismiss: () => setMenuOpen(false),
-    refs: [menuRef]
+    onDismiss: closeMenu,
+    refs: [menuRef, menuPanelRef]
   })
+
+  const menuItemClass =
+    'flex w-full items-center gap-2.5 rounded-md px-2.5 py-1.5 text-left text-[13px] text-ds-ink transition-colors duration-150 hover:bg-ds-hover disabled:opacity-40'
 
   return (
     <div className="ds-sidebar-projects-toolbar ds-sidebar-projects-toolbar--fixed ds-no-drag shrink-0">
@@ -209,8 +283,14 @@ function SidebarProjectsToolbar({
           </button>
           <div className="relative shrink-0" ref={menuRef}>
             <button
+              ref={menuButtonRef}
               type="button"
-              onClick={() => setMenuOpen((open) => !open)}
+              onClick={() => {
+                setMenuOpen((open) => {
+                  if (open) setSortSubmenuOpen(false)
+                  return !open
+                })
+              }}
               title={t('sidebarProjectsMenu')}
               aria-label={t('sidebarProjectsMenu')}
               aria-expanded={menuOpen}
@@ -218,34 +298,136 @@ function SidebarProjectsToolbar({
             >
               <MoreHorizontal className="h-3.5 w-3.5" strokeWidth={1.85} />
             </button>
-            {menuOpen ? (
-              <div className="ds-glass absolute right-0 top-full z-50 mt-1 w-40 overflow-hidden rounded-lg py-1">
-                <button
-                  type="button"
-                  disabled={projectThreadCount === 0}
-                  onClick={() => {
-                    setMenuOpen(false)
-                    onEnterSelectMode()
-                  }}
-                  className="flex w-full items-center gap-2 px-3 py-2 text-left text-[12px] text-ds-ink hover:bg-ds-hover disabled:opacity-40"
-                >
-                  <CheckSquare className="h-3.5 w-3.5 shrink-0" strokeWidth={1.85} />
-                  {t('sidebarChatsBatchSelect')}
-                </button>
-                <button
-                  type="button"
-                  disabled={projectThreadCount === 0 || batchBusy}
-                  onClick={() => {
-                    setMenuOpen(false)
-                    onClearAll()
-                  }}
-                  className="flex w-full items-center gap-2 px-3 py-2 text-left text-[12px] text-red-600 hover:bg-red-50 disabled:opacity-40 dark:text-red-400 dark:hover:bg-red-950/20"
-                >
-                  <Trash2 className="h-3.5 w-3.5 shrink-0" strokeWidth={1.85} />
-                  {t('sidebarChatsClearAll')}
-                </button>
-              </div>
-            ) : null}
+            {menuOpen && menuPos
+              ? createPortal(
+                  <div
+                    ref={menuPanelRef}
+                    className="ds-no-drag fixed z-[130] w-48 overflow-visible rounded-xl border border-ds-border bg-ds-elevated p-1 shadow-[0_24px_70px_rgba(44,55,78,0.18)] backdrop-blur-xl dark:shadow-[0_30px_80px_rgba(0,0,0,0.42)]"
+                    role="menu"
+                    style={{ top: menuPos.top, left: menuPos.left }}
+                    onMouseDown={(event) => event.stopPropagation()}
+                  >
+                    <button
+                      type="button"
+                      disabled={workspaceCount === 0}
+                      onMouseEnter={() => setSortSubmenuOpen(false)}
+                      onClick={() => {
+                        closeMenu()
+                        onExpandAll()
+                      }}
+                      className={menuItemClass}
+                    >
+                      <ChevronsUpDown className="h-3.5 w-3.5 shrink-0" strokeWidth={1.85} />
+                      {t('sidebarProjectsExpandAll')}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={workspaceCount === 0}
+                      onMouseEnter={() => setSortSubmenuOpen(false)}
+                      onClick={() => {
+                        closeMenu()
+                        onCollapseAll()
+                      }}
+                      className={menuItemClass}
+                    >
+                      <ChevronsDownUp className="h-3.5 w-3.5 shrink-0" strokeWidth={1.85} />
+                      {t('sidebarProjectsCollapseAll')}
+                    </button>
+                    <div
+                      className="relative"
+                      onMouseEnter={() => {
+                        if (workspaceCount > 0) setSortSubmenuOpen(true)
+                      }}
+                    >
+                      <button
+                        type="button"
+                        disabled={workspaceCount === 0}
+                        onMouseDown={(event) => event.preventDefault()}
+                        onClick={() => {
+                          if (workspaceCount === 0) return
+                          setSortSubmenuOpen(true)
+                        }}
+                        className={[
+                          menuItemClass,
+                          sortSubmenuOpen ? 'bg-ds-hover' : ''
+                        ].join(' ')}
+                      >
+                        <ArrowUpDown className="h-3.5 w-3.5 shrink-0" strokeWidth={1.85} />
+                        <span className="min-w-0 flex-1 truncate">{t('sidebarProjectsSort')}</span>
+                        <ChevronRight
+                          className="h-3.5 w-3.5 shrink-0 text-ds-faint"
+                          strokeWidth={1.85}
+                        />
+                      </button>
+                      {sortSubmenuOpen ? (
+                        <div
+                          className="absolute top-0 left-full z-10 ml-1 w-[11.75rem] overflow-hidden rounded-xl border border-ds-border bg-ds-elevated p-1 shadow-[0_24px_70px_rgba(44,55,78,0.18)] backdrop-blur-xl before:absolute before:inset-y-0 before:-left-1 before:w-1 before:content-[''] dark:shadow-[0_30px_80px_rgba(0,0,0,0.42)]"
+                          role="menu"
+                        >
+                          {PROJECT_SORT_MODES.map((mode) => {
+                            const active = projectSortMode === mode
+                            return (
+                              <button
+                                key={mode}
+                                type="button"
+                                role="menuitemradio"
+                                aria-checked={active}
+                                onClick={() => {
+                                  onProjectSortModeChange(mode)
+                                  closeMenu()
+                                }}
+                                className={[
+                                  menuItemClass,
+                                  active ? 'bg-ds-hover/80' : ''
+                                ].join(' ')}
+                              >
+                                <span className="min-w-0 flex-1 truncate tracking-[-0.01em]">
+                                  {t(PROJECT_SORT_LABEL_KEYS[mode])}
+                                </span>
+                                <span
+                                  className="flex h-3.5 w-3.5 shrink-0 items-center justify-center"
+                                  style={{ color: 'var(--ds-accent)' }}
+                                >
+                                  {active ? (
+                                    <Check className="h-3.5 w-3.5" strokeWidth={2.4} />
+                                  ) : null}
+                                </span>
+                              </button>
+                            )
+                          })}
+                        </div>
+                      ) : null}
+                    </div>
+                    <button
+                      type="button"
+                      disabled={projectThreadCount === 0}
+                      onMouseEnter={() => setSortSubmenuOpen(false)}
+                      onClick={() => {
+                        closeMenu()
+                        onEnterSelectMode()
+                      }}
+                      className={menuItemClass}
+                    >
+                      <CheckSquare className="h-3.5 w-3.5 shrink-0" strokeWidth={1.85} />
+                      {t('sidebarChatsBatchSelect')}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={projectThreadCount === 0 || batchBusy}
+                      onMouseEnter={() => setSortSubmenuOpen(false)}
+                      onClick={() => {
+                        closeMenu()
+                        onClearAll()
+                      }}
+                      className="flex w-full items-center gap-2.5 rounded-md px-2.5 py-1.5 text-left text-[13px] text-red-600 transition-colors duration-150 hover:bg-red-500/10 disabled:opacity-40 dark:text-red-400"
+                    >
+                      <Trash2 className="h-3.5 w-3.5 shrink-0" strokeWidth={1.85} />
+                      {t('sidebarChatsClearAll')}
+                    </button>
+                  </div>,
+                  document.body
+                )
+              : null}
           </div>
         </>
       )}
@@ -282,6 +464,14 @@ export function SidebarProjectsColumn({
   const [selectMode, setSelectMode] = useState(false)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set())
   const [batchBusy, setBatchBusy] = useState(false)
+  const [collapsedWorkspaces, setCollapsedWorkspaces] = useState<Record<string, boolean>>({})
+  const [expandedWorkspaces, setExpandedWorkspaces] = useState<Record<string, boolean>>({})
+  const [projectSortMode, setProjectSortMode] = useState<ProjectSortMode>(() => loadProjectSortMode())
+
+  const handleProjectSortModeChange = (mode: ProjectSortMode): void => {
+    setProjectSortMode(mode)
+    persistProjectSortMode(mode)
+  }
 
   const pinnedSet = useMemo(() => new Set(pinnedThreadIds), [pinnedThreadIds])
 
@@ -298,6 +488,23 @@ export function SidebarProjectsColumn({
       })
       .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
   }, [threads, pinnedSet, hiddenWorkspacePaths])
+
+  const workspacePaths = useMemo(() => {
+    const paths = new Set<string>()
+    for (const thread of projectThreads) {
+      const key = normalizeWorkspaceRoot(thread.workspace)
+      if (key) paths.add(key)
+    }
+    const selectedWorkspace = normalizeWorkspaceRoot(workspaceRoot)
+    if (
+      selectedWorkspace &&
+      !isChatsWorkspace(selectedWorkspace) &&
+      !isWorkspaceHidden(selectedWorkspace, hiddenWorkspacePaths)
+    ) {
+      paths.add(selectedWorkspace)
+    }
+    return [...paths]
+  }, [projectThreads, workspaceRoot, hiddenWorkspacePaths])
 
   const allSelected =
     projectThreads.length > 0 && projectThreads.every((thread) => selectedIds.has(thread.id))
@@ -377,6 +584,27 @@ export function SidebarProjectsColumn({
     void deleteThreads(projectThreads)
   }
 
+  const handleExpandAll = (): void => {
+    setProjectsCollapsed(false)
+    const nextCollapsed: Record<string, boolean> = {}
+    const nextExpanded: Record<string, boolean> = {}
+    for (const path of workspacePaths) {
+      nextCollapsed[path] = false
+      nextExpanded[path] = true
+    }
+    setCollapsedWorkspaces(nextCollapsed)
+    setExpandedWorkspaces(nextExpanded)
+  }
+
+  const handleCollapseAll = (): void => {
+    const nextCollapsed: Record<string, boolean> = {}
+    for (const path of workspacePaths) {
+      nextCollapsed[path] = true
+    }
+    setCollapsedWorkspaces(nextCollapsed)
+    setExpandedWorkspaces({})
+  }
+
   return (
     <>
       {pinnedSlot}
@@ -384,6 +612,7 @@ export function SidebarProjectsColumn({
         workspaceRoot={workspaceRoot}
         onPickWorkspace={onPickWorkspace}
         projectThreadCount={projectThreads.length}
+        workspaceCount={workspacePaths.length}
         selectMode={selectMode}
         selectedCount={selectedIds.size}
         allSelected={allSelected}
@@ -392,7 +621,11 @@ export function SidebarProjectsColumn({
         onDeleteSelected={handleDeleteSelected}
         onExitSelectMode={exitSelectMode}
         onEnterSelectMode={enterSelectMode}
+        onExpandAll={handleExpandAll}
+        onCollapseAll={handleCollapseAll}
         onClearAll={handleClearAll}
+        projectSortMode={projectSortMode}
+        onProjectSortModeChange={handleProjectSortModeChange}
         t={t}
       />
       {!projectsHidden ? (
@@ -410,6 +643,11 @@ export function SidebarProjectsColumn({
             selectionMode={selectMode}
             selectedIds={selectedIds}
             onToggleSelect={toggleSelect}
+            collapsedWorkspaces={collapsedWorkspaces}
+            onCollapsedWorkspacesChange={setCollapsedWorkspaces}
+            expandedWorkspaces={expandedWorkspaces}
+            onExpandedWorkspacesChange={setExpandedWorkspaces}
+            projectSortMode={projectSortMode}
             onTogglePin={onTogglePin}
             onPickWorkspace={onPickWorkspace}
             onRemoveWorkspace={onRemoveWorkspace}
@@ -439,6 +677,11 @@ function SidebarProjectsSection({
   selectionMode = false,
   selectedIds,
   onToggleSelect,
+  collapsedWorkspaces,
+  onCollapsedWorkspacesChange,
+  expandedWorkspaces,
+  onExpandedWorkspacesChange,
+  projectSortMode,
   onTogglePin,
   onPickWorkspace,
   onRemoveWorkspace,
@@ -450,8 +693,6 @@ function SidebarProjectsSection({
   onCompactThread,
   t
 }: SidebarProjectsSectionProps): ReactElement {
-  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
-  const [expandedWorkspaces, setExpandedWorkspaces] = useState<Record<string, boolean>>({})
   const [deletingThreadIds, setDeletingThreadIds] = useState<Record<string, boolean>>({})
   const [folderHover, setFolderHover] = useState<{ path: string; anchor: DOMRect } | null>(null)
   const folderHoverTimerRef = useRef<number | null>(null)
@@ -489,10 +730,10 @@ function SidebarProjectsSection({
     const workspacePath = normalizeWorkspaceRoot(activeThread.workspace)
     if (!workspacePath) return
     if (isWorkspaceHidden(workspacePath, hiddenWorkspacePaths)) return
-    setCollapsed((current) =>
+    onCollapsedWorkspacesChange((current) =>
       current[workspacePath] === false ? current : { ...current, [workspacePath]: false }
     )
-  }, [activeThreadId, threads, hiddenWorkspacePaths])
+  }, [activeThreadId, threads, hiddenWorkspacePaths, onCollapsedWorkspacesChange])
 
   const pinnedSet = useMemo(() => new Set(pinnedThreadIds), [pinnedThreadIds])
 
@@ -522,12 +763,8 @@ function SidebarProjectsSection({
       map.set(selectedWorkspace, [])
     }
 
-    return Array.from(map.entries()).sort(([pathA, listA], [pathB, listB]) => {
-      const activityDiff = latestWorkspaceActivity(listB) - latestWorkspaceActivity(listA)
-      if (activityDiff !== 0) return activityDiff
-      return workspaceLabelFromPath(pathA).localeCompare(workspaceLabelFromPath(pathB))
-    })
-  }, [threads, workspaceRoot, pinnedSet, hiddenWorkspacePaths])
+    return sortProjectGroups(Array.from(map.entries()), projectSortMode)
+  }, [threads, workspaceRoot, pinnedSet, hiddenWorkspacePaths, projectSortMode])
 
   const handleDeleteThread = async (thread: NormalizedThread): Promise<void> => {
     const threadId = thread.id.trim()
@@ -701,7 +938,7 @@ function SidebarProjectsSection({
 
   const renderWorkspace = ([workspacePath, list]: WorkspaceGroup): ReactElement => {
     const folderName = workspaceLabelFromPath(workspacePath)
-    const isCollapsed = selectionMode ? false : collapsed[workspacePath] !== false
+    const isCollapsed = selectionMode ? false : collapsedWorkspaces[workspacePath] !== false
     const sortedThreads = [...list].sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
     const workspaceExpanded = expandedWorkspaces[workspacePath] === true
     const hasOverflow = !selectionMode && sortedThreads.length > 5
@@ -748,7 +985,7 @@ function SidebarProjectsSection({
           <button
             type="button"
             onClick={() =>
-              setCollapsed((current) => ({
+              onCollapsedWorkspacesChange((current) => ({
                 ...current,
                 [workspacePath]: current[workspacePath] === false
               }))
@@ -820,7 +1057,7 @@ function SidebarProjectsSection({
               <button
                 type="button"
                 onClick={() =>
-                  setExpandedWorkspaces((current) => ({
+                  onExpandedWorkspacesChange((current) => ({
                     ...current,
                     [workspacePath]: !workspaceExpanded
                   }))

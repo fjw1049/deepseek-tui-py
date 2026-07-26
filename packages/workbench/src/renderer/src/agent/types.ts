@@ -26,6 +26,8 @@ export type NormalizedThread = {
   id: string
   title: string
   updatedAt: string
+  /** Thread creation time from the runtime (ISO). Used for project sidebar sort. */
+  createdAt?: string
   model: string
   mode: string
   workspace?: string

@@ -1,9 +1,12 @@
 import type { ReactElement } from 'react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import {
   CheckSquare,
   ChevronDown,
   ChevronRight,
+  ChevronsDownUp,
+  ChevronsUpDown,
   Loader2,
   MoreHorizontal,
   Plus,
@@ -53,10 +56,13 @@ export function SidebarChatsSection({
   const [expanded, setExpanded] = useState(false)
   const [deletingThreadIds, setDeletingThreadIds] = useState<Record<string, boolean>>({})
   const [menuOpen, setMenuOpen] = useState(false)
+  const [menuPos, setMenuPos] = useState<{ top: number; left: number } | null>(null)
   const [selectMode, setSelectMode] = useState(false)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set())
   const [batchBusy, setBatchBusy] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
+  const menuButtonRef = useRef<HTMLButtonElement>(null)
+  const menuPanelRef = useRef<HTMLDivElement>(null)
 
   const pinnedSet = useMemo(() => new Set(pinnedThreadIds), [pinnedThreadIds])
 
@@ -85,10 +91,31 @@ export function SidebarChatsSection({
   const allVisibleSelected =
     visibleChats.length > 0 && visibleChats.every((thread) => selectedIds.has(thread.id))
 
+  const closeMenu = (): void => {
+    setMenuOpen(false)
+    setMenuPos(null)
+  }
+
+  useLayoutEffect(() => {
+    if (!menuOpen || !menuButtonRef.current) {
+      setMenuPos(null)
+      return
+    }
+    const scale =
+      parseFloat(
+        getComputedStyle(document.documentElement).getPropertyValue('--ds-ui-scale')
+      ) || 1
+    const rect = menuButtonRef.current.getBoundingClientRect()
+    setMenuPos({
+      top: rect.bottom / scale + 4,
+      left: rect.left / scale
+    })
+  }, [menuOpen])
+
   useLightDismiss({
     open: menuOpen,
-    onDismiss: () => setMenuOpen(false),
-    refs: [menuRef]
+    onDismiss: closeMenu,
+    refs: [menuRef, menuPanelRef]
   })
 
   // Drop selections for threads that disappeared.
@@ -112,6 +139,18 @@ export function SidebarChatsSection({
     setExpanded(true)
     setSelectMode(true)
     setSelectedIds(new Set())
+  }
+
+  const handleExpandAll = (): void => {
+    setMenuOpen(false)
+    setCollapsed(false)
+    setExpanded(true)
+  }
+
+  const handleCollapseAll = (): void => {
+    setMenuOpen(false)
+    setExpanded(false)
+    setCollapsed(true)
   }
 
   const exitSelectMode = (): void => {
@@ -264,6 +303,7 @@ export function SidebarChatsSection({
             </button>
             <div className="relative shrink-0" ref={menuRef}>
               <button
+                ref={menuButtonRef}
                 type="button"
                 onClick={() => setMenuOpen((open) => !open)}
                 title={t('sidebarChatsMenu')}
@@ -273,28 +313,67 @@ export function SidebarChatsSection({
               >
                 <MoreHorizontal className="h-3.5 w-3.5" strokeWidth={1.85} />
               </button>
-              {menuOpen ? (
-                <div className="ds-glass absolute right-0 top-full z-50 mt-1 w-40 overflow-hidden rounded-lg py-1">
-                  <button
-                    type="button"
-                    disabled={chatsThreads.length === 0}
-                    onClick={enterSelectMode}
-                    className="flex w-full items-center gap-2 px-3 py-2 text-left text-[12px] text-ds-ink hover:bg-ds-hover disabled:opacity-40"
-                  >
-                    <CheckSquare className="h-3.5 w-3.5 shrink-0" strokeWidth={1.85} />
-                    {t('sidebarChatsBatchSelect')}
-                  </button>
-                  <button
-                    type="button"
-                    disabled={chatsThreads.length === 0 || batchBusy}
-                    onClick={handleClearAll}
-                    className="flex w-full items-center gap-2 px-3 py-2 text-left text-[12px] text-red-600 hover:bg-red-50 disabled:opacity-40 dark:text-red-400 dark:hover:bg-red-950/20"
-                  >
-                    <Trash2 className="h-3.5 w-3.5 shrink-0" strokeWidth={1.85} />
-                    {t('sidebarChatsClearAll')}
-                  </button>
-                </div>
-              ) : null}
+              {menuOpen && menuPos
+                ? createPortal(
+                    <div
+                      ref={menuPanelRef}
+                      className="ds-no-drag fixed z-[130] w-44 overflow-hidden rounded-xl border border-ds-border bg-ds-elevated p-1 shadow-[0_24px_70px_rgba(44,55,78,0.18)] backdrop-blur-xl dark:shadow-[0_30px_80px_rgba(0,0,0,0.42)]"
+                      role="menu"
+                      style={{ top: menuPos.top, left: menuPos.left }}
+                      onMouseDown={(event) => event.stopPropagation()}
+                    >
+                      <button
+                        type="button"
+                        disabled={chatsThreads.length === 0}
+                        onClick={() => {
+                          closeMenu()
+                          handleExpandAll()
+                        }}
+                        className="flex w-full items-center gap-2.5 rounded-md px-2.5 py-1.5 text-left text-[13px] text-ds-ink transition-colors duration-150 hover:bg-ds-hover disabled:opacity-40"
+                      >
+                        <ChevronsUpDown className="h-3.5 w-3.5 shrink-0" strokeWidth={1.85} />
+                        {t('sidebarChatsExpandAll')}
+                      </button>
+                      <button
+                        type="button"
+                        disabled={chatsThreads.length === 0}
+                        onClick={() => {
+                          closeMenu()
+                          handleCollapseAll()
+                        }}
+                        className="flex w-full items-center gap-2.5 rounded-md px-2.5 py-1.5 text-left text-[13px] text-ds-ink transition-colors duration-150 hover:bg-ds-hover disabled:opacity-40"
+                      >
+                        <ChevronsDownUp className="h-3.5 w-3.5 shrink-0" strokeWidth={1.85} />
+                        {t('sidebarChatsCollapseAll')}
+                      </button>
+                      <button
+                        type="button"
+                        disabled={chatsThreads.length === 0}
+                        onClick={() => {
+                          closeMenu()
+                          enterSelectMode()
+                        }}
+                        className="flex w-full items-center gap-2.5 rounded-md px-2.5 py-1.5 text-left text-[13px] text-ds-ink transition-colors duration-150 hover:bg-ds-hover disabled:opacity-40"
+                      >
+                        <CheckSquare className="h-3.5 w-3.5 shrink-0" strokeWidth={1.85} />
+                        {t('sidebarChatsBatchSelect')}
+                      </button>
+                      <button
+                        type="button"
+                        disabled={chatsThreads.length === 0 || batchBusy}
+                        onClick={() => {
+                          closeMenu()
+                          handleClearAll()
+                        }}
+                        className="flex w-full items-center gap-2.5 rounded-md px-2.5 py-1.5 text-left text-[13px] text-red-600 transition-colors duration-150 hover:bg-red-500/10 disabled:opacity-40 dark:text-red-400"
+                      >
+                        <Trash2 className="h-3.5 w-3.5 shrink-0" strokeWidth={1.85} />
+                        {t('sidebarChatsClearAll')}
+                      </button>
+                    </div>,
+                    document.body
+                  )
+                : null}
             </div>
           </>
         )}
