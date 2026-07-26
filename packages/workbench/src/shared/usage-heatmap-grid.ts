@@ -17,7 +17,7 @@ export type HeatmapGrid = {
   weekdayLabels: string[]
 }
 
-/** Five visible steps: neutral gray → full accent blue. */
+/** Five visible steps: empty gray → deep/bright contribution green. */
 export const HEAT_FILL = [
   'var(--ds-heat-0)',
   'var(--ds-heat-1)',
@@ -25,6 +25,12 @@ export const HEAT_FILL = [
   'var(--ds-heat-3)',
   'var(--ds-heat-4)'
 ]
+
+/** Stylesheet class for a heat tier — prefer over inline `var()` for reliable theme updates. */
+export function heatClassForLevel(level: number): string {
+  const clamped = Math.max(0, Math.min(4, level))
+  return `ds-heat-fill--${clamped}`
+}
 
 function formatLocalDay(date: Date): string {
   const year = date.getFullYear()
@@ -153,3 +159,4 @@ export function formatHeatmapDayLabel(day: string, locale: string): string {
 export function heatFillForLevel(level: number): string {
   return HEAT_FILL[Math.max(0, Math.min(4, level))] ?? HEAT_FILL[0]!
 }
+

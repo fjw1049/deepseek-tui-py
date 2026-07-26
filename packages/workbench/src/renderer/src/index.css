@@ -52,11 +52,15 @@
   --ds-bubble-user-fg: #1a1a1a;
   --ds-accent: #0088ff;
   --ds-accent-soft: rgba(0, 136, 255, 0.14);
+  /*
+   * Contribution greens — light mode darkens with activity.
+   * Large lightness jumps so ~10px legend swatches stay separable.
+   */
   --ds-heat-0: #ebedf0;
-  --ds-heat-1: #9be9a8;
-  --ds-heat-2: #40c463;
-  --ds-heat-3: #30a14e;
-  --ds-heat-4: #216e39;
+  --ds-heat-1: #bfe9c9;
+  --ds-heat-2: #22c55e;
+  --ds-heat-3: #15803d;
+  --ds-heat-4: #14532d;
   --ds-success: #128a4a;
   --ds-danger: #c92a2a;
   --ds-diff-added: #128a4a;
@@ -160,14 +164,15 @@
   --ds-bubble-user-fg: #ececec;
   --ds-accent: #339cff;
   --ds-accent-soft: rgba(51, 156, 255, 0.18);
-  /* Dark contribution greens. heat-0 is the lifted green-gray tile that
-     completes the grid without holes; active steps start brighter than
-     heat-0 so low activity doesn't sink below the empty tile. */
+  /*
+   * Dark contribution greens — brightens with activity.
+   * heat-0 is a lifted green-gray empty tile; active steps stay above it.
+   */
   --ds-heat-0: #26312a;
-  --ds-heat-1: #1b7a3d;
-  --ds-heat-2: #2ea043;
-  --ds-heat-3: #3fb950;
-  --ds-heat-4: #56d364;
+  --ds-heat-1: #315c40;
+  --ds-heat-2: #15803d;
+  --ds-heat-3: #22c55e;
+  --ds-heat-4: #86efac;
   --ds-success: #40c977;
   --ds-danger: #fa423e;
   --ds-diff-added: #40c977;
@@ -222,6 +227,42 @@
   --glass-card: rgba(255, 255, 255, 0.05);
   --glass-card-hover: rgba(255, 255, 255, 0.08);
   --app-wallpaper: #0e0e0e;
+}
+
+/*
+ * Heatmap swatches use concrete hex (not only var()) so Electron/HMR
+ * always repaints when these rules change. Tokens stay in sync above.
+ */
+.ds-heat-fill--0 {
+  background-color: #ebedf0;
+}
+.ds-heat-fill--1 {
+  background-color: #bfe9c9;
+}
+.ds-heat-fill--2 {
+  background-color: #22c55e;
+}
+.ds-heat-fill--3 {
+  background-color: #15803d;
+}
+.ds-heat-fill--4 {
+  background-color: #14532d;
+}
+
+[data-theme='dark'] .ds-heat-fill--0 {
+  background-color: #26312a;
+}
+[data-theme='dark'] .ds-heat-fill--1 {
+  background-color: #315c40;
+}
+[data-theme='dark'] .ds-heat-fill--2 {
+  background-color: #15803d;
+}
+[data-theme='dark'] .ds-heat-fill--3 {
+  background-color: #22c55e;
+}
+[data-theme='dark'] .ds-heat-fill--4 {
+  background-color: #86efac;
 }
 
 [data-theme='dark'] body::before {

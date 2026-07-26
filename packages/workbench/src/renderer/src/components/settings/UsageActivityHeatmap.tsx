@@ -13,14 +13,14 @@ import {
   buildHeatLevelScale,
   buildHeatmapGrid,
   formatHeatmapDayLabel,
-  heatFillForLevel,
+  heatClassForLevel,
   HEATMAP_ROWS,
   type HeatmapGridCell
 } from '@shared/usage-heatmap-grid'
 import { formatCompactNumber } from '../../hooks/use-model-usage'
 
 const WEEKDAY_LABEL_WIDTH = 16
-const LEGEND_CELL_PX = 11
+const LEGEND_CELL_PX = 14
 const SQUARE_GAP = 3
 const MONTH_ROW_HEIGHT = 14
 const MONTH_ROW_GAP = 6
@@ -379,7 +379,6 @@ function HeatCell({
 }): ReactElement {
   const tokens = cell.inRange ? (cell.point?.totalTokens ?? 0) : 0
   const level = levelFor(tokens)
-  const fill = heatFillForLevel(level)
   // The cell fills its grid track; the swatch is sized to the track's smaller
   // edge via container-query units, so it stays a true square (never stretched
   // into a rectangle) with even breathing room on every side.
@@ -390,8 +389,7 @@ function HeatCell({
   if (!cell.inRange || !cell.day) {
     return (
       <div
-        className={`${cellClass} rounded-[3px]`}
-        style={{ backgroundColor: heatFillForLevel(0) }}
+        className={`${cellClass} rounded-[3px] ${heatClassForLevel(0)}`}
         aria-hidden
       />
     )
@@ -410,12 +408,12 @@ function HeatCell({
       onClick={() => onSelect(cell.day!)}
       className={[
         cellClass,
+        heatClassForLevel(level),
         'cursor-pointer rounded-[3px] border-0 p-0 transition-[transform,filter,box-shadow] duration-150',
         'hover:z-[1] hover:scale-110 hover:brightness-110',
         'focus-visible:z-[1] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70',
         selected ? 'z-[2] scale-110 ring-2 ring-accent ring-offset-1 ring-offset-ds-card' : ''
       ].join(' ')}
-      style={{ backgroundColor: fill }}
     />
   )
 }
@@ -434,11 +432,10 @@ function HeatLegend({
         {[0, 1, 2, 3, 4].map((level) => (
           <span
             key={level}
-            className="rounded-[3px] ring-1 ring-black/[0.04]"
+            className={`rounded-[3px] ring-1 ring-black/[0.04] ${heatClassForLevel(level)}`}
             style={{
               width: LEGEND_CELL_PX,
-              height: LEGEND_CELL_PX,
-              backgroundColor: heatFillForLevel(level)
+              height: LEGEND_CELL_PX
             }}
           />
         ))}
