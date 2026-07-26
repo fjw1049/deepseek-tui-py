@@ -19,7 +19,6 @@ from deepseek_tui.plugins.identity import (
     validate_plugin_id,
 )
 from deepseek_tui.plugins.store import read_derived, write_derived
-from deepseek_tui.tools.registry import ToolRegistry
 
 
 def test_plugin_id_rejects_traversal() -> None:
@@ -212,16 +211,6 @@ def test_stale_grant_skips_hooks_collection(tmp_path: Path, monkeypatch) -> None
     contribs2 = collect_light_contributions(loaded)
     assert contribs2.hook_entries
     assert not any("no execution grant" in w for w in contribs2.warnings)
-
-
-def test_register_exclusive_rejects_collision() -> None:
-    from deepseek_tui.tools.knowledge import NoteTool
-
-    registry = ToolRegistry()
-    tool = NoteTool()
-    registry.register_exclusive(tool)
-    with pytest.raises(ValueError, match="already registered"):
-        registry.register_exclusive(tool)
 
 
 def test_trust_grants_hooks_and_mcp_execution(

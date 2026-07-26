@@ -19,7 +19,7 @@ from deepseek_tui.server.threads import (
 from deepseek_tui.server.threads import _ActiveThreadState, _ActiveTurnState
 from deepseek_tui.engine.events import ApprovalRequiredEvent, TurnCompleteEvent
 from deepseek_tui.engine.handle import EngineHandle
-from deepseek_tui.policy.approval import (
+from deepseek_tui.tools.approval import (
     ApprovalDecision,
     ApprovalRequest,
     RiskLevel,

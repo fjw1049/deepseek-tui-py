@@ -6,11 +6,11 @@ function todoBlock(id: string, statuses: string[]): ChatBlock {
   return {
     kind: 'tool',
     id,
-    summary: 'checklist_write: items written',
+    summary: 'checklist: items written',
     status: 'success',
     toolKind: 'tool_call',
     meta: {
-      tool_name: 'checklist_write',
+      tool_name: 'checklist',
       task_updates: {
         checklist: {
           items: statuses.map((status, index) => ({

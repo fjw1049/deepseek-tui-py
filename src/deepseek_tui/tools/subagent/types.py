@@ -116,17 +116,16 @@ def max_tokens_for_subagent_type(agent_type: SubAgentType) -> int:
 
 # Tool groups for type-based allowlists (see ``SubAgentType.allowed_tools``).
 # Intentionally stricter than ``FOCUS_READ_BASE`` - that set is misnamed and
-# includes write/shell/agent_spawn tools, so it cannot serve a read-only type.
+# includes write/shell/agent tools, so it cannot serve a read-only type.
 _SUBAGENT_READ_TOOLS = frozenset({
     "read_file", "list_dir", "grep_files", "file_search", "project_map",
-    "git_status", "git_diff", "git_log", "git_show", "git_blame",
+    "git",
     "github_issue_context", "github_pr_context",
     "web_search", "fetch_url",
     "note",
 })
 _SUBAGENT_PLAN_TOOLS = _SUBAGENT_READ_TOOLS | frozenset({
-    "update_plan", "checklist_write",
-    "checklist_list",
+    "update_plan", "checklist",
 })
 _SUBAGENT_WRITE_TOOLS = frozenset({"write_file", "edit_file"})
 _SUBAGENT_EXEC_TOOLS = frozenset({"exec_shell", "run_tests"})
@@ -140,7 +139,7 @@ _TYPE_ALLOWLIST: dict[SubAgentType, frozenset[str] | None] = {
         _SUBAGENT_READ_TOOLS
         | _SUBAGENT_WRITE_TOOLS
         | _SUBAGENT_EXEC_TOOLS
-        | frozenset({"update_plan", "checklist_write"})
+        | frozenset({"update_plan", "checklist"})
     ),
     SubAgentType.VERIFIER: _SUBAGENT_READ_TOOLS | _SUBAGENT_EXEC_TOOLS,
     SubAgentType.CUSTOM: None,
@@ -189,9 +188,9 @@ _SUBAGENT_PROMPTS: dict[str, str] = {
         "objective — if you discover related work that needs doing, surface it under\n"
         "RISKS or BLOCKERS rather than starting it. Work autonomously: the parent is\n"
         "not available to answer questions mid-run.\n\n"
-        "Plan before you act. Use `checklist_write` for any multi-step task so your work\n"
+        "Plan before you act. Use `checklist` for any multi-step task so your work\n"
         "is visible in the parent's sidebar. For complex initiatives, layer\n"
-        "`update_plan` (strategy) above `checklist_write` (tactics)."
+        "`update_plan` (strategy) above `checklist` (tactics)."
     ),
     "explore": (
         "You are an exploration sub-agent. Your job is to map the relevant region\n"
@@ -219,7 +218,7 @@ _SUBAGENT_PROMPTS: dict[str, str] = {
         "- Decompose the objective into ordered, verifiable steps.\n"
         "- Surface trade-offs explicitly. If two approaches are viable, name both\n"
         "  and pick one with a reason.\n"
-        "- Use `update_plan` to record the strategy and `checklist_write` for the backlog.\n\n"
+        "- Use `update_plan` to record the strategy and `checklist` for the backlog.\n\n"
         "Prioritization: order todos by dependency graph first, then by risk/effort ratio.\n"
         "Tag each item with `[P0]` / `[P1]` / `[P2]`."
     ),

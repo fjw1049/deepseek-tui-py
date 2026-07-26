@@ -174,8 +174,9 @@ def reconstruct_messages_from_turns(
 
 
 # Exact tool names that mutate workspace source files. Substring matching
-# (e.g. "write" in name) incorrectly classifies checklist_write / todo_write
-# as file_change and makes the chat UI render fake "Edited" rows.
+# (e.g. "write" in name) incorrectly classifies todo_write and historical
+# checklist_write calls as file_change and makes the chat UI render fake
+# "Edited" rows.
 _FILE_CHANGE_TOOLS = frozenset({"write_file", "edit_file"})
 _COMMAND_EXECUTION_TOOLS = frozenset(
     {"exec_shell", "exec_shell_interact"}

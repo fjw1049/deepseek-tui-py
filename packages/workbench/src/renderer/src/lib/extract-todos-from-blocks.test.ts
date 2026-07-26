@@ -31,12 +31,12 @@ describe('buildTodoSessionForTurn', () => {
   it('anchors at first write and merges later updates', () => {
     const blocks: ChatBlock[] = [
       { kind: 'tool', id: 'read-1', summary: 'read_file: src/a.py', status: 'success', toolKind: 'tool_call' },
-      todoBlock('todo-write', 'checklist_write', [
+      todoBlock('todo-write', 'checklist', [
         { id: '1', content: 'P0: first', status: 'pending' },
         { id: '2', content: 'P1: second', status: 'pending' }
       ]),
       { kind: 'tool', id: 'grep-1', summary: 'grep_files: pattern', status: 'success', toolKind: 'tool_call' },
-      todoBlock('todo-update', 'checklist_update', [
+      todoBlock('todo-update', 'checklist', [
         { id: '1', content: 'P0: first', status: 'completed' },
         { id: '2', content: 'P1: second', status: 'in_progress' }
       ])
@@ -66,10 +66,10 @@ describe('buildTodoSessionForTurn', () => {
 
   it('replaces list on a second write in the same turn', () => {
     const blocks: ChatBlock[] = [
-      todoBlock('todo-write-1', 'checklist_write', [
+      todoBlock('todo-write-1', 'checklist', [
         { id: '1', content: 'Old task', status: 'pending' }
       ]),
-      todoBlock('todo-write-2', 'checklist_write', [
+      todoBlock('todo-write-2', 'checklist', [
         { id: '1', content: 'New task A', status: 'pending' },
         { id: '2', content: 'New task B', status: 'pending' }
       ])
@@ -85,15 +85,15 @@ describe('buildTodoSessionForTurn', () => {
 describe('buildTodoEventsForTurn', () => {
   it('records completed todo transitions after the initial list exists', () => {
     const blocks: ChatBlock[] = [
-      todoBlock('todo-write', 'checklist_write', [
+      todoBlock('todo-write', 'checklist', [
         { id: '1', content: 'First task', status: 'pending' },
         { id: '2', content: 'Second task', status: 'pending' }
       ]),
-      todoBlock('todo-update-1', 'checklist_update', [
+      todoBlock('todo-update-1', 'checklist', [
         { id: '1', content: 'First task', status: 'completed' },
         { id: '2', content: 'Second task', status: 'in_progress' }
       ]),
-      todoBlock('todo-update-2', 'checklist_update', [
+      todoBlock('todo-update-2', 'checklist', [
         { id: '1', content: 'First task', status: 'completed' },
         { id: '2', content: 'Second task', status: 'completed' }
       ])
@@ -120,12 +120,12 @@ describe('buildTodoEventsForTurn', () => {
 })
 
 describe('error blocks are ignored', () => {
-  it('buildTodoSessionForTurn skips error checklist_write blocks', () => {
+  it('buildTodoSessionForTurn skips error checklist blocks', () => {
     const blocks: ChatBlock[] = [
-      todoBlock('good-write', 'checklist_write', [
+      todoBlock('good-write', 'checklist', [
         { id: '1', content: 'Coordinator task', status: 'in_progress' }
       ]),
-      todoBlock('bad-write', 'checklist_write', [
+      todoBlock('bad-write', 'checklist', [
         { id: '1', content: 'Coordinator task', status: 'in_progress' },
         { id: '2', content: 'Bubble sort', status: 'in_progress' },
         { id: '3', content: 'Heap sort', status: 'in_progress' }
@@ -141,15 +141,15 @@ describe('error blocks are ignored', () => {
 
   it('buildTodoEventsForTurn skips error blocks', () => {
     const blocks: ChatBlock[] = [
-      todoBlock('write', 'checklist_write', [
+      todoBlock('write', 'checklist', [
         { id: '1', content: 'Step A', status: 'pending' },
         { id: '2', content: 'Step B', status: 'pending' }
       ]),
-      todoBlock('err-update', 'checklist_update', [
+      todoBlock('err-update', 'checklist', [
         { id: '1', content: 'Step A', status: 'completed' },
         { id: '2', content: 'Step B', status: 'in_progress' }
       ], 'error'),
-      todoBlock('ok-update', 'checklist_update', [
+      todoBlock('ok-update', 'checklist', [
         { id: '1', content: 'Step A', status: 'completed' },
         { id: '2', content: 'Step B', status: 'in_progress' }
       ])
@@ -162,10 +162,10 @@ describe('error blocks are ignored', () => {
 
   it('extractTodosFromBlocks skips error blocks for sidebar snapshot', () => {
     const blocks: ChatBlock[] = [
-      todoBlock('good', 'checklist_write', [
+      todoBlock('good', 'checklist', [
         { id: '1', content: 'Real task', status: 'in_progress' }
       ]),
-      todoBlock('bad', 'checklist_write', [
+      todoBlock('bad', 'checklist', [
         { id: '1', content: 'Corrupted', status: 'in_progress' },
         { id: '2', content: 'Also corrupted', status: 'in_progress' }
       ], 'error')

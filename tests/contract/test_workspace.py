@@ -18,7 +18,7 @@ from deepseek_tui.server.threads import (
         ("write_file", TurnItemKind.FILE_CHANGE),
         ("edit_file", TurnItemKind.FILE_CHANGE),
         ("exec_shell", TurnItemKind.COMMAND_EXECUTION),
-        ("checklist_write", TurnItemKind.TOOL_CALL),
+        ("checklist", TurnItemKind.TOOL_CALL),
         ("todo_write", TurnItemKind.TOOL_CALL),
         ("update_plan", TurnItemKind.TOOL_CALL),
         ("read_file", TurnItemKind.TOOL_CALL),
@@ -31,13 +31,13 @@ def test_tool_kind_for_name_uses_exact_file_tools(
     assert tool_kind_for_name(name) == expected
 
 
-def test_tool_item_metadata_checklist_write_is_todo_not_file_path() -> None:
+def test_tool_item_metadata_checklist_is_todo_not_file_path() -> None:
     meta = tool_item_metadata(
-        "checklist_write",
+        "checklist",
         {"todos": [{"id": 1, "content": "fix kind", "status": "pending"}]},
     )
     assert meta is not None
-    assert meta.get("tool_name") == "checklist_write"
+    assert meta.get("tool_name") == "checklist"
     assert "path" not in meta
     assert meta.get("items")
 

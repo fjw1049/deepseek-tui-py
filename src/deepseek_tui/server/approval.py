@@ -11,7 +11,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 
 from deepseek_tui.engine.handle import ApprovalHandler
-from deepseek_tui.policy.approval import ApprovalDecision, ApprovalRequest
+from deepseek_tui.tools.approval import ApprovalDecision, ApprovalRequest
 
 AutoApproveFn = Callable[[], Awaitable[bool]]
 

@@ -61,8 +61,8 @@ not cover (build, test, format, lint, ad-hoc one-liners).
 - Single search/replace edit in one file: `edit_file` (one call per
   replacement; batch independent edits in the same turn).
 - Brand-new file or full rewrite: `write_file`.
-- Inspect git state: `git_status` / `git_diff` / `git_log` / `git_show` /
-  `git_blame` (NOT `exec_shell` with `git`).
+- Inspect git state: `git` (status/diff/log/show/blame) (NOT `exec_shell`
+  with `git`).
 - Web lookup: `web_search` / `fetch_url` (NOT `exec_shell` with `curl`).
 - Run tests / build / format / lint: `run_tests` when applicable, otherwise
   `exec_shell` is correct.

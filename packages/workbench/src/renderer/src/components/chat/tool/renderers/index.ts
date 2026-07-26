@@ -45,14 +45,19 @@ export function registerToolRenderers(): void {
 
   // Sub-agent orchestration → calm one-line marker (Bot icon + agent descriptor).
   // Deliberately lighter than the durable-task UI; rich live progress is the
-  // mailbox-driven SubagentSummaryPanel's job.
+  // mailbox-driven SubagentSummaryPanel's job. `agent` is the current
+  // action-dispatched tool; the agent_* names are legacy fallbacks for
+  // replayed history transcripts.
   toolRendererRegistry.registerMany({
+    agent: SubagentRenderer,
+    agent_resume: SubagentRenderer,
     agent_spawn: SubagentRenderer,
     spawn_agent: SubagentRenderer,
     delegate_to_agent: SubagentRenderer,
     agent_wait: SubagentRenderer,
     agent_result: SubagentRenderer,
     agent_cancel: SubagentRenderer,
-    agent_list: SubagentRenderer
+    agent_list: SubagentRenderer,
+    agent_send_input: SubagentRenderer
   })
 }

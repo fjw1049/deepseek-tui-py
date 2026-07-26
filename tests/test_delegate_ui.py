@@ -48,7 +48,7 @@ def test_delegate_card_renders_short_id_and_summary() -> None:
 
 
 def test_agent_spawn_tool_cell_is_compact_single_line() -> None:
-    cell = ToolCell("agent_spawn", "call123", arguments={"type": "explore"})
+    cell = ToolCell("agent", "call123", arguments={"action": "spawn", "agent_type": "explore"})
     cell.set_result("spawned agent_0d2b2a3a [explore]", success=True)
     rendered = str(cell.render())
     assert "hidden:" not in rendered

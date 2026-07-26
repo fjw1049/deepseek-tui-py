@@ -927,9 +927,28 @@ class McpManager:
         )
 
         api_tools: list[dict[str, Any]] = []
+        api_index: dict[str, int] = {}
         self._tool_map.clear()
         for server_results in all_results:
             for qualified, server_name, raw_name, api_dict in server_results:
+                previous = self._tool_map.get(qualified)
+                if previous is not None:
+                    if previous != (server_name, raw_name):
+                        logger.warning(
+                            "MCP tool name collision: %r from server %r (%s) "
+                            "shadows %r (%s); latter registration wins",
+                            qualified,
+                            server_name,
+                            raw_name,
+                            previous[0],
+                            previous[1],
+                        )
+                    # Replace the shadowed entry in place so the model
+                    # catalog never sees duplicate function names.
+                    api_tools[api_index[qualified]] = api_dict
+                    self._tool_map[qualified] = (server_name, raw_name)
+                    continue
+                api_index[qualified] = len(api_tools)
                 self._tool_map[qualified] = (server_name, raw_name)
                 api_tools.append(api_dict)
         self._restore_focus_into_tool_map()

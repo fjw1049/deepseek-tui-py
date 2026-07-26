@@ -13,7 +13,7 @@ from deepseek_tui.tools.approval import (
 )
 from deepseek_tui.tools.file import ReadFileTool, WriteFileTool
 from deepseek_tui.tools.shell import ExecShellTool
-from deepseek_tui.tools.subagent import AgentSpawnTool
+from deepseek_tui.tools.subagent import AgentTool
 from deepseek_tui.tools.web import FetchUrlTool, WebSearchTool
 
 
@@ -26,14 +26,14 @@ from deepseek_tui.tools.web import FetchUrlTool, WebSearchTool
         ("on-request", ExecShellTool(), True),  # G-04
         ("on-request", FetchUrlTool(), False),  # G-05
         ("on-request", WebSearchTool(), False),  # G-06
-        ("on-request", AgentSpawnTool(), True),  # G-07
+        ("on-request", AgentTool(), True),  # G-07
         ("never", WriteFileTool(), False),  # G-08 prompt
         ("never", ReadFileTool(), False),  # G-09
         ("suggest", WriteFileTool(), True),  # G-12
         ("untrusted", WriteFileTool(), False),  # G-13 SUGGEST auto under untrusted
         ("untrusted", ExecShellTool(), True),  # G-14 REQUIRED still prompts
         ("untrusted", ReadFileTool(), False),  # G-15
-        ("untrusted", AgentSpawnTool(), True),  # G-16
+        ("untrusted", AgentTool(), True),  # G-16
     ],
 )
 def test_needs_tool_approval_prompt(policy: str, tool: object, expected: bool) -> None:
@@ -124,11 +124,11 @@ def test_plan_requires_approval_subagent_blocks_parallel() -> None:
         ToolExecutionPlan(
             index=1,
             id="b",
-            name="agent_spawn",
+            name="agent",
             input={},
             read_only=False,
             supports_parallel=False,
-            approval_required=plan_requires_approval(AgentSpawnTool(), policy),
+            approval_required=plan_requires_approval(AgentTool(), policy),
         ),
     ]
     assert should_parallelize_tool_batch(plans) is False

@@ -26,7 +26,7 @@ from deepseek_tui.tools.subagent import (
 )
 from deepseek_tui.tools.subagent import SubAgentCompletion
 from deepseek_tui.tools.subagent import MailboxMessage, MailboxMessageKind
-from deepseek_tui.tools.subagent import AgentSpawnTool
+from deepseek_tui.tools.subagent import AgentTool
 from deepseek_tui.tools.task import NewTaskRequest
 
 
@@ -157,7 +157,7 @@ async def test_turn_handoff_skips_agent_wait_consumed_completion(
 ) -> None:
     engine, _handle = engine_ctx
     engine._mark_subagent_tool_result_consumed(
-        "agent_wait",
+        "agent",
         {
             "agents": [
                 {
@@ -166,6 +166,7 @@ async def test_turn_handoff_skips_agent_wait_consumed_completion(
                 }
             ]
         },
+        {"action": "wait"},
     )
     engine._enqueue_subagent_completion(
         SubAgentCompletion(
@@ -277,8 +278,8 @@ async def test_spawn_depth_rejected_at_tool_entry(
         subagent_manager=mgr,
         metadata={"subagent_depth": 3, "subagent_runtime": at_max},
     )
-    tool = AgentSpawnTool()
+    tool = AgentTool()
     from deepseek_tui.tools.registry import ToolError
 
     with pytest.raises(ToolError, match="depth limit"):
-        await tool.execute({"prompt": "nested", "type": "explore"}, ctx)
+        await tool.execute({"action": "spawn", "prompt": "nested", "agent_type": "explore"}, ctx)

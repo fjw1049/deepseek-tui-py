@@ -48,11 +48,6 @@ def parse_qualified_tool_name(qualified: str) -> tuple[str, str] | None:
     cache, which stores the ``(server, tool)`` pair explicitly) should
     prefer it over this parser.
     """
-    if qualified.startswith("mcp__"):
-        rest = qualified[5:]
-        parts = rest.split("__", 1)
-        if len(parts) == 2:
-            return parts[0], parts[1]
     if not qualified.startswith("mcp_"):
         return None
     rest = qualified[4:]

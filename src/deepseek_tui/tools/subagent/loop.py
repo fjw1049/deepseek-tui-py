@@ -93,8 +93,8 @@ async def _execute_subagent_tool(
     tool_call_id: str = "",
     runtime: SubAgentRuntime | None = None,
 ) -> str:
-    from deepseek_tui.policy.approval import ApprovalDecision
     from deepseek_tui.tools.approval import (
+        ApprovalDecision,
         approval_request_for_tool,
         enrich_approval_request,
     )
@@ -115,7 +115,13 @@ async def _execute_subagent_tool(
     policy = getattr(getattr(runtime, "config", None), "approval_policy", None)
     if policy is None and hasattr(context, "metadata"):
         policy = (context.metadata or {}).get("approval_policy")  # type: ignore[union-attr]
-    approval_request = None if auto_approve else approval_request_for_tool(tool, policy)
+    approval_request = (
+        None
+        if auto_approve
+        else approval_request_for_tool(
+            tool, policy, tool_input if isinstance(tool_input, dict) else None
+        )
+    )
     if approval_request is not None:
         handler = getattr(runtime, "approval_handler", None) if runtime else None
         if handler is None:
@@ -259,7 +265,7 @@ async def run_subagent_loop(
     )
     from deepseek_tui.tools.registry import build_subagent_registry
     from deepseek_tui.tools.registry import ToolContext
-    from deepseek_tui.tools.validation import (
+    from deepseek_tui.tools.subagent.structured_output import (
         STRUCTURED_OUTPUT_TOOL_NAME,
         StructuredOutputTool,
     )
@@ -279,7 +285,7 @@ async def run_subagent_loop(
     # Type-level default allowlist: when the caller supplied no explicit
     # ``allowed_tools``, fall back to the type's built-in set. Applied here
     # (not in the spawn tool) so direct ``manager.spawn`` callers get the same
-    # filtering as LLM-driven ``agent_spawn``. None means full registry.
+    # filtering as LLM-driven ``agent`` spawn calls. None means full registry.
     effective_tools = agent.allowed_tools
     if effective_tools is None:
         default_set = agent.agent_type.allowed_tools()

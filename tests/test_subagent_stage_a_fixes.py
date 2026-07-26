@@ -23,7 +23,7 @@ from deepseek_tui.tools.subagent import (
     SubAgentType,
     get_real_subagent_executor,
 )
-from deepseek_tui.tools.subagent.tools import AgentSpawnTool, _spawn_config
+from deepseek_tui.tools.subagent.tools import AgentTool, _spawn_config
 from deepseek_tui.tools.subagent.types import resolve_subagent_model
 
 
@@ -35,14 +35,14 @@ def test_explore_allowlist_excludes_write_and_shell() -> None:
     assert "write_file" not in tools
     assert "edit_file" not in tools
     assert "exec_shell" not in tools
-    assert "agent_spawn" not in tools
+    assert "agent" not in tools
 
 
 def test_plan_allowlist_has_plan_tools_without_shell() -> None:
     tools = SubAgentType.PLAN.allowed_tools()
     assert tools is not None
     assert "update_plan" in tools
-    assert "checklist_write" in tools
+    assert "checklist" in tools
     assert "exec_shell" not in tools
     assert "write_file" not in tools
 
@@ -121,8 +121,8 @@ async def test_agent_spawn_uses_per_type_model_on_parent_path(
         subagent_manager=manager,
         metadata={},
     )
-    result = await AgentSpawnTool().execute(
-        {"prompt": "map auth", "type": "explore"},
+    result = await AgentTool().execute(
+        {"action": "spawn", "prompt": "map auth", "agent_type": "explore"},
         ctx,
     )
     assert result.success

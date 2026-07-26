@@ -12,6 +12,7 @@ Manifest locations (first match wins)::
 
     <plugin>/.deepseek-plugin/plugin.json
     <plugin>/.claude-plugin/plugin.json      (Claude Code compat)
+    <plugin>/.codebuddy-plugin/plugin.json   (CodeBuddy compat)
     <plugin>/plugin.json
 
 Field names follow the Claude Code plugin manifest so existing

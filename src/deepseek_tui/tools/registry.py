@@ -14,8 +14,13 @@ from typing import Any, Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
 import asyncio
+import functools
 import logging
+import shutil
+import subprocess
 
+if TYPE_CHECKING:
+    from jsonschema import Draft202012Validator
 
 
 class ToolCapability(str, Enum):
@@ -87,16 +92,30 @@ class ToolSpec(ABC):
             return ApprovalRequirement.REQUIRED
         return ApprovalRequirement.AUTO
 
-    def defer_loading(self) -> bool:
-        """Whether the model should defer loading the tool's full schema.
+    def approval_requirement_for_input(
+        self, input_data: dict[str, Any]
+    ) -> ApprovalRequirement:
+        """Per-call approval requirement for action-dispatched tools.
 
-        Default ``False``.
+        Defaults to the static :meth:`approval_requirement`. Tools that merge
+        several operations behind one name (e.g. ``agent``) override this so
+        read-only actions keep their no-prompt behavior.
         """
-        return False
+        return self.approval_requirement()
 
     def is_read_only(self) -> bool:
         """True iff the tool's capabilities include READ_ONLY."""
         return ToolCapability.READ_ONLY in self.capabilities()
+
+    def is_read_only_for_input(self, input_data: dict[str, Any]) -> bool:
+        """Per-call read-only check for action-dispatched tools.
+
+        Defaults to the static :meth:`is_read_only`. Tools that merge
+        several operations behind one name (e.g. ``agent``, ``checklist``)
+        override this so read-only calls keep parallel scheduling instead
+        of being serialized by the union of all actions' capabilities.
+        """
+        return self.is_read_only()
 
     def supports_parallel(self) -> bool:
         return True
@@ -188,8 +207,10 @@ class ToolContext:
 
         Read-only callers pass ``allow_read_roots=True`` to also accept
         paths under ``extra_read_roots`` (and their subdirs) — e.g. a
-        mounted plugin's own directory. Write callers leave it False so
-        writes stay confined to the workspace.
+        mounted plugin's own directory — and paths under the spillover
+        root (``~/.deepseek/tool_outputs/``) so spilled tool outputs can
+        be read back with ``read_file``/``grep_files``. Write callers
+        leave it False so writes stay confined to the workspace.
         """
         workspace = self.working_directory.expanduser().resolve()
         candidate = Path(path).expanduser()
@@ -198,8 +219,11 @@ class ToolContext:
         else:
             resolved = (workspace / candidate).resolve()
         if not self.trust_mode and not self._within(resolved, workspace):
-            allowed = allow_read_roots and any(
-                self._within(resolved, root) for root in self.extra_read_roots
+            allowed = allow_read_roots and (
+                any(
+                    self._within(resolved, root) for root in self.extra_read_roots
+                )
+                or self._within_spillover_root(resolved)
             )
             if not allowed:
                 raise ValueError(
@@ -207,6 +231,22 @@ class ToolContext:
                     f"(workspace: {workspace}). Use a relative path."
                 )
         return resolved
+
+    @staticmethod
+    def _within_spillover_root(resolved: Path) -> bool:
+        """True when ``resolved`` sits under the spillover root (if any)."""
+        # Lazy import: deepseek_tui.tools.runtime imports this module at
+        # module level, so a top-level import here would be circular.
+        from deepseek_tui.tools.runtime import spillover_root
+
+        root = spillover_root()
+        if root is None:
+            return False
+        try:
+            root = root.expanduser().resolve()
+        except OSError:
+            return False
+        return ToolContext._within(resolved, root)
 
 
 # Tool registry.
@@ -236,11 +276,34 @@ __all__ = ["ToolRegistry"]
 _LOG = logging.getLogger(__name__)
 
 
+def _strip_additional_properties(node: Any) -> Any:
+    """Deep-copy a schema with every ``additionalProperties`` key removed.
+
+    Tool schemas intentionally leave ``additionalProperties`` permissive:
+    the execution layer keeps accepting legacy alias parameters (task's
+    ``id``, agent's ``message``/``objective``, checklist's ``items``), so
+    registry-level validation must never reject extra properties — only
+    required / type / enum violations.
+    """
+    if isinstance(node, dict):
+        return {
+            key: _strip_additional_properties(value)
+            for key, value in node.items()
+            if key != "additionalProperties"
+        }
+    if isinstance(node, list):
+        return [_strip_additional_properties(item) for item in node]
+    return node
+
+
 class ToolRegistry:
     def __init__(self, context: ToolContext | None = None) -> None:
         self._tools: dict[str, ToolSpec] = {}
         self._context: ToolContext | None = context
         self._api_cache: list[dict[str, Any]] | None = None
+        # Validators built from each tool's ``input_schema()``, memoised per
+        # tool name. ``None`` means "skip validation" (invalid/missing schema).
+        self._validator_cache: dict[str, Draft202012Validator | None] = {}
 
     # ------------------------------------------------------------------
     # registration
@@ -252,19 +315,7 @@ class ToolRegistry:
         if name in self._tools:
             _LOG.warning("Overwriting existing tool: %s", name)
         self._tools[name] = tool
-        self._invalidate_api_cache()
-
-    def register_exclusive(self, tool: ToolSpec) -> None:
-        """Register a tool, failing when the name is already taken.
-
-        Plugin session overlays must use this so one package cannot silently
-        replace another package's tool.
-        """
-        name = tool.name()
-        if name in self._tools:
-            raise ValueError(f"tool already registered: {name}")
-        self._tools[name] = tool
-        self._invalidate_api_cache()
+        self._invalidate_caches()
 
     def register_all(self, tools: list[ToolSpec]) -> None:
         """Register every tool in ``tools``."""
@@ -279,13 +330,13 @@ class ToolRegistry:
         """
         removed = self._tools.pop(name, None)
         if removed is not None:
-            self._invalidate_api_cache()
+            self._invalidate_caches()
         return removed
 
     def clear(self) -> None:
         """Remove every registered tool."""
         self._tools.clear()
-        self._invalidate_api_cache()
+        self._invalidate_caches()
 
     def filter_by_names(self, allowed: set[str]) -> None:
         """Keep only tools whose names appear in *allowed*."""
@@ -293,7 +344,7 @@ class ToolRegistry:
         if to_remove:
             for n in to_remove:
                 del self._tools[n]
-            self._invalidate_api_cache()
+            self._invalidate_caches()
 
     # ------------------------------------------------------------------
     # introspection
@@ -367,10 +418,16 @@ class ToolRegistry:
     ) -> ToolResult:
         """Run a tool by name with ``context``. Returns the full result.
 
+        Validates ``input_data`` against the tool's ``input_schema()``
+        (required / types / enums — extra properties are always allowed
+        because the execution layer tolerates legacy alias parameters).
+        A schema violation raises :class:`ToolError` before the tool runs.
+
         Honours ``context.timeout_ms`` if set. Wraps lookup / timeout /
         ``ValueError`` into :class:`ToolError`.
         """
         tool = self.get(name)
+        self._validate_input(name, tool, input_data)
         timeout_seconds = (
             context.timeout_ms / 1000 if context.timeout_ms is not None else None
         )
@@ -465,11 +522,65 @@ class ToolRegistry:
         return tools
 
     # ------------------------------------------------------------------
+    # input validation
+    # ------------------------------------------------------------------
+
+    def _validate_input(self, name: str, tool: ToolSpec, input_data: dict[str, Any]) -> None:
+        """Validate ``input_data`` against the tool's input schema.
+
+        Raises :class:`ToolError` on violation; silently skips validation
+        when the tool has no usable schema (see :meth:`_validator_for`).
+        """
+        from jsonschema.exceptions import best_match
+
+        validator = self._validator_for(name, tool)
+        if validator is None:
+            return
+        error = best_match(validator.iter_errors(input_data))
+        if error is not None:
+            raise ToolError(
+                f"Tool {name} invalid arguments: {error.message} (at {error.json_path})"
+            )
+
+    def _validator_for(self, name: str, tool: ToolSpec) -> Draft202012Validator | None:
+        """Return the memoised validator for *tool* (``None`` = skip).
+
+        ``None`` is cached for tools whose schema is missing or itself
+        invalid — a broken schema is an internal code problem, so we log a
+        warning once and let the call through instead of failing the model.
+        """
+        from jsonschema import Draft202012Validator
+        from jsonschema.exceptions import SchemaError
+
+        if name in self._validator_cache:
+            return self._validator_cache[name]
+        validator: Draft202012Validator | None = None
+        schema = tool.input_schema()
+        if isinstance(schema, dict) and schema:
+            normalized = _strip_additional_properties(schema)
+            try:
+                Draft202012Validator.check_schema(normalized)
+            except SchemaError as exc:
+                _LOG.warning(
+                    "tool %s has an invalid input_schema; "
+                    "skipping argument validation: %s",
+                    name,
+                    exc.message,
+                )
+            else:
+                validator = Draft202012Validator(normalized)
+        self._validator_cache[name] = validator
+        return validator
+
+    # ------------------------------------------------------------------
     # internals
     # ------------------------------------------------------------------
 
-    def _invalidate_api_cache(self) -> None:
+    def _invalidate_caches(self) -> None:
         self._api_cache = None
+        # Registration mutations (register/remove/clear/filter) can swap the
+        # tool behind a name, so memoised validators must be rebuilt too.
+        self._validator_cache.clear()
 
     @staticmethod
     def _serialise_tool(tool: ToolSpec) -> dict[str, Any]:
@@ -493,7 +604,7 @@ class ToolRegistry:
                 "description": tool.description(),
                 "parameters": params,
                 "allowed_callers": ["direct"],
-                "defer_loading": tool.defer_loading(),
+                "defer_loading": False,
             },
         }
 
@@ -503,6 +614,28 @@ from deepseek_tui.config.models import Config
 
 if TYPE_CHECKING:
     from deepseek_tui.client.base import LLMClient
+
+
+@functools.lru_cache(maxsize=1)
+def _gh_cli_ready() -> bool:
+    """True when the ``gh`` CLI is installed *and* authenticated.
+
+    ``github_*`` tools shell out to ``gh``; registering them when the CLI is
+    missing or logged out only gives the model tools that fail at call time.
+    Result is cached per process (auth rarely changes mid-session).
+    """
+    if shutil.which("gh") is None:
+        return False
+    try:
+        proc = subprocess.run(
+            ["gh", "auth", "status"],
+            capture_output=True,
+            timeout=5,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return proc.returncode == 0
 
 
 def build_default_registry(config: Config | None = None, *, mode: str = "agent") -> ToolRegistry:
@@ -527,15 +660,11 @@ def build_default_registry(config: Config | None = None, *, mode: str = "agent")
         WriteFileTool,
     )
     from deepseek_tui.tools.git import (
-        GitBlameTool,
-        GitDiffTool,
         GitHubCloseTool,
         GitHubCommentTool,
         GitHubIssueContextTool,
         GitHubPrContextTool,
-        GitLogTool,
-        GitShowTool,
-        GitStatusTool,
+        GitTool,
     )
     from deepseek_tui.tools.knowledge import NoteTool, PlanUpdateTool, SkillLoadTool
     from deepseek_tui.tools.mcp import (
@@ -551,13 +680,9 @@ def build_default_registry(config: Config | None = None, *, mode: str = "agent")
         ExecShellTool,
     )
     from deepseek_tui.tools.subagent import (
-        AgentCancelTool,
-        AgentListTool,
-        AgentResultTool,
         AgentResumeTool,
-        AgentSendInputTool,
-        AgentSpawnTool,
-        AgentWaitTool,
+        AgentTool,
+        PLAN_AGENT_ACTIONS,
     )
     from deepseek_tui.tools.task import (
         TaskCancelTool,
@@ -570,12 +695,9 @@ def build_default_registry(config: Config | None = None, *, mode: str = "agent")
         TaskShellWaitTool,
     )
     from deepseek_tui.tools.time_tools import CurrentTimeTool
-    from deepseek_tui.tools.todo import (
-        TodoListTool,
-        TodoWriteTool,
-    )
-    from deepseek_tui.tools.user_input import RequestUserInputTool, RetrieveToolResultTool
-    from deepseek_tui.tools.validation import RunTestsTool
+    from deepseek_tui.tools.todo import ChecklistTool
+    from deepseek_tui.tools.user_input import RequestUserInputTool
+    from deepseek_tui.tools.run_tests import RunTestsTool
     from deepseek_tui.tools.web import FetchUrlTool, WebSearchTool
 
     cfg = config or Config()
@@ -586,14 +708,9 @@ def build_default_registry(config: Config | None = None, *, mode: str = "agent")
         ListDirTool(),
         GrepFilesTool(),
         FileSearchTool(),
-        GitStatusTool(),
-        GitDiffTool(),
-        GitLogTool(),
-        GitShowTool(),
-        GitBlameTool(),
+        GitTool(),
         ProjectMapTool(),
-        RetrieveToolResultTool(),
-        TodoListTool(),
+        ChecklistTool(),
     ]:
         registry.register(tool)
 
@@ -601,7 +718,6 @@ def build_default_registry(config: Config | None = None, *, mode: str = "agent")
         for tool in [
             WriteFileTool(),
             EditFileTool(),
-            TodoWriteTool(),
         ]:
             registry.register(tool)
 
@@ -621,13 +737,18 @@ def build_default_registry(config: Config | None = None, *, mode: str = "agent")
         ]:
             registry.register(tool)
 
-    for tool in [
-        GitHubIssueContextTool(),
-        GitHubPrContextTool(),
-        GitHubCommentTool(),
-        GitHubCloseTool(),
-    ]:
-        registry.register(tool)
+    # GitHub tools shell out to the ``gh`` CLI; skip registration entirely
+    # when it is not installed or not authenticated so the model never sees
+    # tools that cannot run. Write-side tools (comment/close) are
+    # additionally excluded in plan mode.
+    if _gh_cli_ready():
+        registry.register(GitHubIssueContextTool())
+        registry.register(GitHubPrContextTool())
+        if mode != "plan":
+            registry.register(GitHubCommentTool())
+            registry.register(GitHubCloseTool())
+    else:
+        _LOG.info("gh CLI missing or not authenticated; skipping github_* tool registration")
 
     if cfg.features.mcp:
         for tool in [
@@ -639,38 +760,48 @@ def build_default_registry(config: Config | None = None, *, mode: str = "agent")
             registry.register(tool)
 
     if cfg.features.tasks:
-        for tool in [
-            TaskCreateTool(),
+        # Plan mode is read-only: keep inspection tools, exclude anything
+        # that creates, mutates, resumes, or executes work.
+        task_tools: list[ToolSpec] = [
             TaskListTool(),
             TaskReadTool(),
-            TaskCancelTool(),
-            TaskResumeTool(),
-            TaskGateRunTool(),
-            TaskShellStartTool(),
             TaskShellWaitTool(),
-        ]:
+        ]
+        if mode != "plan":
+            task_tools.extend(
+                [
+                    TaskCreateTool(),
+                    TaskCancelTool(),
+                    TaskResumeTool(),
+                    TaskGateRunTool(),
+                    TaskShellStartTool(),
+                ]
+            )
+        for tool in task_tools:
             registry.register(tool)
 
     if cfg.features.subagents:
         from deepseek_tui.tools.workflow import WorkflowListTool, WorkflowTool
 
-        registry.register(WorkflowTool())
+        # Plan mode is read-only: no workflow runs, no spawning/resuming or
+        # steering agents — only inspecting and cancelling existing ones.
+        # The ``agent`` tool's action enum is generated from the allowed
+        # subset, so plan mode never sees spawn/send_input in the schema.
+        if mode != "plan":
+            registry.register(WorkflowTool())
         registry.register(WorkflowListTool())
-        for tool in [
-            AgentSpawnTool(),
-            AgentResultTool(),
-            AgentCancelTool(),
-            AgentResumeTool(),
-            AgentListTool(),
-            AgentSendInputTool(),
-            AgentWaitTool(),
-        ]:
-            registry.register(tool)
+        if mode == "plan":
+            registry.register(AgentTool(allowed_actions=PLAN_AGENT_ACTIONS))
+        else:
+            registry.register(AgentTool())
+            registry.register(AgentResumeTool())
 
     # Session clock — always available (not tied to automations CRUD).
     registry.register(CurrentTimeTool())
 
-    if cfg.features.automations:
+    # Automations create/mutate/run scheduled work — the whole family is
+    # excluded from read-only plan mode (list/read alone would dangle).
+    if cfg.features.automations and mode != "plan":
         for tool in [
             AutomationCreateTool(),
             AutomationListTool(),
@@ -683,15 +814,19 @@ def build_default_registry(config: Config | None = None, *, mode: str = "agent")
         ]:
             registry.register(tool)
 
-    # Knowledge / memory / review tools
-    registry.register(NoteTool())
+    # Knowledge / memory / review tools. ``note`` writes persistent memory,
+    # so it is excluded from read-only plan mode.
+    if mode != "plan":
+        registry.register(NoteTool())
     registry.register(PlanUpdateTool())
     registry.register(SkillLoadTool())
 
     # Engine-intercepted special tools (always active)
     registry.register(RequestUserInputTool())
 
-    registry.register(RunTestsTool())
+    # run_tests executes arbitrary commands — excluded from read-only plan mode.
+    if mode != "plan":
+        registry.register(RunTestsTool())
 
     return registry
 

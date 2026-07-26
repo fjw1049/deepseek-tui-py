@@ -244,12 +244,13 @@ def skills_directories(
 
     1. ``<workspace>/.agents/skills`` — deepseek-native convention.
     2. ``<workspace>/skills`` — flat, project-local.
-    3. ``<workspace>/.opencode/skills`` — OpenCode interop.
-    4. ``<workspace>/.claude/skills`` — Claude Code interop.
-    5. ``<workspace>/.cursor/skills`` — Cursor interop.
-    6. ``agents_global_skills_dir`` — agentskills.io global.
-    7. ``claude_global_skills_dir`` — Claude-ecosystem global (#902).
-    8. ``default_skills_dir`` — DeepSeek global, user-installed.
+    3. ``<workspace>/.deepseek/skills`` — project-local DeepSeek dir.
+    4. ``<workspace>/.opencode/skills`` — OpenCode interop.
+    5. ``<workspace>/.claude/skills`` — Claude Code interop.
+    6. ``<workspace>/.cursor/skills`` — Cursor interop.
+    7. ``agents_global_skills_dir`` — agentskills.io global.
+    8. ``claude_global_skills_dir`` — Claude-ecosystem global (#902).
+    9. ``default_skills_dir`` — DeepSeek global, user-installed.
 
     An explicit ``skills_dir`` override (tests, CLI flag) is honored first
     so deterministic precedence holds for callers that pin a directory.

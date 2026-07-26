@@ -33,7 +33,7 @@ def test_todo_metadata_prefers_task_updates_snapshot() -> None:
 
 def test_todo_metadata_merges_update_status_into_existing_items() -> None:
     existing = {
-        "tool_name": "checklist_write",
+        "tool_name": "checklist",
         "items": [
             {"id": "1", "content": "A", "status": "completed"},
             {"id": "2", "content": "B", "status": "pending"},

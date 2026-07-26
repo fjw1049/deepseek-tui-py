@@ -1644,7 +1644,7 @@ class RuntimeThreadManager:
         self, thread: ThreadRecord
     ) -> tuple[EngineHandle, asyncio.Task[None]]:
         from deepseek_tui.engine.orchestrator import Engine
-        from deepseek_tui.policy.approval import exec_policy_for_config
+        from deepseek_tui.tools.approval import exec_policy_for_config
 
         handle = EngineHandle()
         workspace = _resolved_workspace_path(thread.workspace)

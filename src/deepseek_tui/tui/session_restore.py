@@ -114,7 +114,7 @@ def session_started_at_iso(metadata: dict[str, Any], *, path: Path | None = None
 #
 
 from deepseek_tui.engine.handle import ApprovalHandler
-from deepseek_tui.policy.approval import ApprovalDecision, ApprovalRequest
+from deepseek_tui.tools.approval import ApprovalDecision, ApprovalRequest
 
 if TYPE_CHECKING:
     from deepseek_tui.tui.app import DeepSeekTUI

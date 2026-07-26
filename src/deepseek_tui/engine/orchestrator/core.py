@@ -79,8 +79,8 @@ from deepseek_tui.engine.tools import (
 )
 from deepseek_tui.engine.turn import TurnLoop, TurnResult, prepare_turn_for_model
 from deepseek_tui.integrations.lsp import DiagnosticBlock
-from deepseek_tui.policy.approval import ApprovalCache, ExecPolicyEngine
 from deepseek_tui.protocol.messages import Message, MessageOrigin, MessageRequest
+from deepseek_tui.tools.approval import ApprovalCache, ExecPolicyEngine
 from deepseek_tui.tools.registry import ToolContext, ToolRegistry
 from deepseek_tui.tools.subagent import SubAgentCompletion
 from deepseek_tui.utils import bind_turn
@@ -341,8 +341,8 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         # ``<plugin>:<stem>`` invocation (lowercased) → PluginCommand and are
         # expanded into the user message in ``_handle_send_message_inner``.
         # Agents map ``plugin:name`` (and bare ``name`` when unique) →
-        # PluginAgent and are exposed to ``agent_spawn`` via
-        # ``tool_context.metadata['plugin_agents']``.
+        # PluginAgent and are exposed to the ``agent`` tool (action="spawn")
+        # via ``tool_context.metadata['plugin_agents']``.
         self.plugin_commands: dict[str, Any] = {}
         self.plugin_agents: dict[str, Any] = {}
         # Plugin ``rules`` — always-on system-level directives (CodeBuddy
@@ -1147,7 +1147,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             engine._owns_tool_runtime = False
         # Register plugin index + skill names for prompt rendering.
         # Commands/agents/rules are deferred -- ``ensure_plugin_activated``
-        # loads them on-demand (mount, slash-command dispatch, agent_spawn).
+        # loads them on-demand (mount, slash-command dispatch, agent spawn).
         # The lockfile contribution index drives the prompt catalog without
         # disk-scanning .md files, so a workspace with many plugins pays
         # zero heavy-assembly cost at startup.
@@ -1192,8 +1192,8 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             }
             engine.plugin_names = [p.name for p in loaded_plugins]
             # Wire activation callback + agent-name index into tool context so
-            # ``agent_spawn`` can lazily activate a plugin when resolving a
-            # persona that hasn't been heavy-assembled yet.
+            # the ``agent`` tool (action="spawn") can lazily activate a plugin
+            # when resolving a persona that hasn't been heavy-assembled yet.
             if engine.tool_context is not None:
                 engine.tool_context.metadata["activate_plugin"] = (
                     engine.ensure_plugin_activated
@@ -2215,13 +2215,16 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         return out
 
     def _mark_subagent_tool_result_consumed(
-        self, tool_name: str, metadata: dict[str, Any] | None
+        self,
+        tool_name: str,
+        metadata: dict[str, Any] | None,
+        arguments: dict[str, Any] | None = None,
     ) -> None:
         """Mark sub-agent completions already returned by wait/result tools."""
         if not isinstance(metadata, dict):
             return
 
-        if tool_name == "resume_agent":
+        if tool_name == "agent_resume":
             agent_id = metadata.get("agent_id")
             if isinstance(agent_id, str):
                 self._consumed_subagent_completions.discard(agent_id)
@@ -2243,11 +2246,13 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                 )
             return
 
-        if tool_name not in {
-            "agent_wait",
-            "agent_result",
-            "agent_cancel",
-        }:
+        if tool_name == "agent":
+            # Only the result/cancel/wait actions return terminal snapshots;
+            # list would wrongly swallow pending completion reminders.
+            action = arguments.get("action") if isinstance(arguments, dict) else None
+            if action not in ("result", "cancel", "wait"):
+                return
+        else:
             return
 
         def terminal_agent_id(raw: object) -> str | None:

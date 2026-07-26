@@ -16,149 +16,103 @@ from deepseek_tui.tools.registry import ToolCapability, ToolError, ToolResult, T
 from deepseek_tui.tools.registry import ToolContext
 
 
-class GitStatusTool(ToolSpec):
+class GitTool(ToolSpec):
     def name(self) -> str:
-        return "git_status"
+        return "git"
 
     def description(self) -> str:
-        return "Show git status for a repository."
-
-    def input_schema(self) -> dict[str, object]:
-        return {
-            "type": "object",
-            "properties": {"path": {"type": "string"}},
-        }
-
-    def capabilities(self) -> list[ToolCapability]:
-        return [ToolCapability.READ_ONLY, ToolCapability.SANDBOXABLE]
-
-    async def execute(self, input_data: dict[str, object], context: ToolContext) -> ToolResult:
-        root = _resolve_root(input_data, context)
-        return await _run_git(root, "status", "--short", "--branch")
-
-
-class GitDiffTool(ToolSpec):
-    def name(self) -> str:
-        return "git_diff"
-
-    def description(self) -> str:
-        return "Show git diff output for a repository."
+        return (
+            "Run a read-only git query against a repository. "
+            "command=status: working-tree status (short + branch). "
+            "command=diff: diff output (staged, revspec). "
+            "command=log: recent commits (max_count, default 20). "
+            "command=show: show a git object (object required). "
+            "command=blame: per-line attribution for a file (file required; "
+            "optional line_start/line_end)."
+        )
 
     def input_schema(self) -> dict[str, object]:
         return {
             "type": "object",
             "properties": {
+                "command": {
+                    "type": "string",
+                    "enum": ["status", "diff", "log", "show", "blame"],
+                },
                 "path": {"type": "string"},
                 "staged": {"type": "boolean"},
                 "revspec": {"type": "string"},
-            },
-        }
-
-    def capabilities(self) -> list[ToolCapability]:
-        return [ToolCapability.READ_ONLY, ToolCapability.SANDBOXABLE]
-
-    async def execute(self, input_data: dict[str, object], context: ToolContext) -> ToolResult:
-        root = _resolve_root(input_data, context)
-        args = ["diff"]
-        if bool(input_data.get("staged", False)):
-            args.append("--cached")
-        revspec = _optional_string(input_data, "revspec")
-        if revspec is not None:
-            args.append(revspec)
-        return await _run_git(root, *args)
-
-
-class GitLogTool(ToolSpec):
-    def name(self) -> str:
-        return "git_log"
-
-    def description(self) -> str:
-        return "Show recent git commits for a repository."
-
-    def input_schema(self) -> dict[str, object]:
-        return {
-            "type": "object",
-            "properties": {
-                "path": {"type": "string"},
                 "max_count": {"type": "integer"},
-            },
-        }
-
-    def capabilities(self) -> list[ToolCapability]:
-        return [ToolCapability.READ_ONLY, ToolCapability.SANDBOXABLE]
-
-    async def execute(self, input_data: dict[str, object], context: ToolContext) -> ToolResult:
-        root = _resolve_root(input_data, context)
-        max_count = _optional_int(input_data, "max_count") or 20
-        return await _run_git(root, "log", f"--max-count={max_count}", "--oneline")
-
-
-class GitShowTool(ToolSpec):
-    def name(self) -> str:
-        return "git_show"
-
-    def description(self) -> str:
-        return "Show a git object in a repository."
-
-    def input_schema(self) -> dict[str, object]:
-        return {
-            "type": "object",
-            "properties": {
-                "path": {"type": "string"},
                 "object": {"type": "string"},
-            },
-            "required": ["object"],
-        }
-
-    def capabilities(self) -> list[ToolCapability]:
-        return [ToolCapability.READ_ONLY, ToolCapability.SANDBOXABLE]
-
-    async def execute(self, input_data: dict[str, object], context: ToolContext) -> ToolResult:
-        root = _resolve_root(input_data, context)
-        object_name = _require_string(input_data, "object")
-        return await _run_git(root, "show", object_name)
-
-
-class GitBlameTool(ToolSpec):
-    def name(self) -> str:
-        return "git_blame"
-
-    def description(self) -> str:
-        return "Show git blame information for a file."
-
-    def input_schema(self) -> dict[str, object]:
-        return {
-            "type": "object",
-            "properties": {
-                "path": {"type": "string"},
                 "file": {"type": "string"},
                 "line_start": {"type": "integer"},
                 "line_end": {"type": "integer"},
             },
-            "required": ["file"],
+            "required": ["command"],
         }
 
     def capabilities(self) -> list[ToolCapability]:
         return [ToolCapability.READ_ONLY, ToolCapability.SANDBOXABLE]
 
     async def execute(self, input_data: dict[str, object], context: ToolContext) -> ToolResult:
+        command = _require_string(input_data, "command")
         root = _resolve_root(input_data, context)
-        # Resolve inside the workspace (raises on escape), then pass a
-        # root-relative path to git.
-        resolved_file = context.resolve_path(_require_string(input_data, "file"))
-        try:
-            file_path = str(resolved_file.relative_to(root))
-        except ValueError:
-            file_path = str(resolved_file)
-        line_start = _optional_int(input_data, "line_start")
-        line_end = _optional_int(input_data, "line_end")
-        args = ["blame", "-f"]
-        if line_start is not None or line_end is not None:
-            if line_start is None or line_end is None:
-                raise ToolError("line_start and line_end must be provided together")
-            args.extend(["-L", f"{line_start},{line_end}"])
-        args.extend(["--", file_path])
-        return await _run_git(root, *args)
+        if command == "status":
+            return await _git_status(root)
+        if command == "diff":
+            return await _git_diff(input_data, root)
+        if command == "log":
+            return await _git_log(input_data, root)
+        if command == "show":
+            return await _git_show(input_data, root)
+        if command == "blame":
+            return await _git_blame(input_data, context, root)
+        raise ToolError(f"unknown git command: {command}")
+
+
+async def _git_status(root: Path) -> ToolResult:
+    return await _run_git(root, "status", "--short", "--branch")
+
+
+async def _git_diff(input_data: dict[str, object], root: Path) -> ToolResult:
+    args = ["diff"]
+    if bool(input_data.get("staged", False)):
+        args.append("--cached")
+    revspec = _optional_string(input_data, "revspec")
+    if revspec is not None:
+        args.append(revspec)
+    return await _run_git(root, *args)
+
+
+async def _git_log(input_data: dict[str, object], root: Path) -> ToolResult:
+    max_count = _optional_int(input_data, "max_count") or 20
+    return await _run_git(root, "log", f"--max-count={max_count}", "--oneline")
+
+
+async def _git_show(input_data: dict[str, object], root: Path) -> ToolResult:
+    object_name = _require_string(input_data, "object")
+    return await _run_git(root, "show", object_name)
+
+
+async def _git_blame(
+    input_data: dict[str, object], context: ToolContext, root: Path
+) -> ToolResult:
+    # Resolve inside the workspace (raises on escape), then pass a
+    # root-relative path to git.
+    resolved_file = context.resolve_path(_require_string(input_data, "file"))
+    try:
+        file_path = str(resolved_file.relative_to(root))
+    except ValueError:
+        file_path = str(resolved_file)
+    line_start = _optional_int(input_data, "line_start")
+    line_end = _optional_int(input_data, "line_end")
+    args = ["blame", "-f"]
+    if line_start is not None or line_end is not None:
+        if line_start is None or line_end is None:
+            raise ToolError("line_start and line_end must be provided together")
+        args.extend(["-L", f"{line_start},{line_end}"])
+    args.extend(["--", file_path])
+    return await _run_git(root, *args)
 
 
 def _resolve_root(input_data: dict[str, object], context: ToolContext) -> Path:

@@ -14,7 +14,7 @@ from asyncio.subprocess import Process
 from pathlib import Path
 from typing import Any
 
-from deepseek_tui.policy.approval import Decision
+from deepseek_tui.tools.approval import Decision
 from deepseek_tui.policy.command_safety import SafetyLevel, analyze_command
 from deepseek_tui.policy.sandbox import (
     SANDBOX_MANAGER,
@@ -49,13 +49,18 @@ class ExecShellTool(ToolSpec):
             "Execute a shell command. Supports background jobs (background=true) "
             "and an optional pseudo-TTY (pty=true) for interactive programs. "
             "Background jobs return a process_id — collect their output with "
-            "agent_result and cancel them with agent_cancel. "
+            'the agent tool (action="result") and cancel them with '
+            'action="cancel". '
             "Foreground commands are killed after timeout_ms milliseconds "
             "(default 120000, max 600000). Do not use this to fetch a URL — "
             "use fetch_url instead; only shell out with curl/wget when fetch_url "
             "is unavailable or you need shell piping around the response. "
             "Do not mutate source files via sed/python/heredoc — use edit_file "
-            "or write_file (scratch/, build outputs, and /tmp are allowed)."
+            "or write_file (scratch/, build outputs, and /tmp are allowed). "
+            "Do not use grep/rg to search file contents, find/ls -R to "
+            "locate files by name, or cat to read a file — use grep_files, "
+            "file_search, and read_file respectively; exec_shell is for "
+            "builds, tests, git, and process management."
         )
 
     def input_schema(self) -> dict[str, object]:
@@ -264,7 +269,7 @@ def _timeout_fallback_hint(command: str, context: ToolContext) -> str:
       - active durable task      → task_shell_start + task_shell_wait
       - task_manager wired but
         no active task           → task_create first, then task_shell_start
-      - otherwise                → exec_shell(background=true) + agent_result
+      - otherwise                → exec_shell(background=true) + agent (action="result")
 
     The mirror/tool-swap suggestion appears once the host has crossed the
     escalation threshold (see network_escalation). A single timeout stays
@@ -307,8 +312,8 @@ def _timeout_fallback_hint(command: str, context: ToolContext) -> str:
         )
     return (
         "For long-running work, use exec_shell(background=true) and then "
-        "agent_result to collect output, instead of a foreground "
-        "exec_shell that blocks until the timeout."
+        'the agent tool (action="result") to collect output, instead of a '
+        "foreground exec_shell that blocks until the timeout."
     )
 
 
@@ -337,8 +342,8 @@ async def wait_background_process(
 
     With ``timeout_ms`` set, a still-running process yields a
     ``status: running`` result (and stays registered) instead of blocking
-    forever. Shared by ``agent_result`` (background-job result fetch) and
-    ``task_shell_wait``.
+    forever. Shared by the ``agent`` tool (action="result", background-job
+    result fetch) and ``task_shell_wait``.
     """
     pty_proc = _get_pty(context, process_id)
     if pty_proc is not None:
@@ -425,7 +430,7 @@ def _running_process_result(process_id: str) -> ToolResult:
 async def cancel_background_process(context: ToolContext, process_id: str) -> ToolResult:
     """Terminate a background shell process and collect partial output.
 
-    Shared by ``agent_cancel``.
+    Shared by the ``agent`` tool (action="cancel").
     """
     pty_proc = _pop_pty(context, process_id)
     if pty_proc is not None:

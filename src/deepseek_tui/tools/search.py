@@ -12,6 +12,7 @@ from pathlib import Path
 from deepseek_tui.tools.validation import require_string as _require_string
 from deepseek_tui.tools.registry import ToolCapability, ToolError, ToolResult, ToolSpec
 from deepseek_tui.tools.registry import ToolContext
+from deepseek_tui.tools.sensitive import is_sensitive_path
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +57,9 @@ class GrepFilesTool(ToolSpec):
             "optional -A/-B/-C context lines), or 'count_matches' "
             "(path:match_count plus a total). Locate with "
             "files_with_matches, then drill in with content. ``head_limit`` "
-            "caps the returned entries (default 200)."
+            "caps the returned entries (default 200). Prefer this over "
+            "grep/rg via exec_shell — this tool caps output and skips "
+            "sensitive files (.env, private keys)."
         )
 
     def input_schema(self) -> dict[str, object]:
@@ -205,7 +208,10 @@ class FileSearchTool(ToolSpec):
         return "file_search"
 
     def description(self) -> str:
-        return "Find files by name pattern under a directory."
+        return (
+            "Find files by name pattern under a directory. Prefer this over "
+            "find/ls -R via exec_shell."
+        )
 
     def input_schema(self) -> dict[str, object]:
         return {
@@ -241,14 +247,20 @@ class FileSearchTool(ToolSpec):
 
 def _iter_files(root: Path) -> Iterable[Path]:
     if root.is_file():
-        yield root
+        if not is_sensitive_path(root):
+            yield root
         return
     for dirpath, dirnames, filenames in os.walk(root):
         # Prune ignored directories in place so os.walk never descends
         # into them (sorted for deterministic output order).
         dirnames[:] = sorted(d for d in dirnames if d not in _IGNORED_DIRS)
         for name in sorted(filenames):
-            yield Path(dirpath) / name
+            path = Path(dirpath) / name
+            # Never surface credential files (.env, private keys, ...) —
+            # the model must not read them via grep/file_search either.
+            if is_sensitive_path(path):
+                continue
+            yield path
 
 
 def _grep_files(

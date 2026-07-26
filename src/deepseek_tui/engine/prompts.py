@@ -192,7 +192,7 @@ def render_installed_plugins_catalog(entries: list[Any] | None) -> str:
     One line per plugin (name, description, component counts) plus invocation
     hints. Prefer this over per-command/agent listings when many plugins are
     installed — bodies stay on disk until ``/<plugin>:<cmd>``, ``load_skill``,
-    ``agent_spawn``, or ``@plugin:`` scenario mount.
+    an ``agent`` spawn, or ``@plugin:`` scenario mount.
     """
     entries = entries or []
     if not entries:
@@ -233,7 +233,8 @@ def render_installed_plugins_catalog(entries: list[Any] | None) -> str:
     lines.append("")
     lines.append(
         "Invoke slash commands with `/<plugin>:<command> [args]`; spawn a "
-        'plugin persona with `agent_spawn` using `type="<plugin>:<persona>"` '
+        'plugin persona with the `agent` tool (action="spawn") using '
+        '`agent_type="<plugin>:<persona>"` '
         "(bare persona name works when unique); "
         "load skill bodies with `load_skill`. Enter a scenario (full rules) "
         "with `@plugin:<name>`."
@@ -273,7 +274,8 @@ def render_plugin_components_context(
     if agents:
         lines.append(
             "Agent personas from installed plugins — spawn one with the "
-            '`agent_spawn` tool using `type="<plugin>:<name>"` (bare name '
+            '`agent` tool (action="spawn") using `agent_type="<plugin>:<name>"` '
+            "(bare name "
             "works when unique; persona system prompt is applied "
             "automatically). Available:"
         )

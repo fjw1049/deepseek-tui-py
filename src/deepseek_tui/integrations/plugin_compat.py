@@ -34,8 +34,8 @@ FOREIGN_TOOL_NAME_MAP: dict[str, tuple[str, ...]] = {
     "ls": ("list_dir",),
     "webfetch": ("fetch_url",),
     "websearch": ("web_search",),
-    "task": ("agent_spawn",),
-    "todowrite": ("checklist_write",),
+    "task": ("agent",),
+    "todowrite": ("checklist",),
     "skill": ("load_skill",),
 }
 

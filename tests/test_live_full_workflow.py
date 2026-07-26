@@ -1,7 +1,7 @@
 """Live end-to-end workflow: one natural query drives task + subagent + RLM tools.
 
-The parent model must *actively* call ``task_create``, ``agent_spawn`` (+ wait/
-result), and ``rlm`` — no direct tool injection in the test body.
+The parent model must *actively* call ``task_create``, ``agent`` (spawn + wait/
+result actions), and ``rlm`` — no direct tool injection in the test body.
 
 Uses ``.deepseek/config.toml`` (real DeepSeek API). Run:
 
@@ -32,10 +32,9 @@ from deepseek_tui.engine.events import (
     TurnCompleteEvent,
 )
 from deepseek_tui.engine.handle import AutoApprovalHandler, EngineHandle
-from deepseek_tui.policy.approval import ExecPolicyEngine
+from deepseek_tui.tools.approval import ExecPolicyEngine
 from deepseek_tui.integrations.hooks import build_hook_dispatcher, build_lifecycle_hook_executor
 from deepseek_tui.integrations.skills import discover_in_workspace
-from deepseek_tui.tools.registry import wire_registry_client
 from deepseek_tui.tools.runtime import ToolRuntime, create_tool_runtime
 from deepseek_tui.tools.task import TaskStatus
 
@@ -52,8 +51,8 @@ _WORKFLOW_QUERY = f"""请严格按顺序完成以下三步，每一步都必须�
 
 第1步：调用 task_create，prompt="只回复：TASK_DONE"，auto_approve=true。
 
-第2步：调用 agent_spawn，type=explore，prompt="Read WORKSPACE_MARKER.txt and reply with its exact content only"。
-spawn 返回 agent_id 后，再调用 agent_result（block=true）等待子 agent 完成。
+第2步：调用 agent 工具，action="spawn"，agent_type=explore，prompt="Read WORKSPACE_MARKER.txt and reply with its exact content only"。
+spawn 返回 agent_id 后，再调用 agent（action="result"，block=true）等待子 agent 完成。
 
 第3步：调用 rlm，file_path="corpus.txt"，task="Use Python to count lines containing cherry, llm_query for the number only, then FINAL."
 
@@ -119,7 +118,6 @@ async def _create_isolated_engine(
         skill_registry=discover_in_workspace(workspace=workspace),
         hook_executor=build_lifecycle_hook_executor(cfg, workspace),
     )
-    wire_registry_client(engine.tool_registry, client, root_model=model)
     if runtime.subagent_manager is not None:
         runtime.subagent_manager.attach_parent_cancel(handle.cancel_event)
     return engine
@@ -202,19 +200,13 @@ async def _wait_for_task_terminal(
 def _assert_workflow_trace(trace: WorkflowTrace, runtime: ToolRuntime) -> None:
     names = trace.tool_calls
     assert "task_create" in names, f"model never called task_create; got {names}"
-    assert "agent_spawn" in names, f"model never called agent_spawn; got {names}"
+    assert "agent" in names, f"model never called agent; got {names}"
     assert "rlm" in names, f"model never called rlm; got {names}"
-
-    agent_followups = {"agent_result", "agent_wait"}
-    assert any(n in names for n in agent_followups), (
-        f"model never waited on subagent; got {names}"
-    )
 
     successes = {name for name, ok, _ in trace.tool_results if ok}
     assert "task_create" in successes
-    assert "agent_spawn" in successes
+    assert "agent" in successes
     assert "rlm" in successes
-    assert any(n in successes for n in agent_followups)
 
     final_text = "".join(trace.assistant_text)
     assert "WORKFLOW_DONE" in final_text, final_text[-800:]

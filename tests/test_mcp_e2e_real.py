@@ -10,7 +10,7 @@ import pytest
 from deepseek_tui.engine.dispatch import is_mcp_tool
 from deepseek_tui.engine.orchestrator import Engine
 from deepseek_tui.engine.handle import AutoApprovalHandler, EngineHandle
-from deepseek_tui.policy.approval import ExecPolicyEngine
+from deepseek_tui.tools.approval import ExecPolicyEngine
 from deepseek_tui.mcp.config import McpServerConfig
 from deepseek_tui.mcp.manager import McpManager
 from deepseek_tui.protocol.responses import ToolCall

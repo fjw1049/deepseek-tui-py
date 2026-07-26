@@ -28,7 +28,7 @@ from deepseek_tui.config.models import Config, HooksConfig, LifecycleHookEntry
 from deepseek_tui.engine.dispatch import is_mcp_tool
 from deepseek_tui.engine.orchestrator import Engine
 from deepseek_tui.engine.handle import AutoApprovalHandler, EngineHandle
-from deepseek_tui.policy.approval import ExecPolicyEngine
+from deepseek_tui.tools.approval import ExecPolicyEngine
 from deepseek_tui.integrations.hooks import build_hook_dispatcher
 from deepseek_tui.mcp.config import McpServerConfig, load_mcp_config
 from deepseek_tui.mcp.execute import normalize_mcp_bridge_tool_name

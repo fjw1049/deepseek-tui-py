@@ -270,7 +270,7 @@ class DeepSeekTUI(App[None]):
             model = self.config.model or self.config.default_text_model
             approval_handler = TUIApprovalHandler(self)
             logger.info("tui_engine_create model=%s", model)
-            from deepseek_tui.policy.approval import exec_policy_for_config
+            from deepseek_tui.tools.approval import exec_policy_for_config
 
             self._engine = await Engine.create(
                 self.handle,
@@ -672,7 +672,10 @@ class DeepSeekTUI(App[None]):
             elif isinstance(event, ToolCallEvent):
                 tc = event.tool_call
                 transcript.add_tool_call(tc.id, tc.name, tc.arguments)
-                if tc.name == "agent_spawn":
+                if tc.name == "agent" and (
+                    isinstance(tc.arguments, dict)
+                    and tc.arguments.get("action") == "spawn"
+                ):
                     status.set_phase("spawning sub-agent...")
                 else:
                     status.set_phase(f"running {tc.name}")
@@ -687,7 +690,11 @@ class DeepSeekTUI(App[None]):
                     transcript.try_collapse_batch(completed_batch)
                 self._refresh_plan_progress_hint(status)
                 self._schedule_info_sidebar_refresh()
-                if event.success and event.tool_name == "agent_spawn":
+                if (
+                    event.success
+                    and event.tool_name == "agent"
+                    and event.content.startswith("spawned ")
+                ):
                     agent_id = _agent_id_from_spawn_result(event.content)
                     if agent_id:
                         self._turn_agent_ids.add(agent_id)
@@ -1215,7 +1222,7 @@ class DeepSeekTUI(App[None]):
         except Exception:
             return
 
-        # --- Todos: read from the in-memory store TodoWriteTool writes to.
+        # --- Todos: read from the in-memory store ChecklistTool writes to.
         todos_raw = self._engine.tool_context.metadata.get("todos") or {}
         items_raw = todos_raw.get("items", []) if isinstance(todos_raw, dict) else []
         todo_items: list[dict[str, object]] = []

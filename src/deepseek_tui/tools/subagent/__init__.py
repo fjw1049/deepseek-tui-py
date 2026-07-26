@@ -8,7 +8,7 @@ Split by responsibility:
 - :mod:`.agent`      — SubAgent handle + executor plumbing
 - :mod:`.manager`    — SubAgentManager + SubAgentRuntime
 - :mod:`.loop`       — run_subagent_loop executor
-- :mod:`.tools`      — the agent_* tools registered with the ToolRegistry
+- :mod:`.tools`      — the agent tools registered with the ToolRegistry
 
 ``deepseek_tui.tools.subagent`` keeps re-exporting the public names.
 """
@@ -36,13 +36,11 @@ from deepseek_tui.tools.subagent.mailbox import (
 )
 from deepseek_tui.tools.subagent.manager import SubAgentManager, SubAgentRuntime
 from deepseek_tui.tools.subagent.tools import (
-    AgentCancelTool,
-    AgentListTool,
-    AgentResultTool,
+    ALL_AGENT_ACTIONS,
+    PLAN_AGENT_ACTIONS,
+    READ_AGENT_ACTIONS,
     AgentResumeTool,
-    AgentSendInputTool,
-    AgentSpawnTool,
-    AgentWaitTool,
+    AgentTool,
 )
 from deepseek_tui.tools.subagent.types import (  # noqa: F401 — _MAX_CARD_RESULT_CHARS used by tests
     DEFAULT_MAX_AGENTS,
@@ -70,20 +68,18 @@ from deepseek_tui.tools.subagent.types import (  # noqa: F401 — _MAX_CARD_RESU
 
 __all__ = [
     "MAILBOX_MAX_ENVELOPES",
-    "AgentCancelTool",
-    "AgentListTool",
-    "AgentResultTool",
+    "ALL_AGENT_ACTIONS",
     "AgentResumeTool",
     "AgentRunOutput",
-    "AgentSendInputTool",
-    "AgentSpawnTool",
-    "AgentWaitTool",
+    "AgentTool",
     "DEFAULT_MAX_AGENTS",
     "DEFAULT_MAX_SPAWN_DEPTH",
     "DEFAULT_MAX_STEPS",
     "DEFAULT_RESULT_TIMEOUT_MS",
     "MAX_RESULT_TIMEOUT_MS",
     "MIN_WAIT_TIMEOUT_MS",
+    "PLAN_AGENT_ACTIONS",
+    "READ_AGENT_ACTIONS",
     "SUBAGENT_MAX_TOKENS_READ",
     "SUBAGENT_MAX_TOKENS_WRITE",
     "max_tokens_for_subagent_type",

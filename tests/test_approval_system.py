@@ -11,7 +11,7 @@ from deepseek_tui.server.approval import (
     HttpApprovalHandler,
     PendingApprovalRecord,
 )
-from deepseek_tui.policy.approval import ApprovalDecision, ApprovalRequest, RiskLevel, ToolCategory
+from deepseek_tui.tools.approval import ApprovalDecision, ApprovalRequest, RiskLevel, ToolCategory
 from deepseek_tui.tools.approval import (
     approval_request_for_tool,
     needs_tool_approval_prompt,

@@ -23,7 +23,7 @@ def test_checklist_update_includes_content_when_present() -> None:
     assert "Write architecture report" in summary
 
 
-def test_checklist_write_lists_todo_preview() -> None:
+def test_checklist_lists_todo_preview() -> None:
     summary = _summarize_call_args(
         {
             "todos": [

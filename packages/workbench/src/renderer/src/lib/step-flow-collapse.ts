@@ -14,8 +14,10 @@ const MUTATING_TOOLS = new Set([
   'delete_file'
 ])
 
+// `agent` / `agent_resume` are the current tool names; the agent_* entries are
+// legacy fallbacks for replayed history transcripts.
 const ORCHESTRATION_TOOL_RE =
-  /^(?:agent_spawn|spawn_agent|delegate_to_agent|agent_wait|wait|agent_result|agent_list|agent_cancel)$/i
+  /^(?:agent|agent_resume|agent_spawn|spawn_agent|delegate_to_agent|agent_wait|wait|agent_result|agent_list|agent_cancel|agent_send_input)$/i
 
 const PROBE_TOOLS = new Set([
   'read_file',

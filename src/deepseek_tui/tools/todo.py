@@ -1,17 +1,20 @@
-"""Todo / checklist tools.
+"""Todo / checklist tool.
 
-This module exposes a 2-tool family — ``checklist_write`` /
-``checklist_list`` — operating on
+This module exposes a single ``checklist`` tool operating on
 one in-memory ``TodoList`` (kept on ``ToolContext.metadata['todos']``).
+Providing ``todos`` replaces the whole checklist; omitting ``todos``
+returns the current checklist (read-only).
 
-History note: these tools were previously registered twice, under both the
-canonical ``checklist_*`` names and legacy ``todo_*`` aliases. Exposing two
-identical tools in the model's catalog made models flail between them, so the
-aliases were dropped. Historical transcripts that recorded ``todo_*`` calls
-still render fine — the renderer matches both name families by regex and does
-not require the tool to still exist.
+History note: this tool was previously a 2-tool family
+(``checklist_write`` / ``checklist_list``), and before that was also
+registered under legacy ``todo_*`` aliases. Duplicate entries in the
+model's catalog made models flail between identical tools, so the
+family was merged into one tool. Historical transcripts that recorded
+``checklist_*`` / ``todo_*`` calls still render fine — the renderer
+matches those name families by regex and does not require the tool to
+still exist.
 
-Each write/add/update call returns a structured snapshot under
+Each write call returns a structured snapshot under
 ``ToolResult.metadata['task_updates']['checklist']``. When the tool
 runs inside a durable Task, an executor-installed sink forwards that
 snapshot to :class:`TaskManager` which persists it to the on-disk
@@ -23,10 +26,19 @@ from __future__ import annotations
 
 
 import asyncio
+import logging
 from dataclasses import dataclass
 from typing import Any, Literal, cast
 
-from deepseek_tui.tools.registry import ToolCapability, ToolError, ToolResult, ToolSpec
+_LOG = logging.getLogger(__name__)
+
+from deepseek_tui.tools.registry import (
+    ApprovalRequirement,
+    ToolCapability,
+    ToolError,
+    ToolResult,
+    ToolSpec,
+)
 from deepseek_tui.tools.registry import ToolContext
 
 _TODO_STORE_KEY = "todos"
@@ -117,7 +129,8 @@ def _coerce_status(value: object, *, default: TodoStatus = "pending") -> TodoSta
 def _enforce_single_in_progress(items: list[TodoItem]) -> None:
     """Enforce the "at most one item in_progress" invariant.
 
-    Called on every write path (checklist_write) before persisting.
+    Called on every write path (``checklist`` with ``todos``) before
+    persisting.
     """
     in_progress_ids = [i.id for i in items if i.status == "in_progress"]
     if len(in_progress_ids) > 1:
@@ -199,29 +212,34 @@ def _forward_to_task_manager(
 # ---------------------------------------------------------------------------
 
 
-class TodoWriteTool(ToolSpec):
-    """Replace the active checklist.
+class ChecklistTool(ToolSpec):
+    """Read or replace the active checklist.
 
     Operates on the shared in-memory store via :class:`ToolContext.metadata`.
 
-    Schema accepts two shapes:
+    - ``todos`` provided → full-list rewrite (replaces the entire checklist).
+    - ``todos`` omitted → returns the current checklist (read-only).
 
-    - Canonical: ``{"todos": [{"content": ..., "status": ...}, ...]}``
-    - Legacy:    ``{"items": ["text1", "text2", ...]}`` — each becomes
-      a pending todo.
+    Schema accepts the canonical shape
+    ``{"todos": [{"content": ..., "status": ...}, ...]}``. The legacy
+    ``items`` argument (array of strings, each becoming a pending todo) is
+    still accepted at the execution layer as an alias for ``todos`` but is
+    intentionally absent from the schema.
     """
 
     def name(self) -> str:
-        return "checklist_write"
+        return "checklist"
 
     def description(self) -> str:
         return (
             "The canonical progress tracker for multi-step work — use it "
             "whenever a task has more than a couple of steps and keep it "
-            "current as you go. Replaces the entire checklist on every call "
-            "(full-list rewrite). At most one item may be in_progress at a "
-            "time. Durable tasks remain the real executable work object; "
-            "this is granular progress."
+            "current as you go. Provide `todos` to replace the entire "
+            "checklist (full-list rewrite; at most one item may be "
+            "in_progress at a time). Omit `todos` to read the current "
+            "checklist with status + completion percentage. Durable tasks "
+            "remain the real executable work object; this is granular "
+            "progress."
         )
 
     def input_schema(self) -> dict[str, object]:
@@ -231,8 +249,9 @@ class TodoWriteTool(ToolSpec):
                 "todos": {
                     "type": "array",
                     "description": (
-                        "Canonical: array of {content, status} objects. "
-                        "Replaces the existing list."
+                        "Array of {content, status} objects. When provided, "
+                        "replaces the existing list; when omitted, the tool "
+                        "returns the current checklist unchanged."
                     ),
                     "items": {
                         "type": "object",
@@ -246,46 +265,60 @@ class TodoWriteTool(ToolSpec):
                         "required": ["content"],
                     },
                 },
-                "items": {
-                    "type": "array",
-                    "description": (
-                        "Legacy: array of strings (each becomes a pending todo)."
-                    ),
-                    "items": {"type": "string"},
-                },
             },
         }
 
     def capabilities(self) -> list[ToolCapability]:
         return [ToolCapability.WRITES_FILES]
 
+    def approval_requirement_for_input(
+        self, input_data: dict[str, Any]
+    ) -> ApprovalRequirement:
+        # Omitting ``todos`` (and the legacy ``items`` alias) is a pure read —
+        # keep it prompt-free like the pre-merge checklist_list.
+        if isinstance(input_data, dict):
+            if input_data.get("todos") is not None or input_data.get("items") is not None:
+                return ApprovalRequirement.SUGGEST
+            return ApprovalRequirement.AUTO
+        return ApprovalRequirement.SUGGEST
+
+    def is_read_only_for_input(self, input_data: dict[str, Any]) -> bool:
+        # Static capabilities are WRITES_FILES, which would serialize pure
+        # reads; a call without todos/items only reads the current list.
+        if isinstance(input_data, dict):
+            return input_data.get("todos") is None and input_data.get("items") is None
+        return False
+
     async def execute(
         self, input_data: dict[str, object], context: ToolContext
     ) -> ToolResult:
-        # Prefer the canonical ``todos`` shape; fall back to legacy ``items``
-        # for back-compat with old transcripts / tests.
-        normalised: list[tuple[str, TodoStatus]] = []
         todos = input_data.get("todos")
-        items = input_data.get("items")
-        if isinstance(todos, list):
-            for entry in todos:
-                if isinstance(entry, str):
-                    normalised.append((entry, "pending"))
-                elif isinstance(entry, dict):
-                    content = entry.get("content")
-                    if not isinstance(content, str):
-                        raise ToolError("each todo must have a string 'content'")
-                    status = _coerce_status(entry.get("status"))
-                    normalised.append((content, status))
-                else:
-                    raise ToolError("todos entries must be string or object")
-        elif isinstance(items, list):
-            for text in items:
-                if not isinstance(text, str):
-                    raise ToolError("each item must be a string")
-                normalised.append((text, "pending"))
-        else:
-            raise ToolError("provide either 'todos' (canonical) or 'items' (legacy)")
+        if todos is None:
+            items = input_data.get("items")
+            if items is not None:
+                _LOG.debug(
+                    "checklist: legacy 'items' alias used; mapping to 'todos'"
+                )
+                todos = items
+        if todos is None:
+            return self._read(context)
+        return self._write(todos, context)
+
+    def _write(self, todos: object, context: ToolContext) -> ToolResult:
+        if not isinstance(todos, list):
+            raise ToolError("'todos' must be an array")
+        normalised: list[tuple[str, TodoStatus]] = []
+        for entry in todos:
+            if isinstance(entry, str):
+                normalised.append((entry, "pending"))
+            elif isinstance(entry, dict):
+                content = entry.get("content")
+                if not isinstance(content, str):
+                    raise ToolError("each todo must have a string 'content'")
+                status = _coerce_status(entry.get("status"))
+                normalised.append((content, status))
+            else:
+                raise ToolError("todos entries must be string or object")
 
         store = _todo_store(context)
         new_items: list[TodoItem] = []
@@ -305,25 +338,7 @@ class TodoWriteTool(ToolSpec):
             metadata=metadata,
         )
 
-
-class TodoListTool(ToolSpec):
-    """Render the active checklist."""
-
-    def name(self) -> str:
-        return "checklist_list"
-
-    def description(self) -> str:
-        return "List the active checklist with status + completion percentage."
-
-    def input_schema(self) -> dict[str, object]:
-        return {"type": "object", "properties": {}}
-
-    def capabilities(self) -> list[ToolCapability]:
-        return [ToolCapability.READ_ONLY]
-
-    async def execute(
-        self, input_data: dict[str, object], context: ToolContext
-    ) -> ToolResult:
+    def _read(self, context: ToolContext) -> ToolResult:
         store = _todo_store(context)
         items: list[TodoItem] = list(store["items"])
         lines = [
@@ -331,7 +346,7 @@ class TodoListTool(ToolSpec):
             for i in items
         ]
         metadata = _build_result_metadata(store, tool_name=self.name())
-        # Listing is read-only — no task_updates forwarding
+        # Reading is read-only — no task_updates forwarding
         # (``checklist_metadata`` is only attached to write paths).
         metadata.pop("task_updates", None)
         return ToolResult(

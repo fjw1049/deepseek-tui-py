@@ -9,6 +9,7 @@ from pathlib import Path
 from deepseek_tui.tools.validation import require_string as _require_string
 from deepseek_tui.tools.registry import ToolCapability, ToolError, ToolResult, ToolSpec
 from deepseek_tui.tools.registry import ToolContext
+from deepseek_tui.tools.sensitive import is_sensitive_path
 from deepseek_tui.utils import write_text_atomic
 
 logger = logging.getLogger(__name__)
@@ -28,7 +29,9 @@ class ReadFileTool(ToolSpec):
             "Read a UTF-8 text file from disk. Output is line-numbered "
             "(cat -n style). By default at most 2000 lines are returned and "
             "lines longer than 2000 characters are truncated; use offset/limit "
-            "to page through large files in ranges."
+            "to page through large files in ranges. Do not use this on a "
+            "directory — use list_dir instead. Always read a file with this "
+            "tool before editing it with edit_file."
         )
 
     def input_schema(self) -> dict[str, object]:
@@ -61,6 +64,11 @@ class ReadFileTool(ToolSpec):
 
     async def execute(self, input_data: dict[str, object], context: ToolContext) -> ToolResult:
         path = context.resolve_path(_require_string(input_data, "path"), allow_read_roots=True)
+        if is_sensitive_path(path):
+            raise ToolError(
+                f"refusing to read sensitive file: {path} "
+                "(matched the credential-file blocklist)"
+            )
         content = await _read_text(path)
         offset = _optional_non_negative_int(input_data, "offset")
         limit = _optional_non_negative_int(input_data, "limit")
@@ -99,7 +107,8 @@ class WriteFileTool(ToolSpec):
             "you must have used read_file on it earlier in the conversation "
             "before overwriting it; new files can be written directly. "
             "Prefer this (or edit_file) for source changes — do not rewrite "
-            "files via exec_shell."
+            "files via exec_shell. Use this only for new files or full "
+            "rewrites; for partial changes use edit_file."
         )
 
     def input_schema(self) -> dict[str, object]:
@@ -162,7 +171,8 @@ class EditFileTool(ToolSpec):
             "old_string is not found, or if it is not unique unless "
             "replace_all is true. You must have used read_file on this file "
             "earlier in the conversation before editing it. "
-            "Prefer this over sed/python via exec_shell for source edits."
+            "Prefer this over sed/python via exec_shell for source edits. "
+            "For a brand-new file use write_file instead."
         )
 
     def input_schema(self) -> dict[str, object]:

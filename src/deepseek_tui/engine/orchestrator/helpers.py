@@ -31,21 +31,15 @@ _FOCUS_REGISTRY_TOOLS = frozenset(
         "grep_files",
         "file_search",
         "project_map",
-        "git_status",
-        "git_diff",
-        "git_log",
-        "git_blame",
-        "git_show",
+        "git",
         "github_issue_context",
         "github_pr_context",
         # Session
         "load_skill",
         "note",
         "update_plan",
-        "retrieve_tool_result",
         "current_time",
-        "checklist_write",
-        "checklist_list",
+        "checklist",
         "request_user_input",
         # Research
         "web_search",
@@ -57,13 +51,8 @@ _FOCUS_REGISTRY_TOOLS = frozenset(
         "exec_shell",
         "exec_shell_interact",
         # Agents
-        "agent_spawn",
-        "agent_result",
-        "agent_wait",
-        "agent_list",
-        "agent_cancel",
-        "agent_send_input",
-        "resume_agent",
+        "agent",
+        "agent_resume",
     }
 )
 

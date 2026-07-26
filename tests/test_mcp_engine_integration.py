@@ -156,8 +156,8 @@ class TestMcpToolApproval:
     async def test_external_mcp_tool_requires_approval_on_request_policy(self):
         from deepseek_tui.engine.orchestrator import Engine
         from deepseek_tui.engine.handle import EngineHandle
-        from deepseek_tui.policy.approval import ExecPolicyEngine
-        from deepseek_tui.policy.approval import ApprovalDecision
+        from deepseek_tui.tools.approval import ExecPolicyEngine
+        from deepseek_tui.tools.approval import ApprovalDecision
         from deepseek_tui.protocol.responses import ToolCall
         from deepseek_tui.tools.registry import ToolContext
         from deepseek_tui.tools.mcp import MCP_MANAGER_KEY
@@ -283,7 +283,7 @@ class TestNativeDeferralWithoutMcp:
     async def test_no_mcp_manager_defers_non_core_tools(self, tmp_path):
         engine = self._engine(tmp_path)
         defer = self._defer_map(await engine._get_tools_with_mcp())
-        assert defer["git_status"] is True
+        assert defer["git"] is True
         assert defer["workflow"] is True
         assert defer["read_file"] is False
         assert defer["exec_shell"] is False
@@ -293,7 +293,7 @@ class TestNativeDeferralWithoutMcp:
         mgr._discovered_tools_cache = []
         engine = self._engine(tmp_path, mcp_manager=mgr)
         defer = self._defer_map(await engine._get_tools_with_mcp())
-        assert defer["git_status"] is True
+        assert defer["git"] is True
         assert defer["read_file"] is False
 
     async def test_cold_mcp_discovery_defers_non_core_tools(self, tmp_path):
@@ -301,11 +301,11 @@ class TestNativeDeferralWithoutMcp:
         mgr.schedule_background_discover = lambda: None
         engine = self._engine(tmp_path, mcp_manager=mgr)
         defer = self._defer_map(await engine._get_tools_with_mcp())
-        assert defer["git_status"] is True
+        assert defer["git"] is True
         assert defer["read_file"] is False
 
     async def test_yolo_mode_defers_nothing_without_mcp(self, tmp_path):
         engine = self._engine(tmp_path, mode="yolo")
         defer = self._defer_map(await engine._get_tools_with_mcp())
-        assert defer["git_status"] is False
+        assert defer["git"] is False
         assert defer["workflow"] is False

@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-from deepseek_tui.policy.approval import (
+from deepseek_tui.tools.approval import (
     ApprovalRequest,
     RiskLevel,
     ToolCategory,
-)
-from deepseek_tui.tools.approval import (
     approval_request_to_sse_payload,
     classify_presentation_risk,
     classify_tool_category,
@@ -66,14 +64,15 @@ def test_pr04_fetch_url_shows_url() -> None:
 
 
 def test_pr05_agent_spawn_prompt() -> None:
-    req = _req("agent_spawn")
+    req = _req("agent")
     enrich_approval_request(
         req,
-        "agent_spawn",
+        "agent",
         {
+            "action": "spawn",
             "prompt": "Review auth module",
             "allow_shell": True,
-            "type": "review",
+            "agent_type": "review",
         },
     )
     joined = " ".join(req.impacts)
@@ -81,7 +80,7 @@ def test_pr05_agent_spawn_prompt() -> None:
 
 
 def test_pr07_approval_key_matches_cache() -> None:
-    from deepseek_tui.policy.approval import build_approval_key
+    from deepseek_tui.tools.approval import build_approval_key
 
     args = {"command": "echo hi"}
     req = _req("exec_shell")

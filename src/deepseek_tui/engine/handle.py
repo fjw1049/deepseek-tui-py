@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from deepseek_tui.engine.events import EngineEvent
-from deepseek_tui.policy.approval import ApprovalDecision, ApprovalRequest
+from deepseek_tui.tools.approval import ApprovalDecision, ApprovalRequest
 
 if TYPE_CHECKING:
     from deepseek_tui.integrations.hooks import HookDispatcher

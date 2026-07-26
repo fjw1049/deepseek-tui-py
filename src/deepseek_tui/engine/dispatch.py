@@ -241,10 +241,10 @@ _TOOL_PRIMARY_ARG: dict[str, str] = {
     "file_search": "pattern",
     "web_search": "query",
     "fetch_url": "url",
-    "git_show": "ref",
+    "git": "command",
     "load_skill": "name",
     "task_create": "prompt",
-    "agent_spawn": "prompt",
+    "agent": "prompt",
 }
 
 

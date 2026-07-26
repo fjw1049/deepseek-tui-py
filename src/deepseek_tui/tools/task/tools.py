@@ -56,7 +56,7 @@ class TaskCreateTool(ToolSpec):
             "this turn. Use ONLY for long-running work the user will not wait for "
             "here. If you need to WAIT for the result, AGGREGATE several results, "
             "or report back in this reply (e.g. 'benchmark X and Y and summarize'), "
-            "use sub-agents instead (agent_spawn + agent_wait). "
+            "use sub-agents instead (agent tool: action=\"spawn\" + action=\"wait\"). "
             "Never split one combined-report request into multiple tasks — they run "
             "independently and are never aggregated. Cannot be called from inside "
             "another running task (max_task_nest_depth=1); use sub-agents instead."
@@ -164,8 +164,7 @@ class TaskReadTool(ToolSpec):
         return {
             "type": "object",
             "properties": {
-                "task_id": {"type": "string", "description": "Task id (alias: id)"},
-                "id": {"type": "string", "description": "Task id (alias for task_id)"},
+                "task_id": {"type": "string", "description": "Task id"},
             },
             "additionalProperties": False,
         }
@@ -196,8 +195,7 @@ class TaskCancelTool(ToolSpec):
         return {
             "type": "object",
             "properties": {
-                "task_id": {"type": "string", "description": "Task id (alias: id)"},
-                "id": {"type": "string", "description": "Task id (alias for task_id)"},
+                "task_id": {"type": "string", "description": "Task id"},
             },
             "additionalProperties": False,
         }
@@ -249,8 +247,7 @@ class TaskResumeTool(ToolSpec):
         return {
             "type": "object",
             "properties": {
-                "task_id": {"type": "string", "description": "Task id (alias: id)"},
-                "id": {"type": "string", "description": "Task id (alias for task_id)"},
+                "task_id": {"type": "string", "description": "Task id"},
             },
             "additionalProperties": False,
         }
@@ -303,7 +300,6 @@ class TaskGateRunTool(ToolSpec):
                     "type": "string",
                     "description": "Task id; defaults to active task when inside one.",
                 },
-                "id": {"type": "string", "description": "Alias for task_id"},
                 "gate": {
                     "type": "string",
                     "description": "Gate type: fmt, check, clippy, test, custom",
@@ -484,8 +480,7 @@ class TaskShellStartTool(ToolSpec):
         return {
             "type": "object",
             "properties": {
-                "task_id": {"type": "string", "description": "Task id (alias: id)"},
-                "id": {"type": "string", "description": "Alias for task_id"},
+                "task_id": {"type": "string", "description": "Task id"},
                 "command": {"type": "string"},
                 "pty": {"type": "boolean"},
             },

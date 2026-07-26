@@ -1609,12 +1609,12 @@ def test_trust_and_uninstall_resolve_manifest_name(tmp_path: Path) -> None:
 
 
 async def test_agent_spawn_resolves_plugin_persona(tmp_path) -> None:
-    """agent_spawn resolves a plugin agent name to a CUSTOM/general spawn
-    whose system prompt is the persona body."""
+    """agent action="spawn" resolves a plugin agent name to a CUSTOM/general
+    spawn whose system prompt is the persona body."""
     from deepseek_tui.integrations.plugins import PluginAgent
     from deepseek_tui.tools.registry import ToolContext
     from deepseek_tui.tools.subagent.manager import SubAgentManager
-    from deepseek_tui.tools.subagent.tools import AgentSpawnTool
+    from deepseek_tui.tools.subagent.tools import AgentTool
 
     persona = PluginAgent(
         name="demo-specialist",
@@ -1631,8 +1631,9 @@ async def test_agent_spawn_resolves_plugin_persona(tmp_path) -> None:
         subagent_manager=manager,
         metadata={"plugin_agents": {"demo-specialist": persona}},
     )
-    result = await AgentSpawnTool().execute(
-        {"prompt": "do the thing", "type": "demo-specialist"}, context
+    result = await AgentTool().execute(
+        {"action": "spawn", "prompt": "do the thing", "agent_type": "demo-specialist"},
+        context,
     )
     assert result.success
     agent_id = result.metadata["agent_id"]
@@ -1648,8 +1649,9 @@ async def test_agent_spawn_resolves_plugin_persona(tmp_path) -> None:
     from deepseek_tui.tools.registry import ToolError
 
     with pytest.raises(ToolError):
-        await AgentSpawnTool().execute(
-            {"prompt": "x", "type": "nonexistent-agent"}, context
+        await AgentTool().execute(
+            {"action": "spawn", "prompt": "x", "agent_type": "nonexistent-agent"},
+            context,
         )
     await manager.shutdown()
 
@@ -1773,9 +1775,9 @@ async def test_active_plugin_whitelist_read_only(tmp_path, monkeypatch) -> None:
         # + agents (authors rarely declare allowed-tools). Manifest
         # permissions: ["read"] is advisory UI, not a tool-surface cut.
         assert {"read_file", "grep_files", "list_dir", "load_skill"} <= wl
-        assert {"file_search", "git_status", "git_diff", "project_map"} <= wl
+        assert {"file_search", "git", "project_map"} <= wl
         assert {"write_file", "edit_file"} <= wl
-        assert {"exec_shell", "code_execution", "agent_spawn"} <= wl
+        assert {"exec_shell", "code_execution", "agent"} <= wl
         # Orchestration / mutating GitHub stay out unless skill-declared.
         assert {"task_create", "workflow", "github_close"}.isdisjoint(wl)
     finally:
@@ -2270,7 +2272,7 @@ async def test_agent_spawn_resolves_qualified_plugin_persona(tmp_path) -> None:
     from deepseek_tui.integrations.plugins import PluginAgent
     from deepseek_tui.tools.registry import ToolContext
     from deepseek_tui.tools.subagent.manager import SubAgentManager
-    from deepseek_tui.tools.subagent.tools import AgentSpawnTool
+    from deepseek_tui.tools.subagent.tools import AgentTool
 
     persona = PluginAgent(
         name="demo-specialist",
@@ -2289,13 +2291,14 @@ async def test_agent_spawn_resolves_qualified_plugin_persona(tmp_path) -> None:
         subagent_manager=manager,
         metadata={"plugin_agents": registry},
     )
-    tool = AgentSpawnTool()
+    tool = AgentTool()
     result = await tool.execute(
-        {"prompt": "do the thing", "type": "demo:demo-specialist"}, context
+        {"action": "spawn", "prompt": "do the thing", "agent_type": "demo:demo-specialist"},
+        context,
     )
     assert result.success
     result2 = await tool.execute(
-        {"prompt": "again", "type": "demo-specialist"}, context
+        {"action": "spawn", "prompt": "again", "agent_type": "demo-specialist"}, context
     )
     assert result2.success
     await manager.shutdown()
@@ -2387,7 +2390,7 @@ async def test_agent_spawn_untrusted_plugin_confined_to_scenario_base(
     from deepseek_tui.integrations.plugins import PluginAgent
     from deepseek_tui.tools.registry import ToolContext
     from deepseek_tui.tools.subagent.manager import SubAgentManager
-    from deepseek_tui.tools.subagent.tools import AgentSpawnTool
+    from deepseek_tui.tools.subagent.tools import AgentTool
 
     persona = PluginAgent(
         name="demo-specialist",
@@ -2406,8 +2409,9 @@ async def test_agent_spawn_untrusted_plugin_confined_to_scenario_base(
             "plugin_trust": {"demo": False},
         },
     )
-    result = await AgentSpawnTool().execute(
-        {"prompt": "do the thing", "type": "demo-specialist"}, context
+    result = await AgentTool().execute(
+        {"action": "spawn", "prompt": "do the thing", "agent_type": "demo-specialist"},
+        context,
     )
     assert result.success
     spawned = manager._agents[result.metadata["agent_id"]]

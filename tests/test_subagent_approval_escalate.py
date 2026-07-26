@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from deepseek_tui.engine.handle import DenyApprovalHandler
-from deepseek_tui.policy.approval import ApprovalDecision
+from deepseek_tui.tools.approval import ApprovalDecision
 from deepseek_tui.tools.file import WriteFileTool
 from deepseek_tui.tools.registry import ToolRegistry, ToolResult
 from deepseek_tui.tools.shell import ExecShellTool

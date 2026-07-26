@@ -139,16 +139,16 @@ class TestLiveSessionActivity:
         client = DeepSeekClient.from_config(cfg)
 
         query = (
-            f"Call agent_spawn with type=explore and prompt="
+            f"Call the agent tool with action=\"spawn\", agent_type=explore and prompt="
             f"'Read probe.txt and reply with exactly: {marker}'. "
-            "Do NOT call agent_wait. After spawn returns, reply SPAWNED_ONLY."
+            "Do NOT call action \"wait\". After spawn returns, reply SPAWNED_ONLY."
         )
         events = await _run_engine_query(
             cfg, client, tmp_path, live_model, query, timeout=_TIMEOUT_SUBAGENT
         )
 
         names = [e.tool_call.name for e in events if isinstance(e, ToolCallEvent)]
-        assert "agent_spawn" in names, f"expected agent_spawn, got {names}"
+        assert "agent" in names, f"expected agent, got {names}"
 
         statuses = [e.message for e in events if isinstance(e, StatusEvent)]
         assert any("Waiting on" in s or "sub-agent completion" in s for s in statuses), (

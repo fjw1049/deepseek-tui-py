@@ -36,13 +36,13 @@ from deepseek_tui.engine.tools import (
     maybe_activate_requested_deferred_tool,
     missing_tool_error_message,
 )
-from deepseek_tui.policy.approval import (
+from deepseek_tui.protocol.messages import Message, ToolUseBlock
+from deepseek_tui.protocol.responses import ToolCall
+from deepseek_tui.tools.approval import (
     ApprovalCacheStatus,
     ApprovalDecision,
     build_approval_key,
 )
-from deepseek_tui.protocol.messages import Message, ToolUseBlock
-from deepseek_tui.protocol.responses import ToolCall
 from deepseek_tui.tools.registry import ToolError, ToolResult
 from deepseek_tui.utils import bind_tool
 
@@ -116,15 +116,17 @@ class ToolExecutionMixin:
 
                 policy = self.exec_policy.approval_policy
                 if tool is not None:
+                    args = tc.arguments if isinstance(tc.arguments, dict) else {}
+                    read_only = tool.is_read_only_for_input(args)
                     plans.append(ToolExecutionPlan(
                         index=i,
                         id=tc.id,
                         name=tc.name,
-                        input=tc.arguments if isinstance(tc.arguments, dict) else {},
-                        read_only=tool.is_read_only(),
-                        supports_parallel=tool.is_read_only()
+                        input=args,
+                        read_only=read_only,
+                        supports_parallel=read_only
                         and tool.supports_parallel(),
-                        approval_required=plan_requires_approval(tool, policy),
+                        approval_required=plan_requires_approval(tool, policy, args),
                     ))
                 elif is_mcp_tool(tc.name):
                     plans.append(ToolExecutionPlan(
@@ -207,7 +209,11 @@ class ToolExecutionMixin:
                     )
                     if result.success:
                         self._mark_subagent_tool_result_consumed(
-                            tool_call.name, result.metadata
+                            tool_call.name,
+                            result.metadata,
+                            tool_call.arguments
+                            if isinstance(tool_call.arguments, dict)
+                            else None,
                         )
                     self.working_set.observe_tool_call(
                         tool_call.name,
@@ -391,7 +397,11 @@ class ToolExecutionMixin:
                 )
                 if result.success:
                     self._mark_subagent_tool_result_consumed(
-                        tool_call.name, result.metadata
+                        tool_call.name,
+                        result.metadata,
+                        tool_call.arguments
+                        if isinstance(tool_call.arguments, dict)
+                        else None,
                     )
                 self.working_set.observe_tool_call(
                     tool_call.name,
@@ -554,7 +564,9 @@ class ToolExecutionMixin:
         from deepseek_tui.tools.approval import approval_request_for_tool
 
         approval_request = approval_request_for_tool(
-            tool, self.exec_policy.approval_policy
+            tool,
+            self.exec_policy.approval_policy,
+            tool_call.arguments if isinstance(tool_call.arguments, dict) else None,
         )
         if approval_request is not None:
             denied = await self._handle_approval_flow(tool_call, approval_request)

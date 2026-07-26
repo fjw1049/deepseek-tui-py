@@ -1,6 +1,22 @@
 provider = "deepseek"
 model = "deepseek-v4-pro"
 
+# Tool-call approval policy (default "on-request"). One of:
+# on-request | suggest | untrusted | auto | never | never-ask | yolo.
+approval_policy = "on-request"
+
+# Filesystem sandbox for shell/exec tools (default "workspace-write"). One of:
+# workspace-write | read-only | danger-full-access | external-sandbox.
+# When unset, the sandbox is derived from approval_policy.
+sandbox_mode = "workspace-write"
+
+# Master switch for the shell tool (default true).
+allow_shell = true
+
+# Skill install dir and MCP server config file (defaults shown).
+# skills_dir = ".deepseek/skills"
+# mcp_config_path = ".deepseek/mcp.json"
+
 # Web search: AnySearch (optional key) + Tavily (optional key); results are merged.
 # anysearch_api_key = ""   # or ANYSEARCH_API_KEY
 # tavily_api_key = ""      # or TAVILY_API_KEY
@@ -36,8 +52,16 @@ database_path = "~/.deepseek_tui/state.db"
 autosave = true
 
 [features]
+shell_tool = true    # shell/exec tool (default true)
+subagents = true     # sub-agent spawn tools (default true)
 tasks = true
+web_search = true    # AnySearch/Tavily web search tool (default true)
+mcp = true           # MCP servers from mcp_config_path (default true)
+exec_policy = true   # exec policy engine (default true)
+# Opt-in (default false): durable scheduled automations — registers the 8
+# automation tools + scheduler; has side effects, so enable deliberately.
 automations = true
+plugins = true       # plugin system: skills/hooks/MCP bundles (default true)
 
 [subagents]
 # Per-type model overrides. When a sub-agent of the given type is spawned
@@ -94,6 +118,25 @@ skill_create = "propose"
 [evolution.sinks]
 trajectory_enabled = false
 # trajectory_path = "~/.deepseek/trajectories"
+
+# Observability sinks + lifecycle hooks (all optional; defaults shown).
+[hooks]
+enabled = true
+# stdout = false                          # echo hook events to stdout as JSON
+# jsonl_path = ".deepseek/hooks.jsonl"    # append events to a JSONL file
+# webhook_urls = ["https://example.com/hook"]
+# default_timeout_secs = 30.0             # overrides the 30s per-hook default
+
+# Lifecycle hooks run a shell command at engine lifecycle points. Events:
+# session_start | session_end | message_submit | tool_call_before |
+# tool_call_after | mode_change | on_error | shell_env
+# [[hooks.hooks]]
+# event = "tool_call_after"
+# command = "./scripts/on-tool-call.sh"
+# name = "log-tool-calls"
+# timeout_secs = 30.0        # default 30
+# background = false         # default false
+# continue_on_error = true   # default true
 
 # Baidu hot search → email (see scripts/run-baidu-hotsearch-once.sh)
 [automation]

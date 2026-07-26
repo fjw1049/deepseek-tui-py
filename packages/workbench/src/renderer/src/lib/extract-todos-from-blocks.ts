@@ -29,8 +29,11 @@ export type TodoTurnEvent = {
   total: number
 }
 
-const TODO_TOOL_RE = /(?:todo|checklist)_(?:write|update|add|list)/i
-const TODO_WRITE_RE = /(?:todo|checklist)_write$/i
+// `checklist` is the current merged tool (a write when `todos` is passed, a
+// read otherwise); the *_write/_update/_add/_list names are legacy fallbacks
+// for replayed history transcripts.
+const TODO_TOOL_RE = /^(?:todo|checklist)(?:_(?:write|update|add|list))?$/i
+const TODO_WRITE_RE = /^(?:todo|checklist)(?:_write)?$/i
 
 export function isTodoToolName(name: string | undefined): boolean {
   if (!name) return false
@@ -44,7 +47,7 @@ function isTodoWriteToolName(name: string | undefined): boolean {
 
 function summaryLooksTodo(summary: string): boolean {
   return (
-    /\b(?:todo|checklist)_(?:write|update|add|list)\b/i.test(summary) ||
+    /\b(?:todo|checklist)(?:_(?:write|update|add|list))?\b/i.test(summary) ||
     /\bitems written\b/i.test(summary)
   )
 }

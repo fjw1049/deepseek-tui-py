@@ -23,6 +23,10 @@ from typing import Any
 from deepseek_tui.tools.registry import ToolError, ToolResult
 from dataclasses import dataclass
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 # --- Constants ------------------------------------------------------------
 
 REQUEST_USER_INPUT_NAME = "request_user_input"
@@ -55,22 +59,16 @@ _ALWAYS_ACTIVE_TOOLS = frozenset(
         "exec_shell_interact",
         "load_skill",
         "update_plan",
-        "checklist_write",
-        "checklist_list",
+        "checklist",
         "task_create",
         "task_list",
         "task_read",
         # Sub-agent orchestration — keep visible alongside task_* so the
-        # model does not reach for task_create when the user asks for
-        # agent_spawn (both families were originally deferred; task_* was
+        # model does not reach for task_create when the user asks for a
+        # sub-agent (both families were originally deferred; task_* was
         # promoted to always-active in Python and created a selection bias).
-        "agent_spawn",
-        "agent_result",
-        "agent_wait",
-        "agent_list",
-        "agent_cancel",
-        "agent_send_input",
-        "resume_agent",
+        "agent",
+        "agent_resume",
         "web_search",
         "fetch_url",
         REQUEST_USER_INPUT_NAME,
@@ -138,7 +136,22 @@ def build_model_tool_catalog(
 
     native_tools.sort(key=_sort_key)
     mcp_tools.sort(key=_sort_key)
-    return native_tools + mcp_tools
+    # Native tools win name collisions (dispatch resolves registry-first), so
+    # drop shadowed MCP entries to avoid duplicate function names reaching
+    # the model.
+    native_names = {_sort_key(t) for t in native_tools}
+    deduped_mcp: list[dict[str, Any]] = []
+    for tool in mcp_tools:
+        name = _sort_key(tool)
+        if name in native_names:
+            logger.warning(
+                "MCP tool %r shadows a native tool with the same name; "
+                "dropping the MCP entry from the model catalog",
+                name,
+            )
+            continue
+        deduped_mcp.append(tool)
+    return native_tools + deduped_mcp
 
 
 # --- Advanced tooling injection -------------------------------------------

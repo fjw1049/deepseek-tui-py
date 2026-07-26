@@ -37,6 +37,9 @@ describe('isMergeableProbeTool', () => {
   it('rejects shell, writes, and orchestration', () => {
     expect(isMergeableProbeTool('exec_shell')).toBe(false)
     expect(isMergeableProbeTool('write_file')).toBe(false)
+    expect(isMergeableProbeTool('agent')).toBe(false)
+    expect(isMergeableProbeTool('agent_resume')).toBe(false)
+    // Legacy tool names from pre-merge history transcripts.
     expect(isMergeableProbeTool('agent_spawn')).toBe(false)
   })
 })

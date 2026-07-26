@@ -276,8 +276,8 @@ class ExecutionTask:
     auto_approve: bool
     # Back-reference to the owning TaskManager, populated by
     # ``TaskManager._pop_next_task``. Executors propagate it to the
-    # spawned Engine's ``ToolContext.metadata`` so tools like
-    # ``checklist_write`` can forward their snapshots to the durable
+    # spawned Engine's ``ToolContext.metadata`` so the ``checklist``
+    # tool can forward its snapshots to the durable
     # task record via :meth:`TaskManager.record_tool_metadata`.
     # Typed as ``Any`` to avoid a forward reference / circular type.
     task_manager: Any = None

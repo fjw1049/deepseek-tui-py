@@ -108,11 +108,6 @@ class TestMcpToolNaming:
         assert qualify_tool_name("My Server", "Echo-Tool") == "mcp_my_server_echo_tool"
         assert parse_qualified_tool_name("mcp_fixture_echo") == ("fixture", "echo")
 
-    def test_parse_legacy_double_underscore(self) -> None:
-        from deepseek_tui.mcp.client import parse_qualified_tool_name
-
-        assert parse_qualified_tool_name("mcp__legacy__tool") == ("legacy", "tool")
-
     def test_validate_mcp_config_path_rejects_parent_segments(self) -> None:
         from deepseek_tui.mcp.store import validate_mcp_config_path
 

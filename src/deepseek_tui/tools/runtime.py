@@ -595,9 +595,9 @@ def apply_spillover(result: ToolResult, tool_id: str) -> ToolResult:
     footer = (
         f"\n\n[Output truncated: {head_kib} KiB of {total_kib} KiB shown. "
         f"Full output saved to {path_str}. Use "
-        f"`retrieve_tool_result ref={tool_id} mode=tail` or "
-        f"`retrieve_tool_result ref={tool_id} mode=query query=<text>` "
-        f"if you need the elided output.]"
+        f"`read_file path=\"{path_str}\"` (offset/limit) or "
+        f"`grep_files pattern=... path=\"{path_str}\"` "
+        f"to inspect the rest.]"
     )
     metadata = dict(result.metadata)
     metadata["spillover_path"] = path_str

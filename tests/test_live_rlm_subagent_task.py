@@ -21,7 +21,7 @@ from deepseek_tui.config.loader import ConfigLoader
 from deepseek_tui.config.models import Config, FeatureConfig
 from deepseek_tui.engine.orchestrator import Engine
 from deepseek_tui.engine.handle import AutoApprovalHandler, EngineHandle
-from deepseek_tui.policy.approval import ExecPolicyEngine
+from deepseek_tui.tools.approval import ExecPolicyEngine
 from deepseek_tui.tools.registry import ToolContext
 from deepseek_tui.tools.subagent import (
     Mailbox,

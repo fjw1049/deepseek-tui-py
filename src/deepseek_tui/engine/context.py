@@ -155,8 +155,13 @@ def _summarize_subagent_snapshot(snapshot: Any, index: int) -> str:
 def _compact_subagent_tool_result_for_context(
     tool_name: str, raw: str
 ) -> str | None:
-    """Compact agent_result / agent_wait payloads for parent context."""
-    if tool_name not in ("agent_result", "agent_wait", "wait"):
+    """Compact ``agent`` result/wait payloads for parent context.
+
+    Only the result/wait actions emit JSON content, so keying off the merged
+    tool name is safe: other actions (spawn/cancel/list/send_input) return
+    plain text that fails the JSON sniff below and falls through unchanged.
+    """
+    if tool_name not in ("agent", "wait"):
         return None
     try:
         parsed = json.loads(raw)

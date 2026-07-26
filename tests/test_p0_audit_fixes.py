@@ -200,7 +200,7 @@ def test_task_wall_clock_constant_is_set() -> None:
 
 
 def test_approval_key_shell_distinguishes_paths() -> None:
-    from deepseek_tui.policy.approval import build_approval_key
+    from deepseek_tui.tools.approval import build_approval_key
 
     a = build_approval_key("exec_shell", {"command": "rm a.txt"})
     b = build_approval_key("exec_shell", {"command": "rm b.txt"})
@@ -212,7 +212,7 @@ def test_approval_key_shell_distinguishes_paths() -> None:
 
 
 def test_approval_key_write_file_includes_path() -> None:
-    from deepseek_tui.policy.approval import build_approval_key
+    from deepseek_tui.tools.approval import build_approval_key
 
     a = build_approval_key("write_file", {"path": "a.py", "content": "x"})
     b = build_approval_key("write_file", {"path": "b.py", "content": "x"})
@@ -224,7 +224,7 @@ def test_approval_key_write_file_includes_path() -> None:
 @pytest.mark.asyncio
 async def test_run_tests_timeout_kills_process(tmp_path, monkeypatch) -> None:
     """Timed-out run_tests must kill the child (no zombie)."""
-    from deepseek_tui.tools.validation import RunTestsTool
+    from deepseek_tui.tools.run_tests import RunTestsTool
 
     killed = {"value": False}
 
@@ -272,7 +272,7 @@ async def test_run_tests_timeout_kills_process(tmp_path, monkeypatch) -> None:
 async def test_run_tests_routes_through_sandboxed_spawn(tmp_path, monkeypatch) -> None:
     """H7: run_tests must spawn via spawn_sandboxed_shell (workspace sandbox),
     not a bare create_subprocess_shell that escapes it."""
-    from deepseek_tui.tools.validation import RunTestsTool
+    from deepseek_tui.tools.run_tests import RunTestsTool
 
     called = {"value": False}
 

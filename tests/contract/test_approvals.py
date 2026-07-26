@@ -11,7 +11,7 @@ async def test_approval_remember_returns_session_decision(
     client: AsyncClient, runtime_app: object
 ) -> None:
     from deepseek_tui.server.approval import HttpApprovalHandler
-    from deepseek_tui.policy.approval import ApprovalDecision, ApprovalRequest, RiskLevel, ToolCategory
+    from deepseek_tui.tools.approval import ApprovalDecision, ApprovalRequest, RiskLevel, ToolCategory
 
     bridge = runtime_app.state.approval_bridge  # type: ignore[attr-defined]
     approval_id = "appr_contract_remember"

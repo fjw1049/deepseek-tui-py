@@ -171,7 +171,7 @@ class TestEngineHandleBridge:
 
     async def test_approval_required_bridges(self):
         from deepseek_tui.engine.events import ApprovalRequiredEvent
-        from deepseek_tui.policy.approval import ApprovalRequest, RiskLevel, ToolCategory
+        from deepseek_tui.tools.approval import ApprovalRequest, RiskLevel, ToolCategory
 
         collector = CollectorSink()
         dispatcher = HookDispatcher()

@@ -8,7 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from deepseek_tui.policy.approval import ApprovalRequest
+from deepseek_tui.tools.approval import ApprovalRequest
 from deepseek_tui.protocol.messages import ContentBlock, Message, Role, TextBlock, ThinkingBlock
 from deepseek_tui.protocol.responses import ToolCall, Usage
 

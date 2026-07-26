@@ -1,13 +1,13 @@
 ## Workflow tool
 
-Use the `workflow` tool when the user explicitly asks for "workflow", multi-agent orchestration, phased review, parallel fan-out, or adaptive dynamic planning. Do not replace that request with separate `agent_spawn` / `agent_wait` calls. Do not use `workflow` for a single straightforward task.
+Use the `workflow` tool when the user explicitly asks for "workflow", multi-agent orchestration, phased review, parallel fan-out, or adaptive dynamic planning. Do not replace that request with separate `agent` spawn/wait calls. Do not use `workflow` for a single straightforward task.
 
 - Prefer a named workflow with `name` + `task` when one fits. Bundled presets: `repo_review`, `diff_review`, `spec_check`, `adaptive`. Discovery roots (higher wins): `<cwd>/workflows/`, `<cwd>/.deepseek/workflows/`, `~/.deepseek/workflows/`, then built-in presets. Call `workflow_list` to enumerate available workflows and recent runs (and find a `run_id` to resume).
 - For open-ended orchestration without a fixed graph, use `{ "mode": "dynamic", "task": "..." }` or `name: "adaptive"` — a dynamic controller mutates the runtime DAG (spawn/fanout/reduce/synthesize/stop) under budgets.
 - Resume interrupted/failed runs with `run_id` (from `.deepseek/workflow-runs/`). Do not pass `run_id` together with `name`/`spec`/`mode`.
 - Do not pass both `name` and `spec`. For ad-hoc IR, pass a complete `spec` object (Workflow IR v1 phases or v2 `graph`).
 - Every agent step needs a unique `label` or `label_template`.
-- Use `fanout` for parallel items; do not spawn many separate `agent_spawn` calls for the same work.
+- Use `fanout` for parallel items; do not spawn many separate `agent` spawn calls for the same work.
 - Fanout may use static `items` **or** dynamic `items_from: { "step": "<prior_id>", "path": "$.field" }` (exactly one). Upstream steps should return structured JSON (prefer `output_schema`).
 - Use `reduce` (or `synthesis`) for multi-predecessor joins. Prefer explicit v2 edges for A,B→C DAGs.
 - Use `loop` with `max_rounds` and optional `until: { path, equals, step? }` for bounded refine/verify cycles. Templates support `{{round}}`.
@@ -18,7 +18,7 @@ Use the `workflow` tool when the user explicitly asks for "workflow", multi-agen
 - When merging branches, include a `reduce`/`synthesis` step that references prior outputs via `{{outputs.<step_id>}}`.
 - Failed steps may be omitted from outputs; synthesis/reduce prompts must tolerate missing references (`source_policy: partial` default). Use `source_policy: success` when a join must not run after any source failure.
 - Sub-agents do not inherit implicit repository context — include paths, files, and goals in prompts.
-- Do not duplicate work with batch `agent_spawn` outside the workflow after starting a workflow.
+- Do not duplicate work with batch `agent` spawns outside the workflow after starting a workflow.
 - Opt-in isolation: set `policy.worktree` to `"on"` so the run edits a git worktree under `.deepseek/workflow-runs/<run_id>/tree` (fails closed if not a git repo). Default is `"off"`.
 - Background long runs: pass `detach: true` to enqueue via TaskManager and return `run_id` + `task_id` immediately. Cancel with `task_cancel` / resume with `run_id` — Esc only stops waiting, not a detached run.
 

@@ -5,8 +5,10 @@ import { ToolStatusIndicator } from '../primitives'
 import type { ToolRenderContext } from '../render-context'
 
 /**
- * Lightweight renderer for sub-agent orchestration tools (agent_spawn /
- * delegate_to_agent / agent_wait / agent_result / agent_cancel / agent_list).
+ * Lightweight renderer for sub-agent orchestration tools. The current runtime
+ * exposes a single action-dispatched `agent` tool (action: spawn/result/
+ * cancel/list/send_input/wait) plus `agent_resume`; the legacy agent_* names
+ * (agent_spawn / agent_wait / …) are still handled for replayed history.
  *
  * Intentionally far simpler than the durable-task UI: these calls are just
  * orchestration markers, so a single calm row — Bot icon · label · agent
@@ -20,6 +22,16 @@ const WAIT_MODE_LABELS: Record<string, string> = {
   all: '全部',
   any: '任一',
   first: '最先'
+}
+
+/** Per-action labels for the merged `agent` tool (mirror the legacy names). */
+const ACTION_LABELS: Record<string, string> = {
+  spawn: '派生子代理',
+  result: '获取子代理结果',
+  cancel: '取消子代理',
+  list: '子代理列表',
+  send_input: '发送子代理输入',
+  wait: '等待子代理'
 }
 
 function readToolInput(context: ToolRenderContext): Record<string, unknown> {
@@ -39,7 +51,8 @@ function readString(input: Record<string, unknown>, ...keys: string[]): string |
 
 function agentDescriptor(context: ToolRenderContext): string {
   const input = readToolInput(context)
-  const isWait = context.toolName.includes('wait')
+  const action = readString(input, 'action')?.toLowerCase()
+  const isWait = context.toolName.includes('wait') || action === 'wait'
 
   if (isWait) {
     const mode = readString(input, 'wait_mode', 'mode')
@@ -50,6 +63,12 @@ function agentDescriptor(context: ToolRenderContext): string {
   const nickname = readString(input, 'nickname')
   const parts = [type ? humanizeAgentType(type) : undefined, nickname].filter(Boolean)
   return parts.length > 0 ? parts.join(' · ') : context.description
+}
+
+/** Label for the header: per-action for the merged `agent` tool, else mapped. */
+function subagentLabel(context: ToolRenderContext): string {
+  const action = readString(readToolInput(context), 'action')?.toLowerCase()
+  return (action && ACTION_LABELS[action]) || context.label || context.shortName
 }
 
 export const SubagentRenderer = {
@@ -67,7 +86,7 @@ export const SubagentRenderer = {
           aria-hidden
         />
         <span className="shrink-0 font-mono text-[0.6875rem] font-medium text-ds-muted">
-          {context.label || context.shortName}
+          {subagentLabel(context)}
         </span>
         {descriptor ? (
           <span

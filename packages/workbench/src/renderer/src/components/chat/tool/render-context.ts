@@ -112,12 +112,16 @@ function mapState(block: ToolBlock): ToolUIState {
 // ── extraction helpers (ported from MessageTimeline, now owned by the tool layer) ──
 
 const TOOL_NAME_LABELS: Record<string, string> = {
+  agent: '子代理',
   agent_cancel: '取消子代理',
   agent_list: '子代理列表',
   agent_result: '获取子代理结果',
+  agent_resume: '续跑子代理',
+  agent_send_input: '发送子代理输入',
   agent_spawn: '派生子代理',
   agent_wait: '等待子代理',
   apply_patch: '应用补丁',
+  checklist: '待办清单',
   delegate_to_agent: '委派子代理',
   edit_file: '编辑文件',
   exec_shell: '执行命令',

@@ -10,9 +10,9 @@ from deepseek_tui.tools.registry import ToolResult
 from deepseek_tui.tui.sanitize import strip_subagent_sentinels
 
 
-def test_agent_spawn_is_always_active_in_agent_mode() -> None:
-    assert should_default_defer_tool("agent_spawn", "agent") is False
-    assert should_default_defer_tool("agent_result", "agent") is False
+def test_agent_tool_is_always_active_in_agent_mode() -> None:
+    assert should_default_defer_tool("agent", "agent") is False
+    assert should_default_defer_tool("agent_resume", "agent") is False
     assert should_default_defer_tool("task_create", "agent") is False
     # Core write / shell tools stay always-active (not deferred).
     for name in (
@@ -25,9 +25,7 @@ def test_agent_spawn_is_always_active_in_agent_mode() -> None:
     # Non-core tools defer in agent mode (discoverable via tool_search,
     # or auto-activated by calling them directly).
     for name in (
-        "git_status",
-        "git_diff",
-        "git_blame",
+        "git",
         "project_map",
         "run_tests",
         "workflow",
@@ -42,7 +40,7 @@ def test_agent_spawn_is_always_active_in_agent_mode() -> None:
     # workflow mode keeps the workflow tool itself active.
     assert should_default_defer_tool("workflow", "workflow") is False
     # yolo mode never defers.
-    assert should_default_defer_tool("git_status", "yolo") is False
+    assert should_default_defer_tool("git", "yolo") is False
 
 
 def test_strip_subagent_sentinels_removes_complete_tag() -> None:
@@ -70,7 +68,7 @@ def test_compact_agent_result_leads_with_result_body() -> None:
     }
     compacted = compact_tool_result_for_context(
         "deepseek-v4-pro",
-        "agent_result",
+        "agent",
         ToolResult(success=True, content=json.dumps(payload)),
     )
     assert "result: scratch/probe.txt does not exist." in compacted

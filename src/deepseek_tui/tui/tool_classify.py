@@ -37,11 +37,7 @@ _INLINE_TOOLS: dict[str, tuple[str, str]] = {
     "web_search": ("◈", "web"),
     "fetch_url": ("⇣", "fetch"),
     # Git (read-only)
-    "git_status": ("◈", "status"),
-    "git_diff": ("◈", "diff"),
-    "git_log": ("◈", "log"),
-    "git_show": ("◈", "show"),
-    "git_blame": ("◈", "blame"),
+    "git": ("◈", "git"),
     # GitHub (read-only)
     "github_issue_context": ("◈", "issue"),
     "github_pr_context": ("◈", "pr"),
@@ -49,8 +45,7 @@ _INLINE_TOOLS: dict[str, tuple[str, str]] = {
     "note": ("◇", "note"),
     # Plan / checklist
     "update_plan": ("◇", "plan"),
-    "checklist_write": ("◇", "checklist"),
-    "checklist_list": ("◇", "checklist"),
+    "checklist": ("◇", "checklist"),
     "todo_write": ("◇", "todo"),
     "todo_add": ("◇", "todo"),
     "todo_update": ("◇", "todo"),
@@ -64,13 +59,8 @@ _INLINE_TOOLS: dict[str, tuple[str, str]] = {
     "task_shell_start": ("◇", "task"),
     "task_shell_wait": ("◇", "task"),
     # Agent
-    "agent_spawn": ("◐", "spawn"),
-    "agent_result": ("◐", "result"),
-    "agent_wait": ("◐", "wait"),
-    "agent_list": ("◐", "agents"),
-    "agent_cancel": ("◐", "cancel"),
-    "agent_send_input": ("◐", "input"),
-    "resume_agent": ("◐", "resume"),
+    "agent": ("◐", "agent"),
+    "agent_resume": ("◐", "resume"),
     # MCP
     "list_mcp_resources": ("◇", "mcp"),
     "list_mcp_resource_templates": ("◇", "mcp"),
@@ -80,7 +70,6 @@ _INLINE_TOOLS: dict[str, tuple[str, str]] = {
     "run_tests": ("◇", "test"),
     "current_time": ("◇", "time"),
     "request_user_input": ("◇", "input"),
-    "retrieve_tool_result": ("◇", "retrieve"),
     "load_skill": ("◇", "skill"),
     # Automation (read)
     "automation_list": ("◇", "auto"),

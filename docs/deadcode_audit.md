@@ -1,5 +1,7 @@
 # src/ 死代码审计 — 分级清单
 
+> ⚠️ **过时警告（2026-07-26 加注）**：本文行号对应 2026-07 重构前的旧文件布局，已不可按图索骥；结论清单仍可参考，但删除任何符号前必须重新 grep 验证。参见 docs/TOOL_OPTIMIZATION_PLAN.md。
+
 > 工具:vulture(min-confidence 60)出 294 个 unused function/method 候选 → 11-agent 并行复核(逐条 grep 真实调用点)→ 抽样验证。
 > 复核结果:**dead 90+ 唯一符号 / 35 文件,uncertain 1,false_positive 213**(框架回调/动态分发/override/入口点,已剔除)。
 > **原则:只列不删,等你拍板。** 下面按"删除风险"分三层。

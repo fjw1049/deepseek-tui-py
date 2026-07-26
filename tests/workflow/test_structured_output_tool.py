@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from deepseek_tui.tools.registry import ToolContext
-from deepseek_tui.tools.validation import StructuredOutputTool
+from deepseek_tui.tools.subagent.structured_output import StructuredOutputTool
 
 
 @pytest.mark.asyncio

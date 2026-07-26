@@ -2,7 +2,7 @@
 
 Sub-agent activity card:
 
-- :class:`DelegateCard` — single ``agent_spawn`` invocation. Header with
+- :class:`DelegateCard` — single ``agent`` (action="spawn") invocation. Header with
   status glyph + role + agent id, plus the last
   :data:`DELEGATE_MAX_ACTIONS` action lines. Older entries are dropped
   from the head and an ellipsis row signals truncation.
@@ -76,7 +76,7 @@ class AgentLifecycle(str, enum.Enum):
 
 @dataclass(slots=True)
 class DelegateCard:
-    """Single ``agent_spawn`` invocation card."""
+    """Single ``agent`` (action="spawn") invocation card."""
 
     agent_id: str
     agent_type: str
