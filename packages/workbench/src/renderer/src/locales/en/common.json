@@ -1519,6 +1519,8 @@
   "browserReload": "Reload",
   "browserBack": "Back",
   "browserForward": "Forward",
+  "browserStop": "Stop loading",
+  "browserDevTools": "Developer tools",
   "browserNewTab": "New tab",
   "browserCloseTab": "Close tab",
   "browserCloseTabDisabled": "Keep at least one tab",

@@ -5406,7 +5406,14 @@ select:focus-visible,
   background-color: var(--ds-bg-sidebar) !important;
 }
 
-.ds-terminal-panel,
+/* Terminal surface must read as one continuous sheet: the xterm theme
+   background is --ds-bg-canvas (see readTerminalTheme), so paint the panel
+   itself the same colour. Otherwise the xterm cell-grid remainders and the
+   .xterm padding show the grey sidebar through as an ugly inset frame. */
+.ds-terminal-panel {
+  background: var(--ds-bg-canvas);
+}
+
 .ds-terminal-panel__tabs,
 .ds-terminal-host {
   background: transparent;

@@ -4,6 +4,8 @@ import { useTranslation } from 'react-i18next'
 import {
   ArrowLeft,
   ArrowRight,
+  Bug,
+  CircleStop,
   ExternalLink,
   Globe2,
   Loader2,
@@ -23,6 +25,18 @@ import {
   extractDetectedDevPreviewUrls,
   formatDevPreviewUrlLabel
 } from '../lib/dev-preview-detection'
+import {
+  PREVIEW_AUTO_FOLLOW_STORAGE_KEY,
+  createTab,
+  formatAddressInput,
+  reduceCloseTab,
+  reduceOpenOrFocusUrl,
+  resolveAutoFollow,
+  selectDevBrowserView,
+  tabLabel,
+  updateTabById,
+  type PreviewTab
+} from '../lib/dev-browser-tabs'
 
 type DevWebviewTag = HTMLElement & {
   canGoBack(): boolean
@@ -30,7 +44,10 @@ type DevWebviewTag = HTMLElement & {
   getURL(): string
   goBack(): void
   goForward(): void
+  loadURL(url: string): Promise<void>
+  openDevTools(): void
   reloadIgnoringCache(): void
+  stop(): void
 }
 
 type WebviewNavigateEvent = Event & {
@@ -47,20 +64,11 @@ type WebviewTitleEvent = Event & {
   title: string
 }
 
-type PreviewTab = {
-  id: string
-  url: string | null
-  title: string
-}
-
-const PREVIEW_AUTO_FOLLOW_STORAGE_KEY = 'deepseekgui.devPreview.autoFollow'
-
 function readStoredAutoFollow(): boolean {
   try {
-    const raw = window.localStorage.getItem(PREVIEW_AUTO_FOLLOW_STORAGE_KEY)
-    return raw == null ? true : raw === 'true'
+    return resolveAutoFollow(window.localStorage.getItem(PREVIEW_AUTO_FOLLOW_STORAGE_KEY))
   } catch {
-    return true
+    return false
   }
 }
 
@@ -72,39 +80,111 @@ function persistAutoFollow(value: boolean): void {
   }
 }
 
-function formatAddressInput(url: string | null): string {
-  if (!url) return ''
-  try {
-    const parsed = new URL(url)
-    const path = parsed.pathname === '/' ? '' : parsed.pathname
-    return `${parsed.host}${path}${parsed.search}${parsed.hash}`
-  } catch {
-    return url
-  }
-}
-
-function tabLabel(tab: PreviewTab, fallback: string): string {
-  if (tab.title.trim()) return tab.title.trim()
-  if (!tab.url) return fallback
-  try {
-    const parsed = new URL(tab.url)
-    const leaf = decodeURIComponent(parsed.pathname.split('/').filter(Boolean).at(-1) ?? '')
-    return leaf || parsed.host || fallback
-  } catch {
-    return fallback
-  }
-}
-
-function createTab(url: string | null = null, title = ''): PreviewTab {
-  return {
-    id: `preview-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-    url,
-    title
-  }
-}
-
 type LoadOptions = {
   keepAutoFollow?: boolean
+}
+
+type DevBrowserWebviewProps = {
+  tabId: string
+  url: string
+  registerWebview: (tabId: string, webview: DevWebviewTag | null) => void
+  onNavigate: (tabId: string, url: string) => void
+  onTitle: (tabId: string, title: string) => void
+  onLoadingChange: (tabId: string, loading: boolean) => void
+  onFailLoad: (tabId: string, description: string) => void
+}
+
+/**
+ * One persistent webview per tab. The `src` attribute is fixed to the URL the
+ * tab was created with (only used for the very first load); every later load
+ * goes through `loadURL` so in-page navigation state never echoes back into
+ * the src attribute and triggers a full reload (which also broke SPA routes).
+ */
+function DevBrowserWebview({
+  tabId,
+  url,
+  registerWebview,
+  onNavigate,
+  onTitle,
+  onLoadingChange,
+  onFailLoad
+}: DevBrowserWebviewProps): ReactElement {
+  const webviewRef = useRef<DevWebviewTag | null>(null)
+  const initialUrlRef = useRef(url)
+  // URL the guest is at or loading toward; navigation events keep it in sync
+  // so the load effect below never re-loads what the page already navigated to.
+  const loadedUrlRef = useRef<string | null>(url)
+
+  useEffect(() => {
+    const webview = webviewRef.current
+    if (!webview) return
+    if (loadedUrlRef.current === url) return
+    try {
+      void webview.loadURL(url).catch(() => {
+        /* load failures surface via did-fail-load */
+      })
+      loadedUrlRef.current = url
+    } catch {
+      /* webview not attached yet */
+    }
+  }, [url])
+
+  useEffect(() => {
+    const webview = webviewRef.current
+    if (!webview) return
+
+    const handleStartLoading = (): void => onLoadingChange(tabId, true)
+    const handleStopLoading = (): void => onLoadingChange(tabId, false)
+    const handleNavigate: EventListener = (event): void => {
+      const currentUrl = normalizeBrowseUrlInput((event as WebviewNavigateEvent).url)
+      if (!currentUrl) return
+      loadedUrlRef.current = currentUrl
+      onNavigate(tabId, currentUrl)
+    }
+    const handleFailLoad: EventListener = (event): void => {
+      const failEvent = event as WebviewFailLoadEvent
+      if (!failEvent.isMainFrame || failEvent.errorCode === -3) return
+      onFailLoad(tabId, failEvent.errorDescription)
+    }
+    const handleTitle: EventListener = (event): void => {
+      onTitle(tabId, (event as WebviewTitleEvent).title)
+    }
+
+    webview.addEventListener('did-start-loading', handleStartLoading)
+    webview.addEventListener('did-stop-loading', handleStopLoading)
+    webview.addEventListener('did-navigate', handleNavigate)
+    webview.addEventListener('did-navigate-in-page', handleNavigate)
+    webview.addEventListener('did-fail-load', handleFailLoad)
+    webview.addEventListener('page-title-updated', handleTitle)
+
+    return () => {
+      webview.removeEventListener('did-start-loading', handleStartLoading)
+      webview.removeEventListener('did-stop-loading', handleStopLoading)
+      webview.removeEventListener('did-navigate', handleNavigate)
+      webview.removeEventListener('did-navigate-in-page', handleNavigate)
+      webview.removeEventListener('did-fail-load', handleFailLoad)
+      webview.removeEventListener('page-title-updated', handleTitle)
+    }
+  }, [tabId, onNavigate, onTitle, onLoadingChange, onFailLoad])
+
+  return (
+    <webview
+      ref={(element) => {
+        webviewRef.current = element as DevWebviewTag | null
+        registerWebview(tabId, element as DevWebviewTag | null)
+      }}
+      src={initialUrlRef.current}
+      // React 19 refuses to write BOOLEAN attributes on non-standard elements
+      // (runtime warning, attribute dropped), while its built-in webview JSX
+      // typing declares allowpopups?: boolean. Pass the string form through
+      // the boolean-typed prop so `allowpopups="true"` actually lands in the
+      // DOM and window.open works in the guest.
+      allowpopups={'true' as unknown as boolean}
+      partition="persist:deepseek-dev-browser"
+      webpreferences="contextIsolation=yes,nodeIntegration=no,sandbox=yes"
+      className="flex h-full w-full bg-white"
+    />
+  )
 }
 
 export function DevBrowserPanel({
@@ -123,7 +203,7 @@ export function DevBrowserPanel({
   className?: string
 }): ReactElement {
   const { t } = useTranslation('common')
-  const webviewRef = useRef<DevWebviewTag | null>(null)
+  const webviewRefs = useRef(new Map<string, DevWebviewTag>())
   const iframeLoadedUrlRef = useRef<string | null>(null)
   const preferredUrlRef = useRef<string | null>(null)
   const detectedUrls = useMemo(() => extractDetectedDevPreviewUrls(blocks), [blocks])
@@ -141,6 +221,18 @@ export function DevBrowserPanel({
   const activeTab = tabs.find((tab) => tab.id === activeTabId) ?? tabs[0]!
   const activeUrl = activeTab?.url ?? null
 
+  // Mirrors let webview event callbacks (bound once per tab) read the current
+  // tab state without re-binding listeners on every navigation.
+  const activeTabIdRef = useRef(activeTabId)
+  const tabsRef = useRef(tabs)
+  useEffect(() => {
+    activeTabIdRef.current = activeTabId
+    tabsRef.current = tabs
+  })
+  // URLs auto-follow already opened; survives tab navigation (unlike a
+  // tabs.some(url) guard) so redirects don't re-trigger opens.
+  const autoFollowedUrlsRef = useRef(new Set<string>())
+
   const [draftUrl, setDraftUrl] = useState('')
   const [autoFollow, setAutoFollow] = useState(readStoredAutoFollow)
   const [loading, setLoading] = useState(false)
@@ -153,51 +245,82 @@ export function DevBrowserPanel({
   const canNavigateBack = useElectronWebview ? canGoBack : iframeBackStack.length > 0
   const canNavigateForward = useElectronWebview ? canGoForward : iframeForwardStack.length > 0
 
-  const updateActiveTab = useCallback(
-    (patch: Partial<PreviewTab>): void => {
-      setTabs((current) =>
-        current.map((tab) => (tab.id === activeTabId ? { ...tab, ...patch } : tab))
-      )
+  const updateActiveTab = useCallback((patch: Partial<PreviewTab>): void => {
+    const tabId = activeTabIdRef.current
+    setTabs((current) => updateTabById(current, tabId, patch))
+  }, [])
+
+  const registerWebview = useCallback((tabId: string, webview: DevWebviewTag | null): void => {
+    if (webview) webviewRefs.current.set(tabId, webview)
+    else webviewRefs.current.delete(tabId)
+  }, [])
+
+  const syncActiveNavigationState = useCallback((tabId: string): void => {
+    const webview = webviewRefs.current.get(tabId)
+    if (!webview) return
+    try {
+      setCanGoBack(webview.canGoBack())
+      setCanGoForward(webview.canGoForward())
+    } catch {
+      /* webview may not be attached yet */
+    }
+  }, [])
+
+  const handleWebviewNavigate = useCallback(
+    (tabId: string, url: string): void => {
+      setTabs((current) => updateTabById(current, tabId, { url }))
+      if (tabId !== activeTabIdRef.current) return
+      setDraftUrl(formatAddressInput(url))
+      setLoadError(null)
+      syncActiveNavigationState(tabId)
     },
-    [activeTabId]
+    [syncActiveNavigationState]
+  )
+
+  const handleWebviewTitle = useCallback((tabId: string, title: string): void => {
+    setTabs((current) => updateTabById(current, tabId, { title }))
+  }, [])
+
+  const handleWebviewLoadingChange = useCallback(
+    (tabId: string, nextLoading: boolean): void => {
+      if (tabId !== activeTabIdRef.current) return
+      setLoading(nextLoading)
+      if (nextLoading) setLoadError(null)
+      else syncActiveNavigationState(tabId)
+    },
+    [syncActiveNavigationState]
+  )
+
+  const handleWebviewFailLoad = useCallback(
+    (tabId: string, description: string): void => {
+      if (tabId !== activeTabIdRef.current) return
+      setLoading(false)
+      setLoadError(description || t('browserLoadFailed'))
+      syncActiveNavigationState(tabId)
+    },
+    [syncActiveNavigationState, t]
   )
 
   const openOrFocusUrl = useCallback(
     (url: string, options: { title?: string; select?: boolean } = {}): void => {
       const normalized = normalizeBrowseUrlInput(url)
       if (!normalized) return
-      setTabs((current) => {
-        const existing = current.find((tab) => tab.url === normalized)
-        if (existing) {
-          if (options.select !== false) setActiveTabId(existing.id)
-          if (options.title) {
-            return current.map((tab) =>
-              tab.id === existing.id ? { ...tab, title: options.title ?? tab.title } : tab
-            )
-          }
-          return current
-        }
-
-        // Prefer filling an existing blank tab (usually the initial one) so we
-        // don't leave a stuck empty "first tab" beside the real preview.
-        const emptyIndex = current.findIndex((tab) => !tab.url)
-        if (emptyIndex >= 0) {
-          const target = current[emptyIndex]!
-          if (options.select !== false) setActiveTabId(target.id)
-          return current.map((tab, index) =>
-            index === emptyIndex
-              ? { ...tab, url: normalized, title: options.title ?? '' }
-              : tab
-          )
-        }
-
-        const next = createTab(normalized, options.title ?? '')
-        if (options.select !== false) setActiveTabId(next.id)
-        return [...current, next]
-      })
-      setLoadError(null)
-      setLoading(true)
-      setDraftUrl(formatAddressInput(normalized))
+      // Read the latest state via refs (updated every commit) so the reducer
+      // stays outside the setTabs updater — side effects inside updaters are
+      // double-invoked under StrictMode.
+      const current = tabsRef.current
+      const next = reduceOpenOrFocusUrl(
+        { tabs: current, activeTabId: activeTabIdRef.current },
+        normalized,
+        options
+      )
+      if (next.tabs !== current) setTabs(next.tabs)
+      if (next.activeTabId !== activeTabIdRef.current) setActiveTabId(next.activeTabId)
+      if (options.select !== false) {
+        setLoadError(null)
+        setLoading(true)
+        setDraftUrl(formatAddressInput(normalized))
+      }
       setIframeBackStack([])
       setIframeForwardStack([])
     },
@@ -208,15 +331,33 @@ export function DevBrowserPanel({
     persistAutoFollow(autoFollow)
   }, [autoFollow])
 
+  // Reset toolbar/nav state only when switching tabs. In-page navigation is
+  // reflected by the webview event handlers instead, so it must not wipe
+  // canGoBack/canGoForward here.
   useEffect(() => {
-    setDraftUrl(formatAddressInput(activeUrl))
+    const tab = tabsRef.current.find((candidate) => candidate.id === activeTabId)
+    const url = tab?.url ?? null
+    setDraftUrl(formatAddressInput(url))
     setLoadError(null)
     setCanGoBack(false)
     setCanGoForward(false)
     setIframeBackStack([])
     setIframeForwardStack([])
-    setLoading(Boolean(activeUrl))
-  }, [activeTabId, activeUrl])
+    setLoading(Boolean(url))
+    // The newly focused tab's webview kept its own history while hidden —
+    // restore the real nav state from it.
+    const webview = webviewRefs.current.get(activeTabId)
+    if (webview) {
+      try {
+        setCanGoBack(webview.canGoBack())
+        setCanGoForward(webview.canGoForward())
+        const currentUrl = normalizeBrowseUrlInput(webview.getURL())
+        if (currentUrl) setDraftUrl(formatAddressInput(currentUrl))
+      } catch {
+        /* webview may not be attached yet */
+      }
+    }
+  }, [activeTabId])
 
   useEffect(() => {
     if (!externalError) return
@@ -238,75 +379,23 @@ export function DevBrowserPanel({
   }, [normalizedPreferredUrl, onPreferredUrlConsumed, openOrFocusUrl])
 
   useEffect(() => {
-    // Auto-follow stays local-only so agent-mentioned public links never hijack preview.
+    // Auto-follow stays local-only so agent-mentioned public links never hijack
+    // preview. Guard on a ref-set of already-followed URLs (not on tab state):
+    // a tab navigating away from the detected URL (redirect, in-page nav) must
+    // not make the effect open it again on every navigation — that cascading
+    // effect → setTabs → effect chain is what tripped "Maximum update depth".
     if (!autoFollow || !latestDetectedUrl) return
     if (!isLocalPreviewUrl(latestDetectedUrl)) return
-    if (tabs.some((tab) => tab.url === latestDetectedUrl)) return
-    openOrFocusUrl(latestDetectedUrl, { select: tabs.every((tab) => !tab.url) })
-  }, [autoFollow, latestDetectedUrl, openOrFocusUrl, tabs])
+    const normalized = normalizeBrowseUrlInput(latestDetectedUrl)
+    if (!normalized) return
+    if (autoFollowedUrlsRef.current.has(normalized)) return
+    autoFollowedUrlsRef.current.add(normalized)
+    openOrFocusUrl(normalized, { select: tabsRef.current.every((tab) => !tab.url) })
+  }, [autoFollow, latestDetectedUrl, openOrFocusUrl])
 
-  useEffect(() => {
-    const webview = webviewRef.current
-    if (!useElectronWebview || !webview || !activeUrl) return
-
-    const syncNavigationState = (): void => {
-      try {
-        setCanGoBack(webview.canGoBack())
-        setCanGoForward(webview.canGoForward())
-        const currentUrl = normalizeBrowseUrlInput(webview.getURL())
-        if (currentUrl) {
-          updateActiveTab({ url: currentUrl })
-          setDraftUrl(formatAddressInput(currentUrl))
-        }
-      } catch {
-        /* webview may not be attached yet */
-      }
-    }
-
-    const handleStartLoading = (): void => {
-      setLoading(true)
-      setLoadError(null)
-    }
-    const handleStopLoading = (): void => {
-      setLoading(false)
-      syncNavigationState()
-    }
-    const handleNavigate: EventListener = (event): void => {
-      const currentUrl = normalizeBrowseUrlInput((event as WebviewNavigateEvent).url)
-      if (!currentUrl) return
-      updateActiveTab({ url: currentUrl })
-      setDraftUrl(formatAddressInput(currentUrl))
-      setLoadError(null)
-      syncNavigationState()
-    }
-    const handleFailLoad: EventListener = (event): void => {
-      const failEvent = event as WebviewFailLoadEvent
-      if (!failEvent.isMainFrame || failEvent.errorCode === -3) return
-      setLoading(false)
-      setLoadError(failEvent.errorDescription || t('browserLoadFailed'))
-      syncNavigationState()
-    }
-    const handleTitle: EventListener = (event): void => {
-      updateActiveTab({ title: (event as WebviewTitleEvent).title })
-    }
-
-    webview.addEventListener('did-start-loading', handleStartLoading)
-    webview.addEventListener('did-stop-loading', handleStopLoading)
-    webview.addEventListener('did-navigate', handleNavigate)
-    webview.addEventListener('did-navigate-in-page', handleNavigate)
-    webview.addEventListener('did-fail-load', handleFailLoad)
-    webview.addEventListener('page-title-updated', handleTitle)
-
-    return () => {
-      webview.removeEventListener('did-start-loading', handleStartLoading)
-      webview.removeEventListener('did-stop-loading', handleStopLoading)
-      webview.removeEventListener('did-navigate', handleNavigate)
-      webview.removeEventListener('did-navigate-in-page', handleNavigate)
-      webview.removeEventListener('did-fail-load', handleFailLoad)
-      webview.removeEventListener('page-title-updated', handleTitle)
-    }
-  }, [activeUrl, t, updateActiveTab, useElectronWebview])
-
+  // Main process denies window.open inside webview guests and navigates the
+  // same guest instead (target=_blank behaves like a normal browser tab, so
+  // the back button covers returning).
   useEffect(() => {
     if (useElectronWebview || !activeUrl) return
     // Public https can't be reliably embedded in iframe — skip load timeout.
@@ -347,33 +436,21 @@ export function DevBrowserPanel({
   }
 
   const closeTab = (tabId: string): void => {
-    setTabs((current) => {
-      const target = current.find((tab) => tab.id === tabId)
-      if (!target) return current
-
-      // Sole tab: clear the page instead of recreating another blank tab
-      // (which made the X feel broken — "叉不掉").
-      if (current.length <= 1) {
-        if (!target.url && !target.title) return current
-        setDraftUrl('')
-        setLoadError(null)
-        setLoading(false)
-        resetNavState()
-        return [{ ...target, url: null, title: '' }]
-      }
-
-      const index = current.findIndex((tab) => tab.id === tabId)
-      const nextTabs = current.filter((tab) => tab.id !== tabId)
-      if (tabId === activeTabId) {
-        const fallback = nextTabs[Math.max(0, index - 1)] ?? nextTabs[0]!
-        setActiveTabId(fallback.id)
-        setDraftUrl(formatAddressInput(fallback.url))
-        setLoadError(null)
-        setLoading(Boolean(fallback.url))
-        resetNavState()
-      }
-      return nextTabs
-    })
+    const result = reduceCloseTab({ tabs, activeTabId }, tabId)
+    if (result.tabs === tabs) return
+    setTabs(result.tabs)
+    if (result.clearedSoleTab) {
+      setDraftUrl('')
+      setLoadError(null)
+      setLoading(false)
+      resetNavState()
+      return
+    }
+    if (result.activeTabId !== activeTabId) {
+      // The [activeTabId] effect resets draft/loading/nav state for the
+      // fallback tab and restores history from its live webview.
+      setActiveTabId(result.activeTabId)
+    }
   }
 
   const loadUrl = (value: string, options: LoadOptions = {}): void => {
@@ -398,6 +475,9 @@ export function DevBrowserPanel({
     loadUrl(draftUrl)
   }
 
+  const activeWebview = (): DevWebviewTag | null =>
+    webviewRefs.current.get(activeTabIdRef.current) ?? null
+
   const reload = (): void => {
     if (!activeUrl) return
     if (!useElectronWebview) {
@@ -410,9 +490,26 @@ export function DevBrowserPanel({
     setLoading(true)
     setLoadError(null)
     try {
-      webviewRef.current?.reloadIgnoringCache()
+      activeWebview()?.reloadIgnoringCache()
     } catch {
       loadUrl(activeUrl, { keepAutoFollow: true })
+    }
+  }
+
+  const stopLoading = (): void => {
+    try {
+      activeWebview()?.stop()
+    } catch {
+      /* ignore unavailable webview */
+    }
+    setLoading(false)
+  }
+
+  const openDevTools = (): void => {
+    try {
+      activeWebview()?.openDevTools()
+    } catch {
+      /* ignore unavailable webview */
     }
   }
 
@@ -427,7 +524,7 @@ export function DevBrowserPanel({
     window.open(normalized, '_blank', 'noopener,noreferrer')
   }
 
-  const iframeCanEmbed = Boolean(activeUrl && isLocalPreviewUrl(activeUrl))
+  const view = selectDevBrowserView(activeUrl, useElectronWebview)
 
   const goBack = (): void => {
     if (!useElectronWebview) {
@@ -442,7 +539,8 @@ export function DevBrowserPanel({
       return
     }
     try {
-      if (webviewRef.current?.canGoBack()) webviewRef.current.goBack()
+      const webview = activeWebview()
+      if (webview?.canGoBack()) webview.goBack()
     } catch {
       /* ignore unavailable webview navigation */
     }
@@ -461,7 +559,8 @@ export function DevBrowserPanel({
       return
     }
     try {
-      if (webviewRef.current?.canGoForward()) webviewRef.current.goForward()
+      const webview = activeWebview()
+      if (webview?.canGoForward()) webview.goForward()
     } catch {
       /* ignore unavailable webview navigation */
     }
@@ -535,6 +634,18 @@ export function DevBrowserPanel({
             >
               <ExternalLink className="h-3.5 w-3.5" strokeWidth={1.8} />
             </button>
+            {useElectronWebview ? (
+              <button
+                type="button"
+                onClick={openDevTools}
+                disabled={!activeUrl}
+                className="inline-flex h-8 w-8 items-center justify-center rounded-full text-ds-faint transition hover:bg-ds-hover hover:text-ds-ink disabled:cursor-default disabled:opacity-35"
+                aria-label={t('browserDevTools')}
+                title={t('browserDevTools')}
+              >
+                <Bug className="h-3.5 w-3.5" strokeWidth={1.8} />
+              </button>
+            ) : null}
             <button
               type="button"
               onClick={() => setAutoFollow((value) => !value)}
@@ -573,20 +684,32 @@ export function DevBrowserPanel({
             >
               <ArrowRight className="h-4 w-4" strokeWidth={1.8} />
             </button>
-            <button
-              type="button"
-              onClick={reload}
-              disabled={!activeUrl}
-              className="inline-flex h-8 w-8 items-center justify-center rounded-full text-ds-faint transition hover:bg-ds-hover hover:text-ds-ink disabled:cursor-default disabled:opacity-35"
-              aria-label={t('browserReload')}
-              title={t('browserReload')}
-            >
-              {loading ? (
-                <Loader2 className="h-4 w-4 animate-spin" strokeWidth={1.8} />
-              ) : (
-                <RefreshCw className="h-4 w-4" strokeWidth={1.8} />
-              )}
-            </button>
+            {loading && useElectronWebview && activeUrl ? (
+              <button
+                type="button"
+                onClick={stopLoading}
+                className="inline-flex h-8 w-8 items-center justify-center rounded-full text-ds-faint transition hover:bg-ds-hover hover:text-ds-ink"
+                aria-label={t('browserStop')}
+                title={t('browserStop')}
+              >
+                <CircleStop className="h-4 w-4" strokeWidth={1.8} />
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={reload}
+                disabled={!activeUrl}
+                className="inline-flex h-8 w-8 items-center justify-center rounded-full text-ds-faint transition hover:bg-ds-hover hover:text-ds-ink disabled:cursor-default disabled:opacity-35"
+                aria-label={t('browserReload')}
+                title={t('browserReload')}
+              >
+                {loading ? (
+                  <Loader2 className="h-4 w-4 animate-spin" strokeWidth={1.8} />
+                ) : (
+                  <RefreshCw className="h-4 w-4" strokeWidth={1.8} />
+                )}
+              </button>
+            )}
           </div>
 
           <div className="min-w-0 flex-1 px-3">
@@ -636,7 +759,7 @@ export function DevBrowserPanel({
       ) : null}
 
       <div className="relative min-h-0 flex-1 bg-white dark:bg-ds-canvas">
-        {!activeUrl ? (
+        {view === 'empty' ? (
           <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
             <Globe2 className="h-8 w-8 text-ds-faint" strokeWidth={1.5} />
             <div className="text-[14px] font-medium text-ds-ink">{t('browserEmptyTitle')}</div>
@@ -651,16 +774,33 @@ export function DevBrowserPanel({
               {t('browserOpenDefault')}
             </button>
           </div>
-        ) : useElectronWebview ? (
-          <webview
-            key={activeTabId}
-            ref={webviewRef}
-            src={activeUrl}
-            partition="persist:deepseek-dev-browser"
-            webpreferences="contextIsolation=yes,nodeIntegration=no,sandbox=yes"
-            className="flex h-full w-full bg-white"
-          />
-        ) : iframeCanEmbed ? (
+        ) : view === 'webview' ? (
+          // Every tab keeps its webview mounted (hidden when inactive, same
+          // pattern as the terminal panel) so page state, scroll position and
+          // history survive tab switches instead of reloading.
+          <div className="relative h-full w-full">
+            {tabs.map((tab) =>
+              tab.url ? (
+                <div
+                  key={tab.id}
+                  className={
+                    tab.id === activeTabId ? 'h-full w-full' : 'hidden h-full w-full'
+                  }
+                >
+                  <DevBrowserWebview
+                    tabId={tab.id}
+                    url={tab.url}
+                    registerWebview={registerWebview}
+                    onNavigate={handleWebviewNavigate}
+                    onTitle={handleWebviewTitle}
+                    onLoadingChange={handleWebviewLoadingChange}
+                    onFailLoad={handleWebviewFailLoad}
+                  />
+                </div>
+              ) : null
+            )}
+          </div>
+        ) : view === 'iframe' && activeUrl ? (
           <iframe
             key={`${activeTabId}:${activeUrl}:${iframeReloadNonce}`}
             src={activeUrl}
@@ -681,7 +821,7 @@ export function DevBrowserPanel({
             <div className="max-w-sm text-[12.5px] leading-5 text-ds-muted">
               {t('browserEmbedUnsupportedBody')}
             </div>
-            <div className="max-w-md truncate text-[12px] text-ds-faint" title={activeUrl}>
+            <div className="max-w-md truncate text-[12px] text-ds-faint" title={activeUrl ?? undefined}>
               {activeUrl}
             </div>
             <button

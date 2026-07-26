@@ -7,7 +7,8 @@ import {
   nativeTheme,
   Notification,
   screen,
-  session
+  session,
+  shell
 } from 'electron'
 import { installAppMenu } from './app-menu'
 import { existsSync } from 'node:fs'
@@ -151,7 +152,42 @@ function installDevPreviewWebviewGuards(): void {
 
     contents.setWindowOpenHandler(({ url }) => {
       if (contents.getType() !== 'webview') return { action: 'allow' }
-      return isBrowsableUrl(url) ? { action: 'allow' } : { action: 'deny' }
+      // Never pop a bare native window for webview guests (target=_blank):
+      // navigate the same guest instead, so the back button works exactly
+      // like a normal browser tab.
+      if (isBrowsableUrl(url)) {
+        void contents.loadURL(url)
+      }
+      return { action: 'deny' }
+    })
+  })
+}
+
+function installDevBrowserDownloadHandler(): void {
+  // Downloads inside the dev-browser webview partition save to the system
+  // default download location; surface the outcome via a notification.
+  session.fromPartition('persist:deepseek-dev-browser').on('will-download', (_event, item) => {
+    const fileName = item.getFilename()
+    item.once('done', (_doneEvent, state) => {
+      const completed = state === 'completed'
+      if (!completed) {
+        logWarn('dev-browser-download', 'Download failed', { fileName, state })
+      }
+      if (!Notification.isSupported()) return
+      const notification = new Notification({
+        title: completed ? 'Download complete' : 'Download failed',
+        body: normalizeNotificationText(fileName, 'file', 180),
+        icon: appIcon.isEmpty() ? undefined : appIcon
+      })
+      if (completed) {
+        const savePath = item.getSavePath()
+        if (savePath) {
+          notification.on('click', () => {
+            shell.showItemInFolder(savePath)
+          })
+        }
+      }
+      notification.show()
     })
   })
 }
@@ -868,6 +904,7 @@ app.whenReady().then(async () => {
 
   traceStartup('install webview guards:start')
   installDevPreviewWebviewGuards()
+  installDevBrowserDownloadHandler()
   installMediaPermissionHandler()
   traceStartup('install webview guards:done')
 

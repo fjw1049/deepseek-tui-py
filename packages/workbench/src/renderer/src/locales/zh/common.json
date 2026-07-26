@@ -1485,6 +1485,8 @@
   "browserReload": "刷新",
   "browserBack": "后退",
   "browserForward": "前进",
+  "browserStop": "停止加载",
+  "browserDevTools": "开发者工具",
   "browserNewTab": "新建标签",
   "browserCloseTab": "关闭标签",
   "browserCloseTabDisabled": "至少保留一个标签",

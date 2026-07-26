@@ -298,6 +298,12 @@ export function Workbench(): ReactElement {
   )
   const [runtimeDiagnosticsOpen, setRuntimeDiagnosticsOpen] = useState(false)
   const [chatColumnHidden, setChatColumnHidden] = useState(false)
+  // Transparent pointer shield shown during panel drags: without it, pointer
+  // events over the webview/iframe panels are swallowed by the guest process
+  // and the window-level resize listeners starve (drag freezes, then jumps).
+  const [resizeShieldCursor, setResizeShieldCursor] = useState<
+    'col-resize' | 'row-resize' | null
+  >(null)
   const stageInsetClass = 'px-5 md:px-10 lg:px-16 xl:px-24'
   const conversationInsetClass = 'px-3 md:px-5 lg:px-6 xl:px-8'
   const operationConversationInsetClass = 'pl-3 md:pl-5 lg:pl-6 xl:pl-8 pr-0'
@@ -916,6 +922,7 @@ export function Workbench(): ReactElement {
     // pointer 1:1 instead of easing behind it.
     const wrapEl = (event.currentTarget as HTMLElement).closest('.ds-workbench-sidebar-wrap')
     wrapEl?.classList.add('is-resizing')
+    setResizeShieldCursor('col-resize')
 
     const onMove = (moveEvent: PointerEvent): void => {
       const containerWidth = shellRef.current?.clientWidth ?? window.innerWidth
@@ -942,6 +949,7 @@ export function Workbench(): ReactElement {
       document.body.style.cursor = prevCursor
       document.body.style.userSelect = prevUserSelect
       wrapEl?.classList.remove('is-resizing')
+      setResizeShieldCursor(null)
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', onUp)
     }
@@ -960,6 +968,7 @@ export function Workbench(): ReactElement {
     const prevUserSelect = document.body.style.userSelect
     document.body.style.cursor = 'col-resize'
     document.body.style.userSelect = 'none'
+    setResizeShieldCursor('col-resize')
 
     const onMove = (moveEvent: PointerEvent): void => {
       const containerWidth = shellRef.current?.clientWidth ?? window.innerWidth
@@ -983,6 +992,7 @@ export function Workbench(): ReactElement {
     const onUp = (): void => {
       document.body.style.cursor = prevCursor
       document.body.style.userSelect = prevUserSelect
+      setResizeShieldCursor(null)
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', onUp)
     }
@@ -1000,6 +1010,7 @@ export function Workbench(): ReactElement {
     const prevUserSelect = document.body.style.userSelect
     document.body.style.cursor = 'row-resize'
     document.body.style.userSelect = 'none'
+    setResizeShieldCursor('row-resize')
 
     const onMove = (moveEvent: PointerEvent): void => {
       // Handle sits on the panel's top edge, so dragging up (negative delta)
@@ -1013,6 +1024,7 @@ export function Workbench(): ReactElement {
     const onUp = (): void => {
       document.body.style.cursor = prevCursor
       document.body.style.userSelect = prevUserSelect
+      setResizeShieldCursor(null)
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', onUp)
     }
@@ -1026,6 +1038,13 @@ export function Workbench(): ReactElement {
       ref={shellRef}
       className="ds-workbench-shell ds-drag relative flex h-full min-h-0 w-full min-w-0"
     >
+      {resizeShieldCursor !== null ? (
+        <div
+          aria-hidden
+          className="fixed inset-0 z-[100]"
+          style={{ cursor: resizeShieldCursor }}
+        />
+      ) : null}
       {/* Chat route reopens the sidebar from the topbar button below (Synara
           SidebarTrigger in the content header); the floating droplet remains
           for routes without that header (plugins/automation/channels). */}
