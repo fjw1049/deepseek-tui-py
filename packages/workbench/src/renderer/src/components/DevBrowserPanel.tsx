@@ -568,29 +568,25 @@ export function DevBrowserPanel({
 
   return (
     <aside className={`ds-tool-panel ds-no-drag flex min-h-0 flex-col ${className ?? ''}`}>
-      <div className="shrink-0 border-b border-ds-border-muted bg-transparent">
-        <div className="flex h-11 min-w-0 items-center gap-1 px-2">
-          <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
+      <div className="ds-dev-browser__chrome shrink-0">
+        <div className="ds-dev-browser__tabs">
+          <div className="ds-dev-browser__tab-scroll">
             {tabs.map((tab) => {
               const active = tab.id === activeTabId
               const isSoleBlank = tabs.length === 1 && !tab.url
               return (
                 <div
                   key={tab.id}
-                  className={`group flex h-8 max-w-[180px] shrink-0 items-center gap-1 rounded-[10px] px-2 transition ${
-                    active
-                      ? 'bg-ds-surface-subtle text-ds-ink dark:bg-white/10'
-                      : 'text-ds-muted hover:bg-ds-hover/70 hover:text-ds-ink'
-                  }`}
+                  className={`ds-dev-browser__tab group${active ? ' ds-dev-browser__tab--active' : ''}`}
                 >
                   <button
                     type="button"
                     onClick={() => setActiveTabId(tab.id)}
-                    className="flex min-w-0 flex-1 items-center gap-1.5"
+                    className="ds-dev-browser__tab-main"
                     title={tab.url ?? t('browserNewTab')}
                   >
-                    <Globe2 className="h-3.5 w-3.5 shrink-0" strokeWidth={1.75} />
-                    <span className="min-w-0 truncate text-[12px] font-medium">
+                    <Globe2 className="ds-dev-browser__tab-icon" strokeWidth={1.75} aria-hidden />
+                    <span className="ds-dev-browser__tab-label">
                       {tabLabel(tab, t('browserNewTab'))}
                     </span>
                   </button>
@@ -602,13 +598,11 @@ export function DevBrowserPanel({
                       event.stopPropagation()
                       closeTab(tab.id)
                     }}
-                    className={`inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-ds-faint transition hover:bg-ds-hover hover:text-ds-ink disabled:cursor-default disabled:opacity-30 ${
-                      active ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
-                    }`}
+                    className={`ds-dev-browser__tab-close${active ? ' is-visible' : ''}`}
                     aria-label={t('browserCloseTab')}
                     title={isSoleBlank ? t('browserCloseTabDisabled') : t('browserCloseTab')}
                   >
-                    <X className="h-3 w-3" strokeWidth={2} />
+                    <X className="h-2.5 w-2.5" strokeWidth={2.2} />
                   </button>
                 </div>
               )
@@ -617,18 +611,18 @@ export function DevBrowserPanel({
           <button
             type="button"
             onClick={addTab}
-            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-ds-faint transition hover:bg-ds-hover hover:text-ds-ink"
+            className="ds-dev-browser__icon-btn"
             aria-label={t('browserNewTab')}
             title={t('browserNewTab')}
           >
-            <Plus className="h-4 w-4" strokeWidth={1.8} />
+            <Plus className="h-3.5 w-3.5" strokeWidth={1.9} />
           </button>
-          <div className="flex shrink-0 items-center gap-1">
+          <div className="ds-dev-browser__actions">
             <button
               type="button"
               onClick={() => openExternalUrl()}
               disabled={!activeUrl}
-              className="inline-flex h-8 w-8 items-center justify-center rounded-full text-ds-faint transition hover:bg-ds-hover hover:text-ds-ink disabled:cursor-default disabled:opacity-35"
+              className="ds-dev-browser__icon-btn"
               aria-label={t('browserOpenExternal')}
               title={t('browserOpenExternal')}
             >
@@ -639,7 +633,7 @@ export function DevBrowserPanel({
                 type="button"
                 onClick={openDevTools}
                 disabled={!activeUrl}
-                className="inline-flex h-8 w-8 items-center justify-center rounded-full text-ds-faint transition hover:bg-ds-hover hover:text-ds-ink disabled:cursor-default disabled:opacity-35"
+                className="ds-dev-browser__icon-btn"
                 aria-label={t('browserDevTools')}
                 title={t('browserDevTools')}
               >
@@ -649,91 +643,87 @@ export function DevBrowserPanel({
             <button
               type="button"
               onClick={() => setAutoFollow((value) => !value)}
-              className={`inline-flex h-8 items-center justify-center gap-1 rounded-full px-2 transition hover:bg-ds-hover ${
-                autoFollow ? 'text-sky-500 dark:text-sky-300' : 'text-ds-faint hover:text-ds-ink'
-              }`}
+              className={`ds-dev-browser__follow${autoFollow ? ' is-on' : ''}`}
               aria-label={t('browserAutoFollow')}
               aria-pressed={autoFollow}
               title={t('browserAutoFollow')}
             >
               <Radar className="h-3.5 w-3.5" strokeWidth={1.75} />
-              <span className="text-[11px] font-medium">{t('browserAutoFollowShort')}</span>
+              <span>{t('browserAutoFollowShort')}</span>
             </button>
           </div>
         </div>
 
-        <form onSubmit={submitUrl} className="flex h-12 min-w-0 items-center gap-2 px-3">
-          <div className="flex shrink-0 items-center gap-1">
+        <form onSubmit={submitUrl} className="ds-dev-browser__toolbar">
+          <div className="ds-dev-browser__nav">
             <button
               type="button"
               onClick={goBack}
               disabled={!canNavigateBack}
-              className="inline-flex h-8 w-8 items-center justify-center rounded-full text-ds-faint transition hover:bg-ds-hover hover:text-ds-ink disabled:cursor-default disabled:opacity-35"
+              className="ds-dev-browser__icon-btn"
               aria-label={t('browserBack')}
               title={t('browserBack')}
             >
-              <ArrowLeft className="h-4 w-4" strokeWidth={1.8} />
+              <ArrowLeft className="h-3.5 w-3.5" strokeWidth={1.9} />
             </button>
             <button
               type="button"
               onClick={goForward}
               disabled={!canNavigateForward}
-              className="inline-flex h-8 w-8 items-center justify-center rounded-full text-ds-faint transition hover:bg-ds-hover hover:text-ds-ink disabled:cursor-default disabled:opacity-35"
+              className="ds-dev-browser__icon-btn"
               aria-label={t('browserForward')}
               title={t('browserForward')}
             >
-              <ArrowRight className="h-4 w-4" strokeWidth={1.8} />
+              <ArrowRight className="h-3.5 w-3.5" strokeWidth={1.9} />
             </button>
             {loading && useElectronWebview && activeUrl ? (
               <button
                 type="button"
                 onClick={stopLoading}
-                className="inline-flex h-8 w-8 items-center justify-center rounded-full text-ds-faint transition hover:bg-ds-hover hover:text-ds-ink"
+                className="ds-dev-browser__icon-btn"
                 aria-label={t('browserStop')}
                 title={t('browserStop')}
               >
-                <CircleStop className="h-4 w-4" strokeWidth={1.8} />
+                <CircleStop className="h-3.5 w-3.5" strokeWidth={1.9} />
               </button>
             ) : (
               <button
                 type="button"
                 onClick={reload}
                 disabled={!activeUrl}
-                className="inline-flex h-8 w-8 items-center justify-center rounded-full text-ds-faint transition hover:bg-ds-hover hover:text-ds-ink disabled:cursor-default disabled:opacity-35"
+                className="ds-dev-browser__icon-btn"
                 aria-label={t('browserReload')}
                 title={t('browserReload')}
               >
                 {loading ? (
-                  <Loader2 className="h-4 w-4 animate-spin" strokeWidth={1.8} />
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={1.9} />
                 ) : (
-                  <RefreshCw className="h-4 w-4" strokeWidth={1.8} />
+                  <RefreshCw className="h-3.5 w-3.5" strokeWidth={1.9} />
                 )}
               </button>
             )}
           </div>
 
-          <div className="min-w-0 flex-1 px-3">
-            <input
-              value={draftUrl}
-              onChange={(event) => setDraftUrl(event.target.value)}
-              className="h-8 w-full min-w-0 rounded-full bg-transparent px-3 text-center text-[14px] font-medium text-ds-ink outline-none transition focus:bg-ds-surface-subtle focus:text-left dark:focus:bg-white/8"
-              placeholder={t('browserAddressPlaceholder')}
-              spellCheck={false}
-            />
-          </div>
+          <input
+            value={draftUrl}
+            onChange={(event) => setDraftUrl(event.target.value)}
+            className="ds-dev-browser__omnibox"
+            placeholder={t('browserAddressPlaceholder')}
+            spellCheck={false}
+          />
 
           <button
             type="submit"
-            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-ds-faint transition hover:bg-ds-hover hover:text-ds-ink"
+            className="ds-dev-browser__icon-btn"
             aria-label={t('browserOpen')}
             title={t('browserOpen')}
           >
-            <Send className="h-3.5 w-3.5" strokeWidth={1.8} />
+            <Send className="h-3.5 w-3.5" strokeWidth={1.85} />
           </button>
         </form>
 
         {detectedUrls.length > 0 ? (
-          <div className="flex min-w-0 gap-1.5 overflow-x-auto px-3 pb-2">
+          <div className="ds-dev-browser__chips">
             {detectedUrls.map((url) => (
               <button
                 key={url}
@@ -742,7 +732,7 @@ export function DevBrowserPanel({
                   setAutoFollow(false)
                   openOrFocusUrl(url)
                 }}
-                className="shrink-0 rounded-full border border-ds-border-muted bg-ds-surface-subtle px-2.5 py-1 text-[10.5px] font-medium text-ds-muted transition hover:border-ds-border-strong hover:text-ds-ink dark:bg-white/6"
+                className="ds-dev-browser__chip"
                 title={url}
               >
                 {formatDevPreviewUrlLabel(url)}
