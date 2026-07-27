@@ -189,6 +189,8 @@ export function SettingsView(): ReactElement {
   const saveTimer = useRef<ReturnType<typeof window.setTimeout> | null>(null)
   const statusTimer = useRef<ReturnType<typeof window.setTimeout> | null>(null)
   const draftVersion = useRef(0)
+  const formRef = useRef<AppSettingsV1 | null>(null)
+  formRef.current = form
   const formTheme = form?.theme
   const formUiFontScale = form?.uiFontScale
   const formUiFontFamily = form?.uiFontFamily
@@ -407,6 +409,7 @@ export function SettingsView(): ReactElement {
       const next = await window.dsGui.setSettings(snapshot)
       if (version !== draftVersion.current) return
 
+      formRef.current = next
       setForm(next)
       await applyI18n(next.locale)
       void reloadUiSettings()
@@ -507,7 +510,10 @@ export function SettingsView(): ReactElement {
   }
 
   const update = (partial: SettingsPatch): void => {
-    const next = mergeSettings(form, partial)
+    const current = formRef.current
+    if (!current) return
+    const next = mergeSettings(current, partial)
+    formRef.current = next
     setForm(next)
     if (partial.locale) void applyI18n(partial.locale)
     scheduleSave(next)

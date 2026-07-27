@@ -364,6 +364,11 @@ export function LlmProvidersPanel({ form, onUpdate }: Props): ReactElement {
         <CustomProviderDetailSheet
           endpoint={endpoints.find((item) => item.id === detail.id) ?? null}
           onClose={() => setDetail(null)}
+          onPatch={(next) => {
+            onUpdate({
+              customEndpoints: endpoints.map((item) => (item.id === next.id ? next : item))
+            })
+          }}
           onSave={(next) => {
             onUpdate({
               customEndpoints: endpoints.map((item) => (item.id === next.id ? next : item))
@@ -388,7 +393,7 @@ export function LlmProvidersPanel({ form, onUpdate }: Props): ReactElement {
           onClose={() => setDetail(null)}
           onSave={(endpoint) => {
             onUpdate({ customEndpoints: [...endpoints, endpoint] })
-            setDetail({ kind: 'custom', id: endpoint.id })
+            setDetail(null)
           }}
         />
       ) : null}
@@ -397,6 +402,11 @@ export function LlmProvidersPanel({ form, onUpdate }: Props): ReactElement {
         <AsrProviderDetailSheet
           provider={asrProviders.find((item) => item.id === detail.id) ?? null}
           onClose={() => setDetail(null)}
+          onPatch={(next) => {
+            onUpdate({
+              asrProviders: asrProviders.map((item) => (item.id === next.id ? next : item))
+            })
+          }}
           onSave={(next) => {
             onUpdate({
               asrProviders: asrProviders.map((item) => (item.id === next.id ? next : item))
@@ -422,7 +432,7 @@ export function LlmProvidersPanel({ form, onUpdate }: Props): ReactElement {
           onClose={() => setDetail(null)}
           onSave={(provider) => {
             onUpdate({ asrProviders: [...asrProviders, provider] })
-            setDetail({ kind: 'asr', id: provider.id })
+            setDetail(null)
           }}
         />
       ) : null}
@@ -454,13 +464,17 @@ function AddLlmProviderSheet({
   const [baseUrl, setBaseUrl] = useState('')
   const [apiKey, setApiKey] = useState('')
   const [protocol, setProtocol] = useState<EndpointProtocol>('openai')
+  const [modelId, setModelId] = useState('')
   const [showKey, setShowKey] = useState(false)
 
-  const canSave = Boolean(name.trim() && baseUrl.trim() && apiKey.trim())
+  const canSave = Boolean(
+    name.trim() && baseUrl.trim() && apiKey.trim() && modelId.trim()
+  )
 
   return (
     <SheetShell
       title={t('llmAddProviderBtn')}
+      caption={t('llmAddProviderHint')}
       icon={<BrandIcon token="openai" size={40} />}
       onClose={onClose}
       footer={
@@ -483,6 +497,7 @@ function AddLlmProviderSheet({
                 ...BUILTIN_LLM_PROVIDER_IDS,
                 ...endpoints.map((item) => item.id)
               ])
+              const trimmedModel = modelId.trim()
               onSave({
                 id: uniqueSlug(slug, used),
                 name: name.trim(),
@@ -490,7 +505,14 @@ function AddLlmProviderSheet({
                 baseUrl: baseUrl.trim(),
                 apiKey: apiKey.trim(),
                 enabled: true,
-                models: []
+                models: [
+                  {
+                    id: trimmedModel,
+                    enabled: true,
+                    contextWindow: CUSTOM_MODEL_CONTEXT_WINDOW_DEFAULT,
+                    testStatus: 'untested'
+                  }
+                ]
               })
             }}
             className="ds-llm-sheet__btn ds-llm-sheet__btn--primary"
@@ -545,6 +567,15 @@ function AddLlmProviderSheet({
             <option value="anthropic">Anthropic</option>
           </select>
         </div>
+        <div className="ds-llm-inset__row">
+          <div className="ds-llm-inset__key">{t('llmModelIdLabel')}</div>
+          <input
+            className="ds-llm-inset__input"
+            value={modelId}
+            onChange={(e) => setModelId(e.target.value)}
+            placeholder={t('llmAddModelPlaceholder')}
+          />
+        </div>
       </div>
     </SheetShell>
   )
@@ -563,12 +594,16 @@ function AddAsrProviderSheet({
   const [name, setName] = useState('')
   const [baseUrl, setBaseUrl] = useState(DEFAULT_ASR_BASE_URL)
   const [apiKey, setApiKey] = useState('')
+  const [modelId, setModelId] = useState(DEFAULT_ASR_MODEL)
   const [showKey, setShowKey] = useState(false)
-  const canSave = Boolean(name.trim() && baseUrl.trim() && apiKey.trim())
+  const canSave = Boolean(
+    name.trim() && baseUrl.trim() && apiKey.trim() && modelId.trim()
+  )
 
   return (
     <SheetShell
       title={t('asrAddProviderBtn')}
+      caption={t('asrAddProviderHint')}
       icon={<BrandIcon token="glm" size={40} />}
       onClose={onClose}
       footer={
@@ -588,12 +623,13 @@ function AddAsrProviderSheet({
                   .replace(/[^a-z0-9]+/g, '-')
                   .replace(/^-|-$/g, '') || 'asr'
               const used = new Set(providers.map((item) => item.id))
+              const trimmedModel = modelId.trim()
               onSave({
                 id: uniqueSlug(slug, used),
                 name: name.trim(),
                 baseUrl: baseUrl.trim() || DEFAULT_ASR_BASE_URL,
                 apiKey: apiKey.trim(),
-                models: []
+                models: [{ id: trimmedModel, enabled: true }]
               })
             }}
             className="ds-llm-sheet__btn ds-llm-sheet__btn--primary"
@@ -636,6 +672,16 @@ function AddAsrProviderSheet({
               {showKey ? <EyeOff className="h-4 w-4" strokeWidth={1.75} /> : <Eye className="h-4 w-4" strokeWidth={1.75} />}
             </button>
           </div>
+        </div>
+        <div className="ds-llm-inset__row">
+          <div className="ds-llm-inset__key">{t('asrModel')}</div>
+          <input
+            className="ds-llm-inset__input"
+            value={modelId}
+            onChange={(e) => setModelId(e.target.value)}
+            placeholder={DEFAULT_ASR_MODEL}
+            title={t('asrModelDesc')}
+          />
         </div>
       </div>
     </SheetShell>
@@ -1060,11 +1106,13 @@ function BuiltinProviderDetailSheet({
 function CustomProviderDetailSheet({
   endpoint,
   onClose,
+  onPatch,
   onSave,
   onDelete
 }: {
   endpoint: CustomEndpointV1 | null
   onClose: () => void
+  onPatch: (next: CustomEndpointV1) => void
   onSave: (next: CustomEndpointV1) => void
   onDelete: (id: string) => void
 }): ReactElement | null {
@@ -1085,11 +1133,26 @@ function CustomProviderDetailSheet({
 
   if (!endpoint) return null
 
+  const draftEndpoint = (nextModels = models): CustomEndpointV1 => ({
+    ...endpoint,
+    name: name.trim() || endpoint.name,
+    baseUrl: baseUrl.trim() || endpoint.baseUrl,
+    apiKey: apiKey.trim() || endpoint.apiKey,
+    protocol,
+    enabled: true,
+    models: nextModels
+  })
+
+  const commitModels = (nextModels: CustomEndpointV1['models']): void => {
+    setModels(nextModels)
+    onPatch(draftEndpoint(nextModels))
+  }
+
   const addModel = (): void => {
     const id = modelDraft.trim()
     if (!id || models.some((model) => model.id === id)) return
-    setModels((prev) => [
-      ...prev,
+    commitModels([
+      ...models,
       {
         id,
         enabled: true,
@@ -1105,6 +1168,7 @@ function CustomProviderDetailSheet({
     const ids = models.filter((model) => model.enabled).map((model) => model.id)
     if (!apiKey.trim() || !baseUrl.trim() || ids.length === 0 || testingAll) return
     setTestingAll(true)
+    let working = models
     for (const modelId of ids) {
       setTestByModel((prev) => ({ ...prev, [modelId]: { status: 'testing' } }))
       try {
@@ -1113,18 +1177,17 @@ function CustomProviderDetailSheet({
           ...prev,
           [modelId]: { status: result.ok ? 'passed' : 'failed', message: result.message }
         }))
-        setModels((prev) =>
-          prev.map((model) =>
-            model.id === modelId
-              ? {
-                  ...model,
-                  testStatus: result.ok ? 'passed' : 'failed',
-                  toolCalling: result.ok,
-                  lastTestedAt: new Date().toISOString()
-                }
-              : model
-          )
+        working = working.map((model) =>
+          model.id === modelId
+            ? {
+                ...model,
+                testStatus: result.ok ? ('passed' as const) : ('failed' as const),
+                toolCalling: result.ok,
+                lastTestedAt: new Date().toISOString()
+              }
+            : model
         )
+        commitModels(working)
       } catch (error) {
         setTestByModel((prev) => ({
           ...prev,
@@ -1159,17 +1222,7 @@ function CustomProviderDetailSheet({
           <button
             type="button"
             disabled={!name.trim() || !baseUrl.trim() || !apiKey.trim()}
-            onClick={() =>
-              onSave({
-                ...endpoint,
-                name: name.trim(),
-                baseUrl: baseUrl.trim(),
-                apiKey: apiKey.trim(),
-                protocol,
-                enabled: true,
-                models
-              })
-            }
+            onClick={() => onSave(draftEndpoint())}
             className="ds-llm-sheet__btn ds-llm-sheet__btn--primary"
           >
             {t('saveEndpointBtn')}
@@ -1254,8 +1307,8 @@ function CustomProviderDetailSheet({
             model={model}
             checked={model.enabled}
             onToggle={() =>
-              setModels((prev) =>
-                prev.map((item) =>
+              commitModels(
+                models.map((item) =>
                   item.id === model.id ? { ...item, enabled: !item.enabled } : item
                 )
               )
@@ -1273,8 +1326,8 @@ function CustomProviderDetailSheet({
                 delete rest[model.id]
                 return rest
               })
-              setModels((prev) =>
-                prev.map((item) =>
+              commitModels(
+                models.map((item) =>
                   item.id === model.id ? { ...item, contextWindow: next } : item
                 )
               )
@@ -1292,7 +1345,7 @@ function CustomProviderDetailSheet({
                         usageRefreshKey: state.usageRefreshKey + 1
                       }))
                     })
-                  setModels((prev) => prev.filter((item) => item.id !== model.id))
+                  commitModels(models.filter((item) => item.id !== model.id))
                 }}
                 aria-label={t('deleteEndpointBtn')}
               >
@@ -1311,10 +1364,9 @@ function CustomProviderDetailSheet({
           value={modelDraft}
           onChange={(e) => setModelDraft(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === 'Enter') {
-              e.preventDefault()
-              addModel()
-            }
+            if (e.key !== 'Enter' || e.nativeEvent.isComposing || e.keyCode === 229) return
+            e.preventDefault()
+            addModel()
           }}
         />
         <input
@@ -1342,11 +1394,13 @@ function CustomProviderDetailSheet({
 function AsrProviderDetailSheet({
   provider,
   onClose,
+  onPatch,
   onSave,
   onDelete
 }: {
   provider: AsrProviderV1 | null
   onClose: () => void
+  onPatch: (next: AsrProviderV1) => void
   onSave: (next: AsrProviderV1) => void
   onDelete?: (id: string) => void
 }): ReactElement | null {
@@ -1367,6 +1421,19 @@ function AsrProviderDetailSheet({
   const builtin = Boolean(provider.builtin || provider.id === BUILTIN_ASR_PROVIDER_ID)
   const activeModel =
     models.find((model) => model.enabled)?.id || models[0]?.id || DEFAULT_ASR_MODEL
+
+  const draftProvider = (nextModels = models): AsrProviderV1 => ({
+    ...provider,
+    name: builtin ? provider.name : name.trim() || provider.name,
+    baseUrl: baseUrl.trim() || DEFAULT_ASR_BASE_URL,
+    apiKey: apiKey.trim(),
+    models: nextModels
+  })
+
+  const commitModels = (nextModels: AsrProviderV1['models']): void => {
+    setModels(nextModels)
+    onPatch(draftProvider(nextModels))
+  }
 
   const runAsrTest = async (): Promise<void> => {
     const key = apiKey.trim()
@@ -1422,7 +1489,7 @@ function AsrProviderDetailSheet({
   const addAsrModel = (): void => {
     const id = modelDraft.trim()
     if (!id || models.some((model) => model.id === id)) return
-    setModels((prev) => [...prev, { id, enabled: true }])
+    commitModels([...models, { id, enabled: true }])
     setModelDraft('')
   }
 
@@ -1449,15 +1516,7 @@ function AsrProviderDetailSheet({
           </button>
           <button
             type="button"
-            onClick={() =>
-              onSave({
-                ...provider,
-                name: builtin ? provider.name : name.trim() || provider.name,
-                baseUrl: baseUrl.trim() || DEFAULT_ASR_BASE_URL,
-                apiKey: apiKey.trim(),
-                models
-              })
-            }
+            onClick={() => onSave(draftProvider())}
             className="ds-llm-sheet__btn ds-llm-sheet__btn--primary"
           >
             {t('saveEndpointBtn')}
@@ -1548,8 +1607,8 @@ function AsrProviderDetailSheet({
               <button
                 type="button"
                 onClick={() =>
-                  setModels((prev) =>
-                    prev.map((item) =>
+                  commitModels(
+                    models.map((item) =>
                       item.id === model.id ? { ...item, enabled: !item.enabled } : item
                     )
                   )
@@ -1576,10 +1635,9 @@ function AsrProviderDetailSheet({
           value={modelDraft}
           onChange={(e) => setModelDraft(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === 'Enter') {
-              e.preventDefault()
-              addAsrModel()
-            }
+            if (e.key !== 'Enter' || e.nativeEvent.isComposing || e.keyCode === 229) return
+            e.preventDefault()
+            addAsrModel()
           }}
         />
         <button
