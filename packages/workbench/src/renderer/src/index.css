@@ -5391,7 +5391,11 @@ select:focus-visible,
   opacity: 1;
 }
 
-.ds-workbench-right-panel .ds-tool-panel,
+/* Editor / changes / browser stay on the sidebar sheet. Terminal is excluded:
+   AppTerminalPanel also carries .ds-tool-panel, and a sidebar fill here would
+   beat the later .ds-terminal-panel canvas rule on specificity and leave a
+   grey inset frame around the white xterm surface. */
+.ds-workbench-right-panel .ds-tool-panel:not(.ds-terminal-panel),
 .ds-workbench-right-panel .ds-workspace-editor-pane,
 .ds-workbench-right-panel .ds-change-inspector {
   background: var(--ds-bg-sidebar);
@@ -5409,8 +5413,12 @@ select:focus-visible,
 /* Terminal surface must read as one continuous sheet: the xterm theme
    background is --ds-bg-canvas (see readTerminalTheme), so paint the panel
    itself the same colour. Otherwise the xterm cell-grid remainders and the
-   .xterm padding show the grey sidebar through as an ugly inset frame. */
-.ds-terminal-panel {
+   .xterm padding show the grey sidebar through as an ugly inset frame.
+   Nested selector must match or exceed .ds-workbench-right-panel .ds-tool-panel
+   specificity — a lone .ds-terminal-panel loses that fight. */
+.ds-terminal-panel,
+.ds-workbench-right-panel .ds-terminal-panel,
+.ds-workbench-right-panel .ds-tool-panel.ds-terminal-panel {
   background: var(--ds-bg-canvas);
 }
 
