@@ -39,7 +39,6 @@ from deepseek_tui.tools.subagent.tools import (
     ALL_AGENT_ACTIONS,
     PLAN_AGENT_ACTIONS,
     READ_AGENT_ACTIONS,
-    AgentResumeTool,
     AgentTool,
 )
 from deepseek_tui.tools.subagent.types import (  # noqa: F401 — _MAX_CARD_RESULT_CHARS used by tests
@@ -69,7 +68,6 @@ from deepseek_tui.tools.subagent.types import (  # noqa: F401 — _MAX_CARD_RESU
 __all__ = [
     "MAILBOX_MAX_ENVELOPES",
     "ALL_AGENT_ACTIONS",
-    "AgentResumeTool",
     "AgentRunOutput",
     "AgentTool",
     "DEFAULT_MAX_AGENTS",

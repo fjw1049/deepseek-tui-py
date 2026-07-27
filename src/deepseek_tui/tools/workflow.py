@@ -334,7 +334,7 @@ class WorkflowTool(ToolSpec):
         lines = [
             f"Workflow detached: run_id={run_record.run_id}",
             f"task_id={task.id}",
-            "Progress continues in the TASKS panel; cancel with task_cancel.",
+            "Progress continues in the TASKS panel; cancel with task_stop.",
         ]
         if wt.get("worktree_path"):
             lines.append(f"worktree_path={wt['worktree_path']}")

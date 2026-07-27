@@ -251,8 +251,8 @@ async def create_tool_runtime(
         # Hard dependency: automations have no executor of their own —
         # every fire ends up calling ``TaskManager.add_task``. Fail
         # fast at construction time rather than letting the LLM call
-        # ``automation_run`` and discover the missing dependency at
-        # runtime.
+        # ``cron_create(run_now=true)`` and discover the missing
+        # dependency at runtime.
         if not cfg.features.tasks:
             raise ValueError(
                 "features.automations requires features.tasks=True "
@@ -265,8 +265,8 @@ async def create_tool_runtime(
         )
         automation_manager = AutomationManager.open(automation_root)
         metadata[AUTOMATION_MANAGER_KEY] = automation_manager
-        # AutomationRunTool reaches the TaskManager through the same
-        # context.metadata bag.
+        # CronCreateTool's run_now branch reaches the TaskManager through
+        # the same context.metadata bag.
         # The ``features.tasks`` guard above guarantees task_manager is
         # not None here.
         assert task_manager is not None

@@ -533,7 +533,7 @@ Templates: `{{task}}`, `{{item}}`, `{{previous}}`, `{{round}}`, `{{outputs.*}}`.
 - Validate by running `workflow` with a small task; interrupted runs resume via `run_id` (restores runtime graph + dynamic state).
 - Per-step `timeout_seconds` (1..3600) on agent-like steps caps one agent call; on timeout the step yields no output (subject to `on_error`).
 - `policy.token_budget` is enforced via char/4 estimate of prompts/outputs — also bound with `max_agents`, `concurrency`, `wall_clock_seconds`, `timeout_seconds`.
-- Long runs the user will not wait for: pass `detach: true` (TaskManager drives the same `run_id`; cancel with `task_cancel`).
+- Long runs the user will not wait for: pass `detach: true` (TaskManager drives the same `run_id`; cancel with `task_stop`).
 - Save reusable specs under `workflows/<name>.json` (shared) or `.deepseek/workflows/` (private).
 
 ## Runs

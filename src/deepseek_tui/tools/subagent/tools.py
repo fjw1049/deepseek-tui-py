@@ -1,13 +1,21 @@
 """Sub-agent tools — thin wrappers over :class:`SubAgentManager`.
 
-Two tools are registered with the ToolRegistry:
+One tool is registered with the ToolRegistry:
 
 - ``agent`` (:class:`AgentTool`) — a single action-dispatched tool covering
-  spawn / result / cancel / list / send_input / wait.
-- ``agent_resume`` (:class:`AgentResumeTool`) — resume a cancelled or
-  interrupted sub-agent from its durable checkpoint.
+  spawn / send_input / wait, plus a ``resume`` parameter (mutually exclusive
+  with ``action``) that resumes a cancelled or interrupted sub-agent from
+  its durable checkpoint. The retired ``agent_resume`` tool name is still
+  accepted at the execution layer and forwarded here (see
+  ``engine.dispatch.normalize_legacy_tool_call``).
 
-Both delegate to ``context.subagent_manager``.
+The retired ``list`` / ``result`` / ``cancel`` actions are also forwarded at
+the execution layer — to ``task_list`` / ``task_output`` / ``task_stop``,
+which now own background-entity inspection and stopping. Their handler
+functions (``_execute_result`` / ``_execute_cancel``) stay here and are
+reused by those task tools.
+
+Delegates to ``context.subagent_manager``.
 """
 
 from __future__ import annotations
@@ -374,6 +382,11 @@ async def _execute_spawn(input_data: dict[str, Any], context: ToolContext) -> To
 
 
 async def _execute_result(input_data: dict[str, Any], context: ToolContext) -> ToolResult:
+    """Fetch a sub-agent result or background-process output.
+
+    Retired as an ``agent`` action; reused by ``task_output`` (and by the
+    execution-layer forwarding of the old action).
+    """
     block = _pick_bool(input_data, "block")
     timeout_ms = _pick_int(
         input_data, "timeout_ms", default=DEFAULT_RESULT_TIMEOUT_MS
@@ -393,7 +406,7 @@ async def _execute_result(input_data: dict[str, Any], context: ToolContext) -> T
         return await _shell.peek_background_process(context, process_id)
     agent_id = _pick_str_aliased(input_data, "agent_id", "id")
     if agent_id is None:
-        raise ToolError("agent action 'result' requires 'agent_id' or 'process_id'")
+        raise ToolError("result fetch requires 'agent_id' or 'process_id'")
     manager = _require_manager(context)
     try:
         if block:
@@ -421,7 +434,7 @@ async def _execute_cancel(input_data: dict[str, Any], context: ToolContext) -> T
         return await _shell.cancel_background_process(context, process_id)
     agent_id = _pick_str_aliased(input_data, "agent_id", "id")
     if agent_id is None:
-        raise ToolError("agent action 'cancel' requires 'agent_id' or 'process_id'")
+        raise ToolError("cancel requires 'agent_id' or 'process_id'")
     manager = _require_manager(context)
     try:
         snapshot = await manager.cancel(agent_id)
@@ -431,17 +444,6 @@ async def _execute_cancel(input_data: dict[str, Any], context: ToolContext) -> T
         success=True,
         content=f"cancelled {snapshot.agent_id}",
         metadata=_result_to_json(snapshot),
-    )
-
-
-async def _execute_list(input_data: dict[str, Any], context: ToolContext) -> ToolResult:
-    manager = _require_manager(context)
-    include_archived = _pick_bool(input_data, "include_archived")
-    snapshots = manager.list_filtered(include_archived=include_archived)
-    return ToolResult(
-        success=True,
-        content=f"{len(snapshots)} agent(s)",
-        metadata={"agents": [_result_to_json(s) for s in snapshots]},
     )
 
 
@@ -507,27 +509,32 @@ async def _execute_wait(input_data: dict[str, Any], context: ToolContext) -> Too
 
 _ACTION_HANDLERS: dict[str, Callable[..., Any]] = {
     "spawn": _execute_spawn,
-    "result": _execute_result,
-    "cancel": _execute_cancel,
-    "list": _execute_list,
     "send_input": _execute_send_input,
     "wait": _execute_wait,
 }
 
 ALL_AGENT_ACTIONS: tuple[str, ...] = tuple(_ACTION_HANDLERS)
 
-# Read-path actions: registered in plan mode and exempt from approval prompts
-# (matches the pre-merge agent_result/agent_list/agent_wait tools).
-READ_AGENT_ACTIONS: tuple[str, ...] = ("result", "list", "wait")
+# Retired actions — forwarded at the execution layer
+# (``engine.dispatch.normalize_legacy_tool_call``); direct calls get a
+# steering error naming the replacement tool.
+_RETIRED_ACTION_TARGETS: dict[str, str] = {
+    "list": "task_list",
+    "result": "task_output",
+    "cancel": "task_stop",
+}
 
-# Plan mode: inspect and cancel existing agents, but never spawn or steer.
-PLAN_AGENT_ACTIONS: tuple[str, ...] = ("result", "cancel", "list", "wait")
+# Read-path actions: registered in plan mode and exempt from approval prompts
+# (matches the pre-merge agent_wait tool).
+READ_AGENT_ACTIONS: tuple[str, ...] = ("wait",)
+
+# Plan mode: inspect running agents, but never spawn, steer, or stop them
+# (listing/reading/stopping background work moved to task_list/task_output/
+# task_stop; task_stop is a side effect and stays out of plan mode — D5).
+PLAN_AGENT_ACTIONS: tuple[str, ...] = ("wait",)
 
 _ACTION_CAPABILITIES: dict[str, tuple[ToolCapability, ...]] = {
     "spawn": (ToolCapability.EXECUTES_CODE, ToolCapability.REQUIRES_APPROVAL),
-    "result": (ToolCapability.READ_ONLY,),
-    "cancel": (ToolCapability.EXECUTES_CODE, ToolCapability.REQUIRES_APPROVAL),
-    "list": (ToolCapability.READ_ONLY,),
     "send_input": (ToolCapability.EXECUTES_CODE,),
     "wait": (ToolCapability.READ_ONLY,),
 }
@@ -544,19 +551,6 @@ _ACTION_BLURBS: dict[str, str] = {
         "you can continue without this result — completion arrives later as "
         "a <deepseek:subagent.done> reminder (do not poll)."
     ),
-    "result": (
-        "result: fetch the result of a background job — a sub-agent via "
-        "'agent_id', or a background shell process via 'process_id' — "
-        "optionally blocking ('block', 'timeout_ms'). When collecting a "
-        "finished/long-running background process, pass block: true — the "
-        "default non-blocking peek returns status: running for unfinished "
-        "jobs, which is a status report, not the result."
-    ),
-    "cancel": (
-        "cancel: cancel a running background job — a sub-agent via "
-        "'agent_id', or a background shell process via 'process_id'."
-    ),
-    "list": "list: list sub-agents ('include_archived' flips the prior-session filter).",
     "send_input": (
         "send_input: send a text 'input' to a running sub-agent "
         "(requires 'agent_id' and 'input'; optional 'interrupt')."
@@ -576,30 +570,62 @@ class AgentTool(ToolSpec):
     ``allowed_actions`` controls which actions the instance exposes: the
     ``action`` enum is generated from it, so a plan-mode registry can offer
     the read/cancel subset without any runtime mode checks in execute.
+
+    ``allow_resume`` controls whether the ``resume`` parameter (restart a
+    cancelled/interrupted/failed sub-agent from its durable checkpoint)
+    appears in the schema and is accepted by execute. Plan mode disables
+    it: resume restarts real work, which read-only plan mode must not do.
     """
 
-    def __init__(self, allowed_actions: Iterable[str] | None = None) -> None:
+    def __init__(
+        self,
+        allowed_actions: Iterable[str] | None = None,
+        *,
+        allow_resume: bool = True,
+    ) -> None:
         actions = tuple(allowed_actions) if allowed_actions is not None else ALL_AGENT_ACTIONS
         unknown = [a for a in actions if a not in _ACTION_HANDLERS]
         if unknown:
             raise ValueError(f"unknown agent action(s): {', '.join(unknown)}")
         self._allowed_actions = actions
+        self._allow_resume = allow_resume
 
     def name(self) -> str:
         return "agent"
 
     def description(self) -> str:
         blurbs = "; ".join(_ACTION_BLURBS[a] for a in self._allowed_actions)
-        return f"Manage sub-agents and background jobs. Actions — {blurbs}"
+        text = (
+            f"Manage sub-agents. Actions — {blurbs}. To list agents, fetch "
+            "their results, or stop them (and durable tasks / background "
+            "shell processes), use the task_list / task_output / task_stop "
+            "tools instead"
+        )
+        if self._allow_resume:
+            text += (
+                ". Alternatively, pass 'resume' with a sub-agent id (and no "
+                "'action' — the two are mutually exclusive) to resume a "
+                "cancelled/interrupted/failed sub-agent from its durable "
+                "transcript checkpoint, skipping completed tool rounds. Do "
+                "not spawn a new agent for the same work."
+            )
+        return text
 
     def input_schema(self) -> dict[str, Any]:
-        return {
+        schema: dict[str, Any] = {
             "type": "object",
             "properties": {
                 "action": {
                     "type": "string",
                     "enum": list(self._allowed_actions),
-                    "description": "Which sub-agent operation to perform.",
+                    "description": (
+                        "Which sub-agent operation to perform."
+                        + (
+                            " Required unless 'resume' is given."
+                            if self._allow_resume
+                            else ""
+                        )
+                    ),
                 },
                 "prompt": {
                     "type": "string",
@@ -665,7 +691,7 @@ class AgentTool(ToolSpec):
                 "agent_id": {
                     "type": "string",
                     "description": (
-                        "Target sub-agent id (action=result/cancel/send_input/wait)"
+                        "Target sub-agent id (action=send_input/wait)"
                     ),
                 },
                 "agent_ids": {
@@ -676,24 +702,9 @@ class AgentTool(ToolSpec):
                         "waits on all running sub-agents."
                     ),
                 },
-                "process_id": {
-                    "type": "string",
-                    "description": (
-                        "Background shell process id (action=result/cancel; "
-                        "from exec_shell background=true)."
-                    ),
-                },
-                "block": {
-                    "type": "boolean",
-                    "description": "Block until complete (action=result)",
-                },
                 "timeout_ms": {
                     "type": "integer",
-                    "description": "Wait timeout in milliseconds (action=result/wait)",
-                },
-                "include_archived": {
-                    "type": "boolean",
-                    "description": "Include prior-session agents (action=list)",
+                    "description": "Wait timeout in milliseconds (action=wait)",
                 },
                 "input": {
                     "type": "string",
@@ -711,6 +722,20 @@ class AgentTool(ToolSpec):
             },
             "required": ["action"],
         }
+        if self._allow_resume:
+            schema["properties"]["resume"] = {
+                "type": "string",
+                "description": (
+                    "Resume a cancelled/interrupted/failed sub-agent by id, "
+                    "restarting it from its durable transcript checkpoint "
+                    "(completed tool rounds are skipped). Mutually exclusive "
+                    "with 'action' — pass only one."
+                ),
+            }
+            # 'action' stays effectively required, but 'resume' is the
+            # alternative — enforced in execute(), not the schema.
+            schema["required"] = []
+        return schema
 
     def capabilities(self) -> list[ToolCapability]:
         # Union of the per-action capabilities this instance exposes.
@@ -724,6 +749,10 @@ class AgentTool(ToolSpec):
     def approval_requirement_for_input(
         self, input_data: dict[str, Any]
     ) -> ApprovalRequirement:
+        # Resume restarts real work — keep the retired agent_resume tool's
+        # REQUIRED gate.
+        if _pick_str(input_data, "resume") is not None:
+            return ApprovalRequirement.REQUIRED
         # Read actions keep the pre-merge agent_result/agent_list/agent_wait
         # behavior: no approval prompt.
         action = input_data.get("action")
@@ -743,14 +772,28 @@ class AgentTool(ToolSpec):
     ) -> ToolResult:
         raw_action = input_data.get("action")
         action = raw_action.strip() if isinstance(raw_action, str) else ""
+        resume_id = _pick_str(input_data, "resume")
+        if resume_id is not None:
+            if not self._allow_resume:
+                raise ToolError("agent resume is not available in this mode")
+            if action:
+                raise ToolError(
+                    "'resume' is mutually exclusive with 'action' — pass only one"
+                )
+            return await _execute_resume(resume_id, context)
         if not action:
             raise ToolError(
                 "agent action is required (one of: "
                 + ", ".join(self._allowed_actions)
-                + ")"
+                + (")" if not self._allow_resume else "), or pass 'resume'")
             )
         handler = _ACTION_HANDLERS.get(action)
         if handler is None or action not in self._allowed_actions:
+            if action in _RETIRED_ACTION_TARGETS:
+                raise ToolError(
+                    f"agent action '{action}' was retired — use "
+                    f"{_RETIRED_ACTION_TARGETS[action]} instead"
+                )
             raise ToolError(
                 f"unknown agent action '{action}'. Allowed: "
                 + ", ".join(self._allowed_actions)
@@ -758,44 +801,20 @@ class AgentTool(ToolSpec):
         return await handler(input_data, context)
 
 
-class AgentResumeTool(ToolSpec):
-    def name(self) -> str:
-        return "agent_resume"
+async def _execute_resume(agent_id: str, context: ToolContext) -> ToolResult:
+    """Resume a sub-agent from its durable checkpoint (true-resume).
 
-    def description(self) -> str:
-        return (
-            "Resume a cancelled/interrupted/failed sub-agent from its durable "
-            "transcript checkpoint (skips completed tool rounds). Pass agent id. "
-            "Do not spawn a new agent for the same work."
-        )
+    Shared by ``AgentTool`` (``resume`` parameter) and the execution-layer
+    forwarding of the retired ``agent_resume`` tool name.
+    """
+    manager = _require_manager(context)
+    try:
+        snapshot = await manager.resume(agent_id)
+    except (KeyError, RuntimeError) as exc:
+        raise ToolError(str(exc)) from exc
+    return ToolResult(
+        success=True,
+        content=f"resumed {snapshot.agent_id}",
+        metadata=_result_to_json(snapshot),
+    )
 
-    def input_schema(self) -> dict[str, Any]:
-        return {
-            "type": "object",
-            "properties": {
-                "agent_id": {"type": "string"},
-            },
-        }
-
-    def capabilities(self) -> list[ToolCapability]:
-        return [ToolCapability.EXECUTES_CODE, ToolCapability.REQUIRES_APPROVAL]
-
-    def approval_requirement(self) -> ApprovalRequirement:
-        return ApprovalRequirement.REQUIRED
-
-    async def execute(
-        self, input_data: dict[str, Any], context: ToolContext
-    ) -> ToolResult:
-        manager = _require_manager(context)
-        agent_id = _pick_str_aliased(input_data, "agent_id", "id")
-        if agent_id is None:
-            raise ToolError("agent_resume requires 'agent_id'")
-        try:
-            snapshot = await manager.resume(agent_id)
-        except (KeyError, RuntimeError) as exc:
-            raise ToolError(str(exc)) from exc
-        return ToolResult(
-            success=True,
-            content=f"resumed {snapshot.agent_id}",
-            metadata=_result_to_json(snapshot),
-        )

@@ -484,6 +484,13 @@ class ToolExecutionMixin:
         # 先归一化：把桥接别名（如 mcp_read_resource）映射回注册表工具名，
         # 后续的 is_external_mcp_tool 判定才会把它正确归到注册表分支而非外部 MCP 分支。
         tool_name = normalize_mcp_bridge_tool_name(tool_call.name)
+        # 再把已下线工具的旧名（agent_resume / exec_shell_interact）转发到
+        # 合并后的工具（schema 只暴露新名；debug 日志记录旧名命中）。
+        from deepseek_tui.engine.dispatch import normalize_legacy_tool_call
+
+        tool_name, arguments = normalize_legacy_tool_call(
+            tool_name, tool_call.arguments
+        )
         # 写文件类工具执行前拍快照（供 /undo）。
         self._take_pre_tool_snapshot(tool_call.id, tool_name, tool_call.arguments)
 
@@ -566,7 +573,7 @@ class ToolExecutionMixin:
         approval_request = approval_request_for_tool(
             tool,
             self.exec_policy.approval_policy,
-            tool_call.arguments if isinstance(tool_call.arguments, dict) else None,
+            arguments if isinstance(arguments, dict) else None,
         )
         if approval_request is not None:
             denied = await self._handle_approval_flow(tool_call, approval_request)
@@ -589,7 +596,7 @@ class ToolExecutionMixin:
             self.tool_context.metadata["workflow_emit"] = _workflow_emit
         try:
             return await self.tool_registry.execute(
-                tool_name, tool_call.arguments, self.tool_context
+                tool_name, arguments, self.tool_context
             )
         finally:
             # 无论 execute 是否抛异常，都清掉临时注入的 metadata，避免污染下一次工具调用。

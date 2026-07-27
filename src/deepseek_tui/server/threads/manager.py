@@ -313,8 +313,9 @@ class RuntimeThreadManager:
             "shell_jobs": shell_jobs,
             "tasks": task_counts,
             "hint": (
-                "Foreground exec_shell timed out? Use task_shell_start for durable "
-                "background work, then task_shell_wait."
+                "Foreground exec_shell timed out? Rerun it with background=true "
+                "and collect output with task_output (stop it with task_stop); "
+                "use task_create for durable work that survives restarts."
             ),
         }
 

@@ -5,7 +5,7 @@ workspace differs from the runtime's cwd, a per-engine ``ToolContext`` is
 created. Previously it was constructed bare (``ToolContext(working_directory=ws)``),
 dropping ``task_manager`` / ``subagent_manager`` / ``network_policy`` /
 ``policy`` / ``metadata`` from the runtime context. The visible symptom was
-``task_shell_start`` raising "TaskManager is not attached to this context"
+``task_create`` raising "TaskManager is not attached to this context"
 on the main agent path even though ``features.tasks=true`` and the tool was
 registered.
 
@@ -58,7 +58,7 @@ async def test_per_engine_context_inherits_runtime_managers(
 ):
     """A shared runtime with a *different* engine workspace must still
     expose task_manager / subagent_manager / network_policy on the
-    per-engine ToolContext — otherwise task_shell_start is a guaranteed
+    per-engine ToolContext — otherwise task_create is a guaranteed
     failure on the main agent path."""
     runtime_ws = tmp_path / "runtime_ws"
     runtime_ws.mkdir()
@@ -82,7 +82,7 @@ async def test_per_engine_context_inherits_runtime_managers(
 
         # The fix: managers are inherited, not dropped.
         assert ctx.task_manager is runtime.context.task_manager, (
-            "per-engine context dropped task_manager — task_shell_start "
+            "per-engine context dropped task_manager — task_create "
             "would raise 'TaskManager is not attached'"
         )
         # Sub-agents are engine-scoped: the shared manager's single-consumer

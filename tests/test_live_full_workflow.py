@@ -1,7 +1,7 @@
 """Live end-to-end workflow: one natural query drives task + subagent + RLM tools.
 
-The parent model must *actively* call ``task_create``, ``agent`` (spawn + wait/
-result actions), and ``rlm`` — no direct tool injection in the test body.
+The parent model must *actively* call ``task_create``, ``agent`` (spawn action)
++ ``task_output``, and ``rlm`` — no direct tool injection in the test body.
 
 Uses ``.deepseek/config.toml`` (real DeepSeek API). Run:
 
@@ -52,7 +52,7 @@ _WORKFLOW_QUERY = f"""请严格按顺序完成以下三步，每一步都必须�
 第1步：调用 task_create，prompt="只回复：TASK_DONE"，auto_approve=true。
 
 第2步：调用 agent 工具，action="spawn"，agent_type=explore，prompt="Read WORKSPACE_MARKER.txt and reply with its exact content only"。
-spawn 返回 agent_id 后，再调用 agent（action="result"，block=true）等待子 agent 完成。
+spawn 返回 agent_id 后，再调用 task_output（agent_id=<spawn 返回的 id>，block=true）等待子 agent 完成。
 
 第3步：调用 rlm，file_path="corpus.txt"，task="Use Python to count lines containing cherry, llm_query for the number only, then FINAL."
 

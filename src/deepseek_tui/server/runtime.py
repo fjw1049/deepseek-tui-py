@@ -439,6 +439,9 @@ class AppRuntime:
         arguments = call.get("arguments") or call.get("input") or {}
         if not isinstance(arguments, dict):
             return {"ok": False, "error": "call.arguments must be an object"}
+        from deepseek_tui.engine.dispatch import normalize_legacy_tool_call
+
+        tool_name, arguments = normalize_legacy_tool_call(tool_name, arguments)
 
         if self._tool_runtime is None:
             return {"ok": False, "error": "tool runtime not initialized"}

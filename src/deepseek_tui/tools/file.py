@@ -30,7 +30,8 @@ class ReadFileTool(ToolSpec):
             "(cat -n style). By default at most 2000 lines are returned and "
             "lines longer than 2000 characters are truncated; use offset/limit "
             "to page through large files in ranges. Do not use this on a "
-            "directory — use list_dir instead. Always read a file with this "
+            "directory — list entries with file_search or `exec_shell ls` "
+            "instead. Always read a file with this "
             "tool before editing it with edit_file."
         )
 
@@ -255,52 +256,6 @@ class EditFileTool(ToolSpec):
         )
 
 
-class ListDirTool(ToolSpec):
-    def name(self) -> str:
-        return "list_dir"
-
-    def description(self) -> str:
-        return (
-            "List entries in a directory relative to the workspace. "
-            "Returns structured JSON with name and is_dir fields."
-        )
-
-    def input_schema(self) -> dict[str, object]:
-        return {
-            "type": "object",
-            "properties": {
-                "path": {
-                    "type": "string",
-                    "description": "Relative path (default: .)",
-                }
-            },
-            "required": [],
-        }
-
-    def capabilities(self) -> list[ToolCapability]:
-        return [ToolCapability.READ_ONLY]
-
-    async def execute(self, input_data: dict[str, object], context: ToolContext) -> ToolResult:
-        import json
-
-        raw_path = input_data.get("path")
-        path_str = raw_path if isinstance(raw_path, str) and raw_path.strip() else "."
-        # READ_ONLY tool: pass allow_read_roots=True so a mounted plugin's
-        # own directory (granted via ToolContext.extra_read_roots) is listable
-        # just like read_file/grep_files. Without this, list_dir on the plugin
-        # dir is rejected as "path escapes workspace" even when mounted.
-        path = context.resolve_path(path_str, allow_read_roots=True)
-        entries = await _list_dir_structured(path)
-        payload = json.dumps(entries, ensure_ascii=False, indent=2)
-        return ToolResult(
-            success=True,
-            content=payload,
-            metadata={"path": str(path), "count": len(entries)},
-        )
-
-
-
-
 def _require_string_with_alias(
     input_data: dict[str, object], primary: str, alias: str
 ) -> str:
@@ -349,17 +304,3 @@ async def _read_text(path: Path) -> str:
 
 async def _write_text(path: Path, content: str) -> None:
     await asyncio.to_thread(write_text_atomic, path, content)
-
-
-async def _list_dir_structured(path: Path) -> list[dict[str, object]]:
-    def _scan() -> list[dict[str, object]]:
-        rows: list[dict[str, object]] = []
-        for entry in sorted(path.iterdir(), key=lambda p: p.name.lower()):
-            try:
-                is_dir = entry.is_dir()
-            except OSError:
-                continue
-            rows.append({"name": entry.name, "is_dir": is_dir})
-        return rows
-
-    return await asyncio.to_thread(_scan)

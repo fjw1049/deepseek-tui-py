@@ -31,7 +31,6 @@ FOREIGN_TOOL_NAME_MAP: dict[str, tuple[str, ...]] = {
     "bash": ("exec_shell",),
     "glob": ("file_search",),
     "grep": ("grep_files",),
-    "ls": ("list_dir",),
     "webfetch": ("fetch_url",),
     "websearch": ("web_search",),
     "task": ("agent",),

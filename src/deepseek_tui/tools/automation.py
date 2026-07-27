@@ -7,20 +7,23 @@ from __future__ import annotations
 
 
 
-# Model-visible automation tools backed by :class:`AutomationManager`.
+# Model-visible cron tools backed by :class:`AutomationManager`.
 #
-# Eight tools:
+# Three tools (Claude Code CronCreate / CronList / CronDelete shape):
 #
-# ================== ================================================
-# ``automation_create``    create a durable scheduled automation (REQUIRES_APPROVAL)
-# ``automation_list``      list automations with status / next_run / last_run
-# ``automation_read``      detailed view of one automation + recent runs
-# ``automation_update``    edit name / prompt / rrule / cwds / status
-# ``automation_pause``     pause an active automation
-# ``automation_resume``    resume a paused automation
-# ``automation_delete``    delete (also wipes the automation's run history)
-# ``automation_run``       enqueue a one-off run right now
-# ================== ================================================
+# ================ ==================================================
+# ``cron_create``  create a durable scheduled job (REQUIRES_APPROVAL);
+#                  ``run_now=true`` also fires it immediately
+# ``cron_list``    list jobs; with ``automation_id`` shows one job's
+#                  details + recent run history
+# ``cron_delete``  delete (also wipes the job's run history)
+# ================ ==================================================
+#
+# There is deliberately no update/pause/resume/run tool: editing means
+# delete + recreate, and manual runs fold into ``cron_create(run_now)``.
+# The old ``automation_*`` names are retired from the schema; create /
+# list / read / delete keep working at the execution layer via
+# ``engine.dispatch.normalize_legacy_tool_call``.
 #
 # The ``AutomationManager`` lives on ``ToolContext.metadata`` under the
 # key :data:`AUTOMATION_MANAGER_KEY`, set by ``Engine.create`` when the
@@ -54,14 +57,9 @@ import asyncio
 
 __all__ = [
     "AUTOMATION_MANAGER_KEY",
-    "AutomationCreateTool",
-    "AutomationDeleteTool",
-    "AutomationListTool",
-    "AutomationPauseTool",
-    "AutomationReadTool",
-    "AutomationResumeTool",
-    "AutomationRunTool",
-    "AutomationUpdateTool",
+    "CronCreateTool",
+    "CronDeleteTool",
+    "CronListTool",
 ]
 
 
@@ -156,24 +154,28 @@ def _resolve_delivery(raw: dict[str, Any] | None) -> dict[str, Any] | None:
     return delivery
 
 
-class AutomationCreateTool(ToolSpec):
-    """Create a durable scheduled automation (requires approval)."""
+class CronCreateTool(ToolSpec):
+    """Create a durable scheduled job (requires approval)."""
 
     def name(self) -> str:
-        return "automation_create"
+        return "cron_create"
 
     def description(self) -> str:
         return (
-            "Create a durable scheduled automation that enqueues an agent "
-            "task on a schedule. Call current_time first when the user uses "
-            "relative times ('in 10 minutes', 'tomorrow morning'). "
+            "Create a durable scheduled job (cron) that enqueues an agent "
+            "task on a schedule. Relative times ('in 10 minutes', 'tomorrow "
+            "morning') resolve against the current date in the system prompt "
+            "(use exec_shell `date` for finer precision). "
             "Recurring jobs use rrule (FREQ=HOURLY;INTERVAL=N or "
             "FREQ=WEEKLY;BYDAY=MO;BYHOUR=9;BYMINUTE=30). One-shot or "
             "delayed runs set next_run_at (ISO8601) and may use a far-future "
             "placeholder rrule such as FREQ=HOURLY;INTERVAL=8760. Optional "
             "delivery sends the task summary to feishu or email after "
             "completion. For feishu include delivery.mode=feishu and "
-            "delivery.to (open_chat_id). Creation requires approval."
+            "delivery.to (open_chat_id). Set run_now=true to also trigger "
+            "the job immediately after creation. To change an existing "
+            "job, delete it with cron_delete and recreate it (deleting "
+            "wipes the job's run history). Creation requires approval."
         )
 
     def input_schema(self) -> dict[str, object]:
@@ -219,6 +221,13 @@ class AutomationCreateTool(ToolSpec):
                     "additionalProperties": False,
                 },
                 "paused": {"type": "boolean", "default": False},
+                "run_now": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": (
+                        "Also trigger the job immediately after creation."
+                    ),
+                },
             },
             "required": ["name", "prompt", "rrule"],
             "additionalProperties": False,
@@ -241,6 +250,7 @@ class AutomationCreateTool(ToolSpec):
         cwds = _optional_string_list(input_data, "cwds") or []
         delivery = _resolve_delivery(_optional_object(input_data, "delivery"))
         paused = bool(input_data.get("paused", False))
+        run_now = bool(input_data.get("run_now", False))
         status = AutomationStatus.PAUSED if paused else AutomationStatus.ACTIVE
         try:
             record = manager.create_automation(
@@ -256,33 +266,73 @@ class AutomationCreateTool(ToolSpec):
             )
         except ValueError as exc:
             raise ToolError(str(exc)) from exc
-        return ToolResult(
-            success=True,
-            content=record.id,
-            metadata={"automation": _automation_to_payload(record)},
+        metadata: dict[str, Any] = {"automation": _automation_to_payload(record)}
+        content = record.id
+        if run_now:
+            run = await _run_now(manager, record.id, context)
+            content = f"{content}\nqueued run {run.id[:8]} (task_id={run.task_id or '—'})"
+            metadata["run"] = run.to_dict()
+        return ToolResult(success=True, content=content, metadata=metadata)
+
+
+async def _run_now(
+    manager: AutomationManager, automation_id: str, context: ToolContext
+) -> AutomationRunRecord:
+    """Fire one run right now — shared by ``cron_create(run_now=true)``."""
+    # The run_now path requires a TaskManager — pick it up off the
+    # context (``runtime.task_manager``).
+    from deepseek_tui.tools.task import TaskManager
+
+    task_manager_raw = context.metadata.get("task_manager")
+    if not isinstance(task_manager_raw, TaskManager):
+        raise ToolError(
+            "TaskManager is not attached "
+            "(set features.tasks=true to enable run_now)"
         )
 
+    try:
+        return await manager.run_now(automation_id, task_manager_raw)
+    except KeyError as exc:
+        raise ToolError(str(exc)) from exc
 
-class AutomationListTool(ToolSpec):
+
+class CronListTool(ToolSpec):
     def name(self) -> str:
-        return "automation_list"
+        return "cron_list"
 
     def description(self) -> str:
         return (
-            "List durable automations with status, next run, and last run "
-            "timestamps."
+            "List durable scheduled jobs (cron) with status, next run, and "
+            "last run timestamps. Pass automation_id to read one job's "
+            "details and recent run history."
         )
 
     def input_schema(self) -> dict[str, object]:
         return {
             "type": "object",
             "properties": {
+                "automation_id": {
+                    "type": "string",
+                    "description": (
+                        "When set, return this job's details and recent "
+                        "runs instead of the full list."
+                    ),
+                },
                 "limit": {
                     "type": "integer",
                     "minimum": 1,
                     "maximum": 100,
                     "default": 50,
-                }
+                },
+                "runs_limit": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 100,
+                    "description": (
+                        "Recent runs to include when automation_id is set "
+                        "(default 10)."
+                    ),
+                },
             },
             "additionalProperties": False,
         }
@@ -294,6 +344,34 @@ class AutomationListTool(ToolSpec):
         self, input_data: dict[str, object], context: ToolContext
     ) -> ToolResult:
         manager = _get_manager(context)
+        automation_id = _optional_string(input_data, "automation_id")
+        if automation_id is not None:
+            runs_limit = _optional_int(input_data, "runs_limit") or 10
+            try:
+                record = manager.get_automation(automation_id)
+            except KeyError as exc:
+                raise ToolError(str(exc)) from exc
+            runs = manager.list_runs(automation_id, limit=runs_limit)
+            lines = [
+                _format_summary_line(record),
+                f"prompt: {record.prompt}",
+                f"rrule:  {record.rrule}",
+                f"cwds:   {record.cwds}",
+                f"runs ({len(runs)}):",
+            ]
+            for run in runs:
+                lines.append(
+                    f"  {run.id[:8]} | {run.status.value:<10} | "
+                    f"scheduled={run.scheduled_for} | task={run.task_id or '—'}"
+                )
+            return ToolResult(
+                success=True,
+                content="\n".join(lines),
+                metadata={
+                    "automation": _automation_to_payload(record),
+                    "runs": [r.to_dict() for r in runs],
+                },
+            )
         limit = _optional_int(input_data, "limit") or 50
         records = manager.list_automations()[:limit]
         lines = [_format_summary_line(r) for r in records]
@@ -307,201 +385,14 @@ class AutomationListTool(ToolSpec):
         )
 
 
-class AutomationReadTool(ToolSpec):
+class CronDeleteTool(ToolSpec):
     def name(self) -> str:
-        return "automation_read"
+        return "cron_delete"
 
     def description(self) -> str:
         return (
-            "Read details of an automation including its recent run "
-            "history."
-        )
-
-    def input_schema(self) -> dict[str, object]:
-        return {
-            "type": "object",
-            "properties": {
-                "automation_id": {"type": "string"},
-                "runs_limit": {"type": "integer", "minimum": 1, "maximum": 100},
-            },
-            "required": ["automation_id"],
-            "additionalProperties": False,
-        }
-
-    def capabilities(self) -> list[ToolCapability]:
-        return [ToolCapability.READ_ONLY]
-
-    async def execute(
-        self, input_data: dict[str, object], context: ToolContext
-    ) -> ToolResult:
-        manager = _get_manager(context)
-        automation_id = _require_string(input_data, "automation_id")
-        runs_limit = _optional_int(input_data, "runs_limit") or 10
-        try:
-            record = manager.get_automation(automation_id)
-        except KeyError as exc:
-            raise ToolError(str(exc)) from exc
-        runs = manager.list_runs(automation_id, limit=runs_limit)
-        lines = [
-            _format_summary_line(record),
-            f"prompt: {record.prompt}",
-            f"rrule:  {record.rrule}",
-            f"cwds:   {record.cwds}",
-            f"runs ({len(runs)}):",
-        ]
-        for run in runs:
-            lines.append(
-                f"  {run.id[:8]} | {run.status.value:<10} | "
-                f"scheduled={run.scheduled_for} | task={run.task_id or '—'}"
-            )
-        return ToolResult(
-            success=True,
-            content="\n".join(lines),
-            metadata={
-                "automation": _automation_to_payload(record),
-                "runs": [r.to_dict() for r in runs],
-            },
-        )
-
-
-class AutomationUpdateTool(ToolSpec):
-    def name(self) -> str:
-        return "automation_update"
-
-    def description(self) -> str:
-        return "Update an automation's name, prompt, rrule, cwds, or status."
-
-    def input_schema(self) -> dict[str, object]:
-        return {
-            "type": "object",
-            "properties": {
-                "automation_id": {"type": "string"},
-                "name": {"type": "string"},
-                "prompt": {"type": "string"},
-                "rrule": {"type": "string"},
-                "cwds": {"type": "array", "items": {"type": "string"}},
-                "status": {"type": "string", "enum": ["active", "paused"]},
-            },
-            "required": ["automation_id"],
-            "additionalProperties": False,
-        }
-
-    def capabilities(self) -> list[ToolCapability]:
-        return [ToolCapability.REQUIRES_APPROVAL]
-
-    def approval_requirement(self) -> ApprovalRequirement:
-        return ApprovalRequirement.REQUIRED
-
-    async def execute(
-        self, input_data: dict[str, object], context: ToolContext
-    ) -> ToolResult:
-        manager = _get_manager(context)
-        automation_id = _require_string(input_data, "automation_id")
-        status_raw = _optional_string(input_data, "status")
-        status: AutomationStatus | None = None
-        if status_raw is not None:
-            try:
-                status = AutomationStatus(status_raw)
-            except ValueError as exc:
-                raise ToolError(
-                    f"status must be 'active' or 'paused' (got {status_raw!r})"
-                ) from exc
-        req = UpdateAutomationRequest(
-            name=_optional_string(input_data, "name"),
-            prompt=_optional_string(input_data, "prompt"),
-            rrule=_optional_string(input_data, "rrule"),
-            cwds=_optional_string_list(input_data, "cwds"),
-            status=status,
-        )
-        try:
-            record = manager.update_automation(automation_id, req)
-        except KeyError as exc:
-            raise ToolError(str(exc)) from exc
-        except ValueError as exc:
-            raise ToolError(str(exc)) from exc
-        return ToolResult(
-            success=True,
-            content="updated",
-            metadata={"automation": _automation_to_payload(record)},
-        )
-
-
-class AutomationPauseTool(ToolSpec):
-    def name(self) -> str:
-        return "automation_pause"
-
-    def description(self) -> str:
-        return "Pause an active automation."
-
-    def input_schema(self) -> dict[str, object]:
-        return {
-            "type": "object",
-            "properties": {"automation_id": {"type": "string"}},
-            "required": ["automation_id"],
-            "additionalProperties": False,
-        }
-
-    def capabilities(self) -> list[ToolCapability]:
-        return [ToolCapability.READ_ONLY]
-
-    async def execute(
-        self, input_data: dict[str, object], context: ToolContext
-    ) -> ToolResult:
-        manager = _get_manager(context)
-        automation_id = _require_string(input_data, "automation_id")
-        try:
-            record = manager.pause_automation(automation_id)
-        except KeyError as exc:
-            raise ToolError(str(exc)) from exc
-        return ToolResult(
-            success=True,
-            content="paused",
-            metadata={"automation": _automation_to_payload(record)},
-        )
-
-
-class AutomationResumeTool(ToolSpec):
-    def name(self) -> str:
-        return "automation_resume"
-
-    def description(self) -> str:
-        return "Resume a paused automation."
-
-    def input_schema(self) -> dict[str, object]:
-        return {
-            "type": "object",
-            "properties": {"automation_id": {"type": "string"}},
-            "required": ["automation_id"],
-            "additionalProperties": False,
-        }
-
-    def capabilities(self) -> list[ToolCapability]:
-        return [ToolCapability.READ_ONLY]
-
-    async def execute(
-        self, input_data: dict[str, object], context: ToolContext
-    ) -> ToolResult:
-        manager = _get_manager(context)
-        automation_id = _require_string(input_data, "automation_id")
-        try:
-            record = manager.resume_automation(automation_id)
-        except KeyError as exc:
-            raise ToolError(str(exc)) from exc
-        return ToolResult(
-            success=True,
-            content="resumed",
-            metadata={"automation": _automation_to_payload(record)},
-        )
-
-
-class AutomationDeleteTool(ToolSpec):
-    def name(self) -> str:
-        return "automation_delete"
-
-    def description(self) -> str:
-        return (
-            "Delete an automation and wipe its run history. Requires "
-            "approval."
+            "Delete a scheduled job (cron) and wipe its run history. "
+            "Requires approval."
         )
 
     def input_schema(self) -> dict[str, object]:
@@ -531,61 +422,6 @@ class AutomationDeleteTool(ToolSpec):
             success=True,
             content="deleted",
             metadata={"automation_id": record.id},
-        )
-
-
-class AutomationRunTool(ToolSpec):
-    """Manually fire an automation right now (one-off run)."""
-
-    def name(self) -> str:
-        return "automation_run"
-
-    def description(self) -> str:
-        return (
-            "Manually trigger an automation immediately. Requires approval. "
-            "The triggered run is enqueued as a normal durable task."
-        )
-
-    def input_schema(self) -> dict[str, object]:
-        return {
-            "type": "object",
-            "properties": {"automation_id": {"type": "string"}},
-            "required": ["automation_id"],
-            "additionalProperties": False,
-        }
-
-    def capabilities(self) -> list[ToolCapability]:
-        return [ToolCapability.REQUIRES_APPROVAL]
-
-    def approval_requirement(self) -> ApprovalRequirement:
-        return ApprovalRequirement.REQUIRED
-
-    async def execute(
-        self, input_data: dict[str, object], context: ToolContext
-    ) -> ToolResult:
-        manager = _get_manager(context)
-        automation_id = _require_string(input_data, "automation_id")
-
-        # The run_now path requires a TaskManager — pick it up off the
-        # context (``runtime.task_manager``).
-        from deepseek_tui.tools.task import TaskManager
-
-        task_manager_raw = context.metadata.get("task_manager")
-        if not isinstance(task_manager_raw, TaskManager):
-            raise ToolError(
-                "TaskManager is not attached "
-                "(set features.tasks=true to enable run_now)"
-            )
-        task_manager = cast(TaskManager, task_manager_raw)
-
-        try:
-            run = await manager.run_now(automation_id, task_manager)
-        except KeyError as exc:
-            raise ToolError(str(exc)) from exc
-        return ToolResult(
-            success=True,
-            content=f"queued run {run.id[:8]} (task_id={run.task_id or '—'})",
-            metadata={"run": run.to_dict()},
         )
 
 

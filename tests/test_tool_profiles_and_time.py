@@ -1,11 +1,8 @@
-"""Tests for automation tool profiles and current_time offset coercion."""
+"""Tests for automation tool profiles."""
 
 from __future__ import annotations
 
-import asyncio
 from datetime import datetime, timedelta, timezone
-
-import pytest
 
 from deepseek_tui.engine.prompts import (
     AUTOMATION_COMPOSER_HEADING,
@@ -14,8 +11,6 @@ from deepseek_tui.engine.prompts import (
     detect_tool_profile_from_prompt,
     filter_tools_for_profile,
 )
-from deepseek_tui.tools.registry import ToolContext
-from deepseek_tui.tools.time_tools import CurrentTimeTool
 
 
 def test_detect_automation_composer_profile() -> None:
@@ -30,13 +25,14 @@ def test_detect_cron_profile() -> None:
 def test_composer_profile_filters_tools() -> None:
     catalog = [
         {"type": "function", "function": {"name": "current_time", "parameters": {}}},
-        {"type": "function", "function": {"name": "automation_create", "parameters": {}}},
+        {"type": "function", "function": {"name": "cron_create", "parameters": {}}},
         {"type": "function", "function": {"name": "web_search", "parameters": {}}},
         {"type": "function", "function": {"name": "mcp_bing_search", "parameters": {}}},
     ]
     out = filter_tools_for_profile(catalog, TOOL_PROFILE_AUTOMATION_COMPOSER)
     names = {t["function"]["name"] for t in out}
-    assert names == {"current_time", "automation_create"}
+    # current_time was removed (A4); the profile only keeps the cron trio.
+    assert names == {"cron_create"}
 
 
 def test_cron_profile_keeps_search_tools() -> None:
@@ -50,18 +46,6 @@ def test_cron_profile_keeps_search_tools() -> None:
     assert "web_search" in names
     assert "mcp_bing_cn_search" in names
     assert "exec_shell" not in names
-
-
-@pytest.mark.asyncio
-async def test_current_time_accepts_scalar_offset_minutes() -> None:
-    tool = CurrentTimeTool()
-    ctx = ToolContext(working_directory=".")
-    result = await tool.execute(
-        {"timezone": "Asia/Shanghai", "offset_minutes": 2},
-        ctx,
-    )
-    assert result.success is True
-    assert "in_2min_utc" in result.content
 
 
 def test_stale_running_task_detection() -> None:

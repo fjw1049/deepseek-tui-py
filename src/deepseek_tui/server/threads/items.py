@@ -359,7 +359,15 @@ def todo_tool_metadata_from_result(
 
 
 _TASK_TOOL_NAMES = frozenset(
-    {"task_create", "task_list", "task_read", "task_cancel"}
+    {
+        "task_create",
+        "task_list",
+        "task_output",
+        "task_stop",
+        # Retired names — historical transcripts still carry them.
+        "task_read",
+        "task_cancel",
+    }
 )
 
 
@@ -393,9 +401,10 @@ def task_tool_metadata_from_result(
     """Expose durable-task payloads to the Workbench TASKS sidebar section.
 
     ``task_list`` returns ``metadata["tasks"]`` (a list of summaries);
-    ``task_create`` / ``task_read`` / ``task_cancel`` return a single task's
-    ``task_id`` / ``status`` / ``prompt_summary``. Both shapes are normalised
-    into ``metadata["tasks"]`` so the frontend reads one consistent field.
+    ``task_create`` / ``task_output`` / ``task_stop`` (and the retired
+    ``task_read`` / ``task_cancel``) return a single task's ``task_id`` /
+    ``status`` / ``prompt_summary``. Both shapes are normalised into
+    ``metadata["tasks"]`` so the frontend reads one consistent field.
     """
     if not _is_task_tool_name(tool_name):
         return None

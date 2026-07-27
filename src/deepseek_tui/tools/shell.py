@@ -32,6 +32,7 @@ _PROCESS_STORE_KEY = "shell_processes"
 _PTY_STORE_KEY = "shell_pty_processes"
 _EXEC_ENV_STORE_KEY = "shell_exec_envs"
 _COLLECTOR_STORE_KEY = "shell_process_collectors"
+_COMMAND_STORE_KEY = "shell_process_commands"
 _MAX_STORED_PROCESSES = 20
 
 
@@ -49,8 +50,11 @@ class ExecShellTool(ToolSpec):
             "Execute a shell command. Supports background jobs (background=true) "
             "and an optional pseudo-TTY (pty=true) for interactive programs. "
             "Background jobs return a process_id — collect their output with "
-            'the agent tool (action="result") and cancel them with '
-            'action="cancel". '
+            "task_output (process_id, block=true) and cancel them with "
+            "task_stop. "
+            "To send input to a running background process, pass its "
+            "'process_id' with 'input' (and/or close_stdin=true) instead of "
+            "'command' — the two are mutually exclusive. "
             "Foreground commands are killed after timeout_ms milliseconds "
             "(default 120000, max 600000). Do not use this to fetch a URL — "
             "use fetch_url instead; only shell out with curl/wget when fetch_url "
@@ -67,7 +71,13 @@ class ExecShellTool(ToolSpec):
         return {
             "type": "object",
             "properties": {
-                "command": {"type": "string"},
+                "command": {
+                    "type": "string",
+                    "description": (
+                        "Shell command to execute. Required unless "
+                        "'process_id' is given (mutually exclusive)."
+                    ),
+                },
                 "background": {"type": "boolean"},
                 "pty": {"type": "boolean"},
                 "timeout_ms": {
@@ -79,14 +89,43 @@ class ExecShellTool(ToolSpec):
                         f"Default {EXEC_DEFAULT_TIMEOUT_MS}, max {EXEC_MAX_TIMEOUT_MS}."
                     ),
                 },
+                "process_id": {
+                    "type": "string",
+                    "description": (
+                        "Interact with a running background process instead of "
+                        "executing 'command': write 'input' to its stdin "
+                        "and/or close its stdin with close_stdin=true. "
+                        "Mutually exclusive with 'command'."
+                    ),
+                },
+                "input": {
+                    "type": "string",
+                    "description": "Stdin text to write (with 'process_id').",
+                },
+                "close_stdin": {
+                    "type": "boolean",
+                    "description": (
+                        "Close the process's stdin after writing "
+                        "(with 'process_id')."
+                    ),
+                },
             },
-            "required": ["command"],
+            # 'command' stays effectively required, but the process_id
+            # interact branch is the alternative — enforced in execute().
+            "required": [],
         }
 
     def capabilities(self) -> list[ToolCapability]:
         return [ToolCapability.EXECUTES_CODE, ToolCapability.SANDBOXABLE]
 
     async def execute(self, input_data: dict[str, object], context: ToolContext) -> ToolResult:
+        if input_data.get("process_id") is not None:
+            if input_data.get("command") is not None:
+                raise ToolError(
+                    "'process_id' (interact) is mutually exclusive with "
+                    "'command' — pass only one"
+                )
+            return await _execute_interact(input_data, context)
         command = _require_string(input_data, "command")
         background = bool(input_data.get("background", False))
         use_pty = bool(input_data.get("pty", False))
@@ -148,6 +187,7 @@ class ExecShellTool(ToolSpec):
             process_id = str(uuid.uuid4())
             _process_store(context)[process_id] = process
             _exec_env_store(context)[process_id] = exec_env
+            _command_store(context)[process_id] = command
             metadata: dict[str, Any] = {
                 "background": True,
                 "pid": process.pid,
@@ -266,10 +306,10 @@ def _timeout_fallback_hint(command: str, context: ToolContext) -> str:
       - ``curl <url>``          → prefer fetch_url; if the same host has
                                    timed out repeatedly this turn, also
                                    offer the jsDelivr mirror URL.
-      - active durable task      → task_shell_start + task_shell_wait
+      - active durable task      → exec_shell(background=true) + task_output
       - task_manager wired but
-        no active task           → task_create first, then task_shell_start
-      - otherwise                → exec_shell(background=true) + agent (action="result")
+        no active task           → task_create first, else background shell
+      - otherwise                → exec_shell(background=true) + task_output
 
     The mirror/tool-swap suggestion appears once the host has crossed the
     escalation threshold (see network_escalation). A single timeout stays
@@ -302,17 +342,18 @@ def _timeout_fallback_hint(command: str, context: ToolContext) -> str:
     if context.task_manager is not None:
         if context.active_task_id:
             return (
-                "For long-running work, use task_shell_start + task_shell_wait "
-                "on the active durable task instead of foreground exec_shell."
+                "For long-running work, use exec_shell(background=true) and "
+                "collect output with task_output (stop it with task_stop) "
+                "instead of foreground exec_shell."
             )
         return (
             "For long-running work, create a durable task with task_create, "
-            "then use task_shell_start + task_shell_wait instead of a "
-            "foreground exec_shell."
+            "or use exec_shell(background=true) and collect output with "
+            "task_output, instead of a foreground exec_shell."
         )
     return (
         "For long-running work, use exec_shell(background=true) and then "
-        'the agent tool (action="result") to collect output, instead of a '
+        "task_output (process_id, block=true) to collect output, instead of a "
         "foreground exec_shell that blocks until the timeout."
     )
 
@@ -327,7 +368,7 @@ def _timeout_job_hint(command: str, context: ToolContext) -> str:
         return "fetch_url"
     if context.task_manager is not None:
         if context.active_task_id:
-            return "task_shell_start"
+            return "exec_shell_background"
         return "task_create"
     return "exec_shell_background"
 
@@ -342,8 +383,8 @@ async def wait_background_process(
 
     With ``timeout_ms`` set, a still-running process yields a
     ``status: running`` result (and stays registered) instead of blocking
-    forever. Shared by the ``agent`` tool (action="result", background-job
-    result fetch) and ``task_shell_wait``.
+    forever. Shared by ``task_output`` (process_id branch) and the retired
+    ``agent`` result action forwarded there.
     """
     pty_proc = _get_pty(context, process_id)
     if pty_proc is not None:
@@ -430,7 +471,7 @@ def _running_process_result(process_id: str) -> ToolResult:
 async def cancel_background_process(context: ToolContext, process_id: str) -> ToolResult:
     """Terminate a background shell process and collect partial output.
 
-    Shared by the ``agent`` tool (action="cancel").
+    Shared by ``task_stop`` (process_id branch).
     """
     pty_proc = _pop_pty(context, process_id)
     if pty_proc is not None:
@@ -471,72 +512,64 @@ async def cancel_background_process(context: ToolContext, process_id: str) -> To
     )
 
 
-class ExecShellInteractTool(ToolSpec):
-    def name(self) -> str:
-        return "exec_shell_interact"
+async def _execute_interact(input_data: dict[str, object], context: ToolContext) -> ToolResult:
+    """Write stdin / close stdin on a background shell process.
 
-    def description(self) -> str:
-        return "Send input to a background shell command."
-
-    def input_schema(self) -> dict[str, object]:
-        return {
-            "type": "object",
-            "properties": {
-                "process_id": {"type": "string"},
-                "input": {"type": "string"},
-                "close_stdin": {"type": "boolean"},
-            },
-            "required": ["process_id", "input"],
-        }
-
-    def capabilities(self) -> list[ToolCapability]:
-        return [ToolCapability.EXECUTES_CODE, ToolCapability.SANDBOXABLE]
-
-    async def execute(self, input_data: dict[str, object], context: ToolContext) -> ToolResult:
-        process_id = _require_string(input_data, "process_id")
-        data = _require_string(input_data, "input")
-        close_stdin = bool(input_data.get("close_stdin", False))
-
-        pty_proc = _get_pty(context, process_id)
-        if pty_proc is not None:
-            if pty_proc.done:
-                raise ToolError(f"Process already finished: {process_id}")
-            payload = data.encode("utf-8")
-            await pty_proc.write(payload)
-            if close_stdin:
-                # Best-effort: closing master_fd signals EOF to child.
-                pty_proc._close_master()  # noqa: SLF001
-            return ToolResult(
-                success=True,
-                content="sent",
-                metadata={
-                    "process_id": process_id,
-                    "close_stdin": close_stdin,
-                    "pty": True,
-                },
-            )
-
-        process = _get_process(context, process_id)
-        stdin = process.stdin
-        if stdin is None or stdin.is_closing():
-            raise ToolError(f"Process stdin is not available for process_id: {process_id}")
-
-        stdin.write(data.encode("utf-8"))
-        try:
-            await stdin.drain()
-        except (BrokenPipeError, ConnectionResetError) as exc:
+    Shared by ``ExecShellTool`` (``process_id`` branch) and the
+    execution-layer forwarding of the retired ``exec_shell_interact`` tool
+    name.
+    """
+    process_id = _require_string(input_data, "process_id")
+    close_stdin = bool(input_data.get("close_stdin", False))
+    if input_data.get("input") is None:
+        if not close_stdin:
             raise ToolError(
-                f"Process stdin closed for process_id: {process_id}"
-            ) from exc
-        if close_stdin:
-            stdin.close()
-            await stdin.wait_closed()
+                "exec_shell interact requires 'input' (or close_stdin=true)"
+            )
+        data = ""
+    else:
+        data = _require_string(input_data, "input")
 
+    pty_proc = _get_pty(context, process_id)
+    if pty_proc is not None:
+        if pty_proc.done:
+            raise ToolError(f"Process already finished: {process_id}")
+        payload = data.encode("utf-8")
+        await pty_proc.write(payload)
+        if close_stdin:
+            # Best-effort: closing master_fd signals EOF to child.
+            pty_proc._close_master()  # noqa: SLF001
         return ToolResult(
             success=True,
             content="sent",
-            metadata={"process_id": process_id, "close_stdin": close_stdin},
+            metadata={
+                "process_id": process_id,
+                "close_stdin": close_stdin,
+                "pty": True,
+            },
         )
+
+    process = _get_process(context, process_id)
+    stdin = process.stdin
+    if stdin is None or stdin.is_closing():
+        raise ToolError(f"Process stdin is not available for process_id: {process_id}")
+
+    stdin.write(data.encode("utf-8"))
+    try:
+        await stdin.drain()
+    except (BrokenPipeError, ConnectionResetError) as exc:
+        raise ToolError(
+            f"Process stdin closed for process_id: {process_id}"
+        ) from exc
+    if close_stdin:
+        stdin.close()
+        await stdin.wait_closed()
+
+    return ToolResult(
+        success=True,
+        content="sent",
+        metadata={"process_id": process_id, "close_stdin": close_stdin},
+    )
 
 
 def _process_store(context: ToolContext) -> dict[str, Process]:
@@ -692,7 +725,7 @@ def check_command_policy(command: str, context: ToolContext) -> ToolResult | Non
     """Evaluate ``command`` against ``context.policy`` (execpolicy rules).
 
     Shared by every tool that shells out with an LLM-provided command
-    (exec_shell, run_tests, task_gate_run). Raises :class:`ToolError` on
+    (exec_shell, run_tests). Raises :class:`ToolError` on
     FORBIDDEN, returns a refusal :class:`ToolResult` on PROMPT, and
     returns ``None`` when execution may proceed.
     """
@@ -868,6 +901,7 @@ async def _run_pty(
         process_id = str(uuid.uuid4())
         _pty_store(context)[process_id] = proc
         _exec_env_store(context)[process_id] = exec_env
+        _command_store(context)[process_id] = command
         return ToolResult(
             success=True,
             content=process_id,
@@ -1002,6 +1036,52 @@ def _pop_exec_env(context: ToolContext, process_id: str) -> ExecEnv | None:
     return _exec_env_store(context).pop(process_id, None)
 
 
+def _command_store(context: ToolContext) -> dict[str, str]:
+    store = context.metadata.get(_COMMAND_STORE_KEY)
+    if store is None:
+        store = {}
+        context.metadata[_COMMAND_STORE_KEY] = store
+    if not isinstance(store, dict):
+        raise ToolError("shell process command store is invalid")
+    return store
+
+
+def list_background_processes(context: ToolContext) -> list[dict[str, Any]]:
+    """Snapshot of in-memory background shell processes (for ``task_list``).
+
+    Purely in-memory: processes vanish from the store once collected, and
+    everything is lost on restart. Command entries for already-collected
+    processes are pruned lazily here.
+    """
+    processes = _process_store(context)
+    ptys = _pty_store(context)
+    commands = _command_store(context)
+    live_ids = set(processes) | set(ptys)
+    for pid in list(commands):
+        if pid not in live_ids:
+            commands.pop(pid, None)
+    out: list[dict[str, Any]] = []
+    for pid, pty_proc in ptys.items():
+        out.append(
+            {
+                "process_id": pid,
+                "command": commands.get(pid, ""),
+                "status": "completed" if pty_proc.done else "running",
+                "pty": True,
+            }
+        )
+    for pid, process in processes.items():
+        out.append(
+            {
+                "process_id": pid,
+                "command": commands.get(pid, ""),
+                "status": "completed" if process.returncode is not None else "running",
+                "pty": False,
+            }
+        )
+    return out
+
+
 def _resolve_policy(
     context: ToolContext,
     override: ExecutionSandboxPolicy | None = None,
@@ -1096,7 +1176,7 @@ async def spawn_sandboxed_shell(
     """Spawn a shell command under the workspace sandbox.
 
     Shared entry point for subprocess-based tools (``ExecShellTool``,
-    ``run_tests``, ``task_gate_run``) so they apply the same Seatbelt /
+    ``run_tests``) so they apply the same Seatbelt /
     workspace-write policy as the main shell tool instead of escaping it
     via a bare ``asyncio.create_subprocess_shell``. Returns the spawned
     process and the resolved (possibly sandboxed) exec env.

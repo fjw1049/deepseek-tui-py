@@ -14,10 +14,7 @@ from typing import Any, Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
 import asyncio
-import functools
 import logging
-import shutil
-import subprocess
 
 if TYPE_CHECKING:
     from jsonschema import Draft202012Validator
@@ -616,88 +613,40 @@ if TYPE_CHECKING:
     from deepseek_tui.client.base import LLMClient
 
 
-@functools.lru_cache(maxsize=1)
-def _gh_cli_ready() -> bool:
-    """True when the ``gh`` CLI is installed *and* authenticated.
-
-    ``github_*`` tools shell out to ``gh``; registering them when the CLI is
-    missing or logged out only gives the model tools that fail at call time.
-    Result is cached per process (auth rarely changes mid-session).
-    """
-    if shutil.which("gh") is None:
-        return False
-    try:
-        proc = subprocess.run(
-            ["gh", "auth", "status"],
-            capture_output=True,
-            timeout=5,
-            check=False,
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        return False
-    return proc.returncode == 0
-
-
 def build_default_registry(config: Config | None = None, *, mode: str = "agent") -> ToolRegistry:
     # Tool modules import ToolSpec/ToolError/... from this module at import
     # time, so importing them lazily here (instead of at module level) keeps
     # ``import deepseek_tui.tools.<any_tool_module>`` usable as an entry
     # point without a circular-import failure.
     from deepseek_tui.tools.automation import (
-        AutomationCreateTool,
-        AutomationDeleteTool,
-        AutomationListTool,
-        AutomationPauseTool,
-        AutomationReadTool,
-        AutomationResumeTool,
-        AutomationRunTool,
-        AutomationUpdateTool,
+        CronCreateTool,
+        CronDeleteTool,
+        CronListTool,
     )
     from deepseek_tui.tools.file import (
         EditFileTool,
-        ListDirTool,
         ReadFileTool,
         WriteFileTool,
-    )
-    from deepseek_tui.tools.git import (
-        GitHubCloseTool,
-        GitHubCommentTool,
-        GitHubIssueContextTool,
-        GitHubPrContextTool,
-        GitTool,
     )
     from deepseek_tui.tools.knowledge import NoteTool, PlanUpdateTool, SkillLoadTool
     from deepseek_tui.tools.mcp import (
         ListMcpResourcesTool,
-        ListMcpResourceTemplatesTool,
-        McpGetPromptTool,
         ReadMcpResourceTool,
     )
-    from deepseek_tui.tools.patch import ProjectMapTool
     from deepseek_tui.tools.search import FileSearchTool, GrepFilesTool
-    from deepseek_tui.tools.shell import (
-        ExecShellInteractTool,
-        ExecShellTool,
-    )
+    from deepseek_tui.tools.shell import ExecShellTool
     from deepseek_tui.tools.subagent import (
-        AgentResumeTool,
         AgentTool,
         PLAN_AGENT_ACTIONS,
     )
     from deepseek_tui.tools.task import (
-        TaskCancelTool,
         TaskCreateTool,
-        TaskGateRunTool,
         TaskListTool,
-        TaskReadTool,
-        TaskResumeTool,
-        TaskShellStartTool,
-        TaskShellWaitTool,
+        TaskOutputTool,
+        TaskStopTool,
     )
-    from deepseek_tui.tools.time_tools import CurrentTimeTool
     from deepseek_tui.tools.todo import ChecklistTool
     from deepseek_tui.tools.user_input import RequestUserInputTool
-    from deepseek_tui.tools.run_tests import RunTestsTool
     from deepseek_tui.tools.web import FetchUrlTool, WebSearchTool
 
     cfg = config or Config()
@@ -705,11 +654,8 @@ def build_default_registry(config: Config | None = None, *, mode: str = "agent")
 
     for tool in [
         ReadFileTool(),
-        ListDirTool(),
         GrepFilesTool(),
         FileSearchTool(),
-        GitTool(),
-        ProjectMapTool(),
         ChecklistTool(),
     ]:
         registry.register(tool)
@@ -731,50 +677,28 @@ def build_default_registry(config: Config | None = None, *, mode: str = "agent")
         registry.register(FetchUrlTool(anysearch_api_key=cfg.anysearch_api_key))
 
     if cfg.allow_shell and cfg.features.shell_tool and mode != "plan":
-        for tool in [
-            ExecShellTool(),
-            ExecShellInteractTool(),
-        ]:
-            registry.register(tool)
-
-    # GitHub tools shell out to the ``gh`` CLI; skip registration entirely
-    # when it is not installed or not authenticated so the model never sees
-    # tools that cannot run. Write-side tools (comment/close) are
-    # additionally excluded in plan mode.
-    if _gh_cli_ready():
-        registry.register(GitHubIssueContextTool())
-        registry.register(GitHubPrContextTool())
-        if mode != "plan":
-            registry.register(GitHubCommentTool())
-            registry.register(GitHubCloseTool())
-    else:
-        _LOG.info("gh CLI missing or not authenticated; skipping github_* tool registration")
+        registry.register(ExecShellTool())
 
     if cfg.features.mcp:
         for tool in [
             ListMcpResourcesTool(),
-            ListMcpResourceTemplatesTool(),
             ReadMcpResourceTool(),
-            McpGetPromptTool(),
         ]:
             registry.register(tool)
 
     if cfg.features.tasks:
-        # Plan mode is read-only: keep inspection tools, exclude anything
-        # that creates, mutates, resumes, or executes work.
+        # Plan mode is read-only: keep the inspection tools, exclude
+        # anything that creates, resumes, or stops work (D5: task_stop is a
+        # side effect and stays out).
         task_tools: list[ToolSpec] = [
             TaskListTool(),
-            TaskReadTool(),
-            TaskShellWaitTool(),
+            TaskOutputTool(),
         ]
         if mode != "plan":
             task_tools.extend(
                 [
                     TaskCreateTool(),
-                    TaskCancelTool(),
-                    TaskResumeTool(),
-                    TaskGateRunTool(),
-                    TaskShellStartTool(),
+                    TaskStopTool(),
                 ]
             )
         for tool in task_tools:
@@ -784,33 +708,28 @@ def build_default_registry(config: Config | None = None, *, mode: str = "agent")
         from deepseek_tui.tools.workflow import WorkflowListTool, WorkflowTool
 
         # Plan mode is read-only: no workflow runs, no spawning/resuming or
-        # steering agents — only inspecting and cancelling existing ones.
+        # steering agents — only waiting on existing ones (listing/reading
+        # background work goes through task_list / task_output).
         # The ``agent`` tool's action enum is generated from the allowed
-        # subset, so plan mode never sees spawn/send_input in the schema.
+        # subset, so plan mode never sees spawn/send_input in the schema;
+        # ``allow_resume=False`` keeps the resume parameter out as well.
         if mode != "plan":
             registry.register(WorkflowTool())
         registry.register(WorkflowListTool())
         if mode == "plan":
-            registry.register(AgentTool(allowed_actions=PLAN_AGENT_ACTIONS))
+            registry.register(
+                AgentTool(allowed_actions=PLAN_AGENT_ACTIONS, allow_resume=False)
+            )
         else:
             registry.register(AgentTool())
-            registry.register(AgentResumeTool())
 
-    # Session clock — always available (not tied to automations CRUD).
-    registry.register(CurrentTimeTool())
-
-    # Automations create/mutate/run scheduled work — the whole family is
-    # excluded from read-only plan mode (list/read alone would dangle).
+    # Cron tools create/delete scheduled work — the whole family is
+    # excluded from read-only plan mode (cron_list alone would dangle).
     if cfg.features.automations and mode != "plan":
         for tool in [
-            AutomationCreateTool(),
-            AutomationListTool(),
-            AutomationReadTool(),
-            AutomationUpdateTool(),
-            AutomationPauseTool(),
-            AutomationResumeTool(),
-            AutomationDeleteTool(),
-            AutomationRunTool(),
+            CronCreateTool(),
+            CronListTool(),
+            CronDeleteTool(),
         ]:
             registry.register(tool)
 
@@ -823,10 +742,6 @@ def build_default_registry(config: Config | None = None, *, mode: str = "agent")
 
     # Engine-intercepted special tools (always active)
     registry.register(RequestUserInputTool())
-
-    # run_tests executes arbitrary commands — excluded from read-only plan mode.
-    if mode != "plan":
-        registry.register(RunTestsTool())
 
     return registry
 

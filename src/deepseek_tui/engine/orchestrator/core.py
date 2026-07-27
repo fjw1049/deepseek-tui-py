@@ -1062,7 +1062,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         # workspace rather than the process cwd. We branch off the runtime's
         # context instead of constructing a bare one, otherwise the per-engine
         # context loses task_manager/subagent_manager/network_policy/policy and
-        # registered-but-runtime-unwired tools (e.g. task_shell_start) become
+        # registered-but-runtime-unwired tools (e.g. task_create) become
         # guaranteed failures. metadata is shallow-copied so per-engine writes
         # don't mutate the shared one.
         #
@@ -1920,7 +1920,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                     self._focus_tool_whitelist = None
                     self._focus_allowed_servers = None
                 # Read-only放行插件自身目录（工作区外），让模型能 read_file/
-                # list_dir/grep 插件的 skill/清单等资源；写工具仍锁工作区。
+                # file_search/grep 插件的 skill/清单等资源；写工具仍锁工作区。
                 # 将来 skills 的 companion-file 根可在此 append。
                 self.tool_context.extra_read_roots = (
                     self._active_plugin.path.expanduser().resolve(),
@@ -2247,10 +2247,28 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             return
 
         if tool_name == "agent":
+            # A resume restarts the agent: its next completion must arrive
+            # fresh, not be swallowed as already-consumed (same handling as
+            # the retired agent_resume tool above).
+            if isinstance(arguments, dict):
+                resume_id = arguments.get("resume")
+                if isinstance(resume_id, str) and resume_id:
+                    self._consumed_subagent_completions.discard(resume_id)
+                    return
             # Only the result/cancel/wait actions return terminal snapshots;
             # list would wrongly swallow pending completion reminders.
+            # (result/cancel are retired actions now, but legacy calls keep
+            # arriving under the original name — normalization happens after
+            # this marking sees the call.)
             action = arguments.get("action") if isinstance(arguments, dict) else None
             if action not in ("result", "cancel", "wait"):
+                return
+        elif tool_name in ("task_output", "task_stop"):
+            # Unified read/stop tools took over the retired agent
+            # result/cancel actions: only their agent_id branch returns a
+            # terminal sub-agent snapshot (task_id/process_id branches must
+            # not consume anything).
+            if not isinstance(arguments, dict) or not arguments.get("agent_id"):
                 return
         else:
             return

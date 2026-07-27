@@ -22,7 +22,7 @@ from deepseek_tui.tools.registry import (
     ToolResult,
     ToolSpec,
 )
-from deepseek_tui.tools.task import TaskReadTool
+from deepseek_tui.tools.task import TaskOutputTool
 from deepseek_tui.tools.web import WebSearchTool
 
 
@@ -72,13 +72,13 @@ class TestEnumViolations:
 
 class TestExtraPropertiesAllowed:
     async def test_legacy_alias_not_rejected_by_validation(self, context: ToolContext) -> None:
-        """``task_read`` accepts the legacy ``id`` alias at the execution
+        """``task_output`` accepts the legacy ``id`` alias at the execution
         layer, so validation must let it through even though the schema
         only declares ``task_id``. The call then fails on a *business*
         error (no TaskManager attached), not a validation error."""
-        registry = _registry_with(TaskReadTool())
+        registry = _registry_with(TaskOutputTool())
         with pytest.raises(ToolError) as exc_info:
-            await registry.execute("task_read", {"id": "x"}, context)
+            await registry.execute("task_output", {"id": "x"}, context)
         assert "invalid arguments" not in str(exc_info.value)
 
 

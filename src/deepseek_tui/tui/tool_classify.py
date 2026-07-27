@@ -53,6 +53,8 @@ _INLINE_TOOLS: dict[str, tuple[str, str]] = {
     # Task management
     "task_create": ("◇", "task"),
     "task_list": ("◇", "task"),
+    "task_output": ("◇", "task"),
+    "task_stop": ("◇", "task"),
     "task_read": ("◇", "task"),
     "task_cancel": ("◇", "task"),
     "task_gate_run": ("◇", "task"),
@@ -74,6 +76,7 @@ _INLINE_TOOLS: dict[str, tuple[str, str]] = {
     # Automation (read)
     "automation_list": ("◇", "auto"),
     "automation_read": ("◇", "auto"),
+    "cron_list": ("◇", "cron"),
 }
 
 _BLOCK_TOOLS: dict[str, tuple[str, str]] = {
@@ -98,6 +101,9 @@ _BLOCK_TOOLS: dict[str, tuple[str, str]] = {
     "automation_resume": ("◇", "auto"),
     "automation_delete": ("◇", "auto"),
     "automation_run": ("◇", "auto"),
+    # Cron
+    "cron_create": ("◇", "cron"),
+    "cron_delete": ("◇", "cron"),
 }
 
 

@@ -160,8 +160,10 @@ def _compact_subagent_tool_result_for_context(
     Only the result/wait actions emit JSON content, so keying off the merged
     tool name is safe: other actions (spawn/cancel/list/send_input) return
     plain text that fails the JSON sniff below and falls through unchanged.
+    ``task_output`` is included for its agent_id branch (same JSON payload);
+    its task/process branches fail the sniff and pass through.
     """
-    if tool_name not in ("agent", "wait"):
+    if tool_name not in ("agent", "wait", "task_output"):
         return None
     try:
         parsed = json.loads(raw)

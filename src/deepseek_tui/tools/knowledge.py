@@ -186,7 +186,7 @@ class SkillLoadTool(ToolSpec):
             "Load a skill (SKILL.md body + companion file list) into the "
             "next turn's context. Use this when the user names a skill or "
             "the task clearly matches a skill listed in the system prompt's "
-            "`## Skills` section. Faster than read_file + list_dir."
+            "`## Skills` section. Faster than read_file + file_search."
         )
 
     def input_schema(self) -> dict[str, object]:

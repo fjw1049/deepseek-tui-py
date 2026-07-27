@@ -118,9 +118,7 @@ def max_tokens_for_subagent_type(agent_type: SubAgentType) -> int:
 # Intentionally stricter than ``FOCUS_READ_BASE`` - that set is misnamed and
 # includes write/shell/agent tools, so it cannot serve a read-only type.
 _SUBAGENT_READ_TOOLS = frozenset({
-    "read_file", "list_dir", "grep_files", "file_search", "project_map",
-    "git",
-    "github_issue_context", "github_pr_context",
+    "read_file", "grep_files", "file_search",
     "web_search", "fetch_url",
     "note",
 })
@@ -128,7 +126,7 @@ _SUBAGENT_PLAN_TOOLS = _SUBAGENT_READ_TOOLS | frozenset({
     "update_plan", "checklist",
 })
 _SUBAGENT_WRITE_TOOLS = frozenset({"write_file", "edit_file"})
-_SUBAGENT_EXEC_TOOLS = frozenset({"exec_shell", "run_tests"})
+_SUBAGENT_EXEC_TOOLS = frozenset({"exec_shell"})
 
 _TYPE_ALLOWLIST: dict[SubAgentType, frozenset[str] | None] = {
     SubAgentType.GENERAL: None,
@@ -198,7 +196,7 @@ _SUBAGENT_PROMPTS: dict[str, str] = {
         "convention — do not write, patch, or run side-effectful commands. If the\n"
         "task seems to require a write, stop and put it under BLOCKERS.\n\n"
         "Method:\n"
-        "- Start with `list_dir` and `file_search` to orient.\n"
+        "- Start with `file_search` and `grep_files` to orient.\n"
         "- Use `grep_files` (NOT `exec_shell rg`) to find call sites, type defs,\n"
         "  and string literals. Prefer narrow, structured queries over broad scans.\n"
         "- Read each candidate file with `read_file`. Skim, then quote line ranges.\n"
@@ -253,7 +251,7 @@ _SUBAGENT_PROMPTS: dict[str, str] = {
         "test suite and report pass/fail with evidence. You are read-only —\n"
         "do not patch failing tests or modify code.\n\n"
         "Method:\n"
-        "- Run the right gate: `run_tests`, or `exec_shell` for custom commands.\n"
+        "- Run the right gate with `exec_shell` (the project's test command).\n"
         "- Capture the exact failing assertion plus stack trace in EVIDENCE.\n\n"
         "OUTCOME goes at the top of SUMMARY: PASS / FAIL / FLAKY.\n\n"
         "CHANGES will almost always be \"None.\" for a verifier."

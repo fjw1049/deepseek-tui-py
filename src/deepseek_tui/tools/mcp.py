@@ -33,25 +33,6 @@ class ListMcpResourcesTool(ToolSpec):
         return _json_result(resources)
 
 
-class ListMcpResourceTemplatesTool(ToolSpec):
-    def name(self) -> str:
-        return "list_mcp_resource_templates"
-
-    def description(self) -> str:
-        return "List resource templates exposed by configured MCP servers."
-
-    def input_schema(self) -> dict[str, object]:
-        return {"type": "object", "properties": {"server": {"type": "string"}}}
-
-    def capabilities(self) -> list[ToolCapability]:
-        return [ToolCapability.READ_ONLY]
-
-    async def execute(self, input_data: dict[str, object], context: ToolContext) -> ToolResult:
-        server = _optional_string(input_data, "server")
-        templates = await _manager(context).list_resource_templates(server)
-        return _json_result(templates)
-
-
 class ReadMcpResourceTool(ToolSpec):
     def name(self) -> str:
         return "read_mcp_resource"
@@ -76,39 +57,6 @@ class ReadMcpResourceTool(ToolSpec):
         result = await _manager(context).read_resource(
             _require_string(input_data, "server"),
             _require_string(input_data, "uri"),
-        )
-        return _json_result(result)
-
-
-class McpGetPromptTool(ToolSpec):
-    def name(self) -> str:
-        return "mcp_get_prompt"
-
-    def description(self) -> str:
-        return "Get a prompt from an MCP server."
-
-    def input_schema(self) -> dict[str, object]:
-        return {
-            "type": "object",
-            "properties": {
-                "server": {"type": "string"},
-                "name": {"type": "string"},
-                "arguments": {"type": "object"},
-            },
-            "required": ["server", "name"],
-        }
-
-    def capabilities(self) -> list[ToolCapability]:
-        return [ToolCapability.READ_ONLY]
-
-    async def execute(self, input_data: dict[str, object], context: ToolContext) -> ToolResult:
-        arguments = input_data.get("arguments")
-        if arguments is not None and not isinstance(arguments, dict):
-            raise ToolError("arguments must be an object")
-        result = await _manager(context).get_prompt(
-            _require_string(input_data, "server"),
-            _require_string(input_data, "name"),
-            arguments if isinstance(arguments, dict) else None,
         )
         return _json_result(result)
 

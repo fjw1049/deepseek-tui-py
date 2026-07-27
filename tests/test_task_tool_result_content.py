@@ -1,4 +1,4 @@
-"""task_read / task_list must expose results in ToolResult.content.
+"""task_output / task_list must expose results in ToolResult.content.
 
 The orchestrator only injects ``content`` into the model transcript;
 metadata is for the UI. Status-only stubs left follow-up turns unable
@@ -23,7 +23,7 @@ from deepseek_tui.tools.task.models import (
     TaskStatus,
     TaskTimelineEntry,
 )
-from deepseek_tui.tools.task.tools import TaskListTool, TaskReadTool
+from deepseek_tui.tools.task.tools import TaskListTool, TaskOutputTool
 
 
 def _completed_record(**overrides: object) -> TaskRecord:
@@ -52,8 +52,8 @@ def _completed_record(**overrides: object) -> TaskRecord:
 
 def test_task_result_content_includes_result_summary() -> None:
     task = _completed_record()
-    content = _task_result_content("task_read", task)
-    assert "task_read: task_4bccc869 [completed]" in content
+    content = _task_result_content("task_output", task)
+    assert "task_output: task_4bccc869 [completed]" in content
     assert "无法统计 robotgo" in content
     assert "duration_ms: 10355" in content
 
@@ -74,7 +74,7 @@ def test_task_result_content_falls_back_to_timeline_tail() -> None:
             ),
         ],
     )
-    content = _task_result_content("task_read", task)
+    content = _task_result_content("task_output", task)
     assert "timeline_tail:" in content
     assert "exec_shell denied" in content
     assert "cannot request user input" in content
@@ -82,15 +82,15 @@ def test_task_result_content_falls_back_to_timeline_tail() -> None:
 
 def test_task_result_toolresult_content_reaches_model_context() -> None:
     task = _completed_record()
-    result = _task_result("task_read", task)
-    injected = compact_tool_result_for_context("deepseek-v4-pro", "task_read", result)
+    result = _task_result("task_output", task)
+    injected = compact_tool_result_for_context("deepseek-v4-pro", "task_output", result)
     assert "无法统计 robotgo" in injected
     # Must not collapse to the old status-only stub (~36 bytes).
     assert len(injected) > 36
 
 
 @pytest.mark.asyncio
-async def test_task_read_and_list_tools_expose_result_in_content(
+async def test_task_output_and_list_tools_expose_result_in_content(
     tmp_path: Path,
 ) -> None:
     async def executor(task, cancel):  # noqa: ANN001
@@ -112,13 +112,13 @@ async def test_task_read_and_list_tools_expose_result_in_content(
         raise AssertionError("task did not complete")
 
     context = ToolContext(working_directory=tmp_path, task_manager=manager)
-    read_result = await TaskReadTool().execute({"task_id": created.id}, context)
+    read_result = await TaskOutputTool().execute({"task_id": created.id}, context)
     assert "repo has 91 .py files" in read_result.content
     assert created.id in read_result.content
 
     list_result = await TaskListTool().execute({}, context)
     assert created.id in list_result.content
     assert "repo has 91 .py files" in list_result.content
-    assert list_result.content != "1 task(s)"
+    assert list_result.content.startswith("1 task(s):")
 
     await manager.shutdown()

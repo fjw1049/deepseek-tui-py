@@ -124,7 +124,8 @@ def _enforce_max_task_nest_depth(
         return
     raise ToolError(
         f"{action} is not allowed inside a running task "
-        "(max_task_nest_depth=1). Use sub-agents for nested work instead."
+        "(max_task_nest_depth=1). Use sub-agents (agent tool) for nested "
+        "work instead."
     )
 
 

@@ -39,13 +39,12 @@ from deepseek_tui.tools.task import (
     TaskStatus,
     get_real_task_executor,
 )
-from deepseek_tui.tools.task import TaskCreateTool, TaskGateRunTool
+from deepseek_tui.tools.task import TaskCreateTool
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 _TIMEOUT_API = 30
 _TIMEOUT_SUBAGENT = 90
-_TIMEOUT_GATE = 15
 _TIMEOUT_TASK_EXEC = 90
 
 
@@ -121,45 +120,6 @@ class TestLiveRlmSubagentTask:
         combined = (text + "".join(thinking)).upper()
         assert combined, "expected assistant text or reasoning content"
         assert "OK" in combined
-
-    async def test_05_task_gate_run_live_persistence(
-        self, project_config: Config, tmp_path: Path
-    ) -> None:
-        async def _stub(task, cancel):  # noqa: ANN001
-            from deepseek_tui.tools.task import TaskExecutionResult
-
-            return TaskExecutionResult(summary="ok")
-
-        mgr_cfg = TaskManagerConfig(
-            data_dir=tmp_path / "tasks",
-            default_workspace=tmp_path,
-        )
-        manager = TaskManager(mgr_cfg, executor=_stub)
-        await manager.start()
-        try:
-            task = await manager.add_task(NewTaskRequest(prompt="live gate smoke"))
-            assert task.auto_approve is False
-
-            ctx = ToolContext(
-                working_directory=tmp_path,
-                task_manager=manager,
-                active_task_id=task.id,
-            )
-            result = await asyncio.wait_for(
-                TaskGateRunTool().execute(
-                    {"gate": "custom", "command": "echo live_gate_ok"},
-                    ctx,
-                ),
-                timeout=_TIMEOUT_GATE,
-            )
-            assert result.success is True
-            assert "task_updates" in result.metadata
-            await asyncio.sleep(0.1)
-            updated = await manager.get_task(task.id)
-            assert len(updated.gates) == 1
-            assert updated.gates[0].status == "passed"
-        finally:
-            await manager.shutdown()
 
     async def test_06_task_create_default_auto_approve_false(
         self, project_config: Config, tmp_path: Path
@@ -301,7 +261,9 @@ class TestLiveRlmSubagentTask:
     async def test_10_task_executor_wires_task_context_for_tools(
         self, project_config: Config, live_model: str, tmp_path: Path
     ) -> None:
-        """While a task runs, task_gate_run can attach evidence via active_task_id."""
+        """A task run through the real executor completes end-to-end and
+        persists its record (the gate-evidence assertions that used to pin
+        tool wiring retired with the task_gate_run tool)."""
         mgr_cfg = TaskManagerConfig(
             data_dir=tmp_path / "task_exec_gate",
             default_workspace=tmp_path,
@@ -318,22 +280,7 @@ class TestLiveRlmSubagentTask:
             )
             final = await _wait_for_task_terminal(manager, created.id)
             assert final.status is TaskStatus.COMPLETED
-
-            ctx = ToolContext(
-                working_directory=tmp_path,
-                task_manager=manager,
-                active_task_id=created.id,
-            )
-            gate = await TaskGateRunTool().execute(
-                {"gate": "custom", "command": "echo executor_context_ok"},
-                ctx,
-            )
-            assert gate.success is True
-            await asyncio.sleep(0.1)
-            updated = await manager.get_task(created.id)
-            assert len(updated.gates) == 1
-            assert updated.gates[0].status == "passed"
-            assert "executor_context_ok" in (updated.gates[0].summary or "")
+            assert "gate-context-ok" in (final.result_summary or "")
         finally:
             await manager.shutdown()
 

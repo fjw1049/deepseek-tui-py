@@ -6,7 +6,7 @@ Split by responsibility:
 - :mod:`.store`   — (de)serialization + on-disk state loading
 - :mod:`.manager` — durable TaskManager (queue + workers)
 - :mod:`.helpers` — shared tool helpers (input parsing, git probes)
-- :mod:`.tools`   — task CRUD/gate/shell tools
+- :mod:`.tools`   — task create/list/output/stop tools
 
 ``deepseek_tui.tools.task`` keeps re-exporting the public names.
 """
@@ -48,14 +48,10 @@ from deepseek_tui.tools.task.store import (  # noqa: F401 — _is_stale_running_
     _is_stale_running_task,
 )
 from deepseek_tui.tools.task.tools import (
-    TaskCancelTool,
     TaskCreateTool,
-    TaskGateRunTool,
     TaskListTool,
-    TaskReadTool,
-    TaskResumeTool,
-    TaskShellStartTool,
-    TaskShellWaitTool,
+    TaskOutputTool,
+    TaskStopTool,
 )
 
 __all__ = [
@@ -71,24 +67,20 @@ __all__ = [
     "NewTaskRequest",
     "TaskArtifactRef",
     "TaskAttemptRecord",
-    "TaskCancelTool",
     "TaskChecklistItem",
     "TaskChecklistState",
     "TaskCounts",
     "TaskCreateTool",
     "TaskExecutionResult",
     "TaskGateRecord",
-    "TaskGateRunTool",
     "TaskGithubEvent",
     "TaskListTool",
     "TaskManager",
     "TaskManagerConfig",
-    "TaskReadTool",
-    "TaskResumeTool",
+    "TaskOutputTool",
     "TaskRecord",
-    "TaskShellStartTool",
-    "TaskShellWaitTool",
     "TaskStatus",
+    "TaskStopTool",
     "TaskSummary",
     "TaskTimelineEntry",
     "TaskToolCallSummary",

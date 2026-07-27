@@ -382,13 +382,13 @@ export const CLAW_IM_AGENT_INSTRUCTIONS_HEADING = '[Claw IM agent instructions]'
 export const CLAW_FEISHU_INBOUND_MESSAGE_HEADING = '[Feishu / Lark inbound message]'
 export const AUTOMATION_COMPOSER_HEADING = '[Scheduled automation request]'
 const CLAW_SCHEDULE_TOOL_HINT =
-  'When the user asks to create, list, edit, pause, resume, delete, or run scheduled automations or reminders, use the automation tools (`current_time`, `automation_create`, `automation_list`, `automation_read`, `automation_update`, `automation_pause`, `automation_resume`, `automation_delete`, `automation_run`) instead of only describing steps. Call `current_time` first for relative scheduling.'
+  'When the user asks to create, list, or delete scheduled automations or reminders, use the cron tools (`cron_create`, `cron_list`, `cron_delete`) instead of only describing steps. To change an existing job, delete it with `cron_delete` and recreate it with `cron_create` (deleting wipes its run history).'
 
 export type AutomationComposerContext = {
   feishuChatId?: string
   mailTo?: string
   workspaceRoot?: string
-  /** IANA timezone for current_time and user-facing schedule confirmations. */
+  /** IANA timezone for user-facing schedule confirmations. */
   userTimezone?: string
 }
 
@@ -403,15 +403,15 @@ export function buildAutomationComposerPrompt(
   const hints: string[] = [
     'The user wants a scheduled or delayed automation. Follow this playbook:',
     'Do NOT call tool_search_tool_regex, tool_search_tool_bm25, or any other discovery tools — tool names are listed below.',
-    'Only use these tools for this request: current_time, automation_create (and automation_list/read/update/pause/resume/delete/run if the user asks to manage existing jobs).',
-    `1. Call \`current_time\` with timezone "${userTimezone}" and offset_minutes [1] when the user says "in 1 minute" (use [2] for 2 minutes, etc.; integer 2 also works).`,
+    'Only use these tools for this request: cron_create (and cron_list/cron_delete if the user asks to manage existing jobs). To change an existing job, delete it with cron_delete and recreate it (deleting wipes its run history).',
+    '1. Relative times ("in 2 minutes", "tomorrow morning") resolve against the `today: YYYY-MM-DD` date injected in the system prompt; call `exec_shell date` first when you need the exact current time.',
     '2. Recurring jobs: set `rrule` (FREQ=HOURLY;INTERVAL=N or FREQ=WEEKLY;BYDAY=MO;BYHOUR=9;BYMINUTE=30).',
-    '3. One-shot or delayed runs: set `next_run_at` to the exact `in_Nmin_utc` value from current_time (ISO8601 UTC) and use a far-future placeholder rrule such as FREQ=HOURLY;INTERVAL=8760.',
-    '4. Call `automation_create` with name, prompt (the task to run), rrule, optional next_run_at/cwds, and delivery when the user wants results sent.',
-    `5. Confirm the automation id, schedule, and delivery target in plain language. Quote the exact \`in_Nmin_local\` string from current_time for the run time in ${userTimezone} — never guess or use UTC-only.`
+    '3. One-shot or delayed runs: set `next_run_at` to the computed fire time (ISO8601 UTC) and use a far-future placeholder rrule such as FREQ=HOURLY;INTERVAL=8760.',
+    '4. Call `cron_create` with name, prompt (the task to run), rrule, optional next_run_at/cwds, and delivery when the user wants results sent. Set run_now=true if the user also wants it to run immediately.',
+    `5. Confirm the automation id, schedule, and delivery target in plain language. State the run time in ${userTimezone} local time — never guess or use UTC-only.`
   ]
   hints.push(
-    `User timezone: ${userTimezone}. Re-call current_time if more than 30 seconds pass before automation_create.`
+    `User timezone: ${userTimezone}. If you called exec_shell date, re-check the time if more than 30 seconds pass before cron_create.`
   )
   const wantsFeishu = /飞书|feishu|lark/i.test(trimmed)
   const wantsEmail = /邮箱|邮件|email|mail/i.test(trimmed)
@@ -424,7 +424,7 @@ export function buildAutomationComposerPrompt(
       )
     } else {
       hints.push(
-        'The user asked for Feishu delivery but no default chat_id is configured. Ask for the Feishu open_chat_id before calling automation_create.'
+        'The user asked for Feishu delivery but no default chat_id is configured. Ask for the Feishu open_chat_id before calling cron_create.'
       )
     }
   }
@@ -436,7 +436,7 @@ export function buildAutomationComposerPrompt(
       )
     } else if (!wantsFeishu) {
       hints.push(
-        'The user asked for email delivery but no default mail_to is configured. Ask for the recipient address before calling automation_create.'
+        'The user asked for email delivery but no default mail_to is configured. Ask for the recipient address before calling cron_create.'
       )
     }
   }

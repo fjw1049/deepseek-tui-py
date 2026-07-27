@@ -47,7 +47,6 @@ def is_tool_search_tool(name: str) -> bool:
 _ALWAYS_ACTIVE_TOOLS = frozenset(
     {
         "read_file",
-        "list_dir",
         "grep_files",
         "file_search",
         # Core write tools — keep visible so the model does not fall back to
@@ -56,19 +55,18 @@ _ALWAYS_ACTIVE_TOOLS = frozenset(
         "edit_file",
         # Shell family (also force-active in agent mode via _SHELL_TOOLS).
         "exec_shell",
-        "exec_shell_interact",
         "load_skill",
         "update_plan",
         "checklist",
         "task_create",
         "task_list",
-        "task_read",
+        "task_output",
+        "task_stop",
         # Sub-agent orchestration — keep visible alongside task_* so the
         # model does not reach for task_create when the user asks for a
         # sub-agent (both families were originally deferred; task_* was
         # promoted to always-active in Python and created a selection bias).
         "agent",
-        "agent_resume",
         "web_search",
         "fetch_url",
         REQUEST_USER_INPUT_NAME,
@@ -78,7 +76,6 @@ _ALWAYS_ACTIVE_TOOLS = frozenset(
 _SHELL_TOOLS = frozenset(
     {
         "exec_shell",
-        "exec_shell_interact",
     }
 )
 

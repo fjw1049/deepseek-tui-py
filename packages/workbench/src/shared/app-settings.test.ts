@@ -114,8 +114,9 @@ describe('unwrapAutomationComposerPromptForDisplay', () => {
       userTimezone: 'Asia/Shanghai'
     })
     expect(wrapped).toContain('Do NOT call tool_search_tool_regex')
-    expect(wrapped).toContain('current_time')
-    expect(wrapped).toContain('automation_create')
+    expect(wrapped).toContain('cron_create')
+    expect(wrapped).not.toContain('current_time')
+    expect(wrapped).not.toContain('automation_create')
   })
 
   it('derives sandbox mode from the approval tier', () => {

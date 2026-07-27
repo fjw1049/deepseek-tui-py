@@ -20,7 +20,7 @@ Use the `workflow` tool when the user explicitly asks for "workflow", multi-agen
 - Sub-agents do not inherit implicit repository context — include paths, files, and goals in prompts.
 - Do not duplicate work with batch `agent` spawns outside the workflow after starting a workflow.
 - Opt-in isolation: set `policy.worktree` to `"on"` so the run edits a git worktree under `.deepseek/workflow-runs/<run_id>/tree` (fails closed if not a git repo). Default is `"off"`.
-- Background long runs: pass `detach: true` to enqueue via TaskManager and return `run_id` + `task_id` immediately. Cancel with `task_cancel` / resume with `run_id` — Esc only stops waiting, not a detached run.
+- Background long runs: pass `detach: true` to enqueue via TaskManager and return `run_id` + `task_id` immediately. Cancel with `task_stop` / resume with `run_id` — Esc only stops waiting, not a detached run.
 
 ### Incremental examples (why these features exist)
 

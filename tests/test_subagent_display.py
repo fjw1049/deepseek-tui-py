@@ -12,14 +12,14 @@ from deepseek_tui.tui.sanitize import strip_subagent_sentinels
 
 def test_agent_tool_is_always_active_in_agent_mode() -> None:
     assert should_default_defer_tool("agent", "agent") is False
-    assert should_default_defer_tool("agent_resume", "agent") is False
-    assert should_default_defer_tool("task_create", "agent") is False
+    # The unified background-work tools stay always-active alongside it.
+    for name in ("task_create", "task_list", "task_output", "task_stop"):
+        assert should_default_defer_tool(name, "agent") is False
     # Core write / shell tools stay always-active (not deferred).
     for name in (
         "write_file",
         "edit_file",
         "exec_shell",
-        "exec_shell_interact",
     ):
         assert should_default_defer_tool(name, "agent") is False
     # Non-core tools defer in agent mode (discoverable via tool_search,
@@ -29,9 +29,6 @@ def test_agent_tool_is_always_active_in_agent_mode() -> None:
         "project_map",
         "run_tests",
         "workflow",
-        "task_gate_run",
-        "task_shell_start",
-        "task_shell_wait",
         "github_issue_context",
         "github_pr_context",
         "code_execution",

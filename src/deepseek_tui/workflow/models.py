@@ -1454,11 +1454,8 @@ def render_template(
 ANALYSIS_ONLY_TOOLS: frozenset[str] = frozenset(
     {
         "read_file",
-        "list_dir",
         "grep_files",
         "file_search",
-        "git",
-        "project_map",
         "checklist",
         "web_search",
         "fetch_url",

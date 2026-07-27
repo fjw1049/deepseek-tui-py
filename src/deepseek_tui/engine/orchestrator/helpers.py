@@ -27,18 +27,12 @@ _FOCUS_REGISTRY_TOOLS = frozenset(
     {
         # Explore
         "read_file",
-        "list_dir",
         "grep_files",
         "file_search",
-        "project_map",
-        "git",
-        "github_issue_context",
-        "github_pr_context",
         # Session
         "load_skill",
         "note",
         "update_plan",
-        "current_time",
         "checklist",
         "request_user_input",
         # Research
@@ -49,10 +43,8 @@ _FOCUS_REGISTRY_TOOLS = frozenset(
         "edit_file",
         # Shell (registered names only — no exec_wait / exec_interact aliases)
         "exec_shell",
-        "exec_shell_interact",
         # Agents
         "agent",
-        "agent_resume",
     }
 )
 

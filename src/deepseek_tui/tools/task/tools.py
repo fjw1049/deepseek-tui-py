@@ -1,13 +1,25 @@
 """Durable task tools — thin wrappers over :class:`TaskManager`.
 
-All tools delegate to
-``context.task_manager``.
+The task surface is four tools that together manage all three kinds of
+background entities:
+
+- ``task_create`` — enqueue a durable task (or resume one via ``resume=``).
+- ``task_list``   — aggregate snapshot: durable tasks + sub-agents +
+  background shell processes.
+- ``task_output`` — unified read: task record/artifacts, sub-agent result
+  (blocking or not), background process output.
+- ``task_stop``   — unified stop: cancel a task, a sub-agent, or a
+  background process.
+
+Retired names (``task_read`` / ``task_cancel`` / ``task_resume`` /
+``task_shell_start`` / ``task_shell_wait``) are forwarded at the execution
+layer — see ``engine.dispatch.normalize_legacy_tool_call``. The gate-failure
+classification heuristic stays in :mod:`.helpers` (implementation layer,
+decision D3) but is no longer exposed as a tool.
 """
 
 from __future__ import annotations
 
-import asyncio
-import uuid
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
@@ -21,14 +33,10 @@ from deepseek_tui.tools.registry import (
     ToolSpec,
 )
 from deepseek_tui.tools.task.helpers import (
-    _MAX_SUMMARY_CHARS,
-    _classify_gate_failure,
     _enforce_max_task_nest_depth,
-    _forward_to_task_manager,
     _optional_bool,
     _optional_int,
     _optional_string,
-    _optional_task_id_from_input,
     _require_manager,
     _require_string,
     _task_id_from_input,
@@ -37,7 +45,6 @@ from deepseek_tui.tools.task.helpers import (
 from deepseek_tui.tools.task.models import (
     NewTaskRequest,
     TaskArtifactRef,
-    TaskGateRecord,
     TaskTimelineEntry,
 )
 from deepseek_tui.tools.task.store import _utc_now_iso
@@ -52,14 +59,18 @@ class TaskCreateTool(ToolSpec):
             "Create/enqueue a durable, restart-aware background task that runs "
             "DETACHED from this conversation. Fire-and-forget: returns a task id "
             "immediately, runs in a background worker, and its result lands in the "
-            "TASKS panel (read later via task_read) — it does NOT come back into "
+            "TASKS panel (read later via task_output) — it does NOT come back into "
             "this turn. Use ONLY for long-running work the user will not wait for "
             "here. If you need to WAIT for the result, AGGREGATE several results, "
             "or report back in this reply (e.g. 'benchmark X and Y and summarize'), "
             "use sub-agents instead (agent tool: action=\"spawn\" + action=\"wait\"). "
             "Never split one combined-report request into multiple tasks — they run "
             "independently and are never aggregated. Cannot be called from inside "
-            "another running task (max_task_nest_depth=1); use sub-agents instead."
+            "another running task (max_task_nest_depth=1); use sub-agents instead. "
+            "Alternatively, pass 'resume' with a task id (and no 'prompt' — the "
+            "two are mutually exclusive) to re-queue a cancelled, timed_out, or "
+            "failed task from its transcript checkpoint, keeping the same task "
+            "id — do not create a duplicate."
         )
 
     def input_schema(self) -> dict[str, Any]:
@@ -70,12 +81,22 @@ class TaskCreateTool(ToolSpec):
             "type": "object",
             "properties": {
                 "prompt": {"type": "string"},
+                "resume": {
+                    "type": "string",
+                    "description": (
+                        "Resume a cancelled/timed_out/failed task by id from "
+                        "its transcript checkpoint. Mutually exclusive with "
+                        "'prompt' — pass only one."
+                    ),
+                },
                 "model": {"type": "string"},
                 "workspace": {"type": "string"},
                 "mode": {"type": "string", "enum": ["agent", "plan", "yolo"]},
                 "allow_shell": {"type": "boolean"},
             },
-            "required": ["prompt"],
+            # 'prompt' stays effectively required, but 'resume' is the
+            # alternative — enforced in execute(), not the schema.
+            "required": [],
             "additionalProperties": False,
         }
 
@@ -88,8 +109,21 @@ class TaskCreateTool(ToolSpec):
     async def execute(
         self, input_data: dict[str, Any], context: ToolContext
     ) -> ToolResult:
-        _enforce_max_task_nest_depth(context)
         manager = _require_manager(context)
+        resume_id = _optional_string(input_data, "resume")
+        if resume_id is not None:
+            if _optional_string(input_data, "prompt") is not None:
+                raise ToolError(
+                    "'resume' is mutually exclusive with 'prompt' — pass only one"
+                )
+            try:
+                task = await manager.resume_task(resume_id)
+            except KeyError as exc:
+                raise ToolError(str(exc)) from exc
+            except RuntimeError as exc:
+                raise ToolError(str(exc)) from exc
+            return _task_result("task_create", task)
+        _enforce_max_task_nest_depth(context)
         prompt = _require_string(input_data, "prompt")
         origin_thread = context.metadata.get("runtime_thread_id")
         req = NewTaskRequest(
@@ -109,17 +143,28 @@ class TaskCreateTool(ToolSpec):
         return _task_result("task_create", task)
 
 
+_TASK_KINDS = ("task", "agent", "process")
+
+
 class TaskListTool(ToolSpec):
     def name(self) -> str:
         return "task_list"
 
     def description(self) -> str:
-        return "List durable tasks (newest first)."
+        return (
+            "List background work of all kinds: durable tasks (newest first), "
+            "sub-agents, and background shell processes. Each entry carries a "
+            "'kind' field (task | agent | process); pass 'kind' to restrict "
+            "to one source and 'limit' to cap the durable-task count."
+        )
 
     def input_schema(self) -> dict[str, Any]:
         return {
             "type": "object",
-            "properties": {"limit": {"type": "integer", "minimum": 1}},
+            "properties": {
+                "limit": {"type": "integer", "minimum": 1},
+                "kind": {"type": "string", "enum": list(_TASK_KINDS)},
+            },
             "additionalProperties": False,
         }
 
@@ -129,42 +174,142 @@ class TaskListTool(ToolSpec):
     async def execute(
         self, input_data: dict[str, Any], context: ToolContext
     ) -> ToolResult:
-        manager = _require_manager(context)
+        kind_filter = _optional_string(input_data, "kind")
+        if kind_filter is not None and kind_filter not in _TASK_KINDS:
+            raise ToolError(
+                f"kind must be one of: {', '.join(_TASK_KINDS)}"
+            )
         limit_val = input_data.get("limit")
         limit = int(limit_val) if isinstance(limit_val, int) else None
-        summaries = await manager.list_tasks(limit)
-        payload = [asdict(s) | {"status": s.status.value} for s in summaries]
-        lines = [f"{len(payload)} task(s):"]
-        for item in payload:
-            tid = item.get("id", "?")
-            status = item.get("status", "?")
-            prompt = (item.get("prompt_summary") or "").strip()
-            result = (item.get("result_summary") or item.get("error") or "").strip()
-            line = f"- {tid} [{status}]"
-            if prompt:
-                line += f" prompt={prompt}"
-            if result:
-                line += f" result={result}"
-            lines.append(line)
+
+        # Source 1: durable tasks (newest first).
+        task_payload: list[dict[str, Any]] = []
+        if kind_filter in (None, "task"):
+            manager = _require_manager(context)
+            summaries = await manager.list_tasks(limit)
+            task_payload = [
+                asdict(s) | {"status": s.status.value, "kind": "task"}
+                for s in summaries
+            ]
+
+        # Source 2: sub-agents (prior-session archived agents excluded,
+        # matching the retired agent action="list" default).
+        agent_payload: list[dict[str, Any]] = []
+        if kind_filter in (None, "agent"):
+            sub_manager = context.subagent_manager
+            if sub_manager is not None:
+                from deepseek_tui.tools.subagent.tools import _result_to_json
+
+                agent_payload = [
+                    _result_to_json(snap) | {"kind": "agent"}
+                    for snap in sub_manager.list_filtered(include_archived=False)
+                ]
+
+        # Source 3: in-memory background shell processes.
+        process_payload: list[dict[str, Any]] = []
+        if kind_filter in (None, "process"):
+            from deepseek_tui.tools.shell import list_background_processes
+
+            process_payload = [
+                proc | {"kind": "process"}
+                for proc in list_background_processes(context)
+            ]
+
+        lines: list[str] = []
+        if kind_filter in (None, "task"):
+            lines.append(f"{len(task_payload)} task(s):")
+            for item in task_payload:
+                tid = item.get("id", "?")
+                status = item.get("status", "?")
+                prompt = (item.get("prompt_summary") or "").strip()
+                result = (item.get("result_summary") or item.get("error") or "").strip()
+                line = f"- {tid} [{status}]"
+                if prompt:
+                    line += f" prompt={prompt}"
+                if result:
+                    line += f" result={result}"
+                lines.append(line)
+        if kind_filter in (None, "agent"):
+            lines.append(f"{len(agent_payload)} agent(s):")
+            for item in agent_payload:
+                status = item.get("status")
+                kind = status.get("kind") if isinstance(status, dict) else status
+                line = f"- {item.get('agent_id', '?')} [{kind or '?'}]"
+                nickname = (item.get("nickname") or "").strip()
+                if nickname:
+                    line += f" nickname={nickname}"
+                lines.append(line)
+        if kind_filter in (None, "process"):
+            lines.append(f"{len(process_payload)} process(es):")
+            for item in process_payload:
+                line = (
+                    f"- {item.get('process_id', '?')} [{item.get('status', '?')}]"
+                )
+                command = (item.get("command") or "").strip()
+                if command:
+                    line += f" command={command[:120]}"
+                lines.append(line)
         return ToolResult(
             success=True,
-            content="\n".join(lines) if payload else "0 task(s)",
-            metadata={"tasks": payload},
+            content="\n".join(lines),
+            metadata={
+                "tasks": task_payload,
+                "agents": agent_payload,
+                "processes": process_payload,
+            },
         )
 
 
-class TaskReadTool(ToolSpec):
+class TaskOutputTool(ToolSpec):
+    """Unified read for all three background-entity kinds.
+
+    - ``task_id`` → durable task record + artifacts (in-memory miss falls
+      back to the on-disk store via ``TaskManager.get_task``).
+    - ``agent_id`` → sub-agent result; ``block=false`` is a non-blocking
+      snapshot, ``block=true`` waits (default 180s, capped at 3600s).
+    - ``process_id`` → background shell process output (peek/wait); when a
+      ``task_id`` is also given the output is archived as a task artifact
+      (the retired ``task_shell_wait`` behaviour).
+    """
+
     def name(self) -> str:
-        return "task_read"
+        return "task_output"
 
     def description(self) -> str:
-        return "Read a durable task by id or unique prefix."
+        return (
+            "Read the output of background work: a durable task record via "
+            "'task_id', a sub-agent result via 'agent_id', or a background "
+            "shell process via 'process_id' (at least one required). For "
+            "agents/processes, 'block': true waits for completion "
+            "('timeout_ms', default 180000, max 3600000); the default "
+            "non-blocking peek returns status: running for unfinished jobs, "
+            "which is a status report, not the result. When collecting a "
+            "finished/long-running job, pass block: true. With 'process_id' "
+            "plus 'task_id', the collected output is also archived as a task "
+            "artifact."
+        )
 
     def input_schema(self) -> dict[str, Any]:
         return {
             "type": "object",
             "properties": {
-                "task_id": {"type": "string", "description": "Task id"},
+                "task_id": {"type": "string", "description": "Durable task id"},
+                "agent_id": {"type": "string", "description": "Sub-agent id"},
+                "process_id": {
+                    "type": "string",
+                    "description": (
+                        "Background shell process id (from exec_shell "
+                        "background=true)."
+                    ),
+                },
+                "block": {
+                    "type": "boolean",
+                    "description": "Block until complete (agent/process)",
+                },
+                "timeout_ms": {
+                    "type": "integer",
+                    "description": "Wait timeout in milliseconds (agent/process)",
+                },
             },
             "additionalProperties": False,
         }
@@ -175,418 +320,80 @@ class TaskReadTool(ToolSpec):
     async def execute(
         self, input_data: dict[str, Any], context: ToolContext
     ) -> ToolResult:
+        process_id = _optional_string(input_data, "process_id")
+        agent_id = _optional_string(input_data, "agent_id")
+        if process_id is not None and agent_id is not None:
+            raise ToolError("pass either agent_id or process_id, not both")
+
+        if process_id is not None:
+            return await self._process_output(input_data, context, process_id)
+        if agent_id is not None:
+            # Sub-agent result fetch — same semantics as the retired
+            # agent action="result" (block/timeout_ms clamping included).
+            from deepseek_tui.tools.subagent.tools import _execute_result
+
+            return await _execute_result(input_data, context)
+
+        task_id = _optional_string(input_data, "task_id") or _optional_string(
+            input_data, "id"
+        )
+        if task_id is None:
+            task_id = context.active_task_id
+        if task_id is None:
+            raise ToolError(
+                "task_output requires 'task_id', 'agent_id', or 'process_id'"
+            )
         manager = _require_manager(context)
-        task_id = _task_id_from_input(input_data, context)
         try:
             task = await manager.get_task(task_id)
         except KeyError as exc:
             raise ToolError(str(exc)) from exc
-        return _task_result("task_read", task)
+        return _task_result("task_output", task)
 
-
-class TaskCancelTool(ToolSpec):
-    def name(self) -> str:
-        return "task_cancel"
-
-    def description(self) -> str:
-        return "Cancel a queued or running durable task."
-
-    def input_schema(self) -> dict[str, Any]:
-        return {
-            "type": "object",
-            "properties": {
-                "task_id": {"type": "string", "description": "Task id"},
-            },
-            "additionalProperties": False,
-        }
-
-    def capabilities(self) -> list[ToolCapability]:
-        return [ToolCapability.REQUIRES_APPROVAL]
-
-    def approval_requirement(self) -> ApprovalRequirement:
-        return ApprovalRequirement.REQUIRED
-
-    async def execute(
-        self, input_data: dict[str, Any], context: ToolContext
+    async def _process_output(
+        self,
+        input_data: dict[str, Any],
+        context: ToolContext,
+        process_id: str,
     ) -> ToolResult:
-        manager = _require_manager(context)
-        task_id = _task_id_from_input(input_data, context)
-        try:
-            task = await manager.cancel_task(task_id)
-        except KeyError as exc:
-            raise ToolError(str(exc)) from exc
-        # Persist durable stop for workflow-detach jobs so a crash mid-cancel
-        # still prevents the next driver from continuing the run.
-        try:
-            from deepseek_tui.workflow.detach import parse_detach_prompt
-            from deepseek_tui.workflow.store import write_stop_intent
-
-            parsed = parse_detach_prompt(task.prompt)
-            if parsed is not None:
-                write_stop_intent(
-                    parsed["run_id"],
-                    workspace=Path(parsed["workspace"]),
-                )
-        except Exception:  # noqa: BLE001 — cancel already succeeded
-            pass
-        return _task_result("task_cancel", task)
-
-
-class TaskResumeTool(ToolSpec):
-    def name(self) -> str:
-        return "task_resume"
-
-    def description(self) -> str:
-        return (
-            "Resume a cancelled, timed_out, or failed durable task from its "
-            "transcript checkpoint (or Workflow checkpoint for detach jobs). "
-            "Re-queues the same task id — do not task_create a duplicate."
+        from deepseek_tui.tools.shell import (
+            peek_background_process,
+            wait_background_process,
+        )
+        from deepseek_tui.tools.subagent.types import (
+            DEFAULT_RESULT_TIMEOUT_MS,
+            MAX_RESULT_TIMEOUT_MS,
         )
 
-    def input_schema(self) -> dict[str, Any]:
-        return {
-            "type": "object",
-            "properties": {
-                "task_id": {"type": "string", "description": "Task id"},
-            },
-            "additionalProperties": False,
-        }
-
-    def capabilities(self) -> list[ToolCapability]:
-        return [ToolCapability.REQUIRES_APPROVAL]
-
-    def approval_requirement(self) -> ApprovalRequirement:
-        return ApprovalRequirement.REQUIRED
-
-    async def execute(
-        self, input_data: dict[str, Any], context: ToolContext
-    ) -> ToolResult:
-        manager = _require_manager(context)
-        task_id = _task_id_from_input(input_data, context)
-        try:
-            task = await manager.resume_task(task_id)
-        except KeyError as exc:
-            raise ToolError(str(exc)) from exc
-        except RuntimeError as exc:
-            raise ToolError(str(exc)) from exc
-        return _task_result("task_resume", task)
-
-
-class TaskGateRunTool(ToolSpec):
-    """Execute a verification gate command and record the result.
-
-    Runs the command,
-    captures exit_code/stdout/stderr, computes duration, classifies failure,
-    and persists a TaskGateRecord on the task.
-    """
-
-    _DEFAULT_TIMEOUT_MS = 120_000
-    _MAX_TIMEOUT_MS = 600_000
-
-    def name(self) -> str:
-        return "task_gate_run"
-
-    def description(self) -> str:
-        return (
-            "Execute a verification gate (fmt/check/clippy/test/custom) "
-            "against a durable task and record the result."
+        block = bool(input_data.get("block", False))
+        timeout_ms = _optional_int(input_data, "timeout_ms")
+        task_id = _optional_string(input_data, "task_id") or _optional_string(
+            input_data, "id"
         )
 
-    def input_schema(self) -> dict[str, Any]:
-        return {
-            "type": "object",
-            "properties": {
-                "task_id": {
-                    "type": "string",
-                    "description": "Task id; defaults to active task when inside one.",
-                },
-                "gate": {
-                    "type": "string",
-                    "description": "Gate type: fmt, check, clippy, test, custom",
-                },
-                "command": {"type": "string", "description": "Shell command to run"},
-                "cwd": {"type": "string", "description": "Working directory override"},
-                "timeout_ms": {
-                    "type": "integer",
-                    "minimum": 1000,
-                    "maximum": 600000,
-                    "description": "Timeout in ms (default 120000)",
-                },
-            },
-            "required": ["gate", "command"],
-            "additionalProperties": False,
-        }
-
-    def capabilities(self) -> list[ToolCapability]:
-        return [ToolCapability.EXECUTES_CODE, ToolCapability.REQUIRES_APPROVAL]
-
-    def approval_requirement(self) -> ApprovalRequirement:
-        return ApprovalRequirement.REQUIRED
-
-    async def execute(
-        self, input_data: dict[str, Any], context: ToolContext
-    ) -> ToolResult:
-        import time as _time
-
-        manager = _require_manager(context)
-        task_id = _optional_task_id_from_input(input_data, context)
-        gate = _require_string(input_data, "gate")
-        command = _require_string(input_data, "command")
-        cwd_raw = _optional_string(input_data, "cwd")
-        # Keep the working directory inside the workspace — resolve_path
-        # raises on escape attempts (e.g. cwd="../..").
-        cwd = str(context.resolve_path(cwd_raw)) if cwd_raw else str(
-            context.working_directory
-        )
-        timeout_ms = _optional_int(input_data, "timeout_ms") or self._DEFAULT_TIMEOUT_MS
-        timeout_ms = min(timeout_ms, self._MAX_TIMEOUT_MS)
-
-        from deepseek_tui.tools.shell import check_command_policy, spawn_sandboxed_shell
-
-        refusal = check_command_policy(command, context)
-        if refusal is not None:
-            return refusal
-
-        # Execute the command (sandboxed, same path as ExecShellTool)
-        start = _time.monotonic()
-        timed_out = False
-        spawn_error: str | None = None
-        proc: asyncio.subprocess.Process | None = None
-        try:
-            proc, _exec_env = await spawn_sandboxed_shell(
-                command, Path(cwd), context, timeout_ms
+        if block:
+            clamped = max(
+                1000,
+                min(
+                    MAX_RESULT_TIMEOUT_MS,
+                    timeout_ms or DEFAULT_RESULT_TIMEOUT_MS,
+                ),
             )
-            stdout_bytes, stderr_bytes = await asyncio.wait_for(
-                proc.communicate(), timeout=timeout_ms / 1000
+            wait_result = await wait_background_process(
+                context, process_id, timeout_ms=clamped
             )
-            exit_code = proc.returncode
-        except asyncio.TimeoutError:
-            timed_out = True
-            exit_code = None
-            stdout_bytes = b""
-            stderr_bytes = b"Gate timed out"
-            if proc is not None:
-                try:
-                    proc.kill()
-                    await proc.wait()
-                except (OSError, ProcessLookupError):
-                    pass
-        except OSError as exc:
-            spawn_error = str(exc)
-            exit_code = None
-            stdout_bytes = b""
-            stderr_bytes = b""
-        except Exception as exc:  # noqa: BLE001
-            raise ToolError(f"Failed to run gate command: {exc}") from exc
-
-        duration_ms = int((_time.monotonic() - start) * 1000)
-        stdout = stdout_bytes.decode("utf-8", errors="replace")
-        stderr = stderr_bytes.decode("utf-8", errors="replace")
-
-        if timed_out:
-            status = "timeout"
-        elif spawn_error is not None:
-            status = "failed"
-        elif exit_code == 0:
-            status = "passed"
         else:
-            status = "failed"
+            wait_result = await peek_background_process(context, process_id)
 
-        classification = _classify_gate_failure(
-            gate,
-            exit_code if exit_code is not None else -1,
-            stdout,
-            stderr,
-        )
-
-        summary_source = stderr.strip() or stdout.strip() or spawn_error or "(no output)"
-        summary = summary_source[-_MAX_SUMMARY_CHARS:]
-
-        full_log = (
-            f"$ {command}\n\n[stdout]\n{stdout}\n\n[stderr]\n{stderr}\n"
-            + (f"\n[spawn_error]\n{spawn_error}\n" if spawn_error else "")
-        )
-
-
-        gate_id = f"gate_{uuid.uuid4().hex[:8]}"
-        log_path: str | None = None
+        # Archive the collected output on the task when one is named — the
+        # retired task_shell_wait behaviour.
         if task_id is not None:
-            rel = manager.write_task_artifact(task_id, f"gate_{gate}", full_log)
-            log_path = str(rel)
-
-        gate_record = TaskGateRecord(
-            id=gate_id,
-            gate=gate,
-            command=command,
-            cwd=cwd,
-            exit_code=exit_code,
-            status=status,
-            classification=classification,
-            duration_ms=duration_ms,
-            summary=summary,
-            recorded_at=_utc_now_iso(),
-            log_path=log_path,
-        )
-
-        metadata: dict[str, Any] = {
-            "command": command,
-            "cwd": cwd,
-            "exit_code": exit_code,
-            "duration_ms": duration_ms,
-            "timed_out": timed_out,
-            "gate": asdict(gate_record),
-        }
-        if log_path is not None:
-            metadata["artifact_path"] = log_path
-        if task_id is not None:
-            artifacts = [
-                {
-                    "label": "gate_log",
-                    "path": log_path or "",
-                    "summary": summary[:400],
-                }
-            ]
-            metadata["task_updates"] = {
-                "gate": asdict(gate_record),
-                "artifacts": artifacts,
-            }
-
-        result = ToolResult(
-            success=status == "passed",
-            content=(
-                f"Gate {gate} {'PASSED' if status == 'passed' else status.upper()} "
-                f"(rc={exit_code}, {duration_ms}ms)"
-            ),
-            metadata=metadata,
-        )
-        if task_id is not None:
-            context.active_task_id = task_id
-            _forward_to_task_manager(context, metadata)
-        return result
-
-
-class TaskShellStartTool(ToolSpec):
-    def name(self) -> str:
-        return "task_shell_start"
-
-    def description(self) -> str:
-        return (
-            "Start a background shell job attached to a durable task. "
-            "Uses PTY by default so interactive commands (REPL, ssh) work. "
-            "Returns a process_id for task_shell_wait."
-        )
-
-    def input_schema(self) -> dict[str, Any]:
-        return {
-            "type": "object",
-            "properties": {
-                "task_id": {"type": "string", "description": "Task id"},
-                "command": {"type": "string"},
-                "pty": {"type": "boolean"},
-            },
-            "required": ["command"],
-            "additionalProperties": False,
-        }
-
-    def capabilities(self) -> list[ToolCapability]:
-        return [ToolCapability.EXECUTES_CODE, ToolCapability.REQUIRES_APPROVAL]
-
-    def approval_requirement(self) -> ApprovalRequirement:
-        return ApprovalRequirement.REQUIRED
-
-    async def execute(
-        self, input_data: dict[str, Any], context: ToolContext
-    ) -> ToolResult:
-        from deepseek_tui.tools.shell import ExecShellTool
-
-        manager = _require_manager(context)
-        task_id = _task_id_from_input(input_data, context)
-        command = _require_string(input_data, "command")
-        use_pty = bool(input_data.get("pty", True))
-
-        # Ensure task exists (raises if not)
-        try:
-            task = await manager.get_task(task_id)
-        except KeyError as exc:
-            raise ToolError(str(exc)) from exc
-
-        # Launch background shell via ExecShellTool — reuse its pty logic
-        shell_result = await ExecShellTool().execute(
-            {"command": command, "background": True, "pty": use_pty},
-            context,
-        )
-        process_id = shell_result.content  # uuid string returned as content
-        now = _utc_now_iso()
-        task.timeline.append(
-            TaskTimelineEntry(
-                timestamp=now,
-                kind="shell_started",
-                summary=f"bg shell: {command[:120]}",
-            )
-        )
-        # Track mapping task_id → process_id list via context metadata.
-        shell_map: dict[str, list[str]] = context.metadata.setdefault(
-            "task_shell_process_ids", {}
-        )
-        shell_map.setdefault(task_id, []).append(process_id)
-        async with manager._lock:  # noqa: SLF001
-            manager._persist_task_locked(task)  # noqa: SLF001
-        return ToolResult(
-            success=True,
-            content=process_id,
-            metadata={
-                "task_id": task_id,
-                "process_id": process_id,
-                "pty": use_pty,
-                "command": command,
-            },
-        )
-
-
-class TaskShellWaitTool(ToolSpec):
-    def name(self) -> str:
-        return "task_shell_wait"
-
-    def description(self) -> str:
-        return (
-            "Wait for a task-attached background shell job to finish and "
-            "record its output as a task artifact."
-        )
-
-    def input_schema(self) -> dict[str, Any]:
-        return {
-            "type": "object",
-            "properties": {
-                "process_id": {"type": "string"},
-                "task_id": {"type": "string"},
-            },
-            "required": ["process_id"],
-            "additionalProperties": False,
-        }
-
-    def capabilities(self) -> list[ToolCapability]:
-        return [ToolCapability.EXECUTES_CODE]
-
-    async def execute(
-        self, input_data: dict[str, Any], context: ToolContext
-    ) -> ToolResult:
-        from deepseek_tui.tools.shell import wait_background_process
-
-        process_id = _require_string(input_data, "process_id")
-        task_id_opt = _optional_task_id_from_input(input_data, context)
-
-        # Delegate to the shared background-process wait — handles pty and pipe.
-        wait_result = await wait_background_process(context, process_id)
-
-        # Record artifact on the task if we know which one.
-        if task_id_opt is not None:
             manager = _require_manager(context)
             try:
-                task = await manager.get_task(task_id_opt)
+                task = await manager.get_task(task_id)
             except KeyError as exc:
                 raise ToolError(str(exc)) from exc
             now = _utc_now_iso()
-
             task.artifacts.append(
                 TaskArtifactRef(
                     label=f"shell[{process_id[:8]}]",
@@ -607,10 +414,84 @@ class TaskShellWaitTool(ToolSpec):
 
         merged_meta = dict(wait_result.metadata)
         merged_meta["process_id"] = process_id
-        if task_id_opt is not None:
-            merged_meta["task_id"] = task_id_opt
+        if task_id is not None:
+            merged_meta["task_id"] = task_id
         return ToolResult(
             success=wait_result.success,
             content=wait_result.content,
             metadata=merged_meta,
         )
+
+
+class TaskStopTool(ToolSpec):
+    """Unified stop for all three background-entity kinds.
+
+    - ``task_id`` → cancel a queued/running durable task (including the
+      workflow-detach durable stop-intent write).
+    - ``agent_id`` → cancel a sub-agent.
+    - ``process_id`` → terminate a background shell process.
+    """
+
+    def name(self) -> str:
+        return "task_stop"
+
+    def description(self) -> str:
+        return (
+            "Stop background work: cancel a queued or running durable task "
+            "via 'task_id', a sub-agent via 'agent_id', or a background "
+            "shell process via 'process_id' (exactly one required)."
+        )
+
+    def input_schema(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "string", "description": "Durable task id"},
+                "agent_id": {"type": "string", "description": "Sub-agent id"},
+                "process_id": {
+                    "type": "string",
+                    "description": "Background shell process id",
+                },
+            },
+            "additionalProperties": False,
+        }
+
+    def capabilities(self) -> list[ToolCapability]:
+        return [ToolCapability.REQUIRES_APPROVAL]
+
+    def approval_requirement(self) -> ApprovalRequirement:
+        return ApprovalRequirement.REQUIRED
+
+    async def execute(
+        self, input_data: dict[str, Any], context: ToolContext
+    ) -> ToolResult:
+        process_id = _optional_string(input_data, "process_id")
+        agent_id = _optional_string(input_data, "agent_id")
+        if process_id is not None or agent_id is not None:
+            # Sub-agent / background-process cancel — same semantics as the
+            # retired agent action="cancel" (rejects ambiguous ids).
+            from deepseek_tui.tools.subagent.tools import _execute_cancel
+
+            return await _execute_cancel(input_data, context)
+
+        task_id = _task_id_from_input(input_data, context)
+        manager = _require_manager(context)
+        try:
+            task = await manager.cancel_task(task_id)
+        except KeyError as exc:
+            raise ToolError(str(exc)) from exc
+        # Persist durable stop for workflow-detach jobs so a crash mid-cancel
+        # still prevents the next driver from continuing the run.
+        try:
+            from deepseek_tui.workflow.detach import parse_detach_prompt
+            from deepseek_tui.workflow.store import write_stop_intent
+
+            parsed = parse_detach_prompt(task.prompt)
+            if parsed is not None:
+                write_stop_intent(
+                    parsed["run_id"],
+                    workspace=Path(parsed["workspace"]),
+                )
+        except Exception:  # noqa: BLE001 — cancel already succeeded
+            pass
+        return _task_result("task_stop", task)

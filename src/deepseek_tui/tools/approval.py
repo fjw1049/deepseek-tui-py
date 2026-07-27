@@ -194,6 +194,10 @@ def build_approval_key(tool_name: str, tool_input: Any) -> ApprovalKey:
         # The merged ``agent`` tool dispatches by ``action`` — approving a
         # spawn for the session must not bleed into send_input/cancel, and
         # id-scoped actions (cancel/send_input/result) stay per-target.
+        if isinstance(tool_input, dict):
+            raw_resume = tool_input.get("resume")
+            if isinstance(raw_resume, str) and raw_resume:
+                return ApprovalKey(f"agent:resume:{raw_resume}")
         action = ""
         target = ""
         if isinstance(tool_input, dict):
@@ -207,6 +211,32 @@ def build_approval_key(tool_name: str, tool_input: Any) -> ApprovalKey:
                     break
         suffix = f":{target}" if target else ""
         return ApprovalKey(f"agent:{action or '<unknown>'}{suffix}")
+    if tool_name == "agent_resume":
+        # Retired tool name, forwarded at the execution layer to
+        # ``agent(resume=...)`` — share the fingerprint so one session grant
+        # covers both call forms.
+        target = ""
+        if isinstance(tool_input, dict):
+            raw_id = tool_input.get("agent_id")
+            if isinstance(raw_id, str):
+                target = raw_id
+        return ApprovalKey(f"agent:resume:{target}")
+    if tool_name in ("task_stop", "task_cancel"):
+        # Unified stop tool — keep the grant target-scoped: approving a stop
+        # for task/agent/process A must not green-light stopping B (or a
+        # different kind of entity with a colliding id). The retired
+        # ``task_cancel`` name forwards to ``task_stop`` at the execution
+        # layer, so both share the fingerprint (one session grant covers
+        # both call forms).
+        target = ""
+        if isinstance(tool_input, dict):
+            for id_key in ("task_id", "agent_id", "process_id"):
+                raw_id = tool_input.get(id_key)
+                if isinstance(raw_id, str) and raw_id:
+                    target = f"{id_key}:{raw_id}"
+                    break
+        suffix = f":{target}" if target else ""
+        return ApprovalKey(f"task_stop{suffix}")
     return ApprovalKey(f"tool:{tool_name}")
 
 

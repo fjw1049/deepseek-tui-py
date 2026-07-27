@@ -1774,8 +1774,7 @@ async def test_active_plugin_whitelist_read_only(tmp_path, monkeypatch) -> None:
         # Scenario base is generous: explore + write + code_execution + shell
         # + agents (authors rarely declare allowed-tools). Manifest
         # permissions: ["read"] is advisory UI, not a tool-surface cut.
-        assert {"read_file", "grep_files", "list_dir", "load_skill"} <= wl
-        assert {"file_search", "git", "project_map"} <= wl
+        assert {"read_file", "grep_files", "file_search", "load_skill"} <= wl
         assert {"write_file", "edit_file"} <= wl
         assert {"exec_shell", "code_execution", "agent"} <= wl
         # Orchestration / mutating GitHub stay out unless skill-declared.
@@ -1980,7 +1979,7 @@ async def test_render_plugin_context_block_includes_path_and_read_grant(
         # The resolved plugin directory path is communicated to the model.
         assert str((plugins_dir / "ro").resolve()) in block
         # The read grant is stated explicitly (overrides path-escape rule).
-        assert "read_file / list_dir / grep" in block
+        assert "read_file / file_search / grep" in block
         assert "OVERRIDES the path-escape rule" in block
         assert "Declared permissions: read" in block
         # No MCP -> no inactive-MCP note.

@@ -2,10 +2,10 @@
 
 Pins step 2 of the robustness fix: the hint after an exec_shell timeout
 must be driven by what the command was doing and what the runtime has
-wired, not a hardcoded "use task_shell_start". The previous behavior
-recommended task_shell_start unconditionally, which is wrong on the main
-agent path (no active durable task) and useless for a ``curl`` that
-should have used fetch_url in the first place.
+wired, not a hardcoded "use a durable task". The previous behavior
+recommended task-attached background shells unconditionally, which is
+wrong on the main agent path (no active durable task) and useless for a
+``curl`` that should have used fetch_url in the first place.
 """
 
 from __future__ import annotations
@@ -84,25 +84,25 @@ def test_curl_job_hint_is_fetch_url():
     assert _timeout_job_hint(cmd, _ctx()) == "fetch_url"
 
 
-# --- durable task path → task_shell_start only when actually wired ---
+# --- durable task path → background shell + task_output when wired ---
 
-def test_long_command_with_durable_task_suggests_task_shell_start():
+def test_long_command_with_durable_task_suggests_background_shell():
     cmd = "pytest -n auto"
     # A TaskManager-like object is enough; resolver only checks truthiness.
     ctx = _ctx(task_manager=object(), active_task_id="task_abc")
     hint = _timeout_fallback_hint(cmd, ctx)
-    assert "task_shell_start" in hint
-    assert _timeout_job_hint(cmd, ctx) == "task_shell_start"
+    assert "exec_shell(background=true)" in hint
+    assert "task_output" in hint
+    assert _timeout_job_hint(cmd, ctx) == "exec_shell_background"
 
 
 def test_task_manager_without_active_task_id_suggests_create_task_first():
-    """task_shell_start needs an active task id; if a manager is wired but
-    no task is active, guide the model to create one first."""
+    """With a manager wired but no active task, guide the model to create a
+    durable task first (or fall back to a background shell + task_output)."""
     cmd = "pytest -n auto"
     ctx = _ctx(task_manager=object(), active_task_id=None)
     hint = _timeout_fallback_hint(cmd, ctx)
     assert "task_create" in hint
-    assert "task_shell_start" in hint
     assert _timeout_job_hint(cmd, ctx) == "task_create"
 
 
@@ -112,7 +112,7 @@ def test_default_long_command_suggests_background_shell():
     cmd = "npm run build"
     hint = _timeout_fallback_hint(cmd, _ctx())
     assert "exec_shell(background=true)" in hint
-    assert 'agent tool (action="result")' in hint
+    assert "task_output" in hint
     assert _timeout_job_hint(cmd, _ctx()) == "exec_shell_background"
 
 

@@ -36,12 +36,13 @@ def test_focus_read_base_is_registry_plus_meta() -> None:
     assert "exec_interact" not in FOCUS_READ_BASE
 
 
-def test_current_time_registered_without_automations() -> None:
+def test_current_time_not_registered_without_automations() -> None:
+    """current_time was removed (date is injected via the Environment block)."""
     cfg = Config()
     assert cfg.features.automations is False
     names = set(build_default_registry(cfg).names())
-    assert "current_time" in names
-    assert "automation_create" not in names
+    assert "current_time" not in names
+    assert "cron_create" not in names
 
 
 def test_shell_active_sets_have_no_ghost_aliases() -> None:
@@ -49,4 +50,4 @@ def test_shell_active_sets_have_no_ghost_aliases() -> None:
     assert "exec_interact" not in _ALWAYS_ACTIVE_TOOLS
     assert "exec_wait" not in _SHELL_TOOLS
     assert "exec_interact" not in _SHELL_TOOLS
-    assert {"exec_shell", "exec_shell_interact"} <= _SHELL_TOOLS
+    assert {"exec_shell"} <= _SHELL_TOOLS

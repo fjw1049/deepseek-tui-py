@@ -73,7 +73,7 @@ def _deepseek_version() -> str:
 # Calendar date frozen at process start (first render). Survives the whole
 # server lifetime so the Environment block stays KV-prefix-stable; refresh
 # only happens on process restart. Year-month-day is enough for as-of /
-# "latest" reasoning; second-precision remains on the ``current_time`` tool.
+# "latest" reasoning; finer precision is available via ``exec_shell date``.
 _PROCESS_TODAY: str | None = None
 
 
@@ -127,8 +127,8 @@ def render_plugin_context(
     """Render the ``## Active Plugin`` block for a mounted plugin.
 
     Tells the model two things as one bundle: (a) the plugin's directory
-    path, and (b) that ``read_file`` / ``list_dir`` / ``grep`` are permitted
-    under it. The read grant is applied silently via
+    path, and (b) that ``read_file`` / ``file_search`` / ``grep`` are
+    permitted under it. The read grant is applied silently via
     ``ToolContext.extra_read_roots`` at runtime; without this block the model
     only sees base.md's path-escape rule ("paths outside the workspace are
     rejected") and would never attempt to read plugin files. The block
@@ -144,7 +144,7 @@ def render_plugin_context(
         f'You are operating with the plugin "{name}" (v{version}) mounted for this session.',
         "",
         f"- Plugin directory: {path}",
-        "- Read access: you MAY use read_file / list_dir / grep under the plugin "
+        "- Read access: you MAY use read_file / file_search / grep under the plugin "
         "directory above. This OVERRIDES the path-escape rule (paths outside the "
         "workspace are normally rejected) for this directory only, for read operations.",
         "- Write operations remain confined to the workspace.",
@@ -522,19 +522,14 @@ TOOL_PROFILE_CRON = "cron"
 # Composer: schedule creation only — no MCP, no tool_search, no shell.
 _AUTOMATION_COMPOSER_NATIVE = frozenset(
     {
-        "current_time",
-        "automation_create",
-        "automation_list",
-        "automation_read",
-        "automation_update",
-        "automation_pause",
-        "automation_resume",
-        "automation_delete",
-        "automation_run",
+        "cron_create",
+        "cron_list",
+        "cron_delete",
     }
 )
 
-# Cron execution: search/fetch + selected MCP families; no automation_* churn.
+# Cron execution: search/fetch + selected MCP families; no cron-management
+# churn.
 _CRON_NATIVE = frozenset(
     {
         "web_search",

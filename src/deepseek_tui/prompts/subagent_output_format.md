@@ -55,17 +55,15 @@ workspace boundary. Reach for `exec_shell` only for things the typed tools do
 not cover (build, test, format, lint, ad-hoc one-liners).
 
 - Read a file: `read_file` (NOT `exec_shell` with `cat`/`head`/`tail`).
-- List a directory: `list_dir` (NOT `exec_shell` with `ls`).
+- List a directory: `file_search` (or `exec_shell` with `ls`).
 - Search file contents: `grep_files` (NOT `exec_shell` with `rg`/`grep`).
 - Find files by name: `file_search` (NOT `exec_shell` with `find`).
 - Single search/replace edit in one file: `edit_file` (one call per
   replacement; batch independent edits in the same turn).
 - Brand-new file or full rewrite: `write_file`.
-- Inspect git state: `git` (status/diff/log/show/blame) (NOT `exec_shell`
-  with `git`).
+- Inspect git state: `exec_shell` with `git` (status/diff/log/show/blame).
 - Web lookup: `web_search` / `fetch_url` (NOT `exec_shell` with `curl`).
-- Run tests / build / format / lint: `run_tests` when applicable, otherwise
-  `exec_shell` is correct.
+- Run tests / build / format / lint: `exec_shell`.
 
 Always read a file with `read_file` before patching it. Patches written blind
 almost always fail to apply.

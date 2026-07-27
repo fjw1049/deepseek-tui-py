@@ -23,8 +23,17 @@ export function taskListTitle(task: Pick<TaskItemView, 'id' | 'prompt'>, maxChar
 // Only tools that reference a single, conversation-scoped task define
 // membership. `task_list` is intentionally excluded: it returns the
 // process-global task history (often dozens of stale records), which would
-// flood the panel with tasks this conversation never created.
-const TASK_TOOL_NAMES = new Set(['task_create', 'task_read', 'task_cancel', 'task_resume'])
+// flood the panel with tasks this conversation never created. Retired names
+// (`task_read` / `task_cancel` / `task_resume`) stay listed for historical
+// transcripts.
+const TASK_TOOL_NAMES = new Set([
+  'task_create',
+  'task_output',
+  'task_stop',
+  'task_read',
+  'task_cancel',
+  'task_resume'
+])
 
 export const TERMINAL_TASK_STATUSES: ReadonlySet<TaskStatus> = new Set<TaskStatus>([
   'completed',
