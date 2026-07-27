@@ -287,9 +287,10 @@ export function Workbench(): ReactElement {
   const [leftSidebarWidth, setLeftSidebarWidth] = useState(() =>
     readStoredWidth(LEFT_PANEL_WIDTH_KEY, LEFT_PANEL_DEFAULT)
   )
-  const [leftSidebarCollapsed, setLeftSidebarCollapsed] = useState(() =>
-    readStoredBoolean(LEFT_PANEL_COLLAPSED_KEY, false)
-  )
+  // Cold start always opens the default expanded shell (Codex-style). Session
+  // toggles still persist below so a mid-session preference is remembered only
+  // until the next launch.
+  const [leftSidebarCollapsed, setLeftSidebarCollapsed] = useState(false)
   const [rightSidebarWidth, setRightSidebarWidth] = useState(() =>
     readStoredWidth(RIGHT_PANEL_WIDTH_KEY, RIGHT_CONTEXT_DEFAULT)
   )

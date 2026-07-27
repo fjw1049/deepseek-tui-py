@@ -306,6 +306,136 @@ html,
   font-synthesis: none;
 }
 
+/* Startup: calm board → veil lifts → sidebar then main settle in. */
+.ds-app-root--startup {
+  position: relative;
+}
+
+.ds-startup-blank {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  overflow: hidden;
+  background: var(--bg-sidebar);
+}
+
+.ds-startup-blank--exit {
+  animation: ds-startup-blank-exit 0.34s ease-out forwards;
+  pointer-events: none;
+}
+
+.ds-startup-breath {
+  position: absolute;
+  inset: -30%;
+  pointer-events: none;
+  background: radial-gradient(
+    ellipse 48% 36% at 42% 48%,
+    color-mix(in srgb, var(--bg-canvas) 58%, transparent) 0%,
+    transparent 72%
+  );
+  opacity: 0.35;
+  animation: ds-startup-breath 3.6s ease-in-out infinite;
+}
+
+.ds-startup-blank--exit .ds-startup-breath {
+  animation: none;
+  opacity: 0;
+  transition: opacity 0.28s ease-out;
+}
+
+.ds-startup-stage {
+  position: relative;
+  z-index: 10;
+  height: 100%;
+  min-height: 0;
+}
+
+.ds-startup-stage--enter .ds-workbench-sidebar-wrap {
+  animation: ds-startup-sidebar-in 0.48s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.ds-startup-stage--enter .ds-workbench-main {
+  animation: ds-startup-main-in 0.5s cubic-bezier(0.22, 1, 0.36, 1) 0.07s both;
+}
+
+.ds-startup-stage--live .ds-workbench-sidebar-wrap,
+.ds-startup-stage--live .ds-workbench-main {
+  animation: none;
+  opacity: 1;
+  transform: none;
+}
+
+@keyframes ds-startup-breath {
+  0%,
+  100% {
+    opacity: 0.22;
+    transform: translate3d(-1.5%, 0, 0) scale(1);
+  }
+  50% {
+    opacity: 0.55;
+    transform: translate3d(2%, -1%, 0) scale(1.04);
+  }
+}
+
+@keyframes ds-startup-blank-exit {
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes ds-startup-sidebar-in {
+  from {
+    opacity: 0;
+    transform: translate3d(-14px, 0, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes ds-startup-main-in {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 8px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+[data-theme='dark'] .ds-startup-breath {
+  background: radial-gradient(
+    ellipse 48% 36% at 42% 48%,
+    color-mix(in srgb, var(--bg-canvas) 42%, transparent) 0%,
+    transparent 72%
+  );
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ds-startup-breath,
+  .ds-startup-blank--exit,
+  .ds-startup-stage--enter .ds-workbench-sidebar-wrap,
+  .ds-startup-stage--enter .ds-workbench-main {
+    animation: none;
+  }
+
+  .ds-startup-breath {
+    opacity: 0;
+  }
+
+  .ds-startup-blank--exit {
+    opacity: 0;
+  }
+
+  .ds-startup-stage--enter .ds-workbench-sidebar-wrap,
+  .ds-startup-stage--enter .ds-workbench-main {
+    opacity: 1;
+    transform: none;
+  }
+}
+
 /* Primary UI shells: everything inside follows settings → General → UI font. */
 .ds-workbench-shell,
 .ds-workbench-main,
