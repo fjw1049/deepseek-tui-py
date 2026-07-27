@@ -2177,6 +2177,22 @@ samp {
   flex: 1 1 auto;
 }
 
+/* Sidebar lists stay scrollable (wheel/trackpad) but hide the ugly thumb. */
+.ds-sidebar-projects-scroll,
+.ds-sidebar-chats-list,
+.ds-sidebar-pinned-list {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.ds-sidebar-projects-scroll::-webkit-scrollbar,
+.ds-sidebar-chats-list::-webkit-scrollbar,
+.ds-sidebar-pinned-list::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  display: none;
+}
+
 .ds-sidebar-pinned-pane {
   display: flex;
   max-height: 28%;
