@@ -5496,8 +5496,8 @@ select:focus-visible,
 .ds-operation-rail {
   position: relative;
   z-index: 2;
-  flex: 0 0 clamp(13.5rem, 30cqi, 23rem);
-  width: clamp(13.5rem, 30cqi, 23rem);
+  flex: 0 0 clamp(15rem, 34cqi, 25rem);
+  width: clamp(15rem, 34cqi, 25rem);
   flex-direction: column;
   background: transparent;
   padding-right: clamp(0.75rem, 2cqi, 2rem);
