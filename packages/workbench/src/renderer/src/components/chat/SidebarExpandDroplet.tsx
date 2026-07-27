@@ -30,7 +30,7 @@ export function SidebarExpandDroplet({ onExpand }: Props): ReactElement | null {
       aria-label={t('sidebarExpand')}
       title={t('sidebarExpandShortcut')}
     >
-      <PanelLeftOpen className="h-3.5 w-3.5" strokeWidth={2} />
+      <PanelLeftOpen className="h-4 w-4" strokeWidth={1.85} />
     </button>,
     document.body
   )

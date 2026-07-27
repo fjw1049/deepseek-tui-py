@@ -123,6 +123,10 @@
   --ds-window-controls-safe-block: calc(42px / var(--ds-ui-scale, 1));
   /* Horizontal inset so chrome controls sit to the right of traffic lights. */
   --ds-window-controls-safe-inline: calc(72px / var(--ds-ui-scale, 1));
+  /* Keep in sync with BrowserWindow trafficLightPosition in main/index.ts.
+     Lights sit at y:14; optical centre reads a bit below the geometric 12px
+     midpoint once titlebar padding/zoom settle — nudge to 23px. */
+  --ds-traffic-light-center: calc(23px / var(--ds-ui-scale, 1));
 }
 
 [data-theme='dark'] {
@@ -1662,14 +1666,22 @@ samp {
   transition: padding-left 300ms cubic-bezier(0.32, 0.72, 0, 1);
 }
 
-/* Collapsed sidebar: the header inherits the window chrome. The expand toggle
-   now flows inside the topbar row, so only reserve the macOS traffic-light
-   inset (non-mac keeps the row's own padding). */
+/* Collapsed sidebar: clear the fixed expand droplet (same spot as collapse).
+   Subtract the shell's left inset so padding is relative to the content card. */
+.ds-workbench-sidebar-wrap[data-collapsed]
+  + .ds-workbench-main
+  .ds-workbench-topbar__inner {
+  padding-left: calc(16px + 1.75rem + 0.35rem - var(--ds-window-inset, 8px));
+}
+
 :root[data-platform='darwin']
   .ds-workbench-sidebar-wrap[data-collapsed]
   + .ds-workbench-main
   .ds-workbench-topbar__inner {
-  padding-left: calc(var(--ds-window-controls-safe-inline, 72px) + 0.375rem);
+  padding-left: calc(
+    var(--ds-window-controls-safe-inline, 72px) + 6px + 1.75rem + 0.35rem -
+      var(--ds-window-inset, 8px)
+  );
 }
 
 @media (min-width: 640px) {
@@ -4892,20 +4904,25 @@ html[data-theme='dark'] .ds-code-fullscreen .shiki span {
 }
 
 :root[data-platform='darwin'] .ds-sidebar-titlebar-row {
-  /* Droplet sits at safe-inline + 6px; subtract the 16px structural inset.
-     Height comes from --ds-header-height, which is calibrated so the centred
-     28px button lands exactly on the traffic-light line (21.75pt). */
+  /* Pin the collapse control to the traffic-light centreline (not the flex
+     midpoint of the 38px header, which sits ~2px too high). */
+  align-items: flex-start;
+  padding-top: calc(var(--ds-traffic-light-center) - 0.875rem);
+  /* Expand droplet uses left: safe-inline + 6px; subtract the 16px structural
+     inset (aside px-3 + wrapper px-1) so the collapse control shares that x. */
   padding-left: calc(var(--ds-window-controls-safe-inline, 72px) - 10px);
 }
 
-/* Quiet ghost trigger to reopen the collapsed sidebar. Sits in the titlebar
-   row, right after the macOS traffic lights (Synara SidebarTrigger). */
+/* Quiet ghost trigger to reopen the collapsed sidebar. Must share geometry
+   with `.ds-sidebar-titlebar-row > .ds-sidebar-toggle-button`:
+   - left: aside px-3 (12) + wrapper px-1 (4) + titlebar pad = 16px base /
+     darwin safe-inline + 6px
+   - top: traffic-light centreline on macOS; header midpoint elsewhere */
 .ds-sidebar-expand-droplet {
   position: fixed;
   z-index: 60;
   left: 16px;
-  /* Vertically centre the 28px control in the 38px header row. */
-  top: 5px;
+  top: calc((var(--ds-header-height, 38px) - 1.75rem) / 2);
   display: inline-flex;
   height: 1.75rem;
   width: 1.75rem;
@@ -4928,9 +4945,7 @@ html[data-theme='dark'] .ds-code-fullscreen .shiki span {
 
 :root[data-platform='darwin'] .ds-sidebar-expand-droplet {
   left: calc(var(--ds-window-controls-safe-inline, 72px) + 6px);
-  /* Same measured centreline as .ds-sidebar-titlebar-row (21.75pt; native
-     chrome ignores the body zoom, hence the divide). */
-  top: calc(21.75px / var(--ds-ui-scale, 1) - 0.875rem);
+  top: calc(var(--ds-traffic-light-center) - 0.875rem);
 }
 
 .ds-drag button,

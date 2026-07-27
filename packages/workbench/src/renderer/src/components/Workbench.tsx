@@ -1,7 +1,7 @@
 import type { PointerEvent as ReactPointerEvent, ReactElement, RefObject } from 'react'
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Globe2, PanelLeftOpen } from 'lucide-react'
+import { Globe2 } from 'lucide-react'
 import { useShallow } from 'zustand/react/shallow'
 import type { ChatBlock } from '../agent/types'
 import { useChatStore } from '../store/chat-store'
@@ -1059,10 +1059,9 @@ export function Workbench(): ReactElement {
           style={{ cursor: resizeShieldCursor }}
         />
       ) : null}
-      {/* Chat route reopens the sidebar from the topbar button below (Synara
-          SidebarTrigger in the content header); the floating droplet remains
-          for routes without that header (plugins/automation/channels). */}
-      {leftSidebarCollapsed && route !== 'chat' ? (
+      {/* Fixed expand control — same window coords as the sidebar collapse
+          trigger, so the toggle never jumps when the rail opens/closes. */}
+      {leftSidebarCollapsed ? (
         <SidebarExpandDroplet onExpand={expandLeftSidebar} />
       ) : null}
       {/* Stays mounted while collapsed so the offcanvas slide can animate: the
@@ -1183,17 +1182,6 @@ export function Workbench(): ReactElement {
           <section className="ds-drag flex min-h-0 min-w-0 flex-1 flex-col">
             <header className="ds-workbench-topbar ds-surface-divider relative z-10 shrink-0 bg-transparent">
               <div className="ds-workbench-topbar__inner flex w-full min-w-0 items-center justify-between gap-2 py-0.5">
-                {leftSidebarCollapsed ? (
-                  <button
-                    type="button"
-                    onClick={expandLeftSidebar}
-                    className="ds-sidebar-toggle-button ds-no-drag shrink-0"
-                    aria-label={t('sidebarExpand')}
-                    title={t('sidebarExpandShortcut')}
-                  >
-                    <PanelLeftOpen className="h-4 w-4" strokeWidth={1.85} />
-                  </button>
-                ) : null}
                 <div className="min-w-0 flex-1 overflow-hidden">
                   <SessionHeader compact className="min-w-0" />
                 </div>
