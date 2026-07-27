@@ -48,6 +48,23 @@ type DevWebviewTag = HTMLElement & {
   openDevTools(): void
   reloadIgnoringCache(): void
   stop(): void
+  setAudioMuted(muted: boolean): void
+  executeJavaScript(code: string): Promise<unknown>
+}
+
+/** Pause in-page media so background/hidden guests stop decoding video frames. */
+function pauseGuestMedia(webview: DevWebviewTag): void {
+  void webview
+    .executeJavaScript(
+      `(() => {
+        for (const el of document.querySelectorAll('video, audio')) {
+          try { el.pause() } catch {}
+        }
+      })()`
+    )
+    .catch(() => {
+      /* guest may be mid-navigation */
+    })
 }
 
 type WebviewNavigateEvent = Event & {
@@ -358,6 +375,22 @@ export function DevBrowserPanel({
       }
     }
   }, [activeTabId])
+
+  // Inactive guests used to stay `display:none` while still decoding page
+  // media. Chromium then logs ffmpeg_common "Unsupported pixel format: -1"
+  // (AV_PIX_FMT_NONE) for zero-sized / background video frames. Keep full
+  // geometry via absolute stacking, mute + pause media on background tabs.
+  useEffect(() => {
+    for (const [tabId, webview] of webviewRefs.current.entries()) {
+      const active = tabId === activeTabId
+      try {
+        webview.setAudioMuted(!active)
+      } catch {
+        /* webview may not expose muting yet */
+      }
+      if (!active) pauseGuestMedia(webview)
+    }
+  }, [activeTabId, tabs])
 
   useEffect(() => {
     if (!externalError) return
@@ -765,17 +798,22 @@ export function DevBrowserPanel({
             </button>
           </div>
         ) : view === 'webview' ? (
-          // Every tab keeps its webview mounted (hidden when inactive, same
-          // pattern as the terminal panel) so page state, scroll position and
-          // history survive tab switches instead of reloading.
+          // Every tab keeps its webview mounted (inactive tabs stay in the
+          // layout tree with full size — visibility/pointer only) so page
+          // state, scroll and history survive switches. Avoid `display:none`:
+          // it zero-sizes the guest compositor and aggravates Chromium media
+          // decode noise (ffmpeg "Unsupported pixel format: -1").
           <div className="relative h-full w-full">
             {tabs.map((tab) =>
               tab.url ? (
                 <div
                   key={tab.id}
                   className={
-                    tab.id === activeTabId ? 'h-full w-full' : 'hidden h-full w-full'
+                    tab.id === activeTabId
+                      ? 'absolute inset-0 z-10 h-full w-full'
+                      : 'pointer-events-none invisible absolute inset-0 z-0 h-full w-full'
                   }
+                  aria-hidden={tab.id !== activeTabId}
                 >
                   <DevBrowserWebview
                     tabId={tab.id}
