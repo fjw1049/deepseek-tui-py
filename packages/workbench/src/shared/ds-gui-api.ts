@@ -165,8 +165,8 @@ export type SystemNotificationResult =
   | { ok: true; shown: boolean; reason?: string }
   | { ok: false; message: string }
 export type UpstreamModelsResult =
-  | { ok: true; modelIds: string[] }
-  | { ok: false; message: string }
+  | { ok: true; modelIds: string[]; source?: 'upstream' | 'fallback' }
+  | { ok: false; message: string; fallbackModelIds?: string[] }
 export type DeepseekSpawnResult = {
   started: boolean
   healthy: boolean
@@ -241,6 +241,10 @@ export type AsrConfigFileResult = {
 
 export type AsrConfigSaveResult = { path: string }
 
+export type AsrTestResult =
+  | { ok: true; model: string; latencyMs: number; message: string }
+  | { ok: false; model: string; latencyMs: number; message: string }
+
 export type TrendingPeriod = 'daily' | 'weekly' | 'monthly'
 export type TrendingResult =
   | { ok: true; repos: TrendingRepo[]; period: TrendingPeriod; cachedAt: number }
@@ -304,8 +308,15 @@ export type DsGuiApi = {
   }) => Promise<AsrTranscribeResult>
   getAsrConfig: () => Promise<AsrConfigFileResult>
   setAsrConfig: (config: AsrConfigFileResult['config']) => Promise<AsrConfigSaveResult>
+  testAsrEndpoint: (payload: {
+    apiKey: string
+    model: string
+    baseUrl?: string
+  }) => Promise<AsrTestResult>
   runtimeRequest: (path: string, method?: string, body?: string) => Promise<RuntimeRequestResult>
   fetchUpstreamModels: () => Promise<UpstreamModelsResult>
+  /** List models for a built-in vendor (DeepSeek / Kimi / GLM / 火山). */
+  fetchProviderModels: (providerId: string) => Promise<UpstreamModelsResult>
   deepseekSpawnIfNeeded: () => Promise<DeepseekSpawnResult>
   prepareDeepseekBinary: () => Promise<{ ok: true; path: string } | { ok: false; message: string }>
   pickWorkspaceDirectory: (defaultPath?: string) => Promise<WorkspacePickResult>

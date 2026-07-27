@@ -235,6 +235,26 @@ PROVIDER_DEFAULTS: dict[str, ProviderDefaults] = {
         model="deepseek-v4-pro",
         flash_model="deepseek-v4-flash",
     ),
+    "kimi": ProviderDefaults(
+        base_url="https://api.kimi.com/coding/v1",
+        model="kimi-k3",
+        flash_model="kimi-k2.6",
+    ),
+    "moonshot": ProviderDefaults(
+        base_url="https://api.kimi.com/coding/v1",
+        model="kimi-k3",
+        flash_model="kimi-k2.6",
+    ),
+    "glm": ProviderDefaults(
+        base_url="https://open.bigmodel.cn/api/paas/v4",
+        model="glm-5.1",
+        flash_model="glm-4.7-flash",
+    ),
+    "zhipu": ProviderDefaults(
+        base_url="https://open.bigmodel.cn/api/paas/v4",
+        model="glm-5.1",
+        flash_model="glm-4.7-flash",
+    ),
     "openai": ProviderDefaults(
         base_url="https://api.openai.com/v1",
         model="gpt-4.1",
@@ -264,11 +284,13 @@ PROVIDER_DEFAULTS: dict[str, ProviderDefaults] = {
     ),
     "volcengine-ark": ProviderDefaults(
         base_url="https://ark.cn-beijing.volces.com/api/coding/v3",
-        model="GLM-5.2",
+        model="glm-5.1",
+        flash_model="deepseek-v3.2",
     ),
     "volcengine-ark-anthropic": ProviderDefaults(
         base_url="https://ark.cn-beijing.volces.com/api/coding",
-        model="GLM-5.2",
+        model="glm-5.1",
+        flash_model="deepseek-v3.2",
         protocol="anthropic",
     ),
 }

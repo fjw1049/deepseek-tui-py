@@ -1,4 +1,6 @@
+import { DEFAULT_ASR_MODEL } from '../../shared/app-settings'
 import { resolveAsrTranscriptionEndpoint } from '../../shared/asr-config'
+import { buildSilentWavProbeBytes } from '../../shared/asr-probe-wav'
 
 export type TranscribeAudioInput = {
   apiKey: string
@@ -12,6 +14,14 @@ export type TranscribeAudioInput = {
 export type TranscribeAudioResult =
   | { ok: true; text: string }
   | { ok: false; message: string }
+
+export type ProbeAsrResult =
+  | { ok: true; model: string; latencyMs: number; message: string }
+  | { ok: false; model: string; latencyMs: number; message: string }
+
+export function buildSilentWavProbe(durationMs = 100, sampleRate = 16_000): Buffer {
+  return Buffer.from(buildSilentWavProbeBytes(durationMs, sampleRate))
+}
 
 type ApiErrorPayload = {
   text?: string
@@ -91,4 +101,49 @@ export async function transcribeAudio(input: TranscribeAudioInput): Promise<Tran
   }
 
   return { ok: true, text }
+}
+
+/**
+ * Probe ASR credentials by posting a tiny silent WAV.
+ * HTTP 200 means the key / model / endpoint are accepted (empty transcript is fine).
+ */
+export async function probeAsrEndpoint(input: {
+  apiKey: string
+  model: string
+  baseUrl?: string
+}): Promise<ProbeAsrResult> {
+  const model = input.model.trim() || DEFAULT_ASR_MODEL
+  const start = Date.now()
+  const result = await transcribeAudio({
+    apiKey: input.apiKey,
+    model,
+    baseUrl: input.baseUrl,
+    audio: buildSilentWavProbe(),
+    fileName: 'asr-probe.wav',
+    mimeType: 'audio/wav'
+  })
+  const latencyMs = Date.now() - start
+  if (result.ok) {
+    return {
+      ok: true,
+      model,
+      latencyMs,
+      message: `ASR ok (${latencyMs}ms)`
+    }
+  }
+  // Empty/silent audio still proves auth + model acceptance when the API returns 200.
+  if (result.message === 'No speech detected in the recording.') {
+    return {
+      ok: true,
+      model,
+      latencyMs,
+      message: `ASR endpoint accepted the probe (${latencyMs}ms)`
+    }
+  }
+  return {
+    ok: false,
+    model,
+    latencyMs,
+    message: result.message
+  }
 }

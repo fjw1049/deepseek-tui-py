@@ -2,7 +2,12 @@ import { spawn } from 'node:child_process'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import type { AppSettingsV1 } from '../shared/app-settings'
-import { normalizeCustomModelContextWindow } from '../shared/app-settings'
+import {
+  BUILTIN_LLM_PROVIDER_IDS,
+  BUILTIN_LLM_PROVIDERS,
+  normalizeCustomModelContextWindow,
+  resolveProviderDefaultModel
+} from '../shared/app-settings'
 import { upsertTomlSections } from '../shared/toml-section'
 import {
   resolveDeepseekConfigPath,
@@ -46,6 +51,13 @@ function deepseekConfigFieldsChanged(prev: AppSettingsV1, next: AppSettingsV1): 
     a.baseUrl !== b.baseUrl ||
     a.approvalPolicy !== b.approvalPolicy ||
     a.sandboxMode !== b.sandboxMode
+  )
+}
+
+function llmProviderConfigChanged(prev: AppSettingsV1, next: AppSettingsV1): boolean {
+  return (
+    prev.defaultLlmProviderId !== next.defaultLlmProviderId ||
+    JSON.stringify(prev.llmProviders) !== JSON.stringify(next.llmProviders)
   )
 }
 
@@ -108,6 +120,7 @@ async function runDeepseekCommand(
 export function deepseekTuiConfigChanged(prev: AppSettingsV1, next: AppSettingsV1): boolean {
   return (
     deepseekConfigFieldsChanged(prev, next) ||
+    llmProviderConfigChanged(prev, next) ||
     prev.locale !== next.locale ||
     JSON.stringify(prev.customEndpoints) !== JSON.stringify(next.customEndpoints)
   )
@@ -209,6 +222,69 @@ async function syncCustomEndpointConfig(
   await writeFile(configPath, next, 'utf8')
 }
 
+async function syncBuiltinLlmProviderConfig(
+  settings: AppSettingsV1,
+  previous?: AppSettingsV1
+): Promise<void> {
+  const configPath = resolveDeepseekConfigPath()
+  let content = ''
+  try {
+    content = await readFile(configPath, 'utf8')
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+  }
+
+  const activeIds = new Set(
+    BUILTIN_LLM_PROVIDER_IDS.filter((id) => settings.llmProviders[id].apiKey.trim())
+  )
+  const removed = new Set(
+    BUILTIN_LLM_PROVIDER_IDS.filter((id) => !activeIds.has(id)).map((id) => `providers.${id}`)
+  )
+  // Drop stale sections when a vendor key is cleared.
+  if (previous) {
+    for (const id of BUILTIN_LLM_PROVIDER_IDS) {
+      if (previous.llmProviders[id].apiKey.trim() && !activeIds.has(id)) {
+        removed.add(`providers.${id}`)
+      }
+    }
+  }
+  for (const section of [...removed]) {
+    removed.add(`${section}.context_windows`)
+  }
+  // Per-model window tables are rewritten wholesale each sync.
+  for (const id of activeIds) {
+    removed.add(`providers.${id}.context_windows`)
+  }
+  content = removeTomlSections(content, removed)
+
+  const sections: Record<
+    string,
+    Record<string, string | number | boolean | undefined>
+  > = {}
+  for (const id of activeIds) {
+    const def = BUILTIN_LLM_PROVIDERS[id]
+    const config = settings.llmProviders[id]
+    sections[`providers.${id}`] = {
+      protocol: def.protocol,
+      base_url: def.baseUrl,
+      api_key: config.apiKey.trim(),
+      model: resolveProviderDefaultModel(id, config)
+    }
+    const windows: Record<string, number> = {}
+    for (const model of config.models) {
+      if (!model.enabled || !model.id.trim()) continue
+      windows[`"${model.id.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`] =
+        normalizeCustomModelContextWindow(model.contextWindow)
+    }
+    if (Object.keys(windows).length > 0) {
+      sections[`providers.${id}.context_windows`] = windows
+    }
+  }
+  const next = upsertTomlSections(content, sections)
+  await mkdir(dirname(configPath), { recursive: true })
+  await writeFile(configPath, next, 'utf8')
+}
+
 export async function syncDeepseekTuiConfig(
   settings: AppSettingsV1,
   previous?: AppSettingsV1
@@ -218,9 +294,16 @@ export async function syncDeepseekTuiConfig(
   const commands: DeepseekCommand[] = []
   const current = settings.deepseek
   const prev = previous?.deepseek
+  const defaultProviderId = settings.defaultLlmProviderId
+  const defaultProvider = BUILTIN_LLM_PROVIDERS[defaultProviderId]
+  const defaultProviderKey = settings.llmProviders[defaultProviderId].apiKey.trim()
 
-  if (!previous || deepseekConfigFieldsChanged(previous, settings)) {
-    commands.push({ args: ['config', 'set', 'provider', 'deepseek'] })
+  if (
+    !previous ||
+    deepseekConfigFieldsChanged(previous, settings) ||
+    llmProviderConfigChanged(previous, settings)
+  ) {
+    commands.push({ args: ['config', 'set', 'provider', defaultProviderId] })
   }
 
   if (!prev || prev.approvalPolicy !== current.approvalPolicy) {
@@ -235,8 +318,14 @@ export async function syncDeepseekTuiConfig(
     })
   }
 
-  if (!prev || prev.baseUrl !== current.baseUrl) {
-    const baseUrl = current.baseUrl.trim()
+  if (
+    !previous ||
+    previous.defaultLlmProviderId !== defaultProviderId ||
+    previous.llmProviders[defaultProviderId].apiKey !==
+      settings.llmProviders[defaultProviderId].apiKey ||
+    prev?.baseUrl !== current.baseUrl
+  ) {
+    const baseUrl = defaultProvider.baseUrl
     commands.push(
       baseUrl
         ? { args: ['config', 'set', 'base_url', baseUrl] }
@@ -244,12 +333,18 @@ export async function syncDeepseekTuiConfig(
     )
   }
 
-  if (!prev || prev.apiKey !== current.apiKey) {
+  if (
+    !previous ||
+    previous.defaultLlmProviderId !== defaultProviderId ||
+    previous.llmProviders[defaultProviderId].apiKey !==
+      settings.llmProviders[defaultProviderId].apiKey ||
+    prev?.apiKey !== current.apiKey
+  ) {
     // On initial startup (no previous), read config.toml's api_key first.
     // If config.toml already has a non-empty key, don't overwrite it — the
     // user may have edited config.toml directly and the GUI cache is stale.
     let skipApiKeySync = false
-    if (!prev) {
+    if (!previous) {
       try {
         const configPath = resolveDeepseekConfigPath()
         const tomlContent = await readFile(configPath, 'utf8')
@@ -260,9 +355,8 @@ export async function syncDeepseekTuiConfig(
       } catch { /* file missing — proceed with sync */ }
     }
     if (!skipApiKeySync) {
-      const apiKey = current.apiKey.trim()
-      if (apiKey) {
-        commands.push({ args: ['config', 'set', 'api_key', apiKey] })
+      if (defaultProviderKey) {
+        commands.push({ args: ['config', 'set', 'api_key', defaultProviderKey] })
       } else {
         commands.push({ args: ['config', 'unset', 'api_key'] })
       }
@@ -277,6 +371,9 @@ export async function syncDeepseekTuiConfig(
   }
   if (!previous || previous.locale !== settings.locale) {
     await syncUiLocaleConfig(settings)
+  }
+  if (!previous || llmProviderConfigChanged(previous, settings)) {
+    await syncBuiltinLlmProviderConfig(settings, previous)
   }
   if (!previous || JSON.stringify(previous.customEndpoints) !== JSON.stringify(settings.customEndpoints)) {
     await syncCustomEndpointConfig(settings, previous)

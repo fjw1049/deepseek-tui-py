@@ -1,25 +1,18 @@
 import type { ReactElement, ReactNode } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
 import {
-  CUSTOM_MODEL_CONTEXT_WINDOW_DEFAULT,
-  CUSTOM_MODEL_CONTEXT_WINDOW_MAX,
-  CUSTOM_MODEL_CONTEXT_WINDOW_MIN,
   mergeAppearanceSettings,
   mergeClawSettings,
+  mergeLlmProviders,
   mergeShortcutsSettings,
-  normalizeCustomModelContextWindow,
   sandboxModeForApprovalPolicy,
   type AppearancePatchV1,
   type ApprovalPolicy,
   type AppSettingsV1,
+  type BuiltinLlmProviderId,
   type ClawSettingsPatchV1,
-  DEFAULT_ASR_BASE_URL,
-  DEFAULT_ASR_MODEL,
-  type AsrSettingsV1,
-  type CustomEndpointV1,
-  type EndpointProtocol,
+  type LlmProviderConfigV1,
   type ShortcutsPatchV1
 } from '@shared/app-settings'
 import {
@@ -40,17 +33,13 @@ import {
   Keyboard,
   Loader2,
   Palette,
-  Plus,
   RefreshCw,
   Settings,
   Shield,
   Archive,
   HardDrive,
   PawPrint,
-  Pencil,
-  Trash2,
-  X,
-  Zap
+  X
 } from 'lucide-react'
 import type { PetManifestEntry } from '@shared/pet-manifest'
 import { applyTheme, applyUiFontScale, applyUiFontFamily } from '../lib/apply-theme'
@@ -74,6 +63,7 @@ import { useChatStore, type SettingsRouteSection } from '../store/chat-store'
 import { AppearanceSettingsPanel } from './settings/AppearanceSettingsPanel'
 import { ArchiveSettingsPanel } from './settings/ArchiveSettingsPanel'
 import { DataSettingsPanel } from './settings/DataSettingsPanel'
+import { LlmProvidersPanel } from './settings/LlmProvidersPanel'
 import { ModelUsagePanel } from './settings/ModelUsagePanel'
 import { settingsBlockButtonClass } from './settings/SettingsActionToolbar'
 import { SettingsSelect } from './settings/SettingsSelect'
@@ -95,6 +85,8 @@ type SettingsPatch = Partial<
     | 'claw'
     | 'guiUpdate'
     | 'customEndpoints'
+    | 'asrProviders'
+    | 'llmProviders'
     | 'appearance'
     | 'shortcuts'
   >
@@ -106,6 +98,8 @@ type SettingsPatch = Partial<
   claw?: ClawSettingsPatchV1
   guiUpdate?: Partial<AppSettingsV1['guiUpdate']>
   customEndpoints?: AppSettingsV1['customEndpoints']
+  asrProviders?: AppSettingsV1['asrProviders']
+  llmProviders?: Partial<Record<BuiltinLlmProviderId, Partial<LlmProviderConfigV1>>>
   appearance?: AppearancePatchV1
   shortcuts?: ShortcutsPatchV1
 }
@@ -138,7 +132,9 @@ function mergeSettings(current: AppSettingsV1, patch: SettingsPatch): AppSetting
       ...current.deepseek,
       ...(patch.deepseek ?? {})
     },
+    llmProviders: mergeLlmProviders(current.llmProviders, patch.llmProviders),
     customEndpoints: patch.customEndpoints ?? current.customEndpoints,
+    asrProviders: patch.asrProviders ?? current.asrProviders,
     log: {
       ...current.log,
       ...(patch.log ?? {})
@@ -177,18 +173,10 @@ export function SettingsView(): ReactElement {
   const [usageRange, setUsageRange] = useState<UsageRange>('30d')
   const persistentUsage = usePersistentUsage(usageRange, usageRefreshKey)
   const [form, setForm] = useState<AppSettingsV1 | null>(null)
-  const [asrForm, setAsrForm] = useState<AsrSettingsV1>({
-    apiKey: '',
-    model: DEFAULT_ASR_MODEL,
-    baseUrl: DEFAULT_ASR_BASE_URL
-  })
-  const [asrConfigPath, setAsrConfigPath] = useState('~/.deepseek/config.toml')
   const [loadError, setLoadError] = useState<string | null>(null)
   const [workspacePickerError, setWorkspacePickerError] = useState<string | null>(null)
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle')
   const [saveError, setSaveError] = useState<string | null>(null)
-  const [showApiKey, setShowApiKey] = useState(false)
-  const [showAsrKey, setShowAsrKey] = useState(false)
   const [petEnabled, setPetEnabled] = useState(() => readPetEnabled())
   const [petSlug, setPetSlug] = useState(() => readPetSlug())
   const [petFavoriteSlugs, setPetFavoriteSlugs] = useState(() => readPetFavoriteSlugs())
@@ -208,7 +196,6 @@ export function SettingsView(): ReactElement {
   const [hooksNotice, setHooksNotice] = useState<InlineNotice | null>(null)
   const initializedCategory = useRef(false)
   const saveTimer = useRef<ReturnType<typeof window.setTimeout> | null>(null)
-  const asrSaveTimer = useRef<ReturnType<typeof window.setTimeout> | null>(null)
   const statusTimer = useRef<ReturnType<typeof window.setTimeout> | null>(null)
   const draftVersion = useRef(0)
   const formTheme = form?.theme
@@ -353,17 +340,6 @@ export function SettingsView(): ReactElement {
       .catch((e: unknown) => {
         if (!cancelled) setLoadError(e instanceof Error ? e.message : String(e))
       })
-    void window.dsGui
-      .getAsrConfig?.()
-      .then((result) => {
-        if (!cancelled) {
-          setAsrForm(result.config)
-          setAsrConfigPath(result.path)
-        }
-      })
-      .catch(() => {
-        /* optional until preload is updated */
-      })
     if (typeof window.dsGui?.getDeepseekPaths === 'function') {
       void window.dsGui.getDeepseekPaths().then((paths) => {
         if (!cancelled) {
@@ -398,10 +374,13 @@ export function SettingsView(): ReactElement {
   useEffect(() => {
     if (!form || initializedCategory.current) return
     initializedCategory.current = true
+    const hasBuiltinKey = Object.values(form.llmProviders ?? {}).some((entry) =>
+      Boolean(entry?.apiKey?.trim())
+    )
     const hasCustomKey = form.customEndpoints.some(
       (endpoint) => endpoint.enabled && endpoint.apiKey.trim()
     )
-    if (!form.deepseek.apiKey?.trim() && !hasCustomKey) {
+    if (!form.deepseek.apiKey?.trim() && !hasBuiltinKey && !hasCustomKey) {
       openSettings('models')
     }
   }, [form, openSettings])
@@ -456,31 +435,6 @@ export function SettingsView(): ReactElement {
     }
   }
 
-  const persistAsrConfig = async (snapshot: AsrSettingsV1): Promise<void> => {
-    if (typeof window.dsGui?.setAsrConfig !== 'function') return
-    try {
-      const result = await window.dsGui.setAsrConfig(snapshot)
-      setAsrConfigPath(result.path)
-    } catch (e) {
-      setSaveError(e instanceof Error ? e.message : String(e))
-      setSaveStatus('error')
-    }
-  }
-
-  const scheduleAsrSave = (next: AsrSettingsV1): void => {
-    if (asrSaveTimer.current) window.clearTimeout(asrSaveTimer.current)
-    asrSaveTimer.current = window.setTimeout(() => {
-      asrSaveTimer.current = null
-      void persistAsrConfig(next)
-    }, 450)
-  }
-
-  const updateAsr = (partial: Partial<AsrSettingsV1>): void => {
-    const next = { ...asrForm, ...partial }
-    setAsrForm(next)
-    scheduleAsrSave(next)
-  }
-
   const scheduleSave = (next: AppSettingsV1): void => {
     draftVersion.current += 1
     const version = draftVersion.current
@@ -517,11 +471,6 @@ export function SettingsView(): ReactElement {
     }
 
     await persistSettings(form, version)
-    if (asrSaveTimer.current) {
-      window.clearTimeout(asrSaveTimer.current)
-      asrSaveTimer.current = null
-    }
-    await persistAsrConfig(asrForm)
   }
 
   const goBack = (): void => {
@@ -660,7 +609,9 @@ export function SettingsView(): ReactElement {
 
       <div className="ds-page-scroll ds-no-drag min-h-0 min-w-0 flex-1 overflow-y-auto px-8 py-10 sm:px-10">
         <div className={`mx-auto ${category === 'archive' ? 'max-w-[880px]' : 'max-w-[836px]'}`}>
-          {!form.deepseek.apiKey.trim() && category === 'models' ? (
+          {!Object.values(form.llmProviders ?? {}).some((entry) => entry?.apiKey?.trim()) &&
+          !form.customEndpoints.some((endpoint) => endpoint.enabled && endpoint.apiKey.trim()) &&
+          category === 'models' ? (
             <div className="mb-6 rounded-2xl border border-amber-300/80 bg-amber-50/95 px-5 py-4 text-amber-950 shadow-sm dark:border-amber-700/60 dark:bg-amber-950/35 dark:text-amber-100">
               <div className="text-[15px] font-semibold">{t('apiKeyRequiredTitle')}</div>
               <p className="mt-1 text-[13px] leading-6 text-amber-900/90 dark:text-amber-100/90">
@@ -939,134 +890,21 @@ export function SettingsView(): ReactElement {
 
           {category === 'models' && (
             <>
-              <section className="ds-content-card rounded-2xl">
-                <div className="px-5 pt-4 pb-1.5">
-                  <h2 className="text-[12px] font-medium tracking-wide text-ds-muted">
-                    {t('sectionModels')}
-                  </h2>
-                </div>
-                <div className="divide-y divide-ds-border-muted">
-                  <GroupedField
-                    title={t('configFilePath')}
-                    help={<FieldHelpPopover title={t('configFilePath')} intro={t('configFilePathDesc')} />}
-                    control={
-                      <div className="flex w-full min-w-0 items-center rounded-xl border border-ds-border bg-ds-main/40 px-3 py-2 transition-colors focus-within:border-accent/40 focus-within:ring-1 focus-within:ring-accent/30">
-                        <code className="min-w-0 flex-1 break-all font-mono text-[12px] text-ds-muted">
-                          {deepseekPaths.configPath}
-                        </code>
-                      </div>
-                    }
-                  />
-                  <GroupedField
-                    title={t('apiKey')}
-                    help={<FieldHelpPopover title={t('apiKey')} intro={t('apiKeyDesc')} />}
-                    control={
-                      <SecretInput
-                        value={form.deepseek.apiKey}
-                        onChange={(value) => update({ deepseek: { apiKey: value } })}
-                        visible={showApiKey}
-                        onToggleVisibility={() => setShowApiKey((value) => !value)}
-                        placeholder="sk-…"
-                        autoComplete="off"
-                        invalid={!form.deepseek.apiKey.trim()}
-                        showLabel={t('showSecret')}
-                        hideLabel={t('hideSecret')}
-                      />
-                    }
-                  />
-                  <GroupedField
-                    title={t('baseUrl')}
-                    help={<FieldHelpPopover title={t('baseUrl')} intro={t('baseUrlDesc')} />}
-                    control={
-                      <input
-                        className="w-full min-w-0 rounded-xl border border-ds-border bg-ds-card px-3 py-2 text-[14px] text-ds-ink transition-colors focus:border-accent/40 focus:outline-none focus:ring-1 focus:ring-accent/30"
-                        placeholder={t('baseUrlPlaceholder')}
-                        value={form.deepseek.baseUrl}
-                        onChange={(e) => update({ deepseek: { baseUrl: e.target.value } })}
-                      />
-                    }
-                  />
-                </div>
+              <LlmProvidersPanel form={form} onUpdate={(patch) => update(patch)} />
 
-                <div className="px-5 pt-6 pb-1.5">
-                  <h2 className="text-[12px] font-medium tracking-wide text-ds-muted">
-                    {t('asrGroupLabel')}
-                  </h2>
-                </div>
-                <div className="divide-y divide-ds-border-muted pb-1">
-                  <GroupedField
-                    title={t('asrBaseUrl')}
-                    help={
-                      <FieldHelpPopover
-                        title={t('asrBaseUrl')}
-                        intro={t('asrBaseUrlDesc', { path: asrConfigPath })}
-                      />
-                    }
-                    control={
-                      <input
-                        className="w-full min-w-0 rounded-xl border border-ds-border bg-ds-card px-3 py-2 text-[14px] text-ds-ink transition-colors focus:border-accent/40 focus:outline-none focus:ring-1 focus:ring-accent/30"
-                        value={asrForm.baseUrl}
-                        onChange={(e) => updateAsr({ baseUrl: e.target.value })}
-                        placeholder={t('asrBaseUrlPlaceholder')}
-                      />
-                    }
-                  />
-                  <GroupedField
-                    title={t('asrApiKey')}
-                    help={
-                      <FieldHelpPopover
-                        title={t('asrApiKey')}
-                        intro={t('asrApiKeyDesc', { path: asrConfigPath })}
-                      />
-                    }
-                    control={
-                      <SecretInput
-                        value={asrForm.apiKey}
-                        onChange={(value) => updateAsr({ apiKey: value })}
-                        visible={showAsrKey}
-                        onToggleVisibility={() => setShowAsrKey((value) => !value)}
-                        placeholder={t('asrApiKeyPlaceholder')}
-                        autoComplete="off"
-                        showLabel={t('showSecret')}
-                        hideLabel={t('hideSecret')}
-                      />
-                    }
-                  />
-                  <GroupedField
-                    title={t('asrModel')}
-                    help={<FieldHelpPopover title={t('asrModel')} intro={t('asrModelDesc')} />}
-                    control={
-                      <input
-                        className="w-full min-w-0 rounded-xl border border-ds-border bg-ds-card px-3 py-2 text-[14px] text-ds-ink transition-colors focus:border-accent/40 focus:outline-none focus:ring-1 focus:ring-accent/30"
-                        value={asrForm.model}
-                        onChange={(e) => updateAsr({ model: e.target.value })}
-                        placeholder="glm-asr-2512"
-                      />
-                    }
-                  />
-                </div>
-              </section>
-
-                <SettingsCard title={t('customEndpoints')} className="mt-6">
-                  <CustomEndpointsPanel
-                    endpoints={form.customEndpoints}
-                    onUpdate={(patch) => update(patch)}
-                  />
-                </SettingsCard>
-
-                <SettingsCard title={t('modelUsageSection')} className="mt-6">
-                  <ModelUsagePanel
-                    usage={persistentUsage.data?.summary ?? null}
-                    daily={persistentUsage.data?.daily ?? []}
-                    loading={persistentUsage.loading}
-                    loaded={persistentUsage.loaded}
-                    error={persistentUsage.error}
-                    activeModelId={composerModel}
-                    composerModelMeta={composerModelMeta}
-                    range={usageRange}
-                    onRangeChange={setUsageRange}
-                  />
-                </SettingsCard>
+              <SettingsCard title={t('modelUsageSection')} className="mt-6">
+                <ModelUsagePanel
+                  usage={persistentUsage.data?.summary ?? null}
+                  daily={persistentUsage.data?.daily ?? []}
+                  loading={persistentUsage.loading}
+                  loaded={persistentUsage.loaded}
+                  error={persistentUsage.error}
+                  activeModelId={composerModel}
+                  composerModelMeta={composerModelMeta}
+                  range={usageRange}
+                  onRangeChange={setUsageRange}
+                />
+              </SettingsCard>
             </>
           )}
 
@@ -1685,679 +1523,6 @@ function PetMascotSettingsControl({
   )
 }
 
-const endpointFieldClass =
-  'h-11 w-full rounded-[12px] border border-ds-border/80 bg-ds-main/40 px-3.5 text-[14px] tracking-[-0.01em] text-ds-ink outline-none transition-[border-color,box-shadow] duration-200 focus:border-accent/45 focus:ring-[3px] focus:ring-accent/20'
-
-const endpointGhostBtnClass =
-  'ds-endpoint-press inline-flex items-center justify-center gap-1.5 rounded-full border border-ds-border/70 bg-ds-card/80 px-3 py-1.5 text-[12px] font-medium tracking-[-0.01em] text-ds-muted transition hover:bg-ds-hover hover:text-ds-ink'
-
-const endpointPrimaryBtnClass =
-  'ds-endpoint-press inline-flex items-center justify-center gap-1.5 rounded-full bg-ds-userbubble px-4 py-2 text-[13px] font-semibold tracking-[-0.01em] text-ds-userbubbleFg shadow-sm transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-45'
-
-function EndpointConfigSheet({
-  open,
-  title,
-  children,
-  onClose,
-  footer
-}: {
-  open: boolean
-  title: string
-  children: ReactNode
-  onClose: () => void
-  footer: ReactNode
-}): ReactElement | null {
-  const { t: tCommon } = useTranslation('common')
-
-  useEffect(() => {
-    if (!open) return
-    const handleKey = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') {
-        event.preventDefault()
-        onClose()
-      }
-    }
-    window.addEventListener('keydown', handleKey)
-    return () => window.removeEventListener('keydown', handleKey)
-  }, [open, onClose])
-
-  if (!open || typeof document === 'undefined') return null
-
-  return createPortal(
-    <div
-      className="ds-modal-backdrop ds-endpoint-sheet-backdrop ds-no-drag fixed inset-0 z-[80] flex items-center justify-center p-4 sm:p-6"
-      onClick={(event) => {
-        if (event.target === event.currentTarget) onClose()
-      }}
-    >
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-label={title}
-        className="ds-modal-surface ds-endpoint-sheet flex max-h-[min(88vh,720px)] w-full max-w-[560px] flex-col overflow-hidden rounded-[22px]"
-      >
-        <div className="flex shrink-0 items-center justify-between gap-3 px-5 pb-1 pt-5">
-          <h2 className="min-w-0 truncate text-[17px] font-semibold tracking-[-0.022em] text-ds-ink">
-            {title}
-          </h2>
-          <button
-            type="button"
-            onClick={onClose}
-            className="ds-endpoint-press flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-ds-hover/90 text-ds-muted transition hover:bg-ds-hover hover:text-ds-ink"
-            aria-label={tCommon('close')}
-          >
-            <X className="h-4 w-4" strokeWidth={2} />
-          </button>
-        </div>
-        <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-5 py-4">{children}</div>
-        <div className="flex shrink-0 justify-end gap-2.5 border-t border-ds-border-muted/70 px-5 py-4">
-          {footer}
-        </div>
-      </div>
-    </div>,
-    document.body
-  )
-}
-
-function CustomEndpointsPanel({
-  endpoints,
-  onUpdate
-}: {
-  endpoints: CustomEndpointV1[]
-  onUpdate: (patch: SettingsPatch) => void
-}): ReactElement {
-  const { t } = useTranslation('settings')
-  const bumpUsageRefreshKey = (): void => {
-    useChatStore.setState((state) => ({ usageRefreshKey: state.usageRefreshKey + 1 }))
-  }
-  const [showAdd, setShowAdd] = useState(false)
-  const [addName, setAddName] = useState('')
-  const [addUrl, setAddUrl] = useState('')
-  const [addKey, setAddKey] = useState('')
-  const [addProtocol, setAddProtocol] = useState<EndpointProtocol>('openai')
-  const [showAddKey, setShowAddKey] = useState(false)
-  const [modelDrafts, setModelDrafts] = useState<Record<string, string>>({})
-  // Context-window inputs keyed `${epId}::${modelId}` — kept as raw text
-  // while typing and clamped/committed on blur so mid-edit values (e.g.
-  // "10") aren't clamped up to the 1000 minimum under the user's cursor.
-  const [contextWindowDrafts, setContextWindowDrafts] = useState<Record<string, string>>({})
-  const [testResults, setTestResults] = useState<Record<string, { ok: boolean; message: string; testing: boolean }>>({})
-  const [editingEndpointId, setEditingEndpointId] = useState<string | null>(null)
-  const [editName, setEditName] = useState('')
-  const [editUrl, setEditUrl] = useState('')
-  const [editKey, setEditKey] = useState('')
-  const [editProtocol, setEditProtocol] = useState<EndpointProtocol>('openai')
-  const [showEditKey, setShowEditKey] = useState(false)
-
-  const resetAddForm = useCallback((): void => {
-    setShowAdd(false)
-    setAddName('')
-    setAddUrl('')
-    setAddKey('')
-    setAddProtocol('openai')
-    setShowAddKey(false)
-  }, [])
-
-  const cancelEndpointEdit = useCallback((): void => {
-    setEditingEndpointId(null)
-    setEditName('')
-    setEditUrl('')
-    setEditKey('')
-    setEditProtocol('openai')
-    setShowEditKey(false)
-  }, [])
-
-  const startEndpointEdit = (endpoint: CustomEndpointV1): void => {
-    resetAddForm()
-    setEditingEndpointId(endpoint.id)
-    setEditName(endpoint.name)
-    setEditUrl(endpoint.baseUrl)
-    setEditKey(endpoint.apiKey)
-    setEditProtocol(endpoint.protocol)
-    setShowEditKey(false)
-  }
-
-  const updateEndpoints = (next: CustomEndpointV1[]): void => {
-    onUpdate({ customEndpoints: next })
-  }
-
-  const saveEndpointEdit = (): void => {
-    if (!editingEndpointId || !editName.trim() || !editUrl.trim() || !editKey.trim()) return
-    updateEndpoints(
-      endpoints.map((endpoint) =>
-        endpoint.id === editingEndpointId
-          ? {
-              ...endpoint,
-              name: editName.trim(),
-              protocol: editProtocol,
-              baseUrl: editUrl.trim(),
-              apiKey: editKey.trim()
-            }
-          : endpoint
-      )
-    )
-    cancelEndpointEdit()
-  }
-
-  const handleAdd = (): void => {
-    if (!addName.trim() || !addUrl.trim() || !addKey.trim()) return
-    const slug = addName.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'endpoint'
-    const usedIds = new Set(['deepseek', ...endpoints.map((endpoint) => endpoint.id)])
-    let id = slug
-    let suffix = 2
-    while (usedIds.has(id)) {
-      id = `${slug}-${suffix}`
-      suffix += 1
-    }
-    const newEndpoint: CustomEndpointV1 = {
-      id,
-      name: addName.trim(),
-      protocol: addProtocol,
-      baseUrl: addUrl.trim(),
-      apiKey: addKey.trim(),
-      enabled: true,
-      models: []
-    }
-    updateEndpoints([...endpoints, newEndpoint])
-    resetAddForm()
-  }
-
-  const handleRemove = (index: number): void => {
-    const removed = endpoints[index]
-    if (removed) {
-      if (editingEndpointId === removed.id) cancelEndpointEdit()
-      void window.dsGui.pruneUsageProvider(removed.id).finally(bumpUsageRefreshKey)
-    }
-    updateEndpoints(endpoints.filter((_, i) => i !== index))
-  }
-
-  const handleToggleEndpoint = (index: number): void => {
-    updateEndpoints(
-      endpoints.map((endpoint, i) =>
-        i === index ? { ...endpoint, enabled: !endpoint.enabled } : endpoint
-      )
-    )
-  }
-
-  const handleTest = async (ep: CustomEndpointV1, modelId: string): Promise<boolean> => {
-    const key = `${ep.id}::${modelId}`
-    setTestResults((prev) => ({ ...prev, [key]: { ok: false, message: '正在测试...', testing: true } }))
-    try {
-      const result = await window.dsGui.testEndpoint(ep.protocol, ep.baseUrl, ep.apiKey, modelId)
-      setTestResults((prev) => ({ ...prev, [key]: { ok: result.ok, message: result.message, testing: false } }))
-      return result.ok
-    } catch (e) {
-      setTestResults((prev) => ({
-        ...prev,
-        [key]: { ok: false, message: e instanceof Error ? e.message : String(e), testing: false }
-      }))
-      return false
-    }
-  }
-
-  const handleAddModel = async (index: number): Promise<void> => {
-    const endpoint = endpoints[index]
-    const modelId = (modelDrafts[endpoint.id] ?? '').trim()
-    if (!modelId || endpoint.models.some((model) => model.id === modelId)) return
-    const passed = await handleTest(endpoint, modelId)
-    const now = new Date().toISOString()
-    updateEndpoints(
-      endpoints.map((item, i) =>
-        i === index
-          ? {
-              ...item,
-              models: [
-                ...item.models,
-                {
-                  id: modelId,
-                  enabled: true,
-                  contextWindow: CUSTOM_MODEL_CONTEXT_WINDOW_DEFAULT,
-                  testStatus: passed ? ('passed' as const) : ('failed' as const),
-                  toolCalling: passed,
-                  lastTestedAt: now
-                }
-              ]
-            }
-          : item
-      )
-    )
-    setModelDrafts((prev) => ({ ...prev, [endpoint.id]: '' }))
-  }
-
-  const handleRetestModel = async (index: number, modelId: string): Promise<void> => {
-    const endpoint = endpoints[index]
-    const passed = await handleTest(endpoint, modelId)
-    updateEndpoints(
-      endpoints.map((item, endpointIndex) =>
-        endpointIndex === index
-          ? {
-              ...item,
-              models: item.models.map((model) =>
-                model.id === modelId
-                  ? {
-                      ...model,
-                      testStatus: passed ? ('passed' as const) : ('failed' as const),
-                      toolCalling: passed,
-                      lastTestedAt: new Date().toISOString()
-                    }
-                  : model
-              )
-            }
-          : item
-      )
-    )
-  }
-
-  const commitModelContextWindow = (endpointIndex: number, modelId: string): void => {
-    const endpoint = endpoints[endpointIndex]
-    if (!endpoint) return
-    const key = `${endpoint.id}::${modelId}`
-    const draft = contextWindowDrafts[key]
-    if (draft === undefined) return
-    const next = normalizeCustomModelContextWindow(draft)
-    setContextWindowDrafts((prev) => {
-      const rest = { ...prev }
-      delete rest[key]
-      return rest
-    })
-    updateEndpoints(
-      endpoints.map((item, index) =>
-        index === endpointIndex
-          ? {
-              ...item,
-              models: item.models.map((model) =>
-                model.id === modelId ? { ...model, contextWindow: next } : model
-              )
-            }
-          : item
-      )
-    )
-  }
-
-  const handleRemoveModel = (endpointIndex: number, modelId: string): void => {
-    const endpoint = endpoints[endpointIndex]
-    if (endpoint) {
-      void window.dsGui
-        .pruneUsageEndpointModel(endpoint.id, modelId)
-        .finally(bumpUsageRefreshKey)
-    }
-    updateEndpoints(
-      endpoints.map((item, index) =>
-        index === endpointIndex
-          ? { ...item, models: item.models.filter((model) => model.id !== modelId) }
-          : item
-      )
-    )
-  }
-
-  const editingEndpoint = endpoints.find((endpoint) => endpoint.id === editingEndpointId) ?? null
-  const editingIndex = editingEndpoint
-    ? endpoints.findIndex((endpoint) => endpoint.id === editingEndpoint.id)
-    : -1
-
-  return (
-    <div className="px-4 py-5">
-      <p className="mb-5 max-w-xl text-[13px] leading-6 tracking-[-0.01em] text-ds-muted">
-        {t('customEndpointsDesc')}
-      </p>
-
-      <div className="space-y-3">
-        {endpoints.map((ep, index) => (
-          <div
-            key={ep.id}
-            className="ds-endpoint-card rounded-[18px] border border-ds-border/70 bg-ds-card/90 p-4 shadow-[0_1px_2px_rgba(0,0,0,0.04),0_8px_24px_rgba(0,0,0,0.04)]"
-          >
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0 flex-1">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-[15px] font-semibold tracking-[-0.02em] text-ds-ink">
-                    {ep.name}
-                  </span>
-                  <span className="rounded-full bg-ds-hover/90 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.04em] text-ds-muted">
-                    {ep.protocol}
-                  </span>
-                  <span
-                    className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium ${
-                      ep.enabled
-                        ? 'bg-emerald-500/12 text-emerald-700 dark:text-emerald-400'
-                        : 'bg-ds-hover text-ds-faint'
-                    }`}
-                  >
-                    <span
-                      className={`h-1.5 w-1.5 rounded-full ${
-                        ep.enabled ? 'bg-emerald-500' : 'bg-ds-faint'
-                      }`}
-                    />
-                    {ep.enabled ? t('endpointEnabled') : t('endpointDisabled')}
-                  </span>
-                </div>
-                <div
-                  className="mt-1.5 truncate font-mono text-[12px] tracking-[-0.01em] text-ds-muted"
-                  title={ep.baseUrl}
-                >
-                  {ep.baseUrl}
-                </div>
-              </div>
-              <div className="flex shrink-0 items-center gap-1.5">
-                <button
-                  type="button"
-                  onClick={() => startEndpointEdit(ep)}
-                  className={endpointGhostBtnClass}
-                >
-                  <Pencil className="h-3 w-3" strokeWidth={2} />
-                  {t('editEndpointBtn')}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleToggleEndpoint(index)}
-                  className={endpointGhostBtnClass}
-                >
-                  {ep.enabled ? t('disableEndpointBtn') : t('enableEndpointBtn')}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleRemove(index)}
-                  className="ds-endpoint-press flex h-8 w-8 items-center justify-center rounded-full border border-ds-border/70 text-ds-muted transition hover:border-red-300/70 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/30"
-                  aria-label={t('deleteEndpointBtn')}
-                >
-                  <Trash2 className="h-3.5 w-3.5" strokeWidth={2} />
-                </button>
-              </div>
-            </div>
-
-            <div className="mt-4 space-y-2">
-              {ep.models.map((model) => {
-                const testKey = `${ep.id}::${model.id}`
-                const test = testResults[testKey]
-                return (
-                  <div
-                    key={model.id}
-                    className="rounded-[14px] border border-ds-border-muted/80 bg-ds-hover/25 px-3.5 py-2.5"
-                  >
-                    <div className="flex items-center gap-2">
-                      <span className="min-w-0 flex-1 truncate font-mono text-[12.5px] tracking-[-0.01em] text-ds-ink">
-                        {model.id}
-                      </span>
-                      <span
-                        className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${
-                          model.testStatus === 'passed'
-                            ? 'bg-emerald-500/12 text-emerald-700 dark:text-emerald-400'
-                            : model.testStatus === 'failed'
-                              ? 'bg-red-500/10 text-red-600 dark:text-red-400'
-                              : 'bg-ds-hover text-ds-faint'
-                        }`}
-                      >
-                        {model.testStatus === 'passed'
-                          ? t('modelTestPassed')
-                          : model.testStatus === 'failed'
-                            ? t('modelTestFailed')
-                            : t('modelUntested')}
-                      </span>
-                      <button
-                        type="button"
-                        disabled={test?.testing}
-                        onClick={() => void handleRetestModel(index, model.id)}
-                        className="ds-endpoint-press inline-flex items-center gap-1 rounded-full border border-ds-border/70 px-2.5 py-1 text-[11px] font-medium text-ds-muted transition hover:bg-ds-hover disabled:opacity-50"
-                      >
-                        {test?.testing ? (
-                          <Loader2 className="h-3 w-3 animate-spin" />
-                        ) : (
-                          <Zap className="h-3 w-3" />
-                        )}
-                        {t('testBtn')}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleRemoveModel(index, model.id)}
-                        className="ds-endpoint-press flex h-7 w-7 items-center justify-center rounded-full text-ds-faint transition hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/30"
-                      >
-                        <X className="h-3.5 w-3.5" />
-                      </button>
-                    </div>
-                    {test && !test.testing ? (
-                      <div
-                        className={`mt-1.5 text-[11px] leading-5 ${
-                          test.ok
-                            ? 'text-emerald-700 dark:text-emerald-400'
-                            : 'text-red-700 dark:text-red-400'
-                        }`}
-                      >
-                        {test.message}
-                      </div>
-                    ) : null}
-                  </div>
-                )
-              })}
-              <div className="flex gap-2 pt-0.5">
-                <input
-                  className="min-w-0 flex-1 rounded-[12px] border border-ds-border/80 bg-ds-main/35 px-3.5 py-2.5 font-mono text-[12.5px] tracking-[-0.01em] text-ds-ink outline-none transition focus:border-accent/45 focus:ring-[3px] focus:ring-accent/20"
-                  placeholder={t('endpointModelPlaceholder')}
-                  value={modelDrafts[ep.id] ?? ''}
-                  onChange={(event) =>
-                    setModelDrafts((prev) => ({ ...prev, [ep.id]: event.target.value }))
-                  }
-                />
-                <button
-                  type="button"
-                  disabled={!(modelDrafts[ep.id] ?? '').trim()}
-                  onClick={() => void handleAddModel(index)}
-                  className={endpointPrimaryBtnClass}
-                >
-                  {t('testAndAddModelBtn')}
-                </button>
-              </div>
-            </div>
-          </div>
-        ))}
-      </div>
-
-      <button
-        type="button"
-        onClick={() => {
-          cancelEndpointEdit()
-          setShowAdd(true)
-        }}
-        className="ds-endpoint-press mt-4 flex w-full items-center justify-center gap-2 rounded-[16px] border border-dashed border-ds-border/80 bg-ds-hover/20 px-4 py-3.5 text-[13.5px] font-semibold tracking-[-0.015em] text-ds-muted transition hover:border-accent/35 hover:bg-ds-hover/45 hover:text-ds-ink"
-      >
-        <Plus className="h-4 w-4" strokeWidth={2.25} />
-        {t('addEndpointBtn')}
-      </button>
-
-      <EndpointConfigSheet
-        open={showAdd}
-        title={t('addEndpointTitle')}
-        onClose={resetAddForm}
-        footer={
-          <>
-            <button type="button" onClick={resetAddForm} className={endpointGhostBtnClass}>
-              {t('cancelBtn')}
-            </button>
-            <button
-              type="button"
-              onClick={handleAdd}
-              disabled={!addName.trim() || !addUrl.trim() || !addKey.trim()}
-              className={endpointPrimaryBtnClass}
-            >
-              {t('addBtn')}
-            </button>
-          </>
-        }
-      >
-        <div className="grid grid-cols-2 gap-3">
-          <label className="block space-y-1.5">
-            <span className="px-0.5 text-[12px] font-medium tracking-[-0.01em] text-ds-muted">
-              {t('endpointNameLabel')}
-            </span>
-            <input
-              className={endpointFieldClass}
-              placeholder={t('endpointNamePlaceholder')}
-              value={addName}
-              onChange={(e) => setAddName(e.target.value)}
-            />
-          </label>
-          <label className="block space-y-1.5">
-            <span className="px-0.5 text-[12px] font-medium tracking-[-0.01em] text-ds-muted">
-              {t('endpointProtocolLabel')}
-            </span>
-            <select
-              className={endpointFieldClass}
-              value={addProtocol}
-              onChange={(e) => setAddProtocol(e.target.value as EndpointProtocol)}
-            >
-              <option value="openai">OpenAI compatible</option>
-              <option value="anthropic">Anthropic compatible</option>
-            </select>
-          </label>
-        </div>
-        <label className="block space-y-1.5">
-          <span className="px-0.5 text-[12px] font-medium tracking-[-0.01em] text-ds-muted">
-            {t('endpointUrlLabel')}
-          </span>
-          <input
-            className={endpointFieldClass}
-            placeholder={t('endpointUrlPlaceholder')}
-            value={addUrl}
-            onChange={(e) => setAddUrl(e.target.value)}
-          />
-        </label>
-        <label className="block space-y-1.5">
-          <span className="px-0.5 text-[12px] font-medium tracking-[-0.01em] text-ds-muted">
-            {t('endpointKeyLabel')}
-          </span>
-          <SecretInput
-            value={addKey}
-            onChange={setAddKey}
-            visible={showAddKey}
-            onToggleVisibility={() => setShowAddKey((value) => !value)}
-            placeholder={t('endpointKeyPlaceholder')}
-            autoComplete="off"
-            showLabel={t('showSecret')}
-            hideLabel={t('hideSecret')}
-            className="h-11"
-          />
-        </label>
-      </EndpointConfigSheet>
-
-      <EndpointConfigSheet
-        open={Boolean(editingEndpoint)}
-        title={t('editEndpointTitle')}
-        onClose={cancelEndpointEdit}
-        footer={
-          <>
-            <button type="button" onClick={cancelEndpointEdit} className={endpointGhostBtnClass}>
-              {t('cancelBtn')}
-            </button>
-            <button
-              type="button"
-              onClick={saveEndpointEdit}
-              disabled={!editName.trim() || !editUrl.trim() || !editKey.trim()}
-              className={endpointPrimaryBtnClass}
-            >
-              {t('saveEndpointBtn')}
-            </button>
-          </>
-        }
-      >
-        <div className="grid grid-cols-2 gap-3">
-          <label className="block space-y-1.5">
-            <span className="px-0.5 text-[12px] font-medium tracking-[-0.01em] text-ds-muted">
-              {t('endpointNameLabel')}
-            </span>
-            <input
-              className={endpointFieldClass}
-              placeholder={t('endpointNamePlaceholder')}
-              value={editName}
-              onChange={(e) => setEditName(e.target.value)}
-            />
-          </label>
-          <label className="block space-y-1.5">
-            <span className="px-0.5 text-[12px] font-medium tracking-[-0.01em] text-ds-muted">
-              {t('endpointProtocolLabel')}
-            </span>
-            <select
-              className={endpointFieldClass}
-              value={editProtocol}
-              onChange={(e) => setEditProtocol(e.target.value as EndpointProtocol)}
-            >
-              <option value="openai">OpenAI compatible</option>
-              <option value="anthropic">Anthropic compatible</option>
-            </select>
-          </label>
-        </div>
-        <label className="block space-y-1.5">
-          <span className="px-0.5 text-[12px] font-medium tracking-[-0.01em] text-ds-muted">
-            {t('endpointUrlLabel')}
-          </span>
-          <input
-            className={endpointFieldClass}
-            placeholder={t('endpointUrlPlaceholder')}
-            value={editUrl}
-            onChange={(e) => setEditUrl(e.target.value)}
-          />
-        </label>
-        <label className="block space-y-1.5">
-          <span className="px-0.5 text-[12px] font-medium tracking-[-0.01em] text-ds-muted">
-            {t('endpointKeyLabel')}
-          </span>
-          <SecretInput
-            value={editKey}
-            onChange={setEditKey}
-            visible={showEditKey}
-            onToggleVisibility={() => setShowEditKey((value) => !value)}
-            placeholder={t('endpointKeyPlaceholder')}
-            autoComplete="off"
-            showLabel={t('showSecret')}
-            hideLabel={t('hideSecret')}
-            className="h-11"
-          />
-        </label>
-        {editingEndpoint && editingEndpoint.models.length > 0 && editingIndex >= 0 ? (
-          <div className="space-y-1.5">
-            <div
-              className="px-0.5 text-[12px] font-medium tracking-[-0.01em] text-ds-muted"
-              title={t('modelContextWindowHint')}
-            >
-              {t('models')}
-            </div>
-            <div className="divide-y divide-ds-border-muted/80 overflow-hidden rounded-[14px] border border-ds-border/70 bg-ds-hover/20">
-              {editingEndpoint.models.map((model) => {
-                const ctxKey = `${editingEndpoint.id}::${model.id}`
-                return (
-                  <div key={model.id} className="flex items-center gap-3 px-3.5 py-2.5">
-                    <span className="min-w-0 flex-1 truncate font-mono text-[12px] text-ds-ink">
-                      {model.id}
-                    </span>
-                    <label
-                      className="flex shrink-0 items-center gap-2 text-[11px] text-ds-muted"
-                      title={t('modelContextWindowHint')}
-                    >
-                      <span>{t('modelContextWindowLabel')}</span>
-                      <input
-                        type="number"
-                        min={CUSTOM_MODEL_CONTEXT_WINDOW_MIN}
-                        max={CUSTOM_MODEL_CONTEXT_WINDOW_MAX}
-                        step={1000}
-                        className="w-[96px] rounded-[10px] border border-ds-border/80 bg-ds-card px-2 py-1.5 text-right font-mono text-[12px] tabular-nums text-ds-ink outline-none transition focus:border-accent/45 focus:ring-[3px] focus:ring-accent/20"
-                        value={contextWindowDrafts[ctxKey] ?? String(model.contextWindow)}
-                        onChange={(event) =>
-                          setContextWindowDrafts((prev) => ({
-                            ...prev,
-                            [ctxKey]: event.target.value
-                          }))
-                        }
-                        onBlur={() => commitModelContextWindow(editingIndex, model.id)}
-                      />
-                    </label>
-                  </div>
-                )
-              })}
-            </div>
-          </div>
-        ) : null}
-      </EndpointConfigSheet>
-    </div>
-  )
-}
 
 function ShortcutKeycaps({
   chord,

@@ -53,6 +53,10 @@ class InsecurePermissionsError(SecretsError):
 
 _PROVIDER_ENV_CANDIDATES: dict[str, tuple[str, ...]] = {
     "deepseek": ("DEEPSEEK_API_KEY",),
+    "kimi": ("KIMI_API_KEY", "MOONSHOT_API_KEY"),
+    "moonshot": ("MOONSHOT_API_KEY", "KIMI_API_KEY"),
+    "glm": ("GLM_API_KEY", "ZHIPU_API_KEY", "BIGMODEL_API_KEY"),
+    "zhipu": ("ZHIPU_API_KEY", "GLM_API_KEY", "BIGMODEL_API_KEY"),
     "openrouter": ("OPENROUTER_API_KEY",),
     "novita": ("NOVITA_API_KEY",),
     "nvidia": ("NVIDIA_API_KEY", "NVIDIA_NIM_API_KEY", "DEEPSEEK_API_KEY"),

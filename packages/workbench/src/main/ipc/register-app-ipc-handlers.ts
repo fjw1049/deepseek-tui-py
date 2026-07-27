@@ -61,6 +61,7 @@ import {
   workspacePickFilesPayloadSchema,
   asrTranscribePayloadSchema,
   asrConfigPayloadSchema,
+  asrTestPayloadSchema,
   workspaceRootSchema
 } from './app-ipc-schemas'
 import { getWorkspacePreviewUrl } from '../services/workspace-preview-server'
@@ -81,7 +82,7 @@ import {
   refreshMarketplaceCatalog
 } from '../services/modelscope-marketplace'
 import { getWorkspaceSuggestions } from '../services/workspace-suggestions'
-import { transcribeAudio } from '../services/asr-transcription-service'
+import { probeAsrEndpoint, transcribeAudio } from '../services/asr-transcription-service'
 import { readAsrConfigFile, writeAsrConfigFile } from '../asr-config'
 import {
   parseSessionsProbe,
@@ -142,6 +143,7 @@ type RegisterAppIpcHandlersOptions = {
     body?: string
   ) => Promise<RuntimeRequestResult>
   fetchUpstreamModels: () => Promise<UpstreamModelsResult>
+  fetchProviderModels: (providerId: string) => Promise<UpstreamModelsResult>
   prepareDeepseekBinary: () => Promise<
     { ok: true; path: string } | { ok: false; message: string }
   >
@@ -474,6 +476,7 @@ export function registerAppIpcHandlers(options: RegisterAppIpcHandlersOptions): 
     applySettingsPatch,
     runtimeRequest,
     fetchUpstreamModels,
+    fetchProviderModels,
     prepareDeepseekBinary,
     resolveDeepseekConfigPath,
     terminalService,
@@ -514,12 +517,22 @@ export function registerAppIpcHandlers(options: RegisterAppIpcHandlersOptions): 
     return writeAsrConfigFile(config)
   })
 
+  ipcMain.handle('asr:test', async (_, payload: unknown) => {
+    const request = parseIpcPayload('asr:test', asrTestPayloadSchema, payload)
+    return probeAsrEndpoint(request)
+  })
+
   ipcMain.handle('runtime:request', async (_, payload: unknown) => {
     const request = parseIpcPayload('runtime:request', runtimeRequestPayloadSchema, payload)
     return runtimeRequest(request.path, request.method, request.body)
   })
 
   ipcMain.handle('upstream:models', async () => fetchUpstreamModels())
+
+  ipcMain.handle('upstream:provider-models', async (_, payload: unknown) => {
+    const request = z.object({ providerId: z.string().min(1) }).parse(payload)
+    return fetchProviderModels(request.providerId)
+  })
 
   ipcMain.handle('deepseek:prepare-binary', async () => prepareDeepseekBinary())
 

@@ -1435,7 +1435,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
         }
         const settings = await window.dsGui.getSettings()
         const workspaceRoot = normalizeWorkspaceRoot(settings.workspaceRoot)
-        const needsInitialSetup = !settings.deepseek.apiKey.trim() &&
+        const hasBuiltinKey = Object.values(settings.llmProviders ?? {}).some((entry) =>
+          Boolean(entry?.apiKey?.trim())
+        )
+        const needsInitialSetup =
+          !settings.deepseek.apiKey.trim() &&
+          !hasBuiltinKey &&
           !settings.customEndpoints.some(
             (endpoint) => endpoint.enabled && endpoint.apiKey.trim()
           )

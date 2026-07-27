@@ -19,9 +19,12 @@ const api = {
   transcribeAudio: (payload) => ipcRenderer.invoke('asr:transcribe', payload),
   getAsrConfig: () => ipcRenderer.invoke('asr:config:read'),
   setAsrConfig: (config) => ipcRenderer.invoke('asr:config:write', config),
+  testAsrEndpoint: (payload) => ipcRenderer.invoke('asr:test', payload),
   runtimeRequest: (path, method, body) =>
     ipcRenderer.invoke('runtime:request', { path, method, body }),
   fetchUpstreamModels: () => ipcRenderer.invoke('upstream:models'),
+  fetchProviderModels: (providerId) =>
+    ipcRenderer.invoke('upstream:provider-models', { providerId }),
   deepseekSpawnIfNeeded: () =>
     ipcRenderer.invoke('deepseek:spawn-if-needed'),
   prepareDeepseekBinary: () => ipcRenderer.invoke('deepseek:prepare-binary'),

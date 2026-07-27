@@ -3,14 +3,19 @@ import { homedir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import {
   DEFAULT_DEEPSEEK_BASE_URL,
+  DEFAULT_LLM_PROVIDER_ID,
+  defaultAsrProviders,
   defaultClawSettings,
+  defaultLlmProviders,
   defaultMemorySettings,
   defaultShortcutsSettings,
   defaultWorkbenchSkills,
   mergeClawSettings,
+  mergeLlmProviders,
   mergeMemorySettings,
   mergeShortcutsSettings,
   normalizeAppSettings,
+  normalizeAsrProviders,
   normalizeCustomEndpoints,
   normalizeMemorySettings,
   normalizeShortcutsSettings,
@@ -146,7 +151,10 @@ const defaultSettings = (): AppSettingsV1 => ({
     approvalPolicy: 'on-request',
     sandboxMode: 'workspace-write'
   },
+  defaultLlmProviderId: DEFAULT_LLM_PROVIDER_ID,
+  llmProviders: defaultLlmProviders(),
   customEndpoints: [],
+  asrProviders: defaultAsrProviders(),
   workspaceRoot: DEFAULT_WORKSPACE_ROOT,
   log: {
     enabled: true,
@@ -171,7 +179,10 @@ function buildMergedSettings(parsed: Partial<AppSettingsV1>): AppSettingsV1 {
     ...defaults,
     ...parsed,
     deepseek: { ...defaults.deepseek, ...parsed.deepseek },
+    defaultLlmProviderId: parsed.defaultLlmProviderId ?? defaults.defaultLlmProviderId,
+    llmProviders: mergeLlmProviders(defaults.llmProviders, parsed.llmProviders),
     customEndpoints: normalizeCustomEndpoints(parsed.customEndpoints ?? defaults.customEndpoints),
+    asrProviders: normalizeAsrProviders(parsed.asrProviders ?? defaults.asrProviders),
     log: { ...defaults.log, ...parsed.log },
     notifications: { ...defaults.notifications, ...parsed.notifications },
     skills: normalizeWorkbenchSkills(parsed.skills, parsed.claw?.skills?.extraDirs),
@@ -277,6 +288,11 @@ export class JsonSettingsStore {
       ...cur,
       ...partial,
       deepseek: { ...cur.deepseek, ...(partial.deepseek ?? {}) },
+      llmProviders: mergeLlmProviders(cur.llmProviders, partial.llmProviders),
+      customEndpoints: partial.customEndpoints ?? cur.customEndpoints,
+      asrProviders: partial.asrProviders
+        ? normalizeAsrProviders(partial.asrProviders)
+        : cur.asrProviders,
       log: { ...cur.log, ...(partial.log ?? {}) },
       notifications: { ...cur.notifications, ...(partial.notifications ?? {}) },
       skills: normalizeWorkbenchSkills(

@@ -1,5 +1,8 @@
 import type i18next from 'i18next'
-import type { AppSettingsV1 } from '@shared/app-settings'
+import {
+  BUILTIN_LLM_PROVIDER_IDS,
+  type AppSettingsV1
+} from '@shared/app-settings'
 import { encodeModelRef } from '@shared/model-ref'
 import type { ComposerModelMeta } from '../lib/composer-model-label'
 import {
@@ -88,12 +91,29 @@ export function createAppActions(options: CreateAppActionsOptions): Pick<
       const task = (async () => {
         const res = await window.dsGui.fetchUpstreamModels()
         const upstreamIds = res.ok ? [...res.modelIds] : []
-        // Inject custom endpoint models so they appear in the composer picker.
-        // Also collect {ref → endpoint name + model label} so the picker chip can
-        // render ``青云/claude-opus-4-6`` instead of the raw routing id.
+        // Inject built-in vendor + custom endpoint models for the picker.
+        // Collect {ref → endpoint name} so chips can show ``Kimi/kimi-k2.5``.
         const metaMap: Record<string, ComposerModelMeta> = {}
         try {
           const settings = await window.dsGui.getSettings()
+          const providerNames: Record<string, string> = {
+            deepseek: 'DeepSeek',
+            kimi: 'Kimi',
+            glm: 'GLM',
+            'volcengine-ark': '火山'
+          }
+          for (const providerId of BUILTIN_LLM_PROVIDER_IDS) {
+            const entry = settings.llmProviders?.[providerId]
+            if (!entry?.apiKey?.trim()) continue
+            for (const model of entry.models ?? []) {
+              if (!model.enabled) continue
+              const trimmed = model.id?.trim()
+              if (!trimmed) continue
+              const ref = encodeModelRef(providerId, trimmed)
+              if (!upstreamIds.includes(ref)) upstreamIds.push(ref)
+              metaMap[ref] = { endpointName: providerNames[providerId] ?? providerId }
+            }
+          }
           for (const ep of settings.customEndpoints ?? []) {
             if (!ep.enabled) continue
             for (const model of ep.models) {

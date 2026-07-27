@@ -42,14 +42,18 @@ import {
 import {
   mergeAppearanceSettings,
   mergeClawSettings,
+  mergeLlmProviders,
   mergeShortcutsSettings,
   normalizeAppSettings,
+  normalizeAsrProviders,
+  resolveActiveAsrSettings,
   type AppSettingsPatch,
   type AppSettingsV1
 } from '../shared/app-settings'
+import { readAsrConfigFile, writeAsrConfigFile } from './asr-config'
 import type { StartupPhase, StartupPhasePayload } from '../shared/ds-gui-api'
 import { isBrowsableUrl } from '../shared/dev-preview-url'
-import { fetchUpstreamModelIds } from './upstream-models'
+import { fetchBuiltinProviderModelIds, fetchUpstreamModelIds } from './upstream-models'
 import {
   deepseekTuiConfigChanged,
   localeConfigChanged,
@@ -303,12 +307,18 @@ function runtimeFailure(error: string, message: string, status = 0) {
 }
 
 function resolveConfiguredApiKey(settings: AppSettingsV1): string {
+  const fromDefaultProvider =
+    settings.llmProviders?.[settings.defaultLlmProviderId]?.apiKey?.trim() ?? ''
   const fromSettings = settings.deepseek.apiKey?.trim() ?? ''
+  const fromAnyBuiltin =
+    Object.values(settings.llmProviders ?? {})
+      .map((entry) => entry.apiKey?.trim() ?? '')
+      .find(Boolean) ?? ''
   const fromEnv = process.env.DEEPSEEK_API_KEY?.trim() ?? ''
   const fromCustom = settings.customEndpoints.find(
     (endpoint) => endpoint.enabled && endpoint.apiKey.trim()
   )?.apiKey.trim() ?? ''
-  return fromSettings || fromEnv || fromCustom
+  return fromDefaultProvider || fromSettings || fromAnyBuiltin || fromEnv || fromCustom
 }
 
 function runtimeJsonError(error: string, message: string): Error {
@@ -932,10 +942,23 @@ app.whenReady().then(async () => {
     const match = tomlContent.match(/^\s*api_key\s*=\s*"([^"]*)"/m)
     const tomlKey = match?.[1]?.trim() ?? ''
     if (tomlKey && tomlKey !== initial.deepseek.apiKey) {
-      initial = await store.patch({ deepseek: { apiKey: tomlKey } })
+      initial = await store.patch({
+        deepseek: { apiKey: tomlKey },
+        llmProviders: { deepseek: { apiKey: tomlKey } }
+      })
       traceStartup('apiKey backfilled from config.toml')
     }
   } catch { /* config.toml missing or unreadable — use GUI value */ }
+
+  // Migrate flat `[asr]` into asrProviders (builtin 智谱 ASR) when unset.
+  try {
+    const asrFile = await readAsrConfigFile()
+    const migratedAsr = normalizeAsrProviders(initial.asrProviders, asrFile.config)
+    if (JSON.stringify(migratedAsr) !== JSON.stringify(initial.asrProviders)) {
+      initial = await store.patch({ asrProviders: migratedAsr })
+      traceStartup('asrProviders migrated from config.toml')
+    }
+  } catch { /* asr section missing — keep defaults */ }
 
   // Keep native chrome (context menus, dialogs, Windows title bar, resize
   // background) in sync with the app theme. `theme` maps 1:1 to themeSource.
@@ -956,6 +979,9 @@ app.whenReady().then(async () => {
       ...prev,
       ...partial,
       deepseek: { ...prev.deepseek, ...(partial.deepseek ?? {}) },
+      llmProviders: mergeLlmProviders(prev.llmProviders, partial.llmProviders),
+      customEndpoints: partial.customEndpoints ?? prev.customEndpoints,
+      asrProviders: partial.asrProviders ?? prev.asrProviders,
       log: { ...prev.log, ...(partial.log ?? {}) },
       notifications: { ...prev.notifications, ...(partial.notifications ?? {}) },
       skills: { ...prev.skills, ...(partial.skills ?? {}) },
@@ -972,6 +998,15 @@ app.whenReady().then(async () => {
     if (saved.theme !== nativeTheme.themeSource) {
       nativeTheme.themeSource = saved.theme
     }
+    if (JSON.stringify(prev.asrProviders) !== JSON.stringify(saved.asrProviders)) {
+      try {
+        await writeAsrConfigFile(resolveActiveAsrSettings(saved.asrProviders))
+      } catch (error) {
+        logWarn('settings-apply', 'Failed to sync active ASR provider to config.toml', {
+          message: error instanceof Error ? error.message : String(error)
+        })
+      }
+    }
     queueRuntimeSettingsApply(prev, saved)
     return saved
   }
@@ -980,6 +1015,11 @@ app.whenReady().then(async () => {
     const settings = await store.load()
     const key = resolveConfiguredApiKey(settings)
     return fetchUpstreamModelIds(settings, key)
+  }
+
+  const fetchProviderModels = async (providerId: string) => {
+    const settings = await store.load()
+    return fetchBuiltinProviderModelIds(settings, providerId)
   }
 
   const prepareDeepseekBinary = async () => {
@@ -1006,6 +1046,7 @@ app.whenReady().then(async () => {
       return runtimeRequest(settings, path, { method, body })
     },
     fetchUpstreamModels: fetchModels,
+    fetchProviderModels,
     prepareDeepseekBinary,
     resolveDeepseekConfigPath,
     terminalService,

@@ -5,12 +5,46 @@ import {
   type AppearanceSettingsV1
 } from './appearance'
 import {
+  CUSTOM_MODEL_CONTEXT_WINDOW_DEFAULT,
+  normalizeCustomModelContextWindow
+} from './app-settings-context-window'
+import {
+  BUILTIN_LLM_PROVIDER_IDS,
+  BUILTIN_LLM_PROVIDERS,
+  DEFAULT_LLM_PROVIDER_ID,
+  defaultLlmProviders,
+  isBuiltinLlmProviderId,
+  migrateEnabledModelsToModels,
+  normalizeLlmProviderModels,
+  type BuiltinLlmProviderId,
+  type LlmProviderConfigV1,
+  type LlmProviderModelV1
+} from './llm-providers'
+import {
   defaultShortcutsSettings,
   mergeShortcutsSettings,
   normalizeShortcutsSettings,
   type ShortcutsPatchV1,
   type ShortcutsSettingsV1
 } from './shortcuts'
+
+export type { BuiltinLlmProviderId, LlmProviderConfigV1, LlmProviderModelV1 }
+export {
+  BUILTIN_LLM_PROVIDER_IDS,
+  BUILTIN_LLM_PROVIDERS,
+  DEFAULT_LLM_PROVIDER_ID,
+  defaultLlmProviders,
+  enabledLlmModelIds,
+  isBuiltinLlmProviderId,
+  providerHasApiKey,
+  resolveProviderDefaultModel
+} from './llm-providers'
+export {
+  CUSTOM_MODEL_CONTEXT_WINDOW_DEFAULT,
+  CUSTOM_MODEL_CONTEXT_WINDOW_MAX,
+  CUSTOM_MODEL_CONTEXT_WINDOW_MIN,
+  normalizeCustomModelContextWindow
+} from './app-settings-context-window'
 
 export const GUI_UPDATE_CHANNELS = ['frontier', 'stable'] as const
 export type GuiUpdateChannel = (typeof GUI_UPDATE_CHANNELS)[number]
@@ -58,20 +92,6 @@ export type DeepseekSettingsV1 = {
 
 export type EndpointProtocol = 'openai' | 'anthropic'
 
-/** Context-window bounds for custom endpoint models (tokens). */
-export const CUSTOM_MODEL_CONTEXT_WINDOW_DEFAULT = 500_000
-export const CUSTOM_MODEL_CONTEXT_WINDOW_MIN = 1_000
-export const CUSTOM_MODEL_CONTEXT_WINDOW_MAX = 1_000_000
-
-export function normalizeCustomModelContextWindow(value: unknown): number {
-  const parsed = typeof value === 'number' ? value : Number(value)
-  if (!Number.isFinite(parsed) || parsed <= 0) return CUSTOM_MODEL_CONTEXT_WINDOW_DEFAULT
-  return Math.min(
-    CUSTOM_MODEL_CONTEXT_WINDOW_MAX,
-    Math.max(CUSTOM_MODEL_CONTEXT_WINDOW_MIN, Math.floor(parsed))
-  )
-}
-
 export type CustomEndpointModelV1 = {
   /** Wire model identifier sent to the provider. */
   id: string
@@ -108,11 +128,27 @@ export type NotificationConfigV1 = {
 
 export const DEFAULT_ASR_MODEL = 'glm-asr-2512'
 export const DEFAULT_ASR_BASE_URL = 'https://open.bigmodel.cn/api/paas/v4'
+export const BUILTIN_ASR_PROVIDER_ID = 'zhipu-asr'
 
 export type AsrSettingsV1 = {
   apiKey: string
   model: string
   baseUrl: string
+}
+
+export type AsrProviderModelV1 = {
+  id: string
+  enabled: boolean
+}
+
+export type AsrProviderV1 = {
+  id: string
+  name: string
+  baseUrl: string
+  apiKey: string
+  models: AsrProviderModelV1[]
+  /** Built-in vendors cannot be deleted from Settings. */
+  builtin?: boolean
 }
 
 export type ClawSkillSettingsV1 = {
@@ -292,7 +328,13 @@ export type AppSettingsV1 = {
   uiFontFamily: UiFontFamily
   agentProvider: 'deepseek-runtime'
   deepseek: DeepseekSettingsV1
+  /** Active vendor for `provider = …` in config.toml. Defaults to deepseek. */
+  defaultLlmProviderId: BuiltinLlmProviderId
+  /** Per-vendor API keys + models (built-in catalogue only). */
+  llmProviders: Record<BuiltinLlmProviderId, LlmProviderConfigV1>
   customEndpoints: CustomEndpointV1[]
+  /** Speech vendors (builtin Zhipu + user-added). Active one syncs to `[asr]`. */
+  asrProviders: AsrProviderV1[]
   workspaceRoot: string
   log: LogConfigV1
   notifications: NotificationConfigV1
@@ -314,6 +356,8 @@ export type AppSettingsPatch = Partial<
     | 'claw'
     | 'guiUpdate'
     | 'customEndpoints'
+    | 'asrProviders'
+    | 'llmProviders'
     | 'appearance'
     | 'shortcuts'
   >
@@ -326,6 +370,8 @@ export type AppSettingsPatch = Partial<
   claw?: ClawSettingsPatchV1
   guiUpdate?: Partial<GuiUpdateConfigV1>
   customEndpoints?: CustomEndpointV1[]
+  asrProviders?: AsrProviderV1[]
+  llmProviders?: Partial<Record<BuiltinLlmProviderId, Partial<LlmProviderConfigV1>>>
   appearance?: AppearancePatchV1
   shortcuts?: ShortcutsPatchV1
 }
@@ -946,9 +992,241 @@ export function normalizeWorkbenchSkills(
   return { extraDirs: compactStrings(merged) }
 }
 
+function normalizeLlmProviderConfig(raw: unknown): LlmProviderConfigV1 {
+  const source =
+    raw && typeof raw === 'object'
+      ? (raw as Partial<LlmProviderConfigV1> & { enabledModels?: unknown })
+      : {}
+  const models = migrateEnabledModelsToModels(
+    source.enabledModels,
+    normalizeLlmProviderModels(source.models)
+  )
+  const lastFetchedModels = Array.isArray(source.lastFetchedModels)
+    ? source.lastFetchedModels
+        .filter((id): id is string => typeof id === 'string')
+        .map((id) => id.trim())
+        .filter(Boolean)
+    : undefined
+  return {
+    apiKey: typeof source.apiKey === 'string' ? source.apiKey.trim() : '',
+    models,
+    ...(lastFetchedModels && lastFetchedModels.length > 0
+      ? { lastFetchedModels: [...new Set(lastFetchedModels)] }
+      : {})
+  }
+}
+
+/**
+ * Normalize built-in provider map and keep DeepSeek key/url bi-directionally
+ * synced with legacy `deepseek.*` fields.
+ */
+export function normalizeLlmProviders(
+  input: unknown,
+  deepseek: DeepseekSettingsV1,
+  defaultProviderId?: unknown
+): {
+  defaultLlmProviderId: BuiltinLlmProviderId
+  llmProviders: Record<BuiltinLlmProviderId, LlmProviderConfigV1>
+  deepseek: DeepseekSettingsV1
+} {
+  const defaults = defaultLlmProviders()
+  const raw =
+    input && typeof input === 'object'
+      ? (input as Partial<Record<BuiltinLlmProviderId, unknown>>)
+      : {}
+  const llmProviders = { ...defaults }
+  for (const id of BUILTIN_LLM_PROVIDER_IDS) {
+    llmProviders[id] = normalizeLlmProviderConfig(raw[id] ?? defaults[id])
+  }
+
+  // Migrate legacy deepseek.apiKey → llmProviders.deepseek when empty.
+  const migratedDeepseekKey =
+    !llmProviders.deepseek.apiKey && Boolean(deepseek.apiKey.trim())
+  if (migratedDeepseekKey) {
+    llmProviders.deepseek = {
+      ...llmProviders.deepseek,
+      apiKey: deepseek.apiKey.trim()
+    }
+  }
+  // Seed DeepSeek models once when migrating a legacy key with no picks.
+  if (migratedDeepseekKey && llmProviders.deepseek.models.length === 0) {
+    llmProviders.deepseek = {
+      ...llmProviders.deepseek,
+      models: BUILTIN_LLM_PROVIDERS.deepseek.fallbackModels.map((id) => ({
+        id,
+        enabled: true,
+        contextWindow: CUSTOM_MODEL_CONTEXT_WINDOW_DEFAULT
+      }))
+    }
+  }
+
+  // Mirror DeepSeek vendor config back onto legacy fields for old call sites.
+  const lockedDeepseekUrl = BUILTIN_LLM_PROVIDERS.deepseek.baseUrl
+  const nextDeepseek: DeepseekSettingsV1 = {
+    ...deepseek,
+    apiKey: llmProviders.deepseek.apiKey,
+    baseUrl: lockedDeepseekUrl
+  }
+
+  let defaultLlmProviderId: BuiltinLlmProviderId = isBuiltinLlmProviderId(defaultProviderId)
+    ? defaultProviderId
+    : DEFAULT_LLM_PROVIDER_ID
+  // Unconfigured vendors cannot be the default — prefer DeepSeek, else first with a key.
+  if (!llmProviders[defaultLlmProviderId].apiKey.trim()) {
+    defaultLlmProviderId =
+      BUILTIN_LLM_PROVIDER_IDS.find((id) => llmProviders[id].apiKey.trim()) ??
+      DEFAULT_LLM_PROVIDER_ID
+  }
+
+  return { defaultLlmProviderId, llmProviders, deepseek: nextDeepseek }
+}
+
+export function mergeLlmProviders(
+  current: Record<BuiltinLlmProviderId, LlmProviderConfigV1>,
+  patch: Partial<Record<BuiltinLlmProviderId, Partial<LlmProviderConfigV1>>> | undefined
+): Record<BuiltinLlmProviderId, LlmProviderConfigV1> {
+  if (!patch) return current
+  const next = { ...current }
+  for (const id of BUILTIN_LLM_PROVIDER_IDS) {
+    const part = patch[id]
+    if (!part) continue
+    next[id] = normalizeLlmProviderConfig({
+      ...current[id],
+      ...part,
+      models: part.models ?? current[id].models,
+      lastFetchedModels: part.lastFetchedModels ?? current[id].lastFetchedModels
+    })
+  }
+  return next
+}
+
+export function defaultAsrProviders(): AsrProviderV1[] {
+  return [
+    {
+      id: BUILTIN_ASR_PROVIDER_ID,
+      name: '智谱 ASR',
+      baseUrl: DEFAULT_ASR_BASE_URL,
+      apiKey: '',
+      models: [{ id: DEFAULT_ASR_MODEL, enabled: true }],
+      builtin: true
+    }
+  ]
+}
+
+export function resolveActiveAsrSettings(providers: AsrProviderV1[]): AsrSettingsV1 {
+  const active =
+    providers.find(
+      (provider) =>
+        Boolean(provider.apiKey.trim()) && provider.models.some((model) => model.enabled)
+    ) ??
+    providers.find((provider) => provider.builtin) ??
+    providers[0]
+  const model =
+    active?.models.find((entry) => entry.enabled)?.id?.trim() ||
+    active?.models[0]?.id?.trim() ||
+    DEFAULT_ASR_MODEL
+  return {
+    apiKey: active?.apiKey?.trim() ?? '',
+    baseUrl: (active?.baseUrl?.trim() || DEFAULT_ASR_BASE_URL),
+    model
+  }
+}
+
+export function normalizeAsrProviders(
+  raw: unknown,
+  legacy?: Partial<AsrSettingsV1> | null
+): AsrProviderV1[] {
+  const usedIds = new Set<string>()
+  const list: AsrProviderV1[] = []
+  if (Array.isArray(raw)) {
+    for (const row of raw) {
+      if (!row || typeof row !== 'object') continue
+      const source = row as Partial<AsrProviderV1>
+      const name = typeof source.name === 'string' ? source.name.trim() : ''
+      if (!name) continue
+      const fallbackId =
+        `${name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'asr'}-${list.length + 1}`
+      const rawId = typeof source.id === 'string' && source.id.trim() ? source.id.trim() : fallbackId
+      let id = rawId.toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^-|-$/g, '') || fallbackId
+      let suffix = 2
+      while (usedIds.has(id)) {
+        id = `${rawId}-${suffix}`
+        suffix += 1
+      }
+      usedIds.add(id)
+      const modelsRaw = Array.isArray(source.models) ? source.models : []
+      const seenModels = new Set<string>()
+      const models: AsrProviderModelV1[] = []
+      for (const model of modelsRaw) {
+        if (!model || typeof model !== 'object') continue
+        const modelId = typeof model.id === 'string' ? model.id.trim() : ''
+        if (!modelId || seenModels.has(modelId)) continue
+        seenModels.add(modelId)
+        models.push({ id: modelId, enabled: model.enabled !== false })
+      }
+      const builtin = source.builtin === true || id === BUILTIN_ASR_PROVIDER_ID
+      if (models.length === 0 && builtin) {
+        models.push({ id: DEFAULT_ASR_MODEL, enabled: true })
+      }
+      list.push({
+        id,
+        name,
+        baseUrl:
+          typeof source.baseUrl === 'string' && source.baseUrl.trim()
+            ? source.baseUrl.trim()
+            : DEFAULT_ASR_BASE_URL,
+        apiKey: typeof source.apiKey === 'string' ? source.apiKey.trim() : '',
+        models,
+        ...(builtin ? { builtin: true } : {})
+      })
+    }
+  }
+
+  const hasBuiltin = list.some((provider) => provider.id === BUILTIN_ASR_PROVIDER_ID)
+  if (!hasBuiltin) {
+    const seeded = defaultAsrProviders()[0]
+    const legacyKey = typeof legacy?.apiKey === 'string' ? legacy.apiKey.trim() : ''
+    const legacyModel =
+      typeof legacy?.model === 'string' && legacy.model.trim()
+        ? legacy.model.trim()
+        : DEFAULT_ASR_MODEL
+    const legacyUrl =
+      typeof legacy?.baseUrl === 'string' && legacy.baseUrl.trim()
+        ? legacy.baseUrl.trim()
+        : DEFAULT_ASR_BASE_URL
+    list.unshift({
+      ...seeded,
+      apiKey: legacyKey,
+      baseUrl: legacyUrl,
+      models: [{ id: legacyModel, enabled: true }]
+    })
+  } else if (legacy) {
+    const builtin = list.find((provider) => provider.id === BUILTIN_ASR_PROVIDER_ID)
+    if (builtin && !builtin.apiKey.trim() && typeof legacy.apiKey === 'string' && legacy.apiKey.trim()) {
+      builtin.apiKey = legacy.apiKey.trim()
+      if (typeof legacy.baseUrl === 'string' && legacy.baseUrl.trim()) {
+        builtin.baseUrl = legacy.baseUrl.trim()
+      }
+      const legacyModel =
+        typeof legacy.model === 'string' && legacy.model.trim()
+          ? legacy.model.trim()
+          : DEFAULT_ASR_MODEL
+      if (!builtin.models.some((model) => model.id === legacyModel)) {
+        builtin.models = [{ id: legacyModel, enabled: true }, ...builtin.models]
+      } else {
+        builtin.models = builtin.models.map((model) =>
+          model.id === legacyModel ? { ...model, enabled: true } : model
+        )
+      }
+    }
+  }
+
+  return list
+}
+
 export function normalizeCustomEndpoints(endpoints: unknown): CustomEndpointV1[] {
   if (!Array.isArray(endpoints)) return []
-  const usedEndpointIds = new Set(['deepseek'])
+  const usedEndpointIds = new Set<string>([...BUILTIN_LLM_PROVIDER_IDS])
   return endpoints
     .filter((ep): ep is Record<string, unknown> => typeof ep === 'object' && ep !== null)
     .filter((ep) => typeof ep.name === 'string' && ep.name.trim())
@@ -1015,19 +1293,32 @@ export function normalizeAppSettings(settings: AppSettingsV1): AppSettingsV1 {
     guiUpdate?: Partial<GuiUpdateConfigV1>
     appearance?: AppearancePatchV1
     shortcuts?: ShortcutsPatchV1 | ShortcutsSettingsV1
+    llmProviders?: unknown
+    defaultLlmProviderId?: unknown
   }
   const claw = normalizeClawSettings(maybeSettings.claw)
+  const deepseekBase = {
+    ...settings.deepseek,
+    baseUrl: normalizeDeepseekBaseUrl(settings.deepseek.baseUrl),
+    // Keep sandbox derived from the approval tier so the three-mode dial
+    // remains the single permission control.
+    sandboxMode: sandboxModeForApprovalPolicy(settings.deepseek.approvalPolicy)
+  }
+  const llm = normalizeLlmProviders(
+    maybeSettings.llmProviders,
+    deepseekBase,
+    maybeSettings.defaultLlmProviderId
+  )
   return {
     ...settings,
     uiFontFamily: normalizeUiFontFamily(settings.uiFontFamily),
-    deepseek: {
-      ...settings.deepseek,
-      baseUrl: normalizeDeepseekBaseUrl(settings.deepseek.baseUrl),
-      // Keep sandbox derived from the approval tier so the three-mode dial
-      // remains the single permission control.
-      sandboxMode: sandboxModeForApprovalPolicy(settings.deepseek.approvalPolicy)
-    },
+    deepseek: llm.deepseek,
+    defaultLlmProviderId: llm.defaultLlmProviderId,
+    llmProviders: llm.llmProviders,
     customEndpoints: normalizeCustomEndpoints(maybeSettings.customEndpoints),
+    asrProviders: normalizeAsrProviders(
+      (maybeSettings as { asrProviders?: unknown }).asrProviders
+    ),
     notifications: {
       turnComplete: maybeSettings.notifications?.turnComplete !== false
     },

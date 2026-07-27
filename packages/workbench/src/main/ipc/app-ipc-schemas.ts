@@ -109,6 +109,14 @@ export const asrConfigPayloadSchema = z
   })
   .strict()
 
+export const asrTestPayloadSchema = z
+  .object({
+    apiKey: z.string().trim().min(1).max(500),
+    model: z.string().trim().min(1).max(128),
+    baseUrl: z.string().trim().max(500).optional()
+  })
+  .strict()
+
 export const wecomConfigPayloadSchema = z
   .object({
     webhookKey: z.string().trim().min(1).max(500)
