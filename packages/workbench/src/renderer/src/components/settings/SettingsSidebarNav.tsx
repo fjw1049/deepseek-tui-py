@@ -1,4 +1,4 @@
-import type { ReactElement } from 'react'
+import type { ReactElement, ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   Anchor,
@@ -17,17 +17,27 @@ import { requestLeaveSettings } from '../../lib/settings-leave'
 
 type SettingsCategory = SettingsRouteSection
 
+type NavItem = {
+  id: SettingsCategory
+  labelKey: string
+  icon: ReactNode
+}
+
+const NAV_ITEMS: NavItem[] = [
+  { id: 'general', labelKey: 'general', icon: <Globe className="h-4 w-4" strokeWidth={1.75} /> },
+  { id: 'appearance', labelKey: 'appearance', icon: <Palette className="h-4 w-4" strokeWidth={1.75} /> },
+  { id: 'shortcuts', labelKey: 'shortcuts', icon: <Keyboard className="h-4 w-4" strokeWidth={1.75} /> },
+  { id: 'models', labelKey: 'models', icon: <Box className="h-4 w-4" strokeWidth={1.75} /> },
+  { id: 'hooks', labelKey: 'hooks', icon: <Anchor className="h-4 w-4" strokeWidth={1.75} /> },
+  { id: 'permissions', labelKey: 'permissions', icon: <Shield className="h-4 w-4" strokeWidth={1.75} /> },
+  { id: 'data', labelKey: 'data', icon: <HardDrive className="h-4 w-4" strokeWidth={1.75} /> },
+  { id: 'archive', labelKey: 'archive', icon: <Archive className="h-4 w-4" strokeWidth={1.75} /> }
+]
+
 export function SettingsSidebarNav(): ReactElement {
   const { t } = useTranslation('settings')
   const category = useChatStore((s) => s.settingsSection)
   const openSettings = useChatStore((s) => s.openSettings)
-
-  const catCls = (c: SettingsCategory): string =>
-    `flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-[13.5px] font-medium transition ${
-      category === c
-        ? 'bg-ds-hover text-ds-ink'
-        : 'text-ds-muted hover:bg-ds-hover/60 hover:text-ds-ink'
-    }`
 
   return (
     <div className="ds-no-drag flex min-h-0 flex-1 flex-col">
@@ -35,57 +45,36 @@ export function SettingsSidebarNav(): ReactElement {
         <button
           type="button"
           onClick={() => requestLeaveSettings()}
-          className="flex w-full items-center gap-2 rounded-xl px-2 py-2 text-[14px] text-ds-muted hover:bg-ds-hover hover:text-ds-ink"
+          className="ds-sidebar-link ds-sidebar-link--plain flex w-full"
         >
-          <ChevronLeft className="h-4 w-4" strokeWidth={1.75} />
-          {t('back')}
+          <span className="ds-sidebar-link__icon text-ds-muted">
+            <ChevronLeft className="h-4 w-4" strokeWidth={1.75} />
+          </span>
+          <span className="min-w-0 flex-1 truncate text-left">{t('back')}</span>
         </button>
       </div>
-      <nav className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto px-1">
-        <button type="button" className={catCls('general')} onClick={() => openSettings('general')}>
-          <Globe className="h-4 w-4 shrink-0 opacity-70" strokeWidth={1.75} />
-          {t('general')}
-        </button>
-        <button
-          type="button"
-          className={catCls('appearance')}
-          onClick={() => openSettings('appearance')}
-        >
-          <Palette className="h-4 w-4 shrink-0 opacity-70" strokeWidth={1.75} />
-          {t('appearance')}
-        </button>
-        <button
-          type="button"
-          className={catCls('shortcuts')}
-          onClick={() => openSettings('shortcuts')}
-        >
-          <Keyboard className="h-4 w-4 shrink-0 opacity-70" strokeWidth={1.75} />
-          {t('shortcuts')}
-        </button>
-        <button type="button" className={catCls('models')} onClick={() => openSettings('models')}>
-          <Box className="h-4 w-4 shrink-0 opacity-70" strokeWidth={1.75} />
-          {t('models')}
-        </button>
-        <button type="button" className={catCls('hooks')} onClick={() => openSettings('hooks')}>
-          <Anchor className="h-4 w-4 shrink-0 opacity-70" strokeWidth={1.75} />
-          {t('hooks')}
-        </button>
-        <button
-          type="button"
-          className={catCls('permissions')}
-          onClick={() => openSettings('permissions')}
-        >
-          <Shield className="h-4 w-4 shrink-0 opacity-70" strokeWidth={1.75} />
-          {t('permissions')}
-        </button>
-        <button type="button" className={catCls('data')} onClick={() => openSettings('data')}>
-          <HardDrive className="h-4 w-4 shrink-0 opacity-70" strokeWidth={1.75} />
-          {t('data')}
-        </button>
-        <button type="button" className={catCls('archive')} onClick={() => openSettings('archive')}>
-          <Archive className="h-4 w-4 shrink-0 opacity-70" strokeWidth={1.75} />
-          {t('archive')}
-        </button>
+      <nav className="flex min-h-0 flex-1 flex-col gap-px overflow-y-auto px-1" aria-label={t('title')}>
+        {NAV_ITEMS.map((item) => {
+          const active = category === item.id
+          return (
+            <button
+              key={item.id}
+              type="button"
+              onClick={() => openSettings(item.id)}
+              aria-current={active ? 'page' : undefined}
+              className={`ds-sidebar-link ds-sidebar-link--plain ${
+                active ? 'ds-sidebar-link--active' : ''
+              }`}
+            >
+              <span
+                className={`ds-sidebar-link__icon ${active ? 'text-accent' : 'text-ds-muted'}`}
+              >
+                {item.icon}
+              </span>
+              <span className="min-w-0 flex-1 truncate text-left">{t(item.labelKey)}</span>
+            </button>
+          )
+        })}
       </nav>
       <div className="mt-auto shrink-0 border-t border-ds-border px-1 pt-2">
         <div className="flex items-center gap-2 rounded-xl px-2 py-2">
