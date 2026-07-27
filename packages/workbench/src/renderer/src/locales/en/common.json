@@ -1498,6 +1498,7 @@
   "sidebarThreadExport": "Export to runtime session",
   "sidebarThreadResume": "Warm / resume engine",
   "sidebarThreadCompact": "Compact context",
+  "sidebarThreadArchive": "Archive",
   "sidebarThreadDeleteConfirm": "Delete thread \"{{title}}\"? This cannot be undone.",
   "runtimeForkUnsupported": "This runtime does not support forking threads.",
   "runtimeResumeUnsupported": "This runtime does not support resuming threads.",

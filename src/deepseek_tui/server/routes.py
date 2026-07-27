@@ -19,6 +19,7 @@ from fastapi.responses import StreamingResponse
 from datetime import datetime, timezone
 from pathlib import Path
 from fastapi.responses import JSONResponse
+from fastapi.responses import Response
 
 
 def api_error(status_code: int, message: str, *, error: str | None = None) -> HTTPException:
@@ -1187,6 +1188,13 @@ async def threads_summary(request: Request) -> dict[str, Any]:
     return await mgr.threads_summary()
 
 
+@router_threads.post("/threads/purge-archived")
+async def purge_archived_threads(request: Request) -> dict[str, int]:
+    """Permanently delete all soft-archived threads (Settings → Archive)."""
+    mgr = manager(request)
+    return await mgr.purge_archived_threads()
+
+
 @router_threads.get("/threads/{thread_id}/active")
 async def thread_turn_active(request: Request, thread_id: str) -> dict[str, bool]:
     mgr = manager(request)
@@ -1238,6 +1246,17 @@ async def update_thread(request: Request, thread_id: str) -> dict[str, Any]:
     except ValueError as exc:
         raise api_error(400, str(exc), error="invalid_request") from exc
     return thread.model_dump(mode="json")
+
+
+@router_threads.delete("/threads/{thread_id}", status_code=204)
+async def delete_thread(request: Request, thread_id: str) -> Response:
+    """Permanently delete a thread (used by Settings → Archive)."""
+    mgr = manager(request)
+    try:
+        await mgr.delete_thread(thread_id)
+    except FileNotFoundError as exc:
+        raise api_error(404, str(exc), error="thread_not_found") from exc
+    return Response(status_code=204)
 
 
 @router_threads.post("/threads/{thread_id}/fork", status_code=201)

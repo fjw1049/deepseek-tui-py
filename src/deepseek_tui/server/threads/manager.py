@@ -552,6 +552,27 @@ class RuntimeThreadManager:
             )
         return thread
 
+    async def delete_thread(self, thread_id: str) -> None:
+        """Permanently delete a thread and its turns/items/events/checkpoints."""
+        from deepseek_tui.server.data_inventory import delete_thread_tree
+
+        # Ensure the thread exists before eviction/cleanup.
+        self.store.load_thread(thread_id)
+        await self._evict_active_thread(thread_id)
+        delete_thread_tree(self.store, self.checkpoints, thread_id)
+
+    async def purge_archived_threads(self) -> dict[str, int]:
+        """Permanently delete every soft-archived thread. Returns delete counts."""
+        targets = [t.id for t in self.store.list_threads() if t.archived]
+        deleted = 0
+        for thread_id in targets:
+            try:
+                await self.delete_thread(thread_id)
+                deleted += 1
+            except FileNotFoundError:
+                continue
+        return {"deleted": deleted, "requested": len(targets)}
+
     async def resolve_user_input(
         self,
         request_id: str,

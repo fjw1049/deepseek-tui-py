@@ -236,6 +236,7 @@ export function Workbench(): ReactElement {
     composerPickList,
     setComposerModel,
     deleteThread,
+    archiveThread,
     forkThread,
     compactActiveThread
   } = useChatStore(
@@ -269,6 +270,7 @@ export function Workbench(): ReactElement {
       composerPickList: s.composerPickList,
       setComposerModel: s.setComposerModel,
       deleteThread: s.deleteThread,
+      archiveThread: s.archiveThread,
       forkThread: s.forkThread,
       compactActiveThread: s.compactActiveThread
     }))
@@ -1084,13 +1086,7 @@ export function Workbench(): ReactElement {
             onSelectThread={openThread}
             onOpenThreadTerminal={openThreadTerminal}
             onDeleteThread={deleteThread}
-            onCompactThread={async (id) => {
-              if (activeThreadId !== id) {
-                setRoute('chat')
-                await selectThread(id)
-              }
-              await compactActiveThread()
-            }}
+            onArchiveThread={archiveThread}
             onNewChat={startNewChat}
             onNewChatsThread={startNewChatsThread}
             onNewChatInWorkspace={startNewChatInWorkspace}

@@ -104,7 +104,7 @@ type SidebarProjectsSectionProps = {
   onSelectThread: (threadId: string) => void
   onOpenThreadTerminal: (threadId: string) => Promise<void>
   onDeleteThread: (threadId: string) => Promise<void>
-  onCompactThread: (threadId: string) => Promise<void>
+  onArchiveThread: (threadId: string) => Promise<void>
   t: (k: string, opts?: Record<string, unknown>) => string
 }
 
@@ -492,7 +492,7 @@ export function SidebarProjectsColumn({
   onSelectThread,
   onOpenThreadTerminal,
   onDeleteThread,
-  onCompactThread,
+  onArchiveThread,
   t
 }: SidebarProjectsColumnProps): ReactElement {
   const projectsCollapsed = useChatStore((s) => s.projectsCollapsed)
@@ -725,7 +725,7 @@ export function SidebarProjectsColumn({
             onSelectThread={onSelectThread}
             onOpenThreadTerminal={onOpenThreadTerminal}
             onDeleteThread={onDeleteThread}
-            onCompactThread={onCompactThread}
+            onArchiveThread={onArchiveThread}
             t={t}
           />
         </div>
@@ -763,7 +763,7 @@ function SidebarProjectsSection({
   onSelectThread,
   onOpenThreadTerminal,
   onDeleteThread,
-  onCompactThread,
+  onArchiveThread,
   t
 }: SidebarProjectsSectionProps): ReactElement {
   const [deletingThreadIds, setDeletingThreadIds] = useState<Record<string, boolean>>({})
@@ -863,6 +863,21 @@ function SidebarProjectsSection({
     }
   }
 
+  const handleArchiveThread = async (thread: NormalizedThread): Promise<void> => {
+    const threadId = thread.id.trim()
+    if (!threadId || deletingThreadIds[threadId]) return
+    setDeletingThreadIds((prev) => ({ ...prev, [threadId]: true }))
+    try {
+      await onArchiveThread(threadId)
+    } finally {
+      setDeletingThreadIds((prev) => {
+        const next = { ...prev }
+        delete next[threadId]
+        return next
+      })
+    }
+  }
+
   const handleRemoveWorkspace = async (workspacePath: string): Promise<void> => {
     const confirmMessage = t('sidebarWorkspaceRemoveConfirm', { path: workspacePath })
     if (!window.confirm(confirmMessage)) return
@@ -953,9 +968,8 @@ function SidebarProjectsSection({
         onSelect={() => onSelectThread(thread.id)}
         onOpenTerminal={() => void onOpenThreadTerminal(thread.id)}
         onDelete={() => void handleDeleteThread(thread)}
-        onCompact={() => void onCompactThread(thread.id)}
+        onArchive={() => void handleArchiveThread(thread)}
         onTogglePin={() => onTogglePin(thread.id)}
-        canCompact={activeThreadId === thread.id && !busy}
       />
     )
   }
@@ -1285,7 +1299,6 @@ type ThreadRowProps = {
   hasBackgroundTask: boolean
   pinned: boolean
   sourceLabel?: string
-  canCompact: boolean
   /** Workspace batch-manage mode: row toggles selection instead of opening. */
   selectionMode?: boolean
   selected?: boolean
@@ -1293,7 +1306,7 @@ type ThreadRowProps = {
   onSelect: () => void
   onOpenTerminal: () => void
   onDelete: () => void
-  onCompact: () => void
+  onArchive: () => void
   onTogglePin: () => void
 }
 
@@ -1307,14 +1320,13 @@ export function ThreadRow({
   hasBackgroundTask,
   pinned,
   sourceLabel,
-  canCompact,
   selectionMode = false,
   selected = false,
   onToggleSelect,
   onSelect,
   onOpenTerminal,
   onDelete,
-  onCompact,
+  onArchive,
   onTogglePin
 }: ThreadRowProps): ReactElement {
   const { t } = useTranslation('common')
@@ -1428,6 +1440,9 @@ export function ThreadRow({
         break
       case 'toggle-pin':
         onTogglePin()
+        break
+      case 'archive':
+        onArchive()
         break
       case 'mark-unread':
         markThreadUnread(thread.id)
@@ -1604,21 +1619,19 @@ export function ThreadRow({
             <Pin className="h-3.5 w-3.5" strokeWidth={1.9} />
           )}
         </button>
-        {canCompact ? (
-          <button
-            type="button"
-            onClick={(event) => {
-              event.stopPropagation()
-              onCompact()
-            }}
-            disabled={deleting}
-            className="flex h-6 w-6 items-center justify-center rounded-md text-ds-faint transition-colors duration-200 hover:bg-ds-hover hover:text-ds-ink"
-            title={t('sidebarThreadCompact')}
-            aria-label={t('sidebarThreadCompact')}
-          >
-            <Archive className="h-3.5 w-3.5" strokeWidth={1.9} />
-          </button>
-        ) : null}
+        <button
+          type="button"
+          onClick={(event) => {
+            event.stopPropagation()
+            onArchive()
+          }}
+          disabled={deleting}
+          className="flex h-6 w-6 items-center justify-center rounded-md text-ds-faint transition-colors duration-200 hover:bg-ds-hover hover:text-ds-ink"
+          title={t('sidebarThreadArchive')}
+          aria-label={t('sidebarThreadArchive')}
+        >
+          <Archive className="h-3.5 w-3.5" strokeWidth={1.9} />
+        </button>
         <button
           type="button"
           onClick={(event) => {

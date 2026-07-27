@@ -44,6 +44,7 @@ import {
   RefreshCw,
   Settings,
   Shield,
+  Archive,
   HardDrive,
   PawPrint,
   Pencil,
@@ -71,6 +72,7 @@ import { DEFAULT_WORKSPACE_ROOT } from '@shared/workspace-defaults'
 import { normalizeWorkspaceRoot } from '../lib/workspace-path'
 import { useChatStore, type SettingsRouteSection } from '../store/chat-store'
 import { AppearanceSettingsPanel } from './settings/AppearanceSettingsPanel'
+import { ArchiveSettingsPanel } from './settings/ArchiveSettingsPanel'
 import { DataSettingsPanel } from './settings/DataSettingsPanel'
 import { ModelUsagePanel } from './settings/ModelUsagePanel'
 import { settingsBlockButtonClass } from './settings/SettingsActionToolbar'
@@ -639,6 +641,10 @@ export function SettingsView(): ReactElement {
             <HardDrive className="h-4 w-4 shrink-0 opacity-70" strokeWidth={1.75} />
             {t('data')}
           </button>
+          <button type="button" className={catCls('archive')} onClick={() => openSettings('archive')}>
+            <Archive className="h-4 w-4 shrink-0 opacity-70" strokeWidth={1.75} />
+            {t('archive')}
+          </button>
         </nav>
         <div className="ds-no-drag mt-auto border-t border-ds-border p-3">
           <div className="flex items-center gap-2 rounded-xl px-2 py-2">
@@ -653,7 +659,7 @@ export function SettingsView(): ReactElement {
       </aside>
 
       <div className="ds-page-scroll ds-no-drag min-h-0 min-w-0 flex-1 overflow-y-auto px-8 py-10 sm:px-10">
-        <div className="mx-auto max-w-[836px]">
+        <div className={`mx-auto ${category === 'archive' ? 'max-w-[880px]' : 'max-w-[836px]'}`}>
           {!form.deepseek.apiKey.trim() && category === 'models' ? (
             <div className="mb-6 rounded-2xl border border-amber-300/80 bg-amber-50/95 px-5 py-4 text-amber-950 shadow-sm dark:border-amber-700/60 dark:bg-amber-950/35 dark:text-amber-100">
               <div className="text-[15px] font-semibold">{t('apiKeyRequiredTitle')}</div>
@@ -672,13 +678,19 @@ export function SettingsView(): ReactElement {
                     ? t('shortcuts')
                     : category === 'data'
                       ? t('data')
-                      : t('title')}
+                      : category === 'archive'
+                        ? t('archive')
+                        : t('title')}
               </h1>
               <p className="mt-1 text-[14px] text-ds-muted">
-                {category === 'data' ? t('dataSubtitle') : t('subtitle')}
+                {category === 'data'
+                  ? t('dataSubtitle')
+                  : category === 'archive'
+                    ? t('archiveSubtitle')
+                    : t('subtitle')}
               </p>
             </div>
-            {category !== 'data' ? (
+            {category !== 'data' && category !== 'archive' ? (
               <span
                 title={saveStatus === 'error' && saveError ? saveError : undefined}
                 className={`shrink-0 rounded-full px-3 py-1 text-[12px] font-medium ${
@@ -1169,6 +1181,7 @@ export function SettingsView(): ReactElement {
           )}
 
           {category === 'data' && <DataSettingsPanel />}
+          {category === 'archive' && <ArchiveSettingsPanel />}
 
         </div>
       </div>

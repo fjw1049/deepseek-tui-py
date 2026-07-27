@@ -93,6 +93,12 @@ paths:
       responses:
         "200":
           description: Summary object
+  /v1/threads/purge-archived:
+    post:
+      summary: Permanently delete all soft-archived threads
+      responses:
+        "200":
+          description: Purge result with deleted/requested counts
   /v1/threads/{thread_id}:
     get:
       summary: Thread detail with turns, items, latest_seq
@@ -112,9 +118,18 @@ paths:
           description: Updated thread
         "404":
           description: Thread not found
-  # DELETE intentionally omitted: archive flows through PATCH archived=true.
-  # The runtime never exposed DELETE as a real delete (would have been a
-  # destructive action without backups); the GUI uses PATCH instead.
+    delete:
+      summary: Permanently delete a thread
+      description: >
+        Hard-deletes the thread and its turns/items/events/checkpoints.
+        Soft archive/unarchive continues to use PATCH archived=true/false.
+      parameters:
+        - $ref: "#/components/parameters/threadId"
+      responses:
+        "204":
+          description: Deleted
+        "404":
+          description: Thread not found
   /v1/threads/{thread_id}/fork:
     post:
       summary: Fork thread

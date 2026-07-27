@@ -382,7 +382,7 @@ export interface AgentProvider {
   connect(options?: { light?: boolean }): Promise<void>
   isThreadTurnActive?(threadId: string): Promise<boolean>
   warmThread?(threadId: string): Promise<void>
-  listThreads(): Promise<NormalizedThread[]>
+  listThreads(options?: { includeArchived?: boolean }): Promise<NormalizedThread[]>
   createThread(input: { workspace?: string; title?: string; mode?: string; provider?: string; model?: string }): Promise<NormalizedThread>
   getThreadDetail(threadId: string): Promise<{
     blocks: ChatBlock[]
@@ -409,7 +409,14 @@ export interface AgentProvider {
   steerUserMessage?(threadId: string, turnId: string, text: string): Promise<void>
   interruptTurn(threadId: string, turnId: string): Promise<void>
   renameThread(threadId: string, title: string): Promise<void>
+  /** Soft-archive a thread (PATCH archived=true). */
+  archiveThread?(threadId: string): Promise<void>
+  setThreadArchived?(threadId: string, archived: boolean): Promise<void>
+  /** Permanently delete a thread (DELETE). */
   deleteThread(threadId: string): Promise<void>
+  purgeThread?(threadId: string): Promise<void>
+  /** Permanently delete every soft-archived thread. */
+  purgeArchivedThreads?(): Promise<{ deleted: number; requested: number }>
   forkThread?(threadId: string, throughItemId?: string): Promise<NormalizedThread>
   /** Truncate a thread in place: drop `beforeItemId` and everything after it. */
   rewindThread?(threadId: string, beforeItemId: string, restoreFiles?: boolean): Promise<void>

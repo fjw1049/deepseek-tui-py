@@ -14,7 +14,7 @@ type SidebarPinnedSectionProps = {
   onSelectThread: (threadId: string) => void
   onOpenThreadTerminal: (threadId: string) => Promise<void>
   onDeleteThread: (threadId: string) => Promise<void>
-  onCompactThread: (threadId: string) => Promise<void>
+  onArchiveThread: (threadId: string) => Promise<void>
   onTogglePin: (threadId: string) => void
   t: (k: string, opts?: Record<string, unknown>) => string
 }
@@ -23,7 +23,7 @@ export function SidebarPinnedSection({
   onSelectThread,
   onOpenThreadTerminal,
   onDeleteThread,
-  onCompactThread,
+  onArchiveThread,
   onTogglePin,
   t
 }: SidebarPinnedSectionProps): ReactElement | null {
@@ -80,6 +80,21 @@ export function SidebarPinnedSection({
     }
   }
 
+  const handleArchiveThread = async (thread: NormalizedThread): Promise<void> => {
+    const threadId = thread.id.trim()
+    if (!threadId || deletingThreadIds[threadId]) return
+    setDeletingThreadIds((prev) => ({ ...prev, [threadId]: true }))
+    try {
+      await onArchiveThread(threadId)
+    } finally {
+      setDeletingThreadIds((prev) => {
+        const next = { ...prev }
+        delete next[threadId]
+        return next
+      })
+    }
+  }
+
   return (
     <div className="ds-sidebar-pinned-pane ds-no-drag">
       <div className="ds-sidebar-pinned-header">
@@ -125,9 +140,8 @@ export function SidebarPinnedSection({
                     onSelect={() => onSelectThread(thread.id)}
                     onOpenTerminal={() => void onOpenThreadTerminal(thread.id)}
                     onDelete={() => void handleDeleteThread(thread)}
-                    onCompact={() => void onCompactThread(thread.id)}
+                    onArchive={() => void handleArchiveThread(thread)}
                     onTogglePin={() => onTogglePin(thread.id)}
-                    canCompact={activeThreadId === thread.id && !busy}
                   />
                 </SidebarSortableRow>
               ))}

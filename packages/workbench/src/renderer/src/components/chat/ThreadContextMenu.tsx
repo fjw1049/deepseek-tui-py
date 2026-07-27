@@ -1,6 +1,7 @@
 import { useLayoutEffect, useRef, useState, type CSSProperties, type ReactElement } from 'react'
 import { createPortal } from 'react-dom'
 import {
+  Archive,
   Copy,
   ExternalLink,
   FolderOpen,
@@ -20,6 +21,7 @@ import type { SidebarLabelColor } from '../../lib/sidebar-chrome'
 export type ThreadContextMenuAction =
   | 'rename'
   | 'toggle-pin'
+  | 'archive'
   | 'mark-unread'
   | 'copy-path'
   | 'copy-relative-path'
@@ -131,6 +133,10 @@ export function ThreadContextMenu({
         <span className="min-w-0 truncate">
           {pinned ? t('sidebarUnpinThread') : t('sidebarPinThread')}
         </span>
+      </button>
+      <button type="button" className={itemClass} onClick={() => run('archive')}>
+        <Archive className={iconClass} strokeWidth={1.8} />
+        <span className="min-w-0 truncate">{t('sidebarThreadArchive')}</span>
       </button>
       <button
         type="button"

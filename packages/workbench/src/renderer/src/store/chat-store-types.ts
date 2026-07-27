@@ -40,6 +40,7 @@ export type SettingsRouteSection =
   | 'permissions'
   | 'hooks'
   | 'data'
+  | 'archive'
 
 /** @deprecated Use `models` or `general`; kept for deep-link normalization.
  * `mcp`/`skill` moved to the 应用拓展 连接器/技能 pages; old deep-links fall back to `general`. */
@@ -178,6 +179,7 @@ export type ChatState = {
   renameActiveThread: (title: string) => Promise<void>
   renameThread: (threadId: string, title: string) => Promise<void>
   deleteThread: (threadId: string) => Promise<void>
+  archiveThread: (threadId: string) => Promise<void>
   markThreadUnread: (threadId: string) => void
   togglePin: (threadId: string) => void
   /** Persist a new pin order after in-section drag reorder. */

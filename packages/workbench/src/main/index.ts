@@ -852,11 +852,17 @@ async function runtimeRequest(
     if (effectiveToken) {
       hdrs.set('Authorization', `Bearer ${effectiveToken}`)
     }
+    const method = init.method ?? 'GET'
+    const pathOnly = pathNorm.split('?')[0] ?? pathNorm
+    // Bulk archive purge / data maintenance can touch hundreds of threads.
+    const longPost =
+      method === 'POST' &&
+      (pathOnly === '/v1/threads/purge-archived' || pathOnly.startsWith('/v1/data/'))
     const res = await fetch(url, {
-      method: init.method ?? 'GET',
+      method,
       headers: hdrs,
       body: requestBody,
-      signal: AbortSignal.timeout(init.method === 'POST' ? 60_000 : 15_000)
+      signal: AbortSignal.timeout(longPost ? 300_000 : method === 'POST' ? 60_000 : 15_000)
     })
     const text = await res.text()
     if (isStartTurn) {

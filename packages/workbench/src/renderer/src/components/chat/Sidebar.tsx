@@ -31,7 +31,7 @@ type Props = {
   onSelectThread: (id: string) => void
   onOpenThreadTerminal: (id: string) => Promise<void>
   onDeleteThread: (id: string) => Promise<void>
-  onCompactThread: (id: string) => Promise<void>
+  onArchiveThread: (id: string) => Promise<void>
   onNewChat: () => void
   /** Workspace (Chats) section "+" — always a temporary chats thread. */
   onNewChatsThread: () => void
@@ -55,7 +55,7 @@ export function Sidebar({
   onSelectThread,
   onOpenThreadTerminal,
   onDeleteThread,
-  onCompactThread,
+  onArchiveThread,
   onNewChat,
   onNewChatsThread,
   onNewChatInWorkspace,
@@ -231,7 +231,7 @@ export function Sidebar({
               onSelectThread={onSelectThread}
               onOpenThreadTerminal={onOpenThreadTerminal}
               onDeleteThread={onDeleteThread}
-              onCompactThread={onCompactThread}
+              onArchiveThread={onArchiveThread}
               onTogglePin={togglePin}
               t={t}
             />
@@ -244,7 +244,7 @@ export function Sidebar({
           onSelectThread={onSelectThread}
           onOpenThreadTerminal={onOpenThreadTerminal}
           onDeleteThread={onDeleteThread}
-          onCompactThread={onCompactThread}
+          onArchiveThread={onArchiveThread}
           t={t}
         />
 
@@ -254,7 +254,7 @@ export function Sidebar({
             onSelectThread={onSelectThread}
             onOpenThreadTerminal={onOpenThreadTerminal}
             onDeleteThread={onDeleteThread}
-            onCompactThread={onCompactThread}
+            onArchiveThread={onArchiveThread}
             onTogglePin={togglePin}
             t={t}
           />

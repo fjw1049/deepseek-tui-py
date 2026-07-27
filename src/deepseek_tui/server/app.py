@@ -89,6 +89,7 @@ def attach_cors(app: Any, origins: list[str]) -> None:
 # - GET  /threads          — list threads
 # - GET  /threads/{id}     — get thread detail
 # - PATCH /threads/{id}    — update thread (archive/unarchive)
+# - DELETE /threads/{id}   — permanently delete thread
 # - POST /threads/{id}/fork — fork thread
 # - POST /threads/{id}/turns — start turn
 # - POST /threads/{id}/turns/{turn_id}/interrupt — interrupt turn

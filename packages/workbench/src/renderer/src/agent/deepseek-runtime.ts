@@ -908,12 +908,14 @@ export class DeepseekRuntimeProvider implements AgentProvider {
     }
   }
 
-  async listThreads(): Promise<NormalizedThread[]> {
-    const r = await window.dsGui.runtimeRequest('/v1/threads?limit=50', 'GET')
+  async listThreads(options?: { includeArchived?: boolean }): Promise<NormalizedThread[]> {
+    const includeArchived = options?.includeArchived === true
+    const qs = includeArchived ? 'include_archived=true' : 'limit=50'
+    const r = await window.dsGui.runtimeRequest(`/v1/threads?${qs}`, 'GET')
     if (!r.ok) throw toRuntimeError(readRuntimeError(r.body, 'failed to list threads'))
     const rows = JSON.parse(r.body) as ThreadRecordJson[]
     return rows
-      .filter((t) => t.archived !== true)
+      .filter((t) => (includeArchived ? t.archived === true : t.archived !== true))
       .map((t) => ({
         id: t.id,
         title: titleFromThread(t),
@@ -922,7 +924,8 @@ export class DeepseekRuntimeProvider implements AgentProvider {
         model: t.model,
         mode: t.mode,
         workspace: t.workspace,
-        status: t.status
+        status: t.status,
+        archived: t.archived === true
       }))
   }
 
@@ -1240,15 +1243,50 @@ export class DeepseekRuntimeProvider implements AgentProvider {
     if (!r.ok) throw toRuntimeError(readRuntimeError(r.body, 'rename thread failed'))
   }
 
-  async deleteThread(threadId: string): Promise<void> {
-    // GUI v1 archives threads via PATCH; the runtime never exposed DELETE.
+  async archiveThread(threadId: string): Promise<void> {
+    await this.setThreadArchived(threadId, true)
+  }
+
+  async setThreadArchived(threadId: string, archived: boolean): Promise<void> {
     const r = await window.dsGui.runtimeRequest(
       `/v1/threads/${encodeURIComponent(threadId)}`,
       'PATCH',
-      JSON.stringify({ archived: true })
+      JSON.stringify({ archived })
     )
     if (!r.ok) {
-      throw toRuntimeError(readRuntimeError(r.body, `archive thread failed: ${r.status}`))
+      throw toRuntimeError(
+        readRuntimeError(
+          r.body,
+          archived ? `archive thread failed: ${r.status}` : `unarchive thread failed: ${r.status}`
+        )
+      )
+    }
+  }
+
+  async deleteThread(threadId: string): Promise<void> {
+    // Hard delete. Soft-archive is archiveThread / setThreadArchived.
+    await this.purgeThread(threadId)
+  }
+
+  async purgeThread(threadId: string): Promise<void> {
+    const r = await window.dsGui.runtimeRequest(
+      `/v1/threads/${encodeURIComponent(threadId)}`,
+      'DELETE'
+    )
+    if (!r.ok) {
+      throw toRuntimeError(readRuntimeError(r.body, `delete thread failed: ${r.status}`))
+    }
+  }
+
+  async purgeArchivedThreads(): Promise<{ deleted: number; requested: number }> {
+    const r = await window.dsGui.runtimeRequest('/v1/threads/purge-archived', 'POST', '{}')
+    if (!r.ok) {
+      throw toRuntimeError(readRuntimeError(r.body, `purge archived failed: ${r.status}`))
+    }
+    const body = JSON.parse(r.body || '{}') as { deleted?: number; requested?: number }
+    return {
+      deleted: typeof body.deleted === 'number' ? body.deleted : 0,
+      requested: typeof body.requested === 'number' ? body.requested : 0
     }
   }
 

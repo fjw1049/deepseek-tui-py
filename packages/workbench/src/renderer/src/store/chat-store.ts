@@ -2594,6 +2594,57 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
   },
 
+  archiveThread: async (threadId) => {
+    const targetId = threadId.trim()
+    if (!targetId) return
+    if (get().runtimeConnection !== 'ready') {
+      set({ error: i18n.t('common:runtimeActionNeedsConnection') })
+      return
+    }
+    const { providerId, activeThreadId } = get()
+    const p = getProvider(providerId)
+    const deletingActive = activeThreadId === targetId
+    try {
+      if (typeof p.archiveThread === 'function') {
+        await p.archiveThread(targetId)
+      } else if (typeof p.setThreadArchived === 'function') {
+        await p.setThreadArchived(targetId, true)
+      } else {
+        throw new Error(i18n.t('common:sidebarThreadArchive'))
+      }
+      if (deletingActive) {
+        sseAbort?.abort()
+        sseAbort = null
+        clearBusyWatchdog()
+      }
+      set((s) => {
+        const w = { ...s.watchTurnCompletion }
+        delete w[targetId]
+        clearWatchedCompletionNotification(targetId)
+        const u = { ...s.unreadThreadIds }
+        delete u[targetId]
+        const nextPinned = s.pinnedThreadIds.filter((id) => id !== targetId)
+        if (nextPinned.length !== s.pinnedThreadIds.length) savePinnedThreadIds(nextPinned)
+        return {
+          threads: s.threads.filter((thread) => thread.id !== targetId),
+          watchTurnCompletion: w,
+          unreadThreadIds: u,
+          pinnedThreadIds: nextPinned,
+          ...(deletingActive ? clearedThreadSelection() : {}),
+          error: null
+        }
+      })
+      await get().refreshThreads()
+    } catch (e) {
+      set({
+        error: formatRuntimeError(e),
+        ...(settingsSectionForRuntimeError(e)
+          ? { route: 'settings' as const, settingsSection: settingsSectionForRuntimeError(e)! }
+          : {})
+      })
+    }
+  },
+
   togglePin: (threadId) => {
     const targetId = threadId.trim()
     if (!targetId) return
