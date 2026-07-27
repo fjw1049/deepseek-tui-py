@@ -6058,8 +6058,15 @@ select:focus-visible,
   border-radius: 14px;
 }
 
+.ds-channel-page .ds-content-card > button:first-child,
 .ds-channel-page .ds-content-card > div:first-child {
-  min-height: 76px;
+  min-height: 96px;
+}
+
+.ds-channel-brand-glyph svg {
+  display: block;
+  width: 100%;
+  height: 100%;
 }
 
 .ds-automation-page > header,

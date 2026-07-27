@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState, type ReactElement, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ChevronDown, Info, Loader2, Mail, MessageSquare, Users } from 'lucide-react'
+import { ChevronDown, Info, Loader2 } from 'lucide-react'
 import type { FeishuConfigV1 } from '@shared/ds-gui-api'
+import { ChannelBrandIcon } from './ChannelBrandIcon'
 import { FeishuChannelSetup } from './FeishuChannelSetup'
 import { EmailChannelSetup } from './EmailChannelSetup'
 import { WecomChannelSetup } from './WecomChannelSetup'
@@ -48,22 +49,24 @@ function ChannelCard({
         type="button"
         aria-expanded={open}
         onClick={onToggle}
-        className="flex w-full cursor-pointer items-center gap-4 px-5 py-4 text-left"
+        className="flex w-full cursor-pointer items-center gap-[1.05rem] px-5 py-[1.05rem] text-left"
       >
         {icon}
         <div className="min-w-0 flex-1">
-          <h2 className="text-[15px] font-semibold text-ds-ink">{title}</h2>
-          <p className="mt-0.5 text-[13px] text-ds-muted">{description}</p>
+          <h2 className="text-[15.5px] font-semibold leading-snug tracking-[-0.01em] text-ds-ink">
+            {title}
+          </h2>
+          <p className="mt-1 text-[13px] leading-5 text-ds-muted">{description}</p>
           {configured ? (
-            <p className="mt-0.5 text-[11px] text-emerald-600 dark:text-emerald-400">
+            <p className="mt-1 text-[11.5px] font-medium text-emerald-600 dark:text-emerald-400">
               {t('channelConfigured')}
             </p>
           ) : (
-            <p className="mt-0.5 text-[11px] text-ds-faint">{t('channelNotConfigured')}</p>
+            <p className="mt-1 text-[11.5px] text-ds-faint">{t('channelNotConfigured')}</p>
           )}
         </div>
         <ChevronDown
-          className={`h-4 w-4 shrink-0 text-ds-faint transition-transform duration-200 ${
+          className={`h-[1.05rem] w-[1.05rem] shrink-0 text-ds-faint transition-transform duration-200 ${
             open ? 'rotate-180' : ''
           }`}
           aria-hidden
@@ -168,11 +171,7 @@ export function ChannelCenter({ runtimeReady }: Props): ReactElement {
         ) : (
           <div className="flex flex-col gap-4">
             <ChannelCard
-              icon={
-                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-blue-50 text-blue-600 dark:bg-blue-950/30 dark:text-blue-400">
-                  <MessageSquare className="h-5 w-5" />
-                </div>
-              }
+              icon={<ChannelBrandIcon brand="feishu" />}
               title={t('channelFeishuTitle')}
               description={t('channelFeishuDesc')}
               configured={feishuConfigured}
@@ -187,11 +186,7 @@ export function ChannelCenter({ runtimeReady }: Props): ReactElement {
             </ChannelCard>
 
             <ChannelCard
-              icon={
-                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-amber-50 text-amber-600 dark:bg-amber-950/30 dark:text-amber-400">
-                  <Mail className="h-5 w-5" />
-                </div>
-              }
+              icon={<ChannelBrandIcon brand="email" />}
               title={t('channelEmailTitle')}
               description={t('channelEmailDesc')}
               configured={emailConfigured}
@@ -202,11 +197,7 @@ export function ChannelCenter({ runtimeReady }: Props): ReactElement {
             </ChannelCard>
 
             <ChannelCard
-              icon={
-                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600 dark:bg-emerald-950/30 dark:text-emerald-400">
-                  <Users className="h-5 w-5" />
-                </div>
-              }
+              icon={<ChannelBrandIcon brand="wecom" />}
               title={t('channelWecomTitle')}
               description={t('channelWecomDesc')}
               configured={wecomConfigured}
