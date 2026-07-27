@@ -2177,6 +2177,27 @@ samp {
   flex: 1 1 auto;
 }
 
+/* Sidebar drag-reorder: lift the active row; siblings make room via dnd-kit. */
+.ds-sidebar-sortable-row {
+  touch-action: none;
+}
+
+.ds-sidebar-sortable-row--dragging {
+  z-index: 20;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--ds-bg-sidebar) 92%, var(--ds-card-strong));
+  box-shadow:
+    0 1px 2px color-mix(in srgb, var(--ds-text) 8%, transparent),
+    0 8px 22px color-mix(in srgb, var(--ds-text) 12%, transparent);
+  opacity: 0.97;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ds-sidebar-sortable-row {
+    transition: none !important;
+  }
+}
+
 /* Sidebar lists stay scrollable (wheel/trackpad) but hide the ugly thumb. */
 .ds-sidebar-projects-scroll,
 .ds-sidebar-chats-list,

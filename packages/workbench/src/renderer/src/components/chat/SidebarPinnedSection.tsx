@@ -7,6 +7,7 @@ import { extractTasksFromBlocks } from '../../lib/extract-tasks-from-blocks'
 import { useChatStore } from '../../store/chat-store'
 import { isWorkspaceHidden } from '../../lib/sidebar-chrome'
 import { normalizeWorkspaceRoot } from '../../lib/workspace-path'
+import { SidebarSortableList, SidebarSortableRow } from './SidebarSortable'
 import { ThreadRow } from './SidebarProjectsSection'
 
 type SidebarPinnedSectionProps = {
@@ -29,6 +30,7 @@ export function SidebarPinnedSection({
   const threads = useChatStore((s) => s.threads)
   const activeThreadId = useChatStore((s) => s.activeThreadId)
   const pinnedThreadIds = useChatStore((s) => s.pinnedThreadIds)
+  const reorderPinnedThreadIds = useChatStore((s) => s.reorderPinnedThreadIds)
   const hiddenWorkspacePaths = useChatStore((s) => s.hiddenWorkspacePaths)
   const collapsed = useChatStore((s) => s.pinnedCollapsed)
   const setCollapsed = useChatStore((s) => s.setPinnedCollapsed)
@@ -98,32 +100,38 @@ export function SidebarPinnedSection({
       {sectionCollapsed ? null : (
         <div className="ds-sidebar-pinned-list ds-scroll-surface min-h-0 overflow-y-auto overscroll-contain">
           <div className="ds-sidebar-thread-list px-1.5 pb-1">
-            {pinnedThreads.map((thread) => (
-              <ThreadRow
-                key={thread.id}
-                thread={thread}
-                variant="pinned"
-                active={activeThreadId === thread.id}
-                deleting={deletingThreadIds[thread.id] === true}
-                showRunning={
-                  thread.status?.trim().toLowerCase() === 'running' ||
-                  (activeThreadId === thread.id && busy) ||
-                  watchTurnCompletion[thread.id] === true
-                }
-                showUnread={unreadThreadIds[thread.id] === true && activeThreadId !== thread.id}
-                hasBackgroundTask={
-                  threadsWithActiveTasks.has(thread.id) ||
-                  (activeThreadId === thread.id && activeThreadHasTask)
-                }
-                pinned={pinnedSet.has(thread.id)}
-                onSelect={() => onSelectThread(thread.id)}
-                onOpenTerminal={() => void onOpenThreadTerminal(thread.id)}
-                onDelete={() => void handleDeleteThread(thread)}
-                onCompact={() => void onCompactThread(thread.id)}
-                onTogglePin={() => onTogglePin(thread.id)}
-                canCompact={activeThreadId === thread.id && !busy}
-              />
-            ))}
+            <SidebarSortableList
+              items={pinnedThreads.map((thread) => thread.id)}
+              onReorder={reorderPinnedThreadIds}
+            >
+              {pinnedThreads.map((thread) => (
+                <SidebarSortableRow key={thread.id} id={thread.id}>
+                  <ThreadRow
+                    thread={thread}
+                    variant="pinned"
+                    active={activeThreadId === thread.id}
+                    deleting={deletingThreadIds[thread.id] === true}
+                    showRunning={
+                      thread.status?.trim().toLowerCase() === 'running' ||
+                      (activeThreadId === thread.id && busy) ||
+                      watchTurnCompletion[thread.id] === true
+                    }
+                    showUnread={unreadThreadIds[thread.id] === true && activeThreadId !== thread.id}
+                    hasBackgroundTask={
+                      threadsWithActiveTasks.has(thread.id) ||
+                      (activeThreadId === thread.id && activeThreadHasTask)
+                    }
+                    pinned={pinnedSet.has(thread.id)}
+                    onSelect={() => onSelectThread(thread.id)}
+                    onOpenTerminal={() => void onOpenThreadTerminal(thread.id)}
+                    onDelete={() => void handleDeleteThread(thread)}
+                    onCompact={() => void onCompactThread(thread.id)}
+                    onTogglePin={() => onTogglePin(thread.id)}
+                    canCompact={activeThreadId === thread.id && !busy}
+                  />
+                </SidebarSortableRow>
+              ))}
+            </SidebarSortableList>
           </div>
         </div>
       )}

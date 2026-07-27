@@ -1084,6 +1084,7 @@
   "sidebarProjectsSortNameAsc": "项目名称",
   "sidebarProjectsSortThreadCount": "会话数量",
   "sidebarProjectsSortCreated": "创建时间",
+  "sidebarProjectsSortRestoreAuto": "恢复自动排序",
   "sidebarProjectsClearAllConfirm": "确定删除项目中的全部 {{count}} 个会话吗？此操作无法撤销。",
   "sidebarProjectsDeleteSelectedConfirm": "确定删除选中的 {{count}} 个会话吗？此操作无法撤销。",
   "sidebarPinned": "置顶",

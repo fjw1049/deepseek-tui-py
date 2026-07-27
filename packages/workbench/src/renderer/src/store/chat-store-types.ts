@@ -180,6 +180,8 @@ export type ChatState = {
   deleteThread: (threadId: string) => Promise<void>
   markThreadUnread: (threadId: string) => void
   togglePin: (threadId: string) => void
+  /** Persist a new pin order after in-section drag reorder. */
+  reorderPinnedThreadIds: (nextIds: string[]) => void
   setSidebarSearchQuery: (query: string) => void
   setChatsCollapsed: (collapsed: boolean) => void
   setProjectsCollapsed: (collapsed: boolean) => void

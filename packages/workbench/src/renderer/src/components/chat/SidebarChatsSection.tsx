@@ -17,8 +17,14 @@ import type { NormalizedThread } from '../../agent/types'
 import { useLightDismiss } from '../../hooks/use-light-dismiss'
 import { useThreadsWithActiveTasks } from '../../hooks/use-thread-tasks'
 import { extractTasksFromBlocks } from '../../lib/extract-tasks-from-blocks'
+import {
+  applyManualOrder,
+  loadChatsOrder,
+  persistChatsOrder
+} from '../../lib/sidebar-manual-order'
 import { useChatStore } from '../../store/chat-store'
 import { isChatsWorkspace, isClawWorkspacePath } from '../../lib/workspace-path'
+import { SidebarSortableList, SidebarSortableRow } from './SidebarSortable'
 import { ThreadRow } from './SidebarProjectsSection'
 
 const CHATS_VISIBLE_LIMIT = 8
@@ -60,6 +66,7 @@ export function SidebarChatsSection({
   const [selectMode, setSelectMode] = useState(false)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set())
   const [batchBusy, setBatchBusy] = useState(false)
+  const [chatsOrder, setChatsOrder] = useState<string[]>(() => loadChatsOrder())
   const menuRef = useRef<HTMLDivElement>(null)
   const menuButtonRef = useRef<HTMLButtonElement>(null)
   const menuPanelRef = useRef<HTMLDivElement>(null)
@@ -74,7 +81,7 @@ export function SidebarChatsSection({
   // Chats bucket: temp/default-workspace threads not belonging to a user-added
   // project and not pinned. Claw threads stay excluded as elsewhere.
   const chatsThreads = useMemo(() => {
-    return threads
+    const recent = threads
       .filter(
         (th) =>
           !isClawWorkspacePath(th.workspace) &&
@@ -82,7 +89,19 @@ export function SidebarChatsSection({
           !pinnedSet.has(th.id)
       )
       .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
-  }, [threads, pinnedSet])
+    const byId = new Map(recent.map((thread) => [thread.id, thread]))
+    return applyManualOrder(
+      recent.map((thread) => thread.id),
+      chatsOrder
+    )
+      .map((id) => byId.get(id))
+      .filter((thread): thread is NormalizedThread => Boolean(thread))
+  }, [threads, pinnedSet, chatsOrder])
+
+  const handleChatsReorder = (nextIds: string[]): void => {
+    setChatsOrder(nextIds)
+    persistChatsOrder(nextIds)
+  }
 
   const hasOverflow = !selectMode && chatsThreads.length > CHATS_VISIBLE_LIMIT
   const visibleChats =
@@ -385,35 +404,49 @@ export function SidebarChatsSection({
             <div className="px-2.5 py-2 text-[13px] text-ds-faint">{t('sidebarChatsEmpty')}</div>
           ) : (
             <div className="ds-sidebar-thread-list px-1.5 pb-1">
-              {visibleChats.map((thread) => (
-                <ThreadRow
-                  key={thread.id}
-                  thread={thread}
-                  variant="chats"
-                  active={activeThreadId === thread.id}
-                  deleting={deletingThreadIds[thread.id] === true}
-                  showRunning={
-                    thread.status?.trim().toLowerCase() === 'running' ||
-                    (activeThreadId === thread.id && busy) ||
-                    watchTurnCompletion[thread.id] === true
-                  }
-                  showUnread={unreadThreadIds[thread.id] === true && activeThreadId !== thread.id}
-                  hasBackgroundTask={
-                    threadsWithActiveTasks.has(thread.id) ||
-                    (activeThreadId === thread.id && activeThreadHasTask)
-                  }
-                  pinned={pinnedSet.has(thread.id)}
-                  selectionMode={selectMode}
-                  selected={selectedIds.has(thread.id)}
-                  onToggleSelect={() => toggleSelect(thread.id)}
-                  onSelect={() => onSelectThread(thread.id)}
-                  onOpenTerminal={() => void onOpenThreadTerminal(thread.id)}
-                  onDelete={() => void handleDeleteThread(thread)}
-                  onCompact={() => void onCompactThread(thread.id)}
-                  onTogglePin={() => onTogglePin(thread.id)}
-                  canCompact={activeThreadId === thread.id && !busy}
-                />
-              ))}
+              <SidebarSortableList
+                items={visibleChats.map((thread) => thread.id)}
+                disabled={selectMode}
+                onReorder={(nextVisibleIds) => {
+                  // Preserve hidden overflow ids after the visible window.
+                  const visibleSet = new Set(nextVisibleIds)
+                  const rest = chatsThreads
+                    .map((thread) => thread.id)
+                    .filter((id) => !visibleSet.has(id))
+                  handleChatsReorder([...nextVisibleIds, ...rest])
+                }}
+              >
+                {visibleChats.map((thread) => (
+                  <SidebarSortableRow key={thread.id} id={thread.id} disabled={selectMode}>
+                    <ThreadRow
+                      thread={thread}
+                      variant="chats"
+                      active={activeThreadId === thread.id}
+                      deleting={deletingThreadIds[thread.id] === true}
+                      showRunning={
+                        thread.status?.trim().toLowerCase() === 'running' ||
+                        (activeThreadId === thread.id && busy) ||
+                        watchTurnCompletion[thread.id] === true
+                      }
+                      showUnread={unreadThreadIds[thread.id] === true && activeThreadId !== thread.id}
+                      hasBackgroundTask={
+                        threadsWithActiveTasks.has(thread.id) ||
+                        (activeThreadId === thread.id && activeThreadHasTask)
+                      }
+                      pinned={pinnedSet.has(thread.id)}
+                      selectionMode={selectMode}
+                      selected={selectedIds.has(thread.id)}
+                      onToggleSelect={() => toggleSelect(thread.id)}
+                      onSelect={() => onSelectThread(thread.id)}
+                      onOpenTerminal={() => void onOpenThreadTerminal(thread.id)}
+                      onDelete={() => void handleDeleteThread(thread)}
+                      onCompact={() => void onCompactThread(thread.id)}
+                      onTogglePin={() => onTogglePin(thread.id)}
+                      canCompact={activeThreadId === thread.id && !busy}
+                    />
+                  </SidebarSortableRow>
+                ))}
+              </SidebarSortableList>
               {hasOverflow ? (
                 <button
                   type="button"

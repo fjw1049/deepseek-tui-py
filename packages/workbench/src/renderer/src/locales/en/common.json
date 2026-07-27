@@ -1118,6 +1118,7 @@
   "sidebarProjectsSortNameAsc": "Project name",
   "sidebarProjectsSortThreadCount": "Thread count",
   "sidebarProjectsSortCreated": "Date created",
+  "sidebarProjectsSortRestoreAuto": "Restore automatic sort",
   "sidebarProjectsClearAllConfirm": "Delete all {{count}} chats in Projects? This cannot be undone.",
   "sidebarProjectsDeleteSelectedConfirm": "Delete {{count}} selected chats? This cannot be undone.",
   "sidebarPinned": "Pinned",

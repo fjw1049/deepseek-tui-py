@@ -2613,6 +2613,24 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set({ pinnedThreadIds: next, error: null })
   },
 
+  reorderPinnedThreadIds: (nextIds) => {
+    const current = get().pinnedThreadIds
+    const currentSet = new Set(current)
+    const cleaned = nextIds.filter((id) => currentSet.has(id))
+    for (const id of current) {
+      if (!cleaned.includes(id)) cleaned.push(id)
+    }
+    if (cleaned.length === 0) return
+    if (
+      cleaned.length === current.length &&
+      cleaned.every((id, index) => id === current[index])
+    ) {
+      return
+    }
+    savePinnedThreadIds(cleaned)
+    set({ pinnedThreadIds: cleaned })
+  },
+
   setSidebarSearchQuery: (query) => set({ sidebarSearchQuery: query }),
   setChatsCollapsed: (collapsed) => set({ chatsCollapsed: collapsed }),
   setProjectsCollapsed: (collapsed) => set({ projectsCollapsed: collapsed }),
