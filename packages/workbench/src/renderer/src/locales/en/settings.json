@@ -589,7 +589,6 @@
   "dataDeleteAndExit": "Delete and Quit",
   "dataDeleteAndExitDesc": "Permanently delete this app’s local settings, logs, and GUI caches, then quit. Does not delete conversations or Skills in the shared ~/.deepseek directory.",
   "dataDeleteAndExitAction": "Delete and Quit",
-  "dataDeleteAndExitFooter": "The shared CLI directory (~/.deepseek) is kept. To also wipe conversations, use Clear Conversation History above first.",
   "dataDeleteAndExitConfirm": "Delete local GUI data and quit? Shared ~/.deepseek will not be deleted.",
   "dataDeleteAndExitConfirm2": "Confirm again: app settings and local caches will be cleared and the app will quit immediately. This cannot be undone.",
   "dataDeleteAndExitFailed": "Failed to delete local data"

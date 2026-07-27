@@ -744,7 +744,6 @@ export function DataSettingsPanel(): ReactElement {
             </ActionButton>
           }
         />
-        <div className="px-3 py-3 text-[12.5px] leading-5 text-ds-faint">{t('dataDeleteAndExitFooter')}</div>
       </SettingsCard>
     </div>
   )

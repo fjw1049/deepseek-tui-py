@@ -589,7 +589,6 @@
   "dataDeleteAndExit": "删除并退出",
   "dataDeleteAndExitDesc": "永久删除本应用的本地设置、日志与 GUI 缓存，然后退出。不会删除共享目录 ~/.deepseek 中的对话与 Skills。",
   "dataDeleteAndExitAction": "删除并退出",
-  "dataDeleteAndExitFooter": "共享 CLI 目录（~/.deepseek）会被保留。若也要清空对话，请先使用上方的「清空对话历史」。",
   "dataDeleteAndExitConfirm": "确定删除本机 GUI 数据并退出吗？共享 ~/.deepseek 不会被删除。",
   "dataDeleteAndExitConfirm2": "再次确认：将清除应用设置与本地缓存并立即退出，此操作不可撤销。",
   "dataDeleteAndExitFailed": "删除本机数据失败"
