@@ -1156,7 +1156,7 @@ export function FloatingComposer({
   return (
     <div
       className={`pointer-events-auto w-full ${
-        useChatStageWidth ? 'ds-chat-stage px-3 pb-2 pt-0 sm:px-4' : 'max-w-none px-0 pb-2 pt-0'
+        useChatStageWidth ? 'ds-chat-stage px-3 sm:px-4' : 'max-w-none px-0'
       } ${stageCentered ? 'shrink-0 pb-1 pt-0' : 'pb-0 pt-1'}`}
     >
       {pendingApprovals.length > 0 || pendingUserInputs.length > 0 ? (
@@ -2102,18 +2102,26 @@ export function FloatingComposer({
 
             <div className="min-w-0 flex-1" />
 
-            <ReasoningEffortSelector
-              models={selectorModels}
-              model={activeModelId}
-              onModelChange={(id) => {
-                onComposerModelChange(id)
-                focusComposer()
-              }}
-              value={composerReasoningEffort}
-              onChange={setComposerReasoningEffort}
-              onConfigureModels={() => openSettings('models')}
-              disabled={!canChangeModel}
-            />
+            <div className="flex shrink-0 items-center gap-0 -space-x-0.5">
+              <ContextUsageMeter
+                blocks={blocks}
+                model={activeModelId}
+                hasActiveThread={hasActiveThread}
+                threadId={activeThreadId}
+              />
+              <ReasoningEffortSelector
+                models={selectorModels}
+                model={activeModelId}
+                onModelChange={(id) => {
+                  onComposerModelChange(id)
+                  focusComposer()
+                }}
+                value={composerReasoningEffort}
+                onChange={setComposerReasoningEffort}
+                onConfigureModels={() => openSettings('models')}
+                disabled={!canChangeModel}
+              />
+            </div>
 
             {isMediaCaptureSupported() ? (
               <button
@@ -2165,20 +2173,7 @@ export function FloatingComposer({
       </div>
       {stageCentered ? (
         <WorkspaceContextBar workspaceRoot={effectiveWorkspaceRoot} />
-      ) : (
-        <div className="mt-0 grid min-h-6 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-x-2.5 px-3 sm:px-4">
-          <div className="min-w-0" />
-          <span />
-          <div className="min-w-0 justify-self-end">
-            <ContextUsageMeter
-              blocks={blocks}
-              model={activeModelId}
-              hasActiveThread={hasActiveThread}
-              threadId={activeThreadId}
-            />
-          </div>
-        </div>
-      )}
+      ) : null}
       {!runtimeReady ? (
         <p className="px-3 pb-1 text-right text-[11.5px] text-amber-700 dark:text-amber-200 sm:px-4">
           {t('composerOfflineHint')}

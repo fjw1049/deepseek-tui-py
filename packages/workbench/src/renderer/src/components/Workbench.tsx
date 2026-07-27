@@ -1300,7 +1300,7 @@ export function Workbench(): ReactElement {
                         />
                       </div>
                     ) : null}
-                    <div className="ds-chat-stage mx-auto flex w-full shrink-0 -mt-6 pb-0 pt-0">
+                    <div className="ds-chat-stage mx-auto mb-8 flex w-full shrink-0 -mt-6 pb-0 pt-0">
                       <ComposerStage
                         input={input}
                         setInput={setInput}
@@ -1359,7 +1359,7 @@ export function Workbench(): ReactElement {
                     onOpenWorkspaceFile={openFileInEditor}
                     devPreviewCard={previewLaunchCard}
                   />
-                  <div className="mx-auto flex w-full shrink-0 -mt-6 pb-0 pt-0">
+                  <div className="mx-auto mb-8 flex w-full shrink-0 -mt-6 pb-0 pt-0">
                     <ComposerStage
                       input={input}
                       setInput={setInput}

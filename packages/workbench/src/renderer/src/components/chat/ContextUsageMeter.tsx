@@ -191,13 +191,16 @@ export function ContextUsageMeter({
 
   if (!hasActiveThread || !usage || !effectiveBreakdown) {
     return (
-      <div
-        className="ml-auto flex shrink-0 items-center gap-1.5 text-[12px] text-ds-faint"
-        aria-label={t('contextUsageIdle')}
-        title={t('contextUsageIdle')}
-      >
-        <UsageRing percent={0} tone="idle" />
-        <span>—</span>
+      <div ref={wrapRef} className="relative shrink-0">
+        <button
+          type="button"
+          disabled
+          className="ds-no-drag flex h-8 w-7 shrink-0 items-center justify-center rounded-full text-ds-faint opacity-55"
+          aria-label={t('contextUsageIdle')}
+          title={t('contextUsageIdle')}
+        >
+          <UsageRing percent={0} tone="idle" />
+        </button>
       </div>
     )
   }
@@ -209,18 +212,11 @@ export function ContextUsageMeter({
         ? 'high'
         : 'ok'
 
-  const percentLabel = `${Math.round(usage.percent)}%`
   const detailLabel = t('contextUsageLabel', {
     used: formatTokenCount(usage.usedTokens),
     max: formatTokenCount(usage.maxTokens),
     percent: Math.round(usage.percent)
   })
-  const toneText =
-    tone === 'critical'
-      ? 'text-rose-600 dark:text-rose-300'
-      : tone === 'high'
-        ? 'text-amber-700 dark:text-amber-200'
-        : 'text-ds-faint'
 
   const rowLabels = {
     system: t('contextBreakdownSystem'),
@@ -306,12 +302,14 @@ export function ContextUsageMeter({
       : null
 
   return (
-    <div ref={wrapRef} className="relative ml-auto shrink-0">
+    <div ref={wrapRef} className="relative shrink-0">
       <button
         ref={buttonRef}
         type="button"
-        className={`flex items-center gap-1.5 text-[12px] font-medium tabular-nums transition hover:text-ds-ink ${toneText} ${
-          open ? 'text-ds-ink' : ''
+        className={`ds-no-drag flex h-8 w-7 shrink-0 items-center justify-center rounded-full transition ${
+          open
+            ? 'bg-ds-hover text-ds-ink'
+            : 'text-ds-muted hover:bg-ds-hover hover:text-ds-ink'
         }`}
         aria-label={detailLabel}
         title={detailLabel}
@@ -324,14 +322,13 @@ export function ContextUsageMeter({
         }}
       >
         <UsageRing percent={usage.percent} tone={tone} />
-        <span>{percentLabel}</span>
       </button>
       {panel}
     </div>
   )
 }
 
-const RING_SIZE = 14
+const RING_SIZE = 15
 const RING_STROKE = 2
 const RING_RADIUS = (RING_SIZE - RING_STROKE) / 2
 const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS
