@@ -1841,7 +1841,7 @@ samp {
 .ds-workbench-shell.is-scrolling .ds-editor-picker-menu,
 .ds-workbench-shell.is-scrolling .ds-workbench-right-panel,
 .ds-workbench-shell.is-scrolling .ds-feature-page,
-.ds-workbench-shell.is-scrolling .ds-settings-page > .ds-page-scroll,
+.ds-workbench-shell.is-scrolling .ds-settings-page,
 .ds-workbench-shell.is-scrolling .ds-modal-backdrop,
 .ds-workbench-shell.is-scrolling .ds-modal-surface {
   backdrop-filter: none !important;
@@ -5833,69 +5833,10 @@ select:focus-visible,
   transform: translateZ(0);
 }
 
-/* Settings mirrors the main shell: flush frosted sidebar + inset content card. */
+/* Settings content scrolls inside the shared workbench main card. */
 .ds-settings-page {
-  gap: var(--ds-window-gap);
-  padding: var(--ds-window-inset) var(--ds-window-inset) var(--ds-window-inset) 0;
-  background: var(--bg-sidebar);
-}
-
-.ds-settings-sidebar {
-  border-radius: 0;
-  margin-block: calc(-1 * var(--ds-window-inset));
-  min-height: calc(100% + 2 * var(--ds-window-inset));
-}
-
-.ds-settings-page {
-  --seam-line: rgba(0, 0, 0, 0.08);
-  --seam-shadow-color: rgba(0, 0, 0, 0.1);
-  --card-float-shadow:
-    0 1px 2px rgba(0, 0, 0, 0.04),
-    0 4px 18px -6px rgba(0, 0, 0, 0.1);
-  position: relative;
-}
-
-[data-theme='dark'] .ds-settings-page {
-  --seam-line: rgba(255, 255, 255, 0.06);
-  --seam-shadow-color: rgba(0, 0, 0, 0.22);
-  --card-float-shadow:
-    0 1px 2px rgba(0, 0, 0, 0.2),
-    0 6px 22px -8px rgba(0, 0, 0, 0.45);
-}
-
-.ds-settings-page > .ds-page-scroll {
-  overflow: auto;
   overscroll-behavior: contain;
   transform: translateZ(0);
-  margin: 0;
-  border: none;
-  border-radius: var(--ds-radius-shell);
-  background: var(--ds-material-panel);
-  box-shadow:
-    -4px 0 12px -8px var(--seam-shadow-color),
-    var(--card-float-shadow);
-}
-
-/* Seam wedge + full perimeter ring for the settings card (same as chat). */
-.ds-settings-page::before {
-  content: '';
-  position: absolute;
-  inset-block: var(--ds-window-inset);
-  left: 260px;
-  width: var(--ds-radius-shell);
-  z-index: 0;
-  pointer-events: none;
-  background: var(--bg-sidebar);
-}
-
-.ds-settings-page::after {
-  content: '';
-  position: absolute;
-  inset: var(--ds-window-inset) var(--ds-window-inset) var(--ds-window-inset) 260px;
-  z-index: 40;
-  pointer-events: none;
-  border-radius: var(--ds-radius-shell);
-  box-shadow: inset 0 0 0 1px var(--seam-line);
 }
 
 .ds-content-card {
@@ -6142,19 +6083,15 @@ select:focus-visible,
 
 @media (max-width: 1180px) {
   .ds-feature-page,
-  .ds-settings-page > .ds-page-scroll {
+  .ds-settings-page {
     padding-left: 1.5rem;
     padding-right: 1.5rem;
   }
 }
 
 @media (max-width: 900px) {
-  .ds-settings-sidebar {
-    width: 224px;
-  }
-
   .ds-feature-page,
-  .ds-settings-page > .ds-page-scroll {
+  .ds-settings-page {
     padding-left: 1rem;
     padding-right: 1rem;
   }
@@ -6170,7 +6107,7 @@ select:focus-visible,
   .ds-topbar-surface,
   .ds-sidebar-shell,
   .ds-feature-page,
-  .ds-settings-page > .ds-page-scroll,
+  .ds-settings-page,
   .ds-workbench-right-panel,
   .ds-modal-surface {
     background: var(--ds-surface-elevated);

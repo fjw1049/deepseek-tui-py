@@ -22,22 +22,12 @@ import {
   type ShortcutChord
 } from '@shared/shortcuts'
 import {
-  Anchor,
-  Box,
   ChevronDown,
-  ChevronLeft,
   Eye,
   EyeOff,
   FolderOpen,
-  Globe,
-  Keyboard,
   Loader2,
-  Palette,
   RefreshCw,
-  Settings,
-  Shield,
-  Archive,
-  HardDrive,
   PawPrint,
   X
 } from 'lucide-react'
@@ -60,6 +50,7 @@ import { filterManifestPets } from '@shared/pet-catalog-utils'
 import { DEFAULT_WORKSPACE_ROOT } from '@shared/workspace-defaults'
 import { normalizeWorkspaceRoot } from '../lib/workspace-path'
 import { useChatStore, type SettingsRouteSection } from '../store/chat-store'
+import { setSettingsLeaveHandler } from '../lib/settings-leave'
 import { AppearanceSettingsPanel } from './settings/AppearanceSettingsPanel'
 import { ArchiveSettingsPanel } from './settings/ArchiveSettingsPanel'
 import { DataSettingsPanel } from './settings/DataSettingsPanel'
@@ -480,12 +471,21 @@ export function SettingsView(): ReactElement {
       setRoute('chat')
     })()
   }
+  const goBackRef = useRef(goBack)
+  goBackRef.current = goBack
+
+  useEffect(() => {
+    setSettingsLeaveHandler(() => {
+      goBackRef.current()
+    })
+    return () => setSettingsLeaveHandler(null)
+  }, [])
 
   if (loadError) {
     const msg =
       loadError === 'PRELOAD_BRIDGE' ? t('preloadBridgeError') : t('loadFailed', { message: loadError })
     return (
-      <div className="flex h-full flex-col items-center justify-center gap-4 p-6 text-center">
+      <div className="ds-settings-page flex h-full flex-col items-center justify-center gap-4 p-6 text-center">
         <p className="max-w-md text-sm text-red-700 dark:text-red-300">{msg}</p>
         <button
           type="button"
@@ -500,7 +500,7 @@ export function SettingsView(): ReactElement {
 
   if (!form) {
     return (
-      <div className="flex h-full items-center justify-center text-ds-faint">
+      <div className="ds-settings-page flex h-full items-center justify-center text-ds-faint">
         {t('loading')}
       </div>
     )
@@ -533,82 +533,9 @@ export function SettingsView(): ReactElement {
     update({ workspaceRoot: DEFAULT_WORKSPACE_ROOT })
   }
 
-  const catCls = (c: SettingsCategory): string =>
-    `flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-[13.5px] font-medium transition ${
-      category === c
-        ? 'bg-ds-hover text-ds-ink'
-        : 'text-ds-muted hover:bg-ds-hover/60 hover:text-ds-ink'
-    }`
   return (
-    <div className="ds-settings-page ds-drag flex h-full min-h-0 w-full min-w-0">
-      <aside className="ds-sidebar-shell ds-settings-sidebar ds-drag flex w-[260px] shrink-0 flex-col">
-        <div className="px-3 pb-3 pt-3">
-          <div aria-hidden className="ds-titlebar-safe-block" />
-          <button
-            type="button"
-            onClick={goBack}
-            className="ds-no-drag flex items-center gap-2 rounded-xl px-2 py-2 text-[14px] text-ds-muted hover:bg-ds-hover hover:text-ds-ink"
-          >
-            <ChevronLeft className="h-4 w-4" strokeWidth={1.75} />
-            {t('back')}
-          </button>
-        </div>
-        <nav className="ds-no-drag flex flex-col gap-0.5 px-2">
-          <button type="button" className={catCls('general')} onClick={() => openSettings('general')}>
-            <Globe className="h-4 w-4 shrink-0 opacity-70" strokeWidth={1.75} />
-            {t('general')}
-          </button>
-          <button
-            type="button"
-            className={catCls('appearance')}
-            onClick={() => openSettings('appearance')}
-          >
-            <Palette className="h-4 w-4 shrink-0 opacity-70" strokeWidth={1.75} />
-            {t('appearance')}
-          </button>
-          <button
-            type="button"
-            className={catCls('shortcuts')}
-            onClick={() => openSettings('shortcuts')}
-          >
-            <Keyboard className="h-4 w-4 shrink-0 opacity-70" strokeWidth={1.75} />
-            {t('shortcuts')}
-          </button>
-          <button type="button" className={catCls('models')} onClick={() => openSettings('models')}>
-            <Box className="h-4 w-4 shrink-0 opacity-70" strokeWidth={1.75} />
-            {t('models')}
-          </button>
-          <button type="button" className={catCls('hooks')} onClick={() => openSettings('hooks')}>
-            <Anchor className="h-4 w-4 shrink-0 opacity-70" strokeWidth={1.75} />
-            {t('hooks')}
-          </button>
-          <button type="button" className={catCls('permissions')} onClick={() => openSettings('permissions')}>
-            <Shield className="h-4 w-4 shrink-0 opacity-70" strokeWidth={1.75} />
-            {t('permissions')}
-          </button>
-          <button type="button" className={catCls('data')} onClick={() => openSettings('data')}>
-            <HardDrive className="h-4 w-4 shrink-0 opacity-70" strokeWidth={1.75} />
-            {t('data')}
-          </button>
-          <button type="button" className={catCls('archive')} onClick={() => openSettings('archive')}>
-            <Archive className="h-4 w-4 shrink-0 opacity-70" strokeWidth={1.75} />
-            {t('archive')}
-          </button>
-        </nav>
-        <div className="ds-no-drag mt-auto border-t border-ds-border p-3">
-          <div className="flex items-center gap-2 rounded-xl px-2 py-2">
-            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-ds-subtle text-ds-muted">
-              <Settings className="h-4 w-4" strokeWidth={1.75} />
-            </div>
-            <div className="min-w-0 truncate text-[13px] font-medium text-ds-ink">
-              {t('settingsFooter')}
-            </div>
-          </div>
-        </div>
-      </aside>
-
-      <div className="ds-page-scroll ds-no-drag min-h-0 min-w-0 flex-1 overflow-y-auto px-8 py-10 sm:px-10">
-        <div className={`mx-auto ${category === 'archive' ? 'max-w-[880px]' : 'max-w-[836px]'}`}>
+    <div className="ds-settings-page ds-page-scroll ds-no-drag h-full min-h-0 min-w-0 flex-1 overflow-y-auto px-8 py-10 sm:px-10">
+      <div className={`mx-auto ${category === 'archive' ? 'max-w-[880px]' : 'max-w-[836px]'}`}>
           {!Object.values(form.llmProviders ?? {}).some((entry) => entry?.apiKey?.trim()) &&
           !form.customEndpoints.some((endpoint) => endpoint.enabled && endpoint.apiKey.trim()) &&
           category === 'models' ? (
@@ -1021,7 +948,6 @@ export function SettingsView(): ReactElement {
           {category === 'data' && <DataSettingsPanel />}
           {category === 'archive' && <ArchiveSettingsPanel />}
 
-        </div>
       </div>
     </div>
   )

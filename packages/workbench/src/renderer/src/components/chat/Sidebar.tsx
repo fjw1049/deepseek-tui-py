@@ -21,6 +21,7 @@ import { ConversationSearchModal } from './ConversationSearchModal'
 import { SidebarProjectsColumn } from './SidebarProjectsSection'
 import { SidebarPinnedSection } from './SidebarPinnedSection'
 import { SidebarChatsSection } from './SidebarChatsSection'
+import { SettingsSidebarNav } from '../settings/SettingsSidebarNav'
 
 const EXTENSIONS_OPEN_KEY = 'deepseekgui.sidebar.extensionsOpen'
 
@@ -78,6 +79,7 @@ export function Sidebar({
   const pinnedThreadIds = useChatStore((s) => s.pinnedThreadIds)
   const togglePin = useChatStore((s) => s.togglePin)
   const [searchModalOpen, setSearchModalOpen] = useState(false)
+  const settingsActive = route === 'settings'
   const automationActive = route === 'automation'
   const channelsActive = route === 'channels'
   const pluginsActive = route === 'plugins'
@@ -129,146 +131,154 @@ export function Sidebar({
           </div>
         </div>
 
-        <nav className="ds-sidebar-top-nav flex flex-col gap-px px-1" aria-label={t('extensions')}>
-          <SidebarLink
-            icon={<Plus className="h-4 w-4" strokeWidth={2} />}
-            label={t('newAgent')}
-            onClick={runtimeReady ? onNewChat : undefined}
-            disabled={!runtimeReady}
-            disabledHint={t('runtimeActionNeedsConnection')}
-            shortcut="⌘N"
-            variant="action"
-          />
-          <SidebarLink
-            icon={<Search className="h-4 w-4" strokeWidth={1.9} />}
-            label={t('conversationSearchNav')}
-            onClick={() => setSearchModalOpen(true)}
-            shortcut="⌘K"
-            variant="flat"
-          />
+        {settingsActive ? null : (
+          <nav className="ds-sidebar-top-nav flex flex-col gap-px px-1" aria-label={t('extensions')}>
+            <SidebarLink
+              icon={<Plus className="h-4 w-4" strokeWidth={2} />}
+              label={t('newAgent')}
+              onClick={runtimeReady ? onNewChat : undefined}
+              disabled={!runtimeReady}
+              disabledHint={t('runtimeActionNeedsConnection')}
+              shortcut="⌘N"
+              variant="action"
+            />
+            <SidebarLink
+              icon={<Search className="h-4 w-4" strokeWidth={1.9} />}
+              label={t('conversationSearchNav')}
+              onClick={() => setSearchModalOpen(true)}
+              shortcut="⌘K"
+              variant="flat"
+            />
 
-          <SidebarLink
-            icon={<Blocks className="h-4 w-4" strokeWidth={1.9} />}
-            label={t('extensions')}
-            onClick={toggleExtensions}
-            variant="flat"
-            trailing={
-              <ChevronRight
-                className={`ds-sidebar-chevron h-3.5 w-3.5 shrink-0 text-ds-faint ${
-                  extensionsOpen ? 'ds-sidebar-chevron--open' : ''
-                }`}
-                strokeWidth={1.9}
-              />
-            }
-          />
-          {extensionsOpen ? (
-            <div className="ds-sidebar-subgroup flex flex-col gap-px">
-              <SidebarLink
-                icon={<Puzzle className="h-4 w-4" strokeWidth={1.9} />}
-                label={t('extPlugins')}
-                onClick={() => openPlugins()}
-                variant="flat"
-                indent
-                active={pluginsActive}
-              />
-              <SidebarLink
-                icon={<Sparkles className="h-4 w-4" strokeWidth={1.9} />}
-                label={t('extSkills')}
-                onClick={() => openSkills()}
-                variant="flat"
-                indent
-                active={skillsActive}
-              />
-              <SidebarLink
-                icon={<Cable className="h-4 w-4" strokeWidth={1.9} />}
-                label={t('extConnectors')}
-                onClick={() => openConnectors()}
-                variant="flat"
-                indent
-                active={connectorsActive}
-              />
-            </div>
-          ) : null}
+            <SidebarLink
+              icon={<Blocks className="h-4 w-4" strokeWidth={1.9} />}
+              label={t('extensions')}
+              onClick={toggleExtensions}
+              variant="flat"
+              trailing={
+                <ChevronRight
+                  className={`ds-sidebar-chevron h-3.5 w-3.5 shrink-0 text-ds-faint ${
+                    extensionsOpen ? 'ds-sidebar-chevron--open' : ''
+                  }`}
+                  strokeWidth={1.9}
+                />
+              }
+            />
+            {extensionsOpen ? (
+              <div className="ds-sidebar-subgroup flex flex-col gap-px">
+                <SidebarLink
+                  icon={<Puzzle className="h-4 w-4" strokeWidth={1.9} />}
+                  label={t('extPlugins')}
+                  onClick={() => openPlugins()}
+                  variant="flat"
+                  indent
+                  active={pluginsActive}
+                />
+                <SidebarLink
+                  icon={<Sparkles className="h-4 w-4" strokeWidth={1.9} />}
+                  label={t('extSkills')}
+                  onClick={() => openSkills()}
+                  variant="flat"
+                  indent
+                  active={skillsActive}
+                />
+                <SidebarLink
+                  icon={<Cable className="h-4 w-4" strokeWidth={1.9} />}
+                  label={t('extConnectors')}
+                  onClick={() => openConnectors()}
+                  variant="flat"
+                  indent
+                  active={connectorsActive}
+                />
+              </div>
+            ) : null}
 
-          <SidebarLink
-            icon={<CalendarClock className="h-4 w-4" strokeWidth={1.9} />}
-            label={t('newAutomationTask')}
-            onClick={
-              runtimeReady
-                ? () => {
-                    setRoute('automation')
-                  }
-                : undefined
-            }
-            disabled={!runtimeReady}
-            disabledHint={t('runtimeActionNeedsConnection')}
-            variant="flat"
-            active={automationActive}
-          />
-          <SidebarLink
-            icon={<MessageCircle className="h-4 w-4" strokeWidth={1.9} />}
-            label={t('messageChannels')}
-            onClick={() => setRoute('channels')}
-            variant="flat"
-            active={channelsActive}
-          />
-        </nav>
+            <SidebarLink
+              icon={<CalendarClock className="h-4 w-4" strokeWidth={1.9} />}
+              label={t('newAutomationTask')}
+              onClick={
+                runtimeReady
+                  ? () => {
+                      setRoute('automation')
+                    }
+                  : undefined
+              }
+              disabled={!runtimeReady}
+              disabledHint={t('runtimeActionNeedsConnection')}
+              variant="flat"
+              active={automationActive}
+            />
+            <SidebarLink
+              icon={<MessageCircle className="h-4 w-4" strokeWidth={1.9} />}
+              label={t('messageChannels')}
+              onClick={() => setRoute('channels')}
+              variant="flat"
+              active={channelsActive}
+            />
+          </nav>
+        )}
       </div>
 
-      <div className="ds-sidebar-middle ds-no-drag min-h-0 flex-1">
-        <SidebarProjectsColumn
-          threads={threads}
-          activeThreadId={activeThreadId}
-          runtimeReady={runtimeReady}
-          workspaceRoot={workspaceRoot}
-          busy={busy}
-          watchTurnCompletion={watchTurnCompletion}
-          unreadThreadIds={unreadThreadIds}
-          pinnedThreadIds={pinnedThreadIds}
-          locale={i18n.language}
-          pinnedSlot={
-            <SidebarPinnedSection
+      {settingsActive ? (
+        <SettingsSidebarNav />
+      ) : (
+        <>
+          <div className="ds-sidebar-middle ds-no-drag min-h-0 flex-1">
+            <SidebarProjectsColumn
+              threads={threads}
+              activeThreadId={activeThreadId}
+              runtimeReady={runtimeReady}
+              workspaceRoot={workspaceRoot}
+              busy={busy}
+              watchTurnCompletion={watchTurnCompletion}
+              unreadThreadIds={unreadThreadIds}
+              pinnedThreadIds={pinnedThreadIds}
+              locale={i18n.language}
+              pinnedSlot={
+                <SidebarPinnedSection
+                  onSelectThread={onSelectThread}
+                  onOpenThreadTerminal={onOpenThreadTerminal}
+                  onDeleteThread={onDeleteThread}
+                  onArchiveThread={onArchiveThread}
+                  onTogglePin={togglePin}
+                  t={t}
+                />
+              }
+              onTogglePin={togglePin}
+              onPickWorkspace={() => void chooseWorkspace()}
+              onRemoveWorkspace={hideWorkspace}
+              onDeleteWorkspace={deleteWorkspace}
+              onCreateThreadInWorkspace={onNewChatInWorkspace}
               onSelectThread={onSelectThread}
               onOpenThreadTerminal={onOpenThreadTerminal}
               onDeleteThread={onDeleteThread}
               onArchiveThread={onArchiveThread}
-              onTogglePin={togglePin}
               t={t}
             />
-          }
-          onTogglePin={togglePin}
-          onPickWorkspace={() => void chooseWorkspace()}
-          onRemoveWorkspace={hideWorkspace}
-          onDeleteWorkspace={deleteWorkspace}
-          onCreateThreadInWorkspace={onNewChatInWorkspace}
-          onSelectThread={onSelectThread}
-          onOpenThreadTerminal={onOpenThreadTerminal}
-          onDeleteThread={onDeleteThread}
-          onArchiveThread={onArchiveThread}
-          t={t}
-        />
 
-        <div className="ds-sidebar-chats-pane">
-          <SidebarChatsSection
-            onNewChat={onNewChatsThread}
-            onSelectThread={onSelectThread}
-            onOpenThreadTerminal={onOpenThreadTerminal}
-            onDeleteThread={onDeleteThread}
-            onArchiveThread={onArchiveThread}
-            onTogglePin={togglePin}
-            t={t}
-          />
-        </div>
-      </div>
+            <div className="ds-sidebar-chats-pane">
+              <SidebarChatsSection
+                onNewChat={onNewChatsThread}
+                onSelectThread={onSelectThread}
+                onOpenThreadTerminal={onOpenThreadTerminal}
+                onDeleteThread={onDeleteThread}
+                onArchiveThread={onArchiveThread}
+                onTogglePin={togglePin}
+                t={t}
+              />
+            </div>
+          </div>
 
-      <div className="ds-sidebar-footer ds-no-drag shrink-0 px-1 pt-2">
-        <SidebarLink
-          icon={<Settings className="h-4 w-4" strokeWidth={1.75} />}
-          label={t('settings')}
-          onClick={() => onOpenSettings('general')}
-          variant="footer"
-        />
-      </div>
+          <div className="ds-sidebar-footer ds-no-drag shrink-0 px-1 pt-2">
+            <SidebarLink
+              icon={<Settings className="h-4 w-4" strokeWidth={1.75} />}
+              label={t('settings')}
+              onClick={() => onOpenSettings('general')}
+              variant="footer"
+            />
+          </div>
+        </>
+      )}
 
       <ConversationSearchModal
         open={searchModalOpen}

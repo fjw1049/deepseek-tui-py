@@ -68,6 +68,9 @@ const AutomationCenter = lazy(() =>
 const ChannelCenter = lazy(() =>
   import('./channels/ChannelCenter').then((module) => ({ default: module.ChannelCenter }))
 )
+const SettingsView = lazy(() =>
+  import('./SettingsView').then((module) => ({ default: module.SettingsView }))
+)
 
 const LEFT_PANEL_WIDTH_KEY = 'deepseekgui.layout.leftSidebarWidth'
 const LEFT_PANEL_COLLAPSED_KEY = 'deepseekgui.layout.leftSidebarCollapsed'
@@ -1110,7 +1113,11 @@ export function Workbench(): ReactElement {
           route === 'plugins' || route === 'skills' || route === 'connectors' ? 'px-0' : ''
         }`}
       >
-        {route === 'plugins' || route === 'skills' || route === 'connectors' ? (
+        {route === 'settings' ? (
+          <Suspense fallback={<div className="h-full bg-transparent" />}>
+            <SettingsView />
+          </Suspense>
+        ) : route === 'plugins' || route === 'skills' || route === 'connectors' ? (
           <Suspense fallback={<div className="h-full bg-transparent" />}>
             {route === 'skills' ? (
               <SkillsView />
