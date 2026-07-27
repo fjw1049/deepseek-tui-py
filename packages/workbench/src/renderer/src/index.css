@@ -2735,8 +2735,8 @@ samp {
 }
 
 .ds-search-modal {
-  width: min(640px, 100%);
-  max-height: min(72vh, 640px);
+  width: min(720px, 100%);
+  max-height: min(90vh, 920px);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -2868,7 +2868,7 @@ samp {
   display: flex;
   align-items: center;
   justify-content: center;
-  min-height: 200px;
+  min-height: 400px;
   flex: 0 0 auto;
 }
 
