@@ -789,10 +789,10 @@ export function Workbench(): ReactElement {
 
   const startNewChat = (): void => {
     setRoute('chat')
-    // Context-aware New Agent: when a real project is active the new agent
-    // belongs to that project (inherit its workspace); otherwise it is a
-    // temporary (Chats) thread. Reveal the Chats section so the new temporary
-    // thread is visible even if it was collapsed.
+    // Context-aware New Agent / ⌘N: when a real project is active the new
+    // agent belongs to that project (inherit its workspace); otherwise it is
+    // a temporary (Chats) thread. Reveal the Chats section so the new
+    // temporary thread is visible even if it was collapsed.
     // Note: a temporary chat's workspace is the shared DEFAULT_WORKSPACE_ROOT,
     // which is non-empty, so test `isChatsWorkspace` (not just an empty root).
     const activeThread = activeThreadId
@@ -806,6 +806,15 @@ export function Workbench(): ReactElement {
       useChatStore.getState().setChatsCollapsed(false)
       void createThread({ chats: true })
     }
+  }
+
+  // Workspace-section "+" must always create a temporary Chats thread.
+  // Reusing startNewChat here mis-routes into the active project, so the
+  // new session appears under Projects and looks like Workspace "+" did nothing.
+  const startNewChatsThread = (): void => {
+    setRoute('chat')
+    useChatStore.getState().setChatsCollapsed(false)
+    void createThread({ chats: true })
   }
 
   const startNewChatInWorkspace = (workspaceRoot: string): void => {
@@ -1083,6 +1092,7 @@ export function Workbench(): ReactElement {
               await compactActiveThread()
             }}
             onNewChat={startNewChat}
+            onNewChatsThread={startNewChatsThread}
             onNewChatInWorkspace={startNewChatInWorkspace}
             onOpenSettings={(section) => openSettings(section)}
             onCollapseSidebar={() => setLeftSidebarCollapsed(true)}

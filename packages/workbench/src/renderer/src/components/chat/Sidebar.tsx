@@ -33,6 +33,8 @@ type Props = {
   onDeleteThread: (id: string) => Promise<void>
   onCompactThread: (id: string) => Promise<void>
   onNewChat: () => void
+  /** Workspace (Chats) section "+" — always a temporary chats thread. */
+  onNewChatsThread: () => void
   onNewChatInWorkspace: (workspaceRoot: string) => void
   onOpenSettings: (section?: SettingsRouteSection) => void
   onCollapseSidebar: () => void
@@ -55,6 +57,7 @@ export function Sidebar({
   onDeleteThread,
   onCompactThread,
   onNewChat,
+  onNewChatsThread,
   onNewChatInWorkspace,
   onOpenSettings,
   onCollapseSidebar
@@ -247,7 +250,7 @@ export function Sidebar({
 
         <div className="ds-sidebar-chats-pane">
           <SidebarChatsSection
-            onNewChat={onNewChat}
+            onNewChat={onNewChatsThread}
             onSelectThread={onSelectThread}
             onOpenThreadTerminal={onOpenThreadTerminal}
             onDeleteThread={onDeleteThread}
