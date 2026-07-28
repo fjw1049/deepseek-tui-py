@@ -50,7 +50,12 @@ export function stopDockIconAnimation(restIcon?: NativeImage): void {
     clearInterval(timer)
     timer = null
   }
-  if (process.platform === 'darwin' && app.dock && restIcon && !restIcon.isEmpty()) {
+  if (process.platform !== 'darwin' || !app.dock) return
+  // Prefer the padded rest PNG (same artwork as the builder .icns).
+  if (restIcon && !restIcon.isEmpty()) {
     app.dock.setIcon(restIcon)
+    return
   }
+  // No rest image provided — clear the frame override so the bundle icon returns.
+  app.dock.setIcon(nativeImage.createEmpty())
 }

@@ -926,7 +926,10 @@ app.whenReady().then(async () => {
   installMediaPermissionHandler()
   traceStartup('install webview guards:done')
 
-  if (process.platform === 'darwin' && !appIcon.isEmpty()) {
+  // Packaged builds already ship a padded .icns via electron-builder — do not
+  // override with setIcon(PNG) or the Dock icon looks oversized vs other apps.
+  // Dev has no .icns, so set the padded PNG for a matching Dock preview.
+  if (process.platform === 'darwin' && !appIcon.isEmpty() && !app.isPackaged) {
     app.dock.setIcon(appIcon)
   }
 
@@ -937,7 +940,7 @@ app.whenReady().then(async () => {
   traceStartup('settings load:done')
 
   // macOS Dock frame animation — opt-in via Settings → General (default off).
-  if (process.platform === 'darwin' && !appIcon.isEmpty() && initial.iconAnimation) {
+  if (process.platform === 'darwin' && initial.iconAnimation) {
     startDockIconAnimation()
   }
 

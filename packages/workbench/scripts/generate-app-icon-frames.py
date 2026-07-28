@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Generate dock-icon animation frames: largest ↔ smallest diagonal swap."""
+"""Generate dock-icon assets: rest PNG + largest ↔ smallest diagonal swap frames.
+
+macOS Dock expects ~80% artwork on a transparent canvas so the icon matches
+other apps optically. Cell layout is the app-icon.svg design, mapped into that
+content box.
+"""
 
 from __future__ import annotations
 
@@ -9,27 +14,30 @@ from PIL import Image, ImageDraw
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT_DIR = ROOT / 'src/asset/img/app-icon-anim'
-CANVAS = 256  # dock cycles; macOS scales up
+REST_PNG = ROOT / 'src/asset/img/deepseek.png'
+
+# Dock / Finder optical size (Apple-style inset ≈ 80% of canvas).
+CONTENT = 0.80
 FRAME_COUNT = 24
 # Match in-app timing: hold ~18%, ease across, hold, ease back.
 HOLD = 0.18
 CROSS_END = 0.50
 HOLD_B_END = 0.68
 
-# Geometry from app-icon.svg, scaled to CANVAS / 1024.
-S = CANVAS / 1024.0
-TL = (382.0 * S, 382.0 * S)
-BR = (681.661 * S, 681.661 * S)
-LARGE = 260.0 * S
-MID = 180.678 * S
-SMALL = 127.797 * S
+# Original design plate was inset 64/1024 (87.5% fill). Cell centers/sizes are
+# expressed as fractions of that plate, then placed in the 80% content box.
+_PLATE0 = 896.0
+_TL_F = ((382.0 - 64.0) / _PLATE0, (382.0 - 64.0) / _PLATE0)
+_BR_F = ((681.661 - 64.0) / _PLATE0, (681.661 - 64.0) / _PLATE0)
+_LARGE_F = 260.0 / _PLATE0
+_MID_F = 180.678 / _PLATE0
+_SMALL_F = 127.797 / _PLATE0
 RX_RATIO = 0.24
 
 
 def ease(t: str | float) -> float:
-    """cubic-bezier(0.65, 0, 0.35, 1) approx via smoothstep on clipped t."""
+    """cubic-bezier(0.65, 0, 0.35, 1) approx via smootherstep on clipped t."""
     t = max(0.0, min(1.0, float(t)))
-    # smootherstep
     return t * t * t * (t * (t * 6.0 - 15.0) + 10.0)
 
 
@@ -49,22 +57,19 @@ def lerp(a: float, b: float, t: float) -> float:
     return a + (b - a) * t
 
 
-def lerp_color(
-    a: tuple[int, int, int], b: tuple[int, int, int], t: float
-) -> tuple[int, int, int]:
-    return (
-        int(round(lerp(a[0], b[0], t))),
-        int(round(lerp(a[1], b[1], t))),
-        int(round(lerp(a[2], b[2], t))),
-    )
+def layout(canvas: int) -> tuple[tuple[float, float], tuple[float, float], float, float, float, int, float]:
+    margin = canvas * (1.0 - CONTENT) / 2.0
+    plate = canvas * CONTENT
+    tl = (margin + _TL_F[0] * plate, margin + _TL_F[1] * plate)
+    br = (margin + _BR_F[0] * plate, margin + _BR_F[1] * plate)
+    return tl, br, _LARGE_F * plate, _MID_F * plate, _SMALL_F * plate, int(round(margin)), plate
 
 
-def draw_squircle(draw: ImageDraw.ImageDraw) -> None:
-    # Approximate the SVG squircle with a rounded rect matching deepseek.png.
-    margin = int(CANVAS * 0.0625)  # 64/1024
-    radius = int(CANVAS * 0.225)
+def draw_squircle(draw: ImageDraw.ImageDraw, canvas: int, margin: int, plate: float) -> None:
+    # Corner radius ≈ original SVG squircle feel on the content box.
+    radius = int(round(plate * 0.257))  # ~225/896 of plate
     draw.rounded_rectangle(
-        [margin, margin, CANVAS - margin - 1, CANVAS - margin - 1],
+        [margin, margin, canvas - margin - 1, canvas - margin - 1],
         radius=radius,
         fill=(0, 0, 0, 255),
     )
@@ -86,25 +91,23 @@ def draw_cell(
     )
 
 
-def render_frame(t: float) -> Image.Image:
-    img = Image.new('RGBA', (CANVAS, CANVAS), (0, 0, 0, 0))
+def render_frame(canvas: int, t: float) -> Image.Image:
+    tl, br, large, mid, small, margin, plate = layout(canvas)
+    img = Image.new('RGBA', (canvas, canvas), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
-    draw_squircle(draw)
+    draw_squircle(draw, canvas, margin, plate)
 
-    # Static mid grays
-    draw_cell(draw, BR[0], TL[1], MID, (170, 170, 170))
-    draw_cell(draw, TL[0], BR[1], MID, (170, 170, 170))
+    draw_cell(draw, br[0], tl[1], mid, (170, 170, 170))
+    draw_cell(draw, tl[0], br[1], mid, (170, 170, 170))
 
-    # Pair A: white large at TL → shrinks to BR
-    ax = lerp(TL[0], BR[0], t)
-    ay = lerp(TL[1], BR[1], t)
-    asize = lerp(LARGE, SMALL, t)
+    ax = lerp(tl[0], br[0], t)
+    ay = lerp(tl[1], br[1], t)
+    asize = lerp(large, small, t)
     draw_cell(draw, ax, ay, asize, (255, 255, 255))
 
-    # Pair B: dark small at BR → grows to TL
-    bx = lerp(BR[0], TL[0], t)
-    by = lerp(BR[1], TL[1], t)
-    bsize = lerp(SMALL, LARGE, t)
+    bx = lerp(br[0], tl[0], t)
+    by = lerp(br[1], tl[1], t)
+    bsize = lerp(small, large, t)
     draw_cell(draw, bx, by, bsize, (100, 100, 100))
 
     return img
@@ -115,14 +118,18 @@ def main() -> None:
     for old in OUT_DIR.glob('frame-*.png'):
         old.unlink()
 
+    # Rest pose for Dock / electron-builder (1024 master).
+    rest = render_frame(1024, 0.0)
+    rest.save(REST_PNG, 'PNG')
+    print(f'Wrote {REST_PNG} (80% content box)')
+
     for i in range(FRAME_COUNT):
         t = progress(i)
         path = OUT_DIR / f'frame-{i:02d}.png'
-        render_frame(t).save(path, 'PNG')
+        render_frame(256, t).save(path, 'PNG')
         print(f'Wrote {path} (t={t:.3f})')
 
-    # Sanity: frame 0 should match rest pose closely
-    print(f'Done: {FRAME_COUNT} frames → {OUT_DIR}')
+    print(f'Done: rest PNG + {FRAME_COUNT} frames → {OUT_DIR}')
 
 
 if __name__ == '__main__':
