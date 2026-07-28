@@ -60,7 +60,7 @@ Working on issue #124 (cycle-restart). Key decisions: (1) trigger at 110K
 tokens not 128K — need ~8.5K headroom for the briefing turn itself plus
 next-turn growth before the next boundary; (2) archive to JSONL with a
 header line so future tools can stream-read without parsing the whole
-file. Constraint discovered: DeepSeek V4 thinking-mode requires
+file. Constraint discovered: the provider's thinking mode requires
 reasoning_content replay on assistant messages with tool calls — so seed
 messages can't include orphan tool calls from the archived cycle. The
 approach of "summarize then keep recent messages" (the old compaction
