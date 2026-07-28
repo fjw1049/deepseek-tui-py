@@ -87,10 +87,6 @@ type SidebarProjectsSectionProps = {
   onCollapsedWorkspacesChange: (
     update: Record<string, boolean> | ((current: Record<string, boolean>) => Record<string, boolean>)
   ) => void
-  expandedWorkspaces: Record<string, boolean>
-  onExpandedWorkspacesChange: (
-    update: Record<string, boolean> | ((current: Record<string, boolean>) => Record<string, boolean>)
-  ) => void
   projectSortMode: ProjectSortMode
   projectOrder: string[]
   onProjectReorder: (nextPaths: string[]) => void
@@ -116,8 +112,6 @@ type SidebarProjectsColumnProps = Omit<
   | 'locale'
   | 'collapsedWorkspaces'
   | 'onCollapsedWorkspacesChange'
-  | 'expandedWorkspaces'
-  | 'onExpandedWorkspacesChange'
   | 'projectSortMode'
   | 'projectOrder'
   | 'onProjectReorder'
@@ -502,7 +496,6 @@ export function SidebarProjectsColumn({
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set())
   const [batchBusy, setBatchBusy] = useState(false)
   const [collapsedWorkspaces, setCollapsedWorkspaces] = useState<Record<string, boolean>>({})
-  const [expandedWorkspaces, setExpandedWorkspaces] = useState<Record<string, boolean>>({})
   const [projectSortMode, setProjectSortMode] = useState<ProjectSortMode>(() => loadProjectSortMode())
   const [projectOrder, setProjectOrder] = useState<string[]>(() => loadProjectOrder())
   const [projectThreadOrders, setProjectThreadOrders] = useState<Record<string, string[]>>(() =>
@@ -710,8 +703,6 @@ export function SidebarProjectsColumn({
             onToggleSelect={toggleSelect}
             collapsedWorkspaces={collapsedWorkspaces}
             onCollapsedWorkspacesChange={setCollapsedWorkspaces}
-            expandedWorkspaces={expandedWorkspaces}
-            onExpandedWorkspacesChange={setExpandedWorkspaces}
             projectSortMode={projectSortMode}
             projectOrder={projectOrder}
             onProjectReorder={handleProjectReorder}
@@ -748,8 +739,6 @@ function SidebarProjectsSection({
   onToggleSelect,
   collapsedWorkspaces,
   onCollapsedWorkspacesChange,
-  expandedWorkspaces,
-  onExpandedWorkspacesChange,
   projectSortMode,
   projectOrder,
   onProjectReorder,
@@ -1043,10 +1032,6 @@ function SidebarProjectsSection({
     )
       .map((id) => byId.get(id))
       .filter((thread): thread is NormalizedThread => Boolean(thread))
-    const workspaceExpanded = expandedWorkspaces[workspacePath] === true
-    const hasOverflow = !selectionMode && sortedThreads.length > 5
-    const visibleThreads =
-      selectionMode || workspaceExpanded ? sortedThreads : sortedThreads.slice(0, 5)
     const folderHasActive = workspaceHasActiveThread(list, activeThreadId)
     const folderIconClass = folderHasActive ? 'text-accent' : 'text-ds-muted'
     const labelColor = (sidebarLabelColors[workspaceLabelKey(workspacePath)] ??
@@ -1165,41 +1150,17 @@ function SidebarProjectsSection({
                   </button>
                 ) : (
                   <SidebarSortableList
-                    items={visibleThreads.map((thread) => thread.id)}
+                    items={sortedThreads.map((thread) => thread.id)}
                     disabled={selectionMode}
-                    onReorder={(nextVisibleIds) => {
-                      const visibleSet = new Set(nextVisibleIds)
-                      const rest = sortedThreads
-                        .map((thread) => thread.id)
-                        .filter((id) => !visibleSet.has(id))
-                      onProjectThreadReorder(workspacePath, [...nextVisibleIds, ...rest])
-                    }}
+                    onReorder={(nextIds) => onProjectThreadReorder(workspacePath, nextIds)}
                   >
-                    {visibleThreads.map((thread) => (
+                    {sortedThreads.map((thread) => (
                       <SidebarSortableRow key={thread.id} id={thread.id} disabled={selectionMode}>
                         {renderThreadRow(thread)}
                       </SidebarSortableRow>
                     ))}
                   </SidebarSortableList>
                 )}
-                {hasOverflow ? (
-                  <button
-                    type="button"
-                    onClick={() =>
-                      onExpandedWorkspacesChange((current) => ({
-                        ...current,
-                        [workspacePath]: !workspaceExpanded
-                      }))
-                    }
-                    className="ml-1 mt-0.5 rounded-md px-2 py-1 text-[13px] text-ds-faint transition-colors duration-200 hover:bg-ds-hover hover:text-ds-ink"
-                  >
-                    {workspaceExpanded
-                      ? t('sidebarWorkspaceShowLess')
-                      : t('sidebarWorkspaceShowMore', {
-                          count: sortedThreads.length - 5
-                        })}
-                  </button>
-                ) : null}
               </div>
             ) : null}
           </div>
