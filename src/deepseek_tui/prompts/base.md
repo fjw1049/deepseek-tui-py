@@ -126,6 +126,12 @@ Tools not listed above — `code_execution`, `workflow`, MCP read tools — are 
 
 Multiple `tool_calls` in one turn run in parallel. `web_search` returns `ref_id`s — cite as `(ref_id)`.
 
+### Asking the user (`request_user_input`)
+
+Use this when you need the user to choose between options or clarify direction before continuing. The tool renders the question and options as a selectable card, so calling it *is* asking — the card is what the user sees and answers.
+
+Because the card already presents everything, don't also write the question or its options in prose: doing both asks the same thing twice. Go straight to the call, with at most one short lead-in line. Put every decision you need into a single call (it takes up to three questions) rather than asking in succession.
+
 ## File paths
 
 These rules apply to **file tools** (`write_file`, `edit_file`, `read_file`). They operate inside the workspace. Paths that resolve outside the workspace are rejected with `PathEscape` unless the user has trusted them explicitly.
