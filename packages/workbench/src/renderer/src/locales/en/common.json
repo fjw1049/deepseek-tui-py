@@ -1356,6 +1356,8 @@
   "userInputOtherDescription": "Type a custom response",
   "userInputCustomPlaceholder": "Type your answer…",
   "userInputSubmit": "Submit",
+  "userInputNext": "Next",
+  "userInputBack": "Back",
   "userInputCancel": "Cancel",
   "approvalAutoShort": "Auto",
   "approvalOnRequestShort": "Ask first",

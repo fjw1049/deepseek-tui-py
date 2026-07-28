@@ -30,35 +30,38 @@ export function ElevationBubble({ block }: { block: ElevationBlock }): ReactElem
   return (
     <div
       id={`block-${block.id}`}
-      className="rounded-[14px] border border-amber-400/40 bg-[linear-gradient(180deg,rgba(251,191,36,0.08),rgba(251,191,36,0.14))] px-4 py-4 text-[13px] leading-6 text-ds-ink shadow-[0_12px_30px_rgba(86,103,136,0.04)]"
+      className="rounded-2xl border border-ds-border bg-ds-card px-3.5 py-3 text-[13px] leading-6 text-ds-ink shadow-panel"
     >
-      <div className="font-semibold text-amber-800 dark:text-amber-200">{t('elevationTitle')}</div>
-      {block.toolName ? (
-        <div className="mt-1 text-[12px] text-ds-muted">
-          {t('approvalTool', { name: block.toolName })}
-        </div>
-      ) : null}
+      <div className="flex items-center gap-2">
+        <span aria-hidden className="h-2 w-2 shrink-0 rounded-full bg-accent" />
+        <span className="font-semibold tracking-[-0.01em] text-ds-ink">{t('elevationTitle')}</span>
+        {block.toolName ? (
+          <span className="rounded-md bg-ds-subtle px-1.5 py-0.5 font-mono text-[11px] text-ds-muted">
+            {block.toolName}
+          </span>
+        ) : null}
+      </div>
       <p className="mt-2 text-ds-ink">{block.reason}</p>
-      <div className="mt-1 text-[11px] uppercase tracking-[0.12em] text-ds-faint">
+      <div className="mt-1 text-[11px] text-ds-faint">
         {t('elevationKind', { kind: block.elevationKind })}
       </div>
       {block.commandPreview ? (
-        <pre className="mt-2 overflow-x-auto whitespace-pre-wrap break-words rounded-xl border border-ds-border-muted bg-ds-main/80 px-3 py-2.5 font-mono text-[12px] leading-6">
+        <pre className="mt-2 overflow-x-auto whitespace-pre-wrap break-words rounded-xl bg-ds-subtle px-3 py-2.5 font-mono text-[12.5px] leading-6 text-ds-ink">
           {block.commandPreview}
         </pre>
       ) : null}
       {!done ? (
-        <div className="mt-3 flex flex-wrap gap-2">
+        <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-ds-border-muted pt-2.5">
           <button
             type="button"
-            className="ds-btn-primary rounded-full px-4 py-1.5 text-[12px] font-semibold"
+            className="rounded-[10px] bg-accent px-3.5 py-1.5 text-[13px] font-medium text-white shadow-sm transition hover:brightness-[1.06] active:brightness-95"
             onClick={onAllow}
           >
             {t('elevationAllowOnce')}
           </button>
           <button
             type="button"
-            className="ds-btn-ghost rounded-full px-4 py-1.5 text-[12px]"
+            className="rounded-[10px] px-3 py-1.5 text-[13px] font-medium text-ds-muted transition hover:bg-ds-hover hover:text-ds-ink"
             onClick={onDeny}
           >
             {t('elevationDeny')}
@@ -68,7 +71,7 @@ export function ElevationBubble({ block }: { block: ElevationBlock }): ReactElem
         <div className="mt-2 text-[12px] font-medium text-ds-muted">{statusLabel}</div>
       )}
       {block.errorMessage ? (
-        <div className="mt-2 text-[12px] text-red-600 dark:text-red-300">{block.errorMessage}</div>
+        <div className="mt-2 text-[12px] text-ds-danger">{block.errorMessage}</div>
       ) : null}
     </div>
   )

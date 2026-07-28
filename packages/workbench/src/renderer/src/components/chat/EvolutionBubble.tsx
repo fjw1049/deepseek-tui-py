@@ -22,38 +22,40 @@ export function EvolutionBubble({ block }: { block: EvolutionBlock }): ReactElem
   return (
     <div
       id={`block-${block.id}`}
-      className={`rounded-[14px] border px-4 py-4 text-[13px] leading-6 shadow-[0_12px_30px_rgba(86,103,136,0.04)] ${
+      className={`rounded-2xl border px-3.5 py-3 text-[13px] leading-6 shadow-panel ${
         block.status === 'error'
-          ? 'border-red-300/80 bg-red-500/10 dark:border-red-800/60 dark:bg-red-950/35'
-          : 'border-violet-300/50 bg-[linear-gradient(180deg,rgba(139,92,246,0.08),rgba(139,92,246,0.12))] text-ds-ink dark:border-violet-800/50'
+          ? 'border-ds-danger/25 bg-ds-danger-soft text-ds-ink'
+          : 'border-ds-border bg-ds-card text-ds-ink'
       }`}
     >
-      <div className="font-semibold text-violet-700 dark:text-violet-300">{t('evolutionTitle')}</div>
-      {block.kindLabel ? (
-        <div className="mt-1 text-[12px] text-ds-muted">{t('evolutionKind', { kind: block.kindLabel })}</div>
-      ) : null}
+      <div className="flex items-center gap-2">
+        <span aria-hidden className="h-2 w-2 shrink-0 rounded-full bg-accent" />
+        <span className="font-semibold tracking-[-0.01em] text-ds-ink">{t('evolutionTitle')}</span>
+        {block.kindLabel ? (
+          <span className="rounded-md bg-ds-subtle px-1.5 py-0.5 text-[11px] text-ds-muted">
+            {t('evolutionKind', { kind: block.kindLabel })}
+          </span>
+        ) : null}
+      </div>
       <p className="mt-2 whitespace-pre-wrap text-[14px] text-ds-ink">{block.summary}</p>
       {block.assetPath ? (
-        <div className="mt-2 text-[12px] text-ds-muted">{block.assetPath}</div>
-      ) : null}
-      {block.status === 'pending' ? (
-        <p className="mt-2 text-[12px] text-ds-muted">{t('evolutionPolicyHint')}</p>
+        <div className="mt-2 font-mono text-[12px] text-ds-muted">{block.assetPath}</div>
       ) : null}
       {block.errorMessage ? (
-        <p className="mt-2 text-[12px] text-red-700 dark:text-red-300">{block.errorMessage}</p>
+        <p className="mt-2 text-[12px] text-ds-danger">{block.errorMessage}</p>
       ) : null}
       {!done ? (
-        <div className="mt-3 flex flex-wrap gap-2">
+        <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-ds-border-muted pt-2.5">
           <button
             type="button"
-            className="rounded-lg bg-emerald-600 px-3 py-1.5 text-[13px] font-medium text-white hover:bg-emerald-700"
+            className="rounded-[10px] bg-accent px-3.5 py-1.5 text-[13px] font-medium text-white shadow-sm transition hover:brightness-[1.06] active:brightness-95"
             onClick={() => void resolveEvolution(block.id, 'approve')}
           >
             {t('evolutionApprove')}
           </button>
           <button
             type="button"
-            className="rounded-lg border border-ds-border bg-ds-card px-3 py-1.5 text-[13px] font-medium text-ds-ink hover:bg-ds-hover"
+            className="rounded-[10px] px-3 py-1.5 text-[13px] font-medium text-ds-muted transition hover:bg-ds-hover hover:text-ds-ink"
             onClick={() => void resolveEvolution(block.id, 'reject')}
           >
             {t('evolutionReject')}

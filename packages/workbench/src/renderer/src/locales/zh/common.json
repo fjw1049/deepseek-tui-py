@@ -1322,6 +1322,8 @@
   "userInputOtherDescription": "输入自定义回答",
   "userInputCustomPlaceholder": "输入你的回答…",
   "userInputSubmit": "提交",
+  "userInputNext": "下一步",
+  "userInputBack": "上一步",
   "userInputCancel": "取消",
   "approvalAutoShort": "自动",
   "approvalOnRequestShort": "逐次确认",
