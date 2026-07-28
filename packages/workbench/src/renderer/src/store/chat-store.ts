@@ -118,6 +118,8 @@ const BUSY_WATCHDOG_MS = 60_000
 const MAX_BUSY_RECOVERY_ATTEMPTS = 3
 const TURN_COMPLETION_PROBE_MS = 1_500
 let drainingQueuedMessages = false
+/** In-flight approval decisions — prevents double-submit before status flips. */
+const approvalSubmitInFlight = new Set<string>()
 let turnCompletionProbeTimer: ReturnType<typeof setTimeout> | null = null
 const COMPLETION_NOTIFICATION_DEDUPE_LIMIT = 200
 const completionNotificationKeys: string[] = []
@@ -2795,14 +2797,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   resolveApproval: async (blockId, decision, remember = false) => {
+    // Guard before any await so double-clicks cannot submit twice.
+    if (approvalSubmitInFlight.has(blockId)) return false
     const { blocks, providerId } = get()
     const block = blocks.find((b) => b.id === blockId)
-    if (!block || block.kind !== 'approval' || block.status !== 'pending') return
+    if (!block || block.kind !== 'approval' || block.status !== 'pending') return false
     const p = getProvider(providerId)
     if (typeof p.submitApprovalDecision !== 'function') {
       set({ error: 'Current provider does not support approval decisions.' })
-      return
+      return false
     }
+    approvalSubmitInFlight.add(blockId)
     try {
       await p.submitApprovalDecision(
         block.approvalId,
@@ -2821,6 +2826,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         itemId: blockId,
         status: decision === 'allow' ? 'allowed' : 'denied'
       })
+      return true
     } catch (e) {
       const msg = formatRuntimeError(e)
       void window.dsGui.logError('approval', 'Failed to submit approval decision', {
@@ -2839,6 +2845,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
         )
       }))
       emitPetEvent({ type: 'approval_resolved', itemId: blockId, status: 'error' })
+      return true
+    } finally {
+      approvalSubmitInFlight.delete(blockId)
     }
   },
 

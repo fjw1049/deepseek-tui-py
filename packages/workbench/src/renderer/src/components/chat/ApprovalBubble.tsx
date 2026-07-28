@@ -1,4 +1,4 @@
-import { useCallback, type ReactElement } from 'react'
+import { useCallback, useState, type ReactElement } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { ChatBlock } from '../../agent/types'
 import { useChatStore } from '../../store/chat-store'
@@ -13,10 +13,14 @@ export function ApprovalBubble({ block }: { block: ApprovalBlock }): ReactElemen
   const { t } = useTranslation('common')
   const resolveApproval = useChatStore((s) => s.resolveApproval)
   const openSettings = useChatStore((s) => s.openSettings)
+  const [submitting, setSubmitting] = useState(false)
 
   const done = block.status !== 'pending'
+  const busy = done || submitting
   const destructive = isDestructiveApproval(block)
   const commandText = block.inputSummary?.trim() || ''
+  const impacts =
+    destructive && block.impacts && block.impacts.length > 0 ? block.impacts : null
   const statusLabel =
     block.status === 'allowed'
       ? t('approvalAllowed')
@@ -26,11 +30,17 @@ export function ApprovalBubble({ block }: { block: ApprovalBlock }): ReactElemen
           ? t('approvalFailed')
           : t('approvalPending')
 
-  const submitAllow = useCallback(
-    (remember: boolean) => {
-      void resolveApproval(block.id, 'allow', remember)
+  const submit = useCallback(
+    (decision: 'allow' | 'deny', remember = false) => {
+      if (busy) return
+      setSubmitting(true)
+      void resolveApproval(block.id, decision, remember).then((started) => {
+        // Keep disabled until the pending card unmounts; only unlock if this
+        // call did not acquire the in-flight lock (duplicate click).
+        if (!started) setSubmitting(false)
+      })
     },
-    [block.id, resolveApproval]
+    [block.id, busy, resolveApproval]
   )
 
   return (
@@ -71,8 +81,9 @@ export function ApprovalBubble({ block }: { block: ApprovalBlock }): ReactElemen
           {!done ? (
             <button
               type="button"
-              className="shrink-0 self-center rounded-[9px] bg-accent px-3.5 py-1.5 text-[13px] font-medium text-white shadow-sm transition hover:brightness-[1.06] active:brightness-95"
-              onClick={() => submitAllow(false)}
+              disabled={busy}
+              className="shrink-0 self-center rounded-[9px] bg-accent px-3.5 py-1.5 text-[13px] font-medium text-white shadow-sm transition hover:brightness-[1.06] active:brightness-95 disabled:pointer-events-none disabled:opacity-50"
+              onClick={() => submit('allow', false)}
             >
               {t('approvalAllow')}
             </button>
@@ -81,6 +92,14 @@ export function ApprovalBubble({ block }: { block: ApprovalBlock }): ReactElemen
       ) : (
         <p className="mt-2 whitespace-pre-wrap text-[14px] text-ds-ink">{block.summary}</p>
       )}
+
+      {impacts ? (
+        <ul className="mt-2 list-disc space-y-1 pl-5 text-[12.5px] text-ds-muted">
+          {impacts.map((line) => (
+            <li key={line}>{line}</li>
+          ))}
+        </ul>
+      ) : null}
 
       {block.errorMessage ? (
         <p className="mt-2 text-[12px] text-ds-danger">{block.errorMessage}</p>
@@ -91,27 +110,28 @@ export function ApprovalBubble({ block }: { block: ApprovalBlock }): ReactElemen
           {!commandText ? (
             <button
               type="button"
-              className="rounded-[10px] bg-accent px-3.5 py-1.5 text-[13px] font-medium text-white shadow-sm transition hover:brightness-[1.06] active:brightness-95"
-              onClick={() => submitAllow(false)}
+              disabled={busy}
+              className="rounded-[10px] bg-accent px-3.5 py-1.5 text-[13px] font-medium text-white shadow-sm transition hover:brightness-[1.06] active:brightness-95 disabled:pointer-events-none disabled:opacity-50"
+              onClick={() => submit('allow', false)}
             >
               {t('approvalAllow')}
             </button>
           ) : null}
           <button
             type="button"
-            className="rounded-[10px] bg-accent-soft px-3 py-1.5 text-[13px] font-medium text-accent transition hover:brightness-[0.97]"
-            onClick={() => submitAllow(true)}
+            disabled={busy}
+            className="rounded-[10px] bg-accent-soft px-3 py-1.5 text-[13px] font-medium text-accent transition hover:brightness-[0.97] disabled:pointer-events-none disabled:opacity-50"
+            onClick={() => submit('allow', true)}
           >
             {t('approvalAllowRemember')}
           </button>
           <button
             type="button"
-            className={`rounded-[10px] px-3 py-1.5 text-[13px] font-medium transition hover:bg-ds-hover ${
+            disabled={busy}
+            className={`rounded-[10px] px-3 py-1.5 text-[13px] font-medium transition hover:bg-ds-hover disabled:pointer-events-none disabled:opacity-50 ${
               destructive ? 'text-ds-danger' : 'text-ds-muted'
             }`}
-            onClick={() => {
-              void resolveApproval(block.id, 'deny')
-            }}
+            onClick={() => submit('deny')}
           >
             {t('approvalDeny')}
           </button>

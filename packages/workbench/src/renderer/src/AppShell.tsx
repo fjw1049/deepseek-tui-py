@@ -49,17 +49,30 @@ export default function AppShell(): React.ReactElement {
   const runtimeConnection = useChatStore((s) => s.runtimeConnection)
   const [revealPhase, setRevealPhase] = useState<RevealPhase>('waiting')
   const [blankGone, setBlankGone] = useState(false)
+  /** Once true, the cold-start ceremony never runs again — reconnect/checking
+   *  must not unmount Workbench or replay the starfield. */
+  const [startupGateDone, setStartupGateDone] = useState(false)
+  const gateStartedRef = useRef(false)
   const mountedAtRef = useRef<number>(performance.now())
+  const timersRef = useRef<{ hold: number; blank: number; reveal: number }>({
+    hold: 0,
+    blank: 0,
+    reveal: 0
+  })
 
-  // Codex-style gate: blank board until runtime settles (or setup / offline).
-  const shellReady =
+  // First-enter gate only: runtime settled (or setup / offline). After
+  // startupGateDone, runtimeConnection may go through 'checking' without
+  // tearing down the shell.
+  const canEnterShell =
     initialSetupOpen ||
     runtimeConnection === 'ready' ||
     runtimeConnection === 'offline'
 
   useEffect(() => {
-    // Prefetch the shell while the blank board is up so reveal isn't empty.
+    // Prefetch shell + starfield while the blank board is up so reveal isn't empty
+    // and the tunnel is ready before MIN_BLANK_MS elapses on a fast handshake.
     void import('./components/Workbench')
+    void import('./components/StarfieldTunnel')
     if (typeof window.dsGui?.getStartupPhase === 'function') {
       void window.dsGui.getStartupPhase().then(setStartupPhase).catch(() => undefined)
     }
@@ -81,41 +94,48 @@ export default function AppShell(): React.ReactElement {
   }, [boot, setStartupPhase])
 
   useEffect(() => {
-    if (!shellReady) {
-      setRevealPhase('waiting')
-      setBlankGone(false)
-      return
-    }
+    if (startupGateDone || gateStartedRef.current || !canEnterShell) return
+    gateStartedRef.current = true
+
     const reduced =
       typeof window !== 'undefined' &&
       window.matchMedia('(prefers-reduced-motion: reduce)').matches
     if (reduced) {
       setRevealPhase('live')
       setBlankGone(true)
+      setStartupGateDone(true)
       return
     }
+
     // Hold the board (and its starfield) until MIN_BLANK_MS has elapsed, so a
     // fast runtime handshake doesn't flash the animation for a single frame.
     const heldFor = performance.now() - mountedAtRef.current
     const holdRemaining = Math.max(0, MIN_BLANK_MS - heldFor)
-    let revealTimer = 0
-    let blankTimer = 0
-    const holdTimer = window.setTimeout(() => {
+    const timers = timersRef.current
+    timers.hold = window.setTimeout(() => {
       setRevealPhase('revealing')
       // Unmount the board as soon as its own fade finishes, so it doesn't sit
       // (transparent) on top while the shell finishes entering underneath.
-      blankTimer = window.setTimeout(() => setBlankGone(true), BLANK_EXIT_MS)
-      revealTimer = window.setTimeout(() => setRevealPhase('live'), REVEAL_MS)
+      timers.blank = window.setTimeout(() => setBlankGone(true), BLANK_EXIT_MS)
+      timers.reveal = window.setTimeout(() => {
+        setRevealPhase('live')
+        setStartupGateDone(true)
+      }, REVEAL_MS)
     }, holdRemaining)
-    return () => {
-      window.clearTimeout(holdTimer)
-      if (revealTimer) window.clearTimeout(revealTimer)
-      if (blankTimer) window.clearTimeout(blankTimer)
-    }
-  }, [shellReady])
+  }, [canEnterShell, startupGateDone])
 
-  const showBlank = !blankGone && (revealPhase === 'waiting' || revealPhase === 'revealing')
-  const showShell = shellReady
+  useEffect(() => {
+    return () => {
+      const timers = timersRef.current
+      if (timers.hold) window.clearTimeout(timers.hold)
+      if (timers.blank) window.clearTimeout(timers.blank)
+      if (timers.reveal) window.clearTimeout(timers.reveal)
+    }
+  }, [])
+
+  const showBlank =
+    !startupGateDone && !blankGone && (revealPhase === 'waiting' || revealPhase === 'revealing')
+  const showShell = startupGateDone || canEnterShell
 
   return (
     <div className="ds-app-root ds-app-root--startup h-full min-h-0 bg-transparent">

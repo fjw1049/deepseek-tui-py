@@ -194,7 +194,11 @@ export type ChatState = {
   exportThreadToSession: (threadId: string) => Promise<{ path: string } | null>
   scrollToBlock: (blockId: string) => void
   clearScrollTarget: () => void
-  resolveApproval: (blockId: string, decision: 'allow' | 'deny', remember?: boolean) => Promise<void>
+  resolveApproval: (
+    blockId: string,
+    decision: 'allow' | 'deny',
+    remember?: boolean
+  ) => Promise<boolean>
   resolveEvolution: (blockId: string, decision: 'approve' | 'reject') => Promise<void>
   resolveElevation: (blockId: string, decision: 'allow' | 'deny') => Promise<void>
   resolveUserInput: (
