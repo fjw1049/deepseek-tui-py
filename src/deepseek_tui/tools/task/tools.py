@@ -39,7 +39,6 @@ from deepseek_tui.tools.task.helpers import (
     _optional_string,
     _require_manager,
     _require_string,
-    _task_id_from_input,
     _task_result,
 )
 from deepseek_tui.tools.task.models import (
@@ -348,7 +347,22 @@ class TaskOutputTool(ToolSpec):
             task = await manager.get_task(task_id)
         except KeyError as exc:
             raise ToolError(str(exc)) from exc
-        return _task_result("task_output", task)
+        result = _task_result("task_output", task)
+        # Durable tasks are fire-and-forget — block cannot wait for them.
+        if bool(input_data.get("block", False)):
+            note = (
+                "note: 'block' is ignored for durable tasks — they do not "
+                "re-enter this turn. Re-call task_output later, or use "
+                "task_list to check status."
+            )
+            meta = dict(result.metadata)
+            meta["block_ignored"] = True
+            return ToolResult(
+                success=result.success,
+                content=f"{result.content}\n{note}",
+                metadata=meta,
+            )
+        return result
 
     async def _process_output(
         self,
@@ -474,7 +488,16 @@ class TaskStopTool(ToolSpec):
 
             return await _execute_cancel(input_data, context)
 
-        task_id = _task_id_from_input(input_data, context)
+        # Require an explicit id — do not silently cancel context.active_task_id
+        # (that made an empty task_stop() suicide the enclosing durable task).
+        task_id = _optional_string(input_data, "task_id") or _optional_string(
+            input_data, "id"
+        )
+        if task_id is None:
+            raise ToolError(
+                "task_stop requires exactly one of 'task_id', 'agent_id', "
+                "or 'process_id'"
+            )
         manager = _require_manager(context)
         try:
             task = await manager.cancel_task(task_id)

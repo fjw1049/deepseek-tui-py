@@ -243,6 +243,37 @@ def test_task_stop_approval_key_is_target_scoped() -> None:
     assert build_approval_key("task_stop", {"process_id": "p1"}) != key_a
 
 
+async def test_task_stop_requires_explicit_id_even_with_active_task(
+    tmp_path,
+) -> None:
+    """Empty task_stop() must not silently cancel context.active_task_id."""
+    manager = _task_manager(tmp_path)
+    task = await manager.add_task(NewTaskRequest(prompt="durable work"))
+    ctx = ToolContext(
+        working_directory=tmp_path,
+        task_manager=manager,
+        active_task_id=task.id,
+    )
+    with pytest.raises(ToolError, match="exactly one of"):
+        await TaskStopTool().execute({}, ctx)
+    updated = await manager.get_task(task.id)
+    assert updated.status is TaskStatus.QUEUED
+
+
+async def test_task_output_block_ignored_for_durable_task(tmp_path) -> None:
+    manager = _task_manager(tmp_path)
+    task = await manager.add_task(NewTaskRequest(prompt="durable work"))
+    ctx = ToolContext(working_directory=tmp_path, task_manager=manager)
+
+    result = await TaskOutputTool().execute(
+        {"task_id": task.id, "block": True}, ctx
+    )
+
+    assert result.metadata["block_ignored"] is True
+    assert "block' is ignored" in result.content
+    assert result.metadata["task_id"] == task.id
+
+
 # --- task_create: resume parameter ----------------------------------------------
 
 
@@ -267,6 +298,16 @@ async def test_task_create_resume_and_prompt_are_mutually_exclusive(tmp_path) ->
         await TaskCreateTool().execute(
             {"resume": "task_x", "prompt": "new work"}, ctx
         )
+
+
+def test_task_create_resume_approval_key_is_target_scoped() -> None:
+    key = build_approval_key("task_create", {"resume": "t1"})
+    assert str(key) == "task_create:resume:t1"
+    assert key != build_approval_key("task_create", {"prompt": "new work"})
+    assert key != build_approval_key("task_create", {"resume": "t2"})
+    # Retired task_resume name shares the resume fingerprint.
+    assert key == build_approval_key("task_resume", {"task_id": "t1"})
+    assert key == build_approval_key("task_resume", {"id": "t1"})
 
 
 async def test_task_create_requires_prompt_or_resume(tmp_path) -> None:

@@ -97,9 +97,13 @@ class PolicyRule:
 #
 # Fingerprint shapes:
 #
-# - ``exec_shell*`` → ``shell:<positional tokens, flags dropped>``
+# - ``exec_shell`` (command) → ``shell:<positional tokens, flags dropped>``
 #   so ``rm a.txt`` ≠ ``rm b.txt``, while ``git status -s`` ≡
 #   ``git status --porcelain``.
+# - ``exec_shell`` (interact / process_id) → ``shell:interact:<process_id>``
+# - ``task_create(resume=)`` / ``task_resume`` → ``task_create:resume:<id>``
+# - ``task_stop`` / ``task_cancel`` → ``task_stop:<kind>:<id>``
+# - ``cron_*`` / retired ``automation_*`` → shared ``tool:cron_*`` keys
 # - ``write_file`` / ``edit_file`` → ``file:<name>:<path>``
 # - ``fetch_url`` / ``web_fetch`` → ``net:<hostname>``
 # - everything else → ``tool:<tool_name>``
@@ -183,8 +187,23 @@ class ApprovalCache:
 
 
 def build_approval_key(tool_name: str, tool_input: Any) -> ApprovalKey:
-    """Build the approval-cache key for a tool call."""
+    """Build the approval-cache key for a tool call.
+
+    Fingerprints follow **execution semantics** (what will actually run), not
+    the caller's literal tool name. Callers that normalize legacy names first
+    (orchestrator / runtime) should pass the normalized pair; this function
+    still recognizes a few retired names so direct fingerprint checks stay
+    consistent during the deprecation window.
+    """
     if tool_name in _SHELL_TOOLS:
+        # Interact branch writes stdin to an existing process — scope by
+        # process_id so one grant cannot unlock writes to every process
+        # (and so we never collapse interacts into shell:<empty>).
+        if isinstance(tool_input, dict):
+            raw_pid = tool_input.get("process_id")
+            has_command = isinstance(tool_input.get("command"), str)
+            if isinstance(raw_pid, str) and raw_pid and not has_command:
+                return ApprovalKey(f"shell:interact:{raw_pid}")
         return ApprovalKey(f"shell:{_command_prefix(tool_input)}")
     if tool_name in _FETCH_TOOLS:
         return ApprovalKey(f"net:{_parse_host(tool_input)}")
@@ -217,10 +236,23 @@ def build_approval_key(tool_name: str, tool_input: Any) -> ApprovalKey:
         # covers both call forms.
         target = ""
         if isinstance(tool_input, dict):
-            raw_id = tool_input.get("agent_id")
+            raw_id = tool_input.get("agent_id") or tool_input.get("id")
             if isinstance(raw_id, str):
                 target = raw_id
         return ApprovalKey(f"agent:resume:{target}")
+    if tool_name in ("task_create", "task_resume"):
+        # Resume restarts real work — keep it target-scoped so approving
+        # resume of A cannot unlock resume of B (or a fresh create).
+        # ``task_resume`` is the retired name (forwards to task_create(resume=)).
+        if isinstance(tool_input, dict):
+            raw_resume = tool_input.get("resume")
+            if isinstance(raw_resume, str) and raw_resume:
+                return ApprovalKey(f"task_create:resume:{raw_resume}")
+            if tool_name == "task_resume":
+                raw_id = tool_input.get("task_id") or tool_input.get("id")
+                if isinstance(raw_id, str) and raw_id:
+                    return ApprovalKey(f"task_create:resume:{raw_id}")
+        return ApprovalKey("tool:task_create")
     if tool_name in ("task_stop", "task_cancel"):
         # Unified stop tool — keep the grant target-scoped: approving a stop
         # for task/agent/process A must not green-light stopping B (or a
@@ -237,6 +269,16 @@ def build_approval_key(tool_name: str, tool_input: Any) -> ApprovalKey:
                     break
         suffix = f":{target}" if target else ""
         return ApprovalKey(f"task_stop{suffix}")
+    if tool_name in ("cron_create", "automation_create"):
+        return ApprovalKey("tool:cron_create")
+    if tool_name in ("cron_delete", "automation_delete"):
+        target = ""
+        if isinstance(tool_input, dict):
+            raw_id = tool_input.get("automation_id")
+            if isinstance(raw_id, str) and raw_id:
+                target = raw_id
+        suffix = f":{target}" if target else ""
+        return ApprovalKey(f"tool:cron_delete{suffix}")
     return ApprovalKey(f"tool:{tool_name}")
 
 
@@ -856,12 +898,12 @@ def build_impacts(tool_name: str, category: str, args: dict[str, Any]) -> list[s
             lines.append(f"Writes: {path}")
         return lines
     if category == "shell":
-        lines = ["Executes a shell command."]
-        if cmd := _param_preview(args, ("command", "cmd"), 96):
-            lines.append(f"Command: {cmd}")
+        # Command text is shown as the UI hero strip — only attach non-redundant
+        # context (cwd). Fall back to a one-line label when nothing else exists.
+        lines: list[str] = []
         if cwd := _param_preview(args, ("workdir", "cwd"), 72):
             lines.append(f"Working dir: {cwd}")
-        return lines
+        return lines or ["Executes a shell command."]
     if category == "network":
         lines = ["May reach network services or remote content."]
         if target := _param_preview(args, ("url", "q", "query"), 96):

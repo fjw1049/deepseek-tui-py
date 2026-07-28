@@ -102,6 +102,12 @@ async def _execute_subagent_tool(
     from deepseek_tui.tools.registry import ToolRegistry
 
     assert isinstance(registry, ToolRegistry)
+    # Fold retired tool names onto merged successors (same as the parent
+    # orchestrator) so sub-agents inherit the deprecation window.
+    from deepseek_tui.engine.dispatch import normalize_legacy_tool_call
+
+    tool_name, normalized_input = normalize_legacy_tool_call(tool_name, tool_input)
+    tool_input = normalized_input if isinstance(normalized_input, dict) else tool_input
     _reject_subagent_interactive_shell(tool_name, tool_input)
     if not registry.contains(tool_name):
         # Filtered out by the sub-agent's type allowlist (or hallucinated by

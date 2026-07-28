@@ -205,6 +205,62 @@ def test_checklist_and_git_categories() -> None:
     assert classify_tool_category("git") == "safe"
 
 
+# --- Shell interact / legacy shell / cron fingerprints ------------------------
+
+
+def test_shell_interact_fingerprint_is_process_scoped() -> None:
+    key_a = build_approval_key(
+        "exec_shell", {"process_id": "p1", "input": "y\n"}
+    )
+    assert str(key_a) == "shell:interact:p1"
+    assert key_a != build_approval_key(
+        "exec_shell", {"process_id": "p2", "input": "y\n"}
+    )
+    # Legacy interact name shares the same process-scoped key.
+    assert key_a == build_approval_key(
+        "exec_shell_interact", {"process_id": "p1", "input": "y\n"}
+    )
+    # Command execution stays on the command-prefix fingerprint.
+    assert key_a != build_approval_key("exec_shell", {"command": "echo hi"})
+
+
+def test_task_shell_start_normalized_fingerprint_matches_exec_shell() -> None:
+    """After legacy normalize, task_shell_start must not use a bare tool key."""
+    from deepseek_tui.engine.dispatch import normalize_legacy_tool_call
+
+    name, args = normalize_legacy_tool_call(
+        "task_shell_start",
+        {"command": "make test", "task_id": "t1", "pty": False},
+    )
+    assert name == "exec_shell"
+    assert build_approval_key(name, args) == build_approval_key(
+        "exec_shell",
+        {"command": "make test", "background": True, "pty": False},
+    )
+    # Different commands must not share a session grant.
+    assert build_approval_key(name, args) != build_approval_key(
+        "exec_shell", {"command": "rm -rf /", "background": True}
+    )
+
+
+def test_cron_legacy_names_share_fingerprints() -> None:
+    create_args = {
+        "name": "hourly",
+        "prompt": "do work",
+        "rrule": "FREQ=HOURLY;INTERVAL=1",
+    }
+    assert build_approval_key("automation_create", create_args) == build_approval_key(
+        "cron_create", create_args
+    )
+    delete_a = build_approval_key("cron_delete", {"automation_id": "a1"})
+    assert delete_a == build_approval_key(
+        "automation_delete", {"automation_id": "a1"}
+    )
+    assert delete_a != build_approval_key(
+        "cron_delete", {"automation_id": "b2"}
+    )
+
+
 # --- Sub-agent approval bridge path (loop.py) ------------------------------
 
 

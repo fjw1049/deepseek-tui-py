@@ -213,5 +213,7 @@ deferred：`list_mcp_resources` `read_mcp_resources`→`read_mcp_resource`、`wo
 2. `_AUTOMATION_COMPOSER_NATIVE` profile 硬过滤无 shell，但 composer 提示词建议 `exec_shell date`——要么把 `exec_shell` 加进 profile，要么改文案。
 3. `task_list` 的 agent 快照固定 `include_archived=False`，旧 `agent(action=list, include_archived=true)` 语义无等价物（转发丢弃，dispatch 有注释）。
 4. 旧工具名在 tui/tool_classify、workbench 渲染层的分类条目按惯例保留（历史 transcript 重放需要）；兼容期结束后可单独清理。
-5. `subagent/loop.py` 子代理内部工具分发未接旧名归一化（与 Phase 1 行为一致）。
+5. ~~`subagent/loop.py` 子代理内部工具分发未接旧名归一化~~ → **已修**（2026-07-28）：loop 入口接 `normalize_legacy_tool_call`。
 6. 基线 21 个存量测试失败（live API 401、parity mcp_hooks、seatbelt、usage_ledger 日期敏感等）不在本次范围。
+7. ~~审批指纹与 legacy 转发不同步 / interact 塌缩 `shell:<empty>` / `task_create(resume)` 不定域 / `task_stop` 静默自杀~~ → **已修**（2026-07-28）：缓存键用归一化后的 name/args；interact→`shell:interact:<pid>`；resume→`task_create:resume:<id>`；cron 与 automation 旧名共享；`task_stop` 强制显式 id；durable `task_output(block)` 明示忽略。
+8. 已有 cron 的 run-once：模型层仍无独立工具（`run_now` 仅 create 时有效）；Workbench UI 触发；不新增 `cron_run`（刻意保持三件套）。

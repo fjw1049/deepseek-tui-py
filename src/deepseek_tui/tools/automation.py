@@ -173,9 +173,12 @@ class CronCreateTool(ToolSpec):
             "delivery sends the task summary to feishu or email after "
             "completion. For feishu include delivery.mode=feishu and "
             "delivery.to (open_chat_id). Set run_now=true to also trigger "
-            "the job immediately after creation. To change an existing "
-            "job, delete it with cron_delete and recreate it (deleting "
-            "wipes the job's run history). Creation requires approval."
+            "the job immediately after creation — this only applies at "
+            "create time and cannot fire an already-existing job (use the "
+            "Workbench Automations UI to run an existing job once). To "
+            "change an existing job, delete it with cron_delete and "
+            "recreate it (deleting wipes the job's run history). Creation "
+            "requires approval."
         )
 
     def input_schema(self) -> dict[str, object]:

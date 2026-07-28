@@ -576,7 +576,15 @@ class ToolExecutionMixin:
             arguments if isinstance(arguments, dict) else None,
         )
         if approval_request is not None:
-            denied = await self._handle_approval_flow(tool_call, approval_request)
+            # Fingerprint the *normalized* call so legacy names share the
+            # same cache entry as their merged successors (and so
+            # task_shell_start lands on shell:<command>, not a bare tool key).
+            denied = await self._handle_approval_flow(
+                tool_call,
+                approval_request,
+                fingerprint_name=tool_name,
+                fingerprint_arguments=arguments,
+            )
             if denied:
                 return None
 
@@ -610,12 +618,27 @@ class ToolExecutionMixin:
         self,
         tool_call: ToolCall,
         approval_request: Any,
+        *,
+        fingerprint_name: str | None = None,
+        fingerprint_arguments: Any = None,
     ) -> bool:
-        """Run the approval gate. Returns True if denied."""
+        """Run the approval gate. Returns True if denied.
+
+        ``fingerprint_name`` / ``fingerprint_arguments`` should be the
+        post-normalization pair (what will actually execute). UI / audit
+        events still use the original ``tool_call`` name so the user sees
+        what the model invoked.
+        """
         from deepseek_tui.tools.approval import NEVER_BLOCKED_PREFIX
         from deepseek_tui.tools.approval import enrich_approval_request
 
-        cache_key = build_approval_key(tool_call.name, tool_call.arguments)
+        fp_name = fingerprint_name if fingerprint_name is not None else tool_call.name
+        fp_args = (
+            fingerprint_arguments
+            if fingerprint_arguments is not None
+            else tool_call.arguments
+        )
+        cache_key = build_approval_key(fp_name, fp_args)
         cache_status = self.approval_cache.check(cache_key)
 
         if cache_status is ApprovalCacheStatus.APPROVED:
@@ -661,15 +684,13 @@ class ToolExecutionMixin:
                 )
             )
             return True
-        args = (
-            tool_call.arguments
-            if isinstance(tool_call.arguments, dict)
-            else {}
-        )
+        # Enrich from the normalized args so previews / approval_key match
+        # execution semantics (e.g. task_shell_start → shell command).
+        enrich_args = fp_args if isinstance(fp_args, dict) else {}
         enrich_approval_request(
             approval_request,
-            tool_call.name,
-            args,
+            fp_name,
+            enrich_args,
             tool_description=approval_request.reason,
         )
         # Auto-approve short-circuits inside request_approval without ever
