@@ -1881,8 +1881,8 @@ samp {
 
 .ds-empty-stage-mark {
   background-color: #000;
-  -webkit-mask-size: 158%;
-  mask-size: 158%;
+  -webkit-mask-size: 142%;
+  mask-size: 142%;
   -webkit-mask-repeat: no-repeat;
   mask-repeat: no-repeat;
   -webkit-mask-position: center;
