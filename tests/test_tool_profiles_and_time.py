@@ -35,17 +35,29 @@ def test_composer_profile_filters_tools() -> None:
     assert names == {"cron_create"}
 
 
-def test_cron_profile_keeps_search_tools() -> None:
+def test_cron_profile_keeps_native_tools_only() -> None:
     catalog = [
         {"type": "function", "function": {"name": "web_search", "parameters": {}}},
+        {"type": "function", "function": {"name": "fetch_url", "parameters": {}}},
+        {"type": "function", "function": {"name": "read_file", "parameters": {}}},
+        {"type": "function", "function": {"name": "grep_files", "parameters": {}}},
+        {"type": "function", "function": {"name": "file_search", "parameters": {}}},
         {"type": "function", "function": {"name": "exec_shell", "parameters": {}}},
+        {"type": "function", "function": {"name": "write_file", "parameters": {}}},
+        {"type": "function", "function": {"name": "edit_file", "parameters": {}}},
+        {"type": "function", "function": {"name": "cron_create", "parameters": {}}},
         {"type": "function", "function": {"name": "mcp_bing_cn_search", "parameters": {}}},
+        {"type": "function", "function": {"name": "mcp_yahoo_quote", "parameters": {}}},
     ]
     out = filter_tools_for_profile(catalog, TOOL_PROFILE_CRON)
     names = {t["function"]["name"] for t in out}
-    assert "web_search" in names
-    assert "mcp_bing_cn_search" in names
-    assert "exec_shell" not in names
+    assert names == {
+        "web_search",
+        "fetch_url",
+        "read_file",
+        "grep_files",
+        "file_search",
+    }
 
 
 def test_stale_running_task_detection() -> None:

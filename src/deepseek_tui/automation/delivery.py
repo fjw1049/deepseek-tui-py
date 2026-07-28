@@ -269,11 +269,11 @@ CRON_EXECUTION_PLAYBOOK = """\
 You are running a scheduled background task. Follow these rules:
 
 Tool usage:
-1. Prefer web_search (AnySearch + Tavily) or MCP search tools (bing, fetch, china-stock, yahoo) over exec_shell/curl.
-2. Do NOT call tool_search_tool_regex or tool_search_tool_bm25 — use the tools already available.
-3. Do NOT call request_user_input — complete the task with available tools.
-4. Do NOT run pip install or long shell setup; use MCP or web_search instead.
-5. Limit exec_shell to at most 2 attempts; if data is unavailable, stop and write a short summary.
+1. Use only the tools already available: web_search, fetch_url, read_file, grep_files, file_search.
+2. Do NOT call tool_search_tool_regex or tool_search_tool_bm25 — discovery tools are disabled in cron runs.
+3. Do NOT call request_user_input or MCP tools — complete the task with the native tools above.
+4. Shell is disabled for cron runs — do not attempt exec_shell, curl, or package installs.
+5. If data is unavailable after a couple of tool attempts, stop and write a short summary of what is missing.
 6. Do NOT send messages to Feishu/email/webhook yourself — the system delivers your final reply automatically.
 
 Output contract (this final reply IS the message users receive):

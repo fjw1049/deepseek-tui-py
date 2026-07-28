@@ -117,6 +117,8 @@ describe('unwrapAutomationComposerPromptForDisplay', () => {
     expect(wrapped).toContain('cron_create')
     expect(wrapped).not.toContain('current_time')
     expect(wrapped).not.toContain('automation_create')
+    expect(wrapped).not.toContain('exec_shell date')
+    expect(wrapped).toContain('Do NOT call exec_shell')
   })
 
   it('defaults Dock iconAnimation to off and only enables when explicitly true', () => {

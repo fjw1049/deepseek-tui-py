@@ -164,21 +164,23 @@ class CronCreateTool(ToolSpec):
         return (
             "Create a durable scheduled job (cron) that enqueues an agent "
             "task on a schedule. Relative times ('in 10 minutes', 'tomorrow "
-            "morning') resolve against the current date in the system prompt "
-            "(use exec_shell `date` for finer precision). "
+            "morning') resolve against the `today: YYYY-MM-DD` date and "
+            "user timezone in the system prompt — shell/time tools are not "
+            "available in the automation composer. "
             "Recurring jobs use rrule (FREQ=HOURLY;INTERVAL=N or "
             "FREQ=WEEKLY;BYDAY=MO;BYHOUR=9;BYMINUTE=30). One-shot or "
             "delayed runs set next_run_at (ISO8601) and may use a far-future "
             "placeholder rrule such as FREQ=HOURLY;INTERVAL=8760. Optional "
-            "delivery sends the task summary to feishu or email after "
+            "delivery sends the task summary to feishu, email, or wecom after "
             "completion. For feishu include delivery.mode=feishu and "
-            "delivery.to (open_chat_id). Set run_now=true to also trigger "
-            "the job immediately after creation — this only applies at "
-            "create time and cannot fire an already-existing job (use the "
-            "Workbench Automations UI to run an existing job once). To "
-            "change an existing job, delete it with cron_delete and "
-            "recreate it (deleting wipes the job's run history). Creation "
-            "requires approval."
+            "delivery.to (open_chat_id); for wecom use delivery.mode=wecom "
+            "(webhook key comes from config when to is omitted). Set "
+            "run_now=true to also trigger the job immediately after creation "
+            "— this only applies at create time and cannot fire an "
+            "already-existing job (use the Workbench Automations UI to run "
+            "an existing job once). To change an existing job, delete it "
+            "with cron_delete and recreate it (deleting wipes the job's run "
+            "history). Creation requires approval."
         )
 
     def input_schema(self) -> dict[str, object]:
@@ -205,18 +207,25 @@ class CronCreateTool(ToolSpec):
                 "delivery": {
                     "type": "object",
                     "description": (
-                        "Optional post-run delivery (feishu or email)."
+                        "Optional post-run delivery (feishu, email, or wecom)."
                     ),
                     "properties": {
                         "mode": {
                             "type": "string",
-                            "enum": ["feishu", "email", "silent", "notify"],
+                            "enum": [
+                                "feishu",
+                                "email",
+                                "wecom",
+                                "silent",
+                                "notify",
+                            ],
                         },
                         "to": {
                             "type": "string",
                             "description": (
-                                "Recipient: Feishu open_chat_id or email address. "
-                                "Required when mode is feishu or email."
+                                "Recipient: Feishu open_chat_id, email address, "
+                                "or WeCom webhook key/URL. Required for feishu "
+                                "and email; optional for wecom when configured."
                             ),
                         },
                         "best_effort": {"type": "boolean"},

@@ -528,23 +528,18 @@ _AUTOMATION_COMPOSER_NATIVE = frozenset(
     }
 )
 
-# Cron execution: search/fetch + selected MCP families; no cron-management
-# churn.
+# Cron execution: native read/search/fetch only.
+# Intentionally tighter than Claude/Kimi/Grok (they fire into the same
+# interactive session with the full toolset). Our fire path is a detached
+# TaskManager turn with auto_approve, so shell/write/MCP stay out.
 _CRON_NATIVE = frozenset(
     {
         "web_search",
         "fetch_url",
         "read_file",
         "grep_files",
+        "file_search",
     }
-)
-
-_CRON_MCP_PREFIXES = (
-    "mcp_bing",
-    "mcp_china",
-    "mcp_yahoo",
-    "mcp_fetch",
-    "mcp_pozansky",
 )
 
 
@@ -590,9 +585,7 @@ def filter_tools_for_profile(
         out = []
         for entry in tools:
             name = _tool_name(entry)
-            if name in _CRON_NATIVE or any(
-                name.startswith(prefix) for prefix in _CRON_MCP_PREFIXES
-            ):
+            if name in _CRON_NATIVE:
                 clone = _copy_tool_entry(entry)
                 fn = clone.get("function", clone)
                 fn["defer_loading"] = False
