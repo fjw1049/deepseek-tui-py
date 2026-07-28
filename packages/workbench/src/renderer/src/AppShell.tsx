@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useState } from 'react'
+import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { useChatStore } from './store/chat-store'
 
 const Workbench = lazy(() =>
@@ -9,11 +9,24 @@ const InitialSetupDialog = lazy(() =>
     default: module.InitialSetupDialog
   }))
 )
+const StarfieldTunnel = lazy(() =>
+  import('./components/StarfieldTunnel').then((module) => ({ default: module.StarfieldTunnel }))
+)
 
 type RevealPhase = 'waiting' | 'revealing' | 'live'
 
 /** Longest child entrance (main 0.5s + 0.07s delay). */
 const REVEAL_MS = 580
+
+/** Blank board fade-out (matches ds-startup-blank-exit in index.css). Once it
+ *  finishes the board is unmounted, even though the shell keeps entering — so
+ *  there's no transparent-but-mounted board lingering on top after the
+ *  starfield has faded. */
+const BLANK_EXIT_MS = 200
+
+/** Keep the startup board (and its starfield) up at least this long, so the
+ *  animation is seen even when the runtime settles almost immediately. */
+const MIN_BLANK_MS = 1500
 
 function StartupBlank({ exiting = false }: { exiting?: boolean }): React.ReactElement {
   return (
@@ -21,6 +34,9 @@ function StartupBlank({ exiting = false }: { exiting?: boolean }): React.ReactEl
       className={`ds-startup-blank${exiting ? ' ds-startup-blank--exit' : ''}`}
       aria-hidden
     >
+      <Suspense fallback={null}>
+        <StarfieldTunnel />
+      </Suspense>
       <div className="ds-startup-breath" />
     </div>
   )
@@ -32,6 +48,8 @@ export default function AppShell(): React.ReactElement {
   const initialSetupOpen = useChatStore((s) => s.initialSetupOpen)
   const runtimeConnection = useChatStore((s) => s.runtimeConnection)
   const [revealPhase, setRevealPhase] = useState<RevealPhase>('waiting')
+  const [blankGone, setBlankGone] = useState(false)
+  const mountedAtRef = useRef<number>(performance.now())
 
   // Codex-style gate: blank board until runtime settles (or setup / offline).
   const shellReady =
@@ -65,6 +83,7 @@ export default function AppShell(): React.ReactElement {
   useEffect(() => {
     if (!shellReady) {
       setRevealPhase('waiting')
+      setBlankGone(false)
       return
     }
     const reduced =
@@ -72,14 +91,30 @@ export default function AppShell(): React.ReactElement {
       window.matchMedia('(prefers-reduced-motion: reduce)').matches
     if (reduced) {
       setRevealPhase('live')
+      setBlankGone(true)
       return
     }
-    setRevealPhase('revealing')
-    const timer = window.setTimeout(() => setRevealPhase('live'), REVEAL_MS)
-    return () => window.clearTimeout(timer)
+    // Hold the board (and its starfield) until MIN_BLANK_MS has elapsed, so a
+    // fast runtime handshake doesn't flash the animation for a single frame.
+    const heldFor = performance.now() - mountedAtRef.current
+    const holdRemaining = Math.max(0, MIN_BLANK_MS - heldFor)
+    let revealTimer = 0
+    let blankTimer = 0
+    const holdTimer = window.setTimeout(() => {
+      setRevealPhase('revealing')
+      // Unmount the board as soon as its own fade finishes, so it doesn't sit
+      // (transparent) on top while the shell finishes entering underneath.
+      blankTimer = window.setTimeout(() => setBlankGone(true), BLANK_EXIT_MS)
+      revealTimer = window.setTimeout(() => setRevealPhase('live'), REVEAL_MS)
+    }, holdRemaining)
+    return () => {
+      window.clearTimeout(holdTimer)
+      if (revealTimer) window.clearTimeout(revealTimer)
+      if (blankTimer) window.clearTimeout(blankTimer)
+    }
   }, [shellReady])
 
-  const showBlank = revealPhase === 'waiting' || revealPhase === 'revealing'
+  const showBlank = !blankGone && (revealPhase === 'waiting' || revealPhase === 'revealing')
   const showShell = shellReady
 
   return (
