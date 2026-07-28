@@ -62,6 +62,17 @@ def parse_qualified_tool_name(qualified: str) -> tuple[str, str] | None:
 class McpError(Exception):
     """Error from an MCP server."""
 
+    def __init__(self, message: str, *, code: int | None = None) -> None:
+        super().__init__(message)
+        self.code = code
+
+
+def is_method_not_found(exc: BaseException) -> bool:
+    """True for JSON-RPC -32601 / "Method not found" (optional capability absent)."""
+    if isinstance(exc, McpError) and exc.code == -32601:
+        return True
+    return "method not found" in str(exc).lower()
+
 
 @dataclass(slots=True)
 class McpToolDescriptor:
@@ -110,9 +121,20 @@ class McpClient:
         self._transport: McpTransport | None = None
         self._request_id = 0
         self._initialized = False
+        # Server capabilities from initialize; None until handshake succeeds.
+        self._server_capabilities: dict[str, Any] | None = None
         self._pending: dict[int, asyncio.Future[dict[str, Any]]] = {}
         self._reader_task: asyncio.Task[None] | None = None
         self._closed = False
+
+    def supports_capability(self, name: str) -> bool | None:
+        """Whether the server declared ``name`` in initialize capabilities.
+
+        Returns ``None`` when capabilities are unknown (not yet initialized).
+        """
+        if self._server_capabilities is None:
+            return None
+        return name in self._server_capabilities
 
     def _mark_dead(self, exc: BaseException | None = None) -> None:
         """Mark this client unusable after reader/transport failure.
@@ -123,6 +145,7 @@ class McpClient:
         """
         self._closed = True
         self._initialized = False
+        self._server_capabilities = None
         err = McpError(
             f"MCP transport closed: {exc}" if exc is not None else "MCP client dead"
         )
@@ -154,6 +177,7 @@ class McpClient:
             await self.stop()
         self._closed = False
         self._initialized = False
+        self._server_capabilities = None
         self._pending.clear()
         transport = build_transport(self.config)
         await transport.start()
@@ -186,6 +210,7 @@ class McpClient:
                 fut.set_exception(McpError("MCP client stopped"))
         self._pending.clear()
         self._initialized = False
+        self._server_capabilities = None
 
     # --- high-level RPC methods ------------------------------------------
 
@@ -215,17 +240,44 @@ class McpClient:
         )
 
     async def list_resources(self) -> list[dict[str, Any]]:
-        result = await self._send_request("resources/list", {})
+        if self.supports_capability("resources") is False:
+            return []
+        try:
+            result = await self._send_request("resources/list", {})
+        except McpError as exc:
+            if is_method_not_found(exc):
+                return []
+            raise
         resources = result.get("resources", [])
         return [item for item in resources if isinstance(item, dict)]
 
     async def list_resource_templates(self) -> list[dict[str, Any]]:
-        result = await self._send_request("resources/templates/list", {})
+        if self.supports_capability("resources") is False:
+            return []
+        try:
+            result = await self._send_request("resources/templates/list", {})
+        except McpError as exc:
+            if is_method_not_found(exc):
+                return []
+            raise
         templates = result.get("resourceTemplates", [])
         return [item for item in templates if isinstance(item, dict)]
 
     async def read_resource(self, uri: str) -> dict[str, Any]:
-        return await self._send_request("resources/read", {"uri": uri})
+        if self.supports_capability("resources") is False:
+            raise McpError(
+                f"MCP server {self.config.name!r} does not support resources "
+                f"(no capabilities.resources in initialize)"
+            )
+        try:
+            return await self._send_request("resources/read", {"uri": uri})
+        except McpError as exc:
+            if is_method_not_found(exc):
+                raise McpError(
+                    f"MCP server {self.config.name!r} does not support resources/read",
+                    code=exc.code,
+                ) from exc
+            raise
 
     async def get_prompt(
         self,
@@ -239,7 +291,7 @@ class McpClient:
     # --- internal -------------------------------------------------------
 
     async def _initialize(self) -> None:
-        await self._send_request(
+        result = await self._send_request(
             "initialize",
             {
                 "protocolVersion": "2024-11-05",
@@ -250,6 +302,8 @@ class McpClient:
                 },
             },
         )
+        caps = result.get("capabilities") if isinstance(result, dict) else None
+        self._server_capabilities = caps if isinstance(caps, dict) else {}
         await self._send_notification("notifications/initialized", {})
         self._initialized = True
 
@@ -313,8 +367,14 @@ class McpClient:
 
         if "error" in response:
             err = response["error"]
-            msg = err.get("message", "unknown error") if isinstance(err, dict) else str(err)
-            raise McpError(f"MCP error: {msg}")
+            if isinstance(err, dict):
+                msg = err.get("message", "unknown error")
+                raw_code = err.get("code")
+                code = raw_code if isinstance(raw_code, int) else None
+            else:
+                msg = str(err)
+                code = None
+            raise McpError(f"MCP error: {msg}", code=code)
         result: dict[str, Any] = response.get("result", {})
         return result
 

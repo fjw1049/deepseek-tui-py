@@ -25,6 +25,7 @@ from deepseek_tui.mcp.client import (
     McpClient,
     McpError,
     McpToolDescriptor,
+    is_method_not_found,
     parse_qualified_tool_name,
     qualify_tool_name,
 )
@@ -1101,12 +1102,50 @@ class McpManager:
         server: str | None,
         method_name: str,
     ) -> dict[str, list[dict[str, Any]]]:
+        """Call an optional list RPC on one or all servers.
+
+        Aligns with Grok-style resilience: servers that omit optional
+        capabilities (resources/prompts) or return JSON-RPC -32601 yield an
+        empty list instead of failing the whole bridge tool. Hard failures
+        still raise when a specific ``server`` was requested; in all-servers
+        mode they are logged and skipped.
+        """
         names = [server] if server is not None else list(self._configs)
         output: dict[str, list[dict[str, Any]]] = {}
         for name in names:
-            client = await self._ensure_client(name)
-            method = getattr(client, method_name)
-            output[name] = await method()
+            try:
+                client = await self._ensure_client(name)
+                method = getattr(client, method_name)
+                output[name] = await method()
+            except McpError as exc:
+                if is_method_not_found(exc):
+                    logger.info(
+                        "mcp_%s unsupported server=%s error=%s",
+                        method_name,
+                        name,
+                        exc,
+                    )
+                    output[name] = []
+                    continue
+                if server is not None:
+                    raise
+                logger.warning(
+                    "mcp_%s failed server=%s error=%s",
+                    method_name,
+                    name,
+                    exc,
+                )
+                output[name] = []
+            except Exception as exc:  # noqa: BLE001
+                if server is not None:
+                    raise
+                logger.warning(
+                    "mcp_%s failed server=%s error=%s",
+                    method_name,
+                    name,
+                    exc,
+                )
+                output[name] = []
         return output
 
     def _record_config_fingerprint(self, path: Path) -> None:

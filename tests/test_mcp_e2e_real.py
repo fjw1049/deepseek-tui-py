@@ -62,6 +62,35 @@ class TestMcpStdioE2E:
         )
         assert result["content"][0]["text"] == "echo:via-manager"
 
+    async def test_list_resources_tools_only_server_returns_empty(
+        self, mcp_manager: McpManager
+    ) -> None:
+        """Tools-only servers omit resources; bridge must not raise Method not found."""
+        from deepseek_tui.mcp.client import McpError
+        from deepseek_tui.tools.mcp import ListMcpResourcesTool, ReadMcpResourceTool
+
+        client = await mcp_manager._ensure_client("fixture")  # noqa: SLF001
+        assert client.supports_capability("resources") is False
+        assert await client.list_resources() == []
+        assert await mcp_manager.list_resources() == {"fixture": []}
+        assert await mcp_manager.list_resources("fixture") == {"fixture": []}
+
+        ctx = ToolContext(
+            working_directory=Path("/tmp"),
+            metadata={MCP_MANAGER_KEY: mcp_manager},
+        )
+        listed = await ListMcpResourcesTool().execute({}, ctx)
+        assert listed.success is True
+        assert '"fixture"' in listed.content
+        assert "[]" in listed.content
+
+        with pytest.raises(McpError, match="does not support resources"):
+            await client.read_resource("file:///nope")
+        with pytest.raises(McpError, match="does not support resources"):
+            await ReadMcpResourceTool().execute(
+                {"server": "fixture", "uri": "file:///nope"}, ctx
+            )
+
     async def test_engine_execute_mcp_tool_e2e(self, mcp_manager: McpManager) -> None:
         await mcp_manager.discover_tools()
         ctx = ToolContext(
