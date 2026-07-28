@@ -182,7 +182,7 @@ def _structured_output_contract() -> str:
     )
 
 
-# Keep wording aligned with prompts/subagent_output_format.md (five H3s).
+# Keep wording aligned with prompts/sub_output.md (five H3s).
 _SUBAGENT_FINAL_REPORT_NUDGE = (
     "You have gathered enough information. Stop exploring and do NOT call any "
     "more tools. Write your final report now as your assistant message, ending "

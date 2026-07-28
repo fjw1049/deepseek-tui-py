@@ -82,7 +82,7 @@ class SubAgentType(str, Enum):
         """Return the system prompt for this agent type (with markdown report)."""
         from deepseek_tui.engine.prompts import load_prompt
 
-        output_contract = load_prompt("subagent_output_format")
+        output_contract = load_prompt("sub_output")
         base = self.type_prompt()
         return f"{base}\n\n{output_contract}" if base else output_contract
 
@@ -316,7 +316,7 @@ def build_subagent_system_prompt(
     if include_markdown_report_contract:
         from deepseek_tui.engine.prompts import load_prompt
 
-        output_contract = load_prompt("subagent_output_format")
+        output_contract = load_prompt("sub_output")
         base = f"{base}\n\n{output_contract}" if base else output_contract
 
     role = (assignment.role or "").strip()

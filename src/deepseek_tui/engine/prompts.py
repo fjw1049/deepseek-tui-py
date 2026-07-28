@@ -695,11 +695,11 @@ COMPACT_CONSUMER_HINT = (
 
 
 def CYCLE_HANDOFF() -> str:  # noqa: N802
-    return _get("cycle_handoff.md")
+    return _get("cycle.md")
 
 
 def SUBAGENT_OUTPUT_FORMAT() -> str:  # noqa: N802
-    return _get("subagent_output_format.md")
+    return _get("sub_output.md")
 
 
 # (Personality and AppMode moved to top of file)
@@ -730,11 +730,11 @@ def load_prompt(name: str) -> str:
     """Load a prompt by name (for backward compatibility).
 
     Maps prompt names to their corresponding loader functions.
-    Used by SubAgentType.system_prompt() to load subagent_output_format.
+    Used by SubAgentType.system_prompt() to load sub_output.
     """
     name_lower = name.lower().replace("-", "_")
     loaders = {
-        "subagent_output_format": SUBAGENT_OUTPUT_FORMAT,
+        "sub_output": SUBAGENT_OUTPUT_FORMAT,
         "base": BASE_PROMPT,
         "calm_personality": CALM_PERSONALITY,
         "playful_personality": PLAYFUL_PERSONALITY,
@@ -746,7 +746,7 @@ def load_prompt(name: str) -> str:
         "suggest_approval": SUGGEST_APPROVAL,
         "never_approval": NEVER_APPROVAL,
         "compact_template": COMPACT_TEMPLATE,
-        "cycle_handoff": CYCLE_HANDOFF,
+        "cycle": CYCLE_HANDOFF,
     }
     loader = loaders.get(name_lower)
     if loader is None:

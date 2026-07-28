@@ -24,7 +24,7 @@ CYCLE_ARCHIVE_SCHEMA_VERSION = 1
 DEFAULT_BRIEFING_MAX_TOKENS = 3_000
 APPROX_CHARS_PER_TOKEN = 4
 
-CYCLE_HANDOFF_PROMPT_PATH = Path(__file__).parent.parent / "prompts" / "cycle_handoff.md"
+CYCLE_HANDOFF_PROMPT_PATH = Path(__file__).parent.parent / "prompts" / "cycle.md"
 
 
 @dataclass(slots=True)
