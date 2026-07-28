@@ -2526,11 +2526,6 @@ samp {
   min-height: 0;
 }
 
-/* Pinned is a top-level section, not nested under a project folder. */
-.ds-sidebar-pinned-list .ds-sidebar-thread-list {
-  padding-left: 0;
-}
-
 .ds-sidebar-chats-pane {
   display: flex;
   max-height: 38%;
