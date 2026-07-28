@@ -663,6 +663,9 @@ function createWindow(): void {
     icon: appIcon.isEmpty() ? undefined : appIcon,
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     trafficLightPosition: process.platform === 'darwin' ? { x: 16, y: 14 } : undefined,
+    // macOS: first click on an inactive window also hits the control (no
+    // separate "activate only" click). No-op / default on other platforms.
+    acceptFirstMouse: true,
     show: false,
     webPreferences: {
       preload: preloadPath,
@@ -760,6 +763,7 @@ function createWindow(): void {
 function showMainWindowIfHidden(): void {
   if (!mainWindow || mainWindow.isDestroyed() || mainWindow.isVisible()) return
   mainWindow.show()
+  mainWindow.focus()
 }
 
 function deepseekLaunchConfigChanged(prev: AppSettingsV1, next: AppSettingsV1): boolean {
@@ -1271,7 +1275,12 @@ app.whenReady().then(async () => {
   })
 
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow()
+    if (BrowserWindow.getAllWindows().length === 0) {
+      createWindow()
+      return
+    }
+    // Dock click while a window already exists — bring it forward and key it.
+    revealMainWindow()
   })
 }).catch((error) => {
   const message = error instanceof Error ? error.message : String(error)
