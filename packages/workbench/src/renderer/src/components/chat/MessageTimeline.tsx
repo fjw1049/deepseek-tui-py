@@ -11,6 +11,7 @@ import {
   useState,
   useSyncExternalStore
 } from 'react'
+import { createPortal } from 'react-dom'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { useTranslation } from 'react-i18next'
@@ -57,6 +58,7 @@ import {
 } from '../../lib/turn-mutation-view'
 import { useDeferredRender } from '../../hooks/use-deferred-render'
 import { getTimestampFormat, subscribeAppearance } from '../../lib/apply-appearance'
+import { getProvider } from '../../agent/registry'
 import { useChatStore } from '../../store/chat-store'
 import { DiffView } from '../DiffView'
 import { EvolutionBubble } from './EvolutionBubble'
@@ -2147,15 +2149,20 @@ function SubagentSummaryRow({
             ].join(' ')}
             strokeWidth={1.8}
           />
-          <span className="min-w-0 truncate font-semibold tracking-[-0.01em] text-ds-ink">
+          <span className="min-w-0 flex-1 truncate font-semibold tracking-[-0.01em] text-ds-ink">
             {title}
           </span>
           {isActive ? (
-            <Loader2 className="h-3 w-3 animate-spin text-ds-muted" strokeWidth={2} />
+            <Loader2
+              className="h-3 w-3 shrink-0 animate-spin text-ds-muted"
+              strokeWidth={2}
+            />
           ) : null}
-          <span className="font-medium text-ds-muted">{statusLabel}</span>
+          <span className="shrink-0 whitespace-nowrap font-medium text-ds-muted">
+            {statusLabel}
+          </span>
           {flowItems.length > 0 ? (
-            <span className="text-[11px] text-ds-faint">
+            <span className="shrink-0 whitespace-nowrap text-[11px] text-ds-faint">
               {t('subagentStepCount', {
                 count: countSubagentRailSteps(flowItems)
               })}
@@ -3015,9 +3022,12 @@ function UserFocusChip({
   )
 }
 
+const REWIND_CONFIRM_FILE_LIMIT = 8
+
 /**
- * User message bubble: pencil enters edit mode directly. Edit footer offers
- * cancel, resend (conversation only), or rollback (conversation + code).
+ * User message bubble: pencil enters edit mode. A single Resend action rewinds
+ * the conversation; when rewind-preview reports file changes, a confirm dialog
+ * asks whether to restore code or keep workspace edits.
  */
 function UserMessageBubble({
   block
@@ -3033,6 +3043,11 @@ function UserMessageBubble({
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(displayBody)
   const [submitting, setSubmitting] = useState(false)
+  const [previewing, setPreviewing] = useState(false)
+  const [confirm, setConfirm] = useState<{
+    files: string[]
+    previewFailed: boolean
+  } | null>(null)
   // File restore only works for messages persisted on the runtime (`item_…`).
   const canRestoreFiles = activeThreadId != null && block.id.startsWith('item_')
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -3048,21 +3063,36 @@ function UserMessageBubble({
     el.style.height = `${Math.min(el.scrollHeight, 360)}px`
   }, [editing])
 
+  useEffect(() => {
+    if (!confirm) return
+    const handleKey = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        setConfirm(null)
+      }
+    }
+    window.addEventListener('keydown', handleKey)
+    return () => window.removeEventListener('keydown', handleKey)
+  }, [confirm])
+
   const startEdit = (): void => {
     if (busy) return
     setDraft(focus ? focus.body : block.text)
+    setConfirm(null)
     setEditing(true)
   }
 
   const cancelEdit = (): void => {
     setDraft(focus ? focus.body : block.text)
+    setConfirm(null)
     setEditing(false)
   }
 
-  const submit = async (restoreFiles: boolean): Promise<void> => {
+  const commitResend = async (restoreFiles: boolean): Promise<void> => {
     const trimmed = draft.trim()
     if (!trimmed || busy || submitting) return
     const wireText = focus ? composeUserFocusMessage(focus, trimmed) : trimmed
+    setConfirm(null)
     setSubmitting(true)
     setEditing(false)
     try {
@@ -3074,8 +3104,42 @@ function UserMessageBubble({
     }
   }
 
+  const requestResend = async (): Promise<void> => {
+    const trimmed = draft.trim()
+    if (!trimmed || busy || submitting || previewing) return
+
+    if (!canRestoreFiles || !activeThreadId) {
+      await commitResend(false)
+      return
+    }
+
+    const provider = getProvider(useChatStore.getState().providerId)
+    if (typeof provider.rewindPreview !== 'function') {
+      await commitResend(false)
+      return
+    }
+
+    setPreviewing(true)
+    try {
+      const preview = await provider.rewindPreview(activeThreadId, block.id)
+      if (preview.files.length === 0) {
+        await commitResend(false)
+        return
+      }
+      setConfirm({ files: preview.files, previewFailed: false })
+    } catch {
+      setConfirm({ files: [], previewFailed: true })
+    } finally {
+      setPreviewing(false)
+    }
+  }
+
   if (editing) {
-    const actionsDisabled = !draft.trim() || busy || submitting
+    const actionsDisabled = !draft.trim() || busy || submitting || previewing
+    const confirmFiles = confirm?.files ?? []
+    const visibleFiles = confirmFiles.slice(0, REWIND_CONFIRM_FILE_LIMIT)
+    const moreFiles = confirmFiles.length - visibleFiles.length
+
     return (
       <div id={`block-${block.id}`} className="ds-user-message">
         <div className="ds-user-message-bubble ds-user-message-edit-bubble min-w-0">
@@ -3092,11 +3156,11 @@ function UserMessageBubble({
             onKeyDown={(e) => {
               if (e.key === 'Escape') {
                 e.preventDefault()
-                cancelEdit()
+                if (confirm) setConfirm(null)
+                else cancelEdit()
               } else if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
                 e.preventDefault()
-                // Default: rollback conversation + code, then resend.
-                void submit(true)
+                void requestResend()
               }
             }}
             rows={2}
@@ -3106,36 +3170,109 @@ function UserMessageBubble({
             <button
               type="button"
               onClick={cancelEdit}
-              disabled={submitting}
+              disabled={submitting || previewing}
               className="rounded-md px-3 py-1 text-[13px] font-medium text-ds-muted transition hover:bg-ds-hover hover:text-ds-ink disabled:opacity-50"
             >
               {t('rewindCancel')}
             </button>
             <button
               type="button"
-              onClick={() => void submit(false)}
+              onClick={() => void requestResend()}
               disabled={actionsDisabled}
               title={t('rewindResendHint')}
-              className="rounded-md px-3 py-1 text-[13px] font-medium text-ds-ink transition hover:bg-ds-hover disabled:cursor-not-allowed disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 rounded-md bg-accent px-3 py-1 text-[13px] font-medium text-white shadow-sm transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
             >
-              {t('rewindResend')}
-            </button>
-            <button
-              type="button"
-              onClick={() => void submit(true)}
-              disabled={actionsDisabled}
-              title={
-                canRestoreFiles ? t('rewindRollbackHint') : t('rewindRollbackFilesUnavailable')
-              }
-              className="rounded-md bg-accent px-3 py-1 text-[13px] font-medium text-white shadow-sm transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {t('rewindRollback')}
+              {previewing ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={2} aria-hidden />
+              ) : null}
+              {previewing ? t('rewindResendPreviewing') : t('rewindResend')}
             </button>
           </div>
         </div>
         <div className="mt-2 flex min-w-0 items-center justify-end">
           <ModelMetaTag label={block.modelLabel} />
         </div>
+        {confirm && typeof document !== 'undefined'
+          ? createPortal(
+              <div
+                className="ds-modal-backdrop ds-no-drag fixed inset-0 z-[80] flex items-center justify-center p-4"
+                onClick={(event) => {
+                  if (event.target === event.currentTarget) setConfirm(null)
+                }}
+              >
+                <div
+                  role="dialog"
+                  aria-modal="true"
+                  aria-labelledby={`rewind-resend-confirm-${block.id}`}
+                  className="ds-content-card flex w-full max-w-md flex-col overflow-hidden rounded-2xl shadow-xl"
+                >
+                  <div className="flex shrink-0 items-start justify-between gap-3 border-b border-ds-border-muted px-5 py-3.5">
+                    <h2
+                      id={`rewind-resend-confirm-${block.id}`}
+                      className="min-w-0 text-[16px] font-semibold leading-snug text-ds-ink"
+                    >
+                      {t('rewindResendConfirmTitle')}
+                    </h2>
+                    <button
+                      type="button"
+                      onClick={() => setConfirm(null)}
+                      aria-label={t('close')}
+                      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-ds-muted transition hover:bg-ds-hover hover:text-ds-ink"
+                    >
+                      <X className="h-4 w-4" strokeWidth={1.9} />
+                    </button>
+                  </div>
+                  <div className="space-y-3 px-5 py-4">
+                    <p className="text-[13px] leading-5 text-ds-muted">
+                      {confirm.previewFailed
+                        ? t('rewindResendConfirmPreviewFailed')
+                        : t('rewindResendConfirmBody')}
+                    </p>
+                    {!confirm.previewFailed && visibleFiles.length > 0 ? (
+                      <ul className="max-h-40 overflow-y-auto rounded-xl border border-ds-border-muted/70 bg-ds-main/30 px-3 py-2 font-mono text-[12px] leading-5 text-ds-ink">
+                        {visibleFiles.map((file) => (
+                          <li key={file} className="truncate" title={file}>
+                            {file}
+                          </li>
+                        ))}
+                        {moreFiles > 0 ? (
+                          <li className="pt-1 text-ds-faint">
+                            {t('rewindResendConfirmMoreFiles', { count: moreFiles })}
+                          </li>
+                        ) : null}
+                      </ul>
+                    ) : null}
+                  </div>
+                  <div className="flex flex-wrap items-center justify-end gap-2 border-t border-ds-border-muted px-5 py-3">
+                    <button
+                      type="button"
+                      onClick={() => setConfirm(null)}
+                      className="rounded-md px-3 py-1.5 text-[13px] font-medium text-ds-muted transition hover:bg-ds-hover hover:text-ds-ink"
+                    >
+                      {t('rewindCancel')}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void commitResend(false)}
+                      disabled={submitting}
+                      className="rounded-md px-3 py-1.5 text-[13px] font-medium text-ds-ink transition hover:bg-ds-hover disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {t('rewindResendConfirmKeep')}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void commitResend(true)}
+                      disabled={submitting}
+                      className="rounded-md bg-accent px-3 py-1.5 text-[13px] font-medium text-white shadow-sm transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {t('rewindResendConfirmRestore')}
+                    </button>
+                  </div>
+                </div>
+              </div>,
+              document.body
+            )
+          : null}
       </div>
     )
   }

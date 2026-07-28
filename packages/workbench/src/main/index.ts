@@ -18,6 +18,7 @@ import { fileURLToPath } from 'node:url'
 import { randomUUID } from 'node:crypto'
 import { JsonSettingsStore, getRuntimeBaseUrl, devServerHintUrl } from './settings-store'
 import deepseekLogoPng from '../asset/img/deepseek.png'
+import { startDockIconAnimation, stopDockIconAnimation } from './dock-icon-animation'
 import {
   startDeepseekChild,
   stopDeepseekChild,
@@ -935,6 +936,11 @@ app.whenReady().then(async () => {
   let initial = await store.load()
   traceStartup('settings load:done')
 
+  // macOS Dock frame animation — opt-in via Settings → General (default off).
+  if (process.platform === 'darwin' && !appIcon.isEmpty() && initial.iconAnimation) {
+    startDockIconAnimation()
+  }
+
   // Backfill apiKey from config.toml so user edits to config.toml take effect.
   // Only the top-level api_key counts — never [asr]/other table keys (that
   // bug silently overwrote the DeepSeek chat key with the 智谱 ASR key).
@@ -997,6 +1003,10 @@ app.whenReady().then(async () => {
     const saved = await store.patch(partial)
     if (saved.theme !== nativeTheme.themeSource) {
       nativeTheme.themeSource = saved.theme
+    }
+    if (prev.iconAnimation !== saved.iconAnimation) {
+      if (saved.iconAnimation) startDockIconAnimation()
+      else stopDockIconAnimation(appIcon)
     }
     if (JSON.stringify(prev.asrProviders) !== JSON.stringify(saved.asrProviders)) {
       try {

@@ -119,6 +119,38 @@ describe('unwrapAutomationComposerPromptForDisplay', () => {
     expect(wrapped).not.toContain('automation_create')
   })
 
+  it('defaults Dock iconAnimation to off and only enables when explicitly true', () => {
+    const missing = normalizeAppSettings({
+      version: 1,
+      locale: 'en',
+      theme: 'system',
+      uiFontScale: 'small',
+      uiFontFamily: 'system-native',
+      agentProvider: 'deepseek-runtime',
+      workspaceRoot: '',
+      deepseek: {
+        binaryPath: '',
+        port: 7878,
+        autoStart: true,
+        apiKey: '',
+        baseUrl: '',
+        runtimeToken: '',
+        extraCorsOrigins: [],
+        approvalPolicy: 'on-request',
+        sandboxMode: 'workspace-write'
+      },
+      log: { enabled: true, retentionDays: 2 },
+      notifications: { turnComplete: true },
+      skills: { extraDirs: [] },
+      memory: undefined,
+      claw: undefined,
+      guiUpdate: { channel: 'frontier' }
+    } as never)
+    expect(missing.iconAnimation).toBe(false)
+    expect(normalizeAppSettings({ ...missing, iconAnimation: true }).iconAnimation).toBe(true)
+    expect(normalizeAppSettings({ ...missing, iconAnimation: false }).iconAnimation).toBe(false)
+  })
+
   it('derives sandbox mode from the approval tier', () => {
     const auto = normalizeAppSettings({
       version: 1,

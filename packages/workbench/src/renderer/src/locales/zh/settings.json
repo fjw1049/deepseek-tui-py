@@ -254,6 +254,8 @@
   "petMascotPreviewUnavailable": "暂时无法显示预览",
   "turnCompleteNotification": "完成通知",
   "turnCompleteNotificationDesc": "助手回复完成时，显示 Windows/macOS 原生系统通知。",
+  "iconAnimation": "Dock 图标动画",
+  "iconAnimationDesc": "开启后，macOS Dock 上的应用图标会播放循环动画。",
   "asrApiKey": "API Key",
   "asrApiKeyDesc": "写入 {{path}} 的 [asr] 段（与 API Key、自动化等同一份 config.toml）。",
   "asrApiKeyPlaceholder": "粘贴 BigModel API Key",

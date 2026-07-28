@@ -659,6 +659,16 @@ export function SettingsView(): ReactElement {
                     />
                   }
                 />
+                <SettingRow
+                  title={t('iconAnimation')}
+                  description={t('iconAnimationDesc')}
+                  control={
+                    <Toggle
+                      checked={form.iconAnimation}
+                      onChange={(v) => update({ iconAnimation: v })}
+                    />
+                  }
+                />
                 <div className="ds-density-row flex flex-col gap-4 px-4 py-5">
                   {/* Title line + 还原默认 aligned to the title. */}
                   <div className="flex items-start justify-between gap-4">

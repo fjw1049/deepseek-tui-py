@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>App Icon — diagonal swap preview</title>
+    <style>
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        gap: 28px;
+        padding: 40px 24px 56px;
+        font-family: ui-sans-serif, system-ui, -apple-system, sans-serif;
+        background:
+          radial-gradient(1200px 600px at 50% -10%, #2a2a2a 0%, transparent 55%),
+          #111;
+        color: #e8e8e8;
+      }
+      h1 {
+        margin: 0;
+        font-size: 15px;
+        font-weight: 560;
+        color: #bdbdbd;
+        text-align: center;
+      }
+      .row {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: end;
+        justify-content: center;
+        gap: 36px;
+      }
+      .card {
+        display: grid;
+        gap: 12px;
+        justify-items: center;
+      }
+      .card span {
+        font-size: 12px;
+        color: #8a8a8a;
+      }
+      .ds-app-mark {
+        --app-mark-tl-x: 37.3046875%;
+        --app-mark-tl-y: 37.3046875%;
+        --app-mark-br-x: 66.568457%;
+        --app-mark-br-y: 66.568457%;
+        --app-mark-large: 25.390625%;
+        --app-mark-mid: 17.6443359%;
+        --app-mark-small: 12.4801758%;
+        position: relative;
+        display: inline-block;
+        overflow: hidden;
+        border-radius: 22.5%;
+        background: #000;
+        line-height: 0;
+        filter: drop-shadow(0 18px 40px rgba(0, 0, 0, 0.45));
+      }
+      .mark-lg { width: 220px; height: 220px; }
+      .mark-md { width: 64px; height: 64px; filter: drop-shadow(0 8px 18px rgba(0, 0, 0, 0.4)); }
+      .mark-sm { width: 28px; height: 28px; filter: none; }
+      .ds-app-mark__cell {
+        position: absolute;
+        box-sizing: border-box;
+        border-radius: 24%;
+        transform: translate(-50%, -50%);
+      }
+      .ds-app-mark__cell--mid-tr {
+        left: var(--app-mark-br-x);
+        top: var(--app-mark-tl-y);
+        width: var(--app-mark-mid);
+        height: var(--app-mark-mid);
+        background: #aaa;
+      }
+      .ds-app-mark__cell--mid-bl {
+        left: var(--app-mark-tl-x);
+        top: var(--app-mark-br-y);
+        width: var(--app-mark-mid);
+        height: var(--app-mark-mid);
+        background: #aaa;
+      }
+      .ds-app-mark__cell--large {
+        left: var(--app-mark-tl-x);
+        top: var(--app-mark-tl-y);
+        width: var(--app-mark-large);
+        height: var(--app-mark-large);
+        background: #fff;
+        animation: swap-large 2.8s cubic-bezier(0.65, 0, 0.35, 1) infinite;
+      }
+      .ds-app-mark__cell--small {
+        left: var(--app-mark-br-x);
+        top: var(--app-mark-br-y);
+        width: var(--app-mark-small);
+        height: var(--app-mark-small);
+        background: #646464;
+        animation: swap-small 2.8s cubic-bezier(0.65, 0, 0.35, 1) infinite;
+      }
+      @keyframes swap-large {
+        0%, 18% {
+          left: var(--app-mark-tl-x);
+          top: var(--app-mark-tl-y);
+          width: var(--app-mark-large);
+          height: var(--app-mark-large);
+        }
+        50%, 68% {
+          left: var(--app-mark-br-x);
+          top: var(--app-mark-br-y);
+          width: var(--app-mark-small);
+          height: var(--app-mark-small);
+        }
+        100% {
+          left: var(--app-mark-tl-x);
+          top: var(--app-mark-tl-y);
+          width: var(--app-mark-large);
+          height: var(--app-mark-large);
+        }
+      }
+      @keyframes swap-small {
+        0%, 18% {
+          left: var(--app-mark-br-x);
+          top: var(--app-mark-br-y);
+          width: var(--app-mark-small);
+          height: var(--app-mark-small);
+        }
+        50%, 68% {
+          left: var(--app-mark-tl-x);
+          top: var(--app-mark-tl-y);
+          width: var(--app-mark-large);
+          height: var(--app-mark-large);
+        }
+        100% {
+          left: var(--app-mark-br-x);
+          top: var(--app-mark-br-y);
+          width: var(--app-mark-small);
+          height: var(--app-mark-small);
+        }
+      }
+      .note {
+        max-width: 420px;
+        text-align: center;
+        font-size: 13px;
+        line-height: 1.55;
+        color: #8f8f8f;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>最大 ↔ 最小 对角互换 · 2.8s / 圈</h1>
+    <div class="row">
+      <div class="card">
+        <div class="ds-app-mark mark-lg">
+          <span class="ds-app-mark__cell ds-app-mark__cell--mid-tr"></span>
+          <span class="ds-app-mark__cell ds-app-mark__cell--mid-bl"></span>
+          <span class="ds-app-mark__cell ds-app-mark__cell--large"></span>
+          <span class="ds-app-mark__cell ds-app-mark__cell--small"></span>
+        </div>
+        <span>220px</span>
+      </div>
+      <div class="card">
+        <div class="ds-app-mark mark-md">
+          <span class="ds-app-mark__cell ds-app-mark__cell--mid-tr"></span>
+          <span class="ds-app-mark__cell ds-app-mark__cell--mid-bl"></span>
+          <span class="ds-app-mark__cell ds-app-mark__cell--large"></span>
+          <span class="ds-app-mark__cell ds-app-mark__cell--small"></span>
+        </div>
+        <span>64px</span>
+      </div>
+      <div class="card">
+        <div class="ds-app-mark mark-sm">
+          <span class="ds-app-mark__cell ds-app-mark__cell--mid-tr"></span>
+          <span class="ds-app-mark__cell ds-app-mark__cell--mid-bl"></span>
+          <span class="ds-app-mark__cell ds-app-mark__cell--large"></span>
+          <span class="ds-app-mark__cell ds-app-mark__cell--small"></span>
+        </div>
+        <span>28px</span>
+      </div>
+    </div>
+    <p class="note">白大 / 深小沿对角线换位并互缩放大；中灰不动。刷新 Workbench 后看思考指示器。</p>
+  </body>
+</html>

@@ -254,6 +254,8 @@
   "petMascotPreviewUnavailable": "Preview unavailable",
   "turnCompleteNotification": "Completion notifications",
   "turnCompleteNotificationDesc": "Show a native Windows/macOS notification when an agent reply finishes.",
+  "iconAnimation": "Dock icon animation",
+  "iconAnimationDesc": "When on, the macOS Dock app icon plays a looping animation.",
   "asrApiKey": "API Key",
   "asrApiKeyDesc": "Saved to [asr] in {{path}} (same file as API keys and automation settings).",
   "asrApiKeyPlaceholder": "Paste your BigModel API key",

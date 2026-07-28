@@ -326,6 +326,10 @@ export type AppSettingsV1 = {
   theme: 'system' | 'light' | 'dark'
   uiFontScale: UiFontScale
   uiFontFamily: UiFontFamily
+  /**
+   * macOS Dock app-icon frame animation. Off by default; no-op on other platforms.
+   */
+  iconAnimation: boolean
   agentProvider: 'deepseek-runtime'
   deepseek: DeepseekSettingsV1
   /** Active vendor for `provider = …` in config.toml. Defaults to deepseek. */
@@ -1312,6 +1316,7 @@ export function normalizeAppSettings(settings: AppSettingsV1): AppSettingsV1 {
   return {
     ...settings,
     uiFontFamily: normalizeUiFontFamily(settings.uiFontFamily),
+    iconAnimation: maybeSettings.iconAnimation === true,
     deepseek: llm.deepseek,
     defaultLlmProviderId: llm.defaultLlmProviderId,
     llmProviders: llm.llmProviders,

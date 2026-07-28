@@ -135,6 +135,7 @@ const defaultSettings = (): AppSettingsV1 => ({
   theme: 'system',
   uiFontScale: 'small',
   uiFontFamily: 'system-native',
+  iconAnimation: false,
   agentProvider: 'deepseek-runtime',
   deepseek: {
     binaryPath: '',

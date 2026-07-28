@@ -1467,6 +1467,133 @@ samp {
   }
 }
 
+/* Brand app mark — largest ↔ smallest diagonal swap.
+ * Geometry from app-icon.svg, expressed as % of the 1024 canvas. */
+.ds-app-mark {
+  --app-mark-tl-x: 37.3046875%; /* 382 / 1024 */
+  --app-mark-tl-y: 37.3046875%;
+  --app-mark-br-x: 66.568457%; /* 681.661 / 1024 */
+  --app-mark-br-y: 66.568457%;
+  --app-mark-large: 25.390625%; /* 260 / 1024 */
+  --app-mark-mid: 17.6443359%; /* 180.678 / 1024 */
+  --app-mark-small: 12.4801758%; /* 127.797 / 1024 */
+  position: relative;
+  display: inline-block;
+  flex-shrink: 0;
+  overflow: hidden;
+  border-radius: 22.5%;
+  background: #000;
+  line-height: 0;
+}
+
+.ds-app-mark--sm {
+  width: 0.875rem;
+  height: 0.875rem;
+}
+
+.ds-app-mark--md {
+  width: 1.125rem;
+  height: 1.125rem;
+}
+
+.ds-app-mark__cell {
+  position: absolute;
+  box-sizing: border-box;
+  border-radius: 24%;
+  transform: translate(-50%, -50%);
+}
+
+.ds-app-mark__cell--mid-tr {
+  left: var(--app-mark-br-x);
+  top: var(--app-mark-tl-y);
+  width: var(--app-mark-mid);
+  height: var(--app-mark-mid);
+  background: #aaa;
+}
+
+.ds-app-mark__cell--mid-bl {
+  left: var(--app-mark-tl-x);
+  top: var(--app-mark-br-y);
+  width: var(--app-mark-mid);
+  height: var(--app-mark-mid);
+  background: #aaa;
+}
+
+.ds-app-mark__cell--large {
+  left: var(--app-mark-tl-x);
+  top: var(--app-mark-tl-y);
+  width: var(--app-mark-large);
+  height: var(--app-mark-large);
+  background: #fff;
+  animation: ds-app-mark-swap-large 2.8s cubic-bezier(0.65, 0, 0.35, 1) infinite;
+}
+
+.ds-app-mark__cell--small {
+  left: var(--app-mark-br-x);
+  top: var(--app-mark-br-y);
+  width: var(--app-mark-small);
+  height: var(--app-mark-small);
+  background: #646464;
+  animation: ds-app-mark-swap-small 2.8s cubic-bezier(0.65, 0, 0.35, 1) infinite;
+}
+
+.ds-app-mark--static .ds-app-mark__cell--swap {
+  animation: none;
+}
+
+/* Literal % — var() inside keyframes often won't interpolate in Chromium. */
+@keyframes ds-app-mark-swap-large {
+  0%,
+  18% {
+    left: 37.3046875%;
+    top: 37.3046875%;
+    width: 25.390625%;
+    height: 25.390625%;
+  }
+  50%,
+  68% {
+    left: 66.568457%;
+    top: 66.568457%;
+    width: 12.4801758%;
+    height: 12.4801758%;
+  }
+  100% {
+    left: 37.3046875%;
+    top: 37.3046875%;
+    width: 25.390625%;
+    height: 25.390625%;
+  }
+}
+
+@keyframes ds-app-mark-swap-small {
+  0%,
+  18% {
+    left: 66.568457%;
+    top: 66.568457%;
+    width: 12.4801758%;
+    height: 12.4801758%;
+  }
+  50%,
+  68% {
+    left: 37.3046875%;
+    top: 37.3046875%;
+    width: 25.390625%;
+    height: 25.390625%;
+  }
+  100% {
+    left: 66.568457%;
+    top: 66.568457%;
+    width: 12.4801758%;
+    height: 12.4801758%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ds-app-mark__cell--swap {
+    animation: none;
+  }
+}
+
 /* Amicro-style 2×2 Square Grid — thinking / in-progress indicator. */
 .ds-square-grid {
   display: inline-grid;
