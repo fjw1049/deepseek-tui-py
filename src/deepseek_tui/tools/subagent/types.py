@@ -115,8 +115,8 @@ def max_tokens_for_subagent_type(agent_type: SubAgentType) -> int:
 
 
 # Tool groups for type-based allowlists (see ``SubAgentType.allowed_tools``).
-# Intentionally stricter than ``FOCUS_READ_BASE`` - that set is misnamed and
-# includes write/shell/agent tools, so it cannot serve a read-only type.
+# Intentionally stricter than focus bases (``FOCUS_PLUGIN_BASE`` / deprecated
+# alias ``FOCUS_READ_BASE`` include write/shell/agent) — cannot serve read-only.
 _SUBAGENT_READ_TOOLS = frozenset({
     "read_file", "grep_files", "file_search",
     "web_search", "fetch_url",

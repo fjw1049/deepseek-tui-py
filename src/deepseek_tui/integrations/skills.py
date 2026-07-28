@@ -95,12 +95,12 @@ class Skill:
     body: str
     path: Path
     allowed_tools: tuple[str, ...] | None = None
-    """Optional focus-mode tool whitelist from the ``allowed-tools``
-    frontmatter key. When set, overrides ``FOCUS_READ_BASE | FOCUS_WRITE_BASE``
-    for this skill. ``None`` means "not declared" (fall back to the fixed set).
+    """Optional focus-mode tool extras from the ``allowed-tools``
+    frontmatter key. When set, extends ``FOCUS_SKILL_BASE`` (union).
+    ``None`` means "not declared" (skill focus uses ``FOCUS_SKILL_BASE`` alone).
 
     An intentional addition for the focus-mode feature; mirrors workflow
-    ``allowed_tools`` semantics.
+    ``allowed_tools`` naming but unions rather than replaces.
     """
 
 
@@ -212,7 +212,7 @@ def _coerce_allowed_tools(value: Any) -> tuple[str, ...] | None:
     """Normalize ``allowed-tools`` from YAML / legacy string shapes.
 
     Empty / whitespace-only declarations yield ``None`` (treated as
-    "not declared" so focus mode falls back to ``FOCUS_READ_BASE | FOCUS_WRITE_BASE``).
+    "not declared" so skill focus uses ``FOCUS_SKILL_BASE`` alone).
     """
     if value is None:
         return None

@@ -2361,7 +2361,7 @@ async def test_untrusted_plugin_skill_allowed_tools_expand_whitelist(
     from deepseek_tui.config.models import Config
     from deepseek_tui.engine.handle import EngineHandle
     from deepseek_tui.engine.orchestrator.core import Engine
-    from deepseek_tui.engine.orchestrator.helpers import FOCUS_READ_BASE
+    from deepseek_tui.engine.orchestrator.helpers import FOCUS_PLUGIN_BASE
 
     workspace = tmp_path / "ws"
     workspace.mkdir()
@@ -2374,9 +2374,10 @@ async def test_untrusted_plugin_skill_allowed_tools_expand_whitelist(
         engine.set_active_plugin("expand")
         wl, _servers = engine._active_plugin_whitelist()
         assert wl is not None
-        assert FOCUS_READ_BASE <= wl
+        assert FOCUS_PLUGIN_BASE <= wl
         assert {"task_create", "workflow"} <= wl
         assert "write_file" in wl and "exec_shell" in wl
+        assert "agent" in wl
     finally:
         await engine.shutdown_session()
 
@@ -2384,8 +2385,8 @@ async def test_untrusted_plugin_skill_allowed_tools_expand_whitelist(
 async def test_agent_spawn_untrusted_plugin_confined_to_scenario_base(
     tmp_path,
 ) -> None:
-    """Untrusted plugin personas inherit the generous scenario base, not full GENERAL."""
-    from deepseek_tui.engine.orchestrator.helpers import FOCUS_READ_BASE
+    """Untrusted plugin personas inherit the plugin focus base, not full GENERAL."""
+    from deepseek_tui.engine.orchestrator.helpers import FOCUS_PLUGIN_BASE
     from deepseek_tui.integrations.plugins import PluginAgent
     from deepseek_tui.tools.registry import ToolContext
     from deepseek_tui.tools.subagent.manager import SubAgentManager
@@ -2415,7 +2416,8 @@ async def test_agent_spawn_untrusted_plugin_confined_to_scenario_base(
     assert result.success
     spawned = manager._agents[result.metadata["agent_id"]]
     assert spawned.allowed_tools is not None
-    assert set(spawned.allowed_tools) == set(FOCUS_READ_BASE)
+    assert set(spawned.allowed_tools) == set(FOCUS_PLUGIN_BASE)
+    assert "agent" in spawned.allowed_tools
     assert "code_execution" in spawned.allowed_tools
     assert "exec_shell" in spawned.allowed_tools
     await manager.shutdown()

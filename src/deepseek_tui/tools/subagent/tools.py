@@ -307,9 +307,9 @@ async def _execute_spawn(input_data: dict[str, Any], context: ToolContext) -> To
         and not plugin_trusted
         and not allowed_tools
     ):
-        from deepseek_tui.engine.orchestrator.helpers import FOCUS_READ_BASE
+        from deepseek_tui.engine.orchestrator.helpers import FOCUS_PLUGIN_BASE
 
-        allowed_tools = sorted(FOCUS_READ_BASE)
+        allowed_tools = sorted(FOCUS_PLUGIN_BASE)
     # NOTE: type-level default allowlist is applied in ``run_subagent_loop``
     # (not here) so direct ``manager.spawn`` callers (tests, workflow) get
     # the same filtering as LLM-driven ``agent`` spawn calls.

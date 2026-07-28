@@ -16,42 +16,45 @@ from deepseek_tui.protocol.messages import Message, TextBlock
 # re-inject them after the registry whitelist filter.
 FOCUS_META_TOOLS = frozenset({"code_execution"})
 
-# Scenario / focus default tool surface. Authors rarely declare skill
-# ``allowed-tools``, so mounts must ship a usable agent subset by default
-# (explore + write + code_execution + shell + agents + web/session helpers).
-# Trust still gates plugin-supplied processes (hooks / MCP), not these
-# built-ins. Note ``grep_files`` (not ``grep``) — name mismatch historically
-# silently excluded grep from every focus mode.
-# Only real registered names belong here (plus FOCUS_META_TOOLS).
-_FOCUS_REGISTRY_TOOLS = frozenset(
+# Shared kernel for all focus paths (MCP / skill / plugin). Explore + write +
+# shell + web + ask-user. Note ``grep_files`` (not ``grep``) — name mismatch
+# historically silently excluded grep from every focus mode.
+# Registry names only here; meta tools are OR'd in via FOCUS_META_TOOLS.
+_FOCUS_KERNEL_REGISTRY = frozenset(
     {
-        # Explore
         "read_file",
         "grep_files",
         "file_search",
-        # Session
-        "load_skill",
-        "note",
-        "update_plan",
-        "checklist",
-        "request_user_input",
-        # Research
-        "web_search",
-        "fetch_url",
-        # Work
         "write_file",
         "edit_file",
-        # Shell (registered names only — no exec_wait / exec_interact aliases)
         "exec_shell",
-        # Agents
-        "agent",
+        "web_search",
+        "fetch_url",
+        "request_user_input",
     }
 )
+FOCUS_KERNEL = _FOCUS_KERNEL_REGISTRY | FOCUS_META_TOOLS
 
-FOCUS_READ_BASE = _FOCUS_REGISTRY_TOOLS | FOCUS_META_TOOLS
+# @connector — kernel only; server tools are unioned at the call site.
+# No load_skill / checklist / agent (those steal selection from MCP tools).
+FOCUS_MCP_BASE = FOCUS_KERNEL
 
-# Write subset kept for MCP-focus composition and callers that want the
-# write tools without the full scenario base.
+# /skill — kernel + load body + light multi-step helper. No agent by default.
+FOCUS_SKILL_BASE = FOCUS_KERNEL | frozenset({"load_skill", "checklist"})
+
+# Plugin mount — skill base + agent (scenario feels like a mini workspace).
+FOCUS_PLUGIN_BASE = FOCUS_SKILL_BASE | frozenset({"agent"})
+
+# Deprecated alias for the widest focus base (plugin). Prefer FOCUS_PLUGIN_BASE.
+FOCUS_READ_BASE = FOCUS_PLUGIN_BASE
+
+# Registry-only names across all focus bases (for subset-of-registry tests).
+_FOCUS_REGISTRY_TOOLS = (
+    _FOCUS_KERNEL_REGISTRY
+    | frozenset({"load_skill", "checklist", "agent"})
+)
+
+# Write subset kept for callers that want write tools without a full base.
 FOCUS_WRITE_BASE = frozenset({"write_file", "edit_file"})
 
 

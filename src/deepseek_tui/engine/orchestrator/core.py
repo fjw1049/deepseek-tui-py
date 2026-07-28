@@ -51,8 +51,9 @@ from deepseek_tui.engine.handle import (
     SendMessageOp,
 )
 from deepseek_tui.engine.orchestrator.helpers import (
-    FOCUS_READ_BASE,
-    FOCUS_WRITE_BASE,
+    FOCUS_MCP_BASE,
+    FOCUS_PLUGIN_BASE,
+    FOCUS_SKILL_BASE,
     _assistant_preface_text,
     _detect_focus_mcp,
     _detect_focus_skill,
@@ -471,17 +472,15 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
     ) -> tuple[frozenset[str], frozenset[str]]:
         """聚焦某个 MCP 连接器时的工具白名单 + 放行 server 集合。
 
-        返回 ``(tool_names, server_names)``。tool_names 含该 server 已发现的
-        工具名 + 读基座 + 写基座；server_names 含该 server 名，让 lazy 未
+        返回 ``(tool_names, server_names)``。tool_names = ``FOCUS_MCP_BASE``
+        ∪ 该 server 已发现工具名；server_names 含该 server 名，让 lazy 未
         discovery 的工具也能按 server 级放行（修白名单竞态：lazy server 在
         首次工具调用前 tool 名未知，按 server 名前缀匹配兜底放行）。
 
-        基座为场景默认工具面（``FOCUS_READ_BASE``，已含写/exec/agents）
-        并与 ``FOCUS_WRITE_BASE`` 求并（幂等）。连接器聚焦不仅查询连接器，
-        还要能对工作区动手。
+        连接器聚焦不仅查询连接器，还要能对工作区动手（kernel 含写/exec/web）。
         """
         tool_names = frozenset(
-            self._server_tool_names(server) | FOCUS_READ_BASE | FOCUS_WRITE_BASE
+            self._server_tool_names(server) | FOCUS_MCP_BASE
         )
         return tool_names, frozenset({server})
 
@@ -710,10 +709,9 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
 
         返回 ``(tool_names, server_names)`` 或 ``None``（未挂载）。
 
-        tool_names = generous scenario base (``FOCUS_READ_BASE``: explore /
-        write / code_execution / shell / agents / web) ∪ skill
-        ``allowed-tools`` (always — authors rarely declare them, so the
-        base must already be runnable) ∪ trusted plugin MCP tool names.
+        tool_names = ``FOCUS_PLUGIN_BASE`` ∪ skill ``allowed-tools`` ∪
+        trusted plugin MCP tool names. Authors rarely declare allowed-tools,
+        so the plugin base must already be runnable.
 
         server_names = trusted MCP servers for lazy discovery-independent
         prefix allow. Trust gates **plugin processes** (hooks / MCP), not
@@ -723,7 +721,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         if plugin is None:
             return None
 
-        allowed: set[str] = set(FOCUS_READ_BASE)
+        allowed: set[str] = set(FOCUS_PLUGIN_BASE)
         server_names: set[str] = set()
         # Skill allowed-tools always expand the mount surface (extras like
         # task_* / workflow). Trust is not required for built-in declares.
@@ -1874,19 +1872,16 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         try:
             # 聚焦模式：置位 per-turn 工具白名单，``_get_tools_with_mcp`` 据此
             # 收窄 catalog。在 finally 中复位，异常/取消也不会泄漏到下一 turn。
-            # skill 声明 ``allowed-tools`` 则完全覆盖固定白名单；否则回退到
-            # ``FOCUS_READ_BASE | FOCUS_WRITE_BASE``（场景默认面已含写/exec/
-            # shell/agents；声明可再扩 task/workflow 等）。
-            # MCP 连接器聚焦：该 server 工具 + 场景基座。
+            # skill：``FOCUS_SKILL_BASE`` ∪ ``allowed-tools``（并集，可扩
+            # task/workflow 等）。MCP：``FOCUS_MCP_BASE`` ∪ 该 server 工具。
             # 显式前缀（/skill、@mcp）优先级最高；两者都未命中且挂载了插件时，
             # 回退到插件白名单（持续态）。都无 -> 全量（None）。
             if focus_skill is not None:
                 declared = getattr(focus_skill, "allowed_tools", None)
-                self._focus_tool_whitelist = (
-                    frozenset(declared)
-                    if declared
-                    else (FOCUS_READ_BASE | FOCUS_WRITE_BASE)
-                )
+                allowed = set(FOCUS_SKILL_BASE)
+                if declared:
+                    allowed |= set(declared)
+                self._focus_tool_whitelist = frozenset(allowed)
                 self._focus_allowed_servers = frozenset()
             elif focus_mcp is not None:
                 mcp_mgr = self.mcp_manager
