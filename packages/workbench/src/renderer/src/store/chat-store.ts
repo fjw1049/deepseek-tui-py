@@ -921,7 +921,7 @@ function buildThreadEventSink(
       set((s) => ({
         error: s.error === i18n.t('common:runtimeStreamRecovering') ? null : s.error,
         blocks: s.blocks.map((b) =>
-          b.kind === 'user_input' && b.id === ev.itemId
+          b.kind === 'user_input' && (b.id === ev.itemId || b.requestId === ev.itemId)
             ? {
                 ...b,
                 status: ev.status,
@@ -2948,7 +2948,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
         if (get().busy) armBusyWatchdog(set, get)
         set((s) => ({
           blocks: s.blocks.map((b) =>
-            b.id === blockId && b.kind === 'user_input'
+            b.kind === 'user_input' &&
+            (b.id === blockId || b.requestId === block.requestId || b.id === block.requestId)
               ? { ...b, status: 'submitted' as const, answers: action.answers }
               : b
           )
@@ -2963,7 +2964,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       await p.cancelUserInput(block.requestId)
       set((s) => ({
         blocks: s.blocks.map((b) =>
-          b.id === blockId && b.kind === 'user_input'
+          b.kind === 'user_input' &&
+          (b.id === blockId || b.requestId === block.requestId || b.id === block.requestId)
             ? { ...b, status: 'cancelled' as const }
             : b
         )
@@ -2981,7 +2983,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
           ? { route: 'settings' as const, settingsSection: settingsSectionForRuntimeError(e)! }
           : {}),
         blocks: s.blocks.map((b) =>
-          b.id === blockId && b.kind === 'user_input'
+          b.kind === 'user_input' &&
+          (b.id === blockId || b.requestId === block.requestId || b.id === block.requestId)
             ? { ...b, status: 'error' as const, errorMessage: msg }
             : b
         )

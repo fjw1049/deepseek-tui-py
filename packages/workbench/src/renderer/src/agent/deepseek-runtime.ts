@@ -390,6 +390,37 @@ function looksLikeUserInputToolItem(item: TurnItemJson): boolean {
   return readUserInputAnswersFromItem(item) != null
 }
 
+function toolCallIdFromItem(item: TurnItemJson): string | undefined {
+  const meta = item.metadata
+  if (!meta || typeof meta !== 'object') return undefined
+  const id = (meta as Record<string, unknown>).tool_call_id
+  return typeof id === 'string' && id.trim() ? id.trim() : undefined
+}
+
+/** Drop ghost pending cards left by legacy duplicate TurnItems (tool_call_id row). */
+function collapseDuplicateUserInputBlocks(blocks: ChatBlock[]): ChatBlock[] {
+  const inputs = blocks.filter(
+    (block): block is Extract<ChatBlock, { kind: 'user_input' }> => block.kind === 'user_input'
+  )
+  if (inputs.length < 2) return blocks
+  const resolvedKeys = new Set<string>()
+  for (const block of inputs) {
+    if (block.status === 'pending') continue
+    resolvedKeys.add(block.requestId)
+    resolvedKeys.add(block.id)
+  }
+  if (resolvedKeys.size === 0) return blocks
+  const dropIds = new Set<string>()
+  for (const block of inputs) {
+    if (block.status !== 'pending') continue
+    if (resolvedKeys.has(block.requestId) || resolvedKeys.has(block.id)) {
+      dropIds.add(block.id)
+    }
+  }
+  if (dropIds.size === 0) return blocks
+  return blocks.filter((block) => !(block.kind === 'user_input' && dropIds.has(block.id)))
+}
+
 function toolSummaryFromStartedPayload(payload: Record<string, unknown>, fallback: string): string {
   const tool = readPayloadTool(payload)
   if (tool?.name) {
@@ -993,6 +1024,20 @@ export class DeepseekRuntimeProvider implements AgentProvider {
     // Latest mounted-plugin signal across the whole thread (last wins; items
     // are chronological). null = explicit unmount, undefined = never mounted.
     let activePlugin: ActivePluginMeta | null | undefined = undefined
+    // request_user_input used to persist two TurnItems (item_* + tool_call_id).
+    // The tool_call_id orphan stays in_progress forever; remember completed twins
+    // so hydration does not resurrect a pending composer card.
+    const completedUserInputKeys = new Set<string>()
+    const completedUserInputTurns = new Set<string>()
+    for (const it of detail.items) {
+      if (!(it.kind === 'tool_call' && looksLikeUserInputToolItem(it))) continue
+      if (statusFromString(it.status) === 'running') continue
+      completedUserInputKeys.add(it.id)
+      const toolCallId = toolCallIdFromItem(it)
+      if (toolCallId) completedUserInputKeys.add(toolCallId)
+      const turnId = deriveTurnId(it)
+      if (turnId) completedUserInputTurns.add(turnId)
+    }
     for (const it of detail.items) {
       const ap = readActivePlugin(it)
       if (ap !== undefined) activePlugin = ap
@@ -1044,17 +1089,27 @@ export class DeepseekRuntimeProvider implements AgentProvider {
       } else if (it.kind === 'tool_call' && looksLikeUserInputToolItem(it)) {
         const questions = readUserInputQuestionsFromItem(it)
         if (questions) {
-          const status =
-            statusFromString(it.status) === 'error'
-              ? 'error'
-              : statusFromString(it.status) === 'running'
-                ? 'pending'
-                : 'submitted'
+          const requestId = toolCallIdFromItem(it) ?? it.id
+          const running = statusFromString(it.status) === 'running'
+          const errored = statusFromString(it.status) === 'error'
+          const turnId = deriveTurnId(it)
+          // Orphan in_progress rows keyed by tool_call_id must not reopen the dock
+          // after the real item_* twin already completed (legacy + metadata-less).
+          const ghostPending =
+            running &&
+            (completedUserInputKeys.has(requestId) ||
+              completedUserInputKeys.has(it.id) ||
+              (!it.id.startsWith('item_') && !!turnId && completedUserInputTurns.has(turnId)))
+          const status = errored
+            ? 'error'
+            : running && !ghostPending
+              ? 'pending'
+              : 'submitted'
           blocks.push({
             kind: 'user_input',
             id: it.id,
             createdAt: itemCreatedAt(it),
-            requestId: it.id,
+            requestId,
             questions,
             status,
             answers: readUserInputAnswersFromItem(it),
@@ -1109,6 +1164,7 @@ export class DeepseekRuntimeProvider implements AgentProvider {
     }
     // History may lack mailbox ``started.prompt``; spawn tool rows still carry it.
     blocks = applySpawnPromptsToSubagentBlocks(blocks)
+    blocks = collapseDuplicateUserInputBlocks(blocks)
     return {
       blocks,
       latestSeq: detail.latest_seq ?? 0,

@@ -32,6 +32,17 @@ export {
   type DeepseekPaths
 }
 
+/**
+ * Read the top-level ``api_key`` from a config.toml body (before the first
+ * ``[section]``). Matching the whole file would also hit keys inside tables
+ * such as ``[asr]``, which must never be treated as the chat-model key.
+ */
+export function readTopLevelApiKeyFromToml(tomlContent: string): string {
+  const topLevel = tomlContent.split(/^\s*\[/m)[0] ?? ''
+  const match = topLevel.match(/^\s*api_key\s*=\s*"([^"]*)"/m)
+  return match?.[1]?.trim() ?? ''
+}
+
 type DeepseekCommand = {
   args: string[]
   stdin?: string
@@ -348,14 +359,7 @@ export async function syncDeepseekTuiConfig(
       try {
         const configPath = resolveDeepseekConfigPath()
         const tomlContent = await readFile(configPath, 'utf8')
-        // Only inspect the top-level (before the first [section]) api_key.
-        // A plain /m regex over the whole file also matches keys inside other
-        // tables such as [asr], whose api_key is unrelated to the chat model —
-        // that false match made the GUI think a key was already present and
-        // silently skip syncing the real provider key into config.toml.
-        const topLevel = tomlContent.split(/^\s*\[/m)[0]
-        const match = topLevel.match(/^\s*api_key\s*=\s*"([^"]*)"/m)
-        if (match && match[1].trim()) {
+        if (readTopLevelApiKeyFromToml(tomlContent)) {
           skipApiKeySync = true
         }
       } catch { /* file missing — proceed with sync */ }

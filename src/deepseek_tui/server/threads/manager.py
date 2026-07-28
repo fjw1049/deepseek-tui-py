@@ -2883,6 +2883,9 @@ class RuntimeThreadManager:
                 kind = tool_kind_for_name(tc.name)
                 now = datetime.now(timezone.utc)
                 metadata = tool_started_metadata(tc.name, tc.arguments)
+                # Persist tool_call_id so thread reload can key request_user_input
+                # blocks by the HTTP resolve id (not the synthetic item_* id).
+                metadata = {**(metadata or {}), "tool_call_id": tc.id}
                 item = TurnItemRecord(
                     id=item_id,
                     turn_id=turn_id,
@@ -2930,6 +2933,44 @@ class RuntimeThreadManager:
                 item_id = tool_items.pop(event.tool_call_id, None)
                 tool_args = tool_call_args.pop(event.tool_call_id, None)
                 shell_snapshot = shell_watch.pop(event.tool_call_id, None)
+                # Close legacy duplicate rows keyed by tool_call_id (older builds
+                # created these from UserInputRequiredEvent alongside item_*).
+                if (
+                    event.tool_name == "request_user_input"
+                    and event.tool_call_id
+                    and event.tool_call_id != item_id
+                ):
+                    try:
+                        orphan = self.store.load_item(event.tool_call_id)
+                    except FileNotFoundError:
+                        orphan = None
+                    if (
+                        orphan is not None
+                        and orphan.status == TurnItemLifecycleStatus.IN_PROGRESS
+                    ):
+                        now_orphan = datetime.now(timezone.utc)
+                        orphan.ended_at = now_orphan
+                        orphan.status = (
+                            TurnItemLifecycleStatus.COMPLETED
+                            if event.success
+                            else TurnItemLifecycleStatus.FAILED
+                        )
+                        orphan.detail = event.content
+                        orphan.summary = summarize_text(
+                            f"{event.tool_name}: {event.content}", SUMMARY_LIMIT
+                        )
+                        self.store.save_item(orphan)
+                        await self._emit_event(
+                            thread_id,
+                            turn_id,
+                            orphan.id,
+                            (
+                                "item.completed"
+                                if orphan.status == TurnItemLifecycleStatus.COMPLETED
+                                else "item.failed"
+                            ),
+                            {"item": orphan.model_dump(mode="json")},
+                        )
                 if item_id is not None:
                     item = self.store.load_item(item_id)
                     now = datetime.now(timezone.utc)
@@ -3214,36 +3255,61 @@ class RuntimeThreadManager:
                 )
 
             elif isinstance(event, UserInputRequiredEvent):
+                import json as _json
+
                 self._pending_user_inputs[event.tool_call_id] = _PendingUserInputRecord(
                     thread_id=thread_id,
                     turn_id=turn_id,
                     questions=list(event.questions),
                 )
                 now = datetime.now(timezone.utc)
-                item_id = event.tool_call_id
-                try:
-                    self.store.load_item(item_id)
-                except FileNotFoundError:
-                    import json as _json
-
-                    item = TurnItemRecord(
-                        id=item_id,
-                        turn_id=turn_id,
-                        kind=TurnItemKind.TOOL_CALL,
-                        status=TurnItemLifecycleStatus.IN_PROGRESS,
-                        summary="request_user_input",
-                        detail=_json.dumps({"questions": event.questions}),
-                        started_at=now,
-                    )
-                    self.store.save_item(item)
-                    self._attach_item_to_turn(turn_id, item_id)
-                    await self._emit_event(
-                        thread_id,
-                        turn_id,
-                        item_id,
-                        "item.started",
-                        {"item": item.model_dump(mode="json")},
-                    )
+                questions_detail = _json.dumps(
+                    {"questions": event.questions}, ensure_ascii=False
+                )
+                # Prefer the item already created by ToolCallEvent. Creating a
+                # second row keyed by tool_call_id left an IN_PROGRESS orphan
+                # that never received ToolResultEvent — after turn reload the
+                # GUI hydrated it as a fresh pending "需要你的输入" card.
+                existing_item_id = tool_items.get(event.tool_call_id)
+                if existing_item_id is not None:
+                    try:
+                        item = self.store.load_item(existing_item_id)
+                        item.detail = questions_detail
+                        item.summary = "request_user_input"
+                        meta = (
+                            dict(item.metadata)
+                            if isinstance(item.metadata, dict)
+                            else {}
+                        )
+                        meta["tool_call_id"] = event.tool_call_id
+                        item.metadata = meta
+                        self.store.save_item(item)
+                    except FileNotFoundError:
+                        existing_item_id = None
+                if existing_item_id is None:
+                    item_id = event.tool_call_id
+                    try:
+                        self.store.load_item(item_id)
+                    except FileNotFoundError:
+                        item = TurnItemRecord(
+                            id=item_id,
+                            turn_id=turn_id,
+                            kind=TurnItemKind.TOOL_CALL,
+                            status=TurnItemLifecycleStatus.IN_PROGRESS,
+                            summary="request_user_input",
+                            detail=questions_detail,
+                            metadata={"tool_call_id": event.tool_call_id},
+                            started_at=now,
+                        )
+                        self.store.save_item(item)
+                        self._attach_item_to_turn(turn_id, item_id)
+                        await self._emit_event(
+                            thread_id,
+                            turn_id,
+                            item_id,
+                            "item.started",
+                            {"item": item.model_dump(mode="json")},
+                        )
                 await self._emit_event(
                     thread_id, turn_id, None, "user_input.required",
                     {

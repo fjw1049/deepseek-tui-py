@@ -57,6 +57,7 @@ import { fetchBuiltinProviderModelIds, fetchUpstreamModelIds } from './upstream-
 import {
   deepseekTuiConfigChanged,
   localeConfigChanged,
+  readTopLevelApiKeyFromToml,
   resolveDeepseekConfigPath,
   syncDeepseekTuiConfig
 } from './deepseek-config'
@@ -935,12 +936,11 @@ app.whenReady().then(async () => {
   traceStartup('settings load:done')
 
   // Backfill apiKey from config.toml so user edits to config.toml take effect.
-  // The GUI's deepseek-gui-settings.json may hold a stale key; config.toml is
-  // the source of truth for api_key.
+  // Only the top-level api_key counts — never [asr]/other table keys (that
+  // bug silently overwrote the DeepSeek chat key with the 智谱 ASR key).
   try {
     const tomlContent = await readFile(resolveDeepseekConfigPath(), 'utf8')
-    const match = tomlContent.match(/^\s*api_key\s*=\s*"([^"]*)"/m)
-    const tomlKey = match?.[1]?.trim() ?? ''
+    const tomlKey = readTopLevelApiKeyFromToml(tomlContent)
     if (tomlKey && tomlKey !== initial.deepseek.apiKey) {
       initial = await store.patch({
         deepseek: { apiKey: tomlKey },
