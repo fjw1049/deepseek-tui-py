@@ -348,7 +348,13 @@ export async function syncDeepseekTuiConfig(
       try {
         const configPath = resolveDeepseekConfigPath()
         const tomlContent = await readFile(configPath, 'utf8')
-        const match = tomlContent.match(/^\s*api_key\s*=\s*"([^"]*)"/m)
+        // Only inspect the top-level (before the first [section]) api_key.
+        // A plain /m regex over the whole file also matches keys inside other
+        // tables such as [asr], whose api_key is unrelated to the chat model —
+        // that false match made the GUI think a key was already present and
+        // silently skip syncing the real provider key into config.toml.
+        const topLevel = tomlContent.split(/^\s*\[/m)[0]
+        const match = topLevel.match(/^\s*api_key\s*=\s*"([^"]*)"/m)
         if (match && match[1].trim()) {
           skipApiKeySync = true
         }
