@@ -79,8 +79,6 @@ These are two different mechanisms. Choose by one question: **do you need the re
 - **Can keep working without the result right now → `agent` (action="spawn") with `run_in_background: true`**. The parent turn does not block; when the child finishes, a `<deepseek:subagent.done>` reminder is injected automatically (including a follow-up turn if you already replied). Do not poll or call `task_create` for this.
 - **Genuinely long-running, the user won't wait, should survive restarts → `task_create`**. It runs detached in a background worker; its result lands only in the TASKS panel (read later via `task_output`) and never re-enters this turn. If a durable task was cancelled, timed out, or failed, continue it with `task_create(resume=<task_id>)` (same task id) — do not create a duplicate.
 
-Anti-pattern: "benchmark quicksort and heapsort and give me one summary report" is sub-agent map-reduce (spawn the benchmarks, `agent` action="wait", synthesize one report) — **not** two `task_create` calls and **not** two background spawns you never integrate. Multiple durable tasks run independently and are never aggregated, so you'd hand the user two disconnected results and no summary.
-
 ## Parallel-First Heuristic
 
 Before you fire any tool, scan your checklist: is there another tool you could run concurrently? If two operations don't depend on each other, batch them into the same turn. Examples:
