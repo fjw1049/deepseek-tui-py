@@ -302,9 +302,13 @@ class SkillsConfig(BaseModel):
 
 
 class MemoryConfig(BaseModel):
-    """[memory] — reserved for future plugin system."""
+    """[memory] — OptMem integration and future memory backends."""
 
     model_config = {"extra": "ignore"}
+
+    # When true, Engine injects ``memo wake`` output as a user-role
+    # ``<system-reminder>`` on the first turn and after successful compaction.
+    optmem_auto_wake: bool = True
 
 
 

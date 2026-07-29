@@ -13,6 +13,13 @@ sandbox_mode = "workspace-write"
 # Master switch for the shell tool (default true).
 allow_shell = true
 
+# OptMem durable memory (cross-session). Global protocol lives in
+# ~/.deepseek/AGENTS.md and is merged with project AGENTS.md / CLAUDE.md.
+[memory]
+# Inject `memo wake` as a <system-reminder> on the first turn and after
+# successful compaction. Set false to rely on the model calling wake itself.
+optmem_auto_wake = true
+
 # Skill install dir and MCP server config file (defaults shown).
 # skills_dir = ".deepseek/skills"
 # mcp_config_path = ".deepseek/mcp.json"

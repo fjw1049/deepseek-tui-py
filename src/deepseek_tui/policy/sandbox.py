@@ -107,6 +107,13 @@ class ExecutionSandboxPolicy:
         except OSError:
             roots.append(cwd)
 
+        # OptMem durable memory lives under ~/.optmem (outside the workspace).
+        # Allow note/nap writes without requiring a full-access elevation.
+        try:
+            roots.append((Path.home() / ".optmem").resolve())
+        except OSError:
+            roots.append(Path.home() / ".optmem")
+
         if not self.exclude_slash_tmp:
             try:
                 roots.append(Path("/tmp").resolve())

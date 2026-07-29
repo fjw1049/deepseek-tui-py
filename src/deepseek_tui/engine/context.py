@@ -576,14 +576,12 @@ def _scale_static_context_buckets(
 
 
 # Project context loader — discovers AGENTS.md / CLAUDE.md / instructions.
-# Resolves the first project-instruction file found, walks up parent
-# directories for monorepo
-# setups, falls back to a user-level ``~/.deepseek/AGENTS.md``, and finally
-# auto-generates a placeholder ``<workspace>/.deepseek/instructions.md`` so
-# the engine has *something* to anchor on. The loaded content is wrapped as
-# ``<project_instructions source="<path>">…</project_instructions>`` and
-# injected into the system prompt by ``engine/prompts.py``. Without this the
-# model never sees AGENTS.md / CLAUDE.md — they sit on disk and do nothing.
+# Loads a project-scoped instruction file (workspace → parents → auto-gen)
+# and always merges in user-level ``~/.deepseek/AGENTS.md`` when present.
+# The combined content is wrapped as
+# ``<project_instructions source="<path>[,<path>…]">…</project_instructions>``
+# and injected into the system prompt by ``engine/prompts.py``. Without this
+# the model never sees AGENTS.md / CLAUDE.md — they sit on disk and do nothing.
 
 
 from deepseek_tui.config.paths import (
@@ -619,11 +617,15 @@ class ProjectContext:
 
     The ``warnings`` list surfaces non-fatal load failures (file too large,
     empty, unreadable) so callers can show them without aborting startup.
+    ``source_paths`` lists every file that contributed to ``instructions``
+    (global then project). ``source_path`` remains the primary/project file
+    for older call sites.
     """
 
     project_root: Path
     instructions: str | None = None
     source_path: Path | None = None
+    source_paths: list[Path] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
 
     @classmethod
@@ -637,9 +639,15 @@ class ProjectContext:
         """Format the instructions as a system-prompt block."""
         if self.instructions is None:
             return None
-        source = (
-            str(self.source_path) if self.source_path is not None else "project"
-        )
+        paths = list(self.source_paths)
+        if not paths and self.source_path is not None:
+            paths = [self.source_path]
+        if not paths:
+            source = "project"
+        elif len(paths) == 1:
+            source = str(paths[0])
+        else:
+            source = ",".join(str(p) for p in paths)
         return (
             f'<project_instructions source="{source}">\n'
             f"{self.instructions}\n"
@@ -709,25 +717,15 @@ def load_project_context(workspace: Path) -> ProjectContext:
 # ---------------------------------------------------------------------------
 
 
-def load_project_context_with_parents(
-    workspace: Path,
-    *,
-    home_dir: Path | None = None,
+def _load_project_layer(
+    workspace: Path, *, allow_auto_generate: bool = True
 ) -> ProjectContext:
-    """Full project-context resolution.
+    """Project-scoped instructions: workspace → parents → optional auto-gen.
 
-    Search order:
-      1. ``workspace`` itself
-      2. parent directories, recursively (monorepo support)
-      3. ``~/.deepseek/AGENTS.md`` (user-level fallback)
-      4. auto-generate ``<ws>/.deepseek/instructions.md``
-
-    The optional ``home_dir`` parameter is for tests; production callers
-    omit it and the function uses the real ``~/.deepseek/AGENTS.md``.
+    Does not read ``~/.deepseek/AGENTS.md``; that is merged separately.
     """
     ctx = load_project_context(workspace)
 
-    # 2. Walk parents for monorepo setups.
     if not ctx.has_instructions():
         current = workspace.parent
         seen: set[Path] = {workspace.resolve()}
@@ -747,19 +745,10 @@ def load_project_context_with_parents(
                 break
             current = next_parent
 
-    # 3. User-level fallback (~/.deepseek/AGENTS.md).
-    if not ctx.has_instructions():
-        global_ctx = _load_global_agents_context(workspace, home_dir)
-        if global_ctx is not None:
-            ctx.warnings.extend(global_ctx.warnings)
-            if global_ctx.has_instructions():
-                ctx.instructions = global_ctx.instructions
-                ctx.source_path = global_ctx.source_path
-
-    # 4. Auto-generate as last resort. Writes to disk so subsequent loads
-    #    are cached at the filesystem layer (avoids per-turn
-    #    scan that breaks KV prefix cache stability).
-    if not ctx.has_instructions():
+    # Auto-generate only when the caller has no global AGENTS either —
+    # otherwise an empty project would get a noisy placeholder alongside
+    # the user's global instructions.
+    if allow_auto_generate and not ctx.has_instructions():
         generated = _auto_generate_context(workspace)
         if generated is not None:
             reload_ctx = load_project_context(workspace)
@@ -774,7 +763,85 @@ def load_project_context_with_parents(
                 ctx.instructions = generated
                 ctx.source_path = None
 
+    if ctx.has_instructions() and ctx.source_path is not None:
+        ctx.source_paths = [ctx.source_path]
     return ctx
+
+
+def load_project_context_with_parents(
+    workspace: Path,
+    *,
+    home_dir: Path | None = None,
+) -> ProjectContext:
+    """Full project-context resolution with global+project merge.
+
+    Resolution:
+      1. Project layer: ``workspace`` → parents (no auto-gen yet)
+      2. Global layer: ``~/.deepseek/AGENTS.md`` (always attempted)
+      3. If neither exists: auto-generate project placeholder
+      4. Merge: global first, then project (both when present)
+
+    The optional ``home_dir`` parameter is for tests; production callers
+    omit it and the function uses the real ``~/.deepseek/AGENTS.md``.
+    """
+    project_ctx = _load_project_layer(workspace, allow_auto_generate=False)
+    global_ctx = _load_global_agents_context(workspace, home_dir)
+
+    has_global = (
+        global_ctx is not None and global_ctx.has_instructions()
+    )
+    if not project_ctx.has_instructions() and not has_global:
+        project_ctx = _load_project_layer(workspace, allow_auto_generate=True)
+
+    warnings = list(project_ctx.warnings)
+    if global_ctx is not None:
+        warnings.extend(global_ctx.warnings)
+
+    global_text = (
+        global_ctx.instructions
+        if global_ctx is not None and global_ctx.has_instructions()
+        else None
+    )
+    project_text = (
+        project_ctx.instructions if project_ctx.has_instructions() else None
+    )
+    global_path = (
+        global_ctx.source_path
+        if global_ctx is not None and global_ctx.has_instructions()
+        else None
+    )
+    project_path = (
+        project_ctx.source_path if project_ctx.has_instructions() else None
+    )
+
+    merged = ProjectContext.empty(workspace)
+    merged.warnings = warnings
+
+    if global_text and project_text:
+        global_label = str(global_path) if global_path is not None else "global"
+        project_label = (
+            str(project_path) if project_path is not None else "project"
+        )
+        merged.instructions = (
+            f"<!-- deepseek: global AGENTS.md ({global_label}) -->\n"
+            f"{global_text.rstrip()}\n\n"
+            f"<!-- deepseek: project ({project_label}) -->\n"
+            f"{project_text.rstrip()}\n"
+        )
+        merged.source_paths = [
+            p for p in (global_path, project_path) if p is not None
+        ]
+        merged.source_path = project_path or global_path
+    elif global_text:
+        merged.instructions = global_text
+        merged.source_path = global_path
+        merged.source_paths = [global_path] if global_path is not None else []
+    elif project_text:
+        merged.instructions = project_text
+        merged.source_path = project_path
+        merged.source_paths = [project_path] if project_path is not None else []
+
+    return merged
 
 
 def _load_global_agents_context(
@@ -796,6 +863,7 @@ def _load_global_agents_context(
     try:
         ctx.instructions = _load_context_file(path)
         ctx.source_path = path
+        ctx.source_paths = [path]
     except ValueError as exc:
         ctx.warnings.append(str(exc))
     return ctx

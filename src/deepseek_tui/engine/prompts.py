@@ -416,9 +416,9 @@ def build_system_prompt(
 
     full_prompt = compose_prompt(mode, personality)
 
-    # Project instructions (AGENTS.md / CLAUDE.md / .deepseek/instructions.md
-    # / parent dirs / ~/.deepseek/AGENTS.md / auto-gen). Goes above the
-    # Environment block so it stays in the workspace-static prefix layer.
+    # Project instructions: ~/.deepseek/AGENTS.md (global) merged with
+    # workspace AGENTS.md / CLAUDE.md / instructions (parents / auto-gen).
+    # Goes above the Environment block (workspace-static KV prefix layer).
     if workspace is not None and project_context_enabled:
         from deepseek_tui.engine.context import (
             load_project_context_with_parents,
