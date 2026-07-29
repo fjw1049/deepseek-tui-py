@@ -643,13 +643,10 @@ export function SidebarProjectsColumn({
   const handleExpandAll = (): void => {
     setProjectsCollapsed(false)
     const nextCollapsed: Record<string, boolean> = {}
-    const nextExpanded: Record<string, boolean> = {}
     for (const path of workspacePaths) {
       nextCollapsed[path] = false
-      nextExpanded[path] = true
     }
     setCollapsedWorkspaces(nextCollapsed)
-    setExpandedWorkspaces(nextExpanded)
   }
 
   const handleCollapseAll = (): void => {
@@ -658,7 +655,6 @@ export function SidebarProjectsColumn({
       nextCollapsed[path] = true
     }
     setCollapsedWorkspaces(nextCollapsed)
-    setExpandedWorkspaces({})
   }
 
   return (
