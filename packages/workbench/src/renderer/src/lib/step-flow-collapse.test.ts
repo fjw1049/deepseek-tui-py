@@ -34,8 +34,15 @@ describe('isMergeableProbeTool', () => {
     expect(isMergeableProbeTool('grep')).toBe(true)
   })
 
-  it('rejects shell, writes, and orchestration', () => {
+  it('allows probe shells only when the command is allowlisted', () => {
     expect(isMergeableProbeTool('exec_shell')).toBe(false)
+    expect(isMergeableProbeTool('exec_shell', { command: 'ls -la' })).toBe(true)
+    expect(isMergeableProbeTool('exec_shell', { command: 'git log --oneline -5' })).toBe(true)
+    expect(isMergeableProbeTool('exec_shell', { command: 'npm test' })).toBe(false)
+    expect(isMergeableProbeTool('exec_shell_interact', { command: 'ls' })).toBe(false)
+  })
+
+  it('rejects writes and orchestration', () => {
     expect(isMergeableProbeTool('write_file')).toBe(false)
     expect(isMergeableProbeTool('agent')).toBe(false)
     expect(isMergeableProbeTool('agent_resume')).toBe(false)
@@ -50,6 +57,7 @@ describe('probeToolKind / compose', () => {
     expect(probeToolKind('search_files')).toBe('search')
     expect(probeToolKind('list_dir')).toBe('list')
     expect(probeToolKind('grep')).toBe('grep')
+    expect(probeToolKind('exec_shell')).toBe('command')
   })
 
   it('builds compose segments in stable order', () => {
@@ -176,6 +184,7 @@ describe('collapseStepFlowProbes', () => {
       lists: 0,
       greps: 0,
       webs: 0,
+      commands: 0,
       others: 0
     })
     expect(collapsed[0]?.batchEntries?.[0]).toMatchObject({
@@ -208,6 +217,72 @@ describe('collapseStepFlowProbes', () => {
     expect(collapsed[1]?.variant).toBe('narration')
     expect(collapsed[2]?.variant).toBe('batch')
     expect(collapsed[2]?.batchCount).toBe(2)
+  })
+
+  it('folds consecutive probe shells into one command batch', () => {
+    const items: StepFlowItem[] = [
+      {
+        id: 's0',
+        status: 'ok',
+        label: '执行命令',
+        detail: 'ls -la && find . -maxdepth 2',
+        toolName: 'exec_shell',
+        input: 'ls -la && find . -maxdepth 2'
+      },
+      {
+        id: 's1',
+        status: 'ok',
+        label: '执行命令',
+        detail: 'git log --oneline -5',
+        toolName: 'exec_shell',
+        input: 'git log --oneline -5'
+      }
+    ]
+    const collapsed = collapseStepFlowProbes(items)
+    expect(collapsed).toHaveLength(1)
+    expect(collapsed[0]?.variant).toBe('batch')
+    expect(collapsed[0]?.batchCount).toBe(2)
+    expect(collapsed[0]?.batchToolName).toBe('exec_shell')
+    expect(collapsed[0]?.batchCompose?.commands).toBe(2)
+  })
+
+  it('folds mixed read + probe shell with compose counts', () => {
+    const items: StepFlowItem[] = [
+      probe('r0', 'read_file', 'a.py'),
+      {
+        id: 's0',
+        status: 'ok',
+        label: '执行命令',
+        detail: 'git status -sb',
+        toolName: 'exec_shell',
+        input: 'git status -sb'
+      },
+      probe('r1', 'read_file', 'b.py')
+    ]
+    const collapsed = collapseStepFlowProbes(items)
+    expect(collapsed).toHaveLength(1)
+    expect(collapsed[0]?.batchMixed).toBe(true)
+    expect(collapsed[0]?.batchCompose).toMatchObject({ reads: 2, commands: 1 })
+  })
+
+  it('does not fold mutating shells', () => {
+    const items: StepFlowItem[] = [
+      {
+        id: 's0',
+        status: 'ok',
+        label: '执行命令',
+        toolName: 'exec_shell',
+        input: 'npm test'
+      },
+      {
+        id: 's1',
+        status: 'ok',
+        label: '执行命令',
+        toolName: 'exec_shell',
+        input: 'npm test'
+      }
+    ]
+    expect(collapseStepFlowProbes(items)).toHaveLength(2)
   })
 })
 

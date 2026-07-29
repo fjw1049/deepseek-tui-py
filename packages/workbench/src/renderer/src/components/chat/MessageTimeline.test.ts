@@ -336,16 +336,58 @@ describe('groupProcessRows', () => {
     expect(rows[0]!.type === 'tool_batch' && rows[0].blocks).toHaveLength(4)
   })
 
-  it('never folds file changes or shell commands', () => {
+  it('never folds file changes or mutating shells', () => {
     const blocks: ChatBlock[] = [
       toolBlock('t1', 'write_file', { toolKind: 'file_change' }),
       toolBlock('t2', 'write_file', { toolKind: 'file_change' }),
-      toolBlock('t3', 'exec_shell', { toolKind: 'command_execution' }),
-      toolBlock('t4', 'exec_shell', { toolKind: 'command_execution' })
+      toolBlock('t3', 'exec_shell', {
+        toolKind: 'command_execution',
+        summary: 'exec_shell: npm test',
+        meta: { tool_input: { command: 'npm test' } }
+      }),
+      toolBlock('t4', 'exec_shell', {
+        toolKind: 'command_execution',
+        summary: 'exec_shell: npm test',
+        meta: { tool_input: { command: 'npm test' } }
+      })
     ]
     const rows = groupProcessRows(blocks)
     expect(rows).toHaveLength(4)
     expect(rows.every((row) => row.type === 'block')).toBe(true)
+  })
+
+  it('folds consecutive probe shells into one batch', () => {
+    const blocks: ChatBlock[] = [
+      toolBlock('t1', 'exec_shell', {
+        toolKind: 'command_execution',
+        summary: 'exec_shell: ls -la && find . -maxdepth 2',
+        meta: { tool_input: { command: 'ls -la && find . -maxdepth 2' } }
+      }),
+      toolBlock('t2', 'exec_shell', {
+        toolKind: 'command_execution',
+        summary: 'exec_shell: git log --oneline -5',
+        meta: { tool_input: { command: 'git log --oneline -5' } }
+      })
+    ]
+    const rows = groupProcessRows(blocks)
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatchObject({ type: 'tool_batch', toolName: 'exec_shell' })
+    expect(rows[0]!.type === 'tool_batch' && rows[0].blocks).toHaveLength(2)
+  })
+
+  it('folds mixed reads and probe shells', () => {
+    const blocks: ChatBlock[] = [
+      toolBlock('t1', 'read_file'),
+      toolBlock('t2', 'exec_shell', {
+        toolKind: 'command_execution',
+        summary: 'exec_shell: git status -sb',
+        meta: { tool_input: { command: 'git status -sb' } }
+      }),
+      toolBlock('t3', 'read_file')
+    ]
+    const rows = groupProcessRows(blocks)
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatchObject({ type: 'tool_batch', toolName: 'probe', mixed: true })
   })
 
   it('keeps non-tool blocks as block rows and uses them as batch boundaries', () => {

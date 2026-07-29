@@ -1,9 +1,17 @@
 import type { StepFlowItem, StepFlowStatus } from '../components/chat/StepFlow'
+import { isProbeShellCommand } from './probe-shell-command'
 
 const SHELL_TOOLS = new Set([
   'exec_shell',
   'exec_shell_wait',
   'exec_shell_interact',
+  'run_terminal_cmd'
+])
+
+/** Non-interactive shells that may fold when the command itself is a probe. */
+const SHELL_PROBE_CANDIDATE_TOOLS = new Set([
+  'exec_shell',
+  'exec_shell_wait',
   'run_terminal_cmd'
 ])
 
@@ -45,7 +53,7 @@ const MERGEABLE_STATUSES = new Set<StepFlowStatus>([
   'running'
 ])
 
-export type ProbeBatchKind = 'read' | 'search' | 'list' | 'grep' | 'web' | 'other'
+export type ProbeBatchKind = 'read' | 'search' | 'list' | 'grep' | 'web' | 'command' | 'other'
 
 export type ProbeBatchCompose = {
   reads: number
@@ -53,6 +61,7 @@ export type ProbeBatchCompose = {
   lists: number
   greps: number
   webs: number
+  commands: number
   others: number
 }
 
@@ -69,6 +78,7 @@ export type ProbeComposeSegmentKey =
   | 'toolBatchComposeList'
   | 'toolBatchComposeGrep'
   | 'toolBatchComposeWeb'
+  | 'toolBatchComposeCommand'
   | 'toolBatchComposeOther'
 
 /** i18n key for short kind labels in expanded batch rows. */
@@ -78,15 +88,35 @@ export type ProbeKindLabelKey =
   | 'toolBatchKindList'
   | 'toolBatchKindGrep'
   | 'toolBatchKindWeb'
+  | 'toolBatchKindCommand'
   | 'toolBatchKindOther'
 
-/** Read-only probes that the main timeline folds into tool batches. */
-export function isMergeableProbeTool(name: string | undefined): boolean {
+export type MergeableProbeOptions = {
+  /** Raw shell command text; required for shell tools to fold. */
+  command?: string | null
+}
+
+export function isShellProbeCandidateTool(name: string | undefined): boolean {
+  if (!name) return false
+  return SHELL_PROBE_CANDIDATE_TOOLS.has(name.trim().toLowerCase())
+}
+
+/**
+ * Read-only probes that the main timeline / StepFlow fold into tool batches.
+ * Probe-type shell commands fold when `opts.command` passes the allowlist;
+ * interactive shells and unknown/mutating commands stay solo.
+ */
+export function isMergeableProbeTool(
+  name: string | undefined,
+  opts?: MergeableProbeOptions
+): boolean {
   if (!name) return false
   const n = name.trim().toLowerCase()
   if (!n) return false
-  if (SHELL_TOOLS.has(n) || MUTATING_TOOLS.has(n)) return false
+  if (MUTATING_TOOLS.has(n)) return false
   if (ORCHESTRATION_TOOL_RE.test(n)) return false
+  if (isShellProbeCandidateTool(n)) return isProbeShellCommand(opts?.command)
+  if (SHELL_TOOLS.has(n)) return false
   return PROBE_TOOLS.has(n)
 }
 
@@ -97,11 +127,12 @@ export function probeToolKind(toolName: string | undefined): ProbeBatchKind {
   if (n === 'grep' || n === 'grep_files') return 'grep'
   if (n === 'search_files' || n === 'glob_file_search' || n === 'file_search') return 'search'
   if (n === 'web_search' || n === 'fetch_url') return 'web'
+  if (isShellProbeCandidateTool(n)) return 'command'
   return 'other'
 }
 
 export function emptyProbeCompose(): ProbeBatchCompose {
-  return { reads: 0, searches: 0, lists: 0, greps: 0, webs: 0, others: 0 }
+  return { reads: 0, searches: 0, lists: 0, greps: 0, webs: 0, commands: 0, others: 0 }
 }
 
 export function addProbeCompose(compose: ProbeBatchCompose, kind: ProbeBatchKind): void {
@@ -110,6 +141,7 @@ export function addProbeCompose(compose: ProbeBatchCompose, kind: ProbeBatchKind
   else if (kind === 'list') compose.lists += 1
   else if (kind === 'grep') compose.greps += 1
   else if (kind === 'web') compose.webs += 1
+  else if (kind === 'command') compose.commands += 1
   else compose.others += 1
 }
 
@@ -123,6 +155,7 @@ export function probeComposeSegments(
   if (compose.lists > 0) out.push({ key: 'toolBatchComposeList', count: compose.lists })
   if (compose.greps > 0) out.push({ key: 'toolBatchComposeGrep', count: compose.greps })
   if (compose.webs > 0) out.push({ key: 'toolBatchComposeWeb', count: compose.webs })
+  if (compose.commands > 0) out.push({ key: 'toolBatchComposeCommand', count: compose.commands })
   if (compose.others > 0) out.push({ key: 'toolBatchComposeOther', count: compose.others })
   return out
 }
@@ -139,6 +172,8 @@ export function probeKindLabelKey(kind: ProbeBatchKind): ProbeKindLabelKey {
       return 'toolBatchKindGrep'
     case 'web':
       return 'toolBatchKindWeb'
+    case 'command':
+      return 'toolBatchKindCommand'
     default:
       return 'toolBatchKindOther'
   }
@@ -165,10 +200,17 @@ export function buildProbeBatchMeta(
   return { compose, entries, preview }
 }
 
+function shellCommandFromStepItem(item: StepFlowItem): string | undefined {
+  const input = item.input?.trim()
+  if (input) return input
+  const detail = item.detail?.trim()
+  return detail || undefined
+}
+
 function isMergeableProbeItem(item: StepFlowItem): boolean {
   if (item.variant === 'narration' || item.variant === 'batch') return false
   if (!MERGEABLE_STATUSES.has(item.status)) return false
-  return isMergeableProbeTool(item.toolName)
+  return isMergeableProbeTool(item.toolName, { command: shellCommandFromStepItem(item) })
 }
 
 function isSuccessStatus(status: StepFlowStatus): boolean {

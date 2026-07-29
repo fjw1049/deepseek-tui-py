@@ -73,14 +73,14 @@ import { subagentStepsToFlowItems } from '../../lib/subagent-mailbox'
 import {
   buildProbeBatchMeta,
   isMergeableProbeTool,
+  isShellProbeCandidateTool,
   probeComposeSegments
 } from '../../lib/step-flow-collapse'
 import {
   ToolCard,
   registerToolRenderers,
   buildToolRenderContext,
-  humanizeToolName,
-  SHELL_TOOL_NAMES
+  humanizeToolName
 } from './tool'
 import { ToolCopyButton } from './tool/primitives'
 
@@ -1790,10 +1790,26 @@ function visibleExecutionBlocks(
 
 type ToolProcessBlock = Extract<ChatBlock, { kind: 'tool' }>
 
+/** Raw command text for shell probe classification (full, not truncated). */
+function commandTextFromToolBlock(block: ToolProcessBlock): string | undefined {
+  const raw = block.meta?.tool_input
+  if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+    for (const key of ['command', 'cmd', 'script'] as const) {
+      const value = (raw as Record<string, unknown>)[key]
+      if (typeof value === 'string' && value.trim()) return value.trim()
+    }
+  }
+  const metaCmd = block.meta?.command
+  if (typeof metaCmd === 'string' && metaCmd.trim()) return metaCmd.trim()
+  const match = /^[a-z0-9_-]+\s*:\s*(.+)$/i.exec(block.summary.trim())
+  return match?.[1]?.trim() || undefined
+}
+
 /**
  * Whether a process block is a read-only probe that can fold into a batch.
- * Aligned with StepFlow: success / running / error probes merge; mutations,
- * shell, todo, and subagent-orchestration stay solo.
+ * Aligned with StepFlow: success / running / error probes merge (including
+ * allowlisted probe shells); mutations, interactive/mutating shell, todo,
+ * and subagent-orchestration stay solo.
  */
 function isMergeableProbeBlock(block: ChatBlock): block is ToolProcessBlock {
   if (block.kind !== 'tool') return false
@@ -1804,12 +1820,11 @@ function isMergeableProbeBlock(block: ChatBlock): block is ToolProcessBlock {
   ) {
     return false
   }
-  if (block.toolKind === 'file_change' || block.toolKind === 'command_execution') return false
+  if (block.toolKind === 'file_change') return false
   const name = toolNameFromProcessBlock(block)
-  if (SHELL_TOOL_NAMES.has(name)) return false
   if (isTodoToolBlock(block)) return false
   if (isSubagentOrchestrationToolName(name)) return false
-  return isMergeableProbeTool(name)
+  return isMergeableProbeTool(name, { command: commandTextFromToolBlock(block) })
 }
 
 export type RenderRow =
@@ -1953,6 +1968,7 @@ function pickToolBatchIcon(toolName: string): LucideIcon {
     return Search
   }
   if (toolName === 'read_file') return FileText
+  if (isShellProbeCandidateTool(toolName)) return Terminal
   return Wrench
 }
 
