@@ -71,8 +71,7 @@ import {
   findAlternateDeepseekRuntimes,
   findListeningProcessOnPort,
   formatAlternateRuntimeHint,
-  resolveEffectiveRuntimeToken,
-  runtimeTokenFilePath
+  resolveEffectiveRuntimeToken
 } from '../deepseek-process'
 import { commitGitChanges, createAndSwitchGitBranch, getGitBranches, getGitLog, getGitWorkingChanges, stashAndSwitchGitBranch, suggestGitCommitMessage, switchGitBranch } from '../services/git-service'
 import { getTrendingRepos } from '../services/trending-repos'
@@ -81,7 +80,6 @@ import {
   getMarketplaceCatalog,
   refreshMarketplaceCatalog
 } from '../services/modelscope-marketplace'
-import { getWorkspaceSuggestions } from '../services/workspace-suggestions'
 import { probeAsrEndpoint, transcribeAudio } from '../services/asr-transcription-service'
 import { readAsrConfigFile, writeAsrConfigFile } from '../asr-config'
 import {
@@ -123,7 +121,6 @@ import {
   writeWorkspaceFile
 } from '../services/workspace-service'
 import {
-  cacheFeaturedPets,
   fetchPetManifest,
   resolvePetSpritesheet
 } from '../services/pet-asset-service'
@@ -1161,18 +1158,6 @@ export function registerAppIpcHandlers(options: RegisterAppIpcHandlersOptions): 
     }
   })
 
-  // Settings UI calls this on mount so the token field shows the cached
-  // fingerprint immediately, instead of "auto-managed" until the user clicks
-  // Regenerate. Fingerprint is the same shape the regenerate IPC returns.
-  ipcMain.handle('runtime:get-token-fingerprint', async () => {
-    const settings = await store.load()
-    const token = resolveEffectiveRuntimeToken(settings)
-    return {
-      fingerprint: token ? `${token.slice(0, 8)}…${token.slice(-4)}` : '',
-      tokenPath: runtimeTokenFilePath()
-    }
-  })
-
   ipcMain.handle('deepseek:diagnostics', async () =>
     diagnoseDeepseekRuntime({ store, prepareDeepseekBinary, resolveDeepseekConfigPath })
   )
@@ -1239,10 +1224,6 @@ export function registerAppIpcHandlers(options: RegisterAppIpcHandlersOptions): 
     const request = parseIpcPayload('git:suggest-commit-message', gitCommitPathsPayloadSchema, payload)
     return suggestGitCommitMessage(request.workspaceRoot, request.paths)
   })
-
-  ipcMain.handle('workspace:suggestions', async (_, workspaceRoot: unknown) =>
-    getWorkspaceSuggestions(parseIpcPayload('workspace:suggestions', workspaceRootSchema, workspaceRoot))
-  )
 
   ipcMain.handle('trending:repos', async (_, period: unknown) =>
     getTrendingRepos(parseIpcPayload('trending:repos', trendingPeriodSchema, period))
@@ -1366,9 +1347,6 @@ export function registerAppIpcHandlers(options: RegisterAppIpcHandlersOptions): 
     )
     return resolvePetSpritesheet(request.slug)
   })
-  ipcMain.handle('pet:cache-featured', async (_, limit: unknown) =>
-    cacheFeaturedPets(typeof limit === 'number' ? limit : 15)
-  )
 
   ipcMain.handle('usage:query', async (_, payload: unknown) => {
     const request = parseIpcPayload('usage:query', usageQueryPayloadSchema, payload ?? {})

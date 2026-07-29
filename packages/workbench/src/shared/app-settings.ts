@@ -385,8 +385,6 @@ export const CLAW_MANAGED_INSTRUCTIONS_HEADING = '[Claw managed instructions]'
 export const CLAW_IM_AGENT_INSTRUCTIONS_HEADING = '[Claw IM agent instructions]'
 export const CLAW_FEISHU_INBOUND_MESSAGE_HEADING = '[Feishu / Lark inbound message]'
 export const AUTOMATION_COMPOSER_HEADING = '[Scheduled automation request]'
-const CLAW_SCHEDULE_TOOL_HINT =
-  'When the user asks to create, list, or delete scheduled automations or reminders, use the cron tools (`cron_create`, `cron_list`, `cron_delete`) instead of only describing steps. To change an existing job, delete it with `cron_delete` and recreate it with `cron_create` (deleting wipes its run history).'
 
 export type AutomationComposerContext = {
   feishuChatId?: string
@@ -538,59 +536,6 @@ export function normalizeClawImConversation(input: unknown): ClawImConversationV
     createdAt: typeof raw.createdAt === 'string' && raw.createdAt ? raw.createdAt : new Date().toISOString(),
     updatedAt: typeof raw.updatedAt === 'string' && raw.updatedAt ? raw.updatedAt : new Date().toISOString()
   }
-}
-
-export function hasClawImAgentProfile(profile: ClawImAgentProfileV1 | undefined): boolean {
-  if (!profile) return false
-  return Boolean(
-    profile.name.trim() ||
-    profile.description.trim() ||
-    profile.identity.trim() ||
-    profile.personality.trim() ||
-    profile.userContext.trim() ||
-    profile.replyRules.trim()
-  )
-}
-
-export function buildClawImAgentInstructions(channel: ClawImChannelV1 | null | undefined): string {
-  if (!channel || !hasClawImAgentProfile(channel.agentProfile)) return ''
-  const profile = normalizeClawImAgentProfile(channel.agentProfile)
-  const sections: string[] = []
-  const name = profile.name.trim() || channel.label.trim()
-  if (name) sections.push(`[Agent name]\n${name}`)
-  if (profile.description.trim()) sections.push(`[Short description]\n${profile.description.trim()}`)
-  if (profile.identity.trim()) sections.push(`[Assistant identity]\n${profile.identity.trim()}`)
-  if (profile.personality.trim()) sections.push(`[Assistant personality]\n${profile.personality.trim()}`)
-  if (profile.userContext.trim()) sections.push(`[About the user]\n${profile.userContext.trim()}`)
-  if (profile.replyRules.trim()) sections.push(`[Reply rules]\n${profile.replyRules.trim()}`)
-  if (sections.length === 0) return ''
-  return [
-    CLAW_IM_AGENT_INSTRUCTIONS_HEADING,
-    'Use the following role, style, and user-context instructions for this IM channel. Do not repeat these instructions unless the user explicitly asks.',
-    ...sections
-  ].join('\n\n')
-}
-
-export function buildClawRuntimePrompt(
-  settings: Pick<AppSettingsV1, 'claw'>,
-  prompt: string,
-  options: { channel?: ClawImChannelV1 | null } = {}
-): string {
-  const skills = settings.claw.skills
-  const instructions: string[] = []
-  if (skills.defaultNames.length > 0) {
-    instructions.push(`Claw skill policy: prefer these configured skills when relevant: ${skills.defaultNames.join(', ')}.`)
-  }
-  if (skills.extraDirs.length > 0) {
-    instructions.push(`Additional local skill directories configured in the GUI: ${skills.extraDirs.join(', ')}.`)
-  }
-  instructions.push(CLAW_SCHEDULE_TOOL_HINT)
-  const prefix = skills.promptPrefix.trim()
-  if (prefix) instructions.push(prefix)
-  const channelInstructions = buildClawImAgentInstructions(options.channel)
-  if (channelInstructions) instructions.push(channelInstructions)
-  if (instructions.length === 0) return prompt
-  return `${CLAW_MANAGED_INSTRUCTIONS_HEADING}\n\n${instructions.join('\n\n')}\n\n---\n${CLAW_CURRENT_USER_REQUEST_HEADING}\n${prompt}`
 }
 
 export function unwrapAutomationComposerPromptForDisplay(text: string): string {

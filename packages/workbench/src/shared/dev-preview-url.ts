@@ -88,11 +88,6 @@ export function isLocalPreviewUrl(value: string): boolean {
   return normalizeDevPreviewUrlInput(value) !== null
 }
 
-/** @deprecated Prefer {@link isLocalPreviewUrl}; kept for existing call sites. */
-export function isAllowedDevPreviewUrl(value: string): boolean {
-  return isLocalPreviewUrl(value)
-}
-
 function hostHintFromBareInput(value: string): string {
   const withoutPath = value.split(/[/?#]/, 1)[0] ?? value
   const withoutPort = withoutPath.includes(']')

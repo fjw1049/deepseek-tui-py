@@ -77,8 +77,6 @@ const api = {
     ipcRenderer.invoke('endpoint:test', { protocol, baseUrl, apiKey, model }),
   diagnoseDeepseekRuntime: () =>
     ipcRenderer.invoke('deepseek:diagnostics'),
-  getWorkspaceSuggestions: (workspaceRoot) =>
-    ipcRenderer.invoke('workspace:suggestions', workspaceRoot),
   getTrendingRepos: (period) => ipcRenderer.invoke('trending:repos', period),
   getMarketplaceCatalog: (kind) => ipcRenderer.invoke('marketplace:catalog:get', kind),
   refreshMarketplaceCatalog: (kind) => ipcRenderer.invoke('marketplace:catalog:refresh', kind),
@@ -142,8 +140,6 @@ const api = {
   startSse: (threadId, sinceSeq, streamId) =>
     ipcRenderer.invoke('runtime:sse:start', { threadId, sinceSeq, streamId }),
   stopSse: (streamId) => ipcRenderer.invoke('runtime:sse:stop', streamId),
-  regenerateRuntimeToken: () => ipcRenderer.invoke('runtime:regenerate-token'),
-  getRuntimeTokenFingerprint: () => ipcRenderer.invoke('runtime:get-token-fingerprint'),
   onSseEvent: (handler) => {
     const wrapped = (
       _: Electron.IpcRendererEvent,
@@ -179,8 +175,7 @@ const api = {
   openLogDir: () => ipcRenderer.invoke('log:open-dir'),
   fetchPetManifest: (force) => ipcRenderer.invoke('pet:fetch-manifest', force === true),
   resolvePetSpritesheet: (slug) =>
-    ipcRenderer.invoke('pet:resolve-spritesheet', slug ? { slug } : {}),
-  cacheFeaturedPets: (limit) => ipcRenderer.invoke('pet:cache-featured', limit)
+    ipcRenderer.invoke('pet:resolve-spritesheet', slug ? { slug } : {})
 } satisfies DsGuiApi
 
 contextBridge.exposeInMainWorld('dsGui', api)

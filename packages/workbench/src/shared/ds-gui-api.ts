@@ -5,7 +5,6 @@ import type { GitCommitMessageSuggestionResult, GitCommitResult } from './git-co
 import type { GitLogResult } from './git-log'
 import type { GitWorkingChangesResult } from './git-working-changes'
 import type {
-  PetFeaturedCacheResult,
   PetManifestFetchResult,
   PetSpritesheetResolveResult
 } from './pet-manifest'
@@ -195,26 +194,6 @@ export type StartupPhasePayload = {
   detail?: string
 }
 
-export type RuntimeTokenRegenerateResult =
-  | { ok: true; fingerprint: string; restarted: boolean; tokenPath?: string }
-  | { ok: false; message: string }
-
-export type RuntimeTokenFingerprintResult = {
-  fingerprint: string
-  tokenPath?: string
-}
-
-export type WorkspaceSuggestion = {
-  id: string
-  title: string
-  desc: string
-  prompt: string
-  tone: 'blue' | 'emerald' | 'violet' | 'orange'
-}
-export type WorkspaceSuggestionsResult =
-  | { ok: true; suggestions: WorkspaceSuggestion[] }
-  | { ok: false; suggestions: null }
-
 export type TrendingRepo = {
   rank: number
   name: string
@@ -384,7 +363,6 @@ export type DsGuiApi = {
     model: string
   ) => Promise<EndpointTestResult>
   diagnoseDeepseekRuntime: () => Promise<DeepseekRuntimeDiagnosticsResult>
-  getWorkspaceSuggestions: (workspaceRoot: string) => Promise<WorkspaceSuggestionsResult>
   getTrendingRepos: (period: TrendingPeriod) => Promise<TrendingResult>
   getMarketplaceCatalog: (kind: MarketplaceKind) => Promise<MarketplaceCatalogResult>
   refreshMarketplaceCatalog: (kind: MarketplaceKind) => Promise<MarketplaceCatalogResult>
@@ -430,8 +408,6 @@ export type DsGuiApi = {
   ) => Promise<WorkspaceListDirectoryResult>
   startSse: (threadId: string, sinceSeq: number, streamId?: string) => Promise<{ streamId: string }>
   stopSse: (streamId: string) => Promise<boolean>
-  regenerateRuntimeToken: () => Promise<RuntimeTokenRegenerateResult>
-  getRuntimeTokenFingerprint: () => Promise<RuntimeTokenFingerprintResult>
   onSseEvent: (handler: (payload: SseEventPayload) => void) => () => void
   onSseEnd: (handler: (payload: SseEndPayload) => void) => () => void
   onSseError: (handler: (payload: SseErrorPayload) => void) => () => void
@@ -447,5 +423,4 @@ export type DsGuiApi = {
   openLogDir: () => Promise<{ ok: boolean; message?: string }>
   fetchPetManifest: (force?: boolean) => Promise<PetManifestFetchResult>
   resolvePetSpritesheet: (slug?: string) => Promise<PetSpritesheetResolveResult>
-  cacheFeaturedPets: (limit?: number) => Promise<PetFeaturedCacheResult>
 }

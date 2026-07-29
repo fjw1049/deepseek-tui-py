@@ -4,7 +4,6 @@ import { access, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import type {
-  PetFeaturedCacheResult,
   PetManifestFetchResult,
   PetManifestEntry,
   PetManifestSlim,
@@ -210,23 +209,6 @@ async function ensureSpritesheetCached(entry: PetManifestEntry): Promise<boolean
     await writeFile(metaPath, urlHash, 'utf8')
   }
   return true
-}
-
-export async function cacheFeaturedPets(limit = 15): Promise<PetFeaturedCacheResult> {
-  const boundedLimit = Math.min(15, Math.max(1, Math.floor(limit)))
-  const manifestResult = await fetchPetManifest()
-  if (!manifestResult.ok) {
-    return { ok: false, message: manifestResult.message }
-  }
-  const pets = manifestResult.manifest.pets.slice(0, boundedLimit)
-  const cachedSlugs: string[] = []
-  for (const pet of pets) {
-    if (await isSpritesheetCacheFresh(pet)) {
-      cachedSlugs.push(pet.slug)
-    }
-  }
-  void Promise.allSettled(pets.map((pet) => ensureSpritesheetCached(pet)))
-  return { ok: true, pets, cachedSlugs }
 }
 
 export async function resolvePetSpritesheet(

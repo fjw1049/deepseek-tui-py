@@ -28,9 +28,6 @@ import {
   reclaimDeepseekPort,
   inspectDeepseekLaunchConfig,
   resolveEffectiveRuntimeToken,
-  readRuntimeTokenFile,
-  clearRuntimeTokenFile,
-  runtimeTokenFilePath,
   findAlternateDeepseekRuntimes,
   formatAlternateRuntimeHint
 } from './deepseek-process'
@@ -1216,33 +1213,6 @@ app.whenReady().then(async () => {
     return true
   })
 
-  // Settings UI "Regenerate" button: drop the cached token file, recycle the
-  // managed runtime so it picks up a fresh value, and return the fingerprint
-  // (8-char prefix) for display. Returns ok:false if the runtime cannot be
-  // restarted (e.g., user has no API key) — callers should leave the prior
-  // token displayed and surface the error.
-  ipcMain.handle('runtime:regenerate-token', async () => {
-    try {
-      invalidateRuntimeReady('regenerate-token')
-      clearRuntimeTokenFile()
-      await stopDeepseekChildAndWait()
-      const settings = await store.load()
-      if (!resolveConfiguredApiKey(settings)) {
-        // No API key → cannot start runtime; the next spawn attempt will
-        // generate a token. Tell the UI so the fingerprint shows "—".
-        return { ok: true as const, fingerprint: '', restarted: false }
-      }
-      await startDeepseekChild(settings)
-      const ok = await waitForRuntimeHealth(settings.deepseek.port, 5_000)
-      const token = readRuntimeTokenFile()
-      const fingerprint = token ? `${token.slice(0, 8)}…${token.slice(-4)}` : ''
-      return { ok: true as const, fingerprint, restarted: ok, tokenPath: runtimeTokenFilePath() }
-    } catch (e) {
-      const message = e instanceof Error ? e.message : String(e)
-      logError('runtime-regenerate', 'Failed to regenerate runtime token', { message })
-      return { ok: false as const, message }
-    }
-  })
   traceStartup('ipc registration:done')
 
   createWindow()
