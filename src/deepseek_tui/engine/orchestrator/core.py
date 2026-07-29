@@ -1953,6 +1953,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                 workspace=self.tool_context.working_directory,
                 locale_tag=self.reply_locale,
                 workflow_guidelines=self.tool_registry.contains("workflow"),
+                automations_guidelines=self.tool_registry.contains("cron_create"),
             )
             if mode_hint:
                 sys_prompt += mode_hint

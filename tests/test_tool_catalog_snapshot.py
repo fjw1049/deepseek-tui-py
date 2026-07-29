@@ -99,4 +99,11 @@ def test_plan_mode_excludes_automations_even_when_enabled() -> None:
     assert not any(n.startswith("automation_") for n in plan_names)
     assert not any(n.startswith("cron_") for n in plan_names)
     agent_names = set(build_default_registry(cfg, mode="agent").names())
-    assert "cron_create" in agent_names  # sanity: flag is actually on
+    assert {"cron_create", "cron_list", "cron_delete"} <= agent_names
+
+
+def test_cron_tools_not_deferred_when_automations_enabled() -> None:
+    from deepseek_tui.engine.tools import should_default_defer_tool
+
+    for name in ("cron_create", "cron_list", "cron_delete"):
+        assert should_default_defer_tool(name, "agent") is False

@@ -383,6 +383,7 @@ def build_system_prompt(
     locale_tag: str = "zh",
     project_context_enabled: bool = True,
     workflow_guidelines: bool = False,
+    automations_guidelines: bool = False,
 ) -> str:
     """Build the full system prompt for the engine.
 
@@ -473,11 +474,27 @@ def build_system_prompt(
         if snippet:
             full_prompt += "\n\n" + snippet
 
+    # Short lane hint only (peer style: details stay in cron_* tool
+    # descriptions). Injected when cron tools are registered — never a
+    # always-on base.md chapter.
+    if automations_guidelines:
+        full_prompt += "\n\n" + AUTOMATIONS_LANE_HINT
+
     # Consumer hint only — the structured handoff is authored by the
     # summarizer (_create_summary) using COMPACT_TEMPLATE / compact.md.
     full_prompt += "\n\n" + COMPACT_CONSUMER_HINT
 
     return full_prompt
+
+
+# Keep this tiny: routing only. RRULE / delivery / fire toolset live on
+# CronCreateTool.description (and cron execution playbook).
+AUTOMATIONS_LANE_HINT = (
+    "- **Recurring or scheduled for later** (\"every morning\", \"in 2 hours\", "
+    "\"daily digest\") → `cron_create` — never `task_create` for reminders. "
+    "List/delete with `cron_list` / `cron_delete`. Tell the user jobs are "
+    "managed in the Workbench sidebar Automations page."
+)
 
 
 def handoff_path(workspace: Path) -> Path:

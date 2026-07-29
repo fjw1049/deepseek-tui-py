@@ -70,6 +70,12 @@ _ALWAYS_ACTIVE_TOOLS = frozenset(
         "web_search",
         "fetch_url",
         REQUEST_USER_INPUT_NAME,
+        # Cron trio — only present in the catalog when features.automations
+        # is on (registry gate). Keep always-active so the model can schedule
+        # from the main chat without tool_search first.
+        "cron_create",
+        "cron_list",
+        "cron_delete",
     }
 )
 

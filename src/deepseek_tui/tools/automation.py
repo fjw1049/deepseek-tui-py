@@ -165,8 +165,7 @@ class CronCreateTool(ToolSpec):
             "Create a durable scheduled job (cron) that enqueues an agent "
             "task on a schedule. Relative times ('in 10 minutes', 'tomorrow "
             "morning') resolve against the `today: YYYY-MM-DD` date and "
-            "user timezone in the system prompt — shell/time tools are not "
-            "available in the automation composer. "
+            "user timezone in the system prompt (prefer that over shell date). "
             "Recurring jobs use rrule (FREQ=HOURLY;INTERVAL=N or "
             "FREQ=WEEKLY;BYDAY=MO;BYHOUR=9;BYMINUTE=30). One-shot or "
             "delayed runs set next_run_at (ISO8601) and may use a far-future "
@@ -178,9 +177,16 @@ class CronCreateTool(ToolSpec):
             "run_now=true to also trigger the job immediately after creation "
             "— this only applies at create time and cannot fire an "
             "already-existing job (use the Workbench Automations UI to run "
-            "an existing job once). To change an existing job, delete it "
-            "with cron_delete and recreate it (deleting wipes the job's run "
-            "history). Creation requires approval."
+            "an existing job once). "
+            "When the job fires it may use: web_search, fetch_url, read_file, "
+            "grep_files, file_search, exec_shell, load_skill, and installed "
+            "MCP tools; delivery is handled by the system (do not ask the job "
+            "prompt to send Feishu/email itself). "
+            "After creating, tell the user they can view, pause, or delete "
+            "the job in the Workbench sidebar Automations page. "
+            "To change an existing job, delete it with cron_delete and "
+            "recreate it (deleting wipes the job's run history). "
+            "Creation requires approval."
         )
 
     def input_schema(self) -> dict[str, object]:
@@ -316,7 +322,9 @@ class CronListTool(ToolSpec):
         return (
             "List durable scheduled jobs (cron) with status, next run, and "
             "last run timestamps. Pass automation_id to read one job's "
-            "details and recent run history."
+            "details and recent run history. For full management (pause, "
+            "run history UI), point the user to the Workbench sidebar "
+            "Automations page."
         )
 
     def input_schema(self) -> dict[str, object]:
@@ -404,7 +412,9 @@ class CronDeleteTool(ToolSpec):
     def description(self) -> str:
         return (
             "Delete a scheduled job (cron) and wipe its run history. "
-            "Requires approval."
+            "Requires approval. After deleting, tell the user the job is "
+            "gone; remaining jobs are in the Workbench sidebar Automations "
+            "page."
         )
 
     def input_schema(self) -> dict[str, object]:

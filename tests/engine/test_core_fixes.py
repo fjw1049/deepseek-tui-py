@@ -134,6 +134,21 @@ def test_build_system_prompt_uses_consumer_hint_not_empty_template():
     assert "### Next step" in COMPACT_TEMPLATE()
 
 
+def test_build_system_prompt_automations_lane_hint_gated():
+    from deepseek_tui.engine.prompts import AUTOMATIONS_LANE_HINT
+
+    off = build_system_prompt(project_context_enabled=False)
+    assert AUTOMATIONS_LANE_HINT not in off
+    assert "## Scheduled Automations" not in off
+    on = build_system_prompt(
+        project_context_enabled=False, automations_guidelines=True
+    )
+    assert AUTOMATIONS_LANE_HINT in on
+    assert "never `task_create` for reminders" in on
+    # Still a short lane line — not a full playbook chapter.
+    assert on.count("cron_create") <= 2
+
+
 # --- EngineHandle.reset_cancel --------------------------------------------
 
 
