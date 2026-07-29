@@ -1,4 +1,5 @@
 import type { ReactElement } from 'react'
+import { useId } from 'react'
 import { Cable } from 'lucide-react'
 import type { ConnectorItem } from './InstalledConnectorsPanel'
 
@@ -74,13 +75,17 @@ function resolveBrandKey(parts: {
 
 /** App-icon tile: continuous corner + official mark inset. */
 function BrandTile({ brand }: { brand: BrandKey }): ReactElement {
+  const clipId = useId()
   const { hex, path } = BRAND_MARKS[brand]
   if (brand === 'yahoo' || !path) return <YahooIcon />
 
-  // Zhihu / Reddit marks already include their own badge shape — fill brand color on white.
+  // Zhihu / Reddit SI marks already include a full badge (0–24). Fill brand on white
+  // and use inset 0 so they fill the tile like other app icons — a glyph-style inset
+  // leaves a tiny badge floating in the middle.
   const selfContained = brand === 'zhihu' || brand === 'reddit'
   // Xiaohongshu wordmark is dense — slightly tighter inset.
-  const inset = brand === 'xiaohongshu' ? 7 : brand === 'weibo' ? 7.5 : 8
+  const inset = selfContained ? 0 : brand === 'xiaohongshu' ? 7 : brand === 'weibo' ? 7.5 : 8
+  const scale = (40 - inset * 2) / 24
 
   return (
     <svg
@@ -90,9 +95,16 @@ function BrandTile({ brand }: { brand: BrandKey }): ReactElement {
       className="h-full w-full"
       aria-hidden
     >
-      <rect width="40" height="40" rx="10" fill={selfContained ? '#FFFFFF' : hex} />
-      <g transform={`translate(${inset} ${inset}) scale(${(40 - inset * 2) / 24})`}>
-        <path d={path} fill={selfContained ? hex : '#FFFFFF'} />
+      <defs>
+        <clipPath id={clipId}>
+          <rect width="40" height="40" rx="10" />
+        </clipPath>
+      </defs>
+      <g clipPath={`url(#${clipId})`}>
+        <rect width="40" height="40" fill={selfContained ? '#FFFFFF' : hex} />
+        <g transform={`translate(${inset} ${inset}) scale(${scale})`}>
+          <path d={path} fill={selfContained ? hex : '#FFFFFF'} />
+        </g>
       </g>
     </svg>
   )
