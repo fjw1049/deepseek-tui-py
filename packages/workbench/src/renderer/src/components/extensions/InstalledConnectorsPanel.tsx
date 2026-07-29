@@ -3,7 +3,6 @@ import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Loader2, Trash2 } from 'lucide-react'
 import { GlassSegmentedControl } from '../settings/GlassSegmentedControl'
-import { ConnectorIcon } from './connector-icons'
 import { partitionConnectorsByGroup } from '../../lib/connector-groups'
 import type { McpLoadPolicy } from '../../lib/mcp-json-merge'
 
@@ -170,9 +169,6 @@ function ConnectorRow({
   const onFocus = connector.loadPolicy === 'on_focus'
   return (
     <li className="group flex items-center gap-4 px-5 py-4 transition hover:bg-ds-subtle/50 active:bg-ds-subtle/70">
-      <div className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-ds-border bg-ds-card text-ds-muted">
-        <ConnectorIcon connector={connector} />
-      </div>
       <div className="min-w-0 flex-1">
         <div className="flex min-w-0 items-center gap-2">
           <div className="truncate text-[15px] font-semibold text-ds-ink">{connector.name}</div>

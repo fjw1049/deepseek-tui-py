@@ -19,7 +19,6 @@ export type ComposerConnectorRow = {
   section: ComposerConnectorSection
   /** Reserved; composer no longer lists unconfigured media stubs. */
   needsConfig: boolean
-  brand?: string
 }
 
 type RuntimeServer = {
@@ -76,8 +75,7 @@ export function buildComposerConnectorRows(
       enabled: true,
       loadPolicy,
       section,
-      needsConfig: false,
-      brand: media?.brand
+      needsConfig: false
     })
   }
 
@@ -95,8 +93,7 @@ export function buildComposerConnectorRows(
       enabled: true,
       loadPolicy,
       section: classifyConnector(s.name),
-      needsConfig: false,
-      brand: media?.brand
+      needsConfig: false
     })
   }
 

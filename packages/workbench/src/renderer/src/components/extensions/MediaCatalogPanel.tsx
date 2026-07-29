@@ -9,7 +9,6 @@ import {
   type MediaCatalogItem,
   buildTikhubServerEntry
 } from './media-catalog'
-import { ConnectorIcon } from './connector-icons'
 import {
   getMcpServerEntry,
   isMcpServerEnabled,
@@ -77,17 +76,6 @@ export function MediaCatalogPanel({
                   onClick={() => setActive(item)}
                   className="ds-media-catalog__card"
                 >
-                  <div className="ds-media-catalog__icon">
-                    <ConnectorIcon
-                      brand={item.brand}
-                      connector={{
-                        id: item.id,
-                        name: item.title,
-                        summary: item.description,
-                        enabled: true
-                      }}
-                    />
-                  </div>
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
                       <span className="ds-media-catalog__title">{item.title}</span>
@@ -167,17 +155,6 @@ function MediaConfigSheet({
       >
         <div className="ds-media-sheet__grab" aria-hidden />
         <div className="ds-media-sheet__header">
-          <div className="ds-media-catalog__icon ds-media-catalog__icon--lg">
-            <ConnectorIcon
-              brand={item.brand}
-              connector={{
-                id: item.id,
-                name: item.title,
-                summary: item.description,
-                enabled: true
-              }}
-            />
-          </div>
           <div className="min-w-0 flex-1">
             <div id={`media-sheet-${item.id}`} className="ds-media-sheet__title">
               {item.title}
