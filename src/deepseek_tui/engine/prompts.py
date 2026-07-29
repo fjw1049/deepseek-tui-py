@@ -528,10 +528,11 @@ _AUTOMATION_COMPOSER_NATIVE = frozenset(
     }
 )
 
-# Cron execution: native read/search/fetch only.
-# Intentionally tighter than Claude/Kimi/Grok (they fire into the same
-# interactive session with the full toolset). Our fire path is a detached
-# TaskManager turn with auto_approve, so shell/write/MCP stay out.
+# Cron execution: read/search/fetch + shell + skills.
+# Installed MCP tools (mcp_*) are admitted separately in
+# filter_tools_for_profile — they are whatever the shared McpManager
+# already discovered. Write tools / tool_search / request_user_input
+# stay out (detached auto_approve turn).
 _CRON_NATIVE = frozenset(
     {
         "web_search",
@@ -539,8 +540,26 @@ _CRON_NATIVE = frozenset(
         "read_file",
         "grep_files",
         "file_search",
+        "exec_shell",
+        "load_skill",
     }
 )
+
+# Mirror engine.dispatch.is_mcp_tool without importing dispatch (avoids
+# prompts ↔ engine cycles). Covers installed server tools + resource helpers.
+_CRON_MCP_META = frozenset(
+    {
+        "list_mcp_resources",
+        "mcp_read_resource",
+        "read_mcp_resource",
+    }
+)
+
+
+def _is_cron_allowed_mcp_tool(name: str) -> bool:
+    if name in _CRON_MCP_META:
+        return True
+    return name.startswith("mcp_") or name.startswith("mcp__")
 
 
 def detect_tool_profile_from_prompt(prompt: str) -> str:
@@ -585,7 +604,7 @@ def filter_tools_for_profile(
         out = []
         for entry in tools:
             name = _tool_name(entry)
-            if name in _CRON_NATIVE:
+            if name in _CRON_NATIVE or _is_cron_allowed_mcp_tool(name):
                 clone = _copy_tool_entry(entry)
                 fn = clone.get("function", clone)
                 fn["defer_loading"] = False

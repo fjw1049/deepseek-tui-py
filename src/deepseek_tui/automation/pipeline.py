@@ -208,7 +208,7 @@ async def enqueue_automation_task(
         model=None,
         workspace=str(workspace) if workspace else None,
         mode="agent",
-        allow_shell=False,
+        allow_shell=True,
         trust_mode=False,
         auto_approve=True,
     )

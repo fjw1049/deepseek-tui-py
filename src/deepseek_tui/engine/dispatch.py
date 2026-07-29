@@ -515,6 +515,11 @@ async def _run_task_engine_turn(
         mcp=True,
         automations=False,
     )
+    # Cron runs opt into shell (see TOOL_PROFILE_CRON + enqueue allow_shell).
+    # Honor the task flag so a global allow_shell=false config does not
+    # strip exec_shell from the registry for scheduled jobs.
+    if _is_cron_task(task.prompt) and task.allow_shell:
+        cfg.allow_shell = True
     cfg.hooks = HooksConfig(enabled=False, hooks=[])
     handle = EngineHandle()
     client = build_llm_client(cfg)

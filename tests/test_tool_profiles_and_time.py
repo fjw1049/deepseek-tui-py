@@ -35,7 +35,7 @@ def test_composer_profile_filters_tools() -> None:
     assert names == {"cron_create"}
 
 
-def test_cron_profile_keeps_native_tools_only() -> None:
+def test_cron_profile_keeps_native_tools_and_installed_mcp() -> None:
     catalog = [
         {"type": "function", "function": {"name": "web_search", "parameters": {}}},
         {"type": "function", "function": {"name": "fetch_url", "parameters": {}}},
@@ -43,9 +43,12 @@ def test_cron_profile_keeps_native_tools_only() -> None:
         {"type": "function", "function": {"name": "grep_files", "parameters": {}}},
         {"type": "function", "function": {"name": "file_search", "parameters": {}}},
         {"type": "function", "function": {"name": "exec_shell", "parameters": {}}},
+        {"type": "function", "function": {"name": "load_skill", "parameters": {}}},
         {"type": "function", "function": {"name": "write_file", "parameters": {}}},
         {"type": "function", "function": {"name": "edit_file", "parameters": {}}},
         {"type": "function", "function": {"name": "cron_create", "parameters": {}}},
+        {"type": "function", "function": {"name": "request_user_input", "parameters": {}}},
+        {"type": "function", "function": {"name": "list_mcp_resources", "parameters": {}}},
         {"type": "function", "function": {"name": "mcp_bing_cn_search", "parameters": {}}},
         {"type": "function", "function": {"name": "mcp_yahoo_quote", "parameters": {}}},
     ]
@@ -57,6 +60,11 @@ def test_cron_profile_keeps_native_tools_only() -> None:
         "read_file",
         "grep_files",
         "file_search",
+        "exec_shell",
+        "load_skill",
+        "list_mcp_resources",
+        "mcp_bing_cn_search",
+        "mcp_yahoo_quote",
     }
 
 

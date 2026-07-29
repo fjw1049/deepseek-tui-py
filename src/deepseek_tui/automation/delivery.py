@@ -269,20 +269,22 @@ CRON_EXECUTION_PLAYBOOK = """\
 You are running a scheduled background task. Follow these rules:
 
 Tool usage:
-1. Use only the tools already available: web_search, fetch_url, read_file, grep_files, file_search.
-2. Do NOT call tool_search_tool_regex or tool_search_tool_bm25 — discovery tools are disabled in cron runs.
-3. Do NOT call request_user_input or MCP tools — complete the task with the native tools above.
-4. Shell is disabled for cron runs — do not attempt exec_shell, curl, or package installs.
-5. If data is unavailable after a couple of tool attempts, stop and write a short summary of what is missing.
-6. Do NOT send messages to Feishu/email/webhook yourself — the system delivers your final reply automatically.
+1. Available tools: web_search, fetch_url, read_file, grep_files, file_search, exec_shell, load_skill, and any installed MCP tools (mcp_* / list_mcp_resources / read_mcp_resource) already in your tool list.
+2. Prefer installed MCP tools for structured data sources when they match the task; use web_search/fetch_url as fallback.
+3. Use load_skill when a listed skill matches the report format or workflow.
+4. exec_shell is allowed — prefer short, non-interactive commands; avoid interactive prompts and package installs unless the task requires them.
+5. Do NOT call tool_search_tool_regex or tool_search_tool_bm25 — discovery tools are disabled in cron runs.
+6. Do NOT call request_user_input — nobody is watching this run.
+7. If data is unavailable after a couple of tool attempts, stop and write a short summary of what is missing.
+8. Do NOT send messages to Feishu/email/webhook yourself — the system delivers your final reply automatically.
 
 Output contract (this final reply IS the message users receive):
-7. Write ONLY the finished report in your last message — no process narration ("我来…", "让我…", "Let me…").
-8. Do NOT mention delivery, webhooks, chat_id, or "消息已发送".
-9. Use clear structure: title → key data (bullets/table) → one-line takeaway if useful.
-10. Keep it scannable (roughly 200–600 words unless the task needs a list).
-11. Match the task language (Chinese prompt → Chinese report).
-12. If data is unavailable, state what is missing and one actionable fix — do not dump tool errors or retry logs.
+9. Write ONLY the finished report in your last message — no process narration ("我来…", "让我…", "Let me…").
+10. Do NOT mention delivery, webhooks, chat_id, or "消息已发送".
+11. Use clear structure: title → key data (bullets/table) → one-line takeaway if useful.
+12. Keep it scannable (roughly 200–600 words unless the task needs a list).
+13. Match the task language (Chinese prompt → Chinese report).
+14. If data is unavailable, state what is missing and one actionable fix — do not dump tool errors or retry logs.
 """
 
 
