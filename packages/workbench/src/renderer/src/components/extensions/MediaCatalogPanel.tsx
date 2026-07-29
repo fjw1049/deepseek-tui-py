@@ -1,5 +1,6 @@
 import type { ReactElement } from 'react'
 import { useMemo, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
 import { ChevronRight, Loader2, Search, X } from 'lucide-react'
 import {
@@ -153,8 +154,10 @@ function MediaConfigSheet({
     onClose()
   }
 
-  return (
-    <div className="ds-media-sheet-backdrop" onMouseDown={onClose}>
+  // Portal to <body>: nesting inside .ds-feature-page / content-card glass
+  // forces a frosted gray scrim even with backdrop-filter: none.
+  return createPortal(
+    <div className="ds-media-sheet-backdrop ds-no-drag" onMouseDown={onClose}>
       <div
         className="ds-media-sheet"
         role="dialog"
@@ -234,6 +237,7 @@ function MediaConfigSheet({
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   )
 }

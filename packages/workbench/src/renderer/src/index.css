@@ -6504,9 +6504,14 @@ select:focus-visible,
   align-items: flex-end;
   justify-content: center;
   padding: 16px;
-  background: rgba(0, 0, 0, 0.38);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
+  /* Light dim only — no frosted / gray-glass scrim. */
+  background: rgba(0, 0, 0, 0.2);
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+[data-theme='dark'] .ds-media-sheet-backdrop {
+  background: rgba(0, 0, 0, 0.4);
 }
 
 @media (min-width: 640px) {
@@ -6520,7 +6525,8 @@ select:focus-visible,
   max-width: 420px;
   overflow: hidden;
   border-radius: 22px;
-  background: color-mix(in srgb, var(--ds-card) 92%, transparent);
+  /* Solid surface — translucent card reads as gray glass over the page. */
+  background: var(--ds-surface-elevated, var(--ds-card));
   box-shadow:
     0 24px 60px rgba(0, 0, 0, 0.28),
     inset 0 0 0 1px color-mix(in srgb, var(--ds-text) 8%, transparent);
