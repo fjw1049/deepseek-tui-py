@@ -1263,6 +1263,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   composerModel: 'deepseek-v4-pro',
   composerPickList: mergeComposerPickList(false, []),
   composerModelMeta: {},
+  composerMode: 'agent',
   composerReasoningEffort: readStoredComposerEffort(),
   queuedMessages: [],
   watchTurnCompletion: {},
@@ -2057,6 +2058,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const { providerId } = get()
     const trimmedText = text.trim()
     if (!trimmedText) return false
+    // Prefer explicit arg (composer send / queued), else current UI mode.
+    // Critical for rewindAndResend which historically omitted mode.
+    const resolvedMode = (mode?.trim() || get().composerMode || 'agent') as string
     const hidden =
       overrides?.hidden === true ||
       overrides?.queued?.hidden === true ||
@@ -2089,7 +2093,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             id: `q-${now}-${s.queuedMessages.length}`,
             text: trimmedText,
             ...(displayText !== trimmedText ? { displayText } : {}),
-            ...(mode ? { mode } : {}),
+            mode: resolvedMode,
             ...(composerModel ? { model: composerModel } : {}),
             ...(userModelChip ? { modelLabel: userModelChip } : {}),
             ...(hidden ? { hidden: true } : {})
@@ -2199,7 +2203,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             ? await p.createThread({
                 workspace: workspaceRoot,
                 title: generatedTitle,
-                mode: mode ?? 'agent',
+                mode: resolvedMode,
                 provider: selectedModel.providerId,
                 model: selectedModel.modelId
               })
@@ -2268,7 +2272,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }
       const seqAtSend = get().lastSeq
       const { turnId, userMessageItemId } = await p.sendUserMessage(activeThreadId, trimmedText, {
-        mode,
+        mode: resolvedMode,
         uiSubmitAtMs: now,
         reasoningEffort: get().composerReasoningEffort,
         ...(selectedModel.providerId ? { provider: selectedModel.providerId } : {}),
@@ -2734,7 +2738,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
       set((s) => ({ workspaceDirtyTick: s.workspaceDirtyTick + 1 }))
     }
 
-    await get().sendMessage(trimmed)
+    // Use current composer mode (same as model/effort). Do not drop to
+    // the sendMessage default — UI may still show workflow/plan/ask.
+    await get().sendMessage(trimmed, get().composerMode)
   },
 
   rewindToMessage: async (userBlockId, opts) => {

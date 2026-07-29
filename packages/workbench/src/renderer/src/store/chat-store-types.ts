@@ -11,11 +11,14 @@ import type {
 import type { ComposerModelMeta } from '../lib/composer-model-label'
 import type { StartupPhasePayload } from '@shared/ds-gui-api'
 
+/** Composer execution mode (agent / plan / ask / workflow). */
+export type ComposerMode = 'plan' | 'agent' | 'ask' | 'workflow'
+
 export type QueuedUserMessage = {
   id: string
   text: string
   displayText?: string
-  mode?: string
+  mode?: ComposerMode | string
   model?: string
   modelLabel?: string
   hidden?: boolean
@@ -103,6 +106,7 @@ export type ChatState = {
   composerModel: string
   composerPickList: string[]
   composerModelMeta: Record<string, ComposerModelMeta>
+  composerMode: ComposerMode
   composerReasoningEffort: string
   queuedMessages: QueuedUserMessage[]
   watchTurnCompletion: Record<string, boolean>
@@ -130,6 +134,7 @@ export type ChatState = {
   setError: (message: string | null) => void
   setStartupPhase: (phase: StartupPhasePayload | null) => void
   setComposerModel: (modelId: string) => void
+  setComposerMode: (mode: ComposerMode) => void
   setComposerReasoningEffort: (effort: string) => void
   loadComposerModels: () => Promise<void>
   setRoute: (r: AppRoute) => void
@@ -159,7 +164,11 @@ export type ChatState = {
   selectThread: (id: string) => Promise<void>
   warmActiveThread: (threadId?: string) => Promise<void>
   recoverActiveTurn: () => Promise<boolean>
-  sendMessage: (text: string, mode?: string, overrides?: SendMessageOverrides) => Promise<boolean>
+  sendMessage: (
+    text: string,
+    mode?: ComposerMode | string,
+    overrides?: SendMessageOverrides
+  ) => Promise<boolean>
   drainQueuedMessages: () => Promise<void>
   removeQueuedMessage: (id: string) => void
   /** Remove a queued message and return it so the composer can restore the draft. */

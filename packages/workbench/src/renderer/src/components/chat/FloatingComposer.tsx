@@ -38,6 +38,7 @@ import {
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { useChatStore } from '../../store/chat-store'
+import type { ComposerMode } from '../../store/chat-store-types'
 import { ReasoningEffortSelector } from './ReasoningEffortSelector'
 import { ApprovalBubble } from './ApprovalBubble'
 import { ComposerLiveChangesHeader } from './ComposerLiveChangesHeader'
@@ -81,7 +82,7 @@ import {
   type ComposerConnectorSection
 } from '../../lib/composer-connectors'
 
-export type ComposerMode = 'plan' | 'agent' | 'ask' | 'workflow'
+export type { ComposerMode }
 
 type ComposerAttachment = {
   id: string

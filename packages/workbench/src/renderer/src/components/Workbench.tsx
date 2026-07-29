@@ -237,6 +237,8 @@ export function Workbench(): ReactElement {
     composerModel,
     composerPickList,
     setComposerModel,
+    composerMode: mode,
+    setComposerMode: setMode,
     deleteThread,
     archiveThread,
     forkThread,
@@ -270,6 +272,8 @@ export function Workbench(): ReactElement {
       composerModel: s.composerModel,
       composerPickList: s.composerPickList,
       setComposerModel: s.setComposerModel,
+      composerMode: s.composerMode,
+      setComposerMode: s.setComposerMode,
       deleteThread: s.deleteThread,
       archiveThread: s.archiveThread,
       forkThread: s.forkThread,
@@ -277,7 +281,6 @@ export function Workbench(): ReactElement {
     }))
   )
   const [input, setInput] = useState('')
-  const [mode, setMode] = useState<import('./chat/FloatingComposer').ComposerMode>('agent')
   const [rightSidebarOpen, setRightSidebarOpen] = useState(readStoredRightSidebarOpen)
   const [rightSidebarCollapsed, setRightSidebarCollapsed] = useState(readStoredRightSidebarCollapsed)
   const [rightSidebarTab, setRightSidebarTab] = useState<RightSidebarTab>(readStoredRightSidebarTab)
