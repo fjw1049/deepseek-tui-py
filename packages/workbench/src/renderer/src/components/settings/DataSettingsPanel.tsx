@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, type ReactElement, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { FolderOpen, Loader2, Trash2 } from 'lucide-react'
+import { useChatStore } from '../../store/chat-store'
 import { SettingsSelect } from './SettingsSelect'
 import {
   settingsBlockButtonClass,
@@ -177,6 +178,7 @@ function InlineNoticeView({ notice }: { notice: InlineNotice }): ReactElement {
 
 export function DataSettingsPanel(): ReactElement {
   const { t, i18n } = useTranslation('settings')
+  const refreshThreads = useChatStore((s) => s.refreshThreads)
   const [inventory, setInventory] = useState<DataInventory | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
@@ -192,6 +194,14 @@ export function DataSettingsPanel(): ReactElement {
   const [deleteExitState, setDeleteExitState] = useState<ActionState>('idle')
   const [notice, setNotice] = useState<InlineNotice | null>(null)
   const [openDirError, setOpenDirError] = useState<string | null>(null)
+
+  const syncThreadList = useCallback(async (): Promise<void> => {
+    try {
+      await refreshThreads()
+    } catch {
+      // Disk ops already succeeded; sidebar lag is non-fatal.
+    }
+  }, [refreshThreads])
 
   const refreshBackup = useCallback(async (): Promise<void> => {
     try {
@@ -300,6 +310,7 @@ export function DataSettingsPanel(): ReactElement {
       setCleanState('done')
       showNotice('success', t('dataCleanDone', { count: body.threads_deleted ?? 0 }))
       await refresh()
+      await syncThreadList()
     } catch {
       setCleanState('error')
       showNotice('error', t('dataCleanFailed'))
@@ -321,6 +332,7 @@ export function DataSettingsPanel(): ReactElement {
       setClearState('done')
       showNotice('success', t('dataClearHistoryDone'))
       await refresh()
+      await syncThreadList()
     } catch {
       setClearState('error')
       showNotice('error', t('dataClearHistoryFailed'))
@@ -393,16 +405,25 @@ export function DataSettingsPanel(): ReactElement {
         showNotice('error', t('dataImportFailed'))
         return
       }
-      const body = JSON.parse(r.body) as { threads_imported?: number; threads_skipped?: number }
+      const body = JSON.parse(r.body) as {
+        threads_imported?: number
+        threads_skipped?: number
+        settings_restored?: string[]
+      }
+      const settingsRestored = Array.isArray(body.settings_restored) ? body.settings_restored : []
+      const importSummary = t('dataImportDone', {
+        imported: body.threads_imported ?? 0,
+        skipped: body.threads_skipped ?? 0
+      })
       setImportState('done')
       showNotice(
         'success',
-        t('dataImportDone', {
-          imported: body.threads_imported ?? 0,
-          skipped: body.threads_skipped ?? 0
-        })
+        settingsRestored.length > 0
+          ? `${importSummary} ${t('dataImportSettingsRestartHint')}`
+          : importSummary
       )
       await refresh()
+      await syncThreadList()
     } catch {
       setImportState('error')
       showNotice('error', t('dataImportFailed'))
