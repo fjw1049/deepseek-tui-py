@@ -3,7 +3,7 @@
 ``asyncio.Task``-backed
 execution (not multiprocessing — LLM calls are IO-bound; see HANDOVER.md
 decision 2026-05-07). Persistence under
-``<workspace>/.deepseek/subagents.v1.json``.
+``~/.deepseek/agents/registries/<workspace_key>.json``.
 """
 
 from __future__ import annotations
@@ -287,7 +287,7 @@ class SubAgentManager:
         """True-resume a terminated agent from its durable transcript.
 
         Reopens status to Running and re-spawns the driver. The loop hydrates
-        any checkpoint under ``.deepseek/subagent-runs/<id>/``; without a
+        any checkpoint under ``~/.deepseek/agents/runs/<id>/``; without a
         transcript it restarts from the original prompt (legacy behavior).
         """
         async with self._lock:

@@ -1,8 +1,9 @@
 """Local data inventory and maintenance for Workbench Settings.
 
-Inventory reports what lives under ``~/.deepseek`` (threads / sessions /
-state.db). Maintenance ops reclaim disk without touching Skills, MCP,
-plugins, or config — matching the product safety gradient:
+Inventory reports what lives under ``~/.deepseek`` (``threads/`` is the
+conversation source of truth; ``sessions/`` is TUI legacy; plus state.db).
+Maintenance ops reclaim disk without touching Skills, MCP, plugins, or
+config — matching the product safety gradient:
 
 * optimize — never deletes user-visible conversations
 * clean-by-age — deletes whole old threads
@@ -137,6 +138,7 @@ def collect_inventory(
         "home_dir": str(home),
         "threads_dir": str(threads_root),
         "sessions_dir": str(sessions_root),
+        "conversation_source_of_truth": "threads",
         "state_db_path": str(state_db),
         "threads_bytes": threads_bytes,
         "sessions_bytes": sessions_bytes,

@@ -1,19 +1,22 @@
 import { app } from 'electron'
-import { homedir } from 'node:os'
-import { join } from 'node:path'
 import { readdir, rm } from 'node:fs/promises'
+import { join } from 'node:path'
+import {
+  resolveLegacyDeepseekGuiHome,
+  resolveWorkbenchHome
+} from '../../shared/workbench-home'
 import { stopDeepseekChildAndWait } from '../deepseek-process'
 
-/** GUI-only home used by Claw IM workspaces — not the shared ``~/.deepseek``. */
-export function resolveDeepseekGuiHome(): string {
-  return join(homedir(), '.deepseekgui')
-}
-
 /**
- * Permanently remove DeepSeek GUI local data and quit.
+ * Permanently remove DeepSeek GUI local shell data and quit.
  *
- * Deletes Electron ``userData`` contents and ``~/.deepseekgui``.
- * Does **not** delete the shared CLI directory ``~/.deepseek``.
+ * Deletes:
+ * - ``~/.deepseek/workbench/`` GUI product state (settings, claw, logs, caches)
+ * - legacy ``~/.deepseekgui``
+ * - Electron ``userData`` Chromium caches
+ *
+ * Does **not** delete shared runtime data under ``~/.deepseek``
+ * (threads, tasks, skills, config.toml, usage ledger, …).
  */
 export async function deleteGuiDataAndExit(): Promise<{ ok: true } | { ok: false; message: string }> {
   try {
@@ -23,9 +26,25 @@ export async function deleteGuiDataAndExit(): Promise<{ ok: true } | { ok: false
   }
 
   const errors: string[] = []
-  const guiHome = resolveDeepseekGuiHome()
+
+  const workbenchHome = resolveWorkbenchHome()
+  for (const rel of [
+    'settings.json',
+    'claw',
+    'logs',
+    'pet-cache',
+    'marketplace-cache'
+  ] as const) {
+    try {
+      await rm(join(workbenchHome, rel), { recursive: true, force: true })
+    } catch (error) {
+      errors.push(error instanceof Error ? error.message : String(error))
+    }
+  }
+
+  const legacyGuiHome = resolveLegacyDeepseekGuiHome()
   try {
-    await rm(guiHome, { recursive: true, force: true })
+    await rm(legacyGuiHome, { recursive: true, force: true })
   } catch (error) {
     errors.push(error instanceof Error ? error.message : String(error))
   }

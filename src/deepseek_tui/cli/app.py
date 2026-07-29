@@ -99,7 +99,10 @@ def main_callback(
 
     # Wire the rotating log handlers up before any subsystem runs so the
     # very first INFO event ("engine starting") lands in the file.
+    from deepseek_tui.config.layout import ensure_user_home_layout
     from deepseek_tui.utils import setup_logging
+
+    ensure_user_home_layout()
 
     # 装配按小时滚动的日志 handler（须在子系统启动前，确保首条 INFO 落盘）
     setup_logging(

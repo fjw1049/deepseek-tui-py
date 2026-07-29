@@ -123,7 +123,7 @@ class WorkflowTool(ToolSpec):
             "Optional: `policy.worktree: \"on\"` isolates edits in a git "
             "worktree; `detach: true` enqueues via TaskManager and returns "
             "`run_id` + `task_id` immediately.\n\n"
-            "Runs are checkpointed under `.deepseek/workflow-runs/<run_id>/` "
+            "Runs are checkpointed under `~/.deepseek/workflow/<run_id>/` "
             "after every completed step (and every finished fanout/pipeline "
             "item), including runtime graph mutations from `dynamic` nodes."
         )
@@ -159,7 +159,7 @@ class WorkflowTool(ToolSpec):
                     "type": "string",
                     "description": (
                         "Resume a previously interrupted/failed workflow run "
-                        "from `.deepseek/workflow-runs/`. Mutually exclusive "
+                        "from `~/.deepseek/workflow/`. Mutually exclusive "
                         "with name/spec/mode."
                     ),
                 },

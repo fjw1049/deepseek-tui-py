@@ -20,9 +20,9 @@ allow_shell = true
 # successful compaction. Set false to rely on the model calling wake itself.
 optmem_auto_wake = true
 
-# Skill install dir and MCP server config file (defaults shown).
-# skills_dir = ".deepseek/skills"
-# mcp_config_path = ".deepseek/mcp.json"
+# Skill install dir and MCP server config (defaults: ~/.deepseek/…).
+# skills_dir = "~/.deepseek/skills"
+# mcp_config_path = "~/.deepseek/mcp.json"
 
 # Web search: AnySearch (optional key) + Tavily (optional key); results are merged.
 # anysearch_api_key = ""   # or ANYSEARCH_API_KEY
@@ -130,7 +130,7 @@ trajectory_enabled = false
 [hooks]
 enabled = true
 # stdout = false                          # echo hook events to stdout as JSON
-# jsonl_path = ".deepseek/hooks.jsonl"    # append events to a JSONL file
+# jsonl_path = "~/.deepseek/hooks/events.jsonl"  # append events to a JSONL file
 # webhook_urls = ["https://example.com/hook"]
 # default_timeout_secs = 30.0             # overrides the 30s per-hook default
 

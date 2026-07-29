@@ -1,6 +1,6 @@
 """Content-addressed plugin-host storage (v2).
 
-Immutable source trees live under ``plugin-host/sources/sha256/<digest>/``.
+Immutable source trees live under ``plugins/.host/sources/sha256/<digest>/``.
 Scope directories (``~/.deepseek/plugins/<name>``) preferably symlink into the
 store so updates can switch digests without rewriting vendor bytes.
 """
@@ -14,7 +14,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from deepseek_tui.config.paths import user_deepseek_dir
+from deepseek_tui.config.paths import user_deepseek_dir, user_plugin_host_dir
 from deepseek_tui.plugins.model import DerivedPlugin
 from deepseek_tui.plugins.source import LocalArtifact, PluginSourceError
 from deepseek_tui.utils import write_json_atomic
@@ -23,7 +23,9 @@ _HEX = re.compile(r"^[0-9a-f]{64}$")
 
 
 def plugin_host_root(home: Path | None = None) -> Path:
-    return (home or user_deepseek_dir()) / "plugin-host"
+    if home is None:
+        return user_plugin_host_dir()
+    return home / "plugins" / ".host"
 
 
 def sources_root(home: Path | None = None) -> Path:

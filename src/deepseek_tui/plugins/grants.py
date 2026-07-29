@@ -8,7 +8,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from deepseek_tui.config.paths import user_deepseek_dir
 from deepseek_tui.plugins.identity import is_safe_plugin_id, validate_plugin_id
 from deepseek_tui.utils import write_json_atomic
 
@@ -67,7 +66,11 @@ class PluginGrant:
 
 
 def grants_root(home: Path | None = None) -> Path:
-    return (home or user_deepseek_dir()) / "plugin-host" / "grants"
+    from deepseek_tui.config.paths import user_plugin_host_dir
+
+    if home is None:
+        return user_plugin_host_dir() / "grants"
+    return home / "plugins" / ".host" / "grants"
 
 
 def _grant_path(plugin_id: str, digest: str, *, home: Path | None = None) -> Path:

@@ -1,4 +1,4 @@
-"""Generic live MCP probe against project ``.deepseek/mcp.json``.
+"""Generic live MCP probe against ``~/.deepseek/mcp.json`` (user-level).
 
 Sequentially connects to **each enabled server**, lists tools, and optionally
 runs a safe probe call for known server types (``fetch`` only today).
@@ -47,11 +47,12 @@ from typing import Any
 
 import pytest
 
+from deepseek_tui.config.paths import user_mcp_config_path
 from deepseek_tui.mcp.config import McpServerConfig, load_mcp_config
 from deepseek_tui.mcp.manager import McpManager
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-PROJECT_MCP = PROJECT_ROOT / ".deepseek" / "mcp.json"
+USER_MCP = user_mcp_config_path()
+PROJECT_MCP = USER_MCP  # noqa: N816 — historical alias for callers below
 
 _PER_SERVER_TIMEOUT = 25.0
 _SUITE_BUDGET_SEC = 90.0
@@ -83,7 +84,7 @@ class ServerProbeResult:
 
 def _project_mcp_path() -> Path:
     if not PROJECT_MCP.exists():
-        pytest.skip(f"project mcp.json missing: {PROJECT_MCP}")
+        pytest.skip(f"user mcp.json missing: {PROJECT_MCP}")
     return PROJECT_MCP
 
 

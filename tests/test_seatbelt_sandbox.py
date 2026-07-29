@@ -138,6 +138,26 @@ class TestExecutionSandboxPolicy:
         matching = next(r for r in roots if r.root == optmem)
         assert matching.is_path_writable(lock)
 
+    def test_writable_roots_include_user_runtime(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        home = tmp_path / "ds_home"
+        monkeypatch.setenv("DEEPSEEK_HOME", str(home))
+        from deepseek_tui.config.paths import (
+            user_subagent_runs_dir,
+            user_workflow_runs_dir,
+        )
+
+        policy = ExecutionSandboxPolicy.workspace_write(
+            writable_roots=(tmp_path,),
+            network_access=True,
+        )
+        roots = policy.get_writable_roots(tmp_path)
+        wf = user_workflow_runs_dir().resolve()
+        sa = user_subagent_runs_dir().resolve()
+        assert any(r.root == wf for r in roots)
+        assert any(r.root == sa for r in roots)
+
 
 class TestSandboxManager:
     def test_prepare_unsandboxed_for_yolo(self) -> None:
@@ -227,8 +247,13 @@ class TestSeatbeltIntegration:
             "echo hacked >> .deepseek/config.toml",
             workspace,
         )
-        assert metadata.get("sandboxed") is True
-        assert metadata.get("sandbox_denied") is True
+        # Prefer host-side write guard (shell_write_denied); seatbelt is a
+        # second line of defense and may not run when the guard blocks first.
+        denied = metadata.get("shell_write_denied") is True or (
+            metadata.get("sandboxed") is True and metadata.get("sandbox_denied") is True
+        )
+        assert denied
+        assert "hacked" not in config_path.read_text(encoding="utf-8")
 
     @pytest.mark.asyncio
     async def test_yolo_mode_not_sandboxed(self, workspace: Path) -> None:

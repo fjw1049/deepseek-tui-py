@@ -36,7 +36,12 @@ def _spec() -> WorkflowSpec:
 
 
 @pytest.mark.asyncio
-async def test_workflow_list_returns_user_workflow_and_runs(tmp_path: Path) -> None:
+async def test_workflow_list_returns_user_workflow_and_runs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Runs live under DEEPSEEK_HOME/workflow — isolate from the real home.
+    monkeypatch.setenv("DEEPSEEK_HOME", str(tmp_path / "home"))
+
     # A user-defined named workflow in the workspace.
     (tmp_path / "workflows").mkdir()
     (tmp_path / "workflows" / "my_review.json").write_text(
@@ -73,8 +78,9 @@ async def test_workflow_list_returns_user_workflow_and_runs(tmp_path: Path) -> N
 
 @pytest.mark.asyncio
 async def test_workflow_list_empty_workspace_still_lists_presets(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.setenv("DEEPSEEK_HOME", str(tmp_path / "home"))
     tool = WorkflowListTool()
     ctx = ToolContext(working_directory=tmp_path)
     result = await tool.execute({}, ctx)

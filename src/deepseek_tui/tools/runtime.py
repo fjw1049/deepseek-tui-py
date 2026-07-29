@@ -131,9 +131,12 @@ def build_subagent_manager(
     from deepseek_tui.tools.subagent import Mailbox, SubAgentManager
 
     mailbox = Mailbox()
-    resolved_state_path = state_path or (
-        workspace / ".deepseek" / "subagents.v1.json"
-    )
+    if state_path is None:
+        from deepseek_tui.config.paths import user_subagents_state_path
+
+        resolved_state_path = user_subagents_state_path(workspace)
+    else:
+        resolved_state_path = state_path
     max_agents = min(
         20,
         cfg.max_subagents or cfg.subagents.max_concurrent or 10,

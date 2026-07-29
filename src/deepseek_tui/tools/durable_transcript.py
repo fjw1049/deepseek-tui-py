@@ -67,7 +67,14 @@ class DurableTranscript:
 
 
 def subagent_transcript_path(workspace: Path, agent_id: str) -> Path:
-    return workspace / ".deepseek" / "subagent-runs" / agent_id / "transcript.json"
+    """``~/.deepseek/agents/runs/<agent_id>/transcript.json``.
+
+    ``workspace`` is unused for path resolution (kept for call-site compat).
+    """
+    from deepseek_tui.config.paths import user_subagent_runs_dir
+
+    _ = workspace
+    return user_subagent_runs_dir() / agent_id / "transcript.json"
 
 
 def task_transcript_path(data_dir: Path, task_id: str) -> Path:

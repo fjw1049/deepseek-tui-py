@@ -111,7 +111,8 @@ describe('usage-ledger', () => {
 
   it('merges mock overlay onto an existing ledger', () => {
     const base = emptyUsageLedger()
-    const overlay = buildMockUsageLedger(new Date('2026-06-24T12:00:00'))
+    // Anchor near "now" so a short window still overlaps the mock series.
+    const overlay = buildMockUsageLedger(new Date())
     const merged = mergeUsageLedgers(base, overlay)
     const result = queryUsageLedger(merged, '7d', 'en')
 

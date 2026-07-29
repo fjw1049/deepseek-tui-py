@@ -65,6 +65,8 @@ import { sseStartPayloadSchema, streamIdSchema } from './ipc/app-ipc-schemas'
 import { createTerminalService } from './services/terminal-service'
 import { registerAppIpcHandlers } from './ipc/register-app-ipc-handlers'
 import { shutdownWorkspacePreviewServers } from './services/workspace-preview-server'
+import { resolveWorkbenchLogsDir } from '../shared/workbench-home'
+import { migrateLegacyDirContents } from './migrate-legacy-dir'
 
 const mainDir = import.meta.dirname
 const APP_USER_MODEL_ID = 'com.deepseek.workbench'
@@ -119,7 +121,7 @@ let logDir = ''
 const terminalService = createTerminalService()
 
 function resolveLogDirectory(): string {
-  return join(app.getPath('userData'), 'logs')
+  return resolveWorkbenchLogsDir()
 }
 
 function resolvePreloadPath(): string {
@@ -934,7 +936,7 @@ app.whenReady().then(async () => {
     app.dock.setIcon(appIcon)
   }
 
-  store = new JsonSettingsStore(app.getPath('userData'))
+  store = new JsonSettingsStore({ legacyUserDataPath: app.getPath('userData') })
   traceStartup('settings load:start')
   emitStartupPhase('settings')
   let initial = await store.load()
@@ -975,6 +977,9 @@ app.whenReady().then(async () => {
   nativeTheme.themeSource = initial.theme
 
   logDir = resolveLogDirectory()
+  await migrateLegacyDirContents(join(app.getPath('userData'), 'logs'), logDir, {
+    only: (name) => name.startsWith('deepseek-gui-') && name.endsWith('.log')
+  })
   configureLogger({
     dir: logDir,
     enabled: initial.log.enabled,

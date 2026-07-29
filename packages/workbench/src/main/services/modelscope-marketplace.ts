@@ -9,6 +9,8 @@ import type {
   MarketplaceKind,
   SkillMarkdownResult
 } from '../../shared/ds-gui-api'
+import { resolveWorkbenchMarketplaceCacheDir } from '../../shared/workbench-home'
+import { migrateLegacyDirContents } from '../migrate-legacy-dir'
 
 // Public ModelScope marketplaces. MUST use the `.ai` host — `.cn` sits behind an
 // Aliyun WAF that answers the MCP endpoint with a JS challenge page instead of JSON.
@@ -42,13 +44,25 @@ const USER_AGENT =
 type CacheRecord = { fetchedAt: number; items: MarketplaceItem[]; categories: MarketplaceCategory[] }
 
 const memoryCache = new Map<MarketplaceKind, CacheRecord>()
+let cacheReady: Promise<void> | null = null
 
 function cacheRoot(): string {
-  return join(app.getPath('userData'), 'marketplace-cache')
+  return resolveWorkbenchMarketplaceCacheDir()
 }
 
 function cachePath(kind: MarketplaceKind): string {
   return join(cacheRoot(), `${kind}.json`)
+}
+
+async function ensureCacheDir(): Promise<void> {
+  if (!cacheReady) {
+    cacheReady = (async () => {
+      const dest = cacheRoot()
+      await migrateLegacyDirContents(join(app.getPath('userData'), 'marketplace-cache'), dest)
+      await mkdir(dest, { recursive: true })
+    })()
+  }
+  await cacheReady
 }
 
 function asObject(value: unknown): Record<string, unknown> | null {
@@ -229,6 +243,7 @@ async function fetchRemote(kind: MarketplaceKind): Promise<CacheRecord> {
 
 async function readDiskCache(kind: MarketplaceKind): Promise<CacheRecord | null> {
   try {
+    await ensureCacheDir()
     const parsed = JSON.parse(await readFile(cachePath(kind), 'utf8')) as CacheRecord
     if (!Array.isArray(parsed?.items) || typeof parsed.fetchedAt !== 'number') return null
     if (!Array.isArray(parsed.categories)) parsed.categories = []
@@ -240,7 +255,7 @@ async function readDiskCache(kind: MarketplaceKind): Promise<CacheRecord | null>
 
 async function writeDiskCache(kind: MarketplaceKind, record: CacheRecord): Promise<void> {
   try {
-    await mkdir(cacheRoot(), { recursive: true })
+    await ensureCacheDir()
     await writeFile(cachePath(kind), JSON.stringify(record), 'utf8')
   } catch {
     /* cache is best-effort */

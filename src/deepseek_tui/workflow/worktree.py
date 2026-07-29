@@ -91,7 +91,7 @@ def ensure_run_worktree(
 ) -> WorktreeInfo:
     """Create or reuse a managed worktree for ``run_id``.
 
-    Path: ``.deepseek/workflow-runs/<run_id>/tree``
+    Path: ``~/.deepseek/workflow/<run_id>/tree``
     Branch: ``deepseek-wf/<run_id>``
 
     Fail-closed when ``workspace`` is not inside a git repository.

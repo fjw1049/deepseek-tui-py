@@ -45,8 +45,9 @@ def test_pr03_exec_shell_command_and_cwd() -> None:
         "exec_shell",
         {"command": "npm test", "cwd": "/tmp/project"},
     )
+    # Command is the hero preview; impacts only add non-redundant cwd context.
+    assert "npm test" in req.primary_preview
     joined = " ".join(req.impacts)
-    assert "npm test" in joined
     assert "/tmp/project" in joined or "cwd" in req.primary_preview.lower()
 
 

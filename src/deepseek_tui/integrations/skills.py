@@ -63,7 +63,8 @@ SYSTEM_VERSION_MARKER = ".system-installed-version"
 def default_skills_dir() -> Path:
     """``~/.deepseek/skills`` — user-level skill registry.
 
-    Stage 3.3 will add project-level overlay (``<ws>/.deepseek/skills``).
+    Project overlays (``<ws>/.deepseek/skills`` and ecosystem dirs) are
+    discovered separately by :func:`skills_directories`.
     """
     from deepseek_tui.config.paths import user_skills_dir
 
@@ -538,8 +539,8 @@ Templates: `{{task}}`, `{{item}}`, `{{previous}}`, `{{round}}`, `{{outputs.*}}`.
 
 ## Runs
 
-Checkpoints live in `.deepseek/workflow-runs/<run_id>/run.json`. Resume with `workflow({ "run_id": "..." })`. Call `workflow_list` to enumerate available workflows and recent runs.
-With `policy.worktree: "on"`, edits land under `.deepseek/workflow-runs/<run_id>/tree` on branch `deepseek-wf/<run_id>`; resume reuses that tree.
+Checkpoints live in `~/.deepseek/workflow/<run_id>/run.json`. Resume with `workflow({ "run_id": "..." })`. Call `workflow_list` to enumerate available workflows and recent runs.
+With `policy.worktree: "on"`, edits land under `~/.deepseek/workflow/<run_id>/tree` on branch `deepseek-wf/<run_id>`; resume reuses that tree.
 Fanout also checkpoints each finished item as `{step}:{item}` so mid-fanout resume skips completed branches.
 Dynamic mutations are stored in `runtime_graph` / `dynamic_states` so mid-controller resumes keep generated nodes.
 """

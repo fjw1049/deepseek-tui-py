@@ -348,7 +348,8 @@ class DeepSeekTUI(App[None]):
         """Restore session messages from disk if a resume/fork id was given.
 
         Returns a status-bar message (or ``None`` if nothing to do).
-        Sessions are read from ``~/.deepseek/sessions/<id>.json``; the
+        TUI sessions are read from ``~/.deepseek/sessions/<id>.json`` (legacy;
+        Workbench SoT is ``threads/``); the
         special id ``current``/``latest`` maps to the auto-persisted
         ``current.json`` snapshot.
         """

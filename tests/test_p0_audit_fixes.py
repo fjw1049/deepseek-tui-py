@@ -398,7 +398,7 @@ def test_subagent_runtime_copies_active_task_id(tmp_path) -> None:
     assert rt.active_task_id == "task_xyz"
 
 
-def test_apply_compact_result_merges_summary_into_system_prompt() -> None:
+def test_apply_compact_result_replaces_messages_only() -> None:
     from deepseek_tui.engine.turn import _apply_compact_result
     from deepseek_tui.protocol.messages import MessageRequest
 
@@ -413,9 +413,9 @@ def test_apply_compact_result_merges_summary_into_system_prompt() -> None:
     )
     assert len(req.messages) == 1
     assert req.messages[0].content[0].text == "kept"  # type: ignore[union-attr]
-    assert req.system_prompt is not None
-    assert "base" in req.system_prompt
-    assert "archived_context" in req.system_prompt
+    # Bridge text is handled by the compaction pipeline separately; this helper
+    # only swaps the message list and leaves system_prompt untouched.
+    assert req.system_prompt == "base"
 
 
 def test_align_insert_index_skips_tool_orphan() -> None:

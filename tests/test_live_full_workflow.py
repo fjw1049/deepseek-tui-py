@@ -1,13 +1,14 @@
-"""Live end-to-end workflow: one natural query drives task + subagent + RLM tools.
+"""Live end-to-end workflow: one natural query drives task + subagent + grep.
 
 The parent model must *actively* call ``task_create``, ``agent`` (spawn action)
-+ ``task_output``, and ``rlm`` — no direct tool injection in the test body.
++ ``task_output``, and ``grep_files`` — no direct tool injection in the test body.
 
-Uses ``.deepseek/config.toml`` (real DeepSeek API). Run:
+Forces ``volcengine-ark`` / ``glm-5.2`` from user config (top-level provider may
+still default to deepseek). Run:
 
     .venv/bin/python -m pytest tests/test_live_full_workflow.py -m live -v -s
 
-Budget: single test ~120–180s (RLM child calls dominate).
+Budget: single test ~120–180s.
 """
 
 from __future__ import annotations
@@ -33,8 +34,7 @@ from deepseek_tui.engine.events import (
 )
 from deepseek_tui.engine.handle import AutoApprovalHandler, EngineHandle
 from deepseek_tui.tools.approval import ExecPolicyEngine
-from deepseek_tui.integrations.hooks import build_hook_dispatcher, build_lifecycle_hook_executor
-from deepseek_tui.integrations.skills import discover_in_workspace
+from deepseek_tui.integrations.hooks import build_hook_dispatcher
 from deepseek_tui.tools.runtime import ToolRuntime, create_tool_runtime
 from deepseek_tui.tools.task import TaskStatus
 
@@ -54,9 +54,9 @@ _WORKFLOW_QUERY = f"""请严格按顺序完成以下三步，每一步都必须�
 第2步：调用 agent 工具，action="spawn"，agent_type=explore，prompt="Read WORKSPACE_MARKER.txt and reply with its exact content only"。
 spawn 返回 agent_id 后，再调用 task_output（agent_id=<spawn 返回的 id>，block=true）等待子 agent 完成。
 
-第3步：调用 rlm，file_path="corpus.txt"，task="Use Python to count lines containing cherry, llm_query for the number only, then FINAL."
+第3步：调用 grep_files，pattern="cherry"，path="corpus.txt"，output_mode="count_matches"。
 
-最后回复 WORKFLOW_DONE 并一行总结（需包含 cherry 的行数）。"""
+最后回复 WORKFLOW_DONE 并一行总结（需包含 cherry 的匹配行数 3）。"""
 
 
 @dataclass
@@ -74,12 +74,20 @@ def _has_api_key(cfg: Config) -> bool:
 
 def _live_config(project_config: Config) -> Config:
     cfg = project_config.model_copy(deep=True)
+    # Prefer the user's Volcano GLM setup even when top-level provider is unset.
+    if "volcengine-ark" in cfg.providers:
+        cfg.provider = "volcengine-ark"
+        cfg.model = None
+        ark = cfg.providers["volcengine-ark"]
+        if ark.model:
+            cfg.default_text_model = ark.model
     cfg.hooks = HooksConfig(enabled=False, hooks=[])
     cfg.features = FeatureConfig(
         tasks=True,
         subagents=True,
         mcp=False,
         automations=False,
+        plugins=False,
     )
     return cfg
 
@@ -88,7 +96,6 @@ def _prepare_workspace(workspace: Path) -> None:
     workspace.mkdir(parents=True, exist_ok=True)
     (workspace / "WORKSPACE_MARKER.txt").write_text(f"{_MARKER}\n", encoding="utf-8")
     (workspace / "corpus.txt").write_text(_CORPUS_LINES, encoding="utf-8")
-    (workspace / ".deepseek").mkdir(exist_ok=True)
 
 
 async def _create_isolated_engine(
@@ -104,23 +111,22 @@ async def _create_isolated_engine(
         config=cfg,
         working_directory=workspace,
         task_data_dir=workspace / "task_data",
-        subagent_state_path=workspace / ".deepseek" / "subagents.v1.json",
+        subagent_state_path=workspace / "subagents.v1.json",
         start_mcp=False,
     )
-    engine = Engine(
-        handle=handle,
-        client=client,
+    # Engine.create wires attach_loop_runtime (required for agent spawn).
+    return await Engine.create(
+        handle,
+        client,
+        config=cfg,
+        working_directory=workspace,
         default_model=model,
         exec_policy=ExecPolicyEngine(approval_policy="auto"),
         approval_handler=AutoApprovalHandler(),
         max_tool_round_trips=25,
         tool_runtime=runtime,
-        skill_registry=discover_in_workspace(workspace=workspace),
-        hook_executor=build_lifecycle_hook_executor(cfg, workspace),
+        start_mcp=False,
     )
-    if runtime.subagent_manager is not None:
-        runtime.subagent_manager.attach_parent_cancel(handle.cancel_event)
-    return engine
 
 
 async def _run_workflow_turn(
@@ -201,17 +207,18 @@ def _assert_workflow_trace(trace: WorkflowTrace, runtime: ToolRuntime) -> None:
     names = trace.tool_calls
     assert "task_create" in names, f"model never called task_create; got {names}"
     assert "agent" in names, f"model never called agent; got {names}"
-    assert "rlm" in names, f"model never called rlm; got {names}"
+    assert "grep_files" in names, f"model never called grep_files; got {names}"
 
     successes = {name for name, ok, _ in trace.tool_results if ok}
     assert "task_create" in successes
     assert "agent" in successes
-    assert "rlm" in successes
+    assert "grep_files" in successes
 
     final_text = "".join(trace.assistant_text)
     assert "WORKFLOW_DONE" in final_text, final_text[-800:]
     assert _MARKER in final_text or any(_MARKER in body for _, _, body in trace.tool_results)
-    assert "3" in final_text or any("3" in body for _, _, body in trace.tool_results if "rlm" in body.lower() or "cherry" in body.lower())
+    grep_bodies = [body for name, _, body in trace.tool_results if name == "grep_files"]
+    assert any("3" in body for body in grep_bodies) or "3" in final_text
 
     assert trace.turn_ended == "complete", trace.turn_ended
 
@@ -222,25 +229,27 @@ def _assert_workflow_trace(trace: WorkflowTrace, runtime: ToolRuntime) -> None:
 @pytest.fixture(scope="module")
 def project_config() -> Config:
     cfg = ConfigLoader().load(workspace=PROJECT_ROOT)
-    if not _has_api_key(cfg):
-        pytest.skip("no API key in .deepseek/config.toml")
+    if not _has_api_key(_live_config(cfg)):
+        pytest.skip("no API key for volcengine-ark / configured provider")
     return cfg
 
 
 @pytest.fixture(scope="module")
 def live_model(project_config: Config) -> str:
-    return project_config.model or project_config.default_text_model
+    cfg = _live_config(project_config)
+    pc = cfg.effective_provider_config()
+    return pc.model or cfg.model or cfg.default_text_model
 
 
 @pytest.mark.live
 class TestLiveFullWorkflow:
-    async def test_natural_query_invokes_task_subagent_rlm(
+    async def test_natural_query_invokes_task_subagent_grep(
         self,
         project_config: Config,
         live_model: str,
         tmp_path: Path,
     ) -> None:
-        """One user query orchestrates durable task, sub-agent, and RLM tools."""
+        """One user query orchestrates durable task, sub-agent, and grep_files."""
         cfg = _live_config(project_config)
         workspace = tmp_path / "workflow_ws"
         _prepare_workspace(workspace)

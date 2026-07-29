@@ -14,9 +14,11 @@ from deepseek_tui.mcp.config import McpServerConfig
 from deepseek_tui.mcp.manager import McpManager
 from deepseek_tui.mcp.store import (
     McpWriteStatus,
+    _servers_table,
     add_server_config,
     format_manager_snapshot,
     init_config,
+    load_raw_document,
     manager_snapshot_from_config,
     remove_server_config,
     set_server_enabled,
@@ -30,19 +32,19 @@ class TestMcpStoreCrud:
         assert init_config(path) == McpWriteStatus.CREATED
         assert init_config(path) == McpWriteStatus.SKIPPED_EXISTS
         add_server_config(path, "local", command="node", args=["server.js"])
-        data = json.loads(path.read_text(encoding="utf-8"))
-        assert data["servers"]["local"]["command"] == "node"
-        assert data["servers"]["local"]["args"] == ["server.js"]
+        servers = _servers_table(load_raw_document(path))
+        assert servers["local"]["command"] == "node"
+        assert servers["local"]["args"] == ["server.js"]
 
     def test_enable_disable_remove(self, tmp_path: Path) -> None:
         path = tmp_path / "mcp.json"
         add_server_config(path, "svc", command="echo", args=["hi"])
         set_server_enabled(path, "svc", False)
-        data = json.loads(path.read_text(encoding="utf-8"))
-        assert data["servers"]["svc"]["enabled"] is False
+        servers = _servers_table(load_raw_document(path))
+        assert servers["svc"]["enabled"] is False
         set_server_enabled(path, "svc", True)
         remove_server_config(path, "svc")
-        assert "svc" not in json.loads(path.read_text(encoding="utf-8"))["servers"]
+        assert "svc" not in _servers_table(load_raw_document(path))
 
     def test_snapshot_format(self, tmp_path: Path) -> None:
         path = tmp_path / "mcp.json"
@@ -60,8 +62,8 @@ class TestMcpLazyReload:
         mgr = McpManager([McpServerConfig(name="a", command="echo", args=["1"])], config_path=path)
         assert await mgr.reload_if_config_changed() is False
 
-        doc = json.loads(path.read_text(encoding="utf-8"))
-        doc["servers"]["b"] = {"command": "echo", "args": ["2"], "enabled": True}
+        doc = load_raw_document(path)
+        _servers_table(doc)["b"] = {"command": "echo", "args": ["2"], "enabled": True}
         path.write_text(json.dumps(doc), encoding="utf-8")
         path.touch()
         time.sleep(0.01)

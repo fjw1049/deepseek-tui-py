@@ -304,7 +304,7 @@ def test_plugin_cli_gc_and_rollback(tmp_path: Path, monkeypatch) -> None:
     # Re-publish and exercise rollback via host (CLI needs a plugins dir entry).
     digest2, store = publish_source_tree(orphan)
     plugins = tmp_path / "home" / "plugins"
-    plugins.mkdir(parents=True)
+    plugins.mkdir(parents=True, exist_ok=True)
     from deepseek_tui.plugins.store import link_or_copy_from_store
 
     link_or_copy_from_store(store, plugins / "orphan-pkg")

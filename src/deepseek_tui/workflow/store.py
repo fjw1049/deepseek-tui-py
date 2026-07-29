@@ -14,7 +14,7 @@ from typing import Any, Iterator, Literal
 
 _LOG = logging.getLogger(__name__)
 
-from deepseek_tui.config.paths import project_deepseek_dir
+from deepseek_tui.config.paths import user_workflow_runs_dir
 from deepseek_tui.utils import write_json_atomic
 from deepseek_tui.workflow.models import (
     StepOutput,
@@ -58,8 +58,13 @@ def new_run_id() -> str:
 
 
 def workflow_runs_dir(workspace: Path | None = None) -> Path:
-    """``<cwd>/.deepseek/workflow-runs/``."""
-    return project_deepseek_dir(workspace) / "workflow-runs"
+    """``~/.deepseek/workflow/`` — keyed by ``run_id``.
+
+    ``workspace`` is retained for call-site compatibility and is not used for
+    path resolution (workspace belongs in run records / git root for worktrees).
+    """
+    _ = workspace  # call-site compat; storage is user-level
+    return user_workflow_runs_dir()
 
 
 @dataclass
@@ -484,7 +489,7 @@ def list_runs(
         return []
     records: list[WorkflowRunRecord] = []
     for child in sorted(root.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True):
-        if not child.is_dir():
+        if not child.is_dir() or child.name.startswith("."):
             continue
         try:
             records.append(load_run(child.name, workspace=workspace))

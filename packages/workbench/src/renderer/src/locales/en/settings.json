@@ -561,7 +561,7 @@
   "dataMigrationSection": "Data Migration",
   "dataMigrationFooter": "Exports are ZIP archives. On import, choose replace or merge; merge skips existing conversation ids.",
   "dataExport": "Export",
-  "dataExportDesc": "Export conversations and/or settings to a local ZIP file.",
+  "dataExportDesc": "Export conversations and/or settings to a local ZIP (settings include config.toml, mcp.json, and GUI settings.json).",
   "dataExportScopeConversations": "Conversations only",
   "dataExportScopeSettings": "Settings only",
   "dataExportScopeAll": "All data",
@@ -589,9 +589,9 @@
   "dataBackupFailed": "Backup failed (set a backup directory first)",
   "dataLocalResetSection": "Clear Local Data",
   "dataDeleteAndExit": "Delete and Quit",
-  "dataDeleteAndExitDesc": "Permanently delete this app’s local settings, logs, and GUI caches, then quit. Does not delete conversations or Skills in the shared ~/.deepseek directory.",
+  "dataDeleteAndExitDesc": "Permanently delete GUI settings, Claw sandboxes, error logs, and pet/marketplace caches under ~/.deepseek/workbench, plus Electron caches, then quit. Conversations, Skills, usage stats, config.toml, and mcp.json are kept.",
   "dataDeleteAndExitAction": "Delete and Quit",
-  "dataDeleteAndExitConfirm": "Delete local GUI data and quit? Shared ~/.deepseek will not be deleted.",
-  "dataDeleteAndExitConfirm2": "Confirm again: app settings and local caches will be cleared and the app will quit immediately. This cannot be undone.",
+  "dataDeleteAndExitConfirm": "Delete local GUI settings and caches and quit? Conversations and Skills will not be deleted.",
+  "dataDeleteAndExitConfirm2": "Confirm again: GUI settings/Claw/logs/caches under ~/.deepseek/workbench and Electron caches will be cleared and the app will quit immediately. This cannot be undone.",
   "dataDeleteAndExitFailed": "Failed to delete local data"
 }

@@ -1,4 +1,15 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import {
+  access,
+  copyFile,
+  cp,
+  mkdir,
+  readFile,
+  readdir,
+  rename,
+  rm,
+  unlink,
+  writeFile
+} from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import {
@@ -32,11 +43,23 @@ import {
 } from '../shared/appearance'
 import { DEFAULT_DEV_PREVIEW_URL } from '../shared/dev-preview-url'
 import { DEFAULT_WORKSPACE_SEGMENTS } from '../shared/workspace-defaults'
+import {
+  resolveClawChannelsRoot,
+  resolveLegacyClawChannelsRoot,
+  resolveLegacyGuiSettingsPath,
+  resolveWorkbenchSettingsPath
+} from '../shared/workbench-home'
 
 export type { AppSettingsV1 }
 
 const DEFAULT_WORKSPACE_ROOT = join(homedir(), ...DEFAULT_WORKSPACE_SEGMENTS)
-const DEFAULT_CLAW_CHANNELS_ROOT = join(homedir(), '.deepseekgui', 'claw')
+
+export type JsonSettingsStoreOptions = {
+  /** Electron userData — used to migrate ``deepseek-gui-settings.json``. */
+  legacyUserDataPath?: string
+  /** Override ``os.homedir()`` for path resolution (tests). */
+  home?: string
+}
 
 function expandHomePath(raw: string | null | undefined): string {
   const value = typeof raw === 'string' ? raw.trim() : ''
@@ -61,14 +84,36 @@ function sanitizePathSegment(raw: string | null | undefined, fallback: string): 
   return sanitized || fallback
 }
 
-function defaultClawChannelWorkspaceRoot(channel: ClawImChannelV1): string {
+function defaultClawChannelWorkspaceRoot(channel: ClawImChannelV1, home?: string): string {
   const domain = sanitizePathSegment(channel.platformCredential?.domain, 'feishu')
   const workspaceId = sanitizePathSegment(channel.platformCredential?.appId || channel.id, 'channel')
-  return join(DEFAULT_CLAW_CHANNELS_ROOT, channel.provider, domain, workspaceId)
+  return join(resolveClawChannelsRoot(home), channel.provider, domain, workspaceId)
 }
 
-function normalizeClawChannelWorkspaceRoot(channel: ClawImChannelV1): string {
-  return expandHomePath(channel.workspaceRoot) || defaultClawChannelWorkspaceRoot(channel)
+/** Rewrite persisted ``~/.deepseekgui/claw/...`` roots to workbench/claw. */
+function rewriteLegacyClawWorkspacePath(raw: string | null | undefined, home?: string): string {
+  const expanded = expandHomePath(raw)
+  if (!expanded) return ''
+  const legacyRoot = resolveLegacyClawChannelsRoot(home)
+  const nextRoot = resolveClawChannelsRoot(home)
+  if (expanded === legacyRoot || expanded.startsWith(`${legacyRoot}/`) || expanded.startsWith(`${legacyRoot}\\`)) {
+    return `${nextRoot}${expanded.slice(legacyRoot.length)}`
+  }
+  const marker = '/.deepseekgui/claw'
+  const idx = expanded.indexOf(marker)
+  if (idx >= 0) {
+    const prefix = expanded.slice(0, idx)
+    const rest = expanded.slice(idx + marker.length)
+    return `${join(prefix, '.deepseek', 'workbench', 'claw')}${rest}`
+  }
+  return expanded
+}
+
+function normalizeClawChannelWorkspaceRoot(channel: ClawImChannelV1, home?: string): string {
+  return (
+    rewriteLegacyClawWorkspacePath(channel.workspaceRoot, home) ||
+    defaultClawChannelWorkspaceRoot(channel, home)
+  )
 }
 
 function sanitizeConversationWorkspaceSegment(conversation: ClawImConversationV1): string {
@@ -80,19 +125,66 @@ function sanitizeConversationWorkspaceSegment(conversation: ClawImConversationV1
 
 function defaultClawConversationWorkspaceRoot(
   channel: ClawImChannelV1,
-  conversation: ClawImConversationV1
+  conversation: ClawImConversationV1,
+  home?: string
 ): string {
-  return join(normalizeClawChannelWorkspaceRoot(channel), 'conversations', sanitizeConversationWorkspaceSegment(conversation))
+  return join(
+    normalizeClawChannelWorkspaceRoot(channel, home),
+    'conversations',
+    sanitizeConversationWorkspaceSegment(conversation)
+  )
 }
 
 function normalizeClawConversationWorkspaceRoot(
   channel: ClawImChannelV1,
-  conversation: ClawImConversationV1
+  conversation: ClawImConversationV1,
+  home?: string
 ): string {
-  return expandHomePath(conversation.workspaceRoot) || defaultClawConversationWorkspaceRoot(channel, conversation)
+  return (
+    rewriteLegacyClawWorkspacePath(conversation.workspaceRoot, home) ||
+    defaultClawConversationWorkspaceRoot(channel, conversation, home)
+  )
 }
 
-function normalizeStoredSettings(settings: AppSettingsV1): AppSettingsV1 {
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await access(path)
+    return true
+  } catch {
+    return false
+  }
+}
+
+async function isEmptyDir(path: string): Promise<boolean> {
+  try {
+    const entries = await readdir(path)
+    return entries.length === 0
+  } catch {
+    return false
+  }
+}
+
+/** Move legacy ``~/.deepseekgui/claw`` → ``~/.deepseek/workbench/claw`` once. */
+async function migrateLegacyClawChannelsRoot(home = homedir()): Promise<boolean> {
+  const dest = resolveClawChannelsRoot(home)
+  const src = resolveLegacyClawChannelsRoot(home)
+  if (!(await pathExists(src))) return false
+  if (await pathExists(dest)) {
+    // layout.py may have pre-created an empty claw/; treat that as migratable.
+    if (!(await isEmptyDir(dest))) return false
+    await rm(dest, { recursive: true, force: true })
+  }
+  await mkdir(dirname(dest), { recursive: true })
+  try {
+    await rename(src, dest)
+  } catch {
+    await cp(src, dest, { recursive: true })
+    await rm(src, { recursive: true, force: true })
+  }
+  return true
+}
+
+function normalizeStoredSettings(settings: AppSettingsV1, home?: string): AppSettingsV1 {
   const normalized = normalizeAppSettings(settings)
   return {
     ...normalized,
@@ -101,10 +193,10 @@ function normalizeStoredSettings(settings: AppSettingsV1): AppSettingsV1 {
       ...normalized.claw,
       channels: normalized.claw.channels.map((channel) => ({
         ...channel,
-        workspaceRoot: normalizeClawChannelWorkspaceRoot(channel),
+        workspaceRoot: normalizeClawChannelWorkspaceRoot(channel, home),
         conversations: channel.conversations.map((conversation) => ({
           ...conversation,
-          workspaceRoot: normalizeClawConversationWorkspaceRoot(channel, conversation)
+          workspaceRoot: normalizeClawConversationWorkspaceRoot(channel, conversation, home)
         }))
       }))
     }
@@ -116,13 +208,21 @@ async function ensureWorkspaceRootExists(workspaceRoot: string): Promise<void> {
   await mkdir(workspaceRoot, { recursive: true })
 }
 
-async function ensureClawChannelWorkspaceRootsExist(settings: AppSettingsV1): Promise<void> {
+async function ensureClawChannelWorkspaceRootsExist(
+  settings: AppSettingsV1,
+  home?: string
+): Promise<void> {
+  await migrateLegacyClawChannelsRoot(home)
   for (const channel of settings.claw.channels) {
-    const workspaceRoot = normalizeClawChannelWorkspaceRoot(channel)
+    const workspaceRoot = normalizeClawChannelWorkspaceRoot(channel, home)
     if (!workspaceRoot) continue
     await mkdir(workspaceRoot, { recursive: true })
     for (const conversation of channel.conversations) {
-      const conversationWorkspaceRoot = normalizeClawConversationWorkspaceRoot(channel, conversation)
+      const conversationWorkspaceRoot = normalizeClawConversationWorkspaceRoot(
+        channel,
+        conversation,
+        home
+      )
       if (!conversationWorkspaceRoot) continue
       await mkdir(conversationWorkspaceRoot, { recursive: true })
     }
@@ -223,14 +323,39 @@ async function writeInvalidSettingsBackup(path: string, raw: string): Promise<st
 
 export class JsonSettingsStore {
   private path: string
+  private legacySettingsPath: string | null
+  private home: string | undefined
   private cache: AppSettingsV1 | null = null
 
-  constructor(userDataPath: string) {
-    this.path = join(userDataPath, 'deepseek-gui-settings.json')
+  constructor(options: JsonSettingsStoreOptions = {}) {
+    this.home = options.home
+    this.path = resolveWorkbenchSettingsPath(options.home)
+    this.legacySettingsPath = options.legacyUserDataPath
+      ? resolveLegacyGuiSettingsPath(options.legacyUserDataPath)
+      : null
+  }
+
+  private async migrateLegacySettingsIfNeeded(): Promise<void> {
+    if (await pathExists(this.path)) return
+    const legacy = this.legacySettingsPath
+    if (!legacy || !(await pathExists(legacy))) return
+    await mkdir(dirname(this.path), { recursive: true })
+    try {
+      await rename(legacy, this.path)
+    } catch {
+      await copyFile(legacy, this.path)
+      try {
+        await unlink(legacy)
+      } catch {
+        // Best-effort; new path is authoritative.
+      }
+    }
   }
 
   async load(): Promise<AppSettingsV1> {
     if (this.cache) return this.cache
+
+    await this.migrateLegacySettingsIfNeeded()
 
     let raw = ''
     try {
@@ -238,6 +363,7 @@ export class JsonSettingsStore {
     } catch (error) {
       if (isErrnoException(error) && error.code === 'ENOENT') {
         this.cache = await loadDefaultSettings()
+        await this.save(this.cache)
         return this.cache
       }
       const message = error instanceof Error ? error.message : String(error)
@@ -252,6 +378,7 @@ export class JsonSettingsStore {
         const backupPath = await writeInvalidSettingsBackup(this.path, raw)
         const defaults = await loadDefaultSettings()
         await this.save(defaults)
+        this.cache = defaults
         if (backupPath) {
           console.warn(
             `[deepseek-gui] Invalid settings JSON was replaced with defaults. Backup: ${backupPath}`
@@ -267,17 +394,17 @@ export class JsonSettingsStore {
       throw new Error(`Failed to parse settings file ${this.path}: ${message}`, { cause: error })
     }
 
-    const normalized = normalizeStoredSettings(buildMergedSettings(parsed))
+    const normalized = normalizeStoredSettings(buildMergedSettings(parsed), this.home)
     await ensureWorkspaceRootExists(normalized.workspaceRoot)
-    await ensureClawChannelWorkspaceRootsExist(normalized)
+    await ensureClawChannelWorkspaceRootsExist(normalized, this.home)
     this.cache = normalized
     return this.cache
   }
 
   async save(data: AppSettingsV1): Promise<void> {
-    const normalized = normalizeStoredSettings(data)
+    const normalized = normalizeStoredSettings(data, this.home)
     await ensureWorkspaceRootExists(normalized.workspaceRoot)
-    await ensureClawChannelWorkspaceRootsExist(normalized)
+    await ensureClawChannelWorkspaceRootsExist(normalized, this.home)
     this.cache = normalized
     await mkdir(dirname(this.path), { recursive: true })
     await writeFile(this.path, JSON.stringify(normalized, null, 2), 'utf8')
@@ -285,28 +412,31 @@ export class JsonSettingsStore {
 
   async patch(partial: AppSettingsPatch): Promise<AppSettingsV1> {
     const cur = await this.load()
-    const next = normalizeStoredSettings({
-      ...cur,
-      ...partial,
-      deepseek: { ...cur.deepseek, ...(partial.deepseek ?? {}) },
-      llmProviders: mergeLlmProviders(cur.llmProviders, partial.llmProviders),
-      customEndpoints: partial.customEndpoints ?? cur.customEndpoints,
-      asrProviders: partial.asrProviders
-        ? normalizeAsrProviders(partial.asrProviders)
-        : cur.asrProviders,
-      log: { ...cur.log, ...(partial.log ?? {}) },
-      notifications: { ...cur.notifications, ...(partial.notifications ?? {}) },
-      skills: normalizeWorkbenchSkills(
-        partial.skills ? { ...cur.skills, ...partial.skills } : cur.skills,
-        partial.claw?.skills?.extraDirs
-      ),
-      memory: mergeMemorySettings(cur.memory, partial.memory),
-      claw: mergeClawSettings(cur.claw, partial.claw),
-      guiUpdate: { ...cur.guiUpdate, ...(partial.guiUpdate ?? {}) },
-      appearance: mergeAppearanceSettings(cur.appearance, partial.appearance),
-      shortcuts: mergeShortcutsSettings(cur.shortcuts, partial.shortcuts),
-      agentProvider: 'deepseek-runtime'
-    })
+    const next = normalizeStoredSettings(
+      {
+        ...cur,
+        ...partial,
+        deepseek: { ...cur.deepseek, ...(partial.deepseek ?? {}) },
+        llmProviders: mergeLlmProviders(cur.llmProviders, partial.llmProviders),
+        customEndpoints: partial.customEndpoints ?? cur.customEndpoints,
+        asrProviders: partial.asrProviders
+          ? normalizeAsrProviders(partial.asrProviders)
+          : cur.asrProviders,
+        log: { ...cur.log, ...(partial.log ?? {}) },
+        notifications: { ...cur.notifications, ...(partial.notifications ?? {}) },
+        skills: normalizeWorkbenchSkills(
+          partial.skills ? { ...cur.skills, ...partial.skills } : cur.skills,
+          partial.claw?.skills?.extraDirs
+        ),
+        memory: mergeMemorySettings(cur.memory, partial.memory),
+        claw: mergeClawSettings(cur.claw, partial.claw),
+        guiUpdate: { ...cur.guiUpdate, ...(partial.guiUpdate ?? {}) },
+        appearance: mergeAppearanceSettings(cur.appearance, partial.appearance),
+        shortcuts: mergeShortcutsSettings(cur.shortcuts, partial.shortcuts),
+        agentProvider: 'deepseek-runtime'
+      },
+      this.home
+    )
     await this.save(next)
     return next
   }

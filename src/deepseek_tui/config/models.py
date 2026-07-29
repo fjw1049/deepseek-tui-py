@@ -5,6 +5,13 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
+from deepseek_tui.config.paths import (
+    user_logs_dir,
+    user_mcp_config_path,
+    user_notes_path,
+    user_skills_dir,
+)
+
 
 class ConfigError(Exception):
     pass
@@ -323,17 +330,15 @@ class ServerConfig(BaseModel):
 class LoggingConfig(BaseModel):
     """Per-hour rotating file logging — consumed by :func:`logging_setup.setup_logging`.
 
-    Defaults match the design discussion (2026-05-10): INFO level, text
-    format, ``./.deepseek/logs/`` rotation directory (project-local since
-    2026-05-11), 24-hour retention, no console fallback. Tests should
-    leave ``enabled=False`` so they don't spray log files into ``tmp_path``.
+    Defaults to ``~/.deepseek/logs/`` (user-level). Tests should leave
+    ``enabled=False`` so they don't spray log files into the real home dir.
     """
 
     enabled: bool = True
     level: str = "INFO"
-    dir: Path = Path(".deepseek/logs")
+    dir: Path = Field(default_factory=user_logs_dir)
     console: bool = False
-    keep_hours: int = 24
+    keep_hours: int = 168
     # Optional per-logger level overrides — useful when the user wants
     # ``deepseek_tui.engine.turn = "DEBUG"`` while leaving the rest
     # at INFO. Keys are full logger names; values are level strings.
@@ -406,9 +411,11 @@ class Config(BaseModel):
     anysearch_api_key: str | None = None
     managed_config_path: Path | None = None
     requirements_path: Path | None = None
-    skills_dir: Path = Path(".deepseek/skills")
-    mcp_config_path: Path = Path(".deepseek/mcp.json")
-    notes_path: Path = Path(".deepseek/notes.txt")
+    # User-level defaults (cross-project). Project overlays remain optional
+    # via ``<workspace>/.deepseek/skills`` discovery, not these Config paths.
+    skills_dir: Path = Field(default_factory=user_skills_dir)
+    mcp_config_path: Path = Field(default_factory=user_mcp_config_path)
+    notes_path: Path = Field(default_factory=user_notes_path)
     max_subagents: int = 10
     instructions: list[Path] = Field(default_factory=list)
     providers: dict[str, ProviderConfig] = Field(default_factory=dict)

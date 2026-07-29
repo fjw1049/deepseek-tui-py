@@ -175,8 +175,15 @@ _DEFAULT_FORMAT = (
 )
 _DEFAULT_DATEFMT = "%Y-%m-%dT%H:%M:%S%z"
 
-DEFAULT_LOG_DIR = Path(".deepseek/logs")
-DEFAULT_KEEP_HOURS = 24
+def _default_log_dir() -> Path:
+    from deepseek_tui.config.paths import user_logs_dir
+
+    return user_logs_dir()
+
+
+# Back-compat name: resolve at use-time via ``_default_log_dir()`` when possible.
+DEFAULT_LOG_DIR = Path.home() / ".deepseek" / "logs"
+DEFAULT_KEEP_HOURS = 168  # 7 days
 
 
 def _resolve_level(value: str | int) -> int:
@@ -332,11 +339,12 @@ class _LoggingShape:
 
 
 def _shape_from_config(config: Any | None) -> _LoggingShape:
+    default_dir = _default_log_dir()
     if config is None:
         return _LoggingShape(
             enabled=True,
             level=logging.INFO,
-            dir_=DEFAULT_LOG_DIR,
+            dir_=default_dir,
             console=False,
             keep_hours=DEFAULT_KEEP_HOURS,
             per_logger={},
@@ -346,12 +354,12 @@ def _shape_from_config(config: Any | None) -> _LoggingShape:
         return _LoggingShape(
             enabled=True,
             level=logging.INFO,
-            dir_=DEFAULT_LOG_DIR,
+            dir_=default_dir,
             console=False,
             keep_hours=DEFAULT_KEEP_HOURS,
             per_logger={},
         )
-    raw_dir = getattr(cfg, "dir", DEFAULT_LOG_DIR)
+    raw_dir = getattr(cfg, "dir", None) or default_dir
     return _LoggingShape(
         enabled=bool(getattr(cfg, "enabled", True)),
         level=_resolve_level(getattr(cfg, "level", "INFO")),

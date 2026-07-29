@@ -11,6 +11,8 @@ import type {
 } from '../../shared/pet-manifest'
 import { DEFAULT_PET_SLUG, PETDEX_MANIFEST_URL } from '../../shared/pet-manifest'
 import { isAllowedManifestUrl, isAllowedSpritesheetUrl } from '../../shared/pet-url-allowlist'
+import { resolveWorkbenchPetCacheDir } from '../../shared/workbench-home'
+import { migrateLegacyDirContents } from '../migrate-legacy-dir'
 
 const MANIFEST_TTL_MS = 5 * 60 * 1000
 const FETCH_TIMEOUT_MS = 20_000
@@ -22,9 +24,10 @@ type ManifestCacheRecord = {
 }
 
 let memoryManifest: ManifestCacheRecord | null = null
+let cacheReady: Promise<void> | null = null
 
 function cacheRoot(): string {
-  return join(app.getPath('userData'), 'pet-cache')
+  return resolveWorkbenchPetCacheDir()
 }
 
 function manifestCachePath(): string {
@@ -41,7 +44,14 @@ function normalizePetSlug(value: string | undefined, fallback = DEFAULT_PET_SLUG
 }
 
 async function ensureCacheDir(): Promise<void> {
-  await mkdir(cacheRoot(), { recursive: true })
+  if (!cacheReady) {
+    cacheReady = (async () => {
+      const dest = cacheRoot()
+      await migrateLegacyDirContents(join(app.getPath('userData'), 'pet-cache'), dest)
+      await mkdir(dest, { recursive: true })
+    })()
+  }
+  await cacheReady
 }
 
 async function readManifestCacheFile(): Promise<ManifestCacheRecord | null> {

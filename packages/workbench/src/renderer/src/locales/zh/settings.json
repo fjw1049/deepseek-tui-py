@@ -561,7 +561,7 @@
   "dataMigrationSection": "数据迁移",
   "dataMigrationFooter": "导出为 ZIP。导入时可选择合并或替换；合并会跳过已存在的对话 ID。",
   "dataExport": "导出",
-  "dataExportDesc": "将对话与/或设置导出为本地 ZIP 文件。",
+  "dataExportDesc": "将对话与/或设置导出为本地 ZIP（设置含 config.toml、mcp.json、GUI settings.json）。",
   "dataExportScopeConversations": "仅对话",
   "dataExportScopeSettings": "仅设置",
   "dataExportScopeAll": "全部数据",
@@ -589,9 +589,9 @@
   "dataBackupFailed": "备份失败（请先设置备份目录）",
   "dataLocalResetSection": "清空本机数据",
   "dataDeleteAndExit": "删除并退出",
-  "dataDeleteAndExitDesc": "永久删除本应用的本地设置、日志与 GUI 缓存，然后退出。不会删除共享目录 ~/.deepseek 中的对话与 Skills。",
+  "dataDeleteAndExitDesc": "永久删除 ~/.deepseek/workbench 下的 GUI 设置、Claw 沙箱、错误日志与宠物/扩展缓存，并清空 Electron 缓存后退出。对话、Skills、用量统计、config.toml、mcp.json 等运行时数据会保留。",
   "dataDeleteAndExitAction": "删除并退出",
-  "dataDeleteAndExitConfirm": "确定删除本机 GUI 数据并退出吗？共享 ~/.deepseek 不会被删除。",
-  "dataDeleteAndExitConfirm2": "再次确认：将清除应用设置与本地缓存并立即退出，此操作不可撤销。",
+  "dataDeleteAndExitConfirm": "确定删除本机 GUI 设置与缓存并退出吗？对话与 Skills 不会被删除。",
+  "dataDeleteAndExitConfirm2": "再次确认：将清除 ~/.deepseek/workbench 下的 GUI 设置/Claw/日志/缓存与 Electron 缓存并立即退出，此操作不可撤销。",
   "dataDeleteAndExitFailed": "删除本机数据失败"
 }

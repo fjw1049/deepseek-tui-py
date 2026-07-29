@@ -25,8 +25,10 @@ from deepseek_tui.tools.task.models import (
 )
 
 
-def test_transcript_roundtrip(tmp_path: Path) -> None:
+def test_transcript_roundtrip(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DEEPSEEK_HOME", str(tmp_path / "ds_home"))
     path = subagent_transcript_path(tmp_path, "agent_abc")
+    assert path.is_relative_to(tmp_path / "ds_home" / "agents" / "runs")
     save_transcript(
         path,
         DurableTranscript(

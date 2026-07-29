@@ -4,7 +4,7 @@ Use the `workflow` tool when the user explicitly asks for "workflow", multi-agen
 
 - Prefer a named workflow with `name` + `task` when one fits. Bundled presets: `repo_review`, `diff_review`, `spec_check`, `adaptive`. Discovery roots (higher wins): `<cwd>/workflows/`, `<cwd>/.deepseek/workflows/`, `~/.deepseek/workflows/`, then built-in presets. Call `workflow_list` to enumerate available workflows and recent runs (and find a `run_id` to resume).
 - For open-ended orchestration without a fixed graph, use `{ "mode": "dynamic", "task": "..." }` or `name: "adaptive"` — a dynamic controller mutates the runtime DAG (spawn/fanout/reduce/synthesize/stop) under budgets.
-- Resume interrupted/failed runs with `run_id` (from `.deepseek/workflow-runs/`). Do not pass `run_id` together with `name`/`spec`/`mode`.
+- Resume interrupted/failed runs with `run_id` (from `~/.deepseek/workflow/`). Do not pass `run_id` together with `name`/`spec`/`mode`.
 - Do not pass both `name` and `spec`. For ad-hoc IR, pass a complete `spec` object (Workflow IR v1 phases or v2 `graph`).
 - Every agent step needs a unique `label` or `label_template`.
 - Use `fanout` for parallel items; do not spawn many separate `agent` spawn calls for the same work.
@@ -19,7 +19,7 @@ Use the `workflow` tool when the user explicitly asks for "workflow", multi-agen
 - Failed steps may be omitted from outputs; synthesis/reduce prompts must tolerate missing references (`source_policy: partial` default). Use `source_policy: success` when a join must not run after any source failure.
 - Sub-agents do not inherit implicit repository context — include paths, files, and goals in prompts.
 - Do not duplicate work with batch `agent` spawns outside the workflow after starting a workflow.
-- Opt-in isolation: set `policy.worktree` to `"on"` so the run edits a git worktree under `.deepseek/workflow-runs/<run_id>/tree` (fails closed if not a git repo). Default is `"off"`.
+- Opt-in isolation: set `policy.worktree` to `"on"` so the run edits a git worktree under `~/.deepseek/workflow/<run_id>/tree` (fails closed if not a git repo). Default is `"off"`.
 - Background long runs: pass `detach: true` to enqueue via TaskManager and return `run_id` + `task_id` immediately. Cancel with `task_stop` / resume with `run_id` — Esc only stops waiting, not a detached run.
 
 ### Incremental examples (why these features exist)
@@ -40,7 +40,7 @@ Assume the user asks to review integration risk across `engine` / `tools` / `wor
 
 **Loop + until:** bounded refine until structured `done=true` or `max_rounds`.
 
-**Checkpoint resume:** interrupted runs leave `.deepseek/workflow-runs/<run_id>/run.json`; call `{ "run_id": "wf_..." }` to skip completed steps and restore runtime graph / dynamic state. Fanout also checkpoints each finished item (`{step}:{item}`) so mid-fanout resume skips done branches.
+**Checkpoint resume:** interrupted runs leave `~/.deepseek/workflow/<run_id>/run.json`; call `{ "run_id": "wf_..." }` to skip completed steps and restore runtime graph / dynamic state. Fanout also checkpoints each finished item (`{step}:{item}`) so mid-fanout resume skips done branches.
 
 **Worktree:** with `policy.worktree: "on"`, mutating fanout agents share an isolated branch/worktree; the main checkout stays clean; resume reuses the same tree.
 

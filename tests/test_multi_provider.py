@@ -64,7 +64,7 @@ def test_ark_anthropic_registry_default_is_complete() -> None:
 
     assert provider.protocol == "anthropic"
     assert provider.base_url == "https://ark.cn-beijing.volces.com/api/coding"
-    assert provider.model == "GLM-5.2"
+    assert provider.model == "glm-5.1"
 
 
 def test_factory_selects_openai_protocol_and_v3_url() -> None:

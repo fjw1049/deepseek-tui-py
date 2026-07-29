@@ -461,9 +461,9 @@ _ = asdict
 #
 # Layout::
 #
-#     <root>/
-#       automations/<id>.json          ← one AutomationRecord
-#       runs/<automation_id>/<run_id>.json  ← one AutomationRunRecord per fire
+#     <root>/   (= ``~/.deepseek/automations``)
+#       <id>.json                              ← one AutomationRecord
+#       runs/<automation_id>/<run_id>.json     ← one AutomationRunRecord per fire
 #
 # The scheduler tick (see ``automation_scheduler.run_scheduler_loop``)
 # calls :meth:`AutomationManager.scheduler_tick` and
@@ -912,8 +912,9 @@ def default_automations_dir() -> Path:
     override = os.environ.get("DEEPSEEK_AUTOMATIONS_DIR", "").strip()
     if override:
         return Path(override)
-    home = Path.home()
-    return home / ".deepseek" / "automations"
+    from deepseek_tui.config.paths import user_automations_dir
+
+    return user_automations_dir()
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -935,10 +936,14 @@ class AutomationManager:
     """
 
     def __init__(self, root: Path) -> None:
-        self._automations_dir = root / "automations"
+        # Defs live as ``root/*.json``; run history under ``root/runs/``.
+        # Legacy nested ``root/automations/*.json`` is flattened on open.
+        self._root = root
+        self._automations_dir = root
         self._runs_dir = root / "runs"
         self._automations_dir.mkdir(parents=True, exist_ok=True)
         self._runs_dir.mkdir(parents=True, exist_ok=True)
+        self._flatten_legacy_defs()
 
     @classmethod
     def open(cls, root: Path) -> AutomationManager:
@@ -947,6 +952,24 @@ class AutomationManager:
     @classmethod
     def default_location(cls) -> AutomationManager:
         return cls.open(default_automations_dir())
+
+    def _flatten_legacy_defs(self) -> None:
+        nested = self._root / "automations"
+        if not nested.is_dir():
+            return
+        for entry in list(nested.iterdir()):
+            if entry.suffix != ".json" or not entry.is_file():
+                continue
+            dest = self._root / entry.name
+            if not dest.exists():
+                entry.replace(dest)
+            else:
+                entry.unlink(missing_ok=True)
+        try:
+            if nested.is_dir() and not any(nested.iterdir()):
+                nested.rmdir()
+        except OSError:
+            pass
 
     # ── path helpers ──
 
@@ -1011,7 +1034,7 @@ class AutomationManager:
     def list_automations(self) -> list[AutomationRecord]:
         out: list[AutomationRecord] = []
         for entry in self._automations_dir.iterdir():
-            if entry.suffix != ".json":
+            if not entry.is_file() or entry.suffix != ".json":
                 continue
             try:
                 raw = entry.read_text(encoding="utf-8")

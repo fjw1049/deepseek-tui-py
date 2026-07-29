@@ -82,7 +82,9 @@ async def test_unified_bridge_pending_carries_impacts() -> None:
     row = pending[0]
     assert row["tool_name"] == "exec_shell"
     assert isinstance(row["impacts"], list)
-    assert any("npm test" in str(line) for line in row["impacts"])  # type: ignore[arg-type]
+    # Command lives in the hero/input summary; impacts carry cwd-only context.
+    summary = str(row.get("input_summary") or row.get("primary_preview") or "")
+    assert "npm test" in summary or any("npm test" in str(line) for line in row["impacts"])
     assert row["risk"] == "destructive"
 
     assert bridge.resolve("appr-unified-bridge", True)

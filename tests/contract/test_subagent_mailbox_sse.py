@@ -366,6 +366,8 @@ async def test_monitor_turn_reconciles_on_cancel(runtime_app: object) -> None:
 
     fake_manager = SimpleNamespace(mailbox=None, get_result=_get_result)
     stub_engine = SimpleNamespace(
+        session_messages=[],
+        sync_session=lambda messages, model=None: None,
         tool_context=ToolContext(
             working_directory=manager.workspace,
             subagent_manager=fake_manager,

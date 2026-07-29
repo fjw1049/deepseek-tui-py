@@ -417,22 +417,25 @@ describe('subagent-mailbox', () => {
       }
     ]
     const failed = subagentStepsToFlowItems(steps, 0, 'failed')
-    expect(failed.find((i) => i.id === 'tool-call_a')?.status).toBe('cancelled')
     expect(failed.find((i) => i.id === 'started-1')?.status).toBe('cancelled')
-    expect(failed.find((i) => i.id === 'tool-call_b')?.status).toBe('ok')
+    // Consecutive probes collapse; residual cancel must not paint over a success.
+    const failedBatch = failed.find((i) => i.variant === 'batch')
+    expect(failedBatch?.id).toBe('batch-tool-call_a')
+    expect(failedBatch?.batchCount).toBe(2)
+    expect(failedBatch?.status).toBe('ok')
 
     const interrupted = subagentStepsToFlowItems(steps, 0, 'interrupted')
-    expect(interrupted.find((i) => i.id === 'tool-call_a')?.status).toBe('cancelled')
+    expect(interrupted.find((i) => i.variant === 'batch')?.status).toBe('ok')
 
     const completed = subagentStepsToFlowItems(steps, 0, 'completed')
-    expect(completed.find((i) => i.id === 'tool-call_a')?.status).toBe('info')
-    expect(completed.find((i) => i.id === 'tool-call_b')?.status).toBe('ok')
+    expect(completed.find((i) => i.id === 'started-1')?.status).toBe('info')
+    expect(completed.find((i) => i.variant === 'batch')?.status).toBe('ok')
 
     // Live cards keep pulsing; the param is optional and backward compatible.
     const live = subagentStepsToFlowItems(steps)
-    expect(live.find((i) => i.id === 'tool-call_a')?.status).toBe('running')
+    expect(live.find((i) => i.variant === 'batch')?.status).toBe('running')
     const running = subagentStepsToFlowItems(steps, 0, 'running')
-    expect(running.find((i) => i.id === 'tool-call_a')?.status).toBe('running')
+    expect(running.find((i) => i.variant === 'batch')?.status).toBe('running')
   })
 
   it('maps round progress to narration rows and nests following tools', () => {

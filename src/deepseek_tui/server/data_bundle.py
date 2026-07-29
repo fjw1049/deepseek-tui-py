@@ -3,8 +3,9 @@
 Bundle format is a zip with ``manifest.json`` plus optional directory trees.
 Scopes:
 
-* ``conversations`` — ``threads/`` + ``sessions/``
-* ``settings`` — ``config.toml`` + ``mcp.json`` (may contain secrets)
+* ``conversations`` — ``threads/`` (canonical) + ``sessions/`` (TUI legacy)
+* ``settings`` — ``config.toml`` + ``mcp.json`` + ``workbench/settings.json``
+  (may contain secrets / API keys)
 * ``all`` — conversations + settings
 """
 
@@ -25,6 +26,7 @@ from deepseek_tui.config.paths import (
     user_mcp_config_path,
     user_sessions_dir,
     user_threads_dir,
+    workbench_settings_path,
     workbench_usage_dir,
 )
 from deepseek_tui.utils import write_json_atomic
@@ -107,6 +109,7 @@ def export_bundle(
             "sessions": include_conversations,
             "config": include_settings,
             "mcp": include_settings,
+            "workbench_settings": include_settings,
         },
     }
 
@@ -128,6 +131,7 @@ def export_bundle(
             for label, path in (
                 ("config.toml", user_config_path()),
                 ("mcp.json", user_mcp_config_path()),
+                ("workbench/settings.json", workbench_settings_path()),
             ):
                 if path.is_file():
                     zf.write(path, arcname=label)
@@ -215,11 +219,14 @@ def import_bundle(
             for label, target, key in (
                 ("config.toml", user_config_path(), "config"),
                 ("mcp.json", user_mcp_config_path(), "mcp"),
+                ("workbench/settings.json", workbench_settings_path(), "workbench_settings"),
             ):
                 candidate = tmp_root / label
                 if not candidate.is_file():
                     continue
-                if includes and not includes.get(key):
+                # Older exports omit workbench_settings in includes — still restore
+                # when the file is present in the zip.
+                if includes and key in includes and not includes.get(key):
                     continue
                 target.parent.mkdir(parents=True, exist_ok=True)
                 if mode == "merge" and target.is_file():

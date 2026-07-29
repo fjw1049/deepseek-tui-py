@@ -1,13 +1,20 @@
 """Path resolution for the ``.deepseek/`` data directories.
 
-Two-layer layout:
+User home ``~/.deepseek/`` is layered by lifecycle (see ``MANIFEST.toml``):
 
-* **User-level** ``~/.deepseek/`` — cross-project state: credentials,
-  session history, audit log, composer history,
-  workspace trust, MCP config, user skills, task queue.
-* **Project-level** ``<workspace>/.deepseek/`` — checkout-scoped state:
-  project config overrides, current session handoff, active sub-agent
-  state, auto-generated project instructions, project skills, logs.
+* **L0 identity** — config, AGENTS.md, mcp.json, secrets
+* **L1 capabilities** — skills, plugins (+ ``plugins/.host``)
+* **L2 conversations** — ``threads/`` is canonical; ``sessions/`` is TUI legacy
+* **L3 jobs** — tasks, automations, workflow, ``agents/{registries,runs}``
+* **L4 ephemeral** — logs, hooks, tool_outputs, caches
+* **L5 scratch** — default ``workspace/``, notes.txt
+
+Indexed by id (or workspace key for subagent registries), not by living
+inside a git checkout. Durable memory lives in ``~/.optmem``, not here.
+
+Project-level ``<workspace>/.deepseek/`` is optional override only
+(e.g. ``config.toml``). Not created by default; team guidance belongs in
+repo-root ``AGENTS.md``.
 
 Callers MUST go through the typed helpers below. Do not hardcode
 ``Path.home() / ".deepseek"`` or ``Path.cwd() / ".deepseek"``; do not
@@ -16,6 +23,7 @@ introduce new "layer-ambiguous" helpers.
 
 from __future__ import annotations
 
+import hashlib
 import os
 from pathlib import Path
 
@@ -67,7 +75,11 @@ def user_audit_log_path() -> Path:
 
 
 def user_sessions_dir() -> Path:
-    """``~/.deepseek/sessions/`` — all session history, cycles, artifacts."""
+    """``~/.deepseek/sessions/`` — TUI legacy session JSON (not Workbench SoT).
+
+    Workbench conversations live in :func:`user_threads_dir`. TUI still
+    persists ``current.json`` / picker dumps here for crash recovery.
+    """
     return user_deepseek_dir() / "sessions"
 
 
@@ -99,7 +111,7 @@ def user_tasks_dir() -> Path:
 
 
 def user_threads_dir() -> Path:
-    """``~/.deepseek/threads/`` — Python-only thread store (kept user-level)."""
+    """``~/.deepseek/threads/`` — canonical conversation ledger (Workbench)."""
     return user_deepseek_dir() / "threads"
 
 
@@ -123,9 +135,72 @@ def user_mcp_config_path() -> Path:
     return user_deepseek_dir() / "mcp.json"
 
 
+def user_logs_dir() -> Path:
+    """``~/.deepseek/logs/`` — application rotating logs."""
+    return user_deepseek_dir() / "logs"
+
+
+def user_workflow_runs_dir() -> Path:
+    """``~/.deepseek/workflow/`` — workflow checkpoints by ``run_id``."""
+    return user_deepseek_dir() / "workflow"
+
+
+def user_agent_runtime_dir() -> Path:
+    """``~/.deepseek/agents/`` — sub-agent registries + run transcripts."""
+    return user_deepseek_dir() / "agents"
+
+
+def user_subagents_registries_dir() -> Path:
+    """``~/.deepseek/agents/registries/`` — SubAgentManager state files."""
+    return user_agent_runtime_dir() / "registries"
+
+
+def user_subagent_runs_dir() -> Path:
+    """``~/.deepseek/agents/runs/`` — sub-agent transcripts by ``agent_id``."""
+    return user_agent_runtime_dir() / "runs"
+
+
+def workspace_storage_key(workspace: Path | None = None) -> str:
+    """Stable short key for a workspace path (manager isolation, not a project asset)."""
+    root = (workspace or Path.cwd()).resolve()
+    return hashlib.sha256(str(root).encode("utf-8")).hexdigest()[:16]
+
+
+def user_subagents_state_path(workspace: Path | None = None) -> Path:
+    """``~/.deepseek/agents/registries/<workspace_key>.json`` — SubAgentManager registry.
+
+    One file per workspace so concurrent engines on different checkouts do not
+    clobber each other. Storage stays under the user home, not the git tree.
+    """
+    return (
+        user_subagents_registries_dir()
+        / f"{workspace_storage_key(workspace)}.json"
+    )
+
+
+def user_automations_dir() -> Path:
+    """``~/.deepseek/automations/`` — defs (``*.json``) + ``runs/``."""
+    return user_deepseek_dir() / "automations"
+
+
+def user_plugin_host_dir() -> Path:
+    """``~/.deepseek/plugins/.host/`` — content-addressed plugin store."""
+    return user_deepseek_dir() / "plugins" / ".host"
+
+
+def workbench_dir() -> Path:
+    """``~/.deepseek/workbench/`` — GUI settings, Claw, usage, logs, caches."""
+    return user_deepseek_dir() / "workbench"
+
+
+def workbench_settings_path() -> Path:
+    """``~/.deepseek/workbench/settings.json`` — Workbench GUI settings."""
+    return workbench_dir() / "settings.json"
+
+
 def workbench_usage_dir() -> Path:
     """``~/.deepseek/workbench/usage/`` — Workbench model usage ledger."""
-    return user_deepseek_dir() / "workbench" / "usage"
+    return workbench_dir() / "usage"
 
 
 def workbench_usage_ledger_path() -> Path:
@@ -134,18 +209,18 @@ def workbench_usage_ledger_path() -> Path:
 
 
 # ---------------------------------------------------------------------------
-# Project-level: <workspace>/.deepseek/
+# Project-level: <workspace>/.deepseek/ (optional override only)
 # ---------------------------------------------------------------------------
 
 
 def project_deepseek_dir(workspace: Path | None = None) -> Path:
-    """Resolve ``<workspace>/.deepseek/``."""
+    """Resolve ``<workspace>/.deepseek/`` (optional; not created by default)."""
     root = workspace or Path.cwd()
     return root / DOT_DEEPSEEK
 
 
 def project_config_path(workspace: Path | None = None) -> Path:
-    """``<workspace>/.deepseek/config.toml`` — project override config."""
+    """``<workspace>/.deepseek/config.toml`` — optional project override config."""
     return project_deepseek_dir(workspace) / "config.toml"
 
 

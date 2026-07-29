@@ -47,7 +47,7 @@ def test_install_links_into_store(tmp_path: Path, monkeypatch) -> None:
     assert dest.exists()
     # Prefer symlink into store when the platform allows it.
     if dest.is_symlink():
-        assert "plugin-host" in str(dest.resolve())
+        assert ".host" in str(dest.resolve()) or "plugin-host" in str(dest.resolve())
 
 
 def test_gc_removes_unreferenced_digest(tmp_path: Path, monkeypatch) -> None:

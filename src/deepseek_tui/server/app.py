@@ -588,8 +588,10 @@ async def run_http(
     # very first router import lands in the file too. Safe to call even
     # if the CLI already configured logging — duplicate handlers are
     # cleaned out by :func:`setup_logging` itself.
+    from deepseek_tui.config.layout import ensure_user_home_layout
     from deepseek_tui.utils import setup_logging
 
+    ensure_user_home_layout()
     setup_logging(config)
 
     logger.info(

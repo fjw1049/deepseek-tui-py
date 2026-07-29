@@ -178,6 +178,7 @@ export function SettingsView(): ReactElement {
   const [petCatalogLoading, setPetCatalogLoading] = useState(false)
   const [petCatalogError, setPetCatalogError] = useState<string | null>(null)
   const [logDirOpenError, setLogDirOpenError] = useState<string | null>(null)
+  const [logDirPath, setLogDirPath] = useState('~/.deepseek/workbench/logs')
   const [deepseekPaths, setDeepseekPaths] = useState({
     configPath: '~/.deepseek/config.toml',
     mcpPath: '~/.deepseek/mcp.json',
@@ -338,6 +339,11 @@ export function SettingsView(): ReactElement {
         if (!cancelled) {
           setDeepseekPaths(paths)
         }
+      })
+    }
+    if (typeof window.dsGui?.getLogPath === 'function') {
+      void window.dsGui.getLogPath().then((path) => {
+        if (!cancelled && path) setLogDirPath(path)
       })
     }
     return () => {
@@ -720,7 +726,14 @@ export function SettingsView(): ReactElement {
                 <SettingRow
                   relaxed
                   title={t('logDir')}
-                  description={t('logDirDesc')}
+                  description={
+                    <span className="flex flex-col gap-1">
+                      <span>{t('logDirDesc')}</span>
+                      <span className="break-all font-mono text-[12px] text-ds-muted" title={logDirPath}>
+                        {logDirPath}
+                      </span>
+                    </span>
+                  }
                   controlWidth="medium"
                   control={
                     <div className="flex w-full flex-col items-end gap-1.5">

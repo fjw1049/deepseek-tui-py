@@ -90,7 +90,9 @@ def test_record_turn_usage_skips_write_on_schema_mismatch(
 def test_prune_old_days_removes_stale_entries(tmp_path: Path, monkeypatch) -> None:
     path = tmp_path / "ledger-v1.json"
     monkeypatch.setattr(ledger, "workbench_usage_ledger_path", lambda: path)
-    stale_day = (datetime.now(timezone.utc) - timedelta(days=120)).strftime("%Y-%m-%d")
+    stale_day = (
+        datetime.now(timezone.utc) - timedelta(days=ledger.RETENTION_DAYS + 1)
+    ).strftime("%Y-%m-%d")
     fresh_day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     ledger._write_ledger(
         path,
