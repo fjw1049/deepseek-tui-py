@@ -10,7 +10,7 @@ User home ``~/.deepseek/`` is layered by lifecycle (see ``MANIFEST.toml``):
 * **L5 scratch** — default ``workspace/``, notes.txt
 
 Indexed by id (or workspace key for subagent registries), not by living
-inside a git checkout. Durable memory lives in ``~/.optmem``, not here.
+inside a git checkout.
 
 Project-level ``<workspace>/.deepseek/`` is optional override only
 (e.g. ``config.toml``). Not created by default; team guidance belongs in

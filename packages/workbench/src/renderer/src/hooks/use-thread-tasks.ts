@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useSyncExternalStore } from 'react'
 import {
   isActiveTaskStatus,
   normalizeTaskStatus,
@@ -113,6 +113,61 @@ function sameSet(a: Set<string>, b: Set<string>): boolean {
 }
 
 /**
+ * Module-level shared poller. Sidebar Projects / Pinned / Chats all need the
+ * same active-task index; previously each mounted its own interval and hit
+ * `GET /v1/tasks` three times per tick.
+ */
+let sharedIndex: ActiveTaskIndex = EMPTY_ACTIVE_TASK_INDEX
+let sharedSubscribers = 0
+let sharedInterval: number | undefined
+let sharedInFlight = false
+const sharedListeners = new Set<() => void>()
+
+function emitSharedIndex(): void {
+  for (const listener of sharedListeners) listener()
+}
+
+function refreshSharedIndex(): void {
+  if (sharedInFlight) return
+  sharedInFlight = true
+  void fetchActiveTaskIndex()
+    .then((next) => {
+      if (
+        sameSet(sharedIndex.threadIds, next.threadIds) &&
+        sameSet(sharedIndex.taskIds, next.taskIds)
+      ) {
+        return
+      }
+      sharedIndex = next
+      emitSharedIndex()
+    })
+    .finally(() => {
+      sharedInFlight = false
+    })
+}
+
+function subscribeSharedIndex(listener: () => void): () => void {
+  sharedListeners.add(listener)
+  sharedSubscribers += 1
+  if (sharedSubscribers === 1) {
+    refreshSharedIndex()
+    sharedInterval = window.setInterval(refreshSharedIndex, ACTIVE_THREADS_POLL_MS)
+  }
+  return () => {
+    sharedListeners.delete(listener)
+    sharedSubscribers = Math.max(0, sharedSubscribers - 1)
+    if (sharedSubscribers === 0 && sharedInterval !== undefined) {
+      window.clearInterval(sharedInterval)
+      sharedInterval = undefined
+    }
+  }
+}
+
+function getSharedIndexSnapshot(): ActiveTaskIndex {
+  return sharedIndex
+}
+
+/**
  * Poll `GET /v1/tasks` for the set of conversations with background work in
  * flight. `threadIds` attributes active tasks by their stored `thread_id`
  * (covers any conversation, but only for tasks created after the thread_id
@@ -121,29 +176,7 @@ function sameSet(a: Set<string>, b: Set<string>): boolean {
  * thread attribution.
  */
 export function useThreadsWithActiveTasks(): ActiveTaskIndex {
-  const [index, setIndex] = useState<ActiveTaskIndex>(() => EMPTY_ACTIVE_TASK_INDEX)
-
-  useEffect(() => {
-    let cancelled = false
-    const refresh = (): void => {
-      void fetchActiveTaskIndex().then((next) => {
-        if (cancelled) return
-        setIndex((prev) =>
-          sameSet(prev.threadIds, next.threadIds) && sameSet(prev.taskIds, next.taskIds)
-            ? prev
-            : next
-        )
-      })
-    }
-    refresh()
-    const interval = window.setInterval(refresh, ACTIVE_THREADS_POLL_MS)
-    return () => {
-      cancelled = true
-      window.clearInterval(interval)
-    }
-  }, [])
-
-  return index
+  return useSyncExternalStore(subscribeSharedIndex, getSharedIndexSnapshot, getSharedIndexSnapshot)
 }
 
 async function fetchTaskStatuses(): Promise<Record<string, TaskStatus>> {

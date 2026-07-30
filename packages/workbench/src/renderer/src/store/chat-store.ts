@@ -60,6 +60,10 @@ import {
   savePinnedThreadIds
 } from './chat-store-helpers'
 import {
+  readLastActiveThreadId,
+  writeLastActiveThreadId
+} from '../lib/last-active-thread'
+import {
   isWorkspaceHidden,
   loadHiddenWorkspacePaths,
   loadSidebarLabelColors,
@@ -1242,7 +1246,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
   startupPhase: null,
   activeThreadWarmup: { threadId: null, status: 'idle' },
   threads: [],
-  activeThreadId: null,
+  // Seed from localStorage so HMR / remounts don't flash the greeting while
+  // refreshThreads → selectThread rehydrates blocks.
+  activeThreadId: readLastActiveThreadId(),
   blocks: [],
   liveReasoning: '',
   liveAssistant: '',
@@ -1749,6 +1755,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
         }
       })
       syncTurnCompletionPoll(set, get)
+      // After reload / HMR, rehydrate the last conversation. activeThreadId may
+      // already be seeded from localStorage (avoids greeting flash) while SSE
+      // and blocks are still empty — selectThread fills those in.
+      const activeId = get().activeThreadId ?? readLastActiveThreadId()
+      if (
+        activeId &&
+        get().threads.some((thread) => thread.id === activeId) &&
+        (get().activeThreadId !== activeId || sseAbort == null)
+      ) {
+        await get().selectThread(activeId)
+      }
     } catch (e) {
       stopTurnCompletionPoll()
       set({
@@ -1995,6 +2012,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         queuedMessages: [],
               scrollToBlockId: synced.scrollToBlockId
       })
+      writeLastActiveThreadId(id)
       syncTurnCompletionPoll(set, get)
       const ac = sseAbort = new AbortController()
       const sink = buildThreadEventSink(set, get)
@@ -2230,6 +2248,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
               ? [createdThread, ...s.threads]
               : s.threads
         }))
+        writeLastActiveThreadId(threadId)
         void get().refreshThreads()
       } catch (e) {
         void window.dsGui.logError('create-thread', 'Failed to create thread', {

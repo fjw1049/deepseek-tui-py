@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { humanizeAgentType } from './agent-type-label'
-import { countSubagentRailSteps } from '../components/chat/MessageTimeline'
+import { countSubagentRailSteps } from '../components/chat/message-timeline-logic'
 import type { StepFlowItem } from '../components/chat/StepFlow'
 
 describe('humanizeAgentType', () => {

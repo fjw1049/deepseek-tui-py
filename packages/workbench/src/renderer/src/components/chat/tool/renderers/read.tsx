@@ -1,9 +1,6 @@
 import { memo } from 'react'
-import {
-  languageFromPath,
-  SharedCodeBlock,
-  titleFromPath
-} from '../../SharedCodeBlock'
+import { languageFromPath, titleFromPath } from '../../code-language'
+import { SharedCodeBlock } from '../../SharedCodeBlock'
 import { ToolBody, ToolEmptyState } from '../primitives'
 import type { ToolRenderContext } from '../render-context'
 

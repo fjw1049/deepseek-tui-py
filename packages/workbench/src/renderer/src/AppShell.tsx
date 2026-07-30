@@ -28,6 +28,13 @@ const BLANK_EXIT_MS = 200
  *  animation is seen even when the runtime settles almost immediately. */
 const MIN_BLANK_MS = 1500
 
+/**
+ * Survives Vite Fast Refresh / HMR remounts of this module. Without this, every
+ * AppShell hot update replays the starfield blank board and feels like a full
+ * app restart back to the greeting screen.
+ */
+let coldStartCeremonyDone = false
+
 function StartupBlank({ exiting = false }: { exiting?: boolean }): React.ReactElement {
   return (
     <div
@@ -47,12 +54,14 @@ export default function AppShell(): React.ReactElement {
   const setStartupPhase = useChatStore((s) => s.setStartupPhase)
   const initialSetupOpen = useChatStore((s) => s.initialSetupOpen)
   const runtimeConnection = useChatStore((s) => s.runtimeConnection)
-  const [revealPhase, setRevealPhase] = useState<RevealPhase>('waiting')
-  const [blankGone, setBlankGone] = useState(false)
+  const [revealPhase, setRevealPhase] = useState<RevealPhase>(
+    coldStartCeremonyDone ? 'live' : 'waiting'
+  )
+  const [blankGone, setBlankGone] = useState(coldStartCeremonyDone)
   /** Once true, the cold-start ceremony never runs again — reconnect/checking
    *  must not unmount Workbench or replay the starfield. */
-  const [startupGateDone, setStartupGateDone] = useState(false)
-  const gateStartedRef = useRef(false)
+  const [startupGateDone, setStartupGateDone] = useState(coldStartCeremonyDone)
+  const gateStartedRef = useRef(coldStartCeremonyDone)
   const mountedAtRef = useRef<number>(performance.now())
   const timersRef = useRef<{ hold: number; blank: number; reveal: number }>({
     hold: 0,
@@ -101,6 +110,7 @@ export default function AppShell(): React.ReactElement {
       typeof window !== 'undefined' &&
       window.matchMedia('(prefers-reduced-motion: reduce)').matches
     if (reduced) {
+      coldStartCeremonyDone = true
       setRevealPhase('live')
       setBlankGone(true)
       setStartupGateDone(true)
@@ -118,6 +128,7 @@ export default function AppShell(): React.ReactElement {
       // (transparent) on top while the shell finishes entering underneath.
       timers.blank = window.setTimeout(() => setBlankGone(true), BLANK_EXIT_MS)
       timers.reveal = window.setTimeout(() => {
+        coldStartCeremonyDone = true
         setRevealPhase('live')
         setStartupGateDone(true)
       }, REVEAL_MS)

@@ -12,7 +12,7 @@ import {
   reasoningNarrationFromBlocks,
   splitThink,
   trailingThinkingIndicatorId
-} from './MessageTimeline'
+} from './message-timeline-logic'
 import {
   buildToolRenderContext,
   resolveToolRenderer,

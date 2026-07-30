@@ -4,6 +4,7 @@ import type {
   UserMessageEventPayload,
   WorkflowProgressPayload
 } from '../agent/types'
+import { writeLastActiveThreadId } from '../lib/last-active-thread'
 import { finalizeOrphanSubagentBlocks } from '../lib/subagent-mailbox'
 import { normalizeWorkspaceRoot } from '../lib/workspace-path'
 import type { ChatState, QueuedUserMessage } from './chat-store-types'
@@ -381,6 +382,9 @@ export function clearedThreadSelection(): Pick<
   | 'activePlugin'
   | 'turnDiffByTurnId'
 > {
+  // Clearing the in-memory selection must also drop the restore target, or the
+  // next refreshThreads would bounce the user back into the old conversation.
+  writeLastActiveThreadId(null)
   return {
     activeThreadId: null,
     activeThreadWarmup: { threadId: null, status: 'idle' },

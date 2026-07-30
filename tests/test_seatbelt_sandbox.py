@@ -126,18 +126,6 @@ class TestExecutionSandboxPolicy:
         roots = policy.get_writable_roots(tmp_path)
         assert any(r.read_only_subpaths == (deepseek_dir,) for r in roots)
 
-    def test_writable_roots_include_optmem(self, tmp_path: Path) -> None:
-        policy = ExecutionSandboxPolicy.workspace_write(
-            writable_roots=(tmp_path,),
-            network_access=True,
-        )
-        roots = policy.get_writable_roots(tmp_path)
-        optmem = (Path.home() / ".optmem").resolve()
-        assert any(r.root == optmem for r in roots)
-        lock = optmem / "memory" / ".lock"
-        matching = next(r for r in roots if r.root == optmem)
-        assert matching.is_path_writable(lock)
-
     def test_writable_roots_include_user_runtime(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

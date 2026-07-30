@@ -311,10 +311,6 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         # mtime of the last handoff reminder injected into messages (not
         # system). Re-inject only when the file is new or rewritten.
         self._handoff_injected_mtime: float | None = None
-        # OptMem auto-wake: inject ``memo wake`` once per session (and again
-        # after successful compaction). Off for subagents / when disabled.
-        self.optmem_auto_wake: bool = True
-        self._optmem_wake_injected: bool = False
         # Stage 3.next.1 approval cache — fingerprints repeat tool calls
         # so an APPROVED_SESSION grant doesn't have to re-prompt.
         self.approval_cache = ApprovalCache()
@@ -1169,9 +1165,6 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         )
         locale = getattr(getattr(cfg, "ui", None), "locale", None)
         engine.reply_locale = locale if locale in ("zh", "en") else "zh"
-        engine.optmem_auto_wake = bool(
-            getattr(getattr(cfg, "memory", None), "optmem_auto_wake", True)
-        )
         engine.plugin_session = plugin_session
         engine._session_mcp_manager = session_mcp_manager
         engine._owned_plugin_mcp_manager = owned_plugin_mcp_manager
@@ -1427,37 +1420,6 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         self._handoff_injected_mtime = mtime
         return Message.user(
             wrap_system_reminder(body),
-            origin=MessageOrigin.SYSTEM_REMINDER,
-        )
-
-    def _take_optmem_wake_reminder(
-        self, *, force: bool = False
-    ) -> Message | None:
-        """Run ``memo wake`` and return a system-reminder, or None.
-
-        First successful injection per session is latched unless ``force``
-        (used after compaction). Failures are silent — missing OptMem must
-        not block the turn.
-        """
-        if not self.optmem_auto_wake:
-            return None
-        if self._optmem_wake_injected and not force:
-            return None
-        from deepseek_tui.engine.context_pressure import wrap_system_reminder
-        from deepseek_tui.engine.optmem import (
-            format_optmem_wake_reminder,
-            optmem_available,
-            run_memo_wake,
-        )
-
-        if not optmem_available():
-            return None
-        wake_text = run_memo_wake()
-        if not wake_text:
-            return None
-        self._optmem_wake_injected = True
-        return Message.user(
-            wrap_system_reminder(format_optmem_wake_reminder(wake_text)),
             origin=MessageOrigin.SYSTEM_REMINDER,
         )
 
@@ -1926,17 +1888,13 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
 
         prior_count = len(self.session_messages)
         working_messages = [*self.session_messages, user_message]
-        # Handoff / OptMem wake are volatile — inject as user reminders
-        # before the real query, never into the system prompt (KV cache).
+        # The handoff reminder is volatile — inject as a user reminder before
+        # the real query, never into the system prompt (KV cache).
         if not op.hidden:
             insert_at = prior_count
             handoff_msg = self._take_handoff_reminder_message()
             if handoff_msg is not None:
                 working_messages.insert(insert_at, handoff_msg)
-                insert_at += 1
-            optmem_msg = self._take_optmem_wake_reminder()
-            if optmem_msg is not None:
-                working_messages.insert(insert_at, optmem_msg)
                 insert_at += 1
             if hook_context_extra:
                 from deepseek_tui.engine.context_pressure import (
@@ -2630,10 +2588,6 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                     self._compact_cooldown_rounds = 0
                     # Bridge is already the leading user message — leave
                     # system_prompt unchanged for KV prefix cache stability.
-                    # Re-inject OptMem wake so durable memory survives compact.
-                    optmem_msg = self._take_optmem_wake_reminder(force=True)
-                    if optmem_msg is not None:
-                        messages.append(optmem_msg)
                 else:
                     self._compact_cooldown_rounds = 5
                     logger.warning(

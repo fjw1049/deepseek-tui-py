@@ -218,7 +218,7 @@ def _rm_if_empty(path: Path, actions: list[str], label: str) -> None:
 
 
 _DEFAULT_MANIFEST = """# ~/.deepseek layout — lifecycle layers for backup / archive / GC
-# Principle: own by lifecycle, index by id; OptMem stays in ~/.optmem.
+# Principle: own by lifecycle, index by id.
 
 schema_version = 1
 

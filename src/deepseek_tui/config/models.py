@@ -314,18 +314,6 @@ class SkillsConfig(BaseModel):
     auto_update: bool = False
 
 
-class MemoryConfig(BaseModel):
-    """[memory] — OptMem integration and future memory backends."""
-
-    model_config = {"extra": "ignore"}
-
-    # When true, Engine injects ``memo wake`` output as a user-role
-    # ``<system-reminder>`` on the first turn and after successful compaction.
-    optmem_auto_wake: bool = True
-
-
-
-
 class ServerConfig(BaseModel):
     """[server] subsection for HTTP server settings."""
 
@@ -444,7 +432,6 @@ class Config(BaseModel):
     notifications: NotificationsConfig = Field(default_factory=NotificationsConfig)
     network: NetworkPolicyConfig = Field(default_factory=NetworkPolicyConfig)
     skills: SkillsConfig = Field(default_factory=SkillsConfig)
-    memory: MemoryConfig = Field(default_factory=MemoryConfig)
     automation: AutomationConfig = Field(default_factory=AutomationConfig)
     tools_file: Path | None = None
     # Cycle / seam toggles consumed by ``Engine.create``. Off by default

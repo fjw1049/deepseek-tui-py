@@ -62,7 +62,32 @@ export default defineConfig({
     server: {
       host: '127.0.0.1',
       port: 5173,
-      strictPort: true
+      strictPort: true,
+      // These files are not part of the running renderer graph (or always force
+      // a full page reload). Watching them while another process edits the tree
+      // kicks the UI back to the greeting screen on every touch.
+      watch: {
+        // macOS FSEvents also fires on inode/xattr (ctime) touches when content
+        // and mtime are unchanged — Cursor indexing / Spotlight / provenance
+        // scans were causing spurious `page reload` (e.g. resolve-channel-delivery).
+        // Polling keys off mtime + size instead.
+        usePolling: true,
+        interval: 1000,
+        ignored: [
+          '**/*.test.ts',
+          '**/*.test.tsx',
+          '**/*.d.ts',
+          '**/tsconfig*.json',
+          '**/tailwind.config.js',
+          '**/tailwind.config.cjs',
+          // Build/cache trees — not part of the live renderer module graph.
+          '**/node_modules/**',
+          '**/out/**',
+          '**/dist/**',
+          '**/.git/**',
+          '**/coverage/**'
+        ]
+      }
     }
   }
 })

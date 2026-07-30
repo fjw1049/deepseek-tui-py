@@ -107,13 +107,6 @@ class ExecutionSandboxPolicy:
         except OSError:
             roots.append(cwd)
 
-        # OptMem durable memory lives under ~/.optmem (outside the workspace).
-        # Allow note/nap writes without requiring a full-access elevation.
-        try:
-            roots.append((Path.home() / ".optmem").resolve())
-        except OSError:
-            roots.append(Path.home() / ".optmem")
-
         # User-level runtime (workflow worktrees / subagent transcripts). Do not
         # expose the whole ~/.deepseek tree (config/secrets stay out of shell write).
         try:

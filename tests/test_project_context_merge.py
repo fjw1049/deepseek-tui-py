@@ -11,14 +11,14 @@ def test_global_only(tmp_path: Path) -> None:
     home = tmp_path / "home"
     (home / ".deepseek").mkdir(parents=True)
     (home / ".deepseek" / "AGENTS.md").write_text(
-        "# Global\noptmem protocol\n", encoding="utf-8"
+        "# Global\nglobal protocol\n", encoding="utf-8"
     )
     workspace = tmp_path / "ws"
     workspace.mkdir()
 
     ctx = load_project_context_with_parents(workspace, home_dir=home)
     assert ctx.has_instructions()
-    assert "optmem protocol" in (ctx.instructions or "")
+    assert "global protocol" in (ctx.instructions or "")
     assert "Auto-generated" not in (ctx.instructions or "")
     assert ctx.source_paths == [home / ".deepseek" / "AGENTS.md"]
     block = ctx.as_system_block()

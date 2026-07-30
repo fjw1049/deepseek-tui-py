@@ -1,11 +1,8 @@
 import { memo } from 'react'
 import { DiffView } from '../../../DiffView'
 import { looksLikeUnifiedDiff, countDiffStats } from '../../../../lib/diff-stats'
-import {
-  languageFromPath,
-  SharedCodeBlock,
-  titleFromPath
-} from '../../SharedCodeBlock'
+import { languageFromPath, titleFromPath } from '../../code-language'
+import { SharedCodeBlock } from '../../SharedCodeBlock'
 import { ToolBody, ToolErrorState } from '../primitives'
 import type { ToolRenderContext } from '../render-context'
 
