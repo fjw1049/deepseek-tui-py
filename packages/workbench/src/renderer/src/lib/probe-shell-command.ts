@@ -240,9 +240,37 @@ function firstNonFlag(args: string[]): string | undefined {
 /** True when the command writes to a real destination (not /dev/null). */
 export function hasUnsafeShellRedirect(command: string): boolean {
   if (/<<\s*[-]?['"]?\w+/.test(command)) return true
-  // Match `>` / `>>` / `n>` that are not `/dev/null` and not fd dup (`>&1`).
-  const re = /(^|[^\d])>{1,2}\s*(?!\/dev\/null\b)(?!&)/
+  // Match `>` / `>>` / `n>` (n = optional fd number) that target a real file:
+  // not `/dev/null` and not an fd dup (`>&1`, `2>&1`). The optional `\d*`
+  // before `>` lets `2> err.txt` be caught while `2>&1` / `2>/dev/null` pass.
+  const re = /\d*>{1,2}\s*(?!\/dev\/null\b)(?!&)/
   return re.test(command)
+}
+
+/**
+ * Command substitution (`$(...)`, backticks) and process substitution
+ * (`<(...)`, `>(...)`) can smuggle an arbitrary command past first-token
+ * inspection (`echo $(rm -rf x)`), so any command using them is never a probe.
+ */
+function hasCommandSubstitution(command: string): boolean {
+  return /\$\(|`|<\(|>\(/.test(command)
+}
+
+const FIND_MUTATING_ACTIONS = new Set([
+  '-delete',
+  '-exec',
+  '-execdir',
+  '-ok',
+  '-okdir',
+  '-fprint',
+  '-fprint0',
+  '-fprintf',
+  '-fls',
+  '-fput'
+])
+
+function isProbeFind(args: string[]): boolean {
+  return !args.some((a) => FIND_MUTATING_ACTIONS.has(a.replace(/^['"]|['"]$/g, '')))
 }
 
 function isProbeGit(args: string[]): boolean {
@@ -313,6 +341,7 @@ function isProbeSegment(segment: string): boolean {
   const bin = baseBinary(tokens[0]!)
   if (!PROBE_BINARIES.has(bin)) return false
   const args = tokens.slice(1)
+  if (bin === 'find') return isProbeFind(args)
   if (bin === 'git') return isProbeGit(args)
   if (bin === 'npm' || bin === 'pnpm' || bin === 'yarn' || bin === 'pip' || bin === 'pip3') {
     return isProbePackageManager(args)
@@ -342,6 +371,7 @@ function isProbeSegment(segment: string): boolean {
 export function isProbeShellCommand(command: string | undefined | null): boolean {
   const text = command?.trim()
   if (!text) return false
+  if (hasCommandSubstitution(text)) return false
   if (hasUnsafeShellRedirect(text)) return false
   const segments = splitCompoundCommands(text)
   if (segments.length === 0) return false

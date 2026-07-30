@@ -23,6 +23,13 @@ describe('hasUnsafeShellRedirect', () => {
     expect(hasUnsafeShellRedirect('echo hi > out.txt')).toBe(true)
     expect(hasUnsafeShellRedirect("python3 <<'PY'\nprint(1)\nPY")).toBe(true)
   })
+
+  it('rejects fd-numbered redirects to a real file but keeps fd dup', () => {
+    expect(hasUnsafeShellRedirect('echo hi 2> err.txt')).toBe(true)
+    expect(hasUnsafeShellRedirect('echo hi 1> out.txt')).toBe(true)
+    expect(hasUnsafeShellRedirect('ls -la 2>&1')).toBe(false)
+    expect(hasUnsafeShellRedirect('git log 2>/dev/null')).toBe(false)
+  })
 })
 
 describe('isProbeShellCommand', () => {
@@ -63,5 +70,25 @@ describe('isProbeShellCommand', () => {
     expect(isProbeShellCommand('node --version')).toBe(true)
     expect(isProbeShellCommand('npm ls')).toBe(true)
     expect(isProbeShellCommand('pip show requests')).toBe(true)
+  })
+
+  it('accepts read-only find but rejects mutating find actions', () => {
+    expect(isProbeShellCommand('find . -name "*.ts"')).toBe(true)
+    expect(isProbeShellCommand('find . -type f -maxdepth 2')).toBe(true)
+    expect(isProbeShellCommand('find . -delete')).toBe(false)
+    expect(isProbeShellCommand('find . -type f -exec rm {} +')).toBe(false)
+    expect(isProbeShellCommand('find . -execdir rm {} +')).toBe(false)
+    expect(isProbeShellCommand('find . -fprintf out.txt "%p"')).toBe(false)
+  })
+
+  it('rejects command / process substitution that hides a mutating command', () => {
+    expect(isProbeShellCommand('echo $(rm -rf /tmp/x)')).toBe(false)
+    expect(isProbeShellCommand('cat `rm foo`')).toBe(false)
+    expect(isProbeShellCommand('grep x <(cat y)')).toBe(false)
+  })
+
+  it('rejects fd-numbered redirects to a real file', () => {
+    expect(isProbeShellCommand('echo hi 2> err.txt')).toBe(false)
+    expect(isProbeShellCommand('echo hi 1> out.txt')).toBe(false)
   })
 })
