@@ -12,7 +12,6 @@ Manifest locations (first match wins)::
 
     <plugin>/.deepseek-plugin/plugin.json
     <plugin>/.claude-plugin/plugin.json      (Claude Code compat)
-    <plugin>/.codebuddy-plugin/plugin.json   (CodeBuddy compat)
     <plugin>/plugin.json
 
 Field names follow the Claude Code plugin manifest so existing
@@ -61,6 +60,7 @@ Extras layered on top of the core model:
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import logging
 import os
@@ -136,6 +136,7 @@ __all__ = [
     "set_plugin_trusted",
     "uninstall_plugin",
     "update_marketplace",
+    "migrate_codebuddy_plugins",
     "update_plugin",
     "user_plugins_dir",
 ]
@@ -147,7 +148,6 @@ LOCKFILE_NAME = "installed_plugins.json"
 PLUGIN_MANIFEST_CANDIDATES = (
     Path(".deepseek-plugin") / "plugin.json",
     Path(".claude-plugin") / "plugin.json",
-    Path(".codebuddy-plugin") / "plugin.json",
     Path("plugin.json"),
 )
 
@@ -273,6 +273,10 @@ class PluginManifest:
     # ``permissions``). Advisory: consumed by the approval layer for the
     # plugin's MCP tools and surfaced in CLI/UI trust flows.
     permissions: tuple[str, ...] = ()
+    # Agent activated as the main-thread persona when the plugin is
+    # mounted (``@plugin:name``). Sourced from ``settings.json``
+    # ``defaultAgent`` at the plugin root. Empty = no main-thread persona.
+    default_agent: str = ""
 
 
 def capability_values_from_permissions(
@@ -439,6 +443,11 @@ def load_plugin_manifest(plugin_dir: Path) -> PluginManifest | None:
         hooks = _default_hooks(plugin_dir)
 
     unsupported = tuple(k for k in _UNSUPPORTED_COMPONENT_KEYS if data.get(k))
+    # Claude Code convention: a root .lsp.json declares LSP servers even
+    # when the manifest omits the key. We don't wire LSP servers from
+    # plugins yet — surface it instead of silently ignoring the file.
+    if "lspServers" not in unsupported and (plugin_dir / ".lsp.json").is_file():
+        unsupported = (*unsupported, "lspServers (.lsp.json)")
 
     # Mainstream plugins omit these keys and lay components out on disk;
     # assume the conventional relative dir when present (Claude Code compat).
@@ -460,6 +469,8 @@ def load_plugin_manifest(plugin_dir: Path) -> PluginManifest | None:
         # default location when the manifest omits the key.
         mcp_servers = _default_mcp(plugin_dir)
 
+    default_agent = _read_default_agent(plugin_dir, data)
+
     return PluginManifest(
         name=name.strip(),
         version=str(data.get("version") or "0.0.0"),
@@ -475,7 +486,30 @@ def load_plugin_manifest(plugin_dir: Path) -> PluginManifest | None:
             p.strip().lower() for p in _as_str_tuple(data.get("permissions"))
             if p.strip()
         ),
+        default_agent=default_agent,
     )
+
+
+def _read_default_agent(plugin_dir: Path, manifest_data: dict[str, Any]) -> str:
+    """Resolve the plugin's main-thread agent declaration.
+
+    Canonical source: ``settings.json`` ``defaultAgent`` at the plugin
+    root. Returns "" when not declared. (Legacy CodeBuddy ``agentName``
+    manifests are converted by ``migrate_codebuddy_plugins``.)
+    """
+    del manifest_data  # canonical source is settings.json only
+    settings_path = plugin_dir / "settings.json"
+    if settings_path.is_file():
+        try:
+            settings = json.loads(settings_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            _LOG.warning("failed to parse %s: %s", settings_path, exc)
+            settings = None
+        if isinstance(settings, dict):
+            value = settings.get("defaultAgent")
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+    return ""
 
 
 # ── Lockfile ─────────────────────────────────────────────────────────────
@@ -1168,64 +1202,66 @@ def collect_light_contributions(
                 + ", ".join(plugin.manifest.unsupported)
             )
         has_executable = bool(plugin.manifest.hooks) or plugin.manifest.mcp_servers
-        if has_executable and not plugin.trusted:
+        if not has_executable:
+            # Nothing executable to collect or authorize.
+            continue
+        if not plugin.trusted:
             out.warnings.append(
                 f"plugin {plugin.name}: hooks/MCP servers skipped (not trusted; "
                 f"run `deepseek-tui plugin trust {plugin.name}`)"
             )
             continue
-        if plugin.trusted:
-            if enforce_grants:
-                from deepseek_tui.plugins.grants import (
-                    _any_grants,
-                    execution_authorized,
-                    migrate_legacy_fingerprint_grants,
-                )
+        if enforce_grants:
+            from deepseek_tui.plugins.grants import (
+                _any_grants,
+                execution_authorized,
+                migrate_legacy_fingerprint_grants,
+            )
 
-                digest = _execution_digest_for_plugin(plugin)
-                if digest:
-                    migrate_legacy_fingerprint_grants(plugin.name, digest)
-                    # User/claude scopes: heal pre-grant installs that still
-                    # have lockfile trusted=true but no grant files. Never
-                    # heal project scope (trust is grant-only there).
-                    if (
-                        plugin.scope != "project"
-                        and not _any_grants(plugin.name)
-                    ):
-                        from deepseek_tui.plugins.grants import grant_trust
-
-                        try:
-                            grant_trust(plugin.name, digest)
-                            _LOG.info(
-                                "healed missing execution grant for trusted "
-                                "plugin %s",
-                                plugin.name,
-                            )
-                        except Exception:  # noqa: BLE001
-                            _LOG.warning(
-                                "failed to heal execution grant for %s",
-                                plugin.name,
-                                exc_info=True,
-                            )
-                if not execution_authorized(
-                    trusted=True,
-                    plugin_id=plugin.name,
-                    digest=digest,
-                    capability="hooks.execute",
-                ) and not execution_authorized(
-                    trusted=True,
-                    plugin_id=plugin.name,
-                    digest=digest,
-                    capability="mcp.connect",
+            digest = _execution_digest_for_plugin(plugin)
+            if digest:
+                migrate_legacy_fingerprint_grants(plugin.name, digest)
+                # User/claude scopes: heal pre-grant installs that still
+                # have lockfile trusted=true but no grant files. Never
+                # heal project scope (trust is grant-only there).
+                if (
+                    plugin.scope != "project"
+                    and not _any_grants(plugin.name)
                 ):
-                    out.warnings.append(
-                        f"plugin {plugin.name}: hooks/MCP skipped "
-                        f"(no execution grant for current content digest; "
-                        f"re-run `deepseek-tui plugin trust {plugin.name}`)"
-                    )
-                    continue
-            _collect_hooks(plugin, out)
-            _collect_mcp(plugin, out)
+                    from deepseek_tui.plugins.grants import grant_trust
+
+                    try:
+                        grant_trust(plugin.name, digest)
+                        _LOG.info(
+                            "healed missing execution grant for trusted "
+                            "plugin %s",
+                            plugin.name,
+                        )
+                    except Exception:  # noqa: BLE001
+                        _LOG.warning(
+                            "failed to heal execution grant for %s",
+                            plugin.name,
+                            exc_info=True,
+                        )
+            if not execution_authorized(
+                trusted=True,
+                plugin_id=plugin.name,
+                digest=digest,
+                capability="hooks.execute",
+            ) and not execution_authorized(
+                trusted=True,
+                plugin_id=plugin.name,
+                digest=digest,
+                capability="mcp.connect",
+            ):
+                out.warnings.append(
+                    f"plugin {plugin.name}: hooks/MCP skipped "
+                    f"(no execution grant for current content digest; "
+                    f"re-run `deepseek-tui plugin trust {plugin.name}`)"
+                )
+                continue
+        _collect_hooks(plugin, out)
+        _collect_mcp(plugin, out)
     return out
 
 
@@ -1292,6 +1328,15 @@ def _collect_skills(plugin: LoadedPlugin, out: PluginContributions) -> None:
     seen = {s.name.lower() for s in out.skills}
 
     def _add(skill: Skill) -> None:
+        # Namespace plugin skills as ``plugin:skill`` (Claude Code
+        # convention): unique across plugins, and workspace-local skills
+        # keep the bare name. Bare lookups still resolve via the
+        # SkillRegistry suffix fallback. Single-skill plugins whose skill
+        # shares the plugin name stay bare (``x:x`` adds nothing).
+        if skill.name.lower() != plugin.name.lower():
+            skill = dataclasses.replace(
+                skill, name=f"{plugin.name}:{skill.name}"
+            )
         if skill.name.lower() not in seen:
             out.skills.append(skill)
             seen.add(skill.name.lower())
@@ -1326,30 +1371,32 @@ def _collect_skills(plugin: LoadedPlugin, out: PluginContributions) -> None:
 
 # CamelCase lifecycle events used by Claude Code / CodeBuddy hooks.json,
 # mapped to our snake_case ``LIFECYCLE_EVENTS``. Events without a runtime
-# equivalent (Stop, SubagentStop, Notification, PreCompact) are skipped.
+# equivalent (Notification, PreCompact, …) are skipped with a warning.
 _FOREIGN_HOOK_EVENT_MAP = {
     "sessionstart": "session_start",
     "sessionend": "session_end",
     "userpromptsubmit": "message_submit",
     "pretooluse": "tool_call_before",
     "posttooluse": "tool_call_after",
+    "stop": "turn_end",
+    "subagentstop": "subagent_stop",
 }
+
+# Claude Code's documented default hook timeout (seconds).
+_FOREIGN_HOOK_DEFAULT_TIMEOUT_SECS = 600.0
 
 
 def _substitute_hook_command(command: str, plugin_dir: Path) -> str:
     """Resolve plugin-root / project-dir tokens across ecosystems.
 
-    ``${PLUGIN_DIR}`` (native), ``${CODEBUDDY_PLUGIN_ROOT}`` and
-    ``${CLAUDE_PLUGIN_ROOT}`` resolve to the plugin's absolute path at load
-    time. Project-dir tokens become ``${DEEPSEEK_WORKSPACE}`` — the env var the
-    hook runner exports at execution time (shell-expanded in the subprocess).
+    ``${PLUGIN_DIR}`` (native) and ``${CLAUDE_PLUGIN_ROOT}`` resolve to the
+    plugin's absolute path at load time. ``${CLAUDE_PROJECT_DIR}`` becomes
+    ``${DEEPSEEK_WORKSPACE}`` — the env var the hook runner exports at
+    execution time (shell-expanded in the subprocess).
     """
     command = _substitute(command, plugin_dir)
-    root = str(plugin_dir)
-    for token in ("${CODEBUDDY_PLUGIN_ROOT}", "${CLAUDE_PLUGIN_ROOT}"):
-        command = command.replace(token, root)
-    for token in ("${CODEBUDDY_PROJECT_DIR}", "${CLAUDE_PROJECT_DIR}"):
-        command = command.replace(token, "${DEEPSEEK_WORKSPACE}")
+    command = command.replace("${CLAUDE_PLUGIN_ROOT}", str(plugin_dir))
+    command = command.replace("${CLAUDE_PROJECT_DIR}", "${DEEPSEEK_WORKSPACE}")
     return command
 
 
@@ -1383,8 +1430,10 @@ def _append_foreign_hooks(
     """Parse the Claude Code / CodeBuddy ``{EventName: [group, ...]}`` schema.
 
     Each group is ``{matcher?, hooks: [{type: command, command, timeout}]}``.
-    ``timeout`` is milliseconds. ``matcher`` (a tool-name pattern) is recorded
-    as an advisory ``tool_name`` condition for tool events.
+    ``timeout`` is seconds (Claude Code default: 600). ``matcher`` (a
+    tool-name pattern) is mapped to a ``tool_name_any`` condition for tool
+    events. Entries are tagged ``io_dialect="claude"`` so the executor
+    delivers Claude-spelled tool/event names on stdin.
     """
     for event_name, groups in event_dict.items():
         mapped = _FOREIGN_HOOK_EVENT_MAP.get(str(event_name).lower())
@@ -1423,7 +1472,9 @@ def _append_foreign_hooks(
                 # Claude Code documents ``timeout`` in seconds (default 600).
                 timeout = spec.get("timeout")
                 timeout_secs = (
-                    float(timeout) if isinstance(timeout, (int, float)) else 30.0
+                    float(timeout)
+                    if isinstance(timeout, (int, float))
+                    else _FOREIGN_HOOK_DEFAULT_TIMEOUT_SECS
                 )
                 out.hook_entries.append(
                     LifecycleHookEntry(
@@ -1435,6 +1486,7 @@ def _append_foreign_hooks(
                         continue_on_error=True,
                         name=f"{plugin.name}:{event_name}",
                         owner_plugin_id=plugin.name,
+                        io_dialect="claude",
                     )
                 )
 
@@ -2579,6 +2631,171 @@ def set_plugin_trusted(
 
     revoke_grant(lock_name)
     return f"Untrusted plugin {lock_name}"
+
+
+# ── CodeBuddy migration (one-time) ───────────────────────────────────────
+
+_CODEBUDDY_MANIFEST_REL = Path(".codebuddy-plugin") / "plugin.json"
+# Keys CodeBuddy adds on top of the Claude manifest schema. ``agentName``
+# / ``expertType`` migrate into settings.json; the rest are dropped as
+# metadata-only.
+_CODEBUDDY_ONLY_KEYS = ("expertType", "agentName", "category", "keywords")
+_CODEBUDDY_TOKEN_MAP = {
+    "${CODEBUDDY_PLUGIN_ROOT}": "${CLAUDE_PLUGIN_ROOT}",
+    "${CODEBUDDY_PROJECT_DIR}": "${CLAUDE_PROJECT_DIR}",
+}
+
+
+def migrate_codebuddy_plugins(plugins_dir: Path | None = None) -> list[str]:
+    """One-time migration: CodeBuddy-format installs → canonical layout.
+
+    For every ``<plugins_dir>/<name>/.codebuddy-plugin/plugin.json``:
+
+    * ``agentName`` / ``expertType`` → ``settings.json`` ``defaultAgent``
+      at the plugin root (main-thread agent activation).
+    * manifest ``name`` is normalized to the directory name when they
+      disagree (lockfile entry re-keyed accordingly).
+    * manifest moves to ``.deepseek-plugin/plugin.json``; the CodeBuddy
+      dir is removed.
+    * ``${CODEBUDDY_*}`` tokens in the plugin's hooks.json are rewritten
+      to their ``${CLAUDE_*}`` equivalents.
+    * the lockfile ``source`` is repointed at the install dir (original
+      staging paths are typically gone), ``contribution_index`` is
+      rebuilt, and stale ``derived_provenance`` is dropped.
+    * lockfile entries whose plugin directory no longer exists are pruned.
+    * previously-trusted plugins are re-trusted so digest-bound grants
+      re-bind to the rewritten content.
+
+    Reads the CodeBuddy manifest path directly (not via the manifest
+    candidate list) so this keeps working after the CodeBuddy
+    compatibility layer is removed from the loader.
+    """
+    target_dir = plugins_dir or user_plugins_dir()
+    report: list[str] = []
+    if not target_dir.is_dir():
+        return ["No plugins directory; nothing to migrate."]
+    lock = read_lockfile(target_dir)
+    retrust: list[str] = []
+
+    for child in sorted(target_dir.iterdir()):
+        if not child.is_dir() or child.name.startswith("."):
+            continue
+        cb_manifest = child / _CODEBUDDY_MANIFEST_REL
+        if not cb_manifest.is_file():
+            continue
+        try:
+            data = json.loads(cb_manifest.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            report.append(f"{child.name}: manifest unreadable, skipped ({exc})")
+            continue
+        if not isinstance(data, dict):
+            report.append(f"{child.name}: manifest not an object, skipped")
+            continue
+
+        old_name = str(data.get("name") or child.name)
+        # agentName / expertType → settings.json defaultAgent.
+        agent_name = data.get("agentName")
+        if isinstance(agent_name, str) and agent_name.strip():
+            settings_path = child / "settings.json"
+            settings: dict[str, Any] = {}
+            if settings_path.is_file():
+                try:
+                    loaded = json.loads(settings_path.read_text(encoding="utf-8"))
+                    if isinstance(loaded, dict):
+                        settings = loaded
+                except (OSError, json.JSONDecodeError):
+                    pass
+            settings.setdefault("defaultAgent", agent_name.strip())
+            settings_path.write_text(
+                json.dumps(settings, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+            report.append(
+                f"{child.name}: agentName={agent_name.strip()} → "
+                "settings.json defaultAgent"
+            )
+        for key in _CODEBUDDY_ONLY_KEYS:
+            data.pop(key, None)
+
+        # Normalize the manifest name to the directory name.
+        if old_name != child.name:
+            report.append(
+                f"{child.name}: manifest name {old_name!r} → {child.name!r}"
+            )
+            data["name"] = child.name
+
+        # Write the canonical manifest, drop the CodeBuddy dir.
+        dest_dir = child / ".deepseek-plugin"
+        dest_dir.mkdir(exist_ok=True)
+        (dest_dir / "plugin.json").write_text(
+            json.dumps(data, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        shutil.rmtree(child / ".codebuddy-plugin")
+        report.append(f"{child.name}: .codebuddy-plugin → .deepseek-plugin")
+
+        # Rewrite CODEBUDDY_* tokens in hooks.json (declared or default).
+        hooks_rel = data.get("hooks")
+        hook_files = []
+        if isinstance(hooks_rel, str) and hooks_rel.strip():
+            hook_files.append(child / hooks_rel.strip().lstrip("./"))
+        default_hooks = child / "hooks" / "hooks.json"
+        if default_hooks not in hook_files:
+            hook_files.append(default_hooks)
+        for hook_file in hook_files:
+            if not hook_file.is_file():
+                continue
+            try:
+                text = hook_file.read_text(encoding="utf-8")
+            except OSError:
+                continue
+            replaced = text
+            for old, new in _CODEBUDDY_TOKEN_MAP.items():
+                replaced = replaced.replace(old, new)
+            if replaced != text:
+                hook_file.write_text(replaced, encoding="utf-8")
+                report.append(
+                    f"{child.name}: rewrote CODEBUDDY_* tokens in "
+                    f"{hook_file.relative_to(child)}"
+                )
+
+        # Lockfile: re-key to the directory name, repoint source, rebuild
+        # the contribution index against the rewritten content.
+        entry = lock.pop(old_name, None) or lock.pop(child.name, None) or {}
+        entry["source"] = str(child)
+        entry.pop("derived_provenance", None)
+        manifest = load_plugin_manifest(child)
+        if manifest is not None:
+            try:
+                entry["contribution_index"] = build_contribution_index(
+                    child, manifest
+                )
+            except Exception:  # noqa: BLE001 — index is an optimization only
+                entry.pop("contribution_index", None)
+                _LOG.warning(
+                    "index rebuild failed for %s", child.name, exc_info=True
+                )
+        lock[child.name] = entry
+        if entry.get("trusted"):
+            retrust.append(child.name)
+
+    # Prune lockfile entries whose plugin no longer exists on disk.
+    for name in sorted(lock):
+        if _resolve_plugin_dir(name, target_dir) is None:
+            del lock[name]
+            report.append(f"{name}: pruned dead lockfile entry")
+
+    _write_lockfile(target_dir, lock)
+
+    # Re-bind digest grants for plugins that were trusted before migration
+    # (content changed, so old digest grants no longer match).
+    for name in retrust:
+        set_plugin_trusted(name, True, plugins_dir=target_dir)
+        report.append(f"{name}: re-trusted (grant re-bound to new digest)")
+
+    if not report:
+        report.append("No CodeBuddy-format plugins found; nothing to do.")
+    return report
 
 
 # ── Marketplace registry ─────────────────────────────────────────────────

@@ -47,48 +47,10 @@ def test_claude_adapter_inspects_conventional_layout_and_real_yaml(
     assert worker.metadata["tools"] == ["Read", "Grep"]
 
 
-def test_codebuddy_adapter_preserves_rules_and_reports_team_degradation(
-    tmp_path: Path,
-) -> None:
-    _write(
-        tmp_path / ".codebuddy-plugin" / "plugin.json",
-        json.dumps(
-            {
-                "name": "research-team",
-                "version": "1.0.0",
-                "expertType": "team",
-                "teamInfo": {"members": ["researcher"]},
-            }
-        ),
-    )
-    _write(
-        tmp_path / "rules" / "core.md",
-        "---\ndescription: Core.\nalwaysApply: true\n---\nFollow it.\n",
-    )
-    _write(
-        tmp_path / "agents" / "researcher.md",
-        "---\nname: researcher\ndescription: Researcher.\n---\nResearch.\n",
-    )
-
-    packages, _ = inspect_local_source(tmp_path)
-
-    package = packages[0]
-    assert package.compatibility.adapter_id == "codebuddy"
-    assert package.compatibility.status is CompatibilityStatus.DEGRADED
-    assert {item.kind for item in package.contributions} == {
-        "prompt.rule",
-        "agent.persona",
-    }
-    assert any(
-        item.code == "CODEBUDDY_TEAM_ORCHESTRATION_DEGRADED"
-        for item in package.compatibility.diagnostics
-    )
-
-
 def test_collection_locator_keeps_nested_plugin_collision_visible(tmp_path: Path) -> None:
     for relative, marker in (
         ("suite", ".deepseek-plugin"),
-        ("suite/expert", ".codebuddy-plugin"),
+        ("suite/expert", ".claude-plugin"),
     ):
         _write(
             tmp_path / relative / marker / "plugin.json",
@@ -178,6 +140,21 @@ def test_pi_package_is_not_recognized(tmp_path: Path) -> None:
 def test_resource_ref_rejects_unsafe_paths(path: str) -> None:
     with pytest.raises(ValueError):
         ResourceRef(path)
+
+
+def test_local_inspection_accepts_internal_file_symlink(tmp_path: Path) -> None:
+    """Real Claude plugins ship internal symlinks (AGENTS.md -> CLAUDE.md);
+    these resolve inside the plugin root and must not be rejected."""
+    _write(
+        tmp_path / ".claude-plugin" / "plugin.json",
+        json.dumps({"name": "linked", "version": "1.0.0"}),
+    )
+    _write(tmp_path / "CLAUDE.md", "Guidance.\n")
+    (tmp_path / "AGENTS.md").symlink_to("CLAUDE.md")
+
+    packages, _ = inspect_local_source(tmp_path)
+
+    assert [item.plugin_id for item in packages] == ["linked"]
 
 
 def test_local_inspection_rejects_symlink_escape(tmp_path: Path) -> None:

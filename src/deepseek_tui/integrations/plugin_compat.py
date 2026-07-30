@@ -13,9 +13,12 @@ ecosystem means editing this module, not the hot-path loader.
 from __future__ import annotations
 
 __all__ = [
+    "CLAUDE_EVENT_NAME_MAP",
     "FOREIGN_TOOL_NAME_MAP",
     "map_tool_matcher",
     "matcher_to_condition",
+    "to_claude_event_name",
+    "to_claude_tool_name",
 ]
 
 # Foreign (Claude Code / CodeBuddy) tool names -> DeepSeek runtime tool names.
@@ -37,6 +40,47 @@ FOREIGN_TOOL_NAME_MAP: dict[str, tuple[str, ...]] = {
     "todowrite": ("checklist",),
     "skill": ("load_skill",),
 }
+
+
+# DeepSeek runtime tool names -> the Claude Code name community hook
+# scripts match against (e.g. ``jq 'select(.tool_name == "Bash")'``).
+# Reverse of FOREIGN_TOOL_NAME_MAP; fan-in collisions resolve to the
+# most idiomatic Claude name.
+_DEEPSEEK_TO_CLAUDE_TOOL_NAME: dict[str, str] = {
+    "read_file": "Read",
+    "write_file": "Write",
+    "edit_file": "Edit",
+    "exec_shell": "Bash",
+    "file_search": "Glob",
+    "grep_files": "Grep",
+    "fetch_url": "WebFetch",
+    "web_search": "WebSearch",
+    "agent": "Task",
+    "checklist": "TodoWrite",
+    "load_skill": "Skill",
+}
+
+# Internal snake_case lifecycle events -> Claude Code CamelCase names,
+# as delivered in the stdin JSON ``hook_event_name`` field.
+CLAUDE_EVENT_NAME_MAP: dict[str, str] = {
+    "session_start": "SessionStart",
+    "session_end": "SessionEnd",
+    "message_submit": "UserPromptSubmit",
+    "tool_call_before": "PreToolUse",
+    "tool_call_after": "PostToolUse",
+    "turn_end": "Stop",
+    "subagent_stop": "SubagentStop",
+}
+
+
+def to_claude_tool_name(name: str) -> str:
+    """DeepSeek tool name -> Claude Code tool name (identity when unmapped)."""
+    return _DEEPSEEK_TO_CLAUDE_TOOL_NAME.get(name, name)
+
+
+def to_claude_event_name(event: str) -> str:
+    """Internal event name -> Claude Code CamelCase (identity when unmapped)."""
+    return CLAUDE_EVENT_NAME_MAP.get(event, event)
 
 
 def map_tool_matcher(matcher: str) -> list[str]:

@@ -1411,6 +1411,23 @@ def plugin_install_cmd(
         raise typer.Exit(1)
 
 
+@plugin_app.command("migrate")
+def plugin_migrate_cmd(
+    project: bool = _PLUGIN_PROJECT_OPTION,
+) -> None:
+    """Migrate CodeBuddy-format plugins to the canonical layout.
+
+    Moves .codebuddy-plugin/plugin.json to .deepseek-plugin/, converts
+    agentName/expertType into settings.json defaultAgent, rewrites
+    CODEBUDDY_* hook tokens, rebuilds indexes, prunes dead lockfile
+    entries, and re-binds trust grants.
+    """
+    from deepseek_tui.integrations.plugins import migrate_codebuddy_plugins
+
+    for line in migrate_codebuddy_plugins(plugins_dir=_plugins_dir(project)):
+        typer.echo(line)
+
+
 @plugin_app.command("new")
 def plugin_new_cmd(
     name: str = typer.Argument(..., help="Plugin name (lowercase kebab-case)."),

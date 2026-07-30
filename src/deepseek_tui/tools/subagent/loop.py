@@ -404,6 +404,53 @@ async def run_subagent_loop(
     async def _noop_emit(_event: object) -> None:
         return None
 
+    # True once a subagent_stop hook has blocked completion (delivered to
+    # hooks as ``stop_hook_active`` so they can avoid blocking forever).
+    stop_hook_active = False
+
+    async def _subagent_stop_allowed() -> bool:
+        """Run ``subagent_stop`` (Claude "SubagentStop") hooks.
+
+        Returns False when a hook blocks the stop; the block reason is
+        appended to the transcript so the sub-agent keeps working on it.
+        DEFAULT_MAX_STEPS remains the hard upper bound.
+        """
+        nonlocal stop_hook_active
+        executor = getattr(runtime, "hook_executor", None)
+        if executor is None or not executor.has_hooks_for_event("subagent_stop"):
+            return True
+        from deepseek_tui.integrations.hooks import (
+            HookContext,
+            aggregate_hook_decision,
+        )
+
+        ctx = HookContext(
+            session_id=agent.id,
+            workspace=Path(agent.workspace),
+            model=agent.model,
+            stop_hook_active=stop_hook_active,
+        )
+        try:
+            results = await executor.execute("subagent_stop", ctx)
+        except Exception:  # noqa: BLE001 — hooks must never kill the agent
+            _LOG.warning("subagent_stop hooks failed", exc_info=True)
+            return True
+        decision = aggregate_hook_decision(results)
+        if not decision.blocked:
+            return True
+        stop_hook_active = True
+        reason = (
+            decision.reason
+            or "A SubagentStop hook blocked ending this sub-agent."
+        )
+        messages.append(
+            Message.user(
+                "<system-reminder>A SubagentStop hook prevented finishing: "
+                f"{reason}</system-reminder>"
+            )
+        )
+        return False
+
     def _persist_messages(msgs: list[Message]) -> list[Message]:
         # Strip the nudge even from a completed-round snapshot: once a round
         # completes it becomes part of `messages` (the model saw and acted on
@@ -520,7 +567,12 @@ async def run_subagent_loop(
 
             if not result.tool_calls:
                 if round_text:
-                    break
+                    if await _subagent_stop_allowed():
+                        break
+                    # Blocked: give the agent its tools back and keep going.
+                    force_summary = False
+                    _save_complete_checkpoint("round")
+                    continue
                 if not force_summary and structured_value is None:
                     force_summary = True
                     nudge = (
@@ -533,7 +585,11 @@ async def run_subagent_loop(
                     continue
                 if round_thinking:
                     final_text = round_thinking
-                break
+                if await _subagent_stop_allowed():
+                    break
+                force_summary = False
+                _save_complete_checkpoint("round")
+                continue
 
             from deepseek_tui.protocol.messages import ToolUseBlock
 

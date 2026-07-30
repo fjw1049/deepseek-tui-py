@@ -336,6 +336,10 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         # 看到「只读底座 + 按插件 permissions 的写工具 + 该插件的 skill/MCP
         # 工具」。用户显式打 `/skill` 或 `@mcp` 时该轮让位（前缀优先）。
         self._active_plugin: object | None = None
+        # Main-thread persona (PluginAgent) activated by the mounted
+        # plugin's settings.json ``defaultAgent``. Its body is appended to
+        # the plugin context block while mounted; cleared on unmount.
+        self._scenario_agent: Any | None = None
         # Frozen plugin view for this Engine.  Source discovery, contribution
         # assembly, and future format adapters live behind this seam.
         self.plugin_session: Any | None = None
@@ -496,6 +500,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         """
         if name is None or name.lower() == "off":
             self._active_plugin = None
+            self._scenario_agent = None
             if self.hook_executor is not None:
                 self.hook_executor.scenario_plugin = None
             return "已退出场景，恢复全量工具与技能。"
@@ -565,6 +570,19 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         # Ensure heavy components (commands/agents/rules) are loaded for
         # this plugin so prompt rendering and command dispatch work.
         self.ensure_plugin_activated(m.name, plugin=match)
+        # settings.json ``defaultAgent``: mounting the plugin makes that
+        # agent the main-thread persona (its body joins the system prompt).
+        self._scenario_agent = None
+        default_agent = (getattr(m, "default_agent", "") or "").strip()
+        if default_agent:
+            agent = self.plugin_agents.get(
+                f"{m.name}:{default_agent}".lower()
+            ) or self.plugin_agents.get(default_agent.lower())
+            if agent is not None:
+                self._scenario_agent = agent
+                note += f" 已激活主线程 agent：{agent.name}。"
+            else:
+                note += f" 注意：声明的默认 agent「{default_agent}」未找到。"
         return note
 
     def ensure_plugin_activated(
@@ -656,8 +674,13 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                 for s in self.skill_registry.skills
                 if _path_under(s.path, plugin_root)
             ]
+        # Registry names are qualified (``plugin:skill``); older lockfile
+        # indexes may store bare names — match either form.
         return [
-            s for s in self.skill_registry.skills if s.name in skill_names
+            s
+            for s in self.skill_registry.skills
+            if s.name in skill_names
+            or s.name.split(":", 1)[-1] in skill_names
         ]
 
     def _plugin_catalog_entries(self) -> list[Any]:
@@ -762,7 +785,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         from deepseek_tui.engine.prompts import render_plugin_context
 
         has_mcp = bool(plugin.manifest.mcp_servers)
-        return render_plugin_context(
+        block = render_plugin_context(
             name=plugin.name,
             version=plugin.manifest.version,
             path=str(plugin.path.expanduser().resolve()),
@@ -771,6 +794,17 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             mcp_active=has_mcp and plugin.trusted,
             has_mcp=has_mcp,
         )
+        agent = self._scenario_agent
+        body = (getattr(agent, "body", "") or "").strip() if agent is not None else ""
+        if body:
+            block += (
+                f"\n\n## Active Plugin Agent: {agent.name}\n"
+                "While this plugin is mounted you act as the agent below. "
+                "Its instructions extend (and on conflict override) your "
+                "general behavior for this scenario.\n\n"
+                f"{body}"
+            )
+        return block
 
     def _render_plugin_components_context(self) -> str | None:
         """Render plugin contribution surface for the system prompt.
@@ -1278,6 +1312,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                 mailbox=subagent_manager.mailbox,
                 approval_handler=engine.approval_handler,
                 emit_event=handle.emit,
+                hook_executor=engine.hook_executor,
             )
             subagent_manager.attach_loop_runtime(loop_runtime)
 
@@ -1753,6 +1788,34 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         # 上下文。skill 聚焦用 `/` 前缀无此冲突。命中时把首个 `@<name>`
         # token 剥掉再处理，处理完再拼回用户消息，模型仍能看到连接器线索。
         raw_content = op.content or ""
+        # UserPromptSubmit（message_submit）hooks 在引擎层触发，所有 surface
+        # （TUI/server/CLI）语义一致：阻断决策让 prompt 到不了模型；
+        # additionalContext 作为 system reminder 注入（不改用户消息原文）。
+        hook_context_extra = ""
+        if not op.hidden:
+            hook_results = await self.run_lifecycle_hook(
+                "message_submit", message=raw_content
+            )
+            if hook_results:
+                from deepseek_tui.integrations.hooks import aggregate_hook_decision
+
+                decision = aggregate_hook_decision(hook_results)
+                if decision.blocked:
+                    reason = decision.reason or "blocked by a UserPromptSubmit hook"
+                    logger.info(
+                        "user_prompt_blocked_by_hook reason=%r", reason[:200]
+                    )
+                    await self.handle.emit(
+                        StatusEvent(
+                            message=f"Message blocked by hook: {reason[:200]}"
+                        )
+                    )
+                    await self.handle.emit(TurnStartedEvent(user_text=""))
+                    await self.handle.emit(
+                        TurnCompleteEvent(assistant_message=None, success=True)
+                    )
+                    return
+                hook_context_extra = "\n".join(decision.additional_context)
         # 插件命令（/<plugin>:<command> [args]）：把命令 markdown 正文按
         # $ARGUMENTS 展开后替换成用户消息，随后照常走 @mention/聚焦处理。
         # 声明式文本，任何 surface（CLI/TUI/server）发进来都在此统一展开。
@@ -1874,6 +1937,22 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             optmem_msg = self._take_optmem_wake_reminder()
             if optmem_msg is not None:
                 working_messages.insert(insert_at, optmem_msg)
+                insert_at += 1
+            if hook_context_extra:
+                from deepseek_tui.engine.context_pressure import (
+                    wrap_system_reminder,
+                )
+
+                working_messages.insert(
+                    insert_at,
+                    Message.user(
+                        wrap_system_reminder(
+                            "Context from UserPromptSubmit hooks:\n"
+                            + hook_context_extra
+                        ),
+                        origin=MessageOrigin.SYSTEM_REMINDER,
+                    ),
+                )
         self.working_set.observe_user_message(processed.display_text or "")
         self.working_set.observe_references(processed.references)
         preview = (processed.display_text or "")[:200].replace("\n", " ")
@@ -2440,6 +2519,10 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
 
         latency_turn_id = str(turn_id) if turn_id else None
         tool_round_count = 0
+        # True once a turn_end (Claude "Stop") hook has blocked the stop —
+        # delivered to hooks as ``stop_hook_active`` so they can avoid
+        # blocking forever. The round-trip limit is the hard upper bound.
+        stop_hook_active = False
         for round_idx in range(self.max_tool_round_trips + 1):
             trace = get_turn_latency(latency_turn_id) if latency_turn_id else None
             round_trace = trace.start_round(round_idx) if trace is not None else None
@@ -2632,6 +2715,44 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             if not result.tool_calls:
                 if await self._handle_subagent_turn_handoff(messages):
                     continue
+                # turn_end (Claude "Stop") hooks: a blocking decision keeps
+                # the loop running with the hook's reason injected as
+                # context, so "don't stop until done" policies work.
+                if self.hook_executor.has_hooks_for_event("turn_end"):
+                    stop_ctx = self._lifecycle_hook_context(model=model)
+                    stop_ctx.stop_hook_active = stop_hook_active
+                    stop_results = await self._run_lifecycle_hook(
+                        "turn_end", stop_ctx
+                    )
+                    from deepseek_tui.integrations.hooks import (
+                        aggregate_hook_decision,
+                    )
+
+                    stop_decision = aggregate_hook_decision(stop_results)
+                    if stop_decision.blocked:
+                        stop_hook_active = True
+                        reason = (
+                            stop_decision.reason
+                            or "A Stop hook blocked ending the turn."
+                        )
+                        from deepseek_tui.engine.context_pressure import (
+                            wrap_system_reminder,
+                        )
+
+                        messages.append(
+                            Message.user(
+                                wrap_system_reminder(
+                                    "A Stop hook prevented ending the turn: "
+                                    f"{reason}"
+                                ),
+                                origin=MessageOrigin.SYSTEM_REMINDER,
+                            )
+                        )
+                        logger.info(
+                            "turn_end_blocked_by_hook reason=%s",
+                            reason[:200],
+                        )
+                        continue
                 from dataclasses import replace
 
                 return replace(result, tool_round_count=tool_round_count)

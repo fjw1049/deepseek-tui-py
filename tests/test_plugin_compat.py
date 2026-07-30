@@ -58,15 +58,15 @@ def test_tool_name_any_condition_fires() -> None:
     assert fire("read_file") is False
 
 
-def _make_codebuddy_plugin_with_hooks(root: Path, name: str = "ppt") -> Path:
+def _make_claude_plugin_with_hooks(root: Path, name: str = "ppt") -> Path:
     plugin = root / name
-    (plugin / ".codebuddy-plugin").mkdir(parents=True)
+    (plugin / ".claude-plugin").mkdir(parents=True)
     (plugin / "hooks").mkdir()
     (plugin / "skills" / "s").mkdir(parents=True)
     (plugin / "skills" / "s" / "SKILL.md").write_text(
         "---\nname: s\ndescription: d\n---\nbody\n", encoding="utf-8"
     )
-    (plugin / ".codebuddy-plugin" / "plugin.json").write_text(
+    (plugin / ".claude-plugin" / "plugin.json").write_text(
         json.dumps(
             {
                 "name": name,
@@ -86,8 +86,8 @@ def _make_codebuddy_plugin_with_hooks(root: Path, name: str = "ppt") -> Path:
                             "hooks": [
                                 {
                                     "type": "command",
-                                    "command": 'node "${CODEBUDDY_PLUGIN_ROOT}/x.js" '
-                                    '"${CODEBUDDY_PROJECT_DIR}"',
+                                    "command": 'node "${CLAUDE_PLUGIN_ROOT}/x.js" '
+                                    '"${CLAUDE_PROJECT_DIR}"',
                                 }
                             ]
                         }
@@ -107,23 +107,23 @@ def _make_codebuddy_plugin_with_hooks(root: Path, name: str = "ppt") -> Path:
 
 
 def test_install_preserves_vendor_layout(tmp_path: Path) -> None:
-    source = _make_codebuddy_plugin_with_hooks(tmp_path / "src")
+    source = _make_claude_plugin_with_hooks(tmp_path / "src")
     plugins_dir = tmp_path / "installed"
     outcome, _ = install_plugin(str(source), plugins_dir, trust=True)
     assert outcome.name == "INSTALLED"
     dest = plugins_dir / "ppt"
     # Installed copy keeps the vendor layout; runtime adapters map at read time.
-    assert (dest / ".codebuddy-plugin" / "plugin.json").is_file()
-    assert not (dest / ".claude-plugin").exists()
+    assert (dest / ".claude-plugin" / "plugin.json").is_file()
+    assert not (dest / ".deepseek-plugin").exists()
     # Original source is untouched.
-    assert (source / ".codebuddy-plugin" / "plugin.json").is_file()
-    assert not (source / ".claude-plugin").exists()
+    assert (source / ".claude-plugin" / "plugin.json").is_file()
+    assert not (source / ".deepseek-plugin").exists()
     src_hooks = json.loads((source / "hooks" / "hooks.json").read_text())
     assert src_hooks["hooks"]["PostToolUse"][0]["matcher"] == "Edit|Write"
 
 
 def test_foreign_hooks_load_with_mapped_condition(tmp_path: Path) -> None:
-    _make_codebuddy_plugin_with_hooks(tmp_path)
+    _make_claude_plugin_with_hooks(tmp_path)
     set_plugin_trusted("ppt", True, plugins_dir=tmp_path)
     contribs = collect_contributions(discover_plugins(plugins_dir=tmp_path))
     tool_hooks = [

@@ -45,13 +45,29 @@ class LocalArtifact:
             relative = path.relative_to(self.root).as_posix()
             if ".git" in path.relative_to(self.root).parts:
                 continue
-            # Symlinks break content-addressing: rglob does not descend into
-            # symlink directories, and copytree(symlinks=False) can materialize
-            # bytes the digest never covered. Reject them outright.
+            # Internal file symlinks are common in real plugins (e.g.
+            # AGENTS.md -> CLAUDE.md) and safe: read_bytes() follows them, so
+            # the digest covers exactly what copytree(symlinks=False) would
+            # materialize. Reject escapes (bytes outside the root the digest
+            # cannot pin) and symlinked dirs (rglob does not descend, so their
+            # contents would go unhashed).
             if path.is_symlink():
-                raise PluginSourceError(
-                    f"plugin source must not contain symlinks: {relative}"
-                )
+                try:
+                    target = path.resolve(strict=True)
+                except OSError as exc:
+                    raise PluginSourceError(
+                        f"broken symlink in plugin source: {relative}"
+                    ) from exc
+                if not target.is_relative_to(self.root):
+                    raise PluginSourceError(
+                        f"plugin source symlinks must not escape the plugin "
+                        f"root: {relative}"
+                    )
+                if target.is_dir():
+                    raise PluginSourceError(
+                        f"plugin source must not contain symlinked "
+                        f"directories: {relative}"
+                    )
             if path.is_dir():
                 continue
             count += 1
@@ -87,7 +103,6 @@ class LocalArtifact:
 def _manifest_roots(root: Path) -> set[Path]:
     markers = (
         ".claude-plugin/plugin.json",
-        ".codebuddy-plugin/plugin.json",
         ".deepseek-plugin/plugin.json",
     )
     roots: set[Path] = set()

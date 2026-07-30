@@ -496,7 +496,9 @@ class DeepSeekTUI(App[None]):
         if self._engine is None:
             return
         preview = text[:200].replace("\n", " ")
-        await self._engine.run_lifecycle_hook("message_submit", message=text)
+        # UserPromptSubmit (message_submit) hooks fire inside the engine's
+        # send-message path (shared with the server/GUI surface); a blocking
+        # decision surfaces as a StatusEvent.
         # Prepend active mode so Engine adapts behaviour (plan/yolo/ask vs agent).
         content = text
         if self._interaction_mode != "agent":

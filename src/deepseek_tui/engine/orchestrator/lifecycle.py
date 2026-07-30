@@ -52,9 +52,17 @@ class LifecycleLspMixin:
             model=model or self.default_model,
         )
 
-    async def _run_lifecycle_hook(self, event: str, context: object) -> None:
+    async def _run_lifecycle_hook(self, event: str, context: object) -> list[Any]:
+        """Run hooks for *event*; returns the individual ``HookResult``s.
+
+        Callers that care about the decision channel (blocking, ask,
+        context injection) aggregate the results via
+        :func:`deepseek_tui.integrations.hooks.aggregate_hook_decision`;
+        fire-and-forget call sites can ignore the return value.
+        """
         if self.hook_executor.has_hooks_for_event(event):
-            await self.hook_executor.execute(event, context)  # type: ignore[arg-type]
+            return await self.hook_executor.execute(event, context)  # type: ignore[arg-type]
+        return []
 
     async def run_lifecycle_hook(
         self,
@@ -68,7 +76,7 @@ class LifecycleLspMixin:
         message: str | None = None,
         error_message: str | None = None,
         previous_mode: str | None = None,
-    ) -> None:
+    ) -> list[Any]:
         """Run a lifecycle hook (TUI / app-server entry point)."""
         context = self._lifecycle_hook_context(
             tool_name=tool_name,
@@ -80,7 +88,7 @@ class LifecycleLspMixin:
             error_message=error_message,
             previous_mode=previous_mode,
         )
-        await self._run_lifecycle_hook(event, context)
+        return await self._run_lifecycle_hook(event, context)
 
     def _get_lsp_manager(self) -> LspManager | None:
         """Pull LspManager from ToolContext.metadata (set by ToolRuntime).

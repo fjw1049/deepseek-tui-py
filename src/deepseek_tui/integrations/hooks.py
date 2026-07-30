@@ -370,6 +370,8 @@ LIFECYCLE_EVENTS = frozenset(
         "message_submit",
         "tool_call_before",
         "tool_call_after",
+        "turn_end",
+        "subagent_stop",
         "mode_change",
         "on_error",
         "shell_env",
@@ -379,7 +381,8 @@ LIFECYCLE_EVENTS = frozenset(
 
 @dataclass
 class HookContext:
-    """Context passed to hooks via ``DEEPSEEK_*`` environment variables."""
+    """Context passed to hooks via ``DEEPSEEK_*`` environment variables
+    and as a JSON document on stdin (Claude Code hook protocol)."""
 
     tool_name: str | None = None
     tool_args: str | None = None
@@ -395,6 +398,57 @@ class HookContext:
     model: str | None = None
     total_tokens: int | None = None
     session_cost: float | None = None
+    # True when this turn's stop was already blocked once by a turn_end /
+    # subagent_stop hook. Mirrors Claude Code's ``stop_hook_active`` so
+    # hooks can avoid blocking forever.
+    stop_hook_active: bool = False
+
+    def to_stdin_payload(self, event: str, dialect: str = "native") -> dict[str, Any]:
+        """Build the JSON document delivered on the hook's stdin.
+
+        Mirrors the Claude Code hook input schema: common fields
+        (``session_id`` / ``cwd`` / ``hook_event_name``) plus event-specific
+        fields (``tool_name`` / ``tool_input`` / ``tool_response`` /
+        ``prompt`` / ``stop_hook_active``). In the ``claude`` dialect tool
+        and event names are translated to Claude Code spellings so
+        community hook scripts (``jq '.tool_input.file_path'``,
+        ``.tool_name == "Bash"``) work unmodified.
+        """
+        from deepseek_tui.integrations.plugin_compat import (
+            to_claude_event_name,
+            to_claude_tool_name,
+        )
+
+        claude = dialect == "claude"
+        payload: dict[str, Any] = {
+            "session_id": self.session_id or "",
+            "cwd": str(self.workspace) if self.workspace else "",
+            "hook_event_name": to_claude_event_name(event) if claude else event,
+        }
+        if self.tool_name:
+            payload["tool_name"] = (
+                to_claude_tool_name(self.tool_name) if claude else self.tool_name
+            )
+        if self.tool_args is not None:
+            tool_input: Any
+            try:
+                tool_input = json.loads(self.tool_args)
+            except (ValueError, TypeError):
+                tool_input = self.tool_args
+            payload["tool_input"] = tool_input
+        if event == "tool_call_after":
+            if self.tool_result is not None:
+                response = self.tool_result
+                if len(response) > 10_000:
+                    response = response[:10_000] + "...[truncated]"
+                payload["tool_response"] = response
+            if self.tool_success is not None:
+                payload["tool_success"] = self.tool_success
+        if event == "message_submit" and self.message is not None:
+            payload["prompt"] = self.message
+        if event in ("turn_end", "subagent_stop"):
+            payload["stop_hook_active"] = self.stop_hook_active
+        return payload
 
     def to_env_vars(self) -> dict[str, str]:
         env: dict[str, str] = {}
@@ -443,6 +497,135 @@ class HookResult:
     stdout: str = ""
     stderr: str = ""
     error: str | None = None
+    # ── Decision channel (Claude Code hook output protocol) ──
+    # Exit code 2, stdout ``{"decision": "block"}`` or a PreToolUse
+    # ``permissionDecision: deny`` all set ``blocked``. What blocking
+    # *means* is decided by the engine call site per event.
+    blocked: bool = False
+    block_reason: str | None = None
+    # PreToolUse only: "allow" | "deny" | "ask" from
+    # ``hookSpecificOutput.permissionDecision``.
+    permission_decision: str | None = None
+    # Extra context to inject into the conversation (UserPromptSubmit /
+    # SessionStart stdout, or ``hookSpecificOutput.additionalContext``).
+    additional_context: str | None = None
+    # ``systemMessage``: a warning to surface to the user.
+    system_message: str | None = None
+
+
+@dataclass
+class HookDecision:
+    """Aggregated decision across all hooks that ran for one event.
+
+    Deny wins over ask wins over allow (mirrors Claude Code, which runs
+    matching hooks in parallel and lets any deny block).
+    """
+
+    blocked: bool = False
+    reason: str | None = None
+    ask: bool = False
+    additional_context: list[str] = None  # type: ignore[assignment]
+    system_messages: list[str] = None  # type: ignore[assignment]
+
+    def __post_init__(self) -> None:
+        if self.additional_context is None:
+            self.additional_context = []
+        if self.system_messages is None:
+            self.system_messages = []
+
+
+def aggregate_hook_decision(results: list[HookResult]) -> HookDecision:
+    """Fold individual :class:`HookResult` decisions into one outcome."""
+    decision = HookDecision()
+    for result in results:
+        if result.blocked and not decision.blocked:
+            decision.blocked = True
+            decision.reason = result.block_reason
+        if result.permission_decision == "ask":
+            decision.ask = True
+        if result.additional_context:
+            decision.additional_context.append(result.additional_context)
+        if result.system_message:
+            decision.system_messages.append(result.system_message)
+    return decision
+
+
+def _apply_output_semantics(event: str, result: HookResult) -> HookResult:
+    """Interpret a finished hook's exit code and stdout per the Claude
+    Code hook protocol.
+
+    * exit 2 → blocking error; stderr is the reason, stdout is ignored.
+    * other non-zero exits → non-blocking error (no decision).
+    * exit 0 with a JSON object on stdout → structured decision:
+      top-level ``decision: "block"`` + ``reason``, ``continue: false`` +
+      ``stopReason``, ``systemMessage``, and ``hookSpecificOutput``
+      (``permissionDecision`` / ``permissionDecisionReason`` /
+      ``additionalContext``).
+    * exit 0 with non-JSON stdout → for context-injecting events
+      (message_submit / session_start) the raw stdout becomes
+      ``additional_context``.
+    """
+    if result.exit_code == 2:
+        result.blocked = True
+        reason = result.stderr.strip()
+        result.block_reason = reason or None
+        return result
+    if result.exit_code != 0:
+        return result
+
+    stdout = result.stdout.strip()
+    if not stdout:
+        return result
+    document: Any = None
+    try:
+        document = json.loads(stdout)
+    except ValueError:
+        document = None
+    if not isinstance(document, dict):
+        if event in ("message_submit", "session_start"):
+            result.additional_context = stdout
+        return result
+
+    if document.get("decision") == "block":
+        result.blocked = True
+        reason = document.get("reason")
+        if isinstance(reason, str) and reason.strip():
+            result.block_reason = reason.strip()
+    if document.get("continue") is False:
+        result.blocked = True
+        stop_reason = document.get("stopReason")
+        if isinstance(stop_reason, str) and stop_reason.strip():
+            result.block_reason = stop_reason.strip()
+    system_message = document.get("systemMessage")
+    if isinstance(system_message, str) and system_message.strip():
+        result.system_message = system_message.strip()
+
+    specific = document.get("hookSpecificOutput")
+    if isinstance(specific, dict):
+        decision = specific.get("permissionDecision")
+        if isinstance(decision, str) and decision.lower() in (
+            "allow",
+            "deny",
+            "ask",
+        ):
+            result.permission_decision = decision.lower()
+            if result.permission_decision == "deny":
+                result.blocked = True
+                reason = specific.get("permissionDecisionReason")
+                if isinstance(reason, str) and reason.strip():
+                    result.block_reason = reason.strip()
+        context = specific.get("additionalContext")
+        if isinstance(context, str) and context.strip():
+            result.additional_context = context.strip()
+    if result.additional_context is None:
+        # Community hooks commonly emit a bare top-level additionalContext
+        # (e.g. superpowers). Claude Code silently drops that shape — a
+        # documented pain point — so we accept it as a fallback rather
+        # than lose the context.
+        context = document.get("additionalContext")
+        if isinstance(context, str) and context.strip():
+            result.additional_context = context.strip()
+    return result
 
 
 def parse_env_lines(stdout: str) -> dict[str, str]:
@@ -555,11 +738,16 @@ class HookExecutor:
         for hook in hooks:
             if not self._matches_condition(hook, ctx):
                 continue
+            dialect = getattr(hook, "io_dialect", "native") or "native"
+            stdin_data = json.dumps(
+                ctx.to_stdin_payload(event, dialect)
+            ).encode()
             if hook.background:
-                result = await self._execute_background(hook, env_vars)
+                result = await self._execute_background(hook, env_vars, stdin_data)
             else:
-                result = await self._execute_sync(hook, env_vars)
-            if not result.success:
+                result = await self._execute_sync(hook, env_vars, stdin_data)
+                result = _apply_output_semantics(event, result)
+            if not result.success and not result.blocked:
                 label = result.name or "(unnamed)"
                 logger.warning(
                     "lifecycle hook failed hook=%s event=%s exit_code=%s error=%s",
@@ -568,8 +756,15 @@ class HookExecutor:
                     result.exit_code,
                     result.error or result.stderr[:200],
                 )
+            elif result.blocked:
+                logger.info(
+                    "lifecycle hook blocked hook=%s event=%s reason=%s",
+                    result.name or "(unnamed)",
+                    event,
+                    (result.block_reason or "")[:200],
+                )
             results.append(result)
-            if not result.success and not hook.continue_on_error:
+            if not result.success and not result.blocked and not hook.continue_on_error:
                 break
         return results
 
@@ -592,7 +787,10 @@ class HookExecutor:
         return float(hook.timeout_secs)
 
     async def _execute_sync(
-        self, hook: LifecycleHookEntry, env_vars: dict[str, str]
+        self,
+        hook: LifecycleHookEntry,
+        env_vars: dict[str, str],
+        stdin_data: bytes = b"",
     ) -> HookResult:
         timeout = self._timeout(hook)
         cwd = str(self._working_dir())
@@ -601,11 +799,12 @@ class HookExecutor:
                 hook.command,
                 cwd=cwd,
                 env={**_base_env(), **env_vars},
+                stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
             stdout_b, stderr_b = await asyncio.wait_for(
-                proc.communicate(), timeout=timeout
+                proc.communicate(input=stdin_data), timeout=timeout
             )
         except asyncio.TimeoutError:
             proc.kill()  # type: ignore[union-attr]
@@ -635,16 +834,22 @@ class HookExecutor:
         )
 
     async def _execute_background(
-        self, hook: LifecycleHookEntry, env_vars: dict[str, str]
+        self,
+        hook: LifecycleHookEntry,
+        env_vars: dict[str, str],
+        stdin_data: bytes = b"",
     ) -> HookResult:
         asyncio.create_task(
-            self._run_background_hook(hook, env_vars),
+            self._run_background_hook(hook, env_vars, stdin_data),
             name=f"hook-bg-{hook.name or hook.event}",
         )
         return HookResult(name=hook.name, success=True)
 
     async def _run_background_hook(
-        self, hook: LifecycleHookEntry, env_vars: dict[str, str]
+        self,
+        hook: LifecycleHookEntry,
+        env_vars: dict[str, str],
+        stdin_data: bytes = b"",
     ) -> None:
         # 这个 task 没人持有引用，后续在优化
         cwd = str(self._working_dir())
@@ -653,10 +858,11 @@ class HookExecutor:
                 hook.command,
                 cwd=cwd,
                 env={**_base_env(), **env_vars},
+                stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.DEVNULL,
                 stderr=asyncio.subprocess.DEVNULL,
             )
-            await proc.wait()
+            await proc.communicate(input=stdin_data)
         except Exception:
             logger.warning(
                 "background lifecycle hook failed hook=%s event=%s",

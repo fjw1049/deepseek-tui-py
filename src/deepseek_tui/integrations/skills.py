@@ -134,11 +134,23 @@ class SkillRegistry:
         return registry
 
     def get(self, name: str) -> Skill | None:
-        """Look up a skill by name (case-insensitive)."""
+        """Look up a skill by name (case-insensitive).
+
+        Plugin skills are registered under qualified ``plugin:skill``
+        names. A bare lookup (no ``:``) falls back to a suffix match so
+        ``load_skill("brand-guide")`` still resolves
+        ``my-plugin:brand-guide`` when the bare name is unambiguous.
+        """
         name_lower = name.lower()
         for skill in self.skills:
             if skill.name.lower() == name_lower:
                 return skill
+        if ":" in name_lower:
+            return None
+        suffix = f":{name_lower}"
+        matches = [s for s in self.skills if s.name.lower().endswith(suffix)]
+        if len(matches) == 1:
+            return matches[0]
         return None
 
     def list_names(self) -> list[str]:

@@ -4,7 +4,6 @@ from pathlib import Path
 
 from deepseek_tui.plugins.adapters.bare_skill import BareSkillAdapter
 from deepseek_tui.plugins.adapters.claude import ClaudePluginAdapter
-from deepseek_tui.plugins.adapters.codebuddy import CodeBuddyPluginAdapter
 from deepseek_tui.plugins.model import (
     CompatibilityReport,
     CompatibilityStatus,
@@ -16,7 +15,6 @@ from deepseek_tui.plugins.model import (
 from deepseek_tui.plugins.source import LocalArtifact, locate_packages
 
 _ADAPTERS = (
-    CodeBuddyPluginAdapter(),
     ClaudePluginAdapter(),
     BareSkillAdapter(),
 )

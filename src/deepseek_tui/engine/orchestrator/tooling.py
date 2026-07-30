@@ -455,7 +455,48 @@ class ToolExecutionMixin:
             tool_args=tool_call.arguments,
             model=model,
         )
-        await self._run_lifecycle_hook("tool_call_before", hook_ctx)
+        pre_hook_results = await self._run_lifecycle_hook(
+            "tool_call_before", hook_ctx
+        )
+        if pre_hook_results:
+            from deepseek_tui.integrations.hooks import aggregate_hook_decision
+
+            decision = aggregate_hook_decision(pre_hook_results)
+            if decision.blocked:
+                # PreToolUse deny / exit-2: the tool never runs; the reason
+                # is returned to the model as a failed tool result so it can
+                # adjust (Claude Code hook semantics).
+                reason = decision.reason or "Tool call blocked by a PreToolUse hook"
+                emit_tool_audit(
+                    {
+                        "event": "tool.hook_blocked",
+                        "tool_id": tool_call.id,
+                        "tool_name": tool_call.name,
+                    }
+                )
+                return ToolResult(
+                    success=False,
+                    content=f"Tool call blocked by hook: {reason}",
+                )
+            if decision.ask:
+                # permissionDecision "ask": escalate to the user through the
+                # regular approval gate regardless of the tool's own policy.
+                from deepseek_tui.tools.approval import build_approval_request
+
+                approval_request = build_approval_request(
+                    tool_call.name,
+                    [],
+                    reason=decision.reason
+                    or "A PreToolUse hook requested user confirmation",
+                )
+                denied = await self._handle_approval_flow(
+                    tool_call, approval_request
+                )
+                if denied:
+                    return ToolResult(
+                        success=False,
+                        content="Tool call denied by the user (hook escalation)",
+                    )
         # Expose parent transcript for fork_context spawns.
         self.tool_context.metadata["parent_session_messages"] = [
             m.model_dump(mode="json") for m in self.session_messages
@@ -469,7 +510,28 @@ class ToolExecutionMixin:
             self._accrue_child_token_cost_from_metadata(result.metadata)
             hook_ctx.tool_result = result.content
             hook_ctx.tool_success = result.success
-        await self._run_lifecycle_hook("tool_call_after", hook_ctx)
+        post_hook_results = await self._run_lifecycle_hook(
+            "tool_call_after", hook_ctx
+        )
+        if post_hook_results and result is not None:
+            from deepseek_tui.integrations.hooks import aggregate_hook_decision
+
+            decision = aggregate_hook_decision(post_hook_results)
+            feedback: list[str] = []
+            if decision.blocked and decision.reason:
+                # PostToolUse block is non-reverting: the tool already ran.
+                # The reason is appended so the model sees the objection.
+                feedback.append(decision.reason)
+            feedback.extend(decision.additional_context)
+            if feedback:
+                from dataclasses import replace as _dc_replace
+
+                result = _dc_replace(
+                    result,
+                    content=result.content
+                    + "\n\n[hook feedback]\n"
+                    + "\n".join(feedback),
+                )
         return result
 
     async def _execute_single_tool_impl(

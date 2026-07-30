@@ -581,6 +581,13 @@ class SubAgentRuntime:
     # hard-denying when the session is not auto-approved.
     approval_handler: Any | None = None
     emit_event: Any | None = None
+    # Parent engine's lifecycle HookExecutor. When set, the sub-agent loop
+    # fires ``subagent_stop`` (Claude Code "SubagentStop") hooks on
+    # completion; a blocking decision keeps the sub-agent working.
+    hook_executor: Any | None = None
+    # Parent engine's lifecycle HookExecutor. When set, subagent_stop
+    # (Claude "SubagentStop") hooks run when a child finishes responding.
+    hook_executor: Any | None = None
 
     def would_exceed_depth(self) -> bool:
         return self.spawn_depth + 1 > self.max_spawn_depth
@@ -597,6 +604,7 @@ class SubAgentRuntime:
             task_manager=self.task_manager,
             cancel_token=self.cancel_token,
             mailbox=self.mailbox,
+            hook_executor=self.hook_executor,
             spawn_depth=depth,
             max_spawn_depth=self.max_spawn_depth,
             active_task_id=self.active_task_id,
@@ -616,6 +624,7 @@ class SubAgentRuntime:
             task_manager=self.task_manager,
             cancel_token=self.cancel_token,
             mailbox=self.mailbox,
+            hook_executor=self.hook_executor,
             spawn_depth=self.spawn_depth + 1,
             max_spawn_depth=self.max_spawn_depth,
             active_task_id=self.active_task_id,

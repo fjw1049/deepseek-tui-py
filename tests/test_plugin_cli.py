@@ -18,9 +18,9 @@ def _make_claude_plugin(root: Path, name: str) -> None:
 
 
 def test_plugin_doctor_uses_structured_adapter_report(tmp_path: Path) -> None:
-    (tmp_path / ".codebuddy-plugin").mkdir()
-    (tmp_path / ".codebuddy-plugin" / "plugin.json").write_text(
-        json.dumps({"name": "demo-team", "expertType": "team"}),
+    (tmp_path / ".claude-plugin").mkdir()
+    (tmp_path / ".claude-plugin" / "plugin.json").write_text(
+        json.dumps({"name": "demo", "version": "1.0.0"}),
         encoding="utf-8",
     )
     (tmp_path / "agents").mkdir()
@@ -32,9 +32,8 @@ def test_plugin_doctor_uses_structured_adapter_report(tmp_path: Path) -> None:
     result = CliRunner().invoke(app, ["plugin", "doctor", str(tmp_path)])
 
     assert result.exit_code == 0
-    assert "demo-team [degraded/codebuddy]" in result.stdout
+    assert "demo [native/claude]" in result.stdout
     assert "agent.persona=1" in result.stdout
-    assert "CODEBUDDY_TEAM_ORCHESTRATION_DEGRADED" in result.stdout
 
 
 def test_plugin_install_selects_candidate_from_collection(

@@ -132,6 +132,19 @@ def test_manifest_unsupported_components_flagged(tmp_path: Path) -> None:
     assert set(manifest.unsupported) == {"outputStyles", "lspServers"}
 
 
+def test_root_lsp_json_flagged_as_unsupported(tmp_path: Path) -> None:
+    """Claude convention: root .lsp.json declares LSP servers; we surface
+    it as unsupported instead of silently ignoring the file."""
+    plugin = make_plugin(tmp_path)
+    (plugin / ".lsp.json").write_text(
+        json.dumps({"pyright": {"command": "pyright-langserver"}}),
+        encoding="utf-8",
+    )
+    manifest = load_plugin_manifest(plugin)
+    assert manifest is not None
+    assert "lspServers (.lsp.json)" in manifest.unsupported
+
+
 def test_manifest_missing_returns_none(tmp_path: Path) -> None:
     (tmp_path / "empty").mkdir()
     assert load_plugin_manifest(tmp_path / "empty") is None
@@ -232,9 +245,9 @@ def test_manifest_omitting_mcp_key_discovers_mcp_json(
     assert contribs.mcp_servers[0].command == f"{plugin}/bin/x"
 
 
-def make_codebuddy_plugin(root: Path, name: str = "cb") -> Path:
-    """A CodeBuddy-style plugin: ``.codebuddy-plugin`` manifest, skills declared
-    as leaf dirs, agents/rules declared as .md files."""
+def make_leaf_layout_plugin(root: Path, name: str = "cb") -> Path:
+    """A plugin with skills declared as leaf dirs and agents/rules declared
+    as explicit .md file paths (rather than auto-discovered directories)."""
     plugin = root / name
     (plugin / "skills" / "alpha-skill").mkdir(parents=True)
     (plugin / "skills" / "alpha-skill" / "SKILL.md").write_text(
@@ -257,14 +270,14 @@ def make_codebuddy_plugin(root: Path, name: str = "cb") -> Path:
         "---\ndescription: off.\nenabled: false\n---\nShould not load.\n",
         encoding="utf-8",
     )
-    mdir = plugin / ".codebuddy-plugin"
+    mdir = plugin / ".deepseek-plugin"
     mdir.mkdir(parents=True)
     (mdir / "plugin.json").write_text(
         json.dumps(
             {
                 "name": name,
                 "version": "1.0.0",
-                "description": "codebuddy plugin",
+                "description": "leaf layout plugin",
                 "skills": ["./skills/alpha-skill"],
                 "agents": ["./agents/worker.md"],
                 "rules": ["./rules/core.md", "./rules/disabled.md"],
@@ -275,8 +288,8 @@ def make_codebuddy_plugin(root: Path, name: str = "cb") -> Path:
     return plugin
 
 
-def test_codebuddy_manifest_location_recognized(tmp_path: Path) -> None:
-    plugin = make_codebuddy_plugin(tmp_path)
+def test_leaf_manifest_declarations_recognized(tmp_path: Path) -> None:
+    plugin = make_leaf_layout_plugin(tmp_path)
     manifest = load_plugin_manifest(plugin)
     assert manifest is not None
     assert manifest.name == "cb"
@@ -285,11 +298,11 @@ def test_codebuddy_manifest_location_recognized(tmp_path: Path) -> None:
     assert manifest.rules == ("./rules/core.md", "./rules/disabled.md")
 
 
-def test_codebuddy_leaf_skills_files_agents_and_rules(tmp_path: Path) -> None:
-    make_codebuddy_plugin(tmp_path)
+def test_leaf_skills_files_agents_and_rules(tmp_path: Path) -> None:
+    make_leaf_layout_plugin(tmp_path)
     contribs = collect_contributions(discover_plugins(plugins_dir=tmp_path))
-    # Leaf skill dir (SKILL.md directly inside) loads.
-    assert [s.name for s in contribs.skills] == ["fsi-alpha"]
+    # Leaf skill dir (SKILL.md directly inside) loads, namespaced.
+    assert [s.name for s in contribs.skills] == ["cb:fsi-alpha"]
     # Agent declared as a .md file loads.
     assert [a.name for a in contribs.agents] == ["cb_worker"]
     assert contribs.agents[0].model == "claude-haiku-4.5"
@@ -317,11 +330,11 @@ def test_bare_skill_folder_synthesizes_single_skill_plugin(tmp_path: Path) -> No
     assert [s.name for s in contribs.skills] == ["ardot-slides"]
 
 
-def test_codebuddy_hooks_schema_parsed(tmp_path: Path) -> None:
+def test_foreign_hooks_schema_parsed(tmp_path: Path) -> None:
     plugin = tmp_path / "ppt"
-    (plugin / ".codebuddy-plugin").mkdir(parents=True)
+    (plugin / ".claude-plugin").mkdir(parents=True)
     (plugin / "hooks").mkdir()
-    (plugin / ".codebuddy-plugin" / "plugin.json").write_text(
+    (plugin / ".claude-plugin" / "plugin.json").write_text(
         json.dumps(
             {"name": "ppt", "version": "1.0.0", "hooks": "./hooks/hooks.json"}
         ),
@@ -336,8 +349,8 @@ def test_codebuddy_hooks_schema_parsed(tmp_path: Path) -> None:
                             "hooks": [
                                 {
                                     "type": "command",
-                                    "command": 'node "${CODEBUDDY_PLUGIN_ROOT}/x.js" '
-                                    '"${CODEBUDDY_PROJECT_DIR}"',
+                                    "command": 'node "${CLAUDE_PLUGIN_ROOT}/x.js" '
+                                    '"${CLAUDE_PROJECT_DIR}"',
                                     "timeout": 10,
                                 }
                             ]
@@ -352,6 +365,9 @@ def test_codebuddy_hooks_schema_parsed(tmp_path: Path) -> None:
                     "Stop": [
                         {"hooks": [{"type": "command", "command": "echo stop"}]}
                     ],
+                    "PreCompact": [
+                        {"hooks": [{"type": "command", "command": "echo pc"}]}
+                    ],
                 }
             }
         ),
@@ -365,15 +381,19 @@ def test_codebuddy_hooks_schema_parsed(tmp_path: Path) -> None:
     # Claude Code timeout is seconds.
     assert events["session_start"].timeout_secs == 10.0
     # Plugin-root token resolved to absolute path; project-dir -> runtime env.
-    assert "${CODEBUDDY_PLUGIN_ROOT}" not in events["session_start"].command
+    assert "${CLAUDE_PLUGIN_ROOT}" not in events["session_start"].command
     assert "${DEEPSEEK_WORKSPACE}" in events["session_start"].command
     # matcher mapped to our tool taxonomy so the hook actually fires.
     assert events["tool_call_before"].condition == {
         "type": "tool_name_any",
         "names": ["load_skill"],
     }
-    # Unsupported event skipped with a warning.
-    assert any("Stop" in w for w in contribs.warnings)
+    # Stop maps to the turn_end lifecycle event.
+    assert "turn_end" in events
+    # Foreign hooks get the Claude I/O dialect (stdin JSON with Claude names).
+    assert events["turn_end"].io_dialect == "claude"
+    # Events without a runtime equivalent are skipped with a warning.
+    assert any("PreCompact" in w for w in contribs.warnings)
 
 
 def test_current_date_template_substituted_in_rules(tmp_path: Path) -> None:
@@ -387,9 +407,9 @@ def test_current_date_template_substituted_in_rules(tmp_path: Path) -> None:
     )
     assert "{{.Other}}" in substitute_builtin_template_vars("keep {{.Other}}")
     plugin = tmp_path / "dr"
-    (plugin / ".codebuddy-plugin").mkdir(parents=True)
+    (plugin / ".deepseek-plugin").mkdir(parents=True)
     (plugin / "rules").mkdir()
-    (plugin / ".codebuddy-plugin" / "plugin.json").write_text(
+    (plugin / ".deepseek-plugin" / "plugin.json").write_text(
         json.dumps(
             {"name": "dr", "version": "1.0.0", "rules": ["./rules/r.md"]}
         ),
@@ -414,9 +434,9 @@ def test_plugin_rules_context_mounted_vs_unmounted(tmp_path: Path) -> None:
 
     for name, body in (("alpha", "ALPHA-BODY-DIRECTIVE"), ("beta", "BETA-BODY")):
         plugin = tmp_path / name
-        (plugin / ".codebuddy-plugin").mkdir(parents=True)
+        (plugin / ".deepseek-plugin").mkdir(parents=True)
         (plugin / "rules").mkdir()
-        (plugin / ".codebuddy-plugin" / "plugin.json").write_text(
+        (plugin / ".deepseek-plugin" / "plugin.json").write_text(
             json.dumps(
                 {"name": name, "version": "1.0.0", "rules": ["./rules/r.md"]}
             ),
@@ -449,9 +469,9 @@ def test_mounted_plugin_without_rules_injects_nothing(tmp_path: Path) -> None:
     from deepseek_tui.integrations.plugins import plugin_description_blurb
 
     plugin = tmp_path / "toolkit"
-    (plugin / ".codebuddy-plugin").mkdir(parents=True)
+    (plugin / ".deepseek-plugin").mkdir(parents=True)
     (plugin / "skills" / "xlsx").mkdir(parents=True)
-    (plugin / ".codebuddy-plugin" / "plugin.json").write_text(
+    (plugin / ".deepseek-plugin" / "plugin.json").write_text(
         json.dumps(
             {
                 "name": "toolkit",
@@ -488,9 +508,9 @@ async def test_engine_mount_injects_own_rules(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("DEEPSEEK_HOME", str(tmp_path / "home"))
     plugins_dir = tmp_path / "home" / "plugins"
     plugin = plugins_dir / "ruled"
-    (plugin / ".codebuddy-plugin").mkdir(parents=True)
+    (plugin / ".deepseek-plugin").mkdir(parents=True)
     (plugin / "rules").mkdir()
-    (plugin / ".codebuddy-plugin" / "plugin.json").write_text(
+    (plugin / ".deepseek-plugin" / "plugin.json").write_text(
         json.dumps(
             {"name": "ruled", "version": "1.0.0", "rules": ["./rules/r.md"]}
         ),
@@ -540,9 +560,9 @@ async def test_engine_mount_without_rules_injects_nothing(
     monkeypatch.setenv("DEEPSEEK_HOME", str(tmp_path / "home"))
     plugins_dir = tmp_path / "home" / "plugins"
     plugin = plugins_dir / "docs"
-    (plugin / ".codebuddy-plugin").mkdir(parents=True)
+    (plugin / ".deepseek-plugin").mkdir(parents=True)
     (plugin / "skills" / "docx").mkdir(parents=True)
-    (plugin / ".codebuddy-plugin" / "plugin.json").write_text(
+    (plugin / ".deepseek-plugin" / "plugin.json").write_text(
         json.dumps(
             {
                 "name": "docs",
@@ -587,8 +607,8 @@ def test_rules_autodiscovered_without_manifest_key(tmp_path: Path) -> None:
     (plugin / "rules" / "r.md").write_text(
         "---\ndescription: d\n---\nRule body.\n", encoding="utf-8"
     )
-    (plugin / ".codebuddy-plugin").mkdir(parents=True)
-    (plugin / ".codebuddy-plugin" / "plugin.json").write_text(
+    (plugin / ".deepseek-plugin").mkdir(parents=True)
+    (plugin / ".deepseek-plugin" / "plugin.json").write_text(
         json.dumps({"name": "cb2", "version": "1.0.0"}), encoding="utf-8"
     )
     manifest = load_plugin_manifest(plugin)
@@ -917,10 +937,37 @@ def test_project_scope_wins_on_conflict(tmp_path: Path) -> None:
 def test_untrusted_plugin_only_contributes_skills(tmp_path: Path) -> None:
     make_plugin(tmp_path)
     contribs = collect_contributions(discover_plugins(plugins_dir=tmp_path))
-    assert [s.name for s in contribs.skills] == ["demo-skill"]
+    assert [s.name for s in contribs.skills] == ["demo:demo-skill"]
     assert contribs.hook_entries == []
     assert contribs.mcp_servers == []
     assert any("not trusted" in w for w in contribs.warnings)
+
+
+def test_trusted_plugin_without_executables_emits_no_grant_warning(
+    tmp_path: Path,
+) -> None:
+    """A trusted skills-only plugin (no hooks/MCP) must not hit the grant
+    machinery — its executable digest is empty, which used to produce a
+    spurious 'no execution grant' warning."""
+    plugin = tmp_path / "skillsonly"
+    (plugin / ".deepseek-plugin").mkdir(parents=True)
+    (plugin / "skills" / "s").mkdir(parents=True)
+    (plugin / ".deepseek-plugin" / "plugin.json").write_text(
+        json.dumps(
+            {"name": "skillsonly", "version": "1.0.0", "skills": ["./skills/s"]}
+        ),
+        encoding="utf-8",
+    )
+    (plugin / "skills" / "s" / "SKILL.md").write_text(
+        "---\nname: s\ndescription: d\n---\nbody\n", encoding="utf-8"
+    )
+    set_plugin_trusted("skillsonly", True, tmp_path)
+    contribs = collect_contributions(
+        discover_plugins(plugins_dir=tmp_path), enforce_grants=True
+    )
+    assert contribs.hook_entries == []
+    assert contribs.mcp_servers == []
+    assert contribs.warnings == []
 
 
 def test_trusted_plugin_contributes_hooks_and_mcp(tmp_path: Path) -> None:
@@ -982,10 +1029,12 @@ def test_merge_plugin_skills_workspace_wins(tmp_path: Path) -> None:
     contribs = collect_contributions(discover_plugins(plugins_dir=tmp_path))
     registry = SkillRegistry()
     merge_plugin_skills(registry, contribs)
+    # Qualified name registered; bare lookup resolves via suffix fallback.
+    assert registry.get("demo:demo-skill") is not None
     assert registry.get("demo-skill") is not None
     # Re-merge is idempotent on names.
     merge_plugin_skills(registry, contribs)
-    assert len([s for s in registry.skills if s.name == "demo-skill"]) == 1
+    assert len([s for s in registry.skills if s.name == "demo:demo-skill"]) == 1
 
 
 # ── Install lifecycle ────────────────────────────────────────────────────

@@ -68,7 +68,7 @@ def test_plugin_host_opens_frozen_session(tmp_path: Path, monkeypatch) -> None:
 
     assert session.plugin("DEMO") is not None
     assert session.plugin("late") is None
-    assert [skill.name for skill in session.startup.skills] == ["demo-skill"]
+    assert [skill.name for skill in session.startup.skills] == ["demo:demo-skill"]
     activation = session.activate("demo")
     assert activation is not None
     assert [command.qualified for command in activation.commands] == ["demo:greet"]

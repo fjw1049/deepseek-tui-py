@@ -241,6 +241,12 @@ class LifecycleHookEntry(BaseModel):
     name: str | None = None
     # Explicit plugin owner. Prefer this over parsing ``name="plugin:…"``.
     owner_plugin_id: str | None = None
+    # Hook I/O dialect. "native" hooks see DeepSeek tool/event names on
+    # stdin; "claude" hooks (loaded from Claude Code event-keyed
+    # hooks.json) see Claude Code names (Bash/Edit/PreToolUse/…) so
+    # community hook scripts work unmodified. Both dialects receive the
+    # same JSON structure and DEEPSEEK_* env vars.
+    io_dialect: str = "native"
 
 
 class HooksConfig(BaseModel):
