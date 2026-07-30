@@ -112,6 +112,17 @@ class ToolRuntime:
             await self.lsp_manager.close_all()
 
 
+def default_runtime_model(cfg: Config, *, override: str | None = None) -> str:
+    """Model for tasks / subagents / workflow when none is explicitly set.
+
+    Prefer an explicit *override*, else the active provider's model
+    (``effective_provider_config``), else a last-resort DeepSeek id.
+    """
+    if override is not None and str(override).strip():
+        return str(override).strip()
+    return cfg.effective_provider_config().model or "deepseek-chat"
+
+
 def build_subagent_manager(
     cfg: Config,
     workspace: Path,
@@ -147,9 +158,9 @@ def build_subagent_manager(
         state_path=resolved_state_path,
         mailbox=mailbox,
         executor=_safe_subagent_executor(),
-        default_model=cfg.subagents.default_model
-        or cfg.default_text_model
-        or "deepseek-chat",
+        default_model=default_runtime_model(
+            cfg, override=cfg.subagents.default_model
+        ),
         llm_max_concurrent=cfg.subagents.llm_max_concurrent,
         handoff_timeout_secs=cfg.subagents.handoff_timeout_secs,
     )
@@ -199,9 +210,11 @@ async def create_tool_runtime(
         owns_task_manager = False
     elif cfg.features.tasks:
         data_dir = task_data_dir if task_data_dir is not None else default_tasks_dir()
+        # Automations enqueue with model=None and inherit this default.
         task_cfg = TaskManagerConfig(
             data_dir=data_dir,
             default_workspace=workspace,
+            default_model=default_runtime_model(cfg),
             allow_shell=cfg.allow_shell,
             trust_mode=getattr(cfg, "trust_mode", False),
             worker_count=1,

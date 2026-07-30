@@ -344,7 +344,9 @@ def cmd_model(args: str, app: DeepSeekTUI) -> CommandResult:
     if not args.strip():
         cfg = getattr(app, "config", None)
         if cfg is not None:
-            return CommandResult(output=f"Current model: {cfg.model or cfg.default_text_model}")
+            from deepseek_tui.tools.runtime import default_runtime_model
+
+            return CommandResult(output=f"Current model: {default_runtime_model(cfg)}")
         return CommandResult(output="Current model: (unknown — config not attached)")
 
     requested = args.strip()
@@ -447,15 +449,12 @@ def cmd_provider(args: str, app: DeepSeekTUI) -> CommandResult:
     previous_model = cfg.model
     cfg.provider = requested
 
-    # Resolve model: user-configured > PROVIDER_DEFAULTS > keep current
-    provider_cfg = cfg.providers.get(requested)
-    if provider_cfg is not None and provider_cfg.model:
-        new_model = provider_cfg.model
-    elif is_known:
-        new_model = PROVIDER_DEFAULTS[requested].model
-    else:
-        new_model = cfg.model or cfg.default_text_model
+    # Drop any previous top-level model pin so the new provider's effective
+    # model wins (providers.X.model → PROVIDER_DEFAULTS → default_text_model).
+    from deepseek_tui.tools.runtime import default_runtime_model
 
+    cfg.model = None
+    new_model = default_runtime_model(cfg)
     cfg.model = new_model
 
     if app._engine is None:

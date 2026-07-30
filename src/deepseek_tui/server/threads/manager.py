@@ -346,10 +346,11 @@ class RuntimeThreadManager:
     # --- thread CRUD ---------------------------------------------------------
 
     async def create_thread(self, req: CreateThreadRequest) -> ThreadRecord:
+        from deepseek_tui.tools.runtime import default_runtime_model
+
         now = datetime.now(timezone.utc)
-        model = (
-            (req.model or "").strip()
-            or self.config.default_text_model
+        model = default_runtime_model(
+            self.config, override=(req.model or "").strip() or None
         )
         workspace = (req.workspace or "").strip() or str(self.workspace)
         mode = (req.mode or "").strip() or "agent"

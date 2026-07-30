@@ -51,7 +51,7 @@ export const BUILTIN_LLM_PROVIDERS: Record<BuiltinLlmProviderId, BuiltinLlmProvi
     id: 'volcengine-ark',
     baseUrl: 'https://ark.cn-beijing.volces.com/api/coding/v3',
     protocol: 'openai',
-    fallbackModels: ['glm-5.1', 'kimi-k2.6', 'deepseek-v3.2', 'doubao-seed-2.0-code'],
+    fallbackModels: ['glm-5.1', 'kimi-k2.6', 'deepseek-v4-flash', 'doubao-seed-2.0-code'],
     defaultModel: 'glm-5.1'
   }
 }

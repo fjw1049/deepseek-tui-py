@@ -71,7 +71,10 @@ async def execute_detached_workflow(
 
     from deepseek_tui.client.factory import build_llm_client
     from deepseek_tui.config.loader import ConfigLoader
-    from deepseek_tui.tools.runtime import build_subagent_manager
+    from deepseek_tui.tools.runtime import (
+        build_subagent_manager,
+        default_runtime_model,
+    )
     from deepseek_tui.tools.subagent import SubAgentRuntime
     from deepseek_tui.workflow.models import (
         WorkflowAbortedError,
@@ -233,7 +236,7 @@ async def execute_detached_workflow(
         loop_runtime = SubAgentRuntime(
             manager=manager,
             client=client,
-            model=task.model or cfg.default_text_model or "deepseek-chat",
+            model=default_runtime_model(cfg, override=task.model),
             config=cfg,
             workspace=agent_cwd,
             allow_shell=task.allow_shell,

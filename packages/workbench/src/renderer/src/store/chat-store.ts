@@ -1795,10 +1795,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
         }
         return
       }
+      const composerModel = get().composerModel.trim()
+      const selectedModel = decodeModelRef(composerModel)
       const t = await p.createThread({
         workspace: workspaceRoot,
         title: getDefaultThreadTitle(),
-        mode: 'agent'
+        mode: 'agent',
+        ...(selectedModel.providerId ? { provider: selectedModel.providerId } : {}),
+        ...(selectedModel.modelId ? { model: selectedModel.modelId } : {})
       })
       await get().refreshThreads()
       await get().selectThread(t.id)

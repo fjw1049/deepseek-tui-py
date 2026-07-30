@@ -302,7 +302,9 @@ class AppRuntime:
             rec = self.threads.create(model=_pick_str(payload, "model"))
         rec.messages.append(Message.user(text))
 
-        model = rec.model or self.config.default_text_model
+        from deepseek_tui.tools.runtime import default_runtime_model
+
+        model = rec.model or default_runtime_model(self.config)
         response_id = f"resp-{uuid.uuid4().hex[:12]}"
         await self._emit_prompt_hooks(response_id)
         events = _build_prompt_event_frames(response_id)
@@ -353,8 +355,10 @@ class AppRuntime:
         await self._emit_prompt_hooks(response_id)
 
         if self._llm_client is not None:
+            from deepseek_tui.tools.runtime import default_runtime_model
+
             async for frame in self._stream_engine_events(
-                text, rec.model or self.config.default_text_model
+                text, rec.model or default_runtime_model(self.config)
             ):
                 yield frame
             return
@@ -542,9 +546,11 @@ class AppRuntime:
                 "data": {},
             }
         if op == "models":
+            from deepseek_tui.tools.runtime import default_runtime_model
+
             return {
                 "ok": True,
-                "models": [self.config.default_text_model],
+                "models": [default_runtime_model(self.config)],
                 "data": {},
             }
         if op == "config.list":
@@ -876,6 +882,8 @@ class AppRuntime:
         configuration, and minimal counts. Used by the TUI / dashboards
         for a quick read-only header.
         """
+        from deepseek_tui.tools.runtime import default_runtime_model
+
         return {
             "ok": True,
             "runtime_api": {
@@ -885,7 +893,7 @@ class AppRuntime:
             },
             "workspace": {
                 "cwd": str(self.working_directory),
-                "model": self.config.model or self.config.default_text_model,
+                "model": default_runtime_model(self.config),
                 "provider": self.config.provider,
                 "approval_policy": self.config.approval_policy,
                 "sandbox_mode": self.config.sandbox_mode,

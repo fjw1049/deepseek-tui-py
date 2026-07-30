@@ -207,14 +207,12 @@ class DeepSeekTUI(App[None]):
         status = self.query_one(StatusBar)
         status.set_status("starting engine...")
         status.set_mode(self._interaction_mode)
-        if self.config.model:
-            status.set_model(self.config.model)
-        elif self.config.default_text_model:
-            status.set_model(self.config.default_text_model)
+        from deepseek_tui.tools.runtime import default_runtime_model
+
+        status.set_model(default_runtime_model(self.config))
         hint = self.query_one(ComposerHint)
         hint.set_mode(self._interaction_mode)
-        if self.config.model:
-            hint.set_model(self.config.model)
+        hint.set_model(default_runtime_model(self.config))
         self.query_one(Transcript).show_thinking = bool(
             self.config.ui.show_thinking
         )
@@ -267,7 +265,9 @@ class DeepSeekTUI(App[None]):
                     self.push_screen(OnboardingScreen(), _on_onboarding)
                 return
 
-            model = self.config.model or self.config.default_text_model
+            from deepseek_tui.tools.runtime import default_runtime_model
+
+            model = default_runtime_model(self.config)
             approval_handler = TUIApprovalHandler(self)
             logger.info("tui_engine_create model=%s", model)
             from deepseek_tui.tools.approval import exec_policy_for_config

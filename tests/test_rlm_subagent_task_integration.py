@@ -6,8 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from deepseek_tui.config.models import Config, FeatureConfig
-from deepseek_tui.tools.runtime import create_tool_runtime
+from deepseek_tui.config.models import Config, FeatureConfig, ProviderConfig
+from deepseek_tui.tools.runtime import build_subagent_manager, create_tool_runtime
 from deepseek_tui.tools.subagent import (
     Mailbox,
     MailboxMessageKind,
@@ -16,6 +16,7 @@ from deepseek_tui.tools.subagent import (
     SubAgentManager,
     SubAgentType,
 )
+from deepseek_tui.tools.task import NewTaskRequest
 
 
 class TestSubagentMailboxIntegration:
@@ -61,3 +62,60 @@ class TestToolRuntimeIntegration:
         assert runtime.context.task_manager is runtime.task_manager
         assert runtime.context.subagent_manager is runtime.subagent_manager
         await runtime.shutdown()
+
+    @pytest.mark.asyncio
+    async def test_task_default_model_follows_provider(self, tmp_path: Path):
+        """Cron/tasks with model=None must use the active provider model."""
+        cfg = Config(
+            provider="volcengine-ark",
+            features=FeatureConfig(tasks=True, subagents=False, mcp=False),
+            providers={
+                "volcengine-ark": ProviderConfig(
+                    api_key="test-key",
+                    model="glm-5.2",
+                    base_url="https://ark.example/api/coding/v3",
+                )
+            },
+        )
+        runtime = await create_tool_runtime(
+            config=cfg,
+            working_directory=tmp_path,
+            task_data_dir=tmp_path / "tasks",
+        )
+        assert runtime.task_manager is not None
+        task = await runtime.task_manager.add_task(
+            NewTaskRequest(prompt="cron report", model=None)
+        )
+        assert task.model == "glm-5.2"
+        await runtime.shutdown()
+
+    @pytest.mark.asyncio
+    async def test_subagent_default_model_follows_provider(self, tmp_path: Path):
+        """Workflow/subagent spawn with no model must use provider model."""
+        cfg = Config(
+            provider="volcengine-ark",
+            features=FeatureConfig(tasks=False, subagents=True, mcp=False),
+            providers={
+                "volcengine-ark": ProviderConfig(
+                    api_key="test-key",
+                    model="glm-5.2",
+                    base_url="https://ark.example/api/coding/v3",
+                )
+            },
+        )
+        manager, mailbox = build_subagent_manager(
+            cfg, tmp_path, state_path=tmp_path / "subagents.json"
+        )
+        assert manager is not None
+        assert mailbox is not None
+        assert manager.default_model == "glm-5.2"
+        spawned = await manager.spawn(
+            SpawnRequest(
+                prompt="explore",
+                agent_type=SubAgentType.EXPLORE,
+                assignment=SubAgentAssignment(objective="explore"),
+                model=None,
+            )
+        )
+        agent = manager._agents[spawned.agent_id]  # noqa: SLF001
+        assert agent.model == "glm-5.2"

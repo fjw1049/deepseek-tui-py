@@ -161,8 +161,10 @@ async def _run_one_shot_async(config: Config, prompt: str) -> None:
 
     # 引擎↔调用方的双向管道：op 队列收输入、event 队列吐输出
     handle = EngineHandle()
-    # 优先用显式指定的 model，否则退回默认文本模型
-    model = config.model or config.default_text_model
+    from deepseek_tui.tools.runtime import default_runtime_model
+
+    # 优先用显式指定的 model，否则跟当前 provider 有效主模型
+    model = default_runtime_model(config)
     # async 工厂：装配工具运行时/技能/MCP，返回已就绪但未运行的引擎
     engine = await Engine.create(handle, client, config=config, default_model=model)
     # 把引擎主循环丢到后台并发跑（长驻 while 循环，靠 cancel 才停）
@@ -233,7 +235,9 @@ def doctor(
 
     loaded = _load_config(config, profile, provider, model)
     typer.echo(f"  provider: {loaded.provider}")
-    typer.echo(f"  model: {loaded.model or loaded.default_text_model}")
+    from deepseek_tui.tools.runtime import default_runtime_model
+
+    typer.echo(f"  model: {default_runtime_model(loaded)}")
     from deepseek_tui.config.paths import user_config_path
     typer.echo(f"  config path: {user_config_path()}")
 

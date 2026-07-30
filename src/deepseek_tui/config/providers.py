@@ -285,12 +285,12 @@ PROVIDER_DEFAULTS: dict[str, ProviderDefaults] = {
     "volcengine-ark": ProviderDefaults(
         base_url="https://ark.cn-beijing.volces.com/api/coding/v3",
         model="glm-5.1",
-        flash_model="deepseek-v3.2",
+        flash_model="deepseek-v4-flash",
     ),
     "volcengine-ark-anthropic": ProviderDefaults(
         base_url="https://ark.cn-beijing.volces.com/api/coding",
         model="glm-5.1",
-        flash_model="deepseek-v3.2",
+        flash_model="deepseek-v4-flash",
         protocol="anthropic",
     ),
 }
