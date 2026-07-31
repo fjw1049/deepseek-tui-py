@@ -12,10 +12,11 @@ export type ExtensionsMenuItem = {
 type Props = {
   /** Primary action (accent button, optionally wrapped for popover anchoring). */
   children: ReactNode
-  menuItems: ExtensionsMenuItem[]
+  menuItems?: ExtensionsMenuItem[]
 }
 
-export function ExtensionsToolbar({ children, menuItems }: Props): ReactElement {
+/** One secondary action becomes a labeled button; two or more stay under "…". */
+export function ExtensionsToolbar({ children, menuItems = [] }: Props): ReactElement {
   const [open, setOpen] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
 
@@ -25,11 +26,23 @@ export function ExtensionsToolbar({ children, menuItems }: Props): ReactElement 
     refs: [menuRef]
   })
 
-  const hasMenu = menuItems.length > 0
+  const sole = menuItems.length === 1 ? menuItems[0] : null
+  const overflow = menuItems.length > 1
 
   return (
     <div className="flex items-center gap-2">
-      {hasMenu ? (
+      {sole ? (
+        <button
+          type="button"
+          disabled={sole.disabled}
+          onClick={sole.onClick}
+          className="ds-ext-toolbar-menu inline-flex items-center justify-center gap-2 rounded-xl border border-ds-border bg-ds-subtle px-3 py-2 text-[13px] font-semibold leading-none text-ds-muted transition hover:bg-ds-hover hover:text-ds-ink disabled:opacity-50"
+        >
+          {sole.icon ? <span className="shrink-0">{sole.icon}</span> : null}
+          {sole.label}
+        </button>
+      ) : null}
+      {overflow ? (
         <div className="relative" ref={menuRef}>
           <button
             type="button"

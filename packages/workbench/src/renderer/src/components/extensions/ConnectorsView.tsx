@@ -1,7 +1,7 @@
 import type { ReactElement } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Plus, RefreshCw, Search, Settings } from 'lucide-react'
+import { FolderOpen, Plus, Search } from 'lucide-react'
 import { withDefaultOnFocusPolicy } from '../../lib/connector-groups'
 import {
   listMcpServers,
@@ -23,6 +23,7 @@ import { AddMcpServerDialog } from './AddMcpServerDialog'
 import { ImportMcpJsonDialog } from './ImportMcpJsonDialog'
 import { resolveMcpInstall } from './modelscope-install'
 import { ExtensionsToolbar } from './ExtensionsToolbar'
+import { ReloadHint } from './ReloadHint'
 import type { MarketplaceItem } from '../../../../shared/ds-gui-api'
 
 export function ConnectorsView(): ReactElement {
@@ -38,10 +39,9 @@ export function ConnectorsView(): ReactElement {
   const [importOpen, setImportOpen] = useState(false)
   const [mcpConfigText, setMcpConfigText] = useState('')
   const [mcpLoaded, setMcpLoaded] = useState(false)
-  const [reloading, setReloading] = useState(false)
-  // Bumped by the top "重新加载" button to force-refresh the ModelScope market
-  // catalog in parallel with the local mcp.json reload (single button updates
-  // 内置 / 已安装 / 市场三个 tab).
+  // Bumped by the panel-header reload hint to force-refresh the ModelScope
+  // market catalog in parallel with the local mcp.json reload (one click
+  // updates 内置 / 已安装 / 市场三个 tab).
   const [marketRefreshSignal, setMarketRefreshSignal] = useState(0)
   // Serialize mcp.json read-modify-write operations. Without this, concurrent
   // installs from the marketplace (different items, each calling appendMcpServer)
@@ -78,21 +78,22 @@ export function ConnectorsView(): ReactElement {
     void readMcpConfig().catch((e) => setNotice({ tone: 'error', message: e instanceof Error ? e.message : String(e) }))
   }, [mcpLoaded, readMcpConfig])
 
-  const reloadMcp = async (): Promise<void> => {
-    setReloading(true)
-    // Bump the market catalog refresh signal alongside the local reload so the
-    // single top button updates all three tabs (内置 / 已安装 / ModelScope 市场).
+  const reloadMcp = async (): Promise<boolean> => {
+    // Bump the market catalog refresh signal alongside the local reload so one
+    // click updates all three tabs (内置 / 已安装 / ModelScope 市场).
     setMarketRefreshSignal((n) => n + 1)
     try {
       const result = await reloadMcpWithRuntime(readMcpConfig)
-      setNotice({
-        tone: result.runtime ? 'success' : 'info',
-        message: result.runtime ? tSettings('mcpReloadRuntimeOk') : tSettings('mcpReloadDiskOnly')
-      })
+      // The happy path speaks for itself in the header; only an offline runtime
+      // needs the banner, because the change is not live yet.
+      if (!result.runtime) {
+        setNotice({ tone: 'info', message: tSettings('mcpReloadDiskOnly') })
+        return false
+      }
+      return true
     } catch (e) {
       setNotice({ tone: 'error', message: e instanceof Error ? e.message : String(e) })
-    } finally {
-      setReloading(false)
+      return false
     }
   }
 
@@ -261,14 +262,8 @@ export function ConnectorsView(): ReactElement {
           <ExtensionsToolbar
             menuItems={[
               {
-                label: t('connectorReload'),
-                icon: <RefreshCw className={`h-3.5 w-3.5 ${reloading ? 'animate-spin' : ''}`} strokeWidth={1.75} />,
-                onClick: () => void reloadMcp(),
-                disabled: reloading
-              },
-              {
                 label: t('pluginManage'),
-                icon: <Settings className="h-3.5 w-3.5" strokeWidth={1.75} />,
+                icon: <FolderOpen className="h-4 w-4" strokeWidth={1.9} />,
                 onClick: () => void openConfigDir()
               }
             ]}
@@ -310,7 +305,10 @@ export function ConnectorsView(): ReactElement {
           </ExtensionsToolbar>
         </div>
 
-        <p className="mt-2 max-w-2xl text-[14px] leading-6 text-ds-muted">{t('connectorsIntro')}</p>
+        <p className="mt-2 max-w-2xl text-[14px] leading-6 text-ds-muted">
+          {t('connectorsIntro')}
+          <span className="text-ds-faint"> · {t('pluginMcpRestartHint')}</span>
+        </p>
 
         <label className="relative mt-6 block">
           <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-ds-faint" />
@@ -331,12 +329,7 @@ export function ConnectorsView(): ReactElement {
             busyId={busyId}
             onToggle={(connector, enabled) => void toggleConnector(connector, enabled)}
             onDelete={(connector) => void deleteConnector(connector)}
-            headerRight={
-              <div className="flex min-w-0 items-center gap-1.5 text-[12px] text-ds-faint">
-                <RefreshCw className="h-3.5 w-3.5 shrink-0" />
-                <span className="truncate">{t('pluginMcpRestartHint')}</span>
-              </div>
-            }
+            headerRight={<ReloadHint onReload={reloadMcp} />}
             mediaSlot={
               <MediaCatalogPanel
                 mcpConfigText={mcpConfigText}

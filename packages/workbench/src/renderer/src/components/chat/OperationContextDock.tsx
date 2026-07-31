@@ -3,11 +3,11 @@ import {
   Check,
   ChevronDown,
   ChevronRight,
-  Code2,
+  ChevronsLeftRight,
+  Columns2,
   FileEdit,
   Globe2,
   Loader2,
-  Settings,
   Terminal,
   X
 } from 'lucide-react'
@@ -94,7 +94,7 @@ function RowIcon({
   icon: Icon,
   tint
 }: {
-  icon: typeof Code2
+  icon: typeof Columns2
   tint: keyof typeof ROW_ICON_TINTS
 }): ReactElement {
   return (
@@ -465,13 +465,13 @@ export function OperationContextDock({
       <div className="ds-operation-dock ds-operation-dock--compact ds-no-drag relative z-10" data-compact="true">
         <button
           type="button"
-          className="ds-operation-dock-rail__btn ds-operation-dock-rail__btn--gear"
+          className="ds-operation-dock-rail__btn ds-operation-dock-rail__btn--toggle"
           onClick={() => setCompactMode(false)}
           title={t('operationDockExpand')}
           aria-label={t('operationDockExpand')}
           aria-expanded={false}
         >
-          <Settings className="h-[15px] w-[15px]" strokeWidth={1.75} />
+          <ChevronsLeftRight className="h-4 w-4" strokeWidth={2.1} />
         </button>
         <div className="ds-operation-dock-rail__rule" aria-hidden />
         <div className="ds-operation-dock-rail" role="toolbar" aria-label={t('operationDockToolsTitle')}>
@@ -482,7 +482,7 @@ export function OperationContextDock({
             title={t('rightSidebarTabEditor')}
             aria-label={t('rightSidebarTabEditor')}
           >
-            <Code2 className="h-[15px] w-[15px]" strokeWidth={1.75} />
+            <Columns2 className="h-[15px] w-[15px]" strokeWidth={1.75} />
           </button>
           <button
             type="button"
@@ -532,13 +532,13 @@ export function OperationContextDock({
         </span>
         <button
           type="button"
-          className="ds-operation-dock-topbar__settings"
+          className="ds-operation-dock-topbar__toggle"
           onClick={() => setCompactMode(true)}
           title={t('operationDockCollapse')}
           aria-label={t('operationDockCollapse')}
           aria-expanded={true}
         >
-          <Settings className="h-3.5 w-3.5" strokeWidth={1.9} />
+          <ChevronsLeftRight className="h-4 w-4" strokeWidth={2.1} />
         </button>
       </div>
       <div className="ds-operation-dock-body px-4 py-3.5">
@@ -555,7 +555,7 @@ export function OperationContextDock({
           onClick={() => onOpenEditor?.()}
           className={`${DOCK_ROW_CLASS} cursor-pointer text-ds-ink hover:bg-ds-hover/60`}
         >
-          <RowIcon icon={Code2} tint="violet" />
+          <RowIcon icon={Columns2} tint="violet" />
           <span className="min-w-0 flex-1 truncate">{t('rightSidebarTabEditor')}</span>
         </button>
 

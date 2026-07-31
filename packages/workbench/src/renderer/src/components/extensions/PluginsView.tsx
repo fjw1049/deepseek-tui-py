@@ -1,13 +1,14 @@
 import type { ReactElement } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Loader2, Plus, RefreshCw, Search } from 'lucide-react'
+import { Loader2, Plus, Search } from 'lucide-react'
 import { WORKBENCH_FEATURES } from '@shared/workbench-features'
 import { useLightDismiss } from '../../hooks/use-light-dismiss'
 import { useChatStore } from '../../store/chat-store'
 import { useNoticeAutoDismiss, type Notice } from './marketplace-shared'
 import { NoticeView } from './marketplace-ui'
 import { ExtensionsToolbar } from './ExtensionsToolbar'
+import { ReloadHint } from './ReloadHint'
 import {
   InstalledPluginsPanel,
   type MarketplaceInfo,
@@ -25,17 +26,9 @@ export function PluginsView(): ReactElement {
   const [query, setQuery] = useState('')
   const [plugins, setPlugins] = useState<PluginRow[]>([])
   const [loading, setLoading] = useState(false)
-  /** Inline status in the panel header — avoids mounting a Notice that shifts the page. */
-  const [reloadStatus, setReloadStatus] = useState<'idle' | 'loading' | 'done'>('idle')
   const [busyName, setBusyName] = useState<string | null>(null)
   const [notice, setNotice] = useState<Notice | null>(null)
   useNoticeAutoDismiss(notice, setNotice)
-
-  useEffect(() => {
-    if (reloadStatus !== 'done') return
-    const timer = window.setTimeout(() => setReloadStatus('idle'), 1600)
-    return () => window.clearTimeout(timer)
-  }, [reloadStatus])
   const [installOpen, setInstallOpen] = useState(false)
   const installMenuRef = useRef<HTMLDivElement>(null)
   const [registry, setRegistry] = useState<RegistryEntry[] | null>(null)
@@ -53,24 +46,22 @@ export function PluginsView(): ReactElement {
   })
 
   const refresh = useCallback(
-    async (announce = false): Promise<void> => {
-      if (typeof window.dsGui?.runtimeRequest !== 'function') return
+    async (): Promise<boolean> => {
+      if (typeof window.dsGui?.runtimeRequest !== 'function') return false
       setLoading(true)
-      if (announce) setReloadStatus('loading')
       try {
         const qs = workspaceRoot ? `?workspace=${encodeURIComponent(workspaceRoot)}` : ''
         const result = await window.dsGui.runtimeRequest(`/v1/plugins${qs}`, 'GET')
         if (!result.ok) {
-          if (announce) setReloadStatus('idle')
           setNotice({ tone: 'error', message: extractApiError(result.body) || t('pluginActionFailed') })
-          return
+          return false
         }
         const parsed = JSON.parse(result.body) as { plugins?: PluginRow[] }
         setPlugins(parsed.plugins ?? [])
-        if (announce) setReloadStatus('done')
+        return true
       } catch (error) {
-        if (announce) setReloadStatus('idle')
         setNotice({ tone: 'error', message: error instanceof Error ? error.message : String(error) })
+        return false
       } finally {
         setLoading(false)
       }
@@ -344,16 +335,7 @@ export function PluginsView(): ReactElement {
       <div className="mx-auto max-w-6xl">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <h1 className="ds-ext-page-title text-[24px] font-semibold tracking-[-0.02em] text-ds-ink">{t('extPlugins')}</h1>
-          <ExtensionsToolbar
-            menuItems={[
-              {
-                label: t('connectorReload'),
-                icon: <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} strokeWidth={1.75} />,
-                onClick: () => void refresh(true),
-                disabled: loading
-              }
-            ]}
-          >
+          <ExtensionsToolbar>
             <div className="relative" ref={installMenuRef}>
               <button
                 type="button"
@@ -375,7 +357,10 @@ export function PluginsView(): ReactElement {
             </div>
           </ExtensionsToolbar>
         </div>
-        <p className="mt-2 whitespace-nowrap text-[14px] leading-6 text-ds-muted">{t('pluginSysSubtitle')}</p>
+        <p className="mt-2 whitespace-nowrap text-[14px] leading-6 text-ds-muted">
+          {t('pluginSysSubtitle')}
+          <span className="text-ds-faint"> · {t('pluginSysRestartHint')}</span>
+        </p>
 
         <label className="relative mt-6 block">
           <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-ds-faint" />
@@ -413,25 +398,7 @@ export function PluginsView(): ReactElement {
             onMarketplaceUpdate={handleMarketplaceUpdate}
             onMarketplaceRemove={handleMarketplaceRemove}
             onMarketplacePluginInstall={(spec) => void handleMarketplacePluginInstall(spec)}
-            headerRight={
-              <div className="flex h-5 min-w-[8.5rem] items-center justify-end gap-1.5 text-[12px]">
-                {reloadStatus === 'loading' ? (
-                  <>
-                    <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-ds-muted" strokeWidth={2} />
-                    <span className="truncate text-ds-muted">{t('skillsLoading')}</span>
-                  </>
-                ) : reloadStatus === 'done' ? (
-                  <span className="truncate font-medium text-emerald-600 dark:text-emerald-400">
-                    {t('listReloaded')}
-                  </span>
-                ) : (
-                  <>
-                    <RefreshCw className="h-3.5 w-3.5 shrink-0 text-ds-faint" strokeWidth={1.75} />
-                    <span className="truncate text-ds-faint">{t('pluginSysRestartHint')}</span>
-                  </>
-                )}
-              </div>
-            }
+            headerRight={<ReloadHint onReload={refresh} />}
           />
         </div>
       </div>

@@ -5462,45 +5462,52 @@ select:focus-visible,
   line-height: 1.2;
 }
 
-/* Gear toggles full card ↔ compact icon rail. */
-.ds-operation-dock-topbar__settings {
+/* Toggle collapses the full card to a compact icon rail (and back).
+   Kept a step above tool icons: always-on chip + fuller ink, never the
+   ghosted secondary treatment the gear used to wear. */
+.ds-operation-dock-topbar__toggle {
   display: inline-flex;
-  height: 1.55rem;
-  width: 1.55rem;
+  height: 1.65rem;
+  width: 1.65rem;
   flex-shrink: 0;
   align-items: center;
   justify-content: center;
-  border-radius: 0.5rem;
+  border-radius: 0.55rem;
   border: none;
-  background: transparent;
-  color: var(--text-secondary);
-  opacity: 0.62;
+  background: color-mix(in srgb, var(--text-primary) 8%, transparent);
+  color: var(--text-primary);
+  opacity: 1;
   pointer-events: auto;
   cursor: pointer;
   transition:
     color 0.15s ease,
     background-color 0.15s ease,
-    opacity 0.15s ease;
+    transform 80ms ease-out;
 }
 
-.ds-operation-dock-topbar__settings:hover {
-  color: var(--text-primary);
-  opacity: 1;
-  background: color-mix(in srgb, var(--text-primary) 7%, transparent);
+.ds-operation-dock-topbar__toggle:hover {
+  background: color-mix(in srgb, var(--text-primary) 13%, transparent);
 }
 
-.ds-operation-dock-topbar__settings:hover svg {
-  animation: ds-operation-dock-settings-spin 0.85s linear infinite;
+.ds-operation-dock-topbar__toggle:active {
+  transform: scale(0.94);
 }
 
-@keyframes ds-operation-dock-settings-spin {
+/* ChevronsLeftRight is 180°-symmetric — continuous spin still reads cleanly. */
+.ds-operation-dock-topbar__toggle:hover svg,
+.ds-operation-dock-rail__btn--toggle:hover:not(:disabled) svg {
+  animation: ds-operation-dock-toggle-spin 0.85s linear infinite;
+}
+
+@keyframes ds-operation-dock-toggle-spin {
   to {
     transform: rotate(360deg);
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .ds-operation-dock-topbar__settings:hover svg {
+  .ds-operation-dock-topbar__toggle:hover svg,
+  .ds-operation-dock-rail__btn--toggle:hover:not(:disabled) svg {
     animation: none;
   }
 }
@@ -5684,16 +5691,24 @@ select:focus-visible,
   background: color-mix(in srgb, var(--ds-accent, #007aff) 12%, transparent);
 }
 
-.ds-operation-dock-rail__btn--gear {
-  color: color-mix(in srgb, var(--text-primary) 46%, transparent);
-}
-
-.ds-operation-dock-rail__btn--gear:hover:not(:disabled) {
+/* Compact rail: the expand control sits above the hairline and reads as
+   chrome, not as another tool — filled chip + fuller ink + a hair heavier. */
+.ds-operation-dock-rail__btn--toggle {
+  height: 2rem;
+  width: 2rem;
   color: var(--text-primary);
+  background: color-mix(in srgb, var(--text-primary) 9%, transparent);
 }
 
-.ds-operation-dock-rail__btn--gear:hover svg {
-  animation: ds-operation-dock-settings-spin 0.85s linear infinite;
+.ds-operation-dock-rail__btn--toggle:hover:not(:disabled) {
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--text-primary) 14%, transparent);
+}
+
+.ds-operation-dock-rail__btn--toggle svg {
+  width: 16px;
+  height: 16px;
+  stroke-width: 2.1;
 }
 
 /* Below md the dock sits under the transcript — use a horizontal chip. */
@@ -5732,7 +5747,7 @@ select:focus-visible,
     transform: none;
   }
 
-  .ds-operation-dock-rail__btn--gear:hover svg {
+  .ds-operation-dock-rail__btn--toggle:hover:not(:disabled) svg {
     animation: none;
   }
 }
@@ -6068,6 +6083,11 @@ select:focus-visible,
   transition: transform 80ms ease-out, background 0ms;
 }
 
+.ds-ext-reload-hint:active:not(:disabled) {
+  transform: scale(0.97);
+  transition: transform 80ms ease-out;
+}
+
 .ds-ext-row-action:active:not(:disabled) {
   transform: scale(0.95);
   transition: transform 80ms ease-out;
@@ -6230,6 +6250,7 @@ select:focus-visible,
   .ds-sidebar-expand-droplet:active,
   .ds-ext-primary-action:active:not(:disabled),
   .ds-ext-toolbar-menu:active,
+  .ds-ext-reload-hint:active:not(:disabled),
   .ds-ext-row-action:active:not(:disabled),
   .ds-ext-category-chip:active {
     transform: none;

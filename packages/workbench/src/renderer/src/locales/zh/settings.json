@@ -342,7 +342,6 @@
   "mcpSave": "保存配置",
   "mcpReload": "重新加载",
   "pluginsRefresh": "刷新列表",
-  "mcpReloadRuntimeOk": "已从磁盘重新读取 MCP 配置，并已通知运行时重新连接服务器。",
   "mcpReloadDiskOnly": "已从磁盘重新读取 MCP 配置。运行时未连接时不会重连 MCP；启动或恢复运行时后生效。",
   "mcpInstalled": "已配置的 MCP",
   "mcpListDesc": "关闭后运行时不会加载该 MCP 的工具；配置仍保留在本地。",

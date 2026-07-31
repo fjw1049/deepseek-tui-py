@@ -1,7 +1,7 @@
 import type { ReactElement } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Plus, RefreshCw, Search, Settings } from 'lucide-react'
+import { FolderOpen, Plus, Search } from 'lucide-react'
 import { useChatStore } from '../../store/chat-store'
 import { InstalledSkillsPanel, type InstalledSkill } from './InstalledSkillsPanel'
 import { SkillPreviewDialog } from './SkillPreviewDialog'
@@ -16,6 +16,7 @@ import {
 import { NoticeView } from './marketplace-ui'
 import { MarketplaceBrowser, type InstallOutcome } from './MarketplaceBrowser'
 import { ExtensionsToolbar } from './ExtensionsToolbar'
+import { ReloadHint } from './ReloadHint'
 import type { MarketplaceItem } from '../../../../shared/ds-gui-api'
 
 export function SkillsView(): ReactElement {
@@ -31,9 +32,9 @@ export function SkillsView(): ReactElement {
   const [installedSkills, setInstalledSkills] = useState<InstalledSkill[]>([])
   const [skillsListLoading, setSkillsListLoading] = useState(false)
   const [previewSkill, setPreviewSkill] = useState<string | null>(null)
-  // Bumped by the top "重新加载" button to force-refresh the ModelScope market
-  // catalog in parallel with the local skills dir scan (single button updates
-  // 内置 / 已安装 / 市场三个 tab).
+  // Bumped by the panel-header reload hint to force-refresh the ModelScope
+  // market catalog in parallel with the local skills dir scan (one click
+  // updates 内置 / 已安装 / 市场三个 tab).
   const [marketRefreshSignal, setMarketRefreshSignal] = useState(0)
   const installMenuRef = useRef<HTMLDivElement>(null)
 
@@ -158,19 +159,8 @@ export function SkillsView(): ReactElement {
           <ExtensionsToolbar
             menuItems={[
               {
-                label: t('connectorReload'),
-                icon: <RefreshCw className={`h-3.5 w-3.5 ${skillsListLoading ? 'animate-spin' : ''}`} strokeWidth={1.75} />,
-                onClick: () => {
-                  setMarketRefreshSignal((n) => n + 1)
-                  void refreshSkillsList().then(() =>
-                    setNotice({ tone: 'success', message: t('listReloaded') })
-                  )
-                },
-                disabled: skillsListLoading
-              },
-              {
                 label: t('pluginManage'),
-                icon: <Settings className="h-3.5 w-3.5" strokeWidth={1.75} />,
+                icon: <FolderOpen className="h-4 w-4" strokeWidth={1.9} />,
                 onClick: () => void openSkillsDir()
               }
             ]}
@@ -197,7 +187,10 @@ export function SkillsView(): ReactElement {
           </ExtensionsToolbar>
         </div>
 
-        <p className="mt-2 max-w-2xl text-[14px] leading-6 text-ds-muted">{t('pluginSkillTitle')}</p>
+        <p className="mt-2 max-w-2xl text-[14px] leading-6 text-ds-muted">
+          {t('pluginSkillTitle')}
+          <span className="text-ds-faint"> · {t('pluginSkillRestartHint')}</span>
+        </p>
 
         <label className="relative mt-6 block">
           <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-ds-faint" />
@@ -220,10 +213,12 @@ export function SkillsView(): ReactElement {
             onOpen={() => void openSkillsDir()}
             onDelete={(skill) => void deleteSkill(skill)}
             headerRight={
-              <div className="flex min-w-0 items-center gap-1.5 text-[12px] text-ds-faint">
-                <RefreshCw className="h-3.5 w-3.5 shrink-0" />
-                <span className="truncate">{t('pluginSkillRestartHint')}</span>
-              </div>
+              <ReloadHint
+                onReload={async () => {
+                  setMarketRefreshSignal((n) => n + 1)
+                  await refreshSkillsList()
+                }}
+              />
             }
             marketplaceSlot={
               <MarketplaceBrowser

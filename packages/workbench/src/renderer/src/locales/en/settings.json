@@ -342,7 +342,6 @@
   "mcpSave": "Save config",
   "mcpReload": "Reload",
   "pluginsRefresh": "Refresh list",
-  "mcpReloadRuntimeOk": "MCP config re-read from disk and runtime asked to reconnect servers.",
   "mcpReloadDiskOnly": "MCP config re-read from disk. Runtime is offline, so MCP was not reconnected; changes apply when the runtime starts.",
   "mcpInstalled": "Configured MCP",
   "mcpListDesc": "When off, the runtime will not load tools from this server; the entry stays in your local config.",
