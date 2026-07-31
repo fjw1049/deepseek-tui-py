@@ -41,9 +41,12 @@ class LocalArtifact:
         digest = hashlib.sha256()
         count = 0
         total_bytes = 0
+        from deepseek_tui.plugins.identity import is_ignored_plugin_path
+
         for path in sorted(self.root.rglob("*")):
+            relative_parts = path.relative_to(self.root).parts
             relative = path.relative_to(self.root).as_posix()
-            if ".git" in path.relative_to(self.root).parts:
+            if is_ignored_plugin_path(relative_parts, path.name):
                 continue
             # Internal file symlinks are common in real plugins (e.g.
             # AGENTS.md -> CLAUDE.md) and safe: read_bytes() follows them, so

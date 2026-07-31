@@ -27,6 +27,9 @@ dist/
 # committed.
 .deepseek/
 
+# Local Claude-plugin compatibility e2e scratch workspace
+.plugin-e2e-test/
+
 # IDE
 .vscode/
 .idea/

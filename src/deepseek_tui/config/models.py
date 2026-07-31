@@ -247,6 +247,10 @@ class LifecycleHookEntry(BaseModel):
     # community hook scripts work unmodified. Both dialects receive the
     # same JSON structure and DEEPSEEK_* env vars.
     io_dialect: str = "native"
+    # Absolute plugin root for Claude Code env parity. Community hooks
+    # (e.g. hookify) read ``CLAUDE_PLUGIN_ROOT`` to extend ``sys.path``;
+    # expanding the token in ``command`` alone is not enough.
+    plugin_root: str | None = None
 
 
 class HooksConfig(BaseModel):

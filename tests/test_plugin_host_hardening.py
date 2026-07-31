@@ -29,6 +29,29 @@ def test_plugin_id_rejects_traversal() -> None:
         validate_plugin_id("a/b")
 
 
+def test_content_fingerprint_ignores_pycache(tmp_path: Path) -> None:
+    root = tmp_path / "plugin"
+    root.mkdir()
+    (root / "hooks").mkdir()
+    (root / "hooks" / "main.py").write_text("print(1)\n", encoding="utf-8")
+    before = content_fingerprint(root)
+    cache = root / "hooks" / "__pycache__"
+    cache.mkdir()
+    (cache / "main.cpython-312.pyc").write_bytes(b"\0\0")
+    assert content_fingerprint(root) == before
+
+
+def test_source_content_digest_ignores_pycache(tmp_path: Path) -> None:
+    root = tmp_path / "plugin"
+    root.mkdir()
+    (root / "a.py").write_text("x=1\n", encoding="utf-8")
+    before = source_content_digest(root)
+    cache = root / "__pycache__"
+    cache.mkdir()
+    (cache / "a.cpython-312.pyc").write_bytes(b"\0\0")
+    assert source_content_digest(root) == before
+
+
 def test_content_fingerprint_changes_with_file(tmp_path: Path) -> None:
     root = tmp_path / "plugin"
     root.mkdir()

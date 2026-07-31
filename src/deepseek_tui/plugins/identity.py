@@ -40,13 +40,29 @@ def is_safe_relative_posix(path: str) -> bool:
     return not parsed.is_absolute() and ".." not in parsed.parts
 
 
+# Runtime/cache artifacts that must not participate in install digests or
+# contribution-index fingerprints. Claude Python hooks commonly write
+# ``__pycache__`` into the plugin tree on first run; treating that as a
+# content change would invalidate digest-bound grants.
+_IGNORED_PLUGIN_DIR_NAMES = frozenset({".git", "__pycache__", ".mypy_cache", ".ruff_cache"})
+_IGNORED_PLUGIN_FILE_SUFFIXES = (".pyc", ".pyo", ".DS_Store")
+
+
+def is_ignored_plugin_path(relative_parts: tuple[str, ...] | list[str], name: str) -> bool:
+    """True when *relative_parts* / *name* should be excluded from hashing."""
+    if any(part in _IGNORED_PLUGIN_DIR_NAMES for part in relative_parts):
+        return True
+    return name.endswith(_IGNORED_PLUGIN_FILE_SUFFIXES)
+
+
 def content_fingerprint(root: Path, *, max_files: int = 20_000) -> str:
     """Fast invalidate key: relative path + mtime + size (no file bodies)."""
     resolved = root.expanduser().resolve()
     digest = hashlib.sha256()
     count = 0
     for path in sorted(resolved.rglob("*")):
-        if ".git" in path.relative_to(resolved).parts:
+        relative_parts = path.relative_to(resolved).parts
+        if is_ignored_plugin_path(relative_parts, path.name):
             continue
         if path.is_symlink() or path.is_dir():
             continue

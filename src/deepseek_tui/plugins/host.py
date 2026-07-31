@@ -620,6 +620,7 @@ class PluginHost:
             collect_light_contributions,
             collect_skill_contributions,
             discover_plugins,
+            read_lockfile,
         )
 
         plugins = []
@@ -629,7 +630,19 @@ class PluginHost:
                 try:
                     # Memory-only catalog for deferred prompt rendering. Never
                     # write the lockfile from open_session / discovery.
-                    index = build_contribution_index(plugin.path, plugin.manifest)
+                    # Prefer lockfile provenance so store-backed source_digest
+                    # stays aligned with the install grant key.
+                    entry = read_lockfile(plugin.path.parent).get(plugin.name, {})
+                    provenance = (
+                        entry.get("derived_provenance")
+                        if isinstance(entry, dict)
+                        else None
+                    )
+                    index = build_contribution_index(
+                        plugin.path,
+                        plugin.manifest,
+                        provenance=provenance if isinstance(provenance, dict) else None,
+                    )
                 except Exception:  # noqa: BLE001
                     index = None
                 plugin = LoadedPlugin(

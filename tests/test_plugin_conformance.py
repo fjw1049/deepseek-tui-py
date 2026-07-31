@@ -356,6 +356,40 @@ async def test_executor_pipes_claude_stdin_and_blocks_on_exit_2(
     assert "dangerous command blocked" in (decision.reason or "")
 
 
+async def test_executor_exports_claude_plugin_root_env(tmp_path: Path) -> None:
+    """Claude community hooks (hookify etc.) import via CLAUDE_PLUGIN_ROOT."""
+    plugin_root = tmp_path / "my-plugin"
+    plugin_root.mkdir()
+    script = tmp_path / "check_env.py"
+    script.write_text(
+        "import json, os, sys\n"
+        "print(json.dumps({\n"
+        "  'CLAUDE_PLUGIN_ROOT': os.environ.get('CLAUDE_PLUGIN_ROOT'),\n"
+        "  'CLAUDE_PROJECT_DIR': os.environ.get('CLAUDE_PROJECT_DIR'),\n"
+        "}))\n",
+        encoding="utf-8",
+    )
+    cfg = HooksConfig(
+        hooks=[
+            LifecycleHookEntry(
+                event="message_submit",
+                command=f"{sys.executable} {script}",
+                io_dialect="claude",
+                plugin_root=str(plugin_root),
+            )
+        ]
+    )
+    executor = HookExecutor(cfg, tmp_path)
+    results = await executor.execute(
+        "message_submit",
+        HookContext(message="hi", workspace=tmp_path),
+    )
+    assert len(results) == 1 and results[0].success
+    seen = json.loads(results[0].stdout.strip())
+    assert seen["CLAUDE_PLUGIN_ROOT"] == str(plugin_root)
+    assert seen["CLAUDE_PROJECT_DIR"] == str(tmp_path)
+
+
 async def test_executor_stop_hook_stdout_decision(tmp_path: Path) -> None:
     """A Stop hook blocks the first stop via stdout JSON, then allows once
     stop_hook_active is set (self-limiting per Claude docs)."""

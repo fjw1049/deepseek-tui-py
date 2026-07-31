@@ -1142,39 +1142,41 @@ def _is_store_backed(path: Path) -> bool:
     return "sources" in parts and "sha256" in parts
 
 
+def _store_path_digest(path: Path) -> str | None:
+    """Return ``sha256:<hex>`` encoded in a content-store symlink target."""
+    try:
+        if not path.is_symlink():
+            return None
+        parts = path.resolve().parts
+    except OSError:
+        return None
+    try:
+        idx = parts.index("sha256")
+    except ValueError:
+        return None
+    if idx + 1 >= len(parts):
+        return None
+    hexpart = parts[idx + 1]
+    if not hexpart or any(ch in hexpart for ch in "/:\\"):
+        return None
+    return f"sha256:{hexpart}"
+
+
 def _execution_digest_for_plugin(plugin: LoadedPlugin) -> str:
     """Resolve the store ``sha256:`` digest used for grant checks.
 
-    For store-backed installs the lockfile-cached digest is trusted (the
-    content is immutable). For mutable directories the digest is always
-    recomputed from the current bytes on disk so a post-grant edit is
-    detected — the "digest-bound" grant must bind to live content, not a
-    stale cache.
+    For store-backed installs the content-addressed store path is
+    authoritative — runtime artifacts like ``__pycache__`` must not change
+    the grant key. For mutable directories the digest is always recomputed
+    from the current bytes on disk so a post-grant edit is detected.
     """
     from deepseek_tui.plugins.identity import source_content_digest
 
-    provenance: dict[str, Any] | None = None
-    index = plugin.contribution_index
-    store_backed = _is_store_backed(plugin.path)
-    if store_backed and isinstance(index, dict):
-        source_digest = index.get("source_digest")
-        if isinstance(source_digest, str) and source_digest.startswith("sha256:"):
-            return source_digest
+    store_digest = _store_path_digest(plugin.path)
+    if store_digest is not None:
+        return store_digest
     try:
-        entry = read_lockfile(plugin.path.parent).get(plugin.name, {})
-    except OSError:
-        entry = {}
-    if isinstance(entry, dict):
-        raw = entry.get("derived_provenance")
-        if isinstance(raw, dict):
-            provenance = raw
-    try:
-        # Mutable installs must ignore the provenance/cache shortcut and hash
-        # the live tree; store-backed installs may reuse the recorded digest.
-        return source_content_digest(
-            plugin.path,
-            provenance=provenance if store_backed else None,
-        )
+        return source_content_digest(plugin.path, provenance=None)
     except Exception:  # noqa: BLE001
         return ""
 
@@ -1420,6 +1422,7 @@ def _append_native_hook(
             continue_on_error=bool(raw_entry.get("continue_on_error", True)),
             name=f"{plugin.name}:{raw_entry.get('name') or event}",
             owner_plugin_id=plugin.name,
+            plugin_root=str(plugin.path.resolve()),
         )
     )
 
@@ -1487,6 +1490,7 @@ def _append_foreign_hooks(
                         name=f"{plugin.name}:{event_name}",
                         owner_plugin_id=plugin.name,
                         io_dialect="claude",
+                        plugin_root=str(plugin.path.resolve()),
                     )
                 )
 

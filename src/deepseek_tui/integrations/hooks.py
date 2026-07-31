@@ -742,10 +742,20 @@ class HookExecutor:
             stdin_data = json.dumps(
                 ctx.to_stdin_payload(event, dialect)
             ).encode()
+            hook_env = dict(env_vars)
+            plugin_root = getattr(hook, "plugin_root", None)
+            if plugin_root:
+                # Claude Code exports these for plugin scripts (PYTHONPATH-style
+                # imports via CLAUDE_PLUGIN_ROOT). Keep DEEPSEEK_WORKSPACE too.
+                hook_env["CLAUDE_PLUGIN_ROOT"] = str(plugin_root)
+                if ctx.workspace is not None:
+                    hook_env["CLAUDE_PROJECT_DIR"] = str(ctx.workspace)
+                elif "DEEPSEEK_WORKSPACE" in hook_env:
+                    hook_env["CLAUDE_PROJECT_DIR"] = hook_env["DEEPSEEK_WORKSPACE"]
             if hook.background:
-                result = await self._execute_background(hook, env_vars, stdin_data)
+                result = await self._execute_background(hook, hook_env, stdin_data)
             else:
-                result = await self._execute_sync(hook, env_vars, stdin_data)
+                result = await self._execute_sync(hook, hook_env, stdin_data)
                 result = _apply_output_semantics(event, result)
             if not result.success and not result.blocked:
                 label = result.name or "(unnamed)"
