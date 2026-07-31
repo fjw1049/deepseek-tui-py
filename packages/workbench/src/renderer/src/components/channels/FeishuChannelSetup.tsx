@@ -3,6 +3,17 @@ import { useTranslation } from 'react-i18next'
 import QRCode from 'qrcode'
 import { Loader2, QrCode, Send, XCircle } from 'lucide-react'
 import type { FeishuConfigV1 } from '@shared/ds-gui-api'
+import {
+  CHANNEL_ACTIONS,
+  CHANNEL_BTN_ICON,
+  CHANNEL_CONTROL,
+  CHANNEL_FIELD,
+  CHANNEL_HINT,
+  CHANNEL_LABEL,
+  CHANNEL_PRIMARY_BTN,
+  CHANNEL_SECONDARY_BTN,
+  channelNoticeClass
+} from './channel-setup-ui'
 
 type Props = {
   runtimeReady: boolean
@@ -138,92 +149,74 @@ export function FeishuChannelSetup({ runtimeReady, onConfigured }: Props): React
 
   return (
     <div className="flex flex-col gap-4">
-      {notice ? (
-        <p
-          className={`rounded-xl px-3 py-2 text-[13px] ${
-            notice.tone === 'error'
-              ? 'bg-red-500/10 text-red-700 dark:text-red-200'
-              : notice.tone === 'success'
-                ? 'bg-emerald-500/10 text-emerald-800 dark:text-emerald-200'
-                : 'bg-ds-subtle text-ds-muted'
-          }`}
+      {notice ? <div className={channelNoticeClass(notice.tone)}>{notice.message}</div> : null}
+
+      <p className={CHANNEL_HINT}>{t('channelFeishuSimpleDesc')}</p>
+
+      <label className={CHANNEL_FIELD}>
+        <span className={CHANNEL_LABEL}>{t('channelFeishuTarget')}</span>
+        <select
+          className={CHANNEL_CONTROL}
+          value={target}
+          disabled={phase === 'scanning'}
+          onChange={(e) => setTarget(e.target.value as 'feishu' | 'lark')}
         >
-          {notice.message}
-        </p>
-      ) : null}
+          <option value="feishu">{t('channelFeishuTargetFeishu')}</option>
+          <option value="lark">{t('channelFeishuTargetLark')}</option>
+        </select>
+      </label>
 
-      <div className="rounded-xl border border-ds-border-muted bg-ds-subtle/40 px-4 py-3">
-        <div className="text-[13px] font-medium text-ds-ink">{t('channelFeishuSimpleTitle')}</div>
-        <p className="mt-1 text-[12px] leading-5 text-ds-muted">{t('channelFeishuSimpleDesc')}</p>
-
-        <div className="mt-3 flex flex-wrap items-center gap-2">
-          <label className="inline-flex items-center gap-1.5 text-[12px] text-ds-muted">
-            <span>{t('channelFeishuTarget')}</span>
-            <select
-              className="rounded-lg border border-ds-border bg-ds-main px-2 py-1 text-[12px] text-ds-ink"
-              value={target}
-              disabled={phase === 'scanning'}
-              onChange={(e) => setTarget(e.target.value as 'feishu' | 'lark')}
-            >
-              <option value="feishu">{t('channelFeishuTargetFeishu')}</option>
-              <option value="lark">{t('channelFeishuTargetLark')}</option>
-            </select>
-          </label>
-          {phase === 'scanning' ? (
-            <button
-              type="button"
-              onClick={cancelScan}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-ds-border px-3 py-1.5 text-[13px] text-ds-muted hover:bg-ds-hover"
-            >
-              <XCircle className="h-3.5 w-3.5" />
-              {t('channelFeishuScanCancel')}
-            </button>
-          ) : (
-            <button
-              type="button"
-              onClick={() => void startScan()}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-accent/10 px-3 py-1.5 text-[13px] font-medium text-accent hover:bg-accent/15"
-            >
-              <QrCode className="h-3.5 w-3.5" />
-              {configured ? t('channelFeishuScanReconnect') : t('channelFeishuScanConnect')}
-            </button>
-          )}
-          {configured && config?.chatId?.trim() ? (
-            <button
-              type="button"
-              disabled={!runtimeReady || testing}
-              onClick={() => void runTestSend(config.chatId.trim())}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-ds-border bg-ds-main px-3 py-1.5 text-[13px] text-ds-ink hover:bg-ds-hover disabled:opacity-50"
-            >
-              {testing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
-              {t('channelFeishuTestSend')}
-            </button>
-          ) : null}
-        </div>
-
+      <div className={CHANNEL_ACTIONS}>
         {phase === 'scanning' ? (
-          <div className="mt-4 flex flex-col items-center gap-2">
-            {qrDataUrl ? (
-              <img
-                src={qrDataUrl}
-                alt={t('channelFeishuScanQrAlt')}
-                className="rounded-lg border border-ds-border bg-white p-2"
-              />
+          <button type="button" onClick={cancelScan} className={CHANNEL_SECONDARY_BTN}>
+            <XCircle className={CHANNEL_BTN_ICON} />
+            {t('channelFeishuScanCancel')}
+          </button>
+        ) : (
+          <button type="button" onClick={() => void startScan()} className={CHANNEL_PRIMARY_BTN}>
+            <QrCode className={CHANNEL_BTN_ICON} />
+            {configured ? t('channelFeishuScanReconnect') : t('channelFeishuScanConnect')}
+          </button>
+        )}
+        {configured && config?.chatId?.trim() ? (
+          <button
+            type="button"
+            disabled={!runtimeReady || testing}
+            onClick={() => void runTestSend(config.chatId.trim())}
+            className={CHANNEL_SECONDARY_BTN}
+          >
+            {testing ? (
+              <Loader2 className={`${CHANNEL_BTN_ICON} animate-spin`} />
             ) : (
-              <div className="flex items-center gap-2 py-8 text-[13px] text-ds-muted">
-                <Loader2 className="h-4 w-4 animate-spin" />
-                {t('channelFeishuScanGenerating')}
-              </div>
+              <Send className={CHANNEL_BTN_ICON} />
             )}
-            <p className="text-center text-[12px] text-ds-muted">{t('channelFeishuScanHint')}</p>
-            {qrExpireIn > 0 ? (
-              <p className="text-[11px] text-ds-faint">
-                {t('channelFeishuScanExpires', { seconds: qrExpireIn })}
-              </p>
-            ) : null}
-          </div>
+            {t('channelFeishuTestSend')}
+          </button>
         ) : null}
       </div>
+
+      {phase === 'scanning' ? (
+        <div className="flex flex-col items-center gap-2 rounded-lg border border-ds-border-muted bg-ds-subtle/40 px-4 py-4">
+          {qrDataUrl ? (
+            <img
+              src={qrDataUrl}
+              alt={t('channelFeishuScanQrAlt')}
+              className="rounded-lg border border-ds-border bg-white p-2"
+            />
+          ) : (
+            <div className="flex items-center gap-2 py-8 text-[13px] text-ds-muted">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              {t('channelFeishuScanGenerating')}
+            </div>
+          )}
+          <p className="text-center text-[12px] text-ds-muted">{t('channelFeishuScanHint')}</p>
+          {qrExpireIn > 0 ? (
+            <p className="text-[11px] text-ds-faint">
+              {t('channelFeishuScanExpires', { seconds: qrExpireIn })}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   )
 }

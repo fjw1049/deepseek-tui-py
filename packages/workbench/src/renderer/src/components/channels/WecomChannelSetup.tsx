@@ -4,6 +4,17 @@ import { Loader2, Save, Send } from 'lucide-react'
 import { isWecomWebhookConfigured, parseWecomWebhookKey } from '@shared/wecom-channel'
 import { loadWecomChannelState, saveWecomWebhookKey } from '../../lib/resolve-automation-wecom-config'
 import { FieldHelpPopover } from './FieldHelpPopover'
+import {
+  CHANNEL_ACTIONS,
+  CHANNEL_BTN_ICON,
+  CHANNEL_CONTROL,
+  CHANNEL_FIELD,
+  CHANNEL_HINT,
+  CHANNEL_LABEL,
+  CHANNEL_PRIMARY_BTN,
+  CHANNEL_SECONDARY_BTN,
+  channelNoticeClass
+} from './channel-setup-ui'
 
 type Props = {
   runtimeReady: boolean
@@ -104,25 +115,13 @@ export function WecomChannelSetup({ runtimeReady, onConfigured }: Props): ReactE
 
   return (
     <div className="flex flex-col gap-4">
-      {notice ? (
-        <div
-          className={`rounded-lg px-3 py-2 text-[13px] ${
-            notice.tone === 'error'
-              ? 'bg-red-500/10 text-red-700 dark:text-red-200'
-              : notice.tone === 'success'
-                ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-200'
-                : 'bg-ds-subtle text-ds-muted'
-          }`}
-        >
-          {notice.message}
-        </div>
-      ) : null}
+      {notice ? <div className={channelNoticeClass(notice.tone)}>{notice.message}</div> : null}
 
-      <p className="text-[13px] leading-6 text-ds-muted">{t('channelWecomSimpleDesc')}</p>
+      <p className={CHANNEL_HINT}>{t('channelWecomSimpleDesc')}</p>
 
-      <label className="grid gap-1">
+      <label className={CHANNEL_FIELD}>
         <div className="flex items-center gap-1.5">
-          <span className="text-[13px] font-medium text-ds-ink">{t('channelWecomWebhook')}</span>
+          <span className={CHANNEL_LABEL}>{t('channelWecomWebhook')}</span>
           <FieldHelpPopover
             title={t('channelWecomWebhookHelpTitle')}
             intro={t('channelWecomWebhookHelpIntro')}
@@ -137,27 +136,35 @@ export function WecomChannelSetup({ runtimeReady, onConfigured }: Props): ReactE
             setWebhookInput(event.target.value)
           }}
           placeholder={t('channelWecomWebhookPlaceholder')}
-          className="rounded-lg border border-ds-border bg-ds-main px-3 py-2 font-mono text-[12px] text-ds-ink outline-none placeholder:text-ds-faint focus:border-accent/60"
+          className={`${CHANNEL_CONTROL} font-mono text-[12px]`}
         />
       </label>
 
-      <div className="flex flex-wrap gap-2">
+      <div className={CHANNEL_ACTIONS}>
         <button
           type="button"
           onClick={() => void handleSave()}
           disabled={saving}
-          className="inline-flex items-center gap-1.5 rounded-lg bg-ds-ink px-4 py-2 text-[13px] font-medium text-ds-card hover:opacity-80 disabled:opacity-50"
+          className={CHANNEL_PRIMARY_BTN}
         >
-          {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+          {saving ? (
+            <Loader2 className={`${CHANNEL_BTN_ICON} animate-spin`} />
+          ) : (
+            <Save className={CHANNEL_BTN_ICON} />
+          )}
           {t('channelWecomSave')}
         </button>
         <button
           type="button"
           onClick={() => void handleTestSend()}
           disabled={testing}
-          className="inline-flex items-center gap-1.5 rounded-lg border border-ds-border px-4 py-2 text-[13px] font-medium text-ds-ink hover:bg-ds-subtle disabled:opacity-50"
+          className={CHANNEL_SECONDARY_BTN}
         >
-          {testing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+          {testing ? (
+            <Loader2 className={`${CHANNEL_BTN_ICON} animate-spin`} />
+          ) : (
+            <Send className={CHANNEL_BTN_ICON} />
+          )}
           {t('channelWecomTestSend')}
         </button>
       </div>

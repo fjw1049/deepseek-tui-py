@@ -17,6 +17,16 @@ import {
   type EmailChannelConfig
 } from '../../lib/resolve-automation-email-config'
 import { FieldHelpPopover } from './FieldHelpPopover'
+import {
+  CHANNEL_ACTIONS,
+  CHANNEL_BTN_ICON,
+  CHANNEL_CONTROL,
+  CHANNEL_FIELD,
+  CHANNEL_LABEL,
+  CHANNEL_PRIMARY_BTN,
+  CHANNEL_SECONDARY_BTN,
+  channelNoticeClass
+} from './channel-setup-ui'
 
 type Props = {
   runtimeReady: boolean
@@ -185,25 +195,13 @@ export function EmailChannelSetup({ runtimeReady, onConfigured }: Props): ReactE
 
   return (
     <div className="flex flex-col gap-4">
-      {notice ? (
-        <div
-          className={`rounded-lg px-3 py-2 text-[13px] ${
-            notice.tone === 'error'
-              ? 'bg-red-500/10 text-red-700 dark:text-red-200'
-              : notice.tone === 'success'
-                ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-200'
-                : 'bg-ds-subtle text-ds-muted'
-          }`}
-        >
-          {notice.message}
-        </div>
-      ) : null}
+      {notice ? <div className={channelNoticeClass(notice.tone)}>{notice.message}</div> : null}
 
       <div className="grid gap-3">
-        <label className="grid gap-1">
-          <span className="text-[13px] font-medium text-ds-ink">{t('channelEmailProvider')}</span>
+        <label className={CHANNEL_FIELD}>
+          <span className={CHANNEL_LABEL}>{t('channelEmailProvider')}</span>
           <select
-            className="rounded-lg border border-ds-border bg-ds-main px-3 py-2 text-[13px] text-ds-ink outline-none focus:border-accent/60"
+            className={CHANNEL_CONTROL}
             value={activeProvider}
             onChange={(e) => applyProvider(e.target.value as EmailProviderId)}
           >
@@ -215,19 +213,19 @@ export function EmailChannelSetup({ runtimeReady, onConfigured }: Props): ReactE
           </select>
         </label>
 
-        <label className="grid gap-1">
-          <span className="text-[13px] font-medium text-ds-ink">{t('channelEmailMailTo')}</span>
+        <label className={CHANNEL_FIELD}>
+          <span className={CHANNEL_LABEL}>{t('channelEmailMailTo')}</span>
           <input
-            className="rounded-lg border border-ds-border bg-ds-main px-3 py-2 text-[13px] text-ds-ink outline-none focus:border-accent/60"
+            className={CHANNEL_CONTROL}
             value={emailConfig.mailTo}
             onChange={(e) => syncUsernameFromMail(e.target.value)}
             placeholder={t('channelEmailMailToPlaceholder')}
           />
         </label>
 
-        <label className="grid gap-1">
+        <label className={CHANNEL_FIELD}>
           <div className="flex items-center gap-1.5">
-            <span className="text-[13px] font-medium text-ds-ink">{t('channelEmailAuthCode')}</span>
+            <span className={CHANNEL_LABEL}>{t('channelEmailAuthCode')}</span>
             <FieldHelpPopover
               title={t('channelEmailAuthCodeHelpTitle')}
               intro={t('channelEmailAuthCodeHelpIntro')}
@@ -237,7 +235,7 @@ export function EmailChannelSetup({ runtimeReady, onConfigured }: Props): ReactE
           </div>
           <input
             type="password"
-            className="rounded-lg border border-ds-border bg-ds-main px-3 py-2 text-[13px] text-ds-ink outline-none focus:border-accent/60"
+            className={CHANNEL_CONTROL}
             value={authCode}
             onChange={(e) => setAuthCode(e.target.value)}
             placeholder={
@@ -250,23 +248,31 @@ export function EmailChannelSetup({ runtimeReady, onConfigured }: Props): ReactE
         </label>
       </div>
 
-      <div className="flex flex-wrap gap-2">
+      <div className={CHANNEL_ACTIONS}>
         <button
           type="button"
           disabled={saving}
           onClick={() => void handleSave()}
-          className="inline-flex items-center gap-1.5 rounded-lg bg-accent/10 px-3 py-2 text-[13px] font-medium text-accent hover:bg-accent/20 disabled:opacity-50"
+          className={CHANNEL_PRIMARY_BTN}
         >
-          {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+          {saving ? (
+            <Loader2 className={`${CHANNEL_BTN_ICON} animate-spin`} />
+          ) : (
+            <Save className={CHANNEL_BTN_ICON} />
+          )}
           {t('channelEmailSave')}
         </button>
         <button
           type="button"
           disabled={testing || !configured}
           onClick={() => void handleTestSend()}
-          className="inline-flex items-center gap-1.5 rounded-lg border border-ds-border bg-ds-main px-3 py-2 text-[13px] text-ds-ink hover:bg-ds-hover disabled:opacity-50"
+          className={CHANNEL_SECONDARY_BTN}
         >
-          {testing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
+          {testing ? (
+            <Loader2 className={`${CHANNEL_BTN_ICON} animate-spin`} />
+          ) : (
+            <Send className={CHANNEL_BTN_ICON} />
+          )}
           {t('channelEmailTestSend')}
         </button>
       </div>
