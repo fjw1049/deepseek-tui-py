@@ -291,12 +291,43 @@ def whale_nickname_for_index(index: int) -> str:
     return f"{base} {index // len(_WHALE_NICKNAMES) + 1}"
 
 
+_LOCALE_PROSE: dict[str, str] = {
+    "zh": "Simplified Chinese",
+    "en": "English",
+}
+
+
+def language_directive(locale_tag: str | None) -> str | None:
+    """User-visible-language directive injected into sub-agent prompts.
+
+    Sub-agents never see the parent's system prompt or its ``## Environment``
+    block, so the session locale must be stated here explicitly — inferring
+    it from the assignment's language proved unreliable (children narrate in
+    English when the rest of their prompt is English).
+    """
+    name = _LOCALE_PROSE.get((locale_tag or "").strip().lower())
+    if name is None:
+        return None
+    return (
+        "## Language\n\n"
+        f"Write ALL user-visible natural language in {name} "
+        f"(lang: {locale_tag}): your reasoning, progress notes between tool "
+        "calls, checklist item texts, and the report body. This applies "
+        "regardless of the language of this prompt or of the assignment. "
+        "Code, file paths, identifiers, tool names, flags, log lines, and "
+        "machine-parsed structural markers (e.g. the ### SUMMARY / EVIDENCE "
+        "/ CHANGES / RISKS / BLOCKERS report headings) stay in their "
+        "original form."
+    )
+
+
 def build_subagent_system_prompt(
     agent_type: SubAgentType,
     assignment: SubAgentAssignment,
     base_override: str | None = None,
     *,
     include_markdown_report_contract: bool = True,
+    locale_tag: str | None = None,
 ) -> str:
     """Build the sub-agent system prompt.
 
@@ -307,6 +338,10 @@ def build_subagent_system_prompt(
     ``include_markdown_report_contract`` attaches the shared five-section
     Output contract. Set it False when the run uses ``structured_output``
     (JSON schema) so only one final-delivery contract is in force.
+
+    ``locale_tag`` (``zh`` / ``en``) appends an explicit user-visible-language
+    directive; sub-agents have no ``## Environment`` block, so this is their
+    only source of the session language.
     """
     if base_override is not None and base_override.strip():
         base = base_override.strip()
@@ -318,6 +353,10 @@ def build_subagent_system_prompt(
 
         output_contract = load_prompt("sub_output")
         base = f"{base}\n\n{output_contract}" if base else output_contract
+
+    directive = language_directive(locale_tag)
+    if directive:
+        base = f"{base}\n\n{directive}" if base else directive
 
     role = (assignment.role or "").strip()
     if role:

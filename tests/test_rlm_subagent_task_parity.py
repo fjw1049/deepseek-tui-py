@@ -92,6 +92,31 @@ class TestSubagentParity:
         assert "### SUMMARY" not in prompt
         assert "general-purpose sub-agent" in prompt.lower()
 
+    def test_build_subagent_system_prompt_injects_language_directive(self):
+        prompt = build_subagent_system_prompt(
+            SubAgentType.EXPLORE,
+            SubAgentAssignment(objective="x"),
+            locale_tag="zh",
+        )
+        assert "## Language" in prompt
+        assert "Simplified Chinese" in prompt
+        assert "lang: zh" in prompt
+        # Parsed report headings must be exempted from translation.
+        assert "stay in their" in prompt
+
+    def test_build_subagent_system_prompt_no_directive_without_locale(self):
+        prompt = build_subagent_system_prompt(
+            SubAgentType.EXPLORE,
+            SubAgentAssignment(objective="x"),
+        )
+        assert "## Language" not in prompt
+        prompt_bad = build_subagent_system_prompt(
+            SubAgentType.EXPLORE,
+            SubAgentAssignment(objective="x"),
+            locale_tag="fr",
+        )
+        assert "## Language" not in prompt_bad
+
     def test_summarize_subagent_result_prefers_summary_section(self):
         snap = SubAgentResult(
             agent_id="a1",

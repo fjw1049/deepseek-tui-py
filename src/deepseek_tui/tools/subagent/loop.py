@@ -277,12 +277,17 @@ async def run_subagent_loop(
     )
 
     use_structured_output = bool(agent.output_schema)
+    # Session locale (config.ui.locale) — same source and validation as the
+    # parent engine's reply_locale. Children have no ## Environment block, so
+    # the language directive in the system prompt is their only signal.
+    _locale = getattr(getattr(runtime.config, "ui", None), "locale", None)
     system_prompt = build_subagent_system_prompt(
         agent.agent_type,
         agent.assignment,
         base_override=getattr(agent, "system_prompt", None),
         # One final-delivery contract only: Markdown report XOR JSON tool.
         include_markdown_report_contract=not use_structured_output,
+        locale_tag=_locale if _locale in ("zh", "en") else "zh",
     )
     extra_tools = []
     if use_structured_output:
