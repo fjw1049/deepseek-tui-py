@@ -483,4 +483,31 @@ describe('subagent-mailbox', () => {
     expect(tool?.label).toBe('浏览目录')
     expect(tool?.depth).toBe(1)
   })
+
+  it('dedupes consecutive identical progress narrations', () => {
+    let cards = applyMailboxMessage(
+      {},
+      { kind: 'started', agent_id: 'agent_1', agent_type: 'explore', seq: 1 }
+    )
+    const status = 'HANDOVER 提供了详尽的项目背景。现在让我勘察真实代码目录结构。'
+    cards = applyMailboxMessage(cards, {
+      kind: 'progress',
+      agent_id: 'agent_1',
+      status,
+      seq: 2
+    })
+    cards = applyMailboxMessage(cards, {
+      kind: 'progress',
+      agent_id: 'agent_1',
+      status: `  ${status}  `,
+      seq: 3
+    })
+    const card = cards.agent_1
+    expect(card?.cardKind).toBe('delegate')
+    if (card?.cardKind !== 'delegate') return
+    const progressSteps = card.steps.filter((s) => s.kind === 'progress')
+    expect(progressSteps).toHaveLength(1)
+    const items = subagentStepsToFlowItems(card.steps, 0, 'running')
+    expect(items.filter((i) => i.variant === 'narration')).toHaveLength(1)
+  })
 })

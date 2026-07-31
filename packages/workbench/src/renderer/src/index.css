@@ -589,6 +589,20 @@ samp {
   box-shadow: var(--ds-shadow-composer);
 }
 
+/* Live workflow chip above the frosted composer — always opaque so it
+   reads as a solid card, not glass floating over the timeline. */
+.ds-process-tray {
+  background: var(--surface-2, #1d1d1d);
+  border: 1px solid var(--ds-border);
+  box-shadow: var(--ds-shadow-card-soft);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+[data-theme='light'] .ds-process-tray {
+  background: var(--surface-2, #ffffff);
+}
+
 /* backdrop-filter on the frosted composer creates a containing block that breaks
    the model picker popover anchor — drop blur only while the menu is open.
    Raise z-index so the upward popover stacks above the decorative pet dock. */
@@ -4666,8 +4680,9 @@ html[data-theme='dark'] .ds-code-fullscreen .shiki span {
 }
 
 .ds-timeline-composer-clearance-spacer {
-  /* ~composer card + pet dock protrusion above the overlap */
-  height: clamp(7.5rem, 18vh, 11rem);
+  /* Prefer live composer height (ProcessTray / approvals); fall back to the
+     historical clamp so empty-stage layout still clears the pet dock. */
+  height: max(clamp(7.5rem, 18vh, 11rem), var(--ds-composer-clearance, 0px));
 }
 
 /* ── Final-answer reading mode ───────────────────────────────────────────

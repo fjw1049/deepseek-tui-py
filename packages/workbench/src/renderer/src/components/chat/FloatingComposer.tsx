@@ -61,6 +61,7 @@ import {
 import { ContextUsageMeter } from './ContextUsageMeter'
 import { ComposerCommandPanel } from './ComposerCommandPanel'
 import { ComposerVoiceBar, type ComposerVoicePhase } from './ComposerVoiceBar'
+import { ProcessTray } from './ProcessTray'
 import { WorkspaceContextBar } from './WorkspaceContextBar'
 import {
   joinSpeechText,
@@ -1357,6 +1358,8 @@ export function FloatingComposer({
             <div className="ds-composer-command-ribbon" aria-hidden />
           </div>
         ) : null}
+
+        <ProcessTray />
 
         <div
           ref={shellRef}

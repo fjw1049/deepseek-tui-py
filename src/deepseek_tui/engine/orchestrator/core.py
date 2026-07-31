@@ -54,6 +54,7 @@ from deepseek_tui.engine.orchestrator.helpers import (
     FOCUS_MCP_BASE,
     FOCUS_PLUGIN_BASE,
     FOCUS_SKILL_BASE,
+    WORKFLOW_MODE_TOOLS,
     _assistant_preface_text,
     _detect_focus_mcp,
     _detect_focus_skill,
@@ -2003,6 +2004,11 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             else:
                 self._focus_tool_whitelist = None
                 self._focus_allowed_servers = None
+            # Workflow mode overrides skill/mcp/plugin focus: the main agent
+            # must drive ``workflow``; sub-agents keep their own registries.
+            if (self.mode or "").strip() == "workflow":
+                self._focus_tool_whitelist = WORKFLOW_MODE_TOOLS
+                self._focus_allowed_servers = frozenset()
             await self.handle.emit(
                 TurnStartedEvent(user_text="" if op.hidden else processed.display_text)
             )

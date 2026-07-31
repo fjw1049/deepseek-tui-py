@@ -58,10 +58,17 @@ function isPythonInterpreterPath(path: string): boolean {
  * Settings → Runtime → binary path is the deepseek CLI when set.
  * If a Python interpreter was saved by mistake (e.g. repo `.venv/bin/python`),
  * still launch via `-m deepseek_tui` so `serve --http` works.
+ *
+ * Absolute/relative paths that no longer exist (copied settings from another
+ * machine/user) fall back to auto-detect instead of failing spawn with ENOENT.
  */
 export function resolveRuntimeLauncher(binaryPath: string | undefined): RuntimeLauncher {
   const explicit = binaryPath?.trim()
   if (explicit) {
+    const looksLikeFilesystemPath = explicit.includes('/') || explicit.includes('\\')
+    if (looksLikeFilesystemPath && !existsSync(explicit)) {
+      return { bin: resolveDefaultPythonBin(), prefixArgs: ['-m', 'deepseek_tui'] }
+    }
     if (isPythonInterpreterPath(explicit)) {
       return { bin: explicit, prefixArgs: ['-m', 'deepseek_tui'] }
     }

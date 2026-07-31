@@ -15,6 +15,7 @@ from deepseek_tui.engine.orchestrator.helpers import (
     FOCUS_READ_BASE,
     FOCUS_SKILL_BASE,
     FOCUS_WRITE_BASE,
+    WORKFLOW_MODE_TOOLS,
     _FOCUS_KERNEL_REGISTRY,
     _FOCUS_REGISTRY_TOOLS,
 )
@@ -70,6 +71,20 @@ def test_mcp_base_excludes_skill_and_agent_noise() -> None:
     assert "agent" not in FOCUS_MCP_BASE
 
 
+def test_workflow_mode_tools_are_registry_names() -> None:
+    cfg = Config()
+    cfg.features.subagents = True
+    cfg.features.web_search = True
+    names = set(build_default_registry(cfg, mode="workflow").names())
+    missing = sorted(WORKFLOW_MODE_TOOLS - names)
+    assert missing == [], f"WORKFLOW_MODE_TOOLS ghosts: {missing}"
+    assert WORKFLOW_MODE_TOOLS == frozenset(
+        {"workflow", "workflow_list", "request_user_input"}
+    )
+    assert "agent" not in WORKFLOW_MODE_TOOLS
+    assert "read_file" not in WORKFLOW_MODE_TOOLS
+
+
 def test_current_time_not_registered_without_automations() -> None:
     """current_time was removed (date is injected via the Environment block)."""
     cfg = Config()
@@ -109,6 +124,48 @@ async def test_mcp_focus_whitelist_uses_mcp_base(tmp_path) -> None:
         assert "agent" not in tools
         assert "load_skill" not in tools
         assert "checklist" not in tools
+    finally:
+        await engine.shutdown_session()
+
+
+@pytest.mark.asyncio
+async def test_workflow_mode_whitelist_confines_catalog(tmp_path) -> None:
+    from deepseek_tui.engine.handle import EngineHandle
+    from deepseek_tui.engine.orchestrator.core import Engine
+
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    cfg = Config(
+        features={
+            "tasks": True,
+            "subagents": True,
+            "mcp": False,
+            "web_search": True,
+            "shell_tool": True,
+        },
+        allow_shell=True,
+    )
+    engine = await Engine.create(
+        EngineHandle(),
+        AsyncMock(),
+        config=cfg,
+        working_directory=workspace,
+        mode="workflow",
+    )
+    try:
+        # Mirror the turn-start confinement applied for workflow mode.
+        engine._focus_tool_whitelist = WORKFLOW_MODE_TOOLS
+        engine._focus_allowed_servers = frozenset()
+        catalog = await engine._get_tools_with_mcp()
+        names = {
+            (t.get("function") or t).get("name")
+            for t in catalog
+            if isinstance((t.get("function") or t).get("name"), str)
+        }
+        assert names <= WORKFLOW_MODE_TOOLS
+        assert "workflow" in names
+        assert "agent" not in names
+        assert "read_file" not in names
     finally:
         await engine.shutdown_session()
 

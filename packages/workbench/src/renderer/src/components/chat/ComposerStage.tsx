@@ -1,4 +1,11 @@
-import { useMemo, useState, type ComponentProps, type ReactElement } from 'react'
+import {
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ComponentProps,
+  type ReactElement
+} from 'react'
 import { PawPrint } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
@@ -8,13 +15,15 @@ import { useNoticeAutoDismiss, type Notice } from '../extensions/marketplace-sha
 import { PetMascotDock } from '../pet/PetMascotDock'
 import { ComposerNoticeToast } from './composer-notice'
 import { FloatingComposer } from './FloatingComposer'
-import { ProcessTray } from './ProcessTray'
 
 type Props = ComponentProps<typeof FloatingComposer>
+
+const COMPOSER_CLEARANCE_VAR = '--ds-composer-clearance'
 
 export function ComposerStage(props: Props): ReactElement {
   const { t } = useTranslation('common')
   const pet = usePetController()
+  const rootRef = useRef<HTMLDivElement>(null)
   const [composerNotice, setComposerNotice] = useState<Notice | null>(null)
   useNoticeAutoDismiss(composerNotice, setComposerNotice)
 
@@ -35,26 +44,41 @@ export function ComposerStage(props: Props): ReactElement {
     props.onSend(text)
   }
 
+  // Timeline spacer follows real composer height (ProcessTray / approvals /
+  // queued messages) so overlapping chrome doesn't cover the last answer or
+  // make the dialogue appear to jump when the tray mounts.
+  useLayoutEffect(() => {
+    const root = rootRef.current
+    if (!root || typeof ResizeObserver === 'undefined') return
+    const publish = (): void => {
+      const height = Math.ceil(root.getBoundingClientRect().height)
+      document.documentElement.style.setProperty(
+        COMPOSER_CLEARANCE_VAR,
+        `${Math.max(height, 0)}px`
+      )
+    }
+    publish()
+    const ro = new ResizeObserver(publish)
+    ro.observe(root)
+    return () => {
+      ro.disconnect()
+      document.documentElement.style.removeProperty(COMPOSER_CLEARANCE_VAR)
+    }
+  }, [])
+
   return (
-    <div className="flex w-full flex-col items-stretch">
-      <div className="relative">
-        <div className="ds-chat-stage flex w-full px-3 sm:px-4">
-          <div className="ds-no-drag min-w-0 flex-1">
-            <ProcessTray />
-          </div>
-        </div>
-        {/* Decorative only: sit behind the composer (z-0) and ignore hits so the
-            model picker popover above the input stays clickable on the right. */}
-        <div className="pointer-events-none absolute bottom-0 right-0 z-0">
-          <PetMascotDock
-            visible
-            status={pet.status}
-            stateId={pet.stateId}
-            spritesheetSrc={pet.spritesheetSrc}
-            roamOffset={pet.roamOffset}
-            motionPaused={pet.motionPaused}
-          />
-        </div>
+    <div ref={rootRef} className="relative flex w-full flex-col items-stretch">
+      {/* Decorative only: sit behind the composer (z-0) and ignore hits so the
+          model picker popover above the input stays clickable on the right. */}
+      <div className="pointer-events-none absolute bottom-0 right-0 z-0">
+        <PetMascotDock
+          visible
+          status={pet.status}
+          stateId={pet.stateId}
+          spritesheetSrc={pet.spritesheetSrc}
+          roamOffset={pet.roamOffset}
+          motionPaused={pet.motionPaused}
+        />
       </div>
       {composerNotice ? (
         <div className="ds-chat-stage mb-1.5 flex w-full justify-center px-3 sm:px-4">

@@ -23,16 +23,28 @@ describe('resolveRuntimeLauncher', () => {
   })
 
   it('treats explicit Python interpreters as module launchers', () => {
-    expect(resolveRuntimeLauncher('/custom/python')).toEqual({
-      bin: '/custom/python',
+    if (!existsSync(repoVenvPython)) return
+    expect(resolveRuntimeLauncher(repoVenvPython)).toEqual({
+      bin: repoVenvPython,
       prefixArgs: ['-m', 'deepseek_tui']
     })
   })
 
   it('uses explicit deepseek CLI path without -m prefix', () => {
-    expect(resolveRuntimeLauncher('/usr/local/bin/deepseek')).toEqual({
-      bin: '/usr/local/bin/deepseek',
+    // Use a path that exists so we do not trigger the missing-path fallback.
+    const bin = process.execPath
+    expect(resolveRuntimeLauncher(bin)).toEqual({
+      bin,
       prefixArgs: []
+    })
+  })
+
+  it('falls back when settings binaryPath points at a missing file', () => {
+    savedEnv.DEEPSEEK_PYTHON = process.env.DEEPSEEK_PYTHON
+    process.env.DEEPSEEK_PYTHON = '/env/python'
+    expect(resolveRuntimeLauncher('/Users/user/missing/.venv/bin/python')).toEqual({
+      bin: '/env/python',
+      prefixArgs: ['-m', 'deepseek_tui']
     })
   })
 

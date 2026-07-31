@@ -81,7 +81,17 @@ async function readStoredEmailSmtpPassword(): Promise<string | undefined> {
     return safeStorage.decryptString(encrypted)
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined
-    throw error
+    // Corrupt / foreign-machine ciphertext must not block runtime spawn.
+    console.warn(
+      '[deepseek-gui] ignoring undecryptable email SMTP secret:',
+      error instanceof Error ? error.message : error
+    )
+    try {
+      await unlink(emailSecretPath())
+    } catch {
+      // best-effort cleanup
+    }
+    return undefined
   }
 }
 

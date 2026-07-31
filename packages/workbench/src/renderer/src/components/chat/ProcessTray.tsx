@@ -6,13 +6,19 @@ import { ChevronDown, Loader2 } from 'lucide-react'
 import type { ChatBlock } from '../../agent/types'
 import { useChatStore } from '../../store/chat-store'
 import { buildTrackedProcesses, type TrackedProcess } from '../../lib/process-tracker'
+import { collectSpawnPromptsByAgentId } from '../../lib/extract-subagents-from-blocks'
 import { subagentStepsToFlowItems } from '../../lib/subagent-mailbox'
-import type { StepFlowItem } from './StepFlow'
 import {
-  WorkflowDagView,
-  workflowFocusLabel,
-  workflowProgressPct
-} from './WorkflowDagView'
+  clipWorkflowText,
+  resolveSubtaskTitle,
+  workflowFocusSubtask,
+  workflowGoalText,
+  workflowSubtaskProgress,
+  workflowSubtasks,
+  type WorkflowSubtask
+} from '../../lib/workflow-subtask-view'
+import type { StepFlowItem } from './StepFlow'
+import { WorkflowDagView } from './WorkflowDagView'
 
 function collectSubagentStepsByAgentId(
   blocks: ChatBlock[]
@@ -34,103 +40,202 @@ function collectSubagentStepsByAgentId(
   return out
 }
 
+/** Prefer mailbox/card prompt, then spawn-tool backfill. */
+function collectSubtaskPromptsByAgentId(blocks: ChatBlock[]): Record<string, string> {
+  const out = { ...collectSpawnPromptsByAgentId(blocks) }
+  for (const block of blocks) {
+    if (block.kind !== 'subagent') continue
+    const prompt = typeof block.prompt === 'string' ? block.prompt.replace(/\s+/g, ' ').trim() : ''
+    if (!prompt) continue
+    out[block.agentId] = prompt
+    if (block.cardKind === 'fanout' && block.workers) {
+      // Fanout workers rarely carry their own prompt; keep parent as fallback only
+      // when worker id has no entry yet.
+      for (const worker of block.workers) {
+        if (!out[worker.id]) out[worker.id] = prompt
+      }
+    }
+  }
+  return out
+}
+
+function subtaskDotClass(status: WorkflowSubtask['status']): string {
+  switch (status) {
+    case 'running':
+      return 'border-ds-ink/40 bg-ds-ink/70'
+    case 'done':
+      return 'border-ds-ink/25 bg-ds-ink/40'
+    case 'error':
+      return 'border-ds-ink/50 bg-ds-ink/20'
+    case 'skipped':
+      return 'border-ds-border bg-ds-faint/40'
+    default:
+      return 'border-ds-border bg-transparent'
+  }
+}
+
+function subtaskStatusKey(status: WorkflowSubtask['status']): string {
+  switch (status) {
+    case 'running':
+      return 'workflowNodeRunning'
+    case 'done':
+      return 'workflowNodeDone'
+    case 'error':
+      return 'workflowNodeError'
+    case 'skipped':
+      return 'workflowNodeSkipped'
+    default:
+      return 'workflowNodeQueued'
+  }
+}
+
 /**
- * Live indicator above the composer — running workflows only, showing the
- * full DAG (nodes / waves / agent steps) so users can watch orchestration
- * without opening a dialog or hunting the timeline. Terminal runs live in
- * the timeline as WorkflowBlock cards, so there is nothing to dismiss here.
+ * Live workflow chip above the composer.
+ * Titles prefer spawn prompts when controller labels are opaque ids.
  */
 function WorkflowComposerPanel({
   process,
+  promptsByAgentId,
   subagentStepsByAgentId
 }: {
   process: Extract<TrackedProcess, { type: 'workflow' }>
+  promptsByAgentId: Record<string, string>
   subagentStepsByAgentId: Record<string, StepFlowItem[]>
 }): ReactElement {
   const { t } = useTranslation('common')
   const { workflow } = process
   const snap = workflow.snapshot
-  // Open by default so the live wave / agent / tool-step DAG is visible
-  // above the input without an extra click. User can collapse.
-  const [open, setOpen] = useState(true)
-  const pct = process.progressPct ?? workflowProgressPct(snap)
-  const focus = workflowFocusLabel(snap)
-  const runId = workflow.runId?.trim()
+  const [open, setOpen] = useState(false)
+  const [showDag, setShowDag] = useState(false)
 
-  const showAlert = (snap.error_count ?? 0) > 0
+  const goal = useMemo(
+    () => workflowGoalText(snap, workflow.workflowName),
+    [snap, workflow.workflowName]
+  )
+  const subtasks = useMemo(() => workflowSubtasks(snap), [snap])
+  const focus = useMemo(() => workflowFocusSubtask(subtasks), [subtasks])
+  const { done, total } = useMemo(() => workflowSubtaskProgress(subtasks), [subtasks])
+  const showAlert = (snap.error_count ?? 0) > 0 || subtasks.some((s) => s.status === 'error')
+
+  const focusTitle = focus
+    ? resolveSubtaskTitle(focus, promptsByAgentId[focus.agentId], 56)
+    : null
+  const metaParts = [
+    focusTitle,
+    total > 0 ? t('processTraySubtaskProgress', { done, total }) : t('processTrayStatusRunning')
+  ].filter(Boolean)
 
   return (
     <section
-      className="mb-2 w-full overflow-hidden rounded-[16px] border border-ds-border-muted/70 bg-ds-card/55 shadow-[0_10px_28px_rgba(15,23,42,0.05)]"
+      className="ds-process-tray mb-1.5 w-full overflow-hidden rounded-[12px]"
       data-process-tray="workflow"
     >
-      <div className="flex items-start gap-2 px-3 py-2.5">
-        <button
-          type="button"
-          onClick={() => setOpen((v) => !v)}
-          aria-expanded={open}
-          className="flex min-w-0 flex-1 items-start gap-2.5 text-left"
-        >
-          <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-[10px] bg-ds-hover/80 text-ds-ink/80">
-            <Loader2 className="h-4 w-4 animate-spin" strokeWidth={2} />
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className="flex w-full items-start gap-2 px-2.5 py-1.5 text-left transition hover:bg-ds-hover/40"
+      >
+        <Loader2 className="mt-0.5 h-3.5 w-3.5 shrink-0 animate-spin text-ds-ink" strokeWidth={2} />
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-[12.5px] font-semibold leading-5 tracking-[-0.015em] text-ds-ink">
+            {goal ? clipWorkflowText(goal, 88) : t('processTrayStatusRunning')}
           </span>
-          <span className="min-w-0 flex-1">
-            <span className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-              <span className="truncate text-[14px] font-semibold tracking-[-0.02em] text-ds-ink">
-                {workflow.workflowName || snap.name}
-              </span>
-              <span className="shrink-0 rounded-full bg-black/[0.05] px-1.5 py-0.5 text-[10.5px] font-semibold text-ds-muted dark:bg-white/[0.08]">
-                {t('processTrayStatusRunning')}
-              </span>
-              {pct != null ? (
-                <span className="shrink-0 tabular-nums text-[11px] text-ds-faint">{pct}%</span>
-              ) : null}
-            </span>
-            <span className="mt-0.5 block truncate text-[12px] text-ds-muted">
-              {focus
-                ? t('workflowFocusRunning', { label: focus })
-                : snap.description ||
-                  `${snap.done_count}/${Math.max(snap.agent_count, snap.nodes?.length ?? 0)}`}
-            </span>
-            {pct != null ? (
-              <span className="mt-2 block h-1 overflow-hidden rounded-full bg-ds-border/80">
-                <span
-                  className="block h-full rounded-full bg-ds-ink/55 transition-[width] duration-300 dark:bg-ds-ink/70"
-                  style={{ width: `${Math.min(100, Math.max(0, pct))}%` }}
-                />
-              </span>
-            ) : null}
-          </span>
-          {showAlert ? (
-            <span
-              className="mt-1.5 flex h-5 w-5 shrink-0 items-center justify-center text-[15px] font-semibold leading-none tracking-tight text-ds-ink/70"
-              aria-hidden
-            >
-              !
+          {metaParts.length > 0 ? (
+            <span className="mt-0.5 block truncate text-[11.5px] leading-4 text-ds-muted">
+              {metaParts.join(' · ')}
             </span>
           ) : null}
-          <ChevronDown
-            className={[
-              'mt-1.5 h-4 w-4 shrink-0 text-ds-faint transition-transform duration-200',
-              open ? 'rotate-180' : 'rotate-0'
-            ].join(' ')}
-            strokeWidth={1.8}
-          />
-        </button>
-      </div>
+        </span>
+        {showAlert ? (
+          <span
+            className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center text-[13px] font-semibold leading-none text-ds-ink"
+            aria-hidden
+          >
+            !
+          </span>
+        ) : null}
+        <ChevronDown
+          className={[
+            'mt-0.5 h-3.5 w-3.5 shrink-0 text-ds-muted transition-transform duration-200',
+            open ? 'rotate-180' : 'rotate-0'
+          ].join(' ')}
+          strokeWidth={1.8}
+        />
+      </button>
 
       {open ? (
-        <div className="max-h-[min(55vh,32rem)] overflow-y-auto border-t border-ds-border/45 px-2.5 py-2">
-          {runId ? (
-            <p className="mb-1.5 truncate px-1 font-mono text-[10px] text-ds-faint">{runId}</p>
+        <div className="max-h-[min(45vh,28rem)] overflow-y-auto border-t border-ds-border px-2.5 py-2">
+          {goal ? (
+            <p className="mb-2 px-0.5 text-[12px] leading-5 text-ds-ink">
+              {clipWorkflowText(goal, 160)}
+            </p>
           ) : null}
-          {snap.description ? (
-            <p className="mb-2 px-1 text-[12px] leading-5 text-ds-muted">{snap.description}</p>
-          ) : null}
-          <WorkflowDagView
-            snapshot={snap}
-            subagentStepsByAgentId={subagentStepsByAgentId}
-          />
+
+          {subtasks.length === 0 ? (
+            <p className="px-0.5 text-[12px] text-ds-muted">{t('processTrayWaitingSubtasks')}</p>
+          ) : (
+            <ul className="flex flex-col gap-0.5">
+              {subtasks.map((task) => {
+                const title = resolveSubtaskTitle(task, promptsByAgentId[task.agentId], 96)
+                return (
+                  <li
+                    key={task.agentId}
+                    className="flex items-start gap-2 rounded-[8px] px-1.5 py-1"
+                  >
+                    {task.status === 'error' ? (
+                      <span
+                        className="mt-0.5 flex h-3 w-3 shrink-0 items-center justify-center text-[11px] font-semibold leading-none text-ds-ink"
+                        aria-hidden
+                      >
+                        !
+                      </span>
+                    ) : (
+                      <span
+                        className={`mt-1 h-2 w-2 shrink-0 rounded-full border ${subtaskDotClass(task.status)} ${
+                          task.status === 'running' ? 'animate-pulse' : ''
+                        }`}
+                      />
+                    )}
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-[12.5px] font-medium leading-5 text-ds-ink">
+                        {title}
+                      </span>
+                      <span className="text-[11px] text-ds-muted">
+                        {t(subtaskStatusKey(task.status))}
+                      </span>
+                    </span>
+                  </li>
+                )
+              })}
+            </ul>
+          )}
+
+          <div className="mt-2 border-t border-ds-border/70 pt-1.5">
+            <button
+              type="button"
+              onClick={() => setShowDag((v) => !v)}
+              aria-expanded={showDag}
+              className="flex w-full items-center gap-1 px-0.5 text-left text-[11px] font-medium text-ds-muted transition hover:text-ds-ink"
+            >
+              <ChevronDown
+                className={[
+                  'h-3 w-3 transition-transform',
+                  showDag ? 'rotate-180' : 'rotate-0'
+                ].join(' ')}
+                strokeWidth={1.8}
+              />
+              {t('processTrayDagSection')}
+            </button>
+            {showDag ? (
+              <div className="mt-1.5">
+                <WorkflowDagView
+                  snapshot={snap}
+                  subagentStepsByAgentId={subagentStepsByAgentId}
+                />
+              </div>
+            ) : null}
+          </div>
         </div>
       ) : null}
     </section>
@@ -144,18 +249,18 @@ export function ProcessTray(): ReactElement | null {
     () => collectSubagentStepsByAgentId(blocks),
     [blocks]
   )
-  // Terminal runs are covered by timeline WorkflowBlock cards; the tray is a
-  // live-only indicator.
+  const promptsByAgentId = useMemo(() => collectSubtaskPromptsByAgentId(blocks), [blocks])
   const live = processes.filter((process) => process.status === 'running')
 
   if (live.length === 0) return null
 
   return (
-    <div className="ds-no-drag flex w-full flex-col gap-1.5">
+    <div className="ds-no-drag flex w-full flex-col gap-1">
       {live.map((process) => (
         <WorkflowComposerPanel
           key={process.id}
           process={process}
+          promptsByAgentId={promptsByAgentId}
           subagentStepsByAgentId={subagentStepsByAgentId}
         />
       ))}

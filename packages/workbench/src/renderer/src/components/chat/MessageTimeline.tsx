@@ -6,6 +6,7 @@ import {
   Suspense,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -106,6 +107,9 @@ import {
   isSubagentOrchestrationToolName,
   isWorkflowStatusSystemText,
   placeAssistantContentBlock,
+  shouldFoldSubagentsIntoWorkflow,
+  shouldHideRunningWorkflowBlock,
+  shouldHideWorkflowToolBlock,
   splitThink,
   toolNameFromProcessBlock,
   trailingThinkingIndicatorId,
@@ -342,24 +346,33 @@ export function MessageTimeline({
     }
   }, [hiddenTurnCount, loadEarlierTurns])
 
-  useEffect(() => {
+  const pinTimelineToBottom = useCallback((): void => {
     if (!stickToBottomRef.current) return
-    // Back off while the user is actively scrolling so streaming per-frame
-    // stick-to-bottom doesn't fight their gesture (the jitter the user saw).
+    // Back off while the user is actively scrolling so stick-to-bottom
+    // doesn't fight their gesture.
     if (performance.now() - userScrolledAtRef.current < 350) return
-    if (scrollFrameRef.current !== null) {
-      window.cancelAnimationFrame(scrollFrameRef.current)
-    }
-    scrollFrameRef.current = window.requestAnimationFrame(() => {
-      scrollFrameRef.current = null
-      // Set scrollTop directly on the timeline container instead of
-      // endRef.scrollIntoView: scrollIntoView also repositions every
-      // scrollable ancestor, which made the whole dialog layout jitter
-      // every frame during streaming.
-      const el = containerRef.current
-      if (el) el.scrollTop = el.scrollHeight
+    const el = containerRef.current
+    if (el) el.scrollTop = el.scrollHeight
+  }, [])
+
+  // Pin on content resize in the same frame the height changes — waiting for
+  // a React effect + rAF left one painted frame at the old scrollTop, which
+  // reads as the dialogue "bouncing upward" during streaming / composer growth.
+  useLayoutEffect(() => {
+    const el = containerRef.current
+    if (!el || typeof ResizeObserver === 'undefined') return
+    const stack = el.querySelector('.ds-timeline-stack')
+    if (!stack) return
+    const ro = new ResizeObserver(() => {
+      pinTimelineToBottom()
     })
-  }, [blocks, live, liveReasoning])
+    ro.observe(stack)
+    return () => ro.disconnect()
+  }, [pinTimelineToBottom])
+
+  useLayoutEffect(() => {
+    pinTimelineToBottom()
+  }, [blocks, live, liveReasoning, pinTimelineToBottom])
 
   useEffect(() => {
     stickToBottomRef.current = true
@@ -375,19 +388,13 @@ export function MessageTimeline({
     if (el) el.scrollTop = el.scrollHeight
   }, [activeThreadId])
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!currentTurnUserId) return
     stickToBottomRef.current = true
-    if (scrollFrameRef.current !== null) {
-      window.cancelAnimationFrame(scrollFrameRef.current)
-    }
-    scrollFrameRef.current = window.requestAnimationFrame(() => {
-      scrollFrameRef.current = null
-      // Container-scoped smooth scroll on send (not scrollIntoView) so only
-      // the timeline scrolls, not its ancestors.
-      const el = containerRef.current
-      if (el) el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
-    })
+    // Instant pin on send — smooth scroll raced with streaming stick-to-bottom
+    // and produced a visible upward bounce.
+    const el = containerRef.current
+    if (el) el.scrollTop = el.scrollHeight
   }, [currentTurnUserId])
 
   useEffect(() => {
@@ -956,7 +963,15 @@ function MessageTurn({
 
   const todoSession = useMemo(() => buildTodoSessionForTurn(turn.blocks), [turn.blocks])
   const todoEvents = useMemo(() => buildTodoEventsForTurn(turn.blocks), [turn.blocks])
-  const subagentSummary = useMemo(() => buildSubagentSummaryForTurn(turn.blocks), [turn.blocks])
+  // Workflow turns fold subagents into the DAG / dock; Agent mode keeps the summary.
+  const foldSubagentsIntoWorkflow = useMemo(
+    () => shouldFoldSubagentsIntoWorkflow(turn.blocks),
+    [turn.blocks]
+  )
+  const subagentSummary = useMemo(
+    () => (foldSubagentsIntoWorkflow ? null : buildSubagentSummaryForTurn(turn.blocks)),
+    [turn.blocks, foldSubagentsIntoWorkflow]
+  )
   const subagentStepsByAgentId = useMemo(() => collectSubagentStepsByAgentId(turn.blocks), [turn.blocks])
 
   const { processBlocks, assistantContentBlocks, turnFileChanges, systemBlocks } = useMemo(() => {
@@ -1102,6 +1117,7 @@ function MessageTurn({
                   todoSession={todoSession}
                   todoEvents={todoEvents}
                   subagentSummary={subagentSummary}
+                  foldSubagentsIntoWorkflow={foldSubagentsIntoWorkflow}
                   subagentStepsByAgentId={subagentStepsByAgentId}
                   onOpenWorkspaceFile={onOpenWorkspaceFile}
                 />
@@ -1677,15 +1693,33 @@ function shouldHideSubagentToolBlock(block: ChatBlock, summary: SubagentTurnSumm
 function visibleExecutionBlocks(
   blocks: ChatBlock[],
   todoSession: TodoTurnSession | null,
-  subagentSummary: SubagentTurnSummary | null
+  subagentSummary: SubagentTurnSummary | null,
+  foldSubagentsIntoWorkflow = false
 ): ChatBlock[] {
-  return blocks.filter(
-    (block) =>
-      !shouldHideTodoToolBlock(block, todoSession) &&
-      (!shouldHideSubagentBlock(block, subagentSummary) ||
-        isSubagentSummaryAnchor(block, subagentSummary)) &&
-      !shouldHideSubagentToolBlock(block, subagentSummary)
-  )
+  return blocks.filter((block) => {
+    if (shouldHideRunningWorkflowBlock(block)) return false
+    if (shouldHideWorkflowToolBlock(block, blocks)) return false
+    if (foldSubagentsIntoWorkflow && block.kind === 'subagent') return false
+    // Without a SubagentSummaryPanel, still hide orchestration tool chrome on
+    // workflow-owned turns (mirrors shouldHideSubagentToolBlock).
+    if (
+      foldSubagentsIntoWorkflow &&
+      block.kind === 'tool' &&
+      block.status !== 'error' &&
+      isSubagentOrchestrationToolName(toolNameFromProcessBlock(block))
+    ) {
+      return false
+    }
+    if (shouldHideTodoToolBlock(block, todoSession)) return false
+    if (
+      shouldHideSubagentBlock(block, subagentSummary) &&
+      !isSubagentSummaryAnchor(block, subagentSummary)
+    ) {
+      return false
+    }
+    if (shouldHideSubagentToolBlock(block, subagentSummary)) return false
+    return true
+  })
 }
 
 function SubagentSummaryPanel({ summary }: { summary: SubagentTurnSummary }): ReactElement {
@@ -2490,6 +2524,7 @@ function ProcessStream({
   todoSession = null,
   todoEvents = [],
   subagentSummary = null,
+  foldSubagentsIntoWorkflow = false,
   subagentStepsByAgentId,
   onOpenWorkspaceFile
 }: {
@@ -2498,10 +2533,16 @@ function ProcessStream({
   todoSession?: TodoTurnSession | null
   todoEvents?: TodoTurnEvent[]
   subagentSummary?: SubagentTurnSummary | null
+  foldSubagentsIntoWorkflow?: boolean
   subagentStepsByAgentId?: Record<string, StepFlowItem[]>
   onOpenWorkspaceFile?: (path: string, line?: number) => void
 }): ReactElement {
-  const visible = visibleExecutionBlocks(blocks, todoSession, subagentSummary)
+  const visible = visibleExecutionBlocks(
+    blocks,
+    todoSession,
+    subagentSummary,
+    foldSubagentsIntoWorkflow
+  )
   const rows = groupProcessRows(visible)
   // Only the first reasoning segment of a turn earns a live preview. Once a
   // completed reasoning item exists, later reasoning stays collapsed so the
@@ -2593,6 +2634,9 @@ function ProcessStreamEntry({
   if (todoSession && isTodoToolBlock(block) && todoSession.todoBlockIds.includes(block.id)) {
     return null
   }
+
+  // Live workflow cards live in ProcessTray; terminal cards stay on the timeline.
+  if (shouldHideRunningWorkflowBlock(block)) return null
 
   // Subagent summary card replaces the orchestration tool calls around it.
   if (subagentSummary && block.kind === 'subagent' && block.id === subagentSummary.anchorBlockId) {
@@ -3362,6 +3406,7 @@ function MessageBubble({ block }: { block: ChatBlock }): ReactElement | null {
     return <SubagentBubble block={block} />
   }
   if (block.kind === 'workflow') {
+    if (shouldHideRunningWorkflowBlock(block)) return null
     return (
       <WorkflowBlock
         workflowName={block.workflowName}

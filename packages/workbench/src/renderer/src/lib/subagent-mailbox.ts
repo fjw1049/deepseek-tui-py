@@ -299,6 +299,36 @@ function appendLifecycleStep(
   ])
 }
 
+function normalizeProgressLabel(label: string): string {
+  return label.replace(/\s+/g, ' ').trim()
+}
+
+/** Round narration — skip consecutive repeats (SSE replay / model re-emit). */
+function appendProgressStep(
+  steps: SubagentStepState[],
+  label: string,
+  seq?: number | null
+): SubagentStepState[] {
+  const normalized = normalizeProgressLabel(label)
+  if (!normalized) return steps
+  const last = steps[steps.length - 1]
+  if (
+    last?.kind === 'progress' &&
+    normalizeProgressLabel(last.label) === normalized
+  ) {
+    return steps
+  }
+  return capSteps([
+    ...steps,
+    {
+      id: nextStepId('progress', steps, seq),
+      kind: 'progress',
+      label: normalized,
+      output: normalized
+    }
+  ])
+}
+
 export function applyMailboxToDelegate(
   card: DelegateCardState,
   msg: MailboxMessageJson
@@ -328,15 +358,7 @@ export function applyMailboxToDelegate(
     case 'progress':
       status = 'running'
       if (msg.status) {
-        steps = capSteps([
-          ...steps,
-          {
-            id: nextStepId('progress', steps, msg.seq),
-            kind: 'progress',
-            label: msg.status,
-            output: msg.status
-          }
-        ])
+        steps = appendProgressStep(steps, msg.status, msg.seq)
       }
       break
     case 'tool_call_started':
@@ -431,15 +453,7 @@ export function applyMailboxToFanout(
       next.workers = upsertWorker(next.workers, agentId, 'running')
       if (msg.status) {
         next.workerSteps = applyStepsToWorker(next.workerSteps, agentId, (steps) =>
-          capSteps([
-            ...steps,
-            {
-              id: nextStepId('progress', steps, msg.seq),
-              kind: 'progress',
-              label: msg.status!,
-              output: msg.status
-            }
-          ])
+          appendProgressStep(steps, msg.status!, msg.seq)
         )
       }
       break
@@ -899,5 +913,18 @@ export function subagentStepsToFlowItems(
       depth
     }
   })
-  return collapseStepFlowProbes(mapped)
+  // Drop consecutive identical narrations already persisted before dedupe landed.
+  const deduped: typeof mapped = []
+  for (const item of mapped) {
+    const prev = deduped[deduped.length - 1]
+    if (
+      item.variant === 'narration' &&
+      prev?.variant === 'narration' &&
+      normalizeProgressLabel(prev.label) === normalizeProgressLabel(item.label)
+    ) {
+      continue
+    }
+    deduped.push(item)
+  }
+  return collapseStepFlowProbes(deduped)
 }
