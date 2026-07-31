@@ -269,12 +269,7 @@ export function InstalledPluginsPanel({
             segmentClassName="px-3 py-1.5"
           />
         ) : (
-          <div className="text-[15px] font-semibold text-ds-ink">
-            {t('skillTabInstalled')}
-            <span className="ml-1.5 inline-flex min-w-[18px] items-center justify-center rounded-full bg-ds-ink/10 px-1.5 text-[11px] font-semibold">
-              {plugins.length}
-            </span>
-          </div>
+          <div className="text-[15px] font-semibold text-ds-ink">{t('skillTabInstalled')}</div>
         )}
         {headerRight ? <div className="min-w-0">{headerRight}</div> : null}
       </div>

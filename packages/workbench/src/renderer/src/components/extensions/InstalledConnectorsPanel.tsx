@@ -78,8 +78,8 @@ export function InstalledConnectorsPanel({
           {t('connectorsInstalledEmpty')}
         </div>
       ) : (
-        <div>
-          <ConnectorGroupSection
+        <div className="space-y-3 bg-ds-subtle/40 px-4 py-4 dark:bg-ds-subtle/20 sm:px-5 sm:py-5">
+          <ConnectorGroupCard
             title={t('connectorSectionBuiltin')}
             empty={t('connectorSectionBuiltinEmpty')}
             connectors={builtin}
@@ -87,14 +87,13 @@ export function InstalledConnectorsPanel({
             onToggle={onToggle}
             onDelete={onDelete}
           />
-          <ConnectorGroupSection
+          <ConnectorGroupCard
             title={t('connectorSectionActivated')}
             empty={t('connectorSectionActivatedEmpty')}
             connectors={activated}
             busyId={busyId}
             onToggle={onToggle}
             onDelete={onDelete}
-            bordered
           />
         </div>
       )}
@@ -109,14 +108,13 @@ export function InstalledConnectorsPanel({
   )
 }
 
-function ConnectorGroupSection({
+function ConnectorGroupCard({
   title,
   empty,
   connectors,
   busyId,
   onToggle,
-  onDelete,
-  bordered
+  onDelete
 }: {
   title: string
   empty: string
@@ -124,10 +122,9 @@ function ConnectorGroupSection({
   busyId: string | null
   onToggle: (connector: ConnectorItem, enabled: boolean) => void
   onDelete: (connector: ConnectorItem) => void
-  bordered?: boolean
 }): ReactElement {
   return (
-    <section className={bordered ? 'border-t border-ds-border-muted/70' : undefined}>
+    <section className="ds-content-card overflow-hidden rounded-2xl">
       <div className="px-5 pb-1.5 pt-4 text-[11px] font-semibold uppercase tracking-[0.04em] text-ds-faint">
         {title}
       </div>
