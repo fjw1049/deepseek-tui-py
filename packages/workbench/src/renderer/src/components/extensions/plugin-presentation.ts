@@ -47,7 +47,7 @@ const KNOWN: Record<string, PluginVisual> = {
       ].join('\n\n')
     },
     icon: Search,
-    tile: 'bg-[#3B82F6] text-white'
+    tile: 'bg-[#4A8FC7] text-white'
   },
   'data-analysis': {
     title: { zh: '数据分析', en: 'Data Analysis' },
@@ -68,7 +68,7 @@ const KNOWN: Record<string, PluginVisual> = {
       ].join('\n\n')
     },
     icon: BarChart3,
-    tile: 'bg-[#0D9488] text-white'
+    tile: 'bg-[#3A9B8C] text-white'
   },
   'financial-analysis': {
     title: { zh: '金融分析', en: 'Financial Analysis' },
@@ -89,7 +89,7 @@ const KNOWN: Record<string, PluginVisual> = {
       ].join('\n\n')
     },
     icon: Landmark,
-    tile: 'bg-[#059669] text-white'
+    tile: 'bg-[#3D8F6E] text-white'
   },
   'ppt-implement': {
     title: { zh: '智能 PPT', en: 'PPT Implement' },
@@ -110,7 +110,7 @@ const KNOWN: Record<string, PluginVisual> = {
       ].join('\n\n')
     },
     icon: Presentation,
-    tile: 'bg-[#E11D48] text-white'
+    tile: 'bg-[#C45C6A] text-white'
   },
   'document-skills': {
     title: { zh: '文档技能', en: 'Document Skills' },
@@ -131,7 +131,7 @@ const KNOWN: Record<string, PluginVisual> = {
       ].join('\n\n')
     },
     icon: FileStack,
-    tile: 'bg-[#4F46E5] text-white'
+    tile: 'bg-[#6B7BC9] text-white'
   },
   'product-management': {
     title: { zh: '产品管理', en: 'Product Management' },
@@ -152,7 +152,7 @@ const KNOWN: Record<string, PluginVisual> = {
       ].join('\n\n')
     },
     icon: Target,
-    tile: 'bg-[#D97706] text-white'
+    tile: 'bg-[#C4893A] text-white'
   },
   'equity-research': {
     title: { zh: '股票研究', en: 'Equity Research' },
@@ -173,7 +173,7 @@ const KNOWN: Record<string, PluginVisual> = {
       ].join('\n\n')
     },
     icon: CandlestickChart,
-    tile: 'bg-[#1D4ED8] text-white'
+    tile: 'bg-[#3B6FA8] text-white'
   },
   'academic-research-suite': {
     title: { zh: '学术研究', en: 'Academic Research' },
@@ -194,17 +194,17 @@ const KNOWN: Record<string, PluginVisual> = {
       ].join('\n\n')
     },
     icon: GraduationCap,
-    tile: 'bg-[#0F766E] text-white'
+    tile: 'bg-[#3A7D74] text-white'
   }
 }
 
 const FALLBACK_TILES = [
-  'bg-[#2563EB] text-white',
-  'bg-[#0F766E] text-white',
-  'bg-[#B45309] text-white',
-  'bg-[#BE123C] text-white',
-  'bg-[#1E3A5F] text-white',
-  'bg-[#365314] text-white'
+  'bg-[#4A8FC7] text-white',
+  'bg-[#3A7D74] text-white',
+  'bg-[#C4893A] text-white',
+  'bg-[#C45C6A] text-white',
+  'bg-[#5A6F8A] text-white',
+  'bg-[#6B8F5A] text-white'
 ]
 
 export function pluginVisual(pluginId: string): PluginVisual {

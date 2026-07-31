@@ -102,6 +102,10 @@ type Props = {
 const CARD_CLASS =
   'group relative flex min-h-[200px] flex-col rounded-2xl border border-black/[0.04] bg-white p-4 shadow-[0_1px_2px_rgba(15,23,42,0.04)] transition hover:-translate-y-0.5 hover:shadow-[0_8px_24px_rgba(15,23,42,0.08)] dark:border-white/10 dark:bg-ds-card'
 
+/** Installed-plugin gallery card: whole card opens the detail drawer. */
+const INSTALLED_CARD_CLASS =
+  'group relative flex min-h-[168px] cursor-pointer flex-col rounded-2xl border border-ds-border-muted/70 bg-ds-card p-4 shadow-[0_1px_2px_rgba(15,23,42,0.03)] transition duration-150 hover:border-ds-border hover:shadow-[0_12px_32px_-12px_rgba(15,23,42,0.18)] focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 dark:hover:shadow-[0_12px_32px_-12px_rgba(0,0,0,0.6)]'
+
 function pluginKey(plugin: PluginRow): string {
   return `${plugin.scope}:${plugin.name}`
 }
@@ -284,7 +288,7 @@ export function InstalledPluginsPanel({
         ) : plugins.length === 0 ? (
           <div className="px-5 py-10 text-center text-[13px] text-ds-faint">{t('pluginSysEmpty')}</div>
         ) : (
-          <div className="bg-[color-mix(in_srgb,var(--ds-main)_88%,#f4f1ea)] px-4 py-4 dark:bg-ds-subtle/30 sm:px-5 sm:py-5">
+          <div className="bg-ds-subtle/40 px-4 py-4 dark:bg-ds-subtle/20 sm:px-5 sm:py-5">
             <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
               {plugins.map((plugin) => (
                 <PluginCard
@@ -336,7 +340,7 @@ export function InstalledPluginsPanel({
               {registry.length === 0 ? t('pluginSysMarketplaceEmpty') : t('pluginNoResults')}
             </div>
           ) : (
-            <div className="bg-[color-mix(in_srgb,var(--ds-main)_88%,#f4f1ea)] px-4 py-4 dark:bg-ds-subtle/30 sm:px-5 sm:py-5">
+            <div className="bg-ds-subtle/40 px-4 py-4 dark:bg-ds-subtle/20 sm:px-5 sm:py-5">
               <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
                 {filteredRegistry.map((entry) => (
                   <MarketplaceCard
@@ -857,7 +861,7 @@ function RegisteredMarketplacesSection({
                   {t('pluginNoResults')}
                 </div>
               ) : (
-                <div className="bg-[color-mix(in_srgb,var(--ds-main)_88%,#f4f1ea)] px-4 py-4 dark:bg-ds-subtle/30 sm:px-5">
+                <div className="bg-ds-subtle/40 px-4 py-4 dark:bg-ds-subtle/20 sm:px-5">
                   <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
                     {visible.map((entry) => (
                       <MarketplacePluginCard
@@ -1065,53 +1069,56 @@ function PluginCard({
   const summary = pluginDisplaySummary(plugin.name, i18n.language, plugin.description)
   const hasExecutable = plugin.components.hooks || plugin.components.mcp_servers
   const managedElsewhere = plugin.scope === 'claude' || plugin.scope === 'override'
-  const chips = [
-    ...componentKeys(plugin.components).map((key) => componentLabel(key, t)),
-    plugin.permissions.length > 0
-      ? t('pluginDetailPermCount', { count: plugin.permissions.length })
-      : null
-  ].filter((v): v is string => Boolean(v))
   const metaLeft = [
     plugin.version ? `v${plugin.version}` : null,
     scopeLabel(plugin.scope, t),
-    hasExecutable
-      ? plugin.trusted
-        ? t('pluginSysTrusted')
-        : t('pluginSysUntrusted')
-      : t('pluginDetailContentOnly')
+    hasExecutable && !plugin.trusted ? t('pluginSysUntrusted') : null
   ]
     .filter(Boolean)
     .join(' · ')
   const removeLabel = t('pluginSysRemoveAction')
 
   return (
-    <li className={CARD_CLASS}>
-      <div className="flex min-h-0 flex-1 items-start gap-3">
+    <li
+      role="button"
+      tabIndex={0}
+      onClick={onOpenDetails}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault()
+          onOpenDetails()
+        }
+      }}
+      title={t('pluginDetailsAction')}
+      className={INSTALLED_CARD_CLASS}
+    >
+      <div className="flex items-start gap-3">
         <div
-          className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-[12px] shadow-sm ${visual.tile}`}
+          className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-[14px] shadow-sm ring-1 ring-black/5 dark:ring-white/10 ${visual.tile}`}
         >
           <Icon className="h-5 w-5" strokeWidth={1.9} />
         </div>
-        <div className="min-w-0 flex-1">
-          <button type="button" onClick={onOpenDetails} className="min-w-0 text-left">
-            <h3 className="truncate text-[15px] font-semibold tracking-[-0.01em] text-ds-ink hover:text-accent">
-              {title}
-            </h3>
-          </button>
+        <div className="min-w-0 flex-1 pt-0.5">
+          <h3 className="truncate text-[15px] font-semibold tracking-[-0.01em] text-ds-ink transition-colors group-hover:text-accent">
+            {title}
+          </h3>
           <div className="mt-0.5 truncate font-mono text-[12px] text-ds-faint">{plugin.name}</div>
-          <p
-            className="mt-2 line-clamp-3 overflow-hidden text-[13px] leading-5 text-ds-muted"
-            title={summary}
-          >
-            {summary || '—'}
-          </p>
-          <MetaChips items={chips} />
         </div>
+        {hasExecutable ? (
+          <TrustSwitch checked={plugin.trusted} disabled={busy} onChange={onTrust} />
+        ) : null}
       </div>
 
-      <div className="mt-auto flex items-center gap-2 border-t border-ds-border-muted pt-3.5">
+      <p
+        className="mt-3 line-clamp-2 overflow-hidden text-[13px] leading-5 text-ds-muted"
+        title={summary}
+      >
+        {summary || '—'}
+      </p>
+
+      <div className="mt-auto flex items-center gap-2 border-t border-ds-border-muted/70 pt-3">
         <span
-          className="flex min-w-0 flex-1 items-center gap-1.5 text-[13px] text-ds-faint"
+          className="flex min-w-0 flex-1 items-center gap-1.5 text-[12px] text-ds-faint"
           title={hasExecutable && !plugin.trusted ? t('pluginSysUntrustedHint') : undefined}
         >
           {hasExecutable ? (
@@ -1132,13 +1139,6 @@ function PluginCard({
           <span className="truncate">{metaLeft}</span>
           {busy ? <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" strokeWidth={2} /> : null}
         </span>
-        <button
-          type="button"
-          onClick={onOpenDetails}
-          className="shrink-0 rounded-md border border-ds-border px-2 py-1 text-[12px] text-ds-muted hover:bg-ds-hover hover:text-ds-ink"
-        >
-          {t('pluginDetailsAction')}
-        </button>
         {managedElsewhere ? null : (
           <button
             type="button"
@@ -1149,14 +1149,11 @@ function PluginCard({
             }}
             title={removeLabel}
             aria-label={removeLabel}
-            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-red-500 transition hover:bg-red-50 disabled:opacity-50 dark:hover:bg-red-950/30"
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-red-500 opacity-0 transition hover:bg-red-50 focus-visible:opacity-100 group-hover:opacity-100 disabled:opacity-50 dark:hover:bg-red-950/30"
           >
             <Trash2 className="h-3.5 w-3.5" strokeWidth={1.75} />
           </button>
         )}
-        {hasExecutable ? (
-          <TrustSwitch checked={plugin.trusted} disabled={busy} onChange={onTrust} />
-        ) : null}
       </div>
     </li>
   )
