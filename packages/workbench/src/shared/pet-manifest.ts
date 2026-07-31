@@ -23,4 +23,5 @@ export type PetSpritesheetResolveResult =
   | { ok: false; message: string }
 
 export const DEFAULT_PET_SLUG = 'boba'
-export const PETDEX_MANIFEST_URL = 'https://petdex.crafter.run/api/manifest'
+/** Canonical Petdex manifest (crafter.run redirects here). */
+export const PETDEX_MANIFEST_URL = 'https://petdex.dev/api/manifest'

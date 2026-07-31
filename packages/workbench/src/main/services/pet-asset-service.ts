@@ -133,6 +133,10 @@ async function fetchManifestRemote(): Promise<PetManifestSlim> {
 }
 
 export async function fetchPetManifest(force = false): Promise<PetManifestFetchResult> {
+  // Ensure the workbench pet-cache exists and legacy Electron userData
+  // spritesheets are migrated before any read/write.
+  await ensureCacheDir()
+
   const now = Date.now()
   if (!force && memoryManifest && now - memoryManifest.fetchedAt < MANIFEST_TTL_MS) {
     return { ok: true, manifest: memoryManifest.manifest, cached: true }
@@ -225,6 +229,10 @@ export async function resolvePetSpritesheet(
   slugInput: string | undefined
 ): Promise<PetSpritesheetResolveResult> {
   const slug = normalizePetSlug(slugInput)
+  // Migrate legacy cache before the first local read so previously downloaded
+  // pets keep working offline after the workbench-home consolidation.
+  await ensureCacheDir()
+
   const localCached = await readCachedSpritesheet(slug)
   if (localCached) {
     return {
