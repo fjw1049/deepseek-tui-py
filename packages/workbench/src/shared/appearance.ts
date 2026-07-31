@@ -74,10 +74,9 @@ const HEX_COLOR_RE = /^#[0-9a-fA-F]{6}$/
 
 /**
  * Factory-default chrome themes (Settings → Appearance on first launch /
- * "Restore defaults"). Light ships as Notion + JetBrains Mono at full
- * contrast; dark ships as One with the same font/contrast/glass choices.
- * The legacy handcrafted Workbench palette remains available as the
- * `default` preset in the catalog.
+ * "Restore defaults"). Light ships as Notion (opaque, mid contrast); dark
+ * ships as Nord with glass. The legacy handcrafted Workbench palette remains
+ * available as the `default` preset in the catalog.
  */
 export const DEFAULT_CHROME_THEMES: Record<ThemeVariant, ChromeThemeV1> = {
   light: {
@@ -85,22 +84,22 @@ export const DEFAULT_CHROME_THEMES: Record<ThemeVariant, ChromeThemeV1> = {
     accent: '#3183d8',
     surface: '#ffffff',
     ink: '#37352f',
-    contrast: 100,
-    translucent: true,
+    contrast: 62,
+    translucent: false,
     uiFont: '',
-    codeFont: '"JetBrains Mono"',
+    codeFont: '',
     semanticColors: { diffAdded: '#008000', diffRemoved: '#a31515', skill: '#0000ff' }
   },
   dark: {
-    presetId: 'one',
-    accent: '#4d78cc',
-    surface: '#282c34',
-    ink: '#abb2bf',
+    presetId: 'nord',
+    accent: '#88c0d0',
+    surface: '#2e3440',
+    ink: '#d8dee9',
     contrast: 100,
     translucent: true,
     uiFont: '',
-    codeFont: '"JetBrains Mono"',
-    semanticColors: { diffAdded: '#8cc265', diffRemoved: '#e05561', skill: '#c162de' }
+    codeFont: '',
+    semanticColors: { diffAdded: '#a3be8c', diffRemoved: '#bf616a', skill: '#b48ead' }
   }
 }
 
@@ -492,10 +491,10 @@ export function defaultAppearanceSettings(): AppearanceSettingsV1 {
       light: { ...DEFAULT_CHROME_THEMES.light, semanticColors: { ...DEFAULT_CHROME_THEMES.light.semanticColors } },
       dark: { ...DEFAULT_CHROME_THEMES.dark, semanticColors: { ...DEFAULT_CHROME_THEMES.dark.semanticColors } }
     },
-    uiDensity: 'comfortable',
+    uiDensity: 'compact',
     chatFontSizePx: DEFAULT_CHAT_FONT_SIZE_PX,
     terminalFontSizePx: DEFAULT_TERMINAL_FONT_SIZE_PX,
-    terminalFontFamily: '',
+    terminalFontFamily: 'JetBrains Mono',
     fontSmoothing: true,
     timestampFormat: 'locale'
   }
@@ -571,8 +570,8 @@ export function normalizeChromeTheme(input: unknown, variant: ThemeVariant): Chr
   }
 }
 
-function normalizeUiDensity(value: unknown): UiDensity {
-  return value === 'compact' || value === 'spacious' ? value : 'comfortable'
+function normalizeUiDensity(value: unknown, fallback: UiDensity): UiDensity {
+  return value === 'compact' || value === 'comfortable' || value === 'spacious' ? value : fallback
 }
 
 function normalizeTimestampFormat(value: unknown): TimestampFormat {
@@ -589,7 +588,7 @@ export function normalizeAppearanceSettings(input: AppearancePatchV1 | undefined
       light: normalizeChromeTheme(themes.light, 'light'),
       dark: normalizeChromeTheme(themes.dark, 'dark')
     },
-    uiDensity: normalizeUiDensity(source.uiDensity),
+    uiDensity: normalizeUiDensity(source.uiDensity, defaults.uiDensity),
     chatFontSizePx: normalizeIntInRange(
       source.chatFontSizePx,
       defaults.chatFontSizePx,
@@ -602,7 +601,8 @@ export function normalizeAppearanceSettings(input: AppearancePatchV1 | undefined
       MIN_TERMINAL_FONT_SIZE_PX,
       MAX_TERMINAL_FONT_SIZE_PX
     ),
-    terminalFontFamily: normalizeFont(source.terminalFontFamily),
+    terminalFontFamily:
+      'terminalFontFamily' in source ? normalizeFont(source.terminalFontFamily) : defaults.terminalFontFamily,
     fontSmoothing: normalizeBoolean(source.fontSmoothing, defaults.fontSmoothing),
     timestampFormat: normalizeTimestampFormat(source.timestampFormat)
   }

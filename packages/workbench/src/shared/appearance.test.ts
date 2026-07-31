@@ -67,13 +67,17 @@ describe('theme presets', () => {
     }
   })
 
-  it('factory defaults use Notion light and One dark', () => {
+  it('factory defaults use Notion light and Nord dark', () => {
     expect(DEFAULT_CHROME_THEMES.light.presetId).toBe('notion')
-    expect(DEFAULT_CHROME_THEMES.dark.presetId).toBe('one')
-    expect(DEFAULT_CHROME_THEMES.light.contrast).toBe(100)
+    expect(DEFAULT_CHROME_THEMES.dark.presetId).toBe('nord')
+    expect(DEFAULT_CHROME_THEMES.light.contrast).toBe(62)
+    expect(DEFAULT_CHROME_THEMES.light.translucent).toBe(false)
     expect(DEFAULT_CHROME_THEMES.dark.contrast).toBe(100)
-    expect(DEFAULT_CHROME_THEMES.light.codeFont).toContain('JetBrains Mono')
-    expect(DEFAULT_CHROME_THEMES.dark.codeFont).toContain('JetBrains Mono')
+    expect(DEFAULT_CHROME_THEMES.dark.translucent).toBe(true)
+    expect(DEFAULT_CHROME_THEMES.light.accent).toBe('#3183d8')
+    expect(DEFAULT_CHROME_THEMES.dark.accent).toBe('#88c0d0')
+    expect(defaultAppearanceSettings().uiDensity).toBe('compact')
+    expect(defaultAppearanceSettings().terminalFontFamily).toBe('JetBrains Mono')
   })
 
   it('the Workbench preset keeps the legacy handcrafted seeds', () => {
@@ -136,12 +140,14 @@ describe('theme share strings', () => {
 })
 
 describe('appearance-derive', () => {
-  it('emits override CSS for factory defaults (Notion light / One dark)', () => {
+  it('emits override CSS for factory defaults (Notion light / Nord dark)', () => {
     const css = buildAppearanceOverrideCss(defaultAppearanceSettings())
     expect(css).toContain(":root[data-theme='light']")
     expect(css).toContain(":root[data-theme='dark']")
-    expect(css).toContain("--ds-accent:")
-    expect(css).toContain('JetBrains Mono')
+    expect(css).toContain('--ds-accent:')
+    expect(css).toContain('#3183d8')
+    expect(css).toContain('#2e3440')
+    expect(css).toContain('#37352f')
   })
 
   it('emits scoped override blocks for both variants', () => {

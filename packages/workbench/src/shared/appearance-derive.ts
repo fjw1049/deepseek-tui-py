@@ -247,7 +247,7 @@ function cssBlock(selector: string, vars: Record<string, string>): string {
 
 /**
  * Builds the stylesheet text applied for appearance themes. Factory defaults
- * (Notion light / One dark) and every preset go through the same derivation
+ * (Notion light / Nord dark) and every preset go through the same derivation
  * so first-launch looks match Settings → Appearance.
  */
 export function buildAppearanceOverrideCss(appearance: AppearanceSettingsV1): string {

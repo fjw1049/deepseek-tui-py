@@ -235,8 +235,8 @@ async function ensureClawChannelWorkspaceRootsExist(
 const defaultSettings = (): AppSettingsV1 => ({
   version: 1,
   locale: 'zh',
-  theme: 'system',
-  uiFontScale: 'small',
+  theme: 'dark',
+  uiFontScale: 'medium',
   uiFontFamily: 'system-native',
   iconAnimation: false,
   agentProvider: 'deepseek-runtime',

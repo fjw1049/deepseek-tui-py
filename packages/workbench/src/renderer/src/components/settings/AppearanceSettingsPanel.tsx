@@ -75,8 +75,8 @@ export function AppearanceSettingsPanel({ form, onPatch }: Props): ReactElement 
 
   const restoreDefaults = (): void => {
     onPatch({
-      theme: 'system',
-      uiFontScale: 'small',
+      theme: 'dark',
+      uiFontScale: 'medium',
       uiFontFamily: 'system-native',
       appearance: defaultAppearanceSettings()
     })
