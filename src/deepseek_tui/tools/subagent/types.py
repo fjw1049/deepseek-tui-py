@@ -297,6 +297,38 @@ _LOCALE_PROSE: dict[str, str] = {
 }
 
 
+def subagent_environment_block(locale_tag: str | None = None) -> str:
+    """Render the sub-agent ``## Environment`` block.
+
+    Children never inherit the parent's Environment block, so the date
+    (read-only types carry ``web_search`` / ``fetch_url``, where a wrong
+    "today" skews freshness judgements), the locale, and the platform
+    (``exec_shell`` portability) have to be restated here.
+
+    Every field is process-constant, so sibling sub-agents of the same type
+    get a byte-identical system prefix and keep their KV cache hits. Per-spawn
+    values — notably the child's workspace, which a workflow step may point at
+    a per-run worktree — deliberately stay out: tools already resolve relative
+    paths against ``agent.workspace``, so the path is enforced structurally
+    rather than described in the prompt.
+    """
+    import sys
+
+    from deepseek_tui.engine.prompts import process_today
+
+    lines = [f"- today: {process_today()}"]
+    if (locale_tag or "").strip().lower() in _LOCALE_PROSE:
+        lines.append(f"- lang: {locale_tag}")
+    lines.append(f"- platform: {sys.platform}")
+    body = "\n".join(lines)
+    return (
+        f"## Environment\n\n{body}\n\n"
+        "`today` is captured at process start and can be stale in a long "
+        "run; when freshness actually matters and you have a shell tool, "
+        "read the real time with `date`."
+    )
+
+
 def language_directive(locale_tag: str | None) -> str | None:
     """User-visible-language directive injected into sub-agent prompts.
 
@@ -339,9 +371,9 @@ def build_subagent_system_prompt(
     Output contract. Set it False when the run uses ``structured_output``
     (JSON schema) so only one final-delivery contract is in force.
 
-    ``locale_tag`` (``zh`` / ``en``) appends an explicit user-visible-language
-    directive; sub-agents have no ``## Environment`` block, so this is their
-    only source of the session language.
+    ``locale_tag`` (``zh`` / ``en``) feeds the child's own ``## Environment``
+    block plus an explicit user-visible-language directive; children inherit
+    nothing from the parent's system prompt.
     """
     if base_override is not None and base_override.strip():
         base = base_override.strip()
@@ -354,9 +386,12 @@ def build_subagent_system_prompt(
         output_contract = load_prompt("sub_output")
         base = f"{base}\n\n{output_contract}" if base else output_contract
 
+    environment = subagent_environment_block(locale_tag)
+    base = f"{base}\n\n{environment}" if base else environment
+
     directive = language_directive(locale_tag)
     if directive:
-        base = f"{base}\n\n{directive}" if base else directive
+        base = f"{base}\n\n{directive}"
 
     role = (assignment.role or "").strip()
     if role:

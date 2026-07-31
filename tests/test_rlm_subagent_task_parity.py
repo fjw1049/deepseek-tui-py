@@ -110,12 +110,40 @@ class TestSubagentParity:
             SubAgentAssignment(objective="x"),
         )
         assert "## Language" not in prompt
+        assert "- lang:" not in prompt
         prompt_bad = build_subagent_system_prompt(
             SubAgentType.EXPLORE,
             SubAgentAssignment(objective="x"),
             locale_tag="fr",
         )
         assert "## Language" not in prompt_bad
+
+    def test_build_subagent_system_prompt_environment_is_process_constant(self):
+        from deepseek_tui.engine.prompts import process_today
+
+        prompt = build_subagent_system_prompt(
+            SubAgentType.IMPLEMENTER,
+            SubAgentAssignment(objective="x"),
+            locale_tag="zh",
+        )
+        assert "## Environment" in prompt
+        assert f"- today: {process_today()}" in prompt
+        assert "- platform: " in prompt
+        # Per-spawn values must stay out so siblings share a KV prefix.
+        assert "- pwd:" not in prompt
+        assert "deepseek_version" not in prompt
+
+    def test_subagent_system_prompt_is_byte_identical_across_siblings(self):
+        """Same type + role ⇒ identical prefix, so the KV cache still hits."""
+        made = [
+            build_subagent_system_prompt(
+                SubAgentType.EXPLORE,
+                SubAgentAssignment(objective=f"objective {i}"),
+                locale_tag="zh",
+            )
+            for i in range(2)
+        ]
+        assert made[0] == made[1]
 
     def test_summarize_subagent_result_prefers_summary_section(self):
         snap = SubAgentResult(
