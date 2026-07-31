@@ -6,6 +6,7 @@ import {
   mergeClawSettings,
   mergeLlmProviders,
   mergeShortcutsSettings,
+  mergeWebSearchSettings,
   sandboxModeForApprovalPolicy,
   type AppearancePatchV1,
   type ApprovalPolicy,
@@ -13,7 +14,8 @@ import {
   type BuiltinLlmProviderId,
   type ClawSettingsPatchV1,
   type LlmProviderConfigV1,
-  type ShortcutsPatchV1
+  type ShortcutsPatchV1,
+  type WebSearchSettingsPatchV1
 } from '@shared/app-settings'
 import {
   SHORTCUT_CATALOG,
@@ -53,6 +55,7 @@ import { useChatStore, type SettingsRouteSection } from '../store/chat-store'
 import { setSettingsLeaveHandler } from '../lib/settings-leave'
 import { AppearanceSettingsPanel } from './settings/AppearanceSettingsPanel'
 import { ArchiveSettingsPanel } from './settings/ArchiveSettingsPanel'
+import { WebSearchSettingsPanel } from './settings/WebSearchSettingsPanel'
 import { DataSettingsPanel } from './settings/DataSettingsPanel'
 import { LlmProvidersPanel } from './settings/LlmProvidersPanel'
 import { ModelUsagePanel } from './settings/ModelUsagePanel'
@@ -78,6 +81,7 @@ type SettingsPatch = Partial<
     | 'customEndpoints'
     | 'asrProviders'
     | 'llmProviders'
+    | 'webSearch'
     | 'appearance'
     | 'shortcuts'
   >
@@ -91,6 +95,7 @@ type SettingsPatch = Partial<
   customEndpoints?: AppSettingsV1['customEndpoints']
   asrProviders?: AppSettingsV1['asrProviders']
   llmProviders?: Partial<Record<BuiltinLlmProviderId, Partial<LlmProviderConfigV1>>>
+  webSearch?: WebSearchSettingsPatchV1
   appearance?: AppearancePatchV1
   shortcuts?: ShortcutsPatchV1
 }
@@ -126,6 +131,7 @@ function mergeSettings(current: AppSettingsV1, patch: SettingsPatch): AppSetting
     llmProviders: mergeLlmProviders(current.llmProviders, patch.llmProviders),
     customEndpoints: patch.customEndpoints ?? current.customEndpoints,
     asrProviders: patch.asrProviders ?? current.asrProviders,
+    webSearch: mergeWebSearchSettings(current.webSearch, patch.webSearch),
     log: {
       ...current.log,
       ...(patch.log ?? {})
@@ -564,20 +570,24 @@ export function SettingsView(): ReactElement {
               <h1 className="text-2xl font-semibold tracking-tight text-ds-ink">
                 {category === 'models'
                   ? t('models')
-                  : category === 'shortcuts'
-                    ? t('shortcuts')
-                    : category === 'data'
-                      ? t('data')
-                      : category === 'archive'
-                        ? t('archive')
-                        : t('title')}
+                  : category === 'search'
+                    ? t('search')
+                    : category === 'shortcuts'
+                      ? t('shortcuts')
+                      : category === 'data'
+                        ? t('data')
+                        : category === 'archive'
+                          ? t('archive')
+                          : t('title')}
               </h1>
               <p className="mt-1 text-[14px] text-ds-muted">
                 {category === 'data'
                   ? t('dataSubtitle')
                   : category === 'archive'
                     ? t('archiveSubtitle')
-                    : t('subtitle')}
+                    : category === 'search'
+                      ? t('searchSubtitle')
+                      : t('subtitle')}
               </p>
             </div>
             {category !== 'data' && category !== 'archive' ? (
@@ -803,6 +813,10 @@ export function SettingsView(): ReactElement {
                 />
               </SettingsCard>
             </>
+          )}
+
+          {category === 'search' && (
+            <WebSearchSettingsPanel form={form} onUpdate={(patch) => update(patch)} />
           )}
 
           {category === 'appearance' && (

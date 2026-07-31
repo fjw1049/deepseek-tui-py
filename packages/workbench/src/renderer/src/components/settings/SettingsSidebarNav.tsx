@@ -9,6 +9,7 @@ import {
   HardDrive,
   Keyboard,
   Palette,
+  Search,
   Settings,
   Shield
 } from 'lucide-react'
@@ -25,6 +26,7 @@ type NavItem = {
 
 const NAV_ITEMS: NavItem[] = [
   { id: 'general', labelKey: 'general', icon: <Globe className="h-4 w-4" strokeWidth={1.75} /> },
+  { id: 'search', labelKey: 'search', icon: <Search className="h-4 w-4" strokeWidth={1.75} /> },
   { id: 'appearance', labelKey: 'appearance', icon: <Palette className="h-4 w-4" strokeWidth={1.75} /> },
   { id: 'shortcuts', labelKey: 'shortcuts', icon: <Keyboard className="h-4 w-4" strokeWidth={1.75} /> },
   { id: 'models', labelKey: 'models', icon: <Box className="h-4 w-4" strokeWidth={1.75} /> },

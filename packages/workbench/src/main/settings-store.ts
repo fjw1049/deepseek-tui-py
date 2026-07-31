@@ -20,16 +20,19 @@ import {
   defaultLlmProviders,
   defaultMemorySettings,
   defaultShortcutsSettings,
+  defaultWebSearchSettings,
   defaultWorkbenchSkills,
   mergeClawSettings,
   mergeLlmProviders,
   mergeMemorySettings,
   mergeShortcutsSettings,
+  mergeWebSearchSettings,
   normalizeAppSettings,
   normalizeAsrProviders,
   normalizeCustomEndpoints,
   normalizeMemorySettings,
   normalizeShortcutsSettings,
+  normalizeWebSearchSettings,
   normalizeWorkbenchSkills,
   type AppSettingsPatch,
   type AppSettingsV1,
@@ -256,6 +259,7 @@ const defaultSettings = (): AppSettingsV1 => ({
   llmProviders: defaultLlmProviders(),
   customEndpoints: [],
   asrProviders: defaultAsrProviders(),
+  webSearch: defaultWebSearchSettings(),
   workspaceRoot: DEFAULT_WORKSPACE_ROOT,
   log: {
     enabled: true,
@@ -284,6 +288,7 @@ function buildMergedSettings(parsed: Partial<AppSettingsV1>): AppSettingsV1 {
     llmProviders: mergeLlmProviders(defaults.llmProviders, parsed.llmProviders),
     customEndpoints: normalizeCustomEndpoints(parsed.customEndpoints ?? defaults.customEndpoints),
     asrProviders: normalizeAsrProviders(parsed.asrProviders ?? defaults.asrProviders),
+    webSearch: normalizeWebSearchSettings(parsed.webSearch ?? defaults.webSearch),
     log: { ...defaults.log, ...parsed.log },
     notifications: { ...defaults.notifications, ...parsed.notifications },
     skills: normalizeWorkbenchSkills(parsed.skills, parsed.claw?.skills?.extraDirs),
@@ -422,6 +427,9 @@ export class JsonSettingsStore {
         asrProviders: partial.asrProviders
           ? normalizeAsrProviders(partial.asrProviders)
           : cur.asrProviders,
+        webSearch: partial.webSearch
+          ? mergeWebSearchSettings(cur.webSearch, partial.webSearch)
+          : cur.webSearch,
         log: { ...cur.log, ...(partial.log ?? {}) },
         notifications: { ...cur.notifications, ...(partial.notifications ?? {}) },
         skills: normalizeWorkbenchSkills(

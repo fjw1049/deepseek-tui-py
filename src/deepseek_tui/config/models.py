@@ -403,6 +403,10 @@ class Config(BaseModel):
     allow_shell: bool = True
     tavily_api_key: str | None = None
     anysearch_api_key: str | None = None
+    # Ordered web_search backends (e.g. ["anysearch", "tavily"]).
+    # Tried in order: first success with results wins; failures fall through.
+    # ``None`` keeps legacy order: AnySearch first, then Tavily when keyed.
+    web_search_providers: list[str] | None = None
     managed_config_path: Path | None = None
     requirements_path: Path | None = None
     # User-level defaults (cross-project). Project overlays remain optional

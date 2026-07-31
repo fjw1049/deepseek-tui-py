@@ -320,6 +320,145 @@ export type MemorySettingsPatchV1 = Partial<Omit<MemorySettingsV1, 'smart'>> & {
   smart?: Partial<MemorySmartSettingsV1>
 }
 
+/** Built-in web_search backends (Workbench Settings → Search). */
+export const WEB_SEARCH_PROVIDER_IDS = ['anysearch', 'tavily'] as const
+export type WebSearchProviderId = (typeof WEB_SEARCH_PROVIDER_IDS)[number]
+
+export type WebSearchProviderConfigV1 = {
+  enabled: boolean
+  apiKey: string
+}
+
+export type WebSearchSettingsV1 = {
+  /** Priority order — index 0 is tried first; fallback walks down the list. */
+  order: WebSearchProviderId[]
+  providers: Record<WebSearchProviderId, WebSearchProviderConfigV1>
+}
+
+export type WebSearchSettingsPatchV1 = {
+  order?: WebSearchProviderId[]
+  providers?: Partial<Record<WebSearchProviderId, Partial<WebSearchProviderConfigV1>>>
+}
+
+export function isWebSearchProviderId(value: unknown): value is WebSearchProviderId {
+  return typeof value === 'string' && (WEB_SEARCH_PROVIDER_IDS as readonly string[]).includes(value)
+}
+
+/** Keep known ids, drop unknowns/dupes, append any missing catalogue ids. */
+export function normalizeWebSearchOrder(raw: unknown): WebSearchProviderId[] {
+  const seen = new Set<WebSearchProviderId>()
+  const out: WebSearchProviderId[] = []
+  if (Array.isArray(raw)) {
+    for (const item of raw) {
+      const id = typeof item === 'string' ? item.trim().toLowerCase() : ''
+      if (!isWebSearchProviderId(id) || seen.has(id)) continue
+      seen.add(id)
+      out.push(id)
+    }
+  }
+  for (const id of WEB_SEARCH_PROVIDER_IDS) {
+    if (!seen.has(id)) out.push(id)
+  }
+  return out
+}
+
+export function defaultWebSearchSettings(): WebSearchSettingsV1 {
+  return {
+    order: [...WEB_SEARCH_PROVIDER_IDS],
+    providers: {
+      anysearch: { enabled: true, apiKey: '' },
+      tavily: { enabled: false, apiKey: '' }
+    }
+  }
+}
+
+export function normalizeWebSearchSettings(
+  raw: unknown,
+  legacy?: { anysearchApiKey?: string; tavilyApiKey?: string; providers?: string[] | null }
+): WebSearchSettingsV1 {
+  const defaults = defaultWebSearchSettings()
+  const source =
+    raw && typeof raw === 'object' ? (raw as Partial<WebSearchSettingsV1>) : undefined
+  const providersRaw =
+    source?.providers && typeof source.providers === 'object' ? source.providers : undefined
+
+  const next: WebSearchSettingsV1 = {
+    order: normalizeWebSearchOrder(source?.order ?? defaults.order),
+    providers: {
+      anysearch: {
+        enabled: providersRaw?.anysearch?.enabled ?? defaults.providers.anysearch.enabled,
+        apiKey:
+          typeof providersRaw?.anysearch?.apiKey === 'string'
+            ? providersRaw.anysearch.apiKey.trim()
+            : defaults.providers.anysearch.apiKey
+      },
+      tavily: {
+        enabled: providersRaw?.tavily?.enabled ?? defaults.providers.tavily.enabled,
+        apiKey:
+          typeof providersRaw?.tavily?.apiKey === 'string'
+            ? providersRaw.tavily.apiKey.trim()
+            : defaults.providers.tavily.apiKey
+      }
+    }
+  }
+
+  const legacyAny = typeof legacy?.anysearchApiKey === 'string' ? legacy.anysearchApiKey.trim() : ''
+  const legacyTavily = typeof legacy?.tavilyApiKey === 'string' ? legacy.tavilyApiKey.trim() : ''
+  if (!next.providers.anysearch.apiKey && legacyAny) {
+    next.providers.anysearch.apiKey = legacyAny
+  }
+  if (!next.providers.tavily.apiKey && legacyTavily) {
+    next.providers.tavily.apiKey = legacyTavily
+    // A Tavily key in config.toml implies the user wanted it active.
+    if (providersRaw?.tavily?.enabled === undefined) {
+      next.providers.tavily.enabled = true
+    }
+  }
+  if (Array.isArray(legacy?.providers) && source?.order === undefined) {
+    next.order = normalizeWebSearchOrder(legacy.providers)
+    if (!providersRaw) {
+      const enabled = new Set(
+        legacy.providers
+          .map((name) => String(name || '').trim().toLowerCase())
+          .filter(isWebSearchProviderId)
+      )
+      for (const id of WEB_SEARCH_PROVIDER_IDS) {
+        next.providers[id].enabled = enabled.has(id)
+      }
+    }
+  }
+  return next
+}
+
+export function mergeWebSearchSettings(
+  current: WebSearchSettingsV1 | undefined | null,
+  patch?: WebSearchSettingsPatchV1 | WebSearchSettingsV1 | null
+): WebSearchSettingsV1 {
+  const base = normalizeWebSearchSettings(current)
+  if (!patch) return base
+  const providersPatch =
+    patch.providers && typeof patch.providers === 'object' ? patch.providers : undefined
+  return normalizeWebSearchSettings({
+    order: patch.order ?? base.order,
+    providers: {
+      anysearch: {
+        enabled: providersPatch?.anysearch?.enabled ?? base.providers.anysearch.enabled,
+        apiKey: providersPatch?.anysearch?.apiKey ?? base.providers.anysearch.apiKey
+      },
+      tavily: {
+        enabled: providersPatch?.tavily?.enabled ?? base.providers.tavily.enabled,
+        apiKey: providersPatch?.tavily?.apiKey ?? base.providers.tavily.apiKey
+      }
+    }
+  })
+}
+
+/** Enabled provider ids in priority order (written to config.toml). */
+export function enabledWebSearchProviderIds(settings: WebSearchSettingsV1): WebSearchProviderId[] {
+  const order = normalizeWebSearchOrder(settings.order)
+  return order.filter((id) => settings.providers[id]?.enabled)
+}
+
 export type AppSettingsV1 = {
   version: 1
   locale: 'en' | 'zh'
@@ -339,6 +478,8 @@ export type AppSettingsV1 = {
   customEndpoints: CustomEndpointV1[]
   /** Speech vendors (builtin Zhipu + user-added). Active one syncs to `[asr]`. */
   asrProviders: AsrProviderV1[]
+  /** Web search backends (AnySearch / Tavily); syncs to config.toml. */
+  webSearch: WebSearchSettingsV1
   workspaceRoot: string
   log: LogConfigV1
   notifications: NotificationConfigV1
@@ -362,6 +503,7 @@ export type AppSettingsPatch = Partial<
     | 'customEndpoints'
     | 'asrProviders'
     | 'llmProviders'
+    | 'webSearch'
     | 'appearance'
     | 'shortcuts'
   >
@@ -376,6 +518,7 @@ export type AppSettingsPatch = Partial<
   customEndpoints?: CustomEndpointV1[]
   asrProviders?: AsrProviderV1[]
   llmProviders?: Partial<Record<BuiltinLlmProviderId, Partial<LlmProviderConfigV1>>>
+  webSearch?: WebSearchSettingsPatchV1
   appearance?: AppearancePatchV1
   shortcuts?: ShortcutsPatchV1
 }
@@ -1268,6 +1411,9 @@ export function normalizeAppSettings(settings: AppSettingsV1): AppSettingsV1 {
     customEndpoints: normalizeCustomEndpoints(maybeSettings.customEndpoints),
     asrProviders: normalizeAsrProviders(
       (maybeSettings as { asrProviders?: unknown }).asrProviders
+    ),
+    webSearch: normalizeWebSearchSettings(
+      (maybeSettings as { webSearch?: unknown }).webSearch
     ),
     notifications: {
       turnComplete: maybeSettings.notifications?.turnComplete !== false

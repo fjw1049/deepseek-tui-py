@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { upsertTomlSections } from './toml-section'
+import {
+  readTomlTopLevelString,
+  readTomlTopLevelStringArray,
+  upsertTomlSections,
+  upsertTomlTopLevel
+} from './toml-section'
 
 describe('upsertTomlSections', () => {
   it('writes typed values into nested sections', () => {
@@ -57,5 +62,41 @@ describe('upsertTomlSections', () => {
     expect(next).toContain('[providers.hs.context_windows]')
     expect(next).toContain('"glm-5.2" = 1000000')
     expect(next).toContain('"glm-5.2-air" = 300000')
+  })
+})
+
+describe('upsertTomlTopLevel', () => {
+  it('writes and reads web search top-level keys without touching sections', () => {
+    const next = upsertTomlTopLevel(
+      'api_key = "sk-chat"\n\n[asr]\napi_key = "sk-asr"\n',
+      {
+        anysearch_api_key: 'as-key',
+        tavily_api_key: 'tv-key',
+        web_search_providers: ['anysearch', 'tavily']
+      }
+    )
+
+    expect(readTomlTopLevelString(next, 'api_key')).toBe('sk-chat')
+    expect(readTomlTopLevelString(next, 'anysearch_api_key')).toBe('as-key')
+    expect(readTomlTopLevelString(next, 'tavily_api_key')).toBe('tv-key')
+    expect(readTomlTopLevelStringArray(next, 'web_search_providers')).toEqual([
+      'anysearch',
+      'tavily'
+    ])
+    expect(next).toContain('[asr]')
+    expect(next).toContain('api_key = "sk-asr"')
+  })
+
+  it('removes top-level keys when value is null', () => {
+    const next = upsertTomlTopLevel(
+      'tavily_api_key = "tv"\nweb_search_providers = ["tavily"]\n\n[ui]\nlocale = "zh"\n',
+      {
+        tavily_api_key: null,
+        web_search_providers: ['anysearch']
+      }
+    )
+    expect(readTomlTopLevelString(next, 'tavily_api_key')).toBeNull()
+    expect(readTomlTopLevelStringArray(next, 'web_search_providers')).toEqual(['anysearch'])
+    expect(next).toContain('[ui]')
   })
 })

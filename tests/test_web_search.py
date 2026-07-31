@@ -22,7 +22,11 @@ def test_merge_hits_dedupes_by_url_and_caps() -> None:
 
 
 @pytest.mark.asyncio
-async def test_web_search_merges_anysearch_and_tavily(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_web_search_uses_first_provider_when_successful(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    called: list[str] = []
+
     async def fake_anysearch(
         _client: object,
         *,
@@ -30,6 +34,7 @@ async def test_web_search_merges_anysearch_and_tavily(monkeypatch: pytest.Monkey
         max_results: int,
         api_key: str | None,
     ) -> list[_SearchHit]:
+        called.append("anysearch")
         assert query == "test query"
         assert api_key == "as-key"
         return [
@@ -43,7 +48,7 @@ async def test_web_search_merges_anysearch_and_tavily(monkeypatch: pytest.Monkey
         max_results: int,
         api_key: str,
     ) -> tuple[list[_SearchHit], str]:
-        assert api_key == "tv-key"
+        called.append("tavily")
         return (
             [
                 _SearchHit(
@@ -57,10 +62,7 @@ async def test_web_search_merges_anysearch_and_tavily(monkeypatch: pytest.Monkey
             "summary answer",
         )
 
-    monkeypatch.setattr(
-        "deepseek_tui.tools.web._search_anysearch",
-        fake_anysearch,
-    )
+    monkeypatch.setattr("deepseek_tui.tools.web._search_anysearch", fake_anysearch)
     monkeypatch.setattr("deepseek_tui.tools.web._search_tavily", fake_tavily)
 
     class _FakeClient:
@@ -75,12 +77,190 @@ async def test_web_search_merges_anysearch_and_tavily(monkeypatch: pytest.Monkey
         lambda **_kwargs: _FakeClient(),
     )
 
-    tool = WebSearchTool(tavily_api_key="tv-key", anysearch_api_key="as-key")
+    tool = WebSearchTool(
+        tavily_api_key="tv-key",
+        anysearch_api_key="as-key",
+        providers=["anysearch", "tavily"],
+    )
     result = await tool.execute({"query": "test query"}, context=object())  # type: ignore[arg-type]
 
     assert result.success
-    assert "Answer: summary answer" in result.content
+    assert called == ["anysearch"]
     assert "https://a.example/x" in result.content
-    assert "https://b.example/y" in result.content
-    assert result.metadata["sources"] == ["anysearch", "tavily"]
-    assert result.metadata["result_count"] == 2
+    assert "https://b.example/y" not in result.content
+    assert result.metadata["provider"] == "anysearch"
+    assert result.metadata["sources"] == ["anysearch"]
+
+
+@pytest.mark.asyncio
+async def test_web_search_falls_back_when_first_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    called: list[str] = []
+
+    async def fake_anysearch(
+        _client: object,
+        *,
+        query: str,
+        max_results: int,
+        api_key: str | None,
+    ) -> list[_SearchHit]:
+        called.append("anysearch")
+        raise RuntimeError("anysearch down")
+
+    async def fake_tavily(
+        _client: object,
+        *,
+        query: str,
+        max_results: int,
+        api_key: str,
+    ) -> tuple[list[_SearchHit], str]:
+        called.append("tavily")
+        return (
+            [_SearchHit("Tav", "https://b.example/y", "snippet b", "tavily", score=0.7)],
+            "summary answer",
+        )
+
+    monkeypatch.setattr("deepseek_tui.tools.web._search_anysearch", fake_anysearch)
+    monkeypatch.setattr("deepseek_tui.tools.web._search_tavily", fake_tavily)
+
+    class _FakeClient:
+        async def __aenter__(self) -> _FakeClient:
+            return self
+
+        async def __aexit__(self, *args: object) -> None:
+            return None
+
+    monkeypatch.setattr(
+        "deepseek_tui.tools.web.httpx.AsyncClient",
+        lambda **_kwargs: _FakeClient(),
+    )
+
+    tool = WebSearchTool(
+        tavily_api_key="tv-key",
+        anysearch_api_key="as-key",
+        providers=["anysearch", "tavily"],
+    )
+    result = await tool.execute({"query": "fallback"}, context=object())  # type: ignore[arg-type]
+
+    assert result.success
+    assert called == ["anysearch", "tavily"]
+    assert "Answer: summary answer" in result.content
+    assert result.metadata["provider"] == "tavily"
+    assert "anysearch:" in ";".join(result.metadata["errors"])
+
+
+@pytest.mark.asyncio
+async def test_web_search_falls_back_when_first_empty(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    called: list[str] = []
+
+    async def fake_anysearch(
+        _client: object,
+        *,
+        query: str,
+        max_results: int,
+        api_key: str | None,
+    ) -> list[_SearchHit]:
+        called.append("anysearch")
+        return []
+
+    async def fake_tavily(
+        _client: object,
+        *,
+        query: str,
+        max_results: int,
+        api_key: str,
+    ) -> tuple[list[_SearchHit], str]:
+        called.append("tavily")
+        return (
+            [_SearchHit("Tav", "https://b.example/y", "b", "tavily", score=0.7)],
+            "",
+        )
+
+    monkeypatch.setattr("deepseek_tui.tools.web._search_anysearch", fake_anysearch)
+    monkeypatch.setattr("deepseek_tui.tools.web._search_tavily", fake_tavily)
+
+    class _FakeClient:
+        async def __aenter__(self) -> _FakeClient:
+            return self
+
+        async def __aexit__(self, *args: object) -> None:
+            return None
+
+    monkeypatch.setattr(
+        "deepseek_tui.tools.web.httpx.AsyncClient",
+        lambda **_kwargs: _FakeClient(),
+    )
+
+    tool = WebSearchTool(
+        tavily_api_key="tv-key",
+        providers=["anysearch", "tavily"],
+    )
+    result = await tool.execute({"query": "empty first"}, context=object())  # type: ignore[arg-type]
+
+    assert result.success
+    assert called == ["anysearch", "tavily"]
+    assert result.metadata["provider"] == "tavily"
+
+
+@pytest.mark.asyncio
+async def test_web_search_respects_providers_list(monkeypatch: pytest.MonkeyPatch) -> None:
+    called: list[str] = []
+
+    async def fake_anysearch(
+        _client: object,
+        *,
+        query: str,
+        max_results: int,
+        api_key: str | None,
+    ) -> list[_SearchHit]:
+        called.append("anysearch")
+        return [_SearchHit("Any", "https://a.example/x", "a", "anysearch", score=0.9)]
+
+    async def fake_tavily(
+        _client: object,
+        *,
+        query: str,
+        max_results: int,
+        api_key: str,
+    ) -> tuple[list[_SearchHit], str]:
+        called.append("tavily")
+        return (
+            [_SearchHit("Tav", "https://b.example/y", "b", "tavily", score=0.7)],
+            "",
+        )
+
+    monkeypatch.setattr("deepseek_tui.tools.web._search_anysearch", fake_anysearch)
+    monkeypatch.setattr("deepseek_tui.tools.web._search_tavily", fake_tavily)
+
+    class _FakeClient:
+        async def __aenter__(self) -> _FakeClient:
+            return self
+
+        async def __aexit__(self, *args: object) -> None:
+            return None
+
+    monkeypatch.setattr(
+        "deepseek_tui.tools.web.httpx.AsyncClient",
+        lambda **_kwargs: _FakeClient(),
+    )
+
+    tool = WebSearchTool(
+        tavily_api_key="tv-key",
+        anysearch_api_key="as-key",
+        providers=["tavily"],
+    )
+    result = await tool.execute({"query": "only tavily"}, context=object())  # type: ignore[arg-type]
+
+    assert result.success
+    assert called == ["tavily"]
+    assert result.metadata["sources"] == ["tavily"]
+
+
+@pytest.mark.asyncio
+async def test_web_search_empty_providers_fails() -> None:
+    tool = WebSearchTool(providers=[])
+    with pytest.raises(Exception, match="no providers enabled"):
+        await tool.execute({"query": "x"}, context=object())  # type: ignore[arg-type]

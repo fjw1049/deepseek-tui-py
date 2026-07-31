@@ -672,6 +672,7 @@ def build_default_registry(config: Config | None = None, *, mode: str = "agent")
             WebSearchTool(
                 tavily_api_key=cfg.tavily_api_key,
                 anysearch_api_key=cfg.anysearch_api_key,
+                providers=cfg.web_search_providers,
             )
         )
         registry.register(FetchUrlTool(anysearch_api_key=cfg.anysearch_api_key))

@@ -42,6 +42,7 @@ import {
   mergeClawSettings,
   mergeLlmProviders,
   mergeShortcutsSettings,
+  mergeWebSearchSettings,
   normalizeAppSettings,
   normalizeAsrProviders,
   resolveActiveAsrSettings,
@@ -49,6 +50,7 @@ import {
   type AppSettingsV1
 } from '../shared/app-settings'
 import { readAsrConfigFile, writeAsrConfigFile } from './asr-config'
+import { readWebSearchConfigFile, writeWebSearchConfigFile } from './web-search-config'
 import type { StartupPhase, StartupPhasePayload } from '../shared/ds-gui-api'
 import { isBrowsableUrl } from '../shared/dev-preview-url'
 import { fetchBuiltinProviderModelIds, fetchUpstreamModelIds } from './upstream-models'
@@ -454,7 +456,11 @@ function invalidateRuntimeReady(reason: string): void {
 }
 
 function queueRuntimeSettingsApply(prev: AppSettingsV1, next: AppSettingsV1): void {
-  if (!deepseekTuiConfigChanged(prev, next) && !runtimeStartupConfigChanged(prev, next)) {
+  if (
+    !deepseekTuiConfigChanged(prev, next) &&
+    !runtimeStartupConfigChanged(prev, next) &&
+    !webSearchConfigChanged(prev, next)
+  ) {
     return
   }
 
@@ -786,13 +792,21 @@ function runtimeStartupConfigChanged(prev: AppSettingsV1, next: AppSettingsV1): 
   return deepseekLaunchConfigChanged(prev, next)
 }
 
+function webSearchConfigChanged(prev: AppSettingsV1, next: AppSettingsV1): boolean {
+  return JSON.stringify(prev.webSearch) !== JSON.stringify(next.webSearch)
+}
+
 async function restartManagedRuntimeForSettingsChange(
   prev: AppSettingsV1,
   next: AppSettingsV1
 ): Promise<void> {
-  // Locale drives reply language via config.ui.locale — restart so Engine
+  // Locale / web search keys live in config.toml — restart so Engine
   // picks up the new value without waiting for a cold start.
-  if (!runtimeStartupConfigChanged(prev, next) && !localeConfigChanged(prev, next)) {
+  if (
+    !runtimeStartupConfigChanged(prev, next) &&
+    !localeConfigChanged(prev, next) &&
+    !webSearchConfigChanged(prev, next)
+  ) {
     return
   }
 
@@ -972,6 +986,34 @@ app.whenReady().then(async () => {
     }
   } catch { /* asr section missing — keep defaults */ }
 
+  // Backfill web search API keys from config.toml when GUI keys are empty.
+  // Do NOT adopt file provider order here — settings.json order is source of truth
+  // (config only stores the enabled subset, which would clobber GUI ranking).
+  try {
+    const webSearchFile = await readWebSearchConfigFile()
+    if (webSearchFile.hasAnyKey) {
+      const file = webSearchFile.settings
+      const gui = initial.webSearch
+      const anyKey = gui.providers.anysearch.apiKey.trim() || file.providers.anysearch.apiKey
+      const tavKey = gui.providers.tavily.apiKey.trim() || file.providers.tavily.apiKey
+      const enableTavilyFromKey =
+        !gui.providers.tavily.apiKey.trim() && Boolean(file.providers.tavily.apiKey.trim())
+      const migratedWebSearch = mergeWebSearchSettings(gui, {
+        providers: {
+          anysearch: { apiKey: anyKey },
+          tavily: {
+            apiKey: tavKey,
+            ...(enableTavilyFromKey ? { enabled: true } : {})
+          }
+        }
+      })
+      if (JSON.stringify(migratedWebSearch) !== JSON.stringify(gui)) {
+        initial = await store.patch({ webSearch: migratedWebSearch })
+        traceStartup('webSearch keys migrated from config.toml')
+      }
+    }
+  } catch { /* config.toml missing — keep defaults */ }
+
   // Keep native chrome (context menus, dialogs, Windows title bar, resize
   // background) in sync with the app theme. `theme` maps 1:1 to themeSource.
   nativeTheme.themeSource = initial.theme
@@ -997,6 +1039,7 @@ app.whenReady().then(async () => {
       llmProviders: mergeLlmProviders(prev.llmProviders, partial.llmProviders),
       customEndpoints: partial.customEndpoints ?? prev.customEndpoints,
       asrProviders: partial.asrProviders ?? prev.asrProviders,
+      webSearch: mergeWebSearchSettings(prev.webSearch, partial.webSearch),
       log: { ...prev.log, ...(partial.log ?? {}) },
       notifications: { ...prev.notifications, ...(partial.notifications ?? {}) },
       skills: { ...prev.skills, ...(partial.skills ?? {}) },
@@ -1009,7 +1052,11 @@ app.whenReady().then(async () => {
     if (prev.log.enabled !== next.log.enabled || prev.log.retentionDays !== next.log.retentionDays) {
       configureLogger({ enabled: next.log.enabled, retentionDays: next.log.retentionDays })
     }
-    const saved = await store.patch(partial)
+    // Persist the already-merged webSearch (with order) so a second merge in
+    // the store cannot drop ranking when the patch was a partial update.
+    const saved = await store.patch(
+      partial.webSearch !== undefined ? { ...partial, webSearch: next.webSearch } : partial
+    )
     if (saved.theme !== nativeTheme.themeSource) {
       nativeTheme.themeSource = saved.theme
     }
@@ -1022,6 +1069,15 @@ app.whenReady().then(async () => {
         await writeAsrConfigFile(resolveActiveAsrSettings(saved.asrProviders))
       } catch (error) {
         logWarn('settings-apply', 'Failed to sync active ASR provider to config.toml', {
+          message: error instanceof Error ? error.message : String(error)
+        })
+      }
+    }
+    if (webSearchConfigChanged(prev, saved)) {
+      try {
+        await writeWebSearchConfigFile(saved.webSearch)
+      } catch (error) {
+        logWarn('settings-apply', 'Failed to sync web search settings to config.toml', {
           message: error instanceof Error ? error.message : String(error)
         })
       }

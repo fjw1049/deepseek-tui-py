@@ -3,10 +3,14 @@ import {
   AUTOMATION_COMPOSER_HEADING,
   CLAW_CURRENT_USER_REQUEST_HEADING,
   buildAutomationComposerPrompt,
+  defaultWebSearchSettings,
+  enabledWebSearchProviderIds,
   mergeMemorySettings,
+  mergeWebSearchSettings,
   normalizeAppSettings,
   normalizeCustomEndpoints,
   normalizeUiFontFamily,
+  normalizeWebSearchSettings,
   unwrapAutomationComposerPromptForDisplay,
   unwrapClawUserPromptForDisplay
 } from './app-settings'
@@ -258,5 +262,46 @@ describe('normalizeUiFontFamily', () => {
     expect(normalizeUiFontFamily('invalid')).toBe('system-native')
     expect(normalizeUiFontFamily('inter-noto')).toBe('system-native')
     expect(normalizeUiFontFamily('system-native')).toBe('system-native')
+  })
+})
+
+describe('normalizeWebSearchSettings', () => {
+  it('defaults to AnySearch enabled and Tavily disabled', () => {
+    expect(normalizeWebSearchSettings(undefined)).toEqual(defaultWebSearchSettings())
+    expect(enabledWebSearchProviderIds(defaultWebSearchSettings())).toEqual(['anysearch'])
+  })
+
+  it('migrates legacy config.toml keys and provider list order', () => {
+    const migrated = normalizeWebSearchSettings(undefined, {
+      anysearchApiKey: 'as',
+      tavilyApiKey: 'tv',
+      providers: ['tavily', 'anysearch']
+    })
+    expect(migrated.order[0]).toBe('tavily')
+    expect(migrated.providers.anysearch).toEqual({ enabled: true, apiKey: 'as' })
+    expect(migrated.providers.tavily).toEqual({ enabled: true, apiKey: 'tv' })
+    expect(enabledWebSearchProviderIds(migrated)).toEqual(['tavily', 'anysearch'])
+  })
+
+  it('keeps priority order for enabled providers', () => {
+    const settings = normalizeWebSearchSettings({
+      order: ['tavily', 'anysearch'],
+      providers: {
+        anysearch: { enabled: true, apiKey: '' },
+        tavily: { enabled: true, apiKey: 'tv' }
+      }
+    })
+    expect(enabledWebSearchProviderIds(settings)).toEqual(['tavily', 'anysearch'])
+  })
+
+  it('preserves order when merging a full webSearch replace', () => {
+    const merged = mergeWebSearchSettings(defaultWebSearchSettings(), {
+      order: ['tavily', 'anysearch'],
+      providers: {
+        anysearch: { enabled: true, apiKey: 'as' },
+        tavily: { enabled: true, apiKey: 'tv' }
+      }
+    })
+    expect(merged.order).toEqual(['tavily', 'anysearch'])
   })
 })

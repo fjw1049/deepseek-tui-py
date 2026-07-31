@@ -2,11 +2,106 @@
 
 type TomlScalar = string | number | boolean
 type TomlSectionUpdates = Record<string, TomlScalar | undefined>
+/** ``null`` removes the key; ``undefined`` leaves it untouched. */
+export type TomlTopLevelValue = TomlScalar | readonly string[] | null
 
 function formatTomlScalar(value: TomlScalar): string {
   if (typeof value === 'boolean') return value ? 'true' : 'false'
   if (typeof value === 'number') return Number.isFinite(value) ? String(value) : '0'
   return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`
+}
+
+function formatTomlTopLevelValue(value: Exclude<TomlTopLevelValue, null>): string {
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => formatTomlScalar(String(item))).join(', ')}]`
+  }
+  return formatTomlScalar(value as TomlScalar)
+}
+
+function topLevelRegion(content: string): { head: string; rest: string } {
+  const match = content.match(/^\s*\[/m)
+  if (!match || match.index === undefined) {
+    return { head: content, rest: '' }
+  }
+  return {
+    head: content.slice(0, match.index),
+    rest: content.slice(match.index)
+  }
+}
+
+/** Read a top-level string key (before the first ``[section]``). */
+export function readTomlTopLevelString(content: string, key: string): string | null {
+  const { head } = topLevelRegion(content)
+  const m = head.match(new RegExp(`^\\s*${key}\\s*=\\s*"([^"]*)"`, 'm'))
+  if (m) return (m[1] ?? '').trim()
+  const m2 = head.match(new RegExp(`^\\s*${key}\\s*=\\s*'([^']*)'`, 'm'))
+  return m2 ? (m2[1] ?? '').trim() : null
+}
+
+/** Read a top-level string-array key such as ``web_search_providers = ["a", "b"]``. */
+export function readTomlTopLevelStringArray(content: string, key: string): string[] | null {
+  const { head } = topLevelRegion(content)
+  const m = head.match(new RegExp(`^\\s*${key}\\s*=\\s*\\[([^\\]]*)\\]`, 'm'))
+  if (!m) return null
+  const body = m[1] ?? ''
+  const values: string[] = []
+  const re = /"([^"]*)"|'([^']*)'/g
+  let match: RegExpExecArray | null
+  while ((match = re.exec(body))) {
+    values.push((match[1] ?? match[2] ?? '').trim())
+  }
+  return values
+}
+
+/** Upsert or remove top-level keys (never touches ``[section]`` bodies). */
+export function upsertTomlTopLevel(
+  content: string,
+  updates: Record<string, TomlTopLevelValue | undefined>
+): string {
+  const pending = new Map(
+    Object.entries(updates).filter((entry) => entry[1] !== undefined) as Array<
+      [string, TomlTopLevelValue]
+    >
+  )
+  if (pending.size === 0) return content.endsWith('\n') ? content : `${content}\n`
+
+  const { head, rest } = topLevelRegion(content)
+  const lines = head.length > 0 || content.length === 0 ? head.split(/\r?\n/) : []
+  const out: string[] = []
+
+  for (const line of lines) {
+    let replaced = false
+    for (const [key, value] of pending) {
+      const keyRe = new RegExp(`^\\s*${key}\\s*=`)
+      if (!keyRe.test(line)) continue
+      pending.delete(key)
+      if (value === null) {
+        replaced = true
+        break
+      }
+      out.push(`${key} = ${formatTomlTopLevelValue(value)}`)
+      replaced = true
+      break
+    }
+    if (!replaced) out.push(line)
+  }
+
+  for (const [key, value] of pending) {
+    if (value === null) continue
+    out.push(`${key} = ${formatTomlTopLevelValue(value)}`)
+  }
+
+  while (out.length > 0 && out[out.length - 1] === '') out.pop()
+  const headText = out.join('\n')
+  let result = rest
+    ? headText
+      ? `${headText}\n${rest}`
+      : rest
+    : headText
+      ? `${headText}\n`
+      : ''
+  if (!result.endsWith('\n')) result += '\n'
+  return result
 }
 
 export function readTomlString(

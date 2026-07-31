@@ -171,6 +171,24 @@ class FetchUrlTool(ToolSpec):
         )
 
 
+_KNOWN_WEB_SEARCH_PROVIDERS = frozenset({"anysearch", "tavily"})
+
+
+def _normalize_web_search_providers(providers: list[str] | None) -> list[str] | None:
+    """Return enabled provider ids, or ``None`` for legacy auto-selection."""
+    if providers is None:
+        return None
+    seen: set[str] = set()
+    out: list[str] = []
+    for raw in providers:
+        name = str(raw or "").strip().lower()
+        if name not in _KNOWN_WEB_SEARCH_PROVIDERS or name in seen:
+            continue
+        seen.add(name)
+        out.append(name)
+    return out
+
+
 class WebSearchTool(ToolSpec):
     def __init__(
         self,
@@ -178,21 +196,41 @@ class WebSearchTool(ToolSpec):
         tavily_api_key: str | None = None,
         anysearch_api_key: str | None = None,
         api_key: str | None = None,
+        providers: list[str] | None = None,
     ) -> None:
         # ``api_key`` kept for backward compatibility (maps to Tavily).
         self._tavily_api_key = (tavily_api_key or api_key or _TAVILY_API_KEY or "").strip()
         self._anysearch_api_key = (
             anysearch_api_key or _ANYSEARCH_API_KEY or ""
         ).strip()
+        self._providers = _normalize_web_search_providers(providers)
 
     def name(self) -> str:
         return "web_search"
 
     def description(self) -> str:
-        return (
-            "Search the web via AnySearch and Tavily (when configured), "
-            "merge results, and return titles, URLs, and snippets."
+        active = self._active_providers()
+        if not active:
+            return (
+                "Search the web (no providers enabled — configure "
+                "web_search_providers / API keys in settings)."
+            )
+        label = " → ".join(
+            "AnySearch" if name == "anysearch" else "Tavily" for name in active
         )
+        return (
+            f"Search the web via {label} (priority fallback), "
+            "and return titles, URLs, and snippets."
+        )
+
+    def _active_providers(self) -> list[str]:
+        if self._providers is not None:
+            return list(self._providers)
+        # Legacy: AnySearch first; Tavily as fallback when keyed.
+        active = ["anysearch"]
+        if self._tavily_api_key:
+            active.append("tavily")
+        return active
 
     def input_schema(self) -> dict[str, object]:
         return {
@@ -214,78 +252,81 @@ class WebSearchTool(ToolSpec):
         timeout_ms = getattr(context, "timeout_ms", None)
         timeout = timeout_ms / 1000 if timeout_ms is not None else 30.0
 
-        _check_network_policy("https://api.anysearch.com", "web_search", context)
-        use_tavily = bool(self._tavily_api_key)
-        if use_tavily:
-            _check_network_policy("https://api.tavily.com", "web_search", context)
+        active = self._active_providers()
+        if not active:
+            raise ToolError(
+                "web_search failed: no providers enabled "
+                "(configure web_search_providers in settings)"
+            )
 
+        # Priority fallback: try providers in order; first non-empty success wins.
         errors: list[str] = []
         answer = ""
         hits: list[_SearchHit] = []
+        used_provider = ""
 
         async with httpx.AsyncClient(timeout=timeout) as client:
-            tasks: list[tuple[str, asyncio.Task[object]]] = []
-            tasks.append(
-                (
-                    "anysearch",
-                    asyncio.create_task(
-                        _search_anysearch(
+            for name in active:
+                try:
+                    if name == "anysearch":
+                        _check_network_policy(
+                            "https://api.anysearch.com", "web_search", context
+                        )
+                        outcome = await _search_anysearch(
                             client,
                             query=query,
                             max_results=max_results,
                             api_key=self._anysearch_api_key or None,
                         )
-                    ),
-                )
-            )
-            if use_tavily:
-                tasks.append(
-                    (
-                        "tavily",
-                        asyncio.create_task(
-                            _search_tavily(
-                                client,
-                                query=query,
-                                max_results=max_results,
-                                api_key=self._tavily_api_key,
-                            )
-                        ),
-                    ),
-                )
-
-            for name, task in tasks:
-                try:
-                    outcome = await task
+                        candidate = list(outcome)
+                        candidate_answer = ""
+                    elif name == "tavily":
+                        if not self._tavily_api_key:
+                            raise ToolError("tavily_api_key is missing")
+                        _check_network_policy(
+                            "https://api.tavily.com", "web_search", context
+                        )
+                        tavily_hits, tavily_answer = await _search_tavily(
+                            client,
+                            query=query,
+                            max_results=max_results,
+                            api_key=self._tavily_api_key,
+                        )
+                        candidate = list(tavily_hits)
+                        candidate_answer = tavily_answer or ""
+                    else:
+                        errors.append(f"{name}: unknown provider")
+                        continue
                 except Exception as exc:
                     errors.append(f"{name}: {exc}")
                     continue
-                if name == "anysearch":
-                    hits.extend(outcome)  # type: ignore[arg-type]
-                else:
-                    tavily_hits, tavily_answer = outcome  # type: ignore[misc]
-                    hits.extend(tavily_hits)
-                    if tavily_answer:
-                        answer = tavily_answer
 
-        merged = _merge_hits(hits, max_results)
-        if not merged:
+                merged = _merge_hits(candidate, max_results)
+                if not merged:
+                    errors.append(f"{name}: no results")
+                    continue
+
+                hits = merged
+                answer = candidate_answer
+                used_provider = name
+                break
+
+        if not hits:
             detail = "; ".join(errors) if errors else "no results"
             raise ToolError(f"web_search failed: {detail}")
 
-        sources = sorted({hit.source for hit in merged})
         lines: list[str] = []
         if answer:
             lines.append(f"Answer: {answer}\n")
-        for i, hit in enumerate(merged, 1):
-            tag = f"[{hit.source}] " if len(sources) > 1 else ""
-            lines.append(f"{i}. {hit.title}\n   {hit.url}\n   {tag}{hit.snippet}")
+        for i, hit in enumerate(hits, 1):
+            lines.append(f"{i}. {hit.title}\n   {hit.url}\n   {hit.snippet}")
 
         return ToolResult(
             success=True,
             content="\n".join(lines),
             metadata={
                 "query": query,
-                "result_count": len(merged),
+                "result_count": len(hits),
                 "results": [
                     {
                         "title": h.title,
@@ -294,9 +335,10 @@ class WebSearchTool(ToolSpec):
                         "source": h.source,
                         "score": h.score,
                     }
-                    for h in merged
+                    for h in hits
                 ],
-                "sources": sources,
+                "sources": [used_provider] if used_provider else [],
+                "provider": used_provider,
                 "errors": errors,
             },
         )
