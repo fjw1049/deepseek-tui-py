@@ -193,8 +193,22 @@ class CronCreateTool(ToolSpec):
         return {
             "type": "object",
             "properties": {
-                "name": {"type": "string"},
-                "prompt": {"type": "string"},
+                "name": {
+                    "type": "string",
+                    "description": (
+                        "Short human-readable job name shown in the "
+                        "Automations UI, in the user's language."
+                    ),
+                },
+                "prompt": {
+                    "type": "string",
+                    "description": (
+                        "The task the job runs on each fire, written as a "
+                        "self-contained instruction (the job has no "
+                        "conversation context). Do not include delivery "
+                        "instructions — delivery is configured separately."
+                    ),
+                },
                 "rrule": {
                     "type": "string",
                     "description": (
@@ -209,7 +223,14 @@ class CronCreateTool(ToolSpec):
                         "(one-shot or delayed start)."
                     ),
                 },
-                "cwds": {"type": "array", "items": {"type": "string"}},
+                "cwds": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        "Working directories the job runs in (absolute "
+                        "paths). Defaults to the current workspace."
+                    ),
+                },
                 "delivery": {
                     "type": "object",
                     "description": (
@@ -238,7 +259,14 @@ class CronCreateTool(ToolSpec):
                     },
                     "additionalProperties": False,
                 },
-                "paused": {"type": "boolean", "default": False},
+                "paused": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": (
+                        "Create the job in a paused state (it will not "
+                        "fire until resumed in the Automations UI)."
+                    ),
+                },
                 "run_now": {
                     "type": "boolean",
                     "default": False,
@@ -343,6 +371,7 @@ class CronListTool(ToolSpec):
                     "minimum": 1,
                     "maximum": 100,
                     "default": 50,
+                    "description": "Maximum jobs to list.",
                 },
                 "runs_limit": {
                     "type": "integer",
@@ -420,7 +449,15 @@ class CronDeleteTool(ToolSpec):
     def input_schema(self) -> dict[str, object]:
         return {
             "type": "object",
-            "properties": {"automation_id": {"type": "string"}},
+            "properties": {
+                "automation_id": {
+                    "type": "string",
+                    "description": (
+                        "Id of the job to delete (from cron_list). "
+                        "Deletion also wipes the job's run history."
+                    ),
+                },
+            },
             "required": ["automation_id"],
             "additionalProperties": False,
         }

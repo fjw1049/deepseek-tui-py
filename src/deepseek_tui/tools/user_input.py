@@ -92,19 +92,58 @@ class RequestUserInputTool(ToolSpec):
             "properties": {
                 "questions": {
                     "type": "array",
+                    "description": (
+                        "1-3 questions rendered together as one selectable "
+                        "card. Bundle every pending decision into a single "
+                        "call instead of asking in succession."
+                    ),
                     "items": {
                         "type": "object",
                         "properties": {
-                            "header": {"type": "string"},
-                            "id": {"type": "string"},
-                            "question": {"type": "string"},
+                            "header": {
+                                "type": "string",
+                                "description": (
+                                    "Short card title (a few words), e.g. "
+                                    "'Database choice'."
+                                ),
+                            },
+                            "id": {
+                                "type": "string",
+                                "description": (
+                                    "Unique id for this question within "
+                                    "the call (snake_case)."
+                                ),
+                            },
+                            "question": {
+                                "type": "string",
+                                "description": (
+                                    "The question text, one sentence, in "
+                                    "the conversation language."
+                                ),
+                            },
                             "options": {
                                 "type": "array",
+                                "description": (
+                                    "2-3 mutually exclusive choices. Put "
+                                    "your recommended option first."
+                                ),
                                 "items": {
                                     "type": "object",
                                     "properties": {
-                                        "label": {"type": "string"},
-                                        "description": {"type": "string"},
+                                        "label": {
+                                            "type": "string",
+                                            "description": (
+                                                "Short option label shown "
+                                                "on the button."
+                                            ),
+                                        },
+                                        "description": {
+                                            "type": "string",
+                                            "description": (
+                                                "One line on what picking "
+                                                "this option implies."
+                                            ),
+                                        },
                                     },
                                     "required": ["label", "description"],
                                 },

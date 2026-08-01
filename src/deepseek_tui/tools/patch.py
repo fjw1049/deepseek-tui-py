@@ -27,14 +27,33 @@ class ProjectMapTool(ToolSpec):
         return "project_map"
 
     def description(self) -> str:
-        return "Generate a directory tree of the project."
+        return (
+            "Render a directory tree of the project — the cheapest way to "
+            "get oriented in an unfamiliar codebase before reading files. "
+            "For listing files by name use file_search; for searching "
+            "contents use grep_files."
+        )
 
     def input_schema(self) -> dict[str, Any]:
         return {
             "type": "object",
             "properties": {
-                "path": {"type": "string"},
-                "max_depth": {"type": "integer"},
+                "path": {
+                    "type": "string",
+                    "default": ".",
+                    "description": (
+                        "Subtree root, workspace-relative (default: "
+                        "workspace root)."
+                    ),
+                },
+                "max_depth": {
+                    "type": "integer",
+                    "default": 3,
+                    "description": (
+                        "Directory depth to descend. Keep small (2-3) for "
+                        "large projects; deepen only for a specific subtree."
+                    ),
+                },
             },
         }
 

@@ -111,6 +111,23 @@ def wrap_system_reminder(body: str) -> str:
     return f"{SYSTEM_REMINDER_OPEN}\n{trimmed}\n{SYSTEM_REMINDER_CLOSE}"
 
 
+_FAKE_REMINDER_RE = re.compile(r"(</?)\s*(system-reminder)\s*(>)", re.IGNORECASE)
+
+
+def neutralize_fake_system_reminders(text: str) -> str:
+    """Defuse ``<system-reminder>`` tags found in untrusted turn content.
+
+    Engine-injected reminders travel as their own messages and never pass
+    through user-input processing — so any reminder tag inside raw user
+    text (typed, pasted, or inlined via @file expansion) is either a
+    quote or an injection attempt. Rewriting the tag name keeps the
+    content readable while stripping the authority our prompt grants to
+    real reminders. Found by the golden scenario
+    ``test_fake_system_reminder_does_not_leak_prompt``.
+    """
+    return _FAKE_REMINDER_RE.sub(r"\1user-quoted-reminder\3", text)
+
+
 def format_user_query_message(query: str) -> str:
     """Format a real user goal for replay after compaction/cycle."""
     trimmed = query.strip()

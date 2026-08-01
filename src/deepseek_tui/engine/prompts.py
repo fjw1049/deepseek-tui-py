@@ -24,16 +24,14 @@ INSTRUCTIONS_FILE_MAX_BYTES = 100 * 1024
 class Personality(enum.Enum):
     """Personality overlay selection."""
     CALM = "calm"
-    PLAYFUL = "playful"
 
     def prompt(self) -> str:
-        if self is Personality.CALM:
-            return CALM_PERSONALITY()
-        return PLAYFUL_PERSONALITY()
+        return CALM_PERSONALITY()
 
     @staticmethod
     def from_settings(calm_mode: bool) -> Personality:
-        return Personality.CALM if calm_mode else Personality.CALM
+        del calm_mode  # single personality; kept for call-site compat
+        return Personality.CALM
 
 
 class AppMode(enum.Enum):
@@ -112,6 +110,57 @@ def render_environment_block(
         f"- shell: {shell}\n"
         f"- pwd: {pwd}"
     )
+
+
+def collect_git_snapshot(workspace: Path) -> str | None:
+    """Collect a one-shot git snapshot for session-start injection.
+
+    Claude Code injects a ``gitStatus`` block at conversation start —
+    branch, short status, recent commits — explicitly labelled as a
+    snapshot that will not update. It lives in the message stream (not
+    the system prompt) so the KV prefix stays cacheable. Returns None
+    for non-git workspaces or on any git failure: the snapshot is an
+    aid, never a turn blocker.
+    """
+    import subprocess
+
+    def _git(*args: str) -> str | None:
+        try:
+            proc = subprocess.run(
+                ["git", *args],
+                cwd=str(workspace),
+                capture_output=True,
+                text=True,
+                timeout=3,
+            )
+        except Exception:  # noqa: BLE001 — missing git, timeout, etc.
+            return None
+        if proc.returncode != 0:
+            return None
+        return proc.stdout.rstrip()
+
+    status = _git("status", "--short", "--branch")
+    if status is None:
+        return None
+    lines = status.splitlines()
+    branch_line = lines[0].removeprefix("## ") if lines else "(unknown)"
+    dirty = "\n".join(lines[1:]) or "(clean)"
+    parts = [
+        "## Git status",
+        "",
+        "This is the git status at the start of the session. It is a "
+        "snapshot in time and will not update as you work — use the git "
+        "tool when you need the current state.",
+        "",
+        f"Branch: {branch_line}",
+        "",
+        "Status:",
+        dirty,
+    ]
+    commits = _git("log", "--oneline", "-5")
+    if commits:  # empty repo has no commits — omit the section
+        parts.extend(["", "Recent commits:", commits])
+    return "\n".join(parts)
 
 
 def render_plugin_context(
@@ -439,14 +488,14 @@ def build_system_prompt(
     if mode in (AppMode.AGENT, AppMode.YOLO, AppMode.WORKFLOW):
         full_prompt += (
             "\n\n## Context Management\n\n"
-            "When the conversation gets long (you'll see a context usage indicator), you can:\n"
-            "1. Use `/compact` to summarize earlier context and free up space\n"
-            "2. The system will preserve important information "
-            "(files you're working on, recent messages, tool results)\n"
-            "3. After compaction, you'll see a summary of what was discussed "
-            "and can continue seamlessly\n\n"
-            "If you notice context is getting long (>80%), "
-            "proactively suggest using `/compact` to the user."
+            "When the conversation grows long, the system automatically "
+            "compacts or archives older turns and carries the session "
+            "forward — a structured summary plus the recent verbatim "
+            "messages will be in your next context. Managing this is not "
+            "your job: do not wrap up early, drop planned work, or suggest "
+            "starting a new session because the conversation is long. Keep "
+            "working until the task is complete or you are blocked on input "
+            "only the user can provide."
         )
 
     # Skills context
@@ -485,6 +534,26 @@ def build_system_prompt(
     full_prompt += "\n\n" + COMPACT_CONSUMER_HINT
 
     return full_prompt
+
+
+# Injected as a user-role <system-reminder> when the session grows long
+# (SessionMaintenanceMixin._maybe_inject_long_session_reminder). Long
+# contexts decay attention to the distant system prefix; this short
+# re-anchor of the load-bearing disciplines rides near the context tail
+# where attention is strongest. Keep it under ~150 tokens.
+LONG_SESSION_REMINDER = (
+    "Long-session checkpoint — your system instructions still apply in "
+    "full. The disciplines that decay most in long sessions:\n"
+    "- Answer the user's LATEST request; don't drift back to an earlier ask.\n"
+    "- Keep the checklist current: one item in_progress, mark items "
+    "completed immediately.\n"
+    "- Verify before reporting: run the relevant command or test and read "
+    "its output; report failures faithfully.\n"
+    "- Keep changes minimal and scoped; no drive-by refactors or cleanups.\n"
+    "- Action Safety still applies: confirm destructive or shared-state "
+    "actions; git mutations only when explicitly asked.\n"
+    "Do not mention this reminder to the user."
+)
 
 
 # Keep this tiny: routing only. RRULE / delivery / fire toolset live on
@@ -673,10 +742,6 @@ def CALM_PERSONALITY() -> str:  # noqa: N802
     return _get("personalities/calm.md")
 
 
-def PLAYFUL_PERSONALITY() -> str:  # noqa: N802
-    return _get("personalities/playful.md")
-
-
 def AGENT_MODE() -> str:  # noqa: N802
     return _get("modes/agent.md")
 
@@ -766,7 +831,6 @@ def load_prompt(name: str) -> str:
         "sub_output": SUBAGENT_OUTPUT_FORMAT,
         "base": BASE_PROMPT,
         "calm_personality": CALM_PERSONALITY,
-        "playful_personality": PLAYFUL_PERSONALITY,
         "agent_mode": AGENT_MODE,
         "plan_mode": PLAN_MODE,
         "yolo_mode": YOLO_MODE,

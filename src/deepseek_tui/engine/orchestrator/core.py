@@ -54,7 +54,6 @@ from deepseek_tui.engine.orchestrator.helpers import (
     FOCUS_MCP_BASE,
     FOCUS_PLUGIN_BASE,
     FOCUS_SKILL_BASE,
-    WORKFLOW_MODE_TOOLS,
     _assistant_preface_text,
     _detect_focus_mcp,
     _detect_focus_skill,
@@ -312,6 +311,9 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         # mtime of the last handoff reminder injected into messages (not
         # system). Re-inject only when the file is new or rewritten.
         self._handoff_injected_mtime: float | None = None
+        # Session-start git snapshot is injected once, on the first real
+        # user turn (Claude Code's gitStatus pattern).
+        self._git_snapshot_injected: bool = False
         # Stage 3.next.1 approval cache — fingerprints repeat tool calls
         # so an APPROVED_SESSION grant doesn't have to re-prompt.
         self.approval_cache = ApprovalCache()
@@ -1424,6 +1426,29 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             origin=MessageOrigin.SYSTEM_REMINDER,
         )
 
+    def _take_git_snapshot_message(self) -> Message | None:
+        """Return the one-shot session-start git snapshot, or None.
+
+        Fires exactly once per engine lifetime (first real user turn).
+        Like the handoff reminder, it rides in the message stream as a
+        user-role ``<system-reminder>`` so the system prompt stays
+        prefix-cacheable. The snapshot text itself says it will not
+        update, so the model knows to re-query git for fresh state.
+        """
+        if self._git_snapshot_injected:
+            return None
+        self._git_snapshot_injected = True
+        from deepseek_tui.engine.context_pressure import wrap_system_reminder
+        from deepseek_tui.engine.prompts import collect_git_snapshot
+
+        snapshot = collect_git_snapshot(self.tool_context.working_directory)
+        if snapshot is None:
+            return None
+        return Message.user(
+            wrap_system_reminder(snapshot),
+            origin=MessageOrigin.SYSTEM_REMINDER,
+        )
+
     def context_breakdown(self, model: str | None = None) -> dict[str, int]:
         """Estimate token occupancy by category for the next request.
 
@@ -1893,6 +1918,10 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         # the real query, never into the system prompt (KV cache).
         if not op.hidden:
             insert_at = prior_count
+            snapshot_msg = self._take_git_snapshot_message()
+            if snapshot_msg is not None:
+                working_messages.insert(insert_at, snapshot_msg)
+                insert_at += 1
             handoff_msg = self._take_handoff_reminder_message()
             if handoff_msg is not None:
                 working_messages.insert(insert_at, handoff_msg)
@@ -2004,11 +2033,6 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             else:
                 self._focus_tool_whitelist = None
                 self._focus_allowed_servers = None
-            # Workflow mode overrides skill/mcp/plugin focus: the main agent
-            # must drive ``workflow``; sub-agents keep their own registries.
-            if (self.mode or "").strip() == "workflow":
-                self._focus_tool_whitelist = WORKFLOW_MODE_TOOLS
-                self._focus_allowed_servers = frozenset()
             await self.handle.emit(
                 TurnStartedEvent(user_text="" if op.hidden else processed.display_text)
             )
@@ -2602,6 +2626,9 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                     )
             elif self._compact_cooldown_rounds > 0:
                 self._compact_cooldown_rounds -= 1
+            # Long-session drift reminder — after compaction so a rewrite
+            # doesn't immediately archive a freshly injected copy.
+            self._maybe_inject_long_session_reminder(messages, model)
 
             # Flush any diagnostics queued by post-edit hooks from the
             # previous round-trip so the model sees them on this request.

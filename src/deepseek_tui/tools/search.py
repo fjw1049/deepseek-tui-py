@@ -70,8 +70,19 @@ class GrepFilesTool(ToolSpec):
                     "type": "string",
                     "description": "Regular expression to match against each line.",
                 },
-                "path": {"type": "string"},
-                "ignore_case": {"type": "boolean", "default": False},
+                "path": {
+                    "type": "string",
+                    "description": (
+                        "File or directory to search, workspace-relative. "
+                        "Use '.' for the whole workspace; narrower paths "
+                        "are faster and less noisy."
+                    ),
+                },
+                "ignore_case": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "Case-insensitive matching.",
+                },
                 "output_mode": {
                     "type": "string",
                     "enum": ["content", "files_with_matches", "count_matches"],
@@ -209,16 +220,32 @@ class FileSearchTool(ToolSpec):
 
     def description(self) -> str:
         return (
-            "Find files by name pattern under a directory. Prefer this over "
-            "find/ls -R via exec_shell."
+            "Find files whose NAME contains a substring, under a directory "
+            "(recursive; skips .git, node_modules, virtualenvs, build "
+            "output, and credential files). Also the way to list a "
+            "directory's files. Prefer this over find/ls -R via exec_shell. "
+            "Not for searching file CONTENTS — use grep_files for that."
         )
 
     def input_schema(self) -> dict[str, object]:
         return {
             "type": "object",
             "properties": {
-                "pattern": {"type": "string"},
-                "path": {"type": "string"},
+                "pattern": {
+                    "type": "string",
+                    "description": (
+                        "Substring matched against each file name (not a "
+                        "glob or regex): 'config' matches config.py and "
+                        "app_config.toml. Use '' to list every file."
+                    ),
+                },
+                "path": {
+                    "type": "string",
+                    "description": (
+                        "Directory to search, workspace-relative; '.' for "
+                        "the whole workspace."
+                    ),
+                },
             },
             "required": ["pattern", "path"],
         }

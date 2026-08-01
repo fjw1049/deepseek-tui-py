@@ -38,15 +38,61 @@ class GitTool(ToolSpec):
                 "command": {
                     "type": "string",
                     "enum": ["status", "diff", "log", "show", "blame"],
+                    "description": "Which read-only git query to run.",
                 },
-                "path": {"type": "string"},
-                "staged": {"type": "boolean"},
-                "revspec": {"type": "string"},
-                "max_count": {"type": "integer"},
-                "object": {"type": "string"},
-                "file": {"type": "string"},
-                "line_start": {"type": "integer"},
-                "line_end": {"type": "integer"},
+                "path": {
+                    "type": "string",
+                    "default": ".",
+                    "description": (
+                        "Repository root, workspace-relative (default: "
+                        "workspace root)."
+                    ),
+                },
+                "staged": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "diff only: show staged changes (--cached).",
+                },
+                "revspec": {
+                    "type": "string",
+                    "description": (
+                        "diff only: revision or range, e.g. 'HEAD~3' or "
+                        "'main...HEAD'."
+                    ),
+                },
+                "max_count": {
+                    "type": "integer",
+                    "default": 20,
+                    "description": "log only: number of commits to show.",
+                },
+                "object": {
+                    "type": "string",
+                    "description": (
+                        "show only (required there): commit hash, tag, or "
+                        "ref like 'HEAD~1'."
+                    ),
+                },
+                "file": {
+                    "type": "string",
+                    "description": (
+                        "blame only (required there): file path, "
+                        "workspace-relative."
+                    ),
+                },
+                "line_start": {
+                    "type": "integer",
+                    "description": (
+                        "blame only: first line of the range (use with "
+                        "line_end)."
+                    ),
+                },
+                "line_end": {
+                    "type": "integer",
+                    "description": (
+                        "blame only: last line of the range (use with "
+                        "line_start)."
+                    ),
+                },
             },
             "required": ["command"],
         }
@@ -167,8 +213,14 @@ class GitHubIssueContextTool(ToolSpec):
         return {
             "type": "object",
             "properties": {
-                "repo": {"type": "string"},
-                "issue_number": {"type": "integer"},
+                "repo": {
+                    "type": "string",
+                    "description": "Repository in 'owner/name' form.",
+                },
+                "issue_number": {
+                    "type": "integer",
+                    "description": "Issue number (without the leading #).",
+                },
             },
             "required": ["repo", "issue_number"],
         }
@@ -201,8 +253,16 @@ class GitHubPrContextTool(ToolSpec):
         return {
             "type": "object",
             "properties": {
-                "repo": {"type": "string"},
-                "pr_number": {"type": "integer"},
+                "repo": {
+                    "type": "string",
+                    "description": "Repository in 'owner/name' form.",
+                },
+                "pr_number": {
+                    "type": "integer",
+                    "description": (
+                        "Pull request number (without the leading #)."
+                    ),
+                },
             },
             "required": ["repo", "pr_number"],
         }
@@ -235,10 +295,28 @@ class GitHubCommentTool(ToolSpec):
         return {
             "type": "object",
             "properties": {
-                "repo": {"type": "string"},
-                "issue_number": {"type": "integer"},
-                "pr_number": {"type": "integer"},
-                "body": {"type": "string"},
+                "repo": {
+                    "type": "string",
+                    "description": "Repository in 'owner/name' form.",
+                },
+                "issue_number": {
+                    "type": "integer",
+                    "description": (
+                        "Issue to comment on. Provide exactly one of "
+                        "issue_number or pr_number."
+                    ),
+                },
+                "pr_number": {
+                    "type": "integer",
+                    "description": (
+                        "Pull request to comment on. Provide exactly one "
+                        "of issue_number or pr_number."
+                    ),
+                },
+                "body": {
+                    "type": "string",
+                    "description": "Comment body (GitHub Markdown).",
+                },
             },
             "required": ["repo", "body"],
         }
@@ -273,10 +351,30 @@ class GitHubCloseTool(ToolSpec):
         return {
             "type": "object",
             "properties": {
-                "repo": {"type": "string"},
-                "issue_number": {"type": "integer"},
-                "pr_number": {"type": "integer"},
-                "comment": {"type": "string"},
+                "repo": {
+                    "type": "string",
+                    "description": "Repository in 'owner/name' form.",
+                },
+                "issue_number": {
+                    "type": "integer",
+                    "description": (
+                        "Issue to close. Provide exactly one of "
+                        "issue_number or pr_number."
+                    ),
+                },
+                "pr_number": {
+                    "type": "integer",
+                    "description": (
+                        "Pull request to close. Provide exactly one of "
+                        "issue_number or pr_number."
+                    ),
+                },
+                "comment": {
+                    "type": "string",
+                    "description": (
+                        "Optional closing comment posted with the close."
+                    ),
+                },
             },
             "required": ["repo"],
         }

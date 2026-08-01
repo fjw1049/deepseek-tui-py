@@ -22,7 +22,18 @@ class ListMcpResourcesTool(ToolSpec):
         return "List resources exposed by configured MCP servers."
 
     def input_schema(self) -> dict[str, object]:
-        return {"type": "object", "properties": {"server": {"type": "string"}}}
+        return {
+            "type": "object",
+            "properties": {
+                "server": {
+                    "type": "string",
+                    "description": (
+                        "Optional MCP server name to filter by; omit to "
+                        "list resources from every configured server."
+                    ),
+                },
+            },
+        }
 
     def capabilities(self) -> list[ToolCapability]:
         return [ToolCapability.READ_ONLY]
@@ -44,8 +55,17 @@ class ReadMcpResourceTool(ToolSpec):
         return {
             "type": "object",
             "properties": {
-                "server": {"type": "string"},
-                "uri": {"type": "string"},
+                "server": {
+                    "type": "string",
+                    "description": "MCP server name (as configured).",
+                },
+                "uri": {
+                    "type": "string",
+                    "description": (
+                        "Resource URI exactly as returned by "
+                        "list_mcp_resources."
+                    ),
+                },
             },
             "required": ["server", "uri"],
         }

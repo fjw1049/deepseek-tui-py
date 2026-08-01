@@ -79,7 +79,15 @@ class TaskCreateTool(ToolSpec):
         return {
             "type": "object",
             "properties": {
-                "prompt": {"type": "string"},
+                "prompt": {
+                    "type": "string",
+                    "description": (
+                        "The task instruction, written self-contained: the "
+                        "durable task starts with no conversation context, "
+                        "so include goal, relevant paths, and success "
+                        "criteria."
+                    ),
+                },
                 "resume": {
                     "type": "string",
                     "description": (
@@ -88,10 +96,36 @@ class TaskCreateTool(ToolSpec):
                         "'prompt' — pass only one."
                     ),
                 },
-                "model": {"type": "string"},
-                "workspace": {"type": "string"},
-                "mode": {"type": "string", "enum": ["agent", "plan", "yolo"]},
-                "allow_shell": {"type": "boolean"},
+                "model": {
+                    "type": "string",
+                    "description": (
+                        "Model id for the task; omit to use the session's "
+                        "current model."
+                    ),
+                },
+                "workspace": {
+                    "type": "string",
+                    "description": (
+                        "Workspace directory the task runs in (absolute "
+                        "path). Defaults to the current workspace."
+                    ),
+                },
+                "mode": {
+                    "type": "string",
+                    "enum": ["agent", "plan", "yolo"],
+                    "description": (
+                        "App mode for the task. Default 'agent'; 'plan' is "
+                        "read-only analysis; 'yolo' skips approvals — only "
+                        "when the user explicitly asked for it."
+                    ),
+                },
+                "allow_shell": {
+                    "type": "boolean",
+                    "description": (
+                        "Whether the task may run shell commands. Defaults "
+                        "to the session's current policy."
+                    ),
+                },
             },
             # 'prompt' stays effectively required, but 'resume' is the
             # alternative — enforced in execute(), not the schema.
@@ -161,8 +195,23 @@ class TaskListTool(ToolSpec):
         return {
             "type": "object",
             "properties": {
-                "limit": {"type": "integer", "minimum": 1},
-                "kind": {"type": "string", "enum": list(_TASK_KINDS)},
+                "limit": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": (
+                        "Maximum durable tasks to return (newest first); "
+                        "omit for all."
+                    ),
+                },
+                "kind": {
+                    "type": "string",
+                    "enum": list(_TASK_KINDS),
+                    "description": (
+                        "Filter by kind: 'task' = durable background "
+                        "tasks, 'agent' = in-session sub-agents. Omit for "
+                        "both."
+                    ),
+                },
             },
             "additionalProperties": False,
         }

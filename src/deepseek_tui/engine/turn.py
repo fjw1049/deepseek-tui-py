@@ -627,10 +627,23 @@ def prepare_turn_for_model(
 ) -> ProcessedTurnInput:
     """Expand ``@mentions`` before the message is sent to the LLM."""
     del turn_id  # reserved for per-turn artifact namespacing
-    return process_turn_input(
+    processed = process_turn_input(
         UserTurnInput(raw_text=content),
         workspace=workspace,
         cwd=cwd,
         session_id=session_id,
         config=config,
     )
+    # Trust boundary: reminder tags inside user-supplied content (typed
+    # or inlined via @file expansion) must not read as runtime reminders.
+    # Display text is left untouched — the user sees what they wrote.
+    from deepseek_tui.engine.context_pressure import (
+        neutralize_fake_system_reminders,
+    )
+
+    sanitized = neutralize_fake_system_reminders(processed.model_text)
+    if sanitized != processed.model_text:
+        from dataclasses import replace
+
+        processed = replace(processed, model_text=sanitized)
+    return processed

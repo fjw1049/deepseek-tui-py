@@ -26,16 +26,32 @@ class RunTestsTool(ToolSpec):
 
     def description(self) -> str:
         return (
-            "Run project tests. Detects pytest/cargo/npm and executes "
-            "with optional extra arguments."
+            "Run the project's test suite. Auto-detects the runner from "
+            "project files (pyproject.toml/setup.py → pytest, Cargo.toml → "
+            "cargo test, package.json → npm test); override with "
+            "'command' when the project uses something else. Output is "
+            "returned as JSON (exit_code, stdout, stderr) and killed after "
+            "300s — for longer suites use exec_shell with background=true."
         )
 
     def input_schema(self) -> dict[str, object]:
         return {
             "type": "object",
             "properties": {
-                "args": {"type": "string"},
-                "command": {"type": "string"},
+                "args": {
+                    "type": "string",
+                    "description": (
+                        "Extra arguments appended to the test command, "
+                        "e.g. 'tests/test_api.py -k login -q'."
+                    ),
+                },
+                "command": {
+                    "type": "string",
+                    "description": (
+                        "Full test command to run instead of the "
+                        "auto-detected one, e.g. 'make test'."
+                    ),
+                },
             },
         }
 

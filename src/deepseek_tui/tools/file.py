@@ -39,7 +39,13 @@ class ReadFileTool(ToolSpec):
         return {
             "type": "object",
             "properties": {
-                "path": {"type": "string"},
+                "path": {
+                    "type": "string",
+                    "description": (
+                        "File to read, workspace-relative (e.g. "
+                        "'src/app.py'). Absolute only if the user gave one."
+                    ),
+                },
                 "offset": {
                     "type": "integer",
                     "minimum": 0,
@@ -109,15 +115,32 @@ class WriteFileTool(ToolSpec):
             "before overwriting it; new files can be written directly. "
             "Prefer this (or edit_file) for source changes — do not rewrite "
             "files via exec_shell. Use this only for new files or full "
-            "rewrites; for partial changes use edit_file."
+            "rewrites; for partial changes use edit_file. "
+            "Paths are workspace-relative: path=\"notes.md\" lands at "
+            "<workspace>/notes.md. Do not use ~/ or absolute paths outside "
+            "the workspace — they are rejected."
         )
 
     def input_schema(self) -> dict[str, object]:
         return {
             "type": "object",
             "properties": {
-                "path": {"type": "string"},
-                "content": {"type": "string"},
+                "path": {
+                    "type": "string",
+                    "description": (
+                        "Destination, workspace-relative: 'notes.md' lands "
+                        "at <workspace>/notes.md. Throwaway scripts and "
+                        "drafts go under 'scratch/'."
+                    ),
+                },
+                "content": {
+                    "type": "string",
+                    "description": (
+                        "Complete file content (UTF-8). This replaces the "
+                        "whole file — never write placeholders like "
+                        "'... rest unchanged'."
+                    ),
+                },
             },
             "required": ["path", "content"],
         }
@@ -180,9 +203,26 @@ class EditFileTool(ToolSpec):
         return {
             "type": "object",
             "properties": {
-                "path": {"type": "string"},
-                "old_string": {"type": "string", "description": "Text to replace."},
-                "new_string": {"type": "string", "description": "Replacement text."},
+                "path": {
+                    "type": "string",
+                    "description": "File to edit, workspace-relative.",
+                },
+                "old_string": {
+                    "type": "string",
+                    "description": (
+                        "Exact text to replace, copied verbatim from a "
+                        "read_file result (match indentation exactly; never "
+                        "include line-number prefixes). Must be unique in "
+                        "the file unless replace_all=true — include enough "
+                        "surrounding lines to make it unique."
+                    ),
+                },
+                "new_string": {
+                    "type": "string",
+                    "description": (
+                        "Replacement text (must differ from old_string)."
+                    ),
+                },
                 "replace_all": {
                     "type": "boolean",
                     "default": False,

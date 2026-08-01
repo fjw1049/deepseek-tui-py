@@ -56,7 +56,10 @@ class ExecShellTool(ToolSpec):
             "'process_id' with 'input' (and/or close_stdin=true) instead of "
             "'command' — the two are mutually exclusive. "
             "Foreground commands are killed after timeout_ms milliseconds "
-            "(default 120000, max 600000). Do not use this to fetch a URL — "
+            "(default 120000, max 600000); use background=true for servers, "
+            "watchers, and full test suites, and if a foreground command "
+            "times out, rerun it in the background instead of retrying "
+            "foreground. Do not use this to fetch a URL — "
             "use fetch_url instead; only shell out with curl/wget when fetch_url "
             "is unavailable or you need shell piping around the response. "
             "Do not mutate source files via sed/python/heredoc — use edit_file "
@@ -64,7 +67,12 @@ class ExecShellTool(ToolSpec):
             "Do not use grep/rg to search file contents, find/ls -R to "
             "locate files by name, or cat to read a file — use grep_files, "
             "file_search, and read_file respectively; exec_shell is for "
-            "builds, tests, git, and process management."
+            "builds, tests, git, and process management. "
+            "Commands may run under an OS sandbox: writable paths are the "
+            "workspace, /tmp and $TMPDIR, and allowed tool caches; "
+            ".deepseek/ under the workspace is read-only to shell. On "
+            "'Operation not permitted', retry with output under the "
+            "workspace or /tmp, or use a file tool for that write."
         )
 
     def input_schema(self) -> dict[str, object]:
@@ -78,8 +86,25 @@ class ExecShellTool(ToolSpec):
                         "'process_id' is given (mutually exclusive)."
                     ),
                 },
-                "background": {"type": "boolean"},
-                "pty": {"type": "boolean"},
+                "background": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": (
+                        "Run detached and return a process_id immediately. "
+                        "Use for servers, watchers, and anything expected "
+                        "to outlive the foreground timeout."
+                    ),
+                },
+                "pty": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": (
+                        "Allocate a pseudo-TTY. Only for programs that "
+                        "require a terminal (interactive prompts, "
+                        "TTY-gated output); plain commands run faster "
+                        "without it."
+                    ),
+                },
                 "timeout_ms": {
                     "type": "integer",
                     "minimum": 1,

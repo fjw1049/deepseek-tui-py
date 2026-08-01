@@ -195,6 +195,59 @@ class SessionMaintenanceMixin:
                 ),
             )
 
+    # Long-session drift reminder: first injection once the context passes
+    # _DRIFT_REMINDER_FIRST_RATIO of the window, then again after each
+    # further _DRIFT_REMINDER_STEP_RATIO of growth (0.4 → 0.6 → 0.8,
+    # interleaved between the seam levels).
+    _DRIFT_REMINDER_FIRST_RATIO = 0.40
+    _DRIFT_REMINDER_STEP_RATIO = 0.20
+
+    def _maybe_inject_long_session_reminder(
+        self, messages: list[Message], model: str
+    ) -> None:
+        """Append a short values reminder when the session grows long.
+
+        Counters attention decay on the distant system prefix (the
+        ``long_conversation_reminder`` pattern): a ~150-token re-anchor of
+        the load-bearing disciplines, injected as a user-role
+        ``<system-reminder>`` at the context tail. Earlier copies are never
+        removed (prefix-cache friendly); compaction/rewrite archives them
+        naturally, and the tracker resets when the context shrinks past the
+        last injection point.
+        """
+        from deepseek_tui.engine.context_pressure import (
+            measure_context_pressure,
+            wrap_system_reminder,
+        )
+        from deepseek_tui.engine.prompts import LONG_SESSION_REMINDER
+        from deepseek_tui.protocol.messages import MessageOrigin
+
+        pressure = measure_context_pressure(
+            model, messages, real_input_tokens=self.last_real_input_tokens
+        )
+        if pressure.tokens < int(pressure.window * self._DRIFT_REMINDER_FIRST_RATIO):
+            return
+        last = getattr(self, "_drift_reminder_tokens", 0)
+        if last > pressure.tokens:
+            # Context shrank (compaction/rewrite/cycle) past the last
+            # injection point — the old copy was archived, start over.
+            last = 0
+        step = int(pressure.window * self._DRIFT_REMINDER_STEP_RATIO)
+        if last and pressure.tokens - last < step:
+            return
+        self._drift_reminder_tokens = pressure.tokens
+        logger.info(
+            "long_session_reminder_injected tokens=%d window=%d",
+            pressure.tokens,
+            pressure.window,
+        )
+        messages.append(
+            Message.user(
+                wrap_system_reminder(LONG_SESSION_REMINDER),
+                origin=MessageOrigin.SYSTEM_REMINDER,
+            )
+        )
+
     async def _auto_persist_session(self) -> None:
         """Best-effort session persistence after each turn.
 

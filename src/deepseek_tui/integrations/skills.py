@@ -300,7 +300,21 @@ def skills_directories(
     _add(claude_global_skills_dir())
     if skills_dir is None:
         _add(default_skills_dir())
+    _add(bundled_skills_dir())
     return dirs
+
+
+def bundled_skills_dir() -> Path | None:
+    """Skills shipped inside the package (Claude Code bundled-skills
+    pattern). Lowest precedence so any user-installed skill of the same
+    name overrides the bundled one."""
+    try:
+        from importlib.resources import files as pkg_files
+
+        p = Path(str(pkg_files("deepseek_tui") / "skills"))
+    except Exception:  # noqa: BLE001 — zipped install etc.; no bundle
+        return None
+    return p if p.is_dir() else None
 
 
 def discover_in_workspace(

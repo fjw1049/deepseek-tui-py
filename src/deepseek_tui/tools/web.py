@@ -56,6 +56,9 @@ class FetchUrlTool(ToolSpec):
             "hand-rolling curl/wget in exec_shell for any HTTP(S) read. "
             "Uses AnySearch extract for general pages (clean Markdown, low "
             "noise); raw HTTP for direct files (raw GitHub, .md/.txt). "
+            "For a raw GitHub file that times out, retry via "
+            "https://cdn.jsdelivr.net/gh/<owner>/<repo>@<branch>/<path>. "
+            "Use web_search when you need to discover a URL first. "
             "Default max_chars=30000."
         )
 
@@ -63,8 +66,19 @@ class FetchUrlTool(ToolSpec):
         return {
             "type": "object",
             "properties": {
-                "url": {"type": "string"},
-                "max_chars": {"type": "integer"},
+                "url": {
+                    "type": "string",
+                    "description": "Full http(s) URL to fetch.",
+                },
+                "max_chars": {
+                    "type": "integer",
+                    "default": 30000,
+                    "description": (
+                        "Truncate returned content to this many characters. "
+                        "Raise it only when you genuinely need the full "
+                        "document."
+                    ),
+                },
             },
             "required": ["url"],
         }
@@ -236,8 +250,19 @@ class WebSearchTool(ToolSpec):
         return {
             "type": "object",
             "properties": {
-                "query": {"type": "string"},
-                "max_results": {"type": "integer"},
+                "query": {
+                    "type": "string",
+                    "description": (
+                        "Search query. Keep it short and keyword-like; "
+                        "include the current year for time-sensitive "
+                        "topics."
+                    ),
+                },
+                "max_results": {
+                    "type": "integer",
+                    "default": 8,
+                    "description": "Maximum results to return.",
+                },
             },
             "required": ["query"],
         }
