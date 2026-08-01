@@ -156,6 +156,7 @@ async def run_workflow(
     cwd: Path | None = None,
     initial_graph: Any | None = None,
     run_id: str | None = None,
+    resume_ctx: dict[str, Any] | None = None,
 ) -> WorkflowRunResult:
     """Run a workflow via the DAG ready-set scheduler (v1 phases compile to DAG)."""
     return await schedule_workflow(
@@ -173,6 +174,7 @@ async def run_workflow(
         cwd=cwd,
         initial_graph=initial_graph,
         run_id=run_id,
+        resume_ctx=resume_ctx,
     )
 
 
@@ -242,6 +244,9 @@ class WorkflowRunner(Protocol):
         cancel_event: asyncio.Event | None,
         on_agent_id: Any,
         timeout_seconds: float | None = None,
+        resume_agent_id: str | None = None,
+        force_retry: bool = False,
+        on_start_mode: Any = None,
     ) -> StepOutput | None:
         ...
 
@@ -269,6 +274,21 @@ class DeepSeekAgentRunner:
             return sorted(ANALYSIS_ONLY_TOOLS)
         return allowed
 
+    def _agent_resumable(self, agent_id: str) -> bool:
+        try:
+            # get_result is async; peek via known agents / sync list
+            for snap in self._manager.list_agents():
+                if snap.agent_id != agent_id:
+                    continue
+                return snap.status.kind in (
+                    SubAgentStatusKind.FAILED,
+                    SubAgentStatusKind.CANCELLED,
+                    SubAgentStatusKind.INTERRUPTED,
+                )
+        except Exception:  # noqa: BLE001
+            _LOG.debug("workflow agent resumable check failed id=%s", agent_id, exc_info=True)
+        return False
+
     async def run(
         self,
         *,
@@ -282,49 +302,79 @@ class DeepSeekAgentRunner:
         cancel_event: asyncio.Event | None,
         on_agent_id: Any = None,
         timeout_seconds: float | None = None,
+        resume_agent_id: str | None = None,
+        force_retry: bool = False,
+        on_start_mode: Any = None,
     ) -> StepOutput | None:
         if cancel_event is not None and cancel_event.is_set():
             raise WorkflowAbortedError("workflow cancelled")
-        parsed = SubAgentType.parse(agent_type) or SubAgentType.GENERAL
-        # Inherit the parent session's approval tier by default. ``strict``
-        # forces prompts (auto_approve=False). ``analysis_only`` keeps
-        # auto_approve=True because the tool allowlist is already read-only.
-        # Legacy ``trusted_workflow`` maps to inherit (no longer bypasses the
-        # global three-tier policy).
-        if policy.approval_mode == "strict":
-            auto_approve: bool | None = False
-        elif policy.approval_mode == "analysis_only":
-            auto_approve = True
-        else:
-            auto_approve = None  # inherit / trusted_workflow
 
-        request = SpawnRequest(
-            prompt=prompt,
-            agent_type=parsed,
-            assignment=SubAgentAssignment(objective=prompt, role=label),
-            allowed_tools=self._allowed_tools(policy, allowed_tools),
-            model=model,
-            nickname=label,
-            parent_depth=self._parent_depth,
-            output_schema=output_schema,
-            auto_approve=auto_approve,
-            workspace=self._workspace,
-        )
-        snap = await self._manager.spawn(request)
+        start_mode = "spawn"
+        agent_id: str | None = None
+        resume_id = (resume_agent_id or "").strip() or None
+        if resume_id and not force_retry and self._agent_resumable(resume_id):
+            try:
+                snap = await self._manager.resume(resume_id)
+                agent_id = snap.agent_id
+                start_mode = "resume"
+            except (KeyError, RuntimeError) as exc:
+                _LOG.info(
+                    "workflow agent resume unavailable id=%s err=%s; falling back to spawn",
+                    resume_id,
+                    exc,
+                )
+                agent_id = None
+
+        if agent_id is None:
+            parsed = SubAgentType.parse(agent_type) or SubAgentType.GENERAL
+            # Inherit the parent session's approval tier by default. ``strict``
+            # forces prompts (auto_approve=False). ``analysis_only`` keeps
+            # auto_approve=True because the tool allowlist is already read-only.
+            # Legacy ``trusted_workflow`` maps to inherit (no longer bypasses the
+            # global three-tier policy).
+            if policy.approval_mode == "strict":
+                auto_approve: bool | None = False
+            elif policy.approval_mode == "analysis_only":
+                auto_approve = True
+            else:
+                auto_approve = None  # inherit / trusted_workflow
+
+            request = SpawnRequest(
+                prompt=prompt,
+                agent_type=parsed,
+                assignment=SubAgentAssignment(objective=prompt, role=label),
+                allowed_tools=self._allowed_tools(policy, allowed_tools),
+                model=model,
+                nickname=label,
+                parent_depth=self._parent_depth,
+                output_schema=output_schema,
+                auto_approve=auto_approve,
+                workspace=self._workspace,
+            )
+            snap = await self._manager.spawn(request)
+            agent_id = snap.agent_id
+            start_mode = "retry" if (resume_id or force_retry) else "spawn"
+
+        if callable(on_start_mode):
+            try:
+                on_start_mode(start_mode)
+            except Exception:  # noqa: BLE001
+                _LOG.debug("on_start_mode failed", exc_info=True)
         if on_agent_id is not None:
-            on_agent_id(snap.agent_id)
+            on_agent_id(agent_id)
         if self._register_spawned is not None:
-            self._register_spawned(snap.agent_id)
+            self._register_spawned(agent_id)
 
         timeout_s = (
             timeout_seconds if timeout_seconds is not None else WAIT_TIMEOUT_MS / 1000
         )
         deadline = time.monotonic() + timeout_s
-        final = snap
+        assert agent_id is not None
+        final = await self._manager.get_result(agent_id)
 
         async def _try_cancel() -> None:
             try:
-                await self._manager.cancel(snap.agent_id)
+                await self._manager.cancel(agent_id)
             except KeyError:
                 pass
 
@@ -334,7 +384,7 @@ class DeepSeekAgentRunner:
                     await _try_cancel()
                     raise WorkflowAbortedError("workflow cancelled")
                 try:
-                    final = await self._manager.get_result(snap.agent_id)
+                    final = await self._manager.get_result(agent_id)
                 except KeyError:
                     return None
                 except Exception:

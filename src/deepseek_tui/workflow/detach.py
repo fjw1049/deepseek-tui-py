@@ -46,6 +46,57 @@ def is_workflow_detach_prompt(prompt: str) -> bool:
     return parse_detach_prompt(prompt) is not None
 
 
+async def enqueue_workflow_resume(
+    *,
+    run_id: str,
+    workspace: Path,
+    task_manager: Any,
+    thread_id: str | None = None,
+) -> dict[str, str]:
+    """Re-queue a checkpointed workflow as a detach Task (HTTP / UI direct resume).
+
+    Returns ``{run_id, task_id}``. Raises ``WorkflowRunStoreError`` /
+    ``WorkflowValidationError`` equivalents as ValueError/RuntimeError for
+    callers to map to HTTP status codes.
+    """
+    from deepseek_tui.tools.task.models import NewTaskRequest
+    from deepseek_tui.workflow.store import (
+        WorkflowRunStoreError,
+        is_run_actively_running,
+        load_run,
+        save_run,
+        clear_stop_intent,
+    )
+
+    try:
+        record = load_run(run_id, workspace=workspace)
+    except WorkflowRunStoreError as exc:
+        raise KeyError(str(exc)) from exc
+    if record.status == "completed":
+        raise RuntimeError(f"run {record.run_id} already completed")
+    if is_run_actively_running(record, workspace=workspace):
+        raise RuntimeError(
+            f"run {record.run_id} appears to still be running "
+            "(active lease or recent checkpoint)"
+        )
+    if record.status != "running":
+        clear_stop_intent(record.run_id, workspace=workspace)
+    prompt = encode_detach_prompt(run_id=record.run_id, workspace=workspace)
+    task = await task_manager.add_task(
+        NewTaskRequest(
+            prompt=prompt,
+            workspace=str(workspace),
+            auto_approve=True,
+            thread_id=thread_id,
+        )
+    )
+    record.task_id = task.id
+    record.status = "running"
+    record.error = None
+    save_run(record, workspace=workspace)
+    return {"run_id": record.run_id, "task_id": task.id}
+
+
 def wrap_task_executor_for_workflow_detach(inner: ExecutorFunc) -> ExecutorFunc:
     """Run detach workflow jobs in-process; forward all other tasks to *inner*."""
 
@@ -90,6 +141,7 @@ async def execute_detached_workflow(
         heartbeat_run_lease,
         is_run_actively_running,
         load_run,
+        prepare_workflow_resume,
         release_run_lease,
         safe_checkpoint_run,
         save_run,
@@ -283,8 +335,10 @@ async def execute_detached_workflow(
             detail=json.dumps({"run_id": record.run_id, "status": "interrupted"}),
         )
 
-    skip_step_ids = set(record.completed_step_ids)
-    initial_outputs = record.restored_outputs()
+    # Same restore path as sync WorkflowTool: keep successes, retry failures,
+    # restore runtime_graph + dynamic bags (previously write-only on detach).
+    plan = prepare_workflow_resume(record)
+    save_run(record, workspace=project_cwd)
 
     def on_checkpoint(ctx_obj: Any, snap: WorkflowSnapshot, logs: list[str]) -> None:
         nonlocal last_snapshot
@@ -308,6 +362,7 @@ async def execute_detached_workflow(
             skipped_step_ids=list(ctx_obj.skipped_step_ids),
             failed_step_ids=list(ctx_obj.failed_step_ids),
             estimated_tokens_used=ctx_obj.estimated_tokens_used,
+            agent_bindings=dict(getattr(ctx_obj, "agent_bindings", {}) or {}),
         )
 
     try:
@@ -318,8 +373,10 @@ async def execute_detached_workflow(
             manager=manager,
             on_checkpoint=on_checkpoint,
             task=record.task,
-            initial_outputs=initial_outputs,
-            skip_step_ids=skip_step_ids,
+            initial_outputs=plan.initial_outputs,
+            skip_step_ids=plan.skip_step_ids,
+            initial_graph=plan.initial_graph,
+            resume_ctx=plan.resume_ctx,
             cwd=project_cwd,
             run_id=record.run_id,
         )

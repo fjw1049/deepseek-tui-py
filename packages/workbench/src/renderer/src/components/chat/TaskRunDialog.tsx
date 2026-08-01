@@ -2,11 +2,10 @@ import { useEffect, useMemo, useState, type ReactElement, type ReactNode } from 
 import { createPortal } from 'react-dom'
 import { Loader2, X } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
-import { fetchTaskDetail, type TaskDetail } from '../../hooks/use-thread-tasks'
+import { fetchTaskDetail, resumeTask, type TaskDetail } from '../../hooks/use-thread-tasks'
 import { isActiveTaskStatus, isResumableTaskStatus, type TaskStatus } from '../../lib/extract-tasks-from-blocks'
 import { timelineToFlowItems } from '../../lib/task-step-flow'
 import { formatTaskDuration, TaskStatusGlyph, taskStatusLabelKey } from './task-status'
-import { useChatStore } from '../../store/chat-store'
 import { StepFlow } from './StepFlow'
 
 type Props = {
@@ -25,17 +24,18 @@ export function TaskRunDialog({
   onClose
 }: Props): ReactElement | null {
   const { t } = useTranslation('common')
-  const sendMessage = useChatStore((s) => s.sendMessage)
-  const busy = useChatStore((s) => s.busy)
   const [detail, setDetail] = useState<TaskDetail | null>(null)
   const [loading, setLoading] = useState(false)
   const [resuming, setResuming] = useState(false)
+  const [resumeError, setResumeError] = useState<string | null>(null)
   const [promptOpen, setPromptOpen] = useState(false)
+  const [pollToken, setPollToken] = useState(0)
 
   useEffect(() => {
     if (!open) {
       setDetail(null)
       setPromptOpen(false)
+      setResumeError(null)
       return
     }
     let cancelled = false
@@ -53,14 +53,15 @@ export function TaskRunDialog({
     }
     setLoading(true)
     load()
-    if (isActiveTaskStatus(initialStatus)) {
+    // pollToken bumps after a direct resume so we keep polling the re-queued task.
+    if (isActiveTaskStatus(initialStatus) || pollToken > 0) {
       interval = window.setInterval(load, POLL_MS)
     }
     return () => {
       cancelled = true
       if (interval !== undefined) window.clearInterval(interval)
     }
-  }, [open, taskId, initialStatus])
+  }, [open, taskId, initialStatus, pollToken])
 
   useEffect(() => {
     if (!open) return
@@ -83,7 +84,7 @@ export function TaskRunDialog({
 
   const status = detail?.status ?? initialStatus
   const active = isActiveTaskStatus(status)
-  const canResume = isResumableTaskStatus(status) && !busy && !resuming
+  const canResume = isResumableTaskStatus(status) && !resuming
   const prompt = detail?.prompt ?? ''
   const durationLabel = formatTaskDuration(detail?.durationMs ?? null)
   const statusLabel = t(taskStatusLabelKey(status))
@@ -91,9 +92,17 @@ export function TaskRunDialog({
   const onResume = async (): Promise<void> => {
     if (!canResume) return
     setResuming(true)
+    setResumeError(null)
     try {
-      const resumePrompt = t('taskResumePrompt', { taskId })
-      await sendMessage(resumePrompt, 'task')
+      const next = await resumeTask(taskId)
+      setDetail(next)
+      setPollToken((n) => n + 1)
+    } catch (err) {
+      setResumeError(
+        err instanceof Error && err.message.trim()
+          ? err.message
+          : t('taskResumeFailed')
+      )
     } finally {
       setResuming(false)
     }
@@ -147,6 +156,11 @@ export function TaskRunDialog({
 
         <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-6">
           <div className="flex flex-col gap-5">
+            {resumeError ? (
+              <p className="rounded-[12px] bg-ds-hover/70 px-3 py-2 text-[12.5px] leading-5 text-ds-ink/80">
+                {resumeError}
+              </p>
+            ) : null}
             {prompt ? (
               <GroupedSection
                 title={t('contextRailTaskPrompt')}

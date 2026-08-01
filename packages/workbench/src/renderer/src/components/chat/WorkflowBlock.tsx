@@ -2,13 +2,21 @@ import { useState, type ReactElement } from 'react'
 import { ChevronDown, Loader2, Workflow } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import type { WorkflowSnapshotPayload } from '../../lib/workflow-snapshot'
-import { useChatStore } from '../../store/chat-store'
+import { resumeWorkflow } from '../../hooks/use-workflow-resume'
 import type { StepFlowItem } from './StepFlow'
 import {
   WorkflowDagView,
   workflowFocusLabel,
   workflowProgressPct
 } from './WorkflowDagView'
+
+type WorkflowStatus =
+  | 'running'
+  | 'completed'
+  | 'failed'
+  | 'cancelled'
+  | 'timed_out'
+  | 'interrupted'
 
 export function WorkflowBlock({
   workflowName,
@@ -18,26 +26,28 @@ export function WorkflowBlock({
   subagentStepsByAgentId
 }: {
   workflowName: string
-  status: 'running' | 'completed' | 'failed' | 'cancelled' | 'timed_out'
+  status: WorkflowStatus
   snapshot: WorkflowSnapshotPayload
   runId?: string
   /** Live tool-step rails joined into DAG agent rows by agent_id. */
   subagentStepsByAgentId?: Record<string, StepFlowItem[]>
 }): ReactElement {
   const { t } = useTranslation('common')
-  const sendMessage = useChatStore((s) => s.sendMessage)
-  const busy = useChatStore((s) => s.busy)
   // Collapsed by default — expand for the DAG; keeps the timeline calm when
   // many workflows / large graphs are in play.
   const [expanded, setExpanded] = useState(false)
   const [resuming, setResuming] = useState(false)
+  const [resumeError, setResumeError] = useState<string | null>(null)
 
   const name = workflowName || snapshot.name
   const running = status === 'running'
   const pct = workflowProgressPct(snapshot)
   const focus = workflowFocusLabel(snapshot)
   const showAlert =
-    status === 'failed' || status === 'timed_out' || snapshot.error_count > 0
+    status === 'failed' ||
+    status === 'timed_out' ||
+    status === 'interrupted' ||
+    snapshot.error_count > 0
 
   const header =
     status === 'completed'
@@ -46,9 +56,11 @@ export function WorkflowBlock({
         ? t('workflowCancelled')
         : status === 'timed_out'
           ? t('workflowTimedOut')
-          : status === 'running'
-            ? t('workflowRunning')
-            : t('workflowFailed')
+          : status === 'interrupted'
+            ? t('workflowInterrupted')
+            : status === 'running'
+              ? t('workflowRunning')
+              : t('workflowFailed')
 
   const stateLine =
     snapshot.error_count > 0
@@ -64,16 +76,24 @@ export function WorkflowBlock({
 
   const canResume =
     Boolean(runId) &&
-    (status === 'cancelled' || status === 'failed' || status === 'timed_out') &&
-    !busy &&
+    (status === 'cancelled' ||
+      status === 'failed' ||
+      status === 'timed_out' ||
+      status === 'interrupted') &&
     !resuming
 
   const onResume = async (): Promise<void> => {
     if (!runId || !canResume) return
     setResuming(true)
+    setResumeError(null)
     try {
-      const prompt = t('workflowResumePrompt', { runId })
-      await sendMessage(prompt, 'workflow')
+      await resumeWorkflow(runId)
+    } catch (err) {
+      setResumeError(
+        err instanceof Error && err.message.trim()
+          ? err.message
+          : t('workflowResumeFailed')
+      )
     } finally {
       setResuming(false)
     }
@@ -115,6 +135,16 @@ export function WorkflowBlock({
                 </>
               ) : null}
             </span>
+            {canResume ? (
+              <span className="mt-1 block text-[11px] leading-4 text-ds-muted">
+                {t('workflowResumeHint')}
+              </span>
+            ) : null}
+            {resumeError ? (
+              <span className="mt-1 block text-[11px] leading-4 text-ds-ink/80">
+                {resumeError}
+              </span>
+            ) : null}
             {pct != null ? (
               <span className="mt-2 block h-1 overflow-hidden rounded-full bg-ds-border/80">
                 <span

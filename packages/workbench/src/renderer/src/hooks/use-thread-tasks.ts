@@ -73,6 +73,75 @@ export async function fetchTaskDetail(id: string): Promise<TaskDetail | null> {
   }
 }
 
+/** Direct durable-task resume (POST /v1/tasks/{id}/resume) — no main-turn prompt. */
+export async function resumeTask(id: string): Promise<TaskDetail> {
+  if (typeof window.dsGui?.runtimeRequest !== 'function') {
+    throw new Error('runtime unavailable')
+  }
+  const r = await window.dsGui.runtimeRequest(
+    `/v1/tasks/${encodeURIComponent(id)}/resume`,
+    'POST'
+  )
+  if (!r.ok) {
+    throw new Error(r.body?.trim() || `resume task failed (${r.status})`)
+  }
+  let raw: Record<string, unknown>
+  try {
+    raw = JSON.parse(r.body) as Record<string, unknown>
+  } catch {
+    throw new Error('resume task returned invalid JSON')
+  }
+  if (raw.ok === false) {
+    throw new Error(
+      typeof raw.error === 'string' && raw.error.trim()
+        ? raw.error
+        : 'resume task failed'
+    )
+  }
+  const t =
+    raw.task && typeof raw.task === 'object' ? (raw.task as Record<string, unknown>) : raw
+  return {
+    id: typeof t.id === 'string' ? t.id : id,
+    status: normalizeTaskStatus(t.status),
+    prompt: typeof t.prompt === 'string' ? t.prompt : '',
+    resultSummary: typeof t.result_summary === 'string' ? t.result_summary : null,
+    error: typeof t.error === 'string' ? t.error : null,
+    durationMs: typeof t.duration_ms === 'number' ? t.duration_ms : null,
+    timeline: parseTimeline(t.timeline)
+  }
+}
+
+/** Direct sub-agent resume on a thread's warm engine. */
+export async function resumeThreadAgent(
+  threadId: string,
+  agentId: string
+): Promise<void> {
+  if (typeof window.dsGui?.runtimeRequest !== 'function') {
+    throw new Error('runtime unavailable')
+  }
+  const r = await window.dsGui.runtimeRequest(
+    `/v1/threads/${encodeURIComponent(threadId)}/agents/${encodeURIComponent(agentId)}/resume`,
+    'POST'
+  )
+  if (!r.ok) {
+    throw new Error(r.body?.trim() || `resume agent failed (${r.status})`)
+  }
+  if (!r.body.trim()) return
+  try {
+    const raw = JSON.parse(r.body) as Record<string, unknown>
+    if (raw.ok === false) {
+      throw new Error(
+        typeof raw.error === 'string' && raw.error.trim()
+          ? raw.error
+          : 'resume agent failed'
+      )
+    }
+  } catch (err) {
+    if (err instanceof SyntaxError) return
+    throw err
+  }
+}
+
 export type ActiveTaskIndex = {
   /** Thread ids that own a queued/running task (via the task's `thread_id`). */
   threadIds: Set<string>

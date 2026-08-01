@@ -359,6 +359,8 @@ class WorkflowRunContext:
     estimated_tokens_used: int = 0
     # Serialized CompiledGraph (incl. dynamic mutations) for checkpoint/resume.
     runtime_graph: dict[str, Any] | None = None
+    # unit_key → {agent_id, status, mode, updated_at} for true agent resume.
+    agent_bindings: dict[str, dict[str, Any]] = field(default_factory=dict)
 
 
 # Parse and validate Workflow IR JSON.

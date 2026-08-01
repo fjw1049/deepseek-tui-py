@@ -41,6 +41,7 @@ from deepseek_tui.workflow.store import (
     is_run_actively_running,
     list_runs,
     load_run,
+    prepare_workflow_resume,
     release_run_lease,
     safe_checkpoint_run,
     save_run,
@@ -360,6 +361,7 @@ class WorkflowTool(ToolSpec):
         skip_step_ids: set[str] | None = None
         initial_outputs = None
         initial_graph = None
+        resume_ctx = None
 
         try:
             detach = _optional_bool(input_data, "detach") or False
@@ -383,16 +385,15 @@ class WorkflowTool(ToolSpec):
                 # stop-intent is honored below after lease acquire.
                 if resume_record.status != "running":
                     clear_stop_intent(resume_record.run_id, workspace=cwd)
+                # Industry resume: reuse completed outputs, retry failed /
+                # cascade-skipped nodes, restore runtime_graph + dynamic bags.
+                plan = prepare_workflow_resume(resume_record)
                 spec = resume_record.parsed_spec()
                 runtime_task = resume_record.task
-                skip_step_ids = set(resume_record.completed_step_ids)
-                initial_outputs = resume_record.restored_outputs()
-                # Attach resume bags for scheduler (dynamic mutations / skips).
-                setattr(spec, "_resume_ctx", resume_record.resume_ctx_bag())
-                if isinstance(resume_record.runtime_graph, dict):
-                    from deepseek_tui.workflow.dag import CompiledGraph
-
-                    initial_graph = CompiledGraph.from_dict(resume_record.runtime_graph)
+                skip_step_ids = plan.skip_step_ids
+                initial_outputs = plan.initial_outputs
+                initial_graph = plan.initial_graph
+                resume_ctx = plan.resume_ctx
             else:
                 spec = self._resolve_spec(input_data, cwd=cwd)
                 runtime_task = input_data.get("task")
@@ -449,7 +450,8 @@ class WorkflowTool(ToolSpec):
                 content=(
                     f"Workflow cancelled via durable stop-intent "
                     f"(run_id={run_record.run_id}). "
-                    "Resume with workflow({run_id: ...}) to continue."
+                    "Resume with workflow({run_id: ...}) to retry failed "
+                    "steps and continue from checkpoint."
                 ),
                 metadata={
                     "workflow": {
@@ -554,6 +556,7 @@ class WorkflowTool(ToolSpec):
                 estimated_tokens_used=int(
                     getattr(ctx_obj, "estimated_tokens_used", 0) or 0
                 ),
+                agent_bindings=dict(getattr(ctx_obj, "agent_bindings", {}) or {}),
             )
 
         def _result_meta(extra: dict[str, Any]) -> dict[str, Any]:
@@ -584,6 +587,7 @@ class WorkflowTool(ToolSpec):
                     initial_outputs=initial_outputs,
                     skip_step_ids=skip_step_ids,
                     initial_graph=initial_graph,
+                    resume_ctx=resume_ctx,
                     cwd=cwd,
                     run_id=run_record.run_id,
                 )
@@ -605,7 +609,8 @@ class WorkflowTool(ToolSpec):
                     success=False,
                     content=(
                         f"Workflow cancelled (run_id={run_record.run_id}). "
-                        "Resume with workflow({run_id: ...})."
+                        "Resume with workflow({run_id: ...}) to retry "
+                        "failed steps and continue from checkpoint."
                     ),
                     metadata=_result_meta(
                         {
@@ -631,7 +636,8 @@ class WorkflowTool(ToolSpec):
                     success=False,
                     content=(
                         f"Workflow failed: {exc} (run_id={run_record.run_id}). "
-                        "Resume with workflow({run_id: ...})."
+                        "Resume with workflow({run_id: ...}) to retry "
+                        "failed steps and continue from checkpoint."
                     ),
                     metadata=_result_meta(
                         {
@@ -770,7 +776,8 @@ class WorkflowTool(ToolSpec):
                     timed_out_content = (
                         f"Workflow timed out after {timeout}s "
                         f"(run_id={run_record.run_id}). "
-                        "Resume with workflow({run_id: ...})."
+                        "Resume with workflow({run_id: ...}) to retry "
+                        "failed steps and continue from checkpoint."
                     )
                     meta = _result_meta(
                         {

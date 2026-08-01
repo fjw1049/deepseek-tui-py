@@ -28,6 +28,7 @@ from deepseek_tui.workflow.detach import (
 )
 from deepseek_tui.workflow.models import (
     WorkflowValidationError,
+    make_step_output,
     parse_workflow_spec,
 )
 from deepseek_tui.workflow.store import create_run, load_run
@@ -342,6 +343,106 @@ async def test_execute_detached_workflow_cancel(tmp_path: Path, monkeypatch: pyt
     assert out.error == "cancelled"
     reloaded = load_run(record.run_id, workspace=tmp_path)
     assert reloaded.status == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_execute_detached_workflow_applies_resume_plan(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Detach must restore runtime_graph + resume_ctx like the sync path."""
+    from deepseek_tui.workflow.models import WorkflowRunResult, WorkflowSnapshot
+    from deepseek_tui.workflow.store import checkpoint_run
+
+    _git_init(tmp_path)
+    spec = parse_workflow_spec(_minimal_spec())
+    record = create_run(spec, task="t", workspace=tmp_path)
+    checkpoint_run(
+        record,
+        completed_step_ids=["a1"],
+        outputs={"a1": make_step_output("kept")},
+        snapshot=WorkflowSnapshot(
+            name=spec.meta.name, description=spec.meta.description
+        ),
+        logs=[],
+        status="failed",
+        workspace=tmp_path,
+        runtime_graph={
+            "nodes": {},
+            "edges": [],
+            "phase_of": {},
+            "phase_titles": {},
+        },
+        failed_step_ids=["a2"],
+        skipped_step_ids=["a3"],
+        dynamic_states={"d": {"round": 1}},
+    )
+
+    captured: dict[str, Any] = {}
+
+    async def capturing_run_workflow(spec_arg: Any, **kwargs: Any) -> Any:
+        captured["skip_step_ids"] = kwargs.get("skip_step_ids")
+        captured["initial_outputs"] = kwargs.get("initial_outputs")
+        captured["initial_graph"] = kwargs.get("initial_graph")
+        captured["resume_ctx"] = kwargs.get("resume_ctx")
+        return WorkflowRunResult(
+            meta=spec.meta,
+            result={"ok": True},
+            snapshot=WorkflowSnapshot(
+                name=spec.meta.name, description=spec.meta.description
+            ),
+            logs=[],
+            duration_ms=1,
+            errors=[],
+        )
+
+    class _Mgr:
+        async def shutdown(self) -> None:
+            return None
+
+        def attach_loop_runtime(self, *_a: Any, **_k: Any) -> None:
+            return None
+
+        def attach_parent_cancel(self, *_a: Any, **_k: Any) -> None:
+            return None
+
+    monkeypatch.setattr(
+        "deepseek_tui.workflow.runtime.run_workflow",
+        capturing_run_workflow,
+    )
+    monkeypatch.setattr(
+        "deepseek_tui.tools.runtime.build_subagent_manager",
+        lambda *_a, **_k: (_Mgr(), None),
+    )
+    monkeypatch.setattr(
+        "deepseek_tui.client.factory.build_llm_client",
+        lambda *_a, **_k: object(),
+    )
+    monkeypatch.setattr(
+        "deepseek_tui.config.loader.ConfigLoader.load",
+        lambda self: __import__(
+            "deepseek_tui.config.models", fromlist=["Config"]
+        ).Config(),
+    )
+
+    task = ExecutionTask(
+        id="task_resume_plan",
+        prompt=encode_detach_prompt(run_id=record.run_id, workspace=tmp_path),
+        model="deepseek-chat",
+        workspace=str(tmp_path),
+        mode_label="agent",
+        allow_shell=False,
+        trust_mode=False,
+        auto_approve=True,
+    )
+    out = await execute_detached_workflow(task, asyncio.Event())
+    assert out.error is None, out.error
+    assert captured.get("skip_step_ids") == {"a1"}
+    assert "a1" in (captured.get("initial_outputs") or {})
+    assert captured.get("initial_graph") is not None
+    bag = captured.get("resume_ctx") or {}
+    assert bag.get("failed_step_ids") == []
+    assert bag.get("skipped_step_ids") == []
+    assert bag.get("dynamic_states") == {"d": {"round": 1}}
 
 
 @pytest.mark.asyncio

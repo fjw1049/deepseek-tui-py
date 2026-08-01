@@ -40,7 +40,7 @@ export type WorkflowProgressPayload = {
   workflowName: string
   snapshot: WorkflowSnapshotPayload
   completed: boolean
-  status?: 'running' | 'completed' | 'failed' | 'cancelled' | 'timed_out'
+  status?: 'running' | 'completed' | 'failed' | 'cancelled' | 'timed_out' | 'interrupted'
   runId?: string
 }
 

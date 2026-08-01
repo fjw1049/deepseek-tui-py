@@ -767,6 +767,29 @@ class RuntimeThreadManager:
         )
         return await self.get_thread_detail(thread_id)
 
+    async def resume_subagent(
+        self, thread_id: str, agent_id: str
+    ) -> dict[str, Any]:
+        """True-resume a sub-agent on this thread's warm engine.
+
+        Returns a JSON-serialisable snapshot dict. Raises ``FileNotFoundError``
+        when the thread is missing, ``KeyError`` when the agent is unknown,
+        and ``RuntimeError`` when the agent cannot be resumed (already
+        running / completed) or the manager is unavailable.
+        """
+        from deepseek_tui.tools.subagent.tools import _result_to_json
+
+        thread = self.store.load_thread(thread_id)
+        await self._ensure_engine_loaded(thread)
+        state = self._active.get(thread_id)
+        if state is None:
+            raise RuntimeError(f"Thread engine not loaded: {thread_id}")
+        manager = getattr(state.engine.tool_context, "subagent_manager", None)
+        if manager is None:
+            raise RuntimeError("subagent manager not configured")
+        snapshot = await manager.resume(agent_id)
+        return _result_to_json(snapshot)
+
     async def threads_summary(self) -> dict[str, Any]:
         """Compact roll-up over all threads.
 
@@ -1282,6 +1305,12 @@ class RuntimeThreadManager:
         if resume_from_incomplete:
             self._resync_warm_engine_from_store(thread_id)
 
+        soft_resume_reminder: str | None = None
+        if resume_from_incomplete:
+            soft_resume_reminder = await self._build_soft_resume_reminder_text(
+                thread_id
+            )
+
         now = datetime.now(timezone.utc)
         auto_approve = req.auto_approve if req.auto_approve is not None else thread.auto_approve
         trust_mode = req.trust_mode if req.trust_mode is not None else thread.trust_mode
@@ -1304,17 +1333,16 @@ class RuntimeThreadManager:
                 state.provider = provider
             state.engine.mode = effective_mode
             state.engine.tool_context.metadata["turn_latency_turn_id"] = turn_id
-            # Inject CONTINUE_NUDGE only after we own the turn slot so a
+            # Inject soft-resume reminder only after we own the turn slot so a
             # rejected concurrent start cannot pollute session_messages.
-            if resume_from_incomplete:
+            if resume_from_incomplete and soft_resume_reminder:
                 from deepseek_tui.engine.context_pressure import wrap_system_reminder
                 from deepseek_tui.protocol.messages import Message, MessageOrigin
-                from deepseek_tui.tools.durable_transcript import CONTINUE_NUDGE
 
                 resume_msgs = list(state.engine.session_messages)
                 resume_msgs.append(
                     Message.user(
-                        wrap_system_reminder(CONTINUE_NUDGE),
+                        wrap_system_reminder(soft_resume_reminder),
                         origin=MessageOrigin.SYSTEM_REMINDER,
                     )
                 )
@@ -1722,6 +1750,58 @@ class RuntimeThreadManager:
         messages = reconstruct_messages_from_turns(self.store, thread.id)
         if messages:
             engine.sync_session(messages, model=thread.model)
+
+    async def _build_soft_resume_reminder_text(self, thread_id: str) -> str:
+        """Collect resumable sub-agents/tasks/workflows and build the nudge."""
+        from deepseek_tui.server.threads.soft_resume import build_soft_resume_reminder
+
+        agents: list[Any] = []
+        tasks: list[Any] = []
+        workflows: list[Any] = []
+        state = self._active.get(thread_id)
+        if state is not None:
+            sub_mgr = getattr(state.engine.tool_context, "subagent_manager", None)
+            if sub_mgr is not None:
+                lister = getattr(sub_mgr, "list_agents", None)
+                if callable(lister):
+                    try:
+                        agents = list(lister())
+                    except Exception:  # noqa: BLE001 — reminder must not block turn
+                        logger.debug(
+                            "soft_resume_list_agents_failed thread=%s",
+                            thread_id,
+                            exc_info=True,
+                        )
+            task_mgr = getattr(state.engine.tool_context, "task_manager", None)
+            if task_mgr is None and self._shared_tool_runtime is not None:
+                task_mgr = getattr(self._shared_tool_runtime, "task_manager", None)
+            if task_mgr is not None:
+                lister = getattr(task_mgr, "list_tasks", None)
+                if callable(lister):
+                    try:
+                        listed = lister(limit=50)
+                        if asyncio.iscoroutine(listed):
+                            listed = await listed
+                        tasks = list(listed or [])
+                    except Exception:  # noqa: BLE001 — reminder must not block turn
+                        logger.debug(
+                            "soft_resume_list_tasks_failed thread=%s",
+                            thread_id,
+                            exc_info=True,
+                        )
+        try:
+            from deepseek_tui.workflow.store import list_runs
+
+            workflows = list(list_runs(workspace=self.workspace, limit=20))
+        except Exception:  # noqa: BLE001 — reminder must not block turn
+            logger.debug(
+                "soft_resume_list_workflows_failed thread=%s",
+                thread_id,
+                exc_info=True,
+            )
+        return build_soft_resume_reminder(
+            agents=agents, tasks=tasks, workflows=workflows
+        )
 
     def _resync_warm_engine_from_store(self, thread_id: str) -> None:
         """Rehydrate a warm engine after an interrupted/failed turn.

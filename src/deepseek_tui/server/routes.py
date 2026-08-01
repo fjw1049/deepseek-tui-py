@@ -1097,6 +1097,60 @@ async def cancel_task(request: Request, task_id: str) -> dict[str, Any]:
     return task
 
 
+@router_tasks.post("/tasks/{task_id}/resume")
+async def resume_task(request: Request, task_id: str) -> dict[str, Any]:
+    runtime = runtime_from_request(request)
+    result = await runtime.resume_task(task_id)
+    if not result.get("ok"):
+        message = str(result.get("error") or "resume task failed")
+        if result.get("code") == "conflict":
+            raise api_error(409, message, error="task_conflict")
+        if "not found" in message.lower():
+            raise api_error(404, message, error="task_not_found")
+        raise api_error(503, message, error="runtime_error")
+    task = result.get("task")
+    if not isinstance(task, dict):
+        raise api_error(404, f"task not found: {task_id}", error="task_not_found")
+    return task
+
+
+router_workflow = APIRouter(prefix="/v1")
+
+
+@router_workflow.post("/workflow/{run_id}/resume")
+async def resume_workflow(request: Request, run_id: str) -> dict[str, Any]:
+    """Direct resume for a checkpointed workflow (UI card / HTTP)."""
+    runtime = runtime_from_request(request)
+    detach = True
+    thread_id: str | None = None
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001 — empty/non-JSON body is fine
+        body = None
+    if isinstance(body, dict):
+        if "detach" in body:
+            detach = bool(body.get("detach"))
+        raw_tid = body.get("thread_id")
+        if isinstance(raw_tid, str) and raw_tid.strip():
+            thread_id = raw_tid.strip()
+    result = await runtime.resume_workflow(
+        run_id, detach=detach, thread_id=thread_id
+    )
+    if not result.get("ok"):
+        message = str(result.get("error") or "resume workflow failed")
+        code = result.get("code")
+        if code == "conflict":
+            raise api_error(409, message, error="workflow_conflict")
+        if code == "not_found" or "not found" in message.lower():
+            raise api_error(404, message, error="workflow_not_found")
+        raise api_error(503, message, error="runtime_error")
+    return {
+        "ok": True,
+        "run_id": result.get("run_id") or run_id,
+        "task_id": result.get("task_id"),
+    }
+
+
 # /v1/threads CRUD + summary + fork + resume.
 
 
@@ -1325,6 +1379,21 @@ async def resume_thread(request: Request, thread_id: str) -> dict[str, Any]:
     except FileNotFoundError as exc:
         raise api_error(404, str(exc), error="thread_not_found") from exc
     return detail.model_dump(mode="json")
+
+
+@router_threads.post("/threads/{thread_id}/agents/{agent_id}/resume")
+async def resume_thread_agent(
+    request: Request, thread_id: str, agent_id: str
+) -> dict[str, Any]:
+    mgr = manager(request)
+    try:
+        return await mgr.resume_subagent(thread_id, agent_id)
+    except FileNotFoundError as exc:
+        raise api_error(404, str(exc), error="thread_not_found") from exc
+    except KeyError as exc:
+        raise api_error(404, str(exc), error="agent_not_found") from exc
+    except RuntimeError as exc:
+        raise api_error(409, str(exc), error="agent_conflict") from exc
 
 
 # /v1/threads/{id}/turns lifecycle: start / interrupt / steer / compact.
@@ -1584,6 +1653,7 @@ def build_runtime_api_router() -> APIRouter:
     router.include_router(router_sessions)
     router.include_router(router_skills)
     router.include_router(router_tasks)
+    router.include_router(router_workflow)
     router.include_router(router_threads)
     router.include_router(router_turns)
     router.include_router(router_user_inputs)

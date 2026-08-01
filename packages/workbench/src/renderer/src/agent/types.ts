@@ -188,7 +188,7 @@ export type ChatBlock =
       toolCallId: string
       createdAt?: string
       workflowName: string
-      status: 'running' | 'completed' | 'failed' | 'cancelled' | 'timed_out'
+      status: 'running' | 'completed' | 'failed' | 'cancelled' | 'timed_out' | 'interrupted'
       snapshot: WorkflowSnapshotPayload
       runId?: string
     }
@@ -198,7 +198,7 @@ export type WorkflowProgressPayload = {
   workflowName: string
   snapshot: WorkflowSnapshotPayload
   completed: boolean
-  status?: 'running' | 'completed' | 'failed' | 'cancelled' | 'timed_out'
+  status?: 'running' | 'completed' | 'failed' | 'cancelled' | 'timed_out' | 'interrupted'
   runId?: string
 }
 
@@ -431,6 +431,10 @@ export interface AgentProvider {
    */
   rewindPreview?(threadId: string, beforeItemId: string): Promise<RewindPreview>
   resumeThread?(threadId: string): Promise<void>
+  /** Runtime HTTP: POST /v1/tasks/{id}/resume */
+  resumeTask?(taskId: string): Promise<void>
+  /** Runtime HTTP: POST /v1/threads/{id}/agents/{agentId}/resume */
+  resumeThreadAgent?(threadId: string, agentId: string): Promise<void>
   compactThread?(threadId: string, reason?: string): Promise<void>
   subscribeThreadEvents(
     threadId: string,

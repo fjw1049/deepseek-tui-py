@@ -194,17 +194,19 @@ export function upsertWorkflowBlock(
   blocks: ChatBlock[],
   ev: WorkflowProgressPayload
 ): ChatBlock[] {
-  const status: 'running' | 'completed' | 'failed' | 'cancelled' | 'timed_out' =
+  const status: 'running' | 'completed' | 'failed' | 'cancelled' | 'timed_out' | 'interrupted' =
     ev.completed
       ? ev.status === 'timed_out'
         ? 'timed_out'
-        : ev.status === 'cancelled'
-          ? 'cancelled'
-          : ev.status === 'failed'
-            ? 'failed'
-            : ev.snapshot.error_count > 0 && ev.snapshot.done_count === 0
+        : ev.status === 'interrupted'
+          ? 'interrupted'
+          : ev.status === 'cancelled'
+            ? 'cancelled'
+            : ev.status === 'failed'
               ? 'failed'
-              : 'completed'
+              : ev.snapshot.error_count > 0 && ev.snapshot.done_count === 0
+                ? 'failed'
+                : 'completed'
       : 'running'
   const runId = ev.runId?.trim() || undefined
   const nextBlock: ChatBlock = {

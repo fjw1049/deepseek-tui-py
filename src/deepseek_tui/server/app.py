@@ -383,6 +383,44 @@ def build_router() -> APIRouter:
         runtime = _get_runtime(request)
         return await runtime.cancel_task(task_id)
 
+    @router.post("/tasks/{task_id}/resume")
+    async def resume_task(request: Request, task_id: str) -> dict[str, Any]:
+        runtime = _get_runtime(request)
+        return await runtime.resume_task(task_id)
+
+    @router.post("/workflow/{run_id}/resume")
+    async def resume_workflow(request: Request, run_id: str) -> dict[str, Any]:
+        runtime = _get_runtime(request)
+        payload = await _body(request)
+        detach = True
+        thread_id = None
+        if isinstance(payload, dict):
+            if "detach" in payload:
+                detach = bool(payload.get("detach"))
+            raw_tid = payload.get("thread_id")
+            if isinstance(raw_tid, str) and raw_tid.strip():
+                thread_id = raw_tid.strip()
+        return await runtime.resume_workflow(
+            run_id, detach=detach, thread_id=thread_id
+        )
+
+    @router.post("/threads/{thread_id}/agents/{agent_id}/resume")
+    async def resume_thread_agent(
+        request: Request, thread_id: str, agent_id: str
+    ) -> dict[str, Any]:
+        manager = _get_thread_manager(request)
+        if manager is None:
+            return {"ok": False, "error": "runtime thread manager not configured"}
+        try:
+            snapshot = await manager.resume_subagent(thread_id, agent_id)
+        except FileNotFoundError:
+            return {"ok": False, "error": f"thread not found: {thread_id}"}
+        except KeyError as exc:
+            return {"ok": False, "error": str(exc), "code": "agent_not_found"}
+        except RuntimeError as exc:
+            return {"ok": False, "error": str(exc), "code": "conflict"}
+        return {"ok": True, "agent": snapshot}
+
     @router.get("/apps/mcp/servers")
     async def list_mcp_servers_route(request: Request) -> dict[str, Any]:
         runtime = _get_runtime(request)

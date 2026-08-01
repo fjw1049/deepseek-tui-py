@@ -680,7 +680,8 @@ function readWorkflowProgressFromItem(it: TurnItemJson): WorkflowProgressPayload
         parsed.status === 'completed' ||
         parsed.status === 'failed' ||
         parsed.status === 'cancelled' ||
-        parsed.status === 'timed_out'
+        parsed.status === 'timed_out' ||
+        parsed.status === 'interrupted'
           ? parsed.status
           : undefined,
       runId: typeof parsed.run_id === 'string' ? parsed.run_id : undefined
@@ -1414,6 +1415,50 @@ export class DeepseekRuntimeProvider implements AgentProvider {
       'POST'
     )
     if (!r.ok) throw toRuntimeError(readRuntimeError(r.body, 'resume thread failed'))
+  }
+
+  async resumeTask(taskId: string): Promise<void> {
+    const r = await window.dsGui.runtimeRequest(
+      `/v1/tasks/${encodeURIComponent(taskId)}/resume`,
+      'POST'
+    )
+    if (!r.ok) throw toRuntimeError(readRuntimeError(r.body, 'resume task failed'))
+    if (!r.body.trim()) return
+    try {
+      const raw = JSON.parse(r.body) as Record<string, unknown>
+      if (raw.ok === false) {
+        throw toRuntimeError(
+          typeof raw.error === 'string' && raw.error.trim()
+            ? raw.error
+            : 'resume task failed'
+        )
+      }
+    } catch (err) {
+      if (err instanceof SyntaxError) return
+      throw err
+    }
+  }
+
+  async resumeThreadAgent(threadId: string, agentId: string): Promise<void> {
+    const r = await window.dsGui.runtimeRequest(
+      `/v1/threads/${encodeURIComponent(threadId)}/agents/${encodeURIComponent(agentId)}/resume`,
+      'POST'
+    )
+    if (!r.ok) throw toRuntimeError(readRuntimeError(r.body, 'resume agent failed'))
+    if (!r.body.trim()) return
+    try {
+      const raw = JSON.parse(r.body) as Record<string, unknown>
+      if (raw.ok === false) {
+        throw toRuntimeError(
+          typeof raw.error === 'string' && raw.error.trim()
+            ? raw.error
+            : 'resume agent failed'
+        )
+      }
+    } catch (err) {
+      if (err instanceof SyntaxError) return
+      throw err
+    }
   }
 
   async compactThread(threadId: string, reason?: string): Promise<void> {

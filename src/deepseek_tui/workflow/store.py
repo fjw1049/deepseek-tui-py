@@ -67,6 +67,45 @@ def workflow_runs_dir(workspace: Path | None = None) -> Path:
     return user_workflow_runs_dir()
 
 
+def normalize_agent_bindings(raw: Any) -> dict[str, dict[str, Any]]:
+    """Coerce ``run.json`` agent_bindings into ``{unit_key: {agent_id, ...}}``."""
+    if not isinstance(raw, dict):
+        return {}
+    out: dict[str, dict[str, Any]] = {}
+    for key, value in raw.items():
+        if not isinstance(key, str) or not key.strip():
+            continue
+        if not isinstance(value, dict):
+            continue
+        agent_id = value.get("agent_id")
+        if not isinstance(agent_id, str) or not agent_id.strip():
+            continue
+        entry: dict[str, Any] = {
+            "agent_id": agent_id.strip(),
+            "status": str(value.get("status") or "running"),
+        }
+        if isinstance(value.get("updated_at"), str):
+            entry["updated_at"] = value["updated_at"]
+        if isinstance(value.get("mode"), str):
+            entry["mode"] = value["mode"]
+        out[key.strip()] = entry
+    return out
+
+
+def make_agent_binding(
+    agent_id: str,
+    *,
+    status: str = "running",
+    mode: str = "spawn",
+) -> dict[str, Any]:
+    return {
+        "agent_id": agent_id,
+        "status": status,
+        "mode": mode,
+        "updated_at": _utc_now(),
+    }
+
+
 @dataclass
 class WorkflowRunRecord:
     run_id: str
@@ -92,6 +131,8 @@ class WorkflowRunRecord:
     skipped_step_ids: list[str] = field(default_factory=list)
     failed_step_ids: list[str] = field(default_factory=list)
     estimated_tokens_used: int = 0
+    # unit_key (step_id or step_id:item) → bound sub-agent for true resume.
+    agent_bindings: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     def parsed_spec(self) -> WorkflowSpec:
         return parse_workflow_spec(self.spec)
@@ -104,6 +145,7 @@ class WorkflowRunRecord:
         }
 
     def resume_ctx_bag(self) -> dict[str, Any]:
+        """Raw persistence dump (includes failed/skipped as last checkpointed)."""
         return {
             "skipped_step_ids": list(self.skipped_step_ids),
             "failed_step_ids": list(self.failed_step_ids),
@@ -111,7 +153,56 @@ class WorkflowRunRecord:
             "budgets_used": dict(self.budgets_used),
             "generated_node_ids": list(self.generated_node_ids),
             "estimated_tokens_used": self.estimated_tokens_used,
+            "agent_bindings": dict(self.agent_bindings),
         }
+
+
+@dataclass(frozen=True)
+class WorkflowResumePlan:
+    """Prepared inputs for scheduler resume (sync + detach share this)."""
+
+    skip_step_ids: set[str]
+    initial_outputs: dict[str, StepOutput]
+    resume_ctx: dict[str, Any]
+    initial_graph: Any | None  # CompiledGraph | None
+
+
+def prepare_workflow_resume(record: WorkflowRunRecord) -> WorkflowResumePlan:
+    """Keep successes; re-schedule unfinished units; preserve agent bindings.
+
+    - ``completed_step_ids`` + their outputs are skipped / reused
+    - fanout/pipeline item outputs already on disk are reused
+    - ``failed_step_ids`` / ``skipped_step_ids`` are cleared so failed work and
+      cascade-skips become schedulable again
+    - ``agent_bindings`` are preserved so unfinished units can true-resume the
+      same sub-agent (transcript) instead of silently spawning a new one
+    - ``runtime_graph`` / dynamic budgets are preserved across the retry
+    """
+    record.failed_step_ids = []
+    record.skipped_step_ids = []
+    record.error = None
+    record.agent_bindings = normalize_agent_bindings(record.agent_bindings)
+
+    initial_graph = None
+    if isinstance(record.runtime_graph, dict):
+        from deepseek_tui.workflow.dag import CompiledGraph
+
+        initial_graph = CompiledGraph.from_dict(record.runtime_graph)
+
+    return WorkflowResumePlan(
+        skip_step_ids=set(record.completed_step_ids),
+        initial_outputs=record.restored_outputs(),
+        resume_ctx={
+            "skipped_step_ids": [],
+            "failed_step_ids": [],
+            "dynamic_states": dict(record.dynamic_states),
+            "budgets_used": dict(record.budgets_used),
+            "generated_node_ids": list(record.generated_node_ids),
+            "estimated_tokens_used": record.estimated_tokens_used,
+            "agent_bindings": dict(record.agent_bindings),
+        },
+        initial_graph=initial_graph,
+    )
 
 
 class WorkflowRunStoreError(WorkflowValidationError):
@@ -476,6 +567,7 @@ def load_run(run_id: str, *, workspace: Path | None = None) -> WorkflowRunRecord
             if isinstance(raw.get("estimated_tokens_used"), int)
             else 0
         ),
+        agent_bindings=normalize_agent_bindings(raw.get("agent_bindings")),
     )
 
 
@@ -518,6 +610,7 @@ def checkpoint_run(
     skipped_step_ids: list[str] | None = None,
     failed_step_ids: list[str] | None = None,
     estimated_tokens_used: int | None = None,
+    agent_bindings: dict[str, dict[str, Any]] | None = None,
 ) -> WorkflowRunRecord:
     record.completed_step_ids = list(completed_step_ids)
     record.outputs = {sid: step_output_to_dict(out) for sid, out in outputs.items()}
@@ -540,6 +633,8 @@ def checkpoint_run(
         record.failed_step_ids = list(failed_step_ids)
     if estimated_tokens_used is not None:
         record.estimated_tokens_used = estimated_tokens_used
+    if agent_bindings is not None:
+        record.agent_bindings = normalize_agent_bindings(agent_bindings)
     save_run(record, workspace=workspace)
     return record
 
@@ -562,6 +657,7 @@ def safe_checkpoint_run(
     skipped_step_ids: list[str] | None = None,
     failed_step_ids: list[str] | None = None,
     estimated_tokens_used: int | None = None,
+    agent_bindings: dict[str, dict[str, Any]] | None = None,
 ) -> bool:
     """Like :func:`checkpoint_run`, but never raises — returns False on failure.
 
@@ -586,6 +682,7 @@ def safe_checkpoint_run(
             skipped_step_ids=skipped_step_ids,
             failed_step_ids=failed_step_ids,
             estimated_tokens_used=estimated_tokens_used,
+            agent_bindings=agent_bindings,
         )
         return True
     except Exception as exc:  # noqa: BLE001 — persistence must not abort the run path

@@ -58,6 +58,7 @@ import {
   type TurnDiffSnapshot
 } from '../../lib/turn-mutation-view'
 import { useDeferredRender } from '../../hooks/use-deferred-render'
+import { resumeThreadAgent } from '../../hooks/use-thread-tasks'
 import { getTimestampFormat, subscribeAppearance } from '../../lib/apply-appearance'
 import { getProvider } from '../../agent/registry'
 import { useChatStore } from '../../store/chat-store'
@@ -2246,12 +2247,12 @@ function SubagentDetailDialog({
   onClose: () => void
 }): ReactElement {
   const { t } = useTranslation('common')
-  const sendMessage = useChatStore((s) => s.sendMessage)
-  const busy = useChatStore((s) => s.busy)
+  const activeThreadId = useChatStore((s) => s.activeThreadId)
   // Select the blocks array by reference — never filter inside the Zustand
   // selector (a new array each call trips useSyncExternalStore into a loop).
   const allBlocks = useChatStore((s) => s.blocks)
   const [resuming, setResuming] = useState(false)
+  const [resumeError, setResumeError] = useState<string | null>(null)
   const [selectedId, setSelectedId] = useState(initialBlock.agentId)
 
   // Prefer live store blocks so the step rail updates while the dialog is open.
@@ -2300,7 +2301,7 @@ function SubagentDetailDialog({
       : t('subagentDetailNoResult'))
 
   // Delegate cards resume as a single agent; fanout cards resume every
-  // failed/cancelled worker in one prompt (no per-worker UI exists yet).
+  // failed/cancelled worker via direct API (no per-worker UI exists yet).
   const resumableWorkerIds =
     block.cardKind === 'fanout'
       ? (block.workers ?? [])
@@ -2309,17 +2310,27 @@ function SubagentDetailDialog({
       : []
   const canResumeDelegate =
     block.cardKind === 'delegate' && isResumableSubagentStatus(block.status)
-  const canResume = (canResumeDelegate || resumableWorkerIds.length > 0) && !busy && !resuming
+  const canResume =
+    (canResumeDelegate || resumableWorkerIds.length > 0) &&
+    Boolean(activeThreadId) &&
+    !resuming
 
   const onResume = async (): Promise<void> => {
-    if (!canResume) return
+    if (!canResume || !activeThreadId) return
     setResuming(true)
+    setResumeError(null)
     try {
-      const prompt =
-        block.cardKind === 'fanout'
-          ? t('subagentResumePromptMulti', { agentIds: resumableWorkerIds.join(', ') })
-          : t('subagentResumePrompt', { agentId: block.agentId })
-      await sendMessage(prompt, 'subagent')
+      const ids =
+        block.cardKind === 'fanout' ? resumableWorkerIds : [block.agentId]
+      for (const agentId of ids) {
+        await resumeThreadAgent(activeThreadId, agentId)
+      }
+    } catch (err) {
+      setResumeError(
+        err instanceof Error && err.message.trim()
+          ? err.message
+          : t('subagentResumeFailed')
+      )
     } finally {
       setResuming(false)
     }
@@ -2391,6 +2402,11 @@ function SubagentDetailDialog({
       }
     >
       <div className="flex min-h-full flex-col gap-4">
+        {resumeError ? (
+          <p className="rounded-[12px] bg-ds-hover/70 px-3 py-2 text-[12.5px] leading-5 text-ds-ink/80">
+            {resumeError}
+          </p>
+        ) : null}
         {treeNodes.length > 1 ? (
           <section>
             <div className="mb-2 px-1 text-[12px] font-semibold tracking-[0.02em] text-ds-muted">

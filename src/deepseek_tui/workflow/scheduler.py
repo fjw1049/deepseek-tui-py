@@ -170,6 +170,7 @@ async def schedule_workflow(
     initial_graph: CompiledGraph | None = None,
     nested_dynamic_depth: int = 0,
     run_id: str | None = None,
+    resume_ctx: dict[str, Any] | None = None,
 ) -> WorkflowRunResult:
     started = time.monotonic()
     graph = initial_graph or compile_workflow_graph(spec)
@@ -184,8 +185,8 @@ async def schedule_workflow(
         ctx.outputs.update(initial_outputs)
     if skip_step_ids:
         ctx.completed_step_ids = sorted(skip_step_ids)
-    # Optional resume bags (attached by tools/workflow from run.json).
-    resume_bag = getattr(spec, "_resume_ctx", None)
+    # Optional resume bags from prepare_workflow_resume / run.json.
+    resume_bag = resume_ctx
     if isinstance(resume_bag, dict):
         for sid in resume_bag.get("skipped_step_ids") or []:
             if isinstance(sid, str) and sid not in ctx.skipped_step_ids:
@@ -206,6 +207,11 @@ async def schedule_workflow(
             ctx.generated_node_ids = [str(x) for x in gen if isinstance(x, str)]
         if isinstance(resume_bag.get("estimated_tokens_used"), int):
             ctx.estimated_tokens_used = resume_bag["estimated_tokens_used"]
+        from deepseek_tui.workflow.store import normalize_agent_bindings
+
+        bindings = normalize_agent_bindings(resume_bag.get("agent_bindings"))
+        if bindings:
+            ctx.agent_bindings.update(bindings)
 
     snapshot = WorkflowSnapshot(
         name=spec.meta.name,
@@ -238,6 +244,14 @@ async def schedule_workflow(
             msg = f"checkpoint callback failed: {exc}"
             _LOG.warning(msg, exc_info=True)
             log(msg)
+
+    def _bind_agent(unit_key: str, agent_id: str, *, mode: str, status: str) -> None:
+        from deepseek_tui.workflow.store import make_agent_binding
+
+        ctx.agent_bindings[unit_key] = make_agent_binding(
+            agent_id, status=status, mode=mode
+        )
+        checkpoint()
 
     def check_cancel() -> None:
         # Durable stop-intent (cross-crash) takes precedence; also persist
@@ -481,6 +495,20 @@ async def schedule_workflow(
                 snapshot.agents.append(worker_run)
                 progress()
 
+            unit_key = f"{step_id}:{item}" if item is not None else step_id
+            existing = ctx.agent_bindings.get(unit_key) or {}
+            resume_agent_id = (
+                str(existing["agent_id"]).strip()
+                if isinstance(existing.get("agent_id"), str)
+                else None
+            )
+            start_mode = "spawn"
+
+            def _on_start_mode(mode: str) -> None:
+                nonlocal start_mode
+                if isinstance(mode, str) and mode.strip():
+                    start_mode = mode.strip()
+
             def _on_agent_id(aid: str) -> None:
                 nonlocal reserved_agents, slot_transferred
                 ctx.spawned_agent_ids.append(aid)
@@ -493,6 +521,11 @@ async def schedule_workflow(
                         if run.step_id == step_id and run.agent_id is None:
                             run.agent_id = aid
                             break
+                _bind_agent(unit_key, aid, mode=start_mode, status="running")
+                if start_mode == "retry":
+                    log(f"retry spawn unit={unit_key} agent={aid}")
+                elif start_mode == "resume":
+                    log(f"true-resume unit={unit_key} agent={aid}")
                 # Emit immediately so the UI can join mailbox tool steps
                 # while the agent is still running (not only at completion).
                 progress()
@@ -509,14 +542,33 @@ async def schedule_workflow(
                     cancel_event=cancel_event,
                     on_agent_id=_on_agent_id,
                     timeout_seconds=cfg.timeout_seconds,
+                    resume_agent_id=resume_agent_id,
+                    force_retry=False,
+                    on_start_mode=_on_start_mode,
                 )
             except WorkflowAbortedError:
+                bound = ctx.agent_bindings.get(unit_key)
+                if isinstance(bound, dict) and isinstance(bound.get("agent_id"), str):
+                    _bind_agent(
+                        unit_key,
+                        str(bound["agent_id"]),
+                        mode=str(bound.get("mode") or start_mode),
+                        status="cancelled",
+                    )
                 if worker_run is not None:
                     worker_run.status = "skipped"
                     worker_run.error = "aborted"
                     progress()
                 raise
             except Exception as exc:  # noqa: BLE001
+                bound = ctx.agent_bindings.get(unit_key)
+                if isinstance(bound, dict) and isinstance(bound.get("agent_id"), str):
+                    _bind_agent(
+                        unit_key,
+                        str(bound["agent_id"]),
+                        mode=str(bound.get("mode") or start_mode),
+                        status="failed",
+                    )
                 if worker_run is not None:
                     worker_run.status = "error"
                     worker_run.error = str(exc)
@@ -528,6 +580,14 @@ async def schedule_workflow(
                     worker_run.error = "aborted"
                     progress()
                 raise WorkflowAbortedError("workflow cancelled")
+            bound = ctx.agent_bindings.get(unit_key)
+            if isinstance(bound, dict) and isinstance(bound.get("agent_id"), str):
+                _bind_agent(
+                    unit_key,
+                    str(bound["agent_id"]),
+                    mode=str(bound.get("mode") or start_mode),
+                    status="completed" if out is not None else "failed",
+                )
             if worker_run is not None:
                 if out is None:
                     worker_run.status = "error"
@@ -622,6 +682,10 @@ async def schedule_workflow(
                     key = _item_key(item)
                     if key not in ctx.failed_step_ids:
                         ctx.failed_step_ids.append(key)
+                    # Persist failure marks so a mid-fanout crash does not
+                    # forget which items already failed (resume still retries
+                    # them via prepare_workflow_resume clearing failed ids).
+                    checkpoint()
                     progress()
 
                 new_results = await gather_step_outputs(
@@ -677,21 +741,41 @@ async def schedule_workflow(
                             prev = stage_out
                         return prev
 
+                pending_indexed: list[tuple[int, str]] = []
+                for idx, item in enumerate(step.items):
+                    key = f"{step.id}:{item}"
+                    if key in ctx.outputs:
+                        log(f"skip completed pipeline item {key}")
+                    else:
+                        pending_indexed.append((idx, item))
+
+                def _on_pipe_item_done(item: str, res: StepOutput) -> None:
+                    ctx.outputs[f"{step.id}:{item}"] = res
+                    checkpoint()
+                    progress()
+
                 def _on_pipe_item_failed(item: str) -> None:
                     key = f"{step.id}:{item}"
                     if key not in ctx.failed_step_ids:
                         ctx.failed_step_ids.append(key)
+                    checkpoint()
                     progress()
 
                 pipe_results = await gather_step_outputs(
                     step_id=f"pipeline {step.id}",
-                    indexed_items=list(enumerate(step.items)),
+                    indexed_items=pending_indexed,
                     worker=_pipeline_item,
+                    on_item_done=_on_pipe_item_done,
                     on_item_failed=_on_pipe_item_failed,
                 )
-                lines = []
-                for item, res in pipe_results:
-                    ctx.outputs[f"{step.id}:{item}"] = res
+                by_item = {item: res for item, res in pipe_results}
+                lines: list[str] = []
+                for item in step.items:
+                    key = f"{step.id}:{item}"
+                    res = ctx.outputs.get(key) or by_item.get(item)
+                    if res is None:
+                        continue
+                    ctx.outputs[key] = res
                     lines.append(f"{item}: {res.preview}")
                 if not lines:
                     return None
@@ -1015,6 +1099,7 @@ async def schedule_workflow(
                             manager=manager,
                             on_log=on_log,
                             on_progress=on_progress,
+                            on_checkpoint=on_checkpoint,
                             task=ctx.task,
                             cwd=cwd,
                             nested_dynamic_depth=ctx.nested_dynamic_depth,
