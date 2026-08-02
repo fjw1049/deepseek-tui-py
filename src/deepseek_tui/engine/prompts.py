@@ -160,7 +160,14 @@ def collect_git_snapshot(workspace: Path) -> str | None:
     commits = _git("log", "--oneline", "-5")
     if commits:  # empty repo has no commits — omit the section
         parts.extend(["", "Recent commits:", commits])
-    return "\n".join(parts)
+    # Branch names and commit subjects are attacker-controllable repo data
+    # (a cloned repo can carry them); the snapshot is wrapped in a real
+    # reminder envelope downstream, so defuse forged tags at the source.
+    from deepseek_tui.engine.context_pressure import (
+        neutralize_fake_system_reminders,
+    )
+
+    return neutralize_fake_system_reminders("\n".join(parts))
 
 
 def render_plugin_context(

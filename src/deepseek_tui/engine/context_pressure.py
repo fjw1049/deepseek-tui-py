@@ -111,7 +111,10 @@ def wrap_system_reminder(body: str) -> str:
     return f"{SYSTEM_REMINDER_OPEN}\n{trimmed}\n{SYSTEM_REMINDER_CLOSE}"
 
 
-_FAKE_REMINDER_RE = re.compile(r"(</?)\s*(system-reminder)\s*(>)", re.IGNORECASE)
+_FAKE_REMINDER_RE = re.compile(
+    r"(</?)\s*(system-reminder)(?:\s[^<>]*)?\s*(/?>)",
+    re.IGNORECASE,
+)
 
 
 def neutralize_fake_system_reminders(text: str) -> str:

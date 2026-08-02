@@ -3,6 +3,7 @@ import { ChevronDown, Loader2, Workflow } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import type { WorkflowSnapshotPayload } from '../../lib/workflow-snapshot'
 import { resumeWorkflow } from '../../hooks/use-workflow-resume'
+import { useChatStore } from '../../store/chat-store'
 import type { StepFlowItem } from './StepFlow'
 import {
   WorkflowDagView,
@@ -33,11 +34,16 @@ export function WorkflowBlock({
   subagentStepsByAgentId?: Record<string, StepFlowItem[]>
 }): ReactElement {
   const { t } = useTranslation('common')
+  const activeThreadId = useChatStore((s) => s.activeThreadId)
   // Collapsed by default — expand for the DAG; keeps the timeline calm when
   // many workflows / large graphs are in play.
   const [expanded, setExpanded] = useState(false)
   const [resuming, setResuming] = useState(false)
   const [resumeError, setResumeError] = useState<string | null>(null)
+  // Direct resume is fire-and-forget today: the detach worker emits no
+  // progress events back into this thread, so after a successful trigger we
+  // latch a local waiting state instead of leaving the card looking dead.
+  const [resumeTriggered, setResumeTriggered] = useState(false)
 
   const name = workflowName || snapshot.name
   const running = status === 'running'
@@ -80,14 +86,18 @@ export function WorkflowBlock({
       status === 'failed' ||
       status === 'timed_out' ||
       status === 'interrupted') &&
-    !resuming
+    !resuming &&
+    !resumeTriggered
 
   const onResume = async (): Promise<void> => {
     if (!runId || !canResume) return
     setResuming(true)
     setResumeError(null)
     try {
-      await resumeWorkflow(runId)
+      // thread_id attaches the detach task to this thread so the task rail
+      // tracks it; the card itself only refreshes on the next real event.
+      await resumeWorkflow(runId, activeThreadId ?? undefined)
+      setResumeTriggered(true)
     } catch (err) {
       setResumeError(
         err instanceof Error && err.message.trim()
@@ -138,6 +148,11 @@ export function WorkflowBlock({
             {canResume ? (
               <span className="mt-1 block text-[11px] leading-4 text-ds-muted">
                 {t('workflowResumeHint')}
+              </span>
+            ) : null}
+            {resumeTriggered ? (
+              <span className="mt-1 block text-[11px] leading-4 text-ds-muted">
+                {t('workflowResumeTriggered')}
               </span>
             ) : null}
             {resumeError ? (

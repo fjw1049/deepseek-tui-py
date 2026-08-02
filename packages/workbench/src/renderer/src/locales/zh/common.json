@@ -1585,6 +1585,7 @@
   "workflowResuming": "续跑中…",
   "workflowResumeFailed": "续跑 workflow 失败",
   "workflowResumeHint": "跳过已成功步骤；未完成步骤优先续同一子代理（非静默重开）。",
+  "workflowResumeTriggered": "已触发续跑——后台运行中，卡片将在下次更新时刷新。",
   "workflowResumePrompt": "请用 workflow 工具【只传 run_id】续跑被中断的工作流 {{runId}}。不要重新用 name+task 开新跑；从 checkpoint 跳过已完成步骤，并对已绑定的子代理做 resume 而非 spawn。",
   "workflowInterrupted": "已中断",
   "workflowRetry": "强制重开（重试）",

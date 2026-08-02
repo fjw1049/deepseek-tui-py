@@ -5,14 +5,17 @@ export type WorkflowResumeResult = {
   taskId: string
 }
 
-export async function resumeWorkflow(runId: string): Promise<WorkflowResumeResult> {
+export async function resumeWorkflow(
+  runId: string,
+  threadId?: string
+): Promise<WorkflowResumeResult> {
   if (typeof window.dsGui?.runtimeRequest !== 'function') {
     throw new Error('runtime unavailable')
   }
   const r = await window.dsGui.runtimeRequest(
     `/v1/workflow/${encodeURIComponent(runId)}/resume`,
     'POST',
-    JSON.stringify({ detach: true })
+    JSON.stringify(threadId ? { detach: true, thread_id: threadId } : { detach: true })
   )
   if (!r.ok) {
     throw new Error(r.body?.trim() || `resume workflow failed (${r.status})`)

@@ -179,7 +179,8 @@ export function parseWorkflowProgressPayload(
       payload.status === 'completed' ||
       payload.status === 'failed' ||
       payload.status === 'cancelled' ||
-      payload.status === 'timed_out'
+      payload.status === 'timed_out' ||
+      payload.status === 'interrupted'
         ? payload.status
         : undefined,
     runId:

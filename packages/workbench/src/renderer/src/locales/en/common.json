@@ -895,6 +895,7 @@
   "workflowResuming": "Resuming…",
   "workflowResumeFailed": "Failed to resume workflow",
   "workflowResumeHint": "Skips completed steps; unfinished units true-resume the same sub-agent when possible (not a silent re-spawn).",
+  "workflowResumeTriggered": "Resume triggered — running in the background; this card refreshes on the next update.",
   "workflowResumePrompt": "Use the workflow tool with only run_id={{runId}} to resume the interrupted workflow. Do not start a new run with name+task; skip completed steps and resume bound sub-agents instead of spawning new ones.",
   "workflowInterrupted": "Interrupted",
   "workflowRetry": "Force restart (retry)",
