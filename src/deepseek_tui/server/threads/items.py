@@ -68,6 +68,7 @@ def reconstruct_messages_from_turn(
     """
     from deepseek_tui.protocol.messages import (
         Message,
+        MessageOrigin,
         Role,
         TextBlock,
         ToolUseBlock,
@@ -86,8 +87,15 @@ def reconstruct_messages_from_turn(
         if item.kind == TurnItemKind.USER_MESSAGE:
             if not text:
                 continue
+            # The item kind is the provenance: USER_MESSAGE is what the human
+            # typed. Rebuilding it untagged would leave the resumed transcript
+            # unable to tell it apart from an injected reminder.
             messages.append(
-                Message(role=Role.USER, content=[TextBlock(text=text)])
+                Message(
+                    role=Role.USER,
+                    content=[TextBlock(text=text)],
+                    origin=MessageOrigin.REAL_USER,
+                )
             )
         elif item.kind == TurnItemKind.AGENT_MESSAGE:
             # Partial preface from a cancelled stream must not seed resume.

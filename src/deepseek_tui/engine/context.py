@@ -11,6 +11,7 @@ from __future__ import annotations
 import functools
 import json
 import math
+import re
 from typing import Any
 
 from deepseek_tui.config.providers import context_window_for_model
@@ -193,24 +194,63 @@ def _compact_subagent_tool_result_for_context(
     return "\n".join(out)
 
 
-def _tool_result_context_limits(model: str) -> tuple[int, int, int]:
+def _pressure_scale(pressure_ratio: float | None) -> float:
+    """How generous ingress truncation can afford to be right now.
+
+    The limits below are one number doing two jobs: bounding a single
+    pathological result, and rationing a context that is filling up. Those
+    are different problems and only the second one depends on how full the
+    window is. At 5% used, cutting a 30k-char read to a snippet buys nothing
+    and costs the model the file; past the L0 prune point there is a
+    mechanism already reclaiming space, so admitting new bulk works against
+    it. Reuses the ladder's own thresholds rather than inventing more.
+    """
+    from deepseek_tui.engine.context_pressure import (
+        RATIO_AUTO_FLOOR,
+        RATIO_L0_PRUNE,
+    )
+
+    # No real token count yet (first turn of a session, or just after a
+    # cancel). The estimate path is known to run low, so guessing "roomy"
+    # off it would be the one direction that hurts. Behave as before.
+    if pressure_ratio is None:
+        return 1.0
+    if pressure_ratio < RATIO_AUTO_FLOOR:
+        return 3.0
+    if pressure_ratio >= RATIO_L0_PRUNE:
+        return 0.5
+    return 1.0
+
+
+def _tool_result_context_limits(
+    model: str, pressure_ratio: float | None = None
+) -> tuple[int, int, int]:
     """Return (hard_limit, noisy_soft_limit, snippet) for the model."""
     window = context_window_for_model(model)
     if window >= LARGE_CONTEXT_WINDOW_TOKENS:
-        return (
+        limits = (
             LARGE_CONTEXT_TOOL_RESULT_HARD_LIMIT_CHARS,
             LARGE_CONTEXT_TOOL_RESULT_SOFT_LIMIT_CHARS,
             LARGE_CONTEXT_TOOL_RESULT_SNIPPET_CHARS,
         )
-    return (
-        TOOL_RESULT_CONTEXT_HARD_LIMIT_CHARS,
-        TOOL_RESULT_CONTEXT_SOFT_LIMIT_CHARS,
-        TOOL_RESULT_CONTEXT_SNIPPET_CHARS,
-    )
+    else:
+        limits = (
+            TOOL_RESULT_CONTEXT_HARD_LIMIT_CHARS,
+            TOOL_RESULT_CONTEXT_SOFT_LIMIT_CHARS,
+            TOOL_RESULT_CONTEXT_SNIPPET_CHARS,
+        )
+    scale = _pressure_scale(pressure_ratio)
+    if scale == 1.0:
+        return limits
+    return (int(limits[0] * scale), int(limits[1] * scale), int(limits[2] * scale))
 
 
 def compact_tool_result_for_context(
-    model: str, tool_name: str, output: ToolResult
+    model: str,
+    tool_name: str,
+    output: ToolResult,
+    *,
+    pressure_ratio: float | None = None,
 ) -> str:
     """Compact a tool result before inserting into the model transcript."""
     raw = output.content.strip()
@@ -221,7 +261,9 @@ def compact_tool_result_for_context(
     if subagent is not None:
         return subagent
 
-    hard_limit, noisy_soft, snippet_chars = _tool_result_context_limits(model)
+    hard_limit, noisy_soft, snippet_chars = _tool_result_context_limits(
+        model, pressure_ratio
+    )
     raw_len = len(raw)
     should_compact = raw_len > hard_limit or (
         _tool_result_is_noisy(tool_name) and raw_len > noisy_soft
@@ -601,6 +643,11 @@ PROJECT_CONTEXT_FILES: tuple[str, ...] = (
     ".deepseek/instructions.md",
 )
 
+# Cursor keeps its project rules here, one ``.mdc`` per rule with YAML
+# frontmatter. Skill discovery already reads `.cursor/skills`, so a repo set
+# up for Cursor had half of its configuration honoured and half ignored.
+CURSOR_RULES_DIR = ".cursor/rules"
+
 # Hard cap to keep a malicious / oversized include from blowing the prompt
 # budget on its own (= 100 KB).
 MAX_CONTEXT_SIZE: int = 100 * 1024
@@ -712,6 +759,68 @@ def load_project_context(workspace: Path) -> ProjectContext:
     return ctx
 
 
+_CURSOR_FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.DOTALL)
+
+
+def load_cursor_rules(workspace: Path) -> tuple[str | None, list[Path], list[str]]:
+    """Read always-on ``.cursor/rules/*.mdc`` rules from *workspace*.
+
+    Returns ``(text, source_paths, warnings)``.
+
+    Only rules marked ``alwaysApply: true`` are loaded. The glob-scoped ones
+    are deliberately skipped: applying them would mean varying the system
+    prompt with whichever files are in play, and the whole prompt is ordered
+    most-static-first precisely so the prefix stays byte-identical and
+    cacheable. A rule that changes the prefix costs more than it carries.
+    """
+    rules_dir = workspace / CURSOR_RULES_DIR
+    if not rules_dir.is_dir():
+        return None, [], []
+
+    import yaml
+
+    chunks: list[str] = []
+    paths: list[Path] = []
+    warnings: list[str] = []
+    skipped = 0
+    for path in sorted(rules_dir.rglob("*.mdc")):
+        if not path.is_file():
+            continue
+        try:
+            raw = _load_context_file(path)
+        except ValueError as exc:
+            warnings.append(str(exc))
+            continue
+        match = _CURSOR_FRONTMATTER_RE.match(raw)
+        meta: object = None
+        body = raw
+        if match:
+            try:
+                meta = yaml.safe_load(match.group(1))
+            except yaml.YAMLError as exc:
+                warnings.append(f"Invalid frontmatter in {path}: {exc}")
+                continue
+            body = raw[match.end():]
+        if not (isinstance(meta, dict) and meta.get("alwaysApply") is True):
+            skipped += 1
+            continue
+        body = body.strip()
+        if not body:
+            continue
+        chunks.append(f"<!-- deepseek: cursor rule ({path.name}) -->\n{body}")
+        paths.append(path)
+
+    if skipped:
+        logger.info(
+            "cursor_rules_skipped count=%d dir=%s reason=not_always_apply",
+            skipped,
+            rules_dir,
+        )
+    if not chunks:
+        return None, [], warnings
+    return "\n\n".join(chunks), paths, warnings
+
+
 # ---------------------------------------------------------------------------
 # Parent-directory recursion + user-level fallback + auto-generate
 # ---------------------------------------------------------------------------
@@ -778,24 +887,31 @@ def load_project_context_with_parents(
     Resolution:
       1. Project layer: ``workspace`` → parents (no auto-gen yet)
       2. Global layer: ``~/.deepseek/AGENTS.md`` (always attempted)
-      3. If neither exists: auto-generate project placeholder
-      4. Merge: global first, then project (both when present)
+      3. Cursor layer: always-on ``.cursor/rules/*.mdc`` under ``workspace``
+      4. If none exists: auto-generate project placeholder
+      5. Merge in that order, each labelled with its source
 
     The optional ``home_dir`` parameter is for tests; production callers
     omit it and the function uses the real ``~/.deepseek/AGENTS.md``.
     """
     project_ctx = _load_project_layer(workspace, allow_auto_generate=False)
     global_ctx = _load_global_agents_context(workspace, home_dir)
+    cursor_text, cursor_paths, cursor_warnings = load_cursor_rules(workspace)
 
     has_global = (
         global_ctx is not None and global_ctx.has_instructions()
     )
-    if not project_ctx.has_instructions() and not has_global:
+    if (
+        not project_ctx.has_instructions()
+        and not has_global
+        and cursor_text is None
+    ):
         project_ctx = _load_project_layer(workspace, allow_auto_generate=True)
 
     warnings = list(project_ctx.warnings)
     if global_ctx is not None:
         warnings.extend(global_ctx.warnings)
+    warnings.extend(cursor_warnings)
 
     global_text = (
         global_ctx.instructions
@@ -817,29 +933,42 @@ def load_project_context_with_parents(
     merged = ProjectContext.empty(workspace)
     merged.warnings = warnings
 
-    if global_text and project_text:
-        global_label = str(global_path) if global_path is not None else "global"
-        project_label = (
-            str(project_path) if project_path is not None else "project"
-        )
-        merged.instructions = (
-            f"<!-- deepseek: global AGENTS.md ({global_label}) -->\n"
-            f"{global_text.rstrip()}\n\n"
-            f"<!-- deepseek: project ({project_label}) -->\n"
-            f"{project_text.rstrip()}\n"
-        )
-        merged.source_paths = [
-            p for p in (global_path, project_path) if p is not None
+    # (text, header, paths). The cursor layer labels its own rules per file,
+    # so it brings no header of its own.
+    layers: list[tuple[str, str | None, list[Path]]] = []
+    if global_text:
+        label = str(global_path) if global_path is not None else "global"
+        layers.append((
+            global_text,
+            f"<!-- deepseek: global AGENTS.md ({label}) -->",
+            [global_path] if global_path is not None else [],
+        ))
+    if project_text:
+        label = str(project_path) if project_path is not None else "project"
+        layers.append((
+            project_text,
+            f"<!-- deepseek: project ({label}) -->",
+            [project_path] if project_path is not None else [],
+        ))
+    if cursor_text:
+        layers.append((cursor_text, None, cursor_paths))
+
+    if len(layers) == 1:
+        text, _header, paths = layers[0]
+        merged.instructions = text
+        merged.source_paths = list(paths)
+        merged.source_path = paths[0] if paths else None
+    elif layers:
+        parts = [
+            f"{header}\n{text.rstrip()}" if header else text.rstrip()
+            for text, header, _paths in layers
         ]
-        merged.source_path = project_path or global_path
-    elif global_text:
-        merged.instructions = global_text
-        merged.source_path = global_path
-        merged.source_paths = [global_path] if global_path is not None else []
-    elif project_text:
-        merged.instructions = project_text
-        merged.source_path = project_path
-        merged.source_paths = [project_path] if project_path is not None else []
+        merged.instructions = "\n\n".join(parts) + "\n"
+        merged.source_paths = [p for _t, _h, paths in layers for p in paths]
+        # The project's own file stays the headline source when there is one.
+        merged.source_path = project_path or (
+            merged.source_paths[-1] if merged.source_paths else None
+        )
 
     return merged
 

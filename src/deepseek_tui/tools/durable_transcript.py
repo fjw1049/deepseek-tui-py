@@ -124,12 +124,12 @@ def messages_to_dicts(messages: list[Any]) -> list[dict[str, Any]]:
 
 
 def dicts_to_messages(raw_messages: list[dict[str, Any]]) -> list[Any]:
-    from deepseek_tui.protocol.messages import Message
+    from deepseek_tui.engine.context_pressure import messages_from_dicts
 
     out: list[Any] = []
     for index, item in enumerate(raw_messages):
         try:
-            out.append(Message.model_validate(item))
+            out.extend(messages_from_dicts([item]))
         except Exception:  # noqa: BLE001
             # Dropping a message can desync tool_use/tool_result pairing for
             # the rest of the hydrated history — this must never be silent.

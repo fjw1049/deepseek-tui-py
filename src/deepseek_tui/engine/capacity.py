@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 
 from deepseek_tui.config.models import CapacityConfig
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 import asyncio
 import re
 from pathlib import Path
@@ -388,6 +388,13 @@ def build_observation(
     )
 
 
+def _disabled_decision() -> CapacityDecision:
+    return CapacityDecision(
+        action=GuardrailAction.NO_INTERVENTION,
+        reason="capacity monitoring disabled",
+    )
+
+
 async def run_pre_request_checkpoint(
     controller: CapacityController,
     turn_index: int,
@@ -400,6 +407,13 @@ async def run_pre_request_checkpoint(
     Returns ``(decision, compacted, bridge_text)``. The bridge is already
     inside ``messages``; callers must not inject it into the system prompt.
     """
+    # ``observe_*`` returns None when disabled, so the decision was already
+    # fixed — but only after ``build_observation`` had walked the whole
+    # transcript and estimated tokens. Since the feature ships off, that walk
+    # was the entire per-turn cost of a controller that can never act.
+    if not controller.config.enabled:
+        return _disabled_decision(), False, None
+
     obs = build_observation(turn_index, model, messages)
     snapshot: CapacitySnapshot | None = controller.observe_pre_turn(obs)
     decision = controller.decide(turn_index, snapshot)
@@ -433,6 +447,9 @@ async def run_post_tool_checkpoint(
     Full VERIFY_WITH_TOOL_REPLAY (re-running read-only tools) is deferred.
     For now, logs the decision and returns it for caller awareness.
     """
+    if not controller.config.enabled:
+        return _disabled_decision()
+
     obs = build_observation(turn_index, model, messages)
     snapshot = controller.observe_post_tool(obs)
     decision = controller.decide(turn_index, snapshot)
@@ -461,6 +478,9 @@ async def run_error_escalation_checkpoint(
     Full VERIFY_AND_REPLAN (canonical state rebuild) is deferred.
     For now, logs escalation decisions for caller awareness.
     """
+    if not controller.config.enabled:
+        return _disabled_decision()
+
     if step_error_count == 0 and consecutive_tool_error_steps < 2:
         return CapacityDecision(
             action=GuardrailAction.NO_INTERVENTION,
@@ -614,6 +634,71 @@ def _summary_input_limits_for_model(model: str) -> SummaryInputLimits:
 
 
 
+def _elide_middle(text: str, max_chars: int) -> str:
+    """Trim *text* to *max_chars* keeping both ends, and say that you did.
+
+    The summarizer's per-block limit used to be a silent head cut. Two things
+    went wrong with that. A conclusion sits at the *end* of a message — "so
+    I'll use X because Y", the assertion line of a traceback — so head-only
+    keeps the exploration and drops the decision. And with no marker the
+    summarizer cannot tell a complete short message from a severed long one,
+    so it records half a decision as the whole decision. L0 prune already
+    trims tool results head+tail for the same reason.
+    """
+    if max_chars <= 0:
+        return ""
+    if len(text) <= max_chars:
+        return text
+    marker_template = "\n[... {} characters omitted ...]\n"
+    # Reserve room for the marker so the result honours max_chars.
+    budget = max_chars - len(marker_template.format(len(text)))
+    if budget < 2:
+        return _truncate_chars(text, max_chars)
+    head_chars = (budget * 2) // 3
+    tail_chars = budget - head_chars
+    omitted = len(text) - head_chars - tail_chars
+    return (
+        text[:head_chars]
+        + marker_template.format(omitted)
+        + text[len(text) - tail_chars :]
+    )
+
+
+_TOOL_ARG_VALUE_CHARS = 160
+_TOOL_ARGS_TOTAL_CHARS = 480
+
+
+def _render_tool_args(args: dict[str, Any]) -> str:
+    """Say which action a tool call was, without reproducing its payload.
+
+    ``[Used tool: edit_file]`` does not tell the summarizer which file was
+    edited, so ``### Done`` cannot name the patches it is asked to name.
+
+    Size separates the two kinds of argument on its own, which is why there
+    is no per-tool table here: the ones that identify the action — path,
+    command, pattern, url — are short, and the ones carrying a body —
+    content, old_string, prompt — are not. A table would also have to be
+    kept in step with every new tool and could never cover MCP tools
+    registered at runtime. Oversized values collapse to their size, which
+    still records that a body was there.
+    """
+    if not args:
+        return ""
+    parts: list[str] = []
+    used = 0
+    for key, value in args.items():
+        rendered = value if isinstance(value, str) else repr(value)
+        if len(rendered) > _TOOL_ARG_VALUE_CHARS:
+            rendered = f"<{len(rendered)} chars>"
+        part = f"{key}={rendered}"
+        if used + len(part) > _TOOL_ARGS_TOTAL_CHARS:
+            parts.append("...")
+            break
+        parts.append(part)
+        used += len(part)
+    return ", ".join(parts)
+
+
 def _tail_chars(text: str, max_chars: int) -> str:
     """Extract last max_chars characters from text."""
     if max_chars <= 0:
@@ -730,12 +815,18 @@ def should_compact(
     *,
     real_input_tokens: int = 0,
     model: str | None = None,
+    system_prompt: str | None = None,
+    tools: list[dict[str, Any]] | None = None,
 ) -> bool:
     """Determine if messages should be rewrite-compacted.
 
     Primary signal is context-used *ratio* vs ``config.rewrite_ratio``
     (default 0.75). Below ``auto_floor_ratio`` (default 0.20) auto rewrite
     never fires — soft seams / L0 handle that band.
+
+    Pass *system_prompt* and *tools* whenever available: on the estimate
+    path they are a multi-thousand-token constant that the message list
+    alone cannot see, so omitting them biases every threshold low.
     """
     if not config.enabled or not messages:
         return False
@@ -746,6 +837,8 @@ def should_compact(
         model or config.model or "deepseek-chat",
         messages,
         real_input_tokens=real_input_tokens,
+        system_prompt=system_prompt,
+        tools=tools,
     )
     if pressure.ratio < config.auto_floor_ratio:
         return False
@@ -782,6 +875,7 @@ async def compact_messages_safe(
 
     from deepseek_tui.engine.context_pressure import (
         build_compaction_bridge_text,
+        collect_user_requests,
         extract_compaction_bridge_text,
         find_last_real_user_query,
         is_compaction_bridge_message,
@@ -796,6 +890,9 @@ async def compact_messages_safe(
 
     prev = previous_summary or prior_bridge
     last_real_query = find_last_real_user_query(work_messages)
+    # Collected before the plan drops anything: after this point the only
+    # copy of the older requests is the ledger we are about to render.
+    prior_requests = collect_user_requests(messages)
 
     plan = plan_compaction(
         work_messages,
@@ -840,6 +937,7 @@ async def compact_messages_safe(
                 pinned_messages,
                 bridge_text,
                 last_real_query=last_real_query,
+                prior_requests=prior_requests,
             )
 
             return CompactionResult(
@@ -878,23 +976,36 @@ async def _create_summary(
     previous_summary: str | None = None,
 ) -> str:
     """Create a structured compaction handoff using the compact.md contract."""
+    from deepseek_tui.engine.context_pressure import is_synthetic_user_message
+
     limits = _summary_input_limits_for_model(model)
 
     # Format conversation for summarization
     conversation_text = ""
     for msg in messages:
-        role = "User" if msg.role == "user" else "Assistant"
+        # Reminders, seam summaries and cycle seeds all ride the user role.
+        # Labelling them "User" lets the summarizer attribute harness text to
+        # the human, which then replays as a user constraint after compaction.
+        if msg.role != "user":
+            role = "Assistant"
+        elif is_synthetic_user_message(msg):
+            role = "Harness"
+        else:
+            role = "User"
         for block in msg.content:
             if hasattr(block, "text"):
                 text = getattr(block, "text", "")
-                snippet = _truncate_chars(str(text), limits.text_snippet_chars)
+                snippet = _elide_middle(str(text), limits.text_snippet_chars)
                 conversation_text += f"{role}: {snippet}\n\n"
             elif hasattr(block, "name"):
                 name = getattr(block, "name", "unknown")
-                conversation_text += f"{role}: [Used tool: {name}]\n\n"
+                args = _render_tool_args(getattr(block, "input", None) or {})
+                conversation_text += f"{role}: [Used tool: {name}({args})]\n\n"
             elif hasattr(block, "content"):
                 content = getattr(block, "content", "")
-                snippet = _truncate_chars(str(content), limits.tool_result_snippet_chars)
+                snippet = _elide_middle(
+                    str(content), limits.tool_result_snippet_chars
+                )
                 conversation_text += f"Tool result: {snippet}\n\n"
 
     # Truncate conversation if too long (head + tail pattern)
@@ -912,7 +1023,9 @@ async def _create_summary(
     system_prompt = (
         "You write structured compaction handoffs for a coding agent. "
         "Follow the contract exactly. Prefer structure and continuity over "
-        "prose polish. Do not call tools."
+        "prose polish. Do not call tools. Lines labelled 'Harness:' are "
+        "automated injections from the agent runtime, not the human — never "
+        "record their wording as a user request or user constraint."
     )
     previous_block = ""
     if previous_summary and previous_summary.strip():
@@ -1029,6 +1142,8 @@ def should_l0_prune(
     messages: list[Message],
     real_input_tokens: int = 0,
     config: CompactionConfig | None = None,
+    system_prompt: str | None = None,
+    tools: list[dict[str, Any]] | None = None,
 ) -> bool:
     """True when context ratio warrants mid-session tool pruning."""
     cfg = config or CompactionConfig()
@@ -1037,6 +1152,10 @@ def should_l0_prune(
     from deepseek_tui.engine.context_pressure import measure_context_pressure
 
     pressure = measure_context_pressure(
-        model, messages, real_input_tokens=real_input_tokens
+        model,
+        messages,
+        real_input_tokens=real_input_tokens,
+        system_prompt=system_prompt,
+        tools=tools,
     )
     return pressure.ratio >= cfg.l0_prune_ratio

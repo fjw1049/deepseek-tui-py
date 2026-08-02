@@ -36,6 +36,11 @@ class MessageOrigin(str, Enum):
     COMPACTION_BRIDGE = "compaction_bridge"
     SOFT_SEAM = "soft_seam"
     CYCLE_SEED = "cycle_seed"
+    # Harness-rendered replay of everything the human has asked for so far.
+    # Distinct from REAL_USER: it is not a fresh turn, so it must not be read
+    # as "the current request", and distinct from SYSTEM_REMINDER: its content
+    # is the user's own words, which nothing may paraphrase away.
+    REQUEST_LEDGER = "request_ledger"
 
 
 class TextBlock(BaseModel):

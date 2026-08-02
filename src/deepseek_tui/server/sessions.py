@@ -397,6 +397,8 @@ def load_tui_session_messages(path: Path) -> tuple[dict[str, Any], list[Message]
     messages_raw = raw.get("messages")
     if not isinstance(messages_raw, list):
         raise ValueError("Session file has no messages array")
-    messages = [Message.model_validate(item) for item in messages_raw]
+    from deepseek_tui.engine.context_pressure import messages_from_dicts
+
+    messages = messages_from_dicts(messages_raw)
     metadata = raw.get("metadata") if isinstance(raw.get("metadata"), dict) else {}
     return metadata, messages

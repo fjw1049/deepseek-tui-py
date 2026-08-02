@@ -74,6 +74,24 @@ class ToolExecutionMixin:
             )
         )
 
+    def _ingress_pressure_ratio(self, model: str) -> float | None:
+        """How full the context was on the request that asked for these tools.
+
+        Deliberately the real token count and nothing else: ``None`` when the
+        provider has not reported one yet, so ingress truncation falls back
+        to its fixed limits rather than trusting the estimate path, which is
+        known to run low and would talk it into being generous at exactly the
+        wrong moment.
+        """
+        if self.last_real_input_tokens <= 0:
+            return None
+        from deepseek_tui.config.providers import context_window_for_model
+
+        window = context_window_for_model(model)
+        if window <= 0:
+            return None
+        return self.last_real_input_tokens / window
+
     def _build_tool_use_message(self, tool_calls: list[ToolCall]) -> Message:
         return Message.assistant_with_tools(
             [
@@ -243,7 +261,10 @@ class ToolExecutionMixin:
 
                     result = apply_spillover(result, tool_call.id)
                     output_for_context = compact_tool_result_for_context(
-                        effective_model, tool_call.name, result
+                        effective_model,
+                        tool_call.name,
+                        result,
+                        pressure_ratio=self._ingress_pressure_ratio(effective_model),
                     )
                     results.append(
                         Message.tool_result(
@@ -431,7 +452,10 @@ class ToolExecutionMixin:
 
                 result = apply_spillover(result, tool_call.id)
                 output_for_context = compact_tool_result_for_context(
-                    model, tool_call.name, result
+                    model,
+                    tool_call.name,
+                    result,
+                    pressure_ratio=self._ingress_pressure_ratio(model),
                 )
                 results.append(
                     Message.tool_result(

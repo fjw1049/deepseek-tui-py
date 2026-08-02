@@ -1336,14 +1336,12 @@ class RuntimeThreadManager:
             # Inject soft-resume reminder only after we own the turn slot so a
             # rejected concurrent start cannot pollute session_messages.
             if resume_from_incomplete and soft_resume_reminder:
-                from deepseek_tui.engine.context_pressure import wrap_system_reminder
-                from deepseek_tui.protocol.messages import Message, MessageOrigin
+                from deepseek_tui.engine import reminders
 
                 resume_msgs = list(state.engine.session_messages)
                 resume_msgs.append(
-                    Message.user(
-                        wrap_system_reminder(soft_resume_reminder),
-                        origin=MessageOrigin.SYSTEM_REMINDER,
+                    reminders.reminder_message(
+                        reminders.SOFT_RESUME, soft_resume_reminder
                     )
                 )
                 state.engine.sync_session(resume_msgs, model=model)

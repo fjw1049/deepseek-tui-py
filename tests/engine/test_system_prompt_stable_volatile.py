@@ -112,6 +112,36 @@ def test_take_handoff_reminder_injects_once(tmp_path: Path) -> None:
     assert "Updated handoff" in third.text_content()
 
 
+def test_skill_focus_does_not_reach_the_system_prompt() -> None:
+    """A per-turn ``/skill`` must not rewrite the ``## Skills`` section.
+
+    Narrowing the catalog for one turn costs two full prefix-cache misses —
+    the focused turn, then the turn that reverts. The confinement that
+    actually matters (``_focus_tool_whitelist``) rides the tools array, which
+    is tail-append and prefix-safe, and the model keeps its cue either way:
+    the ``/<skill>`` prefix is never stripped from the user message.
+
+    Plugin mount may still narrow: it is session-level, so its prefix is
+    stable across turns.
+    """
+    import inspect
+
+    from deepseek_tui.engine.orchestrator import core as core_mod
+
+    src = inspect.getsource(core_mod.Engine._handle_send_message_inner)
+    call = re.search(
+        r"skills_context=self\._render_skills_context\((.*?)\n\s*\),",
+        src,
+        re.DOTALL,
+    )
+    assert call is not None, "skills_context call not found"
+    assert "focus_skill" not in call.group(1), (
+        "skill focus must not narrow the system prompt catalog"
+    )
+    # It must still drive the tool whitelist — otherwise focus does nothing.
+    assert "focus_skill" in src
+
+
 def test_hard_cap_message_count_removed_from_trigger_logic() -> None:
     """Regression: compact must not key off len(messages) > 500."""
     import inspect

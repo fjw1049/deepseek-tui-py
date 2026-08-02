@@ -50,7 +50,7 @@ from deepseek_tui.protocol.events import (
 from deepseek_tui.protocol.events import (
     ResponseStartEvent as ResponseStartFrame,
 )
-from deepseek_tui.protocol.messages import Message
+from deepseek_tui.protocol.messages import Message, MessageOrigin
 from dataclasses import asdict
 
 if TYPE_CHECKING:
@@ -272,7 +272,7 @@ class AppRuntime:
             msg_rec = self.threads.get(tid)
             if msg_rec is None:
                 return _thread_error(tid, f"unknown thread: {tid}")
-            msg_rec.messages.append(Message.user(text))
+            msg_rec.messages.append(Message.user(text, origin=MessageOrigin.REAL_USER))
             return _thread_response(msg_rec, status="ok")
         return _thread_error("", f"unknown op: {op}")
 
@@ -300,7 +300,7 @@ class AppRuntime:
                 }
         else:
             rec = self.threads.create(model=_pick_str(payload, "model"))
-        rec.messages.append(Message.user(text))
+        rec.messages.append(Message.user(text, origin=MessageOrigin.REAL_USER))
 
         from deepseek_tui.tools.runtime import default_runtime_model
 
@@ -349,7 +349,7 @@ class AppRuntime:
                 return
         else:
             rec = self.threads.create(model=_pick_str(payload, "model"))
-        rec.messages.append(Message.user(text))
+        rec.messages.append(Message.user(text, origin=MessageOrigin.REAL_USER))
 
         response_id = f"resp-{uuid.uuid4().hex[:12]}"
         await self._emit_prompt_hooks(response_id)

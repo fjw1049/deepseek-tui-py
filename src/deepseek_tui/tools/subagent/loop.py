@@ -256,8 +256,9 @@ async def run_subagent_loop(
     messages and continue from the next LLM round instead of rebuilding from
     the original prompt.
     """
+    from deepseek_tui.engine import reminders
     from deepseek_tui.engine.turn import TurnLoop
-    from deepseek_tui.protocol.messages import Message
+    from deepseek_tui.protocol.messages import Message, MessageOrigin
     from deepseek_tui.protocol.messages import MessageRequest
     from deepseek_tui.tools.durable_transcript import (
         CONTINUE_NUDGE,
@@ -375,7 +376,7 @@ async def run_subagent_loop(
     else:
         if agent.fork_messages:
             messages.extend(_messages_from_fork_dicts(agent.fork_messages))
-        messages.append(Message.user(agent.prompt))
+        messages.append(Message.user(agent.prompt, origin=MessageOrigin.REAL_USER))
 
     # Queued input is real user data — fold it in before any snapshot so a
     # cancel on this round can't silently drop it (queue is drained either way).
@@ -386,7 +387,7 @@ async def run_subagent_loop(
             break
         text = (text or "").strip()
         if text:
-            messages.append(Message.user(text))
+            messages.append(Message.user(text, origin=MessageOrigin.REAL_USER))
 
     turn_loop = TurnLoop(runtime.client)
     final_text = ""
@@ -402,7 +403,11 @@ async def run_subagent_loop(
     last_complete_force_summary = force_summary
     has_complete_checkpoint = resuming
 
-    nudge_message = Message.user(CONTINUE_NUDGE) if resuming else None
+    nudge_message = (
+        reminders.reminder_message(reminders.SUBAGENT_OUTPUT_NUDGE, CONTINUE_NUDGE)
+        if resuming
+        else None
+    )
     if nudge_message is not None:
         messages.append(nudge_message)
 
@@ -449,9 +454,9 @@ async def run_subagent_loop(
             or "A SubagentStop hook blocked ending this sub-agent."
         )
         messages.append(
-            Message.user(
-                "<system-reminder>A SubagentStop hook prevented finishing: "
-                f"{reason}</system-reminder>"
+            reminders.reminder_message(
+                reminders.SUBAGENT_STOP_HOOK_BLOCK,
+                f"A SubagentStop hook prevented finishing: {reason}",
             )
         )
         return False
@@ -585,7 +590,11 @@ async def run_subagent_loop(
                         if use_structured_output
                         else _SUBAGENT_FINAL_REPORT_NUDGE
                     )
-                    messages.append(Message.user(nudge))
+                    messages.append(
+                        reminders.reminder_message(
+                            reminders.SUBAGENT_OUTPUT_NUDGE, nudge
+                        )
+                    )
                     _save_complete_checkpoint("round")
                     continue
                 if round_thinking:
@@ -693,7 +702,11 @@ async def run_subagent_loop(
         and not _has_summary_section(final_text)
         and not _subagent_cancelled(cancel, agent)
     ):
-        messages.append(Message.user(_SUBAGENT_SUMMARY_CONTINUATION_NUDGE))
+        messages.append(
+            reminders.reminder_message(
+                reminders.SUBAGENT_OUTPUT_NUDGE, _SUBAGENT_SUMMARY_CONTINUATION_NUDGE
+            )
+        )
         continuation_request = MessageRequest(
             model=agent.model,
             messages=messages,
@@ -726,12 +739,12 @@ async def run_subagent_loop(
 
 
 def _messages_from_fork_dicts(raw_messages: list[dict[str, Any]]) -> list[Message]:
-    from deepseek_tui.protocol.messages import Message
+    from deepseek_tui.engine.context_pressure import messages_from_dicts
 
     out: list[Message] = []
     for item in raw_messages:
         try:
-            out.append(Message.model_validate(item))
+            out.extend(messages_from_dicts([item]))
         except Exception:  # noqa: BLE001
             continue
     return out

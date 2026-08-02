@@ -119,7 +119,12 @@ class SessionMaintenanceMixin:
             logger.debug("checkpoint save failed", exc_info=True)
 
     async def _maybe_layered_context_checkpoint(
-        self, messages: list[Message], model: str
+        self,
+        messages: list[Message],
+        model: str,
+        *,
+        system_prompt: str | None = None,
+        tools: list[dict[str, Any]] | None = None,
     ) -> None:
         """Pre-request soft seam — mirrors ``layered_context_checkpoint`` (#159).
         阈值分级(seam.py:23-31),按当前输入 token 递进,每级只触发一次、且必须按序:
@@ -134,7 +139,11 @@ class SessionMaintenanceMixin:
         from deepseek_tui.engine.context_pressure import measure_context_pressure
 
         pressure = measure_context_pressure(
-            model, messages, real_input_tokens=self.last_real_input_tokens
+            model,
+            messages,
+            real_input_tokens=self.last_real_input_tokens,
+            system_prompt=system_prompt,
+            tools=tools,
         )
         seam.config.apply_window(pressure.window)
         tokens = pressure.tokens
@@ -184,15 +193,10 @@ class SessionMaintenanceMixin:
             insert_at = verbatim_start
             while insert_at > 0 and messages[insert_at].role == Role.TOOL:
                 insert_at -= 1
-            from deepseek_tui.engine.context_pressure import wrap_system_reminder
-            from deepseek_tui.protocol.messages import MessageOrigin
+            from deepseek_tui.engine import reminders
 
             messages.insert(
-                insert_at,
-                Message.user(
-                    wrap_system_reminder(seam_text),
-                    origin=MessageOrigin.SOFT_SEAM,
-                ),
+                insert_at, reminders.reminder_message(reminders.SOFT_SEAM, seam_text)
             )
 
     # Long-session drift reminder: first injection once the context passes
@@ -203,7 +207,12 @@ class SessionMaintenanceMixin:
     _DRIFT_REMINDER_STEP_RATIO = 0.20
 
     def _maybe_inject_long_session_reminder(
-        self, messages: list[Message], model: str
+        self,
+        messages: list[Message],
+        model: str,
+        *,
+        system_prompt: str | None = None,
+        tools: list[dict[str, Any]] | None = None,
     ) -> None:
         """Append a short values reminder when the session grows long.
 
@@ -215,15 +224,16 @@ class SessionMaintenanceMixin:
         naturally, and the tracker resets when the context shrinks past the
         last injection point.
         """
-        from deepseek_tui.engine.context_pressure import (
-            measure_context_pressure,
-            wrap_system_reminder,
-        )
+        from deepseek_tui.engine import reminders
+        from deepseek_tui.engine.context_pressure import measure_context_pressure
         from deepseek_tui.engine.prompts import LONG_SESSION_REMINDER
-        from deepseek_tui.protocol.messages import MessageOrigin
 
         pressure = measure_context_pressure(
-            model, messages, real_input_tokens=self.last_real_input_tokens
+            model,
+            messages,
+            real_input_tokens=self.last_real_input_tokens,
+            system_prompt=system_prompt,
+            tools=tools,
         )
         if pressure.tokens < int(pressure.window * self._DRIFT_REMINDER_FIRST_RATIO):
             return
@@ -242,9 +252,8 @@ class SessionMaintenanceMixin:
             pressure.window,
         )
         messages.append(
-            Message.user(
-                wrap_system_reminder(LONG_SESSION_REMINDER),
-                origin=MessageOrigin.SYSTEM_REMINDER,
+            reminders.reminder_message(
+                reminders.LONG_SESSION_DRIFT, LONG_SESSION_REMINDER
             )
         )
 
@@ -350,7 +359,12 @@ class SessionMaintenanceMixin:
         return result.messages, result.summary_prompt
 
     def _maybe_l0_prune_tool_results(
-        self, messages: list[Message], model: str
+        self,
+        messages: list[Message],
+        model: str,
+        *,
+        system_prompt: str | None = None,
+        tools: list[dict[str, Any]] | None = None,
     ) -> int:
         """Prune old tool bodies when context ratio ≥ L0 threshold."""
         if not should_l0_prune(
@@ -358,6 +372,8 @@ class SessionMaintenanceMixin:
             messages=messages,
             real_input_tokens=self.last_real_input_tokens,
             config=self.compaction_config,
+            system_prompt=system_prompt,
+            tools=tools,
         ):
             return 0
         # Prefer not to mutate inside the recent verbatim / seam window:
@@ -385,7 +401,12 @@ class SessionMaintenanceMixin:
         return changed
 
     async def _maybe_advance_cycle(
-        self, messages: list[Message], model: str
+        self,
+        messages: list[Message],
+        model: str,
+        *,
+        system_prompt: str | None = None,
+        tools: list[dict[str, Any]] | None = None,
     ) -> None:
         """Archive a full cycle to disk and trim history when threshold crossed.
 
@@ -397,17 +418,22 @@ class SessionMaintenanceMixin:
             return
 
         # Prefer the provider's real input_tokens (zero estimation error);
-        # fall back to the char-based estimate on the first turn only.
-        # Same fix as should_compact — the estimate undercounts ~6x and
-        # made cycle's 768K threshold unreachable in practice.
-        active_tokens = self.last_real_input_tokens
-        if active_tokens <= 0:
-            from deepseek_tui.engine.context import estimated_input_tokens
+        # fall back to the estimate on the first turn only. The estimate must
+        # include the system prompt and tool schemas — they are a multi-
+        # thousand-token constant the message list cannot see, and leaving
+        # them out kept cycle's threshold out of reach on the estimate path.
+        from deepseek_tui.engine.context_pressure import measure_context_pressure
 
-            try:
-                active_tokens = estimated_input_tokens(messages)
-            except Exception:  # noqa: BLE001 — token estimation is best-effort
-                return
+        try:
+            active_tokens = measure_context_pressure(
+                model,
+                messages,
+                real_input_tokens=self.last_real_input_tokens,
+                system_prompt=system_prompt,
+                tools=tools,
+            ).tokens
+        except Exception:  # noqa: BLE001 — token estimation is best-effort
+            return
         if not should_advance_cycle(
             active_tokens,
             reserved_headroom_tokens=8_000,
@@ -431,6 +457,8 @@ class SessionMaintenanceMixin:
                 started=self._cycle_started_at,
             )
             logger.info("cycle_archived path=%s", archive_path)
+            # The seed names this file, so the read sandbox has to allow it.
+            self.tool_context.cycle_archive_root = archive_path.parent
         except OSError as exc:
             logger.warning("cycle_archive_failed error=%s", exc)
             return
@@ -486,13 +514,18 @@ class SessionMaintenanceMixin:
                 token_estimate=estimate_tokens(briefing_text),
             )
 
-        from deepseek_tui.engine.context_pressure import find_last_real_user_query
+        from deepseek_tui.engine.context_pressure import (
+            collect_user_requests,
+            find_last_real_user_query,
+        )
 
         last_real_query = find_last_real_user_query(messages)
         seed_dicts = build_seed_messages(
             structured_state_block=structured_block,
             briefing=briefing_obj,
             pending_user_message=last_real_query,
+            archive_path=archive_path,
+            prior_requests=collect_user_requests(messages),
         )
 
         # Convert seed dicts to Message objects and preserve recent messages.

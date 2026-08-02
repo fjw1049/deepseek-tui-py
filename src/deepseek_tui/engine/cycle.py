@@ -255,16 +255,25 @@ def build_seed_messages(
     structured_state_block: str | None,
     briefing: CycleBriefing | None,
     pending_user_message: str | None,
+    archive_path: Path | str | None = None,
+    prior_requests: list[str] | None = None,
 ) -> list[dict[str, str]]:
     """Compose seed messages for the next cycle.
 
     Seeds are user-role carriers only — never fake assistant acknowledgements.
     ``pending_user_message`` should be the last real user goal so the next
     cycle does not lose the objective.
+
+    ``archive_path`` names the JSONL the previous cycle was written to. A
+    briefing is lossy by construction; naming the archive turns the discarded
+    history from lost into re-fetchable, which is the only reason discarding
+    it is acceptable. Callers must ensure the path is readable by the tools
+    (see ``ToolContext.cycle_archive_root``) — pointing at an unreadable file
+    would just buy a guaranteed tool error.
     """
     from deepseek_tui.engine.context_pressure import (
         format_user_query_message,
-        wrap_system_reminder,
+        format_user_requests_block,
     )
 
     out: list[dict[str, str]] = []
@@ -285,11 +294,36 @@ def build_seed_messages(
             f"<carry_forward>\n{briefing.briefing_text.strip()}\n</carry_forward>"
         )
 
+    if archive_path:
+        seed_parts.append(
+            "[CYCLE ARCHIVE]\n\n"
+            "The previous cycle's full history — every message, verbatim — "
+            "was written to:\n"
+            f"{archive_path}\n\n"
+            "The briefing above is a lossy summary of it. When you need a "
+            "detail the briefing does not carry (an exact error, the wording "
+            "of an earlier decision, a file you already inspected), read that "
+            "file rather than guessing or asking the user to repeat themselves."
+        )
+
     if seed_parts:
+        from deepseek_tui.engine import reminders
+
         out.append({
             "role": "user",
-            "content": wrap_system_reminder("\n\n".join(seed_parts)),
-            "origin": "cycle_seed",
+            "content": reminders.render(
+                reminders.CYCLE_SEED, "\n\n".join(seed_parts)
+            ),
+            "origin": reminders.CYCLE_SEED.origin.value,
+        })
+
+    # Verbatim, next to the briefing that paraphrases everything else.
+    ledger_block = format_user_requests_block(prior_requests or [])
+    if ledger_block:
+        out.append({
+            "role": "user",
+            "content": ledger_block,
+            "origin": "request_ledger",
         })
 
     if pending_user_message and pending_user_message.strip():
@@ -335,6 +369,12 @@ def _header_to_dict(header: CycleArchiveHeader) -> dict[str, Any]:
 def _message_to_dict(msg: Any) -> dict[str, Any]:
     if hasattr(msg, "to_dict"):
         return msg.to_dict()
+    # ``Message`` is a pydantic model, so this is the path it takes. Dumping
+    # it properly keeps ``origin`` in the archive: without it a restored
+    # cycle would read every reminder and seam as something the human said.
+    dump = getattr(msg, "model_dump", None)
+    if callable(dump):
+        return dump(mode="json")
     if hasattr(msg, "role") and hasattr(msg, "content"):
         content = msg.content
         if isinstance(content, list):

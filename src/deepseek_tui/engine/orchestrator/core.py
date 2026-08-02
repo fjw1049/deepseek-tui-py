@@ -1124,6 +1124,9 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                 working_directory=ws,
                 subagent_manager=per_engine_subagent_manager,
                 metadata=dict(runtime.context.metadata),
+                # Same reason as metadata: replace() would otherwise alias the
+                # runtime's dict into every engine built from it.
+                file_reads={},
             )
             if (
                 cfg.features.mcp
@@ -1403,7 +1406,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         stays stable for DeepSeek prefix caching. Working-set paths stay out
         of system entirely (compaction bridge / cycle state only).
         """
-        from deepseek_tui.engine.context_pressure import wrap_system_reminder
+        from deepseek_tui.engine import reminders
         from deepseek_tui.engine.prompts import handoff_path, load_handoff_reminder
 
         workspace = self.tool_context.working_directory
@@ -1421,10 +1424,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         if not body:
             return None
         self._handoff_injected_mtime = mtime
-        return Message.user(
-            wrap_system_reminder(body),
-            origin=MessageOrigin.SYSTEM_REMINDER,
-        )
+        return reminders.reminder_message(reminders.HANDOFF, body)
 
     def _take_git_snapshot_message(self) -> Message | None:
         """Return the one-shot session-start git snapshot, or None.
@@ -1438,16 +1438,13 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         if self._git_snapshot_injected:
             return None
         self._git_snapshot_injected = True
-        from deepseek_tui.engine.context_pressure import wrap_system_reminder
+        from deepseek_tui.engine import reminders
         from deepseek_tui.engine.prompts import collect_git_snapshot
 
         snapshot = collect_git_snapshot(self.tool_context.working_directory)
         if snapshot is None:
             return None
-        return Message.user(
-            wrap_system_reminder(snapshot),
-            origin=MessageOrigin.SYSTEM_REMINDER,
-        )
+        return reminders.reminder_message(reminders.GIT_SNAPSHOT, snapshot)
 
     def context_breakdown(self, model: str | None = None) -> dict[str, int]:
         """Estimate token occupancy by category for the next request.
@@ -1927,18 +1924,13 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                 working_messages.insert(insert_at, handoff_msg)
                 insert_at += 1
             if hook_context_extra:
-                from deepseek_tui.engine.context_pressure import (
-                    wrap_system_reminder,
-                )
+                from deepseek_tui.engine import reminders
 
                 working_messages.insert(
                     insert_at,
-                    Message.user(
-                        wrap_system_reminder(
-                            "Context from UserPromptSubmit hooks:\n"
-                            + hook_context_extra
-                        ),
-                        origin=MessageOrigin.SYSTEM_REMINDER,
+                    reminders.reminder_message(
+                        reminders.PROMPT_SUBMIT_HOOK_CONTEXT,
+                        "Context from UserPromptSubmit hooks:\n" + hook_context_extra,
                     ),
                 )
         self.working_set.observe_user_message(processed.display_text or "")
@@ -1959,16 +1951,12 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         # Plan mode: detect quick-plan requests that skip codebase exploration
         # and inject a grounding hint
         if should_force_update_plan_first(self.mode, processed.display_text or ""):
-            from deepseek_tui.engine.context_pressure import wrap_system_reminder
+            from deepseek_tui.engine import reminders
+            from deepseek_tui.engine.prompts import PLAN_GROUNDING_REMINDER
 
             working_messages.append(
-                Message.user(
-                    wrap_system_reminder(
-                        "[System] Before creating the plan, explore the repository "
-                        "structure and relevant code first to ground your plan in "
-                        "the actual codebase."
-                    ),
-                    origin=MessageOrigin.SYSTEM_REMINDER,
+                reminders.reminder_message(
+                    reminders.PLAN_NUDGE, PLAN_GROUNDING_REMINDER
                 )
             )
 
@@ -2044,14 +2032,17 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             sys_prompt = build_system_prompt(
                 op.system_prompt,
                 mode=_resolve_app_mode(self.mode),
+                # Skill focus narrows the tool whitelist, not the catalog.
+                # Rewriting ## Skills for a single turn costs two full prefix
+                # cache misses (this turn, then the turn that reverts), and
+                # the model does not need it: the user's `/<skill>` prefix is
+                # never stripped from the message text, so the cue survives.
+                # Plugin mount stays narrowed — it is session-level state, so
+                # its prefix is stable across turns.
                 skills_context=self._render_skills_context(
-                    only=focus_skill
-                    if focus_skill is not None
-                    else (
-                        self._active_plugin_skills()
-                        if focus_mcp is None and self._active_plugin is not None
-                        else None
-                    )
+                    only=self._active_plugin_skills()
+                    if focus_mcp is None and self._active_plugin is not None
+                    else None
                 ),
                 plugin_context=(
                     self._render_plugin_context()
@@ -2291,10 +2282,11 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             return
         for item in completions:
             self._consumed_subagent_completions.add(item.agent_id)
-        from deepseek_tui.engine.context_pressure import wrap_system_reminder
+        from deepseek_tui.engine import reminders
 
         body = "\n\n".join(
-            wrap_system_reminder(item.payload) for item in completions
+            reminders.render(reminders.SUBAGENT_DONE, item.payload)
+            for item in completions
         )
         logger.info(
             "subagent_idle_delivery count=%d",
@@ -2455,17 +2447,14 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             return False
 
         count = len(completions)
-        from deepseek_tui.engine.context_pressure import wrap_system_reminder
+        from deepseek_tui.engine import reminders
 
         for item in completions:
             # Mark consumed so idle-delivery cannot re-inject the same payload
             # if a race schedules a wake after this handoff drains the queue.
             self._consumed_subagent_completions.add(item.agent_id)
             messages.append(
-                Message.user(
-                    wrap_system_reminder(item.payload),
-                    origin=MessageOrigin.SYSTEM_REMINDER,
-                )
+                reminders.reminder_message(reminders.SUBAGENT_DONE, item.payload)
             )
         await self.handle.emit(
             StatusEvent(
@@ -2501,7 +2490,9 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         # never block the conversation.
         # 输入逼近窗口上限时，归档全量历史到磁盘、只留最近 8 条继续
         if self.cycle_config.enabled:
-            await self._maybe_advance_cycle(messages, model)
+            await self._maybe_advance_cycle(
+                messages, model, system_prompt=system_prompt, tools=tools
+            )
         turn_id = self.tool_context.metadata.get("turn_latency_turn_id")
         from deepseek_tui.server.metrics import get_turn_latency
 
@@ -2589,9 +2580,13 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             # Capacity refresh rewrites messages in place (bridge included);
             # do not mutate system_prompt.
             # L0: prune old tool bodies at ≥50% (deterministic, no LLM).
-            self._maybe_l0_prune_tool_results(messages, model)
+            self._maybe_l0_prune_tool_results(
+                messages, model, system_prompt=system_prompt, tools=tools
+            )
             # Soft seams L1/L2/L3 at 20%/40%/55% of the model window.
-            await self._maybe_layered_context_checkpoint(messages, model)
+            await self._maybe_layered_context_checkpoint(
+                messages, model, system_prompt=system_prompt, tools=tools
+            )
             should_trigger = (
                 self._compact_cooldown_rounds <= 0
                 and should_compact(
@@ -2599,6 +2594,8 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                     self.compaction_config,
                     real_input_tokens=self.last_real_input_tokens,
                     model=model,
+                    system_prompt=system_prompt,
+                    tools=tools,
                 )
             )
             if should_trigger:
@@ -2628,7 +2625,9 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                 self._compact_cooldown_rounds -= 1
             # Long-session drift reminder — after compaction so a rewrite
             # doesn't immediately archive a freshly injected copy.
-            self._maybe_inject_long_session_reminder(messages, model)
+            self._maybe_inject_long_session_reminder(
+                messages, model, system_prompt=system_prompt, tools=tools
+            )
 
             # Flush any diagnostics queued by post-edit hooks from the
             # previous round-trip so the model sees them on this request.
@@ -2680,6 +2679,20 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             round_usage = result.usage
             if round_usage is not None and round_usage.input_tokens:
                 self.last_real_input_tokens = round_usage.input_tokens
+                # Prefix-cache baseline, per round. Anything that perturbs the
+                # stable system prefix mid-turn shows up here as a sudden ratio
+                # drop. Both counters zero means the provider reported nothing
+                # — that is unknown, not a miss (base.md), so stay quiet.
+                cache_hit = round_usage.cache_read_input_tokens
+                cache_miss = round_usage.cache_creation_input_tokens
+                if cache_hit or cache_miss:
+                    logger.info(
+                        "prefix_cache round=%d hit=%d miss=%d ratio=%.3f",
+                        round_idx,
+                        cache_hit,
+                        cache_miss,
+                        cache_hit / (cache_hit + cache_miss),
+                    )
             if not result.cancelled:
                 from deepseek_tui.server.agent_segments import assistant_thinking_text
 
@@ -2722,17 +2735,12 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                             stop_decision.reason
                             or "A Stop hook blocked ending the turn."
                         )
-                        from deepseek_tui.engine.context_pressure import (
-                            wrap_system_reminder,
-                        )
+                        from deepseek_tui.engine import reminders
 
                         messages.append(
-                            Message.user(
-                                wrap_system_reminder(
-                                    "A Stop hook prevented ending the turn: "
-                                    f"{reason}"
-                                ),
-                                origin=MessageOrigin.SYSTEM_REMINDER,
+                            reminders.reminder_message(
+                                reminders.STOP_HOOK_BLOCK,
+                                f"A Stop hook prevented ending the turn: {reason}",
                             )
                         )
                         logger.info(

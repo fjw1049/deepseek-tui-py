@@ -90,6 +90,12 @@ class TodoItem:
         self.status = "completed" if value else "pending"
 
 
+def _render_items(items: list[TodoItem]) -> str:
+    return "\n".join(
+        f"{_STATUS_GLYPHS.get(i.status, '[ ]')} {i.id}: {i.content}" for i in items
+    )
+
+
 # ---------------------------------------------------------------------------
 # Store helpers
 # ---------------------------------------------------------------------------
@@ -332,26 +338,29 @@ class ChecklistTool(ToolSpec):
 
         metadata = _build_result_metadata(store, tool_name=self.name())
         _forward_to_task_manager(context, metadata)
+        # Echo the whole list back, not just a count: the model's only other
+        # view of the checklist is its own earlier tool_call arguments, which
+        # L0 prune blanks at 50% and rewrite compaction drops at 75%. The
+        # leading "N items written" is load-bearing — the Workbench renderer
+        # matches it to detect writes (extract-todos-from-blocks.ts).
+        header = f"{len(store['items'])} items written"
+        body = _render_items(new_items)
         return ToolResult(
             success=True,
-            content=f"{len(store['items'])} items written",
+            content=f"{header}\n{body}" if body else header,
             metadata=metadata,
         )
 
     def _read(self, context: ToolContext) -> ToolResult:
         store = _todo_store(context)
         items: list[TodoItem] = list(store["items"])
-        lines = [
-            f"{_STATUS_GLYPHS.get(i.status, '[ ]')} {i.id}: {i.content}"
-            for i in items
-        ]
         metadata = _build_result_metadata(store, tool_name=self.name())
         # Reading is read-only — no task_updates forwarding
         # (``checklist_metadata`` is only attached to write paths).
         metadata.pop("task_updates", None)
         return ToolResult(
             success=True,
-            content="\n".join(lines),
+            content=_render_items(items),
             metadata=metadata,
         )
 

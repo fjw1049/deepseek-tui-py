@@ -89,7 +89,13 @@ def test_cycle_seed_has_no_fake_assistant_ack() -> None:
     joined = "\n".join(s["content"] for s in seeds)
     assert "Acknowledged" not in joined
     assert "Briefing absorbed" not in joined
-    assert "<system-reminder>" in seeds[0]["content"]
+    # Was `<system-reminder>`. Overturned by F16: a cycle seed is not an
+    # alert about the present, it is what survived a context reset. Sharing
+    # the reminder envelope with "your last edit broke the build" left the
+    # model no way to tell instructions from history, and left the harness
+    # no basis for a position rule.
+    assert "<cycle_carryover>" in seeds[0]["content"]
+    assert "<system-reminder>" not in seeds[0]["content"]
     assert seeds[-1]["origin"] == "real_user"
     assert "fix the login bug" in seeds[-1]["content"]
 

@@ -94,6 +94,7 @@ class ReadFileTool(ToolSpec):
                 f"... (showing lines {start + 1}-{end} of {total_lines}; "
                 "use offset to continue)"
             )
+        context.note_file_content(path)
         metadata: dict[str, object] = {
             "path": str(path),
             "line_offset": offset or 0,
@@ -155,6 +156,8 @@ class WriteFileTool(ToolSpec):
         rel = _require_string(input_data, "path")
         path = context.resolve_path(rel)
         content = _require_string(input_data, "content")
+        if context.changed_since_last_seen(path):
+            raise ToolError(_stale_write_message(path))
         existed = path.exists()
         old_text = ""
         if existed:
@@ -167,6 +170,7 @@ class WriteFileTool(ToolSpec):
             old_text if existed else None,
         )
         await _write_text(path, content)
+        context.note_file_content(path)
         logger.info("write_file path=%s bytes=%d", path, len(content))
         display_path = _workspace_rel(path, context.working_directory, rel)
         unified, stats, op = synthesize_unified_diff(display_path, old_text, content)
@@ -254,6 +258,11 @@ class EditFileTool(ToolSpec):
         count = content.count(old_string)
         if count == 0:
             logger.warning("edit_file_no_match path=%s search_len=%d", path, len(old_string))
+            # A no-match on a file that moved on disk has a specific cause and
+            # a specific fix. Saying only "not found" sends the model hunting
+            # for a typo in old_string that isn't there.
+            if context.changed_since_last_seen(path):
+                raise ToolError(_stale_write_message(path))
             raise ToolError(f"Search string not found in {path}")
         if count > 1 and not replace_all:
             raise ToolError(
@@ -266,6 +275,7 @@ class EditFileTool(ToolSpec):
             _workspace_rel(path, context.working_directory, rel), content
         )
         await _write_text(path, updated)
+        context.note_file_content(path)
         display_path = _workspace_rel(path, context.working_directory, rel)
         summary = f"Replaced {count} occurrence(s) in {display_path}"
         logger.info(
@@ -294,6 +304,16 @@ class EditFileTool(ToolSpec):
             content=summary,
             metadata=meta,
         )
+
+
+def _stale_write_message(path: Path) -> str:
+    """Explain the staleness and give the one action that clears it."""
+    return (
+        f"{path} changed on disk after you last read it — a formatter, a "
+        "shell command, another agent, or the user edited it. Writing now "
+        "would silently discard that change. Run read_file on it, then "
+        "redo this write against what is actually there."
+    )
 
 
 def _require_string_with_alias(

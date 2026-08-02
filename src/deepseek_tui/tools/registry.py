@@ -138,6 +138,12 @@ class ToolContext:
     # stay confined to the workspace. Skills' companion-file roots can be
     # appended here later with no API change.
     extra_read_roots: tuple[Path, ...] = ()
+    # This session's cycle-archive directory. Kept separate from
+    # ``extra_read_roots`` because a plugin mount reassigns that tuple
+    # wholesale; a cycle seed that names an unreadable archive would only
+    # buy the model a guaranteed tool error. Read-only, one directory, and
+    # gated exactly like the spillover root.
+    cycle_archive_root: Path | None = None
     active_task_id: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
     policy: Policy | None = None
@@ -155,6 +161,37 @@ class ToolContext:
     pre_write_capture: Callable[[str, str | None], None] | None = None
     # Subagent id when tools run inside a child agent (projected into ledger).
     mutation_agent_id: str | None = None
+    # Resolved path -> (st_mtime_ns, st_size) as of the last time this session
+    # read or wrote the file. The write tools compare against it so an
+    # overwrite based on a stale read is caught before it lands. Deliberately
+    # per-engine: a shared registry would let one session's write mark another
+    # session's stale read as current, which is the one error worth avoiding.
+    file_reads: dict[Path, tuple[int, int]] = field(default_factory=dict)
+
+    def note_file_content(self, path: Path) -> None:
+        """Record the on-disk stamp of *path* as what this session last saw."""
+        try:
+            stat = path.stat()
+        except OSError:
+            self.file_reads.pop(path, None)
+            return
+        self.file_reads[path] = (stat.st_mtime_ns, stat.st_size)
+
+    def changed_since_last_seen(self, path: Path) -> bool:
+        """True when *path* moved on disk since this session last saw it.
+
+        False for a file this session never touched: absence of a record is
+        not evidence of a change, and guessing would block the legitimate
+        case of writing a file the agent has good reason not to have read.
+        """
+        seen = self.file_reads.get(path)
+        if seen is None:
+            return False
+        try:
+            stat = path.stat()
+        except OSError:
+            return False
+        return (stat.st_mtime_ns, stat.st_size) != seen
 
     def report_file_mutation(self, mutation: dict[str, Any]) -> None:
         """Notify the turn ledger about a successful workspace file write."""
@@ -204,9 +241,10 @@ class ToolContext:
 
         Read-only callers pass ``allow_read_roots=True`` to also accept
         paths under ``extra_read_roots`` (and their subdirs) — e.g. a
-        mounted plugin's own directory — and paths under the spillover
-        root (``~/.deepseek/tool_outputs/``) so spilled tool outputs can
-        be read back with ``read_file``/``grep_files``. Write callers
+        mounted plugin's own directory — plus two agent-data roots the model
+        is pointed at by name: the spillover root
+        (``~/.deepseek/tool_outputs/``) for spilled tool results, and this
+        session's ``cycle_archive_root`` for pre-cycle history. Write callers
         leave it False so writes stay confined to the workspace.
         """
         workspace = self.working_directory.expanduser().resolve()
@@ -221,6 +259,7 @@ class ToolContext:
                     self._within(resolved, root) for root in self.extra_read_roots
                 )
                 or self._within_spillover_root(resolved)
+                or self._within_cycle_archive_root(resolved)
             )
             if not allowed:
                 raise ValueError(
@@ -241,6 +280,16 @@ class ToolContext:
             return False
         try:
             root = root.expanduser().resolve()
+        except OSError:
+            return False
+        return ToolContext._within(resolved, root)
+
+    def _within_cycle_archive_root(self, resolved: Path) -> bool:
+        """True when ``resolved`` sits under this session's cycle archive."""
+        if self.cycle_archive_root is None:
+            return False
+        try:
+            root = self.cycle_archive_root.expanduser().resolve()
         except OSError:
             return False
         return ToolContext._within(resolved, root)
@@ -500,23 +549,6 @@ class ToolRegistry:
                 for _, tool in sorted(self._tools.items())
             ]
         return self._api_cache
-
-    def to_api_tools_with_cache(self, enable_cache: bool) -> list[dict[str, Any]]:
-        """Return :meth:`to_api_tools` with a cache marker on the last tool.
-
-        When ``enable_cache`` is true, the last
-        entry gets ``cache_control = {"type": "ephemeral"}``, which lets
-        prompt-cache-aware providers (Anthropic, some OpenAI proxies)
-        anchor the prefix at the end of the tool list.
-        """
-        # Copy the list so callers don't mutate the memoised payload.
-        tools = [dict(t) for t in self.to_api_tools()]
-        if enable_cache and tools:
-            last = tools[-1]
-            # Avoid mutating the cached `function` dict in place.
-            last["function"] = dict(last["function"])
-            last["cache_control"] = {"type": "ephemeral"}
-        return tools
 
     # ------------------------------------------------------------------
     # input validation

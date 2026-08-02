@@ -127,9 +127,7 @@ class LifecycleLspMixin:
             except OSError:
                 continue
             try:
-                blocks = await manager.diagnostics_for(
-                    absolute, content, self.turn_counter
-                )
+                blocks = await manager.diagnostics_for(absolute, content)
             except Exception:  # noqa: BLE001 — LSP failure is silent
                 continue
             self.pending_lsp_blocks.extend(blocks)
@@ -147,12 +145,8 @@ class LifecycleLspMixin:
         rendered = render_blocks(blocks)
         if not rendered:
             return
-        from deepseek_tui.engine.context_pressure import wrap_system_reminder
-        from deepseek_tui.protocol.messages import MessageOrigin
+        from deepseek_tui.engine import reminders
 
         messages.append(
-            Message.user(
-                wrap_system_reminder(rendered),
-                origin=MessageOrigin.SYSTEM_REMINDER,
-            )
+            reminders.reminder_message(reminders.LSP_DIAGNOSTICS, rendered)
         )

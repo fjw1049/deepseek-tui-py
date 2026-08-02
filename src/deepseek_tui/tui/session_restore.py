@@ -20,10 +20,12 @@ logger = logging.getLogger(__name__)
 
 def parse_session_messages(session_data: dict[str, Any], *, path: Path | None = None) -> list[Message]:
     """Validate session JSON and return restored messages."""
+    from deepseek_tui.engine.context_pressure import messages_from_dicts
+
     messages_raw = session_data.get("messages")
     if not isinstance(messages_raw, list):
         raise ValueError("session file has no messages")
-    return [Message.model_validate(msg) for msg in messages_raw]
+    return messages_from_dicts(messages_raw)
 
 
 def session_metadata(
@@ -66,8 +68,10 @@ def try_restore_crash_checkpoint(engine: Any) -> tuple[list[Message], dict[str, 
     if not isinstance(messages_raw, list) or not messages_raw:
         return None
 
+    from deepseek_tui.engine.context_pressure import messages_from_dicts
+
     try:
-        messages = [Message.model_validate(msg) for msg in messages_raw]
+        messages = messages_from_dicts(messages_raw)
     except Exception:  # noqa: BLE001 — pydantic validation errors
         logger.warning("crash checkpoint messages invalid", exc_info=True)
         return None

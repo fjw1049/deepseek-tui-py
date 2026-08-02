@@ -563,6 +563,14 @@ LONG_SESSION_REMINDER = (
 )
 
 
+# Injected as a user-role reminder in plan mode when the request reads like
+# "just give me a plan" — see should_force_update_plan_first.
+PLAN_GROUNDING_REMINDER = (
+    "[System] Before creating the plan, explore the repository structure and "
+    "relevant code first to ground your plan in the actual codebase."
+)
+
+
 # Keep this tiny: routing only. RRULE / delivery / fire toolset live on
 # CronCreateTool.description (and cron execution playbook).
 AUTOMATIONS_LANE_HINT = (
@@ -592,13 +600,24 @@ def load_handoff_reminder(workspace: Path) -> str | None:
     trimmed = raw.strip()
     if not trimmed:
         return None
-    return (
+    # Same threat as the git snapshot: this is workspace file content, so a
+    # cloned repo can ship a handoff carrying a forged reminder tag. The body
+    # is inlined inside a real envelope downstream, so defuse at the source.
+    from deepseek_tui.engine.context_pressure import (
+        neutralize_fake_system_reminders,
+    )
+
+    return neutralize_fake_system_reminders(
         f"## Previous Session Handoff\n\n"
         f"The previous session in this workspace left a handoff at "
         f"`{HANDOFF_RELATIVE_PATH}`. Consider it the first artifact to read "
         f"on this turn — open blockers, in-flight changes, and recent decisions "
         f"live there. Update or rewrite it before exiting if state changes "
-        f"materially.\n\n{trimmed}"
+        f"materially.\n\n"
+        f"It describes the workspace as the previous session left it and has "
+        f"not been checked against the current state — anything it claims "
+        f"about files, branches, or what is finished is a lead to verify, not "
+        f"a fact to build on.\n\n{trimmed}"
     )
 
 
@@ -791,7 +810,14 @@ COMPACT_CONSUMER_HINT = (
     "(Done / In Progress / Blocked), Key Decisions, and Next step. "
     "Treat that block plus the recent verbatim messages as your "
     "continuation context — do not ask the user to restate work that is "
-    "already covered there."
+    "already covered there.\n\n"
+    "A `<prior_user_requests>` block may accompany it, listing every request "
+    "the user has made this session in their own words. It is quoted "
+    "verbatim; the summary is a paraphrase. **Where the two disagree, the "
+    "verbatim requests win.** A constraint listed there still binds you even "
+    "if the summary omits it — the summary losing it is the expected failure, "
+    "which is why the list exists. The last entry is the current request; "
+    "earlier ones are context and standing constraints, not work to redo."
 )
 
 

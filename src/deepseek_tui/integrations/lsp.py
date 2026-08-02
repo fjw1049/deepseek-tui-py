@@ -10,6 +10,7 @@ from enum import Enum
 from pathlib import Path
 import asyncio
 import json
+import logging
 from abc import ABC, abstractmethod
 from typing import Any
 
@@ -254,6 +255,14 @@ class LspClient:
         self._pending: dict[int, asyncio.Future[Any]] = {}
         self._diagnostics: dict[str, list[Diagnostic]] = {}
         self._receive_task: asyncio.Task[None] | None = None
+        # Per-document version, and the fact that we opened it at all. A
+        # server drops didChange for a document it never saw open, and
+        # requires versions to increase, so neither can be derived from a
+        # counter that belongs to the conversation rather than the file.
+        self._versions: dict[str, int] = {}
+        # Set when the server publishes for a URI, so a caller can wait for
+        # the answer instead of sleeping for however long it might take.
+        self._published: dict[str, asyncio.Event] = {}
 
     async def start(self) -> None:
         """Start the client and initialize the server."""
@@ -342,6 +351,38 @@ class LspClient:
             source = diag.get("source")
             diagnostics.append(Diagnostic(severity, line, column, message, source))
         self._diagnostics[path] = diagnostics
+        self._publication_event(path).set()
+
+    def _publication_event(self, path: str) -> asyncio.Event:
+        event = self._published.get(path)
+        if event is None:
+            event = asyncio.Event()
+            self._published[path] = event
+        return event
+
+    async def sync_and_await_diagnostics(
+        self, path: Path, content: str, timeout_s: float
+    ) -> list[Diagnostic]:
+        """Push the new content and wait for the server's verdict on it.
+
+        Returns as soon as the server publishes, which for a clean file is
+        an empty list rather than silence — so the timeout is a bound on
+        pathological cases, not the price of every edit.
+        """
+        key = path.as_posix()
+        event = self._publication_event(key)
+        event.clear()
+        if key in self._versions:
+            self._versions[key] += 1
+            await self.did_change(path, content, self._versions[key])
+        else:
+            self._versions[key] = 1
+            await self.did_open(path, content)
+        try:
+            await asyncio.wait_for(event.wait(), timeout=timeout_s)
+        except asyncio.TimeoutError:
+            return []
+        return self.get_diagnostics(path)
 
     async def did_open(self, path: Path, content: str) -> None:
         """Send didOpen notification."""
@@ -419,9 +460,9 @@ class LspManager:
     def __init__(self, config: LspConfig) -> None:
         self.config = config
         self._clients: dict[Language, LspClient] = {}
-        self._warned_missing: set[Language] = set()
+        self._unavailable: set[Language] = set()
 
-    async def diagnostics_for(self, path: Path, content: str, seq: int) -> list[DiagnosticBlock]:
+    async def diagnostics_for(self, path: Path, content: str) -> list[DiagnosticBlock]:
         """Get diagnostics for a file after an edit."""
         if not self.config.enabled:
             return []
@@ -435,14 +476,9 @@ class LspManager:
             return []
 
         try:
-            if seq == 1:
-                await client.did_open(path, content)
-            else:
-                await client.did_change(path, content, seq)
-
-            await asyncio.sleep(self.config.poll_after_edit_ms / 1000.0)
-
-            diagnostics = client.get_diagnostics(path)
+            diagnostics = await client.sync_and_await_diagnostics(
+                path, content, self.config.poll_after_edit_ms / 1000.0
+            )
             filtered = self._filter_diagnostics(diagnostics)
             if not filtered:
                 return []
@@ -455,6 +491,10 @@ class LspManager:
         """Get or spawn an LSP client for a language."""
         if lang in self._clients:
             return self._clients[lang]
+        # Without this, a machine with no language server installed re-forks
+        # a doomed subprocess on every single edit for the whole session.
+        if lang in self._unavailable:
+            return None
 
         server_cmd = self.config.servers.get(lang.as_key())
         if server_cmd:
@@ -463,6 +503,7 @@ class LspManager:
         else:
             server_info = server_for(lang)
             if server_info is None:
+                self._unavailable.add(lang)
                 return None
             command, args = server_info
 
@@ -473,8 +514,14 @@ class LspManager:
             self._clients[lang] = client
             return client
         except Exception:
-            if lang not in self._warned_missing:
-                self._warned_missing.add(lang)
+            self._unavailable.add(lang)
+            logging.getLogger(__name__).warning(
+                "lsp_server_unavailable language=%s command=%s — diagnostics "
+                "disabled for this language; install it or set "
+                "[lsp.servers] in config",
+                lang.as_key(),
+                command,
+            )
             return None
 
     def _filter_diagnostics(self, diagnostics: list[Diagnostic]) -> list[Diagnostic]:
