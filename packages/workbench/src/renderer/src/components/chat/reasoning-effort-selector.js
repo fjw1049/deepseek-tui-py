@@ -69,7 +69,6 @@ class ChatGPTModelSelector extends HTMLElement {
         --ink-2: var(--ds-text-muted, #6B7280);
         --ink-3: var(--ds-text-faint, #9CA3AF);
         --track: var(--ds-chip-muted-bg, #E5E7EB);
-        --pill-bg: var(--ds-chip-muted-bg, #F1F2F3);
         --pill-bg-hover: var(--ds-surface-hover, #E8E9EB);
         --card: var(--ds-card-strong, #FFFFFF);
         --hairline: color-mix(in srgb, var(--ds-border, #E5E7EB) 88%, transparent);
@@ -122,7 +121,7 @@ class ChatGPTModelSelector extends HTMLElement {
         max-width: 220px;
         height: 36px;
         border-radius: 999px;
-        background: var(--pill-bg);
+        background: transparent;
         display: inline-flex;
         align-items: center;
         gap: 6px;

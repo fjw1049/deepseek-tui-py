@@ -2136,10 +2136,10 @@ export function FloatingComposer({
                 }
                 aria-label={voiceButtonTitle}
                 title={voiceButtonTitle}
-                className={`ds-no-drag flex h-9 w-9 shrink-0 items-center justify-center rounded-full border shadow-sm transition disabled:cursor-not-allowed disabled:opacity-50 ${
+                className={`ds-no-drag flex h-9 w-9 shrink-0 items-center justify-center rounded-full border transition disabled:cursor-not-allowed disabled:opacity-50 ${
                   voicePhase === 'recording'
                     ? 'border-red-500/45 bg-red-500/15 text-red-600 hover:bg-red-500/25 dark:text-red-300'
-                    : 'border-ds-border bg-ds-card text-ds-muted hover:bg-ds-hover hover:text-ds-ink'
+                    : 'border-transparent bg-transparent text-ds-muted hover:bg-ds-hover hover:text-ds-ink'
                 }`}
               >
                 {voicePhase === 'recording' ? (
