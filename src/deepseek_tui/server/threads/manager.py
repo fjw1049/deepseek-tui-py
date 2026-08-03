@@ -2655,7 +2655,9 @@ class RuntimeThreadManager:
                 {"item": item.model_dump(mode="json")},
             )
 
-        async def persist_final_answer_message(*, text: str) -> None:
+        async def persist_agent_message(
+            *, text: str, agent_segment: str
+        ) -> None:
             nonlocal current_message_item_id, current_message_text
             cleaned = text.strip()
             if not cleaned:
@@ -2668,7 +2670,7 @@ class RuntimeThreadManager:
                 item.status = TurnItemLifecycleStatus.COMPLETED
                 item.detail = cleaned
                 item.summary = summarize_text(cleaned, SUMMARY_LIMIT)
-                item.metadata = {**base_meta, AGENT_SEGMENT_KEY: FINAL_ANSWER}
+                item.metadata = {**base_meta, AGENT_SEGMENT_KEY: agent_segment}
                 item.ended_at = now
                 item_id = current_message_item_id
             else:
@@ -2680,7 +2682,7 @@ class RuntimeThreadManager:
                     status=TurnItemLifecycleStatus.COMPLETED,
                     summary=summarize_text(cleaned, SUMMARY_LIMIT),
                     detail=cleaned,
-                    metadata={AGENT_SEGMENT_KEY: FINAL_ANSWER},
+                    metadata={AGENT_SEGMENT_KEY: agent_segment},
                     started_at=now,
                     ended_at=now,
                 )
@@ -2696,6 +2698,13 @@ class RuntimeThreadManager:
             )
             current_message_item_id = None
             current_message_text = ""
+
+        async def persist_provisional_message(*, text: str) -> None:
+            """Persist text from a no-tool round as mid-turn (not final yet)."""
+            await persist_agent_message(text=text, agent_segment=MID_TURN_PREFACE)
+
+        async def persist_final_answer_message(*, text: str) -> None:
+            await persist_agent_message(text=text, agent_segment=FINAL_ANSWER)
 
         def schedule_phase_bridge(
             segment: ReasoningSegment, round_event: AgentRoundCompleteEvent
@@ -3495,14 +3504,18 @@ class RuntimeThreadManager:
             elif isinstance(event, AgentRoundCompleteEvent):
                 segment = await finalize_open_reasoning()
                 if not event.tool_calls:
+                    # Empty tool_calls is not turn-terminal: checklist gate,
+                    # stop hooks, and subagent handoff may still continue.
+                    # Keep this text as a provisional mid-turn preface; the
+                    # true final_answer is assigned only when the turn ends.
                     last_completed_reasoning = None
                     preface = (event.preface_text or "").strip()
                     if preface and current_message_item_id is not None:
-                        await finalize_open_message(agent_segment=FINAL_ANSWER)
+                        await finalize_open_message(agent_segment=MID_TURN_PREFACE)
                     elif preface:
-                        await persist_final_answer_message(text=preface)
+                        await persist_provisional_message(text=preface)
                     elif current_message_item_id is not None:
-                        await finalize_open_message(agent_segment=FINAL_ANSWER)
+                        await finalize_open_message(agent_segment=MID_TURN_PREFACE)
                 else:
                     # The model's own preface is passed through verbatim as the
                     # pre-tool storyline (no content vetting — wording quality
@@ -3680,9 +3693,15 @@ class RuntimeThreadManager:
             )
 
         if turn_status == RuntimeTurnStatus.COMPLETED:
-            recovered_answer = await self._recover_missing_final_answer(thread_id, turn_id)
-            if recovered_answer:
-                await persist_final_answer_message(text=recovered_answer)
+            promoted = await self._promote_last_provisional_message_to_final_answer(
+                thread_id, turn_id
+            )
+            if not promoted:
+                recovered_answer = await self._recover_missing_final_answer(
+                    thread_id, turn_id
+                )
+                if recovered_answer:
+                    await persist_final_answer_message(text=recovered_answer)
 
         # Finalize the turn record
         ended_at = datetime.now(timezone.utc)
@@ -3793,6 +3812,48 @@ class RuntimeThreadManager:
                 recent_tool_results=recent_tool_results,
                 locale=locale,
             )
+
+    async def _promote_last_provisional_message_to_final_answer(
+        self, thread_id: str, turn_id: str
+    ) -> bool:
+        """Promote the last no-tool provisional preface to ``final_answer``.
+
+        No-tool rounds are persisted as ``mid_turn_preface`` because the
+        orchestrator may still continue. When the turn truly completes, the
+        latest non-empty preface that was *not* a pre-tool narration frame
+        becomes the user-facing final answer.
+        """
+        turn = self.store.load_turn(turn_id)
+        candidate_id: str | None = None
+        for item_id in turn.item_ids:
+            item = self.store.load_item(item_id)
+            if item.kind != TurnItemKind.AGENT_MESSAGE:
+                continue
+            metadata = item.metadata if isinstance(item.metadata, dict) else {}
+            text = (item.detail or item.summary or "").strip()
+            if not text:
+                continue
+            if metadata.get(AGENT_SEGMENT_KEY) == FINAL_ANSWER:
+                return True
+            # Pre-tool frames carry process_intent; skip those.
+            if PROCESS_INTENT_METADATA_KEY in metadata:
+                continue
+            if metadata.get(AGENT_SEGMENT_KEY) in {MID_TURN_PREFACE, None}:
+                candidate_id = item_id
+        if candidate_id is None:
+            return False
+        item = self.store.load_item(candidate_id)
+        base_meta = item.metadata if isinstance(item.metadata, dict) else {}
+        item.metadata = {**base_meta, AGENT_SEGMENT_KEY: FINAL_ANSWER}
+        self.store.save_item(item)
+        await self._emit_event(
+            thread_id,
+            turn_id,
+            candidate_id,
+            "item.completed",
+            {"item": item.model_dump(mode="json")},
+        )
+        return True
 
     async def _recover_missing_final_answer(self, thread_id: str, turn_id: str) -> str | None:
         """Produce a safe final reply when a completed turn emitted none.

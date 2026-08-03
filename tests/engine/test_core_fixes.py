@@ -241,6 +241,18 @@ async def test_pre_content_stream_errors_terminate():
 
 
 @pytest.mark.asyncio
+async def test_non_retryable_pre_content_error_fails_immediately():
+    """Local fail-fast errors (e.g. client rate_limit) must not transparent-retry."""
+    client = _ScriptedClient(
+        [[StreamError(message="rate limit exceeded", retryable=False)]]
+    )
+    result, _ = await asyncio.wait_for(_run_turn(client), timeout=10)
+    assert result.outcome == TurnOutcomeStatus.FAILED
+    assert result.error_message == "rate limit exceeded"
+    assert client.calls == 1
+
+
+@pytest.mark.asyncio
 async def test_successful_stream_unaffected():
     client = _ScriptedClient(
         [[StreamTextDelta(text="ok"), StreamDone(usage=None)]]

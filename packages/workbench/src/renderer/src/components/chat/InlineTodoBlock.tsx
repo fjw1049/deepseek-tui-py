@@ -12,19 +12,23 @@ type Props = {
 
 function statusGlyph(status: TodoItemView['status']): string {
   if (status === 'completed') return '☑'
+  if (status === 'cancelled') return '☒'
   if (status === 'in_progress') return '◔'
   return '☐'
 }
 
 function TodoItemRow({ item }: { item: TodoItemView }): ReactElement {
   const completed = item.status === 'completed'
+  const cancelled = item.status === 'cancelled'
+  const closed = completed || cancelled
   const inProgress = item.status === 'in_progress'
 
   return (
     <li
       className={[
         'flex items-start gap-2 text-[14px] leading-6',
-        completed ? 'text-ds-faint' : inProgress ? 'text-ds-ink' : 'text-ds-muted'
+        closed ? 'text-ds-faint' : inProgress ? 'text-ds-ink' : 'text-ds-muted',
+        cancelled ? 'line-through' : ''
       ].join(' ')}
     >
       <span
@@ -32,9 +36,11 @@ function TodoItemRow({ item }: { item: TodoItemView }): ReactElement {
           'mt-1 shrink-0 text-[13px] font-semibold',
           completed
             ? 'text-emerald-600/85 dark:text-emerald-300/85'
-            : inProgress
-              ? 'text-accent'
-              : 'text-ds-faint'
+            : cancelled
+              ? 'text-ds-faint'
+              : inProgress
+                ? 'text-accent'
+                : 'text-ds-faint'
         ].join(' ')}
         aria-hidden
       >
@@ -48,12 +54,14 @@ function TodoItemRow({ item }: { item: TodoItemView }): ReactElement {
 export function InlineTodoBlock({ session, active = false, className = '' }: Props): ReactElement {
   const { t } = useTranslation('common')
   const count = session.items.length
-  const completedCount = session.items.filter((item) => item.status === 'completed').length
+  const resolvedCount = session.items.filter(
+    (item) => item.status === 'completed' || item.status === 'cancelled'
+  ).length
   const { openItems, completedItems } = useMemo(() => {
     const open: TodoItemView[] = []
     const done: TodoItemView[] = []
     for (const item of session.items) {
-      if (item.status === 'completed') done.push(item)
+      if (item.status === 'completed' || item.status === 'cancelled') done.push(item)
       else open.push(item)
     }
     return { openItems: open, completedItems: done }
@@ -105,7 +113,7 @@ export function InlineTodoBlock({ session, active = false, className = '' }: Pro
           ].join(' ')}
           aria-hidden
         >
-          {session.isComplete ? '✓' : completedCount}
+          {session.isComplete ? '✓' : resolvedCount}
         </span>
         <span className="min-w-0 flex-1">
           <span className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
@@ -123,7 +131,7 @@ export function InlineTodoBlock({ session, active = false, className = '' }: Pro
             </span>
             {count > 0 ? (
               <span className="text-[13px] tabular-nums text-ds-faint">
-                {t('todoInlineProgress', { done: completedCount, total: count })}
+                {t('todoInlineProgress', { done: resolvedCount, total: count })}
               </span>
             ) : null}
           </span>

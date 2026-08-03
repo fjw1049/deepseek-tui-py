@@ -38,10 +38,13 @@ from deepseek_tui.engine.events import (
     SessionEndedEvent,
     SessionStartedEvent,
     StatusEvent,
+    ToolCallEvent,
+    ToolResultEvent,
     TurnCancelledEvent,
     TurnCompleteEvent,
     TurnStartedEvent,
 )
+from deepseek_tui.protocol.responses import ToolCall
 from deepseek_tui.engine.handle import (
     ApprovalHandler,
     AutoApprovalHandler,
@@ -2116,6 +2119,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                     and getattr(cancelled_usage, "input_tokens", 0)
                 ):
                     self.last_real_input_tokens = cancelled_usage.input_tokens
+                await self._emit_checklist_turn_end_reconcile()
                 await self.handle.emit(
                     TurnCancelledEvent(
                         reason=self.handle.cancel_reason or "user_cancelled"
@@ -2197,6 +2201,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                 running_subagents = self.tool_context.subagent_manager.running_count()
             if self.tool_context.task_manager is not None:
                 running_tasks = self.tool_context.task_manager.running_count()
+            await self._emit_checklist_turn_end_reconcile()
             await self.handle.emit(
                 TurnCompleteEvent(
                     assistant_message=result.assistant_message,
@@ -2450,6 +2455,43 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             f"#{getattr(it, 'id', '?')} {getattr(it, 'status', '?')}"
             for it in open_items
         )
+
+    async def _emit_checklist_turn_end_reconcile(self) -> None:
+        """Close leftover open checklist items before the turn goes idle.
+
+        After the single-shot gate, a weak model may still stop with
+        ``pending`` / ``in_progress`` rows. Cancel those so Workbench never
+        keeps a spinning todo card on an idle turn. Emits a synthetic
+        checklist tool pair so the snapshot reaches the timeline.
+        """
+        if self.tool_context is None:
+            return
+        from deepseek_tui.tools.todo import reconcile_open_checklist_items
+
+        reconciled = reconcile_open_checklist_items(self.tool_context)
+        if reconciled is None:
+            return
+        content, metadata = reconciled
+        tool_call_id = f"checklist_reconcile_{uuid.uuid4().hex[:8]}"
+        await self.handle.emit(
+            ToolCallEvent(
+                tool_call=ToolCall(
+                    id=tool_call_id,
+                    name="checklist",
+                    arguments={"op": "update", "reason": "turn_end_reconcile"},
+                )
+            )
+        )
+        await self.handle.emit(
+            ToolResultEvent(
+                tool_call_id=tool_call_id,
+                tool_name="checklist",
+                content=content,
+                success=True,
+                metadata=metadata,
+            )
+        )
+        logger.info("checklist_turn_end_reconcile")
 
     async def _handle_subagent_turn_handoff(self, messages: list[Message]) -> bool:
         """Wait for direct children and inject ``<deepseek:subagent.done>`` (#756).

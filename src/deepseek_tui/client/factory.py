@@ -16,6 +16,7 @@ from deepseek_tui.client.anthropic import AnthropicCompatClient
 from deepseek_tui.client.deepseek import DeepSeekClient
 
 if TYPE_CHECKING:
+    from deepseek_tui.client.base import LLMClient
     from deepseek_tui.config.models import Config
 
 
@@ -29,7 +30,7 @@ class EndpointTestResult:
     message: str = ""
 
 
-def build_llm_client(config: Config) -> DeepSeekClient | AnthropicCompatClient:
+def build_llm_client(config: Config) -> LLMClient:
     """Build an LLM client driven purely by configuration.
 
     Resolution chain (highest priority wins):
@@ -41,6 +42,10 @@ def build_llm_client(config: Config) -> DeepSeekClient | AnthropicCompatClient:
     Unknown providers are fully supported — as long as the user supplies
     base_url + api_key + model in their ``[providers.X]`` section,
     everything works.
+
+    A positive ``[providers.X] rate_limit`` wraps the client in a
+    per-key per-minute limiter (see ``client.rate_limit``); the wrapper
+    shares one process-wide budget per API key across all callers.
     """
     from deepseek_tui.state.secrets import SecretsManager
 
@@ -52,27 +57,34 @@ def build_llm_client(config: Config) -> DeepSeekClient | AnthropicCompatClient:
     model = pc.model or config.default_text_model
 
     if pc.protocol == "anthropic":
-        return AnthropicCompatClient(
+        client: LLMClient = AnthropicCompatClient(
             api_key=api_key,
             base_url=base_url,
             timeout_seconds=float(pc.timeout),
             extra_headers=pc.extra_headers,
         )
+    else:
+        # thinking_supported gates whether reasoning_effort / thinking fields
+        # are sent in the request payload.  Default False — most endpoints
+        # reject unknown fields with HTTP 400.  Only enable for endpoints
+        # known to require these fields (DeepSeek official + DeepSeek models
+        # served via third-party hosts).
+        thinking = _infer_thinking_supported(base_url, model)
 
-    # thinking_supported gates whether reasoning_effort / thinking fields
-    # are sent in the request payload.  Default False — most endpoints
-    # reject unknown fields with HTTP 400.  Only enable for endpoints
-    # known to require these fields (DeepSeek official + DeepSeek models
-    # served via third-party hosts).
-    thinking = _infer_thinking_supported(base_url, model)
+        client = DeepSeekClient(
+            api_key=api_key,
+            base_url=base_url,
+            timeout_seconds=float(pc.timeout),
+            thinking_supported=thinking,
+            extra_headers=pc.extra_headers,
+        )
 
-    return DeepSeekClient(
-        api_key=api_key,
-        base_url=base_url,
-        timeout_seconds=float(pc.timeout),
-        thinking_supported=thinking,
-        extra_headers=pc.extra_headers,
-    )
+    limit = pc.rate_limit or 0
+    if limit > 0:
+        from deepseek_tui.client.rate_limit import RateLimitedLLMClient
+
+        return RateLimitedLLMClient(client, api_key=api_key, limit=limit)
+    return client
 
 
 def _infer_thinking_supported(base_url: str, model: str) -> bool:

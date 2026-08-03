@@ -68,7 +68,7 @@ def test_batch_intent_text_zh_default() -> None:
 
 
 def test_terminal_round_returns_none() -> None:
-    """AgentRoundCompleteEvent with no tool_calls is a terminal round."""
+    """Empty tool_calls means no pre-tool batch for the presentation reducer."""
     reducer = TurnPresentationReducer()
     result = reducer.on_round_complete(
         AgentRoundCompleteEvent(round_idx=0, tool_calls=())

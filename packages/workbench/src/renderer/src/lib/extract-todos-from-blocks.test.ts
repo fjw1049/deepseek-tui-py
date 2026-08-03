@@ -64,6 +64,25 @@ describe('buildTodoSessionForTurn', () => {
     expect(session?.completionPct).toBe(100)
   })
 
+  it('marks complete when leftovers were cancelled at turn end', () => {
+    const blocks: ChatBlock[] = [
+      todoBlock('todo-write', 'checklist', [
+        { id: '1', content: 'A', status: 'completed' },
+        { id: '2', content: 'B', status: 'in_progress' }
+      ]),
+      todoBlock('todo-reconcile', 'checklist', [
+        { id: '1', content: 'A', status: 'completed' },
+        { id: '2', content: 'B', status: 'cancelled' }
+      ])
+    ]
+
+    const session = buildTodoSessionForTurn(blocks)
+    expect(session?.isComplete).toBe(true)
+    expect(session?.completionPct).toBe(100)
+    expect(session?.inProgressId).toBeNull()
+    expect(session?.items[1]?.status).toBe('cancelled')
+  })
+
   it('replaces list on a second write in the same turn', () => {
     const blocks: ChatBlock[] = [
       todoBlock('todo-write-1', 'checklist', [

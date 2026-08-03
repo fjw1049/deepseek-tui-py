@@ -196,6 +196,40 @@ def _build_result_metadata(store: dict[str, Any], *, tool_name: str) -> dict[str
     }
 
 
+def reconcile_open_checklist_items(
+    context: ToolContext,
+) -> tuple[str, dict[str, Any]] | None:
+    """Cancel leftover open items when a turn ends.
+
+    Returns ``(content, metadata)`` when anything changed, else ``None``.
+    ``completed`` / ``cancelled`` items are left untouched — this only closes
+    ``pending`` / ``in_progress`` so the UI never keeps a spinning checklist
+    after the turn is idle.
+    """
+    store = context.metadata.get(_TODO_STORE_KEY)
+    if not isinstance(store, dict):
+        return None
+    items = store.get("items")
+    if not isinstance(items, list) or not items:
+        return None
+    changed = False
+    for item in items:
+        if not isinstance(item, TodoItem):
+            continue
+        if item.status in ("pending", "in_progress"):
+            item.status = "cancelled"
+            changed = True
+    if not changed:
+        return None
+    store["items"] = items
+    metadata = _build_result_metadata(store, tool_name="checklist")
+    _forward_to_task_manager(context, metadata)
+    body = _render_items(list(items))
+    header = "reconciled open items at turn end (cancelled)"
+    content = f"{header}\n{body}" if body else header
+    return content, metadata
+
+
 def _forward_to_task_manager(
     context: ToolContext, metadata: dict[str, Any]
 ) -> None:

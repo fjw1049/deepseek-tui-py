@@ -43,7 +43,13 @@ class ToolCallEvent:
 
 @dataclass(frozen=True, slots=True)
 class AgentRoundCompleteEvent:
-    """One LLM round finished; ``tool_calls`` empty means terminal round."""
+    """One LLM round finished.
+
+    Empty ``tool_calls`` means the model did not request tools this round —
+    not that the turn is over. The orchestrator may still continue (checklist
+    gate, stop hooks, subagent handoff). ``final_answer`` segment tagging
+    belongs on turn completion, not on this event.
+    """
 
     round_idx: int
     tool_calls: tuple[ToolCall, ...] = ()

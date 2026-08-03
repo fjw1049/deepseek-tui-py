@@ -25,6 +25,9 @@ allow_shell = true
 [providers.deepseek]
 base_url = "https://api.deepseek.com"
 timeout = 120
+# 每分钟最多发起的 LLM 调用次数（该 key 的所有调用方共享：主对话、子代理、
+# 工作流、自动化）。0 / 不写 = 不限制；超限时本次调用直接报错并提示何时可重试。
+# rate_limit = 60
 
 # Custom OpenAI-compatible provider example. Models the built-in table
 # doesn't recognize default to a 500K context window; set context_window

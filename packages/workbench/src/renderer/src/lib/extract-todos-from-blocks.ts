@@ -3,7 +3,7 @@ import type { ChatBlock } from '../agent/types'
 export type TodoItemView = {
   id: string
   content: string
-  status: 'pending' | 'in_progress' | 'completed'
+  status: 'pending' | 'in_progress' | 'completed' | 'cancelled'
 }
 
 export type TodoSidebarSnapshot = {
@@ -57,7 +57,12 @@ function normalizeStatus(raw: unknown): TodoItemView['status'] {
   const s = raw.trim().toLowerCase()
   if (s === 'completed' || s === 'done') return 'completed'
   if (s === 'in_progress' || s === 'inprogress' || s === 'in-progress') return 'in_progress'
+  if (s === 'cancelled' || s === 'canceled') return 'cancelled'
   return 'pending'
+}
+
+function isResolvedStatus(status: TodoItemView['status']): boolean {
+  return status === 'completed' || status === 'cancelled'
 }
 
 function parseItemsFromMeta(meta: Record<string, unknown> | undefined): TodoItemView[] | null {
@@ -145,8 +150,10 @@ export function isTodoToolBlock(block: ChatBlock): block is Extract<ChatBlock, {
 }
 
 function snapshotFromItems(items: TodoItemView[]): Omit<TodoSidebarSnapshot, never> {
-  const completed = items.filter((item) => item.status === 'completed').length
-  const completionPct = items.length ? Math.round((completed * 100) / items.length) : 0
+  // Resolved = completed or cancelled. Progress uses that so a turn-end
+  // reconcile to cancelled can show a fully closed checklist (N/N).
+  const resolved = items.filter((item) => isResolvedStatus(item.status)).length
+  const completionPct = items.length ? Math.round((resolved * 100) / items.length) : 0
   const inProgress = items.find((item) => item.status === 'in_progress')
   return {
     items,
@@ -237,7 +244,7 @@ export function buildTodoSessionForTurn(blocks: ChatBlock[]): TodoTurnSession | 
   if (!anchorBlockId || items.length === 0) return null
 
   const snapshot = snapshotFromItems(items)
-  const isComplete = snapshot.items.every((item) => item.status === 'completed')
+  const isComplete = snapshot.items.every((item) => isResolvedStatus(item.status))
 
   return {
     anchorBlockId,

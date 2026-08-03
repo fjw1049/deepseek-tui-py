@@ -85,3 +85,34 @@ def test_gate_reminder_formats() -> None:
     # Renders inside the ALERT envelope without error.
     rendered = reminders.render(reminders.CHECKLIST_INCOMPLETE_GATE, body)
     assert rendered.startswith("<system-reminder>")
+
+
+@pytest.mark.asyncio
+async def test_reconcile_cancels_open_items_only() -> None:
+    from deepseek_tui.tools.todo import reconcile_open_checklist_items
+
+    engine, ctx = _engine_with_context()
+    await _write(
+        ctx,
+        [
+            {"content": "A", "status": "completed"},
+            {"content": "B", "status": "in_progress"},
+            {"content": "C", "status": "pending"},
+            {"content": "D", "status": "cancelled"},
+        ],
+    )
+    reconciled = reconcile_open_checklist_items(ctx)
+    assert reconciled is not None
+    content, metadata = reconciled
+    assert "turn end" in content
+    items = metadata["items"]
+    by_content = {row["content"]: row["status"] for row in items}
+    assert by_content == {
+        "A": "completed",
+        "B": "cancelled",
+        "C": "cancelled",
+        "D": "cancelled",
+    }
+    assert engine._open_checklist_summary() == ""
+    # Second call is a no-op once everything is closed.
+    assert reconcile_open_checklist_items(ctx) is None

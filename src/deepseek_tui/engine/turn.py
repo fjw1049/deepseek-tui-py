@@ -438,8 +438,13 @@ class TurnLoop:
                             )
                             break  # retry with compacted history
                         # Transparent retry: only if no content received yet
+                        # and the error is retryable. Local fail-fast errors
+                        # (e.g. client-side rate_limit) set retryable=False.
                         if _should_transparently_retry(
-                            any_content_received, transparent_retries, cancel_event.is_set()
+                            any_content_received,
+                            transparent_retries,
+                            cancel_event.is_set(),
+                            retryable=stream_event.retryable,
                         ):
                             transparent_retries += 1
                             logger.warning(
@@ -595,11 +600,16 @@ class TurnLoop:
 
 
 def _should_transparently_retry(
-    any_content_received: bool, attempts: int, cancelled: bool
+    any_content_received: bool,
+    attempts: int,
+    cancelled: bool,
+    *,
+    retryable: bool = True,
 ) -> bool:
     """Decide whether to transparently retry a stalled stream."""
     return (
-        not any_content_received
+        retryable
+        and not any_content_received
         and attempts < MAX_TRANSPARENT_STREAM_RETRIES
         and not cancelled
     )
