@@ -316,48 +316,34 @@ html,
   inset: 0;
   z-index: 30;
   overflow: hidden;
+  /* Matches KineticGrid theme board before/while the canvas mounts. */
   background: var(--bg-sidebar);
+  /* html/body/#root are -webkit-app-region: drag; without no-drag, Electron
+     swallows mousemove and the mesh never attracts. */
+  -webkit-app-region: no-drag;
 }
 
-.ds-startup-starfield {
+.ds-startup-kinetic {
   position: absolute;
   inset: 0;
-  pointer-events: none;
-  /* Sits above the board fill, below the breath vignette. */
+  /* Must receive pointer events so OriginKit attraction / trail work. */
+  pointer-events: auto;
+  -webkit-app-region: no-drag;
   z-index: 1;
 }
 
-.ds-startup-starfield canvas {
+.ds-startup-kinetic canvas {
   position: absolute;
   inset: 0;
   width: 100%;
   height: 100%;
   display: block;
+  pointer-events: none;
 }
 
 .ds-startup-blank--exit {
   animation: ds-startup-blank-exit 0.2s ease-out forwards;
   pointer-events: none;
-}
-
-.ds-startup-breath {
-  position: absolute;
-  inset: -30%;
-  z-index: 2;
-  pointer-events: none;
-  background: radial-gradient(
-    ellipse 48% 36% at 42% 48%,
-    color-mix(in srgb, var(--bg-canvas) 58%, transparent) 0%,
-    transparent 72%
-  );
-  opacity: 0.35;
-  animation: ds-startup-breath 3.6s ease-in-out infinite;
-}
-
-.ds-startup-blank--exit .ds-startup-breath {
-  animation: none;
-  opacity: 0;
-  transition: opacity 0.2s ease-out;
 }
 
 .ds-startup-stage {
@@ -380,18 +366,6 @@ html,
   animation: none;
   opacity: 1;
   transform: none;
-}
-
-@keyframes ds-startup-breath {
-  0%,
-  100% {
-    opacity: 0.22;
-    transform: translate3d(-1.5%, 0, 0) scale(1);
-  }
-  50% {
-    opacity: 0.55;
-    transform: translate3d(2%, -1%, 0) scale(1.04);
-  }
 }
 
 @keyframes ds-startup-blank-exit {
@@ -422,24 +396,11 @@ html,
   }
 }
 
-[data-theme='dark'] .ds-startup-breath {
-  background: radial-gradient(
-    ellipse 48% 36% at 42% 48%,
-    color-mix(in srgb, var(--bg-canvas) 42%, transparent) 0%,
-    transparent 72%
-  );
-}
-
 @media (prefers-reduced-motion: reduce) {
-  .ds-startup-breath,
   .ds-startup-blank--exit,
   .ds-startup-stage--enter .ds-workbench-sidebar-wrap,
   .ds-startup-stage--enter .ds-workbench-main {
     animation: none;
-  }
-
-  .ds-startup-breath {
-    opacity: 0;
   }
 
   .ds-startup-blank--exit {

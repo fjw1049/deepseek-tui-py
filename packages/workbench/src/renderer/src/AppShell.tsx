@@ -9,8 +9,8 @@ const InitialSetupDialog = lazy(() =>
     default: module.InitialSetupDialog
   }))
 )
-const StarfieldTunnel = lazy(() =>
-  import('./components/StarfieldTunnel').then((module) => ({ default: module.StarfieldTunnel }))
+const KineticGrid = lazy(() =>
+  import('./components/KineticGrid').then((module) => ({ default: module.KineticGrid }))
 )
 
 type RevealPhase = 'waiting' | 'revealing' | 'live'
@@ -21,16 +21,17 @@ const REVEAL_MS = 580
 /** Blank board fade-out (matches ds-startup-blank-exit in index.css). Once it
  *  finishes the board is unmounted, even though the shell keeps entering — so
  *  there's no transparent-but-mounted board lingering on top after the
- *  starfield has faded. */
+ *  kinetic grid has faded. */
 const BLANK_EXIT_MS = 200
 
-/** Keep the startup board (and its starfield) up at least this long, so the
+/** Keep the startup board (and its kinetic grid) up at least this long, so the
  *  animation is seen even when the runtime settles almost immediately. */
-const MIN_BLANK_MS = 1500
+/** Long enough to notice cursor attraction before the veil lifts. */
+const MIN_BLANK_MS = 2800
 
 /**
  * Survives Vite Fast Refresh / HMR remounts of this module. Without this, every
- * AppShell hot update replays the starfield blank board and feels like a full
+ * AppShell hot update replays the kinetic-grid blank board and feels like a full
  * app restart back to the greeting screen.
  */
 let coldStartCeremonyDone = false
@@ -42,9 +43,8 @@ function StartupBlank({ exiting = false }: { exiting?: boolean }): React.ReactEl
       aria-hidden
     >
       <Suspense fallback={null}>
-        <StarfieldTunnel />
+        <KineticGrid />
       </Suspense>
-      <div className="ds-startup-breath" />
     </div>
   )
 }
@@ -59,7 +59,7 @@ export default function AppShell(): React.ReactElement {
   )
   const [blankGone, setBlankGone] = useState(coldStartCeremonyDone)
   /** Once true, the cold-start ceremony never runs again — reconnect/checking
-   *  must not unmount Workbench or replay the starfield. */
+   *  must not unmount Workbench or replay the kinetic grid. */
   const [startupGateDone, setStartupGateDone] = useState(coldStartCeremonyDone)
   const gateStartedRef = useRef(coldStartCeremonyDone)
   const mountedAtRef = useRef<number>(performance.now())
@@ -78,10 +78,10 @@ export default function AppShell(): React.ReactElement {
     runtimeConnection === 'offline'
 
   useEffect(() => {
-    // Prefetch shell + starfield while the blank board is up so reveal isn't empty
-    // and the tunnel is ready before MIN_BLANK_MS elapses on a fast handshake.
+    // Prefetch shell + kinetic grid while the blank board is up so reveal isn't empty
+    // and the mesh is ready before MIN_BLANK_MS elapses on a fast handshake.
     void import('./components/Workbench')
-    void import('./components/StarfieldTunnel')
+    void import('./components/KineticGrid')
     if (typeof window.dsGui?.getStartupPhase === 'function') {
       void window.dsGui.getStartupPhase().then(setStartupPhase).catch(() => undefined)
     }
@@ -117,7 +117,7 @@ export default function AppShell(): React.ReactElement {
       return
     }
 
-    // Hold the board (and its starfield) until MIN_BLANK_MS has elapsed, so a
+    // Hold the board (and its kinetic grid) until MIN_BLANK_MS has elapsed, so a
     // fast runtime handshake doesn't flash the animation for a single frame.
     const heldFor = performance.now() - mountedAtRef.current
     const holdRemaining = Math.max(0, MIN_BLANK_MS - heldFor)
