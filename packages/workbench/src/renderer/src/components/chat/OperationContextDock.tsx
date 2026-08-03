@@ -1,4 +1,11 @@
-import { useCallback, useMemo, useEffect, useState, type ReactElement } from 'react'
+import {
+  useCallback,
+  useMemo,
+  useEffect,
+  useRef,
+  useState,
+  type ReactElement
+} from 'react'
 import {
   Check,
   ChevronDown,
@@ -67,6 +74,8 @@ const DOCK_ROW_CLASS =
   'group flex w-full items-center gap-2.5 rounded-[10px] px-1.5 py-1.5 text-left text-[13px] leading-5 transition'
 
 const DOCK_COMPACT_STORAGE_KEY = 'deepseekgui.operationDock.compact'
+/** Keep in sync with `.ds-operation-rail` width transition (220ms). */
+const DOCK_MOTION_MS = 220
 
 function readStoredDockCompact(): boolean {
   try {
@@ -82,6 +91,10 @@ function persistDockCompact(value: boolean): void {
   } catch {
     /* ignore persistence failures */
   }
+}
+
+function prefersReducedMotion(): boolean {
+  return window.matchMedia('(prefers-reduced-motion: reduce)').matches
 }
 
 const ROW_ICON_TINTS = {
@@ -427,14 +440,69 @@ export function OperationContextDock({
 
   const [collapsed, setCollapsed] = useState({ tools: false, git: true, process: true, tasks: true })
   const [compact, setCompact] = useState(readStoredDockCompact)
+  /** Drives rail width via `data-compact` — can lead the DOM swap during motion. */
+  const [widthCompact, setWidthCompact] = useState(readStoredDockCompact)
+  const [motion, setMotion] = useState<'idle' | 'collapsing' | 'expanding'>('idle')
+  const motionTimerRef = useRef<number | null>(null)
   /** Which process todo row is expanded to full text (single-line by default). */
   const [expandedTodoKey, setExpandedTodoKey] = useState<string | null>(null)
   const toggle = (key: keyof typeof collapsed): void =>
     setCollapsed((prev) => ({ ...prev, [key]: !prev[key] }))
-  const setCompactMode = useCallback((value: boolean): void => {
-    setCompact(value)
-    persistDockCompact(value)
+
+  const clearMotionTimer = useCallback((): void => {
+    if (motionTimerRef.current != null) {
+      window.clearTimeout(motionTimerRef.current)
+      motionTimerRef.current = null
+    }
   }, [])
+
+  useEffect(() => () => clearMotionTimer(), [clearMotionTimer])
+
+  const setCompactMode = useCallback(
+    (value: boolean): void => {
+      if (motion !== 'idle') return
+      if (value === compact && value === widthCompact) return
+
+      clearMotionTimer()
+
+      if (prefersReducedMotion()) {
+        setCompact(value)
+        setWidthCompact(value)
+        setMotion('idle')
+        persistDockCompact(value)
+        return
+      }
+
+      if (value) {
+        // Collapse: shrink rail + fade/squeeze the card, then swap to icon strip.
+        setMotion('collapsing')
+        setWidthCompact(true)
+        motionTimerRef.current = window.setTimeout(() => {
+          setCompact(true)
+          setMotion('idle')
+          persistDockCompact(true)
+          motionTimerRef.current = null
+        }, DOCK_MOTION_MS)
+        return
+      }
+
+      // Expand: mount the card while still narrow, then widen + fade in together.
+      setCompact(false)
+      setMotion('expanding')
+      setWidthCompact(true)
+      persistDockCompact(false)
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          setWidthCompact(false)
+        })
+      })
+      motionTimerRef.current = window.setTimeout(() => {
+        setMotion('idle')
+        motionTimerRef.current = null
+      }, DOCK_MOTION_MS)
+    },
+    [clearMotionTimer, compact, motion, widthCompact]
+  )
 
   // Auto-expand a section when it gains content and auto-collapse when it
   // empties. Each effect keys on a single boolean edge so manually toggling
@@ -460,9 +528,15 @@ export function OperationContextDock({
 
   const workspaceLabel = workspaceLabelFromPath(root)
 
-  if (compact) {
+  // Keep the expanded card mounted while collapsing (fade/squeeze) and while
+  // expanding (fade in from the narrow rail). Only idle-compact uses the strip.
+  if (compact && motion !== 'expanding') {
     return (
-      <div className="ds-operation-dock ds-operation-dock--compact ds-no-drag relative z-10" data-compact="true">
+      <div
+        className="ds-operation-dock ds-operation-dock--compact ds-no-drag relative z-10"
+        data-compact="true"
+        data-phase={motion === 'idle' ? 'compact' : motion}
+      >
         <button
           type="button"
           className="ds-operation-dock-rail__btn ds-operation-dock-rail__btn--toggle"
@@ -470,6 +544,7 @@ export function OperationContextDock({
           title={t('operationDockExpand')}
           aria-label={t('operationDockExpand')}
           aria-expanded={false}
+          disabled={motion !== 'idle'}
         >
           <ChevronsLeftRight className="h-4 w-4" strokeWidth={2.1} />
         </button>
@@ -524,7 +599,8 @@ export function OperationContextDock({
   return (
     <div
       className="ds-operation-dock ds-hero-panel ds-glass ds-content-card--interactive ds-no-drag relative z-10 w-full overflow-hidden rounded-[18px]"
-      data-compact="false"
+      data-compact={widthCompact ? 'true' : 'false'}
+      data-phase={motion === 'idle' ? 'expanded' : motion}
     >
       <div className="ds-operation-dock-topbar">
         <span className="ds-operation-dock-topbar__title min-w-0 flex-1 truncate" title={workspaceLabel}>
@@ -537,6 +613,7 @@ export function OperationContextDock({
           title={t('operationDockCollapse')}
           aria-label={t('operationDockCollapse')}
           aria-expanded={true}
+          disabled={motion !== 'idle'}
         >
           <ChevronsLeftRight className="h-4 w-4" strokeWidth={2.1} />
         </button>

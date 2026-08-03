@@ -5406,6 +5406,96 @@ select:focus-visible,
   font-synthesis: none;
 }
 
+/*
+ * Collapse / expand motion: rail width still drives the squeeze (overflow clip),
+ * while the card chrome + body fade and drift toward the icon strip so it reads
+ * as packing away — not a hard DOM swap.
+ */
+.ds-operation-dock[data-phase='collapsing'],
+.ds-operation-dock[data-phase='expanding'] {
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.ds-operation-dock[data-phase='collapsing'] {
+  transform-origin: right center;
+  animation: ds-operation-dock-pack-out 220ms cubic-bezier(0.32, 0.72, 0, 1) forwards;
+}
+
+.ds-operation-dock[data-phase='expanding'] {
+  transform-origin: right center;
+  animation: ds-operation-dock-pack-in 220ms cubic-bezier(0.32, 0.72, 0, 1) forwards;
+}
+
+.ds-operation-dock[data-phase='collapsing'] .ds-operation-dock-topbar__title,
+.ds-operation-dock[data-phase='collapsing'] .ds-operation-dock-body {
+  animation: ds-operation-dock-content-out 200ms cubic-bezier(0.32, 0.72, 0, 1) forwards;
+}
+
+.ds-operation-dock[data-phase='expanding'] .ds-operation-dock-topbar__title,
+.ds-operation-dock[data-phase='expanding'] .ds-operation-dock-body {
+  animation: ds-operation-dock-content-in 220ms cubic-bezier(0.32, 0.72, 0, 1) both;
+}
+
+.ds-operation-dock--compact[data-phase='compact'] {
+  animation: ds-operation-dock-rail-in 160ms cubic-bezier(0.32, 0.72, 0, 1) both;
+}
+
+@keyframes ds-operation-dock-pack-out {
+  from {
+    opacity: 1;
+    transform: scaleX(1);
+  }
+  to {
+    opacity: 0;
+    transform: scaleX(0.92);
+  }
+}
+
+@keyframes ds-operation-dock-pack-in {
+  from {
+    opacity: 0;
+    transform: scaleX(0.92);
+  }
+  to {
+    opacity: 1;
+    transform: scaleX(1);
+  }
+}
+
+@keyframes ds-operation-dock-content-out {
+  from {
+    opacity: 1;
+    transform: translateX(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateX(14px);
+  }
+}
+
+@keyframes ds-operation-dock-content-in {
+  from {
+    opacity: 0;
+    transform: translateX(14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes ds-operation-dock-rail-in {
+  from {
+    opacity: 0;
+    transform: scale(0.92);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
 /* Nested chrome: clear pocket vs white body, still soft enough to stay quiet. */
 .ds-operation-dock.ds-hero-panel.ds-glass {
   background: color-mix(in srgb, var(--text-primary) 7%, var(--ds-card-strong));
@@ -5571,8 +5661,8 @@ select:focus-visible,
 .ds-operation-rail {
   position: relative;
   z-index: 2;
-  flex: 0 0 clamp(15rem, 34cqi, 25rem);
-  width: clamp(15rem, 34cqi, 25rem);
+  flex: 0 0 clamp(14.5rem, 32cqi, 23.5rem);
+  width: clamp(14.5rem, 32cqi, 23.5rem);
   flex-direction: column;
   background: transparent;
   padding-right: clamp(0.75rem, 2cqi, 2rem);
@@ -5713,6 +5803,16 @@ select:focus-visible,
 @media (prefers-reduced-motion: reduce) {
   .ds-operation-rail {
     transition: none;
+  }
+
+  .ds-operation-dock[data-phase='collapsing'],
+  .ds-operation-dock[data-phase='expanding'],
+  .ds-operation-dock[data-phase='collapsing'] .ds-operation-dock-topbar__title,
+  .ds-operation-dock[data-phase='collapsing'] .ds-operation-dock-body,
+  .ds-operation-dock[data-phase='expanding'] .ds-operation-dock-topbar__title,
+  .ds-operation-dock[data-phase='expanding'] .ds-operation-dock-body,
+  .ds-operation-dock--compact[data-phase='compact'] {
+    animation: none;
   }
 
   .ds-operation-dock-rail__btn {
