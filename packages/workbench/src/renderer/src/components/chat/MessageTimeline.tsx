@@ -3058,7 +3058,7 @@ function UserMessageBubble({
         {confirm && typeof document !== 'undefined'
           ? createPortal(
               <div
-                className="ds-modal-backdrop ds-no-drag fixed inset-0 z-[80] flex items-center justify-center p-4"
+                className="ds-no-drag fixed inset-0 z-[80] flex items-center justify-center bg-[var(--ds-material-overlay)] p-4"
                 onClick={(event) => {
                   if (event.target === event.currentTarget) setConfirm(null)
                 }}
@@ -3067,7 +3067,7 @@ function UserMessageBubble({
                   role="dialog"
                   aria-modal="true"
                   aria-labelledby={`rewind-resend-confirm-${block.id}`}
-                  className="ds-content-card flex w-full max-w-md flex-col overflow-hidden rounded-2xl shadow-xl"
+                  className="ds-modal-surface ds-modal-surface--solid flex w-full max-w-md flex-col overflow-hidden rounded-2xl"
                 >
                   <div className="flex shrink-0 items-start justify-between gap-3 border-b border-ds-border-muted px-5 py-3.5">
                     <h2
