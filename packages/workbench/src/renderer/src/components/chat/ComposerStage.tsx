@@ -68,31 +68,34 @@ export function ComposerStage(props: Props): ReactElement {
 
   return (
     <div ref={rootRef} className="relative flex w-full flex-col items-stretch">
-      {/* Decorative only: sit behind the composer (z-0) and ignore hits so the
-          model picker popover above the input stays clickable on the right. */}
-      <div className="pointer-events-none absolute bottom-0 right-0 z-0">
-        <PetMascotDock
-          visible
-          status={pet.status}
-          stateId={pet.stateId}
-          spritesheetSrc={pet.spritesheetSrc}
-          roamOffset={pet.roamOffset}
-          motionPaused={pet.motionPaused}
-        />
-      </div>
       {composerNotice ? (
         <div className="ds-chat-stage mb-1.5 flex w-full justify-center px-3 sm:px-4">
           <ComposerNoticeToast notice={composerNotice} />
         </div>
       ) : null}
-      <FloatingComposer
-        {...props}
-        onNoticeChange={setComposerNotice}
-        onSend={handleSend}
-        petSlashCommands={petSlashCommands}
-        onApplyPetSlashCommand={pet.handlePetSlash}
-        filterPetSlashCommands={filterPetSlashMenu}
-      />
+      <div className="relative">
+        {/* Decorative only: rest just above the input (bottom-full) and ignore
+            hits so the model picker popover above the composer stays clickable
+            on the right. */}
+        <div className="pointer-events-none absolute bottom-full right-0 z-0">
+          <PetMascotDock
+            visible
+            status={pet.status}
+            stateId={pet.stateId}
+            spritesheetSrc={pet.spritesheetSrc}
+            roamOffset={pet.roamOffset}
+            motionPaused={pet.motionPaused}
+          />
+        </div>
+        <FloatingComposer
+          {...props}
+          onNoticeChange={setComposerNotice}
+          onSend={handleSend}
+          petSlashCommands={petSlashCommands}
+          onApplyPetSlashCommand={pet.handlePetSlash}
+          filterPetSlashCommands={filterPetSlashMenu}
+        />
+      </div>
     </div>
   )
 }
