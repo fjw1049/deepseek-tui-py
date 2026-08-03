@@ -118,6 +118,17 @@ LONG_SESSION_DRIFT = ReminderSpec(
     priority=20,
 )
 
+CHECKLIST_INCOMPLETE_GATE = ReminderSpec(
+    name="checklist_incomplete_gate",
+    envelope=Envelope.ALERT,
+    placement=Placement.TAIL,
+    origin=MessageOrigin.SYSTEM_REMINDER,
+    # Fires when the model tries to end a turn with open checklist items.
+    # Between the general long-session re-anchor (20) and diagnostics (30):
+    # more specific than a drift nudge, less urgent than a fresh error.
+    priority=25,
+)
+
 LSP_DIAGNOSTICS = ReminderSpec(
     name="lsp_diagnostics",
     envelope=Envelope.ALERT,
@@ -193,6 +204,7 @@ REGISTRY: tuple[ReminderSpec, ...] = (
     PROMPT_SUBMIT_HOOK_CONTEXT,
     PLAN_NUDGE,
     LONG_SESSION_DRIFT,
+    CHECKLIST_INCOMPLETE_GATE,
     LSP_DIAGNOSTICS,
     SUBAGENT_DONE,
     SOFT_RESUME,

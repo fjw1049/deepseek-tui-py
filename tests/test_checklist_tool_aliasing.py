@@ -15,7 +15,12 @@ from __future__ import annotations
 import pytest
 
 from deepseek_tui.engine.tools import _ALWAYS_ACTIVE_TOOLS
-from deepseek_tui.tools.registry import ToolContext, build_default_registry
+from deepseek_tui.tools.registry import (
+    ApprovalRequirement,
+    ToolContext,
+    ToolError,
+    build_default_registry,
+)
 
 _LEGACY_NAMES = [
     "todo_write",
@@ -50,13 +55,18 @@ def test_no_duplicate_checklist_tools_in_catalog() -> None:
     assert checklist_names == [_CANONICAL_NAME]
 
 
-def test_schema_exposes_only_todos_param() -> None:
-    """The schema shows only ``todos`` — the legacy ``items`` alias is hidden."""
+def test_schema_exposes_write_and_update_params() -> None:
+    """Schema shows the write + merge-by-id update surface.
+
+    ``todos`` (full-list write) plus the ``op``/``id``/``status``/``content``
+    single-item update fields. The legacy ``items`` alias stays hidden.
+    """
     registry = build_default_registry(mode="agent")
     assert registry.contains(_CANONICAL_NAME)
     tool = registry.get(_CANONICAL_NAME)
     properties = tool.input_schema().get("properties", {})
-    assert set(properties) == {"todos"}
+    assert set(properties) == {"op", "todos", "id", "status", "content"}
+    assert "items" not in properties
 
 
 def test_canonical_name_is_always_active() -> None:
@@ -111,3 +121,122 @@ async def test_legacy_items_alias_maps_to_todos(tmp_path) -> None:
     assert all(
         it["status"] == "pending" for it in result.metadata["items"]
     )
+
+
+# ---------------------------------------------------------------------------
+# merge-by-id update (op="update") — the Claude-aligned progress path
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_update_flips_one_item_by_id(tmp_path) -> None:
+    """op='update' changes only the addressed item; ids stay stable."""
+    registry = build_default_registry(mode="agent")
+    context = ToolContext(working_directory=tmp_path)
+
+    await registry.execute(
+        _CANONICAL_NAME,
+        {"todos": [{"content": "A"}, {"content": "B"}, {"content": "C"}]},
+        context,
+    )
+    result = await registry.execute(
+        _CANONICAL_NAME, {"op": "update", "id": 1, "status": "completed"}, context
+    )
+    assert result.success
+
+    listed = await registry.execute(_CANONICAL_NAME, {}, context)
+    items = listed.metadata["items"]
+    # Only item 1 changed; contents and ids untouched.
+    assert [it["content"] for it in items] == ["A", "B", "C"]
+    assert [it["status"] for it in items] == ["completed", "pending", "pending"]
+    assert [it["id"] for it in items] == [1, 2, 3]
+
+
+@pytest.mark.asyncio
+async def test_update_unknown_id_errors(tmp_path) -> None:
+    """Updating an id that isn't in the list raises rather than appending."""
+    registry = build_default_registry(mode="agent")
+    context = ToolContext(working_directory=tmp_path)
+    await registry.execute(
+        _CANONICAL_NAME, {"todos": [{"content": "only one"}]}, context
+    )
+    with pytest.raises(ToolError):
+        await registry.execute(
+            _CANONICAL_NAME, {"op": "update", "id": 99, "status": "completed"}, context
+        )
+
+
+@pytest.mark.asyncio
+async def test_update_can_cancel(tmp_path) -> None:
+    """The new ``cancelled`` status is accepted on update."""
+    registry = build_default_registry(mode="agent")
+    context = ToolContext(working_directory=tmp_path)
+    await registry.execute(
+        _CANONICAL_NAME, {"todos": [{"content": "drop me"}]}, context
+    )
+    result = await registry.execute(
+        _CANONICAL_NAME, {"op": "update", "id": 1, "status": "cancelled"}, context
+    )
+    assert result.success
+    assert result.metadata["items"][0]["status"] == "cancelled"
+
+
+def test_status_only_update_is_prompt_free() -> None:
+    """A status-only update is AUTO; writes and content-changing updates SUGGEST."""
+    tool = build_default_registry(mode="agent").get(_CANONICAL_NAME)
+    # Pure status flip → AUTO.
+    assert (
+        tool.approval_requirement_for_input(
+            {"op": "update", "id": 1, "status": "completed"}
+        )
+        == ApprovalRequirement.AUTO
+    )
+    # Update that rewrites content → SUGGEST.
+    assert (
+        tool.approval_requirement_for_input(
+            {"op": "update", "id": 1, "content": "new text"}
+        )
+        == ApprovalRequirement.SUGGEST
+    )
+    # Full-list write → SUGGEST.
+    assert (
+        tool.approval_requirement_for_input({"todos": [{"content": "x"}]})
+        == ApprovalRequirement.SUGGEST
+    )
+    # Pure read → AUTO.
+    assert tool.approval_requirement_for_input({}) == ApprovalRequirement.AUTO
+
+
+@pytest.mark.asyncio
+async def test_identical_rewrite_is_noop(tmp_path) -> None:
+    """Re-writing the exact same list is a no-op (debounce duplicate spam)."""
+    registry = build_default_registry(mode="agent")
+    context = ToolContext(working_directory=tmp_path)
+    todos = [
+        {"content": "A", "status": "completed"},
+        {"content": "B", "status": "in_progress"},
+    ]
+    first = await registry.execute(_CANONICAL_NAME, {"todos": todos}, context)
+    assert "task_updates" in first.metadata  # real write forwards
+
+    second = await registry.execute(_CANONICAL_NAME, {"todos": list(todos)}, context)
+    assert second.success
+    # No-op: does not re-forward the durable snapshot, and marks itself unchanged.
+    assert "task_updates" not in second.metadata
+    assert "unchanged" in second.content.lower()
+
+    # A genuine change still writes (and forwards) normally.
+    changed = await registry.execute(
+        _CANONICAL_NAME,
+        {"todos": [{"content": "A", "status": "completed"}, {"content": "B", "status": "completed"}]},
+        context,
+    )
+    assert "task_updates" in changed.metadata
+
+
+def test_description_carries_completion_gate() -> None:
+    """The Claude-aligned completion discipline is stated in the description."""
+    tool = build_default_registry(mode="agent").get(_CANONICAL_NAME)
+    desc = tool.description().lower()
+    assert "fully accomplished" in desc
+    assert "op=" in desc or 'op="update"' in desc

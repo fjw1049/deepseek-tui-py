@@ -563,6 +563,25 @@ LONG_SESSION_REMINDER = (
 )
 
 
+# Injected as a user-role <system-reminder> when the model tries to end a
+# turn while the checklist still has open items
+# (SessionMaintenanceMixin / orchestrator turn-end gate). The harness does
+# NOT judge whether the work is done — it only forces the model to face each
+# open item once before ending, so a "wrote the plan, did the work, forgot to
+# track it" turn cannot slip through silently. Fires at most once per turn.
+CHECKLIST_GATE_REMINDER = (
+    "Before ending the turn — your checklist still has open items "
+    "({open_summary}). Reconcile each one now:\n"
+    "- Items you finished: mark completed with "
+    "`checklist(op=\"update\", id=<id>, status=\"completed\")` — flip one at a "
+    "time, don't resend the whole list.\n"
+    "- Items you deliberately won't do: mark `cancelled` or say why.\n"
+    "Completion gate: if tests are failing or the work is partial, keep the "
+    "item in_progress rather than marking it done. Do not mention this "
+    "reminder to the user."
+)
+
+
 # Injected as a user-role reminder in plan mode when the request reads like
 # "just give me a plan" — see should_force_update_plan_first.
 PLAN_GROUNDING_REMINDER = (

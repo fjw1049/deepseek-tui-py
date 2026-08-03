@@ -54,7 +54,7 @@ The final reply contains the substantive answer — no replay of tool calls, no 
 
 ## Progress Tracking
 
-- **`checklist`** is the canonical progress tracker for multi-step work. One item `in_progress` at a time; mark completed immediately, not in batches.
+- **`checklist`** is the canonical progress tracker for multi-step work. One item `in_progress` at a time; mark completed immediately, not in batches. To advance one item call `op="update"` with its `id` (e.g. `{op:"update", id:1, status:"completed"}`) — don't resend the whole list to flip one status. Only mark an item completed when it is fully done: if tests are failing or the work is partial, keep it `in_progress`.
 - **`update_plan`** is not a second tracker. Reach for it only in plan mode or when the user explicitly asks to see a plan. Never maintain `update_plan` and `checklist` for the same work.
 - When sub-agents handle the actual work, keep **one coordinator checklist item** `in_progress` (e.g. "Run parallel benchmarks") — the Agents panel tracks per-agent running state independently.
 - Use `note` sparingly for cross-session memory: important decisions, open blockers, architectural context.
