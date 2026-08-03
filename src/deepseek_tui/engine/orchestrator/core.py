@@ -1905,9 +1905,18 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         elif focus_mcp is not None:
             logger.info("mcp_focus_mode server=%s", focus_mcp)
 
-        user_message = Message.user(
-            processed.model_text, origin=MessageOrigin.REAL_USER
+        # Background subagent-done delivery re-enters as a hidden op whose
+        # content is already an `<system-reminder>`-enveloped SUBAGENT_DONE
+        # body (rendered at the idle-delivery site). It must carry the
+        # SYSTEM_REMINDER provenance, not REAL_USER — otherwise a harness
+        # injection reads back as the human's current request (origin drives
+        # compaction, fake-reminder neutralization, and ledger classing).
+        user_origin = (
+            MessageOrigin.SYSTEM_REMINDER
+            if op.internal_kind == "subagent_background_done"
+            else MessageOrigin.REAL_USER
         )
+        user_message = Message.user(processed.model_text, origin=user_origin)
 
         prior_count = len(self.session_messages)
         working_messages = [*self.session_messages, user_message]
