@@ -781,12 +781,14 @@ class UserInputDialog(ModalScreen[dict[str, object] | None]):
                 if isinstance(option, dict):
                     label = str(option.get("label") or "").strip()
                     description = str(option.get("description") or "").strip()
+                    stored = str(option.get("value") or label).strip() or label
                 else:
                     label = str(option).strip()
                     description = ""
+                    stored = label
                 if not label:
                     continue
-                self._option_values.append(label)
+                self._option_values.append(stored)
                 display = escape(label)
                 if description:
                     display += f"  [dim]{escape(description)}[/]"

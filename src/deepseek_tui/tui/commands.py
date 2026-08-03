@@ -1011,33 +1011,16 @@ def cmd_agent(args: str, app: DeepSeekTUI) -> CommandResult:
 
 @_register("/plan")
 def cmd_plan(args: str, app: DeepSeekTUI) -> CommandResult:
-    """Switch to Plan mode and pop the plan-confirmation prompt.
+    """Switch to Plan mode (read-only planning).
 
-    The prompt opens via :class:`PlanPromptScreen` (push_screen with a
-    callback). Outside of a running Textual app (e.g. unit tests), the call
-    short-circuits to a textual hint so the dispatch layer is still testable.
+    Approval UI runs later when the model calls ``exit_plan_mode`` after
+    ``update_plan`` — not at mode entry.
     """
-    from deepseek_tui.tui.plan import PlanOutcome, PlanPromptScreen
-
-    if not getattr(app, "is_running", False):
-        return CommandResult(output="Switched to Plan mode.")
-
     _switch_mode(app, "plan")
-
-    def _on_plan_outcome(outcome: PlanOutcome | None) -> None:
-        # Map prompt outcomes onto real interaction modes; REVISE /
-        # DISMISSED keep the freshly-entered plan mode.
-        if outcome == PlanOutcome.ACCEPT_YOLO:
-            _switch_mode(app, "yolo")
-            from deepseek_tui.engine.handle import AutoApprovalHandler
-
-            if app._engine is not None:
-                app._engine.approval_handler = AutoApprovalHandler()
-        elif outcome in (PlanOutcome.ACCEPT_AGENT, PlanOutcome.EXIT_PLAN):
-            _switch_mode(app, "agent")
-
-    app.push_screen(PlanPromptScreen(), _on_plan_outcome)
-    return CommandResult(output="Switched to Plan mode.")
+    return CommandResult(
+        output="Switched to Plan mode. After update_plan, exit_plan_mode "
+        "will ask you to accept or revise."
+    )
 
 
 # ── /yolo ────────────────────────────────────────────────────────────────

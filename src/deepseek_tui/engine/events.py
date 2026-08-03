@@ -161,6 +161,17 @@ class TurnCompleteEvent:
 class UserInputRequiredEvent:
     tool_call_id: str
     questions: list[dict[str, object]]
+    # Optional purpose so UIs can specialize (e.g. PlanPromptScreen for exit).
+    purpose: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ModeChangedEvent:
+    """Interaction mode changed mid-session (enter/exit plan mode)."""
+
+    mode: str
+    previous_mode: str = ""
+    reason: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -215,6 +226,7 @@ EngineEvent = (
     | WorkflowProgressEvent
     | SessionActivityEvent
     | UserInputRequiredEvent
+    | ModeChangedEvent
     | PluginMountEvent
     | SessionStartedEvent
     | SessionEndedEvent

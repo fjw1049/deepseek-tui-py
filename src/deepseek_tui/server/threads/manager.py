@@ -37,6 +37,7 @@ from deepseek_tui.engine.events import (
     TextDeltaEvent,
     ThinkingDeltaEvent,
     ToolCallEvent,
+    ModeChangedEvent,
     ToolResultEvent,
     TurnCancelledEvent,
     TurnCompleteEvent,
@@ -3116,6 +3117,8 @@ class RuntimeThreadManager:
                             "agent_id",
                             "agent_type",
                             "nickname",
+                            "outcome",
+                            "mode",
                         ):
                             if key in event.metadata:
                                 item.metadata = {
@@ -3332,6 +3335,37 @@ class RuntimeThreadManager:
                     "item.completed",
                     {"item": item.model_dump(mode="json")},
                 )
+
+            elif isinstance(event, ModeChangedEvent):
+                next_mode = (event.mode or "agent").strip() or "agent"
+                try:
+                    thread = self.store.load_thread(thread_id)
+                    if (thread.mode or "agent") != next_mode:
+                        previous_mode = thread.mode or "agent"
+                        thread.mode = next_mode  # type: ignore[assignment]
+                        thread.updated_at = datetime.now(timezone.utc)
+                        self.store.save_thread(thread)
+                        await self._emit_event(
+                            thread_id,
+                            turn_id,
+                            None,
+                            "thread.updated",
+                            {
+                                "thread": thread.model_dump(mode="json"),
+                                "changes": {
+                                    "mode": next_mode,
+                                    "previous_mode": previous_mode,
+                                    "reason": event.reason,
+                                },
+                            },
+                        )
+                except Exception:  # noqa: BLE001 — mode sync is best-effort
+                    logger.debug(
+                        "mode_changed_persist_failed thread=%s mode=%s",
+                        thread_id,
+                        next_mode,
+                        exc_info=True,
+                    )
 
             elif isinstance(event, UserInputRequiredEvent):
                 import json as _json

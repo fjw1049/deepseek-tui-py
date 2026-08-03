@@ -50,7 +50,11 @@ export function UserInputBubble({ block }: { block: UserInputBlock }): ReactElem
     return true
   }
 
-  const chooseOption = (q: UserInputQuestion, label: string, value = label): void => {
+  const chooseOption = (
+    q: UserInputQuestion,
+    label: string,
+    value = label
+  ): void => {
     setAnswers((prev) => ({
       ...prev,
       [q.id]: { id: q.id, label, value }
@@ -137,13 +141,15 @@ export function UserInputBubble({ block }: { block: UserInputBlock }): ReactElem
           </p>
           <div className="mt-1.5 grid gap-1">
             {question.options.map((option) => {
-              const selected = answer?.label === option.label && answer.value === option.label
+              const optionValue = option.value || option.label
+              const selected =
+                answer?.label === option.label && answer.value === optionValue
               return (
                 <button
                   key={option.label}
                   type="button"
                   disabled={done}
-                  onClick={() => chooseOption(question, option.label)}
+                  onClick={() => chooseOption(question, option.label, optionValue)}
                   className={`flex items-start gap-2 rounded-lg border px-2 py-1.5 text-left transition disabled:cursor-default ${
                     selected
                       ? 'border-accent/50 bg-accent-soft text-ds-ink'

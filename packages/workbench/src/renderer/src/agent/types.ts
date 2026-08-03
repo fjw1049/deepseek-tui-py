@@ -7,6 +7,8 @@ export type ToolItemKind = 'tool_call' | 'command_execution' | 'file_change'
 export type UserInputOption = {
   label: string
   description: string
+  /** Optional machine value (e.g. enter_plan_mode / exit_plan_mode outcomes). */
+  value?: string
 }
 
 export type UserInputQuestion = {
@@ -324,6 +326,8 @@ export type ThreadUpdatedPayload = {
   threadId: string
   title?: string | null
   archived?: boolean
+  /** Interaction mode after enter/exit plan (or other mode switches). */
+  mode?: string
   /** Subset of fields that actually changed in this update. */
   changes: Record<string, unknown>
 }

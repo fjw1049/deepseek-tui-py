@@ -70,12 +70,37 @@ _ALWAYS_ACTIVE_TOOLS = frozenset(
         "web_search",
         "fetch_url",
         REQUEST_USER_INPUT_NAME,
+        "enter_plan_mode",
+        "exit_plan_mode",
         # Cron trio — only present in the catalog when features.automations
         # is on (registry gate). Keep always-active so the model can schedule
         # from the main chat without tool_search first.
         "cron_create",
         "cron_list",
         "cron_delete",
+    }
+)
+
+# Tools visible/executable while interaction mode is plan. Used to filter a
+# shared (agent-built) registry when mode flips mid-session without rebuild.
+PLAN_MODE_TOOL_ALLOWLIST = frozenset(
+    {
+        "agent",
+        "checklist",
+        "fetch_url",
+        "file_search",
+        "grep_files",
+        "list_mcp_resources",
+        "load_skill",
+        "read_file",
+        "read_mcp_resource",
+        REQUEST_USER_INPUT_NAME,
+        "task_list",
+        "task_output",
+        "update_plan",
+        "web_search",
+        "workflow_list",
+        "exit_plan_mode",
     }
 )
 

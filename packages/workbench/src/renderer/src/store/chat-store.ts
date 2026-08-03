@@ -40,11 +40,13 @@ import { DEFAULT_WORKSPACE_ROOT } from '@shared/workspace-defaults'
 import type {
   AppRoute,
   ChatState,
+  ComposerMode,
   PluginHostRoute,
   QueuedUserMessage,
   SendMessageOverrides,
   SettingsRouteSection
 } from './chat-store-types'
+import type { UserInputAnswer, UserInputQuestion } from '../agent/types'
 import { createAppActions } from './chat-store-app-actions'
 import {
   hydrateBlockModelLabels,
@@ -484,6 +486,62 @@ function looksLikeActiveTurnError(error: unknown): boolean {
   return raw.toLowerCase().includes('active turn')
 }
 
+/** Map enter/exit plan user-input answers onto the composer mode chip. */
+function composerModeFromPlanUserInput(
+  questions: UserInputQuestion[],
+  answers: UserInputAnswer[]
+): ComposerMode | null {
+  const question = questions[0]
+  if (!question) return null
+  const answer =
+    answers.find((item) => item.id === question.id) ?? answers[0] ?? null
+  if (!answer) return null
+  const value = (answer.value || '').trim().toLowerCase()
+  const label = (answer.label || '').trim().toLowerCase()
+  const token = `${value} ${label}`
+  const isEnterCard =
+    question.id === 'enter_plan' ||
+    /plan mode/i.test(question.header) ||
+    question.header.includes('规划')
+  const isExitCard =
+    question.id === 'exit_plan' ||
+    /plan ready/i.test(question.header) ||
+    question.header.includes('计划已就绪')
+  // Prefer machine values so locale-specific labels stay irrelevant.
+  if (isEnterCard) {
+    if (value === 'enter' || token.includes('enter') || label.includes('进入')) {
+      return 'plan'
+    }
+    return null
+  }
+  if (isExitCard) {
+    if (value === 'revise' || token.includes('revise') || label.includes('修改')) {
+      return 'plan'
+    }
+    // accept_agent / accept_yolo / exit_plan → leave plan chip
+    return 'agent'
+  }
+  return null
+}
+
+function composerModeFromPlanToolEvent(ev: {
+  summary: string
+  status: string
+  meta?: Record<string, unknown>
+}): ComposerMode | null {
+  if (ev.status !== 'success') return null
+  const toolName = String(
+    ev.meta?.tool_name ?? ev.meta?.name ?? ev.summary ?? ''
+  ).toLowerCase()
+  if (toolName.includes('enter_plan_mode')) return 'plan'
+  if (toolName.includes('exit_plan_mode')) {
+    const detail = String(ev.meta?.outcome ?? ev.summary ?? '').toLowerCase()
+    if (detail.includes('revise')) return 'plan'
+    return 'agent'
+  }
+  return null
+}
+
 function isCodeThread(thread: NormalizedThread): boolean {
   const workspace = normalizeWorkspaceRoot(thread.workspace)
   return Boolean(workspace) && !isInternalTemporaryWorkspace(thread.workspace) && !isClawWorkspacePath(thread.workspace)
@@ -701,6 +759,10 @@ function buildThreadEventSink(
         resetBusyRecoveryAttempts()
         // Restore busy state on tool events (same reasoning as onDelta).
         const base: Partial<ChatState> = {}
+        const modeFromTool = composerModeFromPlanToolEvent(ev)
+        if (modeFromTool && modeFromTool !== s.composerMode) {
+          base.composerMode = modeFromTool
+        }
         if (!s.busy && s.currentTurnId) {
           base.busy = true
           armBusyWatchdog(set, get)
@@ -948,16 +1010,43 @@ function buildThreadEventSink(
               ? current.title
               : ev.title
         const nextArchived = ev.archived ?? current.archived
-        if (nextTitle === current.title && nextArchived === current.archived) {
+        // Runtime may use yolo; composer only has agent/plan/ask/workflow.
+        const rawMode = typeof ev.mode === 'string' ? ev.mode.trim() : ''
+        const nextThreadMode = rawMode || current.mode
+        const composerModes = new Set(['agent', 'plan', 'ask', 'workflow'])
+        const nextComposerMode =
+          rawMode === 'yolo'
+            ? 'agent'
+            : composerModes.has(rawMode)
+              ? (rawMode as typeof s.composerMode)
+              : null
+        const threadChanged =
+          nextTitle !== current.title ||
+          nextArchived !== current.archived ||
+          nextThreadMode !== current.mode
+        const syncComposer =
+          nextComposerMode != null &&
+          ev.threadId === s.activeThreadId &&
+          nextComposerMode !== s.composerMode
+        if (!threadChanged && !syncComposer) {
           return {}
         }
-        const threads = [...s.threads]
-        threads[idx] = {
-          ...current,
-          title: nextTitle,
-          archived: nextArchived
+        const threads = threadChanged
+          ? (() => {
+              const next = [...s.threads]
+              next[idx] = {
+                ...current,
+                title: nextTitle,
+                archived: nextArchived,
+                mode: nextThreadMode
+              }
+              return next
+            })()
+          : s.threads
+        return {
+          ...(threadChanged ? { threads } : {}),
+          ...(syncComposer ? { composerMode: nextComposerMode } : {})
         }
-        return { threads }
       }),
     onSystemStatus: (text, itemId) =>
       set((s) => {
@@ -2975,13 +3064,20 @@ export const useChatStore = create<ChatState>((set, get) => ({
         }
         await p.submitUserInputResponse(block.requestId, action.answers)
         if (get().busy) armBusyWatchdog(set, get)
+        const nextMode = composerModeFromPlanUserInput(
+          block.questions,
+          action.answers
+        )
         set((s) => ({
           blocks: s.blocks.map((b) =>
             b.kind === 'user_input' &&
             (b.id === blockId || b.requestId === block.requestId || b.id === block.requestId)
               ? { ...b, status: 'submitted' as const, answers: action.answers }
               : b
-          )
+          ),
+          ...(nextMode && nextMode !== s.composerMode
+            ? { composerMode: nextMode }
+            : {})
         }))
         emitPetEvent({ type: 'user_input_resolved', itemId: blockId, status: 'submitted' })
         return

@@ -45,6 +45,8 @@ _INLINE_TOOLS: dict[str, tuple[str, str]] = {
     "note": ("◇", "note"),
     # Plan / checklist
     "update_plan": ("◇", "plan"),
+    "enter_plan_mode": ("◇", "plan"),
+    "exit_plan_mode": ("◇", "plan"),
     "checklist": ("◇", "checklist"),
     "todo_write": ("◇", "todo"),
     "todo_add": ("◇", "todo"),

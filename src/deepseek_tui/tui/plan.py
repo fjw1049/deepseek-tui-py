@@ -39,16 +39,33 @@ class PlanOutcome(str, enum.Enum):
     DISMISSED = "dismissed"
 
 
-PLAN_OPTIONS: list[tuple[PlanOutcome, str, str]] = [
-    (PlanOutcome.ACCEPT_AGENT, "Accept plan (Agent)",
-     "Start implementation in Agent mode with approvals"),
-    (PlanOutcome.ACCEPT_YOLO, "Accept plan (YOLO)",
-     "Start implementation in YOLO mode (auto-approve)"),
-    (PlanOutcome.REVISE, "Revise plan",
-     "Ask follow-ups or request plan changes"),
-    (PlanOutcome.EXIT_PLAN, "Exit Plan mode",
-     "Return to Agent mode without implementation"),
-]
+def plan_options(locale: str | None = None) -> list[tuple[PlanOutcome, str, str]]:
+    """Localized Accept / YOLO / Revise / Exit labels for the plan prompt."""
+    if (locale or "").strip().lower() == "en":
+        return [
+            (PlanOutcome.ACCEPT_AGENT, "Accept plan (Agent)",
+             "Start implementation in Agent mode with approvals"),
+            (PlanOutcome.ACCEPT_YOLO, "Accept plan (YOLO)",
+             "Start implementation in YOLO mode (auto-approve)"),
+            (PlanOutcome.REVISE, "Revise plan",
+             "Ask follow-ups or request plan changes"),
+            (PlanOutcome.EXIT_PLAN, "Exit Plan mode",
+             "Return to Agent mode without implementation"),
+        ]
+    return [
+        (PlanOutcome.ACCEPT_AGENT, "接受计划（代理）",
+         "退出规划模式，按需批准后开始实现"),
+        (PlanOutcome.ACCEPT_YOLO, "接受计划（YOLO）",
+         "退出规划模式，自动批准并开始实现"),
+        (PlanOutcome.REVISE, "修改计划",
+         "留在规划模式，继续完善计划"),
+        (PlanOutcome.EXIT_PLAN, "退出且不实现",
+         "回到代理模式，暂不开始动手"),
+    ]
+
+
+# Default (zh) — kept for callers/tests that import PLAN_OPTIONS directly.
+PLAN_OPTIONS: list[tuple[PlanOutcome, str, str]] = plan_options("zh")
 
 
 @dataclass(slots=True)
@@ -59,9 +76,13 @@ class PlanPromptState:
     """
 
     selected: int = 0
+    options: list[tuple[PlanOutcome, str, str]] | None = None
+
+    def _options(self) -> list[tuple[PlanOutcome, str, str]]:
+        return self.options if self.options is not None else PLAN_OPTIONS
 
     def max_index(self) -> int:
-        return len(PLAN_OPTIONS) - 1
+        return len(self._options()) - 1
 
     def move_up(self) -> None:
         self.selected = max(0, self.selected - 1)
@@ -70,11 +91,11 @@ class PlanPromptState:
         self.selected = min(self.max_index(), self.selected + 1)
 
     def submit(self) -> PlanOutcome:
-        return PLAN_OPTIONS[self.selected][0]
+        return self._options()[self.selected][0]
 
     def submit_number(self, number: int) -> PlanOutcome | None:
         """Quick-pick by 1-4. Returns None if out of range."""
-        if 1 <= number <= len(PLAN_OPTIONS):
+        if 1 <= number <= len(self._options()):
             self.selected = number - 1
             return self.submit()
         return None
@@ -133,9 +154,11 @@ class PlanPromptScreen(ModalScreen[PlanOutcome]):
     }
     """
 
-    def __init__(self) -> None:
+    def __init__(self, locale: str | None = None) -> None:
         super().__init__()
-        self.state = PlanPromptState()
+        self._locale = locale
+        self._options = plan_options(locale)
+        self.state = PlanPromptState(options=self._options)
 
     def compose(self) -> ComposeResult:
         yield Static(id="plan-modal")
@@ -146,10 +169,26 @@ class PlanPromptScreen(ModalScreen[PlanOutcome]):
     def _refresh(self) -> None:
         body = self.query_one("#plan-modal", Static)
         lines: list[str] = []
-        lines.append("[bold cyan]Plan Confirmation[/]")
-        lines.append("[bold]Choose what should happen after this plan.[/]")
+        if (self._locale or "").strip().lower() == "en":
+            lines.append("[bold cyan]Plan Confirmation[/]")
+            lines.append("[bold]Choose what should happen after this plan.[/]")
+            footer = (
+                "[bold]1-4[/] / [bold]a/y/r/q[/] quick pick   "
+                "[bold]Up/Down[/] move   "
+                "[bold]Enter[/] confirm   "
+                "[bold]Esc[/] close"
+            )
+        else:
+            lines.append("[bold cyan]计划确认[/]")
+            lines.append("[bold]选择这份计划之后要做什么。[/]")
+            footer = (
+                "[bold]1-4[/] / [bold]a/y/r/q[/] 快捷键   "
+                "[bold]上下[/] 移动   "
+                "[bold]Enter[/] 确认   "
+                "[bold]Esc[/] 关闭"
+            )
         lines.append("")
-        for idx, (_, label, description) in enumerate(PLAN_OPTIONS):
+        for idx, (_, label, description) in enumerate(self._options):
             number = idx + 1
             if idx == self.state.selected:
                 lines.append(f"[bold reverse]> {number}) {label}[/]")
@@ -158,12 +197,7 @@ class PlanPromptScreen(ModalScreen[PlanOutcome]):
                 lines.append(f"  {number}) {label}")
                 lines.append(f"    [dim]{description}[/]")
         lines.append("")
-        lines.append(
-            "[bold]1-4[/] / [bold]a/y/r/q[/] quick pick   "
-            "[bold]Up/Down[/] move   "
-            "[bold]Enter[/] confirm   "
-            "[bold]Esc[/] close"
-        )
+        lines.append(footer)
         body.update("\n".join(lines))
 
     def action_move_up(self) -> None:

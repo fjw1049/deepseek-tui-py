@@ -30,7 +30,6 @@ from deepseek_tui.engine.cycle import (
 from deepseek_tui.engine.dispatch import (
     is_mcp_tool,
     should_force_update_plan_first,
-    should_stop_after_plan_tool,
 )
 from deepseek_tui.engine.events import (
     AgentRoundCompleteEvent,
@@ -71,6 +70,7 @@ from deepseek_tui.engine.prompts import (
 )
 from deepseek_tui.engine.seam import SeamConfig, SeamManager
 from deepseek_tui.engine.tools import (
+    PLAN_MODE_TOOL_ALLOWLIST,
     active_tools_for_step,
     apply_mcp_tool_deferral,
     apply_native_tool_deferral,
@@ -915,6 +915,14 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         # through build_model_tool_catalog — otherwise a missing/cold/empty
         # MCP discovery silently ships the full tool set to the model.
         mode = (self.mode or "agent").strip() or "agent"
+        if mode == "plan":
+            # Shared agent registries still expose write tools; filter the
+            # model-visible surface to the plan allowlist.
+            native_tools = [
+                t
+                for t in native_tools
+                if (t.get("function") or t).get("name") in PLAN_MODE_TOOL_ALLOWLIST
+            ]
         if mcp is None:
             result = filter_tools_for_profile(list(native_tools), profile)
             apply_native_tool_deferral(result, mode)
@@ -987,6 +995,13 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                     fn = tool.get("function", tool)
                     if isinstance(fn, dict):
                         fn["defer_loading"] = False
+
+        if mode == "plan":
+            result = [
+                t
+                for t in result
+                if (t.get("function") or t).get("name") in PLAN_MODE_TOOL_ALLOWLIST
+            ]
 
         if trace is not None and build_start is not None:
             trace.note_catalog_build(build_start, now_ms() - build_start, len(result))
@@ -1278,6 +1293,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         engine._cycle_session_id = uuid.uuid4().hex
         engine._cycle_started_at = int(time.time())
         engine.mode = mode
+        engine._app_config = cfg
         from deepseek_tui.policy.sandbox import sync_execution_sandbox_policy
 
         sync_execution_sandbox_policy(
@@ -2868,15 +2884,15 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             else:
                 consecutive_tool_error_steps = 0
 
-            # Plan mode: stop after successful update_plan
-            if tool_errors == 0 and any(
-                should_stop_after_plan_tool(self.mode, tc.name, True)
-                for tc in result.tool_calls
-            ):
-                logger.info("plan_tool_stop mode=%s", self.mode)
-                from dataclasses import replace
+            # Stop only when exit_plan_mode left without implementing.
+            # Accept paths must continue so the model can start the work.
+            if tool_errors == 0 and getattr(self, "_stop_after_exit_plan", False):
+                self._stop_after_exit_plan = False
+                if any(tc.name == "exit_plan_mode" for tc in result.tool_calls):
+                    logger.info("plan_exit_leave_stop mode=%s", self.mode)
+                    from dataclasses import replace
 
-                return replace(result, tool_round_count=tool_round_count)
+                    return replace(result, tool_round_count=tool_round_count)
 
         logger.warning(
             "round_trip_limit_exceeded limit=%d", self.max_tool_round_trips

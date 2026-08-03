@@ -24,6 +24,7 @@ from deepseek_tui.engine.events import (
     ApprovalRequiredEvent,
     ApprovalResolvedEvent,
     ErrorEvent,
+    ModeChangedEvent,
     SandboxDeniedEvent,
     SessionActivityEvent,
     StatusEvent,
@@ -747,6 +748,10 @@ class DeepSeekTUI(App[None]):
                 status.set_status("awaiting user input...")
                 self._presentation.mark_non_collapsible(event.tool_call_id)
                 self._handle_user_input_event(event, transcript)
+            elif isinstance(event, ModeChangedEvent):
+                self._apply_mode_from_engine(
+                    event.mode, notice=f"Mode → {event.mode}"
+                )
             elif isinstance(event, ErrorEvent):
                 if self._engine is not None:
                     await self._engine.run_lifecycle_hook(
@@ -881,10 +886,32 @@ class DeepSeekTUI(App[None]):
 
     # ── user input handling ─────────────────────────────────────────
 
+    def _apply_mode_from_engine(
+        self, mode: str, *, notice: str | None = None
+    ) -> None:
+        """Mirror an engine-driven mode change into the TUI chrome."""
+        from deepseek_tui.tui.commands import _switch_mode
+
+        _switch_mode(self, mode)
+        if notice:
+            try:
+                self.query_one(Transcript).add_notice(notice, severity="info")
+            except Exception:  # noqa: BLE001
+                pass
+
     def _handle_user_input_event(
         self, event: UserInputRequiredEvent, transcript: Transcript
     ) -> None:
         """Show an interactive dialog and resolve the engine wait on dismissal."""
+        from deepseek_tui.tools.plan_mode import (
+            EXIT_PLAN_MODE_NAME,
+            EXIT_QUESTION_ID,
+            EXIT_ACCEPT_AGENT,
+            EXIT_ACCEPT_YOLO,
+            EXIT_LEAVE,
+            EXIT_REVISE,
+        )
+        from deepseek_tui.tui.plan import PlanOutcome, PlanPromptScreen
 
         def _on_result(result: dict[str, object] | None) -> None:
             response = result or {"answers": []}
@@ -903,6 +930,34 @@ class DeepSeekTUI(App[None]):
             else:
                 transcript.add_notice("Input request dismissed", severity="warning")
             self.handle.resolve_user_input(event.tool_call_id, response)
+
+        if event.purpose == EXIT_PLAN_MODE_NAME:
+            def _on_plan_outcome(outcome: PlanOutcome | None) -> None:
+                mapping = {
+                    PlanOutcome.ACCEPT_AGENT: EXIT_ACCEPT_AGENT,
+                    PlanOutcome.ACCEPT_YOLO: EXIT_ACCEPT_YOLO,
+                    PlanOutcome.REVISE: EXIT_REVISE,
+                    PlanOutcome.EXIT_PLAN: EXIT_LEAVE,
+                }
+                value = mapping.get(outcome) if outcome is not None else None
+                if value is None:
+                    _on_result(None)
+                    return
+                _on_result(
+                    {
+                        "answers": [
+                            {"question_id": EXIT_QUESTION_ID, "value": value}
+                        ]
+                    }
+                )
+
+            locale = "zh"
+            if self._engine is not None:
+                locale = getattr(self._engine, "reply_locale", None) or getattr(
+                    getattr(self.config, "ui", None), "locale", None
+                ) or "zh"
+            self.push_screen(PlanPromptScreen(locale=locale), _on_plan_outcome)
+            return
 
         self.push_screen(UserInputDialog(event.questions), _on_result)
 

@@ -55,8 +55,8 @@ def validate_user_input_request(input_data: dict[str, Any]) -> list[UserInputQue
             raise ToolError("header, id, and question are required and must be non-empty")
 
         options = item.get("options")
-        if not isinstance(options, list) or not (2 <= len(options) <= 3):
-            raise ToolError("each question must have 2-3 options")
+        if not isinstance(options, list) or not (2 <= len(options) <= 4):
+            raise ToolError("each question must have 2-4 options")
 
         for opt in options:
             if not isinstance(opt, dict):
@@ -124,7 +124,7 @@ class RequestUserInputTool(ToolSpec):
                             "options": {
                                 "type": "array",
                                 "description": (
-                                    "2-3 mutually exclusive choices. Put "
+                                    "2-4 mutually exclusive choices. Put "
                                     "your recommended option first."
                                 ),
                                 "items": {
@@ -148,7 +148,7 @@ class RequestUserInputTool(ToolSpec):
                                     "required": ["label", "description"],
                                 },
                                 "minItems": 2,
-                                "maxItems": 3,
+                                "maxItems": 4,
                             },
                         },
                         "required": ["header", "id", "question", "options"],

@@ -678,6 +678,7 @@ def build_default_registry(config: Config | None = None, *, mode: str = "agent")
         TaskStopTool,
     )
     from deepseek_tui.tools.todo import ChecklistTool
+    from deepseek_tui.tools.plan_mode import EnterPlanModeTool, ExitPlanModeTool
     from deepseek_tui.tools.user_input import RequestUserInputTool
     from deepseek_tui.tools.web import FetchUrlTool, WebSearchTool
 
@@ -775,6 +776,17 @@ def build_default_registry(config: Config | None = None, *, mode: str = "agent")
 
     # Engine-intercepted special tools (always active)
     registry.register(RequestUserInputTool())
+    # Plan enter/exit: agent proposes, engine asks the user, then switches mode.
+    # Shared runtimes keep both registered; call-time checks enforce mode.
+    if mode != "plan" and mode != "workflow":
+        registry.register(EnterPlanModeTool())
+    if mode == "plan":
+        registry.register(ExitPlanModeTool())
+    elif mode not in ("workflow",):
+        # Agent/yolo/ask catalogs also expose exit so a mid-turn enter can
+        # later exit without rebuilding a shared registry. Call-time rejects
+        # exit when not in plan mode.
+        registry.register(ExitPlanModeTool())
 
     return registry
 

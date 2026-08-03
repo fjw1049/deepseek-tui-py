@@ -329,15 +329,28 @@ function readUserInputQuestions(value: unknown): UserInputQuestion[] | null {
     const rawOptions = q.options
     if (!Array.isArray(rawOptions) || rawOptions.length === 0) return null
     const options = rawOptions
-      .map((rawOption): { label: string; description: string } | null => {
-        if (!rawOption || typeof rawOption !== 'object') return null
-        const opt = rawOption as Record<string, unknown>
-        const label = typeof opt.label === 'string' ? opt.label.trim() : ''
-        const description = typeof opt.description === 'string' ? opt.description.trim() : ''
-        if (!label) return null
-        return { label, description: description || label }
-      })
-      .filter((opt): opt is { label: string; description: string } => opt != null)
+      .map(
+        (
+          rawOption
+        ): { label: string; description: string; value?: string } | null => {
+          if (!rawOption || typeof rawOption !== 'object') return null
+          const opt = rawOption as Record<string, unknown>
+          const label = typeof opt.label === 'string' ? opt.label.trim() : ''
+          const description =
+            typeof opt.description === 'string' ? opt.description.trim() : ''
+          const value = typeof opt.value === 'string' ? opt.value.trim() : ''
+          if (!label) return null
+          return {
+            label,
+            description: description || label,
+            ...(value ? { value } : {})
+          }
+        }
+      )
+      .filter(
+        (opt): opt is { label: string; description: string; value?: string } =>
+          opt != null
+      )
     const header = typeof q.header === 'string' ? q.header.trim() : ''
     const id = typeof q.id === 'string' ? q.id.trim() : ''
     const question = typeof q.question === 'string' ? q.question.trim() : ''
@@ -1843,7 +1856,8 @@ export class DeepseekRuntimeProvider implements AgentProvider {
                         ? null
                         : undefined
                   const archived = typeof thread?.archived === 'boolean' ? thread.archived : undefined
-                  sink.onThreadUpdated({ threadId, title, archived, changes })
+                  const mode = typeof thread?.mode === 'string' ? thread.mode : undefined
+                  sink.onThreadUpdated({ threadId, title, archived, mode, changes })
                 }
                 return
               }

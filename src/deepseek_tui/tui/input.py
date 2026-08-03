@@ -65,7 +65,8 @@ class ComposerHint(Static):
         self._refresh()
 
     def _refresh(self) -> None:
-        chords = "[dim]↵ send · ⌃J newline · ⇧⇥ mode[/]"
+        mode = (self._mode or "agent").strip() or "agent"
+        chords = f"[dim cyan]{escape(mode)}[/]  [dim]↵ send · ⌃J newline · ⇧⇥ mode[/]"
         progress: list[str] = []
         if self._current_step:
             progress.append(f"[bright_cyan]→ {escape(self._current_step[:48])}[/]")

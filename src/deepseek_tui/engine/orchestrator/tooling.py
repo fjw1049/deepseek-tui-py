@@ -22,6 +22,7 @@ from deepseek_tui.engine.events import (
     ApprovalRequiredEvent,
     ApprovalResolvedEvent,
     ElevationRequiredEvent,
+    ModeChangedEvent,
     SandboxDeniedEvent,
     ToolResultEvent,
     UserInputRequiredEvent,
@@ -29,12 +30,26 @@ from deepseek_tui.engine.events import (
 )
 from deepseek_tui.engine.tools import (
     CODE_EXECUTION_TOOL_NAME,
+    PLAN_MODE_TOOL_ALLOWLIST,
     REQUEST_USER_INPUT_NAME,
     execute_code_execution_tool,
     execute_tool_search,
     is_tool_search_tool,
     maybe_activate_requested_deferred_tool,
     missing_tool_error_message,
+)
+from deepseek_tui.tools.plan_mode import (
+    ENTER_PLAN_MODE_NAME,
+    EXIT_ACCEPT_AGENT,
+    EXIT_ACCEPT_YOLO,
+    EXIT_LEAVE,
+    EXIT_PLAN_MODE_NAME,
+    EXIT_REVISE,
+    enter_plan_questions,
+    exit_plan_questions,
+    parse_enter_plan_response,
+    parse_exit_plan_response,
+    plan_file_exists,
 )
 from deepseek_tui.protocol.messages import Message, ToolUseBlock
 from deepseek_tui.protocol.responses import ToolCall
@@ -619,6 +634,19 @@ class ToolExecutionMixin:
         if tool_name == REQUEST_USER_INPUT_NAME:
             return await self._await_user_input(tool_call.id, tool_call.arguments)
 
+        if tool_name == ENTER_PLAN_MODE_NAME:
+            return await self._handle_enter_plan_mode(tool_call.id)
+
+        if tool_name == EXIT_PLAN_MODE_NAME:
+            return await self._handle_exit_plan_mode(tool_call.id)
+
+        mode = (self.mode or "agent").strip() or "agent"
+        if mode == "plan" and tool_name not in PLAN_MODE_TOOL_ALLOWLIST:
+            raise ToolError(
+                f"Tool '{tool_name}' is unavailable in plan mode "
+                "(read-only). Finish with exit_plan_mode when the plan is ready."
+            )
+
         # --- External MCP tools (mcp_<server>_<tool>) ---
         from deepseek_tui.mcp.execute import (
             execute_external_mcp_tool,
@@ -984,18 +1012,37 @@ class ToolExecutionMixin:
             }
             for q in questions
         ]
+        response = await self._await_user_input_raw(
+            tool_call_id, questions_payload, purpose=None
+        )
+        if response is None:
+            return ToolResult(
+                content="User input request cancelled (turn cancelled)",
+                success=False,
+            )
+        import json as _json
 
-        # Create a future the TUI will resolve
-        future: asyncio.Future[dict[str, Any]] = asyncio.get_event_loop().create_future()
+        return ToolResult(content=_json.dumps(response, ensure_ascii=False), success=True)
+
+    async def _await_user_input_raw(
+        self,
+        tool_call_id: str,
+        questions_payload: list[dict[str, object]],
+        *,
+        purpose: str | None,
+    ) -> dict[str, Any] | None:
+        """Block on a UserInputRequiredEvent; None means cancelled."""
+        future: asyncio.Future[dict[str, Any]] = (
+            asyncio.get_event_loop().create_future()
+        )
         self.handle.pending_user_inputs[tool_call_id] = future
-
         await self.handle.emit(
             UserInputRequiredEvent(
                 tool_call_id=tool_call_id,
                 questions=questions_payload,
+                purpose=purpose,
             )
         )
-
         cancel_wait = asyncio.create_task(
             self.handle.cancel_event.wait(), name="user-input-cancel-wait"
         )
@@ -1004,17 +1051,185 @@ class ToolExecutionMixin:
                 {future, cancel_wait}, return_when=asyncio.FIRST_COMPLETED
             )
             if future not in done:
-                # Turn was cancelled while waiting for user input.
                 future.cancel()
-                return ToolResult(
-                    content="User input request cancelled (turn cancelled)",
-                    success=False,
-                )
-            response = future.result()
+                return None
+            return future.result()
         finally:
             cancel_wait.cancel()
             self.handle.pending_user_inputs.pop(tool_call_id, None)
 
-        import json as _json
+    async def _handle_enter_plan_mode(self, tool_call_id: str) -> ToolResult:
+        mode = (self.mode or "agent").strip() or "agent"
+        if mode == "plan":
+            return ToolResult(
+                content="Already in plan mode. Continue investigating, then "
+                "call update_plan and exit_plan_mode when ready.",
+                success=True,
+            )
+        if mode == "workflow":
+            return ToolResult(
+                content="Cannot enter plan mode from workflow mode.",
+                success=False,
+            )
 
-        return ToolResult(content=_json.dumps(response, ensure_ascii=False), success=True)
+        response = await self._await_user_input_raw(
+            tool_call_id,
+            enter_plan_questions(getattr(self, "reply_locale", None)),
+            purpose=ENTER_PLAN_MODE_NAME,
+        )
+        if response is None:
+            return ToolResult(
+                content="Enter plan mode cancelled (turn cancelled).",
+                success=False,
+            )
+        approved = parse_enter_plan_response(response)
+        if approved is None:
+            return ToolResult(
+                content="User dismissed enter_plan_mode. Staying in "
+                f"{mode} mode — continue without planning gate.",
+                success=False,
+            )
+        if not approved:
+            return ToolResult(
+                content="User declined plan mode. Continue in the current "
+                "mode; keep changes small or ask again if the scope grows.",
+                success=False,
+            )
+
+        await self.apply_interaction_mode("plan", reason="enter_plan_mode")
+        return ToolResult(
+            content=(
+                "Entered plan mode (read-only). Investigate the codebase, "
+                "clarify with request_user_input if needed, write the plan "
+                "via update_plan, then call exit_plan_mode for approval. "
+                "Do not edit files or run shell until the plan is accepted."
+            ),
+            success=True,
+            metadata={"mode": "plan"},
+        )
+
+    async def _handle_exit_plan_mode(self, tool_call_id: str) -> ToolResult:
+        mode = (self.mode or "agent").strip() or "agent"
+        if mode != "plan":
+            return ToolResult(
+                content="Not in plan mode. Call enter_plan_mode first "
+                "(or have the user switch to plan) before exit_plan_mode.",
+                success=False,
+            )
+        if not plan_file_exists(
+            self.tool_context.working_directory, self.tool_context.metadata
+        ):
+            return ToolResult(
+                content="No plan found. Call update_plan with the full plan "
+                "before exit_plan_mode.",
+                success=False,
+            )
+
+        response = await self._await_user_input_raw(
+            tool_call_id,
+            exit_plan_questions(getattr(self, "reply_locale", None)),
+            purpose=EXIT_PLAN_MODE_NAME,
+        )
+        if response is None:
+            return ToolResult(
+                content="Exit plan mode cancelled (turn cancelled).",
+                success=False,
+            )
+        outcome = parse_exit_plan_response(response)
+        if outcome is None:
+            return ToolResult(
+                content="User dismissed plan approval. Staying in plan mode "
+                "— revise with update_plan or call exit_plan_mode again.",
+                success=False,
+            )
+        if outcome == EXIT_REVISE:
+            self._stop_after_exit_plan = False
+            return ToolResult(
+                content="User asked to revise the plan. Stay in plan mode, "
+                "update the plan, then call exit_plan_mode again.",
+                success=False,
+                metadata={"outcome": outcome},
+            )
+        if outcome == EXIT_ACCEPT_YOLO:
+            self._stop_after_exit_plan = False
+            await self.apply_interaction_mode("yolo", reason="exit_plan_mode")
+            return ToolResult(
+                content="Plan accepted (YOLO). Implement the plan now with "
+                "auto-approved tool calls.",
+                success=True,
+                metadata={"outcome": outcome, "mode": "yolo"},
+            )
+        if outcome == EXIT_LEAVE:
+            await self.apply_interaction_mode("agent", reason="exit_plan_mode")
+            self._stop_after_exit_plan = True
+            return ToolResult(
+                content="Left plan mode without starting implementation. "
+                "Wait for the user's next instruction.",
+                success=True,
+                metadata={"outcome": outcome, "mode": "agent"},
+            )
+        # Default: accept in agent mode
+        self._stop_after_exit_plan = False
+        await self.apply_interaction_mode("agent", reason="exit_plan_mode")
+        return ToolResult(
+            content="Plan accepted (Agent). Implement the plan now, "
+            "requesting approvals for writes as usual.",
+            success=True,
+            metadata={"outcome": outcome or EXIT_ACCEPT_AGENT, "mode": "agent"},
+        )
+
+    async def apply_interaction_mode(
+        self, mode: str, *, reason: str = ""
+    ) -> None:
+        """Switch interaction mode and notify listeners.
+
+        Rebuilds a private registry when this engine owns its tool runtime.
+        Shared registries stay intact — plan restrictions are enforced via
+        ``PLAN_MODE_TOOL_ALLOWLIST`` filtering instead.
+        """
+        previous = (self.mode or "agent").strip() or "agent"
+        next_mode = (mode or "agent").strip() or "agent"
+        if previous == next_mode:
+            return
+        self.mode = next_mode
+        try:
+            from deepseek_tui.policy.sandbox import sync_execution_sandbox_policy
+
+            sync_execution_sandbox_policy(
+                self.tool_context,
+                next_mode,
+                self.tool_context.working_directory,
+            )
+        except Exception:  # noqa: BLE001 — mode switch must not fail the tool
+            logger.debug("sync_execution_sandbox_policy_failed", exc_info=True)
+
+        if next_mode == "yolo":
+            from deepseek_tui.engine.handle import AutoApprovalHandler
+
+            self.approval_handler = AutoApprovalHandler()
+
+        if getattr(self, "_owns_tool_runtime", False):
+            cfg = getattr(self, "_app_config", None)
+            if cfg is not None:
+                try:
+                    from deepseek_tui.tools.registry import build_default_registry
+
+                    new_registry = build_default_registry(cfg, mode=next_mode)
+                    new_registry.set_context(self.tool_context)
+                    self.tool_registry = new_registry
+                    if self.tool_runtime is not None:
+                        self.tool_runtime.registry = new_registry
+                except Exception:  # noqa: BLE001
+                    logger.warning(
+                        "rebuild_registry_for_mode_failed mode=%s",
+                        next_mode,
+                        exc_info=True,
+                    )
+
+        await self.handle.emit(
+            ModeChangedEvent(
+                mode=next_mode,
+                previous_mode=previous,
+                reason=reason,
+            )
+        )

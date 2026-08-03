@@ -15,7 +15,9 @@ _AGENT_TOOLS = [
     "agent",
     "checklist",
     "edit_file",
+    "enter_plan_mode",
     "exec_shell",
+    "exit_plan_mode",
     "fetch_url",
     "file_search",
     "grep_files",
@@ -39,6 +41,7 @@ _AGENT_TOOLS = [
 _PLAN_TOOLS = [
     "agent",
     "checklist",
+    "exit_plan_mode",
     "fetch_url",
     "file_search",
     "grep_files",
