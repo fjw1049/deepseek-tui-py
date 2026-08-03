@@ -64,6 +64,39 @@ function readTerminalTheme(): ITheme {
   }
 }
 
+/** Probe the viewport with a throwaway xterm so PTY starts at the real size. */
+function proposeTerminalDimensions(container: HTMLElement | null): { cols: number; rows: number } {
+  const fallback = { cols: 120, rows: 32 }
+  if (!container) return fallback
+  const width = container.clientWidth
+  const height = container.clientHeight
+  if (width < 40 || height < 40) return fallback
+
+  const host = document.createElement('div')
+  host.style.cssText = `position:fixed;left:-10000px;top:0;width:${width}px;height:${height}px;overflow:hidden;visibility:hidden;pointer-events:none`
+  document.body.appendChild(host)
+
+  const terminal = new XTerm({
+    fontFamily: readTerminalFontFamily(),
+    fontSize: getTerminalFontSizePx(),
+    lineHeight: 1.2,
+    scrollback: 1
+  })
+  const fitAddon = new FitAddon()
+  terminal.loadAddon(fitAddon)
+  try {
+    terminal.open(host)
+    fitAddon.fit()
+    return {
+      cols: Math.max(20, terminal.cols || fallback.cols),
+      rows: Math.max(8, terminal.rows || fallback.rows)
+    }
+  } finally {
+    terminal.dispose()
+    host.remove()
+  }
+}
+
 export function AppTerminalPanel({
   workspaceRoot,
   mountSurface,
@@ -86,6 +119,7 @@ export function AppTerminalPanel({
   const viewportRef = useRef<HTMLDivElement | null>(null)
   const sessionNodeRefs = useRef<Record<string, HTMLDivElement | null>>({})
   const terminalHandlesRef = useRef<Map<string, TerminalHandle>>(new Map())
+  const pendingOutputRef = useRef<Map<string, string>>(new Map())
   const fitFrameRef = useRef<number | null>(null)
   const trimmedWorkspaceRoot = workspaceRoot.trim()
 
@@ -117,24 +151,52 @@ export function AppTerminalPanel({
   )
 
   const createSession = useCallback(async (): Promise<void> => {
-    await createTerminalSessionForWorkspace(trimmedWorkspaceRoot)
+    // Spawn at the fitted viewport size so zsh prompt_sp can erase its EOL mark.
+    const dimensions = proposeTerminalDimensions(viewportRef.current)
+    await createTerminalSessionForWorkspace(trimmedWorkspaceRoot, dimensions)
   }, [trimmedWorkspaceRoot])
 
   useEffect(() => {
     if (mountActive) setXtermMount(mountSurface)
   }, [mountActive, mountSurface, setXtermMount])
 
+  // Wait until the panel has a real size before the first PTY spawn; otherwise
+  // zsh starts at the 120-col fallback and leaves a visible "%" above the prompt.
   useEffect(() => {
-    if (!trimmedWorkspaceRoot || !mountActive) return
+    if (!trimmedWorkspaceRoot || !mountActive || !visible) return
     if (hasStartedInitialSession) return
-    markInitialSessionStarted()
-    void createSession()
+
+    const viewport = viewportRef.current
+    if (!viewport) return
+
+    const tryStart = (): boolean => {
+      if (useTerminalSessionStore.getState().hasStartedInitialSession) return true
+      if (viewport.clientWidth < 40 || viewport.clientHeight < 40) return false
+      markInitialSessionStarted()
+      void createSession()
+      return true
+    }
+
+    if (tryStart()) return
+
+    if (typeof ResizeObserver === 'undefined') {
+      markInitialSessionStarted()
+      void createSession()
+      return
+    }
+
+    const observer = new ResizeObserver(() => {
+      if (tryStart()) observer.disconnect()
+    })
+    observer.observe(viewport)
+    return () => observer.disconnect()
   }, [
     createSession,
     hasStartedInitialSession,
     markInitialSessionStarted,
     mountActive,
-    trimmedWorkspaceRoot
+    trimmedWorkspaceRoot,
+    visible
   ])
 
   useEffect(() => {
@@ -143,13 +205,21 @@ export function AppTerminalPanel({
     }
 
     const offData = window.dsGui.onTerminalData(({ sessionId, data }) => {
-      terminalHandlesRef.current.get(sessionId)?.terminal.write(data)
+      const handle = terminalHandlesRef.current.get(sessionId)
+      if (handle) {
+        handle.terminal.write(data)
+        return
+      }
+      // PTY often emits the first prompt before React mounts xterm; keep it.
+      const pending = pendingOutputRef.current.get(sessionId) ?? ''
+      pendingOutputRef.current.set(sessionId, pending + data)
     })
 
     const offExit = window.dsGui.onTerminalExit(({ sessionId, exitCode }) => {
       const handle = terminalHandlesRef.current.get(sessionId)
       handle?.terminal.write(`\r\n${t('terminalExited', { code: exitCode })}\r\n`)
       updateSession(sessionId, { status: 'exited', exitCode })
+      pendingOutputRef.current.delete(sessionId)
     })
 
     return () => {
@@ -177,6 +247,18 @@ export function AppTerminalPanel({
       const fitAddon = new FitAddon()
       terminal.loadAddon(fitAddon)
       terminal.open(host)
+      // Fit before any shell output hits the screen — zsh prompt_sp clears its
+      // "%" mark using the current column width; writing at the default 80x24
+      // leaves a permanent mark when the PTY was started at the panel size.
+      fitAddon.fit()
+      if (terminal.cols > 0 && terminal.rows > 0) {
+        void window.dsGui?.resizeTerminalSession?.({
+          sessionId: session.id,
+          cols: terminal.cols,
+          rows: terminal.rows
+        })
+      }
+
       const inputDisposable = terminal.onData((data) => {
         void window.dsGui?.writeTerminalSession?.({ sessionId: session.id, data })
       })
@@ -187,6 +269,12 @@ export function AppTerminalPanel({
         inputDisposable
       })
 
+      const pending = pendingOutputRef.current.get(session.id)
+      if (pending) {
+        pendingOutputRef.current.delete(session.id)
+        terminal.write(pending)
+      }
+
       scheduleFit(session.id)
     }
 
@@ -196,6 +284,7 @@ export function AppTerminalPanel({
       handle.terminal.dispose()
       terminalHandlesRef.current.delete(sessionId)
       delete sessionNodeRefs.current[sessionId]
+      pendingOutputRef.current.delete(sessionId)
     }
   }, [mountActive, scheduleFit, sessions])
 
@@ -253,6 +342,7 @@ export function AppTerminalPanel({
     }
     terminalHandlesRef.current.clear()
     sessionNodeRefs.current = {}
+    pendingOutputRef.current.clear()
   }, [mountActive])
 
   // Unmount cleanup: the bottom terminal is conditionally rendered
@@ -273,6 +363,7 @@ export function AppTerminalPanel({
       }
       terminalHandlesRef.current.clear()
       sessionNodeRefs.current = {}
+      pendingOutputRef.current.clear()
     }
   }, [])
 
@@ -284,6 +375,7 @@ export function AppTerminalPanel({
       terminalHandlesRef.current.delete(sessionId)
     }
     delete sessionNodeRefs.current[sessionId]
+    pendingOutputRef.current.delete(sessionId)
     closeTerminalSessionById(sessionId)
   }
 

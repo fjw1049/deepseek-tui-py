@@ -67,20 +67,31 @@ export const useTerminalSessionStore = create<TerminalSessionStore>((set, get) =
   markInitialSessionStarted: () => set({ hasStartedInitialSession: true })
 }))
 
-export async function createTerminalSessionForWorkspace(workspaceRoot: string): Promise<boolean> {
+export type TerminalCreateDimensions = {
+  cols: number
+  rows: number
+}
+
+export async function createTerminalSessionForWorkspace(
+  workspaceRoot: string,
+  dimensions?: TerminalCreateDimensions
+): Promise<boolean> {
   const cwd = workspaceRoot.trim()
   if (!cwd || typeof window.dsGui?.createTerminalSession !== 'function') return false
 
   const store = useTerminalSessionStore.getState()
   if (store.creatingSession) return false
 
+  const cols = Math.max(20, Math.floor(dimensions?.cols ?? 120))
+  const rows = Math.max(8, Math.floor(dimensions?.rows ?? 32))
+
   store.setCreatingSession(true)
   store.setCreateError(null)
   try {
     const result = await window.dsGui.createTerminalSession({
       cwd,
-      cols: 120,
-      rows: 32
+      cols,
+      rows
     })
     if (!result.ok) {
       store.setCreateError(result.message)
