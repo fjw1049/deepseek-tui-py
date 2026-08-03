@@ -54,7 +54,7 @@ export function ExtensionsToolbar({ children, menuItems = [] }: Props): ReactEle
             <MoreHorizontal className="h-4 w-4" strokeWidth={1.85} />
           </button>
           {open ? (
-            <div className="ds-content-card absolute right-0 top-full z-20 mt-1.5 min-w-[10.5rem] overflow-hidden rounded-xl py-1 shadow-lg">
+            <div className="ds-popover-surface absolute right-0 top-full z-20 mt-1.5 min-w-[10.5rem] overflow-hidden rounded-xl py-1 shadow-lg">
               {menuItems.map((item) => (
                 <button
                   key={item.label}

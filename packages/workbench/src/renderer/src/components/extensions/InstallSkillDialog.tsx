@@ -106,7 +106,7 @@ export function InstallSkillDialog({ open, skillsDir, onClose, onInstalled }: Pr
   }
 
   return (
-    <div className="ds-content-card absolute right-0 top-full z-20 mt-1.5 w-80 overflow-hidden rounded-2xl p-4 shadow-lg">
+    <div className="ds-popover-surface absolute right-0 top-full z-20 mt-1.5 w-80 overflow-hidden rounded-2xl p-4 shadow-lg">
       <div className="mb-3 text-[14px] font-semibold text-ds-ink">{t('skillInstallTitle')}</div>
       <input
         ref={inputRef}

@@ -278,7 +278,7 @@ export function ConnectorsView(): ReactElement {
                 {t('pluginCreate')}
               </button>
               {menuOpen ? (
-                <div className="ds-content-card absolute right-0 top-full z-20 mt-1.5 w-52 overflow-hidden rounded-xl py-1 shadow-lg">
+                <div className="ds-popover-surface absolute right-0 top-full z-20 mt-1.5 w-52 overflow-hidden rounded-xl py-1 shadow-lg">
                   <button
                     type="button"
                     onClick={() => {

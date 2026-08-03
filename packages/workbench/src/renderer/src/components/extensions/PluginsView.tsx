@@ -437,7 +437,7 @@ function InstallPluginPopover({
   }
 
   return (
-    <div className="ds-content-card absolute right-0 top-full z-20 mt-1.5 w-96 rounded-2xl p-4 shadow-lg">
+    <div className="ds-popover-surface absolute right-0 top-full z-20 mt-1.5 w-96 rounded-2xl p-4 shadow-lg">
       <h2 className="text-[14px] font-semibold text-ds-ink">{t('pluginSysInstallTitle')}</h2>
       <p className="mt-1 text-[12px] leading-5 text-ds-faint">{t('pluginSysInstallHint')}</p>
       <input
