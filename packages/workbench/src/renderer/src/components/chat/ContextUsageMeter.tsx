@@ -307,9 +307,7 @@ export function ContextUsageMeter({
         ref={buttonRef}
         type="button"
         className={`ds-no-drag flex h-8 w-7 shrink-0 items-center justify-center rounded-full transition ${
-          open
-            ? 'bg-ds-hover text-ds-ink'
-            : 'text-ds-muted hover:bg-ds-hover hover:text-ds-ink'
+          open ? 'text-ds-ink' : 'text-ds-muted hover:text-ds-ink'
         }`}
         aria-label={detailLabel}
         title={detailLabel}
