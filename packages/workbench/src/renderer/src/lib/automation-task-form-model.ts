@@ -2,9 +2,10 @@ import type { AutomationStatus, CreateAutomationInput } from './automation-runti
 
 export type AutomationScheduleKind = 'once' | 'hourly' | 'daily' | 'weekly' | 'custom'
 export type AutomationDeliveryMode = 'none' | 'feishu' | 'wecom' | 'email'
-export type WeekdayToken = 'MO' | 'TU' | 'WE' | 'TH' | 'FR' | 'SA' | 'SU'
+/** Cron day-of-week tokens. */
+export type WeekdayToken = 'MON' | 'TUE' | 'WED' | 'THU' | 'FRI' | 'SAT' | 'SUN'
 
-export const ALL_WEEKDAYS: WeekdayToken[] = ['MO', 'TU', 'WE', 'TH', 'FR', 'SA', 'SU']
+export const ALL_WEEKDAYS: WeekdayToken[] = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN']
 
 export type AutomationScheduleDraft = {
   kind: AutomationScheduleKind
@@ -12,7 +13,7 @@ export type AutomationScheduleDraft = {
   everyHours: string
   timeOfDay: string
   weekdays: WeekdayToken[]
-  customRrule: string
+  customCron: string
 }
 
 export type AutomationTaskDraft = {
@@ -28,8 +29,9 @@ export type AutomationTaskDraft = {
 }
 
 export type AutomationSchedulePayload = {
-  rrule: string
-  next_run_at?: string | null
+  /** null for a one-shot job, which carries run_at instead. */
+  schedule: string | null
+  run_at?: string | null
 }
 
 function parseTimeOfDay(value: string): { hour: number; minute: number } {
@@ -54,37 +56,32 @@ export function buildAutomationSchedulePayload(
   if (schedule.kind === 'once') {
     const date = new Date(schedule.onceAt)
     if (!schedule.onceAt || Number.isNaN(date.getTime())) throw new Error('once_at_invalid')
-    return {
-      rrule: 'FREQ=HOURLY;INTERVAL=8760',
-      next_run_at: date.toISOString()
-    }
+    return { schedule: null, run_at: date.toISOString() }
   }
 
   if (schedule.kind === 'hourly') {
     const interval = Number(schedule.everyHours)
-    if (!Number.isInteger(interval) || interval < 1) throw new Error('interval_invalid')
-    return { rrule: `FREQ=HOURLY;INTERVAL=${interval}` }
+    if (!Number.isInteger(interval) || interval < 1 || interval > 23)
+      throw new Error('interval_invalid')
+    return { schedule: interval === 1 ? '0 * * * *' : `0 */${interval} * * *` }
   }
 
   if (schedule.kind === 'daily') {
     const { hour, minute } = parseTimeOfDay(schedule.timeOfDay)
-    return {
-      rrule: `FREQ=WEEKLY;BYDAY=${ALL_WEEKDAYS.join(',')};BYHOUR=${hour};BYMINUTE=${minute}`
-    }
+    return { schedule: `${minute} ${hour} * * *` }
   }
 
   if (schedule.kind === 'weekly') {
     const { hour, minute } = parseTimeOfDay(schedule.timeOfDay)
     const weekdays = schedule.weekdays.filter((day) => ALL_WEEKDAYS.includes(day))
     if (weekdays.length === 0) throw new Error('weekdays_required')
-    return {
-      rrule: `FREQ=WEEKLY;BYDAY=${weekdays.join(',')};BYHOUR=${hour};BYMINUTE=${minute}`
-    }
+    return { schedule: `${minute} ${hour} * * ${weekdays.join(',')}` }
   }
 
-  const rrule = schedule.customRrule.trim().toUpperCase()
-  if (!rrule) throw new Error('rrule_required')
-  return { rrule }
+  const cron = schedule.customCron.trim().replace(/\s+/g, ' ')
+  if (!cron) throw new Error('cron_required')
+  if (cron.split(' ').length !== 5) throw new Error('cron_invalid')
+  return { schedule: cron }
 }
 
 export function resolveEffectiveDeliveryTarget(draft: AutomationTaskDraft): string {
@@ -107,8 +104,9 @@ export function buildCreateAutomationInput(draft: AutomationTaskDraft): CreateAu
   return {
     name: draft.name.trim() || deriveAutomationName(prompt),
     prompt,
-    rrule: schedule.rrule,
-    next_run_at: schedule.next_run_at,
+    schedule: schedule.schedule,
+    run_at: schedule.run_at,
+    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
     cwds: workspaceRoot ? [workspaceRoot] : [],
     status,
     delivery:

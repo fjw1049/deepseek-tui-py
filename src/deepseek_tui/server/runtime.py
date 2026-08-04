@@ -739,7 +739,6 @@ class AppRuntime:
         try:
             name = _require_str(body, "name")
             prompt = _require_str(body, "prompt")
-            rrule = _require_str(body, "rrule")
         except ValueError as exc:
             return {"ok": False, "error": str(exc)}
         cwds_raw = body.get("cwds")
@@ -751,16 +750,13 @@ class AppRuntime:
         req = CreateAutomationRequest(
             name=name,
             prompt=prompt,
-            rrule=rrule,
+            schedule=_pick_str(body, "schedule"),
+            timezone=_pick_str(body, "timezone"),
+            run_at=_pick_str(body, "run_at"),
             cwds=cwds,
             status=status,
             delivery=body.get("delivery") if isinstance(body.get("delivery"), dict) else None,
             digest=body.get("digest") if isinstance(body.get("digest"), dict) else None,
-            next_run_at=(
-                str(body["next_run_at"]).strip()
-                if isinstance(body.get("next_run_at"), str) and str(body["next_run_at"]).strip()
-                else None
-            ),
         )
         try:
             record = manager.create_automation(req)
@@ -796,7 +792,8 @@ class AppRuntime:
         req = UpdateAutomationRequest(
             name=_pick_str(body, "name"),
             prompt=_pick_str(body, "prompt"),
-            rrule=_pick_str(body, "rrule"),
+            schedule=_pick_str(body, "schedule"),
+            timezone=_pick_str(body, "timezone"),
             cwds=[str(p) for p in body["cwds"]] if isinstance(body.get("cwds"), list) else None,
             status=status,
             delivery=body.get("delivery") if isinstance(body.get("delivery"), dict) else None,

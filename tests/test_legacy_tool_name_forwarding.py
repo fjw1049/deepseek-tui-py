@@ -160,7 +160,7 @@ def test_agent_live_actions_pass_through() -> None:
 
 
 def test_automation_create_forwards_to_cron_create() -> None:
-    original = {"name": "n", "prompt": "p", "rrule": "FREQ=HOURLY;INTERVAL=1"}
+    original = {"name": "n", "prompt": "p", "schedule": "0 * * * *"}
     name, args = normalize_legacy_tool_call("automation_create", original)
     assert name == "cron_create"
     assert args == original

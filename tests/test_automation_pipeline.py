@@ -29,7 +29,8 @@ def _sample_automation(**overrides: object) -> AutomationRecord:
         "id": "a1",
         "name": "daily-digest",
         "prompt": "Summarize inbox.",
-        "rrule": "FREQ=DAILY;BYHOUR=8;BYMINUTE=0",
+        "schedule": "0 8 * * *",
+        "timezone": "Asia/Shanghai",
         "status": AutomationStatus.ACTIVE,
         "created_at": "2026-05-28T00:00:00+00:00",
         "updated_at": "2026-05-28T00:00:00+00:00",
@@ -69,7 +70,7 @@ def test_automation_record_round_trip_optional_fields(tmp_path: object) -> None:
         CreateAutomationRequest(
             name="t",
             prompt="p",
-            rrule="FREQ=HOURLY;INTERVAL=1",
+            schedule="0 * * * *",
         )
     )
     record.delivery = {"mode": "feishu", "chat_id": "ou_test", "best_effort": True}

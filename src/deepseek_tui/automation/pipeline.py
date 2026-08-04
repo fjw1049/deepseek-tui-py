@@ -604,7 +604,7 @@ def apply_triage(
 ) -> TriageDecision:
     """Decide whether an HTTP trigger should enqueue work.
 
-    Cron / RRULE jobs never call this — only ``POST /v1/triggers`` and similar.
+    Scheduled cron jobs never call this — only ``POST /v1/triggers`` and similar.
     Default policy is ``skip`` (always run).
     """
     key = (policy or TRIAGE_SKIP).strip().lower()

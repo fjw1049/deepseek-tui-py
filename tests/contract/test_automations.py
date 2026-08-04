@@ -54,7 +54,7 @@ async def test_automations_crud_and_trigger(automations_client: AsyncClient) -> 
     body = {
         "name": "test-job",
         "prompt": "say hi",
-        "rrule": "FREQ=HOURLY;INTERVAL=1",
+        "schedule": "0 * * * *",
         "delivery": {"mode": "silent"},
     }
     r = await automations_client.post("/v1/automations", json=body)

@@ -6,7 +6,7 @@ import {
 } from './automation-task-form-model'
 
 describe('automation task form model', () => {
-  it('builds hourly schedules', () => {
+  it('builds hourly schedules anchored to the hour', () => {
     expect(
       buildAutomationSchedulePayload({
         kind: 'hourly',
@@ -14,12 +14,38 @@ describe('automation task form model', () => {
         onceAt: '',
         timeOfDay: '',
         weekdays: [],
-        customRrule: ''
+        customCron: ''
       })
-    ).toEqual({ rrule: 'FREQ=HOURLY;INTERVAL=3' })
+    ).toEqual({ schedule: '0 */3 * * *' })
   })
 
-  it('builds daily schedules as all-week weekly RRULEs', () => {
+  it('collapses an every-1-hour schedule to the plain hourly form', () => {
+    expect(
+      buildAutomationSchedulePayload({
+        kind: 'hourly',
+        everyHours: '1',
+        onceAt: '',
+        timeOfDay: '',
+        weekdays: [],
+        customCron: ''
+      })
+    ).toEqual({ schedule: '0 * * * *' })
+  })
+
+  it('rejects hourly intervals that cron cannot express', () => {
+    expect(() =>
+      buildAutomationSchedulePayload({
+        kind: 'hourly',
+        everyHours: '48',
+        onceAt: '',
+        timeOfDay: '',
+        weekdays: [],
+        customCron: ''
+      })
+    ).toThrow('interval_invalid')
+  })
+
+  it('builds daily schedules with a wildcard day-of-week', () => {
     expect(
       buildAutomationSchedulePayload({
         kind: 'daily',
@@ -27,25 +53,36 @@ describe('automation task form model', () => {
         onceAt: '',
         timeOfDay: '09:30',
         weekdays: [],
-        customRrule: ''
+        customCron: ''
       })
-    ).toEqual({
-      rrule: 'FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR,SA,SU;BYHOUR=9;BYMINUTE=30'
-    })
+    ).toEqual({ schedule: '30 9 * * *' })
   })
 
-  it('builds one-time schedules with next_run_at', () => {
+  it('builds one-time schedules as a run_at with no cron', () => {
     const payload = buildAutomationSchedulePayload({
       kind: 'once',
       onceAt: '2026-06-01T10:00',
       everyHours: '',
       timeOfDay: '',
       weekdays: [],
-      customRrule: ''
+      customCron: ''
     })
 
-    expect(payload.rrule).toBe('FREQ=HOURLY;INTERVAL=8760')
-    expect(payload.next_run_at).toMatch(/^2026-06-01T/)
+    expect(payload.schedule).toBeNull()
+    expect(payload.run_at).toMatch(/^2026-06-01T/)
+  })
+
+  it('rejects custom expressions that are not 5 fields', () => {
+    expect(() =>
+      buildAutomationSchedulePayload({
+        kind: 'custom',
+        onceAt: '',
+        everyHours: '',
+        timeOfDay: '',
+        weekdays: [],
+        customCron: '0 9 * *'
+      })
+    ).toThrow('cron_invalid')
   })
 
   it('builds create payloads with derived names, workspace, status, and delivery', () => {
@@ -58,8 +95,8 @@ describe('automation task form model', () => {
         onceAt: '',
         everyHours: '',
         timeOfDay: '18:05',
-        weekdays: ['MO', 'FR'],
-        customRrule: ''
+        weekdays: ['MON', 'FRI'],
+        customCron: ''
       },
       deliveryMode: 'email',
       deliveryTarget: 'me@example.com',
@@ -69,11 +106,12 @@ describe('automation task form model', () => {
     expect(payload).toMatchObject({
       name: 'Summarize the workspace',
       prompt: 'Summarize the workspace\nwith details',
-      rrule: 'FREQ=WEEKLY;BYDAY=MO,FR;BYHOUR=18;BYMINUTE=5',
+      schedule: '5 18 * * MON,FRI',
       cwds: ['/tmp/project'],
       status: 'paused',
       delivery: { mode: 'email', to: 'me@example.com', best_effort: false }
     })
+    expect(payload.timezone).toBeTruthy()
   })
 
   it('uses channel defaults when delivery target is blank', () => {
@@ -87,7 +125,7 @@ describe('automation task form model', () => {
         everyHours: '',
         timeOfDay: '08:00',
         weekdays: [],
-        customRrule: ''
+        customCron: ''
       },
       deliveryMode: 'email',
       deliveryTarget: '',

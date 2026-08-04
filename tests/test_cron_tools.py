@@ -23,7 +23,7 @@ from deepseek_tui.tools.task.models import TaskExecutionResult, TaskManagerConfi
 _CREATE_INPUT = {
     "name": "hourly",
     "prompt": "do work",
-    "rrule": "FREQ=HOURLY;INTERVAL=1",
+    "schedule": "0 * * * *",
 }
 
 
@@ -93,7 +93,8 @@ async def test_cron_list_lists_and_reads_detail(tmp_path: Path) -> None:
 
     detail = await CronListTool().execute({"automation_id": automation_id}, ctx)
     assert detail.metadata["automation"]["id"] == automation_id
-    assert "prompt: do work" in detail.content
+    assert "prompt:   do work" in detail.content
+    assert "schedule: 0 * * * *" in detail.content
     assert detail.metadata["runs"] == []
 
 

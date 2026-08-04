@@ -8,7 +8,8 @@ const automationWithFeishu: AutomationRecord = {
   id: 'a1',
   name: 'Task',
   prompt: 'p',
-  rrule: 'FREQ=HOURLY',
+  schedule: '0 * * * *',
+    timezone: 'Asia/Shanghai',
   status: 'active',
   delivery: { mode: 'feishu', to: 'ou_x' }
 }

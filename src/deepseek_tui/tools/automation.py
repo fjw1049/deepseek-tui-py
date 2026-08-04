@@ -49,10 +49,11 @@ import os
 import shutil
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING
+from zoneinfo import ZoneInfo
 import asyncio
 
 __all__ = [
@@ -129,7 +130,7 @@ def _format_summary_line(record: Any) -> str:
     next_run = record.next_run_at or "—"
     last_run = record.last_run_at or "—"
     return (
-        f"{record.id[:8]} | {record.status.value:<8} | "
+        f"{record.id[:8]} | {record.status.value:<9} | "
         f"next={next_run} | last={last_run} | {record.name}"
     )
 
@@ -166,10 +167,11 @@ class CronCreateTool(ToolSpec):
             "task on a schedule. Relative times ('in 10 minutes', 'tomorrow "
             "morning') resolve against the `today: YYYY-MM-DD` date and "
             "user timezone in the system prompt (prefer that over shell date). "
-            "Recurring jobs use rrule (FREQ=HOURLY;INTERVAL=N or "
-            "FREQ=WEEKLY;BYDAY=MO;BYHOUR=9;BYMINUTE=30). One-shot or "
-            "delayed runs set next_run_at (ISO8601) and may use a far-future "
-            "placeholder rrule such as FREQ=HOURLY;INTERVAL=8760. Optional "
+            "Recurring jobs set schedule to a standard 5-field cron "
+            "expression ('0 9 * * *' = every day 09:00, '30 8 * * MON,FRI', "
+            "'0 */2 * * *' = every 2 hours on the hour). One-shot jobs set "
+            "run_at (ISO8601) and omit schedule — they fire once and are "
+            "then marked completed. Optional "
             "delivery sends the task summary to feishu, email, or wecom after "
             "completion. For feishu include delivery.mode=feishu and "
             "delivery.to (open_chat_id); for wecom use delivery.mode=wecom "
@@ -209,18 +211,29 @@ class CronCreateTool(ToolSpec):
                         "instructions — delivery is configured separately."
                     ),
                 },
-                "rrule": {
+                "schedule": {
                     "type": "string",
                     "description": (
-                        "Supported: FREQ=HOURLY;INTERVAL=N[;BYDAY=MO,TU] "
-                        "or FREQ=WEEKLY;BYDAY=MO;BYHOUR=9;BYMINUTE=30"
+                        "5-field cron expression: minute hour day-of-month "
+                        "month day-of-week. Examples: '0 9 * * *' (daily "
+                        "09:00), '30 8 * * MON,FRI', '0 */2 * * *' (every "
+                        "2 hours). Omit for a one-shot job."
                     ),
                 },
-                "next_run_at": {
+                "run_at": {
                     "type": "string",
                     "description": (
-                        "Optional ISO8601 timestamp for the first run "
-                        "(one-shot or delayed start)."
+                        "ISO8601 timestamp. Alone it makes a one-shot job; "
+                        "combined with schedule it pins the first run "
+                        "(delayed start). A timestamp without an offset is "
+                        "read in the job's timezone."
+                    ),
+                },
+                "timezone": {
+                    "type": "string",
+                    "description": (
+                        "IANA timezone the schedule is evaluated in, e.g. "
+                        "'Asia/Shanghai'. Defaults to the host timezone."
                     ),
                 },
                 "cwds": {
@@ -275,7 +288,7 @@ class CronCreateTool(ToolSpec):
                     ),
                 },
             },
-            "required": ["name", "prompt", "rrule"],
+            "required": ["name", "prompt"],
             "additionalProperties": False,
         }
 
@@ -291,8 +304,9 @@ class CronCreateTool(ToolSpec):
         manager = _get_manager(context)
         name = _require_string(input_data, "name")
         prompt = _require_string(input_data, "prompt")
-        rrule = _require_string(input_data, "rrule")
-        next_run_at = _optional_string(input_data, "next_run_at")
+        schedule = _optional_string(input_data, "schedule")
+        run_at = _optional_string(input_data, "run_at")
+        tz_name = _optional_string(input_data, "timezone")
         cwds = _optional_string_list(input_data, "cwds") or []
         delivery = _resolve_delivery(_optional_object(input_data, "delivery"))
         paused = bool(input_data.get("paused", False))
@@ -303,11 +317,12 @@ class CronCreateTool(ToolSpec):
                 CreateAutomationRequest(
                     name=name,
                     prompt=prompt,
-                    rrule=rrule,
+                    schedule=schedule,
+                    timezone=tz_name,
+                    run_at=run_at,
                     cwds=cwds,
                     status=status,
                     delivery=delivery,
-                    next_run_at=next_run_at,
                 )
             )
         except ValueError as exc:
@@ -403,9 +418,9 @@ class CronListTool(ToolSpec):
             runs = manager.list_runs(automation_id, limit=runs_limit)
             lines = [
                 _format_summary_line(record),
-                f"prompt: {record.prompt}",
-                f"rrule:  {record.rrule}",
-                f"cwds:   {record.cwds}",
+                f"prompt:   {record.prompt}",
+                f"schedule: {record.schedule or 'one-shot'} ({record.timezone})",
+                f"cwds:     {record.cwds}",
                 f"runs ({len(runs)}):",
             ]
             for run in runs:
@@ -509,13 +524,13 @@ _ = asdict
 # Every disk write goes through ``write_json_atomic`` (tmp file + rename)
 # so partially-written records cannot survive a crash.
 #
-# RRULE subset:
+# Schedules are standard 5-field cron expressions evaluated in the
+# record's IANA timezone (``0 9 * * *`` fires at the user's 09:00, not
+# UTC). A record with ``schedule=None`` is a one-shot: it fires once at
+# ``next_run_at`` and then moves to ``AutomationStatus.COMPLETED``.
 #
-# * ``FREQ=HOURLY;INTERVAL=N[;BYDAY=MO,TU]``
-# * ``FREQ=WEEKLY;BYDAY=MO,WE;BYHOUR=9;BYMINUTE=30``
-#
-# Times in ``next_after`` are computed in **local time** so a user with
-# a 9am rule fires at their local 9am, not UTC 9am.
+# Schema v1 stored an RRULE subset instead; ``AutomationRecord.from_dict``
+# upgrades those records on read via ``cron_from_legacy_rrule``.
 #
 
 if TYPE_CHECKING:
@@ -525,6 +540,8 @@ __all__ = [
     "CURRENT_AUTOMATION_SCHEMA_VERSION",
     "CURRENT_RUN_SCHEMA_VERSION",
     "MISFIRE_GRACE_SECS",
+    "cron_from_legacy_rrule",
+    "default_timezone",
     "AutomationManager",
     "AutomationRecord",
     "AutomationRunRecord",
@@ -539,7 +556,8 @@ __all__ = [
 
 logger = logging.getLogger(__name__)
 
-CURRENT_AUTOMATION_SCHEMA_VERSION = 1
+# v2 replaced the RRULE subset with a cron expression + IANA timezone.
+CURRENT_AUTOMATION_SCHEMA_VERSION = 2
 CURRENT_RUN_SCHEMA_VERSION = 1
 
 # How stale a due slot may be and still fire. Slots missed while the app
@@ -547,27 +565,13 @@ CURRENT_RUN_SCHEMA_VERSION = 1
 # replayed one-per-tick.
 MISFIRE_GRACE_SECS = 30 * 60
 
-# Mapping the ``Weekday`` enum (Mon=0…Sun=6) to Python ``datetime``
-# weekday integers. Python ``datetime.weekday()`` already uses the same
-# 0..6 Monday-first convention so the mapping is the identity, but we
-# keep an explicit table so ``parse_byday`` round-trips cleanly with the
-# string forms accepted.
-_WEEKDAY_BY_TOKEN: dict[str, int] = {
-    "MO": 0,
-    "TU": 1,
-    "WE": 2,
-    "TH": 3,
-    "FR": 4,
-    "SA": 5,
-    "SU": 6,
-}
-
-
 class AutomationStatus(str, Enum):
     """Automation status (snake_case on the wire)."""
 
     ACTIVE = "active"
     PAUSED = "paused"
+    # One-shot jobs land here once their single run has been enqueued.
+    COMPLETED = "completed"
 
 
 class AutomationRunStatus(str, Enum):
@@ -581,179 +585,148 @@ class AutomationRunStatus(str, Enum):
 
 
 # ─────────────────────────────────────────────────────────────────────
-# RRULE parsing
+# Cron schedules
 # ─────────────────────────────────────────────────────────────────────
 
 
-@dataclass(frozen=True, slots=True)
-class _Hourly:
-    interval_hours: int
-    byday: tuple[int, ...] | None  # weekday ints; None = all days
+def default_timezone() -> str:
+    """The host's IANA timezone name (``Asia/Shanghai``), or ``UTC``.
 
-
-@dataclass(frozen=True, slots=True)
-class _Weekly:
-    byday: tuple[int, ...]  # non-empty
-    byhour: int
-    byminute: int
+    There is no stdlib API for this, so probe ``$TZ`` then the
+    ``/etc/localtime`` symlink. Windows has neither and falls back to
+    UTC — set the timezone explicitly there.
+    """
+    env = os.environ.get("TZ", "").strip()
+    if env:
+        try:
+            ZoneInfo(env)
+            return env
+        except Exception:  # noqa: BLE001 — bad $TZ, keep probing
+            pass
+    try:
+        parts = Path("/etc/localtime").resolve().parts
+        if "zoneinfo" in parts:
+            name = "/".join(parts[parts.index("zoneinfo") + 1 :])
+            ZoneInfo(name)
+            return name
+    except Exception:  # noqa: BLE001
+        pass
+    return "UTC"
 
 
 class AutomationSchedule:
-    """Parsed RRULE for an automation.
+    """A 5-field cron expression evaluated in a fixed IANA timezone.
 
-    Wraps a ``_Hourly | _Weekly`` payload. Constructed via
-    :meth:`parse_rrule`. The ``next_after`` method computes the next UTC
-    fire time strictly after ``after``.
+    Date arithmetic is delegated to ``croniter`` so that DST transitions,
+    month lengths, and wall-clock anchoring behave like every other cron
+    implementation. ``next_after`` takes and returns aware UTC datetimes.
     """
 
-    __slots__ = ("_payload",)
+    __slots__ = ("_expr", "_tz", "_tz_name")
 
-    def __init__(self, payload: _Hourly | _Weekly) -> None:
-        self._payload = payload
-
-    @property
-    def is_hourly(self) -> bool:
-        return isinstance(self._payload, _Hourly)
+    def __init__(self, expr: str, tz_name: str) -> None:
+        self._expr = expr
+        self._tz_name = tz_name
+        self._tz = ZoneInfo(tz_name)
 
     @property
-    def is_weekly(self) -> bool:
-        return isinstance(self._payload, _Weekly)
+    def expr(self) -> str:
+        return self._expr
 
     @property
-    def payload(self) -> _Hourly | _Weekly:
-        return self._payload
+    def timezone_name(self) -> str:
+        return self._tz_name
 
     @classmethod
-    def parse_rrule(cls, rrule: str) -> AutomationSchedule:
-        """Parse an RRULE string. Raises :class:`ValueError` on bad input."""
-        parts: dict[str, str] = {}
-        for raw in rrule.split(";"):
-            item = raw.strip()
-            if not item:
-                continue
-            if "=" not in item:
-                raise ValueError(f"Invalid RRULE segment '{item}'")
-            k, v = item.split("=", 1)
-            parts[k.strip().upper()] = v.strip().upper()
+    def parse(cls, expr: str, tz_name: str) -> AutomationSchedule:
+        """Validate a cron expression + timezone. Raises :class:`ValueError`."""
+        from croniter import croniter
 
-        freq = parts.get("FREQ")
-        if freq is None:
-            raise ValueError("RRULE must include FREQ")
-
-        if freq == "HOURLY":
-            for key in parts:
-                if key not in ("FREQ", "INTERVAL", "BYDAY"):
-                    raise ValueError(
-                        f"Unsupported RRULE field '{key}' for HOURLY. "
-                        "Allowed: FREQ,INTERVAL,BYDAY"
-                    )
-            try:
-                interval_hours = int(parts.get("INTERVAL", "1"))
-            except ValueError as exc:
-                raise ValueError("Failed to parse INTERVAL") from exc
-            if interval_hours < 1:
-                raise ValueError("INTERVAL must be >= 1 for HOURLY schedules")
-            byday_raw = parts.get("BYDAY")
-            byday = tuple(_parse_byday(byday_raw)) if byday_raw is not None else None
-            return cls(_Hourly(interval_hours=interval_hours, byday=byday))
-
-        if freq == "WEEKLY":
-            for key in parts:
-                if key not in ("FREQ", "BYDAY", "BYHOUR", "BYMINUTE"):
-                    raise ValueError(
-                        f"Unsupported RRULE field '{key}' for WEEKLY. "
-                        "Allowed: FREQ,BYDAY,BYHOUR,BYMINUTE"
-                    )
-            byday_raw = parts.get("BYDAY")
-            if byday_raw is None:
-                raise ValueError("WEEKLY schedules require BYDAY")
-            byday_list = _parse_byday(byday_raw)
-            if not byday_list:
-                raise ValueError("BYDAY cannot be empty for WEEKLY schedules")
-            byhour_raw = parts.get("BYHOUR")
-            byminute_raw = parts.get("BYMINUTE")
-            if byhour_raw is None:
-                raise ValueError("WEEKLY schedules require BYHOUR")
-            if byminute_raw is None:
-                raise ValueError("WEEKLY schedules require BYMINUTE")
-            try:
-                byhour = int(byhour_raw)
-            except ValueError as exc:
-                raise ValueError("Failed to parse BYHOUR") from exc
-            try:
-                byminute = int(byminute_raw)
-            except ValueError as exc:
-                raise ValueError("Failed to parse BYMINUTE") from exc
-            if byhour > 23:
-                raise ValueError("BYHOUR must be between 0 and 23")
-            if byminute > 59:
-                raise ValueError("BYMINUTE must be between 0 and 59")
-            return cls(_Weekly(byday=tuple(byday_list), byhour=byhour, byminute=byminute))
-
-        raise ValueError(
-            f"Unsupported RRULE FREQ '{freq}'. Supported: HOURLY and WEEKLY"
-        )
+        cleaned = " ".join(expr.strip().split())
+        if not cleaned:
+            raise ValueError("cron expression is required")
+        if not croniter.is_valid(cleaned):
+            raise ValueError(
+                f"Invalid cron expression '{expr}'. Expected 5 fields: "
+                "minute hour day-of-month month day-of-week (e.g. '0 9 * * *')"
+            )
+        try:
+            ZoneInfo(tz_name)
+        except Exception as exc:  # noqa: BLE001
+            raise ValueError(
+                f"Unknown timezone '{tz_name}'. Use an IANA name such as "
+                "'Asia/Shanghai'."
+            ) from exc
+        return cls(cleaned, tz_name)
 
     def next_after(self, after: datetime) -> datetime:
-        """Compute the next fire time strictly after ``after``.
+        """The next fire time strictly after ``after`` (aware UTC in and out).
 
-        Both input and output are timezone-aware UTC ``datetime``s.
-        Internally we convert to local time so weekly BYHOUR=9 fires at
-        the user's 9am.
+        Note: on the autumn DST fallback the local wall clock repeats an
+        hour, so a schedule inside that hour legitimately yields two
+        instants. Zones without DST (e.g. Asia/Shanghai) never see this.
         """
+        from croniter import croniter
+
         if after.tzinfo is None:
             raise ValueError("after must be timezone-aware")
-        local_after = after.astimezone()  # local timezone
-        payload = self._payload
-
-        if isinstance(payload, _Hourly):
-            # Strip seconds + microseconds, advance by INTERVAL hours.
-            candidate = (
-                local_after + timedelta(hours=payload.interval_hours)
-            ).replace(second=0, microsecond=0)
-            if payload.byday is not None:
-                # Search up to 21 days ahead in INTERVAL-hour steps;
-                # 24 * 21 cap.
-                for _ in range(24 * 21):
-                    if candidate.weekday() in payload.byday:
-                        return candidate.astimezone(timezone.utc)
-                    candidate += timedelta(hours=payload.interval_hours)
-                raise ValueError(
-                    "Unable to compute next HOURLY run for BYDAY filter"
-                )
-            return candidate.astimezone(timezone.utc)
-
-        if isinstance(payload, _Weekly):
-            for day_offset in range(15):
-                date = (local_after + timedelta(days=day_offset)).date()
-                if date.weekday() not in payload.byday:
-                    continue
-                candidate = local_after.replace(
-                    year=date.year,
-                    month=date.month,
-                    day=date.day,
-                    hour=payload.byhour,
-                    minute=payload.byminute,
-                    second=0,
-                    microsecond=0,
-                )
-                if candidate > local_after:
-                    return candidate.astimezone(timezone.utc)
-            raise ValueError("Unable to compute next WEEKLY run")
-
-        raise AssertionError("unreachable")
+        local_after = after.astimezone(self._tz)
+        nxt: datetime = croniter(self._expr, local_after).get_next(datetime)
+        return nxt.astimezone(timezone.utc)
 
 
-def _parse_byday(value: str) -> list[int]:
-    days: list[int] = []
-    for token in value.split(","):
-        key = token.strip().upper()
-        if key not in _WEEKDAY_BY_TOKEN:
-            raise ValueError(f"Invalid BYDAY value '{key}'")
-        weekday = _WEEKDAY_BY_TOKEN[key]
-        if weekday not in days:
-            days.append(weekday)
-    return days
+# ── legacy RRULE migration (schema v1 → v2) ─────────────────────────
+
+_CRON_DAY_BY_RRULE_TOKEN: dict[str, str] = {
+    "MO": "MON",
+    "TU": "TUE",
+    "WE": "WED",
+    "TH": "THU",
+    "FR": "FRI",
+    "SA": "SAT",
+    "SU": "SUN",
+}
+
+
+def cron_from_legacy_rrule(rrule: str) -> str | None:
+    """Translate a v1 RRULE into a cron expression.
+
+    Returns ``None`` for the far-future placeholder RRULE that v1 used to
+    fake a one-shot job — those become schedule-less one-shots.
+    """
+    parts: dict[str, str] = {}
+    for raw in rrule.split(";"):
+        item = raw.strip()
+        if not item or "=" not in item:
+            continue
+        key, value = item.split("=", 1)
+        parts[key.strip().upper()] = value.strip().upper()
+
+    freq = parts.get("FREQ", "")
+    days = parts.get("BYDAY")
+    cron_days = "*"
+    if days:
+        tokens = [
+            _CRON_DAY_BY_RRULE_TOKEN[t.strip()]
+            for t in days.split(",")
+            if t.strip() in _CRON_DAY_BY_RRULE_TOKEN
+        ]
+        if tokens and len(tokens) < 7:
+            cron_days = ",".join(tokens)
+
+    if freq == "WEEKLY":
+        hour = parts.get("BYHOUR", "0")
+        minute = parts.get("BYMINUTE", "0")
+        return f"{int(minute)} {int(hour)} * * {cron_days}"
+
+    if freq == "HOURLY":
+        interval = int(parts.get("INTERVAL", "1"))
+        if interval >= 24:
+            return None  # placeholder for a one-shot
+        step = "*" if interval == 1 else f"*/{interval}"
+        return f"0 {step} * * {cron_days}"
+
+    return None
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -763,14 +736,20 @@ def _parse_byday(value: str) -> list[int]:
 
 @dataclass(slots=True)
 class AutomationRecord:
-    """``cwds`` is a list of strings
-    (Path-like) so it round-trips through JSON without needing a custom
-    encoder."""
+    """A scheduled job.
+
+    ``schedule`` is a 5-field cron expression interpreted in
+    ``timezone``; ``schedule=None`` marks a one-shot job that fires once
+    at ``next_run_at`` and then goes to
+    :attr:`AutomationStatus.COMPLETED`. ``cwds`` is a list of strings
+    (Path-like) so it round-trips through JSON without a custom encoder.
+    """
 
     id: str
     name: str
     prompt: str
-    rrule: str
+    schedule: str | None
+    timezone: str
     status: AutomationStatus
     created_at: str  # ISO 8601 UTC string
     updated_at: str
@@ -781,13 +760,18 @@ class AutomationRecord:
     digest: dict[str, Any] | None = None
     schema_version: int = CURRENT_AUTOMATION_SCHEMA_VERSION
 
+    @property
+    def is_one_shot(self) -> bool:
+        return self.schedule is None
+
     def to_dict(self) -> dict[str, Any]:
         out: dict[str, Any] = {
             "schema_version": self.schema_version,
             "id": self.id,
             "name": self.name,
             "prompt": self.prompt,
-            "rrule": self.rrule,
+            "schedule": self.schedule,
+            "timezone": self.timezone,
             "cwds": list(self.cwds),
             "status": self.status.value,
             "created_at": self.created_at,
@@ -809,12 +793,19 @@ class AutomationRecord:
                 f"Automation schema v{schema_version} is newer than "
                 f"supported v{CURRENT_AUTOMATION_SCHEMA_VERSION}"
             )
+        # v1 stored an RRULE and had no timezone — upgrade on read so old
+        # records keep firing without a manual migration step.
+        if "schedule" in raw:
+            schedule = _opt_str_value(raw.get("schedule"))
+        else:
+            schedule = cron_from_legacy_rrule(str(raw.get("rrule", "")))
         return cls(
-            schema_version=schema_version,
+            schema_version=CURRENT_AUTOMATION_SCHEMA_VERSION,
             id=str(raw["id"]),
             name=str(raw["name"]),
             prompt=str(raw["prompt"]),
-            rrule=str(raw["rrule"]),
+            schedule=schedule,
+            timezone=_opt_str_value(raw.get("timezone")) or default_timezone(),
             cwds=[str(p) for p in raw.get("cwds", [])],
             status=AutomationStatus(raw["status"]),
             created_at=str(raw["created_at"]),
@@ -894,21 +885,29 @@ class AutomationRunRecord:
 
 @dataclass(slots=True)
 class CreateAutomationRequest:
+    """``schedule`` (cron) or ``run_at`` (one-shot) — at least one required.
+
+    Passing both makes a recurring job whose first fire is pinned to
+    ``run_at`` (a delayed start).
+    """
+
     name: str
     prompt: str
-    rrule: str
+    schedule: str | None = None
+    timezone: str | None = None
+    run_at: str | None = None
     cwds: list[str] = field(default_factory=list)
     status: AutomationStatus | None = None
     delivery: dict[str, Any] | None = None
     digest: dict[str, Any] | None = None
-    next_run_at: str | None = None
 
 
 @dataclass(slots=True)
 class UpdateAutomationRequest:
     name: str | None = None
     prompt: str | None = None
-    rrule: str | None = None
+    schedule: str | None = None
+    timezone: str | None = None
     cwds: list[str] | None = None
     status: AutomationStatus | None = None
     delivery: dict[str, Any] | None = None
@@ -934,6 +933,40 @@ def _parse_iso(value: str) -> datetime:
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
     return dt
+
+
+def _opt_str_value(value: object) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _normalize_run_at(value: str, tz_name: str) -> str:
+    """Normalize a caller-supplied timestamp to an aware UTC ISO string.
+
+    A naive timestamp is read in the automation's own timezone — that is
+    what a user writing "2026-08-05T09:00" means.
+    """
+    try:
+        dt = datetime.fromisoformat(value.strip())
+    except ValueError as exc:
+        raise ValueError(f"Invalid ISO 8601 timestamp '{value}'") from exc
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=ZoneInfo(tz_name))
+    return dt.astimezone(timezone.utc).isoformat()
+
+
+def _next_run_after_now(record: AutomationRecord) -> str | None:
+    """The next fire time for ``record``, or ``None`` when nothing is left.
+
+    A one-shot keeps its pinned target: there is no "next" to compute, and
+    recomputing would silently move the time the user asked for.
+    """
+    if record.schedule is None:
+        return record.next_run_at
+    schedule = AutomationSchedule.parse(record.schedule, record.timezone)
+    return schedule.next_after(_utc_now()).isoformat()
 
 
 def validate_name_and_prompt(name: str, prompt: str) -> None:
@@ -1037,20 +1070,37 @@ class AutomationManager:
 
     def create_automation(self, req: CreateAutomationRequest) -> AutomationRecord:
         validate_name_and_prompt(req.name, req.prompt)
-        schedule = AutomationSchedule.parse_rrule(req.rrule)
+        tz_name = _opt_str_value(req.timezone) or default_timezone()
+        cron_expr = _opt_str_value(req.schedule)
+        run_at = _opt_str_value(req.run_at)
+        if cron_expr is None and run_at is None:
+            raise ValueError(
+                "Provide schedule (cron expression) for a recurring job, "
+                "or run_at (ISO 8601) for a one-shot job"
+            )
+
         now = _utc_now()
         status = req.status or AutomationStatus.ACTIVE
-        if req.next_run_at and str(req.next_run_at).strip():
-            next_run_at = str(req.next_run_at).strip()
-        elif status is AutomationStatus.ACTIVE:
+        if cron_expr is None:
+            schedule = None
+            ZoneInfo(tz_name)  # validate even without a cron expression
+        else:
+            schedule = AutomationSchedule.parse(cron_expr, tz_name)
+            cron_expr = schedule.expr
+
+        if run_at is not None:
+            next_run_at = _normalize_run_at(run_at, tz_name)
+        elif schedule is not None and status is AutomationStatus.ACTIVE:
             next_run_at = schedule.next_after(now).isoformat()
         else:
             next_run_at = None
+
         record = AutomationRecord(
             id=uuid.uuid4().hex,
             name=req.name.strip(),
             prompt=req.prompt.strip(),
-            rrule=req.rrule.strip().upper(),
+            schedule=cron_expr,
+            timezone=tz_name,
             cwds=list(req.cwds),
             status=status,
             created_at=now.isoformat(),
@@ -1100,22 +1150,33 @@ class AutomationManager:
             if not req.prompt.strip():
                 raise ValueError("Automation prompt cannot be empty")
             existing.prompt = req.prompt.strip()
-        if req.rrule is not None:
-            normalized = req.rrule.strip().upper()
-            AutomationSchedule.parse_rrule(normalized)
-            existing.rrule = normalized
-            if existing.status is AutomationStatus.ACTIVE:
-                schedule = AutomationSchedule.parse_rrule(existing.rrule)
-                existing.next_run_at = schedule.next_after(_utc_now()).isoformat()
+        if req.timezone is not None:
+            existing.timezone = _opt_str_value(req.timezone) or default_timezone()
+        if req.schedule is not None:
+            schedule = AutomationSchedule.parse(req.schedule, existing.timezone)
+            existing.schedule = schedule.expr
         if req.cwds is not None:
             existing.cwds = list(req.cwds)
         if req.status is not None:
+            if (
+                req.status is AutomationStatus.ACTIVE
+                and existing.status is AutomationStatus.COMPLETED
+                and existing.schedule is None
+            ):
+                # Resuming would leave it active but unschedulable forever.
+                raise ValueError(
+                    "This one-shot job already ran. Create a new job instead "
+                    "of resuming it."
+                )
             existing.status = req.status
-            if req.status is AutomationStatus.PAUSED:
-                existing.next_run_at = None
-            else:
-                schedule = AutomationSchedule.parse_rrule(existing.rrule)
-                existing.next_run_at = schedule.next_after(_utc_now()).isoformat()
+
+        # Re-arm whenever the timing changed or the job was resumed. Pausing
+        # deliberately keeps next_run_at so the UI can still show it and a
+        # one-shot does not lose its target time.
+        if (
+            req.schedule is not None or req.timezone is not None or req.status is not None
+        ) and existing.status is AutomationStatus.ACTIVE:
+            existing.next_run_at = _next_run_after_now(existing)
         if req.delivery is not None:
             existing.delivery = dict(req.delivery)
         if req.digest is not None:
@@ -1215,23 +1276,26 @@ class AutomationManager:
     async def scheduler_tick(self, task_manager: TaskManager) -> None:
         """Iterate all active automations.
 
-        Fires due ones (idempotent on
-        ``scheduled_for == due_at``), and advances ``next_run_at`` for
-        each. A slot missed by more than :data:`MISFIRE_GRACE_SECS` is
-        dropped instead of fired, so downtime cannot produce a burst of
-        catch-up runs.
+        Fires due ones (idempotent on ``scheduled_for == due_at``) and
+        re-arms ``next_run_at``.
+
+        Misfire policy differs by job kind, and follows from the model
+        rather than from a tunable: a recurring slot missed by more than
+        :data:`MISFIRE_GRACE_SECS` is dropped, because the next occurrence
+        supersedes it and replaying a backlog would spam the user. A
+        one-shot always catches up however late, because nothing else will
+        ever deliver it.
         """
         now = _utc_now()
-        automations = self.list_automations()
 
-        for automation in automations:
+        for automation in self.list_automations():
             if automation.status is not AutomationStatus.ACTIVE:
                 continue
 
-            schedule = AutomationSchedule.parse_rrule(automation.rrule)
-
             if automation.next_run_at is None:
-                automation.next_run_at = schedule.next_after(now).isoformat()
+                if automation.schedule is None:
+                    continue  # one-shot with nothing left to do
+                automation.next_run_at = _next_run_after_now(automation)
                 automation.updated_at = now.isoformat()
                 self.save_automation(automation)
                 continue
@@ -1240,11 +1304,22 @@ class AutomationManager:
             if due_at > now:
                 continue
 
-            # Always resume from the first slot after *now*, never from the
-            # missed slot — otherwise a backlog fires one slot per tick.
-            upcoming = schedule.next_after(now).isoformat()
+            # Re-arm from *now*, never from the missed slot — otherwise a
+            # backlog fires one slot per tick. One-shots have no next slot.
+            upcoming = (
+                None
+                if automation.schedule is None
+                else AutomationSchedule.parse(
+                    automation.schedule, automation.timezone
+                )
+                .next_after(now)
+                .isoformat()
+            )
 
-            if (now - due_at).total_seconds() > MISFIRE_GRACE_SECS:
+            if (
+                automation.schedule is not None
+                and (now - due_at).total_seconds() > MISFIRE_GRACE_SECS
+            ):
                 logger.info(
                     "automation_misfire_skipped id=%s due_at=%s next_run_at=%s",
                     automation.id,
@@ -1258,33 +1333,32 @@ class AutomationManager:
 
             # Idempotency guard: don't re-fire the same scheduled slot if
             # we already wrote a run for it.
-            existing_for_slot = any(
+            already_fired = any(
                 run.scheduled_for == automation.next_run_at
                 for run in self.list_runs(automation.id, limit=25)
             )
-            if existing_for_slot:
-                automation.next_run_at = upcoming
-                automation.updated_at = now.isoformat()
-                self.save_automation(automation)
-                continue
+            if not already_fired:
+                run = AutomationRunRecord(
+                    id=uuid.uuid4().hex,
+                    automation_id=automation.id,
+                    scheduled_for=automation.next_run_at,
+                    status=AutomationRunStatus.QUEUED,
+                    created_at=now.isoformat(),
+                )
+                await self._enqueue_run_task(automation, run, task_manager)
+                self.save_run(run)
+                if run.status is AutomationRunStatus.FAILED:
+                    from deepseek_tui.automation.pipeline import (
+                        try_deliver_completed_run,
+                    )
 
-            run = AutomationRunRecord(
-                id=uuid.uuid4().hex,
-                automation_id=automation.id,
-                scheduled_for=automation.next_run_at,
-                status=AutomationRunStatus.QUEUED,
-                created_at=now.isoformat(),
-            )
-            await self._enqueue_run_task(automation, run, task_manager)
-            self.save_run(run)
-            if run.status is AutomationRunStatus.FAILED:
-                from deepseek_tui.automation.pipeline import try_deliver_completed_run
-
-                if await try_deliver_completed_run(automation, run, task_manager):
-                    self.save_run(run)
+                    if await try_deliver_completed_run(automation, run, task_manager):
+                        self.save_run(run)
 
             automation.updated_at = now.isoformat()
             automation.next_run_at = upcoming
+            if automation.schedule is None:
+                automation.status = AutomationStatus.COMPLETED
             self.save_automation(automation)
 
     async def reconcile_run_statuses(self, task_manager: TaskManager) -> None:

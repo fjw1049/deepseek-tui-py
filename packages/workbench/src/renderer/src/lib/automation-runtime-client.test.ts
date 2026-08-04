@@ -14,7 +14,8 @@ describe('automation-runtime-client', () => {
         id: 'auto_1',
         name: 'Daily report',
         prompt: 'Summarize changes',
-        rrule: 'FREQ=HOURLY;INTERVAL=1',
+        schedule: '0 * * * *',
+        timezone: 'Asia/Shanghai',
         status: 'active'
       })
     })
@@ -23,7 +24,7 @@ describe('automation-runtime-client', () => {
     const record = await createAutomation({
       name: 'Daily report',
       prompt: 'Summarize changes',
-      rrule: 'FREQ=HOURLY;INTERVAL=1',
+      schedule: '0 * * * *',
       status: 'active',
       cwds: ['/tmp/project']
     })
@@ -34,7 +35,7 @@ describe('automation-runtime-client', () => {
       JSON.stringify({
         name: 'Daily report',
         prompt: 'Summarize changes',
-        rrule: 'FREQ=HOURLY;INTERVAL=1',
+        schedule: '0 * * * *',
         status: 'active',
         cwds: ['/tmp/project']
       })
@@ -46,7 +47,7 @@ describe('automation-runtime-client', () => {
     const runtimeRequest = vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
-      body: JSON.stringify({ id: 'auto_1', name: 'Renamed', prompt: 'Run', rrule: 'FREQ=HOURLY', status: 'active' })
+      body: JSON.stringify({ id: 'auto_1', name: 'Renamed', prompt: 'Run', schedule: '0 * * * *', timezone: 'Asia/Shanghai', status: 'active' })
     })
     vi.stubGlobal('window', { dsGui: { runtimeRequest } })
 

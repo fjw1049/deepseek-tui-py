@@ -50,6 +50,8 @@ export type AutomationListCardProps = {
   groupHover?: boolean
   primaryAction: 'toggle' | 'button'
   active?: boolean
+  /** A one-shot job that already ran: terminal, so the toggle is inert. */
+  completed?: boolean
   actionBusy?: boolean
   actionLabel?: string
   onPrimaryAction: () => void
@@ -67,6 +69,7 @@ export function AutomationListCard({
   groupHover = false,
   primaryAction,
   active = false,
+  completed = false,
   actionBusy = false,
   actionLabel,
   onPrimaryAction,
@@ -106,7 +109,7 @@ export function AutomationListCard({
           <span className="truncate">{schedule}</span>
           {primaryAction === 'toggle' && !active ? (
             <span className="shrink-0 rounded bg-ds-subtle px-1.5 py-0.5 text-[11px] text-ds-muted">
-              {t('automationPaused')}
+              {t(completed ? 'automationCompleted' : 'automationPaused')}
             </span>
           ) : null}
         </span>
@@ -128,7 +131,11 @@ export function AutomationListCard({
           </button>
         ) : null}
         {primaryAction === 'toggle' ? (
-          <CardToggle checked={active} disabled={actionBusy} onChange={onPrimaryAction} />
+          <CardToggle
+            checked={active}
+            disabled={actionBusy || completed}
+            onChange={onPrimaryAction}
+          />
         ) : (
           <button
             type="button"

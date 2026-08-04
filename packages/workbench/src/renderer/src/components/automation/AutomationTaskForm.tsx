@@ -37,13 +37,13 @@ type Props = {
 }
 
 const WEEKDAY_LABELS: Record<WeekdayToken, string> = {
-  MO: 'automationWeekdayMo',
-  TU: 'automationWeekdayTu',
-  WE: 'automationWeekdayWe',
-  TH: 'automationWeekdayTh',
-  FR: 'automationWeekdayFr',
-  SA: 'automationWeekdaySa',
-  SU: 'automationWeekdaySu'
+  MON: 'automationWeekdayMo',
+  TUE: 'automationWeekdayTu',
+  WED: 'automationWeekdayWe',
+  THU: 'automationWeekdayTh',
+  FRI: 'automationWeekdayFr',
+  SAT: 'automationWeekdaySa',
+  SUN: 'automationWeekdaySu'
 }
 
 function defaultOnceAt(): string {
@@ -60,7 +60,8 @@ function errorKey(error: unknown): string {
     message === 'interval_invalid' ||
     message === 'time_of_day_invalid' ||
     message === 'weekdays_required' ||
-    message === 'rrule_required'
+    message === 'cron_required' ||
+    message === 'cron_invalid'
   ) {
     return `common:automationError_${message}`
   }
@@ -84,8 +85,8 @@ export function AutomationTaskForm({
   const [onceAt, setOnceAt] = useState(defaultOnceAt)
   const [everyHours, setEveryHours] = useState('1')
   const [timeOfDay, setTimeOfDay] = useState('09:00')
-  const [weekdays, setWeekdays] = useState<WeekdayToken[]>(['MO', 'TU', 'WE', 'TH', 'FR'])
-  const [customRrule, setCustomRrule] = useState(initialAutomation?.rrule ?? '')
+  const [weekdays, setWeekdays] = useState<WeekdayToken[]>(['MON', 'TUE', 'WED', 'THU', 'FRI'])
+  const [customCron, setCustomCron] = useState(initialAutomation?.schedule ?? '')
   const [workspaceOverride, setWorkspaceOverride] = useState(initialAutomation?.cwds?.[0] ?? workspaceRoot)
   const initialDeliveryMode: AutomationDeliveryMode =
     initialAutomation?.delivery?.mode === 'feishu' ||
@@ -187,7 +188,7 @@ export function AutomationTaskForm({
           everyHours,
           timeOfDay,
           weekdays,
-          customRrule
+          customCron
         },
         deliveryMode,
         deliveryTarget,
@@ -406,8 +407,8 @@ export function AutomationTaskForm({
                   ) : null}
                   {scheduleKind === 'custom' ? (
                     <input
-                      value={customRrule}
-                      onChange={(event) => setCustomRrule(event.target.value)}
+                      value={customCron}
+                      onChange={(event) => setCustomCron(event.target.value)}
                       placeholder="FREQ=WEEKLY;BYDAY=MO;BYHOUR=9;BYMINUTE=30"
                       className="rounded-2xl border border-ds-border bg-ds-card px-4 py-3 font-mono text-[13px] text-ds-ink outline-none placeholder:text-ds-faint focus:border-accent/60"
                     />

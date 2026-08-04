@@ -17,7 +17,7 @@ import {
 import {
   createAutomation,
   deleteAutomation,
-  formatAutomationRrule,
+  formatAutomationSchedule,
   formatAutomationWhen,
   listAutomationRuns,
   listAutomations,
@@ -63,7 +63,7 @@ type TaskTemplate = {
   desc: string
   prompt: string
   badge: string
-  rrule: string
+  schedule: string
   useCwd: boolean
 }
 
@@ -82,7 +82,7 @@ const TEMPLATES: TaskTemplate[] = [
       '4. 对超过 500MB 的大文件特别标注',
       '5. 给出整理建议，但不要自动删除或移动任何文件'
     ].join('\n'),
-    rrule: `FREQ=WEEKLY;BYDAY=${ALL_WEEKDAYS.join(',')};BYHOUR=18;BYMINUTE=0`,
+    schedule: '0 18 * * *',
     useCwd: false
   },
   {
@@ -99,7 +99,7 @@ const TEMPLATES: TaskTemplate[] = [
       '4. 检查 ~/Library/Caches 和 /tmp 目录大小，提示清理建议',
       '5. 将报告格式化为清晰的 Markdown 表格'
     ].join('\n'),
-    rrule: `FREQ=WEEKLY;BYDAY=${ALL_WEEKDAYS.join(',')};BYHOUR=8;BYMINUTE=0`,
+    schedule: '0 8 * * *',
     useCwd: false
   }
 ]
@@ -348,7 +348,7 @@ export function AutomationCenter({
         await createAutomation({
           name: tpl.name,
           prompt: tpl.prompt,
-          rrule: tpl.rrule,
+          schedule: tpl.schedule,
           cwds: tpl.useCwd && workspaceRoot ? [workspaceRoot] : [],
           status: 'active',
           ...(delivery ? { delivery } : {})
@@ -556,12 +556,13 @@ export function AutomationCenter({
                         key={row.id}
                         title={row.name}
                         preview={automationCardPreview(row.prompt)}
-                        schedule={formatAutomationRrule(row.rrule)}
+                        schedule={formatAutomationSchedule(row.schedule)}
                         deliveryHint={deliveryHint}
                         deliveryTitle={automationDeliveryDetail(row, t)}
                         groupHover
                         primaryAction="toggle"
                         active={active}
+                        completed={row.status === 'completed'}
                         actionBusy={busy}
                         onPrimaryAction={() => void mutate(row, 'toggle')}
                         onOpenDetails={() => setSelectedId(row.id)}
@@ -705,8 +706,12 @@ export function AutomationCenter({
               <div className="min-w-0">
                 <h2 className="truncate text-[16px] font-semibold text-ds-ink">{selected.name}</h2>
                 <p className="mt-1 text-[12px] text-ds-muted">
-                  {formatAutomationRrule(selected.rrule)} ·{' '}
-                  {selected.status === 'active' ? t('automationEnabled') : t('automationPaused')}
+                  {formatAutomationSchedule(selected.schedule)} ·{' '}
+                  {selected.status === 'active'
+                    ? t('automationEnabled')
+                    : selected.status === 'completed'
+                      ? t('automationCompleted')
+                      : t('automationPaused')}
                 </p>
               </div>
               <button

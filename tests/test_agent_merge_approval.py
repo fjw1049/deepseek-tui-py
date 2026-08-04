@@ -247,7 +247,7 @@ def test_cron_legacy_names_share_fingerprints() -> None:
     create_args = {
         "name": "hourly",
         "prompt": "do work",
-        "rrule": "FREQ=HOURLY;INTERVAL=1",
+        "schedule": "0 * * * *",
     }
     assert build_approval_key("automation_create", create_args) == build_approval_key(
         "cron_create", create_args

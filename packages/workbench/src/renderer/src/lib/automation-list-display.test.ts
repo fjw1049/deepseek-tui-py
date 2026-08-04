@@ -15,7 +15,8 @@ describe('automation list display', () => {
       id: '1',
       name: 't',
       prompt: '',
-      rrule: '',
+      schedule: '0 * * * *',
+    timezone: 'Asia/Shanghai',
       status: 'active',
       delivery: { mode: 'feishu', to: 'oc_5b08c88b758c17b6dffd3a53bf501a36' }
     }
@@ -32,7 +33,8 @@ describe('automation list display', () => {
       id: '1',
       name: 't',
       prompt: '',
-      rrule: '',
+      schedule: '0 * * * *',
+    timezone: 'Asia/Shanghai',
       status: 'active',
       delivery: {}
     }
@@ -45,7 +47,8 @@ describe('automation list display', () => {
       id: '1',
       name: 't',
       prompt: '',
-      rrule: '',
+      schedule: '0 * * * *',
+    timezone: 'Asia/Shanghai',
       status: 'active',
       delivery: { mode: 'email', to: 'me@example.com' }
     }

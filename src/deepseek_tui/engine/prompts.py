@@ -597,7 +597,7 @@ PLAN_GROUNDING_REMINDER = (
 )
 
 
-# Keep this tiny: routing only. RRULE / delivery / fire toolset live on
+# Keep this tiny: routing only. Cron syntax / delivery / fire toolset live on
 # CronCreateTool.description (and cron execution playbook).
 AUTOMATIONS_LANE_HINT = (
     "- **Recurring or scheduled for later** (\"every morning\", \"in 2 hours\", "

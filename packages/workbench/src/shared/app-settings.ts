@@ -550,9 +550,9 @@ export function buildAutomationComposerPrompt(
     'Do NOT call tool_search_tool_regex, tool_search_tool_bm25, or any other discovery tools — tool names are listed below.',
     'Only use these tools for this request: cron_create (and cron_list/cron_delete if the user asks to manage existing jobs). To change an existing job, delete it with cron_delete and recreate it (deleting wipes its run history).',
     '1. Relative times ("in 2 minutes", "tomorrow morning") resolve against the `today: YYYY-MM-DD` date injected in the system prompt and the user timezone below. Do NOT call exec_shell or any time tool — they are unavailable in this composer profile.',
-    '2. Recurring jobs: set `rrule` (FREQ=HOURLY;INTERVAL=N or FREQ=WEEKLY;BYDAY=MO;BYHOUR=9;BYMINUTE=30).',
-    '3. One-shot or delayed runs: set `next_run_at` to the computed fire time (ISO8601 UTC) and use a far-future placeholder rrule such as FREQ=HOURLY;INTERVAL=8760.',
-    '4. Call `cron_create` with name, prompt (the task to run), rrule, optional next_run_at/cwds, and delivery when the user wants results sent. Set run_now=true if the user also wants it to run immediately.',
+    '2. Recurring jobs: set `schedule` to a 5-field cron expression ("0 9 * * *" = daily 09:00, "30 8 * * MON,FRI", "0 */2 * * *" = every 2 hours).',
+    '3. One-shot or delayed runs: set `run_at` to the computed fire time (ISO8601) and omit `schedule`.',
+    '4. Call `cron_create` with name, prompt (the task to run), schedule or run_at, optional timezone/cwds, and delivery when the user wants results sent. Set run_now=true if the user also wants it to run immediately.',
     `5. Confirm the automation id, schedule, and delivery target in plain language. State the run time in ${userTimezone} local time — never guess or use UTC-only.`
   ]
   hints.push(
