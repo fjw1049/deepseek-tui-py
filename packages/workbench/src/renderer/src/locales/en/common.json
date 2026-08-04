@@ -508,6 +508,7 @@
   "composerOfflineHint": "Reconnect the runtime before sending another message.",
   "composerWorkspaceHint": "Choose a working directory before starting or continuing a thread.",
   "contextBarLocal": "Local",
+  "contextBarLocalHint": "Running locally — data stays on this device",
   "contextBarSearchProjects": "Search projects",
   "contextBarNewProject": "New project",
   "contextBarNoProject": "Workspace",

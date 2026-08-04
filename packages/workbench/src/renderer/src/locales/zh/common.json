@@ -508,6 +508,7 @@
   "composerOfflineHint": "运行时恢复连接后，才可以继续发送消息。",
   "composerWorkspaceHint": "先选择一个工作目录，然后再开始或继续会话。",
   "contextBarLocal": "本地",
+  "contextBarLocalHint": "当前在本地运行，数据保存在本机",
   "contextBarSearchProjects": "搜索项目",
   "contextBarNewProject": "新建项目",
   "contextBarNoProject": "工作空间",

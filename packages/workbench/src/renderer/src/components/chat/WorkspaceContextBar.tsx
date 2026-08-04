@@ -28,10 +28,11 @@ export function WorkspaceContextBar({ workspaceRoot }: Props): ReactElement {
       />
       <span className="ds-workspace-context-sep" aria-hidden />
       <span
-        className="ds-workspace-context-chip ds-workspace-context-chip--static inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md px-2 py-1"
-        title={t('contextBarLocal')}
+        className="ds-workspace-context-status inline-flex h-7 shrink-0 items-center gap-1 px-1.5"
+        title={t('contextBarLocalHint')}
+        aria-label={t('contextBarLocalHint')}
       >
-        <Laptop className="h-3.5 w-3.5 shrink-0" strokeWidth={1.7} />
+        <Laptop className="h-3 w-3 shrink-0" strokeWidth={1.7} aria-hidden />
         <span>{t('contextBarLocal')}</span>
       </span>
       {showBranch ? (
