@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
 import pytest
 
 from deepseek_tui.config.models import Config, FeatureConfig
 from deepseek_tui.tools.automation import (
+    MISFIRE_GRACE_SECS,
     AutomationManager,
+    AutomationRunStatus,
     AutomationSchedule,
     AutomationStatus,
     CreateAutomationRequest,
@@ -59,3 +64,71 @@ def test_create_list_update_automation(tmp_path: object) -> None:
     assert paused.status is AutomationStatus.PAUSED
     resumed = mgr.resume_automation(created.id)
     assert resumed.status is AutomationStatus.ACTIVE
+
+
+def _daily_automation_due(mgr: AutomationManager, *, seconds_ago: float) -> str:
+    """A daily 09:00 job whose slot came due ``seconds_ago`` in the past."""
+    record = mgr.create_automation(
+        CreateAutomationRequest(
+            name="daily report",
+            prompt="report",
+            rrule="FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR,SA,SU;BYHOUR=9;BYMINUTE=0",
+        )
+    )
+    due = datetime.now(timezone.utc) - timedelta(seconds=seconds_ago)
+    record.next_run_at = due.isoformat()
+    mgr.save_automation(record)
+    return record.id
+
+
+@pytest.fixture
+def fired_slots(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Record every enqueued run instead of touching the TaskManager."""
+    slots: list[str] = []
+
+    async def fake_enqueue(self, automation, run, task_manager):  # type: ignore[no-untyped-def] # noqa: ANN001, ANN202
+        run.task_id = f"task-{len(slots)}"
+        run.status = AutomationRunStatus.QUEUED
+        slots.append(run.scheduled_for)
+
+    monkeypatch.setattr(AutomationManager, "_enqueue_run_task", fake_enqueue)
+    return slots
+
+
+@pytest.mark.asyncio
+async def test_slots_missed_during_downtime_do_not_backfill(
+    tmp_path: Path, fired_slots: list[str]
+) -> None:
+    """Three days offline must not replay one slot per tick."""
+    mgr = AutomationManager.open(tmp_path / "auto")
+    automation_id = _daily_automation_due(mgr, seconds_ago=3 * 86400)
+
+    for _ in range(6):
+        await mgr.scheduler_tick(task_manager=None)  # type: ignore[arg-type]
+
+    assert fired_slots == []
+    assert _parse(mgr.get_automation(automation_id).next_run_at) > datetime.now(
+        timezone.utc
+    )
+
+
+@pytest.mark.asyncio
+async def test_slot_within_grace_fires_exactly_once(
+    tmp_path: Path, fired_slots: list[str]
+) -> None:
+    """A slot just missed (app started late) still fires — but only once."""
+    mgr = AutomationManager.open(tmp_path / "auto")
+    automation_id = _daily_automation_due(mgr, seconds_ago=MISFIRE_GRACE_SECS - 60)
+
+    for _ in range(6):
+        await mgr.scheduler_tick(task_manager=None)  # type: ignore[arg-type]
+
+    assert len(fired_slots) == 1
+    assert _parse(mgr.get_automation(automation_id).next_run_at) > datetime.now(
+        timezone.utc
+    )
+
+
+def _parse(value: str | None) -> datetime:
+    assert value is not None
+    return datetime.fromisoformat(value)

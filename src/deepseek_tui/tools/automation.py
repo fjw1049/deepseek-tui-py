@@ -524,6 +524,7 @@ if TYPE_CHECKING:
 __all__ = [
     "CURRENT_AUTOMATION_SCHEMA_VERSION",
     "CURRENT_RUN_SCHEMA_VERSION",
+    "MISFIRE_GRACE_SECS",
     "AutomationManager",
     "AutomationRecord",
     "AutomationRunRecord",
@@ -540,6 +541,11 @@ logger = logging.getLogger(__name__)
 
 CURRENT_AUTOMATION_SCHEMA_VERSION = 1
 CURRENT_RUN_SCHEMA_VERSION = 1
+
+# How stale a due slot may be and still fire. Slots missed while the app
+# was closed (weekend downtime, laptop asleep) are dropped rather than
+# replayed one-per-tick.
+MISFIRE_GRACE_SECS = 30 * 60
 
 # Mapping the ``Weekday`` enum (Mon=0…Sun=6) to Python ``datetime``
 # weekday integers. Python ``datetime.weekday()`` already uses the same
@@ -1211,7 +1217,9 @@ class AutomationManager:
 
         Fires due ones (idempotent on
         ``scheduled_for == due_at``), and advances ``next_run_at`` for
-        each.
+        each. A slot missed by more than :data:`MISFIRE_GRACE_SECS` is
+        dropped instead of fired, so downtime cannot produce a burst of
+        catch-up runs.
         """
         now = _utc_now()
         automations = self.list_automations()
@@ -1232,6 +1240,22 @@ class AutomationManager:
             if due_at > now:
                 continue
 
+            # Always resume from the first slot after *now*, never from the
+            # missed slot — otherwise a backlog fires one slot per tick.
+            upcoming = schedule.next_after(now).isoformat()
+
+            if (now - due_at).total_seconds() > MISFIRE_GRACE_SECS:
+                logger.info(
+                    "automation_misfire_skipped id=%s due_at=%s next_run_at=%s",
+                    automation.id,
+                    automation.next_run_at,
+                    upcoming,
+                )
+                automation.next_run_at = upcoming
+                automation.updated_at = now.isoformat()
+                self.save_automation(automation)
+                continue
+
             # Idempotency guard: don't re-fire the same scheduled slot if
             # we already wrote a run for it.
             existing_for_slot = any(
@@ -1239,7 +1263,7 @@ class AutomationManager:
                 for run in self.list_runs(automation.id, limit=25)
             )
             if existing_for_slot:
-                automation.next_run_at = schedule.next_after(due_at).isoformat()
+                automation.next_run_at = upcoming
                 automation.updated_at = now.isoformat()
                 self.save_automation(automation)
                 continue
@@ -1260,7 +1284,7 @@ class AutomationManager:
                     self.save_run(run)
 
             automation.updated_at = now.isoformat()
-            automation.next_run_at = schedule.next_after(due_at).isoformat()
+            automation.next_run_at = upcoming
             self.save_automation(automation)
 
     async def reconcile_run_statuses(self, task_manager: TaskManager) -> None:
