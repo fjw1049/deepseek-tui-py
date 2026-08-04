@@ -205,6 +205,11 @@ def reconcile_open_checklist_items(
     ``completed`` / ``cancelled`` items are left untouched — this only closes
     ``pending`` / ``in_progress`` so the UI never keeps a spinning checklist
     after the turn is idle.
+
+    The closure is the harness's, not the agent's, and the header says so: an
+    item cancelled here was left open, which is a different thing from an item
+    the agent cancelled on purpose. Collapsing both into a bare "cancelled"
+    made abandoned work indistinguishable from a deliberate drop.
     """
     store = context.metadata.get(_TODO_STORE_KEY)
     if not isinstance(store, dict):
@@ -225,7 +230,10 @@ def reconcile_open_checklist_items(
     metadata = _build_result_metadata(store, tool_name="checklist")
     _forward_to_task_manager(context, metadata)
     body = _render_items(list(items))
-    header = "reconciled open items at turn end (cancelled)"
+    header = (
+        "reconciled open items at turn end: still open when the turn ended, "
+        "cancelled by the harness (not the agent's own decision)"
+    )
     content = f"{header}\n{body}" if body else header
     return content, metadata
 

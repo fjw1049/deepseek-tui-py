@@ -94,6 +94,11 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Backstop for the checklist turn-end gate. Progress-based release already
+# bounds it in the normal case; this only catches a model that closes one item
+# and opens another every time it is blocked.
+_CHECKLIST_GATE_MAX_FIRES = 3
+
 
 def _path_under(path: Path, root: Path) -> bool:
     """Whether ``path`` is inside ``root`` (both resolved)."""
@@ -2456,6 +2461,26 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             for it in open_items
         )
 
+    def _next_checklist_gate_summary(
+        self, *, fired: int, last_open: str | None
+    ) -> str | None:
+        """Open-item summary to block on, or ``None`` to let the turn end.
+
+        The gate re-fires only while blocking it moves the checklist forward:
+        *last_open* is the open set as of the previous block, so an unchanged
+        set means the last nudge produced nothing and the model's decision to
+        stop is honored. That keeps "unfinished work should continue" without
+        the livelock a fire-until-empty gate would have — the harness cannot
+        judge completion, only the model can, and one that will not reconcile
+        would otherwise spin to the round-trip limit.
+        """
+        if fired >= _CHECKLIST_GATE_MAX_FIRES:
+            return None
+        open_summary = self._open_checklist_summary()
+        if not open_summary or open_summary == last_open:
+            return None
+        return open_summary
+
     async def _emit_checklist_turn_end_reconcile(self) -> None:
         """Close leftover open checklist items before the turn goes idle.
 
@@ -2598,13 +2623,13 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         # delivered to hooks as ``stop_hook_active`` so they can avoid
         # blocking forever. The round-trip limit is the hard upper bound.
         stop_hook_active = False
-        # True once the checklist turn-end gate has fired this turn. The gate
-        # blocks ending the turn ONCE when the checklist still has open items,
-        # so a weak model that did the work but forgot to track it is forced to
-        # face the checklist before stopping. Single-shot by design — it never
-        # loops the model, and it never judges whether the work is actually
-        # done (that stays the model's call, preserving the completion gate).
-        checklist_gate_fired = False
+        # Checklist turn-end gate bookkeeping. The gate blocks ending the turn
+        # while the model keeps resolving open items and releases as soon as a
+        # block changes nothing (see _next_checklist_gate_summary). It never
+        # judges whether the work is actually done — that stays the model's
+        # call, preserving the completion gate.
+        checklist_gate_fires = 0
+        checklist_gate_last_open: str | None = None
         for round_idx in range(self.max_tool_round_trips + 1):
             trace = get_turn_latency(latency_turn_id) if latency_turn_id else None
             round_trace = trace.start_round(round_idx) if trace is not None else None
@@ -2819,31 +2844,36 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                 if await self._handle_subagent_turn_handoff(messages):
                     continue
                 # Checklist turn-end gate: if the model is about to stop with
-                # open checklist items, block once and inject a reminder that
-                # makes it reconcile each item. Single-shot (checklist_gate_
-                # fired) so it can never loop the model — after one nudge, a
-                # genuine "I'm done / won't do the rest" decision is honored.
-                if not checklist_gate_fired:
-                    open_summary = self._open_checklist_summary()
-                    if open_summary:
-                        checklist_gate_fired = True
-                        from deepseek_tui.engine import reminders
-                        from deepseek_tui.engine.prompts import (
-                            CHECKLIST_GATE_REMINDER,
-                        )
+                # open checklist items, inject a reminder that makes it face
+                # each one. Re-fires while the model keeps making progress, so
+                # a genuine "I'm done / won't do the rest" costs one extra
+                # round instead of looping.
+                gate_summary = self._next_checklist_gate_summary(
+                    fired=checklist_gate_fires,
+                    last_open=checklist_gate_last_open,
+                )
+                if gate_summary is not None:
+                    checklist_gate_fires += 1
+                    checklist_gate_last_open = gate_summary
+                    from deepseek_tui.engine import reminders
+                    from deepseek_tui.engine.prompts import (
+                        CHECKLIST_GATE_REMINDER,
+                    )
 
-                        messages.append(
-                            reminders.reminder_message(
-                                reminders.CHECKLIST_INCOMPLETE_GATE,
-                                CHECKLIST_GATE_REMINDER.format(
-                                    open_summary=open_summary
-                                ),
-                            )
+                    messages.append(
+                        reminders.reminder_message(
+                            reminders.CHECKLIST_INCOMPLETE_GATE,
+                            CHECKLIST_GATE_REMINDER.format(
+                                open_summary=gate_summary
+                            ),
                         )
-                        logger.info(
-                            "checklist_gate_fired open=%s", open_summary[:200]
-                        )
-                        continue
+                    )
+                    logger.info(
+                        "checklist_gate_fired fire=%d open=%s",
+                        checklist_gate_fires,
+                        gate_summary[:200],
+                    )
+                    continue
                 # turn_end (Claude "Stop") hooks: a blocking decision keeps
                 # the loop running with the hook's reason injected as
                 # context, so "don't stop until done" policies work.

@@ -567,18 +567,25 @@ LONG_SESSION_REMINDER = (
 # turn while the checklist still has open items
 # (SessionMaintenanceMixin / orchestrator turn-end gate). The harness does
 # NOT judge whether the work is done — it only forces the model to face each
-# open item once before ending, so a "wrote the plan, did the work, forgot to
-# track it" turn cannot slip through silently. Fires at most once per turn.
+# open item before ending, so a "wrote the plan, did the work, forgot to
+# track it" turn cannot slip through silently. Re-fires while each block
+# moves the checklist forward and releases once one changes nothing; see
+# Engine._next_checklist_gate_summary.
 CHECKLIST_GATE_REMINDER = (
     "Before ending the turn — your checklist still has open items "
-    "({open_summary}). Reconcile each one now:\n"
-    "- Items you finished: mark completed with "
+    "({open_summary}). Resolve each one now:\n"
+    "- Finished: mark completed with "
     "`checklist(op=\"update\", id=<id>, status=\"completed\")` — flip one at a "
     "time, don't resend the whole list.\n"
-    "- Items you deliberately won't do: mark `cancelled` or say why.\n"
-    "Completion gate: if tests are failing or the work is partial, keep the "
-    "item in_progress rather than marking it done. Do not mention this "
-    "reminder to the user."
+    "- Not finished: keep working and finish it. An open item is planned "
+    "work you committed to, not a note to leave behind.\n"
+    "- Won't do, or blocked on something only the user can provide: mark it "
+    "`cancelled` and say why in your reply.\n"
+    "Never mark an item completed while its tests fail or its implementation "
+    "is partial — cancel it with the reason instead. Items still open when "
+    "the turn ends are closed as cancelled, so leaving one open without "
+    "explanation reads to the user as work silently dropped. Do not mention "
+    "this reminder to the user."
 )
 
 

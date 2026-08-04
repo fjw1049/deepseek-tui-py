@@ -1,12 +1,16 @@
 """Regression tests for the checklist turn-end gate.
 
-The gate blocks ending a turn ONCE when the checklist still has open
-(``pending``/``in_progress``) items, forcing the model to reconcile them.
-It does not judge whether the work is done and never loops the model.
+The gate blocks ending a turn while the checklist still has open
+(``pending``/``in_progress``) items, forcing the model to face them. It
+re-fires only while blocking produces progress, and releases as soon as a
+block changes nothing — unfinished work keeps getting pushed without the
+livelock a fire-until-empty gate would have. It never judges whether the
+work is done.
 
-These tests exercise the isolable pieces: the ``_open_checklist_summary``
-helper on the Engine (fed via the real ``checklist`` tool so the store shape
-is authentic) and the reminder registration/format.
+These tests exercise the isolable pieces: the ``_open_checklist_summary`` and
+``_next_checklist_gate_summary`` helpers on the Engine (fed via the real
+``checklist`` tool so the store shape is authentic) and the reminder
+registration/format.
 """
 
 from __future__ import annotations
@@ -18,6 +22,7 @@ import pytest
 from deepseek_tui.engine import reminders
 from deepseek_tui.engine.handle import EngineHandle
 from deepseek_tui.engine.orchestrator import Engine
+from deepseek_tui.engine.orchestrator.core import _CHECKLIST_GATE_MAX_FIRES
 from deepseek_tui.engine.prompts import CHECKLIST_GATE_REMINDER
 from deepseek_tui.tools.registry import ToolContext, build_default_registry
 
@@ -31,6 +36,13 @@ def _engine_with_context() -> tuple[Engine, ToolContext]:
 async def _write(ctx: ToolContext, todos: list[dict]) -> None:
     registry = build_default_registry(mode="agent")
     await registry.execute("checklist", {"todos": todos}, ctx)
+
+
+async def _update(ctx: ToolContext, item_id: str, status: str) -> None:
+    registry = build_default_registry(mode="agent")
+    await registry.execute(
+        "checklist", {"op": "update", "id": item_id, "status": status}, ctx
+    )
 
 
 @pytest.mark.asyncio
@@ -70,6 +82,67 @@ async def test_summary_lists_open_items() -> None:
     assert "#1" not in summary
 
 
+@pytest.mark.asyncio
+async def test_gate_stays_quiet_when_nothing_is_open() -> None:
+    engine, ctx = _engine_with_context()
+    await _write(ctx, [{"content": "A", "status": "completed"}])
+    assert engine._next_checklist_gate_summary(fired=0, last_open=None) is None
+
+
+@pytest.mark.asyncio
+async def test_gate_fires_on_the_first_stop_attempt() -> None:
+    engine, ctx = _engine_with_context()
+    await _write(ctx, [{"content": "A", "status": "pending"}])
+    summary = engine._next_checklist_gate_summary(fired=0, last_open=None)
+    assert summary is not None
+    assert "#1 pending" in summary
+
+
+@pytest.mark.asyncio
+async def test_gate_releases_when_the_block_changed_nothing() -> None:
+    """A model that will not reconcile costs one extra round, not a livelock."""
+    engine, ctx = _engine_with_context()
+    await _write(ctx, [{"content": "A", "status": "pending"}])
+    first = engine._next_checklist_gate_summary(fired=0, last_open=None)
+    assert first is not None
+    # Nothing moved since the block — honor the stop.
+    assert engine._next_checklist_gate_summary(fired=1, last_open=first) is None
+
+
+@pytest.mark.asyncio
+async def test_gate_refires_while_the_model_keeps_making_progress() -> None:
+    engine, ctx = _engine_with_context()
+    await _write(
+        ctx,
+        [
+            {"content": "A", "status": "pending"},
+            {"content": "B", "status": "pending"},
+        ],
+    )
+    first = engine._next_checklist_gate_summary(fired=0, last_open=None)
+    assert first is not None
+
+    await _update(ctx, "1", "completed")
+    second = engine._next_checklist_gate_summary(fired=1, last_open=first)
+    assert second is not None
+    assert second != first
+    assert "#2 pending" in second
+    assert "#1" not in second
+
+
+@pytest.mark.asyncio
+async def test_gate_stops_at_the_hard_cap_even_with_progress() -> None:
+    """Backstop for a model that closes one item and opens another each block."""
+    engine, ctx = _engine_with_context()
+    await _write(ctx, [{"content": "A", "status": "pending"}])
+    assert (
+        engine._next_checklist_gate_summary(
+            fired=_CHECKLIST_GATE_MAX_FIRES, last_open="stale summary"
+        )
+        is None
+    )
+
+
 def test_gate_reminder_registered_and_tail() -> None:
     spec = reminders.CHECKLIST_INCOMPLETE_GATE
     assert spec in reminders.REGISTRY
@@ -85,6 +158,23 @@ def test_gate_reminder_formats() -> None:
     # Renders inside the ALERT envelope without error.
     rendered = reminders.render(reminders.CHECKLIST_INCOMPLETE_GATE, body)
     assert rendered.startswith("<system-reminder>")
+
+
+def test_gate_reminder_does_not_offer_in_progress_as_a_resting_state() -> None:
+    """Turn-end reconcile cancels whatever is still open.
+
+    The reminder used to close with "keep the item in_progress rather than
+    marking it done", so a model that honestly reported partial work had that
+    honesty flipped to ``cancelled`` with no explanation attached. The two
+    exits it offers must be the ones that survive the turn end: finish the
+    work, or cancel it with a reason.
+    """
+    body = CHECKLIST_GATE_REMINDER.format(open_summary="#2 in_progress")
+    assert "keep the item in_progress" not in body
+    assert "keep working and finish it" in body
+    assert "cancelled" in body
+    # And it must be honest about what happens to anything left open.
+    assert "closed as cancelled" in body
 
 
 @pytest.mark.asyncio
@@ -105,6 +195,9 @@ async def test_reconcile_cancels_open_items_only() -> None:
     assert reconciled is not None
     content, metadata = reconciled
     assert "turn end" in content
+    # Attribution matters: an item closed here was abandoned, which is not the
+    # same as one the agent cancelled on purpose.
+    assert "by the harness" in content
     items = metadata["items"]
     by_content = {row["content"]: row["status"] for row in items}
     assert by_content == {
