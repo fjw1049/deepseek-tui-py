@@ -62,10 +62,6 @@ import {
   savePinnedThreadIds
 } from './chat-store-helpers'
 import {
-  readLastActiveThreadId,
-  writeLastActiveThreadId
-} from '../lib/last-active-thread'
-import {
   isWorkspaceHidden,
   loadHiddenWorkspacePaths,
   loadSidebarLabelColors,
@@ -1335,9 +1331,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
   startupPhase: null,
   activeThreadWarmup: { threadId: null, status: 'idle' },
   threads: [],
-  // Seed from localStorage so HMR / remounts don't flash the greeting while
-  // refreshThreads → selectThread rehydrates blocks.
-  activeThreadId: readLastActiveThreadId(),
+  // Cold start lands on the greeting (main) screen; open a thread explicitly.
+  activeThreadId: null,
   blocks: [],
   liveReasoning: '',
   liveAssistant: '',
@@ -1844,14 +1839,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
         }
       })
       syncTurnCompletionPoll(set, get)
-      // After reload / HMR, rehydrate the last conversation. activeThreadId may
-      // already be seeded from localStorage (avoids greeting flash) while SSE
-      // and blocks are still empty — selectThread fills those in.
-      const activeId = get().activeThreadId ?? readLastActiveThreadId()
+      // Re-bind SSE / blocks when an in-memory selection exists but the stream
+      // isn't subscribed yet (e.g. createThread then refreshThreads). Do not
+      // restore a thread from the previous app session.
+      const activeId = get().activeThreadId
       if (
         activeId &&
         get().threads.some((thread) => thread.id === activeId) &&
-        (get().activeThreadId !== activeId || sseAbort == null)
+        sseAbort == null
       ) {
         await get().selectThread(activeId)
       }
@@ -2101,7 +2096,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
         queuedMessages: [],
               scrollToBlockId: synced.scrollToBlockId
       })
-      writeLastActiveThreadId(id)
       syncTurnCompletionPoll(set, get)
       const ac = sseAbort = new AbortController()
       const sink = buildThreadEventSink(set, get)
@@ -2337,7 +2331,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
               ? [createdThread, ...s.threads]
               : s.threads
         }))
-        writeLastActiveThreadId(threadId)
         void get().refreshThreads()
       } catch (e) {
         void window.dsGui.logError('create-thread', 'Failed to create thread', {
