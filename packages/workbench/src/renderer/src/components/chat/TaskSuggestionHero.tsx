@@ -158,7 +158,6 @@ export function TaskSuggestionHero({ onSelectSuggestion }: Props): ReactElement 
   const { t } = useTranslation('common')
   const usageRefreshKey = useChatStore((s) => s.usageRefreshKey)
   const composerModelMeta = useChatStore((s) => s.composerModelMeta)
-  const [usageTab, setUsageTab] = useState<'overview' | 'models'>('overview')
   const [usageRange, setUsageRange] = useState<UsageRange>('90d')
   const persistentUsage = usePersistentUsage(usageRange, usageRefreshKey)
   const heatmapUsage = usePersistentUsage('1y', usageRefreshKey)
@@ -222,8 +221,6 @@ export function TaskSuggestionHero({ onSelectSuggestion }: Props): ReactElement 
           error={persistentUsage.error ?? heatmapUsage.error}
           range={usageRange}
           onRangeChange={setUsageRange}
-          tab={usageTab}
-          onTabChange={setUsageTab}
           composerModelMeta={composerModelMeta}
         />
 
