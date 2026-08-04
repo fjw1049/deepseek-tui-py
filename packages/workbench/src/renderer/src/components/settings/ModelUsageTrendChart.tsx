@@ -1,4 +1,4 @@
-import { useMemo, type ReactElement } from 'react'
+import { useId, useMemo, type ReactElement } from 'react'
 import type { UsageDailyPoint } from '@shared/usage-ledger'
 import { formatComposerModelLabel } from '../../lib/composer-model-label'
 import type { ComposerModelMeta } from '../../lib/composer-model-label'
@@ -54,6 +54,41 @@ function buildAxisLabelIndices(totalPoints: number, maxLabels: number): number[]
   return Array.from(indices).sort((a, b) => a - b)
 }
 
+type TrendPoint = { x: number; y: number }
+
+/** Catmull-Rom → cubic Bezier path so the trend reads as a curve, not zigzags. */
+function buildSmoothTrendPaths(points: TrendPoint[]): { line: string; area: string } {
+  if (points.length < 2) return { line: '', area: '' }
+  if (points.length === 2) {
+    const [a, b] = points as [TrendPoint, TrendPoint]
+    const line = `M${a.x.toFixed(2)} ${a.y.toFixed(2)} L${b.x.toFixed(2)} ${b.y.toFixed(2)}`
+    return {
+      line,
+      area: `${line} L${b.x.toFixed(2)} 100 L${a.x.toFixed(2)} 100 Z`
+    }
+  }
+
+  const tension = 0.2
+  let line = `M${points[0]!.x.toFixed(2)} ${points[0]!.y.toFixed(2)}`
+  for (let i = 0; i < points.length - 1; i += 1) {
+    const p0 = points[i === 0 ? 0 : i - 1]!
+    const p1 = points[i]!
+    const p2 = points[i + 1]!
+    const p3 = points[i + 2] ?? p2
+    const cp1x = p1.x + (p2.x - p0.x) * tension
+    const cp1y = p1.y + (p2.y - p0.y) * tension
+    const cp2x = p2.x - (p3.x - p1.x) * tension
+    const cp2y = p2.y - (p3.y - p1.y) * tension
+    line += ` C${cp1x.toFixed(2)} ${cp1y.toFixed(2)}, ${cp2x.toFixed(2)} ${cp2y.toFixed(2)}, ${p2.x.toFixed(2)} ${p2.y.toFixed(2)}`
+  }
+  const first = points[0]!
+  const last = points[points.length - 1]!
+  return {
+    line,
+    area: `${line} L${last.x.toFixed(2)} 100 L${first.x.toFixed(2)} 100 Z`
+  }
+}
+
 function aggregateDailyToBuckets(
   daily: UsageDailyPoint[],
   segmentDays: number
@@ -91,6 +126,7 @@ export function ModelUsageTrendChart({
   showYAxis = false,
   segmentDays
 }: Props): ReactElement {
+  const trendFillId = `usage-trend-${useId().replace(/:/g, '')}`
   // When segmented (hero), bucket daily points into N-day bars so every bar is
   // meaningful; otherwise (settings) keep weekly aggregation for long ranges
   // instead of sampling isolated single days and dropping the rest.
@@ -121,7 +157,7 @@ export function ModelUsageTrendChart({
     return models.slice(0, 6)
   }, [daily])
 
-  const chartHeight = compact ? 'h-[132px]' : 'h-[112px]'
+  const chartHeight = compact ? 'h-[132px]' : 'h-[200px]'
   // In segmented mode (hero), label every bar when there are few enough; 7d
   // has 7 daily bars and should show all dates. Otherwise cap the tick count.
   const maxDayLabels = segmentDays !== undefined ? 7 : compact ? 5 : 7
@@ -130,9 +166,21 @@ export function ModelUsageTrendChart({
     [displayDaily.length, maxDayLabels]
   )
   const labeledIndices = useMemo(() => new Set(axisLabelIndices), [axisLabelIndices])
+  // Soft trend envelope over bar tops — smooth curve + faint fill, no markers.
+  const trendPaths = useMemo(() => {
+    const n = displayDaily.length
+    if (n < 2) return { line: '', area: '' }
+    const points = displayDaily.map((point, index) => {
+      const x = ((index + 0.5) / n) * 100
+      // Use true height (no 3% floor) so zero days sit on the baseline.
+      const y = 100 - (point.totalTokens / maxTokens) * 100
+      return { x, y }
+    })
+    return buildSmoothTrendPaths(points)
+  }, [displayDaily, maxTokens])
 
   return (
-    <div className={compact ? 'space-y-2.5' : 'space-y-3'}>
+    <div className="space-y-2.5">
       <div className="flex gap-2">
         {showYAxis ? (
           <div
@@ -198,6 +246,32 @@ export function ModelUsageTrendChart({
                 </div>
               )
             })}
+            {trendPaths.line ? (
+              <svg
+                className="pointer-events-none absolute inset-0 z-[1] h-full w-full overflow-visible"
+                viewBox="0 0 100 100"
+                preserveAspectRatio="none"
+                aria-hidden
+              >
+                <defs>
+                  <linearGradient id={trendFillId} x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="#e8a44a" stopOpacity="0.22" />
+                    <stop offset="100%" stopColor="#e8a44a" stopOpacity="0" />
+                  </linearGradient>
+                </defs>
+                <path d={trendPaths.area} fill={`url(#${trendFillId})`} stroke="none" />
+                <path
+                  d={trendPaths.line}
+                  fill="none"
+                  stroke="#e8a44a"
+                  strokeOpacity={0.9}
+                  strokeWidth={1.5}
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  vectorEffect="non-scaling-stroke"
+                />
+              </svg>
+            ) : null}
           </div>
           {/*
             Label row mirrors the bar row's flex layout (same gap-1 + flex-1
@@ -225,17 +299,14 @@ export function ModelUsageTrendChart({
         </div>
       </div>
       {legendModels.length > 0 ? (
-        <div className={compact ? 'flex flex-wrap gap-x-2.5 gap-y-1' : 'flex flex-wrap gap-x-3 gap-y-1.5'}>
+        <div className="flex flex-wrap gap-x-2.5 gap-y-1">
           {legendModels.map((model, index) => (
             <span
               key={model}
-              className={[
-                'inline-flex min-w-0 max-w-full items-center gap-1.5 text-ds-muted',
-                compact ? 'text-[10px]' : 'text-[11px]'
-              ].join(' ')}
+              className="inline-flex min-w-0 max-w-full items-center gap-1 text-[10px] leading-tight text-ds-muted"
             >
               <span
-                className={['shrink-0 rounded-[2px]', compact ? 'h-1.5 w-1.5' : 'h-2 w-2 rounded-full'].join(' ')}
+                className="h-1.5 w-1.5 shrink-0 rounded-full"
                 style={{ backgroundColor: BAR_COLORS[index % BAR_COLORS.length] }}
               />
               <span className="truncate">{formatComposerModelLabel(model, composerModelMeta)}</span>
