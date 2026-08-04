@@ -228,6 +228,10 @@ export function ContextUsageMeter({
   }
   const rows = breakdownRows(effectiveBreakdown, rowLabels)
   const windowTokens = effectiveBreakdown.window
+  const barSegments = rows.filter((row) => row.tokens > 0)
+  const barUsedTokens = barSegments.reduce((sum, row) => sum + row.tokens, 0)
+  const barUsedPct =
+    windowTokens > 0 ? Math.min(100, (barUsedTokens / windowTokens) * 100) : 0
 
   const panel =
     open && typeof document !== 'undefined'
@@ -257,21 +261,42 @@ export function ContextUsageMeter({
               </div>
             </div>
 
-            <div className="mt-3.5 flex h-1.5 overflow-hidden rounded-full bg-ds-border-muted">
-              {rows.map((row) => {
-                const pct = windowTokens > 0 ? (row.tokens / windowTokens) * 100 : 0
-                if (pct <= 0) return null
-                return (
-                  <span
-                    key={row.key}
-                    className="h-full shrink-0"
-                    style={{
-                      width: `${Math.max(0.6, pct)}%`,
-                      backgroundColor: row.color
-                    }}
-                  />
-                )
-              })}
+            {/* Cursor-style: hairline track; only outer ends round, middle segments square. */}
+            <div className="relative mt-3.5 h-[5px] w-full">
+              <div
+                aria-hidden
+                className="absolute inset-x-0 top-1/2 h-px -translate-y-1/2 rounded-full bg-ds-border-muted"
+              />
+              {barSegments.length > 0 && barUsedPct > 0 ? (
+                <div
+                  className="absolute inset-y-0 left-0 flex"
+                  style={{ width: `${barUsedPct}%`, gap: '1px' }}
+                >
+                  {barSegments.map((row, index) => {
+                    const isFirst = index === 0
+                    const isLast = index === barSegments.length - 1
+                    const radius =
+                      isFirst && isLast
+                        ? 'rounded-full'
+                        : isFirst
+                          ? 'rounded-l-full'
+                          : isLast
+                            ? 'rounded-r-full'
+                            : 'rounded-none'
+                    return (
+                      <span
+                        key={row.key}
+                        className={`min-w-[2px] ${radius}`}
+                        style={{
+                          flexGrow: row.tokens,
+                          flexBasis: 0,
+                          backgroundColor: row.color
+                        }}
+                      />
+                    )
+                  })}
+                </div>
+              ) : null}
             </div>
 
             <ul className="mt-3.5 divide-y divide-ds-border-muted/30">
