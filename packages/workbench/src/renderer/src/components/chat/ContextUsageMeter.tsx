@@ -261,12 +261,11 @@ export function ContextUsageMeter({
               </div>
             </div>
 
-            {/* Cursor-style: hairline track; only outer ends round, middle segments square. */}
-            <div className="relative mt-3.5 h-[5px] w-full">
-              <div
-                aria-hidden
-                className="absolute inset-x-0 top-1/2 h-px -translate-y-1/2 rounded-full bg-ds-border-muted"
-              />
+            {/* Cursor-style: solid free-track grey; gaps show it; only outer ends round. */}
+            <div
+              className="relative mt-3.5 h-[5px] w-full overflow-hidden rounded-full"
+              style={{ backgroundColor: USAGE_TRACK_GREY }}
+            >
               {barSegments.length > 0 && barUsedPct > 0 ? (
                 <div
                   className="absolute inset-y-0 left-0 flex"
@@ -355,6 +354,9 @@ const RING_SIZE = 16
 const RING_STROKE = 2
 const RING_RADIUS = (RING_SIZE - RING_STROKE) / 2
 const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS
+// Solid free-track grey (Cursor-style). Inline color-mix — Tailwind cannot apply
+// `/opacity` to `ds-*` CSS-variable colors, so `bg-ds-hover/70` renders as nothing.
+const USAGE_TRACK_GREY = 'color-mix(in srgb, var(--ds-text-faint) 42%, transparent)'
 
 function UsageRing({
   percent,
@@ -373,7 +375,6 @@ function UsageRing({
       : tone === 'high'
         ? '#d97706'
         : 'var(--ds-accent)'
-  const track = 'color-mix(in srgb, var(--ds-text-faint) 28%, transparent)'
 
   return (
     <svg
@@ -388,7 +389,7 @@ function UsageRing({
         cy={RING_SIZE / 2}
         r={RING_RADIUS}
         fill="none"
-        stroke={track}
+        stroke={USAGE_TRACK_GREY}
         strokeWidth={RING_STROKE}
       />
       {fillPercent > 0 ? (
