@@ -805,6 +805,110 @@ samp {
   }
 }
 
+/* Workspace file tree — match editor tabs: clear but light, no inset bar/shadow. */
+.ds-workspace-file-tree__row--active {
+  color: color-mix(in srgb, var(--ds-accent) 48%, var(--ds-text));
+  background: color-mix(in srgb, var(--ds-accent) 14%, #ffffff);
+  border: 1px solid color-mix(in srgb, var(--ds-accent) 40%, transparent);
+  box-shadow: none;
+  font-weight: 600;
+}
+
+.ds-workspace-file-tree__row--active:hover {
+  background: color-mix(in srgb, var(--ds-accent) 18%, #ffffff);
+  border-color: color-mix(in srgb, var(--ds-accent) 50%, transparent);
+}
+
+[data-theme='dark'] .ds-workspace-file-tree__row--active {
+  color: color-mix(in srgb, var(--ds-accent) 40%, #ffffff);
+  background: color-mix(in srgb, var(--ds-accent) 24%, #2a2a2a);
+  border: 1px solid color-mix(in srgb, var(--ds-accent) 48%, transparent);
+  box-shadow: none;
+}
+
+[data-theme='dark'] .ds-workspace-file-tree__row--active:hover {
+  background: color-mix(in srgb, var(--ds-accent) 30%, #2a2a2a);
+  border-color: color-mix(in srgb, var(--ds-accent) 58%, transparent);
+}
+
+/* Editor tab strip — idle vs active must be obvious (was nearly identical greys). */
+.ds-workspace-editor-tab {
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--ds-text) 10%, transparent);
+  background: color-mix(in srgb, var(--ds-text) 3%, transparent);
+  color: var(--ds-text-muted);
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease,
+    color 120ms ease;
+}
+
+.ds-workspace-editor-tab:hover {
+  border-color: color-mix(in srgb, var(--ds-text) 16%, transparent);
+  background: color-mix(in srgb, var(--ds-text) 6%, transparent);
+  color: var(--ds-text);
+}
+
+.ds-workspace-editor-tab--open {
+  border-color: color-mix(in srgb, var(--ds-text) 14%, transparent);
+  background: color-mix(in srgb, var(--ds-text) 7%, transparent);
+  color: var(--ds-text);
+}
+
+.ds-workspace-editor-tab--active {
+  border-color: color-mix(in srgb, var(--ds-accent) 40%, transparent);
+  background: color-mix(in srgb, var(--ds-accent) 14%, #ffffff);
+  color: color-mix(in srgb, var(--ds-accent) 48%, var(--ds-text));
+  font-weight: 600;
+  box-shadow: none;
+}
+
+.ds-workspace-editor-tab--active:hover {
+  background: color-mix(in srgb, var(--ds-accent) 18%, #ffffff);
+  border-color: color-mix(in srgb, var(--ds-accent) 50%, transparent);
+}
+
+.ds-workspace-editor-tab__close {
+  color: inherit;
+  opacity: 0.45;
+}
+
+.ds-workspace-editor-tab__close:hover {
+  opacity: 1;
+  background: color-mix(in srgb, var(--ds-text) 8%, transparent);
+}
+
+.ds-workspace-editor-tab--active .ds-workspace-editor-tab__close {
+  opacity: 0.65;
+}
+
+[data-theme='dark'] .ds-workspace-editor-tab {
+  border-color: color-mix(in srgb, #fff 10%, transparent);
+  background: color-mix(in srgb, #fff 4%, transparent);
+}
+
+[data-theme='dark'] .ds-workspace-editor-tab:hover {
+  border-color: color-mix(in srgb, #fff 16%, transparent);
+  background: color-mix(in srgb, #fff 8%, transparent);
+}
+
+[data-theme='dark'] .ds-workspace-editor-tab--open {
+  border-color: color-mix(in srgb, #fff 14%, transparent);
+  background: color-mix(in srgb, #fff 9%, transparent);
+}
+
+[data-theme='dark'] .ds-workspace-editor-tab--active {
+  border-color: color-mix(in srgb, var(--ds-accent) 48%, transparent);
+  background: color-mix(in srgb, var(--ds-accent) 24%, #2a2a2a);
+  color: color-mix(in srgb, var(--ds-accent) 40%, #ffffff);
+  box-shadow: none;
+}
+
+[data-theme='dark'] .ds-workspace-editor-tab--active:hover {
+  background: color-mix(in srgb, var(--ds-accent) 30%, #2a2a2a);
+  border-color: color-mix(in srgb, var(--ds-accent) 58%, transparent);
+}
+
 /* Apple menu chrome — shared by project picker + editor picker. */
 .ds-project-context-menu,
 .ds-editor-picker-menu {

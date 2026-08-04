@@ -919,6 +919,7 @@
   "workspaceEditorPickFile": "从左侧文件树选择文件，或点击聊天中的文件引用",
   "workspaceEditorCloseTab": "关闭标签",
   "workspaceEditorSave": "保存",
+  "workspaceEditorFind": "查找",
   "workspaceEditorEdit": "编辑",
   "workspaceEditorCancelEdit": "退出",
   "workspaceEditorOpenExternal": "用 {{editor}} 打开",

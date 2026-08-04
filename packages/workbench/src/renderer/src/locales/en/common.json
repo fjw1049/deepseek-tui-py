@@ -959,6 +959,7 @@
   "workspaceEditorPickFile": "Pick a file from the tree, or click a file reference in chat",
   "workspaceEditorCloseTab": "Close tab",
   "workspaceEditorSave": "Save",
+  "workspaceEditorFind": "Find",
   "workspaceEditorEdit": "Edit",
   "workspaceEditorCancelEdit": "Exit",
   "workspaceEditorOpenExternal": "Open with {{editor}}",

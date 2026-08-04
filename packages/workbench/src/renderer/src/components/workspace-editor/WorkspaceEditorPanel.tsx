@@ -1,6 +1,16 @@
 import type { MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent, ReactElement } from 'react'
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Loader2, Pencil, Save, X } from 'lucide-react'
+import {
+  forwardRef,
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+  useState
+} from 'react'
+import { Loader2, Pencil, Save, Search, X } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { isImagePreviewPath } from '@shared/image-preview'
 import type { ChatBlock } from '../../agent/types'
@@ -32,6 +42,7 @@ import {
   type WorkspaceFileContextMenuAction
 } from './WorkspaceFileContextMenu'
 import { WorkspaceFileTree } from './WorkspaceFileTree'
+import type { WorkspaceEditorSurfaceHandle } from './WorkspaceEditorSurface'
 
 const LazyWorkspaceEditorSurface = lazy(() =>
   import('./WorkspaceEditorSurface').then((module) => ({
@@ -99,36 +110,86 @@ function EditorSurfaceFallback(): ReactElement {
   )
 }
 
-function EditorPaneView({
-  tab,
-  workspaceRoot,
-  patch,
-  isEditing,
-  focused,
-  showFocusChrome,
-  externalOpenError,
-  onFocus,
-  onEdit,
-  onSave,
-  onCancelEdit,
-  onChange
-}: {
-  tab: EditorTab | null
-  workspaceRoot: string
-  patch?: string
-  isEditing: boolean
-  focused: boolean
-  /** Only when split — avoid stacking a left ring against the tree separator. */
-  showFocusChrome: boolean
-  externalOpenError: string | null
-  onFocus: () => void
-  onEdit: () => void
-  onSave: () => void
-  onCancelEdit: () => void
-  onChange: (content: string) => void
-}): ReactElement {
+type EditorPaneHandle = {
+  openFind: () => void
+}
+
+const EditorPaneView = forwardRef<
+  EditorPaneHandle,
+  {
+    tab: EditorTab | null
+    workspaceRoot: string
+    patch?: string
+    isEditing: boolean
+    focused: boolean
+    /** Only when split — avoid stacking a left ring against the tree separator. */
+    showFocusChrome: boolean
+    externalOpenError: string | null
+    onFocus: () => void
+    onChange: (content: string) => void
+  }
+>(function EditorPaneView(
+  {
+    tab,
+    workspaceRoot,
+    patch,
+    isEditing,
+    focused,
+    showFocusChrome,
+    externalOpenError,
+    onFocus,
+    onChange
+  },
+  ref
+): ReactElement {
   const { t } = useTranslation('common')
+  const surfaceRef = useRef<WorkspaceEditorSurfaceHandle | null>(null)
+  const [sourceFindOpen, setSourceFindOpen] = useState(false)
   const isImageTab = tab?.kind === 'image'
+  const isMarkdownPreview =
+    Boolean(tab) && !isImageTab && isMarkdownPath(tab!.path) && !isEditing && !sourceFindOpen
+  const showMonaco = Boolean(tab) && !isImageTab && !isMarkdownPreview
+
+  const openFind = useCallback((): void => {
+    if (!tab || isImageTab || tab.loading) return
+    onFocus()
+    if (isMarkdownPath(tab.path) && !isEditing && !sourceFindOpen) {
+      setSourceFindOpen(true)
+      return
+    }
+    surfaceRef.current?.openFind()
+  }, [tab, isImageTab, isEditing, sourceFindOpen, onFocus])
+
+  useImperativeHandle(ref, () => ({ openFind }), [openFind])
+
+  useEffect(() => {
+    setSourceFindOpen(false)
+  }, [tab?.id])
+
+  useEffect(() => {
+    if (isEditing) setSourceFindOpen(false)
+  }, [isEditing])
+
+  useEffect(() => {
+    if (!focused || !tab || isImageTab) return
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (!(event.metaKey || event.ctrlKey) || event.altKey || event.shiftKey) return
+      if (event.key.toLowerCase() !== 'f') return
+      const target = event.target
+      if (
+        target instanceof HTMLElement &&
+        target.closest('input, textarea, select, [contenteditable="true"]') &&
+        !target.closest('.monaco-editor')
+      ) {
+        return
+      }
+      event.preventDefault()
+      event.stopPropagation()
+      openFind()
+    }
+    window.addEventListener('keydown', onKeyDown, true)
+    return () => window.removeEventListener('keydown', onKeyDown, true)
+  }, [focused, tab, isImageTab, openFind])
 
   if (!tab) {
     return (
@@ -149,45 +210,6 @@ function EditorPaneView({
       }`}
       onMouseDown={onFocus}
     >
-      <div className="flex shrink-0 items-center justify-between gap-2 border-b border-ds-border-muted/40 px-3 py-1.5">
-        <span className="truncate text-[12px] text-ds-faint">
-          {formatFilePathForDisplay(tab.path, workspaceRoot) ?? tab.path}
-        </span>
-        <div className="flex shrink-0 items-center gap-1">
-          {!isImageTab && !isEditing ? (
-            <button
-              type="button"
-              onClick={onEdit}
-              disabled={tab.loading}
-              className="inline-flex h-7 w-7 items-center justify-center rounded-md text-ds-muted transition hover:bg-ds-hover/60 hover:text-ds-ink disabled:opacity-45"
-              aria-label={t('workspaceEditorEdit')}
-              title={t('workspaceEditorEdit')}
-            >
-              <Pencil className="h-3.5 w-3.5" strokeWidth={1.85} />
-            </button>
-          ) : null}
-          {isEditing ? (
-            <>
-              <button
-                type="button"
-                onClick={onCancelEdit}
-                className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[12px] text-ds-muted transition hover:bg-ds-hover/60 hover:text-ds-ink"
-              >
-                {t('workspaceEditorCancelEdit')}
-              </button>
-              <button
-                type="button"
-                onClick={onSave}
-                disabled={tab.loading || tab.content === tab.savedContent}
-                className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[12px] text-ds-muted transition hover:bg-ds-hover/60 hover:text-ds-ink disabled:opacity-45"
-              >
-                <Save className="h-3.5 w-3.5" strokeWidth={1.85} />
-                {t('workspaceEditorSave')}
-              </button>
-            </>
-          ) : null}
-        </div>
-      </div>
       {externalOpenError && focused ? (
         <div className="shrink-0 border-b border-amber-200/70 bg-amber-50/80 px-3 py-2 text-[12px] text-amber-900 dark:border-amber-700/40 dark:bg-amber-950/30 dark:text-amber-100">
           {t('workspaceEditorOpenExternalFailed', { message: externalOpenError })}
@@ -202,21 +224,23 @@ function EditorPaneView({
         <EditorSurfaceFallback />
       ) : isImageTab ? (
         <ImageDocumentPreview path={tab.path} workspaceRoot={workspaceRoot} />
-      ) : isMarkdownPath(tab.path) && !isEditing ? (
+      ) : isMarkdownPreview ? (
         <MarkdownDocumentPreview content={tab.content} />
-      ) : (
+      ) : showMonaco ? (
         <Suspense fallback={<EditorSurfaceFallback />}>
           <LazyWorkspaceEditorSurface
+            ref={surfaceRef}
             tab={tab}
             patch={patch}
             readOnly={!isEditing}
             onChange={onChange}
+            openFindOnReady={sourceFindOpen}
           />
         </Suspense>
-      )}
+      ) : null}
     </div>
   )
-}
+})
 
 export function WorkspaceEditorPanel({ workspaceRoot, blocks }: Props): ReactElement {
   const { t } = useTranslation('common')
@@ -253,6 +277,8 @@ export function WorkspaceEditorPanel({ workspaceRoot, blocks }: Props): ReactEle
   const [fileMenu, setFileMenu] = useState<FileMenuState | null>(null)
   const endPointerDragRef = useRef<(() => void) | null>(null)
   const splitHostRef = useRef<HTMLDivElement | null>(null)
+  const primaryPaneRef = useRef<EditorPaneHandle | null>(null)
+  const secondaryPaneRef = useRef<EditorPaneHandle | null>(null)
 
   useEffect(() => {
     return () => {
@@ -285,6 +311,10 @@ export function WorkspaceEditorPanel({ workspaceRoot, blocks }: Props): ReactEle
   const secondaryTab = tabs.find((tab) => tab.id === secondaryTabId) ?? null
   const focusedTab =
     splitEnabled && focusedPane === 'secondary' ? secondaryTab : primaryTab
+  const focusedIsEditing = Boolean(focusedTab && editingTabId === focusedTab.id)
+  const focusedIsImage = Boolean(focusedTab && focusedTab.kind === 'image')
+  const focusedPaneRef =
+    splitEnabled && focusedPane === 'secondary' ? secondaryPaneRef : primaryPaneRef
 
   const dirtyPaths = useMemo(
     () =>
@@ -502,54 +532,103 @@ export function WorkspaceEditorPanel({ workspaceRoot, blocks }: Props): ReactEle
         </div>
 
         <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col bg-ds-sidebar">
-          <div className="flex shrink-0 items-center gap-1.5 overflow-x-auto border-b border-ds-border-muted/60 px-1.5 py-1.5">
-            {tabs.length === 0 ? (
-              <span className="px-2 py-1 text-[12px] text-ds-faint">{t('workspaceEditorEmpty')}</span>
-            ) : (
-              tabs.map((tab) => {
-                const inPrimary = tab.id === activeTabId
-                const inSecondary = splitEnabled && tab.id === secondaryTabId
-                const shown = inPrimary || inSecondary
-                const focused =
-                  (focusedPane === 'primary' && inPrimary) ||
-                  (focusedPane === 'secondary' && inSecondary)
-                const dirty = tab.content !== tab.savedContent
-                const changed = Boolean(lookupPatchForPath(patchMap, tab.path))
-                const editing = editingTabId === tab.id
-                return (
-                  <span
-                    key={tab.id}
-                    className={`inline-flex max-w-[220px] shrink-0 items-center rounded-md border ${
-                      focused
-                        ? 'border-[color-mix(in_srgb,var(--ds-text)_28%,transparent)] bg-ds-hover/55 text-ds-ink'
-                        : shown
-                          ? 'border-[color-mix(in_srgb,var(--ds-text)_18%,transparent)] bg-ds-hover/30 text-ds-ink'
-                          : 'border-[color-mix(in_srgb,var(--ds-text)_14%,transparent)] bg-[color-mix(in_srgb,var(--ds-text)_4%,transparent)] text-ds-muted hover:border-[color-mix(in_srgb,var(--ds-text)_22%,transparent)] hover:bg-ds-hover/40 hover:text-ds-ink'
-                    }`}
-                    onContextMenu={(event) => openFileMenu(event, tab.path)}
+          <div className="flex shrink-0 items-center gap-1.5 border-b border-ds-border-muted/60 px-1.5 py-1.5">
+            <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto">
+              {tabs.length === 0 ? (
+                <span className="px-2 py-1 text-[12px] text-ds-faint">{t('workspaceEditorEmpty')}</span>
+              ) : (
+                tabs.map((tab) => {
+                  const inPrimary = tab.id === activeTabId
+                  const inSecondary = splitEnabled && tab.id === secondaryTabId
+                  const shown = inPrimary || inSecondary
+                  const focused =
+                    (focusedPane === 'primary' && inPrimary) ||
+                    (focusedPane === 'secondary' && inSecondary)
+                  const dirty = tab.content !== tab.savedContent
+                  const changed = Boolean(lookupPatchForPath(patchMap, tab.path))
+                  const editing = editingTabId === tab.id
+                  return (
+                    <span
+                      key={tab.id}
+                      className={`ds-workspace-editor-tab inline-flex max-w-[220px] shrink-0 items-center ${
+                        focused
+                          ? 'ds-workspace-editor-tab--active'
+                          : shown
+                            ? 'ds-workspace-editor-tab--open'
+                            : ''
+                      }`}
+                      onContextMenu={(event) => openFileMenu(event, tab.path)}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => selectTab(tab.id)}
+                        className="truncate px-2 py-1 text-[12px]"
+                        title={formatFilePathForDisplay(tab.path, trimmedRoot) ?? tab.path}
+                      >
+                        {fileNameFromPath(tab.path)}
+                        {editing ? ' ✎' : dirty ? ' ●' : changed ? ' ◦' : ''}
+                        {tab.loading ? ' …' : ''}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleCloseTab(tab.id)}
+                        className="ds-workspace-editor-tab__close mr-0.5 inline-flex h-5 w-5 items-center justify-center rounded"
+                        aria-label={t('workspaceEditorCloseTab')}
+                      >
+                        <X className="h-3 w-3" strokeWidth={2} />
+                      </button>
+                    </span>
+                  )
+                })
+              )}
+            </div>
+            {focusedTab && !focusedIsImage ? (
+              <div className="flex shrink-0 items-center gap-0.5 pl-1">
+                <button
+                  type="button"
+                  onClick={() => focusedPaneRef.current?.openFind()}
+                  disabled={focusedTab.loading}
+                  className="inline-flex h-7 w-7 items-center justify-center rounded-md text-ds-muted transition hover:bg-ds-hover/60 hover:text-ds-ink disabled:opacity-45"
+                  aria-label={t('workspaceEditorFind')}
+                  title={t('workspaceEditorFind')}
+                >
+                  <Search className="h-3.5 w-3.5" strokeWidth={1.85} />
+                </button>
+                {!focusedIsEditing ? (
+                  <button
+                    type="button"
+                    onClick={() => setEditingTabId(focusedTab.id)}
+                    disabled={focusedTab.loading}
+                    className="inline-flex h-7 w-7 items-center justify-center rounded-md text-ds-muted transition hover:bg-ds-hover/60 hover:text-ds-ink disabled:opacity-45"
+                    aria-label={t('workspaceEditorEdit')}
+                    title={t('workspaceEditorEdit')}
                   >
+                    <Pencil className="h-3.5 w-3.5" strokeWidth={1.85} />
+                  </button>
+                ) : (
+                  <>
                     <button
                       type="button"
-                      onClick={() => selectTab(tab.id)}
-                      className="truncate px-2 py-1 text-[12px]"
-                      title={formatFilePathForDisplay(tab.path, trimmedRoot) ?? tab.path}
+                      onClick={() => setEditingTabId(null)}
+                      className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[12px] text-ds-muted transition hover:bg-ds-hover/60 hover:text-ds-ink"
                     >
-                      {fileNameFromPath(tab.path)}
-                      {editing ? ' ✎' : dirty ? ' ●' : changed ? ' ◦' : ''}
-                      {tab.loading ? ' …' : ''}
+                      {t('workspaceEditorCancelEdit')}
                     </button>
                     <button
                       type="button"
-                      onClick={() => handleCloseTab(tab.id)}
-                      className="mr-0.5 inline-flex h-5 w-5 items-center justify-center rounded text-ds-faint hover:bg-ds-hover/70 hover:text-ds-ink"
-                      aria-label={t('workspaceEditorCloseTab')}
+                      onClick={() => void saveTab(focusedTab.id, trimmedRoot)}
+                      disabled={
+                        focusedTab.loading || focusedTab.content === focusedTab.savedContent
+                      }
+                      className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[12px] text-ds-muted transition hover:bg-ds-hover/60 hover:text-ds-ink disabled:opacity-45"
                     >
-                      <X className="h-3 w-3" strokeWidth={2} />
+                      <Save className="h-3.5 w-3.5" strokeWidth={1.85} />
+                      {t('workspaceEditorSave')}
                     </button>
-                  </span>
-                )
-              })
-            )}
+                  </>
+                )}
+              </div>
+            ) : null}
           </div>
 
           {primaryTab || (splitEnabled && secondaryTab) ? (
@@ -559,6 +638,7 @@ export function WorkspaceEditorPanel({ workspaceRoot, blocks }: Props): ReactEle
                 style={splitEnabled ? { width: `${splitRatio * 100}%` } : { width: '100%' }}
               >
                 <EditorPaneView
+                  ref={primaryPaneRef}
                   tab={primaryTab}
                   workspaceRoot={trimmedRoot}
                   patch={
@@ -569,13 +649,6 @@ export function WorkspaceEditorPanel({ workspaceRoot, blocks }: Props): ReactEle
                   showFocusChrome={splitEnabled}
                   externalOpenError={externalOpenError}
                   onFocus={() => focusPane('primary')}
-                  onEdit={() => {
-                    if (primaryTab) setEditingTabId(primaryTab.id)
-                  }}
-                  onSave={() => {
-                    if (primaryTab) void saveTab(primaryTab.id, trimmedRoot)
-                  }}
-                  onCancelEdit={() => setEditingTabId(null)}
                   onChange={(content) => {
                     if (primaryTab) updateTabContent(primaryTab.id, content)
                   }}
@@ -595,6 +668,7 @@ export function WorkspaceEditorPanel({ workspaceRoot, blocks }: Props): ReactEle
                   </div>
                   <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-ds-sidebar">
                     <EditorPaneView
+                      ref={secondaryPaneRef}
                       tab={secondaryTab}
                       workspaceRoot={trimmedRoot}
                       patch={
@@ -607,13 +681,6 @@ export function WorkspaceEditorPanel({ workspaceRoot, blocks }: Props): ReactEle
                       showFocusChrome={splitEnabled}
                       externalOpenError={externalOpenError}
                       onFocus={() => focusPane('secondary')}
-                      onEdit={() => {
-                        if (secondaryTab) setEditingTabId(secondaryTab.id)
-                      }}
-                      onSave={() => {
-                        if (secondaryTab) void saveTab(secondaryTab.id, trimmedRoot)
-                      }}
-                      onCancelEdit={() => setEditingTabId(null)}
                       onChange={(content) => {
                         if (secondaryTab) updateTabContent(secondaryTab.id, content)
                       }}

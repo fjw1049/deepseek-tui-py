@@ -268,25 +268,31 @@ export function WorkspaceFileTree({
             onFileContextMenu(event, entry.path)
           }}
           aria-current={isActive ? 'page' : undefined}
-          className={`flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-left text-[12.5px] transition hover:bg-ds-hover/60 hover:text-ds-ink ${
+          className={`ds-workspace-file-tree__row flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-left text-[12.5px] transition ${
             isActive
-              ? 'bg-[color-mix(in_srgb,var(--ds-selection)_72%,transparent)] text-ds-ink'
+              ? 'ds-workspace-file-tree__row--active'
               : isDirty
-                ? 'text-ds-ink'
+                ? 'border border-transparent text-ds-ink hover:bg-ds-hover/60 hover:text-ds-ink'
                 : isChanged
-                  ? 'text-ds-diff-added'
-                  : 'text-ds-muted'
+                  ? 'border border-transparent text-ds-diff-added hover:bg-ds-hover/60 hover:text-ds-ink'
+                  : 'border border-transparent text-ds-muted hover:bg-ds-hover/60 hover:text-ds-ink'
           }`}
           style={{ paddingLeft: `${depth * 12 + 20}px` }}
           title={formatFilePathForDisplay(entry.path, trimmedRoot) ?? entry.path}
         >
           <FileCode2
             className={`h-3.5 w-3.5 shrink-0 ${
-              isActive ? 'text-ds-ink' : isChanged ? 'text-ds-diff-added' : 'text-ds-faint'
+              isActive
+                ? 'text-current'
+                : isChanged
+                  ? 'text-ds-diff-added'
+                  : 'text-ds-faint'
             }`}
-            strokeWidth={1.85}
+            strokeWidth={isActive ? 2.1 : 1.85}
           />
-          <span className="truncate font-medium">{entry.name}</span>
+          <span className={`truncate ${isActive ? 'font-semibold' : 'font-medium'}`}>
+            {entry.name}
+          </span>
           {isDirty ? <span className="ml-auto text-[10px] text-accent">●</span> : null}
         </button>
       ]
@@ -296,15 +302,12 @@ export function WorkspaceFileTree({
   return (
     <div className="ds-workspace-file-tree flex h-full min-h-0 flex-col overflow-hidden border-r border-[color-mix(in_srgb,var(--ds-text)_14%,transparent)] bg-ds-sidebar">
       <div className="shrink-0 border-b border-ds-border-muted/60 px-3 py-2.5">
-        <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-ds-muted">
-          {t('workspaceTreeTitle')}
-        </div>
         {trimmedRoot ? (
-          <div className="mt-0.5 truncate text-[12.5px] font-semibold text-ds-ink" title={trimmedRoot}>
+          <div className="truncate text-[12.5px] font-semibold text-ds-ink" title={trimmedRoot}>
             {workspaceLabel}
           </div>
         ) : (
-          <div className="mt-1 text-[12px] leading-5 text-ds-faint">{t('workspaceTreeNoRoot')}</div>
+          <div className="text-[12px] leading-5 text-ds-faint">{t('workspaceTreeNoRoot')}</div>
         )}
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto py-1">{renderEntries('', 0)}</div>
