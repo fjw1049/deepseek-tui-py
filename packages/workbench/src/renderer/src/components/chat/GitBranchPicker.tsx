@@ -214,21 +214,23 @@ export function GitBranchPicker({
       className="z-50 overflow-hidden rounded-xl border border-ds-border bg-ds-elevated shadow-[0_24px_70px_rgba(44,55,78,0.18)] backdrop-blur-xl dark:shadow-[0_30px_80px_rgba(0,0,0,0.42)]"
       onMouseDown={(event) => event.stopPropagation()}
     >
-      <div className="flex items-center gap-2 border-b border-ds-border-muted px-4 py-3">
-        <Search className="h-4 w-4 shrink-0 text-ds-faint" strokeWidth={1.8} />
-        <input
-          ref={inputRef}
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Escape') {
-              e.preventDefault()
-              setOpen(false)
-            }
-          }}
-          placeholder={t('gitSearchBranches')}
-          className="min-w-0 flex-1 bg-transparent text-[15px] text-ds-ink outline-none placeholder:text-ds-faint"
-        />
+      <div className="ds-project-context-menu__header">
+        <label className="ds-project-context-menu__search">
+          <Search className="h-3.5 w-3.5 shrink-0 opacity-45" strokeWidth={1.85} aria-hidden />
+          <input
+            ref={inputRef}
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') {
+                e.preventDefault()
+                setOpen(false)
+              }
+            }}
+            placeholder={t('gitSearchBranches')}
+            className="ds-project-context-menu__search-input"
+          />
+        </label>
       </div>
 
       <div className="max-h-[320px] overflow-y-auto px-3 py-3">

@@ -1572,7 +1572,7 @@ export function FloatingComposer({
             }}
           />
 
-          <div className={`flex items-center gap-2 pl-3 pr-1 ${stageCentered ? 'pb-0' : 'pb-0'}`}>
+          <div className="flex items-center gap-1.5 px-2">
             <div ref={plusMenuRef} className="relative">
               <button
                 type="button"
@@ -2037,7 +2037,7 @@ export function FloatingComposer({
 
             {mode !== 'agent' ? (
               <div
-                className="ds-no-drag inline-flex h-8 shrink-0 select-none items-center gap-1.5 text-[13px] font-semibold text-ds-ink"
+                className="ds-no-drag inline-flex h-9 shrink-0 select-none items-center gap-1.5 px-1 text-[13px] font-semibold text-ds-ink"
                 title={modeLabel}
               >
                 <ModeBadgeIcon
@@ -2052,7 +2052,7 @@ export function FloatingComposer({
 
             {activePlugin || focusPlugin ? (
               <div
-                className="ds-no-drag group inline-flex h-8 max-w-[min(100%,240px)] shrink-0 select-none items-center gap-1.5 text-[13px] font-semibold text-[#a855f7]"
+                className="ds-no-drag group inline-flex h-9 max-w-[min(100%,240px)] shrink-0 select-none items-center gap-1.5 px-1 text-[13px] font-semibold text-[#a855f7]"
                 title={
                   activePlugin
                     ? t('composerPluginMounted', {
@@ -2106,7 +2106,7 @@ export function FloatingComposer({
 
             <div className="min-w-0 flex-1" />
 
-            <div className="flex shrink-0 items-center gap-0 -space-x-0.5">
+            <div className="flex shrink-0 items-center gap-1.5">
               <ContextUsageMeter
                 blocks={blocks}
                 model={activeModelId}
@@ -2125,53 +2125,53 @@ export function FloatingComposer({
                 onConfigureModels={() => openSettings('models')}
                 disabled={!canChangeModel}
               />
-            </div>
 
-            {isMediaCaptureSupported() ? (
-              <button
-                type="button"
-                disabled={voicePhase === 'transcribing' || (voicePhase === 'idle' && !canCompose)}
-                onClick={() =>
-                  voicePhase === 'recording' ? handleStopAndTranscribe() : void handleMicClick()
-                }
-                aria-label={voiceButtonTitle}
-                title={voiceButtonTitle}
-                className={`ds-no-drag flex h-9 w-9 shrink-0 items-center justify-center rounded-full border transition disabled:cursor-not-allowed disabled:opacity-50 ${
-                  voicePhase === 'recording'
-                    ? 'border-red-500/45 bg-red-500/15 text-red-600 hover:bg-red-500/25 dark:text-red-300'
-                    : 'border-transparent bg-transparent text-ds-muted hover:bg-ds-hover hover:text-ds-ink'
-                }`}
-              >
-                {voicePhase === 'recording' ? (
+              {isMediaCaptureSupported() ? (
+                <button
+                  type="button"
+                  disabled={voicePhase === 'transcribing' || (voicePhase === 'idle' && !canCompose)}
+                  onClick={() =>
+                    voicePhase === 'recording' ? handleStopAndTranscribe() : void handleMicClick()
+                  }
+                  aria-label={voiceButtonTitle}
+                  title={voiceButtonTitle}
+                  className={`ds-no-drag flex h-9 w-9 shrink-0 items-center justify-center rounded-full border transition disabled:cursor-not-allowed disabled:opacity-50 ${
+                    voicePhase === 'recording'
+                      ? 'border-red-500/45 bg-red-500/15 text-red-600 hover:bg-red-500/25 dark:text-red-300'
+                      : 'border-transparent bg-transparent text-ds-muted hover:bg-ds-hover hover:text-ds-ink'
+                  }`}
+                >
+                  {voicePhase === 'recording' ? (
+                    <Square className="h-3.5 w-3.5 fill-current" strokeWidth={2.4} />
+                  ) : (
+                    <Mic className="h-4 w-4" strokeWidth={2} />
+                  )}
+                </button>
+              ) : null}
+
+              {busy && !activeHighlightedSlashCommand && voicePhase === 'idle' ? (
+                <button
+                  type="button"
+                  onClick={onInterrupt}
+                  className="ds-no-drag flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-red-500/45 bg-red-500/15 text-red-600 shadow-sm transition hover:bg-red-500/25 hover:text-red-700 dark:text-red-300 dark:hover:text-red-200"
+                  aria-label={t('interrupt')}
+                  title={t('interrupt')}
+                >
                   <Square className="h-3.5 w-3.5 fill-current" strokeWidth={2.4} />
-                ) : (
-                  <Mic className="h-4 w-4" strokeWidth={2} />
-                )}
-              </button>
-            ) : null}
-
-            {busy && !activeHighlightedSlashCommand && voicePhase === 'idle' ? (
-              <button
-                type="button"
-                onClick={onInterrupt}
-                className="ds-no-drag flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-red-500/45 bg-red-500/15 text-red-600 shadow-sm transition hover:bg-red-500/25 hover:text-red-700 dark:text-red-300 dark:hover:text-red-200"
-                aria-label={t('interrupt')}
-                title={t('interrupt')}
-              >
-                <Square className="h-3.5 w-3.5 fill-current" strokeWidth={2.4} />
-              </button>
-            ) : (
-              <button
-                type="button"
-                disabled={primaryActionDisabled}
-                onClick={handlePrimaryAction}
-                className="ds-no-drag flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-accent/15 bg-accent text-white shadow-[0_10px_24px_rgba(79,124,255,0.28)] transition hover:brightness-110 disabled:cursor-not-allowed disabled:border-ds-border disabled:bg-ds-card disabled:text-ds-faint disabled:shadow-none"
-                aria-label={primaryActionLabel}
-                title={primaryActionLabel}
-              >
-                <Send className="h-4 w-4" strokeWidth={2.2} />
-              </button>
-            )}
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  disabled={primaryActionDisabled}
+                  onClick={handlePrimaryAction}
+                  className="ds-no-drag flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-accent/15 bg-accent text-white shadow-[0_10px_24px_rgba(79,124,255,0.28)] transition hover:brightness-110 disabled:cursor-not-allowed disabled:border-ds-border disabled:bg-ds-card disabled:text-ds-faint disabled:shadow-none"
+                  aria-label={primaryActionLabel}
+                  title={primaryActionLabel}
+                >
+                  <Send className="h-4 w-4" strokeWidth={2.2} />
+                </button>
+              )}
+            </div>
           </div>
         </div>
       </div>

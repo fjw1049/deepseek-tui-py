@@ -124,9 +124,9 @@ class ChatGPTModelSelector extends HTMLElement {
         background: transparent;
         display: inline-flex;
         align-items: center;
-        gap: 6px;
+        gap: 7px;
         position: relative;
-        padding: 0 10px 0 8px;
+        padding: 0 10px 0 9px;
         transition: background-color 120ms var(--ease-out), transform 100ms ease-out;
       }
       .pill:hover { background: var(--pill-bg-hover); }

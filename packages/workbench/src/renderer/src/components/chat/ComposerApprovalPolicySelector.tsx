@@ -158,12 +158,12 @@ export function ComposerApprovalPolicySelector({
   }
 
   return (
-    <div ref={wrapRef} className="relative mr-1.5 shrink-0">
+    <div ref={wrapRef} className="relative shrink-0">
       <button
         type="button"
         disabled={disabled || saving}
         onClick={() => setMenuOpen(!open)}
-        className="ds-no-drag inline-flex h-8 shrink-0 select-none items-center gap-1.5 text-[13px] font-semibold transition hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-50"
+        className="ds-no-drag inline-flex h-9 shrink-0 select-none items-center gap-1.5 px-1 text-[13px] font-semibold transition hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-50"
         style={triggerAccent ? { color: triggerAccent } : undefined}
         aria-haspopup="menu"
         aria-expanded={open}

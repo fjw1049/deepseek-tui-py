@@ -195,7 +195,7 @@ export function ContextUsageMeter({
         <button
           type="button"
           disabled
-          className="ds-no-drag flex h-8 w-7 shrink-0 items-center justify-center rounded-full text-ds-faint opacity-55"
+          className="ds-no-drag flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-ds-faint opacity-55"
           aria-label={t('contextUsageIdle')}
           title={t('contextUsageIdle')}
         >
@@ -306,7 +306,7 @@ export function ContextUsageMeter({
       <button
         ref={buttonRef}
         type="button"
-        className={`ds-no-drag flex h-8 w-7 shrink-0 items-center justify-center rounded-full transition ${
+        className={`ds-no-drag flex h-9 w-9 shrink-0 items-center justify-center rounded-full transition ${
           open ? 'text-ds-ink' : 'text-ds-muted hover:text-ds-ink'
         }`}
         aria-label={detailLabel}
@@ -326,7 +326,7 @@ export function ContextUsageMeter({
   )
 }
 
-const RING_SIZE = 15
+const RING_SIZE = 16
 const RING_STROKE = 2
 const RING_RADIUS = (RING_SIZE - RING_STROKE) / 2
 const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS
