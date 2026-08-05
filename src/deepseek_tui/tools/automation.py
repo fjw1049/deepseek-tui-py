@@ -30,7 +30,6 @@ from __future__ import annotations
 # feature flag is enabled. If no manager is attached (feature flag off),
 # each tool returns a clean error so the LLM can fall back gracefully.
 #
-from dataclasses import asdict
 from typing import Any, cast
 
 from deepseek_tui.tools.validation import optional_string as _optional_string
@@ -499,11 +498,6 @@ class CronDeleteTool(ToolSpec):
         )
 
 
-# ``asdict`` is no longer used directly here, but kept importable for
-# downstream tests that referenced it on the prior implementation.
-_ = asdict
-
-
 # Durable automation records and scheduler-supporting manager.
 #
 # Automations are local-first recurring jobs that **enqueue standard
@@ -529,9 +523,6 @@ _ = asdict
 # UTC). A record with ``schedule=None`` is a one-shot: it fires once at
 # ``next_run_at`` and then moves to ``AutomationStatus.COMPLETED``.
 #
-# Schema v1 stored an RRULE subset instead; ``AutomationRecord.from_dict``
-# upgrades those records on read via ``cron_from_legacy_rrule``.
-#
 
 if TYPE_CHECKING:
     from deepseek_tui.tools.task import TaskManager
@@ -540,7 +531,6 @@ __all__ = [
     "CURRENT_AUTOMATION_SCHEMA_VERSION",
     "CURRENT_RUN_SCHEMA_VERSION",
     "MISFIRE_GRACE_SECS",
-    "cron_from_legacy_rrule",
     "default_timezone",
     "AutomationManager",
     "AutomationRecord",
@@ -556,7 +546,6 @@ __all__ = [
 
 logger = logging.getLogger(__name__)
 
-# v2 replaced the RRULE subset with a cron expression + IANA timezone.
 CURRENT_AUTOMATION_SCHEMA_VERSION = 2
 CURRENT_RUN_SCHEMA_VERSION = 1
 
@@ -675,60 +664,6 @@ class AutomationSchedule:
         return nxt.astimezone(timezone.utc)
 
 
-# ── legacy RRULE migration (schema v1 → v2) ─────────────────────────
-
-_CRON_DAY_BY_RRULE_TOKEN: dict[str, str] = {
-    "MO": "MON",
-    "TU": "TUE",
-    "WE": "WED",
-    "TH": "THU",
-    "FR": "FRI",
-    "SA": "SAT",
-    "SU": "SUN",
-}
-
-
-def cron_from_legacy_rrule(rrule: str) -> str | None:
-    """Translate a v1 RRULE into a cron expression.
-
-    Returns ``None`` for the far-future placeholder RRULE that v1 used to
-    fake a one-shot job — those become schedule-less one-shots.
-    """
-    parts: dict[str, str] = {}
-    for raw in rrule.split(";"):
-        item = raw.strip()
-        if not item or "=" not in item:
-            continue
-        key, value = item.split("=", 1)
-        parts[key.strip().upper()] = value.strip().upper()
-
-    freq = parts.get("FREQ", "")
-    days = parts.get("BYDAY")
-    cron_days = "*"
-    if days:
-        tokens = [
-            _CRON_DAY_BY_RRULE_TOKEN[t.strip()]
-            for t in days.split(",")
-            if t.strip() in _CRON_DAY_BY_RRULE_TOKEN
-        ]
-        if tokens and len(tokens) < 7:
-            cron_days = ",".join(tokens)
-
-    if freq == "WEEKLY":
-        hour = parts.get("BYHOUR", "0")
-        minute = parts.get("BYMINUTE", "0")
-        return f"{int(minute)} {int(hour)} * * {cron_days}"
-
-    if freq == "HOURLY":
-        interval = int(parts.get("INTERVAL", "1"))
-        if interval >= 24:
-            return None  # placeholder for a one-shot
-        step = "*" if interval == 1 else f"*/{interval}"
-        return f"0 {step} * * {cron_days}"
-
-    return None
-
-
 # ─────────────────────────────────────────────────────────────────────
 # Records
 # ─────────────────────────────────────────────────────────────────────
@@ -793,18 +728,12 @@ class AutomationRecord:
                 f"Automation schema v{schema_version} is newer than "
                 f"supported v{CURRENT_AUTOMATION_SCHEMA_VERSION}"
             )
-        # v1 stored an RRULE and had no timezone — upgrade on read so old
-        # records keep firing without a manual migration step.
-        if "schedule" in raw:
-            schedule = _opt_str_value(raw.get("schedule"))
-        else:
-            schedule = cron_from_legacy_rrule(str(raw.get("rrule", "")))
         return cls(
             schema_version=CURRENT_AUTOMATION_SCHEMA_VERSION,
             id=str(raw["id"]),
             name=str(raw["name"]),
             prompt=str(raw["prompt"]),
-            schedule=schedule,
+            schedule=_opt_str_value(raw.get("schedule")),
             timezone=_opt_str_value(raw.get("timezone")) or default_timezone(),
             cwds=[str(p) for p in raw.get("cwds", [])],
             status=AutomationStatus(raw["status"]),

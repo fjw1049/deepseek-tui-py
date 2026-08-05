@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -18,7 +17,6 @@ from deepseek_tui.tools.automation import (
     AutomationStatus,
     CreateAutomationRequest,
     UpdateAutomationRequest,
-    cron_from_legacy_rrule,
 )
 from deepseek_tui.tools.runtime import create_tool_runtime
 
@@ -89,40 +87,6 @@ def test_create_list_update_automation(tmp_path: Path) -> None:
     assert paused.status is AutomationStatus.PAUSED
     resumed = mgr.resume_automation(created.id)
     assert resumed.status is AutomationStatus.ACTIVE
-
-
-def test_legacy_rrule_records_upgrade_on_read(tmp_path: Path) -> None:
-    """v1 records on disk keep working without a manual migration."""
-    root = tmp_path / "auto"
-    root.mkdir(parents=True)
-    (root / "old.json").write_text(
-        json.dumps(
-            {
-                "schema_version": 1,
-                "id": "old",
-                "name": "每天 18 点汇报",
-                "prompt": "report",
-                "rrule": "FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR,SA,SU;BYHOUR=18;BYMINUTE=0",
-                "status": "active",
-                "created_at": "2026-08-04T00:00:00+00:00",
-                "updated_at": "2026-08-04T00:00:00+00:00",
-            }
-        ),
-        encoding="utf-8",
-    )
-    record = AutomationManager.open(root).get_automation("old")
-    assert record.schedule == "0 18 * * *"
-    assert record.schema_version == 2
-    assert record.timezone
-
-
-def test_legacy_one_shot_placeholder_becomes_a_real_one_shot() -> None:
-    assert cron_from_legacy_rrule("FREQ=HOURLY;INTERVAL=8760") is None
-    assert cron_from_legacy_rrule("FREQ=HOURLY;INTERVAL=2") == "0 */2 * * *"
-    assert (
-        cron_from_legacy_rrule("FREQ=WEEKLY;BYDAY=MO,FR;BYHOUR=9;BYMINUTE=30")
-        == "30 9 * * MON,FRI"
-    )
 
 
 def _daily_automation_due(mgr: AutomationManager, *, seconds_ago: float) -> str:

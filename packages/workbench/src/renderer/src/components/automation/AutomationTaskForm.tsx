@@ -409,7 +409,7 @@ export function AutomationTaskForm({
                     <input
                       value={customCron}
                       onChange={(event) => setCustomCron(event.target.value)}
-                      placeholder="FREQ=WEEKLY;BYDAY=MO;BYHOUR=9;BYMINUTE=30"
+                      placeholder="30 9 * * MON"
                       className="rounded-2xl border border-ds-border bg-ds-card px-4 py-3 font-mono text-[13px] text-ds-ink outline-none placeholder:text-ds-faint focus:border-accent/60"
                     />
                   ) : null}
