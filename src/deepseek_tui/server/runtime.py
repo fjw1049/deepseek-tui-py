@@ -833,7 +833,7 @@ class AppRuntime:
             return {"ok": False, "error": "automation manager not configured"}
         try:
             record = manager.pause_automation(automation_id)
-        except KeyError as exc:
+        except (KeyError, ValueError) as exc:
             return {"ok": False, "error": str(exc)}
         return {"ok": True, "automation": _automation_record_to_dict(record)}
 
@@ -843,7 +843,7 @@ class AppRuntime:
             return {"ok": False, "error": "automation manager not configured"}
         try:
             record = manager.resume_automation(automation_id)
-        except KeyError as exc:
+        except (KeyError, ValueError) as exc:
             return {"ok": False, "error": str(exc)}
         return {"ok": True, "automation": _automation_record_to_dict(record)}
 

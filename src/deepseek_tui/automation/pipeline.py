@@ -34,6 +34,11 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# best_effort=false retries delivery on later ticks instead of giving up on
+# the first failure. Bound that so a permanently-broken channel (Feishu/SMTP
+# down, bad credentials) cannot re-hammer the endpoint every tick forever.
+_MAX_DELIVERY_ATTEMPTS = 5
+
 
 def _skip_internal_failure_delivery(
     automation_id: str,
@@ -319,8 +324,25 @@ async def try_deliver_completed_run(
             exc,
         )
         if not delivery.best_effort:
-            run.error = f"delivery failed: {exc}"
-            return False
+            run.delivery_attempts += 1
+            if run.delivery_attempts < _MAX_DELIVERY_ATTEMPTS:
+                # Retry on a later tick. Note the failure without clobbering
+                # the task's own result/error — the run's terminal status is
+                # unchanged, only delivery is still pending.
+                return True
+            # Out of retries: stop re-hammering the channel and record why.
+            run.delivery_done = True
+            run.error = (
+                f"delivery failed after {run.delivery_attempts} attempts: {exc}"
+            )
+            logger.warning(
+                "[automation][delivery] giving up automation=%s mode=%s attempts=%d",
+                automation.id,
+                delivery.mode,
+                run.delivery_attempts,
+            )
+            return True
+        # best_effort: one shot, mark done regardless.
     run.delivery_done = True
     return True
 

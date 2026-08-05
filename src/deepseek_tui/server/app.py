@@ -582,6 +582,13 @@ def build_fastapi_app(
         shared_tool_runtime=runtime.tool_runtime,
     )
 
+    # Let the automation scheduler deliver ``mode=notify`` results into a
+    # thread. The scheduler starts inside create_tool_runtime (tools layer,
+    # no thread manager yet), so it is injected here once one exists.
+    _tr = runtime.tool_runtime
+    if _tr is not None and getattr(_tr, "automation_manager", None) is not None:
+        _tr.automation_manager.thread_manager = app.state.thread_manager
+
     # Per-request access log: method/path/status/duration. ``uvicorn.access``
     # is silenced in :mod:`logging_setup` so this is the single source of
     # truth for HTTP traffic during real-API testing.

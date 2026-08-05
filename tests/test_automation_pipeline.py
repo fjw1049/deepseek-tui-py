@@ -235,3 +235,82 @@ async def test_try_deliver_failed_run_notifies() -> None:
     summary = deliver.await_args.kwargs["summary"]
     assert "Tool round-trip" not in summary
     assert "❌" in summary
+
+
+def _completed_task():  # type: ignore[no-untyped-def]
+    from unittest.mock import AsyncMock, MagicMock
+
+    from deepseek_tui.tools.task import TaskStatus
+
+    task = MagicMock()
+    task.status = TaskStatus.COMPLETED
+    task.result_summary = "# Report\n\nAll good."
+    task_manager = MagicMock()
+    task_manager.get_task = AsyncMock(return_value=task)
+    return task_manager
+
+
+@pytest.mark.asyncio
+async def test_delivery_retries_when_not_best_effort() -> None:
+    """A failed send with best_effort=false must retry, not clobber the run."""
+    from unittest.mock import AsyncMock, patch
+
+    from deepseek_tui.automation.pipeline import try_deliver_completed_run
+
+    automation = _sample_automation(
+        delivery={"mode": "feishu", "to": "oc_test", "best_effort": False}
+    )
+    run = AutomationRunRecord(
+        id="r1",
+        automation_id="a1",
+        scheduled_for="2026-05-28T08:00:00+00:00",
+        status=AutomationRunStatus.COMPLETED,
+        created_at="2026-05-28T08:00:00+00:00",
+        task_id="task-1",
+    )
+    task_manager = _completed_task()
+    with patch(
+        "deepseek_tui.automation.pipeline._FeishuSink.deliver",
+        AsyncMock(side_effect=RuntimeError("feishu down")),
+    ):
+        ok = await try_deliver_completed_run(automation, run, task_manager)
+
+    assert ok is True  # run mutated (attempt counted) → caller persists it
+    assert run.delivery_done is False  # will retry next tick
+    assert run.delivery_attempts == 1
+    assert run.error is None  # task result NOT clobbered while still retrying
+
+
+@pytest.mark.asyncio
+async def test_delivery_gives_up_after_max_attempts() -> None:
+    """A permanently-broken channel stops re-hammering after the cap."""
+    from unittest.mock import AsyncMock, patch
+
+    from deepseek_tui.automation.pipeline import (
+        _MAX_DELIVERY_ATTEMPTS,
+        try_deliver_completed_run,
+    )
+
+    automation = _sample_automation(
+        delivery={"mode": "feishu", "to": "oc_test", "best_effort": False}
+    )
+    run = AutomationRunRecord(
+        id="r1",
+        automation_id="a1",
+        scheduled_for="2026-05-28T08:00:00+00:00",
+        status=AutomationRunStatus.COMPLETED,
+        created_at="2026-05-28T08:00:00+00:00",
+        task_id="task-1",
+        delivery_attempts=_MAX_DELIVERY_ATTEMPTS - 1,
+    )
+    task_manager = _completed_task()
+    with patch(
+        "deepseek_tui.automation.pipeline._FeishuSink.deliver",
+        AsyncMock(side_effect=RuntimeError("feishu down")),
+    ):
+        ok = await try_deliver_completed_run(automation, run, task_manager)
+
+    assert ok is True
+    assert run.delivery_done is True  # gave up → no more retries
+    assert run.delivery_attempts == _MAX_DELIVERY_ATTEMPTS
+    assert "delivery failed after" in (run.error or "")

@@ -768,6 +768,7 @@ class AutomationRunRecord:
     turn_id: str | None = None
     error: str | None = None
     delivery_done: bool = False
+    delivery_attempts: int = 0
     schema_version: int = CURRENT_RUN_SCHEMA_VERSION
 
     def to_dict(self) -> dict[str, Any]:
@@ -785,6 +786,7 @@ class AutomationRunRecord:
             "turn_id": self.turn_id,
             "error": self.error,
             "delivery_done": self.delivery_done,
+            "delivery_attempts": self.delivery_attempts,
         }
 
     @classmethod
@@ -809,6 +811,7 @@ class AutomationRunRecord:
             turn_id=raw.get("turn_id"),
             error=raw.get("error"),
             delivery_done=bool(raw.get("delivery_done", False)),
+            delivery_attempts=int(raw.get("delivery_attempts", 0)),
         )
 
 
@@ -949,6 +952,12 @@ class AutomationManager:
         self._automations_dir.mkdir(parents=True, exist_ok=True)
         self._runs_dir.mkdir(parents=True, exist_ok=True)
         self._flatten_legacy_defs()
+        # Optional RuntimeThreadManager, injected by the server layer after
+        # construction so ``delivery.mode=notify`` can append a thread notice.
+        # Kept as an opaque ``Any`` so the tools layer never imports server
+        # types. ``None`` on the scheduler path means notify falls back to a
+        # log line only (which is the pre-fix behaviour).
+        self.thread_manager: Any = None
 
     @classmethod
     def open(cls, root: Path) -> AutomationManager:
@@ -1060,9 +1069,16 @@ class AutomationManager:
                 continue
             try:
                 raw = entry.read_text(encoding="utf-8")
+                out.append(AutomationRecord.from_dict(json.loads(raw)))
             except FileNotFoundError:
                 continue
-            out.append(AutomationRecord.from_dict(json.loads(raw)))
+            except (json.JSONDecodeError, ValueError, KeyError) as exc:
+                # One corrupt/half-written file must not stall the whole
+                # tick — drop it and keep every other job scheduling.
+                logger.warning(
+                    "automation_record_skipped path=%s err=%s", entry, exc
+                )
+                continue
         out.sort(key=lambda r: r.updated_at, reverse=True)
         return out
 
@@ -1148,9 +1164,14 @@ class AutomationManager:
                 continue
             try:
                 raw = entry.read_text(encoding="utf-8")
+                out.append(AutomationRunRecord.from_dict(json.loads(raw)))
             except FileNotFoundError:
                 continue
-            out.append(AutomationRunRecord.from_dict(json.loads(raw)))
+            except (json.JSONDecodeError, ValueError, KeyError) as exc:
+                logger.warning(
+                    "automation_run_skipped path=%s err=%s", entry, exc
+                )
+                continue
         out.sort(key=lambda r: r.created_at, reverse=True)
         if limit is not None:
             out = out[:limit]
@@ -1187,7 +1208,10 @@ class AutomationManager:
         if run.status is AutomationRunStatus.FAILED:
             from deepseek_tui.automation.pipeline import try_deliver_completed_run
 
-            if await try_deliver_completed_run(automation, run, task_manager):
+            if await try_deliver_completed_run(
+                automation, run, task_manager,
+                thread_manager=self.thread_manager,
+            ):
                 self.save_run(run)
 
         automation.updated_at = _utc_now_iso()
@@ -1281,7 +1305,10 @@ class AutomationManager:
                         try_deliver_completed_run,
                     )
 
-                    if await try_deliver_completed_run(automation, run, task_manager):
+                    if await try_deliver_completed_run(
+                        automation, run, task_manager,
+                        thread_manager=self.thread_manager,
+                    ):
                         self.save_run(run)
 
             automation.updated_at = now.isoformat()
@@ -1379,7 +1406,8 @@ class AutomationManager:
                         )
 
                         if await try_deliver_completed_run(
-                            automation, run, task_manager
+                            automation, run, task_manager,
+                            thread_manager=self.thread_manager,
                         ):
                             self.save_run(run)
 

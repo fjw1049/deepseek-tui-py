@@ -226,6 +226,77 @@ def test_naive_run_at_is_read_in_the_job_timezone(tmp_path: Path) -> None:
     assert _parse(record.next_run_at) == datetime(2026, 8, 5, 1, 0, tzinfo=timezone.utc)
 
 
+@pytest.mark.asyncio
+async def test_corrupt_record_does_not_stall_the_tick(
+    tmp_path: Path, fired_slots: list[str]
+) -> None:
+    """One garbage .json beside a healthy job must not stop scheduling."""
+    mgr = AutomationManager.open(tmp_path / "auto")
+    healthy_id = _daily_automation_due(mgr, seconds_ago=MISFIRE_GRACE_SECS - 60)
+    # A half-written / hand-broken file lands in the same dir.
+    (mgr.automations_dir / "broken.json").write_text("{ not json", encoding="utf-8")
+
+    records = mgr.list_automations()
+    assert [r.id for r in records] == [healthy_id]  # broken one dropped
+
+    await mgr.scheduler_tick(task_manager=None)  # type: ignore[arg-type]
+    assert len(fired_slots) == 1  # healthy job still fired
+
+
+@pytest.mark.asyncio
+async def test_reconcile_forwards_thread_manager_for_notify(
+    tmp_path: Path,
+) -> None:
+    """mode=notify delivery on the scheduler path must reach the thread manager.
+
+    Regression: reconcile_run_statuses used to call try_deliver_completed_run
+    without thread_manager, so notify could only log — never append a notice.
+    """
+    from unittest.mock import AsyncMock, MagicMock
+
+    from deepseek_tui.tools.automation import AutomationRunRecord
+    from deepseek_tui.tools.task import TaskStatus
+
+    mgr = AutomationManager.open(tmp_path / "auto")
+    created = mgr.create_automation(
+        CreateAutomationRequest(
+            name="notify-job",
+            prompt="p",
+            schedule="0 9 * * *",
+            delivery={"mode": "notify", "thread_id": "th-1"},
+        )
+    )
+    # A run already enqueued (RUNNING, linked to a task) awaiting reconcile.
+    run = AutomationRunRecord(
+        id="run-1",
+        automation_id=created.id,
+        scheduled_for=created.next_run_at or "2026-08-05T01:00:00+00:00",
+        status=AutomationRunStatus.RUNNING,
+        created_at=datetime.now(timezone.utc).isoformat(),
+        task_id="task-1",
+    )
+    mgr.save_run(run)
+
+    thread_manager = MagicMock()
+    thread_manager.append_automation_notice = AsyncMock()
+    mgr.thread_manager = thread_manager
+
+    task = MagicMock()
+    task.status = TaskStatus.COMPLETED
+    task.result_summary = "# Report\n\nAll good."
+    task.thread_id = "th-1"
+    task.turn_id = None
+    task.started_at = None
+    task.ended_at = None
+    task_manager = MagicMock()
+    task_manager.get_task = AsyncMock(return_value=task)
+
+    await mgr.reconcile_run_statuses(task_manager)
+
+    thread_manager.append_automation_notice.assert_awaited_once()
+    assert thread_manager.append_automation_notice.await_args.args[0] == "th-1"
+
+
 def _parse(value: str | None) -> datetime:
     assert value is not None
     return datetime.fromisoformat(value)
