@@ -321,10 +321,68 @@ async def test_rewind_restore_files_restores_shell_changes(
     )
     (ws / "tracked.py").write_text("v2\n", encoding="utf-8")
     manager.checkpoints.record_out_of_band("turn_b", "tracked.py")
+    # Mirrors turn end: post-images captured for conflict detection.
+    manager.checkpoints.record_post_images("turn_b", ws)
 
     await manager.rewind_thread(thread_id, before_item_id="item_u2", restore_files=True)
 
     assert (ws / "tracked.py").read_text(encoding="utf-8") == "v1\n"
+
+
+@pytest.mark.asyncio
+async def test_rewind_restore_files_keeps_third_party_divergence(
+    runtime_app, runtime_data_dir: Path
+) -> None:
+    """A file someone else rewrote after the turn is not clobbered.
+
+    The conflicted path is left on disk, its checkpoint survives as an
+    orphan, and a later forced restore-code can still roll it back.
+    """
+    manager = runtime_app.state.thread_manager
+    ws = _ws(runtime_data_dir)
+    thread_id = await _seed(manager, workspace=str(ws))
+    target = await _seed_tool_write(manager, thread_id, ws)  # old -> new
+    manager.checkpoints.record_post_images("turn_b", ws)
+    # Another session / editor rewrites the file after the turn ended.
+    target.write_text("someone else's work\n", encoding="utf-8")
+
+    await manager.rewind_thread(thread_id, before_item_id="item_u2", restore_files=True)
+
+    assert target.read_text(encoding="utf-8") == "someone else's work\n"
+    assert manager.checkpoints.load("turn_b") is not None
+
+    result = await manager.restore_code(
+        thread_id, before_item_id="item_u1", force_conflicts=True
+    )
+
+    assert result["restored_files"] == ["note.txt"]
+    assert target.read_text(encoding="utf-8") == "old\n"
+    assert manager.checkpoints.load("turn_b") is None
+
+
+@pytest.mark.asyncio
+async def test_rewind_preview_reports_conflicts(
+    runtime_app, client: AsyncClient, runtime_data_dir: Path
+) -> None:
+    manager = runtime_app.state.thread_manager
+    ws = _ws(runtime_data_dir)
+    thread_id = await _seed(manager, workspace=str(ws))
+    target = await _seed_tool_write(manager, thread_id, ws)
+    manager.checkpoints.record_post_images("turn_b", ws)
+    target.write_text("someone else's work\n", encoding="utf-8")
+
+    r = await client.get(
+        f"/v1/threads/{thread_id}/rewind-preview",
+        params={"before_item_id": "item_u2"},
+    )
+
+    assert r.status_code == 200
+    body = r.json()
+    assert body["files"] == ["note.txt"]
+    assert body["conflicts"] == ["note.txt"]
+    assert body["statuses"] == {"note.txt": "conflicted"}
+    # Preview is a dry run: the third-party content is untouched.
+    assert target.read_text(encoding="utf-8") == "someone else's work\n"
 
 
 @pytest.mark.asyncio
@@ -534,6 +592,42 @@ async def test_conversation_rewind_then_restore_code_replays_orphan_checkpoint(
     # restore-code on the remaining conversation still replays the orphan
     # checkpoint left by turn_b.
     result = await manager.restore_code(thread_id, before_item_id="item_u1")
+
+    assert result["restored_files"] == ["note.txt"]
+    assert target.read_text(encoding="utf-8") == "old\n"
+    assert manager.checkpoints.load("turn_b") is None
+
+
+@pytest.mark.asyncio
+async def test_rewind_restore_files_conflict_keeps_third_party_edit(
+    runtime_app, runtime_data_dir: Path
+) -> None:
+    """A file changed by someone else after the turn is never overwritten.
+
+    The conflicted path is left untouched, its checkpoint survives the
+    rewind as an orphan, and a forced restore-code can still roll it back.
+    """
+    manager = runtime_app.state.thread_manager
+    ws = _ws(runtime_data_dir)
+    thread_id = await _seed(manager, workspace=str(ws))
+    target = await _seed_tool_write(manager, thread_id, ws)  # old -> new
+    manager.checkpoints.record_post_images("turn_b", ws)
+    # Another session / editor rewrites the same content afterwards.
+    target.write_text("someone else's work\n", encoding="utf-8")
+
+    preview = await manager.rewind_preview(thread_id, before_item_id="item_u2")
+    assert preview["conflicts"] == ["note.txt"]
+
+    await manager.rewind_thread(
+        thread_id, before_item_id="item_u2", restore_files=True
+    )
+
+    assert target.read_text(encoding="utf-8") == "someone else's work\n"
+    assert manager.checkpoints.load("turn_b") is not None
+
+    result = await manager.restore_code(
+        thread_id, before_item_id="item_u1", force_conflicts=True
+    )
 
     assert result["restored_files"] == ["note.txt"]
     assert target.read_text(encoding="utf-8") == "old\n"

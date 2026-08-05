@@ -147,7 +147,10 @@ paths:
         Drops the item and everything after it from the durable store.
         With restore_files=true the dropped turns' workspace files are also
         rolled back to their pre-turn state (per-turn file checkpoints) before
-        truncation. Emits thread.rewound with restored_files / skipped_files.
+        truncation. Restore is conflict-aware: paths changed by a third party
+        since the turn ended are three-way merged or left untouched
+        (conflicted) unless force_conflicts=true. Emits thread.rewound with
+        restored_files / merged_files / conflicted_files / skipped_files.
       parameters:
         - $ref: "#/components/parameters/threadId"
       requestBody:
@@ -163,6 +166,9 @@ paths:
                 restore_files:
                   type: boolean
                   default: false
+                force_conflicts:
+                  type: boolean
+                  default: false
       responses:
         "200":
           description: Rewound thread
@@ -175,8 +181,10 @@ paths:
       summary: Restore workspace files to before_item_id, conversation intact
       description: >
         Rolls files mutated by the cutoff turn and later turns back to their
-        pre-turn state and consumes those turns' checkpoints. Conversation
-        records are not touched.
+        pre-turn state and consumes those turns' checkpoints (checkpoints
+        holding conflicted paths survive so a later forced restore can still
+        roll them back). Conflict-aware like rewind; force_conflicts=true
+        overwrites diverged paths. Conversation records are not touched.
       parameters:
         - $ref: "#/components/parameters/threadId"
       requestBody:
@@ -189,6 +197,9 @@ paths:
               properties:
                 before_item_id:
                   type: string
+                force_conflicts:
+                  type: boolean
+                  default: false
       responses:
         "200":
           description: Restore report
@@ -202,6 +213,14 @@ paths:
                   before_item_id:
                     type: string
                   restored_files:
+                    type: array
+                    items:
+                      type: string
+                  merged_files:
+                    type: array
+                    items:
+                      type: string
+                  conflicted_files:
                     type: array
                     items:
                       type: string
@@ -223,12 +242,12 @@ paths:
     get:
       summary: Preview files a rewind/restore to before_item_id would touch
       description: >
-        Aggregates the per-turn checkpoints of the cutoff turn and later
-        turns. files lists every mutated path (including skipped ones);
-        skipped is the subset whose pre-image cannot be resolved (non-git
-        workspace without recorded content); turns is the number of affected
-        turns; no_checkpoint counts affected turns that have no checkpoint
-        (nothing recoverable for them).
+        Dry-runs the restore planner against the current disk state. files
+        lists every mutated path; statuses maps each path to its predicted
+        outcome (restored / merged / conflicted / skipped); conflicts and
+        skipped are the corresponding subsets; turns is the number of
+        affected turns; no_checkpoint counts affected turns that have no
+        checkpoint (nothing recoverable for them).
       parameters:
         - $ref: "#/components/parameters/threadId"
         - name: before_item_id
@@ -245,6 +264,15 @@ paths:
                 type: object
                 properties:
                   files:
+                    type: array
+                    items:
+                      type: string
+                  statuses:
+                    type: object
+                    additionalProperties:
+                      type: string
+                      enum: [restored, merged, conflicted, skipped]
+                  conflicts:
                     type: array
                     items:
                       type: string

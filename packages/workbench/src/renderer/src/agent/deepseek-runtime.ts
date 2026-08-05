@@ -1384,20 +1384,36 @@ export class DeepseekRuntimeProvider implements AgentProvider {
     }
   }
 
-  async rewindThread(threadId: string, beforeItemId: string, restoreFiles?: boolean): Promise<void> {
+  async rewindThread(
+    threadId: string,
+    beforeItemId: string,
+    restoreFiles?: boolean,
+    forceConflicts?: boolean
+  ): Promise<void> {
     const r = await window.dsGui.runtimeRequest(
       `/v1/threads/${encodeURIComponent(threadId)}/rewind`,
       'POST',
-      JSON.stringify({ before_item_id: beforeItemId, restore_files: restoreFiles === true })
+      JSON.stringify({
+        before_item_id: beforeItemId,
+        restore_files: restoreFiles === true,
+        force_conflicts: forceConflicts === true
+      })
     )
     if (!r.ok) throw toRuntimeError(readRuntimeError(r.body, 'rewind thread failed'))
   }
 
-  async restoreCode(threadId: string, beforeItemId: string): Promise<RestoreCodeResult> {
+  async restoreCode(
+    threadId: string,
+    beforeItemId: string,
+    forceConflicts?: boolean
+  ): Promise<RestoreCodeResult> {
     const r = await window.dsGui.runtimeRequest(
       `/v1/threads/${encodeURIComponent(threadId)}/restore-code`,
       'POST',
-      JSON.stringify({ before_item_id: beforeItemId })
+      JSON.stringify({
+        before_item_id: beforeItemId,
+        force_conflicts: forceConflicts === true
+      })
     )
     if (!r.ok) throw toRuntimeError(readRuntimeError(r.body, 'restore code failed'))
     const parsed = JSON.parse(r.body) as Record<string, unknown>
@@ -1417,6 +1433,7 @@ export class DeepseekRuntimeProvider implements AgentProvider {
     return {
       files: stringListFromJson(parsed, 'files'),
       skipped: stringListFromJson(parsed, 'skipped'),
+      conflicts: stringListFromJson(parsed, 'conflicts'),
       isGit: parsed.is_git !== false,
       turns: typeof parsed.turns === 'number' ? parsed.turns : 0
     }

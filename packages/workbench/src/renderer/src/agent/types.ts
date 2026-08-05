@@ -49,6 +49,8 @@ export type RestoreCodeResult = {
 export type RewindPreview = {
   files: string[]
   skipped: string[]
+  /** Paths changed by a third party since the turn — restore leaves them untouched unless forced. */
+  conflicts: string[]
   isGit: boolean
   turns: number
 }
@@ -423,12 +425,21 @@ export interface AgentProvider {
   purgeArchivedThreads?(): Promise<{ deleted: number; requested: number }>
   forkThread?(threadId: string, throughItemId?: string): Promise<NormalizedThread>
   /** Truncate a thread in place: drop `beforeItemId` and everything after it. */
-  rewindThread?(threadId: string, beforeItemId: string, restoreFiles?: boolean): Promise<void>
+  rewindThread?(
+    threadId: string,
+    beforeItemId: string,
+    restoreFiles?: boolean,
+    forceConflicts?: boolean
+  ): Promise<void>
   /**
    * Restore workspace files to the state before `beforeItemId`'s turn WITHOUT
    * truncating the conversation (POST /v1/threads/{id}/restore-code).
    */
-  restoreCode?(threadId: string, beforeItemId: string): Promise<RestoreCodeResult>
+  restoreCode?(
+    threadId: string,
+    beforeItemId: string,
+    forceConflicts?: boolean
+  ): Promise<RestoreCodeResult>
   /**
    * Preview which files a rewind-with-restore (or restore-code) at
    * `beforeItemId` would touch (GET /v1/threads/{id}/rewind-preview).

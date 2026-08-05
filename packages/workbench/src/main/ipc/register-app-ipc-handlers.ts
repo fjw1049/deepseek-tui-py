@@ -74,6 +74,7 @@ import {
   resolveEffectiveRuntimeToken
 } from '../deepseek-process'
 import { commitGitChanges, createAndSwitchGitBranch, getGitBranches, getGitLog, getGitWorkingChanges, stashAndSwitchGitBranch, suggestGitCommitMessage, switchGitBranch } from '../services/git-service'
+import { unwatchWorkspaceFs, watchWorkspaceFs } from '../services/workspace-fs-watch-service'
 import { getTrendingRepos } from '../services/trending-repos'
 import {
   fetchSkillMarkdown,
@@ -1161,6 +1162,17 @@ export function registerAppIpcHandlers(options: RegisterAppIpcHandlersOptions): 
   ipcMain.handle('deepseek:diagnostics', async () =>
     diagnoseDeepseekRuntime({ store, prepareDeepseekBinary, resolveDeepseekConfigPath })
   )
+
+  ipcMain.handle('workspace:fs-watch', (event, workspaceRoot: unknown) =>
+    watchWorkspaceFs(
+      event.sender,
+      parseIpcPayload('workspace:fs-watch', workspaceRootSchema, workspaceRoot)
+    )
+  )
+  ipcMain.handle('workspace:fs-unwatch', (event) => {
+    unwatchWorkspaceFs(event.sender)
+    return true
+  })
 
   ipcMain.handle('git:branches', async (_, workspaceRoot: unknown) =>
     getGitBranches(parseIpcPayload('git:branches', workspaceRootSchema, workspaceRoot))

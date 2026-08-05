@@ -28,6 +28,7 @@ import {
 } from '../lib/right-sidebar-state'
 import { closeAllTerminalSessions } from '../store/terminal-session-store'
 import { useWorkspaceEditorStore } from '../store/workspace-editor-store'
+import { useWorkspaceFsWatch } from '../hooks/use-workspace-fs-watch'
 import { isChatsWorkspace, resolveActiveThreadWorkspace, resolveThreadFilesystemRoot } from '../lib/workspace-path'
 import {
   isShortcutEnabled,
@@ -280,6 +281,7 @@ export function Workbench(): ReactElement {
       compactActiveThread: s.compactActiveThread
     }))
   )
+  useWorkspaceFsWatch()
   const [input, setInput] = useState('')
   const [rightSidebarOpen, setRightSidebarOpen] = useState(readStoredRightSidebarOpen)
   const [rightSidebarCollapsed, setRightSidebarCollapsed] = useState(readStoredRightSidebarCollapsed)

@@ -370,6 +370,10 @@ export type DsGuiApi = {
   queryUsage: (params?: { range?: UsageRange; locale?: string }) => Promise<UsageQueryResult>
   pruneUsageProvider: (providerId: string) => Promise<{ ok: true }>
   pruneUsageEndpointModel: (providerId: string, modelId: string) => Promise<{ ok: true }>
+  /** Watch the workspace on disk; pushes `workspace:fs-changed` on edits (external editors included). */
+  watchWorkspaceFs: (workspaceRoot: string) => Promise<boolean>
+  unwatchWorkspaceFs: () => Promise<boolean>
+  onWorkspaceFsChanged: (handler: (payload: { root: string }) => void) => () => void
   getGitBranches: (workspaceRoot: string) => Promise<GitBranchesResult>
   getGitLog: (workspaceRoot: string) => Promise<GitLogResult>
   getGitWorkingChanges: (workspaceRoot: string) => Promise<GitWorkingChangesResult>

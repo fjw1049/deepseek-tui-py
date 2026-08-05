@@ -2909,8 +2909,10 @@ function UserMessageBubble({
   const [previewing, setPreviewing] = useState(false)
   const [confirm, setConfirm] = useState<{
     files: string[]
+    conflicts: string[]
     previewFailed: boolean
   } | null>(null)
+  const [forceConflicts, setForceConflicts] = useState(false)
   // File restore only works for messages persisted on the runtime (`item_…`).
   const canRestoreFiles = activeThreadId != null && block.id.startsWith('item_')
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -2951,7 +2953,7 @@ function UserMessageBubble({
     setEditing(false)
   }
 
-  const commitResend = async (restoreFiles: boolean): Promise<void> => {
+  const commitResend = async (restoreFiles: boolean, force = false): Promise<void> => {
     const trimmed = draft.trim()
     if (!trimmed || busy || submitting) return
     const wireText = focus ? composeUserFocusMessage(focus, trimmed) : trimmed
@@ -2960,7 +2962,8 @@ function UserMessageBubble({
     setEditing(false)
     try {
       await rewindAndResend(block.id, wireText, {
-        restoreFiles: restoreFiles && canRestoreFiles
+        restoreFiles: restoreFiles && canRestoreFiles,
+        forceConflicts: restoreFiles && canRestoreFiles && force
       })
     } finally {
       setSubmitting(false)
@@ -2989,9 +2992,15 @@ function UserMessageBubble({
         await commitResend(false)
         return
       }
-      setConfirm({ files: preview.files, previewFailed: false })
+      setForceConflicts(false)
+      setConfirm({
+        files: preview.files,
+        conflicts: preview.conflicts ?? [],
+        previewFailed: false
+      })
     } catch {
-      setConfirm({ files: [], previewFailed: true })
+      setForceConflicts(false)
+      setConfirm({ files: [], conflicts: [], previewFailed: true })
     } finally {
       setPreviewing(false)
     }
@@ -2999,9 +3008,14 @@ function UserMessageBubble({
 
   if (editing) {
     const actionsDisabled = !draft.trim() || busy || submitting || previewing
-    const confirmFiles = confirm?.files ?? []
+    const conflictSet = new Set(confirm?.conflicts ?? [])
+    // Conflicted paths first so they stay visible when the list is cut.
+    const confirmFiles = [...(confirm?.files ?? [])].sort(
+      (a, b) => Number(conflictSet.has(b)) - Number(conflictSet.has(a))
+    )
     const visibleFiles = confirmFiles.slice(0, REWIND_CONFIRM_FILE_LIMIT)
     const moreFiles = confirmFiles.length - visibleFiles.length
+    const hasConflicts = conflictSet.size > 0
 
     return (
       <div id={`block-${block.id}`} className="ds-user-message">
@@ -3094,8 +3108,17 @@ function UserMessageBubble({
                     {!confirm.previewFailed && visibleFiles.length > 0 ? (
                       <ul className="max-h-40 overflow-y-auto rounded-xl border border-ds-border-muted/70 bg-ds-main/30 px-3 py-2 font-mono text-[12px] leading-5 text-ds-ink">
                         {visibleFiles.map((file) => (
-                          <li key={file} className="truncate" title={file}>
-                            {file}
+                          <li
+                            key={file}
+                            className="flex min-w-0 items-center gap-2"
+                            title={file}
+                          >
+                            <span className="min-w-0 truncate">{file}</span>
+                            {conflictSet.has(file) ? (
+                              <span className="shrink-0 rounded bg-amber-500/15 px-1.5 text-[10px] font-sans font-medium leading-4 text-amber-500">
+                                {t('rewindResendConfirmConflictTag')}
+                              </span>
+                            ) : null}
                           </li>
                         ))}
                         {moreFiles > 0 ? (
@@ -3104,6 +3127,24 @@ function UserMessageBubble({
                           </li>
                         ) : null}
                       </ul>
+                    ) : null}
+                    {hasConflicts ? (
+                      <div className="space-y-2">
+                        <p className="text-[12px] leading-5 text-amber-500">
+                          {t('rewindResendConfirmConflictNote', {
+                            count: conflictSet.size
+                          })}
+                        </p>
+                        <label className="flex cursor-pointer items-center gap-2 text-[12px] leading-5 text-ds-muted">
+                          <input
+                            type="checkbox"
+                            checked={forceConflicts}
+                            onChange={(e) => setForceConflicts(e.target.checked)}
+                            className="h-3.5 w-3.5 accent-amber-500"
+                          />
+                          {t('rewindResendConfirmForce')}
+                        </label>
+                      </div>
                     ) : null}
                   </div>
                   <div className="flex flex-wrap items-center justify-end gap-2 border-t border-ds-border-muted px-5 py-3">
@@ -3124,7 +3165,7 @@ function UserMessageBubble({
                     </button>
                     <button
                       type="button"
-                      onClick={() => void commitResend(true)}
+                      onClick={() => void commitResend(true, forceConflicts)}
                       disabled={submitting}
                       className="rounded-md bg-accent px-3 py-1.5 text-[13px] font-medium text-white shadow-sm transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
                     >

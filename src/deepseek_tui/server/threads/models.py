@@ -186,12 +186,17 @@ class RewindThreadRequest(BaseModel):
     # Also roll the dropped turns' workspace files back to their pre-turn
     # state (per-turn file checkpoints). Conversation is truncated either way.
     restore_files: bool = False
+    # Overwrite paths whose current content diverged from what the turns
+    # left behind (third-party edits) instead of leaving them untouched.
+    force_conflicts: bool = False
 
 
 class RestoreCodeRequest(BaseModel):
     """Roll workspace files back to ``before_item_id``, conversation intact."""
 
     before_item_id: str
+    # Same semantics as RewindThreadRequest.force_conflicts.
+    force_conflicts: bool = False
 
 
 class StartTurnRequest(BaseModel):

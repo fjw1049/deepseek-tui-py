@@ -1337,6 +1337,7 @@ async def rewind_thread(request: Request, thread_id: str) -> dict[str, Any]:
             thread_id,
             before_item_id=req.before_item_id,
             restore_files=req.restore_files,
+            force_conflicts=req.force_conflicts,
         )
     except FileNotFoundError as exc:
         raise api_error(404, str(exc), error="thread_not_found") from exc
@@ -1351,7 +1352,11 @@ async def restore_code(request: Request, thread_id: str) -> dict[str, Any]:
     payload = await body(request)
     req = RestoreCodeRequest.model_validate(payload)
     try:
-        return await mgr.restore_code(thread_id, before_item_id=req.before_item_id)
+        return await mgr.restore_code(
+            thread_id,
+            before_item_id=req.before_item_id,
+            force_conflicts=req.force_conflicts,
+        )
     except FileNotFoundError as exc:
         raise api_error(404, str(exc), error="thread_not_found") from exc
     except ValueError as exc:

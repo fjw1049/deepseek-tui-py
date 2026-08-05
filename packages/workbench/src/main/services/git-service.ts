@@ -1,4 +1,6 @@
 import { execFile } from 'node:child_process'
+import { stat } from 'node:fs/promises'
+import { join } from 'node:path'
 import { promisify } from 'node:util'
 import type { GitCommitMessageSuggestionResult, GitCommitResult } from '../../shared/git-commit'
 import type { GitLogCommit, GitLogResult, GitLogUpstream } from '../../shared/git-log'
@@ -246,6 +248,39 @@ export async function stashAndSwitchGitBranch(
   }
 }
 
+// Result cache for getGitWorkingChanges keyed by workspace root. The full
+// `git diff HEAD` (plus one diff per untracked file) is expensive on large
+// repos and the panels re-request it on every dirty tick; a cheap fingerprint
+// (HEAD sha + porcelain output + mtime/size of each changed file) detects
+// when nothing actually changed and lets us return the previous result.
+const workingChangesCache = new Map<string, { fingerprint: string; result: GitWorkingChangesResult }>()
+const WORKING_CHANGES_CACHE_MAX_ROOTS = 8
+
+async function workingChangesFingerprint(
+  cwd: string,
+  repositoryRoot: string,
+  porcelainLines: string[],
+  paths: string[]
+): Promise<string> {
+  let head = ''
+  try {
+    head = (await runGit(cwd, ['rev-parse', 'HEAD'])).stdout.trim()
+  } catch {
+    // Repo without commits — porcelain output still fingerprints the state.
+  }
+  const stats = await Promise.all(
+    paths.map(async (path) => {
+      try {
+        const s = await stat(join(repositoryRoot, path))
+        return `${path}\u0000${s.mtimeMs}\u0000${s.size}`
+      } catch {
+        return `${path}\u0000absent`
+      }
+    })
+  )
+  return [head, porcelainLines.join('\n'), stats.join('\u0001')].join('\u0002')
+}
+
 export async function getGitWorkingChanges(workspaceRoot: string): Promise<GitWorkingChangesResult> {
   const cwd = workspaceRoot.trim()
   if (!cwd) {
@@ -272,7 +307,19 @@ export async function getGitWorkingChanges(workspaceRoot: string): Promise<GitWo
       )
 
     if (entries.length === 0) {
+      workingChangesCache.delete(cwd)
       return { ok: true, repositoryRoot, files: [] }
+    }
+
+    const fingerprint = await workingChangesFingerprint(
+      cwd,
+      repositoryRoot,
+      porcelainLines,
+      entries.map((entry) => entry.path)
+    )
+    const cached = workingChangesCache.get(cwd)
+    if (cached && cached.fingerprint === fingerprint) {
+      return cached.result
     }
 
     const trackedDiff = await runGitStdout(cwd, ['diff', 'HEAD', '--no-color'], {
@@ -314,7 +361,13 @@ export async function getGitWorkingChanges(workspaceRoot: string): Promise<GitWo
     }
 
     files.sort((a, b) => a.path.localeCompare(b.path))
-    return { ok: true, repositoryRoot, files }
+    const result: GitWorkingChangesResult = { ok: true, repositoryRoot, files }
+    if (workingChangesCache.size >= WORKING_CHANGES_CACHE_MAX_ROOTS && !workingChangesCache.has(cwd)) {
+      const oldest = workingChangesCache.keys().next().value
+      if (oldest !== undefined) workingChangesCache.delete(oldest)
+    }
+    workingChangesCache.set(cwd, { fingerprint, result })
+    return result
   } catch (error) {
     return gitWorkingChangesFailure(error)
   }

@@ -85,6 +85,17 @@ const api = {
   pruneUsageProvider: (providerId) => ipcRenderer.invoke('usage:prune-provider', { providerId }),
   pruneUsageEndpointModel: (providerId, modelId) =>
     ipcRenderer.invoke('usage:prune-endpoint-model', { providerId, modelId }),
+  watchWorkspaceFs: (workspaceRoot) =>
+    ipcRenderer.invoke('workspace:fs-watch', workspaceRoot),
+  unwatchWorkspaceFs: () => ipcRenderer.invoke('workspace:fs-unwatch'),
+  onWorkspaceFsChanged: (handler) => {
+    const wrapped = (
+      _: Electron.IpcRendererEvent,
+      payload: Parameters<typeof handler>[0]
+    ) => handler(payload)
+    ipcRenderer.on('workspace:fs-changed', wrapped)
+    return () => ipcRenderer.removeListener('workspace:fs-changed', wrapped)
+  },
   getGitBranches: (workspaceRoot) =>
     ipcRenderer.invoke('git:branches', workspaceRoot),
   getGitLog: (workspaceRoot) => ipcRenderer.invoke('git:log', workspaceRoot),

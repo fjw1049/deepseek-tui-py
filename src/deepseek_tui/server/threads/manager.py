@@ -1086,8 +1086,49 @@ class RuntimeThreadManager:
         candidates.sort(key=lambda cp: cp.created_at, reverse=True)
         return candidates
 
+    async def _paths_claimed_by_other_turns(
+        self, turn_id: str, workspace: Path
+    ) -> set[str]:
+        """Paths other active turns in the same workspace already touched.
+
+        Turn-end git reconcile attributes every not-yet-covered dirty path
+        to the finishing turn. When several sessions share one workspace
+        that guess would also claim the other sessions' in-flight edits —
+        and a later restore of this thread would then revert their work —
+        so their checkpoints' paths are fenced off. Attribution errs on the
+        side of missing a path (no rollback for it) rather than claiming a
+        path that belongs to someone else.
+        """
+        other_turn_ids: list[str] = []
+        async with self._active_lock:
+            for state in self._active.values():
+                active = state.active_turn
+                if active is None or active.turn_id == turn_id:
+                    continue
+                try:
+                    ws = (
+                        Path(state.engine.tool_context.working_directory)
+                        .expanduser()
+                        .resolve()
+                    )
+                except Exception:
+                    continue
+                if ws == workspace:
+                    other_turn_ids.append(active.turn_id)
+        paths: set[str] = set()
+        for other_id in other_turn_ids:
+            checkpoint = self.checkpoints.load(other_id)
+            if checkpoint is not None:
+                paths.update(checkpoint.mutated)
+        return paths
+
     async def rewind_thread(
-        self, thread_id: str, *, before_item_id: str, restore_files: bool = False
+        self,
+        thread_id: str,
+        *,
+        before_item_id: str,
+        restore_files: bool = False,
+        force_conflicts: bool = False,
     ) -> ThreadRecord:
         """Truncate a thread in place at ``before_item_id``.
 
@@ -1099,11 +1140,15 @@ class RuntimeThreadManager:
         With ``restore_files=True`` the dropped turns' file checkpoints —
         plus orphan checkpoints left over from earlier conversation-only
         rewinds — are restored (workspace rolled back to its pre-turn state)
-        before truncation and then consumed (deleted). With
-        ``restore_files=False`` checkpoints are deliberately kept on disk so
-        a later restore-code can still roll the files back: orphans linger
-        until consumed (disk space in exchange for rollback-ability —
-        intentionally no TTL or other reaping).
+        before truncation and then consumed (deleted). Restore is
+        conflict-aware: paths changed by a third party since the turn ended
+        are merged or left untouched (``conflicted``); ``force_conflicts``
+        overwrites them anyway. Checkpoints with conflicted paths survive
+        as orphans so a later restore-code / forced restore can still roll
+        them back. With ``restore_files=False`` checkpoints are deliberately
+        kept on disk so a later restore-code can still roll the files back:
+        orphans linger until consumed (disk space in exchange for
+        rollback-ability — intentionally no TTL or other reaping).
 
         Cutoff semantics (v1): the cutoff turn is consumed/restored whole,
         even when the rewind keeps its earlier items. The UI only exposes
@@ -1126,6 +1171,8 @@ class RuntimeThreadManager:
             turns, cutoff_turn_index = self._turns_from_item(thread_id, before_item_id)
 
             restored_files: list[str] = []
+            merged_files: list[str] = []
+            conflicted_files: list[str] = []
             skipped_files: list[str] = []
             if restore_files:
                 candidates = self._checkpoint_candidates(
@@ -1134,10 +1181,19 @@ class RuntimeThreadManager:
                 report = await self.checkpoints.restore(
                     [cp.turn_id for cp in candidates],
                     _resolved_workspace_path(thread.workspace),
+                    force=force_conflicts,
                 )
                 restored_files = report.restored
+                merged_files = report.merged
+                conflicted_files = report.conflicted
                 skipped_files = report.skipped
+                conflicted = set(report.conflicted)
                 for cp in candidates:
+                    # Keep checkpoints holding conflicted paths (as orphans)
+                    # so a later restore-code / forced restore can still
+                    # roll those files back.
+                    if conflicted and any(p in conflicted for p in cp.mutated):
+                        continue
                     self.checkpoints.delete(cp.turn_id)
 
             cutoff_turn = turns[cutoff_turn_index]
@@ -1183,21 +1239,26 @@ class RuntimeThreadManager:
                 "before_item_id": before_item_id,
                 "restore_files": restore_files,
                 "restored_files": restored_files,
+                "merged_files": merged_files,
+                "conflicted_files": conflicted_files,
                 "skipped_files": skipped_files,
             },
         )
         return thread
 
     async def restore_code(
-        self, thread_id: str, *, before_item_id: str
+        self, thread_id: str, *, before_item_id: str, force_conflicts: bool = False
     ) -> dict[str, Any]:
         """Roll workspace files back to ``before_item_id``, conversation intact.
 
         Restores and consumes (deletes) the file checkpoints of the cutoff
         turn and every turn after it, plus this thread's orphan checkpoints
-        left over from earlier conversation-only rewinds. Dropped turns
-        without a checkpoint are listed in ``turns_without_checkpoint`` so
-        callers can surface that only some files were recoverable.
+        left over from earlier conversation-only rewinds. Restore is
+        conflict-aware (see ``TurnCheckpointStore.restore``); checkpoints
+        holding conflicted paths survive so a later forced restore can still
+        roll them back. Dropped turns without a checkpoint are listed in
+        ``turns_without_checkpoint`` so callers can surface that only some
+        files were recoverable.
 
         Cutoff semantics (v1, same as rewind_thread): the cutoff turn is
         consumed/restored whole, even when ``before_item_id`` sits mid-turn.
@@ -1217,8 +1278,12 @@ class RuntimeThreadManager:
             report = await self.checkpoints.restore(
                 [cp.turn_id for cp in candidates],
                 _resolved_workspace_path(thread.workspace),
+                force=force_conflicts,
             )
+            conflicted = set(report.conflicted)
             for cp in candidates:
+                if conflicted and any(p in conflicted for p in cp.mutated):
+                    continue
                 self.checkpoints.delete(cp.turn_id)
 
         candidate_ids = {cp.turn_id for cp in candidates}
@@ -1226,6 +1291,8 @@ class RuntimeThreadManager:
             "thread_id": thread_id,
             "before_item_id": before_item_id,
             "restored_files": report.restored,
+            "merged_files": report.merged,
+            "conflicted_files": report.conflicted,
             "skipped_files": report.skipped,
             "turns_without_checkpoint": [
                 t.id for t in turns[cutoff_turn_index:] if t.id not in candidate_ids
@@ -1238,30 +1305,33 @@ class RuntimeThreadManager:
     ) -> dict[str, Any]:
         """Aggregate the file-restore impact of rewinding to ``before_item_id``.
 
-        ``files`` lists every workspace path the affected checkpoints mutate —
-        the exact candidate set rewind/restore-code would replay, including
-        orphan checkpoints left by earlier conversation-only rewinds.
-        ``skipped`` is the subset whose pre-image cannot be resolved (non-git
-        workspace without recorded content). Conversation turns in range
-        without a checkpoint are counted in ``no_checkpoint``.
+        Dry-runs the restore planner, so per-path outcomes reflect the
+        current disk state. ``files`` lists every workspace path the
+        affected checkpoints mutate — the exact candidate set
+        rewind/restore-code would replay, including orphan checkpoints left
+        by earlier conversation-only rewinds. ``statuses`` maps each path to
+        its predicted outcome (``restored`` / ``merged`` / ``conflicted`` /
+        ``skipped``); ``conflicts`` and ``skipped`` are the corresponding
+        subsets. Conversation turns in range without a checkpoint are
+        counted in ``no_checkpoint``.
         """
-        self.store.load_thread(thread_id)
+        thread = self.store.load_thread(thread_id)
         turns, cutoff_turn_index = self._turns_from_item(thread_id, before_item_id)
         ranged = turns[cutoff_turn_index:]
         candidates = self._checkpoint_candidates(thread_id, turns, cutoff_turn_index)
-        files: dict[str, bool] = {}  # path -> pre-image resolvable in some turn
-        is_git = False
-        for checkpoint in candidates:
-            is_git = is_git or checkpoint.is_git
-            for path in checkpoint.mutated:
-                resolvable = path in checkpoint.pre_contents or (
-                    checkpoint.is_git and bool(checkpoint.head)
-                )
-                files[path] = files.get(path, False) or resolvable
+        statuses = await self.checkpoints.preview(
+            [cp.turn_id for cp in candidates],
+            _resolved_workspace_path(thread.workspace),
+        )
+        is_git = any(cp.is_git for cp in candidates)
         candidate_ids = {cp.turn_id for cp in candidates}
         return {
-            "files": sorted(files),
-            "skipped": sorted(p for p, ok in files.items() if not ok),
+            "files": sorted(statuses),
+            "statuses": {p: statuses[p] for p in sorted(statuses)},
+            "conflicts": sorted(
+                p for p, s in statuses.items() if s == "conflicted"
+            ),
+            "skipped": sorted(p for p, s in statuses.items() if s == "skipped"),
             "is_git": is_git,
             "turns": len(ranged),
             "no_checkpoint": sum(1 for t in ranged if t.id not in candidate_ids),
@@ -2434,7 +2504,14 @@ class RuntimeThreadManager:
             _state = self._active.get(thread_id)
             _engine = _state.engine if _state is not None else None
         git_baseline = None
+        turn_workspace: Path | None = None
         if _engine is not None:
+            try:
+                turn_workspace = Path(
+                    _engine.tool_context.working_directory
+                ).expanduser().resolve()
+            except Exception:
+                turn_workspace = None
             _engine.tool_context.on_file_mutation = _mutation_sink
             mgr = _engine.tool_context.subagent_manager
             if mgr is not None:
@@ -3606,17 +3683,43 @@ class RuntimeThreadManager:
 
         # File Mutation Ledger: git reconcile orphans, then final turn.diff.
         try:
-            if git_baseline is not None and git_baseline.is_git:
-                for fm in await reconcile_to_ledger(mutation_ledger, git_baseline):
-                    self.checkpoints.record_out_of_band(turn_id, fm.path)
-            final_snap = mutation_ledger.mark_complete(emit=False)
-            if final_snap.totals.get("files", 0) > 0 or mutation_ledger.revision > 0:
-                pending_turn_diffs.append(final_snap.to_dict())
-            await flush_turn_diffs()
-        except Exception:
-            logger.debug(
-                "turn_diff_finalize_failed turn=%s", turn_id, exc_info=True
-            )
+            try:
+                if git_baseline is not None and git_baseline.is_git:
+                    # Fence: dirty paths already claimed by other sessions'
+                    # active turns in the same workspace must not be attributed
+                    # to this turn (a later restore would revert their work).
+                    exclude = await self._paths_claimed_by_other_turns(
+                        turn_id, git_baseline.workspace
+                    )
+                    for fm in await reconcile_to_ledger(
+                        mutation_ledger, git_baseline, exclude_paths=exclude
+                    ):
+                        # Reconcile attribution is a guess (an external editor
+                        # may have written the file mid-turn) — mark uncertain
+                        # so restore holds it to an exact post-image match.
+                        self.checkpoints.record_out_of_band(
+                            turn_id, fm.path, uncertain=True
+                        )
+                final_snap = mutation_ledger.mark_complete(emit=False)
+                if final_snap.totals.get("files", 0) > 0 or mutation_ledger.revision > 0:
+                    pending_turn_diffs.append(final_snap.to_dict())
+                await flush_turn_diffs()
+            except Exception:
+                logger.debug(
+                    "turn_diff_finalize_failed turn=%s", turn_id, exc_info=True
+                )
+            # Capture every mutated path's end-of-turn content so a later
+            # restore can detect (and merge around) third-party edits instead
+            # of blindly overwriting them.
+            try:
+                if turn_workspace is not None:
+                    await asyncio.to_thread(
+                        self.checkpoints.record_post_images, turn_id, turn_workspace
+                    )
+            except Exception:
+                logger.debug(
+                    "turn_post_image_capture_failed turn=%s", turn_id, exc_info=True
+                )
         finally:
             async with self._active_lock:
                 _state = self._active.get(thread_id)

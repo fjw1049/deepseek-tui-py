@@ -124,6 +124,7 @@ async def test_restore_git_show_fallback_for_clean_tracked_file(
     store.begin_turn("turn_1", None, head=head, is_git=True)
     store.record_out_of_band("turn_1", "tracked.py")
     (git_repo / "tracked.py").write_text("changed\n", encoding="utf-8")
+    store.record_post_images("turn_1", git_repo)
 
     report = await store.restore(["turn_1"], git_repo)
 
@@ -139,11 +140,166 @@ async def test_restore_git_show_failure_means_file_did_not_exist(
     store.begin_turn("turn_1", None, head=head, is_git=True)
     store.record_out_of_band("turn_1", "created_by_shell.py")
     (git_repo / "created_by_shell.py").write_text("new\n", encoding="utf-8")
+    store.record_post_images("turn_1", git_repo)
 
     report = await store.restore(["turn_1"], git_repo)
 
     assert not (git_repo / "created_by_shell.py").exists()
     assert report.restored == ["created_by_shell.py"]
+
+
+@pytest.mark.asyncio
+async def test_restore_out_of_band_without_post_image_conflicts(
+    store: TurnCheckpointStore, git_repo: Path
+) -> None:
+    """No post-image means ownership cannot be proven — never delete/revert."""
+    head = _git(git_repo, "rev-parse", "HEAD")
+    store.begin_turn("turn_1", None, head=head, is_git=True)
+    store.record_out_of_band("turn_1", "created_by_shell.py")
+    (git_repo / "created_by_shell.py").write_text("new\n", encoding="utf-8")
+
+    report = await store.restore(["turn_1"], git_repo)
+
+    assert report.restored == []
+    assert report.conflicted == ["created_by_shell.py"]
+    assert (git_repo / "created_by_shell.py").read_text(encoding="utf-8") == "new\n"
+
+
+@pytest.mark.asyncio
+async def test_restore_merges_around_third_party_edit(
+    store: TurnCheckpointStore, tmp_path: Path
+) -> None:
+    """Edits made after the turn in a different region are kept."""
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    pre = "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\n"
+    post = pre.replace("two\n", "TURN\n")
+    third_party = post.replace("nine\n", "OTHER\n")
+    store.begin_turn("turn_1", None, head=None, is_git=False)
+    store.record_pre_write("turn_1", "f.py", pre)
+    (ws / "f.py").write_text(post, encoding="utf-8")
+    store.record_post_images("turn_1", ws)
+    (ws / "f.py").write_text(third_party, encoding="utf-8")
+
+    report = await store.restore(["turn_1"], ws)
+
+    # The turn's change (two -> TURN) is reverted, the third-party change
+    # (nine -> OTHER) survives.
+    assert (ws / "f.py").read_text(encoding="utf-8") == pre.replace(
+        "nine\n", "OTHER\n"
+    )
+    assert report.merged == ["f.py"]
+    assert report.restored == []
+    assert report.conflicted == []
+
+
+@pytest.mark.asyncio
+async def test_restore_conflicting_third_party_edit_left_untouched(
+    store: TurnCheckpointStore, tmp_path: Path
+) -> None:
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    store.begin_turn("turn_1", None, head=None, is_git=False)
+    store.record_pre_write("turn_1", "f.py", "old\n")
+    (ws / "f.py").write_text("turn\n", encoding="utf-8")
+    store.record_post_images("turn_1", ws)
+    # Same line rewritten by someone else after the turn.
+    (ws / "f.py").write_text("someone else\n", encoding="utf-8")
+
+    report = await store.restore(["turn_1"], ws)
+
+    assert report.conflicted == ["f.py"]
+    assert report.restored == []
+    assert (ws / "f.py").read_text(encoding="utf-8") == "someone else\n"
+
+
+@pytest.mark.asyncio
+async def test_restore_force_overwrites_conflicts(
+    store: TurnCheckpointStore, tmp_path: Path
+) -> None:
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    store.begin_turn("turn_1", None, head=None, is_git=False)
+    store.record_pre_write("turn_1", "f.py", "old\n")
+    (ws / "f.py").write_text("turn\n", encoding="utf-8")
+    store.record_post_images("turn_1", ws)
+    (ws / "f.py").write_text("someone else\n", encoding="utf-8")
+
+    report = await store.restore(["turn_1"], ws, force=True)
+
+    assert report.restored == ["f.py"]
+    assert report.conflicted == []
+    assert (ws / "f.py").read_text(encoding="utf-8") == "old\n"
+
+
+@pytest.mark.asyncio
+async def test_restore_uncertain_path_never_merges(
+    store: TurnCheckpointStore, git_repo: Path
+) -> None:
+    """Reconcile-attributed paths need an exact post match; a divergence is a
+    conflict even when a three-way merge would succeed."""
+    pre = "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\n"
+    (git_repo / "tracked.py").write_text(pre, encoding="utf-8")
+    _git(git_repo, "add", "tracked.py")
+    _git(git_repo, "commit", "-m", "long file")
+    head = _git(git_repo, "rev-parse", "HEAD")
+    store.begin_turn("turn_1", None, head=head, is_git=True)
+    store.record_out_of_band("turn_1", "tracked.py", uncertain=True)
+    (git_repo / "tracked.py").write_text(
+        pre.replace("two\n", "TURN\n"), encoding="utf-8"
+    )
+    store.record_post_images("turn_1", git_repo)
+    (git_repo / "tracked.py").write_text(
+        pre.replace("two\n", "TURN\n").replace("nine\n", "OTHER\n"),
+        encoding="utf-8",
+    )
+
+    report = await store.restore(["turn_1"], git_repo)
+
+    assert report.conflicted == ["tracked.py"]
+    assert report.merged == []
+
+
+@pytest.mark.asyncio
+async def test_restore_already_at_pre_state_is_noop(
+    store: TurnCheckpointStore, tmp_path: Path
+) -> None:
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    store.begin_turn("turn_1", None, head=None, is_git=False)
+    store.record_pre_write("turn_1", "f.py", "old\n")
+    (ws / "f.py").write_text("turn\n", encoding="utf-8")
+    store.record_post_images("turn_1", ws)
+    # Someone already reverted the file (e.g. git checkout).
+    (ws / "f.py").write_text("old\n", encoding="utf-8")
+
+    report = await store.restore(["turn_1"], ws)
+
+    assert report.restored == ["f.py"]
+    assert report.conflicted == []
+    assert (ws / "f.py").read_text(encoding="utf-8") == "old\n"
+
+
+@pytest.mark.asyncio
+async def test_preview_reports_statuses_without_touching_disk(
+    store: TurnCheckpointStore, tmp_path: Path
+) -> None:
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    store.begin_turn("turn_1", None, head=None, is_git=False)
+    store.record_pre_write("turn_1", "safe.py", "old\n")
+    store.record_pre_write("turn_1", "conflict.py", "old\n")
+    (ws / "safe.py").write_text("turn\n", encoding="utf-8")
+    (ws / "conflict.py").write_text("turn\n", encoding="utf-8")
+    store.record_post_images("turn_1", ws)
+    (ws / "conflict.py").write_text("someone else\n", encoding="utf-8")
+
+    statuses = await store.preview(["turn_1"], ws)
+
+    assert statuses == {"safe.py": "restored", "conflict.py": "conflicted"}
+    # Disk untouched by the dry run.
+    assert (ws / "safe.py").read_text(encoding="utf-8") == "turn\n"
+    assert (ws / "conflict.py").read_text(encoding="utf-8") == "someone else\n"
 
 
 @pytest.mark.asyncio

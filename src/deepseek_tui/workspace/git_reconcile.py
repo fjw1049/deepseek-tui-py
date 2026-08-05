@@ -6,6 +6,7 @@ import asyncio
 import logging
 import subprocess
 import uuid
+from collections.abc import Collection
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -47,8 +48,15 @@ async def capture_baseline(workspace: Path) -> GitTurnBaseline:
 async def reconcile_to_ledger(
     ledger: TurnMutationLedger,
     baseline: GitTurnBaseline,
+    *,
+    exclude_paths: Collection[str] = (),
 ) -> list[FileMutation]:
-    """Append git_reconcile mutations for disk deltas *introduced this turn*."""
+    """Append git_reconcile mutations for disk deltas *introduced this turn*.
+
+    ``exclude_paths`` fences off paths known to belong to someone else
+    (e.g. other active turns in the same workspace) so they are never
+    attributed to this turn.
+    """
     if not baseline.is_git:
         return []
     root = baseline.workspace
@@ -56,12 +64,13 @@ async def reconcile_to_ledger(
     untracked = await _list_untracked(root)
     covered = ledger.covered_paths()
     pre_dirty = {p.replace("\\", "/") for p in baseline.dirty_at_start}
+    excluded = {p.replace("\\", "/") for p in exclude_paths}
     added: list[FileMutation] = []
 
     file_patches = _split_unified_diff_by_file(patch or "")
     for path, unified in file_patches.items():
         norm = path.replace("\\", "/")
-        if norm in covered or norm in pre_dirty:
+        if norm in covered or norm in pre_dirty or norm in excluded:
             continue
         stats = count_diff_stats(unified)
         op = "create" if "--- /dev/null" in unified else "update"
@@ -84,7 +93,7 @@ async def reconcile_to_ledger(
 
     for path in untracked:
         norm = path.replace("\\", "/")
-        if norm in covered or norm in pre_dirty:
+        if norm in covered or norm in pre_dirty or norm in excluded:
             continue
         try:
             content = (root / norm).read_text(encoding="utf-8")

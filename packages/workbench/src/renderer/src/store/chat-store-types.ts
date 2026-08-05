@@ -179,7 +179,7 @@ export type ChatState = {
   rewindAndResend: (
     userBlockId: string,
     newText: string,
-    opts?: { restoreFiles?: boolean }
+    opts?: { restoreFiles?: boolean; forceConflicts?: boolean }
   ) => Promise<void>
   /** Rewind the conversation to just before a user message (optionally also restoring files). */
   rewindToMessage: (userBlockId: string, opts: { restoreFiles: boolean }) => Promise<void>

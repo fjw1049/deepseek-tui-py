@@ -2826,7 +2826,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
       typeof p.rewindThread === 'function'
     ) {
       try {
-        await p.rewindThread(state.activeThreadId, userBlockId, opts?.restoreFiles)
+        await p.rewindThread(
+          state.activeThreadId,
+          userBlockId,
+          opts?.restoreFiles,
+          opts?.forceConflicts
+        )
         restoredOnBackend = opts?.restoreFiles === true
       } catch (e) {
         set({ error: formatRuntimeError(e) })

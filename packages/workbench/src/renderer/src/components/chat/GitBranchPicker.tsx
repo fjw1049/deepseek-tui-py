@@ -13,6 +13,8 @@ import { AlertCircle, Check, ChevronDown, GitBranch, History, Loader2, Search } 
 import { useTranslation } from 'react-i18next'
 import { useGitBranches } from '../../hooks/use-git-branches'
 import { useLightDismiss } from '../../hooks/use-light-dismiss'
+import { useWorkspaceDirtyGitRefresh } from '../../hooks/use-workspace-dirty-git-refresh'
+import { useChatStore } from '../../store/chat-store'
 import { GitLogDialog } from './GitLogDialog'
 
 type Props = {
@@ -36,6 +38,10 @@ export function GitBranchPicker({
   const [logOpen, setLogOpen] = useState(false)
   const [query, setQuery] = useState('')
   const { result, loading, reload, setResult } = useGitBranches(root)
+  // Keep the branch / dirty-count badge fresh when the workspace changes on
+  // disk (agent edits, external editors) — not only when the menu opens.
+  const workspaceDirtyTick = useChatStore((s) => s.workspaceDirtyTick)
+  useWorkspaceDirtyGitRefresh(workspaceDirtyTick, reload)
   const [actingBranch, setActingBranch] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   // Action-level warning that must survive branch list refreshes (unlike `error`).
