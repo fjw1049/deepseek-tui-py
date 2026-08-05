@@ -288,7 +288,7 @@ export function AutomationCenter({
 
   useEffect(() => {
     if (!notice) return
-    const timer = window.setTimeout(() => setNotice(null), 5000)
+    const timer = window.setTimeout(() => setNotice(null), 10000)
     return () => window.clearTimeout(timer)
   }, [notice])
 
@@ -416,7 +416,7 @@ export function AutomationCenter({
       </header>
 
       {/* Wake hint — same px-8 → max-w-6xl shell as header/tabs/content so left edges align.
-          Transient notices reuse this strip for 5s, then the wake hint returns. */}
+          Transient notices reuse this strip for 10s, then the wake hint returns. */}
       <div className="mt-4 shrink-0 px-8">
         <div className="mx-auto max-w-6xl">
           <div
