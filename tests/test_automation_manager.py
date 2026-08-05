@@ -198,6 +198,42 @@ async def test_completed_one_shot_cannot_be_resumed(
 
 
 @pytest.mark.asyncio
+async def test_completed_one_shot_cannot_be_revived_via_pause_resume(
+    tmp_path: Path, fired_slots: list[str]
+) -> None:
+    """pause overwrites COMPLETED, so the guard must not trust status alone."""
+    mgr = AutomationManager.open(tmp_path / "auto")
+    automation_id = _one_shot_due(mgr, seconds_ago=60)
+    await mgr.scheduler_tick(task_manager=None)  # type: ignore[arg-type]
+    assert mgr.get_automation(automation_id).status is AutomationStatus.COMPLETED
+
+    # Laundering the COMPLETED status through PAUSED must not open a hole.
+    mgr.pause_automation(automation_id)
+    with pytest.raises(ValueError, match="already ran"):
+        mgr.resume_automation(automation_id)
+
+
+@pytest.mark.asyncio
+async def test_exhausted_one_shot_can_be_resumed_when_given_a_cron_schedule(
+    tmp_path: Path, fired_slots: list[str]
+) -> None:
+    """Resuming while switching to a recurring schedule is legitimate."""
+    mgr = AutomationManager.open(tmp_path / "auto")
+    automation_id = _one_shot_due(mgr, seconds_ago=60)
+    await mgr.scheduler_tick(task_manager=None)  # type: ignore[arg-type]
+    assert mgr.get_automation(automation_id).status is AutomationStatus.COMPLETED
+
+    revived = mgr.update_automation(
+        automation_id,
+        UpdateAutomationRequest(
+            status=AutomationStatus.ACTIVE, schedule="0 9 * * *"
+        ),
+    )
+    assert revived.status is AutomationStatus.ACTIVE
+    assert revived.next_run_at is not None  # re-armed to the next cron slot
+
+
+@pytest.mark.asyncio
 async def test_pausing_keeps_the_one_shot_target_time(tmp_path: Path) -> None:
     """Pausing must not destroy the time the user asked for."""
     mgr = AutomationManager.open(tmp_path / "auto")

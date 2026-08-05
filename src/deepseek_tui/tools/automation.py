@@ -1103,16 +1103,19 @@ class AutomationManager:
         if req.cwds is not None:
             existing.cwds = list(req.cwds)
         if req.status is not None:
-            if (
-                req.status is AutomationStatus.ACTIVE
-                and existing.status is AutomationStatus.COMPLETED
-                and existing.schedule is None
-            ):
-                # Resuming would leave it active but unschedulable forever.
-                raise ValueError(
-                    "This one-shot job already ran. Create a new job instead "
-                    "of resuming it."
-                )
+            if req.status is AutomationStatus.ACTIVE:
+                # Guard against resurrecting an exhausted one-shot into a
+                # zombie ACTIVE that can never fire. Judge by "one-shot with
+                # no future slot" rather than "status == COMPLETED": pause
+                # overwrites COMPLETED with PAUSED, so status alone is not a
+                # reliable signal of whether the job already ran. This runs
+                # AFTER req.schedule is applied above, so resuming while
+                # switching to a cron schedule is still allowed.
+                if existing.schedule is None and not existing.next_run_at:
+                    raise ValueError(
+                        "This one-shot job already ran. Create a new job "
+                        "instead of resuming it."
+                    )
             existing.status = req.status
 
         # Re-arm whenever the timing changed or the job was resumed. Pausing
