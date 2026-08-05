@@ -286,6 +286,12 @@ export function AutomationCenter({
     if (tab === 'runs') void fetchAllRuns()
   }, [tab, fetchAllRuns])
 
+  useEffect(() => {
+    if (!notice) return
+    const timer = window.setTimeout(() => setNotice(null), 5000)
+    return () => window.clearTimeout(timer)
+  }, [notice])
+
   const mutate = async (
     row: AutomationRecord,
     action: 'toggle' | 'run' | 'delete'
@@ -409,12 +415,22 @@ export function AutomationCenter({
         </div>
       </header>
 
-      {/* Wake hint — same px-8 → max-w-6xl shell as header/tabs/content so left edges align */}
+      {/* Wake hint — same px-8 → max-w-6xl shell as header/tabs/content so left edges align.
+          Transient notices reuse this strip for 5s, then the wake hint returns. */}
       <div className="mt-4 shrink-0 px-8">
         <div className="mx-auto max-w-6xl">
-          <div className="flex items-center gap-2 rounded-lg bg-amber-50/80 px-3 py-2.5 text-[12px] text-amber-800 dark:bg-amber-950/20 dark:text-amber-200">
+          <div
+            role={notice ? 'status' : undefined}
+            className={`flex items-center gap-2 rounded-lg px-3 py-2.5 text-[12px] ${
+              notice?.tone === 'error'
+                ? 'bg-red-500/10 text-red-700 dark:text-red-200'
+                : notice
+                  ? 'bg-emerald-500/10 text-emerald-800 dark:text-emerald-200'
+                  : 'bg-amber-50/80 text-amber-800 dark:bg-amber-950/20 dark:text-amber-200'
+            }`}
+          >
             <Info className="h-3.5 w-3.5 shrink-0" />
-            <span>{t('automationWakeHint')}</span>
+            <span>{notice ? notice.message : t('automationWakeHint')}</span>
           </div>
         </div>
       </div>
@@ -463,18 +479,6 @@ export function AutomationCenter({
             </div>
           ) : tab === 'tasks' ? (
             <>
-              {notice && (
-                <div
-                  className={`mb-4 rounded-lg border px-4 py-3 text-[13px] ${
-                    notice.tone === 'error'
-                      ? 'border-red-500/30 bg-red-500/10 text-red-700 dark:text-red-200'
-                      : 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-200'
-                  }`}
-                >
-                  {notice.message}
-                </div>
-              )}
-
               <div className="mb-5 flex flex-wrap items-center gap-2">
                 <label className="relative flex min-w-[240px] flex-1 items-center">
                   <Search
