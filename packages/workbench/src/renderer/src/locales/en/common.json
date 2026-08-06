@@ -2,7 +2,7 @@
   "appName": "DeepSeek GUI",
   "code": "Code",
   "newChat": "New chat",
-  "newAgent": "New Agent",
+  "newAgent": "New Session",
   "conversationSearchNav": "Search",
   "conversationSearchTitle": "Search conversations",
   "conversationSearchPlaceholder": "Search titles or content across all workspaces",
