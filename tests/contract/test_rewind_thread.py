@@ -267,7 +267,7 @@ def _ws(runtime_data_dir: Path) -> Path:
 async def _seed_tool_write(
     manager, thread_id: str, ws: Path, *, filename: str = "note.txt"
 ) -> Path:
-    """Simulate a turn_b tool write with the pre-write checkpoint hook live."""
+    """Simulate a turn_b tool write through post-image capture (turn end)."""
     target = ws / filename
     target.write_text("old\n", encoding="utf-8")
     manager.checkpoints.begin_turn("turn_b", None, head=None, is_git=False, thread_id=thread_id)
@@ -276,6 +276,7 @@ async def _seed_tool_write(
     result = await WriteFileTool().execute({"path": filename, "content": "new\n"}, ctx)
     assert result.success
     assert target.read_text(encoding="utf-8") == "new\n"
+    manager.checkpoints.record_post_images("turn_b", ws)
     return target
 
 
@@ -414,6 +415,7 @@ async def test_restore_code_keeps_conversation_and_consumes_checkpoints(
     manager.checkpoints.begin_turn("turn_b", None, head=None, is_git=False, thread_id=thread_id)
     manager.checkpoints.record_pre_write("turn_b", "note.txt", "old\n")
     (ws / "note.txt").write_text("new\n", encoding="utf-8")
+    manager.checkpoints.record_post_images("turn_b", ws)
 
     result = await manager.restore_code(thread_id, before_item_id="item_u2")
 
@@ -453,9 +455,12 @@ async def test_rewind_restore_files_multi_turn_returns_oldest_state(
     target.write_text("v1\n", encoding="utf-8")
     manager.checkpoints.begin_turn("turn_b", None, head=None, is_git=False, thread_id=thread_id)
     manager.checkpoints.record_pre_write("turn_b", "f.txt", "v1\n")
+    target.write_text("v2\n", encoding="utf-8")
+    manager.checkpoints.record_post_images("turn_b", ws)
     manager.checkpoints.begin_turn("turn_c", None, head=None, is_git=False, thread_id=thread_id)
     manager.checkpoints.record_pre_write("turn_c", "f.txt", "v2\n")
     target.write_text("v3\n", encoding="utf-8")
+    manager.checkpoints.record_post_images("turn_c", ws)
 
     await manager.rewind_thread(thread_id, before_item_id="item_u2", restore_files=True)
 
@@ -490,6 +495,7 @@ async def test_restore_code_http(runtime_app, client: AsyncClient, runtime_data_
     manager.checkpoints.begin_turn("turn_b", None, head=None, is_git=False, thread_id=thread_id)
     manager.checkpoints.record_pre_write("turn_b", "note.txt", "old\n")
     (ws / "note.txt").write_text("new\n", encoding="utf-8")
+    manager.checkpoints.record_post_images("turn_b", ws)
 
     r = await client.post(
         f"/v1/threads/{thread_id}/restore-code",
@@ -530,8 +536,11 @@ async def test_rewind_preview_http(
     manager = runtime_app.state.thread_manager
     ws = _ws(runtime_data_dir)
     thread_id = await _seed(manager, workspace=str(ws))
+    (ws / "note.txt").write_text("old\n", encoding="utf-8")
     manager.checkpoints.begin_turn("turn_b", None, head=None, is_git=False, thread_id=thread_id)
     manager.checkpoints.record_pre_write("turn_b", "note.txt", "old\n")
+    (ws / "note.txt").write_text("new\n", encoding="utf-8")
+    manager.checkpoints.record_post_images("turn_b", ws)
 
     r = await client.get(
         f"/v1/threads/{thread_id}/rewind-preview",
@@ -660,6 +669,7 @@ def _write_checkpoint(
     thread_id: str,
     created_at: float,
     pre_contents: dict[str, str | None],
+    post_contents: dict[str, str | None] | None = None,
 ) -> None:
     """Persist a checkpoint with an explicit creation time (ordering tests)."""
     cp = TurnCheckpoint(
@@ -668,7 +678,9 @@ def _write_checkpoint(
         thread_id=thread_id,
         created_at=created_at,
         pre_contents=pre_contents,
+        post_contents=dict(post_contents or {}),
         mutated=list(pre_contents),
+        has_post_images=True,
     )
     (manager.checkpoints._root / f"{turn_id}.json").write_text(
         json.dumps(cp.to_dict()), encoding="utf-8"
@@ -687,10 +699,12 @@ async def test_restore_code_excludes_orphans_predating_cutoff_turn(
     _write_checkpoint(
         manager, turn_id="turn_a", thread_id=thread_id, created_at=100.0,
         pre_contents={"f1.txt": "a0\n"},
+        post_contents={"f1.txt": "a1\n"},
     )
     _write_checkpoint(
         manager, turn_id="turn_b", thread_id=thread_id, created_at=200.0,
         pre_contents={"f2.txt": "b0\n"},
+        post_contents={"f2.txt": "b1\n"},
     )
 
     # Conversation-only rewind at B's user message → B's checkpoint orphans,
@@ -713,10 +727,12 @@ async def test_restore_code_excludes_orphans_predating_cutoff_turn(
     _write_checkpoint(
         manager, turn_id="turn_c", thread_id=thread_id, created_at=300.0,
         pre_contents={"f2.txt": "b1\n"},
+        post_contents={"f2.txt": "c1\n"},
     )
     _write_checkpoint(
         manager, turn_id="turn_d", thread_id=thread_id, created_at=400.0,
         pre_contents={"f3.txt": None},
+        post_contents={"f3.txt": "d1\n"},
     )
 
     # The preview must not list files exclusive to the excluded orphan (f2).

@@ -88,9 +88,12 @@ async def test_restore_newest_to_oldest_order(store: TurnCheckpointStore, tmp_pa
     # turn_1 wrote over "v1" -> "v2"; turn_2 wrote over "v2" -> "v3".
     store.begin_turn("turn_1", None, head=None, is_git=False)
     store.record_pre_write("turn_1", "f.py", "v1\n")
+    (ws / "f.py").write_text("v2\n", encoding="utf-8")
+    store.record_post_images("turn_1", ws)
     store.begin_turn("turn_2", None, head=None, is_git=False)
     store.record_pre_write("turn_2", "f.py", "v2\n")
     (ws / "f.py").write_text("v3\n", encoding="utf-8")
+    store.record_post_images("turn_2", ws)
 
     report = await store.restore(["turn_2", "turn_1"], ws)
 
@@ -109,6 +112,7 @@ async def test_restore_none_pre_content_deletes_file(
     store.begin_turn("turn_1", None, head=None, is_git=False)
     store.record_pre_write("turn_1", "new.py", None)  # created by the turn
     (ws / "new.py").write_text("created\n", encoding="utf-8")
+    store.record_post_images("turn_1", ws)
 
     report = await store.restore(["turn_1"], ws)
 
@@ -329,6 +333,7 @@ async def test_restore_missing_checkpoint_recorded(
     store.begin_turn("turn_1", None, head=None, is_git=False)
     store.record_pre_write("turn_1", "a.py", "old\n")
     (ws / "a.py").write_text("new\n", encoding="utf-8")
+    store.record_post_images("turn_1", ws)
 
     report = await store.restore(["turn_2", "turn_1"], ws)
 
@@ -345,9 +350,10 @@ async def test_restore_path_skipped_in_newer_turn_resolved_by_older(
     # Newer turn cannot resolve the pre-image; older one can.
     store.begin_turn("turn_1", None, head=None, is_git=False)
     store.record_pre_write("turn_1", "f.py", "v1\n")
+    (ws / "f.py").write_text("v2\n", encoding="utf-8")
+    store.record_post_images("turn_1", ws)
     store.begin_turn("turn_2", None, head=None, is_git=False)
     store.record_out_of_band("turn_2", "f.py")
-    (ws / "f.py").write_text("v3\n", encoding="utf-8")
 
     report = await store.restore(["turn_2", "turn_1"], ws)
 
@@ -421,7 +427,7 @@ def test_list_for_thread_filters_by_owner(store: TurnCheckpointStore, tmp_path: 
 
 
 def test_load_tolerates_legacy_format(store: TurnCheckpointStore, tmp_path: Path) -> None:
-    # Checkpoints written before thread_id / created_at existed still load.
+    # Checkpoints written before thread_id / created_at / post_contents existed.
     (tmp_path / "checkpoints" / "turn_legacy.json").write_text(
         json.dumps(
             {
@@ -441,3 +447,59 @@ def test_load_tolerates_legacy_format(store: TurnCheckpointStore, tmp_path: Path
     assert legacy.thread_id == ""
     assert legacy.created_at == 0.0
     assert legacy.mutated == ["x.py"]
+    assert legacy.has_post_images is False
+
+
+def test_begin_turn_is_post_image_aware(store: TurnCheckpointStore) -> None:
+    cp = store.begin_turn("turn_1", None, head=None, is_git=False)
+    assert cp.has_post_images is True
+    loaded = store.load("turn_1")
+    assert loaded is not None
+    assert loaded.has_post_images is True
+
+
+@pytest.mark.asyncio
+async def test_legacy_checkpoint_still_unconditionally_restores_tool_write(
+    store: TurnCheckpointStore, tmp_path: Path
+) -> None:
+    """JSON without a ``post_contents`` field keeps the historical write."""
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    (ws / "f.py").write_text("new\n", encoding="utf-8")
+    (tmp_path / "checkpoints" / "turn_legacy.json").write_text(
+        json.dumps(
+            {
+                "turn_id": "turn_legacy",
+                "is_git": False,
+                "head": None,
+                "pre_contents": {"f.py": "old\n"},
+                "mutated": ["f.py"],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    report = await store.restore(["turn_legacy"], ws)
+
+    assert report.restored == ["f.py"]
+    assert report.conflicted == []
+    assert (ws / "f.py").read_text(encoding="utf-8") == "old\n"
+
+
+@pytest.mark.asyncio
+async def test_new_checkpoint_missing_post_image_conflicts_not_blind_write(
+    store: TurnCheckpointStore, tmp_path: Path
+) -> None:
+    """Post-image-aware checkpoint with no capture must not clobber disk."""
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    store.begin_turn("turn_1", None, head=None, is_git=False)
+    store.record_pre_write("turn_1", "f.py", "old\n")
+    # Simulate capture failure / unreadable skip: no record_post_images.
+    (ws / "f.py").write_text("someone else\n", encoding="utf-8")
+
+    report = await store.restore(["turn_1"], ws)
+
+    assert report.restored == []
+    assert report.conflicted == ["f.py"]
+    assert (ws / "f.py").read_text(encoding="utf-8") == "someone else\n"

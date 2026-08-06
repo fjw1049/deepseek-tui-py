@@ -30,10 +30,14 @@ turn left behind (the post-image):
   and reported in :attr:`RestoreReport.conflicted` (``force=True``
   overrides and writes the pre-image anyway).
 
-Checkpoints written before post-images existed keep the historical
-unconditional-write behaviour for tool-written paths (``pre_contents``
-present); out-of-band paths without a post-image are treated as conflicts
-so a restore can never delete or revert a file it cannot prove it owns.
+Checkpoints written before post-images existed (JSON lacks a
+``post_contents`` field) keep the historical unconditional-write
+behaviour for tool-written paths (``pre_contents`` present). On
+post-image-aware checkpoints, a missing per-path post-image — binary,
+oversized, or capture failure — is treated as a conflict, never as a
+legacy blind write. Out-of-band paths without a post-image are always
+conflicts so a restore can never delete or revert a file it cannot
+prove it owns.
 """
 
 from __future__ import annotations
@@ -61,7 +65,7 @@ _MAX_IMAGE_BYTES = 512 * 1024
 _BINARY_SNIFF_BYTES = 8192
 
 # Sentinel distinct from None (None = "file absent"): post-image was never
-# recorded for the path (legacy checkpoint, or unreadable at capture time).
+# recorded for the path (unreadable at capture time, or capture never ran).
 _MISSING: Any = object()
 
 
@@ -74,7 +78,7 @@ class TurnCheckpoint:
     # path (posix, workspace-relative) -> pre-turn content; None = absent then.
     pre_contents: dict[str, str | None] = field(default_factory=dict)
     # path -> content when the turn finished; None = absent then. Missing key
-    # = never captured (legacy checkpoint / unreadable file).
+    # = never captured for this path (unreadable / capture failure).
     post_contents: dict[str, str | None] = field(default_factory=dict)
     # Every path mutated this turn (ordered, deduplicated).
     mutated: list[str] = field(default_factory=list)
@@ -87,6 +91,10 @@ class TurnCheckpoint:
     # for checkpoints written before these fields existed.
     thread_id: str = ""
     created_at: float = 0.0
+    # True when the on-disk JSON carried a ``post_contents`` field (or this
+    # checkpoint was created after post-images landed). False only for
+    # legacy checkpoints; drives the unconditional-write restore fallback.
+    has_post_images: bool = True
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -113,6 +121,10 @@ class TurnCheckpoint:
             uncertain=[str(p) for p in raw.get("uncertain") or []],
             thread_id=str(raw.get("thread_id") or ""),
             created_at=float(raw.get("created_at") or 0.0),
+            # Generational marker: presence of the key, not whether any
+            # path was captured. An empty ``post_contents`` still means
+            # post-image-aware (capture ran / format supports it).
+            has_post_images="post_contents" in raw,
         )
 
 
@@ -231,12 +243,14 @@ class TurnCheckpointStore:
     def record_post_images(self, turn_id: str, workspace: Path) -> None:
         """Capture every mutated path's end-of-turn content for restore-time
         conflict detection. Unreadable files (binary/oversized) stay
-        uncaptured and are treated conservatively at restore."""
+        uncaptured; on post-image-aware checkpoints restore reports them
+        as conflicts rather than blindly writing the pre-image."""
         root = _resolved_root(workspace)
         with self._lock:
             checkpoint = self.load(turn_id)
             if checkpoint is None or not checkpoint.mutated:
                 return
+            checkpoint.has_post_images = True
             for path in checkpoint.mutated:
                 value = _read_disk(root, path)
                 if isinstance(value, _Unreadable):
@@ -353,10 +367,16 @@ class TurnCheckpointStore:
                     state.current = pre
                     state.status = STATUS_RESTORED
                     continue
-                if post is _MISSING and path in checkpoint.pre_contents:
-                    # Legacy checkpoint (pre-dates post-images) for a
-                    # tool-written path: keep the historical unconditional
-                    # write rather than dead-ending every old checkpoint.
+                if (
+                    not checkpoint.has_post_images
+                    and post is _MISSING
+                    and path in checkpoint.pre_contents
+                ):
+                    # Whole-checkpoint legacy format (no ``post_contents``
+                    # field): keep the historical unconditional write for
+                    # tool-written paths. Per-path missing posts on a
+                    # post-image-aware checkpoint must NOT take this branch
+                    # — they fall through to conflict below.
                     state.current = pre
                     state.status = STATUS_RESTORED
                     continue
