@@ -955,7 +955,6 @@ function MessageTurn({
   void turnDiffRevision
   const { think: liveThink, content: liveContent } = splitThink(live)
   const liveProcessText = [liveReasoning, liveThink].filter(Boolean).join('\n\n')
-  const hasLiveAssistantStream = isProcessing && !!liveContent.trim()
   const [workExpanded, setWorkExpanded] = useState(isProcessing)
 
   useEffect(() => {
@@ -1015,16 +1014,12 @@ function MessageTurn({
       nextProcessBlocks.push({ kind: 'reasoning', id: 'live-reasoning', text: liveProcessText })
     }
 
-    // The in-flight `agent_message` streams into `liveContent` for BOTH a
-    // mid-turn preface and the final answer (deltas carry no item id, and the
-    // backend itself only classifies the segment at completion). Stream it live
-    // inside the work trace in the small process style. When the segment
-    // settles, the store clears `liveAssistant`: a preface persists as a small
-    // trace row, and a final answer arrives through `onFinalAnswer` to render as
-    // the big bubble below (`showLiveAssistant`).
-    if (hasLiveAssistantStream) {
-      nextProcessBlocks.push({ kind: 'assistant', id: 'live-assistant', text: liveContent })
-    }
+    // Live `agent_message` text is rendered in the main answer bubble below
+    // (`showLiveAssistant`) so tokens stream in the large answer style. Do NOT
+    // also push it into the process rail — MidTurnPrefaceLine clips to 160
+    // chars and made long finals look like they only appeared at turn end.
+    // When a mid-turn preface settles, the store clears `liveAssistant` and
+    // persists a small `mid_turn_preface` row; finals land via `onFinalAnswer`.
 
     // Prefer File Mutation Ledger turn.diff snapshot (includes subagent / reconcile);
     // fall back to per-tool file_change blocks for legacy sessions.
@@ -1065,14 +1060,14 @@ function MessageTurn({
   }, [
     turn.blocks,
     liveProcessText,
-    hasLiveAssistantStream,
-    liveContent,
     workspaceRoot,
     turnDiffSnapshot,
     turnDiffTurnId
   ])
 
-  const showLiveAssistant = !isProcessing && !!liveContent.trim()
+  // Stream into the main answer bubble while the turn is live (and keep a
+  // brief fallback if live text remains after busy clears before final upsert).
+  const showLiveAssistant = !!liveContent.trim()
 
   const isSystemOnlyTurn =
     !turn.user &&
