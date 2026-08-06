@@ -4,11 +4,6 @@ import { useChatStore } from './store/chat-store'
 const Workbench = lazy(() =>
   import('./components/Workbench').then((module) => ({ default: module.Workbench }))
 )
-const InitialSetupDialog = lazy(() =>
-  import('./components/InitialSetupDialog').then((module) => ({
-    default: module.InitialSetupDialog
-  }))
-)
 const KineticGrid = lazy(() =>
   import('./components/KineticGrid').then((module) => ({ default: module.KineticGrid }))
 )
@@ -165,11 +160,6 @@ export default function AppShell(): React.ReactElement {
             <Workbench />
           </Suspense>
         </div>
-      ) : null}
-      {initialSetupOpen ? (
-        <Suspense fallback={null}>
-          <InitialSetupDialog />
-        </Suspense>
       ) : null}
     </div>
   )

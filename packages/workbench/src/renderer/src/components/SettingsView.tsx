@@ -53,6 +53,7 @@ import { DEFAULT_WORKSPACE_ROOT } from '@shared/workspace-defaults'
 import { normalizeWorkspaceRoot } from '../lib/workspace-path'
 import { useChatStore, type SettingsRouteSection } from '../store/chat-store'
 import { setSettingsLeaveHandler } from '../lib/settings-leave'
+import { InitialSetupPanel } from './InitialSetupDialog'
 import { AppearanceSettingsPanel } from './settings/AppearanceSettingsPanel'
 import { ArchiveSettingsPanel } from './settings/ArchiveSettingsPanel'
 import { WebSearchSettingsPanel } from './settings/WebSearchSettingsPanel'
@@ -379,6 +380,7 @@ export function SettingsView(): ReactElement {
   useEffect(() => {
     if (!form || initializedCategory.current) return
     initializedCategory.current = true
+    if (category === 'setup') return
     const hasBuiltinKey = Object.values(form.llmProviders ?? {}).some((entry) =>
       Boolean(entry?.apiKey?.trim())
     )
@@ -388,7 +390,7 @@ export function SettingsView(): ReactElement {
     if (!form.deepseek.apiKey?.trim() && !hasBuiltinKey && !hasCustomKey) {
       openSettings('models')
     }
-  }, [form, openSettings])
+  }, [form, openSettings, category])
 
   useEffect(() => {
     return () => {
@@ -495,6 +497,16 @@ export function SettingsView(): ReactElement {
     })
     return () => setSettingsLeaveHandler(null)
   }, [])
+
+  if (category === 'setup') {
+    return (
+      <div className="ds-settings-page ds-page-scroll ds-no-drag flex h-full min-h-0 min-w-0 flex-1 items-center justify-center overflow-y-auto px-8 py-12 sm:px-10">
+        <div className="w-full translate-y-4 sm:translate-y-6">
+          <InitialSetupPanel />
+        </div>
+      </div>
+    )
+  }
 
   if (loadError) {
     const msg =

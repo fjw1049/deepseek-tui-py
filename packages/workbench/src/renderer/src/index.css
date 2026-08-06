@@ -414,6 +414,393 @@ html,
   }
 }
 
+/* Settings → Guide (playful preflight sheet) */
+.ds-guide-sheet {
+  display: flex;
+  flex-direction: column;
+}
+
+.ds-guide-panel {
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--ds-accent) 28%, var(--ds-border));
+  border-radius: 24px;
+  background: var(--ds-surface-card);
+  box-shadow: 0 14px 36px color-mix(in srgb, var(--ds-accent) 8%, transparent);
+  animation: ds-guide-enter 360ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.ds-guide-hero {
+  position: relative;
+  overflow: hidden;
+  border-bottom: 1px solid var(--ds-border-muted);
+  background:
+    radial-gradient(ellipse 55% 80% at 0% 0%, color-mix(in srgb, var(--ds-accent) 22%, transparent), transparent 60%),
+    radial-gradient(ellipse 40% 60% at 100% 110%, color-mix(in srgb, #22c55e 14%, transparent), transparent 55%),
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--ds-accent) 8%, var(--ds-surface-card)) 0%,
+      var(--ds-surface-card) 48%,
+      color-mix(in srgb, #f59e0b 6%, var(--ds-surface-card)) 100%
+    );
+  padding: 2.6rem 2.25rem 2.35rem;
+}
+
+.ds-guide-hero__grid {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.45;
+  background-image:
+    linear-gradient(color-mix(in srgb, var(--ds-accent) 10%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in srgb, var(--ds-accent) 10%, transparent) 1px, transparent 1px);
+  background-size: 24px 24px;
+  mask-image: radial-gradient(ellipse 80% 90% at 20% 30%, #000 20%, transparent 75%);
+}
+
+.ds-guide-hero__blob {
+  position: absolute;
+  border-radius: 9999px;
+  pointer-events: none;
+  filter: blur(2px);
+}
+
+.ds-guide-hero__blob--a {
+  top: -18%;
+  right: -6%;
+  width: 160px;
+  height: 160px;
+  background: color-mix(in srgb, var(--ds-accent) 18%, transparent);
+  animation: ds-guide-blob 7s ease-in-out infinite;
+}
+
+.ds-guide-hero__blob--b {
+  bottom: -28%;
+  left: 18%;
+  width: 120px;
+  height: 120px;
+  background: color-mix(in srgb, #22c55e 14%, transparent);
+  animation: ds-guide-blob 8.5s ease-in-out infinite reverse;
+}
+
+.ds-guide-hero__orbit {
+  position: absolute;
+  top: 1.25rem;
+  right: 1.4rem;
+  width: 98px;
+  height: 98px;
+  pointer-events: none;
+}
+
+.ds-guide-hero__orbit-ring {
+  position: absolute;
+  inset: 0;
+  border-radius: 9999px;
+  border: 1px dashed color-mix(in srgb, var(--ds-accent) 40%, transparent);
+  animation: ds-guide-spin 14s linear infinite;
+}
+
+.ds-guide-hero__orbit-ring--inner {
+  inset: 14px;
+  border-style: solid;
+  border-color: color-mix(in srgb, #f59e0b 35%, transparent);
+  animation-duration: 9s;
+  animation-direction: reverse;
+}
+
+.ds-guide-hero__orbit-dot {
+  position: absolute;
+  top: -3px;
+  left: calc(50% - 3px);
+  width: 6px;
+  height: 6px;
+  border-radius: 9999px;
+  background: var(--ds-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ds-accent) 18%, transparent);
+}
+
+.ds-guide-hero__trail {
+  position: absolute;
+  right: 1.15rem;
+  bottom: 1.1rem;
+  width: min(48%, 260px);
+  height: 42px;
+  pointer-events: none;
+  color: var(--ds-accent);
+  opacity: 0.85;
+}
+
+.ds-guide-hero__trail-path {
+  stroke-dasharray: 6 7;
+  animation: ds-guide-dash 1.4s linear infinite;
+}
+
+.ds-guide-hero__body {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: flex-start;
+  gap: 1rem;
+}
+
+.ds-guide-hero__pad {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 5.25rem;
+  height: 5.25rem;
+  flex-shrink: 0;
+  border-radius: 1.5rem;
+  border: 1px solid color-mix(in srgb, var(--ds-accent) 35%, transparent);
+  background:
+    linear-gradient(
+      160deg,
+      color-mix(in srgb, var(--ds-accent) 22%, var(--ds-surface-card)),
+      color-mix(in srgb, var(--ds-accent) 8%, var(--ds-surface-card))
+    );
+  color: var(--ds-accent);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, #fff 35%, transparent),
+    0 8px 18px color-mix(in srgb, var(--ds-accent) 16%, transparent);
+}
+
+.ds-guide-hero__pad-rocket {
+  animation: ds-guide-rocket 2.2s ease-in-out infinite;
+}
+
+.ds-guide-hero__meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.2rem 0.55rem;
+  border-radius: 9999px;
+  border: 1px solid color-mix(in srgb, var(--ds-accent) 28%, transparent);
+  background: color-mix(in srgb, var(--ds-accent) 10%, var(--ds-surface-card));
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ds-accent);
+}
+
+.ds-guide-hero__title {
+  margin-top: 0.9rem;
+  font-size: 2.55rem;
+  font-weight: 700;
+  letter-spacing: -0.035em;
+  line-height: 1.1;
+  color: var(--ds-text);
+  background: linear-gradient(
+    105deg,
+    var(--ds-text) 0%,
+    var(--ds-text) 55%,
+    color-mix(in srgb, var(--ds-accent) 75%, var(--ds-text)) 100%
+  );
+  -webkit-background-clip: text;
+  background-clip: text;
+}
+
+@supports (background-clip: text) or (-webkit-background-clip: text) {
+  .ds-guide-hero__title {
+    color: transparent;
+  }
+}
+
+.ds-guide-hero__sub {
+  margin-top: 0.8rem;
+  max-width: 36rem;
+  font-size: 17px;
+  line-height: 1.6;
+  color: var(--ds-text-muted);
+}
+
+.ds-guide-body {
+  padding: 0.7rem 1.45rem 0.85rem;
+}
+
+.ds-guide-section {
+  margin: 1.2rem 0.3rem 0.25rem;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ds-text-faint);
+}
+
+.ds-guide-section:first-child {
+  margin-top: 0.65rem;
+}
+
+.ds-guide-row {
+  display: grid;
+  grid-template-columns: minmax(10rem, 12.5rem) minmax(0, 1fr);
+  align-items: center;
+  gap: 1.1rem 1.5rem;
+  padding: 1.3rem 0.45rem;
+}
+
+.ds-guide-row__label {
+  min-width: 0;
+}
+
+.ds-guide-row__title {
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.2;
+  color: var(--ds-text);
+}
+
+.ds-guide-row__desc {
+  margin-top: 0.45rem;
+  font-size: 14px;
+  line-height: 1.45;
+  color: var(--ds-text-muted);
+}
+
+.ds-guide-row__control {
+  min-width: 0;
+  width: 100%;
+}
+
+@media (max-width: 720px) {
+  .ds-guide-row {
+    grid-template-columns: 1fr;
+    gap: 0.65rem;
+    padding: 0.85rem 0.2rem;
+  }
+}
+
+.ds-guide-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.85rem;
+  border-top: 1px solid var(--ds-border-muted);
+  padding: 1.5rem 1.7rem 1.65rem;
+}
+
+.ds-guide-btn-ghost {
+  height: 3rem;
+  border-radius: 12px;
+  border: 1px solid var(--ds-border);
+  background: var(--ds-surface-card);
+  padding: 0 1.25rem;
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--ds-text-muted);
+  transition:
+    color 140ms ease-out,
+    background-color 140ms ease-out,
+    border-color 140ms ease-out,
+    transform 100ms ease-out;
+}
+
+.ds-guide-btn-ghost:hover {
+  border-color: var(--ds-border-strong);
+  background: var(--ds-surface-hover);
+  color: var(--ds-text);
+}
+
+.ds-guide-btn-ghost:active {
+  transform: scale(0.98);
+}
+
+.ds-guide-btn-primary {
+  height: 3rem;
+  border-radius: 12px;
+  border: none;
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--ds-accent) 92%, #fff),
+    var(--ds-accent) 45%,
+    color-mix(in srgb, var(--ds-accent) 78%, #000)
+  );
+  padding: 0 1.55rem;
+  font-size: 15px;
+  font-weight: 700;
+  color: #fff;
+  box-shadow: 0 10px 22px color-mix(in srgb, var(--ds-accent) 28%, transparent);
+  transition:
+    filter 140ms ease-out,
+    transform 100ms ease-out,
+    box-shadow 140ms ease-out;
+}
+
+.ds-guide-btn-primary:hover {
+  filter: brightness(1.06);
+  box-shadow: 0 12px 26px color-mix(in srgb, var(--ds-accent) 34%, transparent);
+}
+
+.ds-guide-btn-primary:active {
+  transform: scale(0.98);
+}
+
+.ds-guide-btn-primary:disabled {
+  opacity: 0.5;
+  box-shadow: none;
+}
+
+@keyframes ds-guide-enter {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 10px, 0) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
+@keyframes ds-guide-rocket {
+  0%,
+  100% {
+    transform: translate3d(0, 1px, 0) rotate(-8deg);
+  }
+  50% {
+    transform: translate3d(0, -3px, 0) rotate(-8deg);
+  }
+}
+
+@keyframes ds-guide-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes ds-guide-dash {
+  to {
+    stroke-dashoffset: -26;
+  }
+}
+
+@keyframes ds-guide-blob {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  50% {
+    transform: translate3d(-10px, 8px, 0) scale(1.08);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ds-guide-panel,
+  .ds-guide-hero__pad-rocket,
+  .ds-guide-hero__orbit-ring,
+  .ds-guide-hero__orbit-ring--inner,
+  .ds-guide-hero__trail-path,
+  .ds-guide-hero__blob--a,
+  .ds-guide-hero__blob--b {
+    animation: none;
+  }
+
+  .ds-guide-btn-ghost:active,
+  .ds-guide-btn-primary:active {
+    transform: none;
+  }
+}
+
 /* Primary UI shells: everything inside follows settings → General → UI font. */
 .ds-workbench-shell,
 .ds-workbench-main,
@@ -2320,6 +2707,25 @@ samp {
 
 .ds-sidebar-link--active:not(:disabled):hover {
   background: color-mix(in srgb, var(--text-primary) 10%, var(--ds-bg-sidebar));
+}
+
+/* Always emphasized — not only when selected. */
+.ds-sidebar-link.ds-settings-nav-setup,
+.ds-sidebar-link.ds-settings-nav-setup.ds-sidebar-link--active {
+  min-height: 2.45rem;
+  margin-top: 0.2rem;
+  font-size: 1rem; /* 16px — slightly above --sidebar-text (15px) */
+  font-weight: 700;
+}
+
+.ds-settings-nav-setup .ds-settings-nav-setup__label {
+  font-size: inherit;
+  font-weight: 700;
+}
+
+.ds-settings-nav-setup .ds-sidebar-link__icon {
+  width: 1.15rem;
+  height: 1.15rem;
 }
 
 .ds-sidebar-link:disabled {

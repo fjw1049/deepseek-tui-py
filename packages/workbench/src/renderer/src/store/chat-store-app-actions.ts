@@ -189,7 +189,11 @@ export function createAppActions(options: CreateAppActionsOptions): Pick<
       set({ route: 'connectors' })
     },
 
-    closeInitialSetup: () => set({ initialSetupOpen: false }),
+    closeInitialSetup: () =>
+      set({
+        initialSetupOpen: false,
+        route: 'chat'
+      }),
 
     selectInspectorItem: (id) => set({ inspectorSelectedId: id }),
 

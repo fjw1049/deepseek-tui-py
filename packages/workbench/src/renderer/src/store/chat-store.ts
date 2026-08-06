@@ -1547,7 +1547,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
         void window.dsGui.notifyAppearanceApplied?.()
         await get().applyI18nFromSettings(settings.locale)
         set({
-          route: 'chat',
+          route: needsInitialSetup ? 'settings' : 'chat',
+          settingsSection: needsInitialSetup ? 'setup' : get().settingsSection,
           initialSetupOpen: needsInitialSetup,
           providerId: settings.agentProvider,
           workspaceRoot,

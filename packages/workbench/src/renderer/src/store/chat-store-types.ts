@@ -36,6 +36,7 @@ export type SendMessageOverrides = {
 }
 
 export type SettingsRouteSection =
+  | 'setup'
   | 'general'
   | 'search'
   | 'appearance'

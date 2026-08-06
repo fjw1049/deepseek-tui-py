@@ -10,6 +10,7 @@ import {
   Keyboard,
   Palette,
   Search,
+  Rocket,
   Settings,
   Shield
 } from 'lucide-react'
@@ -33,7 +34,12 @@ const NAV_ITEMS: NavItem[] = [
   { id: 'hooks', labelKey: 'hooks', icon: <Anchor className="h-4 w-4" strokeWidth={1.75} /> },
   { id: 'permissions', labelKey: 'permissions', icon: <Shield className="h-4 w-4" strokeWidth={1.75} /> },
   { id: 'data', labelKey: 'data', icon: <HardDrive className="h-4 w-4" strokeWidth={1.75} /> },
-  { id: 'archive', labelKey: 'archive', icon: <Archive className="h-4 w-4" strokeWidth={1.75} /> }
+  { id: 'archive', labelKey: 'archive', icon: <Archive className="h-4 w-4" strokeWidth={1.75} /> },
+  {
+    id: 'setup',
+    labelKey: 'setup',
+    icon: <Rocket className="h-[18px] w-[18px]" strokeWidth={2} />
+  }
 ]
 
 export function SettingsSidebarNav(): ReactElement {
@@ -58,6 +64,7 @@ export function SettingsSidebarNav(): ReactElement {
       <nav className="flex min-h-0 flex-1 flex-col gap-px overflow-y-auto px-1" aria-label={t('title')}>
         {NAV_ITEMS.map((item) => {
           const active = category === item.id
+          const isSetup = item.id === 'setup'
           return (
             <button
               key={item.id}
@@ -66,14 +73,20 @@ export function SettingsSidebarNav(): ReactElement {
               aria-current={active ? 'page' : undefined}
               className={`ds-sidebar-link ds-sidebar-link--plain ${
                 active ? 'ds-sidebar-link--active' : ''
-              }`}
+              } ${isSetup ? 'ds-settings-nav-setup' : ''}`}
             >
               <span
-                className={`ds-sidebar-link__icon ${active ? 'text-accent' : 'text-ds-muted'}`}
+                className={`ds-sidebar-link__icon ${active ? 'text-accent' : isSetup ? 'text-accent' : 'text-ds-muted'}`}
               >
                 {item.icon}
               </span>
-              <span className="min-w-0 flex-1 truncate text-left">{t(item.labelKey)}</span>
+              <span
+                className={`min-w-0 flex-1 truncate text-left ${
+                  isSetup ? 'ds-settings-nav-setup__label' : ''
+                }`}
+              >
+                {t(item.labelKey)}
+              </span>
             </button>
           )
         })}
