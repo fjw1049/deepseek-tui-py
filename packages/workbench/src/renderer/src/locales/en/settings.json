@@ -602,9 +602,9 @@
   "dataBackupFailed": "Backup failed (set a backup directory first)",
   "dataLocalResetSection": "Clear Local Data",
   "dataDeleteAndExit": "Delete and Quit",
-  "dataDeleteAndExitDesc": "Permanently delete GUI settings, Claw sandboxes, error logs, and pet/marketplace caches under ~/.deepseek/workbench, plus Electron caches, then quit. Conversations, Skills, usage stats, config.toml, and mcp.json are kept.",
+  "dataDeleteAndExitDesc": "Permanently delete GUI settings (~/.deepseek/settings.json) and error logs / pet & marketplace caches under ~/.deepseek/caches, plus Electron caches, then quit. Conversations, Skills, usage stats, Claw sandboxes, config.toml, and mcp.json are kept.",
   "dataDeleteAndExitAction": "Delete and Quit",
-  "dataDeleteAndExitConfirm": "Delete local GUI settings and caches and quit? Conversations and Skills will not be deleted.",
-  "dataDeleteAndExitConfirm2": "Confirm again: GUI settings/Claw/logs/caches under ~/.deepseek/workbench and Electron caches will be cleared and the app will quit immediately. This cannot be undone.",
+  "dataDeleteAndExitConfirm": "Delete local GUI settings and caches and quit? Conversations, Skills, and Claw sandboxes will not be deleted.",
+  "dataDeleteAndExitConfirm2": "Confirm again: GUI settings (~/.deepseek/settings.json) and caches under ~/.deepseek/caches, plus Electron caches, will be cleared and the app will quit immediately. This cannot be undone.",
   "dataDeleteAndExitFailed": "Failed to delete local data"
 }

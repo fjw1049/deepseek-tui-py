@@ -188,24 +188,14 @@ def user_plugin_host_dir() -> Path:
     return user_deepseek_dir() / "plugins" / ".host"
 
 
-def workbench_dir() -> Path:
-    """``~/.deepseek/workbench/`` — GUI settings, Claw, usage, logs, caches."""
-    return user_deepseek_dir() / "workbench"
+def settings_path() -> Path:
+    """``~/.deepseek/settings.json`` — GUI settings (flat, à la ``.claude``)."""
+    return user_deepseek_dir() / "settings.json"
 
 
-def workbench_settings_path() -> Path:
-    """``~/.deepseek/workbench/settings.json`` — Workbench GUI settings."""
-    return workbench_dir() / "settings.json"
-
-
-def workbench_usage_dir() -> Path:
-    """``~/.deepseek/workbench/usage/`` — Workbench model usage ledger."""
-    return workbench_dir() / "usage"
-
-
-def workbench_usage_ledger_path() -> Path:
-    """``~/.deepseek/workbench/usage/ledger-v1.json`` — daily model usage."""
-    return workbench_usage_dir() / "ledger-v1.json"
+def usage_ledger_path() -> Path:
+    """``~/.deepseek/usage.json`` — daily model usage ledger."""
+    return user_deepseek_dir() / "usage.json"
 
 
 # ---------------------------------------------------------------------------

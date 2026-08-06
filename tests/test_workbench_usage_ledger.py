@@ -11,7 +11,7 @@ from deepseek_tui.server import workbench_usage_ledger as ledger
 
 def test_record_turn_usage_deduplicates_turn_id(tmp_path: Path, monkeypatch) -> None:
     path = tmp_path / "ledger-v1.json"
-    monkeypatch.setattr(ledger, "workbench_usage_ledger_path", lambda: path)
+    monkeypatch.setattr(ledger, "usage_ledger_path", lambda: path)
     ended_at = datetime(2026, 6, 24, 12, 0, tzinfo=timezone.utc)
     usage = {
         "models": {
@@ -50,7 +50,7 @@ def test_record_turn_usage_skips_write_on_schema_mismatch(
     tmp_path: Path, monkeypatch
 ) -> None:
     path = tmp_path / "ledger-v1.json"
-    monkeypatch.setattr(ledger, "workbench_usage_ledger_path", lambda: path)
+    monkeypatch.setattr(ledger, "usage_ledger_path", lambda: path)
     path.write_text(
         json.dumps(
             {
@@ -89,7 +89,7 @@ def test_record_turn_usage_skips_write_on_schema_mismatch(
 
 def test_prune_old_days_removes_stale_entries(tmp_path: Path, monkeypatch) -> None:
     path = tmp_path / "ledger-v1.json"
-    monkeypatch.setattr(ledger, "workbench_usage_ledger_path", lambda: path)
+    monkeypatch.setattr(ledger, "usage_ledger_path", lambda: path)
     stale_day = (
         datetime.now(timezone.utc) - timedelta(days=ledger.RETENTION_DAYS + 1)
     ).strftime("%Y-%m-%d")

@@ -1,53 +1,52 @@
-// Canonical GUI product state under ``~/.deepseek/workbench/``:
-// settings, claw, usage, logs, pet-cache, marketplace-cache.
+// GUI product state is flat under ``~/.deepseek/`` (à la ``.claude`` / ``.codex``):
+// settings.json + usage.json at the top level, active ``claw/`` sandbox at the top
+// level, and wipeable caches under ``caches/`` (logs, pet-cache, marketplace-cache).
 // Electron ``userData`` remains for Chromium caches only (plus one-shot migrations).
 
 import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
 
-const WORKBENCH_HOME_SEGMENTS = ['.deepseek', 'workbench'] as const
-
 /**
- * Resolve ``…/workbench``.
+ * Resolve the user-level ``~/.deepseek`` root (same root as Python ``user_deepseek_dir``).
  *
- * - ``home`` override (tests): ``{home}/.deepseek/workbench``
- * - else ``$DEEPSEEK_HOME/workbench`` when set (same root as Python ``user_deepseek_dir``)
- * - else ``~/.deepseek/workbench``
+ * - ``home`` override (tests): ``{home}/.deepseek``
+ * - else ``$DEEPSEEK_HOME`` when set
+ * - else ``~/.deepseek``
  */
 export function resolveWorkbenchHome(home?: string): string {
   if (home !== undefined) {
-    return join(home, ...WORKBENCH_HOME_SEGMENTS)
+    return join(home, '.deepseek')
   }
   const fromEnv = process.env.DEEPSEEK_HOME?.trim()
   if (fromEnv) {
-    return join(resolve(fromEnv), 'workbench')
+    return resolve(fromEnv)
   }
-  return join(homedir(), ...WORKBENCH_HOME_SEGMENTS)
+  return join(homedir(), '.deepseek')
 }
 
-/** GUI settings (theme, port, models UI, …). */
+/** GUI settings (theme, port, models UI, …) — flat at the top level. */
 export function resolveWorkbenchSettingsPath(home?: string): string {
   return join(resolveWorkbenchHome(home), 'settings.json')
 }
 
-/** Claw / IM channel sandbox workspaces. */
+/** Claw / IM channel sandbox workspaces — active data at the top level, not a cache. */
 export function resolveClawChannelsRoot(home?: string): string {
   return join(resolveWorkbenchHome(home), 'claw')
 }
 
-/** GUI error logs (``deepseek-gui-YYYY-MM-DD.log``). */
+/** GUI error logs (``deepseek-gui-YYYY-MM-DD.log``) — under wipeable ``caches/``. */
 export function resolveWorkbenchLogsDir(home?: string): string {
-  return join(resolveWorkbenchHome(home), 'logs')
+  return join(resolveWorkbenchHome(home), 'caches', 'logs')
 }
 
-/** Desktop pet spritesheet / manifest cache. */
+/** Desktop pet spritesheet / manifest cache — under wipeable ``caches/``. */
 export function resolveWorkbenchPetCacheDir(home?: string): string {
-  return join(resolveWorkbenchHome(home), 'pet-cache')
+  return join(resolveWorkbenchHome(home), 'caches', 'pet-cache')
 }
 
-/** ModelScope marketplace catalog cache. */
+/** ModelScope marketplace catalog cache — under wipeable ``caches/``. */
 export function resolveWorkbenchMarketplaceCacheDir(home?: string): string {
-  return join(resolveWorkbenchHome(home), 'marketplace-cache')
+  return join(resolveWorkbenchHome(home), 'caches', 'marketplace-cache')
 }
 
 /** Legacy GUI home (pre-consolidation). Always under OS home, not DEEPSEEK_HOME. */

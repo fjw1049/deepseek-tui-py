@@ -12,7 +12,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
-from deepseek_tui.config.paths import workbench_usage_ledger_path
+from deepseek_tui.config.paths import usage_ledger_path
 
 logger = logging.getLogger(__name__)
 
@@ -269,7 +269,7 @@ def record_turn_usage(
         return
     _ = thread_id  # reserved for future per-thread rollups
 
-    path = workbench_usage_ledger_path()
+    path = usage_ledger_path()
 
     def mutate(ledger: dict[str, Any]) -> None:
         processed = ledger.setdefault("processedTurnIds", {})
@@ -292,7 +292,7 @@ def prune_usage_provider(provider_id: str) -> None:
     provider = provider_id.strip()
     if not provider:
         return
-    path = workbench_usage_ledger_path()
+    path = usage_ledger_path()
 
     def should_drop(model_ref: str) -> bool:
         decoded_provider, _ = _decode_model_ref(model_ref)
@@ -321,7 +321,7 @@ def prune_usage_endpoint_model(provider_id: str, model_id: str) -> None:
         target_ref = model
     else:
         target_ref = f"{provider}{MODEL_REF_SEPARATOR}{model}"
-    path = workbench_usage_ledger_path()
+    path = usage_ledger_path()
 
     def mutate(ledger: dict[str, Any]) -> None:
         for day_bucket in ledger.get("days", {}).values():

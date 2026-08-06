@@ -16,7 +16,7 @@ def test_export_import_workbench_settings_roundtrip(
 ) -> None:
     home = tmp_path / "home"
     monkeypatch.setenv("DEEPSEEK_HOME", str(home))
-    settings = home / "workbench" / "settings.json"
+    settings = home / "settings.json"
     settings.parent.mkdir(parents=True)
     settings.write_text(json.dumps({"version": 1, "theme": "light"}), encoding="utf-8")
     (home / "config.toml").write_text("model = \"x\"\n", encoding="utf-8")
@@ -26,14 +26,14 @@ def test_export_import_workbench_settings_roundtrip(
     assert report["files"] >= 3
     with zipfile.ZipFile(export_path) as zf:
         names = set(zf.namelist())
-        assert "workbench/settings.json" in names
+        assert "settings.json" in names
         assert "config.toml" in names
         manifest = json.loads(zf.read("manifest.json"))
         assert manifest["includes"]["workbench_settings"] is True
 
     settings.unlink()
     imported = import_bundle(export_path, mode="replace")
-    assert "workbench/settings.json" in imported["settings_restored"]
+    assert "settings.json" in imported["settings_restored"]
     assert json.loads(settings.read_text(encoding="utf-8"))["theme"] == "light"
 
 
@@ -42,7 +42,7 @@ def test_import_merge_keeps_existing_workbench_settings(
 ) -> None:
     home = tmp_path / "home"
     monkeypatch.setenv("DEEPSEEK_HOME", str(home))
-    settings = home / "workbench" / "settings.json"
+    settings = home / "settings.json"
     settings.parent.mkdir(parents=True)
     settings.write_text(json.dumps({"theme": "dark"}), encoding="utf-8")
 
@@ -51,5 +51,5 @@ def test_import_merge_keeps_existing_workbench_settings(
     settings.write_text(json.dumps({"theme": "kept"}), encoding="utf-8")
 
     imported = import_bundle(export_path, mode="merge")
-    assert "workbench/settings.json" not in imported["settings_restored"]
+    assert "settings.json" not in imported["settings_restored"]
     assert json.loads(settings.read_text(encoding="utf-8"))["theme"] == "kept"

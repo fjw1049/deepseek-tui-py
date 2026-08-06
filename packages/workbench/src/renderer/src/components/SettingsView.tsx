@@ -184,7 +184,7 @@ export function SettingsView(): ReactElement {
   const [petCatalogLoading, setPetCatalogLoading] = useState(false)
   const [petCatalogError, setPetCatalogError] = useState<string | null>(null)
   const [logDirOpenError, setLogDirOpenError] = useState<string | null>(null)
-  const [logDirPath, setLogDirPath] = useState('~/.deepseek/workbench/logs')
+  const [logDirPath, setLogDirPath] = useState('~/.deepseek/caches/logs')
   const [deepseekPaths, setDeepseekPaths] = useState({
     configPath: '~/.deepseek/config.toml',
     mcpPath: '~/.deepseek/mcp.json',

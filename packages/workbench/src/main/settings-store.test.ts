@@ -35,7 +35,7 @@ describe('JsonSettingsStore', () => {
     expect(loaded.deepseek.autoStart).toBe(false)
   })
 
-  it('migrates legacy Electron userData settings into workbench/', async () => {
+  it('migrates legacy Electron userData settings into ~/.deepseek', async () => {
     const home = await mkdtemp(join(tmpdir(), 'ds-gui-home-'))
     const userDataDir = await mkdtemp(join(tmpdir(), 'ds-gui-userdata-'))
     const workspaceRoot = join(home, 'workspace')
@@ -60,7 +60,7 @@ describe('JsonSettingsStore', () => {
     )
   })
 
-  it('migrates claw even when workbench/claw was pre-created empty', async () => {
+  it('migrates claw even when claw/ was pre-created empty', async () => {
     const home = await mkdtemp(join(tmpdir(), 'ds-gui-claw-mig-'))
     const src = join(resolveLegacyClawChannelsRoot(home), 'feishu', 'demo')
     const dest = resolveClawChannelsRoot(home)
@@ -110,7 +110,7 @@ describe('JsonSettingsStore', () => {
     )
   })
 
-  it('defaults claw channel workspaces under ~/.deepseek/workbench/claw', async () => {
+  it('defaults claw channel workspaces under ~/.deepseek/claw', async () => {
     const home = await mkdtemp(join(tmpdir(), 'ds-gui-claw-'))
     const store = new JsonSettingsStore({ home })
     await store.load()

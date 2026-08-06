@@ -93,7 +93,8 @@ function defaultClawChannelWorkspaceRoot(channel: ClawImChannelV1, home?: string
   return join(resolveClawChannelsRoot(home), channel.provider, domain, workspaceId)
 }
 
-/** Rewrite persisted ``~/.deepseekgui/claw/...`` roots to workbench/claw. */
+/** Rewrite persisted legacy claw roots (``~/.deepseekgui/claw`` or the old
+ * ``~/.deepseek/workbench/claw``) to the flat top-level ``~/.deepseek/claw``. */
 function rewriteLegacyClawWorkspacePath(raw: string | null | undefined, home?: string): string {
   const expanded = expandHomePath(raw)
   if (!expanded) return ''
@@ -102,12 +103,13 @@ function rewriteLegacyClawWorkspacePath(raw: string | null | undefined, home?: s
   if (expanded === legacyRoot || expanded.startsWith(`${legacyRoot}/`) || expanded.startsWith(`${legacyRoot}\\`)) {
     return `${nextRoot}${expanded.slice(legacyRoot.length)}`
   }
-  const marker = '/.deepseekgui/claw'
-  const idx = expanded.indexOf(marker)
-  if (idx >= 0) {
-    const prefix = expanded.slice(0, idx)
-    const rest = expanded.slice(idx + marker.length)
-    return `${join(prefix, '.deepseek', 'workbench', 'claw')}${rest}`
+  for (const marker of ['/.deepseekgui/claw', '/.deepseek/workbench/claw']) {
+    const idx = expanded.indexOf(marker)
+    if (idx >= 0) {
+      const prefix = expanded.slice(0, idx)
+      const rest = expanded.slice(idx + marker.length)
+      return `${join(prefix, '.deepseek', 'claw')}${rest}`
+    }
   }
   return expanded
 }
@@ -167,7 +169,7 @@ async function isEmptyDir(path: string): Promise<boolean> {
   }
 }
 
-/** Move legacy ``~/.deepseekgui/claw`` → ``~/.deepseek/workbench/claw`` once. */
+/** Move legacy ``~/.deepseekgui/claw`` → ``~/.deepseek/claw`` once. */
 async function migrateLegacyClawChannelsRoot(home = homedir()): Promise<boolean> {
   const dest = resolveClawChannelsRoot(home)
   const src = resolveLegacyClawChannelsRoot(home)

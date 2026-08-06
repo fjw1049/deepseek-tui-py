@@ -44,5 +44,5 @@ export function resolveMcpConfigPath(): string {
 }
 
 export function resolveWorkbenchUsageLedgerPath(): string {
-  return join(resolveUserDeepseekDir(), 'workbench', 'usage', 'ledger-v1.json')
+  return join(resolveUserDeepseekDir(), 'usage.json')
 }

@@ -11,12 +11,13 @@ import { stopDeepseekChildAndWait } from '../deepseek-process'
  * Permanently remove DeepSeek GUI local shell data and quit.
  *
  * Deletes:
- * - ``~/.deepseek/workbench/`` GUI product state (settings, claw, logs, caches)
+ * - ``~/.deepseek/settings.json`` GUI settings
+ * - ``~/.deepseek/caches/`` GUI caches (logs, pet-cache, marketplace-cache)
  * - legacy ``~/.deepseekgui``
  * - Electron ``userData`` Chromium caches
  *
  * Does **not** delete shared runtime data under ``~/.deepseek``
- * (threads, tasks, skills, config.toml, usage ledger, …).
+ * (threads, tasks, skills, config.toml, usage ledger, claw sandboxes, …).
  */
 export async function deleteGuiDataAndExit(): Promise<{ ok: true } | { ok: false; message: string }> {
   try {
@@ -27,16 +28,10 @@ export async function deleteGuiDataAndExit(): Promise<{ ok: true } | { ok: false
 
   const errors: string[] = []
 
-  const workbenchHome = resolveWorkbenchHome()
-  for (const rel of [
-    'settings.json',
-    'claw',
-    'logs',
-    'pet-cache',
-    'marketplace-cache'
-  ] as const) {
+  const deepseekHome = resolveWorkbenchHome()
+  for (const rel of ['settings.json', 'caches'] as const) {
     try {
-      await rm(join(workbenchHome, rel), { recursive: true, force: true })
+      await rm(join(deepseekHome, rel), { recursive: true, force: true })
     } catch (error) {
       errors.push(error instanceof Error ? error.message : String(error))
     }

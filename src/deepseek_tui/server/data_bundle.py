@@ -4,7 +4,7 @@ Bundle format is a zip with ``manifest.json`` plus optional directory trees.
 Scopes:
 
 * ``conversations`` — ``threads/`` (canonical) + ``sessions/`` (TUI legacy)
-* ``settings`` — ``config.toml`` + ``mcp.json`` + ``workbench/settings.json``
+* ``settings`` — ``config.toml`` + ``mcp.json`` + ``settings.json``
   (may contain secrets / API keys)
 * ``all`` — conversations + settings
 """
@@ -21,13 +21,12 @@ from pathlib import Path
 from typing import Any, Literal
 
 from deepseek_tui.config.paths import (
+    settings_path,
     user_config_path,
     user_deepseek_dir,
     user_mcp_config_path,
     user_sessions_dir,
     user_threads_dir,
-    workbench_settings_path,
-    workbench_usage_dir,
 )
 from deepseek_tui.utils import write_json_atomic
 
@@ -41,22 +40,29 @@ ImportMode = Literal["merge", "replace"]
 _SCOPES: frozenset[str] = frozenset({"conversations", "settings", "all"})
 
 
-def backup_meta_path() -> Path:
-    return workbench_usage_dir().parent / "backup-meta.json"
+_EMPTY_BACKUP_META = {"directory": None, "last_backup_at": None, "last_backup_path": None}
 
 
-def read_backup_meta() -> dict[str, Any]:
-    path = backup_meta_path()
+def _read_settings() -> dict[str, Any]:
+    path = settings_path()
     if not path.is_file():
-        return {"directory": None, "last_backup_at": None, "last_backup_path": None}
+        return {}
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
-        return {"directory": None, "last_backup_at": None, "last_backup_path": None}
+        return {}
+    return raw if isinstance(raw, dict) else {}
+
+
+def read_backup_meta() -> dict[str, Any]:
+    """Backup bookkeeping now lives under ``settings.json`` → ``backup`` (à la ``.claude``)."""
+    backup = _read_settings().get("backup")
+    if not isinstance(backup, dict):
+        return dict(_EMPTY_BACKUP_META)
     return {
-        "directory": raw.get("directory"),
-        "last_backup_at": raw.get("last_backup_at"),
-        "last_backup_path": raw.get("last_backup_path"),
+        "directory": backup.get("directory"),
+        "last_backup_at": backup.get("last_backup_at"),
+        "last_backup_path": backup.get("last_backup_path"),
     }
 
 
@@ -73,9 +79,11 @@ def write_backup_meta(
         current["last_backup_at"] = last_backup_at
     if last_backup_path is not None:
         current["last_backup_path"] = last_backup_path
-    path = backup_meta_path()
+    settings = _read_settings()
+    settings["backup"] = current
+    path = settings_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    write_json_atomic(path, current)
+    write_json_atomic(path, settings)
     return current
 
 
@@ -131,7 +139,7 @@ def export_bundle(
             for label, path in (
                 ("config.toml", user_config_path()),
                 ("mcp.json", user_mcp_config_path()),
-                ("workbench/settings.json", workbench_settings_path()),
+                ("settings.json", settings_path()),
             ):
                 if path.is_file():
                     zf.write(path, arcname=label)
@@ -216,13 +224,17 @@ def import_bundle(
             report["sessions_restored"] = True
 
         if import_settings:
-            for label, target, key in (
-                ("config.toml", user_config_path(), "config"),
-                ("mcp.json", user_mcp_config_path(), "mcp"),
-                ("workbench/settings.json", workbench_settings_path(), "workbench_settings"),
+            for arcnames, target, key in (
+                (("config.toml",), user_config_path(), "config"),
+                (("mcp.json",), user_mcp_config_path(), "mcp"),
+                # New exports store settings.json flat; older ones under workbench/.
+                (("settings.json", "workbench/settings.json"), settings_path(), "workbench_settings"),
             ):
-                candidate = tmp_root / label
-                if not candidate.is_file():
+                candidate = next(
+                    (tmp_root / name for name in arcnames if (tmp_root / name).is_file()),
+                    None,
+                )
+                if candidate is None:
                     continue
                 # Older exports omit workbench_settings in includes — still restore
                 # when the file is present in the zip.
@@ -233,7 +245,7 @@ def import_bundle(
                     # Keep existing settings on merge; only replace on replace mode.
                     continue
                 shutil.copy2(candidate, target)
-                report["settings_restored"].append(label)
+                report["settings_restored"].append(target.name)
 
         return report
 
