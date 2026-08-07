@@ -94,8 +94,14 @@ function sanitizePickPayload(raw: PreviewElementPickPayload): PreviewElementPick
 /** Dispose any previous picker instance in the guest page. */
 export function buildPreviewPickerCleanupScript(): string {
   return `(() => {
+  // Flip the arm flag first so any orphaned capture listeners become no-ops
+  // even if dispose() is missing / fails (host tracking can get out of sync).
+  try { window.__dsPreviewPickActive = false; } catch {}
   try { window.__dsPreviewPick?.dispose?.(); } catch {}
   try { delete window.__dsPreviewPick; } catch {}
+  try { document.getElementById('__ds_preview_pick_overlay__')?.remove(); } catch {}
+  try { document.getElementById('__ds_preview_pick_menu__')?.remove(); } catch {}
+  try { document.documentElement.style.cursor = ''; } catch {}
 })();`
 }
 
@@ -110,16 +116,21 @@ export function buildPreviewPickerInjectScript(): string {
   const ancestryMax = PREVIEW_PICK_ANCESTRY_MAX
   return `(() => {
   try { window.__dsPreviewPick?.dispose?.(); } catch {}
+  // Armed flag: every handler checks this so a missed dispose cannot leave
+  // click/mousemove capture listeners selecting elements after Inspect is off.
+  window.__dsPreviewPickActive = true;
 
   const PREFIX = ${prefix};
   const TEXT_MAX = ${textMax};
   const HTML_MAX = ${htmlMax};
   const ANCESTRY_MAX = ${ancestryMax};
   const SKIP = new Set(['HTML', 'HEAD', 'BODY', 'SCRIPT', 'STYLE', 'LINK', 'META', 'NOSCRIPT', 'BR', 'HR']);
+  const isArmed = () => window.__dsPreviewPickActive === true;
 
   // Prefer warn (level=2): some Chromium/webview paths are flaky about
   // forwarding console.log (level=1) to the host console-message event.
   const emit = (msg) => {
+    if (!isArmed()) return;
     try { console.warn(PREFIX + JSON.stringify(msg)); } catch {}
   };
 
@@ -270,6 +281,7 @@ export function buildPreviewPickerInjectScript(): string {
   };
 
   const onMove = (event) => {
+    if (!isArmed()) return;
     if (menu.style.display === 'block' && event.target === menu) return;
     const el = pickTarget(event.target);
     hoverEl = el;
@@ -277,6 +289,7 @@ export function buildPreviewPickerInjectScript(): string {
   };
 
   const onClick = (event) => {
+    if (!isArmed()) return;
     if (event.target === menu) return;
     const el = pickTarget(event.target);
     if (!el) return;
@@ -287,6 +300,7 @@ export function buildPreviewPickerInjectScript(): string {
   };
 
   const onContextMenu = (event) => {
+    if (!isArmed()) return;
     const el = pickTarget(event.target);
     if (!el) return;
     event.preventDefault();
@@ -302,6 +316,7 @@ export function buildPreviewPickerInjectScript(): string {
   };
 
   const onMenuClick = (event) => {
+    if (!isArmed()) return;
     event.preventDefault();
     event.stopPropagation();
     const el = menuEl || hoverEl;
@@ -310,6 +325,7 @@ export function buildPreviewPickerInjectScript(): string {
   };
 
   const onKeyDown = (event) => {
+    if (!isArmed()) return;
     if (event.key === 'Escape') {
       event.preventDefault();
       emit({ type: 'cancel' });
@@ -317,6 +333,7 @@ export function buildPreviewPickerInjectScript(): string {
   };
 
   const onScroll = () => {
+    if (!isArmed()) return;
     hideMenu();
     placeOverlay(hoverEl);
   };
@@ -333,6 +350,7 @@ export function buildPreviewPickerInjectScript(): string {
 
   window.__dsPreviewPick = {
     dispose() {
+      window.__dsPreviewPickActive = false;
       document.removeEventListener('mousemove', onMove, true);
       document.removeEventListener('click', onClick, true);
       document.removeEventListener('contextmenu', onContextMenu, true);

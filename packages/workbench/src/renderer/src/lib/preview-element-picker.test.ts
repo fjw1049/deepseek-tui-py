@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
   PREVIEW_PICK_CONSOLE_PREFIX,
+  buildPreviewPickerCleanupScript,
+  buildPreviewPickerInjectScript,
   extractWebviewConsoleMessage,
   parsePreviewPickConsoleMessage,
   type PreviewElementPick
@@ -93,6 +95,23 @@ describe('extractWebviewConsoleMessage', () => {
 
   it('returns null when message is missing', () => {
     expect(extractWebviewConsoleMessage(new Event('console-message'))).toBeNull()
+  })
+})
+
+describe('preview picker arm/disarm scripts', () => {
+  it('cleanup clears the arm flag before dispose so orphaned listeners no-op', () => {
+    const cleanup = buildPreviewPickerCleanupScript()
+    const armIdx = cleanup.indexOf('__dsPreviewPickActive = false')
+    const disposeIdx = cleanup.indexOf('__dsPreviewPick?.dispose')
+    expect(armIdx).toBeGreaterThanOrEqual(0)
+    expect(disposeIdx).toBeGreaterThan(armIdx)
+  })
+
+  it('inject gates click/move handlers on the arm flag', () => {
+    const inject = buildPreviewPickerInjectScript()
+    expect(inject).toContain('__dsPreviewPickActive = true')
+    expect(inject).toContain('isArmed()')
+    expect(inject).toMatch(/onClick[\s\S]*if \(!isArmed\(\)\) return/)
   })
 })
 

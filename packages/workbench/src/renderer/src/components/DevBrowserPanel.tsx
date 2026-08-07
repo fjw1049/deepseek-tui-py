@@ -398,7 +398,9 @@ export function DevBrowserPanel({
 
   const cleanupPickerOnTab = useCallback(
     (tabId: string): void => {
-      if (!pickerInjectedTabsRef.current.has(tabId)) return
+      // Always run the guest cleanup script — do not gate on the inject set.
+      // did-start-loading used to clear the set without disposing, so a later
+      // "turn Inspect off" early-returned and left capture listeners armed.
       pickerInjectedTabsRef.current.delete(tabId)
       runGuestScript(tabId, buildPreviewPickerCleanupScript())
     },
@@ -407,7 +409,16 @@ export function DevBrowserPanel({
 
   const injectPickerOnTab = useCallback(
     (tabId: string): void => {
+      // Hard gate: never re-arm after Inspect was turned off (stop-loading /
+      // dom-ready can race past a stale inspectModeRef).
+      if (!inspectModeRef.current) return
       if (!runGuestScript(tabId, buildPreviewPickerInjectScript())) return
+      if (!inspectModeRef.current) {
+        // Toggled off while executeJavaScript was queued — disarm immediately.
+        runGuestScript(tabId, buildPreviewPickerCleanupScript())
+        pickerInjectedTabsRef.current.delete(tabId)
+        return
+      }
       pickerInjectedTabsRef.current.add(tabId)
     },
     [runGuestScript]
@@ -424,15 +435,20 @@ export function DevBrowserPanel({
         if (tabId === activeTabIdRef.current) syncActiveNavigationState(tabId)
         return
       }
+      // Disarm before dropping tracking — same-document start-loading must not
+      // orphan capture listeners that a later cleanup would skip.
+      cleanupPickerOnTab(tabId)
       webviewDomReadyRef.current.delete(tabId)
-      pickerInjectedTabsRef.current.delete(tabId)
     },
-    [injectPickerOnTab, syncActiveNavigationState]
+    [cleanupPickerOnTab, injectPickerOnTab, syncActiveNavigationState]
   )
 
   const stopInspectMode = useCallback(
     (tabId: string = activeTabIdRef.current): void => {
-      if (inspectModeRef.current) setInspectMode(false)
+      // Sync ref immediately so stop-loading / dom-ready cannot re-inject
+      // between setState and the inspectMode effect flush.
+      inspectModeRef.current = false
+      setInspectMode(false)
       cleanupPickerOnTab(tabId)
     },
     [cleanupPickerOnTab]
@@ -489,6 +505,8 @@ export function DevBrowserPanel({
         stopInspectMode(tabId)
         return
       }
+      // Inspect off: ignore stale guest picks (orphaned listeners / late console).
+      if (!inspectModeRef.current) return
       if (tabId !== activeTabIdRef.current) return
       const filePath =
         tabsRef.current.find((tab) => tab.id === tabId)?.filePath?.trim() || ''
@@ -540,6 +558,7 @@ export function DevBrowserPanel({
   // canGoBack/canGoForward here.
   useEffect(() => {
     const tabId = activeTabId
+    inspectModeRef.current = false
     setInspectMode(false)
     const tab = tabsRef.current.find((candidate) => candidate.id === tabId)
     const url = tab?.url ?? null
@@ -612,18 +631,25 @@ export function DevBrowserPanel({
   useEffect(() => {
     if (!inspectMode) return
     if (!canInspect) {
-      setInspectMode(false)
+      stopInspectMode(activeTabId)
       return
     }
     injectPickerOnTab(activeTabId)
     return () => {
       cleanupPickerOnTab(activeTabId)
     }
-  }, [activeTabId, canInspect, cleanupPickerOnTab, injectPickerOnTab, inspectMode])
+  }, [
+    activeTabId,
+    canInspect,
+    cleanupPickerOnTab,
+    injectPickerOnTab,
+    inspectMode,
+    stopInspectMode
+  ])
 
   useEffect(() => {
-    if (!canInspect && inspectMode) setInspectMode(false)
-  }, [canInspect, inspectMode])
+    if (!canInspect && inspectMode) stopInspectMode()
+  }, [canInspect, inspectMode, stopInspectMode])
 
   useEffect(() => {
     // Auto-follow stays local-only so agent-mentioned public links never hijack
