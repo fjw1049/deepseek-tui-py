@@ -15,6 +15,8 @@ export type EditorTab = {
   error: string | null
   line?: number
   column?: number
+  /** Bumped on each open-at-line request so the surface re-reveals even for the same line. */
+  revealNonce?: number
 }
 
 export type OpenFileOptions = {
@@ -143,7 +145,12 @@ export const useWorkspaceEditorStore = create<WorkspaceEditorStore>((set, get) =
         // the editor surface re-reveals the newly requested line.
         tabs:
           line !== undefined || column !== undefined
-            ? upsertTab(state.tabs, { ...existing, line, column })
+            ? upsertTab(state.tabs, {
+                ...existing,
+                line,
+                column,
+                revealNonce: (existing.revealNonce ?? 0) + 1
+              })
             : state.tabs,
         ...paneAssignment(id, targetPane, toSide)
       }))
@@ -160,7 +167,8 @@ export const useWorkspaceEditorStore = create<WorkspaceEditorStore>((set, get) =
       loading: true,
       error: null,
       line,
-      column
+      column,
+      revealNonce: line !== undefined || column !== undefined ? 1 : undefined
     }
     set((state) => ({
       tabs: upsertTab(state.tabs, placeholder),
@@ -215,7 +223,8 @@ export const useWorkspaceEditorStore = create<WorkspaceEditorStore>((set, get) =
               loading: false,
               error: result.truncated ? 'File truncated for preview; edits may be limited.' : null,
               line,
-              column
+              column,
+              revealNonce: placeholder.revealNonce
             }
 
       set((state) => ({

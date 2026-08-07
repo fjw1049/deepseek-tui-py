@@ -23,6 +23,7 @@ import {
   looksLikeUnifiedDiff,
   sumDiffStats
 } from '../lib/diff-stats'
+import { firstChangedEditorLineFromPatch } from '../lib/parse-unified-diff-for-editor'
 import { resolveActiveThreadWorkspace } from '../lib/workspace-path'
 import { useChatStore } from '../store/chat-store'
 
@@ -31,8 +32,25 @@ type InspectorChangeItem = {
   filePath?: string
   detail: string
   status: 'running' | 'success' | 'error'
+  /** First changed line in the new file (1-based), for open-in-editor jumps. */
+  editLine?: number
   committable?: boolean
   gitStage?: GitWorkingChangeStage
+}
+
+function editLineFromChange(
+  detail: string,
+  meta?: Record<string, unknown>
+): number | undefined {
+  const mutation =
+    meta?.mutation && typeof meta.mutation === 'object' && !Array.isArray(meta.mutation)
+      ? (meta.mutation as Record<string, unknown>)
+      : undefined
+  const fromMeta = mutation?.line_start
+  if (typeof fromMeta === 'number' && Number.isFinite(fromMeta) && fromMeta >= 1) {
+    return Math.floor(fromMeta)
+  }
+  return firstChangedEditorLineFromPatch(detail)
 }
 
 function normalizeChangePath(path: string | undefined): string {
@@ -53,7 +71,8 @@ function sessionChangeItems(blocks: ChatBlock[]): InspectorChangeItem[] {
         id: block.id,
         filePath: extractDiffFilePath(detailText, block.filePath),
         detail: detailText,
-        status: block.status
+        status: block.status,
+        editLine: editLineFromChange(detailText, block.meta)
       }
     ]
   })
@@ -77,7 +96,8 @@ function turnLedgerChangeItems(
         id: `turn-ledger:${snap.turn_id}:${file.path}`,
         filePath: file.path,
         detail,
-        status: 'success'
+        status: 'success',
+        editLine: firstChangedEditorLineFromPatch(detail)
       })
     }
   }
@@ -90,6 +110,7 @@ function gitChangeItems(files: GitWorkingChangeFile[]): InspectorChangeItem[] {
     filePath: file.path,
     detail: file.patch,
     status: 'success' as const,
+    editLine: firstChangedEditorLineFromPatch(file.patch),
     committable: true,
     gitStage: file.stage
   }))
@@ -152,7 +173,7 @@ export function ChangeInspector({
 }: {
   blocks: ChatBlock[]
   className?: string
-  onOpenFileInEditor: (path: string) => void
+  onOpenFileInEditor: (path: string, line?: number) => void
 }): ReactElement {
   const { t } = useTranslation('common')
   const selectedId = useChatStore((s) => s.inspectorSelectedId)
@@ -382,7 +403,7 @@ export function ChangeInspector({
                             type="button"
                             onClick={(event) => {
                               event.stopPropagation()
-                              onOpenFileInEditor(item.filePath!)
+                              onOpenFileInEditor(item.filePath!, item.editLine)
                             }}
                             className="mt-0.5 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-ds-faint transition hover:bg-ds-hover hover:text-ds-ink"
                             title={t('inspectorOpenInEditor')}

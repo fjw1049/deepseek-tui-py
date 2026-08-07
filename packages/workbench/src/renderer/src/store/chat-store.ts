@@ -116,7 +116,7 @@ let composerModelLoadPromise: Promise<void> | null = null
 let bootPromise: Promise<void> | null = null
 let threadWarmupSeq = 0
 let threadWarmupTask: { threadId: string; promise: Promise<void> } | null = null
-const BUSY_WATCHDOG_MS = 60_000
+const BUSY_WATCHDOG_MS = 120_000
 const MAX_BUSY_RECOVERY_ATTEMPTS = 3
 const TURN_COMPLETION_PROBE_MS = 1_500
 let drainingQueuedMessages = false
@@ -567,6 +567,21 @@ function armBusyWatchdog(
   })
 }
 
+/**
+ * Incoming SSE activity means the stream is healthy. Reset the recovery budget
+ * and push the busy-watchdog deadline forward so long turns do not flash
+ * "event stream interrupted" every BUSY_WATCHDOG_MS.
+ */
+function noteBusyStreamActivity(
+  set: (partial: Partial<ChatState> | ((state: ChatState) => Partial<ChatState>)) => void,
+  get: () => ChatState
+): void {
+  resetBusyRecoveryAttempts()
+  if (get().busy) {
+    armBusyWatchdog(set, get)
+  }
+}
+
 function syncTurnCompletionPoll(
   set: (partial: Partial<ChatState> | ((state: ChatState) => Partial<ChatState>)) => void,
   get: () => ChatState
@@ -609,7 +624,7 @@ function buildThreadEventSink(
 ): ThreadEventSink {
   const sink: ThreadEventSink = {
     onSeq: (seq) => {
-      resetBusyRecoveryAttempts()
+      noteBusyStreamActivity(set, get)
       set((s) => ({
         lastSeq: seq,
         error: s.error === i18n.t('common:runtimeStreamRecovering') ? null : s.error
@@ -676,6 +691,10 @@ function buildThreadEventSink(
         // freeze the composer again.
         if (!s.busy && s.currentTurnId) {
           base.busy = true
+        }
+        // Healthy stream traffic must refresh the watchdog — otherwise a turn
+        // longer than BUSY_WATCHDOG_MS falsely triggers recoverActiveTurn.
+        if (s.busy || s.currentTurnId) {
           armBusyWatchdog(set, get)
         }
         let blocks = s.blocks
@@ -761,6 +780,8 @@ function buildThreadEventSink(
         }
         if (!s.busy && s.currentTurnId) {
           base.busy = true
+        }
+        if (s.busy || s.currentTurnId) {
           armBusyWatchdog(set, get)
         }
         if (
@@ -852,8 +873,8 @@ function buildThreadEventSink(
         itemId: `approval-${req.approvalId}`,
         toolName: req.toolName
       })
+      noteBusyStreamActivity(set, get)
       set((s) => {
-        resetBusyRecoveryAttempts()
         if (s.blocks.some((b) => b.kind === 'approval' && b.approvalId === req.approvalId)) {
           return {}
         }
@@ -882,8 +903,8 @@ function buildThreadEventSink(
       })
     },
     onEvolutionProposal: (req) => {
+      noteBusyStreamActivity(set, get)
       set((s) => {
-        resetBusyRecoveryAttempts()
         if (s.blocks.some((b) => b.kind === 'evolution' && b.recordId === req.recordId)) {
           return {}
         }
@@ -915,8 +936,8 @@ function buildThreadEventSink(
         itemId: `elevation-${req.elevationId}`,
         toolName: req.toolName
       })
+      noteBusyStreamActivity(set, get)
       set((s) => {
-        resetBusyRecoveryAttempts()
         if (s.blocks.some((b) => b.kind === 'elevation' && b.elevationId === req.elevationId)) {
           return {}
         }
@@ -1141,9 +1162,7 @@ function buildThreadEventSink(
           return { ...flushed, blocks: nextBlocks }
         }
         resetBusyRecoveryAttempts()
-        if (!s.busy) {
-          armBusyWatchdog(set, get)
-        }
+        armBusyWatchdog(set, get)
         return {
           ...flushed,
           busy: true,
@@ -1153,7 +1172,7 @@ function buildThreadEventSink(
       })
     },
     onLiveSegmentComplete: (kind, itemId, createdAt, text, processIntent) => {
-      resetBusyRecoveryAttempts()
+      noteBusyStreamActivity(set, get)
       set((s) => {
         if (kind === 'agent_reasoning' && s.liveReasoning.trim()) {
           return {
@@ -1184,7 +1203,7 @@ function buildThreadEventSink(
       scheduleTurnCompletionProbe(get, sink)
     },
     onFinalAnswer: (itemId, text, createdAt) => {
-      resetBusyRecoveryAttempts()
+      noteBusyStreamActivity(set, get)
       set((s) => ({
         blocks: upsertFinalAnswerBlock(s.blocks, itemId, text, createdAt),
         liveReasoning: '',

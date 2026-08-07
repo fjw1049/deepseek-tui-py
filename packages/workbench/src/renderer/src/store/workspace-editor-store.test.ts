@@ -47,7 +47,16 @@ describe('openFile line targeting', () => {
     const state = useWorkspaceEditorStore.getState()
     expect(state.tabs).toHaveLength(1)
     expect(state.tabs[0]?.line).toBe(42)
+    expect(state.tabs[0]?.revealNonce).toBe(1)
     expect(state.activeTabId).toBe('src/foo.ts')
+  })
+
+  it('bumps revealNonce when re-opening the same line', async () => {
+    const { openFile } = useWorkspaceEditorStore.getState()
+    await openFile('src/foo.ts', '/workspace', 9)
+    expect(useWorkspaceEditorStore.getState().tabs[0]?.revealNonce).toBe(1)
+    await openFile('src/foo.ts', '/workspace', 9)
+    expect(useWorkspaceEditorStore.getState().tabs[0]?.revealNonce).toBe(2)
   })
 
   it('keeps the previous line when re-opening without one', async () => {

@@ -4,7 +4,7 @@ import {
   looksLikeUnifiedDiff,
   type DiffStats
 } from '../../../lib/diff-stats'
-import { parseUnifiedDiffForEditor } from '../../../lib/parse-unified-diff-for-editor'
+import { firstChangedEditorLineFromPatch } from '../../../lib/parse-unified-diff-for-editor'
 
 /**
  * The lifecycle state of a tool call, as the renderer sees it. Mapped from
@@ -369,7 +369,8 @@ function resolveEditLine(
   if (fromMeta !== undefined && fromMeta >= 1) return Math.floor(fromMeta)
   const detail = block.detail
   if (!detail || !looksLikeUnifiedDiff(detail)) return undefined
-  return parseUnifiedDiffForEditor(detail).addedLines[0]
+  // Ignore bogus 0 from hunk headers like bare `@@` (no +N line number).
+  return firstChangedEditorLineFromPatch(detail)
 }
 
 function summarizeProcessText(text: string, max = 96): string {

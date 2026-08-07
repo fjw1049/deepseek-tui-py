@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { parseUnifiedDiffForEditor } from './parse-unified-diff-for-editor'
+import {
+  firstChangedEditorLineFromPatch,
+  parseUnifiedDiffForEditor
+} from './parse-unified-diff-for-editor'
 
 describe('parseUnifiedDiffForEditor', () => {
   it('maps added and deleted hunks to editor line numbers', () => {
@@ -42,5 +45,31 @@ describe('parseUnifiedDiffForEditor', () => {
     const result = parseUnifiedDiffForEditor(patch)
     expect(result.addedLines).toEqual([2, 3])
     expect(result.deletionZones).toEqual([])
+  })
+})
+
+describe('firstChangedEditorLineFromPatch', () => {
+  it('returns the first added line', () => {
+    const patch = ['--- a/a.ts', '+++ b/a.ts', '@@ -10,2 +10,3 @@', ' keep', '+added', ' keep'].join(
+      '\n'
+    )
+    expect(firstChangedEditorLineFromPatch(patch)).toBe(11)
+  })
+
+  it('falls back near a deletion-only hunk', () => {
+    const patch = [
+      '--- a/a.ts',
+      '+++ b/a.ts',
+      '@@ -10,3 +10,2 @@',
+      ' keep',
+      '-removed',
+      ' keep'
+    ].join('\n')
+    expect(firstChangedEditorLineFromPatch(patch)).toBe(10)
+  })
+
+  it('ignores bare @@ hunks that cannot resolve a real line', () => {
+    const patch = ['--- a/a.ts', '+++ b/a.ts', '@@', '-a', '+b'].join('\n')
+    expect(firstChangedEditorLineFromPatch(patch)).toBeUndefined()
   })
 })

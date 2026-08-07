@@ -46,7 +46,7 @@ type Props = {
   onToggleMaximize: () => void
   maximized?: boolean
   onBeginResize: (event: React.PointerEvent<HTMLDivElement>) => void
-  onOpenFileInEditor: (path: string) => void
+  onOpenFileInEditor: (path: string, line?: number) => void
   fillWidth?: boolean
   terminalMountActive?: boolean
 }

@@ -112,14 +112,28 @@ export const WorkspaceEditorSurface = forwardRef<WorkspaceEditorSurfaceHandle, P
     useEffect(() => {
       if (!editorReady || tab.loading) return
       const line = tab.line
-      if (typeof line !== 'number' || !Number.isFinite(line)) return
+      if (typeof line !== 'number' || !Number.isFinite(line) || line < 1) return
       const editor = editorRef.current
-      const model = editor?.getModel()
-      if (!editor || !model) return
-      const target = Math.min(Math.max(1, Math.floor(line)), model.getLineCount())
-      editor.revealLineInCenter(target)
-      editor.setPosition({ lineNumber: target, column: tab.column ?? 1 })
-    }, [editorReady, tab.id, tab.line, tab.column, tab.loading])
+      if (!editor) return
+      let cancelled = false
+      const reveal = (): void => {
+        if (cancelled) return
+        const model = editor.getModel()
+        if (!model || model.getLineCount() < 1) return
+        const target = Math.min(Math.max(1, Math.floor(line)), model.getLineCount())
+        editor.revealLineInCenter(target)
+        editor.setPosition({ lineNumber: target, column: tab.column ?? 1 })
+      }
+      // Defer past Monaco's controlled `value` sync + layout. Otherwise the
+      // model rewrite after loading snaps the viewport back to line 1.
+      const frame = window.requestAnimationFrame(() => {
+        window.requestAnimationFrame(reveal)
+      })
+      return () => {
+        cancelled = true
+        window.cancelAnimationFrame(frame)
+      }
+    }, [editorReady, tab.id, tab.line, tab.column, tab.loading, tab.revealNonce])
 
     useEffect(() => {
       if (!editorReady || tab.loading) return
@@ -161,6 +175,9 @@ export const WorkspaceEditorSurface = forwardRef<WorkspaceEditorSurfaceHandle, P
               seedSearchStringFromSelection: 'always'
             },
             minimap: { enabled: false },
+            // Side-panel editor is short; sticky scope headers read as a heavy
+            // "black bar" in dark theme (vs-dark shadow + widget bg).
+            stickyScroll: { enabled: false },
             overviewRulerLanes: 0,
             hideCursorInOverviewRuler: true,
             overviewRulerBorder: false,
