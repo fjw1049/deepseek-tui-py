@@ -264,3 +264,55 @@ async def test_web_search_empty_providers_fails() -> None:
     tool = WebSearchTool(providers=[])
     with pytest.raises(Exception, match="no providers enabled"):
         await tool.execute({"query": "x"}, context=object())  # type: ignore[arg-type]
+
+
+@pytest.mark.asyncio
+async def test_web_search_caps_huge_provider_snippets(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tavily/AnySearch often return full-page text as 'content' — must not
+    persist 100KB–400KB blobs into the turn item / soft-resume transcript.
+    """
+    from deepseek_tui.tools.web import (
+        _MAX_SEARCH_CONTENT_CHARS,
+        _MAX_SEARCH_SNIPPET_CHARS,
+    )
+
+    huge = "甲" * 50_000
+
+    async def fake_tavily(
+        _client: object,
+        *,
+        query: str,
+        max_results: int,
+        api_key: str,
+    ) -> tuple[list[_SearchHit], str]:
+        return (
+            [
+                _SearchHit("T", f"https://t.example/{i}", huge, "tavily", score=1.0)
+                for i in range(8)
+            ],
+            "答" * 5_000,
+        )
+
+    monkeypatch.setattr("deepseek_tui.tools.web._search_tavily", fake_tavily)
+
+    class _FakeClient:
+        async def __aenter__(self) -> _FakeClient:
+            return self
+
+        async def __aexit__(self, *args: object) -> None:
+            return None
+
+    monkeypatch.setattr(
+        "deepseek_tui.tools.web.httpx.AsyncClient",
+        lambda **_kwargs: _FakeClient(),
+    )
+
+    tool = WebSearchTool(tavily_api_key="tv-key", providers=["tavily"])
+    result = await tool.execute({"query": "众安"}, context=object())  # type: ignore[arg-type]
+
+    assert result.success
+    assert len(result.content) <= _MAX_SEARCH_CONTENT_CHARS + 80
+    for entry in result.metadata["results"]:
+        assert len(entry["content"]) <= _MAX_SEARCH_SNIPPET_CHARS + 80

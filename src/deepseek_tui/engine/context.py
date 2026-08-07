@@ -412,10 +412,15 @@ def estimated_input_tokens(messages: list[Message]) -> int:
     Chinese-heavy sessions accurate without over-counting the JSON framing.
     This is only the fallback path when ``real_input_tokens`` is unavailable;
     the primary path back-derives conversation from the provider's real total.
+
+    ``ensure_ascii=False`` is required: the default ``json.dumps`` escapes
+    every CJK codepoint to ``\\uXXXX`` (6× chars), which then inflates the
+    char-split estimator by ~3× on Chinese-heavy tool results and makes the
+    Workbench /context meter report e.g. 1.5M when the real payload is ~0.5M.
     """
     total = 0
     for m in messages:
-        total += estimate_tokens(json.dumps(m.model_dump()))
+        total += estimate_tokens(json.dumps(m.model_dump(), ensure_ascii=False))
     return max(1, total)
 
 

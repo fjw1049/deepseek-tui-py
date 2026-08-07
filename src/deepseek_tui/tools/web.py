@@ -26,6 +26,13 @@ _ANYSEARCH_SEARCH_URL = "https://api.anysearch.com/v1/search"
 _ANYSEARCH_MCP_URL = "https://api.anysearch.com/mcp"
 _TAVILY_SEARCH_URL = "https://api.tavily.com/search"
 _DEFAULT_FETCH_MAX_CHARS = 30_000
+# Search providers (esp. Tavily/AnySearch) often put full-page text in the
+# "content"/"snippet" field. Without caps a single web_search can dump
+# 400KB+ into the persisted turn item; soft-resume then rehydrates it and
+# the /context meter explodes even though live compaction would have cut it.
+_MAX_SEARCH_SNIPPET_CHARS = 800
+_MAX_SEARCH_ANSWER_CHARS = 2_000
+_MAX_SEARCH_CONTENT_CHARS = 12_000
 _DEFAULT_FETCH_TIMEOUT_S = 25.0
 _BROWSER_UA = (
     "Mozilla/5.0 (compatible; DeepSeekTUI/1.0; +https://github.com/deepseek-ai)"
@@ -342,13 +349,19 @@ class WebSearchTool(ToolSpec):
 
         lines: list[str] = []
         if answer:
-            lines.append(f"Answer: {answer}\n")
+            clipped_answer = _truncate_text(answer, _MAX_SEARCH_ANSWER_CHARS)
+            lines.append(f"Answer: {clipped_answer}\n")
         for i, hit in enumerate(hits, 1):
-            lines.append(f"{i}. {hit.title}\n   {hit.url}\n   {hit.snippet}")
+            snippet = _truncate_text(hit.snippet, _MAX_SEARCH_SNIPPET_CHARS)
+            lines.append(f"{i}. {hit.title}\n   {hit.url}\n   {snippet}")
+
+        content = "\n".join(lines)
+        if len(content) > _MAX_SEARCH_CONTENT_CHARS:
+            content = _truncate_text(content, _MAX_SEARCH_CONTENT_CHARS)
 
         return ToolResult(
             success=True,
-            content="\n".join(lines),
+            content=content,
             metadata={
                 "query": query,
                 "result_count": len(hits),
@@ -356,7 +369,7 @@ class WebSearchTool(ToolSpec):
                     {
                         "title": h.title,
                         "url": h.url,
-                        "content": h.snippet,
+                        "content": _truncate_text(h.snippet, _MAX_SEARCH_SNIPPET_CHARS),
                         "source": h.source,
                         "score": h.score,
                     }

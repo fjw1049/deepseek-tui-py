@@ -142,14 +142,35 @@ def reconstruct_messages_from_turn(
                     ]
                 )
             )
+            # Items persist the raw tool detail for the UI timeline. Live turns
+            # run compact_tool_result_for_context before inserting into the
+            # model transcript; soft-resume / cold /context must do the same
+            # or a single uncapped web_search (100KB–400KB) re-inflates the
+            # session after interrupt.
             messages.append(
                 Message.tool_result(
                     tool_use_id,
-                    text,
+                    _compact_persisted_tool_detail(tool_name, text),
                     is_error=item.status == TurnItemLifecycleStatus.FAILED,
                 )
             )
     return messages
+
+
+def _compact_persisted_tool_detail(tool_name: str, text: str) -> str:
+    """Apply the same tool-result compaction the live engine uses."""
+    from deepseek_tui.engine.context import compact_tool_result_for_context
+    from deepseek_tui.tools.registry import ToolResult
+
+    return compact_tool_result_for_context(
+        # Force the small-window tool-result caps (12k hard / 2k noisy soft).
+        # Do NOT pass a DeepSeek V4 alias here — those resolve to a 1M window
+        # and raise the hard cap to 40k, which still lets a fat read_file /
+        # web_search blob dominate soft-resume context.
+        "gpt-4",
+        tool_name,
+        ToolResult(success=True, content=text),
+    )
 
 
 def _turn_has_compaction_snapshot(

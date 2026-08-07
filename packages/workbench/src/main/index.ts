@@ -56,6 +56,7 @@ import { isBrowsableUrl } from '../shared/dev-preview-url'
 import { fetchBuiltinProviderModelIds, fetchUpstreamModelIds } from './upstream-models'
 import {
   deepseekTuiConfigChanged,
+  llmProviderConfigChanged,
   localeConfigChanged,
   readTopLevelApiKeyFromToml,
   resolveDeepseekConfigPath,
@@ -783,6 +784,10 @@ function deepseekLaunchConfigChanged(prev: AppSettingsV1, next: AppSettingsV1): 
     a.runtimeToken !== b.runtimeToken ||
     a.approvalPolicy !== b.approvalPolicy ||
     a.sandboxMode !== b.sandboxMode ||
+    // Builtin llmProviders (keys / models / context_windows) are synced into
+    // config.toml; without a restart the in-memory Config keeps stale provider
+    // tables → empty Bearer on switch + 128k instead of the configured window.
+    llmProviderConfigChanged(prev, next) ||
     JSON.stringify(prev.customEndpoints) !== JSON.stringify(next.customEndpoints) ||
     JSON.stringify(a.extraCorsOrigins) !== JSON.stringify(b.extraCorsOrigins)
   )

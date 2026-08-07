@@ -65,7 +65,8 @@ function deepseekConfigFieldsChanged(prev: AppSettingsV1, next: AppSettingsV1): 
   )
 }
 
-function llmProviderConfigChanged(prev: AppSettingsV1, next: AppSettingsV1): boolean {
+/** True when builtin vendor keys/models/windows changed (needs config sync + runtime restart). */
+export function llmProviderConfigChanged(prev: AppSettingsV1, next: AppSettingsV1): boolean {
   return (
     prev.defaultLlmProviderId !== next.defaultLlmProviderId ||
     JSON.stringify(prev.llmProviders) !== JSON.stringify(next.llmProviders)

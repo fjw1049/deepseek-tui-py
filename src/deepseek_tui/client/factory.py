@@ -56,6 +56,15 @@ def build_llm_client(config: Config) -> LLMClient:
     base_url = pc.base_url or "https://api.deepseek.com"
     model = pc.model or config.default_text_model
 
+    # Refuse to build a client that would send `Authorization: Bearer `
+    # (httpx rejects it as an illegal header). Surface a clear missing-key
+    # error instead of a cryptic stream failure after provider switch.
+    if not api_key.strip():
+        raise ValueError(
+            f"missing_api_key: no API key configured for provider "
+            f"'{config.provider}'. Add it in Settings → Models, then retry."
+        )
+
     if pc.protocol == "anthropic":
         client: LLMClient = AnthropicCompatClient(
             api_key=api_key,
