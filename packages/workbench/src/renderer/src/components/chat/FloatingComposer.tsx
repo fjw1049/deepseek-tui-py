@@ -82,6 +82,11 @@ import {
   type ComposerConnectorRow,
   type ComposerConnectorSection
 } from '../../lib/composer-connectors'
+import type { PreviewElementPick } from '../../lib/preview-element-picker'
+import {
+  formatPreviewPickChipLabel,
+  formatPreviewPickWireMessage
+} from '../../lib/preview-pick-message'
 
 export type { ComposerMode }
 
@@ -178,6 +183,12 @@ type Props = {
   onApplyPetSlashCommand?: (command: string) => boolean
   filterPetSlashCommands?: (query: string) => PetSlashMenuItem[]
   onNoticeChange?: (notice: Notice | null) => void
+  /** Bump to request focusing the textarea (e.g. after preview element pick). */
+  focusRequestId?: number
+  /** HTML preview element picks held as chips; JSON context is prepended only on send. */
+  previewPicks?: PreviewElementPick[]
+  onRemovePreviewPick?: (index: number) => void
+  onClearPreviewPicks?: () => void
 }
 
 type SlashCommandId = ComposerMode | ComposerActionCommandId
@@ -234,7 +245,11 @@ export function FloatingComposer({
   petSlashCommands = [],
   onApplyPetSlashCommand,
   filterPetSlashCommands,
-  onNoticeChange
+  onNoticeChange,
+  focusRequestId = 0,
+  previewPicks = [],
+  onRemovePreviewPick,
+  onClearPreviewPicks
 }: Props): ReactElement {
   const { t, i18n } = useTranslation('common')
   const workspaceRoot = useChatStore((s) => s.workspaceRoot)
@@ -331,7 +346,11 @@ export function FloatingComposer({
   // with no typed request yet.
   const canSend =
     canCompose &&
-    (outboundPreview.length > 0 || focusSkill != null || focusConnector != null || focusPlugin != null)
+    (outboundPreview.length > 0 ||
+      focusSkill != null ||
+      focusConnector != null ||
+      focusPlugin != null ||
+      previewPicks.length > 0)
   const petSlashQuery = getPetSlashQuery(input)
   const slashQuery = petSlashQuery == null ? getSlashQuery(input) : null
   const [selectedCommandIndex, setSelectedCommandIndex] = useState(0)
@@ -680,6 +699,11 @@ export function FloatingComposer({
   const focusComposer = (): void => {
     window.requestAnimationFrame(() => textareaRef.current?.focus())
   }
+
+  useEffect(() => {
+    if (!focusRequestId) return
+    focusComposer()
+  }, [focusRequestId])
 
   const applySlashCommand = (command: SlashCommand): void => {
     if (command.kind === 'action') {
@@ -1136,14 +1160,24 @@ export function FloatingComposer({
     // Prepend the focus target as a leading token so the runtime detects it
     // (chips are UI-only; wire format is unchanged): skill -> `/name`, MCP
     // connector -> `@name`, plugin mount -> `@plugin:name`. Mutually exclusive
-    // by construction.
-    const payload = focusSkill
-      ? `/${focusSkill} ${body}`.trim()
+    // by construction. Preview picks are also chip-only; JSON context is
+    // assembled here so the textarea stays a short user request.
+    const focusPrefix = focusSkill
+      ? `/${focusSkill}`
       : focusConnector
-        ? `@${focusConnector} ${body}`.trim()
+        ? `@${focusConnector}`
         : focusPlugin
-          ? `@plugin:${focusPlugin} ${body}`.trim()
-          : body
+          ? `@plugin:${focusPlugin}`
+          : ''
+    // With picks, the focus prefix must stay at the very start of the wire
+    // message (runtime detects `/name` / `@name` by line head); nesting it
+    // inside the pick JSON's "user request" would break detection.
+    const payload = previewPicks.length > 0
+      ? [focusPrefix, formatPreviewPickWireMessage(previewPicks, body)]
+          .filter(Boolean)
+          .join(' ')
+          .trim()
+      : `${focusPrefix} ${body}`.trim()
     if (!payload.trim()) return
     attachTimersRef.current.forEach((timer) => clearInterval(timer))
     attachTimersRef.current.clear()
@@ -1152,6 +1186,7 @@ export function FloatingComposer({
     setFocusSkill(null)
     setFocusConnector(null)
     setFocusPlugin(null)
+    onClearPreviewPicks?.()
     onSend(payload)
   }
 
@@ -1495,13 +1530,45 @@ export function FloatingComposer({
             </div>
           ) : null}
 
+          {previewPicks.length > 0 ? (
+            <div className="flex flex-wrap gap-2 px-1 pt-1">
+              {previewPicks.map((pick, index) => {
+                const label = formatPreviewPickChipLabel(pick)
+                return (
+                  <span
+                    key={`${pick.filePath}:${pick.selector}:${index}`}
+                    title={t('composerPreviewPickFocus', { name: label })}
+                    className="ds-no-drag inline-flex max-w-full items-center gap-1 rounded-full border border-[rgba(14,165,233,0.4)] bg-[rgba(14,165,233,0.14)] py-0.5 pl-2.5 pr-1 text-[12px] font-medium text-[#0ea5e9]"
+                  >
+                    <Wand2 className="h-3 w-3 shrink-0" strokeWidth={2} />
+                    <span className="truncate pr-0.5">{label}</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onRemovePreviewPick?.(index)
+                        focusComposer()
+                      }}
+                      aria-label={t('composerPreviewPickRemove', { name: label })}
+                      title={t('composerPreviewPickRemove', { name: label })}
+                      className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[#0ea5e9]/opacity-70 transition hover:bg-[rgba(14,165,233,0.22)] hover:opacity-100"
+                    >
+                      <X className="h-3 w-3" strokeWidth={2.25} />
+                    </button>
+                  </span>
+                )
+              })}
+            </div>
+          ) : null}
+
           <textarea
             ref={textareaRef}
             rows={stageCentered ? 1 : 1}
             className={`ds-composer-input ds-no-drag block min-w-0 w-full resize-none break-words bg-transparent px-2 text-ds-ink placeholder:text-ds-faint focus:outline-none [overflow-wrap:anywhere] ${
               stageCentered ? 'min-h-[48px] py-1.5' : 'min-h-[48px] py-1.5'
             } ${canCompose ? '' : 'opacity-80'}`}
-            placeholder={placeholder}
+            placeholder={
+              previewPicks.length > 0 ? t('composerPreviewPickPlaceholder') : placeholder
+            }
             value={input}
             disabled={!canCompose || voicePhase === 'transcribing'}
             onChange={(e) => {

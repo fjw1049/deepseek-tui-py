@@ -1,6 +1,7 @@
 import type { NormalizedThread } from '../agent/types'
 import i18n from '../i18n'
 import { parseUserFocusPrefix } from './user-focus-prefix'
+import { parsePreviewPickWireMessage } from './preview-pick-message'
 
 const LEGACY_PLACEHOLDER_TITLES = new Set(['New Thread', '新会话'])
 const MAX_THREAD_TITLE_LENGTH = 48
@@ -32,10 +33,15 @@ export function getDefaultThreadTitle(): string {
 
 export function deriveThreadTitleFromPrompt(prompt: string): string {
   const fallback = getDefaultThreadTitle()
-  // Strip focus prefixes (@plugin:, /skill, @connector) so the sidebar title
+  // Strip focus prefixes / preview-pick envelopes so the sidebar title
   // shows the user's actual question, not the raw wire command.
-  const focus = parseUserFocusPrefix(prompt)
-  const cleanPrompt = focus ? focus.body || focus.name : prompt
+  const previewPick = parsePreviewPickWireMessage(prompt)
+  const focus = previewPick ? null : parseUserFocusPrefix(prompt)
+  const cleanPrompt = previewPick
+    ? previewPick.userRequest || previewPick.chipLabels[0] || ''
+    : focus
+      ? focus.body || focus.name
+      : prompt
   const lines = cleanPrompt
     .split(/\r?\n/)
     .filter((line) => !/^\s*(```|~~~)/.test(line))

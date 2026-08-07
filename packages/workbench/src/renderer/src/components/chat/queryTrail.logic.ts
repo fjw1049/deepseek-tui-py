@@ -6,6 +6,7 @@
 
 import type { ChatBlock } from '../../agent/types'
 import { parseUserFocusPrefix } from '../../lib/user-focus-prefix'
+import { parsePreviewPickWireMessage } from '../../lib/preview-pick-message'
 
 /** One tick on the navigation trail — a single query the user sent. */
 export interface QueryTrailItem {
@@ -92,8 +93,13 @@ export function deriveQueryTrailItems(blocks: readonly ChatBlock[]): QueryTrailI
   let currentTurnIndex = -1
   for (const block of blocks) {
     if (block.kind === 'user') {
-      const focus = parseUserFocusPrefix(block.text)
-      const previewSource = focus ? focus.body || focus.name : block.text
+      const previewPick = parsePreviewPickWireMessage(block.text)
+      const focus = previewPick ? null : parseUserFocusPrefix(block.text)
+      const previewSource = previewPick
+        ? previewPick.userRequest || previewPick.chipLabels[0] || ''
+        : focus
+          ? focus.body || focus.name
+          : block.text
       items.push({
         id: block.id,
         ordinal: items.length + 1,

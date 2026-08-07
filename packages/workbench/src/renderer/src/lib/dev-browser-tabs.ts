@@ -4,6 +4,8 @@ export type PreviewTab = {
   id: string
   url: string | null
   title: string
+  /** Workspace HTML source path when opened via html-preview; enables Inspect. */
+  filePath?: string | null
 }
 
 export const PREVIEW_AUTO_FOLLOW_STORAGE_KEY = 'deepseekgui.devPreview.autoFollow'
@@ -13,11 +15,16 @@ export function resolveAutoFollow(stored: string | null): boolean {
   return stored === 'true'
 }
 
-export function createTab(url: string | null = null, title = ''): PreviewTab {
+export function createTab(
+  url: string | null = null,
+  title = '',
+  filePath: string | null = null
+): PreviewTab {
   return {
     id: `preview-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     url,
-    title
+    title,
+    filePath
   }
 }
 
@@ -56,7 +63,13 @@ export function updateTabById(
     // Webview events (did-navigate, page-title-updated) fire for URLs/titles
     // the state already holds; bail out referentially so they don't trigger
     // a re-render (and downstream effects) per event.
-    if (merged.url === tab.url && merged.title === tab.title) return tab
+    if (
+      merged.url === tab.url &&
+      merged.title === tab.title &&
+      (merged.filePath ?? null) === (tab.filePath ?? null)
+    ) {
+      return tab
+    }
     changed = true
     return merged
   })
@@ -66,6 +79,8 @@ export function updateTabById(
 export type OpenOrFocusOptions = {
   title?: string
   select?: boolean
+  /** Stamp workspace HTML path for Inspect; omit to leave existing meta alone. */
+  filePath?: string | null
 }
 
 export type TabState = {
@@ -87,8 +102,11 @@ export function reduceOpenOrFocusUrl(
 
   const existing = tabs.find((tab) => tab.url === url)
   if (existing) {
+    const patch: Partial<PreviewTab> = {}
+    if (options.title) patch.title = options.title
+    if (options.filePath !== undefined) patch.filePath = options.filePath
     return {
-      tabs: options.title ? updateTabById(tabs, existing.id, { title: options.title }) : tabs,
+      tabs: Object.keys(patch).length > 0 ? updateTabById(tabs, existing.id, patch) : tabs,
       activeTabId: select ? existing.id : activeTabId
     }
   }
@@ -100,13 +118,20 @@ export function reduceOpenOrFocusUrl(
     const target = tabs[emptyIndex]!
     return {
       tabs: tabs.map((tab, index) =>
-        index === emptyIndex ? { ...tab, url, title: options.title ?? '' } : tab
+        index === emptyIndex
+          ? {
+              ...tab,
+              url,
+              title: options.title ?? '',
+              filePath: options.filePath !== undefined ? options.filePath : (tab.filePath ?? null)
+            }
+          : tab
       ),
       activeTabId: select ? target.id : activeTabId
     }
   }
 
-  const next = createTab(url, options.title ?? '')
+  const next = createTab(url, options.title ?? '', options.filePath ?? null)
   return {
     tabs: [...tabs, next],
     activeTabId: select ? next.id : activeTabId
@@ -128,9 +153,11 @@ export function reduceCloseTab(state: TabState, tabId: string): CloseTabResult {
   if (!target) return { tabs, activeTabId, clearedSoleTab: false }
 
   if (tabs.length <= 1) {
-    if (!target.url && !target.title) return { tabs, activeTabId, clearedSoleTab: false }
+    if (!target.url && !target.title && !target.filePath) {
+      return { tabs, activeTabId, clearedSoleTab: false }
+    }
     return {
-      tabs: [{ ...target, url: null, title: '' }],
+      tabs: [{ ...target, url: null, title: '', filePath: null }],
       activeTabId,
       clearedSoleTab: true
     }

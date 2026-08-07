@@ -11,6 +11,7 @@ import {
   Loader2,
   Plus,
   Radar,
+  Wand2,
   RefreshCw,
   Send,
   X
@@ -21,6 +22,7 @@ import {
   isLocalPreviewUrl,
   normalizeBrowseUrlInput
 } from '@shared/dev-preview-url'
+import { isHtmlPreviewPath } from '@shared/html-preview'
 import {
   extractDetectedDevPreviewUrls,
   formatDevPreviewUrlLabel
@@ -37,6 +39,14 @@ import {
   updateTabById,
   type PreviewTab
 } from '../lib/dev-browser-tabs'
+import {
+  PREVIEW_PICK_CONSOLE_PREFIX,
+  buildPreviewPickerCleanupScript,
+  buildPreviewPickerInjectScript,
+  extractWebviewConsoleMessage,
+  parsePreviewPickConsoleMessage,
+  type PreviewElementPick
+} from '../lib/preview-element-picker'
 
 type DevWebviewTag = HTMLElement & {
   canGoBack(): boolean
@@ -54,17 +64,25 @@ type DevWebviewTag = HTMLElement & {
 
 /** Pause in-page media so background/hidden guests stop decoding video frames. */
 function pauseGuestMedia(webview: DevWebviewTag): void {
-  void webview
-    .executeJavaScript(
+  // executeJavaScript throws synchronously when the guest is not attached /
+  // dom-ready yet (e.g. switching to a newly opened preview tab). .catch()
+  // alone cannot prevent the React crash.
+  try {
+    const pending = webview.executeJavaScript(
       `(() => {
         for (const el of document.querySelectorAll('video, audio')) {
           try { el.pause() } catch {}
         }
       })()`
     )
-    .catch(() => {
-      /* guest may be mid-navigation */
-    })
+    if (pending && typeof (pending as Promise<unknown>).catch === 'function') {
+      void (pending as Promise<unknown>).catch(() => {
+        /* guest may be mid-navigation */
+      })
+    }
+  } catch {
+    /* webview not attached / not dom-ready yet */
+  }
 }
 
 type WebviewNavigateEvent = Event & {
@@ -109,6 +127,8 @@ type DevBrowserWebviewProps = {
   onTitle: (tabId: string, title: string) => void
   onLoadingChange: (tabId: string, loading: boolean) => void
   onFailLoad: (tabId: string, description: string) => void
+  onConsoleMessage: (tabId: string, message: string) => void
+  onDomReadyChange: (tabId: string, ready: boolean) => void
 }
 
 /**
@@ -124,7 +144,9 @@ function DevBrowserWebview({
   onNavigate,
   onTitle,
   onLoadingChange,
-  onFailLoad
+  onFailLoad,
+  onConsoleMessage,
+  onDomReadyChange
 }: DevBrowserWebviewProps): ReactElement {
   const webviewRef = useRef<DevWebviewTag | null>(null)
   const initialUrlRef = useRef(url)
@@ -137,21 +159,34 @@ function DevBrowserWebview({
     if (!webview) return
     if (loadedUrlRef.current === url) return
     try {
-      void webview.loadURL(url).catch(() => {
-        /* load failures surface via did-fail-load */
-      })
+      onDomReadyChange(tabId, false)
+      const pending = webview.loadURL(url)
+      if (pending && typeof pending.catch === 'function') {
+        void pending.catch(() => {
+          /* load failures surface via did-fail-load */
+        })
+      }
       loadedUrlRef.current = url
     } catch {
-      /* webview not attached yet */
+      /* webview not attached / not dom-ready yet */
     }
-  }, [url])
+  }, [onDomReadyChange, tabId, url])
 
   useEffect(() => {
     const webview = webviewRef.current
     if (!webview) return
 
-    const handleStartLoading = (): void => onLoadingChange(tabId, true)
-    const handleStopLoading = (): void => onLoadingChange(tabId, false)
+    const handleStartLoading = (): void => {
+      onDomReadyChange(tabId, false)
+      onLoadingChange(tabId, true)
+    }
+    const handleStopLoading = (): void => {
+      onLoadingChange(tabId, false)
+      // Stop-loading is a reliable "guest can run JS" signal when we missed
+      // the one-shot dom-ready (Strict Mode remount / late listener attach).
+      onDomReadyChange(tabId, true)
+    }
+    const handleDomReady = (): void => onDomReadyChange(tabId, true)
     const handleNavigate: EventListener = (event): void => {
       const currentUrl = normalizeBrowseUrlInput((event as WebviewNavigateEvent).url)
       if (!currentUrl) return
@@ -166,23 +201,57 @@ function DevBrowserWebview({
     const handleTitle: EventListener = (event): void => {
       onTitle(tabId, (event as WebviewTitleEvent).title)
     }
+    const handleConsoleMessage: EventListener = (event): void => {
+      const message = extractWebviewConsoleMessage(event)
+      // Cheap gate: ignore unrelated guest logs before crossing into React state.
+      if (!message || !message.includes(PREVIEW_PICK_CONSOLE_PREFIX)) return
+      onConsoleMessage(tabId, message)
+    }
 
     webview.addEventListener('did-start-loading', handleStartLoading)
     webview.addEventListener('did-stop-loading', handleStopLoading)
+    webview.addEventListener('dom-ready', handleDomReady)
     webview.addEventListener('did-navigate', handleNavigate)
     webview.addEventListener('did-navigate-in-page', handleNavigate)
     webview.addEventListener('did-fail-load', handleFailLoad)
     webview.addEventListener('page-title-updated', handleTitle)
+    webview.addEventListener('console-message', handleConsoleMessage)
+
+    // Probe: if the page already finished before listeners attached, mark ready.
+    try {
+      const probe = webview.executeJavaScript('true')
+      if (probe && typeof probe.then === 'function') {
+        void probe
+          .then(() => onDomReadyChange(tabId, true))
+          .catch(() => {
+            /* still loading — wait for dom-ready / did-stop-loading */
+          })
+      }
+    } catch {
+      /* not attached yet */
+    }
 
     return () => {
+      // Do NOT clear ready here: Strict Mode remount would drop the flag after
+      // the only dom-ready already fired, leaving magic-pen inject stuck.
       webview.removeEventListener('did-start-loading', handleStartLoading)
       webview.removeEventListener('did-stop-loading', handleStopLoading)
+      webview.removeEventListener('dom-ready', handleDomReady)
       webview.removeEventListener('did-navigate', handleNavigate)
       webview.removeEventListener('did-navigate-in-page', handleNavigate)
       webview.removeEventListener('did-fail-load', handleFailLoad)
       webview.removeEventListener('page-title-updated', handleTitle)
+      webview.removeEventListener('console-message', handleConsoleMessage)
     }
-  }, [tabId, onNavigate, onTitle, onLoadingChange, onFailLoad])
+  }, [
+    tabId,
+    onNavigate,
+    onTitle,
+    onLoadingChange,
+    onFailLoad,
+    onConsoleMessage,
+    onDomReadyChange
+  ])
 
   return (
     <webview
@@ -207,16 +276,20 @@ function DevBrowserWebview({
 export function DevBrowserPanel({
   blocks,
   preferredUrl,
+  preferredFilePath = null,
   externalError,
   onPreferredUrlConsumed,
   onExternalErrorConsumed,
+  onPreviewPick,
   className
 }: {
   blocks: ChatBlock[]
   preferredUrl?: string | null
+  preferredFilePath?: string | null
   externalError?: string | null
   onPreferredUrlConsumed?: () => void
   onExternalErrorConsumed?: () => void
+  onPreviewPick?: (pick: PreviewElementPick) => void
   className?: string
 }): ReactElement {
   const { t } = useTranslation('common')
@@ -259,8 +332,24 @@ export function DevBrowserPanel({
   const [iframeBackStack, setIframeBackStack] = useState<string[]>([])
   const [iframeForwardStack, setIframeForwardStack] = useState<string[]>([])
   const [iframeReloadNonce, setIframeReloadNonce] = useState(0)
+  const [inspectMode, setInspectMode] = useState(false)
+  const inspectModeRef = useRef(false)
+  /** Tabs where the picker script was successfully requested (cleanup only these). */
+  const pickerInjectedTabsRef = useRef(new Set<string>())
+  /** Tabs that have emitted Electron `dom-ready` (safe for executeJavaScript). */
+  const webviewDomReadyRef = useRef(new Set<string>())
   const canNavigateBack = useElectronWebview ? canGoBack : iframeBackStack.length > 0
   const canNavigateForward = useElectronWebview ? canGoForward : iframeForwardStack.length > 0
+  const activeFilePath = activeTab?.filePath?.trim() || ''
+  // Magic pen only for workspace static HTML opened with source path meta —
+  // hide (don't just disable) on Vite/dev-server/public browse tabs.
+  const canInspect =
+    useElectronWebview &&
+    Boolean(activeUrl && activeFilePath && isHtmlPreviewPath(activeFilePath))
+
+  useEffect(() => {
+    inspectModeRef.current = inspectMode
+  }, [inspectMode])
 
   const updateActiveTab = useCallback((patch: Partial<PreviewTab>): void => {
     const tabId = activeTabIdRef.current
@@ -269,12 +358,16 @@ export function DevBrowserPanel({
 
   const registerWebview = useCallback((tabId: string, webview: DevWebviewTag | null): void => {
     if (webview) webviewRefs.current.set(tabId, webview)
-    else webviewRefs.current.delete(tabId)
+    else {
+      webviewRefs.current.delete(tabId)
+      pickerInjectedTabsRef.current.delete(tabId)
+      webviewDomReadyRef.current.delete(tabId)
+    }
   }, [])
 
   const syncActiveNavigationState = useCallback((tabId: string): void => {
     const webview = webviewRefs.current.get(tabId)
-    if (!webview) return
+    if (!webview || !webviewDomReadyRef.current.has(tabId)) return
     try {
       setCanGoBack(webview.canGoBack())
       setCanGoForward(webview.canGoForward())
@@ -283,15 +376,81 @@ export function DevBrowserPanel({
     }
   }, [])
 
+  const runGuestScript = useCallback((tabId: string, code: string): boolean => {
+    const webview = webviewRefs.current.get(tabId)
+    if (!webview) return false
+    // Soft gate: prefer the ready set, but still attempt executeJavaScript —
+    // missing a one-shot dom-ready must not permanently disable magic pen.
+    // Sync throws are caught; success marks the tab ready.
+    try {
+      const pending = webview.executeJavaScript(code)
+      webviewDomReadyRef.current.add(tabId)
+      if (pending && typeof (pending as Promise<unknown>).catch === 'function') {
+        void (pending as Promise<unknown>).catch(() => {
+          /* guest may be mid-navigation */
+        })
+      }
+      return true
+    } catch {
+      return false
+    }
+  }, [])
+
+  const cleanupPickerOnTab = useCallback(
+    (tabId: string): void => {
+      if (!pickerInjectedTabsRef.current.has(tabId)) return
+      pickerInjectedTabsRef.current.delete(tabId)
+      runGuestScript(tabId, buildPreviewPickerCleanupScript())
+    },
+    [runGuestScript]
+  )
+
+  const injectPickerOnTab = useCallback(
+    (tabId: string): void => {
+      if (!runGuestScript(tabId, buildPreviewPickerInjectScript())) return
+      pickerInjectedTabsRef.current.add(tabId)
+    },
+    [runGuestScript]
+  )
+
+  const handleWebviewDomReadyChange = useCallback(
+    (tabId: string, ready: boolean): void => {
+      if (ready) {
+        webviewDomReadyRef.current.add(tabId)
+        // Magic pen may have been toggled before the guest finished loading.
+        if (inspectModeRef.current && tabId === activeTabIdRef.current) {
+          injectPickerOnTab(tabId)
+        }
+        if (tabId === activeTabIdRef.current) syncActiveNavigationState(tabId)
+        return
+      }
+      webviewDomReadyRef.current.delete(tabId)
+      pickerInjectedTabsRef.current.delete(tabId)
+    },
+    [injectPickerOnTab, syncActiveNavigationState]
+  )
+
+  const stopInspectMode = useCallback(
+    (tabId: string = activeTabIdRef.current): void => {
+      if (inspectModeRef.current) setInspectMode(false)
+      cleanupPickerOnTab(tabId)
+    },
+    [cleanupPickerOnTab]
+  )
+
   const handleWebviewNavigate = useCallback(
     (tabId: string, url: string): void => {
+      // Full navigations drop the injected picker. Keep Inspect armed and
+      // re-inject on the next dom-ready / stop-loading instead of forcing off
+      // (initial did-navigate used to cancel magic pen immediately).
+      if (inspectModeRef.current) cleanupPickerOnTab(tabId)
       setTabs((current) => updateTabById(current, tabId, { url }))
       if (tabId !== activeTabIdRef.current) return
       setDraftUrl(formatAddressInput(url))
       setLoadError(null)
       syncActiveNavigationState(tabId)
     },
-    [syncActiveNavigationState]
+    [cleanupPickerOnTab, syncActiveNavigationState]
   )
 
   const handleWebviewTitle = useCallback((tabId: string, title: string): void => {
@@ -303,9 +462,13 @@ export function DevBrowserPanel({
       if (tabId !== activeTabIdRef.current) return
       setLoading(nextLoading)
       if (nextLoading) setLoadError(null)
-      else syncActiveNavigationState(tabId)
+      else {
+        syncActiveNavigationState(tabId)
+        // Inspect may have been toggled before dom-ready; retry inject once loaded.
+        if (inspectModeRef.current) injectPickerOnTab(tabId)
+      }
     },
-    [syncActiveNavigationState]
+    [injectPickerOnTab, syncActiveNavigationState]
   )
 
   const handleWebviewFailLoad = useCallback(
@@ -318,8 +481,31 @@ export function DevBrowserPanel({
     [syncActiveNavigationState, t]
   )
 
+  const handleWebviewConsoleMessage = useCallback(
+    (tabId: string, message: string): void => {
+      const parsed = parsePreviewPickConsoleMessage(message)
+      if (!parsed) return
+      if (parsed.type === 'cancel') {
+        stopInspectMode(tabId)
+        return
+      }
+      if (tabId !== activeTabIdRef.current) return
+      const filePath =
+        tabsRef.current.find((tab) => tab.id === tabId)?.filePath?.trim() || ''
+      // Keep Inspect armed so the user can append more chips; Esc / toggle
+      // still call stopInspectMode. Missing filePath is a hard gate — bail
+      // without clearing Composer chips.
+      if (!filePath) return
+      onPreviewPick?.({ ...parsed.payload, filePath })
+    },
+    [onPreviewPick, stopInspectMode]
+  )
+
   const openOrFocusUrl = useCallback(
-    (url: string, options: { title?: string; select?: boolean } = {}): void => {
+    (
+      url: string,
+      options: { title?: string; select?: boolean; filePath?: string | null } = {}
+    ): void => {
       const normalized = normalizeBrowseUrlInput(url)
       if (!normalized) return
       // Read the latest state via refs (updated every commit) so the reducer
@@ -337,11 +523,12 @@ export function DevBrowserPanel({
         setLoadError(null)
         setLoading(true)
         setDraftUrl(formatAddressInput(normalized))
+        stopInspectMode()
       }
       setIframeBackStack([])
       setIframeForwardStack([])
     },
-    []
+    [stopInspectMode]
   )
 
   useEffect(() => {
@@ -352,7 +539,9 @@ export function DevBrowserPanel({
   // reflected by the webview event handlers instead, so it must not wipe
   // canGoBack/canGoForward here.
   useEffect(() => {
-    const tab = tabsRef.current.find((candidate) => candidate.id === activeTabId)
+    const tabId = activeTabId
+    setInspectMode(false)
+    const tab = tabsRef.current.find((candidate) => candidate.id === tabId)
     const url = tab?.url ?? null
     setDraftUrl(formatAddressInput(url))
     setLoadError(null)
@@ -363,8 +552,8 @@ export function DevBrowserPanel({
     setLoading(Boolean(url))
     // The newly focused tab's webview kept its own history while hidden —
     // restore the real nav state from it.
-    const webview = webviewRefs.current.get(activeTabId)
-    if (webview) {
+    const webview = webviewRefs.current.get(tabId)
+    if (webview && webviewDomReadyRef.current.has(tabId)) {
       try {
         setCanGoBack(webview.canGoBack())
         setCanGoForward(webview.canGoForward())
@@ -374,7 +563,12 @@ export function DevBrowserPanel({
         /* webview may not be attached yet */
       }
     }
-  }, [activeTabId])
+    // Cleanup the tab we leave so a lingering overlay never sticks on a
+    // background guest after Inspect was active.
+    return () => {
+      cleanupPickerOnTab(tabId)
+    }
+  }, [activeTabId, cleanupPickerOnTab])
 
   // Inactive guests used to stay `display:none` while still decoding page
   // media. Chromium then logs ffmpeg_common "Unsupported pixel format: -1"
@@ -383,12 +577,15 @@ export function DevBrowserPanel({
   useEffect(() => {
     for (const [tabId, webview] of webviewRefs.current.entries()) {
       const active = tabId === activeTabId
+      const ready = webviewDomReadyRef.current.has(tabId)
       try {
         webview.setAudioMuted(!active)
       } catch {
         /* webview may not expose muting yet */
       }
-      if (!active) pauseGuestMedia(webview)
+      // Never call executeJavaScript on a guest that has not reached dom-ready
+      // (switching to a freshly opened preview tab used to crash here).
+      if (!active && ready) pauseGuestMedia(webview)
     }
   }, [activeTabId, tabs])
 
@@ -407,9 +604,26 @@ export function DevBrowserPanel({
     if (preferredUrlRef.current === normalizedPreferredUrl) return
     preferredUrlRef.current = normalizedPreferredUrl
     setAutoFollow(false)
-    openOrFocusUrl(normalizedPreferredUrl)
+    const filePath = preferredFilePath?.trim() || null
+    openOrFocusUrl(normalizedPreferredUrl, { filePath })
     onPreferredUrlConsumed?.()
-  }, [normalizedPreferredUrl, onPreferredUrlConsumed, openOrFocusUrl])
+  }, [normalizedPreferredUrl, onPreferredUrlConsumed, openOrFocusUrl, preferredFilePath])
+
+  useEffect(() => {
+    if (!inspectMode) return
+    if (!canInspect) {
+      setInspectMode(false)
+      return
+    }
+    injectPickerOnTab(activeTabId)
+    return () => {
+      cleanupPickerOnTab(activeTabId)
+    }
+  }, [activeTabId, canInspect, cleanupPickerOnTab, injectPickerOnTab, inspectMode])
+
+  useEffect(() => {
+    if (!canInspect && inspectMode) setInspectMode(false)
+  }, [canInspect, inspectMode])
 
   useEffect(() => {
     // Auto-follow stays local-only so agent-mentioned public links never hijack
@@ -493,14 +707,25 @@ export function DevBrowserPanel({
       return
     }
     if (!options.keepAutoFollow) setAutoFollow(false)
+    stopInspectMode()
     setLoadError(null)
     setLoading(true)
     if (!useElectronWebview && activeUrl && normalized !== activeUrl) {
       setIframeBackStack((stack) => [...stack, activeUrl].slice(-30))
       setIframeForwardStack([])
     }
-    updateActiveTab({ url: normalized, title: '' })
+    // Omnibox navigations have no workspace source meta.
+    updateActiveTab({ url: normalized, title: '', filePath: null })
     setDraftUrl(formatAddressInput(normalized))
+  }
+
+  const toggleInspectMode = (): void => {
+    if (!canInspect) return
+    if (inspectMode) {
+      stopInspectMode()
+      return
+    }
+    setInspectMode(true)
   }
 
   const submitUrl = (event: FormEvent<HTMLFormElement>): void => {
@@ -673,6 +898,38 @@ export function DevBrowserPanel({
                 <Bug className="h-3.5 w-3.5" strokeWidth={1.8} />
               </button>
             ) : null}
+            {canInspect ? (
+              <button
+                type="button"
+                onClick={toggleInspectMode}
+                className={`ds-dev-browser__magic${inspectMode ? ' is-on' : ''}`}
+                aria-label={t('browserInspect')}
+                aria-pressed={inspectMode}
+                title={t('browserInspectHint')}
+              >
+                <svg aria-hidden="true" width="0" height="0" className="absolute">
+                  <defs>
+                    <linearGradient
+                      id="ds-magic-grad"
+                      x1="0%"
+                      y1="100%"
+                      x2="100%"
+                      y2="0%"
+                    >
+                      <stop offset="0%" stopColor="#2dd4bf" />
+                      <stop offset="35%" stopColor="#38bdf8" />
+                      <stop offset="70%" stopColor="#a78bfa" />
+                      <stop offset="100%" stopColor="#f472b6" />
+                    </linearGradient>
+                  </defs>
+                </svg>
+                <Wand2
+                  className="ds-dev-browser__magic-icon h-3.5 w-3.5"
+                  stroke={inspectMode ? 'url(#ds-magic-grad)' : 'currentColor'}
+                  strokeWidth={1.75}
+                />
+              </button>
+            ) : null}
             <button
               type="button"
               onClick={() => setAutoFollow((value) => !value)}
@@ -682,7 +939,6 @@ export function DevBrowserPanel({
               title={t('browserAutoFollow')}
             >
               <Radar className="h-3.5 w-3.5" strokeWidth={1.75} />
-              <span>{t('browserAutoFollowShort')}</span>
             </button>
           </div>
         </div>
@@ -823,6 +1079,8 @@ export function DevBrowserPanel({
                     onTitle={handleWebviewTitle}
                     onLoadingChange={handleWebviewLoadingChange}
                     onFailLoad={handleWebviewFailLoad}
+                    onConsoleMessage={handleWebviewConsoleMessage}
+                    onDomReadyChange={handleWebviewDomReadyChange}
                   />
                 </div>
               ) : null

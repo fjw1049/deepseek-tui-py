@@ -34,6 +34,7 @@ import {
   Search,
   Sparkles,
   Terminal,
+  Wand2,
   Wrench,
   X
 } from 'lucide-react'
@@ -96,6 +97,11 @@ import {
   type TodoTurnSession
 } from '../../lib/extract-todos-from-blocks'
 import { parseUserFocusPrefix, composeUserFocusMessage } from '../../lib/user-focus-prefix'
+import {
+  formatPreviewPickChipLabel,
+  formatPreviewPickWireMessage,
+  parsePreviewPickWireMessage
+} from '../../lib/preview-pick-message'
 import { pluginDisplayTitle } from '../extensions/plugin-presentation'
 import { QueryTrail } from './QueryTrail'
 import { createActiveTrailStore, deriveQueryTrailItems } from './queryTrail.logic'
@@ -2880,6 +2886,41 @@ function UserFocusChip({
   )
 }
 
+/** Chip for HTML preview element picks — wire JSON stays hidden in the bubble. */
+function PreviewPickChip({
+  label,
+  onRemove
+}: {
+  label: string
+  onRemove?: () => void
+}): ReactElement {
+  const { t } = useTranslation('common')
+  return (
+    <span
+      title={t('composerPreviewPickFocus', { name: label })}
+      className="inline-flex max-w-full items-center gap-1 rounded-full border border-[rgba(14,165,233,0.4)] bg-[rgba(14,165,233,0.14)] py-0.5 pl-2.5 pr-1 text-[12px] font-medium text-[#0ea5e9]"
+    >
+      <Wand2 className="h-3 w-3 shrink-0" strokeWidth={2} aria-hidden />
+      <span className="truncate pr-0.5">{label}</span>
+      {onRemove ? (
+        <button
+          type="button"
+          onClick={(event) => {
+            event.preventDefault()
+            event.stopPropagation()
+            onRemove()
+          }}
+          aria-label={t('composerPreviewPickRemove', { name: label })}
+          title={t('composerPreviewPickRemove', { name: label })}
+          className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[#0ea5e9]/opacity-70 transition hover:bg-[rgba(14,165,233,0.22)] hover:opacity-100"
+        >
+          <X className="h-3 w-3" strokeWidth={2.25} aria-hidden />
+        </button>
+      ) : null}
+    </span>
+  )
+}
+
 const REWIND_CONFIRM_FILE_LIMIT = 8
 
 /**
@@ -2896,10 +2937,20 @@ function UserMessageBubble({
   const busy = useChatStore((s) => s.busy)
   const rewindAndResend = useChatStore((s) => s.rewindAndResend)
   const activeThreadId = useChatStore((s) => s.activeThreadId)
-  const focus = useMemo(() => parseUserFocusPrefix(block.text), [block.text])
-  const displayBody = focus ? focus.body : block.text
+  const previewPick = useMemo(() => parsePreviewPickWireMessage(block.text), [block.text])
+  const focus = useMemo(
+    () => (previewPick ? null : parseUserFocusPrefix(block.text)),
+    [block.text, previewPick]
+  )
+  const displayBody = previewPick
+    ? previewPick.userRequest
+    : focus
+      ? focus.body
+      : block.text
+  const previewChipLabels = previewPick?.chipLabels ?? []
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(displayBody)
+  const [editPicks, setEditPicks] = useState(() => previewPick?.picks ?? [])
   const [submitting, setSubmitting] = useState(false)
   const [previewing, setPreviewing] = useState(false)
   const [confirm, setConfirm] = useState<{
@@ -2937,13 +2988,19 @@ function UserMessageBubble({
 
   const startEdit = (): void => {
     if (busy) return
-    setDraft(focus ? focus.body : block.text)
+    setDraft(
+      previewPick ? previewPick.userRequest : focus ? focus.body : block.text
+    )
+    setEditPicks(previewPick?.picks ?? [])
     setConfirm(null)
     setEditing(true)
   }
 
   const cancelEdit = (): void => {
-    setDraft(focus ? focus.body : block.text)
+    setDraft(
+      previewPick ? previewPick.userRequest : focus ? focus.body : block.text
+    )
+    setEditPicks(previewPick?.picks ?? [])
     setConfirm(null)
     setEditing(false)
   }
@@ -2951,7 +3008,12 @@ function UserMessageBubble({
   const commitResend = async (restoreFiles: boolean, force = false): Promise<void> => {
     const trimmed = draft.trim()
     if (!trimmed || busy || submitting) return
-    const wireText = focus ? composeUserFocusMessage(focus, trimmed) : trimmed
+    const wireText =
+      editPicks.length > 0
+        ? formatPreviewPickWireMessage(editPicks, trimmed)
+        : focus
+          ? composeUserFocusMessage(focus, trimmed)
+          : trimmed
     setConfirm(null)
     setSubmitting(true)
     setEditing(false)
@@ -3015,6 +3077,22 @@ function UserMessageBubble({
     return (
       <div id={`block-${block.id}`} className="ds-user-message">
         <div className="ds-user-message-bubble ds-user-message-edit-bubble min-w-0">
+          {editPicks.length > 0 ? (
+            <div className="mb-1.5 flex flex-wrap gap-1.5">
+              {editPicks.map((pick, index) => {
+                const label = formatPreviewPickChipLabel(pick)
+                return (
+                  <PreviewPickChip
+                    key={`${pick.filePath}:${pick.selector}:${index}`}
+                    label={label}
+                    onRemove={() => {
+                      setEditPicks((current) => current.filter((_, i) => i !== index))
+                    }}
+                  />
+                )
+              })}
+            </div>
+          ) : null}
           {focus ? <UserFocusChip kind={focus.kind} name={focus.name} /> : null}
           <textarea
             ref={textareaRef}
@@ -3179,6 +3257,13 @@ function UserMessageBubble({
   return (
     <div id={`block-${block.id}`} className="ds-user-message group relative">
       <div className="ds-user-message-bubble min-w-0">
+        {previewChipLabels.length > 0 ? (
+          <div className="mb-1.5 flex flex-wrap gap-1.5">
+            {previewChipLabels.map((label, index) => (
+              <PreviewPickChip key={`${label}:${index}`} label={label} />
+            ))}
+          </div>
+        ) : null}
         {focus ? <UserFocusChip kind={focus.kind} name={focus.name} /> : null}
         {displayBody ? (
           <div className="whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-justify [text-justify:inter-ideograph]">

@@ -1,4 +1,5 @@
 import {
+  useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -16,7 +17,11 @@ import { PetMascotDock } from '../pet/PetMascotDock'
 import { ComposerNoticeToast } from './composer-notice'
 import { FloatingComposer } from './FloatingComposer'
 
-type Props = ComponentProps<typeof FloatingComposer>
+type Props = ComponentProps<typeof FloatingComposer> & {
+  /** One-shot notice from parent (e.g. preview pick limit); keyed by nonce. */
+  flashNotice?: Notice | null
+  flashNoticeNonce?: number
+}
 
 const COMPOSER_CLEARANCE_VAR = '--ds-composer-clearance'
 
@@ -26,6 +31,14 @@ export function ComposerStage(props: Props): ReactElement {
   const rootRef = useRef<HTMLDivElement>(null)
   const [composerNotice, setComposerNotice] = useState<Notice | null>(null)
   useNoticeAutoDismiss(composerNotice, setComposerNotice)
+
+  const { flashNotice = null, flashNoticeNonce = 0, ...composerProps } = props
+
+  useEffect(() => {
+    if (flashNoticeNonce > 0 && flashNotice) {
+      setComposerNotice(flashNotice)
+    }
+  }, [flashNotice, flashNoticeNonce])
 
   const petSlashCommands = useMemo(
     () =>
@@ -41,7 +54,7 @@ export function ComposerStage(props: Props): ReactElement {
 
   const handleSend = (text: string): void => {
     if (pet.handlePetSlash(text)) return
-    props.onSend(text)
+    composerProps.onSend(text)
   }
 
   // Timeline spacer follows real composer height (ProcessTray / approvals /
@@ -88,7 +101,7 @@ export function ComposerStage(props: Props): ReactElement {
           />
         </div>
         <FloatingComposer
-          {...props}
+          {...composerProps}
           onNoticeChange={setComposerNotice}
           onSend={handleSend}
           petSlashCommands={petSlashCommands}

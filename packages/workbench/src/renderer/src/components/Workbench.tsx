@@ -13,6 +13,9 @@ import {
   extractLatestTurnHtmlPreviewPaths
 } from '../lib/html-preview-detection'
 import { isHtmlPreviewPath } from '@shared/html-preview'
+import type { PreviewElementPick } from '../lib/preview-element-picker'
+import { PREVIEW_PICK_MAX, upsertPreviewPick } from '../lib/preview-pick-message'
+import type { Notice } from './extensions/marketplace-shared'
 import {
   WORKSPACE_FILE_PREVIEW_EVENT,
   type WorkspaceFilePreviewDetail
@@ -349,8 +352,14 @@ export function Workbench(): ReactElement {
   )
   const latestHtmlPreviewPath = detectedHtmlPreviewPaths[0] ?? null
   const [workspacePreviewUrl, setWorkspacePreviewUrl] = useState<string | null>(null)
+  const [workspacePreviewPath, setWorkspacePreviewPath] = useState<string | null>(null)
+  const [composerFocusRequestId, setComposerFocusRequestId] = useState(0)
+  const [pendingPreviewPicks, setPendingPreviewPicks] = useState<PreviewElementPick[]>([])
+  const [previewPickNotice, setPreviewPickNotice] = useState<Notice | null>(null)
+  const [previewPickNoticeNonce, setPreviewPickNoticeNonce] = useState(0)
   const [htmlPreviewError, setHtmlPreviewError] = useState<string | null>(null)
   const preferredPreviewUrl = workspacePreviewUrl ?? latestDevPreviewUrl
+  const preferredPreviewFilePath = workspacePreviewUrl ? workspacePreviewPath : null
   const showDevPreviewCard =
     route === 'chat' &&
     latestDevPreviewUrl !== null
@@ -583,6 +592,7 @@ export function Workbench(): ReactElement {
               return
             }
             setWorkspacePreviewUrl(result.url)
+            setWorkspacePreviewPath(detail.path)
           } catch (error) {
             console.error('[html-preview] failed to resolve preview URL', error)
             openRightSidebar('editor')
@@ -615,6 +625,8 @@ export function Workbench(): ReactElement {
     previewThreadId.current = activeThreadId
     autoOpenedPreviewUrlRef.current = null
     setWorkspacePreviewUrl(null)
+    setWorkspacePreviewPath(null)
+    setPendingPreviewPicks([])
     setHtmlPreviewError(null)
     if (rightSidebarOpen && rightSidebarTab === 'preview') {
       closeRightSidebar()
@@ -853,6 +865,7 @@ export function Workbench(): ReactElement {
     if (latestDevPreviewUrl) {
       autoOpenedPreviewUrlRef.current = latestDevPreviewUrl
       setWorkspacePreviewUrl(null)
+      setWorkspacePreviewPath(null)
     }
     openRightSidebar('preview')
   }
@@ -889,11 +902,13 @@ export function Workbench(): ReactElement {
           console.error('[html-preview]', result.message, { path, root })
           openRightSidebar('preview')
           setWorkspacePreviewUrl(null)
+          setWorkspacePreviewPath(null)
           setHtmlPreviewError(result.message)
           return
         }
         setHtmlPreviewError(null)
         setWorkspacePreviewUrl(result.url)
+        setWorkspacePreviewPath(path)
         openRightSidebar('preview')
       } catch (error) {
         console.error('[html-preview] failed to resolve preview URL', error)
@@ -907,10 +922,39 @@ export function Workbench(): ReactElement {
 
   const clearWorkspacePreviewUrl = useCallback((): void => {
     setWorkspacePreviewUrl(null)
+    setWorkspacePreviewPath(null)
   }, [])
 
   const clearHtmlPreviewError = useCallback((): void => {
     setHtmlPreviewError(null)
+  }, [])
+
+  const handlePreviewPick = useCallback(
+    (pick: PreviewElementPick): void => {
+      // Keep the textarea for the short user request; context rides as chips
+      // and is expanded to JSON only on send. Same selector toggles off.
+      setPendingPreviewPicks((current) => {
+        const result = upsertPreviewPick(current, pick)
+        if (result.kind === 'limit') {
+          setPreviewPickNotice({
+            tone: 'info',
+            message: t('composerPreviewPickLimit', { count: PREVIEW_PICK_MAX })
+          })
+          setPreviewPickNoticeNonce((n) => n + 1)
+        }
+        return result.picks
+      })
+      setComposerFocusRequestId((current) => current + 1)
+    },
+    [t]
+  )
+
+  const removePendingPreviewPick = useCallback((index: number): void => {
+    setPendingPreviewPicks((current) => current.filter((_, i) => i !== index))
+  }, [])
+
+  const clearPendingPreviewPicks = useCallback((): void => {
+    setPendingPreviewPicks([])
   }, [])
 
   const previewLaunchCard =
@@ -1262,6 +1306,12 @@ export function Workbench(): ReactElement {
                         onWithdrawQueuedMessage={withdrawQueuedMessage}
                         onSendQueuedMessageNow={(id) => void sendQueuedMessageNow(id)}
                         onInterrupt={() => void interrupt()}
+                        focusRequestId={composerFocusRequestId}
+                        previewPicks={pendingPreviewPicks}
+                        onRemovePreviewPick={removePendingPreviewPick}
+                        onClearPreviewPicks={clearPendingPreviewPicks}
+                        flashNotice={previewPickNotice}
+                        flashNoticeNonce={previewPickNoticeNonce}
                       />
                     </div>
                   </div>
@@ -1323,6 +1373,12 @@ export function Workbench(): ReactElement {
                         onWithdrawQueuedMessage={withdrawQueuedMessage}
                         onSendQueuedMessageNow={(id) => void sendQueuedMessageNow(id)}
                         onInterrupt={() => void interrupt()}
+                        focusRequestId={composerFocusRequestId}
+                        previewPicks={pendingPreviewPicks}
+                        onRemovePreviewPick={removePendingPreviewPick}
+                        onClearPreviewPicks={clearPendingPreviewPicks}
+                        flashNotice={previewPickNotice}
+                        flashNoticeNonce={previewPickNoticeNonce}
                       />
                     </div>
                   </div>
@@ -1382,6 +1438,12 @@ export function Workbench(): ReactElement {
                       onWithdrawQueuedMessage={withdrawQueuedMessage}
                       onSendQueuedMessageNow={(id) => void sendQueuedMessageNow(id)}
                       onInterrupt={() => void interrupt()}
+                      focusRequestId={composerFocusRequestId}
+                      previewPicks={pendingPreviewPicks}
+                      onRemovePreviewPick={removePendingPreviewPick}
+                      onClearPreviewPicks={clearPendingPreviewPicks}
+                      flashNotice={previewPickNotice}
+                      flashNoticeNonce={previewPickNoticeNonce}
                     />
                   </div>
                 </div>
@@ -1429,9 +1491,11 @@ export function Workbench(): ReactElement {
             blocks={blocks}
             devPreviewBlocks={devPreviewBlocks}
             latestDevPreviewUrl={preferredPreviewUrl}
+            preferredPreviewFilePath={preferredPreviewFilePath}
             previewError={htmlPreviewError}
             onPreferredUrlConsumed={clearWorkspacePreviewUrl}
             onPreviewErrorConsumed={clearHtmlPreviewError}
+            onPreviewPick={handlePreviewPick}
             onTabChange={setRightSidebarTab}
             onToggleCollapsed={() => setRightSidebarCollapsed((current) => !current)}
             onClose={closeRightSidebarPanel}

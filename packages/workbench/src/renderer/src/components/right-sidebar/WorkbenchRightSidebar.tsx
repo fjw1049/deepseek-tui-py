@@ -12,6 +12,7 @@ import {
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import type { ChatBlock } from '../../agent/types'
+import type { PreviewElementPick } from '../../lib/preview-element-picker'
 import type { RightSidebarTab } from '../../lib/right-sidebar-state'
 import { AppTerminalPanel } from '../AppTerminalPanel'
 import { RightSidebarCollapsedStrip } from './RightSidebarCollapsedStrip'
@@ -37,9 +38,11 @@ type Props = {
   blocks: ChatBlock[]
   devPreviewBlocks: ChatBlock[]
   latestDevPreviewUrl: string | null
+  preferredPreviewFilePath?: string | null
   previewError?: string | null
   onPreferredUrlConsumed?: () => void
   onPreviewErrorConsumed?: () => void
+  onPreviewPick?: (pick: PreviewElementPick) => void
   onTabChange: (tab: RightSidebarTab) => void
   onToggleCollapsed: () => void
   onClose: () => void
@@ -99,9 +102,11 @@ export function WorkbenchRightSidebar({
   blocks,
   devPreviewBlocks,
   latestDevPreviewUrl,
+  preferredPreviewFilePath = null,
   previewError = null,
   onPreferredUrlConsumed,
   onPreviewErrorConsumed,
+  onPreviewPick,
   onTabChange,
   onToggleCollapsed,
   onClose,
@@ -150,9 +155,11 @@ export function WorkbenchRightSidebar({
         <DevBrowserPanel
           blocks={devPreviewBlocks}
           preferredUrl={latestDevPreviewUrl}
+          preferredFilePath={preferredPreviewFilePath}
           externalError={previewError}
           onPreferredUrlConsumed={onPreferredUrlConsumed}
           onExternalErrorConsumed={onPreviewErrorConsumed}
+          onPreviewPick={onPreviewPick}
           className="h-full max-h-full w-full flex-col"
         />
       </Suspense>

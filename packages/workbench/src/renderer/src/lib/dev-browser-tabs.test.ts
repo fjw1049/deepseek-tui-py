@@ -71,6 +71,28 @@ describe('reduceOpenOrFocusUrl', () => {
     const next = reduceOpenOrFocusUrl(initial, 'https://example.com/', { title: 'New title' })
     expect(next.tabs[0]!.title).toBe('New title')
   })
+
+  it('stamps filePath meta when opening a workspace HTML preview', () => {
+    const initial = state([tab('a')], 'a')
+    const next = reduceOpenOrFocusUrl(initial, 'http://127.0.0.1:9/docs/a.html', {
+      filePath: 'docs/a.html'
+    })
+    expect(next.tabs[0]).toMatchObject({
+      url: 'http://127.0.0.1:9/docs/a.html',
+      filePath: 'docs/a.html'
+    })
+  })
+
+  it('updates filePath when refocusing the same preview URL', () => {
+    const initial = state(
+      [{ id: 'a', url: 'http://127.0.0.1:9/a.html', title: '', filePath: 'old.html' }],
+      'a'
+    )
+    const next = reduceOpenOrFocusUrl(initial, 'http://127.0.0.1:9/a.html', {
+      filePath: 'new.html'
+    })
+    expect(next.tabs[0]!.filePath).toBe('new.html')
+  })
 })
 
 describe('reduceCloseTab', () => {
