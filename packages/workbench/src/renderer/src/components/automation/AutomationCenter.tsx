@@ -126,6 +126,7 @@ export function AutomationCenter({
   const [query, setQuery] = useState('')
   const [status, setStatus] = useState<StatusFilter>('all')
   const [loading, setLoading] = useState(false)
+  const [hasLoaded, setHasLoaded] = useState(false)
   const [runsLoading, setRunsLoading] = useState(false)
   const [busyId, setBusyId] = useState<string | null>(null)
   const [notice, setNotice] = useState<Notice | null>(null)
@@ -191,23 +192,36 @@ export function AutomationCenter({
     return list
   }, [query, rows, status, sort])
 
-  const refresh = useCallback(async () => {
-    if (!runtimeReady) {
-      setRows([])
-      return
-    }
-    setLoading(true)
-    try {
-      setRows(await listAutomations())
-    } catch (error) {
-      setNotice({
-        tone: 'error',
-        message: error instanceof Error ? error.message : String(error)
-      })
-    } finally {
-      setLoading(false)
-    }
-  }, [runtimeReady])
+  const refresh = useCallback(
+    async (opts?: { notify?: boolean }) => {
+      if (!runtimeReady) {
+        setRows([])
+        setHasLoaded(true)
+        return
+      }
+      setLoading(true)
+      try {
+        const [automations, channels] = await Promise.all([
+          listAutomations(),
+          loadChannelDeliveryState().catch(() => null)
+        ])
+        setRows(automations)
+        if (channels) setChannelDelivery(channels)
+        if (opts?.notify) {
+          setNotice({ tone: 'success', message: t('listReloaded') })
+        }
+      } catch (error) {
+        setNotice({
+          tone: 'error',
+          message: error instanceof Error ? error.message : String(error)
+        })
+      } finally {
+        setLoading(false)
+        setHasLoaded(true)
+      }
+    },
+    [runtimeReady, t]
+  )
 
   const refreshRuns = useCallback(async (id: string) => {
     setRunsLoading(true)
@@ -224,40 +238,46 @@ export function AutomationCenter({
     }
   }, [])
 
-  const fetchAllRuns = useCallback(async () => {
-    if (!rows.length) {
-      setAllRuns([])
-      return
-    }
-    setAllRunsLoading(true)
-    try {
-      const nameMap = new Map(rows.map((r) => [r.id, r.name]))
-      const collected: AnnotatedRun[] = []
-      await Promise.all(
-        rows.map(async (row) => {
-          try {
-            const batch = await listAutomationRuns(row.id, 10)
-            collected.push(
-              ...batch.map((r) => ({
-                ...r,
-                automationName: nameMap.get(r.automation_id) || '—'
-              }))
-            )
-          } catch {
-            /* skip automations whose runs can't be fetched */
-          }
-        })
-      )
-      collected.sort(
-        (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-      )
-      setAllRuns(collected.slice(0, 100))
-    } catch {
-      setAllRuns([])
-    } finally {
-      setAllRunsLoading(false)
-    }
-  }, [rows])
+  const fetchAllRuns = useCallback(
+    async (opts?: { notify?: boolean }) => {
+      if (!rows.length) {
+        setAllRuns([])
+        return
+      }
+      setAllRunsLoading(true)
+      try {
+        const nameMap = new Map(rows.map((r) => [r.id, r.name]))
+        const collected: AnnotatedRun[] = []
+        await Promise.all(
+          rows.map(async (row) => {
+            try {
+              const batch = await listAutomationRuns(row.id, 10)
+              collected.push(
+                ...batch.map((r) => ({
+                  ...r,
+                  automationName: nameMap.get(r.automation_id) || '—'
+                }))
+              )
+            } catch {
+              /* skip automations whose runs can't be fetched */
+            }
+          })
+        )
+        collected.sort(
+          (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+        )
+        setAllRuns(collected.slice(0, 100))
+        if (opts?.notify) {
+          setNotice({ tone: 'success', message: t('listReloaded') })
+        }
+      } catch {
+        setAllRuns([])
+      } finally {
+        setAllRunsLoading(false)
+      }
+    },
+    [rows, t]
+  )
 
   useEffect(() => {
     void refresh()
@@ -512,7 +532,7 @@ export function AutomationCenter({
                 </select>
                 <button
                   type="button"
-                  onClick={() => void refresh()}
+                  onClick={() => void refresh({ notify: true })}
                   disabled={loading}
                   title={t('automationRefresh')}
                   className="rounded-lg border border-ds-border bg-ds-card p-2 text-ds-muted hover:bg-ds-hover disabled:opacity-50"
@@ -521,7 +541,7 @@ export function AutomationCenter({
                 </button>
               </div>
 
-              {loading && rows.length === 0 ? (
+              {loading && !hasLoaded ? (
                 <div className="flex items-center justify-center gap-2 py-16 text-[13px] text-ds-muted">
                   <Loader2 className="h-4 w-4 animate-spin" />
                   {t('automationLoading')}
@@ -644,7 +664,18 @@ export function AutomationCenter({
             </>
           ) : (
             <>
-              {allRunsLoading ? (
+              <div className="mb-5 flex items-center justify-end">
+                <button
+                  type="button"
+                  onClick={() => void fetchAllRuns({ notify: true })}
+                  disabled={allRunsLoading || rows.length === 0}
+                  title={t('automationRefresh')}
+                  className="rounded-lg border border-ds-border bg-ds-card p-2 text-ds-muted hover:bg-ds-hover disabled:opacity-50"
+                >
+                  <RefreshCw className={`h-4 w-4 ${allRunsLoading ? 'animate-spin' : ''}`} />
+                </button>
+              </div>
+              {allRunsLoading && allRuns.length === 0 ? (
                 <div className="flex items-center justify-center gap-2 py-16 text-[13px] text-ds-muted">
                   <Loader2 className="h-4 w-4 animate-spin" />
                   {t('automationLoading')}
