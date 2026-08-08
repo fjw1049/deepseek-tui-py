@@ -27,8 +27,6 @@ import { isChatsWorkspace, isClawWorkspacePath } from '../../lib/workspace-path'
 import { SidebarSortableList, SidebarSortableRow } from './SidebarSortable'
 import { ThreadRow } from './SidebarProjectsSection'
 
-const CHATS_VISIBLE_LIMIT = 8
-
 type SidebarChatsSectionProps = {
   onNewChat: () => void
   onSelectThread: (threadId: string) => void
@@ -59,7 +57,6 @@ export function SidebarChatsSection({
 
   const collapsed = useChatStore((s) => s.chatsCollapsed)
   const setCollapsed = useChatStore((s) => s.setChatsCollapsed)
-  const [expanded, setExpanded] = useState(false)
   const [deletingThreadIds, setDeletingThreadIds] = useState<Record<string, boolean>>({})
   const [menuOpen, setMenuOpen] = useState(false)
   const [menuPos, setMenuPos] = useState<{ top: number; left: number } | null>(null)
@@ -103,12 +100,8 @@ export function SidebarChatsSection({
     persistChatsOrder(nextIds)
   }
 
-  const hasOverflow = !selectMode && chatsThreads.length > CHATS_VISIBLE_LIMIT
-  const visibleChats =
-    selectMode || expanded ? chatsThreads : chatsThreads.slice(0, CHATS_VISIBLE_LIMIT)
-
   const allVisibleSelected =
-    visibleChats.length > 0 && visibleChats.every((thread) => selectedIds.has(thread.id))
+    chatsThreads.length > 0 && chatsThreads.every((thread) => selectedIds.has(thread.id))
 
   const closeMenu = (): void => {
     setMenuOpen(false)
@@ -155,7 +148,6 @@ export function SidebarChatsSection({
   const enterSelectMode = (): void => {
     setMenuOpen(false)
     setCollapsed(false)
-    setExpanded(true)
     setSelectMode(true)
     setSelectedIds(new Set())
   }
@@ -163,12 +155,10 @@ export function SidebarChatsSection({
   const handleExpandAll = (): void => {
     setMenuOpen(false)
     setCollapsed(false)
-    setExpanded(true)
   }
 
   const handleCollapseAll = (): void => {
     setMenuOpen(false)
-    setExpanded(false)
     setCollapsed(true)
   }
 
@@ -190,7 +180,7 @@ export function SidebarChatsSection({
   const toggleSelectAllVisible = (): void => {
     setSelectedIds((prev) => {
       if (allVisibleSelected) return new Set()
-      return new Set(visibleChats.map((thread) => thread.id))
+      return new Set(chatsThreads.map((thread) => thread.id))
     })
   }
 
@@ -278,7 +268,7 @@ export function SidebarChatsSection({
             <button
               type="button"
               onClick={toggleSelectAllVisible}
-              disabled={visibleChats.length === 0 || batchBusy}
+              disabled={chatsThreads.length === 0 || batchBusy}
               className="shrink-0 rounded-md px-1.5 py-1 text-[12px] text-ds-muted transition-colors hover:bg-ds-hover hover:text-ds-ink disabled:opacity-40"
             >
               {allVisibleSelected ? t('sidebarChatsDeselectAll') : t('sidebarChatsSelectAll')}
@@ -420,18 +410,11 @@ export function SidebarChatsSection({
           ) : (
             <div className="ds-sidebar-thread-list px-1.5 pb-1">
               <SidebarSortableList
-                items={visibleChats.map((thread) => thread.id)}
+                items={chatsThreads.map((thread) => thread.id)}
                 disabled={selectMode}
-                onReorder={(nextVisibleIds) => {
-                  // Preserve hidden overflow ids after the visible window.
-                  const visibleSet = new Set(nextVisibleIds)
-                  const rest = chatsThreads
-                    .map((thread) => thread.id)
-                    .filter((id) => !visibleSet.has(id))
-                  handleChatsReorder([...nextVisibleIds, ...rest])
-                }}
+                onReorder={handleChatsReorder}
               >
-                {visibleChats.map((thread) => (
+                {chatsThreads.map((thread) => (
                   <SidebarSortableRow key={thread.id} id={thread.id} disabled={selectMode}>
                     <ThreadRow
                       thread={thread}
@@ -461,19 +444,6 @@ export function SidebarChatsSection({
                   </SidebarSortableRow>
                 ))}
               </SidebarSortableList>
-              {hasOverflow ? (
-                <button
-                  type="button"
-                  onClick={() => setExpanded((prev) => !prev)}
-                  className="ml-1 mt-0.5 rounded-md px-2 py-1 text-[13px] text-ds-faint transition-colors duration-200 hover:bg-ds-hover hover:text-ds-ink"
-                >
-                  {expanded
-                    ? t('sidebarWorkspaceShowLess')
-                    : t('sidebarChatsShowMore', {
-                        count: chatsThreads.length - CHATS_VISIBLE_LIMIT
-                      })}
-                </button>
-              ) : null}
             </div>
           )}
         </div>

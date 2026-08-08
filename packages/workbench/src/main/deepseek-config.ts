@@ -8,7 +8,7 @@ import {
   normalizeCustomModelContextWindow,
   resolveProviderDefaultModel
 } from '../shared/app-settings'
-import { upsertTomlSections } from '../shared/toml-section'
+import { readTomlBool, upsertTomlSections } from '../shared/toml-section'
 import {
   resolveDeepseekConfigPath,
   resolveDeepseekPaths,
@@ -295,6 +295,42 @@ async function syncBuiltinLlmProviderConfig(
   const next = upsertTomlSections(content, sections)
   await mkdir(dirname(configPath), { recursive: true })
   await writeFile(configPath, next, 'utf8')
+}
+
+/**
+ * Workbench exposes a scheduled-task UI that requires the Runtime automation
+ * manager. Ensure ``[features] automations/tasks`` are on in config.toml.
+ * Returns ``changed: true`` when the file was updated (caller should restart
+ * a managed Runtime so the new flags take effect).
+ */
+export async function ensureAutomationsFeatureEnabled(): Promise<{ changed: boolean }> {
+  const configPath = resolveDeepseekConfigPath()
+  let content = ''
+  try {
+    content = await readFile(configPath, 'utf8')
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+  }
+
+  const automationsOn = readTomlBool(content, 'automations', { section: 'features' }) === true
+  const tasksExplicitlyOff = readTomlBool(content, 'tasks', { section: 'features' }) === false
+  // Python defaults tasks=true; only rewrite when automations is off or tasks
+  // was explicitly disabled (automations cannot run without tasks).
+  if (automationsOn && !tasksExplicitlyOff) {
+    return { changed: false }
+  }
+
+  const next = upsertTomlSections(content, {
+    features: {
+      automations: true,
+      tasks: true
+    }
+  })
+  if (next === content) return { changed: false }
+
+  await mkdir(dirname(configPath), { recursive: true })
+  await writeFile(configPath, next, 'utf8')
+  return { changed: true }
 }
 
 export async function syncDeepseekTuiConfig(

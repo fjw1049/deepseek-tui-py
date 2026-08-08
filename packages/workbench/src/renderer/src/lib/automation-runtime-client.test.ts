@@ -1,9 +1,59 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { createAutomation, listAutomationRuns, updateAutomation } from './automation-runtime-client'
+import {
+  createAutomation,
+  formatAutomationApiError,
+  listAutomations,
+  listAutomationRuns,
+  updateAutomation
+} from './automation-runtime-client'
 
 describe('automation-runtime-client', () => {
   afterEach(() => {
     vi.unstubAllGlobals()
+  })
+
+  it('extracts message from FastAPI detail objects', () => {
+    expect(
+      formatAutomationApiError(
+        JSON.stringify({
+          detail: {
+            message: 'automation manager not configured',
+            error: 'runtime_error'
+          }
+        }),
+        'HTTP 503'
+      )
+    ).toBe('automation manager not configured')
+  })
+
+  it('extracts string detail and validation msg arrays', () => {
+    expect(formatAutomationApiError(JSON.stringify({ detail: 'bad request' }), 'HTTP 400')).toBe(
+      'bad request'
+    )
+    expect(
+      formatAutomationApiError(
+        JSON.stringify({
+          detail: [{ loc: ['body', 'name'], msg: 'Field required', type: 'missing' }]
+        }),
+        'HTTP 422'
+      )
+    ).toBe('Field required')
+  })
+
+  it('surfaces detail.message when listAutomations fails', async () => {
+    const runtimeRequest = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 503,
+      body: JSON.stringify({
+        detail: {
+          message: 'automation manager not configured',
+          error: 'runtime_error'
+        }
+      })
+    })
+    vi.stubGlobal('window', { dsGui: { runtimeRequest } })
+
+    await expect(listAutomations()).rejects.toThrow('automation manager not configured')
   })
 
   it('posts create automation payloads to the runtime API', async () => {

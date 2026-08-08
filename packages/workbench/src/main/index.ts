@@ -56,6 +56,7 @@ import { isBrowsableUrl } from '../shared/dev-preview-url'
 import { fetchBuiltinProviderModelIds, fetchUpstreamModelIds } from './upstream-models'
 import {
   deepseekTuiConfigChanged,
+  ensureAutomationsFeatureEnabled,
   llmProviderConfigChanged,
   localeConfigChanged,
   readTopLevelApiKeyFromToml,
@@ -496,7 +497,18 @@ async function waitForQueuedRuntimeSettingsApply(): Promise<void> {
 
 async function ensureRuntime(settings: AppSettingsV1): Promise<void> {
   if (runtimeEnsurePromise) return runtimeEnsurePromise
+
+  // Scheduled-task UI needs the automation manager; flip the feature flags
+  // before the ready-cache short-circuit so a stale Runtime is restarted.
+  const automationsFeature = await ensureAutomationsFeatureEnabled()
+  if (automationsFeature.changed && isDeepseekChildRunning()) {
+    runtimeReadyCache.invalidate('automations-feature-enabled')
+    abortAllSseStreams()
+    await stopDeepseekChildAndWait()
+  }
+
   if (
+    !automationsFeature.changed &&
     !runtimeSettingsApplyPromise &&
     (!settings.deepseek.autoStart || isDeepseekChildRunning()) &&
     runtimeReadyCache.isFresh()

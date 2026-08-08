@@ -51,6 +51,43 @@ export type AutomationRunRecord = {
   delivery_done?: boolean
 }
 
+/** Extract a human-readable message from Runtime / FastAPI error JSON. */
+export function formatAutomationApiError(body: string, fallback: string): string {
+  if (!body.trim()) return fallback
+  try {
+    const parsed = JSON.parse(body) as {
+      detail?: unknown
+      error?: unknown
+      message?: unknown
+    }
+    const detail = parsed.detail
+    if (typeof detail === 'string' && detail.trim()) return detail.trim()
+    if (detail && typeof detail === 'object' && !Array.isArray(detail)) {
+      const obj = detail as { message?: unknown; error?: unknown }
+      if (typeof obj.message === 'string' && obj.message.trim()) return obj.message.trim()
+      if (typeof obj.error === 'string' && obj.error.trim()) return obj.error.trim()
+    }
+    if (Array.isArray(detail) && detail.length > 0) {
+      const parts = detail
+        .map((item) => {
+          if (typeof item === 'string') return item.trim()
+          if (item && typeof item === 'object') {
+            const msg = (item as { msg?: unknown }).msg
+            if (typeof msg === 'string' && msg.trim()) return msg.trim()
+          }
+          return ''
+        })
+        .filter(Boolean)
+      if (parts.length > 0) return parts.join('; ').slice(0, 240)
+    }
+    if (typeof parsed.message === 'string' && parsed.message.trim()) return parsed.message.trim()
+    if (typeof parsed.error === 'string' && parsed.error.trim()) return parsed.error.trim()
+  } catch {
+    /* fall through */
+  }
+  return body.trim().slice(0, 240) || fallback
+}
+
 async function runtimeJson<T>(path: string, method: string, body?: unknown): Promise<T> {
   const raw = await window.dsGui.runtimeRequest(
     path,
@@ -58,14 +95,7 @@ async function runtimeJson<T>(path: string, method: string, body?: unknown): Pro
     body === undefined ? undefined : JSON.stringify(body)
   )
   if (!raw.ok) {
-    let message = `HTTP ${raw.status}`
-    try {
-      const parsed = JSON.parse(raw.body) as { detail?: string; error?: string; message?: string }
-      message = parsed.detail ?? parsed.message ?? parsed.error ?? message
-    } catch {
-      if (raw.body.trim()) message = raw.body.trim().slice(0, 240)
-    }
-    throw new Error(message)
+    throw new Error(formatAutomationApiError(raw.body, `HTTP ${raw.status}`))
   }
   if (!raw.body.trim()) {
     return undefined as T

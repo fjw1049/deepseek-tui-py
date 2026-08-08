@@ -126,6 +126,28 @@ export function readTomlString(
   return null
 }
 
+/** Read a boolean key from a ``[section]`` (or top-level when section is omitted). */
+export function readTomlBool(
+  content: string,
+  key: string,
+  options: { section?: string } = {}
+): boolean | null {
+  const lines = content.split(/\r?\n/)
+  let inSection = !options.section
+  for (const line of lines) {
+    const sec = line.match(/^\s*\[([^\]]+)\]\s*$/)
+    if (sec) {
+      inSection = options.section ? sec[1].trim() === options.section : true
+      continue
+    }
+    if (!inSection) continue
+    const m = line.match(new RegExp(`^\\s*${key}\\s*=\\s*(true|false)\\s*(?:#.*)?$`, 'i'))
+    if (!m) continue
+    return m[1]!.toLowerCase() === 'true'
+  }
+  return null
+}
+
 export function upsertTomlSections(
   content: string,
   sections: Record<string, TomlSectionUpdates>

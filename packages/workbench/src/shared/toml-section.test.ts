@@ -1,10 +1,20 @@
 import { describe, expect, it } from 'vitest'
 import {
+  readTomlBool,
   readTomlTopLevelString,
   readTomlTopLevelStringArray,
   upsertTomlSections,
   upsertTomlTopLevel
 } from './toml-section'
+
+describe('readTomlBool', () => {
+  it('reads section booleans and ignores missing keys', () => {
+    const toml = '[features]\nautomations = true\ntasks = false\n'
+    expect(readTomlBool(toml, 'automations', { section: 'features' })).toBe(true)
+    expect(readTomlBool(toml, 'tasks', { section: 'features' })).toBe(false)
+    expect(readTomlBool(toml, 'mcp', { section: 'features' })).toBeNull()
+  })
+})
 
 describe('upsertTomlSections', () => {
   it('writes typed values into nested sections', () => {
