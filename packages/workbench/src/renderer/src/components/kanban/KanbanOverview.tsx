@@ -26,30 +26,30 @@ function OverviewProjectColumn({
   const { visibleCards, hiddenCount } = overviewVisibleCards(projectBoard)
 
   return (
-    <section className="flex w-72 shrink-0 flex-col">
-      <div className="flex shrink-0 items-center gap-1 px-1 py-1.5">
+    <section className="flex w-80 shrink-0 flex-col">
+      <div className="flex shrink-0 items-center gap-1.5 px-1 py-2">
         <button
           type="button"
           onClick={() => onOpenProject(projectBoard.projectId)}
-          className="group/kanban-project flex min-w-0 flex-1 items-center gap-2 rounded-lg px-1 py-0.5 text-left transition hover:bg-ds-hover"
+          className="group/kanban-project flex min-w-0 flex-1 items-center gap-2 rounded-lg px-1.5 py-1 text-left transition hover:bg-ds-hover"
         >
-          <h2 className="min-w-0 truncate text-[13px] font-semibold text-ds-ink">
+          <h2 className="min-w-0 truncate text-[15px] font-semibold text-ds-ink">
             {projectBoard.projectName}
           </h2>
-          <span className="text-xs text-ds-faint">{projectBoard.totalCount}</span>
-          <ChevronRight className="ml-auto h-3.5 w-3.5 shrink-0 text-ds-faint opacity-0 transition group-hover/kanban-project:opacity-100" />
+          <span className="text-[13px] text-ds-faint">{projectBoard.totalCount}</span>
+          <ChevronRight className="ml-auto h-4 w-4 shrink-0 text-ds-faint opacity-0 transition group-hover/kanban-project:opacity-100" />
         </button>
         <button
           type="button"
-          className="ds-no-drag inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-ds-faint transition hover:bg-ds-hover hover:text-ds-ink"
+          className="ds-no-drag inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-ds-faint transition hover:bg-ds-hover hover:text-ds-ink"
           aria-label={t('kanbanNewTaskInProject', { project: projectBoard.projectName })}
           title={t('kanbanNewTaskInProject', { project: projectBoard.projectName })}
           onClick={() => onNewTask(projectBoard)}
         >
-          <Plus className="h-3.5 w-3.5" strokeWidth={2} />
+          <Plus className="h-4 w-4" strokeWidth={2} />
         </button>
       </div>
-      <ul className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto p-1">
+      <ul className="flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto p-1">
         {visibleCards.map((card) => (
           <li key={card.cardId} className="list-none">
             <KanbanCardView
@@ -64,7 +64,7 @@ function OverviewProjectColumn({
             <button
               type="button"
               onClick={() => onOpenProject(projectBoard.projectId)}
-              className="w-full rounded-lg px-3 py-1.5 text-center text-xs text-ds-faint transition hover:bg-ds-hover hover:text-ds-ink"
+              className="w-full rounded-lg px-3 py-2 text-center text-[13px] text-ds-faint transition hover:bg-ds-hover hover:text-ds-ink"
             >
               {t('kanbanShowMore', { count: hiddenCount })}
             </button>
@@ -102,7 +102,7 @@ export function KanbanOverview({
   }
 
   return (
-    <div className="flex h-full min-h-0 gap-4 overflow-x-auto px-4 pb-4">
+    <div className="flex h-full min-h-0 gap-5 overflow-x-auto px-8 pb-6">
       {board.projects.map((projectBoard) => (
         <OverviewProjectColumn
           key={projectBoard.projectId}

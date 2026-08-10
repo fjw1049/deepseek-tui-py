@@ -46,7 +46,7 @@ export function KanbanCardView({
   const timeLabel = card.timestamp ? formatRelativeTimeLargestUnit(card.timestamp) : null
   const dragging = Boolean(dragBind?.isDragging || isDragSource)
 
-  const className = `ds-no-drag group relative flex w-full flex-col gap-2.5 rounded-xl border border-ds-border bg-ds-card px-3 py-2.5 text-left transition focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-sky-500/50 ${
+  const className = `ds-no-drag group relative flex w-full flex-col gap-3 rounded-2xl border border-ds-border bg-ds-card px-3.5 py-3 text-left transition focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-sky-500/50 ${
     isOverlay
       ? 'shadow-panel rotate-[1.5deg]'
       : dragging
@@ -58,21 +58,21 @@ export function KanbanCardView({
     <>
       {draggable || dragBind ? (
         <span
-          className="pointer-events-none absolute right-2 top-2 text-ds-faint opacity-50 group-hover:opacity-100"
+          className="pointer-events-none absolute right-2.5 top-2.5 text-ds-faint opacity-50 group-hover:opacity-100"
           aria-hidden
         >
-          <GripVertical className="h-3.5 w-3.5" strokeWidth={1.75} />
+          <GripVertical className="h-4 w-4" strokeWidth={1.75} />
         </span>
       ) : null}
-      <div className="line-clamp-3 pr-5 text-[13px] font-medium leading-5 text-ds-ink">
+      <div className="line-clamp-3 pr-6 text-[14px] font-medium leading-5 text-ds-ink">
         {card.title}
       </div>
-      <div className="flex min-w-0 items-center gap-2 text-[11px] text-ds-faint">
+      <div className="flex min-w-0 items-center gap-2 text-[12px] text-ds-faint">
         <span className="flex min-w-0 flex-1 items-center gap-1.5">
-          <Package className="h-3 w-3 shrink-0 opacity-70" strokeWidth={1.75} aria-hidden />
+          <Package className="h-3.5 w-3.5 shrink-0 opacity-70" strokeWidth={1.75} aria-hidden />
           {card.branch ? (
             <span className="flex min-w-0 items-center gap-1">
-              <GitBranch className="h-3 w-3 shrink-0 opacity-70" strokeWidth={1.75} aria-hidden />
+              <GitBranch className="h-3.5 w-3.5 shrink-0 opacity-70" strokeWidth={1.75} aria-hidden />
               <span className="truncate">{card.branch}</span>
             </span>
           ) : null}

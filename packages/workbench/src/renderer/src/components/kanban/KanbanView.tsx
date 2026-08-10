@@ -21,10 +21,13 @@ import {
 import { useChatStore } from '../../store/chat-store'
 import {
   clearKanbanDraftPrompt,
-  loadKanbanDraftOrders,
+  DEFAULT_KANBAN_APPROVAL_POLICY,
+  kanbanExecutionFlags,
+  loadKanbanColumnOrders,
   loadKanbanDraftPrompts,
   loadKanbanDrafts,
-  setKanbanDraftOrder,
+  normalizeKanbanApprovalPolicy,
+  setKanbanColumnOrder,
   setKanbanDraftPrompt
 } from './kanban-ui-store'
 import { KanbanNewTaskDialog, type KanbanNewTaskSubmit } from './KanbanNewTaskDialog'
@@ -35,6 +38,7 @@ import {
   CHATS_COLUMN_ID,
   withProjectBranches,
   type KanbanCard,
+  type KanbanColumnKey,
   type KanbanProjectBoard
 } from './kanban.logic'
 
@@ -81,7 +85,7 @@ export function KanbanView({ onOpenThread, onOpenThreadTerminal }: Props): React
   const [projectOrder] = useState(() => loadProjectOrder())
   const [projectSortMode] = useState(() => loadProjectSortMode())
   const [draftPrompts, setDraftPrompts] = useState(() => loadKanbanDraftPrompts())
-  const [draftOrders, setDraftOrders] = useState(() => loadKanbanDraftOrders())
+  const [columnOrders, setColumnOrders] = useState(() => loadKanbanColumnOrders())
   const [optimisticInProgress, setOptimisticInProgress] = useState<Set<string>>(() => new Set())
   const [branchByProjectId, setBranchByProjectId] = useState<Map<string, string | null>>(
     () => new Map()
@@ -132,7 +136,7 @@ export function KanbanView({ onOpenThread, onOpenThreadTerminal }: Props): React
         inProgressThreadIds,
         chatsColumnName: t('kanbanChatsColumn'),
         draftPromptByThreadId: draftPrompts,
-        draftOrderByProjectId: draftOrders,
+        columnOrderByProjectId: columnOrders,
         optimisticInProgressThreadIds: optimisticInProgress
       }),
     [
@@ -143,7 +147,7 @@ export function KanbanView({ onOpenThread, onOpenThreadTerminal }: Props): React
       inProgressThreadIds,
       t,
       draftPrompts,
-      draftOrders,
+      columnOrders,
       optimisticInProgress
     ]
   )
@@ -262,7 +266,7 @@ export function KanbanView({ onOpenThread, onOpenThreadTerminal }: Props): React
       const threadId = await ensureThreadForProject(input)
       if (!threadId) return
       if (input.sendAsDraft) {
-        setKanbanDraftPrompt(threadId, input.prompt, input.model)
+        setKanbanDraftPrompt(threadId, input.prompt, input.model, input.approvalPolicy)
         setDraftPrompts(loadKanbanDraftPrompts())
         const title = deriveThreadTitleFromPrompt(input.prompt)
         await renameThread(threadId, title)
@@ -273,7 +277,11 @@ export function KanbanView({ onOpenThread, onOpenThreadTerminal }: Props): React
       clearKanbanDraftPrompt(threadId)
       setDraftPrompts(loadKanbanDraftPrompts())
       setOptimisticInProgress((prev) => new Set(prev).add(threadId))
-      const sent = await sendMessage(input.prompt)
+      const flags = kanbanExecutionFlags(input.approvalPolicy)
+      const sent = await sendMessage(input.prompt, undefined, {
+        autoApprove: flags.auto_approve,
+        trustMode: flags.trust_mode
+      })
       if (!sent) {
         setOptimisticInProgress((prev) => {
           const next = new Set(prev)
@@ -305,11 +313,17 @@ export function KanbanView({ onOpenThread, onOpenThreadTerminal }: Props): React
     setOptimisticInProgress((prev) => new Set(prev).add(card.threadId))
     const prompt = card.draftPrompt
     const model = stored?.model
+    const approvalPolicy =
+      normalizeKanbanApprovalPolicy(stored?.approvalPolicy) ?? DEFAULT_KANBAN_APPROVAL_POLICY
     clearKanbanDraftPrompt(card.threadId)
     setDraftPrompts(loadKanbanDraftPrompts())
-    const sent = await sendMessage(prompt)
+    const flags = kanbanExecutionFlags(approvalPolicy)
+    const sent = await sendMessage(prompt, undefined, {
+      autoApprove: flags.auto_approve,
+      trustMode: flags.trust_mode
+    })
     if (!sent) {
-      setKanbanDraftPrompt(card.threadId, prompt, model)
+      setKanbanDraftPrompt(card.threadId, prompt, model, approvalPolicy)
       setDraftPrompts(loadKanbanDraftPrompts())
       setOptimisticInProgress((prev) => {
         const next = new Set(prev)
@@ -322,9 +336,13 @@ export function KanbanView({ onOpenThread, onOpenThreadTerminal }: Props): React
     showNotice(t('kanbanDraftSent'))
   }
 
-  const handleReorderDrafts = (projectId: string, cardIds: string[]): void => {
-    setKanbanDraftOrder(projectId, cardIds)
-    setDraftOrders(loadKanbanDraftOrders())
+  const handleReorderColumn = (
+    projectId: string,
+    column: KanbanColumnKey,
+    cardIds: string[]
+  ): void => {
+    setKanbanColumnOrder(projectId, column, cardIds)
+    setColumnOrders(loadKanbanColumnOrders())
   }
 
   const handleCardContextMenu = (card: KanbanCard, event: MouseEvent): void => {
@@ -405,53 +423,63 @@ export function KanbanView({ onOpenThread, onOpenThreadTerminal }: Props): React
 
   const headerCount = projectBoard?.totalCount ?? board.totalCount
   const headerTitle = projectBoard?.projectName ?? t('kanbanTitle')
+  const headerDesc = projectBoard
+    ? t('kanbanTaskCount', { count: headerCount })
+    : t('kanbanDesc')
 
   return (
-    <div className="ds-no-drag flex h-full min-h-0 flex-col bg-transparent">
-      <header className="flex shrink-0 items-center justify-between gap-3 px-5 pb-3 pt-4">
-        <div className="flex min-w-0 items-center gap-2">
-          {projectBoard ? (
-            <button
-              type="button"
-              onClick={() => setActiveProjectId(null)}
-              className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-ds-faint transition hover:bg-ds-hover hover:text-ds-ink"
-              aria-label={t('kanbanBackToOverview')}
-              title={t('kanbanBackToOverview')}
-            >
-              <ArrowLeft className="h-4 w-4" strokeWidth={1.9} />
-            </button>
-          ) : null}
-          <div className="flex min-w-0 items-baseline gap-2">
-            <h1 className="truncate text-[15px] font-semibold text-ds-ink">{headerTitle}</h1>
-            <span className="shrink-0 text-[12px] text-ds-faint">
-              {t('kanbanTaskCount', { count: headerCount })}
-            </span>
+    <div className="ds-feature-page ds-no-drag relative flex h-full min-h-0 flex-col">
+      <header className="shrink-0 px-8 pt-8">
+        <div className="mx-auto flex max-w-6xl items-start justify-between gap-4">
+          <div className="min-w-0">
+            <div className="flex min-w-0 items-center gap-2">
+              {projectBoard ? (
+                <button
+                  type="button"
+                  onClick={() => setActiveProjectId(null)}
+                  className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-ds-faint transition hover:bg-ds-hover hover:text-ds-ink"
+                  aria-label={t('kanbanBackToOverview')}
+                  title={t('kanbanBackToOverview')}
+                >
+                  <ArrowLeft className="h-4 w-4" strokeWidth={1.9} />
+                </button>
+              ) : null}
+              <h1 className="truncate text-[24px] font-semibold text-ds-ink">{headerTitle}</h1>
+              {!projectBoard ? (
+                <span className="shrink-0 text-[13px] text-ds-faint">
+                  {t('kanbanTaskCount', { count: headerCount })}
+                </span>
+              ) : null}
+            </div>
+            <p className="mt-1 text-[13px] text-ds-muted">{headerDesc}</p>
           </div>
+          <button
+            type="button"
+            onClick={() => openNewTask(projectBoard?.projectId ?? null, false)}
+            className="inline-flex shrink-0 items-center gap-2 rounded-lg bg-accent px-4 py-2 text-[13px] font-medium text-white transition hover:opacity-90"
+          >
+            <Plus className="h-4 w-4" strokeWidth={2} />
+            {t('kanbanNewTask')}
+          </button>
         </div>
-        <button
-          type="button"
-          onClick={() =>
-            openNewTask(projectBoard?.projectId ?? null, false)
-          }
-          className="inline-flex items-center gap-1.5 rounded-lg border border-ds-border bg-ds-card px-2.5 py-1.5 text-[12px] font-medium text-ds-ink transition hover:bg-ds-hover"
-        >
-          <Plus className="h-3.5 w-3.5" strokeWidth={2} />
-          {t('kanbanNewTask')}
-        </button>
       </header>
 
       {notice ? (
-        <div className="px-5 pb-2 text-[12px] text-ds-muted">{notice}</div>
+        <div className="mt-3 shrink-0 px-8">
+          <div className="mx-auto max-w-6xl text-[12px] text-ds-muted">{notice}</div>
+        </div>
       ) : null}
 
-      <div className="min-h-0 flex-1">
+      <div className="mt-4 min-h-0 flex-1">
         {projectBoard ? (
           <KanbanProjectBoardView
             board={projectBoard}
             onOpenCard={handleOpenCard}
             onCardContextMenu={handleCardContextMenu}
             onNewTask={() => openNewTask(projectBoard.projectId, true)}
-            onReorderDrafts={(cardIds) => handleReorderDrafts(projectBoard.projectId, cardIds)}
+            onReorderColumn={(column, cardIds) =>
+              handleReorderColumn(projectBoard.projectId, column, cardIds)
+            }
             onDispatchDraft={handleDispatchDraft}
           />
         ) : (

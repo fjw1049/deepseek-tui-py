@@ -63,6 +63,10 @@ export type BuildKanbanBoardInput = {
   draftPromptByThreadId?: Readonly<Record<string, string | undefined>>
   /** Manual draft-column order per project. */
   draftOrderByProjectId?: Readonly<Record<string, readonly string[] | undefined>>
+  /** Manual card order per project column (draft / inProgress / done). */
+  columnOrderByProjectId?: Readonly<
+    Record<string, Partial<Record<KanbanColumnKey, readonly string[]>> | undefined>
+  >
   /** Threads temporarily forced into In Progress after a kanban send. */
   optimisticInProgressThreadIds?: ReadonlySet<string>
 }
@@ -136,7 +140,7 @@ function sortByRecency(cards: KanbanCard[]): KanbanCard[] {
   return [...cards].sort((a, b) => b.sortTimestamp - a.sortTimestamp)
 }
 
-function applyDraftOrder(
+function applyCardOrder(
   cards: KanbanCard[],
   manualOrder: readonly string[] | undefined
 ): KanbanCard[] {
@@ -189,13 +193,15 @@ function buildProjectBoard(
     else done.push(card)
   }
 
+  const columnOrders = input.columnOrderByProjectId?.[projectId]
+  const draftOrder = columnOrders?.draft ?? input.draftOrderByProjectId?.[projectId]
   return {
     projectId,
     projectName,
     workspacePath,
-    draft: applyDraftOrder(draft, input.draftOrderByProjectId?.[projectId]),
-    inProgress: sortByRecency(inProgress),
-    done: sortByRecency(done),
+    draft: applyCardOrder(draft, draftOrder),
+    inProgress: applyCardOrder(inProgress, columnOrders?.inProgress),
+    done: applyCardOrder(done, columnOrders?.done),
     totalCount: draft.length + inProgress.length + done.length
   }
 }
@@ -290,7 +296,7 @@ export function withProjectBranches(
   }
 }
 
-export function reorderDraftCardIds(
+export function reorderKanbanCardIds(
   visibleCardIds: readonly string[],
   activeCardId: string,
   overCardId: string
@@ -303,6 +309,30 @@ export function reorderDraftCardIds(
   if (moved === undefined) return null
   next.splice(toIndex, 0, moved)
   return next
+}
+
+/** @deprecated Prefer {@link reorderKanbanCardIds}. */
+export const reorderDraftCardIds = reorderKanbanCardIds
+
+export function cardsForColumn(
+  board: KanbanProjectBoard,
+  column: KanbanColumnKey
+): readonly KanbanCard[] {
+  if (column === 'draft') return board.draft
+  if (column === 'inProgress') return board.inProgress
+  return board.done
+}
+
+export function findBoardCard(
+  board: KanbanProjectBoard,
+  cardId: string
+): KanbanCard | null {
+  return (
+    board.draft.find((card) => card.cardId === cardId) ??
+    board.inProgress.find((card) => card.cardId === cardId) ??
+    board.done.find((card) => card.cardId === cardId) ??
+    null
+  )
 }
 
 export const COLUMN_DROP_ID_PREFIX = 'kanban-column'

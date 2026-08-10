@@ -92,33 +92,32 @@ export function KanbanColumn({
   const dropHint =
     droppable &&
     activeCard &&
-    activeCard.column === 'draft' &&
-    (columnKey === 'inProgress' || columnKey === 'done') &&
+    activeCard.column !== columnKey &&
     isOver
 
   return (
-    <section className="flex w-72 shrink-0 flex-col">
-      <div className="flex shrink-0 items-center gap-1.5 px-1 py-1.5">
+    <section className="flex w-80 shrink-0 flex-col">
+      <div className="flex shrink-0 items-center gap-1.5 px-1 py-2">
         <KanbanStatusIcon column={columnKey} />
-        <h2 className="min-w-0 flex-1 truncate text-[13px] font-semibold text-ds-ink">
+        <h2 className="min-w-0 flex-1 truncate text-[15px] font-semibold text-ds-ink">
           {t(COLUMN_TITLE_KEY[columnKey])}
         </h2>
-        <span className="text-xs text-ds-faint">{cards.length}</span>
+        <span className="text-[13px] text-ds-faint">{cards.length}</span>
         {onNewCard ? (
           <button
             type="button"
-            className="ds-no-drag inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-ds-faint transition hover:bg-ds-hover hover:text-ds-ink"
+            className="ds-no-drag inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-ds-faint transition hover:bg-ds-hover hover:text-ds-ink"
             aria-label={t('kanbanNewTask')}
             title={t('kanbanNewTask')}
             onClick={onNewCard}
           >
-            <Plus className="h-3.5 w-3.5" strokeWidth={2} />
+            <Plus className="h-4 w-4" strokeWidth={2} />
           </button>
         ) : null}
       </div>
       <ul
         ref={setNodeRef}
-        className={`flex min-h-[10rem] flex-1 flex-col gap-2 overflow-y-auto rounded-xl p-1 transition ${
+        className={`flex min-h-[12rem] flex-1 flex-col gap-2.5 overflow-y-auto rounded-xl p-1 transition ${
           isOver ? 'bg-ds-hover' : ''
         } ${dropHint ? 'ring-1 ring-sky-500/40' : ''}`}
       >

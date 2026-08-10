@@ -2414,7 +2414,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
         reasoningEffort: get().composerReasoningEffort,
         ...(selectedModel.providerId ? { provider: selectedModel.providerId } : {}),
         ...(selectedModel.modelId ? { model: selectedModel.modelId } : {}),
-        ...(hidden ? { hidden: true } : {})
+        ...(hidden ? { hidden: true } : {}),
+        ...(overrides?.autoApprove !== undefined ? { autoApprove: overrides.autoApprove } : {}),
+        ...(overrides?.trustMode !== undefined ? { trustMode: overrides.trustMode } : {})
       })
       set({ activeThreadWarmup: { threadId: activeThreadId, status: 'ready' } })
       // Mirror the composer model selection against the runtime's stable

@@ -415,8 +415,12 @@ export interface AgentProvider {
       mode?: string
       provider?: string
       model?: string
+      reasoningEffort?: string
       uiSubmitAtMs?: number
       hidden?: boolean
+      /** Per-turn override; when omitted, uses global approval dial. */
+      autoApprove?: boolean
+      trustMode?: boolean
     }
   ): Promise<{ turnId: string; threadId: string; userMessageItemId?: string }>
   steerUserMessage?(threadId: string, turnId: string, text: string): Promise<void>

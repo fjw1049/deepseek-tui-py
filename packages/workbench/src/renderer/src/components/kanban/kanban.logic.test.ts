@@ -114,6 +114,30 @@ describe('buildKanbanBoard', () => {
     })
     expect(board.projects[0]?.draft.map((card) => card.threadId)).toEqual(['c', 'a', 'b'])
   })
+
+  it('applies manual in-progress and done order', () => {
+    const board = buildKanbanBoard({
+      threads: [
+        thread({ id: 'd1', title: 'Done A', workspace: '/p', updatedAt: '2026-08-10T03:00:00.000Z' }),
+        thread({ id: 'd2', title: 'Done B', workspace: '/p', updatedAt: '2026-08-10T02:00:00.000Z' }),
+        thread({ id: 'r1', title: 'Run A', workspace: '/p', updatedAt: '2026-08-10T04:00:00.000Z' }),
+        thread({ id: 'r2', title: 'Run B', workspace: '/p', updatedAt: '2026-08-10T05:00:00.000Z' })
+      ],
+      hiddenWorkspacePaths: [],
+      projectOrder: [],
+      projectSortMode: 'name_asc',
+      inProgressThreadIds: new Set(['r1', 'r2']),
+      chatsColumnName: 'Chats',
+      columnOrderByProjectId: {
+        '/p': {
+          inProgress: ['r2', 'r1'],
+          done: ['d2', 'd1']
+        }
+      }
+    })
+    expect(board.projects[0]?.inProgress.map((card) => card.threadId)).toEqual(['r2', 'r1'])
+    expect(board.projects[0]?.done.map((card) => card.threadId)).toEqual(['d2', 'd1'])
+  })
 })
 
 describe('overviewVisibleCards', () => {

@@ -33,6 +33,12 @@ export type SendMessageOverrides = {
    * user_message item (plugin mount/unmount-only control turns).
    */
   hidden?: boolean
+  /**
+   * Per-turn tool approval override (e.g. kanban new-task permission).
+   * When set, skips reading the global approval dial for this send.
+   */
+  autoApprove?: boolean
+  trustMode?: boolean
 }
 
 export type SettingsRouteSection =

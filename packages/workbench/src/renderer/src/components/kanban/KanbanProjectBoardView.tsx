@@ -1,4 +1,4 @@
-import { useRef, useState, type ReactElement, type MouseEvent } from 'react'
+import { useEffect, useRef, useState, type ReactElement, type MouseEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   DndContext,
@@ -12,11 +12,17 @@ import {
   type DragEndEvent,
   type DragStartEvent
 } from '@dnd-kit/core'
+import {
+  beginLightDismissShell,
+  endLightDismissShell
+} from '../../hooks/use-light-dismiss'
 import { KanbanCardView } from './KanbanCardView'
 import { KanbanColumn } from './KanbanColumn'
 import {
+  cardsForColumn,
+  findBoardCard,
   parseKanbanColumnDropId,
-  reorderDraftCardIds,
+  reorderKanbanCardIds,
   type KanbanCard,
   type KanbanColumnKey,
   type KanbanProjectBoard
@@ -27,7 +33,8 @@ function resolveDropColumn(board: KanbanProjectBoard, overId: string): KanbanCol
   if (columnDrop) {
     return columnDrop.projectId === board.projectId ? columnDrop.column : null
   }
-  return board.draft.some((card) => card.cardId === overId) ? 'draft' : null
+  const overCard = findBoardCard(board, overId)
+  return overCard?.column ?? null
 }
 
 const collisionDetection: CollisionDetection = (args) => {
@@ -41,20 +48,21 @@ export function KanbanProjectBoardView({
   onOpenCard,
   onCardContextMenu,
   onNewTask,
-  onReorderDrafts,
+  onReorderColumn,
   onDispatchDraft
 }: {
   board: KanbanProjectBoard
   onOpenCard: (card: KanbanCard) => void
   onCardContextMenu?: (card: KanbanCard, event: MouseEvent) => void
   onNewTask: () => void
-  onReorderDrafts: (cardIds: string[]) => void
+  onReorderColumn: (column: KanbanColumnKey, cardIds: string[]) => void
   onDispatchDraft: (card: KanbanCard) => void | Promise<void>
 }): ReactElement {
   const { t } = useTranslation('common')
   const [activeCard, setActiveCard] = useState<KanbanCard | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const suppressClickRef = useRef(false)
+  const shellUnlockedRef = useRef(false)
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -62,6 +70,20 @@ export function KanbanProjectBoardView({
       activationConstraint: { distance: 8 }
     })
   )
+
+  const unlockShell = (): void => {
+    if (shellUnlockedRef.current) return
+    shellUnlockedRef.current = true
+    beginLightDismissShell()
+  }
+
+  const relockShell = (): void => {
+    if (!shellUnlockedRef.current) return
+    shellUnlockedRef.current = false
+    endLightDismissShell()
+  }
+
+  useEffect(() => () => relockShell(), [])
 
   const handleOpenCard = (card: KanbanCard): void => {
     if (suppressClickRef.current) return
@@ -75,45 +97,60 @@ export function KanbanProjectBoardView({
   }
 
   const handleDragStart = (event: DragStartEvent): void => {
-    const card = board.draft.find((candidate) => candidate.cardId === event.active.id) ?? null
+    const card = findBoardCard(board, String(event.active.id))
     setActiveCard(card)
     suppressClickRef.current = true
+    unlockShell()
   }
 
   const handleDragCancel = (): void => {
     setActiveCard(null)
     releaseClickSuppression()
+    relockShell()
+  }
+
+  const reorderWithin = (column: KanbanColumnKey, activeId: string, overId: string): void => {
+    const visibleCardIds = cardsForColumn(board, column).map((card) => card.cardId)
+    const nextOrder =
+      overId === activeId
+        ? null
+        : visibleCardIds.includes(overId)
+          ? reorderKanbanCardIds(visibleCardIds, activeId, overId)
+          : reorderKanbanCardIds(visibleCardIds, activeId, visibleCardIds.at(-1) ?? activeId)
+    if (nextOrder) onReorderColumn(column, nextOrder)
   }
 
   const handleDragEnd = (event: DragEndEvent): void => {
     setActiveCard(null)
     releaseClickSuppression()
+    relockShell()
     const { active, over } = event
     if (!over) return
     const activeId = String(active.id)
-    const card = board.draft.find((candidate) => candidate.cardId === activeId)
+    const card = findBoardCard(board, activeId)
     if (!card) return
     const overId = String(over.id)
     const targetColumn = resolveDropColumn(board, overId)
-    if (targetColumn === 'draft') {
-      const visibleCardIds = board.draft.map((draftCard) => draftCard.cardId)
-      const nextOrder =
-        overId === activeId
-          ? null
-          : board.draft.some((draftCard) => draftCard.cardId === overId)
-            ? reorderDraftCardIds(visibleCardIds, activeId, overId)
-            : reorderDraftCardIds(visibleCardIds, activeId, visibleCardIds.at(-1) ?? activeId)
-      if (nextOrder) onReorderDrafts(nextOrder)
+    if (!targetColumn) return
+
+    if (targetColumn === card.column) {
+      reorderWithin(targetColumn, activeId, overId)
       return
     }
-    if (targetColumn === 'inProgress') {
+
+    // Cross-column: only Draft → In Progress dispatches a send.
+    if (card.column === 'draft' && targetColumn === 'inProgress') {
       void onDispatchDraft(card)
       return
     }
-    if (targetColumn === 'done') {
+    if (card.column === 'draft' && targetColumn === 'done') {
       setNotice(t('kanbanDoneDerivedHint'))
       window.setTimeout(() => setNotice(null), 2400)
+      return
     }
+
+    setNotice(t('kanbanStatusDerivedHint'))
+    window.setTimeout(() => setNotice(null), 2400)
   }
 
   return (
@@ -125,11 +162,11 @@ export function KanbanProjectBoardView({
       onDragCancel={handleDragCancel}
     >
       {notice ? (
-        <div className="px-4 pb-2 text-[12px] text-ds-muted">{notice}</div>
+        <div className="px-8 pb-2 text-[12px] text-ds-muted">{notice}</div>
       ) : (
-        <div className="px-4 pb-2 text-[12px] text-ds-faint">{t('kanbanBoardDragTip')}</div>
+        <div className="px-8 pb-2 text-[12px] text-ds-faint">{t('kanbanBoardDragTip')}</div>
       )}
-      <div className="ds-no-drag flex h-full min-h-0 gap-3 overflow-x-auto px-4 pb-4">
+      <div className="ds-no-drag flex h-full min-h-0 gap-5 overflow-x-auto px-8 pb-6">
         <KanbanColumn
           projectId={board.projectId}
           columnKey="draft"
@@ -147,6 +184,7 @@ export function KanbanProjectBoardView({
           cards={board.inProgress}
           onOpenCard={handleOpenCard}
           onCardContextMenu={onCardContextMenu}
+          sortable
           droppable
           activeCard={activeCard}
         />
@@ -156,11 +194,12 @@ export function KanbanProjectBoardView({
           cards={board.done}
           onOpenCard={handleOpenCard}
           onCardContextMenu={onCardContextMenu}
+          sortable
           droppable
           activeCard={activeCard}
         />
       </div>
-      <DragOverlay dropAnimation={null}>
+      <DragOverlay dropAnimation={null} className="ds-no-drag">
         {activeCard ? (
           <KanbanCardView card={activeCard} showColumnLabel={false} isOverlay />
         ) : null}

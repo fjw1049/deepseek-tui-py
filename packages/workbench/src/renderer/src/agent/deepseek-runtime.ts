@@ -1222,10 +1222,17 @@ export class DeepseekRuntimeProvider implements AgentProvider {
       uiSubmitAtMs?: number
       /** Skip persisting a user_message item (plugin mount/unmount control). */
       hidden?: boolean
+      /** Per-turn override; when omitted, uses global approval dial. */
+      autoApprove?: boolean
+      trustMode?: boolean
     }
   ): Promise<{ turnId: string; threadId: string; userMessageItemId?: string }> {
     const settings = await window.dsGui.getSettings()
-    const flags = runtimeExecutionFlags(settings)
+    const defaults = runtimeExecutionFlags(settings)
+    const flags = {
+      auto_approve: options?.autoApprove ?? defaults.auto_approve,
+      trust_mode: options?.trustMode ?? defaults.trust_mode
+    }
     const r = await window.dsGui.runtimeRequest(
       `/v1/threads/${encodeURIComponent(threadId)}/turns`,
       'POST',

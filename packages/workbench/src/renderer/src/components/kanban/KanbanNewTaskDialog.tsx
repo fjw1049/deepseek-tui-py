@@ -7,13 +7,21 @@ import {
   formatComposerModelLabel
 } from '../../lib/composer-model-label'
 import { useChatStore } from '../../store/chat-store'
+import {
+  DEFAULT_KANBAN_APPROVAL_POLICY,
+  type KanbanApprovalPolicy
+} from './kanban-ui-store'
 import { CHATS_COLUMN_ID, type KanbanProjectBoard } from './kanban.logic'
+
+export type { KanbanApprovalPolicy }
+export { DEFAULT_KANBAN_APPROVAL_POLICY }
 
 export type KanbanNewTaskSubmit = {
   projectId: string
   workspacePath: string | null
   prompt: string
   model: string
+  approvalPolicy: KanbanApprovalPolicy
   sendAsDraft: boolean
 }
 
@@ -34,7 +42,7 @@ export function KanbanNewTaskDialog({
   onClose: () => void
   onSubmit: (input: KanbanNewTaskSubmit) => void | Promise<void>
 }): ReactElement | null {
-  const { t } = useTranslation('common')
+  const { t } = useTranslation(['common', 'settings'])
   const composerModel = useChatStore((s) => s.composerModel)
   const composerPickList = useChatStore((s) => s.composerPickList)
   const composerModelMeta = useChatStore((s) => s.composerModelMeta)
@@ -44,7 +52,7 @@ export function KanbanNewTaskDialog({
     if (!list.some((project) => project.projectId === CHATS_COLUMN_ID)) {
       list.push({
         projectId: CHATS_COLUMN_ID,
-        projectName: t('kanbanChatsColumn'),
+        projectName: t('common:kanbanChatsColumn'),
         workspacePath: null
       })
     }
@@ -56,9 +64,38 @@ export function KanbanNewTaskDialog({
     [composerModel, composerPickList]
   )
 
+  const approvalOptions = useMemo(
+    () =>
+      [
+        {
+          id: 'auto' as const,
+          label: t('settings:approvalAuto'),
+          description: t('common:composerApprovalAutoDesc')
+        },
+        {
+          id: 'untrusted' as const,
+          label: t('settings:approvalUntrusted'),
+          description: t('common:composerApprovalUntrustedDesc')
+        },
+        {
+          id: 'on-request' as const,
+          label: t('settings:approvalOnRequest'),
+          description: t('common:composerApprovalOnRequestDesc')
+        }
+      ] satisfies Array<{
+        id: KanbanApprovalPolicy
+        label: string
+        description: string
+      }>,
+    [t]
+  )
+
   const [projectId, setProjectId] = useState(initialProjectId ?? options[0]?.projectId ?? '')
   const [prompt, setPrompt] = useState('')
   const [model, setModel] = useState(composerModel.trim() || modelOptions[0] || '')
+  const [approvalPolicy, setApprovalPolicy] = useState<KanbanApprovalPolicy>(
+    DEFAULT_KANBAN_APPROVAL_POLICY
+  )
   const [sendAsDraft, setSendAsDraft] = useState(initialSendAsDraft)
 
   useEffect(() => {
@@ -66,6 +103,7 @@ export function KanbanNewTaskDialog({
     setProjectId(initialProjectId ?? options[0]?.projectId ?? '')
     setPrompt('')
     setModel(composerModel.trim() || modelOptions[0] || '')
+    setApprovalPolicy(DEFAULT_KANBAN_APPROVAL_POLICY)
     setSendAsDraft(initialSendAsDraft)
   }, [open, initialProjectId, initialSendAsDraft, options, composerModel, modelOptions])
 
@@ -82,6 +120,7 @@ export function KanbanNewTaskDialog({
       workspacePath: selected.workspacePath,
       prompt: prompt.trim(),
       model: model.trim(),
+      approvalPolicy,
       sendAsDraft
     })
   }
@@ -91,23 +130,23 @@ export function KanbanNewTaskDialog({
       <div
         role="dialog"
         aria-modal="true"
-        aria-label={t('kanbanNewTask')}
+        aria-label={t('common:kanbanNewTask')}
         className="w-full max-w-lg rounded-2xl border border-ds-border bg-ds-elevated shadow-panel"
       >
         <div className="flex items-center justify-between gap-3 border-b border-ds-border px-4 py-3">
-          <h2 className="text-[14px] font-semibold text-ds-ink">{t('kanbanNewTask')}</h2>
+          <h2 className="text-[14px] font-semibold text-ds-ink">{t('common:kanbanNewTask')}</h2>
           <button
             type="button"
             className="inline-flex h-7 w-7 items-center justify-center rounded-md text-ds-faint hover:bg-ds-hover hover:text-ds-ink"
             onClick={onClose}
-            aria-label={t('kanbanDialogClose')}
+            aria-label={t('common:kanbanDialogClose')}
           >
             <X className="h-4 w-4" strokeWidth={1.9} />
           </button>
         </div>
         <div className="flex flex-col gap-3 px-4 py-3">
           <label className="flex flex-col gap-1.5 text-[12px] text-ds-muted">
-            {t('kanbanTaskProject')}
+            {t('common:kanbanTaskProject')}
             <select
               value={selected?.projectId ?? ''}
               onChange={(event) => setProjectId(event.target.value)}
@@ -121,7 +160,7 @@ export function KanbanNewTaskDialog({
             </select>
           </label>
           <label className="flex flex-col gap-1.5 text-[12px] text-ds-muted">
-            {t('kanbanTaskModel')}
+            {t('common:kanbanTaskModel')}
             <select
               value={model}
               onChange={(event) => setModel(event.target.value)}
@@ -135,12 +174,31 @@ export function KanbanNewTaskDialog({
             </select>
           </label>
           <label className="flex flex-col gap-1.5 text-[12px] text-ds-muted">
-            {t('kanbanTaskPrompt')}
+            {t('common:kanbanTaskPermission')}
+            <select
+              value={approvalPolicy}
+              onChange={(event) =>
+                setApprovalPolicy(event.target.value as KanbanApprovalPolicy)
+              }
+              className="rounded-lg border border-ds-border bg-ds-card px-2.5 py-2 text-[13px] text-ds-ink outline-none focus:ring-1 focus:ring-sky-500/40"
+            >
+              {approvalOptions.map((option) => (
+                <option key={option.id} value={option.id}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+            <span className="text-[11px] leading-4 text-ds-faint">
+              {approvalOptions.find((option) => option.id === approvalPolicy)?.description}
+            </span>
+          </label>
+          <label className="flex flex-col gap-1.5 text-[12px] text-ds-muted">
+            {t('common:kanbanTaskPrompt')}
             <textarea
               value={prompt}
               onChange={(event) => setPrompt(event.target.value)}
               rows={6}
-              placeholder={t('kanbanTaskPromptPlaceholder')}
+              placeholder={t('common:kanbanTaskPromptPlaceholder')}
               className="resize-y rounded-lg border border-ds-border bg-ds-card px-3 py-2 text-[13px] leading-5 text-ds-ink outline-none focus:ring-1 focus:ring-sky-500/40"
               autoFocus
             />
@@ -151,7 +209,7 @@ export function KanbanNewTaskDialog({
               checked={sendAsDraft}
               onChange={(event) => setSendAsDraft(event.target.checked)}
             />
-            {t('kanbanSendAsDraft')}
+            {t('common:kanbanSendAsDraft')}
           </label>
         </div>
         <div className="flex items-center justify-end gap-2 border-t border-ds-border px-4 py-3">
@@ -161,7 +219,7 @@ export function KanbanNewTaskDialog({
             onClick={onClose}
             disabled={submitting}
           >
-            {t('kanbanDialogCancel')}
+            {t('common:kanbanDialogCancel')}
           </button>
           <button
             type="button"
@@ -169,7 +227,7 @@ export function KanbanNewTaskDialog({
             onClick={submit}
             disabled={!canSubmit}
           >
-            {sendAsDraft ? t('kanbanSaveDraft') : t('kanbanSendTask')}
+            {sendAsDraft ? t('common:kanbanSaveDraft') : t('common:kanbanSendTask')}
           </button>
         </div>
       </div>
