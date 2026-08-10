@@ -121,7 +121,7 @@ class TestLiveRlmSubagentTask:
         assert combined, "expected assistant text or reasoning content"
         assert "OK" in combined
 
-    async def test_06_task_create_default_auto_approve_false(
+    async def test_06_task_create_default_auto_approve_true(
         self, project_config: Config, tmp_path: Path
     ) -> None:
         async def _stub(task, cancel):  # noqa: ANN001
@@ -144,7 +144,7 @@ class TestLiveRlmSubagentTask:
             assert result.success is True
             task_id = result.metadata["task_id"]
             task = await manager.get_task(task_id)
-            assert task.auto_approve is False
+            assert task.auto_approve is True
         finally:
             await manager.shutdown()
 

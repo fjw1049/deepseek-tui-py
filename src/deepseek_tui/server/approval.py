@@ -25,6 +25,7 @@ class PendingApprovalRecord:
     impacts: list[str] = field(default_factory=list)
     presentation_risk: str = ""
     approval_key: str = ""
+    task_id: str | None = None
 
 
 @dataclass
@@ -71,25 +72,26 @@ class ApprovalBridge:
             meta = self._meta.get(approval_id)
             if thread_id and (meta is None or meta.thread_id != thread_id):
                 continue
-            out.append(
-                {
-                    "approval_id": approval_id,
-                    "id": approval_id,
-                    "thread_id": meta.thread_id if meta else "",
-                    "tool_name": meta.tool_name if meta else "",
-                    "description": meta.description if meta else "",
-                    "summary": meta.description if meta else "",
-                    "input_summary": meta.input_summary if meta else "",
-                    "impacts": list(meta.impacts) if meta else [],
-                    "risk": meta.presentation_risk if meta else "",
-                    "risk_level": (
-                        "high"
-                        if meta and meta.presentation_risk == "destructive"
-                        else "low"
-                    ),
-                    "approval_key": meta.approval_key if meta else "",
-                }
-            )
+            row: dict[str, object] = {
+                "approval_id": approval_id,
+                "id": approval_id,
+                "thread_id": meta.thread_id if meta else "",
+                "tool_name": meta.tool_name if meta else "",
+                "description": meta.description if meta else "",
+                "summary": meta.description if meta else "",
+                "input_summary": meta.input_summary if meta else "",
+                "impacts": list(meta.impacts) if meta else [],
+                "risk": meta.presentation_risk if meta else "",
+                "risk_level": (
+                    "high"
+                    if meta and meta.presentation_risk == "destructive"
+                    else "low"
+                ),
+                "approval_key": meta.approval_key if meta else "",
+            }
+            if meta is not None and meta.task_id:
+                row["task_id"] = meta.task_id
+            out.append(row)
         return out
 
     def cancel_for_thread(self, thread_id: str) -> None:
@@ -129,10 +131,12 @@ class HttpApprovalHandler(ApprovalHandler):
         *,
         thread_id: str = "",
         auto_approve: AutoApproveFn | None = None,
+        task_id: str | None = None,
     ) -> None:
         self._bridge = bridge
         self._thread_id = thread_id
         self._auto_approve = auto_approve
+        self._task_id = task_id
 
     async def auto_approve_enabled(self) -> bool:
         return self._auto_approve is not None and await self._auto_approve()
@@ -161,6 +165,7 @@ class HttpApprovalHandler(ApprovalHandler):
                 impacts=list(request.impacts),
                 presentation_risk=request.presentation_risk,
                 approval_key=request.approval_key,
+                task_id=self._task_id,
             ),
         )
         try:
@@ -253,5 +258,105 @@ class ElevationBridge:
         for fut in self._pending.values():
             if not fut.done():
                 fut.cancel()
+        self._pending.clear()
+        self._meta.clear()
+
+
+# HTTP-suspended user-input prompts for detached task engines.
+
+
+@dataclass(slots=True)
+class PendingUserInputRecord:
+    thread_id: str
+    questions: list[dict[str, object]]
+    purpose: str | None = None
+    task_id: str | None = None
+    turn_id: str | None = None
+
+
+@dataclass
+class UserInputBridge:
+    """Maps request_id → Future[dict] until POST /v1/user-inputs/{id}.
+
+    Used by background task executors that have no interactive EngineHandle
+    on the origin thread: the future lives here while the GUI answers via
+    the same HTTP path as in-turn ``request_user_input``.
+    """
+
+    _pending: dict[str, asyncio.Future[dict[str, object]]] = field(
+        default_factory=dict
+    )
+    _meta: dict[str, PendingUserInputRecord] = field(default_factory=dict)
+
+    def register(
+        self,
+        request_id: str,
+        *,
+        meta: PendingUserInputRecord | None = None,
+    ) -> asyncio.Future[dict[str, object]]:
+        fut: asyncio.Future[dict[str, object]] = (
+            asyncio.get_running_loop().create_future()
+        )
+        self._pending[request_id] = fut
+        if meta is not None:
+            self._meta[request_id] = meta
+        return fut
+
+    def resolve(
+        self,
+        request_id: str,
+        *,
+        answers: list[dict[str, object]] | None = None,
+        cancelled: bool = False,
+    ) -> bool:
+        fut = self._pending.pop(request_id, None)
+        self._meta.pop(request_id, None)
+        if fut is None or fut.done():
+            return False
+        if cancelled:
+            fut.set_result({"cancelled": True})
+        else:
+            fut.set_result({"answers": list(answers or [])})
+        return True
+
+    def list_pending(self, thread_id: str | None = None) -> list[dict[str, object]]:
+        out: list[dict[str, object]] = []
+        for request_id, fut in self._pending.items():
+            if fut.done():
+                continue
+            meta = self._meta.get(request_id)
+            if thread_id and (meta is None or meta.thread_id != thread_id):
+                continue
+            out.append(
+                {
+                    "request_id": request_id,
+                    "id": request_id,
+                    "thread_id": meta.thread_id if meta else "",
+                    "turn_id": meta.turn_id if meta else None,
+                    "questions": list(meta.questions) if meta else [],
+                    "purpose": meta.purpose if meta else None,
+                    "task_id": meta.task_id if meta else None,
+                }
+            )
+        return out
+
+    def cancel_for_thread(self, thread_id: str) -> None:
+        to_cancel = [
+            request_id
+            for request_id, fut in self._pending.items()
+            if not fut.done()
+            and (meta := self._meta.get(request_id)) is not None
+            and meta.thread_id == thread_id
+        ]
+        for request_id in to_cancel:
+            fut = self._pending.pop(request_id, None)
+            self._meta.pop(request_id, None)
+            if fut is not None and not fut.done():
+                fut.set_result({"cancelled": True})
+
+    def cancel_all(self) -> None:
+        for fut in self._pending.values():
+            if not fut.done():
+                fut.set_result({"cancelled": True})
         self._pending.clear()
         self._meta.clear()

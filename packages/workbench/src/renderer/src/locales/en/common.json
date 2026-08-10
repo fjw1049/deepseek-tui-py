@@ -1360,6 +1360,7 @@
   "approvalBannerJump": "Review",
   "runtimeExportUnsupported": "Current provider does not support exporting to a runtime session.",
   "userInputTitle": "Input required",
+  "userInputFromTask": "From task {{id}}",
   "userInputPending": "Waiting for your answer…",
   "userInputSubmitted": "Submitted",
   "userInputCancelled": "Cancelled",

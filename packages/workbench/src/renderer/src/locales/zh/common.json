@@ -1320,6 +1320,7 @@
   "approvalBannerJump": "查看",
   "runtimeExportUnsupported": "当前 Provider 不支持导出为运行时会话。",
   "userInputTitle": "需要你的输入",
+  "userInputFromTask": "来自任务 {{id}}",
   "userInputPending": "等待你选择…",
   "userInputSubmitted": "已提交",
   "userInputCancelled": "已取消",

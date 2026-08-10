@@ -48,7 +48,7 @@ class TestEngineChildCostAccrual:
 
 class TestTaskSecurity:
     @pytest.mark.asyncio
-    async def test_add_task_default_auto_approve_false(self, tmp_path: Path):
+    async def test_add_task_default_auto_approve_true(self, tmp_path: Path):
         cfg = TaskManagerConfig(
             data_dir=tmp_path,
             default_workspace=tmp_path,
@@ -56,7 +56,7 @@ class TestTaskSecurity:
         manager = TaskManager(cfg, executor=_immediate_stub)
         await manager.start()
         task = await manager.add_task(TaskNewTaskRequest(prompt="fix todos"))
-        assert task.auto_approve is False
+        assert task.auto_approve is True
         assert task.allow_shell is False
         await manager.shutdown()
 

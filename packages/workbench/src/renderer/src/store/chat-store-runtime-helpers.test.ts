@@ -3,6 +3,7 @@ import type { ChatBlock } from '../agent/types'
 import {
   finalizeOrphanRuntimeBlocks,
   hasPendingRuntimeWork,
+  mergePendingUserInputBlocks,
   moveQueuedMessageToFront
 } from './chat-store-runtime-helpers'
 import type { QueuedUserMessage } from './chat-store-types'
@@ -78,6 +79,34 @@ describe('finalizeOrphanRuntimeBlocks', () => {
   it('returns the same array when nothing is pending', () => {
     const blocks: ChatBlock[] = [tool('t1', 'success')]
     expect(finalizeOrphanRuntimeBlocks(blocks)).toBe(blocks)
+  })
+})
+
+describe('mergePendingUserInputBlocks', () => {
+  it('adds bridged task prompts even when none exist in thread detail', () => {
+    const blocks: ChatBlock[] = [tool('t1', 'success')]
+    const merged = mergePendingUserInputBlocks(blocks, [
+      {
+        requestId: 'call_plan',
+        taskId: 'task_heap',
+        questions: [
+          {
+            id: 'enter_plan',
+            header: '规划模式',
+            question: '进入？',
+            options: [{ label: '进入', description: '', value: 'enter' }]
+          }
+        ]
+      }
+    ])
+    expect(merged.firstAddedBlockId).toBe('call_plan')
+    const card = merged.blocks.find((b) => b.kind === 'user_input')
+    expect(card).toMatchObject({
+      kind: 'user_input',
+      requestId: 'call_plan',
+      taskId: 'task_heap',
+      status: 'pending'
+    })
   })
 })
 

@@ -105,6 +105,11 @@ export function UserInputBubble({ block }: { block: UserInputBlock }): ReactElem
         <span className="text-[12px] font-semibold tracking-[-0.01em] text-ds-ink">
           {t('userInputTitle')}
         </span>
+        {block.taskId ? (
+          <span className="truncate font-mono text-[11px] text-ds-faint">
+            {t('userInputFromTask', { id: block.taskId })}
+          </span>
+        ) : null}
         <span className="text-[11px] text-ds-faint">{statusLabel}</span>
         {total > 1 ? (
           <div className="ml-auto flex items-center gap-1">

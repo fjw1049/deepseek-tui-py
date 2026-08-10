@@ -83,6 +83,18 @@ def _reject_subagent_interactive_shell(tool_name: str, input_data: dict[str, Any
         )
 
 
+async def _subagent_auto_approve_enabled(
+    auto_approve: bool,
+    runtime: "SubAgentRuntime | None",
+) -> bool:
+    """Prefer the parent handler's live turn flag over a create-time snapshot."""
+    handler = getattr(runtime, "approval_handler", None) if runtime else None
+    check = getattr(handler, "auto_approve_enabled", None) if handler is not None else None
+    if callable(check):
+        return bool(await check())
+    return bool(auto_approve)
+
+
 async def _execute_subagent_tool(
     registry: object,
     context: object,
@@ -121,9 +133,11 @@ async def _execute_subagent_tool(
     policy = getattr(getattr(runtime, "config", None), "approval_policy", None)
     if policy is None and hasattr(context, "metadata"):
         policy = (context.metadata or {}).get("approval_policy")  # type: ignore[union-attr]
+    # Live parent-session flag (YOLO / turn auto_approve), not Engine.create snapshot.
+    effective_auto = await _subagent_auto_approve_enabled(auto_approve, runtime)
     approval_request = (
         None
-        if auto_approve
+        if effective_auto
         else approval_request_for_tool(
             tool, policy, tool_input if isinstance(tool_input, dict) else None
         )
@@ -143,8 +157,15 @@ async def _execute_subagent_tool(
             tool_description=approval_request.reason,
         )
         call_id = tool_call_id or f"subagent-{tool_name}"
+        # Mirror Engine tooling: auto-approve short-circuits inside
+        # request_approval without registering on ApprovalBridge. Emitting
+        # ApprovalRequiredEvent in that case races the UI (ghost card / 404).
+        still_needs_prompt = True
+        check = getattr(handler, "auto_approve_enabled", None)
+        if callable(check):
+            still_needs_prompt = not bool(await check())
         emit = getattr(runtime, "emit_event", None) if runtime else None
-        if emit is not None:
+        if still_needs_prompt and emit is not None:
             from deepseek_tui.engine.events import ApprovalRequiredEvent
 
             maybe = emit(

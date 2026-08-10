@@ -16,6 +16,8 @@ export type PendingApprovalPayload = {
   riskLevel?: string
   presentationRisk?: string
   toolName?: string
+  /** Present when a detached durable task bridged the approval here. */
+  taskId?: string
 }
 
 export function threadBelongsToWorkspace(
@@ -30,6 +32,7 @@ export function threadBelongsToWorkspace(
 export type PendingUserInputPayload = {
   requestId: string
   questions: UserInputQuestion[]
+  taskId?: string
 }
 
 export function mergePendingUserInputBlocks(
@@ -52,7 +55,8 @@ export function mergePendingUserInputBlocks(
       createdAt: new Date().toISOString(),
       requestId: item.requestId,
       questions: item.questions,
-      status: 'pending'
+      status: 'pending',
+      ...(item.taskId ? { taskId: item.taskId } : {})
     })
   }
   if (!additions.length) return { blocks, firstAddedBlockId: null }
@@ -87,7 +91,8 @@ export function mergePendingApprovalBlocks(
       riskLevel: item.riskLevel,
       presentationRisk: item.presentationRisk,
       toolName: item.toolName,
-      status: 'pending'
+      status: 'pending',
+      ...(item.taskId ? { taskId: item.taskId } : {})
     })
   }
   if (!additions.length) return { blocks, firstAddedBlockId: null }

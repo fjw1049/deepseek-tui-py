@@ -1082,6 +1082,15 @@ class ToolExecutionMixin:
                 content="Enter plan mode cancelled (turn cancelled).",
                 success=False,
             )
+        err = response.get("error")
+        if isinstance(err, str) and err.strip():
+            return ToolResult(content=err.strip(), success=False)
+        if response.get("cancelled"):
+            return ToolResult(
+                content="User dismissed enter_plan_mode. Staying in "
+                f"{mode} mode — continue without planning gate.",
+                success=False,
+            )
         approved = parse_enter_plan_response(response)
         if approved is None:
             return ToolResult(
@@ -1133,6 +1142,15 @@ class ToolExecutionMixin:
         if response is None:
             return ToolResult(
                 content="Exit plan mode cancelled (turn cancelled).",
+                success=False,
+            )
+        err = response.get("error")
+        if isinstance(err, str) and err.strip():
+            return ToolResult(content=err.strip(), success=False)
+        if response.get("cancelled"):
+            return ToolResult(
+                content="User dismissed plan approval. Staying in plan mode "
+                "— revise with update_plan or call exit_plan_mode again.",
                 success=False,
             )
         outcome = parse_exit_plan_response(response)

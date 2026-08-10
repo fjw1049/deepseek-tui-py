@@ -274,6 +274,9 @@ class ExecutionTask:
     allow_shell: bool
     trust_mode: bool
     auto_approve: bool
+    # Origin chat thread (if any) — used to bridge enter/exit plan prompts
+    # back to the Workbench composer when the task is not auto-approved.
+    thread_id: str | None = None
     # Back-reference to the owning TaskManager, populated by
     # ``TaskManager._pop_next_task``. Executors propagate it to the
     # spawned Engine's ``ToolContext.metadata`` so the ``checklist``

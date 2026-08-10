@@ -39,6 +39,10 @@ import {
 import { useTranslation } from 'react-i18next'
 import { useChatStore } from '../../store/chat-store'
 import type { ComposerMode } from '../../store/chat-store-types'
+import {
+  extractTasksFromBlocks,
+  isActiveTaskStatus
+} from '../../lib/extract-tasks-from-blocks'
 import { ReasoningEffortSelector } from './ReasoningEffortSelector'
 import { ApprovalBubble } from './ApprovalBubble'
 import { ComposerLiveChangesHeader } from './ComposerLiveChangesHeader'
@@ -338,6 +342,11 @@ export function FloatingComposer({
       ),
     [blocks]
   )
+  const hasActiveDurableTask = useMemo(
+    () => extractTasksFromBlocks(blocks).some((task) => isActiveTaskStatus(task.status)),
+    [blocks]
+  )
+  const refreshPendingUserInputs = useChatStore((s) => s.refreshPendingUserInputs)
 
   const canCompose = runtimeReady && (hasActiveThread || !!effectiveWorkspaceRoot)
   const canChangeModel = canCompose && !busy
@@ -586,6 +595,28 @@ export function FloatingComposer({
   useEffect(() => {
     setActiveCommand(null)
   }, [activeThreadId])
+
+  // Bridged task consent is not a TurnItem; re-hydrate after thread switches and
+  // keep polling while a durable task is still running (SSE can race turn-complete).
+  useEffect(() => {
+    if (!activeThreadId || !runtimeReady) return
+    void refreshPendingUserInputs()
+  }, [activeThreadId, runtimeReady, refreshPendingUserInputs])
+
+  useEffect(() => {
+    if (!activeThreadId || !runtimeReady || !hasActiveDurableTask) return
+    if (pendingUserInputs.length > 0) return
+    const timer = window.setInterval(() => {
+      void refreshPendingUserInputs()
+    }, 2000)
+    return () => window.clearInterval(timer)
+  }, [
+    activeThreadId,
+    runtimeReady,
+    hasActiveDurableTask,
+    pendingUserInputs.length,
+    refreshPendingUserInputs
+  ])
 
   useEffect(() => {
     const el = textareaRef.current

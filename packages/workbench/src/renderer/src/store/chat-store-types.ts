@@ -216,6 +216,8 @@ export type ChatState = {
     blockId: string,
     action: { kind: 'submit'; answers: UserInputAnswer[] } | { kind: 'cancel' }
   ) => Promise<void>
+  /** Re-fetch bridged task / in-turn user-input prompts for the active thread. */
+  refreshPendingUserInputs: () => Promise<void>
   selectInspectorItem: (id: string | null) => void
   syncGitCommitSelection: (allPaths: string[]) => void
   toggleGitCommitPath: (path: string, allPaths: string[]) => void

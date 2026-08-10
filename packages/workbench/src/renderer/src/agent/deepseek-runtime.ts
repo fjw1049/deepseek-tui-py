@@ -127,6 +127,10 @@ function approvalPayloadFromRecord(
       : typeof row.presentation_risk === 'string'
         ? row.presentation_risk
         : undefined
+  const taskId =
+    typeof row.task_id === 'string' && row.task_id.trim()
+      ? row.task_id.trim()
+      : undefined
   return {
     approvalId,
     summary: String(row.title ?? row.description ?? row.summary ?? 'Approval required'),
@@ -139,7 +143,8 @@ function approvalPayloadFromRecord(
     impacts: impacts?.length ? impacts : undefined,
     riskLevel: typeof row.risk_level === 'string' ? row.risk_level : undefined,
     presentationRisk,
-    toolName: typeof row.tool_name === 'string' ? row.tool_name : undefined
+    toolName: typeof row.tool_name === 'string' ? row.tool_name : undefined,
+    ...(taskId ? { taskId } : {})
   }
 }
 
@@ -924,10 +929,15 @@ export class DeepseekRuntimeProvider implements AgentProvider {
         const rawQuestions = row.questions
         const questions = readUserInputQuestions(rawQuestions)
         if (!requestId || !questions) return null
+        const taskId =
+          typeof row.task_id === 'string' && row.task_id.trim()
+            ? row.task_id.trim()
+            : undefined
         return {
           itemId: requestId,
           requestId,
-          questions
+          questions,
+          ...(taskId ? { taskId } : {})
         }
       })
       .filter((row): row is UserInputRequestPayload => row != null)
@@ -1882,11 +1892,16 @@ export class DeepseekRuntimeProvider implements AgentProvider {
               if (ev === 'user_input.required') {
                 const requestId = String(payload.request_id ?? payload.id ?? '')
                 const questions = readUserInputQuestions(payload.questions)
+                const taskId =
+                  typeof payload.task_id === 'string' && payload.task_id.trim()
+                    ? payload.task_id.trim()
+                    : undefined
                 if (requestId && questions && sink.onUserInput) {
                   sink.onUserInput({
                     itemId: requestId,
                     requestId,
-                    questions
+                    questions,
+                    ...(taskId ? { taskId } : {})
                   })
                 }
                 return

@@ -380,9 +380,19 @@ async function reloadActiveThreadBlocks(
     const blocks = threadStatusLooksActive(threadStatus)
       ? hydrated
       : finalizeOrphanSubagentBlocks(hydrated)
-    set({
+    // Bridged task prompts are not TurnItems — re-hydrate them after every
+    // detail reload so turn-complete cannot wipe a waiting consent card.
+    const synced = await syncRuntimePendingApprovals(
+      provider,
+      threadId,
       blocks,
-      lastSeq: latestSeq
+      get().busy
+    )
+    if (get().activeThreadId !== threadId) return
+    set({
+      blocks: synced.blocks,
+      lastSeq: latestSeq,
+      ...(synced.scrollToBlockId ? { scrollToBlockId: synced.scrollToBlockId } : {})
     })
   } catch {
     /* keep in-memory blocks if reload fails */
@@ -439,27 +449,27 @@ async function syncRuntimePendingApprovals(
   blocks: ChatBlock[],
   busy: boolean
 ): Promise<{ blocks: ChatBlock[]; scrollToBlockId: string | null }> {
-  if (!busy) {
-    return { blocks, scrollToBlockId: null }
-  }
   let nextBlocks = blocks
   let scrollToBlockId: string | null = null
+  // Evolution proposals only apply while a turn is active.
+  if (busy && typeof provider.fetchPendingEvolution === 'function') {
+    try {
+      const pendingEvolution = await provider.fetchPendingEvolution(threadId)
+      const merged = mergePendingEvolutionBlocks(nextBlocks, pendingEvolution)
+      nextBlocks = merged.blocks
+      scrollToBlockId = scrollToBlockId ?? merged.firstAddedBlockId
+    } catch {
+      /* ignore */
+    }
+  }
+  // Detached durable tasks can bridge tool approvals + plan prompts after the
+  // parent turn is idle — always hydrate those cards, not only while busy.
   if (typeof provider.fetchPendingApprovals === 'function') {
     try {
       const pending = await provider.fetchPendingApprovals(threadId)
       const merged = mergePendingApprovalBlocks(nextBlocks, pending)
       nextBlocks = merged.blocks
       // Approvals live in the composer dock — do not scroll the timeline to them.
-    } catch {
-      /* ignore */
-    }
-  }
-  if (typeof provider.fetchPendingEvolution === 'function') {
-    try {
-      const pendingEvolution = await provider.fetchPendingEvolution(threadId)
-      const merged = mergePendingEvolutionBlocks(nextBlocks, pendingEvolution)
-      nextBlocks = merged.blocks
-      scrollToBlockId = scrollToBlockId ?? merged.firstAddedBlockId
     } catch {
       /* ignore */
     }
@@ -895,7 +905,8 @@ function buildThreadEventSink(
               riskLevel: req.riskLevel,
               presentationRisk: req.presentationRisk,
               toolName: req.toolName,
-              status: 'pending' as const
+              status: 'pending' as const,
+              ...(req.taskId ? { taskId: req.taskId } : {})
             }
           ],
           error: s.error === i18n.t('common:runtimeStreamRecovering') ? null : s.error
@@ -984,7 +995,8 @@ function buildThreadEventSink(
               createdAt: new Date().toISOString(),
               requestId: req.requestId,
               questions: req.questions,
-              status: 'pending' as const
+              status: 'pending' as const,
+              ...(req.taskId ? { taskId: req.taskId } : {})
             }
           ],
           error: s.error === i18n.t('common:runtimeStreamRecovering') ? null : s.error
@@ -3067,6 +3079,29 @@ export const useChatStore = create<ChatState>((set, get) => ({
         )
       }))
       emitPetEvent({ type: 'elevation_resolved', itemId: blockId, status: 'error' })
+    }
+  },
+
+  refreshPendingUserInputs: async () => {
+    const { activeThreadId, providerId, blocks, busy, runtimeConnection } = get()
+    if (!activeThreadId || runtimeConnection !== 'ready') return
+    const p = getProvider(providerId)
+    if (typeof p.fetchPendingUserInputs !== 'function') return
+    try {
+      const synced = await syncRuntimePendingApprovals(
+        p,
+        activeThreadId,
+        blocks,
+        busy
+      )
+      if (get().activeThreadId !== activeThreadId) return
+      if (synced.blocks === blocks && !synced.scrollToBlockId) return
+      set({
+        blocks: synced.blocks,
+        ...(synced.scrollToBlockId ? { scrollToBlockId: synced.scrollToBlockId } : {})
+      })
+    } catch {
+      /* ignore transient poll failures */
     }
   },
 

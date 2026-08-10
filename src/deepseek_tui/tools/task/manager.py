@@ -90,6 +90,11 @@ class TaskManager:
         self._notify = asyncio.Event()
         self._shutdown = asyncio.Event()
         self._worker_tasks: list[asyncio.Task[None]] = []
+        # Injected by the HTTP runtime so detached tasks can surface plan /
+        # tool approvals on the origin thread (see server/app.py).
+        self.thread_manager: Any | None = None
+        self.user_input_bridge: Any | None = None
+        self.approval_bridge: Any | None = None
 
     async def start(self) -> None:
         """Initialize directories, load prior state, spawn workers."""
@@ -181,7 +186,7 @@ class TaskManager:
             trust_mode=(
                 req.trust_mode if req.trust_mode is not None else self._cfg.trust_mode
             ),
-            auto_approve=req.auto_approve if req.auto_approve is not None else False,
+            auto_approve=req.auto_approve if req.auto_approve is not None else True,
             status=TaskStatus.QUEUED,
             created_at=now,
             thread_id=req.thread_id,
@@ -590,6 +595,7 @@ class TaskManager:
                     allow_shell=task.allow_shell,
                     trust_mode=task.trust_mode,
                     auto_approve=task.auto_approve,
+                    thread_id=task.thread_id,
                     task_manager=self,
                 )
                 cancel = asyncio.Event()

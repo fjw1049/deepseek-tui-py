@@ -210,6 +210,7 @@ class RuntimeThreadManager:
         llm_client: LLMClient | None = None,
         approval_bridge: Any | None = None,
         elevation_bridge: Any | None = None,
+        user_input_bridge: Any | None = None,
         shared_tool_runtime: Any | None = None,
     ) -> None:
         self.config = config
@@ -223,6 +224,7 @@ class RuntimeThreadManager:
         self._provider_clients: dict[str, LLMClient] = {}
         self._approval_bridge = approval_bridge
         self._elevation_bridge = elevation_bridge
+        self._user_input_bridge = user_input_bridge
         self._shared_tool_runtime = shared_tool_runtime
 
         self._active: dict[str, _ActiveThreadState] = {}
@@ -336,6 +338,8 @@ class RuntimeThreadManager:
             self._approval_bridge.cancel_all()
         if self._elevation_bridge is not None:
             self._elevation_bridge.cancel_all()
+        if self._user_input_bridge is not None:
+            self._user_input_bridge.cancel_all()
 
     @property
     def is_shutdown(self) -> bool:
@@ -598,6 +602,14 @@ class RuntimeThreadManager:
                 if resolved:
                     self._pending_user_inputs.pop(request_id, None)
                 return resolved
+        if self._user_input_bridge is not None:
+            return bool(
+                self._user_input_bridge.resolve(
+                    request_id,
+                    answers=answers,
+                    cancelled=cancelled,
+                )
+            )
         return False
 
     async def list_pending_user_inputs(
@@ -622,7 +634,50 @@ class RuntimeThreadManager:
                             "questions": questions,
                         }
                     )
+        if self._user_input_bridge is not None:
+            out.extend(self._user_input_bridge.list_pending(thread_id=thread_id))
         return out
+
+    async def emit_bridged_user_input(
+        self,
+        thread_id: str,
+        request_id: str,
+        questions: list[dict[str, object]],
+        *,
+        purpose: str | None = None,
+        task_id: str | None = None,
+    ) -> None:
+        """Surface a detached-task user-input prompt on an origin thread SSE."""
+        payload: dict[str, Any] = {
+            "id": request_id,
+            "request_id": request_id,
+            "questions": questions,
+        }
+        if purpose:
+            payload["purpose"] = purpose
+        if task_id:
+            payload["task_id"] = task_id
+        await self._emit_event(
+            thread_id, None, None, "user_input.required", payload
+        )
+
+    async def emit_bridged_approval(
+        self,
+        thread_id: str,
+        approval_id: str,
+        request: Any,
+        *,
+        task_id: str | None = None,
+    ) -> None:
+        """Surface a detached-task tool approval on an origin thread SSE."""
+        from deepseek_tui.tools.approval import approval_request_to_sse_payload
+
+        payload = approval_request_to_sse_payload(approval_id, request)
+        if task_id:
+            payload["task_id"] = task_id
+        await self._emit_event(
+            thread_id, None, None, "approval.required", payload
+        )
 
     async def get_thread_detail(self, thread_id: str) -> ThreadDetail:
         thread = self.store.load_thread(thread_id)
@@ -1419,6 +1474,8 @@ class RuntimeThreadManager:
             state.active_turn = _ActiveTurnState(
                 turn_id=turn_id, auto_approve=auto_approve, trust_mode=trust_mode
             )
+            # Let task_create inherit the live session flag (YOLO / auto).
+            state.engine.tool_context.metadata["session_auto_approve"] = auto_approve
             self._sync_trust_mode(state.engine, trust_mode)
             self._touch_lru(thread_id)
 

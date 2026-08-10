@@ -200,6 +200,7 @@ def emit_tool_audit(event: dict[str, Any]) -> None:
 
 from deepseek_tui.engine.events import (
     AgentRoundCompleteEvent,
+    ApprovalRequiredEvent,
     ErrorEvent,
     ToolResultEvent,
     TurnCancelledEvent,
@@ -427,10 +428,211 @@ def _describe_tool_call(
     return f"{label} — {reason}" if reason else label
 
 
+def synthetic_plan_user_input_response(purpose: str | None) -> dict[str, Any] | None:
+    """Build auto-approve answers for enter/exit plan prompts.
+
+    Returns ``None`` when *purpose* is not a plan-mode gate (generic
+    ``request_user_input`` still needs a real human answer).
+    """
+    from deepseek_tui.tools.plan_mode import (
+        ENTER_APPROVE_VALUE,
+        ENTER_PLAN_MODE_NAME,
+        ENTER_QUESTION_ID,
+        EXIT_ACCEPT_YOLO,
+        EXIT_PLAN_MODE_NAME,
+        EXIT_QUESTION_ID,
+    )
+
+    if purpose == ENTER_PLAN_MODE_NAME:
+        return {
+            "answers": [
+                {"question_id": ENTER_QUESTION_ID, "value": ENTER_APPROVE_VALUE}
+            ]
+        }
+    if purpose == EXIT_PLAN_MODE_NAME:
+        return {
+            "answers": [
+                {"question_id": EXIT_QUESTION_ID, "value": EXIT_ACCEPT_YOLO}
+            ]
+        }
+    return None
+
+
+def task_auto_approves_user_input(task: "ExecutionTask") -> bool:
+    """True when a detached task should skip interactive plan consent."""
+    if bool(getattr(task, "auto_approve", False)):
+        return True
+    mode = str(getattr(task, "mode_label", "") or "").strip().lower()
+    return mode == "yolo"
+
+
+async def bridge_background_user_input(
+    event: "UserInputRequiredEvent",
+    *,
+    task: "ExecutionTask",
+    handle: "EngineHandle",
+) -> None:
+    """Resolve a background ``UserInputRequiredEvent`` (auto / bridge / error)."""
+    future = handle.pending_user_inputs.get(event.tool_call_id)
+    if future is None or future.done():
+        return
+
+    if task_auto_approves_user_input(task):
+        synthetic = synthetic_plan_user_input_response(event.purpose)
+        if synthetic is not None:
+            future.set_result(synthetic)
+            return
+        # Generic request_user_input cannot be invented — fall through to UI.
+
+    mgr = getattr(task, "task_manager", None)
+    bridge = getattr(mgr, "user_input_bridge", None) if mgr is not None else None
+    thread_manager = getattr(mgr, "thread_manager", None) if mgr is not None else None
+    thread_id = getattr(task, "thread_id", None)
+    if (
+        isinstance(thread_id, str)
+        and thread_id.strip()
+        and bridge is not None
+        and thread_manager is not None
+    ):
+        from deepseek_tui.server.approval import PendingUserInputRecord
+
+        questions = [dict(q) for q in event.questions]
+        bridged = bridge.register(
+            event.tool_call_id,
+            meta=PendingUserInputRecord(
+                thread_id=thread_id.strip(),
+                questions=questions,
+                purpose=event.purpose,
+                task_id=task.id,
+            ),
+        )
+
+        def _drop_bridge_if_handle_cancelled(
+            handle_fut: asyncio.Future[dict[str, Any]],
+        ) -> None:
+            if handle_fut.cancelled() and not bridged.done():
+                bridge.resolve(event.tool_call_id, cancelled=True)
+
+        future.add_done_callback(_drop_bridge_if_handle_cancelled)
+
+        async def _forward() -> None:
+            try:
+                result = await bridged
+            except asyncio.CancelledError:
+                if not future.done():
+                    future.set_result({"cancelled": True})
+                raise
+            if not future.done():
+                future.set_result(result)
+
+        asyncio.create_task(
+            _forward(), name=f"bridge-user-input-{event.tool_call_id}"
+        )
+        try:
+            await thread_manager.emit_bridged_user_input(
+                thread_id.strip(),
+                event.tool_call_id,
+                questions,
+                purpose=event.purpose,
+                task_id=task.id,
+            )
+        except Exception:  # noqa: BLE001 — surface failure to the waiting tool
+            logger.exception(
+                "emit_bridged_user_input_failed task=%s thread=%s",
+                task.id,
+                thread_id,
+            )
+            if not future.done():
+                future.set_result(
+                    {
+                        "error": (
+                            "Failed to surface user input on the origin thread"
+                        )
+                    }
+                )
+            if not bridged.done():
+                bridge.resolve(event.tool_call_id, cancelled=True)
+        return
+
+    future.set_result(
+        {
+            "error": (
+                "Background task has no origin thread for user input"
+            )
+        }
+    )
+
+
+async def bridge_background_approval(
+    event: "ApprovalRequiredEvent",
+    *,
+    task: "ExecutionTask",
+) -> None:
+    """Forward a background tool-approval prompt onto the origin thread SSE.
+
+    The task engine's ``HttpApprovalHandler`` already registered the id on
+    ``ApprovalBridge``; this only surfaces the card in the origin session UI
+    (same pattern as :func:`bridge_background_user_input`).
+    """
+    mgr = getattr(task, "task_manager", None)
+    thread_manager = getattr(mgr, "thread_manager", None) if mgr is not None else None
+    thread_id = getattr(task, "thread_id", None)
+    if (
+        not isinstance(thread_id, str)
+        or not thread_id.strip()
+        or thread_manager is None
+    ):
+        return
+    try:
+        await thread_manager.emit_bridged_approval(
+            thread_id.strip(),
+            event.tool_call_id,
+            event.request,
+            task_id=task.id,
+        )
+    except Exception:  # noqa: BLE001 — best-effort UI surface
+        logger.exception(
+            "emit_bridged_approval_failed task=%s thread=%s",
+            task.id,
+            thread_id,
+        )
+
+
+def _build_task_approval_handler(task: "ExecutionTask") -> Any:
+    """Approval policy for a detached durable task.
+
+    * ``auto_approve`` → allow all tools (default for fire-and-forget).
+    * otherwise bridge to the origin thread via ``ApprovalBridge`` when wired;
+      fall back to deny so the model sees a refusal instead of hanging.
+    """
+    from deepseek_tui.engine.handle import AutoApprovalHandler, DenyApprovalHandler
+    from deepseek_tui.server.approval import HttpApprovalHandler
+
+    if task.auto_approve:
+        return AutoApprovalHandler()
+
+    mgr = getattr(task, "task_manager", None)
+    bridge = getattr(mgr, "approval_bridge", None) if mgr is not None else None
+    thread_id = getattr(task, "thread_id", None)
+    if (
+        bridge is not None
+        and isinstance(thread_id, str)
+        and thread_id.strip()
+    ):
+        return HttpApprovalHandler(
+            bridge,
+            thread_id=thread_id.strip(),
+            task_id=task.id,
+        )
+    return DenyApprovalHandler()
+
+
 async def _collect_turn_events(
     handle: EngineHandle,
     cancel: asyncio.Event,
     on_tool_event: Callable[..., Awaitable[None]] | None = None,
+    *,
+    task: "ExecutionTask | None" = None,
 ) -> tuple[str, str | None]:
     """Drain events until turn end. Returns (final_assistant_text, error_message).
 
@@ -488,11 +690,23 @@ async def _collect_turn_events(
                 detail = summarize_text(event.content or "", 4_000) or None
                 await _emit_tool_event(kind, summary, detail)
         elif isinstance(event, UserInputRequiredEvent):
-            future = handle.pending_user_inputs.get(event.tool_call_id)
-            if future and not future.done():
-                future.set_result(
-                    {"error": "Background executors cannot request user input"}
+            if task is not None:
+                await bridge_background_user_input(
+                    event, task=task, handle=handle
                 )
+            else:
+                future = handle.pending_user_inputs.get(event.tool_call_id)
+                if future and not future.done():
+                    future.set_result(
+                        {
+                            "error": (
+                                "Background executors cannot request user input"
+                            )
+                        }
+                    )
+        elif isinstance(event, ApprovalRequiredEvent):
+            if task is not None:
+                await bridge_background_approval(event, task=task)
         elif isinstance(event, TurnCompleteEvent):
             final_text = assistant_message_text(event.assistant_message)
             break
@@ -509,7 +723,6 @@ async def _run_task_engine_turn(
     from deepseek_tui.config.loader import ConfigLoader
     from deepseek_tui.config.models import FeatureConfig, HooksConfig
     from deepseek_tui.engine.orchestrator import Engine
-    from deepseek_tui.engine.handle import AutoApprovalHandler, DenyApprovalHandler
     from deepseek_tui.tools.runtime import create_tool_runtime
     from deepseek_tui.tools.task import TaskExecutionResult
 
@@ -540,15 +753,10 @@ async def _run_task_engine_turn(
         start_mcp=False,
     )
 
-    # Tasks run detached — there is no interactive channel to surface an
-    # approval prompt. auto_approve=True lets the task use privileged tools;
-    # otherwise DenyApprovalHandler refuses them so the model sees a refusal
-    # instead of hanging on a prompt nobody can answer. Passing None would
-    # fall through to Engine.__init__'s AutoApprovalHandler() default and
-    # silently make every task auto-approved.
-    approval_handler = (
-        AutoApprovalHandler() if task.auto_approve else DenyApprovalHandler()
-    )
+    # Default auto_approve=True for fire-and-forget. When False, bridge tool
+    # approvals onto the origin thread (HttpApprovalHandler + ApprovalBridge)
+    # so the Workbench can confirm — same UX as the main session.
+    approval_handler = _build_task_approval_handler(task)
     max_rounds = (
         CRON_MAX_TOOL_ROUND_TRIPS
         if _is_cron_task(task.prompt)
@@ -683,7 +891,9 @@ async def _run_task_engine_turn(
 
     bridge_task = asyncio.create_task(_bridge_cancel())
     collect_task = asyncio.create_task(
-        _collect_turn_events(handle, cancel, on_tool_event=_record_tool_event)
+        _collect_turn_events(
+            handle, cancel, on_tool_event=_record_tool_event, task=task
+        )
     )
     try:
         try:

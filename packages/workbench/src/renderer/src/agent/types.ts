@@ -130,6 +130,8 @@ export type ChatBlock =
       toolName?: string
       status: 'pending' | 'allowed' | 'denied' | 'error'
       errorMessage?: string
+      /** Present when a detached durable task bridged the approval here. */
+      taskId?: string
     }
   | {
       kind: 'elevation'
@@ -152,6 +154,8 @@ export type ChatBlock =
       status: 'pending' | 'submitted' | 'cancelled' | 'error'
       answers?: UserInputAnswer[]
       errorMessage?: string
+      /** Present when a detached durable task bridged the prompt here. */
+      taskId?: string
     }
   | {
       kind: 'subagent'
@@ -221,6 +225,8 @@ export type ApprovalRequestPayload = {
   riskLevel?: string
   presentationRisk?: string
   toolName?: string
+  /** Present when a detached durable task bridged the approval here. */
+  taskId?: string
 }
 
 export type ElevationRequestPayload = {
@@ -246,6 +252,7 @@ export type UserInputRequestPayload = {
   itemId: string
   requestId: string
   questions: UserInputQuestion[]
+  taskId?: string
 }
 
 export type UserInputStatusPayload = {

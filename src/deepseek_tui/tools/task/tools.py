@@ -159,6 +159,14 @@ class TaskCreateTool(ToolSpec):
         _enforce_max_task_nest_depth(context)
         prompt = _require_string(input_data, "prompt")
         origin_thread = context.metadata.get("runtime_thread_id")
+        # Durable tasks are fire-and-forget: default auto-approve so they can
+        # write/run without a live operator. When False, the executor bridges
+        # tool approvals onto the origin thread (same UI as the main session).
+        session_auto = context.metadata.get("session_auto_approve")
+        if isinstance(session_auto, bool):
+            auto_approve = session_auto
+        else:
+            auto_approve = True
         req = NewTaskRequest(
             prompt=prompt,
             model=_optional_string(input_data, "model"),
@@ -166,7 +174,7 @@ class TaskCreateTool(ToolSpec):
             mode=_optional_string(input_data, "mode"),
             allow_shell=_optional_bool(input_data, "allow_shell"),
             trust_mode=False,
-            auto_approve=False,
+            auto_approve=auto_approve,
             thread_id=origin_thread if isinstance(origin_thread, str) else None,
         )
         try:

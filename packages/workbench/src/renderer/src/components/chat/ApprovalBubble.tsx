@@ -93,6 +93,11 @@ export function ApprovalBubble({ block }: { block: ApprovalBlock }): ReactElemen
                 {block.toolName}
               </span>
             ) : null}
+            {block.taskId ? (
+              <span className="truncate font-mono text-[11px] text-ds-faint">
+                {t('userInputFromTask', { id: block.taskId })}
+              </span>
+            ) : null}
             {destructive ? (
               <span className="text-[11px] font-medium tracking-[-0.01em] text-ds-danger">
                 {t('approvalDestructive')}

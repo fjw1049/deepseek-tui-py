@@ -10,6 +10,7 @@ from typing import Any
 
 from deepseek_tui.server.approval import ApprovalBridge
 from deepseek_tui.server.approval import ElevationBridge
+from deepseek_tui.server.approval import UserInputBridge
 from deepseek_tui.server.auth import RuntimeAuthMiddleware
 from deepseek_tui.server.routes import build_runtime_api_router
 from fastapi import APIRouter, Request
@@ -39,8 +40,10 @@ def attach_runtime_api(
     """
     bridge = ApprovalBridge()
     elevation = ElevationBridge()
+    user_input_bridge = UserInputBridge()
     app.state.approval_bridge = bridge
     app.state.elevation_bridge = elevation
+    app.state.user_input_bridge = user_input_bridge
     app.state.runtime_auth_token = auth_token
 
     @app.get("/")
@@ -553,6 +556,7 @@ def build_fastapi_app(
     )
 
     approval_bridge = None
+    user_input_bridge = None
     if http_mode:
         from deepseek_tui.server.auth import (
             env_runtime_token,
@@ -569,6 +573,7 @@ def build_fastapi_app(
             auth_token=resolved.token,
             cors_origins=cors_origins,
         )
+        user_input_bridge = getattr(app.state, "user_input_bridge", None)
         app.state.runtime_auth = resolved
     else:
         elevation_bridge = None
@@ -579,6 +584,7 @@ def build_fastapi_app(
         manager_cfg=_mgr_cfg,
         approval_bridge=approval_bridge,
         elevation_bridge=elevation_bridge,
+        user_input_bridge=user_input_bridge,
         shared_tool_runtime=runtime.tool_runtime,
     )
 
@@ -588,6 +594,12 @@ def build_fastapi_app(
     _tr = runtime.tool_runtime
     if _tr is not None and getattr(_tr, "automation_manager", None) is not None:
         _tr.automation_manager.thread_manager = app.state.thread_manager
+    # Detached tasks need the same bridges to surface plan prompts + tool
+    # approvals on the origin thread (or auto-resolve when auto_approve).
+    if _tr is not None and getattr(_tr, "task_manager", None) is not None:
+        _tr.task_manager.thread_manager = app.state.thread_manager
+        _tr.task_manager.user_input_bridge = user_input_bridge
+        _tr.task_manager.approval_bridge = approval_bridge
 
     # Per-request access log: method/path/status/duration. ``uvicorn.access``
     # is silenced in :mod:`logging_setup` so this is the single source of

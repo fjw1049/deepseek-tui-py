@@ -5,6 +5,7 @@ import {
   type TaskItemView,
   type TaskStatus
 } from '../lib/extract-tasks-from-blocks'
+import { useChatStore } from '../store/chat-store'
 
 const POLL_INTERVAL_MS = 2_000
 
@@ -270,14 +271,16 @@ async function fetchTaskStatuses(): Promise<Record<string, TaskStatus>> {
 /**
  * Overlay live durable-task status onto conversation-derived tasks.
  *
- * Durable tasks run in a background worker that never emits events on the
- * thread SSE stream, so a `task_create` tool block is frozen at `queued`.
- * This polls `GET /v1/tasks` to refresh status, but only while at least one
- * of the given tasks is still active (queued/running) — once everything is
- * terminal, polling stops.
+ * Durable tasks run in a background worker; status updates do not ride the
+ * main turn's tool-result stream, so a `task_create` tool block can stay at
+ * `queued`. This polls `GET /v1/tasks` to refresh status, but only while at
+ * least one of the given tasks is still active (queued/running) — once
+ * everything is terminal, polling stops. While active it also refreshes
+ * bridged user-input prompts (enter/exit plan) onto the composer.
  */
 export function useLiveTasks(baseTasks: TaskItemView[]): TaskItemView[] {
   const [liveStatuses, setLiveStatuses] = useState<Record<string, TaskStatus>>({})
+  const refreshPendingUserInputs = useChatStore((s) => s.refreshPendingUserInputs)
 
   const idsKey = baseTasks.map((task) => task.id).join(',')
   const anyActive = baseTasks.some((task) =>
@@ -304,6 +307,11 @@ export function useLiveTasks(baseTasks: TaskItemView[]): TaskItemView[] {
           return next
         })
       })
+      // Background tasks bridge plan consent onto this thread; poll while any
+      // task is active so a missed SSE / turn-complete reload cannot hide it.
+      if (anyActive) {
+        void refreshPendingUserInputs()
+      }
     }
     refresh()
     const interval = anyActive ? window.setInterval(refresh, POLL_INTERVAL_MS) : undefined
@@ -311,7 +319,7 @@ export function useLiveTasks(baseTasks: TaskItemView[]): TaskItemView[] {
       cancelled = true
       if (interval !== undefined) window.clearInterval(interval)
     }
-  }, [idsKey, anyActive])
+  }, [idsKey, anyActive, refreshPendingUserInputs])
 
   return baseTasks.map((task) => {
     const live = liveStatuses[task.id]
