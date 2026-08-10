@@ -62,6 +62,7 @@ export type AppRoute =
   | 'plugins'
   | 'skills'
   | 'connectors'
+  | 'kanban'
   | 'automation'
   | 'channels'
 export type PluginHostRoute = 'chat'

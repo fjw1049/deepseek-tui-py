@@ -5,6 +5,7 @@ import {
   Cable,
   CalendarClock,
   ChevronRight,
+  Columns3,
   Command,
   MessageCircle,
   PanelLeftClose,
@@ -80,6 +81,7 @@ export function Sidebar({
   const togglePin = useChatStore((s) => s.togglePin)
   const [searchModalOpen, setSearchModalOpen] = useState(false)
   const settingsActive = route === 'settings'
+  const kanbanActive = route === 'kanban'
   const automationActive = route === 'automation'
   const channelsActive = route === 'channels'
   const pluginsActive = route === 'plugins'
@@ -148,6 +150,13 @@ export function Sidebar({
               onClick={() => setSearchModalOpen(true)}
               shortcut="⌘K"
               variant="flat"
+            />
+            <SidebarLink
+              icon={<Columns3 className="h-4 w-4" strokeWidth={1.9} />}
+              label={t('kanbanNav')}
+              onClick={() => setRoute('kanban')}
+              variant="flat"
+              active={kanbanActive}
             />
 
             <SidebarLink

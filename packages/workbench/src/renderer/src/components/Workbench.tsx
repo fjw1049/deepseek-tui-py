@@ -72,6 +72,9 @@ const AutomationCenter = lazy(() =>
 const ChannelCenter = lazy(() =>
   import('./channels/ChannelCenter').then((module) => ({ default: module.ChannelCenter }))
 )
+const KanbanView = lazy(() =>
+  import('./kanban/KanbanView').then((module) => ({ default: module.KanbanView }))
+)
 const SettingsView = lazy(() =>
   import('./SettingsView').then((module) => ({ default: module.SettingsView }))
 )
@@ -1173,6 +1176,13 @@ export function Workbench(): ReactElement {
             ) : (
               <PluginsView />
             )}
+          </Suspense>
+        ) : route === 'kanban' ? (
+          <Suspense fallback={<div className="h-full bg-transparent" />}>
+            <KanbanView
+              onOpenThread={openThread}
+              onOpenThreadTerminal={openThreadTerminal}
+            />
           </Suspense>
         ) : route === 'automation' ? (
           <Suspense fallback={<div className="h-full bg-transparent" />}>
