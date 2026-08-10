@@ -14,7 +14,7 @@ import pytest
 from deepseek_tui.tools.file import ReadFileTool
 from deepseek_tui.tools.registry import ToolContext, ToolError
 from deepseek_tui.tools.search import FileSearchTool, GrepFilesTool
-from deepseek_tui.tools.sensitive import is_sensitive_path
+from deepseek_tui.tools.utils.sensitive import is_sensitive_path
 
 
 async def test_read_file_refuses_env(tmp_path: Path):

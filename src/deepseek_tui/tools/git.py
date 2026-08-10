@@ -10,8 +10,8 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
-from deepseek_tui.tools.validation import optional_string as _optional_string
-from deepseek_tui.tools.validation import require_string as _require_string
+from deepseek_tui.tools.utils.validation import optional_string as _optional_string
+from deepseek_tui.tools.utils.validation import require_string as _require_string
 from deepseek_tui.tools.registry import ToolCapability, ToolError, ToolResult, ToolSpec
 from deepseek_tui.tools.registry import ToolContext
 

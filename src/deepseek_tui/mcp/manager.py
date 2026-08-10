@@ -712,6 +712,32 @@ class McpManager:
             return list(self._stale_cache)
         return None
 
+    def lookup_tool_parameters(self, qualified_name: str) -> dict[str, Any] | None:
+        """Return the cached JSON-Schema ``parameters`` for a qualified MCP tool.
+
+        Used to reinject a compact schema into argument-error messages so the
+        model can correct a bad call without guessing field names. Returns
+        ``None`` when the tool is unknown or the cache has no schema.
+        """
+        for entry in self.cached_tools() or []:
+            fn = entry.get("function", entry)
+            if not isinstance(fn, dict):
+                continue
+            if fn.get("name") != qualified_name:
+                continue
+            params = fn.get("parameters")
+            return params if isinstance(params, dict) else None
+        for tools in self._focus_api_tools.values():
+            for entry in tools:
+                fn = entry.get("function", entry)
+                if not isinstance(fn, dict):
+                    continue
+                if fn.get("name") != qualified_name:
+                    continue
+                params = fn.get("parameters")
+                return params if isinstance(params, dict) else None
+        return None
+
     @property
     def discover_errors(self) -> dict[str, str]:
         """Per-server errors from the most recent fresh discovery pass."""

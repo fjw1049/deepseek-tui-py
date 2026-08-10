@@ -9,10 +9,10 @@ import re
 from collections.abc import Iterable
 from pathlib import Path
 
-from deepseek_tui.tools.validation import require_string as _require_string
+from deepseek_tui.tools.utils.validation import require_string as _require_string
 from deepseek_tui.tools.registry import ToolCapability, ToolError, ToolResult, ToolSpec
 from deepseek_tui.tools.registry import ToolContext
-from deepseek_tui.tools.sensitive import is_sensitive_path
+from deepseek_tui.tools.utils.sensitive import is_sensitive_path
 
 logger = logging.getLogger(__name__)
 

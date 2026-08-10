@@ -6,8 +6,8 @@ import json
 from typing import Any
 
 from deepseek_tui.mcp.manager import McpManager
-from deepseek_tui.tools.validation import optional_string as _optional_string
-from deepseek_tui.tools.validation import require_string as _require_string
+from deepseek_tui.tools.utils.validation import optional_string as _optional_string
+from deepseek_tui.tools.utils.validation import require_string as _require_string
 from deepseek_tui.tools.registry import ToolCapability, ToolError, ToolResult, ToolSpec
 from deepseek_tui.tools.registry import ToolContext
 

@@ -6,10 +6,12 @@ import asyncio
 import logging
 from pathlib import Path
 
-from deepseek_tui.tools.validation import require_string as _require_string
+from deepseek_tui.tools.utils.edit_diagnostics import build_edit_no_match_message
+from deepseek_tui.tools.utils.path_suggestions import format_not_found_error
+from deepseek_tui.tools.utils.validation import require_string as _require_string
 from deepseek_tui.tools.registry import ToolCapability, ToolError, ToolResult, ToolSpec
 from deepseek_tui.tools.registry import ToolContext
-from deepseek_tui.tools.sensitive import is_sensitive_path
+from deepseek_tui.tools.utils.sensitive import is_sensitive_path
 from deepseek_tui.utils import write_text_atomic
 
 logger = logging.getLogger(__name__)
@@ -70,13 +72,18 @@ class ReadFileTool(ToolSpec):
         return [ToolCapability.READ_ONLY]
 
     async def execute(self, input_data: dict[str, object], context: ToolContext) -> ToolResult:
-        path = context.resolve_path(_require_string(input_data, "path"), allow_read_roots=True)
+        rel = _require_string(input_data, "path")
+        path = context.resolve_path(rel, allow_read_roots=True)
         if is_sensitive_path(path):
             raise ToolError(
                 f"refusing to read sensitive file: {path} "
                 "(matched the credential-file blocklist)"
             )
-        content = await _read_text(path)
+        content = await _read_text(
+            path,
+            display_path=rel,
+            cwd=context.working_directory,
+        )
         offset = _optional_non_negative_int(input_data, "offset")
         limit = _optional_non_negative_int(input_data, "limit")
         all_lines = content.splitlines()
@@ -163,7 +170,8 @@ class WriteFileTool(ToolSpec):
         if existed:
             try:
                 old_text = await _read_text(path)
-            except OSError:
+            except (OSError, ToolError):
+                # Race: vanished between exists() and read — treat as empty.
                 old_text = ""
         context.capture_pre_write(
             _workspace_rel(path, context.working_directory, rel),
@@ -254,7 +262,11 @@ class EditFileTool(ToolSpec):
         # would rewrite the entire file — reject before touching disk.
         if old_string == "":
             raise ToolError("edit_file old_string must not be empty")
-        content = await _read_text(path)
+        content = await _read_text(
+            path,
+            display_path=rel,
+            cwd=context.working_directory,
+        )
         count = content.count(old_string)
         if count == 0:
             logger.warning("edit_file_no_match path=%s search_len=%d", path, len(old_string))
@@ -263,7 +275,7 @@ class EditFileTool(ToolSpec):
             # for a typo in old_string that isn't there.
             if context.changed_since_last_seen(path):
                 raise ToolError(_stale_write_message(path))
-            raise ToolError(f"Search string not found in {path}")
+            raise ToolError(build_edit_no_match_message(path, old_string, content))
         if count > 1 and not replace_all:
             raise ToolError(
                 f"old_string occurs {count} times in {path}; provide more "
@@ -358,8 +370,25 @@ def _workspace_rel(path: Path, workspace: Path, fallback: str) -> str:
         return fallback.replace("\\", "/")
 
 
-async def _read_text(path: Path) -> str:
-    return await asyncio.to_thread(path.read_text, encoding="utf-8")
+async def _read_text(
+    path: Path,
+    *,
+    display_path: str | None = None,
+    cwd: Path | None = None,
+) -> str:
+    """Read UTF-8 text; enrich FileNotFound with path suggestions when possible."""
+    try:
+        return await asyncio.to_thread(path.read_text, encoding="utf-8")
+    except FileNotFoundError as exc:
+        if cwd is None:
+            raise ToolError(f"Error: {display_path or path} does not exist.") from exc
+        raise ToolError(
+            format_not_found_error(
+                display_path=display_path or str(path),
+                resolved_path=path,
+                cwd=cwd,
+            )
+        ) from exc
 
 
 async def _write_text(path: Path, content: str) -> None:

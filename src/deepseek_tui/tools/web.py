@@ -17,8 +17,8 @@ from deepseek_tui.tools.registry import (
     ToolResult,
     ToolSpec,
 )
-from deepseek_tui.tools.validation import optional_int as _optional_int
-from deepseek_tui.tools.validation import require_string as _require_string
+from deepseek_tui.tools.utils.validation import optional_int as _optional_int
+from deepseek_tui.tools.utils.validation import require_string as _require_string
 
 _TAVILY_API_KEY = os.environ.get("TAVILY_API_KEY", "")
 _ANYSEARCH_API_KEY = os.environ.get("ANYSEARCH_API_KEY", "")

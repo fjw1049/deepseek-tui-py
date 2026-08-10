@@ -32,8 +32,8 @@ from __future__ import annotations
 #
 from typing import Any, cast
 
-from deepseek_tui.tools.validation import optional_string as _optional_string
-from deepseek_tui.tools.validation import require_string as _require_string
+from deepseek_tui.tools.utils.validation import optional_string as _optional_string
+from deepseek_tui.tools.utils.validation import require_string as _require_string
 from deepseek_tui.tools.registry import (
     ApprovalRequirement,
     ToolCapability,

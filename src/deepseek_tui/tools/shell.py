@@ -24,7 +24,7 @@ from deepseek_tui.policy.sandbox import (
     apply_sandbox_metadata,
 )
 from deepseek_tui.tools.registry import ToolCapability, ToolContext, ToolError, ToolResult, ToolSpec
-from deepseek_tui.tools.validation import require_string as _require_string
+from deepseek_tui.tools.utils.validation import require_string as _require_string
 
 logger = logging.getLogger(__name__)
 
