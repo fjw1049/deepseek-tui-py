@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from deepseek_tui.engine.capacity import (
+    L0_HARD_CLEAR_MIN_RECLAIM,
     MAX_WORKING_SET_PATHS,
     CompactionResult,
     ToolPruneConfig,
@@ -367,6 +368,15 @@ class SessionMaintenanceMixin:
         tools: list[dict[str, Any]] | None = None,
     ) -> int:
         """Prune old tool bodies when context ratio ≥ L0 threshold."""
+        from deepseek_tui.engine.context_pressure import measure_context_pressure
+
+        pressure = measure_context_pressure(
+            model,
+            messages,
+            real_input_tokens=self.last_real_input_tokens,
+            system_prompt=system_prompt,
+            tools=tools,
+        )
         if not should_l0_prune(
             model=model,
             messages=messages,
@@ -374,6 +384,7 @@ class SessionMaintenanceMixin:
             config=self.compaction_config,
             system_prompt=system_prompt,
             tools=tools,
+            pressure=pressure,
         ):
             return 0
         # Prefer not to mutate inside the recent verbatim / seam window:
@@ -388,16 +399,35 @@ class SessionMaintenanceMixin:
             if '<archived_context level="' in text:
                 boundary = i
                 break
+        # Soft trims land near the tail and cost the KV prefix almost nothing,
+        # but a hard clear rewrites bodies deep inside it, so every request
+        # after one re-bills the whole tail at full price. Ages tick per user
+        # turn, so left alone a single newly-aged result breaks the prefix every
+        # turn for a few thousand chars of relief. Batch the clears instead —
+        # except once pressure reaches the rewrite band, where the window
+        # matters more and a rewrite is about to break the prefix regardless.
+        min_reclaim = (
+            0
+            if pressure.ratio >= self.compaction_config.rewrite_ratio
+            else L0_HARD_CLEAR_MIN_RECLAIM
+        )
         changed = prune_old_tool_results(
             messages,
             config=ToolPruneConfig(
                 enabled=True,
                 trigger_ratio=self.compaction_config.l0_prune_ratio,
+                hard_clear_min_reclaim=min_reclaim,
             ),
             mutate_before_index=boundary,
         )
         if changed:
-            logger.info("l0_tool_prune changed=%d boundary=%d", changed, boundary)
+            logger.info(
+                "l0_tool_prune changed=%d boundary=%d ratio=%.2f min_reclaim=%d",
+                changed,
+                boundary,
+                pressure.ratio,
+                min_reclaim,
+            )
         return changed
 
     async def _maybe_advance_cycle(

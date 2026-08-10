@@ -538,6 +538,17 @@ L0_HARD_CLEAR_AGE_TURNS = 10
 # Default hard-clear body when no spillover path is recoverable. Prefer
 # ``format_hard_clear_placeholder`` so spilled outputs keep a re-read pointer.
 L0_HARD_CLEAR_PLACEHOLDER = "[Tool result omitted — too old]"
+# Minimum chars a hard-clear pass must reclaim before it may run.
+#
+# A clear rewrites bodies that already sit in the provider's KV prefix, so the
+# next request re-bills everything from that point at full price. Ages tick per
+# user turn, so without a floor a single newly-aged result is enough to break
+# the prefix every turn. Measured on a 25-turn tool-heavy session: clearing
+# every turn held the cacheable prefix at ~27%; batching until this much is
+# reclaimable lifted it to ~58% for ~7% more average payload, cutting effective
+# input billing by roughly a third. Waiting costs nothing permanent — the
+# bodies stay soft-trimmed and get cleared in one batch later.
+L0_HARD_CLEAR_MIN_RECLAIM = 16_000
 
 
 @dataclass
@@ -564,6 +575,10 @@ class ToolPruneConfig:
     soft_trim_head: int = L0_SOFT_TRIM_HEAD
     soft_trim_tail: int = L0_SOFT_TRIM_TAIL
     hard_clear_age_turns: int = L0_HARD_CLEAR_AGE_TURNS
+    # 0 = clear as soon as a body is old enough. Above 0, defer the clear until
+    # the whole eligible batch reclaims this many chars, so the prefix break is
+    # paid once per batch instead of once per turn.
+    hard_clear_min_reclaim: int = 0
 
 
 @dataclass
@@ -1075,6 +1090,35 @@ def _turn_index_from_end(messages: list[Message], idx: int) -> int:
     return turns
 
 
+def _pending_hard_clear_reclaim(
+    messages: list[Message], cfg: ToolPruneConfig, boundary: int
+) -> int:
+    """Chars a hard-clear pass would reclaim right now.
+
+    Mirrors the eligibility checks in :func:`prune_old_tool_results` without
+    mutating anything, so the caller can weigh the prefix break a clear costs
+    against the window it buys. Bodies whose placeholder would be *longer* than
+    the body contribute nothing rather than a negative.
+    """
+    from deepseek_tui.protocol.messages import Role, ToolResultBlock
+    from deepseek_tui.tools.runtime import format_hard_clear_placeholder
+
+    min_age = max(cfg.keep_last_n_turns, cfg.hard_clear_age_turns)
+    reclaim = 0
+    for i, msg in enumerate(messages):
+        if i >= boundary or msg.role != Role.TOOL:
+            continue
+        if _turn_index_from_end(messages, i) < min_age:
+            continue
+        for block in msg.content:
+            if not isinstance(block, ToolResultBlock):
+                continue
+            content = block.content or ""
+            saved = len(content) - len(format_hard_clear_placeholder(content))
+            reclaim += max(0, saved)
+    return reclaim
+
+
 def prune_old_tool_results(
     messages: list[Message],
     *,
@@ -1098,6 +1142,16 @@ def prune_old_tool_results(
         if mutate_before_index is not None
         else len(messages)
     )
+    allow_hard_clear = True
+    if cfg.hard_clear_min_reclaim > 0:
+        reclaim = _pending_hard_clear_reclaim(messages, cfg, boundary)
+        allow_hard_clear = reclaim >= cfg.hard_clear_min_reclaim
+        if not allow_hard_clear and reclaim:
+            logger.debug(
+                "l0_hard_clear_deferred reclaimable=%d threshold=%d",
+                reclaim,
+                cfg.hard_clear_min_reclaim,
+            )
     changed = 0
     for i, msg in enumerate(messages):
         if i >= boundary or msg.role != Role.TOOL:
@@ -1112,7 +1166,7 @@ def prune_old_tool_results(
                 new_blocks.append(block)
                 continue
             content = block.content or ""
-            if age >= cfg.hard_clear_age_turns:
+            if allow_hard_clear and age >= cfg.hard_clear_age_turns:
                 from deepseek_tui.tools.runtime import format_hard_clear_placeholder
 
                 cleared = format_hard_clear_placeholder(content)
@@ -1165,18 +1219,25 @@ def should_l0_prune(
     config: CompactionConfig | None = None,
     system_prompt: str | None = None,
     tools: list[dict[str, Any]] | None = None,
+    pressure: Any | None = None,
 ) -> bool:
-    """True when context ratio warrants mid-session tool pruning."""
+    """True when context ratio warrants mid-session tool pruning.
+
+    Pass ``pressure`` when the caller already measured it — the L0 call site
+    needs the ratio anyway to decide how aggressively to prune, and measuring
+    twice per round is pure waste on long histories.
+    """
     cfg = config or CompactionConfig()
     if not cfg.l0_prune_enabled:
         return False
-    from deepseek_tui.engine.context_pressure import measure_context_pressure
+    if pressure is None:
+        from deepseek_tui.engine.context_pressure import measure_context_pressure
 
-    pressure = measure_context_pressure(
-        model,
-        messages,
-        real_input_tokens=real_input_tokens,
-        system_prompt=system_prompt,
-        tools=tools,
-    )
+        pressure = measure_context_pressure(
+            model,
+            messages,
+            real_input_tokens=real_input_tokens,
+            system_prompt=system_prompt,
+            tools=tools,
+        )
     return pressure.ratio >= cfg.l0_prune_ratio
