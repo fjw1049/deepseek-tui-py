@@ -429,45 +429,41 @@ export function KanbanView({ onOpenThread, onOpenThreadTerminal }: Props): React
 
   return (
     <div className="ds-feature-page ds-no-drag relative flex h-full min-h-0 flex-col">
-      <header className="shrink-0 px-8 pt-8">
-        <div className="mx-auto flex max-w-6xl items-start justify-between gap-4">
-          <div className="min-w-0">
-            <div className="flex min-w-0 items-center gap-2">
-              {projectBoard ? (
-                <button
-                  type="button"
-                  onClick={() => setActiveProjectId(null)}
-                  className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-ds-faint transition hover:bg-ds-hover hover:text-ds-ink"
-                  aria-label={t('kanbanBackToOverview')}
-                  title={t('kanbanBackToOverview')}
-                >
-                  <ArrowLeft className="h-4 w-4" strokeWidth={1.9} />
-                </button>
-              ) : null}
-              <h1 className="truncate text-[24px] font-semibold text-ds-ink">{headerTitle}</h1>
-              {!projectBoard ? (
-                <span className="shrink-0 text-[13px] text-ds-faint">
-                  {t('kanbanTaskCount', { count: headerCount })}
-                </span>
-              ) : null}
-            </div>
-            <p className="mt-1 text-[13px] text-ds-muted">{headerDesc}</p>
+      <header className="flex shrink-0 items-start justify-between gap-4 px-8 pt-8">
+        <div className="min-w-0">
+          <div className="flex min-w-0 items-center gap-2">
+            {projectBoard ? (
+              <button
+                type="button"
+                onClick={() => setActiveProjectId(null)}
+                className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-ds-faint transition hover:bg-ds-hover hover:text-ds-ink"
+                aria-label={t('kanbanBackToOverview')}
+                title={t('kanbanBackToOverview')}
+              >
+                <ArrowLeft className="h-4 w-4" strokeWidth={1.9} />
+              </button>
+            ) : null}
+            <h1 className="truncate text-[24px] font-semibold text-ds-ink">{headerTitle}</h1>
+            {!projectBoard ? (
+              <span className="shrink-0 text-[13px] text-ds-faint">
+                {t('kanbanTaskCount', { count: headerCount })}
+              </span>
+            ) : null}
           </div>
-          <button
-            type="button"
-            onClick={() => openNewTask(projectBoard?.projectId ?? null, false)}
-            className="inline-flex shrink-0 items-center gap-2 rounded-lg bg-accent px-4 py-2 text-[13px] font-medium text-white transition hover:opacity-90"
-          >
-            <Plus className="h-4 w-4" strokeWidth={2} />
-            {t('kanbanNewTask')}
-          </button>
+          <p className="mt-1 text-[13px] text-ds-muted">{headerDesc}</p>
         </div>
+        <button
+          type="button"
+          onClick={() => openNewTask(projectBoard?.projectId ?? null, false)}
+          className="inline-flex shrink-0 items-center gap-2 rounded-lg bg-accent px-4 py-2 text-[13px] font-medium text-white transition hover:opacity-90"
+        >
+          <Plus className="h-4 w-4" strokeWidth={2} />
+          {t('kanbanNewTask')}
+        </button>
       </header>
 
       {notice ? (
-        <div className="mt-3 shrink-0 px-8">
-          <div className="mx-auto max-w-6xl text-[12px] text-ds-muted">{notice}</div>
-        </div>
+        <div className="mt-3 shrink-0 px-8 text-[12px] text-ds-muted">{notice}</div>
       ) : null}
 
       <div className="mt-4 min-h-0 flex-1">

@@ -27,11 +27,11 @@ function OverviewProjectColumn({
 
   return (
     <section className="flex w-80 shrink-0 flex-col">
-      <div className="flex shrink-0 items-center gap-1.5 px-1 py-2">
+      <div className="flex shrink-0 items-center gap-1.5 py-2 pr-1">
         <button
           type="button"
           onClick={() => onOpenProject(projectBoard.projectId)}
-          className="group/kanban-project flex min-w-0 flex-1 items-center gap-2 rounded-lg px-1.5 py-1 text-left transition hover:bg-ds-hover"
+          className="group/kanban-project flex min-w-0 flex-1 items-center gap-2 rounded-lg py-1 pr-1.5 text-left transition hover:bg-ds-hover"
         >
           <h2 className="min-w-0 truncate text-[15px] font-semibold text-ds-ink">
             {projectBoard.projectName}
@@ -49,7 +49,7 @@ function OverviewProjectColumn({
           <Plus className="h-4 w-4" strokeWidth={2} />
         </button>
       </div>
-      <ul className="flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto p-1">
+      <ul className="flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto py-1 pr-1">
         {visibleCards.map((card) => (
           <li key={card.cardId} className="list-none">
             <KanbanCardView

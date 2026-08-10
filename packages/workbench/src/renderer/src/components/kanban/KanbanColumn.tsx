@@ -97,7 +97,7 @@ export function KanbanColumn({
 
   return (
     <section className="flex w-80 shrink-0 flex-col">
-      <div className="flex shrink-0 items-center gap-1.5 px-1 py-2">
+      <div className="flex shrink-0 items-center gap-1.5 py-2 pr-1">
         <KanbanStatusIcon column={columnKey} />
         <h2 className="min-w-0 flex-1 truncate text-[15px] font-semibold text-ds-ink">
           {t(COLUMN_TITLE_KEY[columnKey])}
@@ -117,7 +117,7 @@ export function KanbanColumn({
       </div>
       <ul
         ref={setNodeRef}
-        className={`flex min-h-[12rem] flex-1 flex-col gap-2.5 overflow-y-auto rounded-xl p-1 transition ${
+        className={`flex min-h-[12rem] flex-1 flex-col gap-2.5 overflow-y-auto rounded-xl py-1 pr-1 transition ${
           isOver ? 'bg-ds-hover' : ''
         } ${dropHint ? 'ring-1 ring-sky-500/40' : ''}`}
       >
