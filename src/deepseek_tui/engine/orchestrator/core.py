@@ -429,6 +429,10 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         # injection. One per
         # Engine instance: workspace lives on tool_context.working_directory.
         self.working_set = WorkingSet(workspace=self.tool_context.working_directory)
+        from deepseek_tui.engine.tool_dedup import ToolCallDeduplicator
+
+        # Turn-local same-args anti-loop (reset at each _run_conversation).
+        self._tool_dedup = ToolCallDeduplicator()
         self._mcp_tools_cache: list[dict[str, Any]] | None = None
         self.tool_profile: str | None = None
         # Issue #756: parent turn resumes when direct children complete.
@@ -2603,6 +2607,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         # by the focus whitelist so a plugin mount can actually confine them.
         _turn_include_search, _turn_include_code = self._advanced_tool_flags()
         self.turn_counter += 1
+        self._tool_dedup.reset_turn()
         step_error_count = 0
         consecutive_tool_error_steps = 0
         # Cycle boundary check (opt-in). When the active input grows past

@@ -18,6 +18,7 @@ from deepseek_tui.engine.dispatch import (
     is_mcp_tool,
     should_parallelize_tool_batch,
 )
+from deepseek_tui.engine.tool_dedup import ToolCallDeduplicator
 from deepseek_tui.engine.events import (
     ApprovalRequiredEvent,
     ApprovalResolvedEvent,
@@ -66,6 +67,9 @@ logger = logging.getLogger(__name__)
 
 class ToolExecutionMixin:
     """Tool dispatch / approval / elevation methods shared into Engine."""
+
+    # Populated by Engine.__init__; declared here for type-checkers / mixins.
+    _tool_dedup: ToolCallDeduplicator
 
     async def _emit_tool_failure(
         self, tool_call: ToolCall, error_msg: str
@@ -128,8 +132,25 @@ class ToolExecutionMixin:
         results: list[Message] = []
         effective_model = model or self.default_model
         api_tools = await self._get_tools_with_mcp()
+        self._tool_dedup.begin_batch()
 
-        # Build execution plans and check if batch can be parallelized
+        try:
+            return await self._execute_tool_calls_inner(
+                tool_calls, api_tools, effective_model, results
+            )
+        finally:
+            self._tool_dedup.end_batch()
+
+    async def _execute_tool_calls_inner(
+        self,
+        tool_calls: list[ToolCall],
+        api_tools: list[dict[str, Any]],
+        effective_model: str,
+        results: list[Message],
+    ) -> list[Message]:
+        # Build execution plans and check if batch can be parallelized.
+        # Duplicate fingerprints fall back to the sequential path so reuse /
+        # force-stop stay single-threaded and ordered.
         if len(tool_calls) > 1:
             from deepseek_tui.engine.dispatch import (
                 ToolExecutionPlan,
@@ -185,13 +206,64 @@ class ToolExecutionMixin:
                         supports_parallel=False,
                         approval_required=False,
                     ))
-            if should_parallelize_tool_batch(plans):
+            has_dup_keys = self._tool_dedup.batch_has_duplicate_keys(
+                [
+                    (
+                        tc.name,
+                        tc.arguments if isinstance(tc.arguments, dict) else {},
+                    )
+                    for tc in tool_calls
+                ]
+            )
+            if should_parallelize_tool_batch(plans) and not has_dup_keys:
                 logger.info("parallel_tool_batch size=%d", len(tool_calls))
                 return await self._execute_tools_parallel(
                     tool_calls, api_tools, effective_model
                 )
 
         for tool_call in tool_calls:
+            decision = self._tool_dedup.classify(
+                tool_call.name,
+                tool_call.arguments if isinstance(tool_call.arguments, dict) else {},
+            )
+            if decision.kind == "reuse":
+                content = self._tool_dedup.reuse_content(decision)
+                logger.info(
+                    "tool_call_dedup_reuse name=%s tool_id=%s",
+                    tool_call.name,
+                    tool_call.id,
+                )
+                await self.handle.emit(
+                    ToolResultEvent(
+                        tool_call_id=tool_call.id,
+                        tool_name=tool_call.name,
+                        content=content,
+                        success=not decision.reuse_is_error,
+                    )
+                )
+                results.append(
+                    Message.tool_result(
+                        tool_call.id,
+                        content,
+                        is_error=decision.reuse_is_error,
+                    )
+                )
+                continue
+            if decision.kind == "block":
+                content = self._tool_dedup.block_content(decision)
+                logger.warning(
+                    "tool_call_dedup_blocked name=%s streak=%d tool_id=%s",
+                    tool_call.name,
+                    decision.projected_streak,
+                    tool_call.id,
+                )
+                await self._emit_tool_failure(tool_call, content)
+                self._tool_dedup.record(decision.key, content, is_error=True)
+                results.append(
+                    Message.tool_result(tool_call.id, content, is_error=True)
+                )
+                continue
+
             with bind_tool(tool_call.id):
                 args_preview = repr(tool_call.arguments)[:200]
                 logger.info(
@@ -211,10 +283,19 @@ class ToolExecutionMixin:
                             tool_call.name,
                             duration_ms,
                         )
+                        denied = (
+                            f"Tool {tool_call.name} denied by approval policy"
+                        )
+                        self._tool_dedup.record(
+                            decision.key, denied, is_error=True
+                        )
+                        denied = self._tool_dedup.decorate_execute_content(
+                            decision, denied
+                        )
                         results.append(
                             Message.tool_result(
                                 tool_call.id,
-                                f"Tool {tool_call.name} denied by approval policy",
+                                denied,
                                 is_error=True,
                             )
                         )
@@ -281,6 +362,14 @@ class ToolExecutionMixin:
                         result,
                         pressure_ratio=self._ingress_pressure_ratio(effective_model),
                     )
+                    self._tool_dedup.record(
+                        decision.key,
+                        output_for_context,
+                        is_error=not result.success,
+                    )
+                    output_for_context = self._tool_dedup.decorate_execute_content(
+                        decision, output_for_context
+                    )
                     results.append(
                         Message.tool_result(
                             tool_call.id,
@@ -298,9 +387,16 @@ class ToolExecutionMixin:
                         error_msg,
                     )
                     await self._emit_tool_failure(tool_call, error_msg)
+                    err_content = f"Error: {error_msg}"
+                    self._tool_dedup.record(
+                        decision.key, err_content, is_error=True
+                    )
+                    err_content = self._tool_dedup.decorate_execute_content(
+                        decision, err_content
+                    )
                     results.append(
                         Message.tool_result(
-                            tool_call.id, f"Error: {error_msg}", is_error=True
+                            tool_call.id, err_content, is_error=True
                         )
                     )
                 except Exception as exc:  # noqa: BLE001
@@ -313,9 +409,16 @@ class ToolExecutionMixin:
                         error_msg,
                     )
                     await self._emit_tool_failure(tool_call, error_msg)
+                    err_content = f"Error: {error_msg}"
+                    self._tool_dedup.record(
+                        decision.key, err_content, is_error=True
+                    )
+                    err_content = self._tool_dedup.decorate_execute_content(
+                        decision, err_content
+                    )
                     results.append(
                         Message.tool_result(
-                            tool_call.id, f"Error: {error_msg}", is_error=True
+                            tool_call.id, err_content, is_error=True
                         )
                     )
         return results
@@ -330,8 +433,22 @@ class ToolExecutionMixin:
 
         Only called when should_parallelize_tool_batch returns True,
         which guarantees all tools are read-only, non-interactive,
-        and don't require approval.
+        and don't require approval. Callers must also ensure the batch
+        has no duplicate fingerprints (those use the sequential path).
         """
+        from deepseek_tui.engine.tool_dedup import DedupDecision
+
+        decisions: list[DedupDecision] = []
+        runnable: list[ToolCall] = []
+        for tool_call in tool_calls:
+            decision = self._tool_dedup.classify(
+                tool_call.name,
+                tool_call.arguments if isinstance(tool_call.arguments, dict) else {},
+            )
+            decisions.append(decision)
+            if decision.kind == "block":
+                continue
+            runnable.append(tool_call)
 
         async def _exec_one_parallel(
             tool_call: ToolCall,
@@ -397,27 +514,58 @@ class ToolExecutionMixin:
                     )
                     return (tool_call, None, error_msg)
 
-        # Execute all tools in parallel
-        outcomes = await asyncio.gather(
-            *[_exec_one_parallel(tc) for tc in tool_calls]
+        outcomes = (
+            await asyncio.gather(*[_exec_one_parallel(tc) for tc in runnable])
+            if runnable
+            else []
         )
+        outcome_by_id = {tc.id: (tc, result, err) for tc, result, err in outcomes}
 
         # Process outcomes and emit events (sequential, to preserve order)
         results: list[Message] = []
-        for tool_call, result, error_msg in outcomes:
+        for tool_call, decision in zip(tool_calls, decisions, strict=True):
+            if decision.kind == "block":
+                content = self._tool_dedup.block_content(decision)
+                logger.warning(
+                    "tool_call_dedup_blocked name=%s streak=%d tool_id=%s "
+                    "(parallel batch)",
+                    tool_call.name,
+                    decision.projected_streak,
+                    tool_call.id,
+                )
+                await self._emit_tool_failure(tool_call, content)
+                self._tool_dedup.record(decision.key, content, is_error=True)
+                results.append(
+                    Message.tool_result(tool_call.id, content, is_error=True)
+                )
+                continue
+
+            _tc, result, error_msg = outcome_by_id[tool_call.id]
             if error_msg is not None:
                 await self._emit_tool_failure(tool_call, error_msg)
+                err_content = f"Error: {error_msg}"
+                self._tool_dedup.record(
+                    decision.key, err_content, is_error=True
+                )
+                err_content = self._tool_dedup.decorate_execute_content(
+                    decision, err_content
+                )
                 results.append(
                     Message.tool_result(
-                        tool_call.id, f"Error: {error_msg}", is_error=True
+                        tool_call.id, err_content, is_error=True
                     )
                 )
             elif result is None:
                 # Denial case (shouldn't happen)
+                denied = f"Tool {tool_call.name} denied"
+                self._tool_dedup.record(decision.key, denied, is_error=True)
+                denied = self._tool_dedup.decorate_execute_content(
+                    decision, denied
+                )
                 results.append(
                     Message.tool_result(
                         tool_call.id,
-                        f"Tool {tool_call.name} denied",
+                        denied,
                         is_error=True,
                     )
                 )
@@ -471,6 +619,14 @@ class ToolExecutionMixin:
                     tool_call.name,
                     result,
                     pressure_ratio=self._ingress_pressure_ratio(model),
+                )
+                self._tool_dedup.record(
+                    decision.key,
+                    output_for_context,
+                    is_error=not result.success,
+                )
+                output_for_context = self._tool_dedup.decorate_execute_content(
+                    decision, output_for_context
                 )
                 results.append(
                     Message.tool_result(

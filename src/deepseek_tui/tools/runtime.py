@@ -26,6 +26,7 @@ from __future__ import annotations
 # drain managers cleanly.
 #
 import asyncio
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -618,3 +619,41 @@ def apply_spillover(result: ToolResult, tool_id: str) -> ToolResult:
     metadata = dict(result.metadata)
     metadata["spillover_path"] = path_str
     return replace(result, content=head + footer, metadata=metadata)
+
+
+# Paths written into tool-result footers / L0 placeholders. Keep the patterns
+# in sync with ``apply_spillover`` so mid-session prune can recover the
+# re-read pointer after the body is hard-cleared.
+_SPILL_SAVED_TO_RE = re.compile(r"Full output saved to (?P<path>\S+)\.")
+_SPILL_READ_FILE_RE = re.compile(r'read_file path="(?P<path>[^"]+)"')
+_OMITTED_TOO_OLD_PREFIX = "[Tool result omitted — too old"
+
+
+def extract_spillover_path_from_text(text: str) -> str | None:
+    """Recover a spillover file path from tool-result text, if present."""
+    if not text:
+        return None
+    match = _SPILL_SAVED_TO_RE.search(text) or _SPILL_READ_FILE_RE.search(text)
+    if match is None:
+        return None
+    path = match.group("path").strip()
+    return path or None
+
+
+def is_tool_result_omitted_placeholder(text: str) -> bool:
+    """True when *text* is already an L0 hard-clear placeholder."""
+    return (text or "").lstrip().startswith(_OMITTED_TOO_OLD_PREFIX)
+
+
+def format_hard_clear_placeholder(content: str) -> str:
+    """Build the L0 hard-clear body, preserving a spillover re-read path."""
+    if is_tool_result_omitted_placeholder(content):
+        return content
+    path = extract_spillover_path_from_text(content)
+    if path is None:
+        return "[Tool result omitted — too old]"
+    return (
+        f"[Tool result omitted — too old. Full output saved to {path}. "
+        f'Use `read_file path="{path}"` (offset/limit) or '
+        f'`grep_files pattern=... path="{path}"` to inspect the rest.]'
+    )

@@ -535,6 +535,8 @@ L0_SOFT_TRIM_THRESHOLD = 4_000
 L0_SOFT_TRIM_HEAD = 1_500
 L0_SOFT_TRIM_TAIL = 1_500
 L0_HARD_CLEAR_AGE_TURNS = 10
+# Default hard-clear body when no spillover path is recoverable. Prefer
+# ``format_hard_clear_placeholder`` so spilled outputs keep a re-read pointer.
 L0_HARD_CLEAR_PLACEHOLDER = "[Tool result omitted — too old]"
 
 
@@ -1111,9 +1113,12 @@ def prune_old_tool_results(
                 continue
             content = block.content or ""
             if age >= cfg.hard_clear_age_turns:
-                if content != L0_HARD_CLEAR_PLACEHOLDER:
+                from deepseek_tui.tools.runtime import format_hard_clear_placeholder
+
+                cleared = format_hard_clear_placeholder(content)
+                if cleared != content:
                     new_blocks.append(
-                        block.model_copy(update={"content": L0_HARD_CLEAR_PLACEHOLDER})
+                        block.model_copy(update={"content": cleared})
                     )
                     msg_changed = True
                 else:
@@ -1125,6 +1130,22 @@ def prune_old_tool_results(
                 trimmed = (
                     f"{head}\n\n[... tool output pruned for context ...]\n\n{tail}"
                 )
+                # Soft-trim keeps a tail slice; if that slice drops a spillover
+                # footer, append a compact re-read pointer so the path survives.
+                from deepseek_tui.tools.runtime import (
+                    extract_spillover_path_from_text,
+                )
+
+                spill_path = extract_spillover_path_from_text(content)
+                if (
+                    spill_path is not None
+                    and extract_spillover_path_from_text(trimmed) is None
+                ):
+                    trimmed = (
+                        f"{trimmed.rstrip()}\n\n"
+                        f"[Full output saved to {spill_path}. "
+                        f'Use `read_file path="{spill_path}"` to inspect.]'
+                    )
                 if trimmed != content:
                     new_blocks.append(block.model_copy(update={"content": trimmed}))
                     msg_changed = True

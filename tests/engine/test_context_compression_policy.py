@@ -133,6 +133,79 @@ def test_l0_prune_soft_and_hard():
     assert "omitted" in content or "pruned" in content or len(content) < 8000
 
 
+def test_l0_hard_clear_keeps_spillover_path() -> None:
+    spill = "/tmp/deepseek-tool-outputs/call-0.txt"
+    body = (
+        ("Z" * 200)
+        + f'\n\n[Output truncated: 1 KiB of 200 KiB shown. '
+        f"Full output saved to {spill}. Use "
+        f'`read_file path="{spill}"` (offset/limit) or '
+        f'`grep_files pattern=... path="{spill}"` '
+        f"to inspect the rest.]"
+    )
+    messages: list[Message] = []
+    for i in range(12):
+        messages.append(Message.user(f"u{i}"))
+        messages.append(Message.assistant(f"a{i}"))
+        messages.append(
+            Message.tool_result(f"call-{i}", body if i == 0 else "short")
+        )
+
+    prune_old_tool_results(
+        messages,
+        config=ToolPruneConfig(
+            keep_last_n_turns=3,
+            soft_trim_threshold=4000,
+            soft_trim_head=100,
+            soft_trim_tail=100,
+            hard_clear_age_turns=10,
+        ),
+    )
+    content = messages[2].content[0].content  # type: ignore[attr-defined]
+    assert "omitted" in content
+    assert spill in content
+    assert "read_file" in content
+
+
+def test_l0_soft_trim_reappends_spillover_path_when_tail_drops_it() -> None:
+    spill = "/tmp/deepseek-tool-outputs/call-soft.txt"
+    # Spillover footer at the end; tiny soft_trim_tail cannot keep it.
+    body = ("HEAD" * 800) + (
+        f'\n\n[Output truncated: 1 KiB of 200 KiB shown. '
+        f"Full output saved to {spill}. Use "
+        f'`read_file path="{spill}"` (offset/limit) or '
+        f'`grep_files pattern=... path="{spill}"` '
+        f"to inspect the rest.]"
+    )
+    messages = [
+        Message.user("u0"),
+        Message.assistant("a0"),
+        Message.tool_result("call-soft", body),
+        Message.user("u1"),
+        Message.assistant("a1"),
+        Message.tool_result("call-recent", "short"),
+        Message.user("u2"),
+        Message.assistant("a2"),
+        Message.tool_result("call-recent-2", "short"),
+        Message.user("u3"),
+        Message.assistant("a3"),
+        Message.tool_result("call-recent-3", "short"),
+    ]
+    prune_old_tool_results(
+        messages,
+        config=ToolPruneConfig(
+            keep_last_n_turns=3,
+            soft_trim_threshold=500,
+            soft_trim_head=80,
+            soft_trim_tail=20,
+            hard_clear_age_turns=99,
+        ),
+    )
+    content = messages[2].content[0].content  # type: ignore[attr-defined]
+    assert spill in content
+    assert "read_file" in content
+
+
 def test_should_l0_prune_ratio():
     msgs = [Message.user("hi")]
     assert not should_l0_prune(
