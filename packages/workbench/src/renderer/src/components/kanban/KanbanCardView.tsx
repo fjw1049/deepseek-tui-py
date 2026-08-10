@@ -67,9 +67,6 @@ export function KanbanCardView({
       <div className="line-clamp-3 pr-5 text-[13px] font-medium leading-5 text-ds-ink">
         {card.title}
       </div>
-      {card.draftPrompt && card.column === 'draft' ? (
-        <div className="line-clamp-2 text-[11px] leading-4 text-ds-muted">{card.draftPrompt}</div>
-      ) : null}
       <div className="flex min-w-0 items-center gap-2 text-[11px] text-ds-faint">
         <span className="flex min-w-0 flex-1 items-center gap-1.5">
           <Package className="h-3 w-3 shrink-0 opacity-70" strokeWidth={1.75} aria-hidden />
