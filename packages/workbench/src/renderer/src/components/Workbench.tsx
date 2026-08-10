@@ -740,6 +740,13 @@ export function Workbench(): ReactElement {
         return
       }
 
+      if (matched.id === 'openKanban') {
+        e.preventDefault()
+        setLeftSidebarCollapsed(false)
+        setRoute('kanban')
+        return
+      }
+
       if (matched.id === 'importProject') {
         e.preventDefault()
         void chooseWorkspace()

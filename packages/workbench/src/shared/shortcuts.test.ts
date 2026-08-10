@@ -61,6 +61,8 @@ describe('shortcuts', () => {
     expect(findMatchedShortcut(keyEvent({ key: 'k', metaKey: true }))?.id).toBe(
       'searchConversations'
     )
+    expect(findMatchedShortcut(keyEvent({ key: 'j', metaKey: true }))?.id).toBe('openKanban')
+    expect(findMatchedShortcut(keyEvent({ key: 'J', ctrlKey: true }))?.id).toBe('openKanban')
     expect(findMatchedShortcut(keyEvent({ key: 'p', metaKey: true }))?.id).toBe('importProject')
     expect(findMatchedShortcut(keyEvent({ key: 'q', metaKey: true }))?.id).toBe(
       'approvalPolicyMenu'

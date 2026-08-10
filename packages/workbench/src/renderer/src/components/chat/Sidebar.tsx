@@ -155,6 +155,7 @@ export function Sidebar({
               icon={<Columns3 className="h-4 w-4" strokeWidth={1.9} />}
               label={t('kanbanNav')}
               onClick={() => setRoute('kanban')}
+              shortcut="⌘J"
               variant="flat"
               active={kanbanActive}
             />

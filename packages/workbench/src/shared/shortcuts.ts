@@ -7,6 +7,7 @@
 export const SHORTCUT_IDS = [
   'newConversation',
   'searchConversations',
+  'openKanban',
   'importProject',
   'toggleLeftSidebar',
   'toggleRightPanel',
@@ -41,6 +42,7 @@ export type ShortcutsPatchV1 = Partial<Record<ShortcutId, Partial<ShortcutPrefer
 export const SHORTCUT_CATALOG: readonly ShortcutDefinition[] = [
   { id: 'newConversation', chord: { key: 'n' }, ignoreWhenTyping: false },
   { id: 'searchConversations', chord: { key: 'k' }, ignoreWhenTyping: false },
+  { id: 'openKanban', chord: { key: 'j' }, ignoreWhenTyping: false },
   { id: 'importProject', chord: { key: 'p' }, ignoreWhenTyping: false },
   { id: 'toggleLeftSidebar', chord: { key: 'b' }, ignoreWhenTyping: true },
   { id: 'toggleRightPanel', chord: { key: 'b', shift: true }, ignoreWhenTyping: true },
