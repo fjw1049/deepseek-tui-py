@@ -186,7 +186,9 @@ const api = {
   openLogDir: () => ipcRenderer.invoke('log:open-dir'),
   fetchPetManifest: (force) => ipcRenderer.invoke('pet:fetch-manifest', force === true),
   resolvePetSpritesheet: (slug) =>
-    ipcRenderer.invoke('pet:resolve-spritesheet', slug ? { slug } : {})
+    ipcRenderer.invoke('pet:resolve-spritesheet', slug ? { slug } : {}),
+  copyDevBrowserScreenshotToClipboard: (webContentsId) =>
+    ipcRenderer.invoke('dev-browser:copy-screenshot', { webContentsId })
 } satisfies DsGuiApi
 
 contextBridge.exposeInMainWorld('dsGui', api)

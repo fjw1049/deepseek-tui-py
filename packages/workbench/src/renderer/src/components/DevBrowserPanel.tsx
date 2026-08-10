@@ -5,13 +5,13 @@ import {
   ArrowLeft,
   ArrowRight,
   Bug,
+  Camera,
   CircleStop,
   ExternalLink,
   Globe2,
   Loader2,
   Plus,
   Radar,
-  Wand2,
   RefreshCw,
   Send,
   X
@@ -47,11 +47,13 @@ import {
   parsePreviewPickConsoleMessage,
   type PreviewElementPick
 } from '../lib/preview-element-picker'
+import { localizeDevBrowserScreenshotError } from '../lib/dev-browser-screenshot-errors'
 
 type DevWebviewTag = HTMLElement & {
   canGoBack(): boolean
   canGoForward(): boolean
   getURL(): string
+  getWebContentsId(): number
   goBack(): void
   goForward(): void
   loadURL(url: string): Promise<void>
@@ -60,6 +62,24 @@ type DevWebviewTag = HTMLElement & {
   stop(): void
   setAudioMuted(muted: boolean): void
   executeJavaScript(code: string): Promise<unknown>
+}
+
+/** Synara-style window + cursor icon for element pick / annotate mode. */
+function BrowserWindowCursorIcon({ className }: { className?: string }): ReactElement {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      fill="currentColor"
+      className={className}
+    >
+      <path d="M5.75 4C3.67893 4 2 5.67893 2 7.75V17.25C2 19.3211 3.67893 21 5.75 21H12.25C12.6642 21 13 20.6642 13 20.25C13 19.8358 12.6642 19.5 12.25 19.5H5.75C4.50736 19.5 3.5 18.4926 3.5 17.25V7.75C3.5 6.50736 4.50736 5.5 5.75 5.5H18.25C19.4926 5.5 20.5 6.50736 20.5 7.75V12.25C20.5 12.6642 20.8358 13 21.25 13C21.6642 13 22 12.6642 22 12.25V7.75C22 5.67893 20.3211 4 18.25 4H5.75Z" />
+      <path d="M6.5 9.5C5.94772 9.5 5.5 9.05228 5.5 8.5C5.5 7.94772 5.94772 7.5 6.5 7.5C7.05228 7.5 7.5 7.94772 7.5 8.5C7.5 9.05228 7.05228 9.5 6.5 9.5Z" />
+      <path d="M14.4697 14.4697C14.6661 14.2732 14.9551 14.2015 15.2206 14.2832L22.2206 16.437C22.5136 16.5272 22.7222 16.7865 22.7475 17.092C22.7727 17.3975 22.6096 17.6876 22.3354 17.8247L19.3283 19.3283L17.8247 22.3354C17.6876 22.6096 17.3975 22.7727 17.092 22.7475C16.7865 22.7222 16.5272 22.5136 16.437 22.2206L14.2832 15.2206C14.2015 14.9551 14.2732 14.6661 14.4697 14.4697Z" />
+      <path d="M10 9.5C9.44772 9.5 9 9.05228 9 8.5C9 7.94772 9.44772 7.5 10 7.5C10.5523 7.5 11 7.94772 11 8.5C11 9.05228 10.5523 9.5 10 9.5Z" />
+      <path d="M13.5 9.5C12.9477 9.5 12.5 9.05228 12.5 8.5C12.5 7.94772 12.9477 7.5 13.5 7.5C14.0523 7.5 14.5 7.94772 14.5 8.5C14.5 9.05228 14.0523 9.5 13.5 9.5Z" />
+    </svg>
+  )
 }
 
 /** Pause in-page media so background/hidden guests stop decoding video frames. */
@@ -334,6 +354,13 @@ export function DevBrowserPanel({
   const [iframeReloadNonce, setIframeReloadNonce] = useState(0)
   const [inspectMode, setInspectMode] = useState(false)
   const inspectModeRef = useRef(false)
+  const [screenshotNotice, setScreenshotNotice] = useState<string | null>(null)
+  const [screenshotNoticeTone, setScreenshotNoticeTone] = useState<'info' | 'success' | 'error'>(
+    'info'
+  )
+  const screenshotNoticeTimerRef = useRef<number | null>(null)
+  const copyingScreenshotRef = useRef(false)
+  const [copyingScreenshot, setCopyingScreenshot] = useState(false)
   /** Tabs where the picker script was successfully requested (cleanup only these). */
   const pickerInjectedTabsRef = useRef(new Set<string>())
   /** Tabs that have emitted Electron `dom-ready` (safe for executeJavaScript). */
@@ -350,6 +377,14 @@ export function DevBrowserPanel({
   useEffect(() => {
     inspectModeRef.current = inspectMode
   }, [inspectMode])
+
+  useEffect(() => {
+    return () => {
+      if (screenshotNoticeTimerRef.current !== null) {
+        window.clearTimeout(screenshotNoticeTimerRef.current)
+      }
+    }
+  }, [])
 
   const updateActiveTab = useCallback((patch: Partial<PreviewTab>): void => {
     const tabId = activeTabIdRef.current
@@ -797,6 +832,98 @@ export function DevBrowserPanel({
     }
   }
 
+  const showScreenshotNotice = useCallback(
+    (message: string, tone: 'info' | 'success' | 'error' = 'info', timeoutMs = 2_000): void => {
+      setScreenshotNotice(message)
+      setScreenshotNoticeTone(tone)
+      if (screenshotNoticeTimerRef.current !== null) {
+        window.clearTimeout(screenshotNoticeTimerRef.current)
+      }
+      screenshotNoticeTimerRef.current = window.setTimeout(() => {
+        setScreenshotNotice(null)
+        screenshotNoticeTimerRef.current = null
+      }, timeoutMs)
+    },
+    []
+  )
+
+  const resolveScreenshotWebContentsId = useCallback(
+    (tabId: string, webview: DevWebviewTag): number | null => {
+      try {
+        const webContentsId = webview.getWebContentsId()
+        if (!Number.isFinite(webContentsId) || webContentsId <= 0) return null
+        webviewDomReadyRef.current.add(tabId)
+        return webContentsId
+      } catch {
+        return null
+      }
+    },
+    []
+  )
+
+  const copyScreenshotToClipboard = useCallback(async (): Promise<void> => {
+    if (!useElectronWebview || !activeUrl) {
+      showScreenshotNotice(t('browserScreenshotNotReady'), 'error')
+      return
+    }
+    if (copyingScreenshotRef.current) {
+      showScreenshotNotice(t('browserScreenshotBusy'), 'info', 1_200)
+      return
+    }
+
+    const tabId = activeTabIdRef.current
+    const webview = activeWebview()
+    if (!webview) {
+      showScreenshotNotice(t('browserScreenshotNotReady'), 'error')
+      return
+    }
+
+    const webContentsId = resolveScreenshotWebContentsId(tabId, webview)
+    if (webContentsId === null) {
+      showScreenshotNotice(t('browserScreenshotNotReady'), 'error')
+      return
+    }
+    if (typeof window.dsGui?.copyDevBrowserScreenshotToClipboard !== 'function') {
+      showScreenshotNotice(t('browserScreenshotNeedRestart'), 'error', 4_000)
+      return
+    }
+
+    copyingScreenshotRef.current = true
+    setCopyingScreenshot(true)
+    showScreenshotNotice(t('browserScreenshotCopying'), 'info', 12_000)
+
+    try {
+      const result = await window.dsGui.copyDevBrowserScreenshotToClipboard(webContentsId)
+      if (!result.ok) {
+        showScreenshotNotice(
+          localizeDevBrowserScreenshotError(result.message, t),
+          'error',
+          4_000
+        )
+        return
+      }
+      showScreenshotNotice(t('browserScreenshotCopied'), 'success')
+    } catch (error) {
+      showScreenshotNotice(
+        localizeDevBrowserScreenshotError(
+          error instanceof Error ? error.message : String(error),
+          t
+        ),
+        'error',
+        4_000
+      )
+    } finally {
+      copyingScreenshotRef.current = false
+      setCopyingScreenshot(false)
+    }
+  }, [
+    activeUrl,
+    resolveScreenshotWebContentsId,
+    showScreenshotNotice,
+    t,
+    useElectronWebview
+  ])
+
   const openExternalUrl = (url: string | null | undefined = activeUrl): void => {
     if (!url) return
     const normalized = normalizeBrowseUrlInput(url)
@@ -902,28 +1029,6 @@ export function DevBrowserPanel({
             <Plus className="h-3.5 w-3.5" strokeWidth={1.9} />
           </button>
           <div className="ds-dev-browser__actions">
-            <button
-              type="button"
-              onClick={() => openExternalUrl()}
-              disabled={!activeUrl}
-              className="ds-dev-browser__icon-btn"
-              aria-label={t('browserOpenExternal')}
-              title={t('browserOpenExternal')}
-            >
-              <ExternalLink className="h-3.5 w-3.5" strokeWidth={1.8} />
-            </button>
-            {useElectronWebview ? (
-              <button
-                type="button"
-                onClick={openDevTools}
-                disabled={!activeUrl}
-                className="ds-dev-browser__icon-btn"
-                aria-label={t('browserDevTools')}
-                title={t('browserDevTools')}
-              >
-                <Bug className="h-3.5 w-3.5" strokeWidth={1.8} />
-              </button>
-            ) : null}
             {canInspect ? (
               <button
                 type="button"
@@ -933,29 +1038,50 @@ export function DevBrowserPanel({
                 aria-pressed={inspectMode}
                 title={t('browserInspectHint')}
               >
-                <svg aria-hidden="true" width="0" height="0" className="absolute">
-                  <defs>
-                    <linearGradient
-                      id="ds-magic-grad"
-                      x1="0%"
-                      y1="100%"
-                      x2="100%"
-                      y2="0%"
-                    >
-                      <stop offset="0%" stopColor="#2dd4bf" />
-                      <stop offset="35%" stopColor="#38bdf8" />
-                      <stop offset="70%" stopColor="#a78bfa" />
-                      <stop offset="100%" stopColor="#f472b6" />
-                    </linearGradient>
-                  </defs>
-                </svg>
-                <Wand2
-                  className="ds-dev-browser__magic-icon h-3.5 w-3.5"
-                  stroke={inspectMode ? 'url(#ds-magic-grad)' : 'currentColor'}
-                  strokeWidth={1.75}
-                />
+                <BrowserWindowCursorIcon className="ds-dev-browser__magic-icon h-3.5 w-3.5" />
               </button>
             ) : null}
+            {useElectronWebview ? (
+              <button
+                type="button"
+                onClick={() => void copyScreenshotToClipboard()}
+                disabled={!activeUrl}
+                aria-busy={copyingScreenshot}
+                className={`ds-dev-browser__icon-btn${copyingScreenshot ? ' is-busy' : ''}`}
+                aria-label={t('browserCopyScreenshot')}
+                title={t('browserCopyScreenshot')}
+              >
+                {copyingScreenshot ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={1.75} />
+                ) : (
+                  <Camera className="h-3.5 w-3.5" strokeWidth={1.75} />
+                )}
+              </button>
+            ) : null}
+            <div className="ds-dev-browser__action-pill">
+              <button
+                type="button"
+                onClick={() => openExternalUrl()}
+                disabled={!activeUrl}
+                className="ds-dev-browser__icon-btn"
+                aria-label={t('browserOpenExternal')}
+                title={t('browserOpenExternal')}
+              >
+                <ExternalLink className="h-3.5 w-3.5" strokeWidth={1.8} />
+              </button>
+              {useElectronWebview ? (
+                <button
+                  type="button"
+                  onClick={openDevTools}
+                  disabled={!activeUrl}
+                  className="ds-dev-browser__icon-btn"
+                  aria-label={t('browserDevTools')}
+                  title={t('browserDevTools')}
+                >
+                  <Bug className="h-3.5 w-3.5" strokeWidth={1.8} />
+                </button>
+              ) : null}
+            </div>
             <button
               type="button"
               onClick={() => setAutoFollow((value) => !value)}
@@ -1036,6 +1162,16 @@ export function DevBrowserPanel({
             <Send className="h-3.5 w-3.5" strokeWidth={1.85} />
           </button>
         </form>
+
+        {screenshotNotice ? (
+          <div
+            className={`ds-dev-browser__screenshot-notice ds-dev-browser__screenshot-notice--${screenshotNoticeTone}`}
+            role="status"
+            aria-live="polite"
+          >
+            {screenshotNotice}
+          </div>
+        ) : null}
 
         {detectedUrls.length > 0 ? (
           <div className="ds-dev-browser__chips">

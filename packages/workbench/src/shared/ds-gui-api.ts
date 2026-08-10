@@ -427,4 +427,8 @@ export type DsGuiApi = {
   openLogDir: () => Promise<{ ok: boolean; message?: string }>
   fetchPetManifest: (force?: boolean) => Promise<PetManifestFetchResult>
   resolvePetSpritesheet: (slug?: string) => Promise<PetSpritesheetResolveResult>
+  /** Capture the dev-browser guest webview and copy it to the system clipboard. */
+  copyDevBrowserScreenshotToClipboard: (
+    webContentsId: number
+  ) => Promise<{ ok: true } | { ok: false; message?: string }>
 }
