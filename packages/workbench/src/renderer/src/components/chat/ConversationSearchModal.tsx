@@ -12,10 +12,6 @@ import { useTranslation } from 'react-i18next'
 import { Clock, CornerDownLeft, Folder, MessageSquare, Search, X } from 'lucide-react'
 import { formatShortcutLabel, shortcutChordTokens } from '@shared/shortcuts'
 import type { NormalizedThread } from '../../agent/types'
-import {
-  pushConversationSearchHistory,
-  readConversationSearchHistory
-} from '../../lib/conversation-search-history'
 import { formatRelativeTime } from '../../lib/format-relative-time'
 import { workspaceLabelFromPath } from '../../lib/workspace-label'
 
@@ -25,6 +21,9 @@ type Props = {
   onClose: () => void
   onSelectThread: (id: string) => void
 }
+
+const RECENT_LIMIT = 40
+const RESULT_LIMIT = 50
 
 function threadMatchesQuery(thread: NormalizedThread, query: string): boolean {
   const q = query.trim().toLowerCase()
@@ -36,6 +35,10 @@ function threadMatchesQuery(thread: NormalizedThread, query: string): boolean {
   return workspaceLabelFromPath(workspace).toLowerCase().includes(q)
 }
 
+function sortByRecent(threads: NormalizedThread[]): NormalizedThread[] {
+  return [...threads].sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
+}
+
 export function ConversationSearchModal({
   open,
   threads,
@@ -44,26 +47,32 @@ export function ConversationSearchModal({
 }: Props): ReactElement | null {
   const { t, i18n } = useTranslation('common')
   const inputRef = useRef<HTMLInputElement>(null)
+  const listRef = useRef<HTMLUListElement>(null)
   const [query, setQuery] = useState('')
-  const [history, setHistory] = useState<string[]>(() => readConversationSearchHistory())
   const [activeIndex, setActiveIndex] = useState(0)
 
-  const results = useMemo(() => {
-    const q = query.trim()
-    if (!q) return [] as NormalizedThread[]
-    return threads
-      .filter((thread) => threadMatchesQuery(thread, q))
-      .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
-      .slice(0, 50)
-  }, [threads, query])
+  const trimmedQuery = query.trim()
+  const browsingRecent = trimmedQuery.length === 0
 
-  const showingHistory = query.trim().length === 0
-  const rowCount = showingHistory ? history.length : results.length
+  const recentThreads = useMemo(
+    () => sortByRecent(threads).slice(0, RECENT_LIMIT),
+    [threads]
+  )
+
+  const results = useMemo(() => {
+    if (browsingRecent) return [] as NormalizedThread[]
+    return sortByRecent(threads.filter((thread) => threadMatchesQuery(thread, trimmedQuery))).slice(
+      0,
+      RESULT_LIMIT
+    )
+  }, [threads, trimmedQuery, browsingRecent])
+
+  const rows = browsingRecent ? recentThreads : results
+  const rowCount = rows.length
 
   useEffect(() => {
     if (!open) return
     setQuery('')
-    setHistory(readConversationSearchHistory())
     setActiveIndex(0)
     const timer = window.setTimeout(() => inputRef.current?.focus(), 0)
     return () => window.clearTimeout(timer)
@@ -71,7 +80,12 @@ export function ConversationSearchModal({
 
   useEffect(() => {
     setActiveIndex(0)
-  }, [query, showingHistory])
+  }, [query, browsingRecent])
+
+  useEffect(() => {
+    const active = listRef.current?.querySelector<HTMLElement>('[aria-selected="true"]')
+    active?.scrollIntoView({ block: 'nearest' })
+  }, [activeIndex, rows])
 
   useEffect(() => {
     if (!open) return
@@ -86,22 +100,12 @@ export function ConversationSearchModal({
   }, [open, onClose])
 
   const selectThread = useCallback(
-    (threadId: string, recordQuery: string) => {
-      const trimmed = recordQuery.trim()
-      if (trimmed) {
-        setHistory(pushConversationSearchHistory(trimmed))
-      }
+    (threadId: string) => {
       onSelectThread(threadId)
       onClose()
     },
     [onClose, onSelectThread]
   )
-
-  const applyHistoryQuery = useCallback((value: string) => {
-    setQuery(value)
-    setActiveIndex(0)
-    inputRef.current?.focus()
-  }, [])
 
   const onInputKeyDown = (event: ReactKeyboardEvent<HTMLInputElement>): void => {
     if (event.key === 'ArrowDown') {
@@ -118,13 +122,8 @@ export function ConversationSearchModal({
     }
     if (event.key !== 'Enter') return
     event.preventDefault()
-    if (showingHistory) {
-      const item = history[activeIndex]
-      if (item) applyHistoryQuery(item)
-      return
-    }
-    const thread = results[activeIndex]
-    if (thread) selectThread(thread.id, query)
+    const thread = rows[activeIndex]
+    if (thread) selectThread(thread.id)
   }
 
   if (!open) return null
@@ -132,6 +131,7 @@ export function ConversationSearchModal({
   const shortcutChord = { key: 'k' } as const
   const shortcutLabel = formatShortcutLabel(shortcutChord)
   const shortcutTokens = shortcutChordTokens(shortcutChord)
+  const isEmpty = rowCount === 0
 
   return createPortal(
     <div
@@ -164,134 +164,114 @@ export function ConversationSearchModal({
             autoComplete="off"
             spellCheck={false}
           />
-          <div className="ds-shortcut-keys shrink-0" aria-label={shortcutLabel}>
-            {shortcutTokens.map((token, index) => (
-              <kbd
-                key={`${token}-${index}`}
-                className={`ds-keycap${token.length > 1 ? ' ds-keycap--wide' : ''}`}
-              >
-                {token}
-              </kbd>
-            ))}
+          <div className="ds-search-modal__header-right">
+            <div className="ds-shortcut-keys shrink-0" aria-label={shortcutLabel}>
+              {shortcutTokens.map((token, index) => (
+                <kbd
+                  key={`${token}-${index}`}
+                  className={`ds-keycap${token.length > 1 ? ' ds-keycap--wide' : ''}`}
+                >
+                  {token}
+                </kbd>
+              ))}
+            </div>
+            <button
+              type="button"
+              className="ds-search-modal__close"
+              onClick={onClose}
+              aria-label={t('conversationSearchClose')}
+            >
+              <X className="h-3.5 w-3.5" strokeWidth={2} />
+            </button>
           </div>
-          <button
-            type="button"
-            className="ds-search-modal__close"
-            onClick={onClose}
-            aria-label={t('conversationSearchClose')}
-          >
-            <X className="h-3.5 w-3.5" strokeWidth={2} />
-          </button>
         </div>
 
         <div
-          className={`ds-search-modal__body${
-            (showingHistory && history.length === 0) || (!showingHistory && results.length === 0)
-              ? ' ds-search-modal__body--empty'
-              : ''
-          }`}
+          className={`ds-search-modal__body${isEmpty ? ' ds-search-modal__body--empty' : ''}`}
         >
-          {showingHistory ? (
-            history.length === 0 ? (
-              <div className="ds-search-modal__empty">
-                <Search className="ds-search-modal__empty-icon" strokeWidth={1.5} aria-hidden />
-                <p className="ds-search-modal__empty-title">{t('conversationSearchNoHistory')}</p>
-                <p className="ds-search-modal__empty-hint">{t('conversationSearchHint')}</p>
-              </div>
-            ) : (
-              <>
-                <div className="ds-search-modal__section">{t('conversationSearchRecent')}</div>
-                <ul className="ds-search-modal__list" role="listbox">
-                  {history.map((item, index) => {
-                    const active = index === activeIndex
-                    return (
-                      <li key={`${item}-${index}`}>
-                        <button
-                          type="button"
-                          role="option"
-                          aria-selected={active}
-                          className={`ds-search-modal__row ${
-                            active ? 'ds-search-modal__row--active' : ''
-                          }`}
-                          onMouseEnter={() => setActiveIndex(index)}
-                          onClick={() => applyHistoryQuery(item)}
-                        >
-                          <span className="ds-search-modal__row-icon-wrap" aria-hidden>
-                            <MessageSquare strokeWidth={1.7} />
-                          </span>
-                          <span className="ds-search-modal__row-main">
-                            <span className="ds-search-modal__row-title">{item}</span>
-                          </span>
-                          {active ? (
-                            <CornerDownLeft
-                              className="ds-search-modal__enter"
-                              strokeWidth={1.75}
-                              aria-hidden
-                            />
-                          ) : null}
-                        </button>
-                      </li>
-                    )
-                  })}
-                </ul>
-              </>
-            )
-          ) : results.length === 0 ? (
+          {isEmpty ? (
             <div className="ds-search-modal__empty">
               <Search className="ds-search-modal__empty-icon" strokeWidth={1.5} aria-hidden />
-              <p className="ds-search-modal__empty-title">{t('conversationSearchNoResults')}</p>
+              <p className="ds-search-modal__empty-title">
+                {browsingRecent
+                  ? t('conversationSearchNoRecent')
+                  : t('conversationSearchNoResults')}
+              </p>
               <p className="ds-search-modal__empty-hint">{t('conversationSearchHint')}</p>
             </div>
           ) : (
-            <ul className="ds-search-modal__list" role="listbox">
-              {results.map((thread, index) => {
-                const workspace = thread.workspace?.trim()
-                const folder = workspace ? workspaceLabelFromPath(workspace) : ''
-                const active = index === activeIndex
-                return (
-                  <li key={thread.id}>
-                    <button
-                      type="button"
-                      role="option"
-                      aria-selected={active}
-                      className={`ds-search-modal__row ${
-                        active ? 'ds-search-modal__row--active' : ''
-                      }`}
-                      onMouseEnter={() => setActiveIndex(index)}
-                      onClick={() => selectThread(thread.id, query)}
-                    >
-                      <span className="ds-search-modal__row-icon-wrap" aria-hidden>
-                        <MessageSquare strokeWidth={1.7} />
-                      </span>
-                      <span className="ds-search-modal__row-main">
-                        <span className="ds-search-modal__row-title">{thread.title}</span>
-                        <span className="ds-search-modal__row-meta">
-                          {folder ? (
+            <>
+              {browsingRecent ? (
+                <div className="ds-search-modal__section">{t('conversationSearchRecent')}</div>
+              ) : null}
+              <ul ref={listRef} className="ds-search-modal__list" role="listbox">
+                {rows.map((thread, index) => {
+                  const workspace = thread.workspace?.trim()
+                  const folder = workspace ? workspaceLabelFromPath(workspace) : ''
+                  const active = index === activeIndex
+                  return (
+                    <li key={thread.id}>
+                      <button
+                        type="button"
+                        role="option"
+                        aria-selected={active}
+                        className={`ds-search-modal__row ${
+                          active ? 'ds-search-modal__row--active' : ''
+                        }`}
+                        onMouseEnter={() => setActiveIndex(index)}
+                        onClick={() => selectThread(thread.id)}
+                      >
+                        <span className="ds-search-modal__row-icon-wrap" aria-hidden>
+                          <MessageSquare strokeWidth={1.7} />
+                        </span>
+                        <span className="ds-search-modal__row-main">
+                          <span className="ds-search-modal__row-title">{thread.title}</span>
+                          <span className="ds-search-modal__row-meta">
+                            {folder ? (
+                              <span className="ds-search-modal__meta-chip">
+                                <Folder strokeWidth={1.8} aria-hidden />
+                                {folder}
+                              </span>
+                            ) : null}
                             <span className="ds-search-modal__meta-chip">
-                              <Folder strokeWidth={1.8} aria-hidden />
-                              {folder}
+                              <Clock strokeWidth={1.8} aria-hidden />
+                              {formatRelativeTime(thread.updatedAt, i18n.language)}
                             </span>
-                          ) : null}
-                          <span className="ds-search-modal__meta-chip">
-                            <Clock strokeWidth={1.8} aria-hidden />
-                            {formatRelativeTime(thread.updatedAt, i18n.language)}
                           </span>
                         </span>
-                      </span>
-                      {active ? (
-                        <CornerDownLeft
-                          className="ds-search-modal__enter"
-                          strokeWidth={1.75}
-                          aria-hidden
-                        />
-                      ) : null}
-                    </button>
-                  </li>
-                )
-              })}
-            </ul>
+                        {active ? (
+                          <CornerDownLeft
+                            className="ds-search-modal__enter"
+                            strokeWidth={1.75}
+                            aria-hidden
+                          />
+                        ) : null}
+                      </button>
+                    </li>
+                  )
+                })}
+              </ul>
+            </>
           )}
         </div>
+
+        {!isEmpty ? (
+          <div className="ds-search-modal__footer" aria-hidden>
+            <span>
+              <kbd className="ds-keycap">↑</kbd>
+              <kbd className="ds-keycap">↓</kbd>
+              <span className="ds-search-modal__footer-label">
+                {t('conversationSearchFooterSelect')}
+              </span>
+            </span>
+            <span>
+              <kbd className="ds-keycap">↵</kbd>
+              <span className="ds-search-modal__footer-label">
+                {t('conversationSearchFooterOpen')}
+              </span>
+            </span>
+          </div>
+        ) : null}
       </div>
     </div>,
     document.body

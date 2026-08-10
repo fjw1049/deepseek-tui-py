@@ -3821,7 +3821,7 @@ samp {
 }
 
 .ds-search-modal {
-  width: min(720px, 100%);
+  width: min(520px, 100%);
   max-height: min(90vh, 920px);
   display: flex;
   flex-direction: column;
@@ -3839,6 +3839,15 @@ samp {
   gap: 10px;
   flex-shrink: 0;
   padding: 18px 16px 14px 20px;
+}
+
+/* Keep ⌘K (+ close) pinned to the trailing edge of the search field. */
+.ds-search-modal__header-right {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
 }
 
 /* Feathered edge only — no hard rule that frames a “search bar” box. */
@@ -3942,8 +3951,10 @@ samp {
 }
 
 .ds-search-modal__body {
+  /* ~10 rows visible; more conversations scroll inside. */
+  max-height: calc(10 * 44px + 36px);
   min-height: 0;
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   overflow: auto;
   padding: 8px 10px 12px;
   scrollbar-width: thin;
@@ -3954,7 +3965,8 @@ samp {
   display: flex;
   align-items: center;
   justify-content: center;
-  min-height: 400px;
+  min-height: 200px;
+  max-height: none;
   flex: 0 0 auto;
 }
 
@@ -4059,16 +4071,19 @@ samp {
   display: flex;
   min-width: 0;
   flex: 1;
-  flex-direction: column;
-  gap: 2px;
+  flex-direction: row;
+  align-items: baseline;
+  gap: 10px;
 }
 
 .ds-search-modal__row-title {
   min-width: 0;
+  max-width: 58%;
+  flex: 0 1 auto;
   overflow: hidden;
   color: var(--ds-text);
-  font-size: 15px;
-  font-weight: 500;
+  font-size: 14px;
+  font-weight: 600;
   letter-spacing: -0.022em;
   line-height: 1.3;
   text-overflow: ellipsis;
@@ -4077,9 +4092,12 @@ samp {
 
 .ds-search-modal__row-meta {
   display: flex;
-  flex-wrap: wrap;
+  min-width: 0;
+  flex: 1 1 auto;
+  flex-wrap: nowrap;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
+  overflow: hidden;
   color: var(--ds-text-faint);
   font-size: 12px;
   font-weight: 400;
@@ -4087,11 +4105,44 @@ samp {
   line-height: 1.3;
 }
 
-.ds-search-modal__meta-chip {
+.ds-search-modal__footer {
+  display: flex;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 14px;
+  padding: 10px 16px 12px;
+  border-top: 1px solid color-mix(in srgb, var(--ds-border-muted) 80%, transparent);
+  color: var(--ds-text-faint);
+  font-size: 12px;
+}
+
+.ds-search-modal__footer > span {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 5px;
+}
+
+.ds-search-modal__footer-label {
+  margin-left: 2px;
+}
+
+.ds-search-modal__footer .ds-keycap {
+  min-width: 1.35rem;
+  height: 1.35rem;
+  padding: 0 0.3rem;
+  font-size: 11px;
+}
+
+.ds-search-modal__meta-chip {
+  display: inline-flex;
   min-width: 0;
+  align-items: center;
+  gap: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .ds-search-modal__meta-chip svg {
