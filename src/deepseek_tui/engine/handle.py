@@ -285,6 +285,16 @@ class EngineHandle:
     def _mark_turn_idle(self) -> None:
         self._turn_active.clear()
 
+    def has_pending_steers(self) -> bool:
+        """True while queued steer text has not been drained into a round yet.
+
+        Engine reads this before ending a turn: the queue is only drained at
+        the top of a round, so text that arrived after the last drain (the
+        user typing while the final answer streams) would otherwise be
+        stranded — already persisted as a delivered user message, never read.
+        """
+        return not self._steer_queue.empty()
+
     def drain_steers(self) -> list[str]:
         """Non-blocking drain of all queued steer messages."""
         steers: list[str] = []

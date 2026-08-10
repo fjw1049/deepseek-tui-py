@@ -99,6 +99,12 @@ logger = logging.getLogger(__name__)
 # and opens another every time it is blocked.
 _CHECKLIST_GATE_MAX_FIRES = 3
 
+# Same backstop for turn_end ("Stop") hooks. Unlike the checklist gate there is
+# no progress signal to release on, so a hook that blocks unconditionally used
+# to spin to the round-trip limit — re-sending the whole context every round.
+# Hooks still receive ``stop_hook_active`` so a well-written one yields first.
+_STOP_HOOK_MAX_FIRES = 3
+
 
 def _path_under(path: Path, root: Path) -> bool:
     """Whether ``path`` is inside ``root`` (both resolved)."""
@@ -301,6 +307,9 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         # See HANDOVER §九 ``cache_chip.2026-05-15 cumulative``.
         self.session_cache_hit_total: int = 0
         self.session_cache_miss_total: int = 0
+        # Previous round's per-unit request digests, for attributing a prefix
+        # cache miss to whatever rewrote history. See ``_log_prefix_break``.
+        self._prefix_digests: list[str] = []
         # Stage 4.4 post-edit LSP diagnostics — pending diagnostic blocks.
         self.pending_lsp_blocks: list[DiagnosticBlock] = []
         self.turn_counter = 0
@@ -2589,6 +2598,48 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         logger.info("subagent_handoff count=%d", count)
         return True
 
+    def _log_prefix_break(
+        self,
+        round_idx: int,
+        system_prompt: str | None,
+        messages: list[Message],
+        tools: list[dict[str, Any]] | None,
+    ) -> None:
+        """Name whatever invalidated the provider's KV prefix this round.
+
+        ``prefix_cache`` already reports the hit ratio, but a ratio alone cannot
+        say which of compaction, L0 pruning, reminder injection or an unstable
+        tool schema moved history. Comparing per-unit digests against the last
+        round does: the first mismatch is the culprit, and everything after it
+        is re-billed at full price. Silence means the round was a pure append.
+
+        One hashing pass over history — ~3ms on an 800-message, 600k-char
+        session, so it rides the log level rather than a separate switch.
+        """
+        if not logger.isEnabledFor(logging.INFO):
+            return
+        from deepseek_tui.engine.prefix_probe import (
+            describe_break,
+            fingerprint_request,
+            first_divergence,
+        )
+
+        digests = fingerprint_request(system_prompt, messages, tools)
+        previous, self._prefix_digests = self._prefix_digests, digests
+        if not previous:
+            return
+        break_at = first_divergence(previous, digests)
+        if break_at is None:
+            return
+        logger.info(
+            "prefix_break round=%d at=%d/%d reusable=%.0f%% culprit=%s",
+            round_idx,
+            break_at,
+            len(previous),
+            break_at / len(previous) * 100,
+            describe_break(break_at, messages),
+        )
+
     async def _run_conversation(
         self,
         messages: list[Message],
@@ -2626,8 +2677,10 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         tool_round_count = 0
         # True once a turn_end (Claude "Stop") hook has blocked the stop —
         # delivered to hooks as ``stop_hook_active`` so they can avoid
-        # blocking forever. The round-trip limit is the hard upper bound.
+        # blocking forever. ``_STOP_HOOK_MAX_FIRES`` is the backstop for hooks
+        # that block anyway; the round-trip limit is the last resort.
         stop_hook_active = False
+        stop_hook_fires = 0
         # Checklist turn-end gate bookkeeping. The gate blocks ending the turn
         # while the model keeps resolving open items and releases as soon as a
         # block changes nothing (see _next_checklist_gate_summary). It never
@@ -2785,6 +2838,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                 len(tools),
                 model,
             )
+            self._log_prefix_break(round_idx, system_prompt, messages, tools)
             from deepseek_tui.engine.usage_ledger import usage_source
 
             with usage_source("agent_round"):
@@ -2848,6 +2902,16 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             if not result.tool_calls:
                 if await self._handle_subagent_turn_handoff(messages):
                     continue
+                # Steer text queued after this round's drain — the usual case
+                # is the user typing while the final answer streams. Steers are
+                # only read at the top of a round, so ending the turn here
+                # strands it: the UI has already persisted it as a delivered
+                # user message that the model never reads. Loop once more and
+                # let the top-of-round drain pick it up. A steer the drain
+                # discards (blank text) empties the queue, so this cannot spin.
+                if self.handle.has_pending_steers():
+                    logger.info("turn_end_deferred_pending_steer")
+                    continue
                 # Checklist turn-end gate: if the model is about to stop with
                 # open checklist items, inject a reminder that makes it face
                 # each one. Re-fires while the model keeps making progress, so
@@ -2882,7 +2946,15 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                 # turn_end (Claude "Stop") hooks: a blocking decision keeps
                 # the loop running with the hook's reason injected as
                 # context, so "don't stop until done" policies work.
-                if self.hook_executor.has_hooks_for_event("turn_end"):
+                if (
+                    stop_hook_fires >= _STOP_HOOK_MAX_FIRES
+                    and self.hook_executor.has_hooks_for_event("turn_end")
+                ):
+                    logger.warning(
+                        "turn_end_hook_gate_exhausted fires=%d — ending the turn",
+                        stop_hook_fires,
+                    )
+                elif self.hook_executor.has_hooks_for_event("turn_end"):
                     stop_ctx = self._lifecycle_hook_context(model=model)
                     stop_ctx.stop_hook_active = stop_hook_active
                     stop_results = await self._run_lifecycle_hook(
@@ -2895,6 +2967,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                     stop_decision = aggregate_hook_decision(stop_results)
                     if stop_decision.blocked:
                         stop_hook_active = True
+                        stop_hook_fires += 1
                         reason = (
                             stop_decision.reason
                             or "A Stop hook blocked ending the turn."
