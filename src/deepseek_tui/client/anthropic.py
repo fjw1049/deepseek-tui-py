@@ -13,6 +13,7 @@ import httpx
 from httpx_sse import aconnect_sse
 
 from deepseek_tui.client.base import LLMClient
+from deepseek_tui.client.normalize import drop_orphaned_tool_blocks
 from deepseek_tui.client.streaming import AnthropicStreamParser
 from deepseek_tui.protocol.messages import (
     Message,
@@ -162,7 +163,7 @@ def _build_anthropic_messages(
         else:
             output.append({"role": role, "content": blocks})
 
-    for message in messages:
+    for message in drop_orphaned_tool_blocks(messages):
         blocks: list[dict[str, Any]] = []
         for block in message.content:
             if isinstance(block, TextBlock):

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from deepseek_tui.client.normalize import drop_orphaned_tool_blocks
 from deepseek_tui.config.providers import normalize_model
 from deepseek_tui.protocol.messages import (
     Message,
@@ -30,7 +31,7 @@ def build_chat_messages(
     include_reasoning = _should_include_reasoning(model, reasoning_effort)
     pending_tool_calls: set[str] = set()
 
-    for message in messages:
+    for message in drop_orphaned_tool_blocks(messages):
         text_parts: list[str] = []
         thinking_parts: list[str] = []
         tool_calls: list[dict[str, Any]] = []
