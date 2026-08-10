@@ -52,20 +52,21 @@ export function SessionHeader({ compact = false, className = '' }: Props): React
 
   // Compact: a synara-style breadcrumb row — thread title in ink, then a
   // muted "workspace · mode · time" trail. No boxed icon chips.
+  // Row box matches the 28px sidebar toggle so the title shares its centreline.
   if (compact) {
     return (
       <div
-        className={`ds-session-header ds-no-drag flex min-h-0 min-w-0 flex-1 items-center gap-2 text-left ${className}`}
+        className={`ds-session-header ds-no-drag flex h-7 min-h-0 min-w-0 flex-1 items-center gap-2 text-left ${className}`}
       >
         {active ? (
-          <div className="flex min-w-0 flex-1 items-baseline gap-2 overflow-hidden">
+          <div className="flex h-7 min-w-0 flex-1 items-center gap-2 overflow-hidden">
             <span
-              className="max-w-[min(38vw,320px)] shrink-0 truncate text-[13px] font-medium leading-5 tracking-[-0.01em] text-ds-ink"
+              className="inline-flex h-7 max-w-[min(38vw,320px)] shrink-0 items-center truncate text-[13px] font-medium leading-none tracking-[-0.01em] text-ds-ink"
               title={active.title}
             >
               {active.title}
             </span>
-            <span className="ds-session-header-meta flex min-w-0 items-center gap-1.5 truncate text-[12px] leading-4 text-ds-faint">
+            <span className="ds-session-header-meta inline-flex h-7 min-w-0 items-center gap-1.5 truncate text-[12px] leading-none text-ds-faint">
               <span className="shrink-0 capitalize">{active.mode}</span>
               <span className="opacity-60">·</span>
               <span className="shrink-0 tabular-nums">
@@ -74,8 +75,8 @@ export function SessionHeader({ compact = false, className = '' }: Props): React
             </span>
           </div>
         ) : showWorkspaceMeta ? (
-          <div className="min-w-0 overflow-hidden">
-            <div className="truncate text-[13px] font-medium leading-5 text-ds-muted">
+          <div className="flex h-7 min-w-0 items-center overflow-hidden">
+            <div className="truncate text-[13px] font-medium leading-none text-ds-muted">
               {workspaceLabel}
             </div>
           </div>

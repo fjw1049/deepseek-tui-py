@@ -2278,7 +2278,12 @@ samp {
 }
 
 :root[data-platform='darwin'] {
-  --ds-header-height: calc(38px / var(--ds-ui-scale, 1));
+  /* Shared by chat topbar + right-panel tabs so their bottom dividers stay one line.
+     Hug the pinned 28px title row (traffic-light centre − inset) + a little bottom air. */
+  --ds-header-height: calc(
+    max(0px, var(--ds-traffic-light-center) - 0.875rem - var(--ds-window-inset, 8px)) +
+      1.75rem + 0.25rem
+  );
 }
 
 .ds-workbench-topbar {
@@ -2310,6 +2315,22 @@ samp {
   );
 }
 
+/*
+ * macOS: pin the chat title row to the same horizontal centreline as the
+ * traffic lights / sidebar expand·collapse toggle. Those controls are fixed to
+ * --ds-traffic-light-center in window space; the topbar lives inside the inset
+ * content card, so subtract --ds-window-inset to land on the same line.
+ * Height comes from --ds-header-height (shared with the right-panel tab row).
+ */
+:root[data-platform='darwin'] .ds-workbench-topbar__inner {
+  align-items: flex-start;
+  padding-top: max(
+    0px,
+    calc(var(--ds-traffic-light-center) - 0.875rem - var(--ds-window-inset, 8px))
+  );
+  padding-bottom: 0.25rem;
+}
+
 @media (min-width: 640px) {
   .ds-workbench-topbar__inner {
     padding-inline: 1.25rem;
@@ -2331,6 +2352,14 @@ samp {
   align-items: center;
   gap: 0.375rem;
   transform: translateY(-50%);
+}
+
+:root[data-platform='darwin'] .ds-workbench-topbar__right-actions {
+  top: max(
+    0px,
+    calc(var(--ds-traffic-light-center) - 0.875rem - var(--ds-window-inset, 8px))
+  );
+  transform: none;
 }
 
 @media (min-width: 640px) {

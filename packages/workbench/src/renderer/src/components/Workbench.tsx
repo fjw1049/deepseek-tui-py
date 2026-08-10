@@ -1246,11 +1246,11 @@ export function Workbench(): ReactElement {
           <div className={`min-h-0 min-w-0 flex-1 flex-col ${chatColumnHidden ? 'hidden' : 'flex'}`}>
           <section className="ds-drag flex min-h-0 min-w-0 flex-1 flex-col">
             <header className="ds-workbench-topbar ds-surface-divider relative z-10 shrink-0 bg-transparent">
-              <div className="ds-workbench-topbar__inner flex w-full min-w-0 items-center justify-between gap-2 py-0.5">
-                <div className="min-w-0 flex-1 overflow-hidden">
+              <div className="ds-workbench-topbar__inner flex w-full min-w-0 items-center justify-between gap-2">
+                <div className="flex h-7 min-w-0 flex-1 items-center overflow-hidden">
                   <SessionHeader compact className="min-w-0" />
                 </div>
-                <div className={`flex shrink-0 items-center gap-1.5 ${topbarRightPaddingClass}`}>
+                <div className={`flex h-7 shrink-0 items-center gap-1.5 ${topbarRightPaddingClass}`}>
                   <ConnectionStatusBar compact />
                   {busy ? (
                     <span className="inline-flex shrink-0 rounded-full bg-amber-500/16 px-1.5 py-px text-[10px] font-semibold leading-4 text-amber-950 dark:text-amber-100">
