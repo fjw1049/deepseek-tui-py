@@ -875,7 +875,7 @@
   "composerSlashHint": "Type / for commands",
   "workingDirectory": "Working directory",
   "emptyHeroBadge": "GitHub Trending",
-  "emptyStagePrompt": "What would you like to build?",
+  "emptyStagePrompt": "What should we work on?",
   "greetingMorning": "Good morning",
   "greetingNoon": "Good midday",
   "greetingAfternoon": "Good afternoon",

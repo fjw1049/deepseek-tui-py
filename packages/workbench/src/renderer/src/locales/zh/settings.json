@@ -237,7 +237,7 @@
   "uiDensityComfortable": "舒适",
   "uiDensitySpacious": "宽松",
   "emptyHomeLayout": "空首页布局",
-  "emptyHomeLayoutDesc": "普通显示问候、用量概览与 GitHub Trending；简洁只保留居中输入框。",
+  "emptyHomeLayoutDesc": "普通显示问候、用量概览与 GitHub Trending；简洁保留居中的品牌提示与输入框。",
   "emptyHomeLayoutNormal": "普通",
   "emptyHomeLayoutSimple": "简洁",
   "chatFontSize": "聊天字号",

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" fill="none">
+  <!-- Blue offset plate — matches dock/app icon silhouette -->
+  <rect x="168" y="168" width="780" height="780" rx="200" ry="200" fill="#1B4DFF"/>
+  <rect x="102.400" y="102.400" width="780" height="780" rx="200" ry="200" fill="#0A0A0A"/>
+  <rect x="262" y="262" width="226" height="226" rx="54" ry="54" fill="#ffffff"/>
+  <rect x="556" y="296" width="157" height="157" rx="38" ry="38" fill="#aaaaaa"/>
+  <rect x="296" y="556" width="157" height="157" rx="38" ry="38" fill="#aaaaaa"/>
+  <rect x="580" y="580" width="111" height="111" rx="27" ry="27" fill="#646464"/>
+</svg>

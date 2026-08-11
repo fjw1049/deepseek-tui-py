@@ -237,7 +237,7 @@
   "uiDensityComfortable": "Comfortable",
   "uiDensitySpacious": "Spacious",
   "emptyHomeLayout": "Empty home layout",
-  "emptyHomeLayoutDesc": "Normal shows the greeting, usage overview, and GitHub Trending. Simple keeps only a centered composer.",
+  "emptyHomeLayoutDesc": "Normal shows the greeting, usage overview, and GitHub Trending. Simple keeps a centered brand prompt and composer.",
   "emptyHomeLayoutNormal": "Normal",
   "emptyHomeLayoutSimple": "Simple",
   "chatFontSize": "Chat font size",

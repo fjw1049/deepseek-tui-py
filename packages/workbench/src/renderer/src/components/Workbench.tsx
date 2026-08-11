@@ -57,6 +57,7 @@ import { SidebarExpandDroplet } from './chat/SidebarExpandDroplet'
 import { OperationContextDock } from './chat/OperationContextDock'
 import { MessageTimeline } from './chat/MessageTimeline'
 import { ComposerStage } from './chat/ComposerStage'
+import { SimpleEmptyPrompt } from './chat/SimpleEmptyPrompt'
 import { getEmptyHomeLayout, subscribeAppearance } from '../lib/apply-appearance'
 import { ConnectionStatusBar } from './ConnectionStatusBar'
 import { DefaultEditorPicker } from './DefaultEditorPicker'
@@ -1325,41 +1326,52 @@ export function Workbench(): ReactElement {
                       </div>
                     ) : null}
                     <div
-                      className={`ds-chat-stage ds-empty-stage-composer shrink-0 ${
-                        simpleEmptyHome ? '' : 'mt-auto'
-                      }`}
+                      className={
+                        simpleEmptyHome
+                          ? 'ds-simple-empty-cluster shrink-0'
+                          : 'ds-chat-stage ds-empty-stage-composer mt-auto shrink-0'
+                      }
                     >
-                      <ComposerStage
-                        input={input}
-                        setInput={setInput}
-                        mode={mode}
-                        setMode={setMode}
-                        busy={busy}
-                        runtimeReady={runtimeConnection === 'ready'}
-                        hasActiveThread={Boolean(activeThreadId)}
-                        stageCentered={stageCentered}
-                        useChatStageWidth={false}
-                        composerModel={composerModel}
-                        composerPickList={composerPickList}
-                        onComposerModelChange={(modelId) => {
-                          setComposerModel(modelId)
-                        }}
-                        onSend={handleSend}
-                        onCompact={compactActiveThread}
-                        onFork={handleComposerFork}
-                        onOpenDiff={handleComposerOpenDiff}
-                        queuedMessages={queuedMessages}
-                        onRemoveQueuedMessage={removeQueuedMessage}
-                        onWithdrawQueuedMessage={withdrawQueuedMessage}
-                        onSendQueuedMessageNow={(id) => void sendQueuedMessageNow(id)}
-                        onInterrupt={() => void interrupt()}
-                        focusRequestId={composerFocusRequestId}
-                        previewPicks={pendingPreviewPicks}
-                        onRemovePreviewPick={removePendingPreviewPick}
-                        onClearPreviewPicks={clearPendingPreviewPicks}
-                        flashNotice={previewPickNotice}
-                        flashNoticeNonce={previewPickNoticeNonce}
-                      />
+                      {simpleEmptyHome ? <SimpleEmptyPrompt /> : null}
+                      <div
+                        className={
+                          simpleEmptyHome
+                            ? 'ds-chat-stage ds-empty-stage-composer'
+                            : 'contents'
+                        }
+                      >
+                        <ComposerStage
+                          input={input}
+                          setInput={setInput}
+                          mode={mode}
+                          setMode={setMode}
+                          busy={busy}
+                          runtimeReady={runtimeConnection === 'ready'}
+                          hasActiveThread={Boolean(activeThreadId)}
+                          stageCentered={stageCentered}
+                          useChatStageWidth={false}
+                          composerModel={composerModel}
+                          composerPickList={composerPickList}
+                          onComposerModelChange={(modelId) => {
+                            setComposerModel(modelId)
+                          }}
+                          onSend={handleSend}
+                          onCompact={compactActiveThread}
+                          onFork={handleComposerFork}
+                          onOpenDiff={handleComposerOpenDiff}
+                          queuedMessages={queuedMessages}
+                          onRemoveQueuedMessage={removeQueuedMessage}
+                          onWithdrawQueuedMessage={withdrawQueuedMessage}
+                          onSendQueuedMessageNow={(id) => void sendQueuedMessageNow(id)}
+                          onInterrupt={() => void interrupt()}
+                          focusRequestId={composerFocusRequestId}
+                          previewPicks={pendingPreviewPicks}
+                          onRemovePreviewPick={removePendingPreviewPick}
+                          onClearPreviewPicks={clearPendingPreviewPicks}
+                          flashNotice={previewPickNotice}
+                          flashNoticeNonce={previewPickNoticeNonce}
+                        />
+                      </div>
                     </div>
                   </div>
                 </div>
