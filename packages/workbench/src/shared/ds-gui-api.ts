@@ -23,7 +23,8 @@ import type {
   WorkspaceFileTarget,
   WorkspaceFileWriteResult,
   WorkspaceFileWriteTarget,
-  WorkspaceListDirectoryResult
+  WorkspaceListDirectoryResult,
+  WorkspaceSearchEntriesResult
 } from './workspace-file'
 import type { UsageQueryResult, UsageRange } from './usage-ledger'
 
@@ -410,6 +411,11 @@ export type DsGuiApi = {
     workspaceRoot: string,
     directoryPath?: string
   ) => Promise<WorkspaceListDirectoryResult>
+  searchWorkspaceEntries: (
+    workspaceRoot: string,
+    query: string,
+    limit?: number
+  ) => Promise<WorkspaceSearchEntriesResult>
   startSse: (threadId: string, sinceSeq: number, streamId?: string) => Promise<{ streamId: string }>
   stopSse: (streamId: string) => Promise<boolean>
   onSseEvent: (handler: (payload: SseEventPayload) => void) => () => void

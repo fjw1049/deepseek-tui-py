@@ -148,6 +148,8 @@ const api = {
     ipcRenderer.invoke('workspace:html-preview-url', options),
   listWorkspaceDirectory: (workspaceRoot, directoryPath) =>
     ipcRenderer.invoke('file:list-workspace', { workspaceRoot, directoryPath }),
+  searchWorkspaceEntries: (workspaceRoot, query, limit) =>
+    ipcRenderer.invoke('file:search-workspace', { workspaceRoot, query, limit }),
   startSse: (threadId, sinceSeq, streamId) =>
     ipcRenderer.invoke('runtime:sse:start', { threadId, sinceSeq, streamId }),
   stopSse: (streamId) => ipcRenderer.invoke('runtime:sse:stop', streamId),

@@ -53,13 +53,17 @@ const LazyWorkspaceEditorSurface = lazy(() =>
 type Props = {
   workspaceRoot: string
   blocks: ChatBlock[]
+  /** When true, hide the embedded file tree (IDE layout owns its own explorer/search). */
+  hideTree?: boolean
 }
 
 const TREE_WIDTH_KEY = 'deepseekgui.layout.workspaceEditorTreeWidth'
 const SPLIT_RATIO_KEY = 'deepseekgui.layout.workspaceEditorSplitRatio'
-const TREE_DEFAULT = 176
-const TREE_MIN = 120
+/** Fixed-ish explorer: wide enough for CJK names, still secondary to the editor. */
+const TREE_DEFAULT = 232
+const TREE_MIN = 168
 const TREE_MAX = 420
+const TREE_LEGACY_DEFAULT = 176
 const SPLIT_DEFAULT = 0.5
 const SPLIT_MIN = 0.25
 const SPLIT_MAX = 0.75
@@ -76,7 +80,9 @@ function readStoredTreeWidth(): number {
     if (!raw) return TREE_DEFAULT
     const parsed = Number(raw)
     if (!Number.isFinite(parsed)) return TREE_DEFAULT
-    return Math.round(parsed)
+    // Previous default was too tight — treat it as unset.
+    if (Math.round(parsed) === TREE_LEGACY_DEFAULT) return TREE_DEFAULT
+    return clampTreeWidth(parsed)
   } catch {
     return TREE_DEFAULT
   }
@@ -242,7 +248,11 @@ const EditorPaneView = forwardRef<
   )
 })
 
-export function WorkspaceEditorPanel({ workspaceRoot, blocks }: Props): ReactElement {
+export function WorkspaceEditorPanel({
+  workspaceRoot,
+  blocks,
+  hideTree = false
+}: Props): ReactElement {
   const { t } = useTranslation('common')
   const trimmedRoot = workspaceRoot.trim()
   const tabs = useWorkspaceEditorStore((s) => s.tabs)
@@ -510,26 +520,28 @@ export function WorkspaceEditorPanel({ workspaceRoot, blocks }: Props): ReactEle
   return (
     <div className="ds-workspace-editor-pane ds-no-drag flex h-full min-h-0 flex-col">
       <div className="relative flex h-full min-h-0 flex-1 bg-ds-sidebar">
-        <div className="relative h-full min-h-0 shrink-0" style={{ width: treeWidth }}>
-          <WorkspaceFileTree
-            workspaceRoot={trimmedRoot}
-            activePaths={activePaths}
-            dirtyPaths={dirtyPaths}
-            patchMap={patchMap}
-            onOpenFile={(path) => {
-              void openFile(path, trimmedRoot)
-            }}
-            onFileContextMenu={openFileMenu}
-          />
-          {/* Overlay handle — no layout gap, so tree/editor share one continuous fill. */}
-          <div
-            role="separator"
-            aria-orientation="vertical"
-            aria-label={t('workspaceEditorTreeResize')}
-            className="ds-no-drag absolute inset-y-0 right-0 z-20 w-2 translate-x-1/2 cursor-col-resize"
-            onPointerDown={beginTreeResize}
-          />
-        </div>
+        {hideTree ? null : (
+          <div className="relative h-full min-h-0 shrink-0" style={{ width: treeWidth }}>
+            <WorkspaceFileTree
+              workspaceRoot={trimmedRoot}
+              activePaths={activePaths}
+              dirtyPaths={dirtyPaths}
+              patchMap={patchMap}
+              onOpenFile={(path) => {
+                void openFile(path, trimmedRoot)
+              }}
+              onFileContextMenu={openFileMenu}
+            />
+            {/* Overlay handle — no layout gap, so tree/editor share one continuous fill. */}
+            <div
+              role="separator"
+              aria-orientation="vertical"
+              aria-label={t('workspaceEditorTreeResize')}
+              className="ds-no-drag absolute inset-y-0 right-0 z-20 w-2 translate-x-1/2 cursor-col-resize"
+              onPointerDown={beginTreeResize}
+            />
+          </div>
+        )}
 
         <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col bg-ds-sidebar">
           <div className="flex shrink-0 items-center gap-1.5 border-b border-ds-border-muted/60 px-1.5 py-1.5">

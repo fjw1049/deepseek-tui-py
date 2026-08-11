@@ -212,6 +212,14 @@ export const workspaceListDirectoryPayloadSchema = z
   })
   .strict()
 
+export const workspaceSearchEntriesPayloadSchema = z
+  .object({
+    workspaceRoot: trimmedString(MAX_PATH_LENGTH),
+    query: z.string().trim().max(MAX_PATH_LENGTH),
+    limit: z.number().int().positive().max(200).optional()
+  })
+  .strict()
+
 export const workspaceFileTargetPayloadSchema = z
   .object({
     path: trimmedString(MAX_PATH_LENGTH),

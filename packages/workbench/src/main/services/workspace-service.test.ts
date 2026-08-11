@@ -13,7 +13,12 @@ vi.mock('electron', () => ({
   }
 }))
 
-import { readWorkspaceFile, resolveWorkspaceFile, listWorkspaceDirectory } from './workspace-service'
+import {
+  readWorkspaceFile,
+  resolveWorkspaceFile,
+  listWorkspaceDirectory,
+  searchWorkspaceEntries
+} from './workspace-service'
 
 describe('workspace-service boundary checks', () => {
   let rootDir = ''
@@ -79,6 +84,20 @@ describe('workspace-service boundary checks', () => {
       expect(result.entries.some((entry) => entry.name === 'packages' && entry.kind === 'directory')).toBe(
         true
       )
+    }
+  })
+
+  it('searches workspace files by path fragment', async () => {
+    await mkdir(join(workspaceRoot, 'packages', 'core'), { recursive: true })
+    await writeFile(join(workspaceRoot, 'packages', 'core', 'engine.ts'), 'export {}', 'utf8')
+    await writeFile(join(workspaceRoot, 'packages', 'readme.txt'), 'hello', 'utf8')
+
+    const result = await searchWorkspaceEntries(workspaceRoot, 'engine', 20)
+
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      expect(result.entries.some((entry) => entry.path === 'packages/core/engine.ts')).toBe(true)
+      expect(result.entries.every((entry) => entry.kind === 'file')).toBe(true)
     }
   })
 })

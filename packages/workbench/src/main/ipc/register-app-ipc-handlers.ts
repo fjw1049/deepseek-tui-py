@@ -59,6 +59,7 @@ import {
   workspaceFileWritePayloadSchema,
   workspaceHtmlPreviewPayloadSchema,
   workspaceListDirectoryPayloadSchema,
+  workspaceSearchEntriesPayloadSchema,
   workspacePickFilesPayloadSchema,
   asrTranscribePayloadSchema,
   asrConfigPayloadSchema,
@@ -121,6 +122,7 @@ import {
   openPathWithShell,
   readWorkspaceFile,
   resolveWorkspaceFile,
+  searchWorkspaceEntries,
   writeWorkspaceFile
 } from '../services/workspace-service'
 import {
@@ -1302,6 +1304,15 @@ export function registerAppIpcHandlers(options: RegisterAppIpcHandlersOptions): 
       payload
     )
     return listWorkspaceDirectory(request.workspaceRoot, request.directoryPath ?? '')
+  })
+
+  ipcMain.handle('file:search-workspace', async (_, payload: unknown) => {
+    const request = parseIpcPayload(
+      'file:search-workspace',
+      workspaceSearchEntriesPayloadSchema,
+      payload
+    )
+    return searchWorkspaceEntries(request.workspaceRoot, request.query, request.limit)
   })
 
   ipcMain.handle('workspace:html-preview-url', async (_, payload: unknown) => {

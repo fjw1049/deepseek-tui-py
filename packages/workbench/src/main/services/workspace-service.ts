@@ -19,6 +19,7 @@ import type {
   WorkspaceFileWriteResult,
   WorkspaceFileWriteTarget,
   WorkspaceListDirectoryResult,
+  WorkspaceSearchEntriesResult,
   WorkspaceTreeEntry
 } from '../../shared/workspace-file'
 
@@ -877,6 +878,107 @@ export async function resolveWorkspaceFile(
       allowBasenameFallback: false
     })
     return { ok: true, path: targetPath }
+  } catch (error) {
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : String(error)
+    }
+  }
+}
+
+const WORKSPACE_SEARCH_MAX_WALK = 12_000
+const WORKSPACE_SEARCH_DEFAULT_LIMIT = 80
+
+function scoreWorkspaceSearchPath(relativePath: string, query: string): number | null {
+  const normalizedPath = relativePath.replace(/\\/g, '/').toLowerCase()
+  const normalizedQuery = query.trim().toLowerCase()
+  if (!normalizedQuery) return null
+  const basename = normalizedPath.split('/').pop() ?? normalizedPath
+  if (basename === normalizedQuery) return 300
+  if (basename.startsWith(normalizedQuery)) return 220
+  if (basename.includes(normalizedQuery)) return 160
+  if (normalizedPath.endsWith(`/${normalizedQuery}`)) return 140
+  if (normalizedPath.includes(normalizedQuery)) return 100
+  // Lightweight subsequence match on basename for typo-tolerant fuzzy search.
+  let qi = 0
+  for (let i = 0; i < basename.length && qi < normalizedQuery.length; i += 1) {
+    if (basename[i] === normalizedQuery[qi]) qi += 1
+  }
+  if (qi === normalizedQuery.length) return 40
+  return null
+}
+
+export async function searchWorkspaceEntries(
+  workspaceRoot: string,
+  query: string,
+  limit = WORKSPACE_SEARCH_DEFAULT_LIMIT
+): Promise<WorkspaceSearchEntriesResult> {
+  try {
+    const root = workspaceRoot.trim()
+    if (!root) {
+      return { ok: false, message: 'Workspace root is required.' }
+    }
+    const normalizedQuery = query.trim()
+    if (!normalizedQuery) {
+      return { ok: true, entries: [], truncated: false }
+    }
+
+    const rootPath = await enforceWorkspaceBoundary(resolve(expandHomePath(root)), root)
+    const cappedLimit = Math.max(1, Math.min(200, Math.floor(limit)))
+    const ranked: Array<{ entry: WorkspaceTreeEntry; score: number }> = []
+    let walked = 0
+    let truncated = false
+
+    const queue: string[] = ['']
+    while (queue.length > 0) {
+      const relativeDir = queue.shift() ?? ''
+      const absoluteDir = relativeDir ? join(rootPath, relativeDir) : rootPath
+      let dirents: Dirent[]
+      try {
+        dirents = await readdir(absoluteDir, { withFileTypes: true })
+      } catch {
+        continue
+      }
+
+      for (const dirent of dirents) {
+        if (dirent.name === '.git' || SKIP_SEARCH_DIRS.has(dirent.name)) continue
+        walked += 1
+        if (walked > WORKSPACE_SEARCH_MAX_WALK) {
+          truncated = true
+          break
+        }
+
+        const relativePath = relativeDir ? `${relativeDir}/${dirent.name}` : dirent.name
+        const posixPath = relativePath.split('\\').join('/')
+        if (dirent.isDirectory()) {
+          queue.push(posixPath)
+          continue
+        }
+        if (!dirent.isFile()) continue
+
+        const score = scoreWorkspaceSearchPath(posixPath, normalizedQuery)
+        if (score === null) continue
+        const entry: WorkspaceTreeEntry = {
+          name: dirent.name,
+          path: posixPath,
+          kind: 'file'
+        }
+        ranked.push({ entry, score })
+      }
+      if (truncated) break
+    }
+
+    ranked.sort((left, right) => {
+      if (right.score !== left.score) return right.score - left.score
+      return left.entry.path.localeCompare(right.entry.path)
+    })
+    if (ranked.length > cappedLimit) truncated = true
+
+    return {
+      ok: true,
+      entries: ranked.slice(0, cappedLimit).map((item) => item.entry),
+      truncated
+    }
   } catch (error) {
     return {
       ok: false,

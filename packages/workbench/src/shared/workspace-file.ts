@@ -38,6 +38,20 @@ export type WorkspaceListDirectoryResult =
     }
   | { ok: false; message: string }
 
+export type WorkspaceSearchEntriesResult =
+  | {
+      ok: true
+      entries: WorkspaceTreeEntry[]
+      truncated: boolean
+    }
+  | { ok: false; message: string }
+
+export type WorkspaceSearchEntriesTarget = {
+  workspaceRoot: string
+  query: string
+  limit?: number
+}
+
 export type WorkspaceFileWriteTarget = {
   path: string
   workspaceRoot?: string

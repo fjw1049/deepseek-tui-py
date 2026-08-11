@@ -10,7 +10,7 @@ import {
   useSyncExternalStore
 } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Globe2 } from 'lucide-react'
+import { Code2, Globe2 } from 'lucide-react'
 import { useShallow } from 'zustand/react/shallow'
 import type { ChatBlock } from '../agent/types'
 import { useChatStore } from '../store/chat-store'
@@ -38,10 +38,24 @@ import {
   readStoredRightSidebarTab,
   type RightSidebarTab
 } from '../lib/right-sidebar-state'
+import {
+  persistLayoutMode,
+  readStoredLayoutMode,
+  type IdeCenterTab,
+  type WorkbenchLayoutMode
+} from '../lib/workbench-layout-mode'
 import { closeAllTerminalSessions } from '../store/terminal-session-store'
 import { useWorkspaceEditorStore } from '../store/workspace-editor-store'
 import { useWorkspaceFsWatch } from '../hooks/use-workspace-fs-watch'
-import { isChatsWorkspace, resolveActiveThreadWorkspace, resolveThreadFilesystemRoot } from '../lib/workspace-path'
+import {
+  isChatsWorkspace,
+  isClawWorkspacePath,
+  isInternalTemporaryWorkspace,
+  normalizeWorkspaceRoot,
+  resolveActiveThreadWorkspace,
+  resolveThreadFilesystemRoot
+} from '../lib/workspace-path'
+import { workspaceLabelFromPath } from '../lib/workspace-label'
 import {
   isShortcutEnabled,
   requestOpenApprovalPolicyMenu,
@@ -67,6 +81,7 @@ import {
   RightSidebarToggleButton,
   WorkbenchRightSidebar
 } from './right-sidebar/WorkbenchRightSidebar'
+import { IdeWorkspaceLayout } from './ide/IdeWorkspaceLayout'
 
 const SkillsView = lazy(() =>
   import('./extensions/SkillsView').then((module) => ({ default: module.SkillsView }))
@@ -233,6 +248,8 @@ export function Workbench(): ReactElement {
     selectThread,
     createThread,
     chooseWorkspace,
+    activateWorkspace,
+    hiddenWorkspacePaths,
     blocks,
     liveReasoning,
     liveAssistant,
@@ -268,6 +285,8 @@ export function Workbench(): ReactElement {
       selectThread: s.selectThread,
       createThread: s.createThread,
       chooseWorkspace: s.chooseWorkspace,
+      activateWorkspace: s.activateWorkspace,
+      hiddenWorkspacePaths: s.hiddenWorkspacePaths,
       blocks: s.blocks,
       liveReasoning: s.liveReasoning,
       liveAssistant: s.liveAssistant,
@@ -324,6 +343,8 @@ export function Workbench(): ReactElement {
   )
   const [runtimeDiagnosticsOpen, setRuntimeDiagnosticsOpen] = useState(false)
   const [chatColumnHidden, setChatColumnHidden] = useState(false)
+  const [layoutMode, setLayoutMode] = useState<WorkbenchLayoutMode>(readStoredLayoutMode)
+  const [requestedIdeCenterTab, setRequestedIdeCenterTab] = useState<IdeCenterTab | null>(null)
   // Transparent pointer shield shown during panel drags: without it, pointer
   // events over the webview/iframe panels are swallowed by the guest process
   // and the window-level resize listeners starve (drag freezes, then jumps).
@@ -390,6 +411,45 @@ export function Workbench(): ReactElement {
     () => resolveActiveThreadWorkspace(activeThreadId, threads, workspaceRoot),
     [activeThreadId, threads, workspaceRoot]
   )
+  const ideProjectOptions = useMemo(() => {
+    const paths = new Set<string>()
+    const active = normalizeWorkspaceRoot(activeWorkspaceRoot)
+    if (active) paths.add(active)
+    for (const thread of threads) {
+      const path = normalizeWorkspaceRoot(thread.workspace)
+      if (!path) continue
+      if (isInternalTemporaryWorkspace(path) || isClawWorkspacePath(path) || isChatsWorkspace(path)) {
+        continue
+      }
+      if (
+        hiddenWorkspacePaths.some(
+          (hidden) => normalizeWorkspaceRoot(hidden).toLowerCase() === path.toLowerCase()
+        )
+      ) {
+        continue
+      }
+      paths.add(path)
+    }
+    return [...paths]
+      .sort((left, right) =>
+        workspaceLabelFromPath(left).localeCompare(workspaceLabelFromPath(right), undefined, {
+          sensitivity: 'base'
+        })
+      )
+      .map((path) => ({
+        path,
+        name: workspaceLabelFromPath(path)
+      }))
+  }, [activeWorkspaceRoot, hiddenWorkspacePaths, threads])
+  const handleSelectIdeProject = useCallback(
+    (workspacePath: string): void => {
+      void activateWorkspace(workspacePath)
+    },
+    [activateWorkspace]
+  )
+  const handleBrowseIdeProject = useCallback((): void => {
+    void chooseWorkspace()
+  }, [chooseWorkspace])
   const simpleEmptyHome =
     stageCentered &&
     emptyHomeLayout === 'simple' &&
@@ -410,15 +470,29 @@ export function Workbench(): ReactElement {
   // Panel header already owns close/maximize when the sidebar is fully open —
   // keep the topbar control only for closed / collapsed-strip (open) entry.
   const rightPanelVisible = rightSidebarOpen && !rightSidebarCollapsed
+  const ideModeActive =
+    route === 'chat' && layoutMode === 'ide' && activeWorkspaceRoot.trim().length > 0
+  // IDE mode is editor-first: hide the projects/threads rail entirely (Synara
+  // Editor view does the same). Keep the user's chat-mode collapse preference
+  // in `leftSidebarCollapsed` so exiting IDE restores it.
+  const leftSidebarHidden = leftSidebarCollapsed || ideModeActive
+  const showIdeModeToggle =
+    route === 'chat' && activeWorkspaceRoot.trim().length > 0 && !ideModeActive
   const showRightSidebarToggle =
-    route === 'chat' && activeWorkspaceRoot.trim().length > 0 && !rightPanelVisible
-  const showTopbarRightActions = showDefaultEditorPicker || showRightSidebarToggle
+    route === 'chat' &&
+    activeWorkspaceRoot.trim().length > 0 &&
+    !rightPanelVisible &&
+    !ideModeActive
+  const showTopbarRightActions =
+    showDefaultEditorPicker || showRightSidebarToggle || showIdeModeToggle
   const topbarRightPaddingClass = showTopbarRightActions
-    ? showDefaultEditorPicker && showRightSidebarToggle
-      ? 'pr-[7rem] sm:pr-[7.5rem]'
+    ? showDefaultEditorPicker && (showRightSidebarToggle || showIdeModeToggle)
+      ? 'pr-[9.5rem] sm:pr-[10rem]'
       : showDefaultEditorPicker
         ? 'pr-[5.25rem]'
-        : 'pr-9 sm:pr-10'
+        : showIdeModeToggle && showRightSidebarToggle
+          ? 'pr-[7.5rem]'
+          : 'pr-9 sm:pr-10'
     : ''
   const operationColumnActive = showOperationColumn && !rightSidebarOpen
   const terminalSidebarOpen =
@@ -442,6 +516,10 @@ export function Workbench(): ReactElement {
   }
 
   const handleComposerOpenDiff = (): void => {
+    if (layoutMode === 'ide') {
+      setRequestedIdeCenterTab('changes')
+      return
+    }
     setRightSidebarOpen(true)
     setRightSidebarCollapsed(false)
     setRightSidebarTab('changes')
@@ -455,11 +533,33 @@ export function Workbench(): ReactElement {
 
   const openFileInEditor = useCallback(
     (path: string, line?: number): void => {
+      if (layoutMode === 'ide') {
+        setRequestedIdeCenterTab('files')
+        void openEditorFile(path, activeWorkspaceRoot, line)
+        return
+      }
       openRightSidebar('editor')
       void openEditorFile(path, activeWorkspaceRoot, line)
     },
-    [activeWorkspaceRoot, openEditorFile, openRightSidebar]
+    [activeWorkspaceRoot, layoutMode, openEditorFile, openRightSidebar]
   )
+
+  const enterIdeMode = useCallback((): void => {
+    if (!activeWorkspaceRoot.trim()) {
+      setError(t('ideNeedsWorkspace'))
+      return
+    }
+    // IDE mode owns the center stage; clear chat-mode maximize so the two
+    // layout systems never fight over chatColumnHidden.
+    setChatColumnHidden(false)
+    setLayoutMode('ide')
+    persistLayoutMode('ide')
+  }, [activeWorkspaceRoot, setError, t])
+
+  const exitIdeMode = useCallback((): void => {
+    setLayoutMode('chat')
+    persistLayoutMode('chat')
+  }, [])
 
   const closeRightSidebar = useCallback((): void => {
     setRightSidebarOpen(false)
@@ -496,7 +596,7 @@ export function Workbench(): ReactElement {
     const mainWidth = readMainRowWidth(
       shellRef,
       mainRowRef,
-      !leftSidebarCollapsed,
+      !leftSidebarHidden,
       leftSidebarWidth
     )
     if (chatColumnHidden) {
@@ -506,11 +606,20 @@ export function Workbench(): ReactElement {
     }
     setRightSidebarWidth(mainWidth)
     setChatColumnHidden(true)
-  }, [chatColumnHidden, leftSidebarCollapsed, leftSidebarWidth])
+  }, [chatColumnHidden, leftSidebarHidden, leftSidebarWidth])
 
   useEffect(() => {
     inputRef.current = input
   }, [input])
+
+  // IDE mode requires a bound workspace; fall back to chat if the root disappears
+  // (thread switch / cleared project) so we never render an empty IDE shell.
+  useEffect(() => {
+    if (layoutMode !== 'ide') return
+    if (activeWorkspaceRoot.trim()) return
+    setLayoutMode('chat')
+    persistLayoutMode('chat')
+  }, [activeWorkspaceRoot, layoutMode])
 
   // Scroll perf: flag the shell while any surface is actively scrolling so CSS
   // can drop the expensive backdrop-filter blur (re-rasterized every frame in
@@ -577,20 +686,34 @@ export function Workbench(): ReactElement {
       const mainWidth = readMainRowWidth(
         shellRef,
         mainRowRef,
-        !leftSidebarCollapsed,
+        !leftSidebarHidden,
         leftSidebarWidth
       )
       setRightSidebarWidth(resolveHalfRightWidth(mainWidth))
       setChatColumnHidden(false)
     }
-  }, [leftSidebarCollapsed, leftSidebarWidth, rightSidebarCollapsed, rightSidebarOpen])
+  }, [leftSidebarHidden, leftSidebarWidth, rightSidebarCollapsed, rightSidebarOpen])
 
   useEffect(() => {
+    const openEditorTarget = (path: string, root: string, line?: number, column?: number): void => {
+      if (layoutMode === 'ide') {
+        setRequestedIdeCenterTab('files')
+        void openEditorFile(path, root, line, column)
+        return
+      }
+      openRightSidebar('editor')
+      void openEditorFile(path, root, line, column)
+    }
+
     const onPreview = (event: Event): void => {
       const detail = (event as CustomEvent<WorkspaceFilePreviewDetail>).detail
       if (!detail?.path) return
       const root = (threadFilesystemRoot || detail.workspaceRoot || activeWorkspaceRoot).trim()
       if (isHtmlPreviewPath(detail.path) && root) {
+        // HTML preview still needs the chat-mode right sidebar browser tab.
+        if (layoutMode === 'ide') {
+          exitIdeMode()
+        }
         openRightSidebar('preview')
         void (async () => {
           const api = window.dsGui?.getWorkspaceHtmlPreviewUrl
@@ -607,38 +730,43 @@ export function Workbench(): ReactElement {
             })
             if (!result.ok) {
               console.error('[html-preview]', result.message)
-              openRightSidebar('editor')
-              void openEditorFile(detail.path, root, detail.line, detail.column)
+              openEditorTarget(detail.path, root, detail.line, detail.column)
               return
             }
             setWorkspacePreviewUrl(result.url)
             setWorkspacePreviewPath(detail.path)
           } catch (error) {
             console.error('[html-preview] failed to resolve preview URL', error)
-            openRightSidebar('editor')
-            void openEditorFile(detail.path, root, detail.line, detail.column)
+            openEditorTarget(detail.path, root, detail.line, detail.column)
           }
         })()
         return
       }
-      openRightSidebar('editor')
-      void openEditorFile(
-        detail.path,
-        root || activeWorkspaceRoot,
-        detail.line,
-        detail.column
-      )
+      openEditorTarget(detail.path, root || activeWorkspaceRoot, detail.line, detail.column)
     }
 
     window.addEventListener(WORKSPACE_FILE_PREVIEW_EVENT, onPreview)
     return () => window.removeEventListener(WORKSPACE_FILE_PREVIEW_EVENT, onPreview)
-  }, [activeWorkspaceRoot, openEditorFile, openRightSidebar, threadFilesystemRoot])
+  }, [
+    activeWorkspaceRoot,
+    exitIdeMode,
+    layoutMode,
+    openEditorFile,
+    openRightSidebar,
+    threadFilesystemRoot
+  ])
 
   useEffect(() => {
-    const onOpenChanges = (): void => openRightSidebar('changes')
+    const onOpenChanges = (): void => {
+      if (layoutMode === 'ide') {
+        setRequestedIdeCenterTab('changes')
+        return
+      }
+      openRightSidebar('changes')
+    }
     window.addEventListener('deepseekgui:open-changes-panel', onOpenChanges)
     return () => window.removeEventListener('deepseekgui:open-changes-panel', onOpenChanges)
-  }, [openRightSidebar])
+  }, [layoutMode, openRightSidebar])
 
   useEffect(() => {
     if (previewThreadId.current === activeThreadId) return
@@ -808,7 +936,7 @@ export function Workbench(): ReactElement {
         leftSidebarWidth,
         rightSidebarWidth,
         {
-          leftPanelVisible: !leftSidebarCollapsed,
+          leftPanelVisible: !leftSidebarHidden,
           rightPanelVisible
         },
         measuredMain
@@ -817,12 +945,13 @@ export function Workbench(): ReactElement {
       if (rightPanelVisible && next.right !== rightSidebarWidth) {
         setRightSidebarWidth(next.right)
       }
-      setChatColumnHidden(next.chatHidden)
+      // IDE mode owns chat visibility; never let the chat-mode fit helper hide it.
+      if (!ideModeActive) setChatColumnHidden(next.chatHidden)
     }
     sync()
     window.addEventListener('resize', sync)
     return () => window.removeEventListener('resize', sync)
-  }, [leftSidebarCollapsed, leftSidebarWidth, rightSidebarWidth, rightPanelVisible])
+  }, [ideModeActive, leftSidebarHidden, leftSidebarWidth, rightSidebarWidth, rightPanelVisible])
 
   const openThread = (id: string): void => {
     setRoute('chat')
@@ -998,7 +1127,7 @@ export function Workbench(): ReactElement {
   )
 
   const beginLeftResize = (event: ReactPointerEvent<HTMLDivElement>): void => {
-    if (leftSidebarCollapsed || event.button !== 0) return
+    if (leftSidebarHidden || event.button !== 0) return
     event.preventDefault()
     const startX = event.clientX
     const startLeft = leftSidebarWidth
@@ -1068,7 +1197,7 @@ export function Workbench(): ReactElement {
         startLeft,
         startRight - delta,
         {
-          leftPanelVisible: !leftSidebarCollapsed,
+          leftPanelVisible: !leftSidebarHidden,
           rightPanelVisible: true
         },
         measuredMain
@@ -1135,8 +1264,9 @@ export function Workbench(): ReactElement {
         />
       ) : null}
       {/* Fixed expand control — same window coords as the sidebar collapse
-          trigger, so the toggle never jumps when the rail opens/closes. */}
-      {leftSidebarCollapsed ? (
+          trigger, so the toggle never jumps when the rail opens/closes.
+          Hidden in IDE mode: that layout has no projects/threads rail. */}
+      {leftSidebarCollapsed && !ideModeActive ? (
         <SidebarExpandDroplet onExpand={expandLeftSidebar} />
       ) : null}
       {/* Stays mounted while collapsed so the offcanvas slide can animate: the
@@ -1144,16 +1274,16 @@ export function Workbench(): ReactElement {
           left, both on the same 300ms curve (Synara sidebar gap + container). */}
       <div
         className="ds-workbench-sidebar-wrap relative min-h-0 shrink-0"
-        data-collapsed={leftSidebarCollapsed ? '' : undefined}
-        aria-hidden={leftSidebarCollapsed}
-        inert={leftSidebarCollapsed || undefined}
-        style={{ width: leftSidebarCollapsed ? 0 : sidebarWrapWidth }}
+        data-collapsed={leftSidebarHidden ? '' : undefined}
+        aria-hidden={leftSidebarHidden}
+        inert={leftSidebarHidden || undefined}
+        style={{ width: leftSidebarHidden ? 0 : sidebarWrapWidth }}
       >
         <div
           className="ds-workbench-sidebar-slide absolute inset-y-0 left-0"
           style={{
             width: sidebarWrapWidth,
-            transform: leftSidebarCollapsed ? 'translateX(-100%)' : 'translateX(0)'
+            transform: leftSidebarHidden ? 'translateX(-100%)' : 'translateX(0)'
           }}
         >
           <Sidebar
@@ -1259,6 +1389,109 @@ export function Workbench(): ReactElement {
           </div>
         )}
 
+        {ideModeActive ? (
+          <div ref={mainRowRef} className="flex min-h-0 min-w-0 flex-1 flex-col">
+            <IdeWorkspaceLayout
+              workspaceRoot={activeWorkspaceRoot}
+              blocks={blocks}
+              projectLabel={workspaceLabelFromPath(activeWorkspaceRoot)}
+              projectOptions={ideProjectOptions}
+              onSelectProject={handleSelectIdeProject}
+              onBrowseProject={handleBrowseIdeProject}
+              onExitIdeMode={exitIdeMode}
+              onOpenFileInEditor={openFileInEditor}
+              requestedCenterTab={requestedIdeCenterTab}
+              onRequestedCenterTabConsumed={() => setRequestedIdeCenterTab(null)}
+              chatRail={
+                <div className="flex h-full min-h-0 min-w-0 flex-col">
+                  <div className="ds-ide-chat-rail__header ds-surface-divider flex h-10 shrink-0 items-center gap-2 pl-3.5 pr-1.5">
+                    <SessionHeader compact className="min-w-0" />
+                    {busy ? (
+                      <span className="inline-flex shrink-0 rounded-full bg-amber-500/16 px-1.5 py-px text-[10px] font-semibold leading-4 text-amber-950 dark:text-amber-100">
+                        {t('running')}
+                      </span>
+                    ) : null}
+                  </div>
+                  <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+                    <MessageTimeline
+                      blocks={blocks}
+                      liveReasoning={liveReasoning}
+                      live={liveAssistant}
+                      activeThreadId={activeThreadId}
+                      runtimeConnection={runtimeConnection}
+                      stageCentered={false}
+                      useChatStageWidth={false}
+                      onRetryConnection={() => void probeRuntime('user')}
+                      onOpenSettings={() => openSettings('general')}
+                      onOpenDiagnostics={() => setRuntimeDiagnosticsOpen(true)}
+                      onSelectSuggestion={(text) => setInput(text)}
+                      htmlPreviewAction={htmlPreviewAction}
+                      onOpenWorkspaceFile={openFileInEditor}
+                      devPreviewCard={previewLaunchCard}
+                    />
+                    <div className="mx-auto mb-3 flex w-full shrink-0 pl-3.5 pr-1.5 pt-0">
+                      <ComposerStage
+                        input={input}
+                        setInput={setInput}
+                        mode={mode}
+                        setMode={setMode}
+                        busy={busy}
+                        runtimeReady={runtimeConnection === 'ready'}
+                        hasActiveThread={Boolean(activeThreadId)}
+                        useChatStageWidth={false}
+                        composerModel={composerModel}
+                        composerPickList={composerPickList}
+                        onComposerModelChange={(modelId) => {
+                          setComposerModel(modelId)
+                        }}
+                        onSend={handleSend}
+                        onCompact={compactActiveThread}
+                        onFork={handleComposerFork}
+                        onOpenDiff={handleComposerOpenDiff}
+                        queuedMessages={queuedMessages}
+                        onRemoveQueuedMessage={removeQueuedMessage}
+                        onWithdrawQueuedMessage={withdrawQueuedMessage}
+                        onSendQueuedMessageNow={(id) => void sendQueuedMessageNow(id)}
+                        onInterrupt={() => void interrupt()}
+                        focusRequestId={composerFocusRequestId}
+                        previewPicks={pendingPreviewPicks}
+                        onRemovePreviewPick={removePendingPreviewPick}
+                        onClearPreviewPicks={clearPendingPreviewPicks}
+                        flashNotice={previewPickNotice}
+                        flashNoticeNonce={previewPickNoticeNonce}
+                      />
+                    </div>
+                  </div>
+                </div>
+              }
+            />
+            {bottomTerminalOpen && activeWorkspaceRoot.trim().length > 0 ? (
+              <div
+                className="ds-bottom-terminal ds-no-drag flex shrink-0 flex-col border-t-2 border-ds-border"
+                style={{ height: bottomTerminalHeight }}
+              >
+                <div
+                  role="separator"
+                  aria-orientation="horizontal"
+                  aria-label={t('terminalPanelResize')}
+                  title={t('terminalPanelResize')}
+                  className="ds-bottom-terminal__handle ds-no-drag group flex h-2 shrink-0 items-center justify-center cursor-row-resize touch-none select-none"
+                  onPointerDown={beginBottomTerminalResize}
+                >
+                  <span className="pointer-events-none h-0.5 w-8 rounded-full bg-ds-border-strong transition group-hover:w-12 group-hover:bg-ds-accent/70" />
+                </div>
+                <AppTerminalPanel
+                  workspaceRoot={activeWorkspaceRoot}
+                  mountSurface="bottom"
+                  mountActive
+                  visible
+                  onClose={() => setBottomTerminalOpen(false)}
+                  className="min-h-0 w-full flex-1 border-0"
+                />
+              </div>
+            ) : null}
+          </div>
+        ) : (
         <div ref={mainRowRef} className="flex min-h-0 flex-1">
           <div className={`min-h-0 min-w-0 flex-1 flex-col ${chatColumnHidden ? 'hidden' : 'flex'}`}>
           <section className="ds-drag flex min-h-0 min-w-0 flex-1 flex-col">
@@ -1278,6 +1511,18 @@ export function Workbench(): ReactElement {
               </div>
               {showTopbarRightActions ? (
                 <div className="ds-workbench-topbar__right-actions ds-no-drag">
+                  {showIdeModeToggle ? (
+                    <button
+                      type="button"
+                      onClick={enterIdeMode}
+                      className="inline-flex h-7 items-center gap-1 rounded-md border border-ds-border bg-ds-elevated px-2 text-[11.5px] font-medium text-ds-muted transition hover:bg-ds-hover/60 hover:text-ds-ink"
+                      title={t('ideSwitchToIde')}
+                      aria-label={t('ideSwitchToIde')}
+                    >
+                      <Code2 className="h-3.5 w-3.5" strokeWidth={1.9} />
+                      <span className="hidden sm:inline">{t('ideModeIde')}</span>
+                    </button>
+                  ) : null}
                   {showDefaultEditorPicker ? <DefaultEditorPicker /> : null}
                   {showRightSidebarToggle ? (
                     <RightSidebarToggleButton
@@ -1566,6 +1811,7 @@ export function Workbench(): ReactElement {
             terminalMountActive={!bottomTerminalOpen}
           />
         </div>
+        )}
           </>
         )}
       </main>
