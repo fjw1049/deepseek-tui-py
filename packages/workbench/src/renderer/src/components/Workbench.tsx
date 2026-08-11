@@ -10,7 +10,7 @@ import {
   useSyncExternalStore
 } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Code2, Globe2 } from 'lucide-react'
+import { Globe2 } from 'lucide-react'
 import { useShallow } from 'zustand/react/shallow'
 import type { ChatBlock } from '../agent/types'
 import { useChatStore } from '../store/chat-store'
@@ -76,6 +76,7 @@ import { getEmptyHomeLayout, subscribeAppearance } from '../lib/apply-appearance
 import { ConnectionStatusBar } from './ConnectionStatusBar'
 import { DefaultEditorPicker } from './DefaultEditorPicker'
 import { SessionHeader } from './SessionHeader'
+import { IdeChatRailHeader } from './ide/IdeChatRailHeader'
 import { RuntimeDiagnosticsDialog } from './RuntimeDiagnosticsDialog'
 import {
   RightSidebarToggleButton,
@@ -472,27 +473,30 @@ export function Workbench(): ReactElement {
   const rightPanelVisible = rightSidebarOpen && !rightSidebarCollapsed
   const ideModeActive =
     route === 'chat' && layoutMode === 'ide' && activeWorkspaceRoot.trim().length > 0
+  // IDE rail is too narrow for Overview / GitHub cards — always simple empty home.
+  const ideSimpleEmptyHome =
+    ideModeActive &&
+    runtimeConnection === 'ready' &&
+    !busy &&
+    blocks.length === 0 &&
+    !liveAssistant &&
+    !liveReasoning
   // IDE mode is editor-first: hide the projects/threads rail entirely (Synara
   // Editor view does the same). Keep the user's chat-mode collapse preference
   // in `leftSidebarCollapsed` so exiting IDE restores it.
   const leftSidebarHidden = leftSidebarCollapsed || ideModeActive
-  const showIdeModeToggle =
-    route === 'chat' && activeWorkspaceRoot.trim().length > 0 && !ideModeActive
   const showRightSidebarToggle =
     route === 'chat' &&
     activeWorkspaceRoot.trim().length > 0 &&
     !rightPanelVisible &&
     !ideModeActive
-  const showTopbarRightActions =
-    showDefaultEditorPicker || showRightSidebarToggle || showIdeModeToggle
+  const showTopbarRightActions = showDefaultEditorPicker || showRightSidebarToggle
   const topbarRightPaddingClass = showTopbarRightActions
-    ? showDefaultEditorPicker && (showRightSidebarToggle || showIdeModeToggle)
+    ? showDefaultEditorPicker && showRightSidebarToggle
       ? 'pr-[9.5rem] sm:pr-[10rem]'
       : showDefaultEditorPicker
         ? 'pr-[5.25rem]'
-        : showIdeModeToggle && showRightSidebarToggle
-          ? 'pr-[7.5rem]'
-          : 'pr-9 sm:pr-10'
+        : 'pr-9 sm:pr-10'
     : ''
   const operationColumnActive = showOperationColumn && !rightSidebarOpen
   const terminalSidebarOpen =
@@ -1404,32 +1408,42 @@ export function Workbench(): ReactElement {
               onRequestedCenterTabConsumed={() => setRequestedIdeCenterTab(null)}
               chatRail={
                 <div className="flex h-full min-h-0 min-w-0 flex-col">
-                  <div className="ds-ide-chat-rail__header ds-surface-divider flex h-10 shrink-0 items-center gap-2 pl-3.5 pr-1.5">
-                    <SessionHeader compact className="min-w-0" />
-                    {busy ? (
-                      <span className="inline-flex shrink-0 rounded-full bg-amber-500/16 px-1.5 py-px text-[10px] font-semibold leading-4 text-amber-950 dark:text-amber-100">
-                        {t('running')}
-                      </span>
-                    ) : null}
-                  </div>
+                  <IdeChatRailHeader
+                    busy={busy}
+                    onNewChat={() => {
+                      if (activeWorkspaceRoot.trim()) {
+                        startNewChatInWorkspace(activeWorkspaceRoot)
+                      } else {
+                        startNewChat()
+                      }
+                    }}
+                    onNewTerminal={toggleTerminalPanel}
+                  />
                   <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-                    <MessageTimeline
-                      blocks={blocks}
-                      liveReasoning={liveReasoning}
-                      live={liveAssistant}
-                      activeThreadId={activeThreadId}
-                      runtimeConnection={runtimeConnection}
-                      stageCentered={false}
-                      useChatStageWidth={false}
-                      onRetryConnection={() => void probeRuntime('user')}
-                      onOpenSettings={() => openSettings('general')}
-                      onOpenDiagnostics={() => setRuntimeDiagnosticsOpen(true)}
-                      onSelectSuggestion={(text) => setInput(text)}
-                      htmlPreviewAction={htmlPreviewAction}
-                      onOpenWorkspaceFile={openFileInEditor}
-                      devPreviewCard={previewLaunchCard}
-                    />
-                    <div className="mx-auto mb-3 flex w-full shrink-0 pl-3.5 pr-1.5 pt-0">
+                    {ideSimpleEmptyHome ? (
+                      <div className="flex min-h-0 min-w-0 flex-1 flex-col justify-center pl-[1.15rem] pr-[0.95rem]">
+                        <SimpleEmptyPrompt />
+                      </div>
+                    ) : (
+                      <MessageTimeline
+                        blocks={blocks}
+                        liveReasoning={liveReasoning}
+                        live={liveAssistant}
+                        activeThreadId={activeThreadId}
+                        runtimeConnection={runtimeConnection}
+                        stageCentered={false}
+                        useChatStageWidth={false}
+                        forceSimpleEmptyHome
+                        onRetryConnection={() => void probeRuntime('user')}
+                        onOpenSettings={() => openSettings('general')}
+                        onOpenDiagnostics={() => setRuntimeDiagnosticsOpen(true)}
+                        onSelectSuggestion={(text) => setInput(text)}
+                        htmlPreviewAction={htmlPreviewAction}
+                        onOpenWorkspaceFile={openFileInEditor}
+                        devPreviewCard={previewLaunchCard}
+                      />
+                    )}
+                    <div className="mx-auto mb-2 flex w-full shrink-0 px-[0.95rem] pl-[1.15rem] pt-0 -mt-3">
                       <ComposerStage
                         input={input}
                         setInput={setInput}
@@ -1439,6 +1453,7 @@ export function Workbench(): ReactElement {
                         runtimeReady={runtimeConnection === 'ready'}
                         hasActiveThread={Boolean(activeThreadId)}
                         useChatStageWidth={false}
+                        compactChrome
                         composerModel={composerModel}
                         composerPickList={composerPickList}
                         onComposerModelChange={(modelId) => {
@@ -1511,18 +1526,6 @@ export function Workbench(): ReactElement {
               </div>
               {showTopbarRightActions ? (
                 <div className="ds-workbench-topbar__right-actions ds-no-drag">
-                  {showIdeModeToggle ? (
-                    <button
-                      type="button"
-                      onClick={enterIdeMode}
-                      className="inline-flex h-7 items-center gap-1 rounded-md border border-ds-border bg-ds-elevated px-2 text-[11.5px] font-medium text-ds-muted transition hover:bg-ds-hover/60 hover:text-ds-ink"
-                      title={t('ideSwitchToIde')}
-                      aria-label={t('ideSwitchToIde')}
-                    >
-                      <Code2 className="h-3.5 w-3.5" strokeWidth={1.9} />
-                      <span className="hidden sm:inline">{t('ideModeIde')}</span>
-                    </button>
-                  ) : null}
                   {showDefaultEditorPicker ? <DefaultEditorPicker /> : null}
                   {showRightSidebarToggle ? (
                     <RightSidebarToggleButton
@@ -1644,6 +1647,7 @@ export function Workbench(): ReactElement {
                         <OperationContextDock
                           onOpenChanges={handleComposerOpenDiff}
                           onOpenEditor={() => openRightSidebar('editor')}
+                          onEnterIdeMode={enterIdeMode}
                           previewActive={rightSidebarOpen && rightSidebarTab === 'preview'}
                           terminalPanelOpen={bottomTerminalOpen}
                           terminalPanelEnabled={activeWorkspaceRoot.trim().length > 0}
@@ -1691,6 +1695,7 @@ export function Workbench(): ReactElement {
                       <OperationContextDock
                         onOpenChanges={handleComposerOpenDiff}
                         onOpenEditor={() => openRightSidebar('editor')}
+                        onEnterIdeMode={enterIdeMode}
                         previewActive={rightSidebarOpen && rightSidebarTab === 'preview'}
                         terminalPanelOpen={bottomTerminalOpen}
                         terminalPanelEnabled={activeWorkspaceRoot.trim().length > 0}

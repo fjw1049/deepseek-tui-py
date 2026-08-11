@@ -9,11 +9,11 @@ import {
 } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useShallow } from 'zustand/react/shallow'
-import { ChevronRight, FileEdit, Pencil } from 'lucide-react'
+import { FileEdit } from 'lucide-react'
 import type { GitWorkingChangeFile, GitWorkingChangeStage } from '@shared/git-working-changes'
 import type { ChatBlock } from '../agent/types'
 import { ChangeDiffStatsLabel } from './ChangeDiffStatsLabel'
-import { DiffView } from './DiffView'
+import { DiffView, type DiffRenderStyle } from './DiffView'
 import { useGitWorkingChanges } from '../hooks/use-git-working-changes'
 import { useWorkspaceDirtyGitRefresh } from '../hooks/use-workspace-dirty-git-refresh'
 import {
@@ -120,8 +120,6 @@ function mergeChangeItems(
   sessionItems: InspectorChangeItem[],
   gitItems: InspectorChangeItem[]
 ): InspectorChangeItem[] {
-  // Prefer session/ledger detail (agent turn), but keep git commit metadata so
-  // AI-touched files that are also dirty in git still show checkboxes.
   const gitByPath = new Map<string, InspectorChangeItem>()
   for (const item of gitItems) {
     const key = normalizeChangePath(item.filePath)
@@ -158,22 +156,26 @@ function mergeChangeItems(
   return merged
 }
 
-const DIFF_HEIGHT_DEFAULT = 360
-const DIFF_HEIGHT_MIN = 160
-const DIFF_HEIGHT_MAX = 900
+const FILE_LIST_DEFAULT = 280
+const FILE_LIST_MIN = 180
+const FILE_LIST_MAX = 480
+const STACK_LIST_DEFAULT = 220
+const STACK_LIST_MIN = 120
+const STACK_LIST_MAX = 420
 
 /**
- * Right-side change list — expand a file to review its unified diff;
- * open the full file in the workspace editor via an explicit action.
+ * Change review panel.
+ * - `review`: IDE center — file list | full-height compare viewport (default split).
+ * - `stack`: right sidebar — file list above, compare below.
  */
 export function ChangeInspector({
   blocks,
   className,
-  onOpenFileInEditor
+  variant = 'stack'
 }: {
   blocks: ChatBlock[]
   className?: string
-  onOpenFileInEditor: (path: string, line?: number) => void
+  variant?: 'review' | 'stack'
 }): ReactElement {
   const { t } = useTranslation('common')
   const selectedId = useChatStore((s) => s.inspectorSelectedId)
@@ -198,36 +200,45 @@ export function ChangeInspector({
     () => (gitChanges?.ok ? gitChanges.files.map((file) => file.path) : []),
     [gitChanges]
   )
-  const [expandedId, setExpandedId] = useState<string | null>(null)
-  const [diffHeight, setDiffHeight] = useState(DIFF_HEIGHT_DEFAULT)
-  const resizeDrag = useRef<{ startY: number; startHeight: number } | null>(null)
 
-  const onDiffResizePointerDown = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
-    event.preventDefault()
-    event.stopPropagation()
-    const target = event.currentTarget
-    target.setPointerCapture(event.pointerId)
-    resizeDrag.current = { startY: event.clientY, startHeight: diffHeight }
-  }, [diffHeight])
+  const isReview = variant === 'review'
+  const [listSize, setListSize] = useState(isReview ? FILE_LIST_DEFAULT : STACK_LIST_DEFAULT)
+  // Unified by default — denser, no empty half-pane on new/deleted files.
+  const [diffStyle, setDiffStyle] = useState<DiffRenderStyle>('unified')
+  const resizeDrag = useRef<{ start: number; startSize: number } | null>(null)
 
-  const onDiffResizePointerMove = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
-    const drag = resizeDrag.current
-    if (!drag) return
-    const next = Math.min(
-      DIFF_HEIGHT_MAX,
-      Math.max(DIFF_HEIGHT_MIN, drag.startHeight + (event.clientY - drag.startY))
-    )
-    setDiffHeight(next)
-  }, [])
-
-  const onDiffResizePointerUp = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
-    if (resizeDrag.current) {
-      resizeDrag.current = null
-      try {
-        event.currentTarget.releasePointerCapture(event.pointerId)
-      } catch {
-        /* already released */
+  const onListResizePointerDown = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      event.preventDefault()
+      event.stopPropagation()
+      event.currentTarget.setPointerCapture(event.pointerId)
+      resizeDrag.current = {
+        start: isReview ? event.clientX : event.clientY,
+        startSize: listSize
       }
+    },
+    [isReview, listSize]
+  )
+
+  const onListResizePointerMove = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      const drag = resizeDrag.current
+      if (!drag) return
+      const delta = (isReview ? event.clientX : event.clientY) - drag.start
+      const min = isReview ? FILE_LIST_MIN : STACK_LIST_MIN
+      const max = isReview ? FILE_LIST_MAX : STACK_LIST_MAX
+      setListSize(Math.min(max, Math.max(min, drag.startSize + delta)))
+    },
+    [isReview]
+  )
+
+  const onListResizePointerUp = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!resizeDrag.current) return
+    resizeDrag.current = null
+    try {
+      event.currentTarget.releasePointerCapture(event.pointerId)
+    } catch {
+      /* already released */
     }
   }, [])
 
@@ -258,18 +269,16 @@ export function ChangeInspector({
   useEffect(() => {
     if (fileChanges.length === 0) {
       if (selectedId !== null) selectInspectorItem(null)
-      setExpandedId(null)
       return
     }
     if (selectedId && fileChanges.some((item) => item.id === selectedId)) return
     selectInspectorItem(fileChanges[fileChanges.length - 1]?.id ?? null)
   }, [fileChanges, selectedId, selectInspectorItem])
 
-  useEffect(() => {
-    if (expandedId && !fileChanges.some((item) => item.id === expandedId)) {
-      setExpandedId(null)
-    }
-  }, [expandedId, fileChanges])
+  const selectedItem = useMemo(
+    () => fileChanges.find((item) => item.id === selectedId) ?? null,
+    [fileChanges, selectedId]
+  )
 
   const gitStageLabel = (stage: GitWorkingChangeStage): string => {
     if (stage === 'staged') return t('gitStageStaged')
@@ -277,34 +286,131 @@ export function ChangeInspector({
     return t('gitStageUnstaged')
   }
 
-  const toggleItem = (item: InspectorChangeItem): void => {
-    selectInspectorItem(item.id)
-    setExpandedId((current) => (current === item.id ? null : item.id))
-  }
+  const fileList = (
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+      {/* Same h-9 + px-2 + border as DiffView header so both columns share one rule. */}
+      <div className="ds-change-inspector__pane-header flex shrink-0 items-center gap-2">
+        <div className="min-w-0 flex-1 truncate text-[12.5px] font-semibold text-ds-muted">
+          {t('inspectorTitle')}
+          {changeStats ? (
+            <span className="ml-2 inline-flex align-middle">
+              <ChangeDiffStatsLabel stats={changeStats} size="sm" />
+            </span>
+          ) : null}
+        </div>
+        {gitFilePaths.length > 0 ? (
+          <span className="max-w-[46%] shrink-0 truncate text-[11px] text-ds-faint" title={t('gitCommitSelectionSummary', {
+            selected: selectedCommitCount,
+            total: gitFilePaths.length
+          })}>
+            {t('gitCommitSelectionSummary', {
+              selected: selectedCommitCount,
+              total: gitFilePaths.length
+            })}
+          </span>
+        ) : fileChanges.length > 0 ? (
+          <span className="shrink-0 text-[11px] text-ds-faint">
+            {t('inspectorSummaryFiles', { count: fileChanges.length })}
+          </span>
+        ) : null}
+      </div>
+      <ul className="min-h-0 flex-1 overflow-y-auto">
+        {fileChanges.map((item) => {
+          const stats = countDiffStats(item.detail)
+          const displayPath = formatFilePathForDisplay(item.filePath, root || workspaceRoot)
+          const commitSelected = Boolean(
+            item.committable && item.filePath && gitCommitSelectedPaths.includes(item.filePath)
+          )
+          const isSelected = selectedId === item.id
+          return (
+            <li key={item.id}>
+              <div
+                className={`flex w-full items-start gap-2 px-2 py-1.5 transition ${
+                  isSelected ? 'bg-ds-hover text-ds-ink' : 'text-ds-ink hover:bg-ds-hover/70'
+                }`}
+              >
+                {item.committable && item.filePath ? (
+                  <input
+                    type="checkbox"
+                    checked={commitSelected}
+                    aria-label={t('gitCommitIncludeFile', {
+                      file: displayPath ?? item.filePath
+                    })}
+                    className="mt-1 shrink-0"
+                    onClick={(event) => event.stopPropagation()}
+                    onChange={() => toggleGitCommitPath(item.filePath!, gitFilePaths)}
+                  />
+                ) : (
+                  <FileEdit
+                    className={`mt-0.5 h-4 w-4 shrink-0 ${
+                      item.status === 'error' ? 'text-red-700' : 'text-ds-muted'
+                    }`}
+                    strokeWidth={1.75}
+                  />
+                )}
+                <button
+                  type="button"
+                  onClick={() => selectInspectorItem(item.id)}
+                  aria-current={isSelected ? 'true' : undefined}
+                  className="flex min-w-0 flex-1 flex-col gap-0.5 text-left"
+                >
+                  <div className="flex min-w-0 items-center gap-2">
+                    <div className="min-w-0 flex-1 truncate text-[13px] text-ds-ink">
+                      {displayPath ?? t('toolActionFile')}
+                    </div>
+                    {item.gitStage && item.gitStage !== 'unstaged' ? (
+                      <span className="shrink-0 rounded-full bg-ds-hover px-2 py-0.5 text-[11px] font-medium leading-none text-ds-muted">
+                        {gitStageLabel(item.gitStage)}
+                      </span>
+                    ) : null}
+                    {item.status === 'running' ? (
+                      <span className="shrink-0 rounded-full bg-amber-200/40 px-2 py-0.5 text-[11px] font-medium leading-none text-amber-900 dark:bg-amber-700/30 dark:text-amber-100">
+                        {t('inspectorStatusRunning')}
+                      </span>
+                    ) : null}
+                  </div>
+                  {stats ? <ChangeDiffStatsLabel stats={stats} size="sm" /> : null}
+                </button>
+              </div>
+            </li>
+          )
+        })}
+      </ul>
+    </div>
+  )
+
+  const diffViewport = (
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+      {selectedItem ? (
+        selectedItem.detail.trim() ? (
+          <DiffView
+            patch={selectedItem.detail}
+            filePath={selectedItem.filePath}
+            maxHeight={9000}
+            diffStyle={diffStyle}
+            showStyleToggle
+            onDiffStyleChange={setDiffStyle}
+            chrome="flush"
+            className="min-h-0 flex-1"
+          />
+        ) : (
+          <div className="flex flex-1 items-center justify-center text-[12px] text-ds-faint">
+            {t('inspectorDiffEmpty')}
+          </div>
+        )
+      ) : (
+        <div className="flex flex-1 items-center justify-center px-4 text-center text-[13px] text-ds-faint">
+          {t('inspectorSelectHint')}
+        </div>
+      )}
+    </div>
+  )
 
   return (
     <aside
-      className={`ds-change-inspector ds-tool-panel ds-no-drag flex flex-col ${className ?? ''}`}
+      className={`ds-change-inspector ds-change-inspector--${variant} ds-tool-panel ds-no-drag flex h-full min-h-0 flex-col ${className ?? ''}`}
     >
-      <div className="flex min-h-[58px] shrink-0 items-center gap-3 border-b border-ds-border-muted px-3 py-3">
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <div className="text-[13px] font-semibold tracking-wide text-ds-muted">
-              {t('inspectorTitle')}
-            </div>
-            {changeStats ? <ChangeDiffStatsLabel stats={changeStats} size="md" /> : null}
-          </div>
-          <div className="mt-1 truncate text-[12px] text-ds-faint">
-            {gitLoading && fileChanges.length === 0
-              ? t('gitBranchLoading')
-              : fileChanges.length > 0
-                ? t('inspectorSummaryFiles', { count: fileChanges.length })
-                : t('inspectorEmpty')}
-          </div>
-        </div>
-      </div>
-
-      <div className="flex min-h-0 flex-1 flex-col">
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
         {gitLoading && fileChanges.length === 0 ? (
           <div className="flex flex-1 items-center justify-center px-6 py-10 text-center text-[13px] text-ds-faint">
             {t('gitBranchLoading')}
@@ -319,136 +425,42 @@ export function ChangeInspector({
               <div className="mt-1 text-[12px] leading-6 text-ds-faint">{t('inspectorEmpty')}</div>
             </div>
           </div>
-        ) : (
-          <>
-            {gitFilePaths.length > 0 ? (
-              <div className="flex shrink-0 items-center gap-2 border-b border-ds-border-muted/60 px-4 py-2 text-[12px] text-ds-faint">
-                <span className="min-w-0 flex-1 truncate">
-                  {t('gitCommitSelectionSummary', {
-                    selected: selectedCommitCount,
-                    total: gitFilePaths.length
-                  })}
-                </span>
-              </div>
-            ) : null}
-            <div className="min-h-0 flex-1 overflow-y-auto py-2">
-              <ul className="divide-y divide-ds-border-muted/60">
-                {fileChanges.map((item) => {
-                  const stats = countDiffStats(item.detail)
-                  const displayPath = formatFilePathForDisplay(item.filePath, root || workspaceRoot)
-                  const commitSelected = Boolean(
-                    item.committable &&
-                      item.filePath &&
-                      gitCommitSelectedPaths.includes(item.filePath)
-                  )
-                  const isExpanded = expandedId === item.id
-                  const hasPatch = Boolean(item.detail.trim())
-                  return (
-                    <li key={item.id}>
-                      <div
-                        className={`flex w-full items-start gap-2.5 px-4 py-2.5 transition ${
-                          isExpanded ? 'bg-ds-hover text-ds-ink' : 'text-ds-ink hover:bg-ds-hover/70'
-                        }`}
-                      >
-                        {item.committable && item.filePath ? (
-                          <input
-                            type="checkbox"
-                            checked={commitSelected}
-                            aria-label={t('gitCommitIncludeFile', {
-                              file: displayPath ?? item.filePath
-                            })}
-                            className="mt-1 shrink-0"
-                            onClick={(event) => event.stopPropagation()}
-                            onChange={() => toggleGitCommitPath(item.filePath!, gitFilePaths)}
-                          />
-                        ) : (
-                          <FileEdit
-                            className={`mt-0.5 h-4 w-4 shrink-0 ${
-                              item.status === 'error' ? 'text-red-700' : 'text-ds-muted'
-                            }`}
-                            strokeWidth={1.75}
-                          />
-                        )}
-                        <button
-                          type="button"
-                          onClick={() => toggleItem(item)}
-                          aria-expanded={isExpanded}
-                          className="flex min-w-0 flex-1 flex-col gap-0.5 text-left"
-                        >
-                          <div className="flex min-w-0 items-center gap-2">
-                            <div className="min-w-0 flex-1 truncate text-[13px] text-ds-ink">
-                              {displayPath ?? t('toolActionFile')}
-                            </div>
-                            {item.gitStage && item.gitStage !== 'unstaged' ? (
-                              <span className="shrink-0 rounded-full bg-ds-hover px-2 py-0.5 text-[11px] font-medium leading-none text-ds-muted">
-                                {gitStageLabel(item.gitStage)}
-                              </span>
-                            ) : null}
-                            {item.status === 'running' ? (
-                              <span className="shrink-0 rounded-full bg-amber-200/40 px-2 py-0.5 text-[11px] font-medium leading-none text-amber-900 dark:bg-amber-700/30 dark:text-amber-100">
-                                {t('inspectorStatusRunning')}
-                              </span>
-                            ) : null}
-                            <ChevronRight
-                              className={`h-4 w-4 shrink-0 text-ds-faint transition-transform ${
-                                isExpanded ? 'rotate-90' : ''
-                              }`}
-                              strokeWidth={1.85}
-                            />
-                          </div>
-                          {stats ? <ChangeDiffStatsLabel stats={stats} size="sm" /> : null}
-                        </button>
-                        {item.filePath ? (
-                          <button
-                            type="button"
-                            onClick={(event) => {
-                              event.stopPropagation()
-                              onOpenFileInEditor(item.filePath!, item.editLine)
-                            }}
-                            className="mt-0.5 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-ds-faint transition hover:bg-ds-hover hover:text-ds-ink"
-                            title={t('inspectorOpenInEditor')}
-                            aria-label={t('inspectorOpenInEditor')}
-                          >
-                            <Pencil className="h-3.5 w-3.5" strokeWidth={1.85} />
-                          </button>
-                        ) : null}
-                      </div>
-                      {isExpanded ? (
-                        <div className="border-t border-ds-border-muted/50 bg-ds-sidebar/40 px-3 py-2.5">
-                          {hasPatch ? (
-                            <div className="flex min-w-0 flex-col">
-                              <DiffView
-                                patch={item.detail}
-                                filePath={item.filePath}
-                                maxHeight={diffHeight}
-                              />
-                              <div
-                                role="separator"
-                                aria-orientation="horizontal"
-                                aria-label={t('inspectorResizeDiff')}
-                                title={t('inspectorResizeDiff')}
-                                className="ds-no-drag group mt-1 flex h-2.5 cursor-row-resize touch-none items-center justify-center"
-                                onPointerDown={onDiffResizePointerDown}
-                                onPointerMove={onDiffResizePointerMove}
-                                onPointerUp={onDiffResizePointerUp}
-                                onPointerCancel={onDiffResizePointerUp}
-                              >
-                                <span className="h-0.5 w-8 rounded-full bg-ds-border-strong transition group-hover:bg-ds-muted" />
-                              </div>
-                            </div>
-                          ) : (
-                            <div className="px-1 py-3 text-center text-[12px] text-ds-faint">
-                              {t('inspectorDiffEmpty')}
-                            </div>
-                          )}
-                        </div>
-                      ) : null}
-                    </li>
-                  )
-                })}
-              </ul>
+        ) : isReview ? (
+          <div className="flex min-h-0 flex-1 overflow-hidden">
+            <div className="flex h-full min-h-0 shrink-0 flex-col" style={{ width: listSize }}>
+              {fileList}
             </div>
-          </>
+            <div
+              role="separator"
+              aria-orientation="vertical"
+              aria-label={t('inspectorResizeSplit')}
+              className="ds-change-inspector__split-handle ds-no-drag relative z-10 w-px shrink-0 cursor-col-resize touch-none bg-[color-mix(in_srgb,var(--ds-text)_10%,transparent)] hover:bg-ds-hover"
+              onPointerDown={onListResizePointerDown}
+              onPointerMove={onListResizePointerMove}
+              onPointerUp={onListResizePointerUp}
+              onPointerCancel={onListResizePointerUp}
+            />
+            {diffViewport}
+          </div>
+        ) : (
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+            <div className="flex min-h-0 shrink-0 flex-col overflow-hidden" style={{ height: listSize }}>
+              {fileList}
+            </div>
+            <div
+              role="separator"
+              aria-orientation="horizontal"
+              aria-label={t('inspectorResizeSplit')}
+              className="ds-change-inspector__split-handle ds-no-drag flex h-1.5 shrink-0 cursor-row-resize touch-none items-center justify-center"
+              onPointerDown={onListResizePointerDown}
+              onPointerMove={onListResizePointerMove}
+              onPointerUp={onListResizePointerUp}
+              onPointerCancel={onListResizePointerUp}
+            >
+              <span className="h-px w-8 bg-ds-border-strong" />
+            </div>
+            {diffViewport}
+          </div>
         )}
       </div>
     </aside>

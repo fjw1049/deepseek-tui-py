@@ -2,7 +2,7 @@ import { resolveProviderIcon, uniquifySvgIds } from './provider-icons.js'
 import { clampEffortIndex } from './clamp-effort-index'
 
 class ChatGPTModelSelector extends HTMLElement {
-  static observedAttributes = ['value', 'model', 'disabled'];
+  static observedAttributes = ['value', 'model', 'disabled', 'compact', 'dense'];
 
   #tiers = [
     { key: 'Light',      valuetext: 'Light — fastest' },
@@ -87,11 +87,53 @@ class ChatGPTModelSelector extends HTMLElement {
         max-width: 220px;
         vertical-align: middle;
         z-index: 1;
+        min-width: 0;
         font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
         -webkit-font-smoothing: antialiased;
         font-variant-numeric: tabular-nums;
         user-select: none;
         -webkit-user-select: none;
+      }
+      /* Narrow footer only: drop the model name, keep icon + full effort label. */
+      :host([compact]) {
+        max-width: 8.5rem;
+      }
+      :host([compact]) .pill {
+        max-width: 8.5rem;
+        padding: 0 6px 0 8px;
+        gap: 4px;
+      }
+      :host([compact]) .pill .model-name {
+        display: none !important;
+      }
+      :host([compact]) .pill-lead {
+        gap: 4px;
+      }
+      :host([compact]) .pill .label {
+        gap: 0;
+      }
+      /* IDE rail: match 12px transcript + flatter composer footer. */
+      :host([dense]) .pill {
+        height: 28px;
+        gap: 5px;
+        padding: 0 8px 0 7px;
+      }
+      :host([dense]) .pill-icon {
+        width: 16px;
+        height: 16px;
+        border-radius: 5px;
+      }
+      :host([dense]) .pill-icon svg {
+        width: 13px;
+        height: 13px;
+      }
+      :host([dense]) .pill .label {
+        font-size: 12px;
+        letter-spacing: normal;
+      }
+      :host([dense]) .chev {
+        width: 12px;
+        height: 12px;
       }
       :host(:has(.pill[aria-expanded="true"])) {
         z-index: 40;
@@ -753,6 +795,7 @@ class ChatGPTModelSelector extends HTMLElement {
       this.#renderModelList();
       this.#updatePillModel();
     }
+    if (name === 'compact') this.#syncCompact();
     if (name === 'disabled' && val !== null) this.#close();
   }
 
@@ -870,9 +913,22 @@ class ChatGPTModelSelector extends HTMLElement {
     }
   }
 
+  #syncCompact() {
+    const compact = this.hasAttribute('compact');
+    if (this.$modelName) {
+      this.$modelName.style.display = compact ? 'none' : '';
+    }
+  }
+
   #updatePillModel() {
     const m = this.#models.find((x) => x.id === this.#modelId);
-    if (this.$modelName) this.$modelName.textContent = m ? (m.label || m.id) : 'Model';
+    const name = m ? (m.label || m.id) : 'Model';
+    if (this.$modelName) this.$modelName.textContent = name;
+    this.#syncCompact();
+    if (this.$pill) {
+      const tier = this.#tiers[this.#index]?.key ?? '';
+      this.$pill.title = tier ? `${name} · ${tier}` : name;
+    }
     if (this.$pillIcon) {
       const icon = resolveProviderIcon({
         providerId: m?.providerId || this.#inferProvider(this.#modelId),
@@ -1122,6 +1178,10 @@ class ChatGPTModelSelector extends HTMLElement {
       this.#swapText(this.$tier, t.key, animateTier);
     }
     this.$tier.classList.toggle('is-ultra', isUltra);
+    if (this.$pill) {
+      const name = this.$modelName?.textContent || 'Model';
+      this.$pill.title = `${name} · ${t.key}`;
+    }
 
     if (this.$effortV.textContent !== t.key) {
       this.#swapText(this.$effortV, t.key, animateTier);

@@ -12,8 +12,10 @@ const IDE_ACTIVITY_SIDEBAR_VISIBLE_KEY = 'deepseekgui.layout.ideActivitySidebarV
 
 /** Comfortable fixed-ish rail: wide enough for CJK lines, still secondary to the editor. */
 export const IDE_CHAT_RAIL_DEFAULT_WIDTH = 440
-export const IDE_CHAT_RAIL_MIN_WIDTH = 360
-export const IDE_CHAT_RAIL_MAX_WIDTH = 560
+/** Floor fits iconized composer footer without crushing the textarea. */
+export const IDE_CHAT_RAIL_MIN_WIDTH = 400
+/** Wider max so dragging the rail left has more travel (editor stays primary). */
+export const IDE_CHAT_RAIL_MAX_WIDTH = 800
 
 const VALID_MODES = new Set<WorkbenchLayoutMode>(['chat', 'ide'])
 const VALID_CENTER_TABS = new Set<IdeCenterTab>(['files', 'changes', 'search'])
@@ -115,4 +117,16 @@ export function readStoredIdeActivitySidebarVisible(): boolean {
 
 export function persistIdeActivitySidebarVisible(visible: boolean): void {
   persistBoolean(IDE_ACTIVITY_SIDEBAR_VISIBLE_KEY, visible)
+}
+
+/** VS Code activity-bar toggle: click the active icon again to collapse the side panel. */
+export function nextIdeActivitySelection(
+  currentTab: IdeCenterTab,
+  sidebarVisible: boolean,
+  clicked: IdeCenterTab
+): { tab: IdeCenterTab; sidebarVisible: boolean } {
+  if (clicked === currentTab && sidebarVisible) {
+    return { tab: currentTab, sidebarVisible: false }
+  }
+  return { tab: clicked, sidebarVisible: true }
 }

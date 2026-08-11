@@ -150,6 +150,11 @@ type Props = {
   stageCentered?: boolean
   useChatStageWidth?: boolean
   withOperationColumn?: boolean
+  /**
+   * IDE chat rail is too narrow for Overview / GitHub cards — always use the
+   * simple empty home (hide TaskSuggestionHero) regardless of appearance setting.
+   */
+  forceSimpleEmptyHome?: boolean
 }
 
 type Turn = {
@@ -267,7 +272,8 @@ export function MessageTimeline({
   devPreviewCard,
   stageCentered = false,
   useChatStageWidth = true,
-  withOperationColumn = false
+  withOperationColumn = false,
+  forceSimpleEmptyHome = false
 }: Props): ReactElement {
   const { t } = useTranslation('common')
   const workspaceRoot = useChatStore((s) => s.workspaceRoot)
@@ -634,6 +640,7 @@ export function MessageTimeline({
           <EmptyHero
             ready={runtimeConnection === 'ready'}
             hasWorkspace={!!workspaceRoot}
+            forceSimpleEmptyHome={forceSimpleEmptyHome}
             onPickWorkspace={() => void chooseWorkspace()}
             onRetry={onRetryConnection}
             onOpenSettings={onOpenSettings}
@@ -646,6 +653,7 @@ export function MessageTimeline({
           <EmptyHero
             ready={runtimeConnection === 'ready'}
             hasWorkspace={!!workspaceRoot}
+            forceSimpleEmptyHome={forceSimpleEmptyHome}
             onPickWorkspace={() => void chooseWorkspace()}
             onRetry={onRetryConnection}
             onOpenSettings={onOpenSettings}
@@ -781,6 +789,7 @@ export function MessageTimeline({
 function EmptyHero({
   ready,
   hasWorkspace,
+  forceSimpleEmptyHome = false,
   onPickWorkspace,
   onRetry,
   onOpenSettings,
@@ -789,6 +798,7 @@ function EmptyHero({
 }: {
   ready: boolean
   hasWorkspace: boolean
+  forceSimpleEmptyHome?: boolean
   onPickWorkspace: () => void
   onRetry: () => void
   onOpenSettings: () => void
@@ -825,7 +835,8 @@ function EmptyHero({
     )
   }
 
-  if (emptyHomeLayout === 'simple') return null
+  // IDE rail / explicit simple home: skip Overview + GitHub Trending cards.
+  if (forceSimpleEmptyHome || emptyHomeLayout === 'simple') return null
 
   return <TaskSuggestionHero onSelectSuggestion={onSelectSuggestion} />
 }
@@ -3280,7 +3291,7 @@ function UserMessageBubble({
       </div>
       <div className="mt-2 flex min-w-0 items-center justify-between gap-3 text-ds-faint opacity-90 transition group-hover:opacity-100">
         <ModelMetaTag label={block.modelLabel} className="flex-1 justify-start text-left" />
-        <div className="flex items-center justify-end gap-3">
+        <div className="ds-user-message-actions flex items-center justify-end gap-3">
           <CopyFeedbackButton text={displayBody || block.text} iconOnly />
           <button
             type="button"

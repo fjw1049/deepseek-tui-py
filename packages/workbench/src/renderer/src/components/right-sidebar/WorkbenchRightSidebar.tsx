@@ -145,7 +145,6 @@ export function WorkbenchRightSidebar({
         <ChangeInspector
           blocks={blocks}
           className="h-full max-h-full w-full flex-col"
-          onOpenFileInEditor={onOpenFileInEditor}
         />
       </Suspense>
     )

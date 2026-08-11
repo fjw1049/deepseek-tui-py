@@ -4,6 +4,7 @@ import {
   IDE_CHAT_RAIL_DEFAULT_WIDTH,
   IDE_CHAT_RAIL_MAX_WIDTH,
   IDE_CHAT_RAIL_MIN_WIDTH,
+  nextIdeActivitySelection,
   persistIdeCenterTab,
   persistLayoutMode,
   readStoredIdeCenterTab,
@@ -59,5 +60,20 @@ describe('workbench-layout-mode', () => {
     expect(clampIdeChatRailWidth(10)).toBe(IDE_CHAT_RAIL_MIN_WIDTH)
     expect(clampIdeChatRailWidth(10_000)).toBe(IDE_CHAT_RAIL_MAX_WIDTH)
     expect(clampIdeChatRailWidth(IDE_CHAT_RAIL_DEFAULT_WIDTH)).toBe(IDE_CHAT_RAIL_DEFAULT_WIDTH)
+  })
+
+  it('toggles activity sidebar like VS Code', () => {
+    expect(nextIdeActivitySelection('files', true, 'files')).toEqual({
+      tab: 'files',
+      sidebarVisible: false
+    })
+    expect(nextIdeActivitySelection('files', false, 'files')).toEqual({
+      tab: 'files',
+      sidebarVisible: true
+    })
+    expect(nextIdeActivitySelection('files', true, 'search')).toEqual({
+      tab: 'search',
+      sidebarVisible: true
+    })
   })
 })

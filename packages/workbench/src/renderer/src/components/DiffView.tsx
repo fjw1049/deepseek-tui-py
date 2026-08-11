@@ -1,20 +1,51 @@
 import { useMemo, useState, type ReactElement } from 'react'
-import { Check, Copy } from 'lucide-react'
+import { Check, Columns2, Copy, Rows3 } from 'lucide-react'
+
+export type DiffRenderStyle = 'unified' | 'split'
 
 type Props = {
   patch: string
   className?: string
-  /** Maximum visible height (px). Defaults to 320 */
+  /** Maximum visible height (px). Defaults to 320. Use >= 9000 to fill flex parent. */
   maxHeight?: number
   /** Optional file path; falls back to parsing from patch headers */
   filePath?: string
+  /** Default unified (chat cards). Inspector review uses split. */
+  diffStyle?: DiffRenderStyle
+  showStyleToggle?: boolean
+  onDiffStyleChange?: (style: DiffRenderStyle) => void
+  /**
+   * `card` — rounded inset card (chat tool previews).
+   * `flush` — edge-to-edge in the change inspector (no padding card chrome).
+   */
+  chrome?: 'card' | 'flush'
 }
 
 type ParsedDiff = {
   filePath: string | null
   added: number
   removed: number
-  hunkOffset: number
+}
+
+type UnifiedRow = {
+  key: number
+  kind: 'meta' | 'context' | 'add' | 'del'
+  oldNo: number | null
+  newNo: number | null
+  text: string
+  cls: string
+}
+
+type SplitRow = {
+  key: number
+  kind: 'meta' | 'change'
+  meta?: string
+  leftNo: number | null
+  rightNo: number | null
+  leftText: string | null
+  rightText: string | null
+  leftKind: 'empty' | 'context' | 'del'
+  rightKind: 'empty' | 'context' | 'add'
 }
 
 const LANG_BADGES: Array<{ test: RegExp; label: string; tone: string }> = [
@@ -34,10 +65,8 @@ function parseDiff(patch: string, override?: string): ParsedDiff {
   let filePath = override ?? null
   let added = 0
   let removed = 0
-  let hunkOffset = -1
 
-  for (let i = 0; i < lines.length; i += 1) {
-    const line = lines[i]
+  for (const line of lines) {
     if (!filePath) {
       if (line.startsWith('+++ ')) {
         const raw = line.slice(4).trim()
@@ -52,11 +81,10 @@ function parseDiff(patch: string, override?: string): ParsedDiff {
         if (m) filePath = m[1]
       }
     }
-    if (line.startsWith('@@') && hunkOffset === -1) hunkOffset = i
     if (line.startsWith('+') && !line.startsWith('+++')) added += 1
     else if (line.startsWith('-') && !line.startsWith('---')) removed += 1
   }
-  return { filePath, added, removed, hunkOffset }
+  return { filePath, added, removed }
 }
 
 function badgeFor(name: string | null): { label: string; tone: string } {
@@ -65,26 +93,194 @@ function badgeFor(name: string | null): { label: string; tone: string } {
   return { label: 'TXT', tone: 'bg-zinc-100 text-zinc-700 dark:bg-zinc-500/15 dark:text-zinc-300' }
 }
 
+function filterBodyLines(lines: string[]): Array<{ line: string; i: number }> {
+  return lines.map((line, i) => ({ line, i })).filter(({ line }) => {
+    if (line.startsWith('--- ') || line.startsWith('+++ ')) return false
+    if (line.startsWith('diff --git ')) return false
+    if (line.startsWith('index ')) return false
+    return true
+  })
+}
+
+function buildUnifiedRows(bodyLines: Array<{ line: string; i: number }>): UnifiedRow[] {
+  const rows: UnifiedRow[] = []
+  let oldNo: number | null = null
+  let newNo: number | null = null
+
+  for (const { line, i } of bodyLines) {
+    if (line.startsWith('@@')) {
+      const m = line.match(/@@\s*-(\d+)(?:,\d+)?\s+\+(\d+)/)
+      oldNo = m ? parseInt(m[1]!, 10) : null
+      newNo = m ? parseInt(m[2]!, 10) : null
+      rows.push({
+        key: i,
+        kind: 'meta',
+        oldNo: null,
+        newNo: null,
+        text: line,
+        cls: 'bg-accent-soft/60 text-ds-muted'
+      })
+      continue
+    }
+    if (line.startsWith('+')) {
+      rows.push({
+        key: i,
+        kind: 'add',
+        oldNo: null,
+        newNo,
+        text: line,
+        cls: 'bg-ds-diff-added-soft text-ds-diff-added'
+      })
+      if (newNo != null) newNo += 1
+      continue
+    }
+    if (line.startsWith('-')) {
+      rows.push({
+        key: i,
+        kind: 'del',
+        oldNo,
+        newNo: null,
+        text: line,
+        cls: 'bg-ds-diff-removed-soft text-ds-diff-removed'
+      })
+      if (oldNo != null) oldNo += 1
+      continue
+    }
+    rows.push({
+      key: i,
+      kind: 'context',
+      oldNo,
+      newNo,
+      text: line,
+      cls: 'text-ds-ink'
+    })
+    if (oldNo != null) oldNo += 1
+    if (newNo != null) newNo += 1
+  }
+  return rows
+}
+
+function stripPrefix(line: string): string {
+  if (line.startsWith('+') || line.startsWith('-') || line.startsWith(' ')) {
+    return line.slice(1)
+  }
+  return line
+}
+
+function buildSplitRows(bodyLines: Array<{ line: string; i: number }>): SplitRow[] {
+  const rows: SplitRow[] = []
+  let oldNo: number | null = null
+  let newNo: number | null = null
+  let pendingDels: Array<{ i: number; text: string; no: number | null }> = []
+  let keySeq = 0
+
+  const flushDels = (): void => {
+    for (const del of pendingDels) {
+      rows.push({
+        key: keySeq++,
+        kind: 'change',
+        leftNo: del.no,
+        rightNo: null,
+        leftText: del.text,
+        rightText: null,
+        leftKind: 'del',
+        rightKind: 'empty'
+      })
+    }
+    pendingDels = []
+  }
+
+  for (const { line, i } of bodyLines) {
+    if (line.startsWith('@@')) {
+      flushDels()
+      const m = line.match(/@@\s*-(\d+)(?:,\d+)?\s+\+(\d+)/)
+      oldNo = m ? parseInt(m[1]!, 10) : null
+      newNo = m ? parseInt(m[2]!, 10) : null
+      rows.push({ key: keySeq++, kind: 'meta', meta: line, leftNo: null, rightNo: null, leftText: null, rightText: null, leftKind: 'empty', rightKind: 'empty' })
+      continue
+    }
+    if (line.startsWith('-')) {
+      pendingDels.push({ i, text: stripPrefix(line), no: oldNo })
+      if (oldNo != null) oldNo += 1
+      continue
+    }
+    if (line.startsWith('+')) {
+      const del = pendingDels.shift()
+      rows.push({
+        key: keySeq++,
+        kind: 'change',
+        leftNo: del?.no ?? null,
+        rightNo: newNo,
+        leftText: del?.text ?? null,
+        rightText: stripPrefix(line),
+        leftKind: del ? 'del' : 'empty',
+        rightKind: 'add'
+      })
+      if (newNo != null) newNo += 1
+      continue
+    }
+    flushDels()
+    const text = stripPrefix(line)
+    rows.push({
+      key: keySeq++,
+      kind: 'change',
+      leftNo: oldNo,
+      rightNo: newNo,
+      leftText: text,
+      rightText: text,
+      leftKind: 'context',
+      rightKind: 'context'
+    })
+    if (oldNo != null) oldNo += 1
+    if (newNo != null) newNo += 1
+  }
+  flushDels()
+  return rows
+}
+
+function sideCls(kind: 'empty' | 'context' | 'del' | 'add'): string {
+  if (kind === 'del') return 'bg-ds-diff-removed-soft text-ds-diff-removed'
+  if (kind === 'add') return 'bg-ds-diff-added-soft text-ds-diff-added'
+  if (kind === 'empty') return 'bg-[color-mix(in_srgb,var(--ds-text)_3%,transparent)] text-ds-faint'
+  return 'text-ds-ink'
+}
+
 /**
- * Lightweight unified-diff renderer with a header (badge, filename, stats,
- * copy). Tints +/-/@@ lines and renders everything else as monospace context.
+ * Lightweight diff renderer with dual gutters and optional side-by-side split.
+ * Chat tool cards keep unified; the change inspector defaults to split.
  */
 export function DiffView({
   patch,
   className = '',
   maxHeight = 320,
-  filePath
+  filePath,
+  diffStyle: controlledStyle,
+  showStyleToggle = false,
+  onDiffStyleChange,
+  chrome = 'card'
 }: Props): ReactElement {
-  const lines = patch.split('\n')
-  const looksLikePatch = lines.some((l) => /^[+-]/.test(l) || l.startsWith('@@'))
+  const looksLikePatch = useMemo(
+    () => patch.split('\n').some((l) => /^[+-]/.test(l) || l.startsWith('@@')),
+    [patch]
+  )
   const parsed = useMemo(() => parseDiff(patch, filePath), [patch, filePath])
   const [copied, setCopied] = useState(false)
+  const [localStyle, setLocalStyle] = useState<DiffRenderStyle>(controlledStyle ?? 'unified')
+  const diffStyle = controlledStyle ?? localStyle
 
   const fileLabel = parsed.filePath ?? filePath ?? null
   const displayName = fileLabel ? fileLabel.split(/[/\\]/).pop() ?? fileLabel : null
   const badge = badgeFor(fileLabel)
-  /** Sentinel: fill flex parent (inspector panel) instead of a fixed max-height box */
   const fillParent = maxHeight >= 9000
+
+  const bodyLines = useMemo(() => filterBodyLines(patch.split('\n')), [patch])
+  const unifiedRows = useMemo(() => buildUnifiedRows(bodyLines), [bodyLines])
+  const splitRows = useMemo(() => buildSplitRows(bodyLines), [bodyLines])
+
+  const setStyle = (next: DiffRenderStyle): void => {
+    if (controlledStyle == null) setLocalStyle(next)
+    onDiffStyleChange?.(next)
+  }
 
   const onCopy = async (): Promise<void> => {
     try {
@@ -96,11 +292,21 @@ export function DiffView({
     }
   }
 
+  const flush = chrome === 'flush'
+  const shellClass = flush
+    ? `ds-diff-view ds-diff-view--flush flex h-full min-h-0 min-w-0 flex-col overflow-hidden ${className}`
+    : `ds-diff-view ds-card-strong flex min-h-0 min-w-0 flex-col overflow-hidden rounded-[14px] ${className}`
+  const bodyClass = `ds-change-inspector__code min-w-0 ${
+    fillParent || flush ? 'min-h-0 flex-1 overflow-auto' : 'overflow-auto'
+  }`
+  /** Keep header inset and code gutters on the same 8px rhythm. */
+  const gutterStyle = { width: flush ? 36 : 40 } as const
+  const cellPad = 'px-2'
+  const metaPad = 'px-2'
+
   if (!looksLikePatch) {
     return (
-      <div
-        className={`ds-card-strong flex min-h-0 min-w-0 flex-col overflow-hidden rounded-[14px] ${className}`}
-      >
+      <div className={shellClass}>
         <DiffHeader
           badge={badge}
           name={displayName}
@@ -108,12 +314,14 @@ export function DiffView({
           removed={null}
           onCopy={onCopy}
           copied={copied}
+          showStyleToggle={false}
+          diffStyle={diffStyle}
+          onDiffStyleChange={setStyle}
+          flush={flush}
         />
         <pre
-          className={`ds-change-inspector__code min-w-0 overflow-auto whitespace-pre p-3 text-ds-ink ${
-            fillParent ? 'min-h-0 flex-1' : ''
-          }`}
-          style={fillParent ? undefined : { maxHeight }}
+          className={`${bodyClass} whitespace-pre text-ds-ink ${flush ? 'px-2 py-1' : 'p-3'}`}
+          style={fillParent || flush ? undefined : { maxHeight }}
         >
           {patch}
         </pre>
@@ -121,43 +329,8 @@ export function DiffView({
     )
   }
 
-  // Hide diff metadata lines (---, +++, diff --git, index) in the rendered body
-  // since they're surfaced in the header.
-  const bodyLines = lines.map((line, i) => ({ line, i })).filter(({ line }) => {
-    if (line.startsWith('--- ') || line.startsWith('+++ ')) return false
-    if (line.startsWith('diff --git ')) return false
-    if (line.startsWith('index ')) return false
-    return true
-  })
-
-  // Compute display line numbers using hunk headers (@@ -a,b +c,d @@).
-  const numbered: Array<{ key: number; line: string; lineNo: number | null; cls: string }> = []
-  let newLineNo: number | null = null
-  for (const { line, i } of bodyLines) {
-    let cls: string
-    let displayedNo: number | null = null
-    if (line.startsWith('@@')) {
-      cls = 'bg-accent-soft/60 text-ds-muted'
-      const m = line.match(/\+(\d+)/)
-      newLineNo = m ? parseInt(m[1], 10) : null
-    } else if (line.startsWith('+')) {
-      cls = 'bg-ds-diff-added-soft text-ds-diff-added'
-      displayedNo = newLineNo
-      if (newLineNo != null) newLineNo += 1
-    } else if (line.startsWith('-')) {
-      cls = 'bg-ds-diff-removed-soft text-ds-diff-removed'
-    } else {
-      cls = 'text-ds-ink'
-      displayedNo = newLineNo
-      if (newLineNo != null) newLineNo += 1
-    }
-    numbered.push({ key: i, line, lineNo: displayedNo, cls })
-  }
-
   return (
-    <div
-      className={`ds-card-strong flex min-h-0 min-w-0 flex-col overflow-hidden rounded-[14px] ${className}`}
-    >
+    <div className={shellClass}>
       <DiffHeader
         badge={badge}
         name={displayName}
@@ -165,32 +338,82 @@ export function DiffView({
         removed={parsed.removed}
         onCopy={onCopy}
         copied={copied}
+        showStyleToggle={showStyleToggle}
+        diffStyle={diffStyle}
+        onDiffStyleChange={setStyle}
+        flush={flush}
       />
-      <div
-        className={`ds-change-inspector__code min-w-0 ${
-          fillParent
-            ? 'min-h-0 flex-1 overflow-x-auto overflow-y-auto'
-            : 'overflow-x-auto overflow-y-auto'
-        }`}
-        style={fillParent ? undefined : { maxHeight }}
-      >
-        {/* Keep rows at least as wide as the viewport while still allowing long
-            lines to expand horizontally. */}
-        <table className="w-max min-w-full border-collapse">
-          <tbody>
-            {numbered.map(({ key, line, lineNo, cls }) => (
-              <tr key={key} className={cls}>
-                <td
-                  className="select-none px-2 text-right tabular-nums text-ds-faint"
-                  style={{ width: '2.75rem' }}
-                >
-                  {lineNo ?? ''}
-                </td>
-                <td className="whitespace-pre px-3 pr-2">{line || ' '}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+      <div className={bodyClass} style={fillParent || flush ? undefined : { maxHeight }}>
+        {diffStyle === 'split' ? (
+          <table className="w-full table-fixed border-collapse">
+            <colgroup>
+              <col style={gutterStyle} />
+              <col />
+              <col style={gutterStyle} />
+              <col />
+            </colgroup>
+            <tbody>
+              {splitRows.map((row) => {
+                if (row.kind === 'meta') {
+                  return (
+                    <tr key={row.key} className="bg-accent-soft/60 text-ds-muted">
+                      <td colSpan={4} className={`break-all ${metaPad} py-0.5 font-mono text-[12px]`}>
+                        {row.meta}
+                      </td>
+                    </tr>
+                  )
+                }
+                return (
+                  <tr key={row.key}>
+                    <td
+                      className={`select-none px-1 text-right align-top font-mono text-[11px] tabular-nums text-ds-faint ${sideCls(row.leftKind)}`}
+                    >
+                      {row.leftNo ?? ''}
+                    </td>
+                    <td
+                      className={`max-w-0 break-all whitespace-pre-wrap ${cellPad} align-top font-mono text-[12.5px] leading-[1.45] ${sideCls(row.leftKind)}`}
+                    >
+                      {row.leftText ?? '\u00a0'}
+                    </td>
+                    <td
+                      className={`select-none border-l border-ds-border-muted/50 px-1 text-right align-top font-mono text-[11px] tabular-nums text-ds-faint ${sideCls(row.rightKind)}`}
+                    >
+                      {row.rightNo ?? ''}
+                    </td>
+                    <td
+                      className={`max-w-0 break-all whitespace-pre-wrap ${cellPad} align-top font-mono text-[12.5px] leading-[1.45] ${sideCls(row.rightKind)}`}
+                    >
+                      {row.rightText ?? '\u00a0'}
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        ) : (
+          <table className="w-full table-fixed border-collapse">
+            <colgroup>
+              <col style={gutterStyle} />
+              <col style={gutterStyle} />
+              <col />
+            </colgroup>
+            <tbody>
+              {unifiedRows.map((row) => (
+                <tr key={row.key} className={row.cls}>
+                  <td className="select-none px-1 text-right align-top font-mono text-[11px] tabular-nums text-ds-faint">
+                    {row.oldNo ?? ''}
+                  </td>
+                  <td className="select-none border-r border-ds-border-muted/40 px-1 text-right align-top font-mono text-[11px] tabular-nums text-ds-faint">
+                    {row.newNo ?? ''}
+                  </td>
+                  <td className="max-w-0 break-all whitespace-pre-wrap px-2 align-top font-mono text-[12.5px] leading-[1.45]">
+                    {row.text || '\u00a0'}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
       </div>
     </div>
   )
@@ -202,7 +425,11 @@ function DiffHeader({
   added,
   removed,
   onCopy,
-  copied
+  copied,
+  showStyleToggle,
+  diffStyle,
+  onDiffStyleChange,
+  flush = false
 }: {
   badge: { label: string; tone: string }
   name: string | null
@@ -210,32 +437,66 @@ function DiffHeader({
   removed: number | null
   onCopy: () => void
   copied: boolean
+  showStyleToggle: boolean
+  diffStyle: DiffRenderStyle
+  onDiffStyleChange: (style: DiffRenderStyle) => void
+  flush?: boolean
 }): ReactElement {
   return (
-    <div className="ds-panel-strip flex items-center gap-2.5 border-b border-ds-border-muted px-3 py-2">
+    <div
+      className={
+        flush
+          ? 'ds-diff-view__header ds-change-inspector__pane-header flex shrink-0 items-center gap-2'
+          : 'ds-diff-view__header flex h-9 shrink-0 items-center gap-2 border-b border-ds-border-muted px-3'
+      }
+    >
       <span
-        className={`shrink-0 rounded-md px-1.5 py-0.5 font-mono text-[10px] font-semibold ${badge.tone}`}
+        className={`shrink-0 rounded px-1.5 py-0.5 font-mono text-[10px] font-semibold ${badge.tone}`}
       >
         {badge.label}
       </span>
-      <span className="min-w-0 flex-1 truncate font-medium text-[13px] text-ds-ink" title={name ?? ''}>
+      <span className="min-w-0 flex-1 truncate text-[12.5px] font-medium text-ds-ink" title={name ?? ''}>
         {name ?? 'patch'}
       </span>
       {added != null || removed != null ? (
         <span className="shrink-0 text-[12px] tabular-nums">
-          {(added ?? 0) > 0 ? (
-            <span className="text-ds-diff-added">+{added}</span>
-          ) : null}
+          {(added ?? 0) > 0 ? <span className="text-ds-diff-added">+{added}</span> : null}
           {(added ?? 0) > 0 && (removed ?? 0) > 0 ? <span className="px-1 text-ds-faint">·</span> : null}
-          {(removed ?? 0) > 0 ? (
-            <span className="text-ds-diff-removed">-{removed}</span>
-          ) : null}
+          {(removed ?? 0) > 0 ? <span className="text-ds-diff-removed">-{removed}</span> : null}
         </span>
+      ) : null}
+      {showStyleToggle ? (
+        <div className="flex shrink-0 items-center rounded border border-ds-border-muted/70 p-0.5">
+          <button
+            type="button"
+            onClick={() => onDiffStyleChange('unified')}
+            className={`rounded px-1 py-0.5 transition ${
+              diffStyle === 'unified' ? 'bg-ds-hover text-ds-ink' : 'text-ds-faint hover:text-ds-muted'
+            }`}
+            title="Unified"
+            aria-label="Unified diff"
+            aria-pressed={diffStyle === 'unified'}
+          >
+            <Rows3 className="h-3.5 w-3.5" strokeWidth={1.85} />
+          </button>
+          <button
+            type="button"
+            onClick={() => onDiffStyleChange('split')}
+            className={`rounded px-1 py-0.5 transition ${
+              diffStyle === 'split' ? 'bg-ds-hover text-ds-ink' : 'text-ds-faint hover:text-ds-muted'
+            }`}
+            title="Split"
+            aria-label="Split diff"
+            aria-pressed={diffStyle === 'split'}
+          >
+            <Columns2 className="h-3.5 w-3.5" strokeWidth={1.85} />
+          </button>
+        </div>
       ) : null}
       <button
         type="button"
         onClick={onCopy}
-        className="ds-chip-muted shrink-0 rounded-md p-1 text-ds-faint transition hover:text-ds-ink"
+        className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded text-ds-faint transition hover:bg-ds-hover hover:text-ds-ink"
         aria-label="Copy diff"
         title="Copy diff"
       >

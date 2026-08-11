@@ -23,8 +23,11 @@ import {
   IDE_CHAT_RAIL_DEFAULT_WIDTH,
   IDE_CHAT_RAIL_MAX_WIDTH,
   IDE_CHAT_RAIL_MIN_WIDTH,
+  nextIdeActivitySelection,
+  persistIdeActivitySidebarVisible,
   persistIdeCenterTab,
   persistIdeChatRailWidth,
+  readStoredIdeActivitySidebarVisible,
   readStoredIdeCenterTab,
   readStoredIdeChatRailWidth,
   type IdeCenterTab
@@ -115,6 +118,10 @@ export function IdeWorkspaceLayout({
   })
 
   const [centerTab, setCenterTab] = useState<IdeCenterTab>(readStoredIdeCenterTab)
+  /** VS Code-style: click the active activity icon again to collapse the side panel. */
+  const [activitySidebarVisible, setActivitySidebarVisible] = useState(
+    readStoredIdeActivitySidebarVisible
+  )
   const [searchQuery, setSearchQuery] = useState('')
   const [chatRailVisible, setChatRailVisible] = useState(true)
   const [chatRailWidth, setChatRailWidth] = useState(readStoredIdeChatRailWidth)
@@ -130,14 +137,24 @@ export function IdeWorkspaceLayout({
   }, [centerTab])
 
   useEffect(() => {
+    persistIdeActivitySidebarVisible(activitySidebarVisible)
+  }, [activitySidebarVisible])
+
+  useEffect(() => {
     if (!requestedCenterTab) return
     setCenterTab(requestedCenterTab)
+    setActivitySidebarVisible(true)
     onRequestedCenterTabConsumed?.()
   }, [onRequestedCenterTabConsumed, requestedCenterTab])
 
-  const selectActivity = useCallback((item: ActivityItem) => {
-    setCenterTab(item)
-  }, [])
+  const selectActivity = useCallback(
+    (item: ActivityItem) => {
+      const next = nextIdeActivitySelection(centerTab, activitySidebarVisible, item)
+      setCenterTab(next.tab)
+      setActivitySidebarVisible(next.sidebarVisible)
+    },
+    [activitySidebarVisible, centerTab]
+  )
 
   const handleSelectSearchFile = useCallback(
     (path: string) => {
@@ -182,9 +199,11 @@ export function IdeWorkspaceLayout({
     window.addEventListener('pointercancel', onEnd)
   }
 
-  const showSearchSidebar = centerTab === 'search'
-  // Search owns the left list; keep the editor tree for Files mode.
-  const editorHideTree = centerTab === 'search'
+  const showSearchSidebar = centerTab === 'search' && activitySidebarVisible
+  // Hide the explorer tree when: search owns the list, or the activity panel is collapsed.
+  const editorHideTree =
+    !activitySidebarVisible || centerTab === 'search' || centerTab === 'changes'
+  const showChangesPanel = centerTab === 'changes' && activitySidebarVisible
 
   const projectName =
     projectLabel?.trim() ||
@@ -248,21 +267,21 @@ export function IdeWorkspaceLayout({
           aria-label={t('ideActivityBarLabel')}
         >
           <ActivityButton
-            active={centerTab === 'files'}
+            active={centerTab === 'files' && activitySidebarVisible}
             label={t('ideActivityFiles')}
             onClick={() => selectActivity('files')}
           >
             <Folders className="h-4 w-4" strokeWidth={1.85} />
           </ActivityButton>
           <ActivityButton
-            active={centerTab === 'changes'}
+            active={centerTab === 'changes' && activitySidebarVisible}
             label={t('ideActivityChanges')}
             onClick={() => selectActivity('changes')}
           >
             <FileEdit className="h-4 w-4" strokeWidth={1.85} />
           </ActivityButton>
           <ActivityButton
-            active={centerTab === 'search'}
+            active={centerTab === 'search' && activitySidebarVisible}
             label={t('ideActivitySearch')}
             onClick={() => selectActivity('search')}
           >
@@ -283,13 +302,11 @@ export function IdeWorkspaceLayout({
 
           <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
             <Suspense fallback={<PanelFallback />}>
-              {centerTab === 'changes' ? (
+              {showChangesPanel ? (
                 <ChangeInspector
+                  variant="review"
                   blocks={blocks}
-                  onOpenFileInEditor={(path, line) => {
-                    setCenterTab('files')
-                    onOpenFileInEditor(path, line)
-                  }}
+                  className="h-full min-h-0"
                 />
               ) : (
                 <WorkspaceEditorPanel

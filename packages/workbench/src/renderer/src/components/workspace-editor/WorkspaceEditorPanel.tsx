@@ -522,6 +522,8 @@ export function WorkspaceEditorPanel({
       <div className="relative flex h-full min-h-0 flex-1 bg-ds-sidebar">
         {hideTree ? null : (
           <div className="relative h-full min-h-0 shrink-0" style={{ width: treeWidth }}>
+            {/* Expand state is cached per workspace root inside WorkspaceFileTree
+                so switching IDE center tabs (changes/search) does not reset folds. */}
             <WorkspaceFileTree
               workspaceRoot={trimmedRoot}
               activePaths={activePaths}

@@ -931,7 +931,7 @@ samp {
 
 .ds-composer-shell {
   position: relative;
-  overflow: hidden;
+  overflow: visible;
   background: var(--ds-card-strong);
   border: 1px solid var(--ds-border-strong);
   box-shadow: var(--ds-shadow-composer);
@@ -983,16 +983,30 @@ samp {
 
 /* Floating composer over an active thread: translucent material so timeline
    scrolls underneath (Apple-style floating chrome). Empty-state hero keeps the
-   solid card for legibility on the dotted canvas. */
+   solid card for legibility on the dotted canvas.
+   Blur lives on ::before (z-index: -1) so the shell itself is not a containing
+   block that clips anchored pickers (Synara chat-composer-surface pattern). */
 .ds-chat-composer:not(.ds-composer-empty) {
   background: color-mix(in srgb, var(--ds-card-strong) 68%, transparent);
   border-color: color-mix(in srgb, var(--ds-border) 72%, transparent);
   border-top-color: color-mix(in srgb, #ffffff 42%, transparent);
-  backdrop-filter: blur(20px) saturate(180%);
-  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
   box-shadow:
     0 4px 24px rgba(15, 23, 42, 0.06),
     0 1px 3px rgba(0, 0, 0, 0.04);
+}
+
+.ds-chat-composer:not(.ds-composer-empty)::before {
+  content: '';
+  display: block;
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  pointer-events: none;
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
 }
 
 [data-theme='dark'] .ds-chat-composer {
@@ -1008,8 +1022,12 @@ samp {
     0 0 0 1px rgba(255, 255, 255, 0.04);
 }
 
-.ds-chat-composer::before,
+.ds-chat-composer.ds-composer-empty::before,
 .ds-chat-composer::after {
+  display: none;
+}
+
+.ds-chat-composer:not(.ds-composer-empty).ds-composer-model-picker-open::before {
   display: none;
 }
 
@@ -1192,15 +1210,18 @@ samp {
   }
 }
 
-/* Workspace file tree — fixed-ish rail: airier on the left, tight on the right,
-   with a thin scrollbar so it doesn't steal a whole character column. */
+/* Workspace file tree — Synara-like explorer density: h-7 rows, soft selection. */
+.ds-workspace-file-tree {
+  border-right: 1px solid color-mix(in srgb, var(--ds-text) 14%, transparent);
+}
+
 .ds-workspace-file-tree__header {
-  padding-left: 0.8rem;
-  padding-right: 0.35rem;
+  padding-left: 0.7rem;
+  padding-right: 0.5rem;
 }
 
 .ds-workspace-file-tree__row-pad {
-  padding-right: 0.3rem;
+  padding-right: 0.45rem;
 }
 
 .ds-workspace-file-tree__scroll {
@@ -1220,30 +1241,25 @@ samp {
   background-clip: padding-box;
 }
 
-/* Workspace file tree — match editor tabs: clear but light, no inset bar/shadow. */
 .ds-workspace-file-tree__row--active {
-  color: color-mix(in srgb, var(--ds-accent) 48%, var(--ds-text));
-  background: color-mix(in srgb, var(--ds-accent) 14%, #ffffff);
-  border: 1px solid color-mix(in srgb, var(--ds-accent) 40%, transparent);
-  box-shadow: none;
-  font-weight: 600;
+  color: color-mix(in srgb, var(--ds-accent) 42%, var(--ds-text));
+  background: color-mix(in srgb, var(--ds-text) 8%, transparent);
+  box-shadow: inset 2px 0 0 color-mix(in srgb, var(--ds-accent) 72%, transparent);
+  font-weight: 500;
 }
 
 .ds-workspace-file-tree__row--active:hover {
-  background: color-mix(in srgb, var(--ds-accent) 18%, #ffffff);
-  border-color: color-mix(in srgb, var(--ds-accent) 50%, transparent);
+  background: color-mix(in srgb, var(--ds-text) 11%, transparent);
 }
 
 [data-theme='dark'] .ds-workspace-file-tree__row--active {
-  color: color-mix(in srgb, var(--ds-accent) 40%, #ffffff);
-  background: color-mix(in srgb, var(--ds-accent) 24%, #2a2a2a);
-  border: 1px solid color-mix(in srgb, var(--ds-accent) 48%, transparent);
-  box-shadow: none;
+  color: color-mix(in srgb, var(--ds-accent) 36%, #ffffff);
+  background: color-mix(in srgb, var(--ds-text) 10%, transparent);
+  box-shadow: inset 2px 0 0 color-mix(in srgb, var(--ds-accent) 68%, transparent);
 }
 
 [data-theme='dark'] .ds-workspace-file-tree__row--active:hover {
-  background: color-mix(in srgb, var(--ds-accent) 30%, #2a2a2a);
-  border-color: color-mix(in srgb, var(--ds-accent) 58%, transparent);
+  background: color-mix(in srgb, var(--ds-text) 14%, transparent);
 }
 
 /* Editor tab strip — idle vs active must be obvious (was nearly identical greys). */
@@ -1755,7 +1771,6 @@ samp {
 
 .ds-chat-composer textarea,
 .ds-composer-empty textarea,
-.ds-user-message-edit-textarea,
 .ds-composer-input {
   font-family: var(--font-ui);
   font-size: 15px;
@@ -1764,9 +1779,24 @@ samp {
   letter-spacing: -0.011em;
   -webkit-font-smoothing: antialiased;
   font-synthesis: none;
-  /* Match final-answer justify so compose / re-edit don't look ragged-right. */
-  text-align: justify;
-  text-justify: inter-ideograph;
+  text-align: start;
+  text-justify: auto;
+  /* Prefer content-sized growth; avoids height=0 reflow flashes on width change. */
+  field-sizing: content;
+  min-height: 44px;
+  max-height: 176px;
+  overflow-y: auto;
+}
+
+.ds-user-message-edit-textarea {
+  font-family: var(--font-ui);
+  font-size: 15px;
+  font-weight: 400;
+  line-height: 1.5;
+  letter-spacing: -0.011em;
+  -webkit-font-smoothing: antialiased;
+  font-synthesis: none;
+  text-align: start;
 }
 
 .ds-composer-input::placeholder {
@@ -6383,6 +6413,34 @@ select:focus-visible,
   font-family: var(--font-ui);
   -webkit-font-smoothing: antialiased;
   font-synthesis: none;
+  background: var(--ds-bg-sidebar);
+}
+
+/* Edge-to-edge diff: same plane as the file list, no nested card / grey frame. */
+.ds-diff-view--flush {
+  border: 0 !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  background: var(--ds-bg-sidebar);
+}
+
+/* Shared column chrome: file list header and diff header must paint as one bar. */
+.ds-change-inspector__pane-header {
+  box-sizing: border-box;
+  height: 36px;
+  padding-left: 8px;
+  padding-right: 8px;
+  border-bottom: 1px solid color-mix(in srgb, var(--ds-text) 10%, transparent);
+  background: var(--ds-bg-sidebar);
+}
+
+.ds-diff-view--flush .ds-diff-view__header {
+  background: var(--ds-bg-sidebar);
+}
+
+/* Split-diff halves: equal gutters, shared vertical seam. */
+.ds-diff-view--flush table {
+  border-spacing: 0;
 }
 
 .ds-change-stats {
@@ -9332,9 +9390,9 @@ select:focus-visible,
   width: 100%;
   margin-left: 0;
   margin-right: 0;
-  /* Looser from the editor seam; tighter against the window edge / scrollbar. */
-  padding-left: 0.85rem;
-  padding-right: 0.35rem;
+  /* More air from the editor seam and the window edge / scrollbar. */
+  padding-left: 1.15rem;
+  padding-right: 0.95rem;
 }
 
 /* Header rule comes from .ds-surface-divider (background hairline), same as
@@ -9345,14 +9403,177 @@ select:focus-visible,
   max-width: none;
 }
 
+/* Flatter IDE composer — match rail 12px / 1.625 transcript. */
+.ds-ide-chat-rail .ds-composer-shell,
+.ds-ide-chat-rail .ds-composer-shell--compact {
+  border-radius: 0.75rem;
+}
+
+.ds-ide-chat-rail .ds-composer-input,
+.ds-ide-chat-rail .ds-chat-composer textarea {
+  font-size: 12px;
+  line-height: 1.625;
+  letter-spacing: normal;
+  min-height: 22px;
+  max-height: 120px;
+}
+
+.ds-ide-chat-rail .ds-composer-input::placeholder {
+  letter-spacing: normal;
+}
+
+/* Only the compact host is capped from the light DOM (avoids stale CE styles). */
+[data-composer-footer] reasoning-effort-selector {
+  display: inline-block;
+  min-width: 0;
+  max-width: 220px;
+  vertical-align: middle;
+}
+[data-composer-footer] reasoning-effort-selector[compact] {
+  max-width: 8.5rem;
+}
+
 .ds-ide-chat-rail .mb-8 {
   margin-bottom: 0.75rem;
+}
+
+/* IDE composer sits in-flow under the timeline (not overlapping like main chat
+   -mt-6). Drop the floating-composer inset so the last turn hugs the input. */
+.ds-ide-chat-rail .ds-timeline-composer-clearance {
+  padding-bottom: 0;
+}
+.ds-ide-chat-rail .ds-timeline-composer-clearance-spacer {
+  height: 0;
 }
 
 .ds-ide-chat-rail .ds-user-bubble,
 .ds-ide-chat-rail .ds-assistant-bubble,
 .ds-ide-chat-rail .ds-tool-card {
   max-width: 100%;
+}
+
+/* User-message copy/edit: smaller + slightly tighter in the narrow IDE rail. */
+.ds-ide-chat-rail .ds-user-message-actions {
+  gap: 0.35rem;
+}
+.ds-ide-chat-rail .ds-user-message-actions button {
+  padding: 0.2rem;
+}
+.ds-ide-chat-rail .ds-user-message-actions svg {
+  width: 12px;
+  height: 12px;
+}
+
+/*
+ * IDE rail typography — match Synara transcript tokens
+ * (DEFAULT_CHAT_FONT_SIZE_PX=12, line-height ratio 1.625, left-aligned).
+ * Scoped to .ds-ide-chat-rail only; main chat keeps 15px answer mode.
+ */
+.ds-ide-chat-rail {
+  --ds-chat-font-size: 12px;
+  --ds-chat-code-font-size: 11px; /* Synara chatCodePx ≈ base * 0.95 */
+}
+
+.ds-ide-chat-rail .ds-markdown,
+.ds-ide-chat-rail .ds-markdown.ds-markdown--answer,
+.ds-ide-chat-rail .ds-chat-answer {
+  font-size: 12px;
+  line-height: 1.625; /* 19.5px at 12px — Synara CHAT_TRANSCRIPT_LINE_HEIGHT_RATIO */
+  letter-spacing: normal;
+  color: var(--ds-text);
+}
+
+.ds-ide-chat-rail .ds-markdown.ds-markdown--answer p,
+.ds-ide-chat-rail .ds-markdown.ds-markdown--answer li {
+  text-align: start;
+  text-justify: auto;
+  -webkit-hyphens: manual;
+  hyphens: manual;
+}
+
+.ds-ide-chat-rail .ds-markdown.ds-markdown--answer strong,
+.ds-ide-chat-rail .ds-markdown.ds-markdown--answer b {
+  font-weight: 500; /* Synara chat-markdown strong */
+  font-synthesis: none;
+}
+
+.ds-ide-chat-rail .ds-markdown.ds-markdown--answer p,
+.ds-ide-chat-rail .ds-markdown.ds-markdown--answer ul,
+.ds-ide-chat-rail .ds-markdown.ds-markdown--answer ol,
+.ds-ide-chat-rail .ds-markdown.ds-markdown--answer blockquote,
+.ds-ide-chat-rail .ds-markdown.ds-markdown--answer pre,
+.ds-ide-chat-rail .ds-markdown.ds-markdown--answer table,
+.ds-ide-chat-rail .ds-markdown.ds-markdown--answer hr {
+  margin: 0.65rem 0; /* Synara .chat-markdown block rhythm */
+}
+
+.ds-ide-chat-rail .ds-markdown.ds-markdown--answer > :first-child {
+  margin-top: 0;
+}
+
+.ds-ide-chat-rail .ds-markdown.ds-markdown--answer > :last-child {
+  margin-bottom: 0;
+}
+
+.ds-ide-chat-rail .ds-markdown.ds-markdown--answer .space-y-4 > :not([hidden]) ~ :not([hidden]) {
+  margin-top: 0.65rem;
+}
+
+.ds-ide-chat-rail .ds-markdown.ds-markdown--answer li + li {
+  margin-top: 0.25rem;
+}
+
+.ds-ide-chat-rail .ds-markdown.ds-markdown--answer ul,
+.ds-ide-chat-rail .ds-markdown.ds-markdown--answer ol {
+  padding-left: 1.25rem;
+}
+
+.ds-ide-chat-rail .ds-markdown.ds-markdown--answer h1,
+.ds-ide-chat-rail .ds-markdown.ds-markdown--answer h2,
+.ds-ide-chat-rail .ds-markdown.ds-markdown--answer h3,
+.ds-ide-chat-rail .ds-markdown.ds-markdown--answer h4 {
+  margin: 1.1em 0 0.35em;
+  font-family: inherit;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1.25;
+}
+
+.ds-ide-chat-rail .ds-markdown.ds-markdown--answer h1 {
+  font-size: 1.35em;
+}
+
+.ds-ide-chat-rail .ds-markdown.ds-markdown--answer h2 {
+  font-size: 1.25em;
+}
+
+.ds-ide-chat-rail .ds-markdown.ds-markdown--answer h3 {
+  font-size: 1.15em;
+}
+
+.ds-ide-chat-rail .ds-markdown.ds-markdown--answer h4 {
+  font-size: 1.05em;
+}
+
+.ds-ide-chat-rail .ds-markdown.ds-markdown--answer :not(pre) > code,
+.ds-ide-chat-rail .ds-markdown.ds-markdown--answer .ds-code-inline {
+  font-size: var(--ds-chat-code-font-size, 11px);
+  font-weight: 500;
+  line-height: 1.5;
+  padding: 0.1rem 0.35rem;
+  border-radius: 0.4rem;
+}
+
+.ds-ide-chat-rail .ds-markdown.ds-markdown--answer .ds-code-block-body,
+.ds-ide-chat-rail .ds-markdown.ds-markdown--answer .ds-code-block-html > pre,
+.ds-ide-chat-rail .ds-markdown.ds-markdown--answer .ds-code-block-html > pre code,
+.ds-ide-chat-rail .ds-markdown.ds-markdown--answer pre code {
+  font-size: var(--ds-chat-code-font-size, 11px);
+  line-height: 1.5;
+}
+
+.ds-ide-chat-rail .ds-markdown.ds-markdown--answer .ds-code-block-language {
+  font-size: 0.72rem;
 }
 
 .ds-ide-chat-rail textarea,

@@ -12,6 +12,7 @@ import {
   ChevronRight,
   ChevronsLeftRight,
   Columns2,
+  PanelsTopLeft,
   FileEdit,
   Globe2,
   Loader2,
@@ -56,6 +57,8 @@ import { GitCommitPopover } from './GitCommitPopover'
 type Props = {
   onOpenChanges?: () => void
   onOpenEditor?: () => void
+  /** Enter IDE layout — shown flush with the General section header. */
+  onEnterIdeMode?: () => void
   previewActive: boolean
   terminalPanelOpen: boolean
   terminalPanelEnabled: boolean
@@ -335,6 +338,7 @@ function TaskRow({
 export function OperationContextDock({
   onOpenChanges,
   onOpenEditor,
+  onEnterIdeMode,
   previewActive,
   terminalPanelOpen,
   terminalPanelEnabled,
@@ -550,6 +554,17 @@ export function OperationContextDock({
         </button>
         <div className="ds-operation-dock-rail__rule" aria-hidden />
         <div className="ds-operation-dock-rail" role="toolbar" aria-label={t('operationDockToolsTitle')}>
+          {onEnterIdeMode ? (
+            <button
+              type="button"
+              className="ds-operation-dock-rail__btn"
+              onClick={onEnterIdeMode}
+              title={t('ideSwitchToIde')}
+              aria-label={t('ideSwitchToIde')}
+            >
+              <PanelsTopLeft className="h-[15px] w-[15px]" strokeWidth={1.75} />
+            </button>
+          ) : null}
           <button
             type="button"
             className="ds-operation-dock-rail__btn"
@@ -619,6 +634,22 @@ export function OperationContextDock({
         </button>
       </div>
       <div className="ds-operation-dock-body px-4 py-3.5">
+      {onEnterIdeMode ? (
+        <>
+          <button
+            type="button"
+            onClick={onEnterIdeMode}
+            className="flex w-full items-center gap-1.5 rounded-md py-0.5 text-left text-ds-muted transition hover:text-ds-ink"
+            title={t('ideSwitchToIde')}
+            aria-label={t('ideSwitchToIde')}
+          >
+            <PanelsTopLeft className="h-3.5 w-3.5 shrink-0" strokeWidth={2} aria-hidden />
+            <span className="ds-operation-dock-section-label flex-1">{t('ideModeIde')}</span>
+          </button>
+          <div className="my-2 border-t border-ds-border-muted/40" />
+        </>
+      ) : null}
+
       <SectionHeader
         label={t('operationDockToolsTitle')}
         collapsed={collapsed.tools}

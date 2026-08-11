@@ -1,10 +1,24 @@
 import type { MouseEvent as ReactMouseEvent, ReactElement } from 'react'
-import { useEffect, useRef, useState } from 'react'
-import { ChevronRight, FileCode2, Folder, Loader2 } from 'lucide-react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import {
+  ChevronRight,
+  File,
+  FileCode2,
+  FileJson,
+  FileText,
+  Folder,
+  FolderOpen,
+  Image as ImageIcon,
+  Loader2
+} from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import type { WorkspaceTreeEntry } from '@shared/workspace-file'
 import { formatFilePathForDisplay } from '../../lib/diff-stats'
 import { directoryHasChanges, pathHasChanges } from '../../lib/workspace-change-patches'
+import {
+  readExpandedDirs,
+  writeExpandedDirs
+} from '../../lib/workspace-file-tree-expand-cache'
 import { workspaceLabelFromPath } from '../../lib/workspace-label'
 import i18n from '../../i18n'
 
@@ -24,12 +38,24 @@ type Props = {
   onFileContextMenu?: (event: ReactMouseEvent, path: string) => void
 }
 
-function normalizePath(path: string): string {
-  return path.replace(/\\/g, '/')
+/** Tree keys: posix + lower-case so clicks and cache always agree. */
+function treeKey(path: string): string {
+  return path.replace(/\\/g, '/').replace(/^\/+/, '').trim().toLowerCase()
 }
 
 function emptyNode(loading: boolean): TreeNodeState {
   return { entries: [], loading, loaded: false, error: null }
+}
+
+function fileIconForName(name: string): typeof FileCode2 {
+  const lower = name.toLowerCase()
+  if (/\.(png|jpe?g|gif|webp|svg|ico|bmp)$/.test(lower)) return ImageIcon
+  if (/\.(json|jsonc|json5)$/.test(lower)) return FileJson
+  if (/\.(md|txt|rst|log)$/.test(lower)) return FileText
+  if (/\.(tsx?|jsx?|mjs|cjs|py|go|rs|java|kt|swift|rb|php|css|scss|less|html?|vue|svelte|toml|ya?ml|sh|bash|zsh|c|cc|cpp|h|hpp)$/.test(lower)) {
+    return FileCode2
+  }
+  return File
 }
 
 async function fetchDirectory(
@@ -65,6 +91,14 @@ function translateTreeError(message: string): string {
   return message
 }
 
+function indentPx(depth: number): number {
+  return depth * 12 + 8
+}
+
+/**
+ * VS Code-style explorer: click a folder row to expand/collapse.
+ * Expand state is user-driven only — git/patch refresh must not reopen folders.
+ */
 export function WorkspaceFileTree({
   workspaceRoot,
   activePaths,
@@ -76,17 +110,53 @@ export function WorkspaceFileTree({
   const { t } = useTranslation('common')
   const trimmedRoot = workspaceRoot.trim()
   const workspaceLabel = workspaceLabelFromPath(trimmedRoot) || trimmedRoot
-  const activeKeys = new Set((activePaths ?? []).map(normalizePath).filter(Boolean))
+  const activeKeys = new Set((activePaths ?? []).map(treeKey).filter(Boolean))
   const trimmedRootRef = useRef(trimmedRoot)
   trimmedRootRef.current = trimmedRoot
+  const nodesRef = useRef<Record<string, TreeNodeState>>({})
 
-  const [expanded, setExpanded] = useState<Set<string>>(() => new Set(['']))
+  const [expanded, setExpanded] = useState<Set<string>>(() => {
+    const restored = readExpandedDirs(trimmedRoot)
+    return new Set([...restored].map(treeKey))
+  })
   const [nodes, setNodes] = useState<Record<string, TreeNodeState>>({})
+  nodesRef.current = nodes
+
+  const loadChildDirectory = useCallback((directoryPath: string): void => {
+    const root = trimmedRootRef.current
+    if (!root) return
+
+    const key = treeKey(directoryPath)
+    const existing = nodesRef.current[key]
+    if (existing?.loading || existing?.loaded) return
+
+    setNodes((prev) => ({
+      ...prev,
+      [key]: emptyNode(true)
+    }))
+
+    void (async () => {
+      // Prefer the original relative path for IPC; key is only for state.
+      const result = await fetchDirectory(root, directoryPath)
+      if (trimmedRootRef.current !== root) return
+
+      setNodes((prev) => ({
+        ...prev,
+        [key]: {
+          entries: result.ok ? result.entries : [],
+          loading: false,
+          loaded: true,
+          error: result.ok ? null : translateTreeError(result.message)
+        }
+      }))
+    })()
+  }, [])
 
   useEffect(() => {
     let cancelled = false
+    const restored = new Set([...readExpandedDirs(trimmedRoot)].map(treeKey))
+    setExpanded(restored)
 
-    setExpanded(new Set(['']))
     if (!trimmedRoot) {
       setNodes({})
       return () => {
@@ -108,78 +178,72 @@ export function WorkspaceFileTree({
           error: result.ok ? null : translateTreeError(result.message)
         }
       })
+
+      for (const dir of restored) {
+        if (!dir) continue
+        loadChildDirectory(dir)
+      }
     })()
 
     return () => {
       cancelled = true
     }
-  }, [trimmedRoot])
+  }, [trimmedRoot, loadChildDirectory])
 
-  const loadChildDirectory = (directoryPath: string): void => {
-    const root = trimmedRootRef.current
-    if (!root) return
-
-    const key = normalizePath(directoryPath)
-    setNodes((prev) => ({
-      ...prev,
-      [key]: emptyNode(true)
-    }))
-
-    void (async () => {
-      const result = await fetchDirectory(root, directoryPath)
-      if (trimmedRootRef.current !== root) return
-
-      setNodes((prev) => ({
-        ...prev,
-        [key]: {
-          entries: result.ok ? result.entries : [],
-          loading: false,
-          loaded: true,
-          error: result.ok ? null : translateTreeError(result.message)
-        }
-      }))
-    })()
-  }
-
+  // When the active editor file changes, reveal its ancestors once (VS Code).
+  // Do NOT expand every dirty path on git/patch refresh — that fights folder clicks.
+  const lastRevealedActiveRef = useRef('')
   useEffect(() => {
-    if (!patchMap || patchMap.size === 0) return
+    const active = (activePaths ?? []).map(treeKey).find(Boolean)
+    if (!active || active === lastRevealedActiveRef.current) return
+    lastRevealedActiveRef.current = active
 
-    const dirsToExpand = new Set<string>([''])
-    for (const key of patchMap.keys()) {
-      const parts = key.split('/').filter(Boolean)
-      let acc = ''
-      for (let i = 0; i < parts.length - 1; i += 1) {
-        acc = acc ? `${acc}/${parts[i]}` : parts[i]!
-        dirsToExpand.add(acc)
-      }
+    const parts = active.split('/').filter(Boolean)
+    const ancestors: string[] = []
+    let acc = ''
+    for (let i = 0; i < parts.length - 1; i += 1) {
+      acc = acc ? `${acc}/${parts[i]}` : parts[i]!
+      ancestors.push(acc)
     }
+    if (ancestors.length === 0) return
 
-    setExpanded(dirsToExpand)
-    for (const dir of dirsToExpand) {
-      if (!dir) continue
-      loadChildDirectory(dir)
-    }
-  }, [patchMap, trimmedRoot])
-
-  const toggleDirectory = (path: string): void => {
-    const key = normalizePath(path)
     setExpanded((prev) => {
       const next = new Set(prev)
-      if (next.has(key)) {
-        next.delete(key)
-      } else {
-        next.add(key)
-        const node = nodes[key]
-        if (!node?.loaded && !node?.loading) {
-          loadChildDirectory(path)
-        }
-      }
+      for (const dir of ancestors) next.add(dir)
+      writeExpandedDirs(trimmedRoot, next)
       return next
     })
-  }
+    for (const dir of ancestors) {
+      loadChildDirectory(dir)
+    }
+  }, [activePaths, loadChildDirectory, trimmedRoot])
+
+  const toggleDirectory = useCallback(
+    (path: string): void => {
+      const key = treeKey(path)
+      setExpanded((prev) => {
+        const next = new Set(prev)
+        const willExpand = !next.has(key)
+        if (willExpand) {
+          next.add(key)
+        } else {
+          next.delete(key)
+        }
+        writeExpandedDirs(trimmedRootRef.current, next)
+        if (willExpand) {
+          const node = nodesRef.current[key]
+          if (!node?.loaded && !node?.loading) {
+            queueMicrotask(() => loadChildDirectory(path))
+          }
+        }
+        return next
+      })
+    },
+    [loadChildDirectory]
+  )
 
   const renderEntries = (directoryPath: string, depth: number): ReactElement[] => {
-    const key = normalizePath(directoryPath)
+    const key = treeKey(directoryPath)
     const node = nodes[key]
 
     if (!node) {
@@ -189,10 +253,10 @@ export function WorkspaceFileTree({
       return [
         <div
           key={`${key}__loading`}
-          className="ds-workspace-file-tree__row-pad flex items-center gap-2 py-1 text-[12px] text-ds-faint"
-          style={{ paddingLeft: `${depth * 12 + 10}px` }}
+          className="ds-workspace-file-tree__row-pad flex h-7 items-center gap-1.5 text-[12px] text-ds-faint"
+          style={{ paddingLeft: `${indentPx(depth)}px` }}
         >
-          <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={1.8} />
+          <Loader2 className="pointer-events-none h-3.5 w-3.5 animate-spin" strokeWidth={1.8} />
           {t('workspaceTreeLoading')}
         </div>
       ]
@@ -202,7 +266,7 @@ export function WorkspaceFileTree({
         <div
           key={`${key}__error`}
           className="ds-workspace-file-tree__row-pad py-1 text-[12px] text-red-600 dark:text-red-300"
-          style={{ paddingLeft: `${depth * 12 + 10}px` }}
+          style={{ paddingLeft: `${indentPx(depth)}px` }}
         >
           {node.error}
         </div>
@@ -214,7 +278,7 @@ export function WorkspaceFileTree({
         <div
           key={`${key}__empty`}
           className="ds-workspace-file-tree__row-pad py-1 text-[12px] text-ds-faint"
-          style={{ paddingLeft: `${depth * 12 + 10}px` }}
+          style={{ paddingLeft: `${indentPx(depth)}px` }}
         >
           {t('workspaceTreeEmpty')}
         </div>
@@ -222,31 +286,43 @@ export function WorkspaceFileTree({
     }
 
     return node.entries.flatMap((entry) => {
-      const entryKey = normalizePath(entry.path)
+      const entryKey = treeKey(entry.path)
       const isDir = entry.kind === 'directory'
       const isExpanded = expanded.has(entryKey)
-      const isDirty = dirtyPaths?.has(entryKey)
+      const isDirty = dirtyPaths
+        ? [...dirtyPaths].some((p) => treeKey(p) === entryKey)
+        : false
       const isChanged = patchMap ? pathHasChanges(patchMap, entry.path) : false
       const dirHasChanges = isDir && patchMap ? directoryHasChanges(patchMap, entry.path) : false
 
       if (isDir) {
+        const FolderIcon = isExpanded ? FolderOpen : Folder
         return [
           <button
             key={entryKey}
             type="button"
-            onClick={() => toggleDirectory(entry.path)}
-            className="ds-workspace-file-tree__row-pad flex w-full items-center gap-1.5 rounded-md py-1 text-left text-[12.5px] text-ds-muted transition hover:bg-ds-hover/60 hover:text-ds-ink"
-            style={{ paddingLeft: `${depth * 12 + 10}px` }}
+            aria-expanded={isExpanded}
+            onClick={(event) => {
+              event.preventDefault()
+              event.stopPropagation()
+              toggleDirectory(entry.path)
+            }}
+            className="ds-no-drag ds-workspace-file-tree__row ds-workspace-file-tree__row-pad flex h-7 w-full items-center gap-1.5 text-left text-[12px] text-ds-muted transition hover:bg-ds-hover/55 hover:text-ds-ink"
+            style={{ paddingLeft: `${indentPx(depth)}px` }}
           >
             <ChevronRight
-              className={`h-3.5 w-3.5 shrink-0 transition ${isExpanded ? 'rotate-90' : ''}`}
+              className={`pointer-events-none h-3.5 w-3.5 shrink-0 opacity-75 transition ${
+                isExpanded ? 'rotate-90' : ''
+              }`}
               strokeWidth={1.85}
             />
-            <Folder
-              className={`h-3.5 w-3.5 shrink-0 ${dirHasChanges ? 'text-ds-diff-added' : 'text-ds-faint'}`}
+            <FolderIcon
+              className={`pointer-events-none h-3.5 w-3.5 shrink-0 ${
+                dirHasChanges ? 'text-ds-diff-added' : 'text-ds-faint'
+              }`}
               strokeWidth={1.85}
             />
-            <span className={`truncate ${dirHasChanges ? 'font-medium text-ds-diff-added' : ''}`}>
+            <span className={`min-w-0 truncate ${dirHasChanges ? 'font-medium text-ds-diff-added' : ''}`}>
               {entry.name}
             </span>
           </button>,
@@ -255,12 +331,17 @@ export function WorkspaceFileTree({
       }
 
       const isActive = activeKeys.has(entryKey)
+      const FileIcon = fileIconForName(entry.name)
 
       return [
         <button
           key={entryKey}
           type="button"
-          onClick={() => onOpenFile(entry.path)}
+          onClick={(event) => {
+            event.preventDefault()
+            event.stopPropagation()
+            onOpenFile(entry.path)
+          }}
           onContextMenu={(event) => {
             if (!onFileContextMenu) return
             event.preventDefault()
@@ -268,31 +349,25 @@ export function WorkspaceFileTree({
             onFileContextMenu(event, entry.path)
           }}
           aria-current={isActive ? 'page' : undefined}
-          className={`ds-workspace-file-tree__row ds-workspace-file-tree__row-pad flex w-full items-center gap-1.5 rounded-md py-1 text-left text-[12.5px] transition ${
+          className={`ds-no-drag ds-workspace-file-tree__row ds-workspace-file-tree__row-pad flex h-7 w-full items-center gap-1.5 text-left text-[12px] transition ${
             isActive
               ? 'ds-workspace-file-tree__row--active'
               : isDirty
-                ? 'border border-transparent text-ds-ink hover:bg-ds-hover/60 hover:text-ds-ink'
+                ? 'text-ds-ink hover:bg-ds-hover/55'
                 : isChanged
-                  ? 'border border-transparent text-ds-diff-added hover:bg-ds-hover/60 hover:text-ds-ink'
-                  : 'border border-transparent text-ds-muted hover:bg-ds-hover/60 hover:text-ds-ink'
+                  ? 'text-ds-diff-added hover:bg-ds-hover/55 hover:text-ds-ink'
+                  : 'text-ds-muted hover:bg-ds-hover/55 hover:text-ds-ink'
           }`}
-          style={{ paddingLeft: `${depth * 12 + 22}px` }}
+          style={{ paddingLeft: `${indentPx(depth) + 14}px` }}
           title={formatFilePathForDisplay(entry.path, trimmedRoot) ?? entry.path}
         >
-          <FileCode2
-            className={`h-3.5 w-3.5 shrink-0 ${
-              isActive
-                ? 'text-current'
-                : isChanged
-                  ? 'text-ds-diff-added'
-                  : 'text-ds-faint'
+          <FileIcon
+            className={`pointer-events-none h-3.5 w-3.5 shrink-0 opacity-80 ${
+              isActive ? 'text-current' : isChanged ? 'text-ds-diff-added' : 'text-ds-faint'
             }`}
-            strokeWidth={isActive ? 2.1 : 1.85}
+            strokeWidth={isActive ? 2.05 : 1.85}
           />
-          <span className={`truncate ${isActive ? 'font-semibold' : 'font-medium'}`}>
-            {entry.name}
-          </span>
+          <span className="min-w-0 truncate">{entry.name}</span>
           {isDirty ? <span className="ml-auto text-[10px] text-accent">●</span> : null}
         </button>
       ]
@@ -300,12 +375,15 @@ export function WorkspaceFileTree({
   }
 
   return (
-    <div className="ds-workspace-file-tree flex h-full min-h-0 flex-col overflow-hidden border-r border-[color-mix(in_srgb,var(--ds-text)_14%,transparent)] bg-ds-sidebar">
-      <div className="ds-workspace-file-tree__header shrink-0 border-b border-ds-border-muted/60 py-2.5">
+    <div className="ds-no-drag ds-workspace-file-tree flex h-full min-h-0 flex-col overflow-hidden bg-ds-sidebar">
+      <div className="ds-workspace-file-tree__header flex h-10 shrink-0 items-center gap-2 border-b border-[color-mix(in_srgb,var(--ds-text)_10%,transparent)]">
         {trimmedRoot ? (
-          <div className="truncate text-[12.5px] font-semibold text-ds-ink" title={trimmedRoot}>
-            {workspaceLabel}
-          </div>
+          <>
+            <Folder className="pointer-events-none h-3.5 w-3.5 shrink-0 text-ds-faint" strokeWidth={1.85} />
+            <div className="min-w-0 truncate text-[12px] font-semibold text-ds-ink" title={trimmedRoot}>
+              {workspaceLabel}
+            </div>
+          </>
         ) : (
           <div className="text-[12px] leading-5 text-ds-faint">{t('workspaceTreeNoRoot')}</div>
         )}

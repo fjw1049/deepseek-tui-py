@@ -25,11 +25,17 @@ export type ComposerApprovalTier = Extract<ApprovalPolicy, 'on-request' | 'untru
 type Props = {
   disabled?: boolean
   onOpenChange?: (open: boolean) => void
+  /** Hide the text label; keep the icon + title tooltip. */
+  compact?: boolean
+  /** IDE rail: shorter trigger matching 12px chat chrome. */
+  dense?: boolean
 }
 
 export function ComposerApprovalPolicySelector({
   disabled = false,
-  onOpenChange
+  onOpenChange,
+  compact = false,
+  dense = false
 }: Props): ReactElement {
   const { t } = useTranslation(['common', 'settings'])
   const openSettings = useChatStore((s) => s.openSettings)
@@ -163,15 +169,23 @@ export function ComposerApprovalPolicySelector({
         type="button"
         disabled={disabled || saving}
         onClick={() => setMenuOpen(!open)}
-        className="ds-no-drag inline-flex h-9 shrink-0 select-none items-center gap-1.5 px-1 text-[13px] font-semibold transition hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-50"
+        className={`ds-no-drag inline-flex shrink-0 select-none items-center px-1 font-semibold transition hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-50 ${
+          dense ? 'h-7 gap-1 text-[12px]' : 'h-9 gap-1.5 text-[13px]'
+        }`}
         style={triggerAccent ? { color: triggerAccent } : undefined}
         aria-haspopup="menu"
         aria-expanded={open}
         aria-label={t('settings:approvalPolicy')}
         title={t('settings:approvalPolicy')}
       >
-        <TriggerIcon className="h-4 w-4 shrink-0" strokeWidth={2} aria-hidden />
-        <span className={triggerAccent ? undefined : 'text-ds-ink'}>{triggerLabel}</span>
+        <TriggerIcon
+          className={`${dense ? 'h-3.5 w-3.5' : 'h-4 w-4'} shrink-0`}
+          strokeWidth={2}
+          aria-hidden
+        />
+        {compact ? null : (
+          <span className={`truncate ${triggerAccent ? '' : 'text-ds-ink'}`}>{triggerLabel}</span>
+        )}
       </button>
 
       {open ? (

@@ -44,6 +44,10 @@ interface ReasoningEffortSelectorProps {
   /** Jump to Settings → Models (custom endpoints). */
   onConfigureModels?: () => void
   disabled?: boolean
+  /** Hide model name; keep provider icon + effort tier (narrow footers). */
+  compact?: boolean
+  /** IDE rail: shorter pill + 12px label. */
+  dense?: boolean
 }
 
 /**
@@ -60,6 +64,8 @@ export function ReasoningEffortSelector({
   onChange,
   onConfigureModels,
   disabled,
+  compact = false,
+  dense = false,
 }: ReasoningEffortSelectorProps) {
   const { t } = useTranslation('common')
   const ref = useRef<HTMLElement>(null)
@@ -101,6 +107,33 @@ export function ReasoningEffortSelector({
     if (disabled) el.setAttribute('disabled', '')
     else el.removeAttribute('disabled')
   }, [disabled])
+
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    if (compact) el.setAttribute('compact', '')
+    else el.removeAttribute('compact')
+    if (dense) el.setAttribute('dense', '')
+    else el.removeAttribute('dense')
+    // Patch shadow tree directly — custom-element HMR often keeps a stale sheet.
+    const root = el.shadowRoot
+    const name = root?.querySelector('.model-name') as HTMLElement | null
+    if (name) name.style.display = compact ? 'none' : ''
+    const pill = root?.querySelector('.pill') as HTMLElement | null
+    if (pill) {
+      pill.style.maxWidth = compact ? '8.5rem' : ''
+      if (dense) {
+        pill.style.height = '28px'
+        const label = pill.querySelector('.label') as HTMLElement | null
+        if (label) label.style.fontSize = '12px'
+      } else {
+        pill.style.height = ''
+        const label = pill.querySelector('.label') as HTMLElement | null
+        if (label) label.style.fontSize = ''
+      }
+    }
+    el.style.maxWidth = compact ? '8.5rem' : ''
+  }, [compact, dense])
 
   useEffect(() => {
     const el = ref.current
@@ -147,5 +180,14 @@ export function ReasoningEffortSelector({
     }
   }, [])
 
-  return <reasoning-effort-selector ref={ref} className="ds-no-drag" value={String(index)} model={model} />
+  return (
+    <reasoning-effort-selector
+      ref={ref}
+      className="ds-no-drag"
+      value={String(index)}
+      model={model}
+      {...(compact ? ({ compact: '' } as object) : null)}
+      {...(dense ? ({ dense: '' } as object) : null)}
+    />
+  )
 }
