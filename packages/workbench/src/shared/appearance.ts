@@ -12,6 +12,8 @@
 export type ThemeVariant = 'light' | 'dark'
 export type UiDensity = 'compact' | 'comfortable' | 'spacious'
 export type TimestampFormat = 'locale' | '12-hour' | '24-hour'
+/** Empty-home landing: dashboard hero vs composer-only. */
+export type EmptyHomeLayout = 'normal' | 'simple'
 
 export type ThemeSemanticColorsV1 = {
   diffAdded: string
@@ -41,6 +43,8 @@ export type ChromeThemeV1 = {
 export type AppearanceSettingsV1 = {
   themes: Record<ThemeVariant, ChromeThemeV1>
   uiDensity: UiDensity
+  /** Empty chat home: full hero dashboard or centered composer only. */
+  emptyHomeLayout: EmptyHomeLayout
   /** Chat/reading text size in px. */
   chatFontSizePx: number
   terminalFontSizePx: number
@@ -492,6 +496,7 @@ export function defaultAppearanceSettings(): AppearanceSettingsV1 {
       dark: { ...DEFAULT_CHROME_THEMES.dark, semanticColors: { ...DEFAULT_CHROME_THEMES.dark.semanticColors } }
     },
     uiDensity: 'compact',
+    emptyHomeLayout: 'normal',
     chatFontSizePx: DEFAULT_CHAT_FONT_SIZE_PX,
     terminalFontSizePx: DEFAULT_TERMINAL_FONT_SIZE_PX,
     terminalFontFamily: 'JetBrains Mono',
@@ -574,6 +579,10 @@ function normalizeUiDensity(value: unknown, fallback: UiDensity): UiDensity {
   return value === 'compact' || value === 'comfortable' || value === 'spacious' ? value : fallback
 }
 
+function normalizeEmptyHomeLayout(value: unknown, fallback: EmptyHomeLayout): EmptyHomeLayout {
+  return value === 'normal' || value === 'simple' ? value : fallback
+}
+
 function normalizeTimestampFormat(value: unknown): TimestampFormat {
   return value === '12-hour' || value === '24-hour' ? value : 'locale'
 }
@@ -589,6 +598,7 @@ export function normalizeAppearanceSettings(input: AppearancePatchV1 | undefined
       dark: normalizeChromeTheme(themes.dark, 'dark')
     },
     uiDensity: normalizeUiDensity(source.uiDensity, defaults.uiDensity),
+    emptyHomeLayout: normalizeEmptyHomeLayout(source.emptyHomeLayout, defaults.emptyHomeLayout),
     chatFontSizePx: normalizeIntInRange(
       source.chatFontSizePx,
       defaults.chatFontSizePx,

@@ -43,6 +43,18 @@ describe('normalizeAppearanceSettings', () => {
     expect(merged.themes.dark.accent).toBe('#ff0000')
     expect(merged.themes.light).toEqual(base.themes.light)
   })
+
+  it('normalizes emptyHomeLayout and falls back on invalid values', () => {
+    expect(defaultAppearanceSettings().emptyHomeLayout).toBe('normal')
+    expect(normalizeAppearanceSettings({ emptyHomeLayout: 'simple' }).emptyHomeLayout).toBe('simple')
+    expect(normalizeAppearanceSettings({ emptyHomeLayout: 'weird' as never }).emptyHomeLayout).toBe(
+      'normal'
+    )
+    const merged = mergeAppearanceSettings(defaultAppearanceSettings(), {
+      emptyHomeLayout: 'simple'
+    })
+    expect(merged.emptyHomeLayout).toBe('simple')
+  })
 })
 
 describe('normalizeHexColor', () => {

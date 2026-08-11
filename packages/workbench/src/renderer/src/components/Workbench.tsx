@@ -1,5 +1,14 @@
 import type { PointerEvent as ReactPointerEvent, ReactElement, RefObject } from 'react'
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore
+} from 'react'
 import { useTranslation } from 'react-i18next'
 import { Globe2 } from 'lucide-react'
 import { useShallow } from 'zustand/react/shallow'
@@ -48,6 +57,7 @@ import { SidebarExpandDroplet } from './chat/SidebarExpandDroplet'
 import { OperationContextDock } from './chat/OperationContextDock'
 import { MessageTimeline } from './chat/MessageTimeline'
 import { ComposerStage } from './chat/ComposerStage'
+import { getEmptyHomeLayout, subscribeAppearance } from '../lib/apply-appearance'
 import { ConnectionStatusBar } from './ConnectionStatusBar'
 import { DefaultEditorPicker } from './DefaultEditorPicker'
 import { SessionHeader } from './SessionHeader'
@@ -374,10 +384,16 @@ export function Workbench(): ReactElement {
     liveReasoning.trim().length > 0
 
   const stageCentered = !hasStartedConversation
+  const emptyHomeLayout = useSyncExternalStore(subscribeAppearance, getEmptyHomeLayout)
   const activeWorkspaceRoot = useMemo(
     () => resolveActiveThreadWorkspace(activeThreadId, threads, workspaceRoot),
     [activeThreadId, threads, workspaceRoot]
   )
+  const simpleEmptyHome =
+    stageCentered &&
+    emptyHomeLayout === 'simple' &&
+    runtimeConnection === 'ready' &&
+    activeWorkspaceRoot.trim().length > 0
   const threadFilesystemRoot = useMemo(
     () => resolveThreadFilesystemRoot(activeThreadId, threads, workspaceRoot),
     [activeThreadId, threads, workspaceRoot]
@@ -1278,27 +1294,41 @@ export function Workbench(): ReactElement {
               >
             <div className="flex min-h-0 min-w-0 flex-1 flex-col">
               {stageCentered ? (
-                <div className="ds-empty-stage flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-                  <div className="ds-empty-stage-frame flex min-h-0 min-w-0 flex-1 flex-col">
-                    <div className="ds-chat-stage ds-empty-stage-hero min-h-0 flex-1 overflow-y-auto">
-                      <MessageTimeline
-                        blocks={blocks}
-                        liveReasoning={liveReasoning}
-                        live={liveAssistant}
-                        activeThreadId={activeThreadId}
-                        runtimeConnection={runtimeConnection}
-                        stageCentered={stageCentered}
-                        useChatStageWidth={false}
-                        onRetryConnection={() => void probeRuntime('user')}
-                        onOpenSettings={() => openSettings('general')}
-                        onOpenDiagnostics={() => setRuntimeDiagnosticsOpen(true)}
-                        onSelectSuggestion={(text) => setInput(text)}
-                        htmlPreviewAction={htmlPreviewAction}
-                        onOpenWorkspaceFile={openFileInEditor}
-                        devPreviewCard={previewLaunchCard}
-                      />
-                    </div>
-                    <div className="ds-chat-stage ds-empty-stage-composer mt-auto shrink-0">
+                <div
+                  className={`ds-empty-stage flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden ${
+                    simpleEmptyHome ? 'ds-empty-stage--simple' : ''
+                  }`}
+                >
+                  <div
+                    className={`ds-empty-stage-frame relative flex min-h-0 min-w-0 flex-1 flex-col ${
+                      simpleEmptyHome ? 'justify-center' : ''
+                    }`}
+                  >
+                    {!simpleEmptyHome ? (
+                      <div className="ds-chat-stage ds-empty-stage-hero min-h-0 flex-1 overflow-y-auto">
+                        <MessageTimeline
+                          blocks={blocks}
+                          liveReasoning={liveReasoning}
+                          live={liveAssistant}
+                          activeThreadId={activeThreadId}
+                          runtimeConnection={runtimeConnection}
+                          stageCentered={stageCentered}
+                          useChatStageWidth={false}
+                          onRetryConnection={() => void probeRuntime('user')}
+                          onOpenSettings={() => openSettings('general')}
+                          onOpenDiagnostics={() => setRuntimeDiagnosticsOpen(true)}
+                          onSelectSuggestion={(text) => setInput(text)}
+                          htmlPreviewAction={htmlPreviewAction}
+                          onOpenWorkspaceFile={openFileInEditor}
+                          devPreviewCard={previewLaunchCard}
+                        />
+                      </div>
+                    ) : null}
+                    <div
+                      className={`ds-chat-stage ds-empty-stage-composer shrink-0 ${
+                        simpleEmptyHome ? '' : 'mt-auto'
+                      }`}
+                    >
                       <ComposerStage
                         input={input}
                         setInput={setInput}

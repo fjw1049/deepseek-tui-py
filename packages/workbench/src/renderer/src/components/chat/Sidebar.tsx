@@ -23,6 +23,7 @@ import { SidebarProjectsColumn } from './SidebarProjectsSection'
 import { SidebarPinnedSection } from './SidebarPinnedSection'
 import { SidebarChatsSection } from './SidebarChatsSection'
 import { SettingsSidebarNav } from '../settings/SettingsSidebarNav'
+import { EmptyHomeLayoutToggle } from './EmptyHomeLayoutToggle'
 
 const EXTENSIONS_OPEN_KEY = 'deepseekgui.sidebar.extensionsOpen'
 
@@ -279,13 +280,16 @@ export function Sidebar({
             </div>
           </div>
 
-          <div className="ds-sidebar-footer ds-no-drag shrink-0 px-1 pt-2">
-            <SidebarLink
-              icon={<Settings className="h-4 w-4" strokeWidth={1.75} />}
-              label={t('settings')}
-              onClick={() => onOpenSettings('general')}
-              variant="footer"
-            />
+          <div className="ds-sidebar-footer ds-no-drag flex shrink-0 items-center gap-1 px-1 pt-2">
+            <div className="min-w-0 flex-1">
+              <SidebarLink
+                icon={<Settings className="h-4 w-4" strokeWidth={1.75} />}
+                label={t('settings')}
+                onClick={() => onOpenSettings('general')}
+                variant="footer"
+              />
+            </div>
+            <EmptyHomeLayoutToggle />
           </div>
         </>
       )}
@@ -365,9 +369,6 @@ function SidebarLink({
         </kbd>
       ) : null}
       {trailing ?? null}
-      {variant === 'footer' ? (
-        <ChevronRight className="ds-sidebar-chevron h-3.5 w-3.5 shrink-0 text-ds-faint" strokeWidth={1.8} />
-      ) : null}
     </button>
   )
 }

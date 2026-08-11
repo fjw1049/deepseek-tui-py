@@ -2263,6 +2263,18 @@ samp {
   width: 100%;
 }
 
+/* Simple empty home: no dashboard hero — center the composer in the stage. */
+.ds-empty-stage--simple .ds-empty-stage-frame {
+  justify-content: center;
+}
+
+.ds-empty-stage--simple .ds-empty-stage-composer {
+  margin-top: 0;
+  margin-bottom: 0;
+  padding-top: 0.75rem;
+  padding-bottom: 0.75rem;
+}
+
 .ds-empty-hero-panel {
   height: 28.75rem;
   max-height: 28.75rem;

@@ -12,6 +12,7 @@
 import {
   defaultAppearanceSettings,
   type AppearanceSettingsV1,
+  type EmptyHomeLayout,
   type TimestampFormat
 } from '@shared/appearance'
 import { buildAppearanceOverrideCss } from '@shared/appearance-derive'
@@ -34,6 +35,10 @@ export function subscribeAppearance(listener: () => void): () => void {
 
 export function getTimestampFormat(): TimestampFormat {
   return current.timestampFormat
+}
+
+export function getEmptyHomeLayout(): EmptyHomeLayout {
+  return current.emptyHomeLayout
 }
 
 export function getTerminalFontSizePx(): number {

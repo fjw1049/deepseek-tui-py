@@ -17,6 +17,7 @@ import {
   normalizeHexColor,
   parseThemeShareString,
   type ChromeThemeV1,
+  type EmptyHomeLayout,
   type ThemeVariant,
   type UiDensity
 } from '@shared/appearance'
@@ -157,6 +158,21 @@ export function AppearanceSettingsPanel({ form, onPatch }: Props): ReactElement 
                 { value: 'spacious', label: t('uiDensitySpacious') }
               ]}
               onChange={(value) => onAppearancePatch({ uiDensity: value })}
+            />
+          }
+        />
+        <Row
+          title={t('emptyHomeLayout')}
+          description={t('emptyHomeLayoutDesc')}
+          control={
+            <GlassSegmentedControl<EmptyHomeLayout>
+              className="w-full"
+              value={appearance.emptyHomeLayout ?? 'normal'}
+              items={[
+                { value: 'normal', label: t('emptyHomeLayoutNormal') },
+                { value: 'simple', label: t('emptyHomeLayoutSimple') }
+              ]}
+              onChange={(value) => onAppearancePatch({ emptyHomeLayout: value })}
             />
           }
         />

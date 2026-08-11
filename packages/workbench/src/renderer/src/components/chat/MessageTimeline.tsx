@@ -60,7 +60,11 @@ import {
 } from '../../lib/turn-mutation-view'
 import { useDeferredRender } from '../../hooks/use-deferred-render'
 import { resumeThreadAgent } from '../../hooks/use-thread-tasks'
-import { getTimestampFormat, subscribeAppearance } from '../../lib/apply-appearance'
+import {
+  getEmptyHomeLayout,
+  getTimestampFormat,
+  subscribeAppearance
+} from '../../lib/apply-appearance'
 import { getProvider } from '../../agent/registry'
 import { useChatStore } from '../../store/chat-store'
 import { DiffView } from '../DiffView'
@@ -790,8 +794,9 @@ function EmptyHero({
   onOpenSettings: () => void
   onOpenDiagnostics: () => void
   onSelectSuggestion?: (prompt: string) => void
-}): ReactElement {
+}): ReactElement | null {
   const { t } = useTranslation('common')
+  const emptyHomeLayout = useSyncExternalStore(subscribeAppearance, getEmptyHomeLayout)
 
   if (!ready) {
     return (
@@ -819,6 +824,8 @@ function EmptyHero({
       </div>
     )
   }
+
+  if (emptyHomeLayout === 'simple') return null
 
   return <TaskSuggestionHero onSelectSuggestion={onSelectSuggestion} />
 }

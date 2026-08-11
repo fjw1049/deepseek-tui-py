@@ -1150,6 +1150,8 @@
   "promptDesignSub": "Suggest design and interaction improvements",
   "promptDesignPrompt": "Please review the current UI and flows, find friction points, and propose actionable improvements.",
   "settings": "Settings",
+  "emptyHomeLayoutToggleToSimple": "Switch to simple layout",
+  "emptyHomeLayoutToggleToNormal": "Switch to normal layout",
   "selectWorkspace": "Choose working directory",
   "changeWorkspace": "Change working directory",
   "workspaceReadyState": "Ready",
