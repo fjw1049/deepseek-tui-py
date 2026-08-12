@@ -311,10 +311,11 @@ export function WorkspaceFileTree({
             style={{ paddingLeft: `${indentPx(depth)}px` }}
           >
             <ChevronRight
-              className={`pointer-events-none h-3.5 w-3.5 shrink-0 opacity-75 transition ${
+              className={`pointer-events-none h-3.5 w-3.5 shrink-0 text-ds-faint transition ${
                 isExpanded ? 'rotate-90' : ''
               }`}
               strokeWidth={1.85}
+              aria-hidden
             />
             <FolderIcon
               className={`pointer-events-none h-3.5 w-3.5 shrink-0 ${

@@ -9199,7 +9199,8 @@ select:focus-visible,
   /* Never fill with --ds-bg-canvas — in light theme that reads as stark white chips. */
   background: transparent;
   padding-inline: 0.4rem;
-  color: var(--ds-text-muted);
+  /* Neutral chrome grey — Notion warm ink (#37352f) reads yellow on icons. */
+  color: rgba(0, 0, 0, 0.48);
   transition:
     background-color 140ms ease,
     color 140ms ease;
@@ -9213,13 +9214,27 @@ select:focus-visible,
 }
 
 .ds-ide-topbar__action:hover {
-  background: color-mix(in srgb, var(--ds-text) 8%, transparent);
-  color: var(--ds-text);
+  background: rgba(0, 0, 0, 0.06);
+  color: rgba(0, 0, 0, 0.78);
 }
 
 .ds-ide-topbar__action[aria-pressed='true'] {
-  background: color-mix(in srgb, var(--ds-text) 10%, transparent);
-  color: var(--ds-text);
+  background: rgba(0, 0, 0, 0.08);
+  color: rgba(0, 0, 0, 0.82);
+}
+
+[data-theme='dark'] .ds-ide-topbar__action {
+  color: rgba(255, 255, 255, 0.48);
+}
+
+[data-theme='dark'] .ds-ide-topbar__action:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.86);
+}
+
+[data-theme='dark'] .ds-ide-topbar__action[aria-pressed='true'] {
+  background: rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.9);
 }
 
 .ds-ide-project-picker {
@@ -9374,35 +9389,69 @@ select:focus-visible,
   padding-top: 0.2rem;
 }
 
-/* IDE canvas — one continuous bg-app (match chat rail). Chat-mode sidebar
-   layering (lighter veil over main) stays untouched outside data-ide-mode. */
+/* IDE layering follows Appearance tokens (same stack as chat):
+   - shell / gutters → --bg-app (surfaceUnder — warmer board)
+   - work surfaces → --ds-material-panel / --ds-bg-canvas (theme surface — whiter)
+   Never hardcode cream/white; presets retheme both layers together. */
 .ds-workbench-shell[data-ide-mode] {
   background: var(--bg-app);
 }
 
 .ds-workbench-shell[data-ide-mode] .ds-workbench-main {
-  background: var(--bg-app);
+  background: var(--ds-material-panel);
 }
 
-.ds-ide-workspace .ds-workbench-topbar {
-  background: var(--ds-bg-main);
+/* IDE work surfaces share the Appearance canvas token. !important beats
+   Tailwind `bg-ds-sidebar` / `bg-ds-main` utilities so the explorer + tab
+   strip cannot stay on the warmer board (which made chevrons read yellow). */
+.ds-ide-workspace .ds-workbench-topbar,
+.ds-ide-workspace .ds-ide-activity-bar,
+.ds-ide-workspace .ds-ide-search-sidebar,
+.ds-ide-workspace .ds-workspace-file-tree,
+.ds-ide-workspace .ds-workspace-editor-pane,
+.ds-ide-workspace .ds-workspace-editor-pane .bg-ds-sidebar,
+.ds-ide-workspace .bg-ds-sidebar,
+.ds-ide-workspace .bg-ds-main {
+  background-color: var(--ds-bg-canvas) !important;
 }
 
-.ds-ide-workspace .bg-ds-sidebar {
-  background-color: var(--ds-bg-main);
-}
-
-/* Markdown preview + Monaco chrome use CSS vars (not Tailwind), so the
-   utility override above misses them — pin both to bg-app in IDE. */
 .ds-ide-workspace .ds-markdown-doc-shell {
-  background: var(--ds-bg-main);
+  background: var(--ds-bg-canvas);
 }
 
 .ds-ide-workspace .ds-workspace-editor-pane .monaco-editor,
 .ds-ide-workspace .ds-workspace-editor-pane .monaco-editor .margin,
 .ds-ide-workspace .ds-workspace-editor-pane .monaco-editor .monaco-editor-background,
 .ds-ide-workspace .ds-workspace-editor-pane .monaco-editor .overflow-guard {
-  background-color: var(--ds-bg-main) !important;
+  background-color: var(--ds-bg-canvas) !important;
+}
+
+/* Chrome glyphs: neutralize Appearance warm ink so chevrons / activity icons
+   stay cool grey on the white canvas (Notion #37352f otherwise reads yellow).
+   !important beats Tailwind text-ds-* utilities on the same nodes. */
+.ds-ide-workspace .ds-workspace-file-tree__row > svg:first-child,
+.ds-ide-workspace .ds-ide-activity-bar button:not([aria-pressed='true']),
+.ds-ide-workspace .ds-ide-topbar__action {
+  color: rgba(0, 0, 0, 0.45) !important;
+  opacity: 1;
+}
+
+.ds-ide-workspace .ds-ide-activity-bar button[aria-pressed='true'],
+.ds-ide-workspace .ds-ide-topbar__action:hover,
+.ds-ide-workspace .ds-ide-topbar__action[aria-pressed='true'] {
+  color: rgba(0, 0, 0, 0.8) !important;
+}
+
+[data-theme='dark'] .ds-ide-workspace .ds-workspace-file-tree__row > svg:first-child,
+[data-theme='dark'] .ds-ide-workspace .ds-ide-activity-bar button:not([aria-pressed='true']),
+[data-theme='dark'] .ds-ide-workspace .ds-ide-topbar__action {
+  color: rgba(255, 255, 255, 0.45) !important;
+}
+
+[data-theme='dark'] .ds-ide-workspace .ds-ide-activity-bar button[aria-pressed='true'],
+[data-theme='dark'] .ds-ide-workspace .ds-ide-topbar__action:hover,
+[data-theme='dark'] .ds-ide-workspace .ds-ide-topbar__action[aria-pressed='true'] {
+  color: rgba(255, 255, 255, 0.88) !important;
 }
 
 /* IDE mode seams — one shared rule weight/color so header/activity/chat

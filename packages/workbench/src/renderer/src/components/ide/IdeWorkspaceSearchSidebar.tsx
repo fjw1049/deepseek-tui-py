@@ -74,7 +74,7 @@ export function IdeWorkspaceSearchSidebar({
   }, [query, t, workspaceRoot])
 
   return (
-    <aside className="ds-ide-search-sidebar flex h-full min-h-0 w-60 shrink-0 flex-col bg-ds-main">
+    <aside className="ds-ide-search-sidebar flex h-full min-h-0 w-60 shrink-0 flex-col bg-ds-canvas">
       <div className="ds-surface-divider flex h-10 shrink-0 items-center gap-2 px-3">
         <Search className="h-3.5 w-3.5 shrink-0 text-ds-faint" strokeWidth={1.9} />
         <span className="truncate text-[12px] font-medium text-ds-ink">{t('ideWorkspaceSearchTitle')}</span>

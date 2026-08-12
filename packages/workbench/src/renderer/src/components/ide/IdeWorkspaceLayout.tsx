@@ -13,6 +13,7 @@ import {
   FileEdit,
   Folders,
   MessageSquare,
+  PanelRight,
   PanelRightClose,
   Search
 } from 'lucide-react'
@@ -65,7 +66,7 @@ type Props = {
 type ActivityItem = IdeCenterTab
 
 function PanelFallback(): ReactElement {
-  return <div className="h-full w-full bg-ds-main" />
+  return <div className="h-full w-full bg-ds-canvas" />
 }
 
 function ActivityButton({
@@ -213,7 +214,7 @@ export function IdeWorkspaceLayout({
   const showProjectPicker = Boolean(onSelectProject)
 
   return (
-    <div className="ds-ide-workspace flex h-full min-h-0 min-w-0 flex-1 flex-col bg-ds-main text-ds-ink">
+    <div className="ds-ide-workspace flex h-full min-h-0 min-w-0 flex-1 flex-col bg-ds-canvas text-ds-ink">
       <header className="ds-workbench-topbar ds-surface-divider relative z-10 shrink-0">
         <div className="ds-ide-topbar__inner">
           <div className="ds-ide-topbar__leading min-w-0">
@@ -252,7 +253,11 @@ export function IdeWorkspaceLayout({
               title={chatRailVisible ? t('ideChatRailHide') : t('ideChatRailShow')}
               onClick={() => setChatRailVisible((current) => !current)}
             >
-              <PanelRightClose className="h-3.5 w-3.5" strokeWidth={1.85} />
+              {chatRailVisible ? (
+                <PanelRightClose className="h-3.5 w-3.5" strokeWidth={1.85} />
+              ) : (
+                <PanelRight className="h-3.5 w-3.5" strokeWidth={1.85} />
+              )}
               <span className="sr-only">
                 {chatRailVisible ? t('ideChatRailHide') : t('ideChatRailShow')}
               </span>
@@ -263,7 +268,7 @@ export function IdeWorkspaceLayout({
 
       <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
         <nav
-          className="ds-ide-activity-bar flex w-11 shrink-0 flex-col items-center gap-1 bg-ds-main py-2"
+          className="ds-ide-activity-bar flex w-11 shrink-0 flex-col items-center gap-1 bg-ds-canvas py-2"
           aria-label={t('ideActivityBarLabel')}
         >
           <ActivityButton
@@ -320,7 +325,7 @@ export function IdeWorkspaceLayout({
 
           {chatRailVisible ? (
             <aside
-              className="ds-ide-chat-rail relative flex h-full min-h-0 shrink-0 flex-col bg-ds-main"
+              className="ds-ide-chat-rail relative flex h-full min-h-0 shrink-0 flex-col bg-ds-canvas"
               style={{ width: chatRailWidth }}
             >
               {/* Same seam pattern as WorkbenchRightSidebar: the panel border is

@@ -15,11 +15,16 @@ export type WorkspaceMonacoThemeName =
   | 'ds-ide-workspace-dark'
   | 'ds-ide-workspace-light'
 
-/** Match Monaco canvas to workbench tokens (sidebar panel vs IDE bg-app). */
+/**
+ * Monaco theme ids for workspace editors.
+ * Live colors are pinned by CSS to Appearance tokens
+ * (`--ds-bg-sidebar` in chat, `--ds-bg-canvas` in IDE) — these hex values are
+ * only fallbacks before the stylesheet override applies.
+ */
 export function ensureWorkspaceMonacoThemes(): void {
   if (themesReady) return
   themesReady = true
-  // Chat-mode right panel / tool editor — `--bg-sidebar`.
+  // Chat-mode right panel / tool editor — overridden to `--ds-bg-sidebar`.
   monaco.editor.defineTheme('ds-workspace-dark', {
     base: 'vs-dark',
     inherit: true,
@@ -40,15 +45,15 @@ export function ensureWorkspaceMonacoThemes(): void {
       'minimap.background': '#f0f0f0'
     }
   })
-  // IDE workspace — `--bg-app` / `bg-ds-main` (same as chat rail).
+  // IDE work surface — overridden to `--ds-bg-canvas` (appearance surface).
   monaco.editor.defineTheme('ds-ide-workspace-dark', {
     base: 'vs-dark',
     inherit: true,
     rules: [],
     colors: {
-      'editor.background': '#0e0e0e',
-      'editorGutter.background': '#0e0e0e',
-      'minimap.background': '#0e0e0e'
+      'editor.background': '#111111',
+      'editorGutter.background': '#111111',
+      'minimap.background': '#111111'
     }
   })
   monaco.editor.defineTheme('ds-ide-workspace-light', {
@@ -56,9 +61,9 @@ export function ensureWorkspaceMonacoThemes(): void {
     inherit: true,
     rules: [],
     colors: {
-      'editor.background': '#fcfcfc',
-      'editorGutter.background': '#fcfcfc',
-      'minimap.background': '#fcfcfc'
+      'editor.background': '#ffffff',
+      'editorGutter.background': '#ffffff',
+      'minimap.background': '#ffffff'
     }
   })
 }
