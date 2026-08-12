@@ -196,6 +196,25 @@ describe('appearance-derive', () => {
     expect(darkVars['--ds-accent']).not.toBe('#0169cc')
   })
 
+  it('keeps board → canvas → sidebar luminance order for dark presets', () => {
+    const lum = (hex: string): number => {
+      const r = Number.parseInt(hex.slice(1, 3), 16)
+      const g = Number.parseInt(hex.slice(3, 5), 16)
+      const b = Number.parseInt(hex.slice(5, 7), 16)
+      return 0.2126 * r + 0.7152 * g + 0.0722 * b
+    }
+    for (const id of ['nord', 'notion', 'codex', 'dracula'] as const) {
+      const theme = getThemePresetSeed(id, 'dark')!
+      const vars = buildChromeThemeCssVars(theme, 'dark')
+      const board = lum(vars['--bg-app']!)
+      const canvas = lum(vars['--bg-canvas']!)
+      const sidebar = lum(vars['--bg-sidebar']!)
+      // Shell gutters use board; content card uses canvas; rail uses sidebar.
+      expect(canvas - board, id).toBeGreaterThanOrEqual(10)
+      expect(sidebar, id).toBeGreaterThan(canvas)
+    }
+  })
+
   it('maps theme pack fonts to UI, mono, and chat-code tokens', () => {
     const theme = { ...getThemePresetSeed('raycast', 'dark')! }
     const vars = buildChromeThemeCssVars(theme, 'dark')

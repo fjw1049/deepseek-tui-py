@@ -270,7 +270,7 @@
 }
 
 [data-theme='dark'] body::before {
-  background: var(--app-wallpaper);
+  background: var(--bg-sidebar);
 }
 
 html,
@@ -856,7 +856,9 @@ body::before {
   position: fixed;
   inset: 0;
   z-index: -2;
-  background: var(--app-wallpaper);
+  /* Same chrome as shell/sidebar — not --app-wallpaper/--bg-app, or window
+     edges peek a darker second board behind the card gutters. */
+  background: var(--bg-sidebar);
 }
 
 body::after {
@@ -2658,11 +2660,13 @@ samp {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   font-synthesis: none;
-  background: var(--glass-bg);
+  /* Solid --bg-sidebar (not frosted --glass-bg): glass-over-board mixed a
+     second tone that never matched the seam wedge → stitching at the card. */
+  background: var(--bg-sidebar);
   border-right: 1px solid var(--glass-border);
   box-shadow: inset 0 1px 0 var(--glass-highlight);
-  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 
 .ds-sidebar-shell button,
@@ -2778,12 +2782,13 @@ samp {
   padding: 0.35rem 0.25rem 0.5rem;
 }
 
-/* Sits outside the sidebar scroll surface so the projects header never scrolls away. */
+/* Sits outside the sidebar scroll surface so the projects header never scrolls away.
+   Transparent — inherit .ds-sidebar-shell; a solid fill here reads as a nested card. */
 .ds-sidebar-projects-toolbar--fixed {
   position: relative;
   z-index: 2;
   margin-top: 0.75rem;
-  background: var(--ds-bg-sidebar);
+  background: transparent;
   padding-top: 0.5rem;
   padding-bottom: 0.45rem;
   border-bottom: 1px solid color-mix(in srgb, var(--ds-sidebar-border) 80%, transparent);
@@ -2985,7 +2990,7 @@ samp {
   flex-direction: column;
   margin-top: 0.75rem;
   border-bottom: 1px solid color-mix(in srgb, var(--ds-sidebar-border) 80%, transparent);
-  background: var(--ds-bg-sidebar);
+  background: transparent;
 }
 
 /* Pinned sits above Projects — drop the toolbar's top gap to avoid double spacing. */
@@ -3010,7 +3015,8 @@ samp {
   flex: 0 1 auto;
   flex-direction: column;
   border-top: 1px solid color-mix(in srgb, var(--ds-sidebar-border) 80%, transparent);
-  background: var(--ds-bg-sidebar);
+  /* Inherit shell glass — solid --ds-bg-sidebar stacked a second card on the rail. */
+  background: transparent;
 }
 
 .ds-sidebar-chats-section {
@@ -6065,8 +6071,9 @@ select:focus-visible,
   /* Pad the content card via shell padding (reliable in flex). Left stays 0 so
      the sidebar can sit flush; collapsed sidebar restores left inset below. */
   padding: var(--ds-window-inset) var(--ds-window-inset) var(--ds-window-inset) 0;
-  /* One continuous chrome behind the inset content card — same tone as the
-     flush left sidebar, so top/right/bottom gutters read as attached frame. */
+  /* One chrome color with the left rail: gutters around the floating card
+     (top/right/bottom, and left when collapsed) must match --bg-sidebar.
+     Using --bg-app here made the four card corners a darker second board tone. */
   background: var(--bg-sidebar);
 }
 
@@ -6080,8 +6087,12 @@ select:focus-visible,
   overflow: hidden;
   border: none;
   border-radius: 0;
-  background: var(--glass-bg);
+  /* Solid rail fill — frosted --glass-bg over --bg-app mixed a second board
+     tone and never matched the seam wedge, which read as stitching. */
+  background: var(--bg-sidebar);
   box-shadow: var(--ds-sidebar-shadow);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 
 .ds-workbench-main {
@@ -6104,13 +6115,12 @@ select:focus-visible,
 }
 
 [data-theme='dark'] .ds-workbench-main {
-  --seam-line: rgba(255, 255, 255, 0.06);
-  /* Softer than Synara's 0.36: our dark sidebar/canvas tones sit much closer
-     together, so a strong fringe reads as a dirty double-line, not depth. */
-  --seam-shadow-color: rgba(0, 0, 0, 0.22);
-  --card-float-shadow:
-    0 1px 2px rgba(0, 0, 0, 0.2),
-    0 6px 22px -8px rgba(0, 0, 0, 0.45);
+  --seam-line: rgba(255, 255, 255, 0.08);
+  /* Soft left seam only — avoid a second dark halo on the board. */
+  --seam-shadow-color: rgba(0, 0, 0, 0.16);
+  /* One tight elevation. A large dark blur paints multi-tone bands on the
+     solid board under the card radius and reads as stitching. */
+  --card-float-shadow: 0 1px 3px rgba(0, 0, 0, 0.28);
 }
 
 /* Only when the left sidebar is visible does the seam exist: round the card's
@@ -6146,33 +6156,23 @@ select:focus-visible,
   }
 }
 
-/* Wedge behind the card's rounded seam corners: fills the radius cutouts with
-   the sidebar material so the corners melt into the sidebar column instead of
-   exposing the darker window ground (Synara chat-content-card-backing::after). */
+/* Wedge = same solid --bg-sidebar as the rail (fills card radius cutouts only). */
 .ds-workbench-sidebar-wrap::after {
   content: '';
   position: absolute;
-  /* Sidebar bleeds into shell padding; keep the wedge aligned with the card. */
   inset-block: var(--ds-window-inset);
   right: calc(-1 * var(--ds-radius-shell));
-  /* 2px wider than the radius so the strip overlaps the sidebar's right edge:
-     the sidebar's backdrop blur samples the darker window ground past its own
-     edge and leaves a dark fringe there — the overlap paints sidebar material
-     (same color AND same blur, per Synara chat-content-card-backing) over it. */
-  width: calc(var(--ds-radius-shell) + 2px);
+  width: var(--ds-radius-shell);
   pointer-events: none;
-  /* Prefer solid sidebar tone over translucent glass — a 6% hole lets the
-     darker window ground show through as a bitten corner. */
   background: var(--bg-sidebar);
   transition: opacity 300ms cubic-bezier(0.32, 0.72, 0, 1);
 }
 
 .ds-workbench-sidebar-wrap + .ds-workbench-main {
   border-radius: var(--ds-radius-shell);
-  /* Soft left seam into the sidebar + the same float on the other edges. */
-  box-shadow:
-    -4px 0 12px -8px var(--seam-shadow-color),
-    var(--card-float-shadow);
+  /* Float only — the extra left seam shadow painted a third dark band on the
+     board/rail join. Hairline ::before already marks the card edge. */
+  box-shadow: var(--card-float-shadow);
   transition:
     border-radius 300ms cubic-bezier(0.32, 0.72, 0, 1),
     box-shadow 300ms cubic-bezier(0.32, 0.72, 0, 1);
@@ -9160,6 +9160,7 @@ select:focus-visible,
 
 :root[data-platform='darwin'] .ds-ide-topbar__inner {
   align-items: flex-start;
+  /* Card sits inside --ds-window-inset; subtract it so controls clear traffic lights. */
   padding-top: max(
     0px,
     calc(var(--ds-traffic-light-center) - 0.875rem - var(--ds-window-inset, 8px))
@@ -9389,16 +9390,17 @@ select:focus-visible,
   padding-top: 0.2rem;
 }
 
-/* IDE layering follows Appearance tokens (same stack as chat):
-   - shell / gutters → --bg-app (surfaceUnder — warmer board)
-   - work surfaces → --ds-material-panel / --ds-bg-canvas (theme surface — whiter)
-   Never hardcode cream/white; presets retheme both layers together. */
+/* IDE = same floating-card shell as chat (projects rail collapsed).
+   Chrome gutters share --bg-sidebar with the chat rail so card corners match. */
 .ds-workbench-shell[data-ide-mode] {
-  background: var(--bg-app);
+  background: var(--bg-sidebar);
+  background-image: none;
 }
 
-.ds-workbench-shell[data-ide-mode] .ds-workbench-main {
-  background: var(--ds-material-panel);
+/* Rail is width-0 but still mounted — keep the seam wedge off the board. */
+.ds-workbench-shell[data-ide-mode] .ds-workbench-sidebar-wrap::after {
+  content: none;
+  opacity: 0;
 }
 
 /* IDE work surfaces share the Appearance canvas token. !important beats

@@ -83,7 +83,9 @@ export function buildChromeThemeCssVars(
   const anchor = light ? WHITE : ink
 
   // Layered surfaces (Synara: surfaceUnder / panel / elevated / editor).
-  const surfaceUnder = mixRgb(
+  // Shell gutters use --bg-app (= surfaceUnder); the content card uses
+  // --ds-material-panel (= canvas). Sidebar chrome uses --bg-sidebar.
+  let surfaceUnder = mixRgb(
     surface,
     light ? ink : BLACK,
     SURFACE_UNDER_BASE_ALPHA[variant] + (theme.contrast - CONTRAST_BASELINE[variant]) * SURFACE_UNDER_CONTRAST_STEP[variant]
@@ -102,6 +104,21 @@ export function buildChromeThemeCssVars(
   // Fall back to the window-ground mix so chrome stays distinct.
   const canvasBg = surface
   const sidebarBg = light && hex(panel) === hex(surface) ? surfaceUnder : panel
+
+  // Near-black dark surfaces otherwise yield ΔL≈3 between board and canvas and
+  // read as a flat slab. Nudge the board further toward black until the gap is
+  // perceptible (matches the ~12ΔL light Notion board→card separation).
+  if (!light) {
+    const lum = (rgb: Rgb): number => 0.2126 * rgb.r + 0.7152 * rgb.g + 0.0722 * rgb.b
+    const minGap = 10
+    let gap = lum(canvasBg) - lum(surfaceUnder)
+    let guard = 0
+    while (gap < minGap && guard < 8) {
+      surfaceUnder = mixRgb(surfaceUnder, BLACK, 0.12)
+      gap = lum(canvasBg) - lum(surfaceUnder)
+      guard += 1
+    }
+  }
 
   // Text tiers.
   const textSecondary = rgba(ink, 0.65 + c * 0.1)
