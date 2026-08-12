@@ -110,7 +110,7 @@ export function WorkflowBlock({
   }
 
   return (
-    <div className="overflow-hidden rounded-[14px] border border-ds-border-muted/70 bg-ds-card/55 text-[12.5px] leading-5 shadow-[0_8px_24px_rgba(15,23,42,0.04)]">
+    <div className="ds-workflow-block overflow-hidden rounded-[14px] border border-ds-border-muted/70 bg-ds-card/55 text-[12.5px] leading-5 shadow-[0_8px_24px_rgba(15,23,42,0.04)]">
       <div className="flex items-start gap-1 px-2.5 py-2">
         <button
           type="button"
@@ -118,7 +118,7 @@ export function WorkflowBlock({
           aria-expanded={expanded}
           className="flex min-w-0 flex-1 items-start gap-2.5 text-left transition hover:opacity-95"
         >
-          <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-[10px] bg-ds-hover/80 text-ds-ink/80">
+          <span className="ds-workflow-block__icon mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-[10px] bg-ds-hover/80 text-ds-ink/80">
             {running ? (
               <Loader2 className="h-4 w-4 animate-spin" strokeWidth={1.9} />
             ) : (
@@ -127,7 +127,7 @@ export function WorkflowBlock({
           </span>
           <span className="min-w-0 flex-1">
             <span className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-              <span className="truncate text-[13.5px] font-semibold tracking-[-0.015em] text-ds-ink">
+              <span className="ds-workflow-block__title truncate text-[13.5px] font-semibold tracking-[-0.015em] text-ds-ink">
                 {name}
               </span>
               <span className="shrink-0 rounded-full bg-black/[0.05] px-1.5 py-0.5 text-[10.5px] font-semibold text-ds-muted dark:bg-white/[0.08]">

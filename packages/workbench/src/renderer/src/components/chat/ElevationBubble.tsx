@@ -30,7 +30,7 @@ export function ElevationBubble({ block }: { block: ElevationBlock }): ReactElem
   return (
     <div
       id={`block-${block.id}`}
-      className="rounded-2xl border border-ds-border bg-ds-card px-3.5 py-3 text-[13px] leading-6 text-ds-ink shadow-panel"
+      className="ds-elevation-bubble rounded-2xl border border-ds-border bg-ds-card px-3.5 py-3 text-[13px] leading-6 text-ds-ink shadow-panel"
     >
       <div className="flex items-center gap-2">
         <span aria-hidden className="h-2 w-2 shrink-0 rounded-full bg-accent" />

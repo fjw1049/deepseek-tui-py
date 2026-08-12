@@ -69,7 +69,7 @@ export function ApprovalBubble({ block }: { block: ApprovalBlock }): ReactElemen
   return (
     <div
       id={`block-${block.id}`}
-      className={`relative overflow-hidden rounded-[18px] border px-4 py-3.5 text-[13px] leading-6 shadow-panel ${
+      className={`ds-approval-bubble relative overflow-hidden rounded-[18px] border px-4 py-3.5 text-[13px] leading-6 shadow-panel ${
         block.status === 'error'
           ? 'border-ds-danger/25 bg-ds-danger-soft text-ds-ink'
           : 'border-ds-border/80 bg-ds-card/95 text-ds-ink backdrop-blur-xl'

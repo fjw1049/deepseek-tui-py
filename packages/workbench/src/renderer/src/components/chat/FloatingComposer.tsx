@@ -287,8 +287,15 @@ export function FloatingComposer({
   const footerRef = useRef<HTMLDivElement | null>(null)
   const plusMenuRef = useRef<HTMLDivElement | null>(null)
   const [footerWidth, setFooterWidth] = useState<number | null>(null)
-  const footerTier = useMemo(() => composerFooterTierForWidth(footerWidth), [footerWidth])
-  const footerPlan = useMemo(() => composerFooterPlanForWidth(footerWidth), [footerWidth])
+  const footerLayoutOpts = useMemo(() => ({ dense: compactChrome }), [compactChrome])
+  const footerTier = useMemo(
+    () => composerFooterTierForWidth(footerWidth, footerLayoutOpts),
+    [footerWidth, footerLayoutOpts]
+  )
+  const footerPlan = useMemo(
+    () => composerFooterPlanForWidth(footerWidth, footerLayoutOpts),
+    [footerWidth, footerLayoutOpts]
+  )
   const composingRef = useRef(false)
   const speechBaseRef = useRef('')
   const [voicePhase, setVoicePhase] = useState<ComposerVoicePhase>('idle')
@@ -591,13 +598,18 @@ export function FloatingComposer({
       ? t('queueMessage')
       : t('send')
 
-  // Soft grow via height:auto (never 0px). Width reflows no longer remeasure —
-  // CSS `field-sizing: content` covers most cases in Chromium/Electron.
+  // Soft grow via height:auto. Empty value must NOT follow placeholder
+  // scrollHeight — narrow columns wrap the long CJK placeholder into a tall box.
   const resizeTextarea = useCallback(() => {
     const el = textareaRef.current
     if (!el) return
-    const minHeight = compactChrome ? 22 : 44
+    const minHeight = compactChrome ? 22 : 48
     const maxHeight = compactChrome ? 120 : 176
+    if (!el.value) {
+      el.style.height = `${minHeight}px`
+      el.style.overflowY = 'hidden'
+      return
+    }
     el.style.height = 'auto'
     const nextHeight = Math.min(Math.max(el.scrollHeight, minHeight), maxHeight)
     el.style.height = `${nextHeight}px`
@@ -607,6 +619,17 @@ export function FloatingComposer({
   useLayoutEffect(() => {
     resizeTextarea()
   }, [attachments.length, canCompose, input, resizeTextarea])
+
+  // Re-clamp when the composer column width changes (sidebar drag / restore).
+  useEffect(() => {
+    const el = textareaRef.current
+    if (!el || typeof ResizeObserver === 'undefined') return
+    const ro = new ResizeObserver(() => {
+      resizeTextarea()
+    })
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [resizeTextarea])
 
   useEffect(() => {
     setActiveCommand(null)
@@ -717,6 +740,12 @@ export function FloatingComposer({
       setPluginQuery('')
     }
   }, [plusMenuOpen])
+
+  useEffect(() => {
+    if (!footerPlan.showPlus && plusMenuOpen) {
+      setPlusMenuOpen(false)
+    }
+  }, [footerPlan.showPlus, plusMenuOpen])
 
   const loadComposerSkills = useCallback((): void => {
     if (skillsLoaded || skillsLoading) return
@@ -1612,7 +1641,7 @@ export function FloatingComposer({
             ref={textareaRef}
             rows={stageCentered ? 1 : 1}
             className={`ds-composer-input ds-no-drag block min-w-0 w-full resize-none break-words bg-transparent px-2 text-ds-ink placeholder:text-ds-faint focus:outline-none [overflow-wrap:anywhere] ${
-              compactChrome ? 'min-h-[22px] py-0.5' : 'min-h-[48px] py-1.5'
+              compactChrome ? 'py-0.5' : 'py-1.5'
             } ${canCompose ? '' : 'opacity-80'}`}
             placeholder={
               previewPicks.length > 0 ? t('composerPreviewPickPlaceholder') : placeholder
@@ -1693,8 +1722,9 @@ export function FloatingComposer({
             data-composer-footer-tier={footerTier}
             className={`flex flex-nowrap items-center ${compactChrome ? 'gap-1 px-1' : 'gap-1.5 px-2'}`}
           >
-            {/* Left chrome never shrinks — otherwise + / approval overflow under the model pill. */}
+            {/* Left chrome: progressive hide via footerPlan (plus last-but-one). */}
             <div className={`relative z-10 flex shrink-0 items-center ${compactChrome ? 'gap-1' : 'gap-1.5'}`}>
+            {footerPlan.showPlus ? (
             <div ref={plusMenuRef} className="relative shrink-0">
               <button
                 type="button"
@@ -1715,6 +1745,11 @@ export function FloatingComposer({
               </button>
               {plusMenuOpen ? (
                 <div className="absolute bottom-full left-0 z-40 mb-2">
+                  {/*
+                    Chat: flyout opens to the right (left-full).
+                    IDE compactChrome: stack above + left-align — the rail sits on
+                    the window's right edge, so a right flyout is clipped.
+                  */}
                   <div className="ds-glass min-w-[220px] overflow-hidden rounded-2xl p-1.5">
                     {/* Add files: no submenu, runs immediately. */}
                     <button
@@ -1813,7 +1848,13 @@ export function FloatingComposer({
                   </div>
 
                   {plusSubmenu === 'mode' ? (
-                    <div className="ds-glass absolute bottom-0 left-full ml-2 w-max overflow-hidden rounded-2xl p-2 before:absolute before:inset-y-0 before:-left-2 before:w-2 before:content-['']">
+                    <div
+                      className={
+                        compactChrome
+                          ? 'ds-composer-plus-flyout ds-composer-plus-flyout--ide ds-glass absolute bottom-full left-0 mb-2 w-max max-w-[min(300px,calc(100vw-2rem))] overflow-hidden rounded-2xl p-2'
+                          : "ds-composer-plus-flyout ds-glass absolute bottom-0 left-full ml-2 w-max overflow-hidden rounded-2xl p-2 before:absolute before:inset-y-0 before:-left-2 before:w-2 before:content-['']"
+                      }
+                    >
                       {/* Lock panel width to Plan hint so toggling Ask/Workflow doesn't resize. */}
                       <p
                         aria-hidden
@@ -1873,7 +1914,13 @@ export function FloatingComposer({
                   ) : null}
 
                   {plusSubmenu === 'skills' ? (
-                    <div className="ds-glass absolute bottom-0 left-full ml-2 flex max-h-[min(420px,52vh)] w-[300px] flex-col overflow-hidden rounded-2xl p-2 before:absolute before:inset-y-0 before:-left-2 before:w-2 before:content-['']">
+                    <div
+                      className={
+                        compactChrome
+                          ? 'ds-composer-plus-flyout ds-composer-plus-flyout--ide ds-glass absolute bottom-full left-0 mb-2 flex max-h-[min(360px,46vh)] w-[min(300px,calc(100vw-2rem))] flex-col overflow-hidden rounded-2xl p-2'
+                          : "ds-composer-plus-flyout ds-glass absolute bottom-0 left-full ml-2 flex max-h-[min(420px,52vh)] w-[300px] flex-col overflow-hidden rounded-2xl p-2 before:absolute before:inset-y-0 before:-left-2 before:w-2 before:content-['']"
+                      }
+                    >
                       <div className="mb-2 flex shrink-0 items-center gap-2 rounded-xl border border-ds-border bg-ds-card px-2.5 py-1.5">
                         <Search className="h-4 w-4 shrink-0 text-ds-faint" strokeWidth={1.8} />
                         <input
@@ -1938,7 +1985,13 @@ export function FloatingComposer({
                   ) : null}
 
                   {plusSubmenu === 'connectors' ? (
-                    <div className="ds-glass absolute bottom-0 left-full ml-2 flex max-h-[min(420px,52vh)] w-[300px] flex-col overflow-hidden rounded-2xl p-2 before:absolute before:inset-y-0 before:-left-2 before:w-2 before:content-['']">
+                    <div
+                      className={
+                        compactChrome
+                          ? 'ds-composer-plus-flyout ds-composer-plus-flyout--ide ds-glass absolute bottom-full left-0 mb-2 flex max-h-[min(360px,46vh)] w-[min(300px,calc(100vw-2rem))] flex-col overflow-hidden rounded-2xl p-2'
+                          : "ds-composer-plus-flyout ds-glass absolute bottom-0 left-full ml-2 flex max-h-[min(420px,52vh)] w-[300px] flex-col overflow-hidden rounded-2xl p-2 before:absolute before:inset-y-0 before:-left-2 before:w-2 before:content-['']"
+                      }
+                    >
                       <div className="mb-2 flex shrink-0 gap-1 rounded-xl bg-ds-subtle/70 p-0.5">
                         {(
                           [
@@ -2052,7 +2105,13 @@ export function FloatingComposer({
                   ) : null}
 
                   {plusSubmenu === 'plugins' ? (
-                    <div className="ds-glass absolute bottom-0 left-full ml-2 flex max-h-[min(420px,52vh)] w-[300px] flex-col overflow-hidden rounded-2xl p-2 before:absolute before:inset-y-0 before:-left-2 before:w-2 before:content-['']">
+                    <div
+                      className={
+                        compactChrome
+                          ? 'ds-composer-plus-flyout ds-composer-plus-flyout--ide ds-glass absolute bottom-full left-0 mb-2 flex max-h-[min(360px,46vh)] w-[min(300px,calc(100vw-2rem))] flex-col overflow-hidden rounded-2xl p-2'
+                          : "ds-composer-plus-flyout ds-glass absolute bottom-0 left-full ml-2 flex max-h-[min(420px,52vh)] w-[300px] flex-col overflow-hidden rounded-2xl p-2 before:absolute before:inset-y-0 before:-left-2 before:w-2 before:content-['']"
+                      }
+                    >
                       <div className="mb-2 flex shrink-0 items-center gap-2 rounded-xl border border-ds-border bg-ds-card px-2.5 py-1.5">
                         <Search className="h-4 w-4 shrink-0 text-ds-faint" strokeWidth={1.8} />
                         <input
@@ -2148,20 +2207,23 @@ export function FloatingComposer({
                 </div>
               ) : null}
             </div>
+            ) : null}
 
-            <div className="relative z-10 shrink-0">
-              <ComposerApprovalPolicySelector
-                disabled={!canCompose}
-                compact={!footerPlan.showApprovalLabel}
-                dense={compactChrome}
-                onOpenChange={(nextOpen) => {
-                  if (nextOpen) {
-                    setPlusMenuOpen(false)
-                    setPlusSubmenu(null)
-                  }
-                }}
-              />
-            </div>
+            {footerPlan.showApproval ? (
+              <div className="relative z-10 shrink-0">
+                <ComposerApprovalPolicySelector
+                  disabled={!canCompose}
+                  compact={!footerPlan.showApprovalLabel}
+                  dense={compactChrome}
+                  onOpenChange={(nextOpen) => {
+                    if (nextOpen) {
+                      setPlusMenuOpen(false)
+                      setPlusSubmenu(null)
+                    }
+                  }}
+                />
+              </div>
+            ) : null}
 
             {mode !== 'agent' ? (
               <div
@@ -2243,7 +2305,7 @@ export function FloatingComposer({
             ) : null}
             </div>
 
-            {/* Middle: meter + model (may shrink). Actions are a separate reserved cluster. */}
+            {/* Middle: meter + model — progressive hide (meter → effort → model). */}
             <div className="flex min-w-0 flex-1 items-center justify-end gap-1.5">
               {footerPlan.showContextMeter ? (
                 <ContextUsageMeter
@@ -2253,33 +2315,30 @@ export function FloatingComposer({
                   threadId={activeThreadId}
                 />
               ) : null}
-              <div
-                className={
-                  footerPlan.showModelLabel
-                    ? 'min-w-0 max-w-[min(100%,220px)]'
-                    : 'min-w-0 max-w-[min(100%,8.5rem)] shrink'
-                }
-              >
-                <ReasoningEffortSelector
-                  models={selectorModels}
-                  model={activeModelId}
-                  onModelChange={(id) => {
-                    onComposerModelChange(id)
-                    focusComposer()
-                  }}
-                  value={composerReasoningEffort}
-                  onChange={setComposerReasoningEffort}
-                  onConfigureModels={() => openSettings('models')}
-                  disabled={!canChangeModel}
-                  compact={!footerPlan.showModelLabel}
-                  dense={compactChrome}
-                />
-              </div>
+              {footerPlan.showModel ? (
+                <div className="min-w-0 max-w-[min(100%,220px)]">
+                  <ReasoningEffortSelector
+                    models={selectorModels}
+                    model={activeModelId}
+                    onModelChange={(id) => {
+                      onComposerModelChange(id)
+                      focusComposer()
+                    }}
+                    value={composerReasoningEffort}
+                    onChange={setComposerReasoningEffort}
+                    onConfigureModels={() => openSettings('models')}
+                    disabled={!canChangeModel}
+                    compact={!footerPlan.showModelLabel}
+                    hideEffort={!footerPlan.showEffortTier}
+                    dense={compactChrome}
+                  />
+                </div>
+              ) : null}
             </div>
 
-            {/* Voice + send: always reserved — never share a shrinking box with the model pill. */}
+            {/* Voice → plus already gated; send is last to disappear. */}
             <div className={`relative z-20 flex shrink-0 items-center ${compactChrome ? 'gap-1' : 'gap-1.5'}`}>
-              {isMediaCaptureSupported() ? (
+              {footerPlan.showVoice && isMediaCaptureSupported() ? (
                 <button
                   type="button"
                   disabled={voicePhase === 'transcribing' || (voicePhase === 'idle' && !canCompose)}
@@ -2304,32 +2363,34 @@ export function FloatingComposer({
                 </button>
               ) : null}
 
-              {busy && !activeHighlightedSlashCommand && voicePhase === 'idle' ? (
-                <button
-                  type="button"
-                  onClick={onInterrupt}
-                  className={`ds-no-drag flex shrink-0 items-center justify-center rounded-full border border-red-500/45 bg-red-500/15 text-red-600 shadow-sm transition hover:bg-red-500/25 hover:text-red-700 dark:text-red-300 dark:hover:text-red-200 ${
-                    compactChrome ? 'h-7 w-7' : 'h-9 w-9'
-                  }`}
-                  aria-label={t('interrupt')}
-                  title={t('interrupt')}
-                >
-                  <Square className="h-3 w-3 fill-current" strokeWidth={2.4} />
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  disabled={primaryActionDisabled}
-                  onClick={handlePrimaryAction}
-                  className={`ds-no-drag flex shrink-0 items-center justify-center rounded-full border border-accent/15 bg-accent text-white shadow-[0_10px_24px_rgba(79,124,255,0.28)] transition hover:brightness-110 disabled:cursor-not-allowed disabled:border-ds-border disabled:bg-ds-card disabled:text-ds-faint disabled:shadow-none ${
-                    compactChrome ? 'h-7 w-7' : 'h-9 w-9'
-                  }`}
-                  aria-label={primaryActionLabel}
-                  title={primaryActionLabel}
-                >
-                  <Send className={compactChrome ? 'h-3.5 w-3.5' : 'h-4 w-4'} strokeWidth={2.2} />
-                </button>
-              )}
+              {footerPlan.showSend ? (
+                busy && !activeHighlightedSlashCommand && voicePhase === 'idle' ? (
+                  <button
+                    type="button"
+                    onClick={onInterrupt}
+                    className={`ds-no-drag flex shrink-0 items-center justify-center rounded-full border border-red-500/45 bg-red-500/15 text-red-600 shadow-sm transition hover:bg-red-500/25 hover:text-red-700 dark:text-red-300 dark:hover:text-red-200 ${
+                      compactChrome ? 'h-7 w-7' : 'h-9 w-9'
+                    }`}
+                    aria-label={t('interrupt')}
+                    title={t('interrupt')}
+                  >
+                    <Square className="h-3 w-3 fill-current" strokeWidth={2.4} />
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    disabled={primaryActionDisabled}
+                    onClick={handlePrimaryAction}
+                    className={`ds-no-drag flex shrink-0 items-center justify-center rounded-full border border-accent/15 bg-accent text-white shadow-[0_10px_24px_rgba(79,124,255,0.28)] transition hover:brightness-110 disabled:cursor-not-allowed disabled:border-ds-border disabled:bg-ds-card disabled:text-ds-faint disabled:shadow-none ${
+                      compactChrome ? 'h-7 w-7' : 'h-9 w-9'
+                    }`}
+                    aria-label={primaryActionLabel}
+                    title={primaryActionLabel}
+                  >
+                    <Send className={compactChrome ? 'h-3.5 w-3.5' : 'h-4 w-4'} strokeWidth={2.2} />
+                  </button>
+                )
+              ) : null}
             </div>
           </div>
         </div>

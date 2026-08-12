@@ -22,6 +22,10 @@ type Props = {
   compact?: boolean
   usePortal?: boolean
   menuPlacement?: 'above' | 'below'
+  /** Compact tray: drop the branch name, keep the git icon. */
+  hideLabel?: boolean
+  /** Compact tray: drop the chevron before hiding the control. */
+  hideChevron?: boolean
 }
 
 const MENU_WIDTH = 420
@@ -30,7 +34,9 @@ export function GitBranchPicker({
   workspaceRoot,
   compact = false,
   usePortal = false,
-  menuPlacement = 'above'
+  menuPlacement = 'above',
+  hideLabel = false,
+  hideChevron = false
 }: Props): ReactElement | null {
   const { t } = useTranslation('common')
   const root = workspaceRoot.trim()
@@ -322,19 +328,22 @@ export function GitBranchPicker({
         type="button"
         className={
           compact
-            ? 'ds-workspace-context-chip flex h-7 max-w-[160px] items-center gap-1.5 rounded-md px-2 py-1 text-left'
+            ? `ds-workspace-context-chip flex h-7 items-center gap-1.5 rounded-md px-2 py-1 text-left ${
+                hideLabel ? 'shrink-0' : 'max-w-[160px] min-w-0'
+              }`
             : 'flex h-8 max-w-[320px] items-center gap-2 rounded-lg px-2 text-[14px] font-medium text-ds-muted transition hover:bg-ds-hover hover:text-ds-ink'
         }
         onClick={() => setOpen((v) => !v)}
-        title={t('gitBranch')}
+        title={label || t('gitBranch')}
+        aria-label={label || t('gitBranch')}
       >
         <GitBranch className="h-3.5 w-3.5 shrink-0" strokeWidth={1.7} />
-        <span className="min-w-0 flex-1 truncate">{label}</span>
+        {!hideLabel ? <span className="min-w-0 flex-1 truncate">{label}</span> : null}
         {loading ? (
           <Loader2 className="h-3 w-3 shrink-0 animate-spin text-ds-faint" strokeWidth={2} />
-        ) : (
+        ) : !hideChevron ? (
           <ChevronDown className="ds-workspace-context-chip__chevron" strokeWidth={2.2} />
-        )}
+        ) : null}
       </button>
 
       {usePortal && typeof document !== 'undefined'

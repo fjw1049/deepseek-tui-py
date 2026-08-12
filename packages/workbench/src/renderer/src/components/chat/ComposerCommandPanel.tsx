@@ -60,9 +60,11 @@ function PanelHeader({
   onClose: () => void
 }): ReactElement {
   return (
-    <div className="flex items-start gap-3 border-b border-ds-border-muted px-4 py-3">
+    <div className="ds-composer-command-panel__header flex items-start gap-3 border-b border-ds-border-muted px-4 py-3">
       <div className="min-w-0 flex-1">
-        <div className="text-[14px] font-semibold text-ds-ink">{title}</div>
+        <div className="ds-composer-command-panel__title text-[14px] font-semibold text-ds-ink">
+          {title}
+        </div>
         <div className="mt-0.5 text-[11px] leading-5 text-ds-faint">{subtitle}</div>
       </div>
       <button
@@ -110,7 +112,7 @@ export function ComposerCommandPanel(props: Props): ReactElement {
   return (
     <div
       ref={panelRef}
-      className="ds-composer-command-popover absolute bottom-full left-[calc(50%-64px)] z-40 max-h-[min(500px,58vh)] w-[calc(100%_-_24px)] max-w-[680px] -translate-x-1/2 overflow-hidden rounded-t-[22px] rounded-b-[14px] shadow-[0_22px_60px_rgba(15,23,42,0.18)]"
+      className="ds-composer-command-panel ds-composer-command-popover absolute bottom-full left-[calc(50%-64px)] z-40 max-h-[min(500px,58vh)] w-[calc(100%_-_24px)] max-w-[680px] -translate-x-1/2 overflow-hidden rounded-t-[22px] rounded-b-[14px] shadow-[0_22px_60px_rgba(15,23,42,0.18)]"
     >
       <PanelHeader title={titles[command]} subtitle={`/${command}`} onClose={onClose} />
       <div className="ds-scroll-surface max-h-[min(450px,52vh)] overflow-y-auto p-4">

@@ -201,7 +201,7 @@ export const ToolCard = memo(function ToolCard({
     <div
       id={`block-${block.id}`}
       className={cn(
-        'group overflow-hidden rounded-[14px] border border-ds-border bg-ds-card/60',
+        'ds-tool-card group overflow-hidden rounded-[14px] border border-ds-border bg-ds-card/60',
         className
       )}
     >

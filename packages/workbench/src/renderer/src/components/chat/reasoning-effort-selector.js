@@ -2,7 +2,7 @@ import { resolveProviderIcon, uniquifySvgIds } from './provider-icons.js'
 import { clampEffortIndex } from './clamp-effort-index'
 
 class ChatGPTModelSelector extends HTMLElement {
-  static observedAttributes = ['value', 'model', 'disabled', 'compact', 'dense'];
+  static observedAttributes = ['value', 'model', 'disabled', 'compact', 'dense', 'hide-effort'];
 
   #tiers = [
     { key: 'Light',      valuetext: 'Light — fastest' },
@@ -94,7 +94,7 @@ class ChatGPTModelSelector extends HTMLElement {
         user-select: none;
         -webkit-user-select: none;
       }
-      /* Narrow footer only: drop the model name, keep icon + full effort label. */
+      /* Narrow footer: drop the model name, keep icon + effort (legacy). */
       :host([compact]) {
         max-width: 8.5rem;
       }
@@ -110,6 +110,13 @@ class ChatGPTModelSelector extends HTMLElement {
         gap: 4px;
       }
       :host([compact]) .pill .label {
+        gap: 0;
+      }
+      /* Progressive footer: drop effort tier first, keep model name. */
+      :host([hide-effort]) .pill .tier {
+        display: none !important;
+      }
+      :host([hide-effort]) .pill .label {
         gap: 0;
       }
       /* IDE rail: match 12px transcript + flatter composer footer. */
@@ -275,6 +282,13 @@ class ChatGPTModelSelector extends HTMLElement {
           opacity 160ms cubic-bezier(0.4, 0, 1, 1),
           scale 160ms cubic-bezier(0.4, 0, 1, 1),
           translate 160ms cubic-bezier(0.4, 0, 1, 1);
+      }
+      /* IDE rail (dense): grow left from the pill — right edge is the window. */
+      :host([dense]) .popover {
+        left: auto;
+        right: 0;
+        width: min(300px, calc(100vw - 2rem));
+        transform-origin: calc(100% - 28px) calc(100% + 18px);
       }
       .popover.is-open {
         opacity: 1;
@@ -796,6 +810,7 @@ class ChatGPTModelSelector extends HTMLElement {
       this.#updatePillModel();
     }
     if (name === 'compact') this.#syncCompact();
+    if (name === 'hide-effort') this.#syncHideEffort();
     if (name === 'disabled' && val !== null) this.#close();
   }
 
@@ -920,6 +935,13 @@ class ChatGPTModelSelector extends HTMLElement {
     }
   }
 
+  #syncHideEffort() {
+    const hide = this.hasAttribute('hide-effort');
+    if (this.$tier) {
+      this.$tier.style.display = hide ? 'none' : '';
+    }
+  }
+
   #updatePillModel() {
     const m = this.#models.find((x) => x.id === this.#modelId);
     const name = m ? (m.label || m.id) : 'Model';
@@ -1030,10 +1052,22 @@ class ChatGPTModelSelector extends HTMLElement {
     this.#setPickerOpen(true);
     this.$pill.setAttribute('aria-expanded', 'true');
     const pop = this.$popover;
-    const hostLeft = this.getBoundingClientRect().left;
-    const pillLeft = this.$pill.getBoundingClientRect().left;
-    pop.style.left = (pillLeft - hostLeft) + 'px';
-    pop.style.width = '300px';
+    const dense = this.hasAttribute('dense');
+    const hostRect = this.getBoundingClientRect();
+    const pillRect = this.$pill.getBoundingClientRect();
+    if (dense) {
+      // IDE chat rail sits on the window's right edge — left-aligning a 300px
+      // panel clips it. Pin to the pill's right and grow left into the rail.
+      pop.style.left = 'auto';
+      pop.style.right = '0';
+      pop.style.width = Math.min(300, Math.max(240, window.innerWidth - 32)) + 'px';
+      pop.style.transformOrigin = 'calc(100% - 28px) calc(100% + 18px)';
+    } else {
+      pop.style.right = 'auto';
+      pop.style.left = (pillRect.left - hostRect.left) + 'px';
+      pop.style.width = '300px';
+      pop.style.transformOrigin = '28px calc(100% + 18px)';
+    }
     pop.style.display = 'block';
     this.$menu.classList.add('menu-stagger');
     requestAnimationFrame(() => pop.classList.add('is-open'));

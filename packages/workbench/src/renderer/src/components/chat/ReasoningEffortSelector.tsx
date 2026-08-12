@@ -44,8 +44,10 @@ interface ReasoningEffortSelectorProps {
   /** Jump to Settings → Models (custom endpoints). */
   onConfigureModels?: () => void
   disabled?: boolean
-  /** Hide model name; keep provider icon + effort tier (narrow footers). */
+  /** Hide model name; keep provider icon + effort tier (legacy narrow). */
   compact?: boolean
+  /** Hide effort tier text; keep model name (progressive footer step). */
+  hideEffort?: boolean
   /** IDE rail: shorter pill + 12px label. */
   dense?: boolean
 }
@@ -65,6 +67,7 @@ export function ReasoningEffortSelector({
   onConfigureModels,
   disabled,
   compact = false,
+  hideEffort = false,
   dense = false,
 }: ReasoningEffortSelectorProps) {
   const { t } = useTranslation('common')
@@ -113,12 +116,16 @@ export function ReasoningEffortSelector({
     if (!el) return
     if (compact) el.setAttribute('compact', '')
     else el.removeAttribute('compact')
+    if (hideEffort) el.setAttribute('hide-effort', '')
+    else el.removeAttribute('hide-effort')
     if (dense) el.setAttribute('dense', '')
     else el.removeAttribute('dense')
     // Patch shadow tree directly — custom-element HMR often keeps a stale sheet.
     const root = el.shadowRoot
     const name = root?.querySelector('.model-name') as HTMLElement | null
     if (name) name.style.display = compact ? 'none' : ''
+    const tier = root?.querySelector('.tier') as HTMLElement | null
+    if (tier) tier.style.display = hideEffort ? 'none' : ''
     const pill = root?.querySelector('.pill') as HTMLElement | null
     if (pill) {
       pill.style.maxWidth = compact ? '8.5rem' : ''
@@ -133,7 +140,7 @@ export function ReasoningEffortSelector({
       }
     }
     el.style.maxWidth = compact ? '8.5rem' : ''
-  }, [compact, dense])
+  }, [compact, hideEffort, dense])
 
   useEffect(() => {
     const el = ref.current
@@ -187,6 +194,7 @@ export function ReasoningEffortSelector({
       value={String(index)}
       model={model}
       {...(compact ? ({ compact: '' } as object) : null)}
+      {...(hideEffort ? ({ 'hide-effort': '' } as object) : null)}
       {...(dense ? ({ dense: '' } as object) : null)}
     />
   )

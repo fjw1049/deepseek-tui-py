@@ -22,7 +22,7 @@ export function EvolutionBubble({ block }: { block: EvolutionBlock }): ReactElem
   return (
     <div
       id={`block-${block.id}`}
-      className={`rounded-2xl border px-3.5 py-3 text-[13px] leading-6 shadow-panel ${
+      className={`ds-evolution-bubble rounded-2xl border px-3.5 py-3 text-[13px] leading-6 shadow-panel ${
         block.status === 'error'
           ? 'border-ds-danger/25 bg-ds-danger-soft text-ds-ink'
           : 'border-ds-border bg-ds-card text-ds-ink'

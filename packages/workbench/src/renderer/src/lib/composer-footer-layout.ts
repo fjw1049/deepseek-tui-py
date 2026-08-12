@@ -1,47 +1,143 @@
 /**
- * Progressive footer degradation for narrow chat composers.
+ * Progressive footer degradation — same ladder for main chat and IDE rail.
  *
- * Never hide send / voice — those stay in a shrink-0 action cluster.
- * Meter, model name, approval/mode/plugin labels may compact.
+ * Hide / compact only when controls are about to collide — not eagerly.
+ *
+ * Order as width shrinks:
+ *   1. context meter
+ *   2. approval / mode / plugin → icon only
+ *   3. model reasoning effort tier
+ *   4. approval control entirely (the hand) — before model name
+ *   5. entire model picker
+ *   6. voice
+ *   7. plus menu
+ *   8. send (last)
  */
 
-export type ComposerFooterTier = 0 | 1 | 2
+export type ComposerFooterTier = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8
 
 export type ComposerFooterPlan = {
   showContextMeter: boolean
-  /** Model pill shows provider icon + effort; name only when room. */
-  showModelLabel: boolean
+  /** Entire approval / permissions control (hand). */
+  showApproval: boolean
   showApprovalLabel: boolean
   showModeLabel: boolean
   showPluginLabel: boolean
+  /** Model name on the pill (when the picker itself is still shown). */
+  showModelLabel: boolean
+  /** Effort tier text on the pill (Light / High / Ultra…). */
+  showEffortTier: boolean
+  /** Entire model / reasoning selector. */
+  showModel: boolean
+  showVoice: boolean
+  showPlus: boolean
+  showSend: boolean
 }
 
-/** Breakpoints (footer clientWidth). Wider → richer chrome. */
-const TIER1_HIDE_METER = 520
-const TIER2_FOLD_LABELS = 360
+export type ComposerFooterLayoutOptions = {
+  /**
+   * IDE rail uses denser (smaller) controls, so the same clientWidth still has
+   * room — shift every breakpoint down and only strip chrome near collision.
+   */
+  dense?: boolean
+}
 
-export function composerFooterTierForWidth(width: number | null): ComposerFooterTier {
+type Breakpoints = {
+  hideMeter: number
+  iconOnly: number
+  hideEffort: number
+  hideApproval: number
+  hideModel: number
+  hideVoice: number
+  hidePlus: number
+  hideSend: number
+}
+
+/** Main chat — roomy 36px controls. */
+const CHAT_BP: Breakpoints = {
+  hideMeter: 500,
+  iconOnly: 420,
+  hideEffort: 340,
+  hideApproval: 280,
+  hideModel: 250,
+  hideVoice: 210,
+  hidePlus: 170,
+  hideSend: 130
+}
+
+/**
+ * IDE dense — 28px controls + padded rail. Footer clientWidth is already
+ * smaller than the rail; keep the hand until it is truly about to collide.
+ */
+const DENSE_BP: Breakpoints = {
+  hideMeter: 400,
+  iconOnly: 340,
+  hideEffort: 290,
+  hideApproval: 230,
+  hideModel: 200,
+  hideVoice: 170,
+  hidePlus: 145,
+  hideSend: 120
+}
+
+function breakpointsFor(options?: ComposerFooterLayoutOptions): Breakpoints {
+  return options?.dense ? DENSE_BP : CHAT_BP
+}
+
+export function composerFooterTierForWidth(
+  width: number | null,
+  options?: ComposerFooterLayoutOptions
+): ComposerFooterTier {
   if (width == null || !Number.isFinite(width)) return 0
-  if (width < TIER2_FOLD_LABELS) return 2
-  if (width < TIER1_HIDE_METER) return 1
+  const bp = breakpointsFor(options)
+  if (width < bp.hideSend) return 8
+  if (width < bp.hidePlus) return 7
+  if (width < bp.hideVoice) return 6
+  if (width < bp.hideModel) return 5
+  if (width < bp.hideApproval) return 4
+  if (width < bp.hideEffort) return 3
+  if (width < bp.iconOnly) return 2
+  if (width < bp.hideMeter) return 1
   return 0
 }
 
-export function composerFooterPlanForWidth(width: number | null): ComposerFooterPlan {
-  const tier = composerFooterTierForWidth(width)
+export function composerFooterPlanForWidth(
+  width: number | null,
+  options?: ComposerFooterLayoutOptions
+): ComposerFooterPlan {
+  const tier = composerFooterTierForWidth(width, options)
   return {
     showContextMeter: tier < 1,
-    showModelLabel: tier < 2,
-    // Keep approval text even in the tightest tier — short label fills the
-    // empty flex gap next to the bolt better than icon-only chrome.
-    showApprovalLabel: true,
+    showApprovalLabel: tier < 2,
     showModeLabel: tier < 2,
-    showPluginLabel: tier < 2
+    showPluginLabel: tier < 2,
+    showEffortTier: tier < 3,
+    // Hand goes away before the model name / picker — but only when cramped.
+    showApproval: tier < 4,
+    showModelLabel: tier < 5,
+    showModel: tier < 5,
+    showVoice: tier < 6,
+    showPlus: tier < 7,
+    showSend: tier < 8
   }
 }
 
-export function composerFooterPlanForTier(tier: ComposerFooterTier): ComposerFooterPlan {
-  return composerFooterPlanForWidth(
-    tier === 0 ? TIER1_HIDE_METER : tier === 1 ? TIER1_HIDE_METER - 1 : TIER2_FOLD_LABELS - 1
-  )
+/** Sample width inside each tier — for tests / callers that only have a tier. */
+export function composerFooterPlanForTier(
+  tier: ComposerFooterTier,
+  options?: ComposerFooterLayoutOptions
+): ComposerFooterPlan {
+  const bp = breakpointsFor(options)
+  const sample: Record<ComposerFooterTier, number> = {
+    0: bp.hideMeter,
+    1: bp.hideMeter - 1,
+    2: bp.iconOnly - 1,
+    3: bp.hideEffort - 1,
+    4: bp.hideApproval - 1,
+    5: bp.hideModel - 1,
+    6: bp.hideVoice - 1,
+    7: bp.hidePlus - 1,
+    8: bp.hideSend - 1
+  }
+  return composerFooterPlanForWidth(sample[tier], options)
 }

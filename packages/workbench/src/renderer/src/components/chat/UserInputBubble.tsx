@@ -58,7 +58,7 @@ function SubmittedUserInputBubble({
   const { t } = useTranslation('common')
   const rows = submittedAnswerRows(block)
   return (
-    <div id={`block-${block.id}`} className="min-w-0 max-w-xl py-0.5">
+    <div id={`block-${block.id}`} className="ds-user-input-bubble min-w-0 max-w-xl py-0.5">
       <div className="flex items-center gap-1.5 text-[12px] leading-4 text-ds-faint">
         <CheckCircle2
           aria-hidden
@@ -172,7 +172,7 @@ function PendingUserInputCard({ block }: { block: UserInputBlock }): ReactElemen
   return (
     <div
       id={`block-${block.id}`}
-      className="rounded-2xl border border-ds-border bg-ds-card px-3 py-2.5 text-[12px] leading-5 text-ds-ink shadow-panel"
+      className="ds-user-input-pending rounded-2xl border border-ds-border bg-ds-card px-3 py-2.5 text-[12px] leading-5 text-ds-ink shadow-panel"
     >
       <div className="flex items-center gap-1.5">
         <span aria-hidden className="h-1.5 w-1.5 shrink-0 rounded-full bg-accent" />

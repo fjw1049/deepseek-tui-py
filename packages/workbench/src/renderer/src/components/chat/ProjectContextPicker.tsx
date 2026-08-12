@@ -25,6 +25,8 @@ type Props = {
   workspaceRoot: string
   usePortal?: boolean
   menuPlacement?: 'above' | 'below'
+  /** Compact tray: drop the chevron before the project chip itself. */
+  hideChevron?: boolean
 }
 
 const MENU_WIDTH = 340
@@ -50,7 +52,8 @@ function projectPathHint(path: string): string {
 export function ProjectContextPicker({
   workspaceRoot,
   usePortal = false,
-  menuPlacement = 'above'
+  menuPlacement = 'above',
+  hideChevron = false
 }: Props): ReactElement {
   const { t } = useTranslation('common')
   const threads = useChatStore((s) => s.threads)
@@ -334,7 +337,9 @@ export function ProjectContextPicker({
           <Folder className="h-3.5 w-3.5 shrink-0" strokeWidth={1.7} />
         )}
         <span className="min-w-0 flex-1 truncate">{triggerLabel}</span>
-        <ChevronDown className="ds-workspace-context-chip__chevron" strokeWidth={2.2} />
+        {!hideChevron ? (
+          <ChevronDown className="ds-workspace-context-chip__chevron" strokeWidth={2.2} />
+        ) : null}
       </button>
       {usePortal && typeof document !== 'undefined' ? createPortal(menu, document.body) : menu}
     </div>

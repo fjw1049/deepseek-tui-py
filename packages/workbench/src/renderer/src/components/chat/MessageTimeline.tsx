@@ -932,7 +932,7 @@ function NeutralIntentLine({
   const { t } = useTranslation('common')
   const anchors = (intent.anchors ?? []).slice(0, 3)
   return (
-    <div className="flex items-start gap-1.5 py-0.5">
+    <div className="ds-process-narration flex items-start gap-1.5 py-0.5">
       {showIndicator ? <SquareGrid className="mt-1 text-ds-faint" /> : null}
       <p className="text-[13.5px] leading-6 text-ds-faint">
         {anchors.length > 0
@@ -1102,7 +1102,7 @@ function MessageTurn({
   const hasProcess = !isSystemOnlyTurn && (isProcessing || processBlocks.length > 0)
 
   return (
-    <div className="flex min-w-0 flex-col gap-4">
+    <div className="ds-message-turn flex min-w-0 flex-col gap-4">
       {turn.user ? <MessageBubble block={turn.user} /> : null}
 
       {isSystemOnlyTurn ? (
@@ -1290,7 +1290,7 @@ function TurnChangeSummary({
   const previewLabel = nestedPreviewPath ? formatHtmlPreviewPathLabel(nestedPreviewPath) : ''
 
   return (
-    <section className="ds-card-strong overflow-hidden rounded-[14px] border border-ds-border shadow-[0_16px_40px_rgba(86,103,136,0.08)]">
+    <section className="ds-turn-change-summary ds-card-strong overflow-hidden rounded-[14px] border border-ds-border shadow-[0_16px_40px_rgba(86,103,136,0.08)]">
       {primaryMarkdownPath ? (
         <div className="border-b border-ds-border-muted/70 bg-gradient-to-b from-ds-card-muted/30 to-transparent px-4 py-3">
           <div className="relative flex items-center gap-3 overflow-hidden rounded-[12px] border border-ds-border bg-ds-elevated/90 py-2.5 pl-3.5 pr-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
@@ -1333,13 +1333,13 @@ function TurnChangeSummary({
           window.dispatchEvent(new CustomEvent('deepseekgui:open-changes-panel'))
         }}
         aria-expanded={expanded}
-        className="flex w-full items-center gap-4 px-5 py-4 text-left transition hover:bg-ds-hover/40"
+        className="ds-turn-change-summary__header flex w-full items-center gap-4 px-5 py-4 text-left transition hover:bg-ds-hover/40"
       >
-        <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-[16px] bg-ds-card-muted text-ds-muted">
+        <span className="ds-turn-change-summary__icon flex h-12 w-12 shrink-0 items-center justify-center rounded-[16px] bg-ds-card-muted text-ds-muted">
           <FileEdit className="h-5 w-5" strokeWidth={1.85} />
         </span>
         <span className="min-w-0 flex-1">
-          <span className="block text-[18px] font-semibold tracking-[-0.02em] text-ds-ink">
+          <span className="ds-turn-change-summary__title block text-[18px] font-semibold tracking-[-0.02em] text-ds-ink">
             {title}
           </span>
           {totals ? (
@@ -1385,7 +1385,7 @@ function TurnChangeSummary({
                 >
                   <span className="min-w-0 flex-1">
                     <span className="flex min-w-0 items-center gap-2">
-                      <span className="block break-all text-[14px] font-medium text-ds-ink">
+                      <span className="ds-turn-change-summary__path block break-all text-[14px] font-medium text-ds-ink">
                         {primary}
                       </span>
                       {isPreviewTarget ? (
@@ -1472,12 +1472,12 @@ function HtmlPreviewStandaloneCard({
   const { t } = useTranslation('common')
   const label = formatHtmlPreviewPathLabel(path)
   return (
-    <div className="flex min-h-[64px] w-full items-center gap-3 rounded-[14px] border border-ds-border bg-ds-elevated/90 px-4 py-3 shadow-[0_12px_34px_rgba(0,0,0,0.06)]">
-      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[12px] bg-amber-500/10 text-amber-600 dark:bg-amber-300/10 dark:text-amber-300">
+    <div className="ds-html-preview-card flex min-h-[64px] w-full items-center gap-3 rounded-[14px] border border-ds-border bg-ds-elevated/90 px-4 py-3 shadow-[0_12px_34px_rgba(0,0,0,0.06)]">
+      <div className="ds-html-preview-card__icon flex h-10 w-10 shrink-0 items-center justify-center rounded-[12px] bg-amber-500/10 text-amber-600 dark:bg-amber-300/10 dark:text-amber-300">
         <Globe2 className="h-5 w-5" strokeWidth={1.9} />
       </div>
       <div className="min-w-0 flex-1">
-        <div className="truncate text-[14.5px] font-semibold text-ds-ink">{label}</div>
+        <div className="ds-html-preview-card__title truncate text-[14.5px] font-semibold text-ds-ink">{label}</div>
         <div className="mt-0.5 truncate text-[12px] text-ds-muted">
           {t('htmlPreviewStandaloneHint')}
         </div>
@@ -1574,7 +1574,7 @@ function WorkMetaRow({
       type="button"
       onClick={onToggle}
       aria-expanded={expanded}
-      className="group flex w-fit max-w-full items-center gap-1.5 rounded-md py-1 text-left text-[15px] font-medium text-ds-muted transition hover:opacity-85"
+      className="ds-work-meta-row group flex w-fit max-w-full items-center gap-1.5 rounded-md py-1 text-left text-[15px] font-medium text-ds-muted transition hover:opacity-85"
     >
       {processing ? (
         <span className="mr-0.5 flex h-5 w-5 shrink-0 items-center justify-center">
@@ -1627,7 +1627,7 @@ function TodoEventRow({
     <button
       type="button"
       onClick={jumpToTodos}
-      className="group flex w-fit max-w-full items-center gap-2 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-3 py-1.5 text-left text-[13.5px] text-emerald-800 transition hover:bg-emerald-500/15 dark:text-emerald-200"
+      className="ds-todo-event-row group flex w-fit max-w-full items-center gap-2 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-3 py-1.5 text-left text-[13.5px] text-emerald-800 transition hover:bg-emerald-500/15 dark:text-emerald-200"
     >
       <Check className="h-3.5 w-3.5 shrink-0" strokeWidth={2} />
       <span className="min-w-0 truncate font-medium">
@@ -1758,13 +1758,13 @@ function SubagentSummaryPanel({ summary }: { summary: SubagentTurnSummary }): Re
   return (
     <section
       id={`block-${summary.anchorBlockId}`}
-      className="my-2 overflow-hidden rounded-[12px] border border-ds-border-muted/70 bg-ds-card/55 shadow-[0_10px_28px_rgba(15,23,42,0.04)]"
+      className="ds-subagent-summary my-2 overflow-hidden rounded-[12px] border border-ds-border-muted/70 bg-ds-card/55 shadow-[0_10px_28px_rgba(15,23,42,0.04)]"
     >
       <button
         type="button"
         onClick={() => setExpanded((value) => !value)}
         aria-expanded={expanded}
-        className="group flex w-full items-start gap-3 px-4 py-3 text-left transition hover:bg-ds-hover/35"
+        className="ds-subagent-summary__header group flex w-full items-start gap-3 px-4 py-3 text-left transition hover:bg-ds-hover/35"
       >
         <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-ds-hover/80 text-ds-ink/75">
           {active ? (
@@ -1775,7 +1775,7 @@ function SubagentSummaryPanel({ summary }: { summary: SubagentTurnSummary }): Re
         </span>
         <span className="min-w-0 flex-1">
           <span className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-            <span className="text-[14px] font-semibold tracking-[-0.015em] text-ds-ink">
+            <span className="ds-subagent-summary__title text-[14px] font-semibold tracking-[-0.015em] text-ds-ink">
               {t('subagentSummaryTitle', { count: summary.total })}
             </span>
             {countParts.length > 0 ? (
@@ -1895,7 +1895,7 @@ function ToolBatchPanel({
   const preview = meta.preview
 
   return (
-    <div className="overflow-hidden rounded-[12px] border border-ds-border-muted/50 bg-ds-card/40">
+    <div className="ds-tool-batch overflow-hidden rounded-[12px] border border-ds-border-muted/50 bg-ds-card/40">
       <button
         type="button"
         onClick={() => setExpanded((value) => !value)}
@@ -1904,7 +1904,9 @@ function ToolBatchPanel({
       >
         <Icon className="mt-0.5 h-3.5 w-3.5 shrink-0 text-ds-faint" strokeWidth={1.8} />
         <span className="min-w-0 flex-1">
-          <span className="block truncate text-[13.5px] leading-6 text-ds-muted">{title}</span>
+          <span className="ds-tool-batch__title block truncate text-[13.5px] leading-6 text-ds-muted">
+            {title}
+          </span>
           {!expanded && preview ? (
             <span className="mt-0.5 block truncate text-[11px] leading-4 text-ds-faint" title={preview}>
               {preview}
@@ -2373,7 +2375,7 @@ function SubagentDetailDialog({
               <Bot className="h-5 w-5" strokeWidth={1.7} />
             </span>
             <div className="min-w-0 flex-1">
-              <h3 className="text-[18px] font-semibold leading-tight tracking-[-0.025em] text-ds-ink">
+              <h3 className="ds-subagent-dialog__title text-[18px] font-semibold leading-tight tracking-[-0.025em] text-ds-ink">
                 {title}
               </h3>
               <p className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[12.5px] leading-5 text-ds-muted">
@@ -2518,7 +2520,7 @@ function MidTurnPrefaceLine({
   const shown = expanded || !clipped ? text.trim() : preview
 
   return (
-    <div className="flex items-start gap-1.5 py-0.5">
+    <div className="ds-process-narration flex items-start gap-1.5 py-0.5">
       {showIndicator ? <SquareGrid className="mt-1 text-ds-faint" /> : null}
       <div className="min-w-0 flex-1">
         <p className="whitespace-pre-wrap text-[13.5px] leading-6 text-ds-muted">{shown}</p>
@@ -2718,7 +2720,7 @@ function ProcessStreamEntry({
     // Other assistant content that landed in the work trace (interstitial
     // final-answer segments).
     return (
-      <div className="ds-markdown text-[13.5px] leading-6 text-ds-muted">
+      <div className="ds-process-assistant-md ds-markdown text-[13.5px] leading-6 text-ds-muted">
         <AssistantMarkdown text={block.text} streaming={processing} />
       </div>
     )
@@ -2797,7 +2799,7 @@ function ReasoningEntry({
   // Indicator only on the newest step; earlier steps are text-only.
   if (narration) {
     return (
-      <div className="flex items-start gap-1.5 py-0.5">
+      <div className="ds-process-narration flex items-start gap-1.5 py-0.5">
         {showIndicator ? <SquareGrid className="mt-1 text-ds-faint" /> : null}
         <p className="text-[13.5px] leading-6 text-ds-faint/85">{narration}</p>
       </div>
@@ -2807,11 +2809,11 @@ function ReasoningEntry({
   // No narration: collapsible raw reasoning.
   if (!text) return <></>
   return (
-    <div className="flex flex-col">
+    <div className="ds-process-reasoning flex flex-col">
       <button
         type="button"
         onClick={() => setExpanded((v) => !v)}
-        className="group flex w-fit items-center gap-1.5 py-0.5 text-left text-[14px] font-medium text-ds-muted transition hover:opacity-85"
+        className="ds-process-reasoning__toggle group flex w-fit items-center gap-1.5 py-0.5 text-left text-[14px] font-medium text-ds-muted transition hover:opacity-85"
       >
         {showIndicator ? <SquareGrid className="text-ds-faint" /> : null}
         <span className={showIndicator ? 'ds-shiny-text' : ''}>{t('thinkingLabel')}</span>
@@ -2848,7 +2850,7 @@ function ModelMetaTag({
   if (!label) return null
   return (
     <div
-      className={`flex min-w-0 text-right ${className}`.trim()}
+      className={`ds-model-meta-tag flex min-w-0 text-right ${className}`.trim()}
       title={t('turnModelBadgeTitle', { model: label })}
     >
       <span className="truncate text-[12px] tracking-tight text-ds-faint/85">
@@ -3172,12 +3174,12 @@ function UserMessageBubble({
                   role="dialog"
                   aria-modal="true"
                   aria-labelledby={`rewind-resend-confirm-${block.id}`}
-                  className="ds-modal-surface ds-modal-surface--solid flex w-full max-w-md flex-col overflow-hidden rounded-2xl"
+                  className="ds-chat-rail-modal ds-modal-surface ds-modal-surface--solid flex w-full max-w-md flex-col overflow-hidden rounded-2xl"
                 >
                   <div className="flex shrink-0 items-start justify-between gap-3 border-b border-ds-border-muted px-5 py-3.5">
                     <h2
                       id={`rewind-resend-confirm-${block.id}`}
-                      className="min-w-0 text-[16px] font-semibold leading-snug text-ds-ink"
+                      className="ds-chat-rail-modal__title min-w-0 text-[16px] font-semibold leading-snug text-ds-ink"
                     >
                       {t('rewindResendConfirmTitle')}
                     </h2>
@@ -3454,7 +3456,7 @@ function SubagentBubble({
   return (
     <div
       id={`block-${block.id}`}
-      className="rounded-[14px] border border-ds-border-muted/70 bg-ds-card/55 px-4 py-4 text-[13px] leading-6 text-ds-ink shadow-[0_12px_30px_rgba(15,23,42,0.04)]"
+      className="ds-subagent-bubble rounded-[14px] border border-ds-border-muted/70 bg-ds-card/55 px-4 py-4 text-[13px] leading-6 text-ds-ink shadow-[0_12px_30px_rgba(15,23,42,0.04)]"
     >
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <div className="flex items-center gap-2 font-semibold tracking-[-0.015em] text-ds-ink">
@@ -3530,7 +3532,7 @@ function MessageBubble({ block }: { block: ChatBlock }): ReactElement | null {
           <AssistantMarkdown text={block.text} streaming={streaming} />
         </div>
         {!streaming ? (
-          <div className="mt-1 flex min-h-5 min-w-0 items-center justify-between gap-3 text-[11.5px] text-ds-faint opacity-0 transition duration-150 group-hover/message:opacity-100">
+          <div className="ds-assistant-message-meta mt-1 flex min-h-5 min-w-0 items-center justify-between gap-3 text-[11.5px] text-ds-faint opacity-0 transition duration-150 group-hover/message:opacity-100">
             <span className="min-w-0 truncate">{createdAtLabel ?? ''}</span>
             <div className="flex items-center gap-1.5">
               <ForkFromHereButton itemId={block.id} />

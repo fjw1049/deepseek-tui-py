@@ -46,13 +46,13 @@ export function ToolHeaderRow({
 }: ToolHeaderRowProps): React.JSX.Element {
   const { t } = useTranslation('common')
   return (
-    <div className={cn('flex w-full items-center gap-2', className)}>
+    <div className={cn('ds-tool-header-row flex w-full items-center gap-2', className)}>
       {Icon ? (
         <Icon className="h-3.5 w-3.5 shrink-0 text-ds-faint" strokeWidth={1.8} aria-hidden />
       ) : null}
       <span
         className={cn(
-          'shrink-0 font-mono text-[0.6875rem] font-medium text-ds-muted',
+          'ds-tool-header-row__label shrink-0 font-mono text-[0.6875rem] font-medium text-ds-muted',
           labelClassName
         )}
       >
@@ -61,7 +61,7 @@ export function ToolHeaderRow({
       {title ? (
         <span
           className={cn(
-            'min-w-0 flex-1 truncate text-[13px] tabular-nums text-ds-faint',
+            'ds-tool-header-row__title min-w-0 flex-1 truncate text-[13px] tabular-nums text-ds-faint',
             titleClassName
           )}
           title={subtitle ?? title}

@@ -94,13 +94,13 @@ export function InlineTodoBlock({ session, active = false, className = '' }: Pro
   return (
     <section
       id={`todo-session-${session.anchorBlockId}`}
-      className={`my-2 overflow-hidden rounded-[12px] border border-ds-border bg-ds-card/70 shadow-[0_10px_28px_rgba(86,103,136,0.04)] ${className}`.trim()}
+      className={`ds-inline-todo my-2 overflow-hidden rounded-[12px] border border-ds-border bg-ds-card/70 shadow-[0_10px_28px_rgba(86,103,136,0.04)] ${className}`.trim()}
     >
       <button
         type="button"
         onClick={() => setListExpanded((value) => !value)}
         aria-expanded={listExpanded}
-        className="group flex w-full items-start gap-3 px-4 py-3 text-left transition hover:bg-ds-hover/40"
+        className="ds-inline-todo__header group flex w-full items-start gap-3 px-4 py-3 text-left transition hover:bg-ds-hover/40"
       >
         <span
           className={[
@@ -117,7 +117,9 @@ export function InlineTodoBlock({ session, active = false, className = '' }: Pro
         </span>
         <span className="min-w-0 flex-1">
           <span className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-            <span className="text-[14px] font-semibold text-ds-ink">{t('todoInlineTitle')}</span>
+            <span className="ds-inline-todo__title text-[14px] font-semibold text-ds-ink">
+              {t('todoInlineTitle')}
+            </span>
             <span
               className={[
                 'text-[13.5px] font-medium',

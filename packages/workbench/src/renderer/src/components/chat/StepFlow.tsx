@@ -400,7 +400,7 @@ export function StepFlow({
     )
   }
   return (
-    <ol className={['flex flex-col', className ?? ''].join(' ')}>
+    <ol className={['ds-step-flow flex flex-col', className ?? ''].join(' ')}>
       {items.map((item, index) => (
         <StepRow
           key={item.id}
