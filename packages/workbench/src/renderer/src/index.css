@@ -2460,6 +2460,28 @@ samp {
   );
 }
 
+/* Maximized right panel hides the chat topbar, so the editor/changes/terminal/
+   preview chips become the left-edge chrome. Reuse the same droplet clearance
+   only in that case — half-width right panel stays untouched. */
+.ds-workbench-sidebar-wrap[data-collapsed]
+  + .ds-workbench-main
+  .ds-workbench-right-panel[data-fill-width]
+  .ds-right-panel-tabbar {
+  padding-left: calc(16px + 1.75rem + 0.35rem - var(--ds-window-inset, 8px));
+  transition: padding-left 300ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+:root[data-platform='darwin']
+  .ds-workbench-sidebar-wrap[data-collapsed]
+  + .ds-workbench-main
+  .ds-workbench-right-panel[data-fill-width]
+  .ds-right-panel-tabbar {
+  padding-left: calc(
+    var(--ds-window-controls-safe-inline, 72px) + 6px + 1.75rem + 0.35rem -
+      var(--ds-window-inset, 8px)
+  );
+}
+
 /*
  * macOS: pin the chat title row to the same horizontal centreline as the
  * traffic lights / sidebar expand·collapse toggle. Those controls are fixed to

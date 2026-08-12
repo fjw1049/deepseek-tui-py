@@ -221,6 +221,7 @@ export function WorkbenchRightSidebar({
       className={`ds-workbench-right-panel ds-no-drag relative h-full min-h-0 ${
         fillWidth ? 'min-w-0 w-full flex-1' : 'shrink-0'
       }`}
+      data-fill-width={fillWidth ? '' : undefined}
       style={fillWidth ? undefined : { width }}
     >
       <div
@@ -236,7 +237,7 @@ export function WorkbenchRightSidebar({
       <div className="ds-tool-panel ds-right-panel-surface flex h-full min-h-0 flex-col overflow-hidden bg-ds-sidebar">
         {/* Same height + divider treatment as the workbench topbar so the two
             header lines read as one continuous rule across the card. */}
-        <div className="ds-no-drag ds-surface-divider flex min-h-[var(--ds-header-height,38px)] shrink-0 items-center gap-0.5 px-1.5">
+        <div className="ds-no-drag ds-surface-divider ds-right-panel-tabbar flex min-h-[var(--ds-header-height,38px)] shrink-0 items-center gap-0.5 px-1.5">
           <div
             ref={tabRowRef}
             className="flex min-w-0 flex-1 flex-nowrap items-center gap-0.5 overflow-hidden"
