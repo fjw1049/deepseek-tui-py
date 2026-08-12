@@ -1433,6 +1433,7 @@
   "userInputFromTask": "From task {{id}}",
   "userInputPending": "Waiting for your answer…",
   "userInputSubmitted": "Submitted",
+  "userInputAnswered": "Answered",
   "userInputCancelled": "Cancelled",
   "userInputFailed": "Submit failed",
   "userInputQuestionProgress": "Question {{current}} / {{total}}",

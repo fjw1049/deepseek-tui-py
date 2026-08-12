@@ -3,6 +3,7 @@ import {
   useCallback,
   useEffect,
   useImperativeHandle,
+  useLayoutEffect,
   useRef,
   useState,
   type ReactElement
@@ -14,7 +15,8 @@ import { applyEditorDiffHighlights } from '../../lib/apply-editor-diff-highlight
 import {
   ensureMonacoConfigured,
   ensureWorkspaceMonacoThemes,
-  workspaceMonacoTheme
+  workspaceMonacoTheme,
+  type WorkspaceMonacoThemeName
 } from '../../lib/monaco-editor-setup'
 import { languageForPath } from '../../lib/monaco-language-for-path'
 import type { EditorTab } from '../../store/workspace-editor-store'
@@ -45,6 +47,15 @@ export const WorkspaceEditorSurface = forwardRef<WorkspaceEditorSurfaceHandle, P
     const cleanupRef = useRef<(() => void) | null>(null)
     const pendingFindRef = useRef(false)
     const [editorReady, setEditorReady] = useState(false)
+    const [monacoTheme, setMonacoTheme] = useState<WorkspaceMonacoThemeName>(() =>
+      workspaceMonacoTheme(false)
+    )
+
+    // IDE workspace uses bg-app Monaco theme; chat-mode tool panel keeps sidebar.
+    useLayoutEffect(() => {
+      const ideCanvas = Boolean(hostRef.current?.closest('.ds-ide-workspace'))
+      setMonacoTheme(workspaceMonacoTheme(ideCanvas))
+    }, [tab.id])
 
     const openFind = useCallback((): void => {
       const editor = editorRef.current
@@ -150,13 +161,16 @@ export const WorkspaceEditorSurface = forwardRef<WorkspaceEditorSurfaceHandle, P
           height="100%"
           width="100%"
           wrapperProps={{ className: 'absolute inset-0 overflow-hidden' }}
-          theme={workspaceMonacoTheme()}
+          theme={monacoTheme}
           language={languageForPath(tab.path)}
           value={tab.content}
           onChange={readOnly ? undefined : (value) => onChange(value ?? '')}
           onMount={(editor) => {
             editorRef.current = editor
             ensureWorkspaceMonacoThemes()
+            const ideCanvas = Boolean(hostRef.current?.closest('.ds-ide-workspace'))
+            const theme = workspaceMonacoTheme(ideCanvas)
+            setMonacoTheme(theme)
             editor.updateOptions({ readOnly })
             setEditorReady(true)
             editor.layout()

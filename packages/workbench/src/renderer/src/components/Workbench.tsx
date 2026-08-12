@@ -1259,6 +1259,7 @@ export function Workbench(): ReactElement {
     <div
       ref={shellRef}
       className="ds-workbench-shell ds-drag relative flex h-full min-h-0 w-full min-w-0"
+      data-ide-mode={ideModeActive ? '' : undefined}
     >
       {resizeShieldCursor !== null ? (
         <div

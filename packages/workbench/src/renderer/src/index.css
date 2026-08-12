@@ -9348,6 +9348,37 @@ select:focus-visible,
   padding-top: 0.2rem;
 }
 
+/* IDE canvas — one continuous bg-app (match chat rail). Chat-mode sidebar
+   layering (lighter veil over main) stays untouched outside data-ide-mode. */
+.ds-workbench-shell[data-ide-mode] {
+  background: var(--bg-app);
+}
+
+.ds-workbench-shell[data-ide-mode] .ds-workbench-main {
+  background: var(--bg-app);
+}
+
+.ds-ide-workspace .ds-workbench-topbar {
+  background: var(--ds-bg-main);
+}
+
+.ds-ide-workspace .bg-ds-sidebar {
+  background-color: var(--ds-bg-main);
+}
+
+/* Markdown preview + Monaco chrome use CSS vars (not Tailwind), so the
+   utility override above misses them — pin both to bg-app in IDE. */
+.ds-ide-workspace .ds-markdown-doc-shell {
+  background: var(--ds-bg-main);
+}
+
+.ds-ide-workspace .ds-workspace-editor-pane .monaco-editor,
+.ds-ide-workspace .ds-workspace-editor-pane .monaco-editor .margin,
+.ds-ide-workspace .ds-workspace-editor-pane .monaco-editor .monaco-editor-background,
+.ds-ide-workspace .ds-workspace-editor-pane .monaco-editor .overflow-guard {
+  background-color: var(--ds-bg-main) !important;
+}
+
 /* IDE mode seams — one shared rule weight/color so header/activity/chat
    junctions read as a single continuous grid (not doubled/offset hairlines). */
 .ds-ide-activity-bar {

@@ -65,7 +65,7 @@ type Props = {
 type ActivityItem = IdeCenterTab
 
 function PanelFallback(): ReactElement {
-  return <div className="h-full w-full bg-ds-sidebar" />
+  return <div className="h-full w-full bg-ds-main" />
 }
 
 function ActivityButton({
@@ -263,7 +263,7 @@ export function IdeWorkspaceLayout({
 
       <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
         <nav
-          className="ds-ide-activity-bar flex w-11 shrink-0 flex-col items-center gap-1 bg-ds-sidebar py-2"
+          className="ds-ide-activity-bar flex w-11 shrink-0 flex-col items-center gap-1 bg-ds-main py-2"
           aria-label={t('ideActivityBarLabel')}
         >
           <ActivityButton

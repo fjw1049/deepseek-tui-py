@@ -84,5 +84,7 @@ describe('IdeWorkspaceLayout', () => {
     expect(markup).toContain('/tmp/demo')
     expect(markup).toContain('ds-ide-project-picker__trigger')
     expect(markup).toContain('ds-ide-project-picker__name')
+    expect(markup).toContain('ds-ide-activity-bar')
+    expect(markup).toContain('bg-ds-main')
   })
 })

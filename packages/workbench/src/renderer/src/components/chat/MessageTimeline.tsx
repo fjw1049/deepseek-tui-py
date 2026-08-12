@@ -2547,7 +2547,7 @@ function MidTurnPrefaceLine({
  *                      else collapsed raw reasoning
  *  - assistant       → mid-turn preface shown inline as narration
  *  - approval         → null (pending cards live in the composer dock)
- *  - user_input       → pending null (composer dock); resolved stays in timeline
+ *  - user_input       → pending null (composer dock); submitted = quiet Q→A summary
  *  - elev/evol/etc    → existing Bubble/Block components, never hidden
  *
  * The 4 `shouldHide*` patches are gone: todo/subagent were never wrong-blocked

@@ -74,7 +74,7 @@ export function IdeWorkspaceSearchSidebar({
   }, [query, t, workspaceRoot])
 
   return (
-    <aside className="ds-ide-search-sidebar flex h-full min-h-0 w-60 shrink-0 flex-col bg-ds-sidebar">
+    <aside className="ds-ide-search-sidebar flex h-full min-h-0 w-60 shrink-0 flex-col bg-ds-main">
       <div className="ds-surface-divider flex h-10 shrink-0 items-center gap-2 px-3">
         <Search className="h-3.5 w-3.5 shrink-0 text-ds-faint" strokeWidth={1.9} />
         <span className="truncate text-[12px] font-medium text-ds-ink">{t('ideWorkspaceSearchTitle')}</span>
@@ -85,7 +85,7 @@ export function IdeWorkspaceSearchSidebar({
           value={query}
           onChange={(event) => onQueryChange(event.target.value)}
           placeholder={t('ideWorkspaceSearchPlaceholder')}
-          className="h-8 w-full rounded-md border border-ds-border bg-ds-elevated px-2.5 text-[12.5px] text-ds-ink outline-none placeholder:text-ds-faint focus:border-accent/40 focus:ring-1 focus:ring-accent/20"
+          className="h-8 w-full rounded-md border border-ds-border bg-ds-elevated px-2.5 text-[12.5px] text-ds-ink outline-none placeholder:text-ds-faint"
           autoFocus
         />
       </div>

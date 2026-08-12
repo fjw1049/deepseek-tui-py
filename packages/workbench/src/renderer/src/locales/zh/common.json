@@ -1392,6 +1392,7 @@
   "userInputFromTask": "来自任务 {{id}}",
   "userInputPending": "等待你选择…",
   "userInputSubmitted": "已提交",
+  "userInputAnswered": "已回答",
   "userInputCancelled": "已取消",
   "userInputFailed": "提交失败",
   "userInputQuestionProgress": "问题 {{current}} / {{total}}",

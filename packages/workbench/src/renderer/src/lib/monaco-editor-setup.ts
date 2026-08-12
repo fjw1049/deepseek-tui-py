@@ -9,10 +9,17 @@ import tsWorker from 'monaco-editor/esm/vs/language/typescript/ts.worker?worker'
 let configured = false
 let themesReady = false
 
-/** Match Monaco canvas to `--bg-sidebar` tokens in index.css (both themes at once). */
+export type WorkspaceMonacoThemeName =
+  | 'ds-workspace-dark'
+  | 'ds-workspace-light'
+  | 'ds-ide-workspace-dark'
+  | 'ds-ide-workspace-light'
+
+/** Match Monaco canvas to workbench tokens (sidebar panel vs IDE bg-app). */
 export function ensureWorkspaceMonacoThemes(): void {
   if (themesReady) return
   themesReady = true
+  // Chat-mode right panel / tool editor — `--bg-sidebar`.
   monaco.editor.defineTheme('ds-workspace-dark', {
     base: 'vs-dark',
     inherit: true,
@@ -33,13 +40,36 @@ export function ensureWorkspaceMonacoThemes(): void {
       'minimap.background': '#f0f0f0'
     }
   })
+  // IDE workspace — `--bg-app` / `bg-ds-main` (same as chat rail).
+  monaco.editor.defineTheme('ds-ide-workspace-dark', {
+    base: 'vs-dark',
+    inherit: true,
+    rules: [],
+    colors: {
+      'editor.background': '#0e0e0e',
+      'editorGutter.background': '#0e0e0e',
+      'minimap.background': '#0e0e0e'
+    }
+  })
+  monaco.editor.defineTheme('ds-ide-workspace-light', {
+    base: 'vs',
+    inherit: true,
+    rules: [],
+    colors: {
+      'editor.background': '#fcfcfc',
+      'editorGutter.background': '#fcfcfc',
+      'minimap.background': '#fcfcfc'
+    }
+  })
 }
 
-export function workspaceMonacoTheme(): 'ds-workspace-dark' | 'ds-workspace-light' {
+export function workspaceMonacoTheme(ideCanvas = false): WorkspaceMonacoThemeName {
   ensureWorkspaceMonacoThemes()
-  return document.documentElement.getAttribute('data-theme') === 'dark'
-    ? 'ds-workspace-dark'
-    : 'ds-workspace-light'
+  const dark = document.documentElement.getAttribute('data-theme') === 'dark'
+  if (ideCanvas) {
+    return dark ? 'ds-ide-workspace-dark' : 'ds-ide-workspace-light'
+  }
+  return dark ? 'ds-workspace-dark' : 'ds-workspace-light'
 }
 
 export function ensureMonacoConfigured(): void {
