@@ -46,7 +46,9 @@ describe('workbench-layout-mode', () => {
     expect(readStoredLayoutMode()).toBe('chat')
   })
 
-  it('persists and restores ide layout mode', () => {
+  it('can persist ide layout mode for mid-session callers', () => {
+    // Cold start ignores this (Workbench always mounts as chat); helpers still
+    // round-trip so enter/exit IDE can write without fighting storage.
     persistLayoutMode('ide')
     expect(readStoredLayoutMode()).toBe('ide')
   })

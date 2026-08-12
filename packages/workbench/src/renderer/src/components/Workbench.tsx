@@ -33,14 +33,11 @@ import {
   persistRightSidebarCollapsed,
   persistRightSidebarOpen,
   persistRightSidebarTab,
-  readStoredRightSidebarCollapsed,
-  readStoredRightSidebarOpen,
   readStoredRightSidebarTab,
   type RightSidebarTab
 } from '../lib/right-sidebar-state'
 import {
   persistLayoutMode,
-  readStoredLayoutMode,
   type IdeCenterTab,
   type WorkbenchLayoutMode
 } from '../lib/workbench-layout-mode'
@@ -320,16 +317,16 @@ export function Workbench(): ReactElement {
   )
   useWorkspaceFsWatch()
   const [input, setInput] = useState('')
-  const [rightSidebarOpen, setRightSidebarOpen] = useState(readStoredRightSidebarOpen)
-  const [rightSidebarCollapsed, setRightSidebarCollapsed] = useState(readStoredRightSidebarCollapsed)
+  // Cold start always lands on the main chat shell: left rail expanded, no IDE
+  // mode, no right tool panel (editor / changes / terminal / browser). Widths
+  // and the last right-sidebar tab still persist for when the user opens them.
+  const [rightSidebarOpen, setRightSidebarOpen] = useState(false)
+  const [rightSidebarCollapsed, setRightSidebarCollapsed] = useState(false)
   const [rightSidebarTab, setRightSidebarTab] = useState<RightSidebarTab>(readStoredRightSidebarTab)
   const openEditorFile = useWorkspaceEditorStore((s) => s.openFile)
   const [leftSidebarWidth, setLeftSidebarWidth] = useState(() =>
     readStoredWidth(LEFT_PANEL_WIDTH_KEY, LEFT_PANEL_DEFAULT)
   )
-  // Cold start always opens the default expanded shell (Codex-style). Session
-  // toggles still persist below so a mid-session preference is remembered only
-  // until the next launch.
   const [leftSidebarCollapsed, setLeftSidebarCollapsed] = useState(false)
   const [rightSidebarWidth, setRightSidebarWidth] = useState(() =>
     readStoredWidth(RIGHT_PANEL_WIDTH_KEY, RIGHT_CONTEXT_DEFAULT)
@@ -344,7 +341,7 @@ export function Workbench(): ReactElement {
   )
   const [runtimeDiagnosticsOpen, setRuntimeDiagnosticsOpen] = useState(false)
   const [chatColumnHidden, setChatColumnHidden] = useState(false)
-  const [layoutMode, setLayoutMode] = useState<WorkbenchLayoutMode>(readStoredLayoutMode)
+  const [layoutMode, setLayoutMode] = useState<WorkbenchLayoutMode>('chat')
   const [requestedIdeCenterTab, setRequestedIdeCenterTab] = useState<IdeCenterTab | null>(null)
   // Transparent pointer shield shown during panel drags: without it, pointer
   // events over the webview/iframe panels are swallowed by the guest process
@@ -669,6 +666,14 @@ export function Workbench(): ReactElement {
     persistRightSidebarCollapsed(rightSidebarCollapsed)
   }, [rightSidebarCollapsed])
 
+  // Scrub stale IDE / open-panel flags written by older builds so storage matches
+  // the cold-start shell even if something else reads those keys later.
+  useEffect(() => {
+    persistLayoutMode('chat')
+    persistRightSidebarOpen(false)
+    persistRightSidebarCollapsed(false)
+  }, [])
+
   useEffect(() => {
     persistWidth(BOTTOM_TERMINAL_HEIGHT_KEY, bottomTerminalHeight)
   }, [bottomTerminalHeight])
@@ -788,9 +793,16 @@ export function Workbench(): ReactElement {
   useEffect(() => {
     if (!latestDevPreviewUrl || route !== 'chat') return
     if (autoOpenedPreviewUrlRef.current === latestDevPreviewUrl) return
+    // Restored threads often already contain a preview URL — do not reopen the
+    // browser panel on cold start / idle navigation. Only auto-open when a new
+    // URL appears while a turn is actively running.
+    if (!busy) {
+      autoOpenedPreviewUrlRef.current = latestDevPreviewUrl
+      return
+    }
     autoOpenedPreviewUrlRef.current = latestDevPreviewUrl
     openRightSidebar('preview')
-  }, [latestDevPreviewUrl, openRightSidebar, route])
+  }, [busy, latestDevPreviewUrl, openRightSidebar, route])
 
   useEffect(() => {
     if (activeWorkspaceRoot.trim()) return

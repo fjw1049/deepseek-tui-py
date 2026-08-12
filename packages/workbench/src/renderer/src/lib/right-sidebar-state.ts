@@ -52,6 +52,7 @@ function runLegacyMigrationOnce(): void {
 
 runLegacyMigrationOnce()
 
+/** Last open flag — Workbench cold-starts closed and ignores this on launch. */
 export function readStoredRightSidebarOpen(): boolean {
   return readBoolean(OPEN_KEY, false)
 }

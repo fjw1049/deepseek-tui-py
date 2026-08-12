@@ -1,6 +1,7 @@
-// Persists Workbench chat-vs-IDE layout mode and IDE-local chrome so re-entry
-// restores the previous activity tab / chat-rail width without fighting the
-// chat-mode right-sidebar maximize path (chatColumnHidden).
+// Persists IDE-local chrome (center tab / chat-rail width / activity sidebar)
+// across sessions. Layout mode itself is cold-started as chat in Workbench —
+// these helpers still persist mode for mid-session callers, but launch always
+// returns to the main chat shell.
 
 export type WorkbenchLayoutMode = 'chat' | 'ide'
 export type IdeCenterTab = 'files' | 'changes' | 'search'
