@@ -11,7 +11,9 @@ import {
   ChevronDown,
   ChevronRight,
   ChevronsLeftRight,
-  Columns2,
+  GitBranch,
+  ListChecks,
+  ListTodo,
   PanelsTopLeft,
   FileEdit,
   Globe2,
@@ -56,8 +58,7 @@ import { GitCommitPopover } from './GitCommitPopover'
 
 type Props = {
   onOpenChanges?: () => void
-  onOpenEditor?: () => void
-  /** Enter IDE layout — shown flush with the General section header. */
+  /** Enter IDE/editor layout — top entry, labeled as Editor. */
   onEnterIdeMode?: () => void
   previewActive: boolean
   terminalPanelOpen: boolean
@@ -75,6 +76,10 @@ function sessionChangePatches(blocks: ChatBlock[]): Array<string | undefined> {
 
 const DOCK_ROW_CLASS =
   'group flex w-full items-center gap-2.5 rounded-[10px] px-1.5 py-1.5 text-left text-[13px] leading-5 transition'
+
+/** Same horizontal inset / gap as dock rows so icon and label columns line up. */
+const DOCK_SECTION_HEADER_CLASS =
+  'flex w-full items-center gap-2.5 rounded-[10px] px-1.5 py-1.5 text-left text-ds-muted transition hover:text-ds-ink'
 
 const DOCK_COMPACT_STORAGE_KEY = 'deepseekgui.operationDock.compact'
 /** Keep in sync with `.ds-operation-rail` width transition (220ms). */
@@ -103,14 +108,15 @@ function prefersReducedMotion(): boolean {
 const ROW_ICON_TINTS = {
   violet: 'bg-violet-500/10 text-violet-500 group-hover:bg-violet-500/16 dark:text-violet-300',
   sky: 'bg-sky-500/10 text-sky-500 group-hover:bg-sky-500/16 dark:text-sky-300',
-  amber: 'bg-amber-500/12 text-amber-600 group-hover:bg-amber-500/18 dark:text-amber-300'
+  amber: 'bg-amber-500/12 text-amber-600 group-hover:bg-amber-500/18 dark:text-amber-300',
+  muted: 'bg-ds-hover/70 text-ds-muted group-hover:bg-ds-hover'
 } as const
 
 function RowIcon({
   icon: Icon,
   tint
 }: {
-  icon: typeof Columns2
+  icon: typeof Globe2
   tint: keyof typeof ROW_ICON_TINTS
 }): ReactElement {
   return (
@@ -125,11 +131,13 @@ function RowIcon({
 
 function SectionHeader({
   label,
+  icon,
   collapsed,
   onToggle,
   trailing
 }: {
   label: string
+  icon: typeof Globe2
   collapsed: boolean
   onToggle: () => void
   trailing?: ReactElement
@@ -139,17 +147,18 @@ function SectionHeader({
       type="button"
       onClick={onToggle}
       aria-expanded={!collapsed}
-      className="flex w-full items-center gap-1.5 rounded-md py-0.5 text-left text-ds-muted transition hover:text-ds-ink"
+      className={DOCK_SECTION_HEADER_CLASS}
     >
+      <RowIcon icon={icon} tint="muted" />
+      <span className="ds-operation-dock-section-label min-w-0 flex-1">{label}</span>
+      {trailing}
       <ChevronRight
-        className={`h-3.5 w-3.5 shrink-0 transition-transform duration-200 ${
+        className={`h-3.5 w-3.5 shrink-0 text-ds-faint transition-transform duration-200 ${
           collapsed ? '' : 'rotate-90'
         }`}
         strokeWidth={2}
         aria-hidden
       />
-      <span className="ds-operation-dock-section-label flex-1">{label}</span>
-      {trailing}
     </button>
   )
 }
@@ -337,7 +346,6 @@ function TaskRow({
 
 export function OperationContextDock({
   onOpenChanges,
-  onOpenEditor,
   onEnterIdeMode,
   previewActive,
   terminalPanelOpen,
@@ -442,7 +450,7 @@ export function OperationContextDock({
     onOpenChanges?.()
   }
 
-  const [collapsed, setCollapsed] = useState({ tools: false, git: true, process: true, tasks: true })
+  const [collapsed, setCollapsed] = useState({ git: true, process: true, tasks: true })
   const [compact, setCompact] = useState(readStoredDockCompact)
   /** Drives rail width via `data-compact` — can lead the DOM swap during motion. */
   const [widthCompact, setWidthCompact] = useState(readStoredDockCompact)
@@ -510,8 +518,7 @@ export function OperationContextDock({
 
   // Auto-expand a section when it gains content and auto-collapse when it
   // empties. Each effect keys on a single boolean edge so manually toggling
-  // one section never overrides another. The "tools" section has no effect:
-  // it stays expanded by default.
+  // one section never overrides another.
   const hasTodos = totalCount > 0
   const hasTasks = visibleTasks.length > 0
   const hasSubagents = dockSubagents.length > 0
@@ -553,27 +560,18 @@ export function OperationContextDock({
           <ChevronsLeftRight className="h-4 w-4" strokeWidth={2.1} />
         </button>
         <div className="ds-operation-dock-rail__rule" aria-hidden />
-        <div className="ds-operation-dock-rail" role="toolbar" aria-label={t('operationDockToolsTitle')}>
+        <div className="ds-operation-dock-rail" role="toolbar" aria-label={t('rightSidebarTabEditor')}>
           {onEnterIdeMode ? (
             <button
               type="button"
               className="ds-operation-dock-rail__btn"
               onClick={onEnterIdeMode}
-              title={t('ideSwitchToIde')}
-              aria-label={t('ideSwitchToIde')}
+              title={t('rightSidebarTabEditor')}
+              aria-label={t('rightSidebarTabEditor')}
             >
               <PanelsTopLeft className="h-[15px] w-[15px]" strokeWidth={1.75} />
             </button>
           ) : null}
-          <button
-            type="button"
-            className="ds-operation-dock-rail__btn"
-            onClick={() => onOpenEditor?.()}
-            title={t('rightSidebarTabEditor')}
-            aria-label={t('rightSidebarTabEditor')}
-          >
-            <Columns2 className="h-[15px] w-[15px]" strokeWidth={1.75} />
-          </button>
           <button
             type="button"
             className="ds-operation-dock-rail__btn"
@@ -639,84 +637,83 @@ export function OperationContextDock({
           <button
             type="button"
             onClick={onEnterIdeMode}
-            className="flex w-full items-center gap-1.5 rounded-md py-0.5 text-left text-ds-muted transition hover:text-ds-ink"
-            title={t('ideSwitchToIde')}
-            aria-label={t('ideSwitchToIde')}
+            className={`${DOCK_ROW_CLASS} cursor-pointer text-ds-ink hover:bg-ds-hover/60`}
+            title={t('rightSidebarTabEditor')}
+            aria-label={t('rightSidebarTabEditor')}
           >
-            <PanelsTopLeft className="h-3.5 w-3.5 shrink-0" strokeWidth={2} aria-hidden />
-            <span className="ds-operation-dock-section-label flex-1">{t('ideModeIde')}</span>
+            <RowIcon icon={PanelsTopLeft} tint="violet" />
+            <span className="min-w-0 flex-1 truncate">{t('rightSidebarTabEditor')}</span>
           </button>
           <div className="my-2 border-t border-ds-border-muted/40" />
         </>
       ) : null}
 
-      <SectionHeader
-        label={t('operationDockToolsTitle')}
-        collapsed={collapsed.tools}
-        onToggle={() => toggle('tools')}
-      />
+      <button
+        type="button"
+        onClick={onTogglePreview}
+        disabled={!previewEnabled}
+        className={`${DOCK_ROW_CLASS} ${
+          previewEnabled
+            ? previewActive
+              ? 'bg-accent/[0.09] text-ds-ink'
+              : 'cursor-pointer text-ds-ink hover:bg-ds-hover/60'
+            : 'cursor-default text-ds-faint opacity-55'
+        }`}
+        aria-pressed={previewActive}
+        title={previewEnabled ? t('rightPanelBrowser') : t('terminalWorkspaceRequired')}
+      >
+        <RowIcon icon={Globe2} tint="sky" />
+        <span className="min-w-0 flex-1 truncate">{t('rightPanelBrowser')}</span>
+        {previewActive ? (
+          <span className="ml-auto shrink-0 text-[12px] font-medium text-accent">
+            {t('operationDockToolOpen')}
+          </span>
+        ) : null}
+      </button>
 
-      {!collapsed.tools ? (
-        <div className="mt-1.5 flex flex-col gap-1">
-        <button
-          type="button"
-          onClick={() => onOpenEditor?.()}
-          className={`${DOCK_ROW_CLASS} cursor-pointer text-ds-ink hover:bg-ds-hover/60`}
-        >
-          <RowIcon icon={Columns2} tint="violet" />
-          <span className="min-w-0 flex-1 truncate">{t('rightSidebarTabEditor')}</span>
-        </button>
+      <div className="my-2 border-t border-ds-border-muted/40" />
 
-        <button
-          type="button"
-          onClick={onTogglePreview}
-          disabled={!previewEnabled}
-          className={`${DOCK_ROW_CLASS} ${
-            previewEnabled
-              ? previewActive
-                ? 'bg-accent/[0.09] text-ds-ink'
-                : 'cursor-pointer text-ds-ink hover:bg-ds-hover/60'
-              : 'cursor-default text-ds-faint opacity-55'
-          }`}
-          aria-pressed={previewActive}
-          title={previewEnabled ? t('rightPanelBrowser') : t('terminalWorkspaceRequired')}
-        >
-          <RowIcon icon={Globe2} tint="sky" />
-          <span className="min-w-0 flex-1 truncate">{t('rightPanelBrowser')}</span>
-          {previewActive ? (
-            <span className="ml-auto shrink-0 text-[12px] font-medium text-accent">{t('operationDockToolOpen')}</span>
-          ) : null}
-        </button>
-
-        <button
-          type="button"
-          onClick={onToggleTerminalPanel}
-          disabled={!terminalPanelEnabled}
-          className={`${DOCK_ROW_CLASS} ${
-            terminalPanelEnabled
-              ? terminalPanelOpen
-                ? 'bg-accent/[0.09] text-ds-ink'
-                : 'cursor-pointer text-ds-ink hover:bg-ds-hover/60'
-              : 'cursor-default text-ds-faint opacity-55'
-          }`}
-          aria-pressed={terminalPanelOpen}
-          title={terminalPanelEnabled ? t('terminalToggle') : t('terminalWorkspaceRequired')}
-        >
-          <RowIcon icon={Terminal} tint="amber" />
-          <span className="min-w-0 flex-1 truncate">{t('terminalPanelTitle')}</span>
-          {terminalPanelOpen ? (
-            <span className="ml-auto shrink-0 text-[12px] font-medium text-accent">{t('operationDockToolOpen')}</span>
-          ) : null}
-        </button>
-      </div>
-      ) : null}
+      <button
+        type="button"
+        onClick={onToggleTerminalPanel}
+        disabled={!terminalPanelEnabled}
+        className={`${DOCK_ROW_CLASS} ${
+          terminalPanelEnabled
+            ? terminalPanelOpen
+              ? 'bg-accent/[0.09] text-ds-ink'
+              : 'cursor-pointer text-ds-ink hover:bg-ds-hover/60'
+            : 'cursor-default text-ds-faint opacity-55'
+        }`}
+        aria-pressed={terminalPanelOpen}
+        title={terminalPanelEnabled ? t('terminalToggle') : t('terminalWorkspaceRequired')}
+      >
+        <RowIcon icon={Terminal} tint="amber" />
+        <span className="min-w-0 flex-1 truncate">{t('terminalPanelTitle')}</span>
+        {terminalPanelOpen ? (
+          <span className="ml-auto shrink-0 text-[12px] font-medium text-accent">
+            {t('operationDockToolOpen')}
+          </span>
+        ) : null}
+      </button>
 
       <div className="my-2 border-t border-ds-border-muted/40" />
 
       <SectionHeader
         label={t('operationDockGitTitle')}
+        icon={GitBranch}
         collapsed={collapsed.git}
         onToggle={() => toggle('git')}
+        trailing={
+          collapsed.git && hasChanges ? (
+            changeStats ? (
+              <ChangeDiffStatsLabel stats={changeStats} size="sm" className="shrink-0" />
+            ) : (
+              <span className="shrink-0 text-[11px] tabular-nums text-ds-faint">
+                {t('gitDirtyFiles', { count: gitDirtyCount })}
+              </span>
+            )
+          ) : undefined
+        }
       />
 
       {!collapsed.git ? (
@@ -788,16 +785,12 @@ export function OperationContextDock({
         type="button"
         onClick={() => toggle('process')}
         aria-expanded={!collapsed.process}
-        className="flex w-full items-center gap-1.5 rounded-md py-0.5 text-left text-ds-muted transition hover:text-ds-ink"
+        className={DOCK_SECTION_HEADER_CLASS}
       >
-        <ChevronRight
-          className={`h-3.5 w-3.5 shrink-0 transition-transform duration-200 ${
-            collapsed.process ? '' : 'rotate-90'
-          }`}
-          strokeWidth={2}
-          aria-hidden
-        />
-        <span className="ds-operation-dock-section-label flex-1">{t('contextRailProcess')}</span>
+        <RowIcon icon={ListTodo} tint="muted" />
+        <span className="ds-operation-dock-section-label min-w-0 flex-1">
+          {t('contextRailProcess')}
+        </span>
         {totalCount > 0 ? (
           <span className="flex shrink-0 items-center gap-2">
             <span className="flex items-center gap-[2px]" aria-hidden>
@@ -819,6 +812,13 @@ export function OperationContextDock({
             </span>
           </span>
         ) : null}
+        <ChevronRight
+          className={`h-3.5 w-3.5 shrink-0 text-ds-faint transition-transform duration-200 ${
+            collapsed.process ? '' : 'rotate-90'
+          }`}
+          strokeWidth={2}
+          aria-hidden
+        />
       </button>
 
       {!collapsed.process ? (
@@ -906,6 +906,7 @@ export function OperationContextDock({
 
       <SectionHeader
         label={t('contextRailTasks')}
+        icon={ListChecks}
         collapsed={collapsed.tasks}
         onToggle={() => toggle('tasks')}
         trailing={

@@ -1647,7 +1647,6 @@ export function Workbench(): ReactElement {
                       <div className="ds-dialogue-gutter shrink-0 pb-2 md:hidden">
                         <OperationContextDock
                           onOpenChanges={handleComposerOpenDiff}
-                          onOpenEditor={() => openRightSidebar('editor')}
                           onEnterIdeMode={enterIdeMode}
                           previewActive={rightSidebarOpen && rightSidebarTab === 'preview'}
                           terminalPanelOpen={bottomTerminalOpen}
@@ -1695,7 +1694,6 @@ export function Workbench(): ReactElement {
                     <div className="ds-operation-rail__scroll min-h-0 flex-1 overflow-y-auto pb-4 pl-0 pr-0 pt-[var(--ds-operation-stack-offset)]">
                       <OperationContextDock
                         onOpenChanges={handleComposerOpenDiff}
-                        onOpenEditor={() => openRightSidebar('editor')}
                         onEnterIdeMode={enterIdeMode}
                         previewActive={rightSidebarOpen && rightSidebarTab === 'preview'}
                         terminalPanelOpen={bottomTerminalOpen}
