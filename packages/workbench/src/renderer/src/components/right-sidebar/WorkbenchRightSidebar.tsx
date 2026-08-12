@@ -1,5 +1,13 @@
-import type { PointerEvent as ReactPointerEvent, ReactElement, ReactNode } from 'react'
-import { lazy, Suspense } from 'react'
+import {
+  lazy,
+  Suspense,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactElement,
+  type ReactNode
+} from 'react'
 import {
   Code2,
   FileEdit,
@@ -14,6 +22,10 @@ import { useTranslation } from 'react-i18next'
 import type { ChatBlock } from '../../agent/types'
 import type { PreviewElementPick } from '../../lib/preview-element-picker'
 import type { RightSidebarTab } from '../../lib/right-sidebar-state'
+import {
+  rightSidebarTabBarPlanForWidth,
+  rightSidebarTabBarTierForWidth
+} from '../../lib/right-sidebar-tab-bar-layout'
 import { AppTerminalPanel } from '../AppTerminalPanel'
 import { RightSidebarCollapsedStrip } from './RightSidebarCollapsedStrip'
 
@@ -64,11 +76,13 @@ const TAB_ITEMS: Array<{ id: RightSidebarTab; icon: typeof Code2; labelKey: stri
 function TabButton({
   active,
   label,
+  showLabel,
   icon: Icon,
   onClick
 }: {
   active: boolean
   label: string
+  showLabel: boolean
   icon: typeof Code2
   onClick: () => void
 }): ReactElement {
@@ -76,15 +90,19 @@ function TabButton({
     <button
       type="button"
       onClick={onClick}
-      className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11.5px] font-medium transition ${
+      title={label}
+      aria-label={label}
+      className={`inline-flex shrink-0 items-center gap-1 rounded-full border py-0.5 text-[11.5px] font-medium transition ${
+        showLabel ? 'px-2' : 'px-1.5'
+      } ${
         active
           ? 'border-ds-border bg-ds-card text-ds-ink shadow-[0_1px_2px_rgba(0,0,0,0.04)]'
           : 'border-transparent text-ds-faint hover:bg-ds-hover/60 hover:text-ds-muted'
       }`}
       aria-pressed={active}
     >
-      <Icon className="h-3 w-3" strokeWidth={1.9} />
-      <span className="hidden xl:inline">{label}</span>
+      <Icon className="h-3 w-3 shrink-0" strokeWidth={1.9} />
+      {showLabel ? <span className="whitespace-nowrap">{label}</span> : null}
     </button>
   )
 }
@@ -118,6 +136,36 @@ export function WorkbenchRightSidebar({
   terminalMountActive = true
 }: Props): ReactElement | null {
   const { t } = useTranslation('common')
+  const tabRowRef = useRef<HTMLDivElement>(null)
+  const [tabRowWidth, setTabRowWidth] = useState<number | null>(null)
+  const tabPlan = useMemo(
+    () => rightSidebarTabBarPlanForWidth(tabRowWidth, tab),
+    [tab, tabRowWidth]
+  )
+  const tabTier = rightSidebarTabBarTierForWidth(tabRowWidth)
+
+  useLayoutEffect(() => {
+    if (!open || collapsed) return
+    const el = tabRowRef.current
+    if (!el || typeof ResizeObserver === 'undefined') return
+
+    let frame = 0
+    const apply = (nextWidth: number): void => {
+      setTabRowWidth((prev) => (prev === nextWidth ? prev : nextWidth))
+    }
+    apply(el.getBoundingClientRect().width)
+
+    const observer = new ResizeObserver(([entry]) => {
+      const nextWidth = entry?.contentRect.width ?? el.getBoundingClientRect().width
+      window.cancelAnimationFrame(frame)
+      frame = window.requestAnimationFrame(() => apply(nextWidth))
+    })
+    observer.observe(el)
+    return () => {
+      window.cancelAnimationFrame(frame)
+      observer.disconnect()
+    }
+  }, [collapsed, open])
 
   if (!open) return null
 
@@ -166,6 +214,7 @@ export function WorkbenchRightSidebar({
   }
 
   const terminalVisible = tab === 'terminal'
+  const visibleTabItems = TAB_ITEMS.filter((item) => tabPlan.visibleTabs.includes(item.id))
 
   return (
     <aside
@@ -188,12 +237,17 @@ export function WorkbenchRightSidebar({
         {/* Same height + divider treatment as the workbench topbar so the two
             header lines read as one continuous rule across the card. */}
         <div className="ds-no-drag ds-surface-divider flex min-h-[var(--ds-header-height,38px)] shrink-0 items-center gap-0.5 px-1.5">
-          <div className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto">
-            {TAB_ITEMS.map((item) => (
+          <div
+            ref={tabRowRef}
+            className="flex min-w-0 flex-1 flex-nowrap items-center gap-0.5 overflow-hidden"
+            data-right-sidebar-tab-tier={tabRowWidth == null ? 'unknown' : String(tabTier)}
+          >
+            {visibleTabItems.map((item) => (
               <TabButton
                 key={item.id}
                 active={tab === item.id}
                 label={t(item.labelKey)}
+                showLabel={tabPlan.showLabel[item.id]}
                 icon={item.icon}
                 onClick={() => onTabChange(item.id)}
               />
