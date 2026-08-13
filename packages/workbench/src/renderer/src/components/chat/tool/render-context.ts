@@ -1,7 +1,7 @@
 import type { ToolBlock } from '../../../agent/types'
 import {
-  countDiffStats,
   looksLikeUnifiedDiff,
+  resolvePatchStats,
   type DiffStats
 } from '../../../lib/diff-stats'
 import { firstChangedEditorLineFromPatch } from '../../../lib/parse-unified-diff-for-editor'
@@ -353,11 +353,7 @@ function resolveDiffStats(
 ): DiffStats | undefined {
   const added = readMutationNumber(mutation, 'additions')
   const removed = readMutationNumber(mutation, 'deletions')
-  if (added !== undefined || removed !== undefined) {
-    const stats = { added: Math.max(0, added ?? 0), removed: Math.max(0, removed ?? 0) }
-    return stats.added > 0 || stats.removed > 0 ? stats : undefined
-  }
-  return countDiffStats(block.detail) ?? undefined
+  return resolvePatchStats(block.detail, { added, removed }) ?? undefined
 }
 
 /** First changed line in the NEW file: runtime hint, else parsed from the patch. */

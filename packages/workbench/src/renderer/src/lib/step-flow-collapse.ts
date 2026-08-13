@@ -232,19 +232,20 @@ export function batchStatus(items: StepFlowItem[]): StepFlowStatus {
 }
 
 /**
- * Fold runs of ≥2 consecutive probes into one batch row.
+ * Fold runs of consecutive probes into one batch row, including a lone
+ * probe (“读取文件 · 1 项”) so singles match the multi-item chrome.
  * Same-name runs keep that tool label; mixed read/search/grep runs carry
  * compose counts (`batchCompose`) for a “读 2 · 搜 2” title. Narration /
  * lifecycle / queued rows flush the buffer.
  */
 export function collapseStepFlowProbes(items: StepFlowItem[]): StepFlowItem[] {
-  if (items.length < 2) return items
+  if (items.length === 0) return items
 
   const out: StepFlowItem[] = []
   let buffer: StepFlowItem[] = []
 
   const flush = (): void => {
-    if (buffer.length >= 2) {
+    if (buffer.length >= 1) {
       const first = buffer[0]!
       const names = new Set(
         buffer.map((i) => (i.toolName || '').trim().toLowerCase()).filter(Boolean)
@@ -267,8 +268,6 @@ export function collapseStepFlowProbes(items: StepFlowItem[]): StepFlowItem[] {
         detail: preview || undefined,
         output: preview || null
       })
-    } else if (buffer.length === 1) {
-      out.push(buffer[0]!)
     }
     buffer = []
   }

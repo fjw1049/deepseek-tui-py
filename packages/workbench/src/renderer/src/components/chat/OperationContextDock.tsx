@@ -23,14 +23,16 @@ import {
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { useShallow } from 'zustand/react/shallow'
-import type { ChatBlock } from '../../agent/types'
 import { ChangeDiffStatsLabel } from '../ChangeDiffStatsLabel'
 import { useGitBranches } from '../../hooks/use-git-branches'
 import { useDockSubagents, type DockSubagentView } from '../../hooks/use-dock-subagents'
 import { fetchTaskDetail, useLiveTasks } from '../../hooks/use-thread-tasks'
 import { useGitWorkingChanges } from '../../hooks/use-git-working-changes'
 import { useWorkspaceDirtyGitRefresh } from '../../hooks/use-workspace-dirty-git-refresh'
-import { sumDiffStats } from '../../lib/diff-stats'
+import {
+  collectWorkspaceChangeEntries,
+  sumWorkspaceChangeStats
+} from '../../lib/workspace-change-stats'
 import {
   extractTasksFromBlocks,
   isActiveTaskStatus,
@@ -66,12 +68,6 @@ type Props = {
   previewEnabled: boolean
   onTogglePreview: () => void
   onToggleTerminalPanel: () => void
-}
-
-function sessionChangePatches(blocks: ChatBlock[]): Array<string | undefined> {
-  return blocks.flatMap((block) =>
-    block.kind === 'tool' && block.toolKind === 'file_change' ? [block.detail] : []
-  )
 }
 
 const DOCK_ROW_CLASS =
@@ -363,7 +359,8 @@ export function OperationContextDock({
     gitCommitSelectionKey,
     gitCommitSelectedPaths,
     syncGitCommitSelection,
-    workspaceDirtyTick
+    workspaceDirtyTick,
+    turnDiffByTurnId
   } = useChatStore(
     useShallow((s) => ({
       workspaceRoot: s.workspaceRoot,
@@ -373,7 +370,8 @@ export function OperationContextDock({
       gitCommitSelectionKey: s.gitCommitSelectionKey,
       gitCommitSelectedPaths: s.gitCommitSelectedPaths,
       syncGitCommitSelection: s.syncGitCommitSelection,
-      workspaceDirtyTick: s.workspaceDirtyTick
+      workspaceDirtyTick: s.workspaceDirtyTick,
+      turnDiffByTurnId: s.turnDiffByTurnId
     }))
   )
   const root = resolveActiveThreadWorkspace(activeThreadId, threads, workspaceRoot)
@@ -416,10 +414,17 @@ export function OperationContextDock({
     })
   }, [])
   const dockSubagents = useDockSubagents(blocks)
-  const changeStats = useMemo(() => {
-    const gitPatches = gitChanges?.ok ? gitChanges.files.map((file) => file.patch) : []
-    return sumDiffStats([...sessionChangePatches(blocks), ...gitPatches])
-  }, [blocks, gitChanges])
+  const changeStats = useMemo(
+    () =>
+      sumWorkspaceChangeStats(
+        collectWorkspaceChangeEntries({
+          blocks,
+          turnDiffByTurnId,
+          gitFiles: gitChanges?.ok ? gitChanges.files : null
+        })
+      ),
+    [blocks, gitChanges, turnDiffByTurnId]
+  )
   const gitDirtyCount = gitResult?.ok ? gitResult.dirtyCount : 0
   const gitReady = gitResult?.ok ?? false
   const gitFilePaths = useMemo(

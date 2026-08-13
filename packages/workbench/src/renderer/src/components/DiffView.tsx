@@ -1,6 +1,7 @@
 import { useMemo, useState, type ReactElement } from 'react'
 import { Check, Columns2, Copy, MessageSquarePlus, Rows3 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
+import { countDiffStats, extractDiffFilePath } from '../lib/diff-stats'
 
 export type DiffRenderStyle = 'unified' | 'split'
 
@@ -63,30 +64,12 @@ const LANG_BADGES: Array<{ test: RegExp; label: string; tone: string }> = [
 ]
 
 function parseDiff(patch: string, override?: string): ParsedDiff {
-  const lines = patch.split('\n')
-  let filePath = override ?? null
-  let added = 0
-  let removed = 0
-
-  for (const line of lines) {
-    if (!filePath) {
-      if (line.startsWith('+++ ')) {
-        const raw = line.slice(4).trim()
-        const cleaned = raw.replace(/^[ab]\//, '')
-        if (cleaned && cleaned !== '/dev/null') filePath = cleaned
-      } else if (line.startsWith('--- ') && !filePath) {
-        const raw = line.slice(4).trim()
-        const cleaned = raw.replace(/^[ab]\//, '')
-        if (cleaned && cleaned !== '/dev/null') filePath = cleaned
-      } else if (line.startsWith('diff --git ')) {
-        const m = line.match(/ b\/(\S+)/)
-        if (m) filePath = m[1]
-      }
-    }
-    if (line.startsWith('+') && !line.startsWith('+++')) added += 1
-    else if (line.startsWith('-') && !line.startsWith('---')) removed += 1
+  const stats = countDiffStats(patch)
+  return {
+    filePath: extractDiffFilePath(patch, override) ?? null,
+    added: stats?.added ?? 0,
+    removed: stats?.removed ?? 0
   }
-  return { filePath, added, removed }
 }
 
 function badgeFor(name: string | null): { label: string; tone: string } {

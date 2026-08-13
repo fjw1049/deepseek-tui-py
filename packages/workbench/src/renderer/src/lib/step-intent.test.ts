@@ -43,9 +43,10 @@ describe('timelineToFlowItems', () => {
       }
     ])
     expect(items).toHaveLength(1)
+    expect(items[0]?.variant).toBe('batch')
+    expect(items[0]?.batchCount).toBe(1)
     expect(items[0]?.label).toBe('读取文件')
     expect(items[0]?.detail).toContain('foo.ts')
     expect(items[0]?.label).not.toMatch(/step \d/)
-    expect(items[0]?.input).toContain('foo.ts')
   })
 })

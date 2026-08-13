@@ -208,21 +208,19 @@ function isMergeableProbeBlock(block: ChatBlock): block is ToolProcessBlock {
 
 /**
  * Fold consecutive settled read-only probes into one `tool_batch`, including
- * mixed read/search/grep runs (same rule as Task/SubAgent StepFlow). A lone
- * probe stays a plain block; non-mergeable rows end the current run.
+ * mixed read/search/grep runs and a lone probe (“读取文件 · 1 项”).
+ * Non-mergeable rows end the current run.
  */
 export function groupProcessRows(visible: ChatBlock[]): RenderRow[] {
   const rows: RenderRow[] = []
   let buffer: ToolProcessBlock[] = []
 
   const flush = (): void => {
-    if (buffer.length >= 2) {
+    if (buffer.length >= 1) {
       const names = new Set(buffer.map((b) => toolNameFromProcessBlock(b).toLowerCase()))
       const mixed = names.size > 1
       const toolName = mixed ? 'probe' : [...names][0] || toolNameFromProcessBlock(buffer[0]!)
       rows.push({ type: 'tool_batch', toolName, blocks: buffer, mixed })
-    } else if (buffer.length === 1) {
-      rows.push({ type: 'block', block: buffer[0]! })
     }
     buffer = []
   }

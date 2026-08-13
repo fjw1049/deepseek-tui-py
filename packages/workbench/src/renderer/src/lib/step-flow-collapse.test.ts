@@ -124,9 +124,13 @@ describe('collapseStepFlowProbes', () => {
     expect(collapsed[0]?.detail?.split(' · ')).toHaveLength(8)
   })
 
-  it('does not fold a single probe', () => {
+  it('folds a single probe into a one-item batch', () => {
     const items = [probe('r0', 'read_file', '…/a.tsx')]
-    expect(collapseStepFlowProbes(items)).toEqual(items)
+    const collapsed = collapseStepFlowProbes(items)
+    expect(collapsed).toHaveLength(1)
+    expect(collapsed[0]?.variant).toBe('batch')
+    expect(collapsed[0]?.batchCount).toBe(1)
+    expect(collapsed[0]?.batchToolName).toBe('read_file')
   })
 
   it('folds consecutive running probes into a live batch', () => {

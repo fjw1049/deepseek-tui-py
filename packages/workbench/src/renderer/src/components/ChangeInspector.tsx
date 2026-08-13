@@ -10,52 +10,24 @@ import {
 import { useTranslation } from 'react-i18next'
 import { useShallow } from 'zustand/react/shallow'
 import { FileEdit } from 'lucide-react'
-import type { GitWorkingChangeFile, GitWorkingChangeStage } from '@shared/git-working-changes'
+import type { GitWorkingChangeStage } from '@shared/git-working-changes'
 import type { ChatBlock } from '../agent/types'
 import { ChangeDiffStatsLabel } from './ChangeDiffStatsLabel'
 import { DiffView, type DiffRenderStyle } from './DiffView'
 import { EditorListSkeleton } from './workspace-editor/EditorListSkeleton'
 import { useGitWorkingChanges } from '../hooks/use-git-working-changes'
 import { useWorkspaceDirtyGitRefresh } from '../hooks/use-workspace-dirty-git-refresh'
+import { formatFilePathForDisplay } from '../lib/diff-stats'
 import {
-  countDiffStats,
-  extractDiffFilePath,
-  formatFilePathForDisplay,
-  looksLikeUnifiedDiff,
-  sumDiffStats
-} from '../lib/diff-stats'
+  collectWorkspaceChangeEntries,
+  sumWorkspaceChangeStats,
+  workspaceChangeEntryStats
+} from '../lib/workspace-change-stats'
 import { formatComposerPathMention, insertComposerSnippet } from '../lib/composer-insert'
 import { splitFileNameAndParent } from '../lib/editor-breadcrumb'
 import { resolveGitCommitPaths } from '../lib/git-commit-selection'
-import { firstChangedEditorLineFromPatch } from '../lib/parse-unified-diff-for-editor'
 import { resolveActiveThreadWorkspace } from '../lib/workspace-path'
 import { useChatStore } from '../store/chat-store'
-
-type InspectorChangeItem = {
-  id: string
-  filePath?: string
-  detail: string
-  status: 'running' | 'success' | 'error'
-  /** First changed line in the new file (1-based), for open-in-editor jumps. */
-  editLine?: number
-  committable?: boolean
-  gitStage?: GitWorkingChangeStage
-}
-
-function editLineFromChange(
-  detail: string,
-  meta?: Record<string, unknown>
-): number | undefined {
-  const mutation =
-    meta?.mutation && typeof meta.mutation === 'object' && !Array.isArray(meta.mutation)
-      ? (meta.mutation as Record<string, unknown>)
-      : undefined
-  const fromMeta = mutation?.line_start
-  if (typeof fromMeta === 'number' && Number.isFinite(fromMeta) && fromMeta >= 1) {
-    return Math.floor(fromMeta)
-  }
-  return firstChangedEditorLineFromPatch(detail)
-}
 
 function normalizeChangePath(path: string | undefined): string {
   return (path ?? '').replace(/\\/g, '/').trim().toLowerCase()
@@ -78,108 +50,6 @@ export function findChangeItemId(
   return items.find((item) => changePathsMatch(item.filePath, key))?.id
 }
 
-function sessionChangeItems(blocks: ChatBlock[]): InspectorChangeItem[] {
-  return blocks.flatMap((block): InspectorChangeItem[] => {
-    if (!(block.kind === 'tool' && block.toolKind === 'file_change')) {
-      return []
-    }
-
-    const detailText = block.detail?.trim() ?? ''
-    const hasDiff = looksLikeUnifiedDiff(detailText)
-    const filePath = extractDiffFilePath(detailText, block.filePath)
-    if (!hasDiff && !filePath) return []
-
-    return [
-      {
-        id: block.id,
-        filePath,
-        detail: hasDiff ? detailText : '',
-        status: block.status,
-        editLine: editLineFromChange(detailText, block.meta)
-      }
-    ]
-  })
-}
-
-function turnLedgerChangeItems(
-  turnDiffByTurnId: Record<
-    string,
-    {
-      turn_id: string
-      files: Array<{ path: string; unified_diff: string; additions: number; deletions: number }>
-    }
-  >
-): InspectorChangeItem[] {
-  const items: InspectorChangeItem[] = []
-  for (const snap of Object.values(turnDiffByTurnId)) {
-    for (const file of snap.files ?? []) {
-      const detail = file.unified_diff?.trim() ?? ''
-      const hasDiff = looksLikeUnifiedDiff(detail)
-      const filePath = file.path?.trim() ?? ''
-      if (!hasDiff && !filePath) continue
-      items.push({
-        id: `turn-ledger:${snap.turn_id}:${file.path}`,
-        filePath: filePath || extractDiffFilePath(detail),
-        detail: hasDiff ? detail : '',
-        status: 'success',
-        editLine: firstChangedEditorLineFromPatch(detail)
-      })
-    }
-  }
-  return items
-}
-
-function gitChangeItems(files: GitWorkingChangeFile[]): InspectorChangeItem[] {
-  return files.map((file) => ({
-    id: `git:${file.path}`,
-    filePath: file.path,
-    detail: file.patch ?? '',
-    status: 'success' as const,
-    editLine: firstChangedEditorLineFromPatch(file.patch),
-    committable: true,
-    gitStage: file.stage
-  }))
-}
-
-function mergeChangeItems(
-  sessionItems: InspectorChangeItem[],
-  gitItems: InspectorChangeItem[]
-): InspectorChangeItem[] {
-  const gitByPath = new Map<string, InspectorChangeItem>()
-  for (const item of gitItems) {
-    const key = normalizeChangePath(item.filePath)
-    if (key) gitByPath.set(key, item)
-  }
-
-  const seen = new Set<string>()
-  const merged: InspectorChangeItem[] = []
-
-  for (const item of sessionItems) {
-    const key = normalizeChangePath(item.filePath) || item.id
-    if (seen.has(key)) continue
-    seen.add(key)
-    const git = item.filePath ? gitByPath.get(normalizeChangePath(item.filePath)) : undefined
-    if (git) {
-      merged.push({
-        ...item,
-        committable: true,
-        gitStage: git.gitStage,
-        detail: (item.detail ?? '').trim() ? item.detail : (git.detail ?? '')
-      })
-    } else {
-      merged.push(item)
-    }
-  }
-
-  for (const item of gitItems) {
-    const key = normalizeChangePath(item.filePath) || item.id
-    if (seen.has(key)) continue
-    seen.add(key)
-    merged.push(item)
-  }
-
-  return merged
-}
 
 function InspectorCommitBar({
   root,
@@ -364,19 +234,17 @@ export function ChangeInspector({
     }
   }, [])
 
-  const fileChanges = useMemo(() => {
-    const sessionItems = mergeChangeItems(
-      sessionChangeItems(blocks),
-      turnLedgerChangeItems(turnDiffByTurnId)
-    )
-    const gitItems = gitChanges?.ok ? gitChangeItems(gitChanges.files) : []
-    return mergeChangeItems(sessionItems, gitItems)
-  }, [blocks, gitChanges, turnDiffByTurnId])
-
-  const changeStats = useMemo(
-    () => sumDiffStats(fileChanges.map((item) => item.detail)),
-    [fileChanges]
+  const fileChanges = useMemo(
+    () =>
+      collectWorkspaceChangeEntries({
+        blocks,
+        turnDiffByTurnId,
+        gitFiles: gitChanges?.ok ? gitChanges.files : null
+      }),
+    [blocks, gitChanges, turnDiffByTurnId]
   )
+
+  const changeStats = useMemo(() => sumWorkspaceChangeStats(fileChanges), [fileChanges])
 
   useEffect(() => {
     if (gitChanges == null || !gitChanges.ok) return
@@ -458,7 +326,7 @@ export function ChangeInspector({
       </div>
       <ul className="min-h-0 flex-1 overflow-y-auto">
         {fileChanges.map((item) => {
-          const stats = countDiffStats(item.detail)
+          const stats = workspaceChangeEntryStats(item)
           const displayPath = formatFilePathForDisplay(item.filePath, root || workspaceRoot)
           const { name, parent } = splitFileNameAndParent(displayPath ?? item.filePath ?? '')
           const commitSelected = Boolean(

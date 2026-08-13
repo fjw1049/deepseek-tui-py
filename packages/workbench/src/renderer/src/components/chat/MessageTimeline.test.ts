@@ -393,9 +393,11 @@ describe('groupProcessRows', () => {
     expect(rows[0]!.type === 'tool_batch' && rows[0].blocks).toHaveLength(5)
   })
 
-  it('keeps a lone probe as a plain block row', () => {
+  it('folds a lone probe into a one-item batch', () => {
     const rows = groupProcessRows([toolBlock('t1', 'read_file')])
-    expect(rows).toEqual([{ type: 'block', block: expect.objectContaining({ id: 't1' }) }])
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatchObject({ type: 'tool_batch', toolName: 'read_file' })
+    expect(rows[0]!.type === 'tool_batch' && rows[0].blocks).toHaveLength(1)
   })
 
   it('folds mixed consecutive probe tool names into one batch', () => {

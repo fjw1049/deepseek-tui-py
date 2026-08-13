@@ -95,4 +95,58 @@ describe('turn-mutation-view', () => {
     expect(resolveLatestTurnDiffId(null, 'turn_old')).toBe('turn_old')
     expect(resolveLatestTurnDiffId(null, null)).toBeNull()
   })
+
+  it('reconciles totals from unique files so header matches the list', () => {
+    const summary = turnSummaryFromSources(
+      {
+        turn_id: 'turn_1',
+        files: [
+          {
+            path: 'a.ts',
+            additions: 6,
+            deletions: 3,
+            unified_diff: 'diff --git a/a.ts b/a.ts\n--- a/a.ts\n+++ b/a.ts\n@@\n-a\n+b\n'
+          },
+          {
+            path: 'b.ts',
+            additions: 5,
+            deletions: 0,
+            unified_diff: 'diff --git a/b.ts b/b.ts\n--- a/b.ts\n+++ b/b.ts\n@@\n+x\n'
+          }
+        ],
+        totals: { files: 99, additions: 1, deletions: 1 },
+        revision: 1,
+        complete: true
+      },
+      []
+    )
+    expect(summary.totals).toEqual({ files: 2, additions: 11, deletions: 3 })
+    expect(toolBlocksFromTurnSummary('turn_1', summary)).toHaveLength(2)
+  })
+
+  it('merges repeated tool edits of the same path in the fallback', () => {
+    const patch = 'diff --git a/a.ts b/a.ts\n--- a/a.ts\n+++ b/a.ts\n@@\n-a\n+b\n'
+    const summary = turnSummaryFromSources(null, [
+      {
+        kind: 'tool',
+        id: 't1',
+        summary: 'edit_file: path="a.ts"',
+        status: 'success',
+        toolKind: 'file_change',
+        filePath: 'a.ts',
+        detail: patch
+      },
+      {
+        kind: 'tool',
+        id: 't2',
+        summary: 'edit_file: path="a.ts"',
+        status: 'success',
+        toolKind: 'file_change',
+        filePath: 'a.ts',
+        detail: patch
+      }
+    ])
+    expect(summary.files).toHaveLength(1)
+    expect(summary.totals.files).toBe(1)
+  })
 })

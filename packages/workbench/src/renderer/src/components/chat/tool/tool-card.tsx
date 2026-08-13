@@ -1,6 +1,7 @@
 import { lazy, memo, Suspense, useCallback, useMemo } from 'react'
 import type { LucideIcon } from 'lucide-react'
 import { FileEdit, Search, Terminal, Wrench } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 import { cn } from './cn'
 import { buildToolRenderContext, isPendingState } from './render-context'
 import { resolveToolRenderer } from './registry'
@@ -62,7 +63,11 @@ export const ToolCard = memo(function ToolCard({
   className,
   onOpenWorkspaceFile
 }: ToolCardProps): React.JSX.Element | null {
+  const { t } = useTranslation('common')
   const ctx = useMemo(() => buildToolRenderContext(block), [block])
+  const headerLabel = ctx.isFileChange
+    ? t('toolBatchTitle', { label: ctx.label || ctx.shortName, count: 1 })
+    : ctx.label || ctx.shortName
   const workspaceRoot = useChatStore((s) => s.workspaceRoot)
   const prefetchPath = ctx.input.path
   const handlePrefetch = useCallback((): void => {
@@ -116,7 +121,7 @@ export const ToolCard = memo(function ToolCard({
   ) : (
     <ToolHeaderRow
       icon={Icon}
-      label={ctx.label || ctx.shortName}
+      label={headerLabel}
       title={ctx.description || undefined}
       state={ctx.state}
       expanded={open}

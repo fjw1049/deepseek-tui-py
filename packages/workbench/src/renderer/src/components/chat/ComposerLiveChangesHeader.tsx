@@ -3,6 +3,7 @@
 import { memo } from 'react'
 import { FileEdit } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
+import { turnSummaryFromSources } from '../../lib/turn-mutation-view'
 import { useChatStore } from '../../store/chat-store'
 
 export const ComposerLiveChangesHeader = memo(function ComposerLiveChangesHeader({
@@ -17,27 +18,29 @@ export const ComposerLiveChangesHeader = memo(function ComposerLiveChangesHeader
     currentTurnId ? s.turnDiffByTurnId[currentTurnId] : undefined
   )
 
-  if (!busy || !snap || snap.complete || snap.totals.files <= 0) {
+  const totals = snap ? turnSummaryFromSources(snap, []).totals : null
+
+  if (!busy || !snap || snap.complete || !totals || totals.files <= 0) {
     return null
   }
 
   const label =
-    snap.totals.files === 1
+    totals.files === 1
       ? t('turnChangeFilesOne', { defaultValue: '1 file changed' })
       : t('turnChangeFilesMany', {
-          count: snap.totals.files,
-          defaultValue: `${snap.totals.files} files changed`
+          count: totals.files,
+          defaultValue: `${totals.files} files changed`
         })
 
   return (
     <div className="mb-1.5 flex items-center gap-2 rounded-[12px] border border-ds-border-muted/70 bg-ds-card/70 px-3 py-2 text-[12.5px] text-ds-ink">
       <FileEdit className="h-3.5 w-3.5 shrink-0 text-ds-muted" strokeWidth={1.8} />
       <span className="min-w-0 flex-1 truncate font-medium">{label}</span>
-      {snap.totals.additions + snap.totals.deletions > 0 ? (
+      {totals.additions + totals.deletions > 0 ? (
         <span className="shrink-0 tabular-nums">
-          <span className="text-ds-diff-added">+{snap.totals.additions}</span>
+          <span className="text-ds-diff-added">+{totals.additions}</span>
           <span className="mx-1 text-ds-faint">·</span>
-          <span className="text-ds-diff-removed">-{snap.totals.deletions}</span>
+          <span className="text-ds-diff-removed">-{totals.deletions}</span>
         </span>
       ) : null}
       {onReview ? (

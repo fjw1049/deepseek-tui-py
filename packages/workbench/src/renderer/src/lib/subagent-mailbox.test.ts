@@ -479,8 +479,10 @@ describe('subagent-mailbox', () => {
     expect(narration?.label).toContain('chat 组件')
     expect(narration?.depth ?? 0).toBe(0)
 
-    const tool = items.find((i) => i.id === 'tool-call_1')
+    const tool = items.find((i) => i.id === 'batch-tool-call_1') ?? items.find((i) => i.id === 'tool-call_1')
     expect(tool?.label).toBe('浏览目录')
+    expect(tool?.variant).toBe('batch')
+    expect(tool?.batchCount).toBe(1)
     expect(tool?.depth).toBe(1)
   })
 

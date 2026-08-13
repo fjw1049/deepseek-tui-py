@@ -1,7 +1,12 @@
 /** Derive Edited rows / turn summary from file_change blocks + turn.diff snapshots. */
 
 import type { ChatBlock, ToolBlock } from '../agent/types'
-import { looksLikeUnifiedDiff, countDiffStats, extractDiffFilePath } from './diff-stats'
+import {
+  looksLikeUnifiedDiff,
+  extractDiffFilePath,
+  resolvePatchStats,
+  type DiffStats
+} from './diff-stats'
 
 export type TurnDiffFile = {
   path: string
@@ -46,7 +51,16 @@ export function editedRowsFromToolBlocks(blocks: ChatBlock[]): EditedRow[] {
       (looksLikeUnifiedDiff(detail) ? extractDiffFilePath(detail, block.filePath) : undefined) ||
       ''
     if (!path && !looksLikeUnifiedDiff(detail)) continue
-    const stats = looksLikeUnifiedDiff(detail) ? countDiffStats(detail) : null
+    const mutation =
+      block.meta?.mutation &&
+      typeof block.meta.mutation === 'object' &&
+      !Array.isArray(block.meta.mutation)
+        ? (block.meta.mutation as Record<string, unknown>)
+        : undefined
+    const stats = resolvePatchStats(looksLikeUnifiedDiff(detail) ? detail : undefined, {
+      added: typeof mutation?.additions === 'number' ? mutation.additions : undefined,
+      removed: typeof mutation?.deletions === 'number' ? mutation.deletions : undefined
+    })
     rows.push({
       id: block.id,
       path: path || 'file',
@@ -79,47 +93,58 @@ export function resolveLatestTurnDiffId(
   return currentTurnId || lastCompletedTurnId || null
 }
 
+export function statsForTurnFile(file: TurnDiffFile): DiffStats {
+  return (
+    resolvePatchStats(file.unified_diff, {
+      added: file.additions,
+      removed: file.deletions
+    }) ?? { added: 0, removed: 0 }
+  )
+}
+
+export function totalsFromTurnFiles(
+  files: TurnDiffFile[]
+): { files: number; additions: number; deletions: number } {
+  let additions = 0
+  let deletions = 0
+  for (const file of files) {
+    const stats = statsForTurnFile(file)
+    additions += stats.added
+    deletions += stats.removed
+  }
+  return { files: files.length, additions, deletions }
+}
+
 /** Folded turn summary — prefer turn.diff.updated snapshot; fall back to tool blocks. */
 export function turnSummaryFromSources(
   snapshot: TurnDiffSnapshot | null | undefined,
   blocks: ChatBlock[]
 ): { files: TurnDiffFile[]; totals: { files: number; additions: number; deletions: number } } {
   if (snapshot && snapshot.files.length > 0) {
-    return {
-      files: snapshot.files.map((f) => ({
-        path: f.path,
-        op: f.op,
-        additions: f.additions ?? 0,
-        deletions: f.deletions ?? 0,
-        unified_diff: f.unified_diff ?? '',
-        detail_truncated: f.detail_truncated
-      })),
-      totals: {
-        files: snapshot.totals?.files ?? snapshot.files.length,
-        additions: snapshot.totals?.additions ?? 0,
-        deletions: snapshot.totals?.deletions ?? 0
-      }
-    }
+    const files = snapshot.files.map((f) => ({
+      path: f.path,
+      op: f.op,
+      additions: f.additions ?? 0,
+      deletions: f.deletions ?? 0,
+      unified_diff: f.unified_diff ?? '',
+      detail_truncated: f.detail_truncated
+    }))
+    return { files, totals: totalsFromTurnFiles(files) }
   }
   const byPath = new Map<string, TurnDiffFile>()
   for (const row of editedRowsFromToolBlocks(blocks)) {
-    if (row.status !== 'success' || !row.detail) continue
-    byPath.set(row.path, {
+    if (row.status === 'error') continue
+    const path = row.path.replace(/\\/g, '/').trim()
+    if (!path) continue
+    byPath.set(path.toLowerCase(), {
       path: row.path,
       additions: row.additions,
       deletions: row.deletions,
-      unified_diff: row.detail
+      unified_diff: row.detail ?? ''
     })
   }
   const files = [...byPath.values()]
-  return {
-    files,
-    totals: {
-      files: files.length,
-      additions: files.reduce((n, f) => n + f.additions, 0),
-      deletions: files.reduce((n, f) => n + f.deletions, 0)
-    }
-  }
+  return { files, totals: totalsFromTurnFiles(files) }
 }
 
 /** ToolBlock[] for TurnChangeSummary / ChangeInspector from a turn summary. */
@@ -127,17 +152,24 @@ export function toolBlocksFromTurnSummary(
   turnId: string,
   summary: ReturnType<typeof turnSummaryFromSources>
 ): ToolBlock[] {
-  return summary.files
-    .filter((f) => looksLikeUnifiedDiff(f.unified_diff))
-    .map((f, index) => ({
+  return summary.files.map((f, index) => {
+    const stats = statsForTurnFile(f)
+    return {
       kind: 'tool' as const,
       id: `turn-diff:${turnId}:${f.path}:${index}`,
       summary: `edit_file: path="${f.path}"`,
       status: 'success' as const,
       toolKind: 'file_change' as const,
       detail: f.unified_diff,
-      filePath: f.path
-    }))
+      filePath: f.path,
+      meta: {
+        mutation: {
+          additions: stats.added,
+          deletions: stats.removed
+        }
+      }
+    }
+  })
 }
 
 function formatPath(path: string | undefined): string {

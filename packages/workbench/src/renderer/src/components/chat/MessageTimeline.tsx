@@ -46,11 +46,10 @@ import { TaskSuggestionHero, TaskSuggestionOfflineHero } from './TaskSuggestionH
 import { SquareGrid } from './SquareGrid'
 import type { ChatBlock, RuntimeConnectionStatus, ToolBlock } from '../../agent/types'
 import {
-  countDiffStats,
-  extractDiffFilePath,
   formatFilePathForDisplay,
-  looksLikeUnifiedDiff,
-  sumDiffStats
+  resolvePatchStats,
+  sumDiffStatsList,
+  type DiffStats
 } from '../../lib/diff-stats'
 import {
   resolveLatestTurnDiffId,
@@ -1046,34 +1045,15 @@ function MessageTurn({
     // persists a small `mid_turn_preface` row; finals land via `onFinalAnswer`.
 
     // Prefer File Mutation Ledger turn.diff snapshot (includes subagent / reconcile);
-    // fall back to per-tool file_change blocks for legacy sessions.
+    // fall back to unique-path tool blocks. Same totals as the live header.
     const summary = turnSummaryFromSources(turnDiffSnapshot, turn.blocks)
-    let nextTurnFileChanges: ToolBlock[] = []
-    if (summary.files.length > 0 && turnDiffTurnId) {
-      nextTurnFileChanges = toolBlocksFromTurnSummary(turnDiffTurnId, summary).map((block) => ({
-        ...block,
-        filePath: formatFilePathForDisplay(block.filePath, workspaceRoot) || block.filePath
-      }))
-    } else {
-      nextTurnFileChanges = turn.blocks.flatMap((block): ToolBlock[] => {
-        if (
-          !(block.kind === 'tool' && block.toolKind === 'file_change' && block.status === 'success')
-        ) {
-          return []
-        }
-
-        const detailText = block.detail?.trim() ?? ''
-        if (!looksLikeUnifiedDiff(detailText)) return []
-
-        const resolvedFilePath = formatFilePathForDisplay(
-          extractDiffFilePath(detailText, block.filePath),
-          workspaceRoot
-        )
-        if (!resolvedFilePath) return []
-
-        return [{ ...block, filePath: resolvedFilePath }]
-      })
-    }
+    const nextTurnFileChanges: ToolBlock[] =
+      summary.files.length > 0
+        ? toolBlocksFromTurnSummary(turnDiffTurnId || 'legacy', summary).map((block) => ({
+            ...block,
+            filePath: formatFilePathForDisplay(block.filePath, workspaceRoot) || block.filePath
+          }))
+        : []
 
     return {
       processBlocks: nextProcessBlocks,
@@ -1216,6 +1196,19 @@ const MemoMessageTurn = memo(MessageTurn, (prev, next) => (
   prev.turnDiffRevision === next.turnDiffRevision
 ))
 
+function turnChangeBlockStats(block: ToolBlock): DiffStats | null {
+  const mutation =
+    block.meta?.mutation &&
+    typeof block.meta.mutation === 'object' &&
+    !Array.isArray(block.meta.mutation)
+      ? (block.meta.mutation as Record<string, unknown>)
+      : undefined
+  return resolvePatchStats(block.detail, {
+    added: typeof mutation?.additions === 'number' ? mutation.additions : undefined,
+    removed: typeof mutation?.deletions === 'number' ? mutation.deletions : undefined
+  })
+}
+
 function normalizePathKey(path: string): string {
   return path.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
 }
@@ -1256,7 +1249,11 @@ function TurnChangeSummary({
     })
   }, [changes])
 
-  const totals = useMemo(() => sumDiffStats(changes.map((change) => change.detail)), [changes])
+  const fileStats = useMemo(
+    () => changes.map((change) => turnChangeBlockStats(change)),
+    [changes]
+  )
+  const totals = useMemo(() => sumDiffStatsList(fileStats), [fileStats])
   const title = useMemo(
     () =>
       changes.length === 1
@@ -1364,8 +1361,8 @@ function TurnChangeSummary({
           style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 280px' }}
         >
           {shouldRenderBody
-            ? changes.map((change) => {
-            const stats = countDiffStats(change.detail)
+            ? changes.map((change, index) => {
+            const stats = fileStats[index]
             const open = activeId === change.id
             const primary = change.filePath ?? t('toolActionFile')
             const isPreviewTarget =

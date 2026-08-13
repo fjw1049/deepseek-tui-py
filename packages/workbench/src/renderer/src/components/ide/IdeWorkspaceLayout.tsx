@@ -37,6 +37,7 @@ import { workspaceLabelFromPath } from '../../lib/workspace-label'
 import { IDE_QUICK_OPEN_EVENT } from '../../lib/workspace-editor-events'
 import { useWorkspaceEditorStore } from '../../store/workspace-editor-store'
 import { useGitWorkingChanges } from '../../hooks/use-git-working-changes'
+import { collectWorkspaceChangeEntries } from '../../lib/workspace-change-stats'
 import { IdeProjectPicker, type IdeProjectOption } from './IdeProjectPicker'
 import { IdeQuickOpenPalette } from './IdeQuickOpenPalette'
 
@@ -173,9 +174,10 @@ export function IdeWorkspaceLayout({
     pendingWidth: number
   } | null>(null)
   const { result: gitChanges } = useGitWorkingChanges(workspaceRoot)
-  const changeBadge = gitChanges?.ok
-    ? gitChanges.files.length
-    : blocks.filter((block) => block.kind === 'tool' && block.toolKind === 'file_change').length
+  const changeBadge = collectWorkspaceChangeEntries({
+    blocks,
+    gitFiles: gitChanges?.ok ? gitChanges.files : null
+  }).length
 
   useEffect(() => {
     persistIdeCenterTab(centerTab === 'search' ? 'files' : centerTab)
