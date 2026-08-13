@@ -75,7 +75,7 @@ function sessionChangePatches(blocks: ChatBlock[]): Array<string | undefined> {
 }
 
 const DOCK_ROW_CLASS =
-  'group flex w-full items-center gap-2.5 rounded-[10px] px-1.5 py-1.5 text-left text-[13px] leading-5 transition'
+  'group flex w-full items-center gap-2.5 rounded-[10px] px-1.5 py-1.5 text-left text-[13px] font-semibold leading-5 transition'
 
 /** Same horizontal inset / gap as dock rows so icon and label columns line up. */
 const DOCK_SECTION_HEADER_CLASS =
