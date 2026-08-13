@@ -1,9 +1,16 @@
 /** Live files-changed strip above the composer while a turn is mutating files. */
 
-import { memo } from 'react'
+import { memo, useMemo } from 'react'
 import { FileEdit } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
-import { turnSummaryFromSources } from '../../lib/turn-mutation-view'
+import { useShallow } from 'zustand/react/shallow'
+import { useGitWorkingChanges } from '../../hooks/use-git-working-changes'
+import { useWorkspaceDirtyGitRefresh } from '../../hooks/use-workspace-dirty-git-refresh'
+import {
+  collectWorkspaceChangeEntries,
+  sumWorkspaceChangeStats
+} from '../../lib/workspace-change-stats'
+import { resolveActiveThreadWorkspace } from '../../lib/workspace-path'
 import { useChatStore } from '../../store/chat-store'
 
 export const ComposerLiveChangesHeader = memo(function ComposerLiveChangesHeader({
@@ -12,35 +19,61 @@ export const ComposerLiveChangesHeader = memo(function ComposerLiveChangesHeader
   onReview?: () => void
 }): React.JSX.Element | null {
   const { t } = useTranslation('common')
-  const busy = useChatStore((s) => s.busy)
-  const currentTurnId = useChatStore((s) => s.currentTurnId)
-  const snap = useChatStore((s) =>
-    currentTurnId ? s.turnDiffByTurnId[currentTurnId] : undefined
+  const {
+    busy,
+    blocks,
+    turnDiffByTurnId,
+    workspaceRoot,
+    activeThreadId,
+    threads,
+    workspaceDirtyTick
+  } = useChatStore(
+    useShallow((s) => ({
+      busy: s.busy,
+      blocks: s.blocks,
+      turnDiffByTurnId: s.turnDiffByTurnId,
+      workspaceRoot: s.workspaceRoot,
+      activeThreadId: s.activeThreadId,
+      threads: s.threads,
+      workspaceDirtyTick: s.workspaceDirtyTick
+    }))
   )
+  const root = resolveActiveThreadWorkspace(activeThreadId, threads, workspaceRoot)
+  const { result: gitChanges, reload: reloadGitChanges } = useGitWorkingChanges(root)
+  useWorkspaceDirtyGitRefresh(workspaceDirtyTick, reloadGitChanges)
 
-  const totals = snap ? turnSummaryFromSources(snap, []).totals : null
+  const entries = useMemo(
+    () =>
+      collectWorkspaceChangeEntries({
+        blocks,
+        turnDiffByTurnId,
+        gitFiles: gitChanges?.ok ? gitChanges.files : null
+      }),
+    [blocks, gitChanges, turnDiffByTurnId]
+  )
+  const stats = useMemo(() => sumWorkspaceChangeStats(entries), [entries])
 
-  if (!busy || !snap || snap.complete || !totals || totals.files <= 0) {
+  if (!busy || entries.length === 0) {
     return null
   }
 
   const label =
-    totals.files === 1
+    entries.length === 1
       ? t('turnChangeFilesOne', { defaultValue: '1 file changed' })
       : t('turnChangeFilesMany', {
-          count: totals.files,
-          defaultValue: `${totals.files} files changed`
+          count: entries.length,
+          defaultValue: `${entries.length} files changed`
         })
 
   return (
     <div className="mb-1.5 flex items-center gap-2 rounded-[12px] border border-ds-border-muted/70 bg-ds-card/70 px-3 py-2 text-[12.5px] text-ds-ink">
       <FileEdit className="h-3.5 w-3.5 shrink-0 text-ds-muted" strokeWidth={1.8} />
       <span className="min-w-0 flex-1 truncate font-medium">{label}</span>
-      {totals.additions + totals.deletions > 0 ? (
+      {stats && stats.added + stats.removed > 0 ? (
         <span className="shrink-0 tabular-nums">
-          <span className="text-ds-diff-added">+{totals.additions}</span>
+          <span className="text-ds-diff-added">+{stats.added}</span>
           <span className="mx-1 text-ds-faint">·</span>
-          <span className="text-ds-diff-removed">-{totals.deletions}</span>
+          <span className="text-ds-diff-removed">-{stats.removed}</span>
         </span>
       ) : null}
       {onReview ? (

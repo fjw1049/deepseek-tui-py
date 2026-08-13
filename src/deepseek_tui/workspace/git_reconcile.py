@@ -51,7 +51,14 @@ async def reconcile_to_ledger(
     *,
     exclude_paths: Collection[str] = (),
 ) -> list[FileMutation]:
-    """Append git_reconcile mutations for disk deltas *introduced this turn*.
+    """Record disk deltas *introduced this turn*, and refresh covered files.
+
+    New dirty paths (not already in the ledger, not dirty at turn start)
+    are appended as ``git_reconcile`` mutations.
+
+    Paths already in the ledger keep their attribution, but the folded
+    snapshot is replaced with net ``git diff HEAD`` so last-hunk tool
+    stats do not under-count the working tree.
 
     ``exclude_paths`` fences off paths known to belong to someone else
     (e.g. other active turns in the same workspace) so they are never
@@ -70,7 +77,7 @@ async def reconcile_to_ledger(
     file_patches = _split_unified_diff_by_file(patch or "")
     for path, unified in file_patches.items():
         norm = path.replace("\\", "/")
-        if norm in covered or norm in pre_dirty or norm in excluded:
+        if norm in pre_dirty or norm in excluded:
             continue
         stats = count_diff_stats(unified)
         op = "create" if "--- /dev/null" in unified else "update"
@@ -87,13 +94,18 @@ async def reconcile_to_ledger(
             source="git_reconcile",
             status="applied",
         )
+        already = norm in covered
         ledger.commit(mut, emit=False)
+        if already:
+            # Tool edits store last-hunk +/-; replace with net vs HEAD so the
+            # turn fold-up matches git/inspector.
+            continue
         added.append(mut)
         covered.add(norm)
 
     for path in untracked:
         norm = path.replace("\\", "/")
-        if norm in covered or norm in pre_dirty or norm in excluded:
+        if norm in pre_dirty or norm in excluded:
             continue
         try:
             content = (root / norm).read_text(encoding="utf-8")
@@ -111,8 +123,12 @@ async def reconcile_to_ledger(
             source="git_reconcile",
             status="applied",
         )
+        already = norm in covered
         ledger.commit(mut, emit=False)
+        if already:
+            continue
         added.append(mut)
+        covered.add(norm)
 
     return added
 

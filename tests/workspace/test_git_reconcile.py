@@ -85,6 +85,38 @@ async def test_reconcile_skips_paths_already_in_ledger(git_repo: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_reconcile_refreshes_covered_path_with_net_git_diff(git_repo: Path) -> None:
+    baseline = await capture_baseline(git_repo)
+    (git_repo / "tracked.py").write_text("v1\nline2\nline3\n", encoding="utf-8")
+
+    ledger = TurnMutationLedger("turn_r4", throttle_ms=0)
+    ledger.commit(
+        FileMutation(
+            mutation_id="m1",
+            turn_id="turn_r4",
+            path="tracked.py",
+            op="update",
+            unified_diff=(
+                "diff --git a/tracked.py b/tracked.py\n"
+                "--- a/tracked.py\n+++ b/tracked.py\n@@\n+line3\n"
+            ),
+            additions=1,
+            deletions=0,
+            source="edit_file",
+        ),
+        emit=False,
+    )
+    added = await reconcile_to_ledger(ledger, baseline)
+    assert all(m.path != "tracked.py" for m in added)
+    snap = ledger.snapshot()
+    by_path = {f.path: f for f in snap.files}
+    assert by_path["tracked.py"].additions == 2
+    assert by_path["tracked.py"].deletions == 0
+    assert snap.totals["additions"] == 2
+    assert "+line2" in by_path["tracked.py"].unified_diff
+
+
+@pytest.mark.asyncio
 async def test_reconcile_picks_up_untracked_and_modified(git_repo: Path) -> None:
     baseline = await capture_baseline(git_repo)
     (git_repo / "tracked.py").write_text("v2\n", encoding="utf-8")

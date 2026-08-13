@@ -1,8 +1,9 @@
-/** One workspace-change list + one +/- total for inspector, dock, and sidebar. */
+/** One workspace-change list + one +/- total for inspector, dock, sidebar, and live fold-up. */
 
 import type { GitWorkingChangeFile, GitWorkingChangeStage } from '@shared/git-working-changes'
 import type { ChatBlock } from '../agent/types'
 import {
+  countDiffStats,
   extractDiffFilePath,
   looksLikeUnifiedDiff,
   resolvePatchStats,
@@ -10,7 +11,8 @@ import {
   type DiffStats
 } from './diff-stats'
 import { firstChangedEditorLineFromPatch } from './parse-unified-diff-for-editor'
-import type { TurnDiffSnapshot } from './turn-mutation-view'
+import type { TurnDiffFile, TurnDiffSnapshot } from './turn-mutation-view'
+import { totalsFromTurnFiles } from './turn-mutation-view'
 import { normalizeChangePath } from './workspace-change-path'
 
 export type WorkspaceChangeEntry = {
@@ -112,6 +114,7 @@ export function collectWorkspaceChangeEntries(opts: {
       continue
     }
     const patch = file.patch?.trim() ?? ''
+    const gitStats = countDiffStats(patch)
     upsert(byPath, {
       id: prev?.id ?? `git:${file.path}`,
       filePath: file.path,
@@ -119,7 +122,11 @@ export function collectWorkspaceChangeEntries(opts: {
       status: prev?.status ?? 'success',
       editLine: firstChangedEditorLineFromPatch(patch) ?? prev?.editLine,
       committable: true,
-      gitStage: file.stage
+      gitStage: file.stage,
+      // Git vs HEAD is the working-tree truth. Drop last-edit ledger counts
+      // so the header +/- matches the patch the list actually renders.
+      additions: gitStats?.added ?? (patch ? undefined : prev?.additions),
+      deletions: gitStats?.removed ?? (patch ? undefined : prev?.deletions)
     })
   }
 
@@ -136,6 +143,26 @@ export function workspaceChangeEntryStats(entry: WorkspaceChangeEntry): DiffStat
 /** Header +/- must be the sum of the same per-file stats the list shows. */
 export function sumWorkspaceChangeStats(entries: WorkspaceChangeEntry[]): DiffStats | null {
   return sumDiffStatsList(entries.map((entry) => workspaceChangeEntryStats(entry)))
+}
+
+/** Latest-turn fold-up uses the same files + +/- as the inspector. */
+export function turnSummaryFromWorkspaceEntries(entries: WorkspaceChangeEntry[]): {
+  files: TurnDiffFile[]
+  totals: { files: number; additions: number; deletions: number }
+} {
+  const files: TurnDiffFile[] = []
+  for (const entry of entries) {
+    const path = entry.filePath?.trim()
+    if (!path) continue
+    const stats = workspaceChangeEntryStats(entry)
+    files.push({
+      path,
+      additions: stats?.added ?? 0,
+      deletions: stats?.removed ?? 0,
+      unified_diff: entry.detail
+    })
+  }
+  return { files, totals: totalsFromTurnFiles(files) }
 }
 
 export function workspaceChangePatchMap(

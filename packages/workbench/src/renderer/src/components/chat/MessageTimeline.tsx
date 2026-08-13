@@ -57,6 +57,14 @@ import {
   turnSummaryFromSources,
   type TurnDiffSnapshot
 } from '../../lib/turn-mutation-view'
+import {
+  collectWorkspaceChangeEntries,
+  turnSummaryFromWorkspaceEntries,
+  type WorkspaceChangeEntry
+} from '../../lib/workspace-change-stats'
+import { useGitWorkingChanges } from '../../hooks/use-git-working-changes'
+import { useWorkspaceDirtyGitRefresh } from '../../hooks/use-workspace-dirty-git-refresh'
+import { resolveActiveThreadWorkspace } from '../../lib/workspace-path'
 import { useDeferredRender } from '../../hooks/use-deferred-render'
 import { resumeThreadAgent } from '../../hooks/use-thread-tasks'
 import {
@@ -282,6 +290,20 @@ export function MessageTimeline({
   const currentTurnId = useChatStore((s) => s.currentTurnId)
   const lastCompletedTurnId = useChatStore((s) => s.lastCompletedTurnId)
   const turnDiffByTurnId = useChatStore((s) => s.turnDiffByTurnId)
+  const threads = useChatStore((s) => s.threads)
+  const workspaceDirtyTick = useChatStore((s) => s.workspaceDirtyTick)
+  const gitRoot = resolveActiveThreadWorkspace(activeThreadId, threads, workspaceRoot)
+  const { result: gitChanges, reload: reloadGitChanges } = useGitWorkingChanges(gitRoot)
+  useWorkspaceDirtyGitRefresh(workspaceDirtyTick, reloadGitChanges)
+  const workspaceChangeEntries = useMemo(
+    () =>
+      collectWorkspaceChangeEntries({
+        blocks,
+        turnDiffByTurnId,
+        gitFiles: gitChanges?.ok ? gitChanges.files : null
+      }),
+    [blocks, gitChanges, turnDiffByTurnId]
+  )
   const currentTurnUserId = useChatStore((s) => s.currentTurnUserId)
   const latestTurnDiffId = resolveLatestTurnDiffId(currentTurnId, lastCompletedTurnId)
   const turnStartedAtByUserId = useChatStore((s) => s.turnStartedAtByUserId)
@@ -717,6 +739,7 @@ export function MessageTimeline({
                   ? (turnDiffByTurnId[latestTurnDiffId]?.revision ?? 0)
                   : 0
               }
+              workspaceChangeEntries={isLatestTurn ? workspaceChangeEntries : null}
             />
           )
         })}
@@ -957,7 +980,8 @@ function MessageTurn({
   viewportRef,
   turnDiffSnapshot,
   turnDiffTurnId = null,
-  turnDiffRevision = 0
+  turnDiffRevision = 0,
+  workspaceChangeEntries = null
 }: {
   turn: Turn
   isProcessing: boolean
@@ -974,6 +998,8 @@ function MessageTurn({
   turnDiffSnapshot?: TurnDiffSnapshot
   turnDiffTurnId?: string | null
   turnDiffRevision?: number
+  /** Same workspace list the inspector uses — latest turn only. */
+  workspaceChangeEntries?: WorkspaceChangeEntry[] | null
 }): ReactElement {
   const workspaceRoot = useChatStore((s) => s.workspaceRoot)
   void turnDiffRevision
@@ -1045,9 +1071,16 @@ function MessageTurn({
     // When a mid-turn preface settles, the store clears `liveAssistant` and
     // persists a small `mid_turn_preface` row; finals land via `onFinalAnswer`.
 
-    // Prefer File Mutation Ledger turn.diff snapshot (includes subagent / reconcile);
-    // fall back to unique-path tool blocks. Same totals as the live header.
-    const summary = turnSummaryFromSources(turnDiffSnapshot, turn.blocks)
+    // Prefer the inspector's workspace list (git vs HEAD) so the fold-up
+    // +/- matches the changes panel. Only when this turn actually edited
+    // files — don't attach unrelated pre-existing dirt to a chat-only turn.
+    const ledgerSummary = turnSummaryFromSources(turnDiffSnapshot, turn.blocks)
+    const summary =
+      ledgerSummary.files.length > 0 &&
+      workspaceChangeEntries &&
+      workspaceChangeEntries.length > 0
+        ? turnSummaryFromWorkspaceEntries(workspaceChangeEntries)
+        : ledgerSummary
     const nextTurnFileChanges: ToolBlock[] =
       summary.files.length > 0
         ? toolBlocksFromTurnSummary(turnDiffTurnId || 'legacy', summary).map((block) => ({
@@ -1067,7 +1100,8 @@ function MessageTurn({
     liveProcessText,
     workspaceRoot,
     turnDiffSnapshot,
-    turnDiffTurnId
+    turnDiffTurnId,
+    workspaceChangeEntries
   ])
 
   // Stream into the main answer bubble while the turn is live (and keep a
@@ -1194,7 +1228,8 @@ const MemoMessageTurn = memo(MessageTurn, (prev, next) => (
   prev.viewportRef === next.viewportRef &&
   prev.turnDiffSnapshot === next.turnDiffSnapshot &&
   prev.turnDiffTurnId === next.turnDiffTurnId &&
-  prev.turnDiffRevision === next.turnDiffRevision
+  prev.turnDiffRevision === next.turnDiffRevision &&
+  prev.workspaceChangeEntries === next.workspaceChangeEntries
 ))
 
 function turnChangeBlockStats(block: ToolBlock): DiffStats | null {

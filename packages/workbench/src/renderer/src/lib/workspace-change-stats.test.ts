@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import type { ChatBlock } from '../agent/types'
+import { countDiffStats } from './diff-stats'
 import {
   collectWorkspaceChangeEntries,
   sumWorkspaceChangeStats,
+  turnSummaryFromWorkspaceEntries,
   workspaceChangeEntryStats
 } from './workspace-change-stats'
 
@@ -68,5 +70,50 @@ describe('collectWorkspaceChangeEntries', () => {
     expect(entries).toHaveLength(1)
     expect(entries[0]?.detail).toBe(gitPatch)
     expect(entries[0]?.committable).toBe(true)
+    expect(workspaceChangeEntryStats(entries[0]!)).toEqual(countDiffStats(gitPatch))
+  })
+
+  it('uses git vs HEAD +/- instead of last-edit ledger counts', () => {
+    const lastEdit = [
+      'diff --git a/git.py b/git.py',
+      '--- a/git.py',
+      '+++ b/git.py',
+      '@@',
+      '+timeout'
+    ].join('\n')
+    const vsHead = [
+      'diff --git a/git.py b/git.py',
+      '--- a/git.py',
+      '+++ b/git.py',
+      '@@',
+      '+one',
+      '+two',
+      '+three',
+      '-old'
+    ].join('\n')
+    const entries = collectWorkspaceChangeEntries({
+      turnDiffByTurnId: {
+        turn_1: {
+          turn_id: 'turn_1',
+          files: [
+            {
+              path: 'git.py',
+              additions: 1,
+              deletions: 0,
+              unified_diff: lastEdit
+            }
+          ],
+          totals: { files: 1, additions: 1, deletions: 0 },
+          revision: 2,
+          complete: true
+        }
+      },
+      blocks: [],
+      gitFiles: [{ path: 'git.py', status: 'modified', stage: 'unstaged', patch: vsHead }]
+    })
+    expect(sumWorkspaceChangeStats(entries)).toEqual({ added: 3, removed: 1 })
+    const summary = turnSummaryFromWorkspaceEntries(entries)
+    expect(summary.totals).toEqual({ files: 1, additions: 3, deletions: 1 })
+    expect(summary.files[0]?.unified_diff).toBe(vsHead)
   })
 })
