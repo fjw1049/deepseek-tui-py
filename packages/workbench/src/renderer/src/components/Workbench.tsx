@@ -565,6 +565,7 @@ export function Workbench(): ReactElement {
   const closeRightSidebar = useCallback((): void => {
     setRightSidebarOpen(false)
     setRightSidebarCollapsed(false)
+    setChatColumnHidden(false)
   }, [])
 
   const toggleRightSidebar = useCallback((): void => {
@@ -578,6 +579,7 @@ export function Workbench(): ReactElement {
       return
     }
     setRightSidebarOpen(false)
+    setChatColumnHidden(false)
   }, [rightSidebarCollapsed, rightSidebarOpen])
 
   const toggleTerminalPanel = useCallback((): void => {
@@ -958,6 +960,12 @@ export function Workbench(): ReactElement {
         measuredMain
       )
       if (next.left !== leftSidebarWidth) setLeftSidebarWidth(next.left)
+      // Fill-width is an explicit maximize. Opening the left rail shrinks
+      // the main row, and the fit helper then sees "room for chat" against
+      // the stored right width — that would un-hide a white chat sliver
+      // beside the editor. Keep fill-width while the right panel is still
+      // filling; if it closes or collapses, fall through so chat returns.
+      if (chatColumnHidden && rightPanelVisible) return
       if (rightPanelVisible && next.right !== rightSidebarWidth) {
         setRightSidebarWidth(next.right)
       }
@@ -967,7 +975,14 @@ export function Workbench(): ReactElement {
     sync()
     window.addEventListener('resize', sync)
     return () => window.removeEventListener('resize', sync)
-  }, [ideModeActive, leftSidebarHidden, leftSidebarWidth, rightSidebarWidth, rightPanelVisible])
+  }, [
+    chatColumnHidden,
+    ideModeActive,
+    leftSidebarHidden,
+    leftSidebarWidth,
+    rightPanelVisible,
+    rightSidebarWidth
+  ])
 
   const openThread = (id: string): void => {
     setRoute('chat')
@@ -1173,7 +1188,7 @@ export function Workbench(): ReactElement {
         measuredMain
       )
       setLeftSidebarWidth(next.left)
-      if (rightPanelVisible) {
+      if (rightPanelVisible && !chatColumnHidden) {
         if (next.right !== rightSidebarWidth) setRightSidebarWidth(next.right)
         setChatColumnHidden(next.chatHidden)
       }
