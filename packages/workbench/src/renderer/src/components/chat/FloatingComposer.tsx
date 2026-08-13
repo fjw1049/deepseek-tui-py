@@ -1269,7 +1269,7 @@ export function FloatingComposer({
     <div
       className={`pointer-events-auto w-full ${
         useChatStageWidth ? 'ds-chat-stage px-3 sm:px-4' : 'max-w-none px-0'
-      } ${stageCentered ? 'shrink-0 pb-1 pt-0' : 'pb-0 pt-1'}`}
+      } ${stageCentered ? 'shrink-0 pb-1 pt-0' : compactChrome ? 'pb-0 pt-0' : 'pb-0 pt-1'}`}
     >
       {pendingApprovals.length > 0 || pendingUserInputs.length > 0 ? (
         <div className="ds-no-drag ds-scroll-surface mb-2 max-h-[min(320px,40vh)] space-y-2 overflow-y-auto overscroll-contain">
@@ -1473,12 +1473,12 @@ export function FloatingComposer({
 
         <div
           ref={shellRef}
-            className={`ds-composer-shell ds-chat-composer ds-frosted flex w-full flex-col transition ${
+            className={`ds-composer-shell ds-chat-composer flex w-full flex-col transition ${
               compactChrome
-                ? 'ds-composer-shell--compact gap-0.5 px-2.5 py-1'
+                ? 'ds-composer-shell--compact gap-0.5 px-2 py-1'
                 : stageCentered
-                  ? 'ds-composer-empty relative z-10 gap-1.5 px-4 py-2.5 sm:px-5'
-                  : 'gap-1.5 px-4 py-2.5 sm:px-5'
+                  ? 'ds-composer-empty ds-frosted relative z-10 gap-1.5 px-4 py-2.5 sm:px-5'
+                  : 'gap-1.5 px-2 py-2.5'
             } ${focused ? 'ds-chat-composer-focus' : ''}`}
         >
           {attachments.length > 0 ? (
@@ -1640,9 +1640,9 @@ export function FloatingComposer({
           <textarea
             ref={textareaRef}
             rows={stageCentered ? 1 : 1}
-            className={`ds-composer-input ds-no-drag block min-w-0 w-full resize-none break-words bg-transparent px-2 text-ds-ink placeholder:text-ds-faint focus:outline-none [overflow-wrap:anywhere] ${
-              compactChrome ? 'py-0.5' : 'py-1.5'
-            } ${canCompose ? '' : 'opacity-80'}`}
+            className={`ds-composer-input ds-no-drag block min-w-0 w-full resize-none break-words bg-transparent text-ds-ink placeholder:text-ds-faint focus:outline-none [overflow-wrap:anywhere] ${
+              stageCentered ? 'px-2' : 'px-1'
+            } ${compactChrome ? 'py-0.5' : 'py-1.5'} ${canCompose ? '' : 'opacity-80'}`}
             placeholder={
               previewPicks.length > 0 ? t('composerPreviewPickPlaceholder') : placeholder
             }
@@ -1720,7 +1720,9 @@ export function FloatingComposer({
             ref={footerRef}
             data-composer-footer
             data-composer-footer-tier={footerTier}
-            className={`flex flex-nowrap items-center ${compactChrome ? 'gap-1 px-1' : 'gap-1.5 px-2'}`}
+            className={`flex flex-nowrap items-center ${
+              compactChrome ? 'gap-1 px-1' : stageCentered ? 'gap-1.5 px-2' : 'gap-1.5 px-1'
+            }`}
           >
             {/* Left chrome: progressive hide via footerPlan (plus last-but-one). */}
             <div className={`relative z-10 flex shrink-0 items-center ${compactChrome ? 'gap-1' : 'gap-1.5'}`}>

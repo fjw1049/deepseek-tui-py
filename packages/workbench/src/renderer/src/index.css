@@ -939,8 +939,8 @@ samp {
   box-shadow: var(--ds-shadow-composer);
 }
 
-/* Live workflow chip above the frosted composer — always opaque so it
-   reads as a solid card, not glass floating over the timeline. */
+/* Live workflow chip above the composer — always opaque so it reads as a
+   solid card, not glass floating over the timeline. */
 .ds-process-tray {
   background: var(--surface-2, #1d1d1d);
   border: 1px solid var(--ds-border);
@@ -953,9 +953,8 @@ samp {
   background: var(--surface-2, #ffffff);
 }
 
-/* backdrop-filter on the frosted composer creates a containing block that breaks
-   the model picker popover anchor — drop blur only while the menu is open.
-   Raise z-index so the upward popover stacks above the decorative pet dock. */
+/* Raise z-index while the model picker is open so the upward popover stacks
+   above the decorative pet dock. */
 .ds-chat-composer:not(.ds-composer-empty).ds-composer-model-picker-open,
 .ds-composer-shell.ds-composer-model-picker-open {
   backdrop-filter: none !important;
@@ -983,45 +982,22 @@ samp {
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
 }
 
-/* Floating composer over an active thread: translucent material so timeline
-   scrolls underneath (Apple-style floating chrome). Empty-state hero keeps the
-   solid card for legibility on the dotted canvas.
-   Blur lives on ::before (z-index: -1) so the shell itself is not a containing
-   block that clips anchored pickers (Synara chat-composer-surface pattern). */
+/* Active-thread composer: solid card (same token as empty). Frosted fill let
+   timeline glyphs show through the input — main chat and IDE share this shell. */
 .ds-chat-composer:not(.ds-composer-empty) {
-  background: color-mix(in srgb, var(--ds-card-strong) 68%, transparent);
-  border-color: color-mix(in srgb, var(--ds-border) 72%, transparent);
-  border-top-color: color-mix(in srgb, #ffffff 42%, transparent);
+  background: var(--ds-card-strong);
+  border-color: var(--ds-border);
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
-  box-shadow:
-    0 4px 24px rgba(15, 23, 42, 0.06),
-    0 1px 3px rgba(0, 0, 0, 0.04);
 }
 
 .ds-chat-composer:not(.ds-composer-empty)::before {
-  content: '';
-  display: block;
-  position: absolute;
-  inset: 0;
-  z-index: -1;
-  border-radius: inherit;
-  pointer-events: none;
-  backdrop-filter: blur(20px) saturate(180%);
-  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  content: none;
+  display: none;
 }
 
 [data-theme='dark'] .ds-chat-composer {
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
-}
-
-[data-theme='dark'] .ds-chat-composer:not(.ds-composer-empty) {
-  background: color-mix(in srgb, var(--surface-1) 76%, transparent);
-  border-color: color-mix(in srgb, var(--ds-border) 80%, transparent);
-  border-top-color: color-mix(in srgb, #ffffff 8%, transparent);
-  box-shadow:
-    0 8px 32px rgba(0, 0, 0, 0.28),
-    0 0 0 1px rgba(255, 255, 255, 0.04);
 }
 
 .ds-chat-composer.ds-composer-empty::before,
@@ -9567,13 +9543,24 @@ select:focus-visible,
   margin-bottom: 0.75rem;
 }
 
-/* IDE composer sits in-flow under the timeline (not overlapping like main chat
-   -mt-6). Drop the floating-composer inset so the last turn hugs the input. */
+/* Dock the composer to the rail floor. The shell is 14px rounded — a leftover
+   bottom gap reads as a curved shelf (square corners would hide it). */
 .ds-ide-chat-rail .ds-timeline-composer-clearance {
-  padding-bottom: 0;
+  padding-bottom: 0.75rem;
 }
 .ds-ide-chat-rail .ds-timeline-composer-clearance-spacer {
   height: 0;
+}
+
+.ds-ide-chat-rail .ds-composer-shell,
+.ds-ide-chat-rail .ds-chat-composer {
+  box-shadow: none;
+}
+
+.ds-ide-chat-rail .ds-composer-shell--compact,
+.ds-ide-chat-rail .ds-chat-composer {
+  border-bottom-left-radius: 0.75rem;
+  border-bottom-right-radius: var(--ds-radius-shell);
 }
 
 .ds-ide-chat-rail .ds-user-bubble,
