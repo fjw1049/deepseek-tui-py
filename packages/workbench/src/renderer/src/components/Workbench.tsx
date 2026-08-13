@@ -53,6 +53,7 @@ import {
   resolveThreadFilesystemRoot
 } from '../lib/workspace-path'
 import { workspaceLabelFromPath } from '../lib/workspace-label'
+import { EDITOR_CLOSE_ACTIVE_TAB_EVENT, IDE_QUICK_OPEN_EVENT } from '../lib/workspace-editor-events'
 import {
   isShortcutEnabled,
   requestOpenApprovalPolicyMenu,
@@ -343,6 +344,7 @@ export function Workbench(): ReactElement {
   const [chatColumnHidden, setChatColumnHidden] = useState(false)
   const [layoutMode, setLayoutMode] = useState<WorkbenchLayoutMode>('chat')
   const [requestedIdeCenterTab, setRequestedIdeCenterTab] = useState<IdeCenterTab | null>(null)
+  const [changesFocusPath, setChangesFocusPath] = useState<string | null>(null)
   // Transparent pointer shield shown during panel drags: without it, pointer
   // events over the webview/iframe panels are swallowed by the guest process
   // and the window-level resize listeners starve (drag freezes, then jumps).
@@ -533,13 +535,21 @@ export function Workbench(): ReactElement {
   }, [])
 
   const openFileInEditor = useCallback(
-    (path: string, line?: number): void => {
-      if (layoutMode === 'ide') {
-        setRequestedIdeCenterTab('files')
-        void openEditorFile(path, activeWorkspaceRoot, line)
+    (path: string, line?: number, options?: { review?: boolean }): void => {
+      if (options?.review) {
+        window.dispatchEvent(
+          new CustomEvent('deepseekgui:open-changes-panel', { detail: { path } })
+        )
+        if (layoutMode === 'ide') {
+          void openEditorFile(path, activeWorkspaceRoot, line)
+        }
         return
       }
-      openRightSidebar('editor')
+      if (layoutMode === 'ide') {
+        setRequestedIdeCenterTab('files')
+      } else {
+        openRightSidebar('editor')
+      }
       void openEditorFile(path, activeWorkspaceRoot, line)
     },
     [activeWorkspaceRoot, layoutMode, openEditorFile, openRightSidebar]
@@ -721,9 +731,10 @@ export function Workbench(): ReactElement {
       if (!detail?.path) return
       const root = (threadFilesystemRoot || detail.workspaceRoot || activeWorkspaceRoot).trim()
       if (isHtmlPreviewPath(detail.path) && root) {
-        // HTML preview still needs the chat-mode right sidebar browser tab.
         if (layoutMode === 'ide') {
-          exitIdeMode()
+          setRequestedIdeCenterTab('files')
+          void openEditorFile(detail.path, root, detail.line, detail.column)
+          return
         }
         openRightSidebar('preview')
         void (async () => {
@@ -760,7 +771,6 @@ export function Workbench(): ReactElement {
     return () => window.removeEventListener(WORKSPACE_FILE_PREVIEW_EVENT, onPreview)
   }, [
     activeWorkspaceRoot,
-    exitIdeMode,
     layoutMode,
     openEditorFile,
     openRightSidebar,
@@ -768,7 +778,9 @@ export function Workbench(): ReactElement {
   ])
 
   useEffect(() => {
-    const onOpenChanges = (): void => {
+    const onOpenChanges = (event: Event): void => {
+      const path = (event as CustomEvent<{ path?: string }>).detail?.path
+      if (typeof path === 'string' && path.trim()) setChangesFocusPath(path.trim())
       if (layoutMode === 'ide') {
         setRequestedIdeCenterTab('changes')
         return
@@ -912,6 +924,10 @@ export function Workbench(): ReactElement {
 
       if (matched.id === 'importProject') {
         e.preventDefault()
+        if (ideModeActive) {
+          window.dispatchEvent(new CustomEvent(IDE_QUICK_OPEN_EVENT))
+          return
+        }
         void chooseWorkspace()
         return
       }
@@ -936,6 +952,16 @@ export function Workbench(): ReactElement {
       }
 
       if (matched.id === 'openTerminal') {
+        const editorFocused = Boolean(
+          (e.target instanceof Element &&
+            e.target.closest('.ds-workspace-editor-pane, .monaco-editor')) ||
+            document.activeElement?.closest('.ds-workspace-editor-pane, .monaco-editor')
+        )
+        if (ideModeActive && editorFocused) {
+          e.preventDefault()
+          window.dispatchEvent(new CustomEvent(EDITOR_CLOSE_ACTIVE_TAB_EVENT))
+          return
+        }
         e.preventDefault()
         setRoute('chat')
         toggleTerminalPanel()
@@ -943,7 +969,14 @@ export function Workbench(): ReactElement {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [chooseWorkspace, createThread, setRoute, toggleRightSidebar, toggleTerminalPanel])
+  }, [
+    chooseWorkspace,
+    createThread,
+    ideModeActive,
+    setRoute,
+    toggleRightSidebar,
+    toggleTerminalPanel
+  ])
 
   useEffect(() => {
     const sync = (): void => {
@@ -1063,6 +1096,12 @@ export function Workbench(): ReactElement {
       console.error('[html-preview] missing html path')
       return
     }
+    if (layoutMode === 'ide') {
+      const ideRoot = (threadFilesystemRoot || activeWorkspaceRoot).trim()
+      setRequestedIdeCenterTab('files')
+      if (ideRoot) void openEditorFile(path, ideRoot)
+      return
+    }
     // Prefer the thread's real filesystem root; if missing and the HTML path
     // is absolute, fall back to that file's parent directory so preview still
     // works when UI "project" state was blanked for temporary workspaces.
@@ -1105,7 +1144,14 @@ export function Workbench(): ReactElement {
         )
       }
     })()
-  }, [latestHtmlPreviewPath, openRightSidebar, threadFilesystemRoot])
+  }, [
+    activeWorkspaceRoot,
+    latestHtmlPreviewPath,
+    layoutMode,
+    openEditorFile,
+    openRightSidebar,
+    threadFilesystemRoot
+  ])
 
   const clearWorkspacePreviewUrl = useCallback((): void => {
     setWorkspacePreviewUrl(null)
@@ -1824,6 +1870,8 @@ export function Workbench(): ReactElement {
             width={rightSidebarWidth}
             workspaceRoot={activeWorkspaceRoot}
             blocks={blocks}
+            changesFocusPath={changesFocusPath}
+            onChangesFocusPathConsumed={() => setChangesFocusPath(null)}
             devPreviewBlocks={devPreviewBlocks}
             latestDevPreviewUrl={preferredPreviewUrl}
             preferredPreviewFilePath={preferredPreviewFilePath}

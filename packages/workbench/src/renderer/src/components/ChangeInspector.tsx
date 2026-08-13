@@ -14,6 +14,7 @@ import type { GitWorkingChangeFile, GitWorkingChangeStage } from '@shared/git-wo
 import type { ChatBlock } from '../agent/types'
 import { ChangeDiffStatsLabel } from './ChangeDiffStatsLabel'
 import { DiffView, type DiffRenderStyle } from './DiffView'
+import { EditorListSkeleton } from './workspace-editor/EditorListSkeleton'
 import { useGitWorkingChanges } from '../hooks/use-git-working-changes'
 import { useWorkspaceDirtyGitRefresh } from '../hooks/use-workspace-dirty-git-refresh'
 import {
@@ -23,6 +24,9 @@ import {
   looksLikeUnifiedDiff,
   sumDiffStats
 } from '../lib/diff-stats'
+import { formatComposerPathMention, insertComposerSnippet } from '../lib/composer-insert'
+import { splitFileNameAndParent } from '../lib/editor-breadcrumb'
+import { resolveGitCommitPaths } from '../lib/git-commit-selection'
 import { firstChangedEditorLineFromPatch } from '../lib/parse-unified-diff-for-editor'
 import { resolveActiveThreadWorkspace } from '../lib/workspace-path'
 import { useChatStore } from '../store/chat-store'
@@ -57,6 +61,23 @@ function normalizeChangePath(path: string | undefined): string {
   return (path ?? '').replace(/\\/g, '/').trim().toLowerCase()
 }
 
+function changePathsMatch(left: string | undefined, right: string | undefined): boolean {
+  const a = normalizeChangePath(left)
+  const b = normalizeChangePath(right)
+  if (!a || !b) return false
+  if (a === b) return true
+  return a.endsWith(`/${b}`) || b.endsWith(`/${a}`)
+}
+
+export function findChangeItemId(
+  items: ReadonlyArray<{ id: string; filePath?: string }>,
+  path: string
+): string | undefined {
+  const key = normalizeChangePath(path)
+  if (!key) return undefined
+  return items.find((item) => changePathsMatch(item.filePath, key))?.id
+}
+
 function sessionChangeItems(blocks: ChatBlock[]): InspectorChangeItem[] {
   return blocks.flatMap((block): InspectorChangeItem[] => {
     if (!(block.kind === 'tool' && block.toolKind === 'file_change')) {
@@ -64,13 +85,15 @@ function sessionChangeItems(blocks: ChatBlock[]): InspectorChangeItem[] {
     }
 
     const detailText = block.detail?.trim() ?? ''
-    if (!looksLikeUnifiedDiff(detailText)) return []
+    const hasDiff = looksLikeUnifiedDiff(detailText)
+    const filePath = extractDiffFilePath(detailText, block.filePath)
+    if (!hasDiff && !filePath) return []
 
     return [
       {
         id: block.id,
-        filePath: extractDiffFilePath(detailText, block.filePath),
-        detail: detailText,
+        filePath,
+        detail: hasDiff ? detailText : '',
         status: block.status,
         editLine: editLineFromChange(detailText, block.meta)
       }
@@ -91,11 +114,13 @@ function turnLedgerChangeItems(
   for (const snap of Object.values(turnDiffByTurnId)) {
     for (const file of snap.files ?? []) {
       const detail = file.unified_diff?.trim() ?? ''
-      if (!looksLikeUnifiedDiff(detail)) continue
+      const hasDiff = looksLikeUnifiedDiff(detail)
+      const filePath = file.path?.trim() ?? ''
+      if (!hasDiff && !filePath) continue
       items.push({
         id: `turn-ledger:${snap.turn_id}:${file.path}`,
-        filePath: file.path,
-        detail,
+        filePath: filePath || extractDiffFilePath(detail),
+        detail: hasDiff ? detail : '',
         status: 'success',
         editLine: firstChangedEditorLineFromPatch(detail)
       })
@@ -108,7 +133,7 @@ function gitChangeItems(files: GitWorkingChangeFile[]): InspectorChangeItem[] {
   return files.map((file) => ({
     id: `git:${file.path}`,
     filePath: file.path,
-    detail: file.patch,
+    detail: file.patch ?? '',
     status: 'success' as const,
     editLine: firstChangedEditorLineFromPatch(file.patch),
     committable: true,
@@ -139,7 +164,7 @@ function mergeChangeItems(
         ...item,
         committable: true,
         gitStage: git.gitStage,
-        detail: item.detail.trim() ? item.detail : git.detail
+        detail: (item.detail ?? '').trim() ? item.detail : (git.detail ?? '')
       })
     } else {
       merged.push(item)
@@ -156,6 +181,87 @@ function mergeChangeItems(
   return merged
 }
 
+function InspectorCommitBar({
+  root,
+  gitFilePaths,
+  onCommitted
+}: {
+  root: string
+  gitFilePaths: string[]
+  onCommitted: () => void
+}): ReactElement | null {
+  const { t } = useTranslation('common')
+  const gitCommitSelectedPaths = useChatStore((s) => s.gitCommitSelectedPaths)
+  const gitCommitSelectionKey = useChatStore((s) => s.gitCommitSelectionKey)
+  const [message, setMessage] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+
+  const selectedPaths = useMemo(
+    () =>
+      resolveGitCommitPaths(gitCommitSelectedPaths, gitFilePaths, gitCommitSelectionKey, root),
+    [gitCommitSelectedPaths, gitFilePaths, gitCommitSelectionKey, root]
+  )
+
+  if (gitFilePaths.length === 0) return null
+
+  const submit = async (): Promise<void> => {
+    const trimmed = message.trim()
+    if (!trimmed) {
+      setError(t('operationDockCommitEmptyMessage'))
+      return
+    }
+    if (selectedPaths.length === 0) {
+      setError(t('operationDockCommitSelectFiles'))
+      return
+    }
+    if (typeof window.dsGui?.commitGitChanges !== 'function') {
+      setError(t('operationDockCommitUnavailable'))
+      return
+    }
+    setBusy(true)
+    setError(null)
+    try {
+      const result = await window.dsGui.commitGitChanges(root, trimmed, selectedPaths)
+      if (!result.ok) {
+        setError(result.message)
+        return
+      }
+      setMessage('')
+      onCommitted()
+    } catch (commitError) {
+      setError(commitError instanceof Error ? commitError.message : String(commitError))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="shrink-0 border-t border-[color-mix(in_srgb,var(--ds-text)_10%,transparent)] px-2 py-2">
+      <textarea
+        value={message}
+        onChange={(event) => setMessage(event.target.value)}
+        placeholder={t('operationDockCommitMessagePlaceholder')}
+        rows={2}
+        className="w-full resize-none rounded-md border border-ds-border bg-ds-elevated px-2 py-1.5 text-[12px] text-ds-ink outline-none placeholder:text-ds-faint"
+      />
+      {error ? (
+        <p className="mt-1 text-[11px] text-amber-700 dark:text-amber-200">{error}</p>
+      ) : null}
+      <button
+        type="button"
+        disabled={busy || selectedPaths.length === 0}
+        onClick={() => void submit()}
+        className="mt-1.5 inline-flex h-7 w-full items-center justify-center rounded-md bg-ds-hover text-[12px] font-medium text-ds-ink transition hover:bg-ds-hover/80 disabled:opacity-45"
+      >
+        {busy
+          ? t('operationDockCommitSubmitting')
+          : `${t('operationDockCommitSubmit')} (${selectedPaths.length})`}
+      </button>
+    </div>
+  )
+}
+
 const FILE_LIST_DEFAULT = 280
 const FILE_LIST_MIN = 180
 const FILE_LIST_MAX = 480
@@ -165,17 +271,30 @@ const STACK_LIST_MAX = 420
 
 /**
  * Change review panel.
- * - `review`: IDE center — file list | full-height compare viewport (default split).
- * - `stack`: right sidebar — file list above, compare below.
+ * - `review`: wide file list | full-height compare — unused leftover layout.
+ * - `stack`: file list above, compare below — chat-mode right sidebar.
+ * - `list`: file list only — IDE activity sidebar.
+ * - `diff`: compare only — IDE center stage.
  */
 export function ChangeInspector({
   blocks,
   className,
-  variant = 'stack'
+  variant = 'stack',
+  onOpenFile,
+  onRevealInEditor,
+  requestedPath = null,
+  onRequestedPathConsumed
 }: {
   blocks: ChatBlock[]
   className?: string
-  variant?: 'review' | 'stack'
+  variant?: 'review' | 'stack' | 'list' | 'diff'
+  /** Chat / review: open the file (IDE keep-alive editor). */
+  onOpenFile?: (path: string, line?: number) => void
+  /** IDE list: double-click / Enter jumps to source in the Files editor. */
+  onRevealInEditor?: (path: string, line?: number) => void
+  /** Select this path when the list contains it (from a file_change jump). */
+  requestedPath?: string | null
+  onRequestedPathConsumed?: () => void
 }): ReactElement {
   const { t } = useTranslation('common')
   const selectedId = useChatStore((s) => s.inspectorSelectedId)
@@ -202,6 +321,9 @@ export function ChangeInspector({
   )
 
   const isReview = variant === 'review'
+  const isList = variant === 'list'
+  const isDiff = variant === 'diff'
+  const compactList = isReview || isList
   const [listSize, setListSize] = useState(isReview ? FILE_LIST_DEFAULT : STACK_LIST_DEFAULT)
   // Unified by default — denser, no empty half-pane on new/deleted files.
   const [diffStyle, setDiffStyle] = useState<DiffRenderStyle>('unified')
@@ -269,11 +391,31 @@ export function ChangeInspector({
   useEffect(() => {
     if (fileChanges.length === 0) {
       if (selectedId !== null) selectInspectorItem(null)
+      if (requestedPath && !gitLoading) onRequestedPathConsumed?.()
       return
+    }
+    if (requestedPath) {
+      const matchedId = findChangeItemId(fileChanges, requestedPath)
+      if (matchedId) {
+        selectInspectorItem(matchedId)
+        onRequestedPathConsumed?.()
+        return
+      }
+      // Git may still be loading the matching path; wait. Otherwise don't
+      // pin an unmatched path forever — fall through and show the list.
+      if (gitLoading) return
+      onRequestedPathConsumed?.()
     }
     if (selectedId && fileChanges.some((item) => item.id === selectedId)) return
     selectInspectorItem(fileChanges[fileChanges.length - 1]?.id ?? null)
-  }, [fileChanges, selectedId, selectInspectorItem])
+  }, [
+    fileChanges,
+    selectedId,
+    selectInspectorItem,
+    requestedPath,
+    onRequestedPathConsumed,
+    gitLoading
+  ])
 
   const selectedItem = useMemo(
     () => fileChanges.find((item) => item.id === selectedId) ?? null,
@@ -318,17 +460,30 @@ export function ChangeInspector({
         {fileChanges.map((item) => {
           const stats = countDiffStats(item.detail)
           const displayPath = formatFilePathForDisplay(item.filePath, root || workspaceRoot)
+          const { name, parent } = splitFileNameAndParent(displayPath ?? item.filePath ?? '')
           const commitSelected = Boolean(
             item.committable && item.filePath && gitCommitSelectedPaths.includes(item.filePath)
           )
           const isSelected = selectedId === item.id
+          const rowClass = compactList
+            ? `flex h-7 w-full items-center gap-1.5 px-2 transition ${
+                isSelected ? 'bg-ds-hover text-ds-ink' : 'text-ds-ink hover:bg-ds-hover/70'
+              }`
+            : `flex w-full items-start gap-2 px-2 py-1.5 transition ${
+                isSelected ? 'bg-ds-hover text-ds-ink' : 'text-ds-ink hover:bg-ds-hover/70'
+              }`
+          const selectRow = (): void => {
+            onRequestedPathConsumed?.()
+            selectInspectorItem(item.id)
+            if (!isList && onOpenFile && item.filePath) onOpenFile(item.filePath, item.editLine)
+          }
+          const revealRow = (): void => {
+            selectInspectorItem(item.id)
+            if (item.filePath) onRevealInEditor?.(item.filePath, item.editLine)
+          }
           return (
             <li key={item.id}>
-              <div
-                className={`flex w-full items-start gap-2 px-2 py-1.5 transition ${
-                  isSelected ? 'bg-ds-hover text-ds-ink' : 'text-ds-ink hover:bg-ds-hover/70'
-                }`}
-              >
+              <div className={rowClass}>
                 {item.committable && item.filePath ? (
                   <input
                     type="checkbox"
@@ -336,11 +491,11 @@ export function ChangeInspector({
                     aria-label={t('gitCommitIncludeFile', {
                       file: displayPath ?? item.filePath
                     })}
-                    className="mt-1 shrink-0"
+                    className={`${compactList ? '' : 'mt-1 '}shrink-0`}
                     onClick={(event) => event.stopPropagation()}
                     onChange={() => toggleGitCommitPath(item.filePath!, gitFilePaths)}
                   />
-                ) : (
+                ) : compactList ? null : (
                   <FileEdit
                     className={`mt-0.5 h-4 w-4 shrink-0 ${
                       item.status === 'error' ? 'text-red-700' : 'text-ds-muted'
@@ -350,39 +505,92 @@ export function ChangeInspector({
                 )}
                 <button
                   type="button"
-                  onClick={() => selectInspectorItem(item.id)}
+                  onClick={selectRow}
+                  onDoubleClick={revealRow}
+                  onKeyDown={(event) => {
+                    if (event.key !== 'Enter') return
+                    event.preventDefault()
+                    if (isList) revealRow()
+                    else selectRow()
+                  }}
+                  title={
+                    isList && item.filePath
+                      ? t('inspectorOpenSourceHint')
+                      : (displayPath ?? item.filePath)
+                  }
                   aria-current={isSelected ? 'true' : undefined}
-                  className="flex min-w-0 flex-1 flex-col gap-0.5 text-left"
+                  className={
+                    compactList
+                      ? 'flex min-w-0 flex-1 items-center gap-1.5 text-left'
+                      : 'flex min-w-0 flex-1 flex-col gap-0.5 text-left'
+                  }
                 >
-                  <div className="flex min-w-0 items-center gap-2">
-                    <div className="min-w-0 flex-1 truncate text-[13px] text-ds-ink">
-                      {displayPath ?? t('toolActionFile')}
-                    </div>
-                    {item.gitStage && item.gitStage !== 'unstaged' ? (
-                      <span className="shrink-0 rounded-full bg-ds-hover px-2 py-0.5 text-[11px] font-medium leading-none text-ds-muted">
-                        {gitStageLabel(item.gitStage)}
+                  {compactList ? (
+                    <>
+                      <span className="min-w-0 flex-1 truncate text-[12.5px]">
+                        <span
+                          className={`font-medium ${
+                            item.status === 'error' ? 'text-red-700' : 'text-ds-ink'
+                          }`}
+                        >
+                          {name || t('toolActionFile')}
+                        </span>
+                        {parent ? (
+                          <span className="ml-1.5 text-[11px] text-ds-faint">{parent}</span>
+                        ) : null}
                       </span>
-                    ) : null}
-                    {item.status === 'running' ? (
-                      <span className="shrink-0 rounded-full bg-amber-200/40 px-2 py-0.5 text-[11px] font-medium leading-none text-amber-900 dark:bg-amber-700/30 dark:text-amber-100">
-                        {t('inspectorStatusRunning')}
-                      </span>
-                    ) : null}
-                  </div>
-                  {stats ? <ChangeDiffStatsLabel stats={stats} size="sm" /> : null}
+                      {item.gitStage && item.gitStage !== 'unstaged' ? (
+                        <span className="shrink-0 rounded-full bg-ds-hover px-1.5 py-0.5 text-[10px] font-medium leading-none text-ds-muted">
+                          {gitStageLabel(item.gitStage)}
+                        </span>
+                      ) : null}
+                      {item.status === 'running' ? (
+                        <span className="shrink-0 rounded-full bg-amber-200/40 px-1.5 py-0.5 text-[10px] font-medium leading-none text-amber-900 dark:bg-amber-700/30 dark:text-amber-100">
+                          {t('inspectorStatusRunning')}
+                        </span>
+                      ) : null}
+                      {stats ? <ChangeDiffStatsLabel stats={stats} size="sm" /> : null}
+                    </>
+                  ) : (
+                    <>
+                      <div className="flex min-w-0 items-center gap-2">
+                        <div className="min-w-0 flex-1 truncate text-[13px] text-ds-ink">
+                          {displayPath ?? t('toolActionFile')}
+                        </div>
+                        {item.gitStage && item.gitStage !== 'unstaged' ? (
+                          <span className="shrink-0 rounded-full bg-ds-hover px-2 py-0.5 text-[11px] font-medium leading-none text-ds-muted">
+                            {gitStageLabel(item.gitStage)}
+                          </span>
+                        ) : null}
+                        {item.status === 'running' ? (
+                          <span className="shrink-0 rounded-full bg-amber-200/40 px-2 py-0.5 text-[11px] font-medium leading-none text-amber-900 dark:bg-amber-700/30 dark:text-amber-100">
+                            {t('inspectorStatusRunning')}
+                          </span>
+                        ) : null}
+                      </div>
+                      {stats ? <ChangeDiffStatsLabel stats={stats} size="sm" /> : null}
+                    </>
+                  )}
                 </button>
               </div>
             </li>
           )
         })}
       </ul>
+      {isList ? (
+        <InspectorCommitBar
+          root={root}
+          gitFilePaths={gitFilePaths}
+          onCommitted={() => void reloadGitChanges()}
+        />
+      ) : null}
     </div>
   )
 
   const diffViewport = (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
       {selectedItem ? (
-        selectedItem.detail.trim() ? (
+        (selectedItem.detail ?? '').trim() ? (
           <DiffView
             patch={selectedItem.detail}
             filePath={selectedItem.filePath}
@@ -392,6 +600,16 @@ export function ChangeInspector({
             onDiffStyleChange={setDiffStyle}
             chrome="flush"
             className="min-h-0 flex-1"
+            onAddToChat={
+              selectedItem.filePath
+                ? () => {
+                    const relative =
+                      formatFilePathForDisplay(selectedItem.filePath, root || workspaceRoot) ||
+                      selectedItem.filePath
+                    if (relative) insertComposerSnippet(formatComposerPathMention(relative))
+                  }
+                : undefined
+            }
           />
         ) : (
           <div className="flex flex-1 items-center justify-center text-[12px] text-ds-faint">
@@ -412,9 +630,13 @@ export function ChangeInspector({
     >
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
         {gitLoading && fileChanges.length === 0 ? (
-          <div className="flex flex-1 items-center justify-center px-6 py-10 text-center text-[13px] text-ds-faint">
-            {t('gitBranchLoading')}
-          </div>
+          isList || isDiff || isReview ? (
+            <EditorListSkeleton rows={isDiff ? 12 : 8} />
+          ) : (
+            <div className="flex flex-1 items-center justify-center px-6 py-10 text-center text-[13px] text-ds-faint">
+              {t('gitBranchLoading')}
+            </div>
+          )
         ) : fileChanges.length === 0 ? (
           <div className="flex flex-1 items-center justify-center px-6 py-10 text-center">
             <div>
@@ -425,6 +647,10 @@ export function ChangeInspector({
               <div className="mt-1 text-[12px] leading-6 text-ds-faint">{t('inspectorEmpty')}</div>
             </div>
           </div>
+        ) : isList ? (
+          fileList
+        ) : isDiff ? (
+          diffViewport
         ) : isReview ? (
           <div className="flex min-h-0 flex-1 overflow-hidden">
             <div className="flex h-full min-h-0 shrink-0 flex-col" style={{ width: listSize }}>
@@ -434,7 +660,7 @@ export function ChangeInspector({
               role="separator"
               aria-orientation="vertical"
               aria-label={t('inspectorResizeSplit')}
-              className="ds-change-inspector__split-handle ds-no-drag relative z-10 w-px shrink-0 cursor-col-resize touch-none bg-[color-mix(in_srgb,var(--ds-text)_10%,transparent)] hover:bg-ds-hover"
+              className="ds-change-inspector__split-handle ds-no-drag relative z-10 w-px shrink-0 cursor-col-resize touch-none bg-[color-mix(in_srgb,var(--ds-text)_14%,transparent)] hover:bg-ds-hover"
               onPointerDown={onListResizePointerDown}
               onPointerMove={onListResizePointerMove}
               onPointerUp={onListResizePointerUp}
@@ -451,14 +677,12 @@ export function ChangeInspector({
               role="separator"
               aria-orientation="horizontal"
               aria-label={t('inspectorResizeSplit')}
-              className="ds-change-inspector__split-handle ds-no-drag flex h-1.5 shrink-0 cursor-row-resize touch-none items-center justify-center"
+              className="ds-change-inspector__split-handle ds-change-inspector__split-handle--horizontal ds-no-drag relative z-10 h-2 shrink-0 cursor-row-resize touch-none"
               onPointerDown={onListResizePointerDown}
               onPointerMove={onListResizePointerMove}
               onPointerUp={onListResizePointerUp}
               onPointerCancel={onListResizePointerUp}
-            >
-              <span className="h-px w-8 bg-ds-border-strong" />
-            </div>
+            />
             {diffViewport}
           </div>
         )}

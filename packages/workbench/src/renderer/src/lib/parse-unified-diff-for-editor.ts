@@ -94,6 +94,7 @@ export function firstChangedEditorLine(highlight: EditorDiffHighlight): number |
   return zone.afterLineNumber
 }
 
-export function firstChangedEditorLineFromPatch(patch: string): number | undefined {
+export function firstChangedEditorLineFromPatch(patch: string | undefined): number | undefined {
+  if (!patch) return undefined
   return firstChangedEditorLine(parseUnifiedDiffForEditor(patch))
 }

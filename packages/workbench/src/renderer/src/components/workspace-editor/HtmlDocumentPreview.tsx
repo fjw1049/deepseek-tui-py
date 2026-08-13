@@ -8,8 +8,8 @@ type Props = {
   workspaceRoot: string
 }
 
-/** Read-only image preview for workspace editor tabs. */
-export function ImageDocumentPreview({ path, workspaceRoot }: Props): ReactElement {
+/** Live HTML preview inside an IDE/editor pane — does not leave IDE mode. */
+export function HtmlDocumentPreview({ path, workspaceRoot }: Props): ReactElement {
   const { t } = useTranslation('common')
   const [url, setUrl] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -52,8 +52,8 @@ export function ImageDocumentPreview({ path, workspaceRoot }: Props): ReactEleme
 
   if (loading) {
     return (
-      <div className="flex min-h-0 flex-1 flex-col bg-ds-sidebar">
-        <EditorListSkeleton rows={5} />
+      <div className="flex min-h-0 flex-1 flex-col bg-ds-canvas">
+        <EditorListSkeleton />
       </div>
     )
   }
@@ -67,14 +67,10 @@ export function ImageDocumentPreview({ path, workspaceRoot }: Props): ReactEleme
   }
 
   return (
-    <div className="flex min-h-0 flex-1 items-center justify-center overflow-auto bg-ds-sidebar p-4">
-      <img
-        src={url}
-        alt={path.split(/[/\\]/).pop() ?? path}
-        className="max-h-full max-w-full object-contain"
-        draggable={false}
-        onError={() => setError('Failed to load image preview.')}
-      />
-    </div>
+    <iframe
+      title={path.split(/[/\\]/).pop() ?? path}
+      src={url}
+      className="min-h-0 w-full flex-1 border-0 bg-ds-canvas"
+    />
   )
 }

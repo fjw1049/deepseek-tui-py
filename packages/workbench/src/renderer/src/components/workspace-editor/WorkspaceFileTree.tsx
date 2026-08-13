@@ -8,13 +8,14 @@ import {
   FileText,
   Folder,
   FolderOpen,
-  Image as ImageIcon,
-  Loader2
+  Image as ImageIcon
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import type { WorkspaceTreeEntry } from '@shared/workspace-file'
 import { formatFilePathForDisplay } from '../../lib/diff-stats'
 import { directoryHasChanges, pathHasChanges } from '../../lib/workspace-change-patches'
+import { setWorkspacePathDragData } from '../../lib/composer-insert'
+import { useWorkspaceDirtyGitRefresh } from '../../hooks/use-workspace-dirty-git-refresh'
 import {
   readExpandedDirs,
   writeExpandedDirs
@@ -34,6 +35,7 @@ type Props = {
   activePaths?: string[]
   dirtyPaths?: Set<string>
   patchMap?: Map<string, string>
+  workspaceDirtyTick?: number
   onOpenFile: (path: string) => void
   onFileContextMenu?: (event: ReactMouseEvent, path: string) => void
 }
@@ -104,6 +106,7 @@ export function WorkspaceFileTree({
   activePaths,
   dirtyPaths,
   patchMap,
+  workspaceDirtyTick = 0,
   onOpenFile,
   onFileContextMenu
 }: Props): ReactElement {
@@ -151,6 +154,35 @@ export function WorkspaceFileTree({
       }))
     })()
   }, [])
+
+  const refreshLoadedDirectories = useCallback((): void => {
+    const root = trimmedRootRef.current
+    if (!root) return
+    const loadedKeys = Object.entries(nodesRef.current)
+      .filter(([, node]) => node.loaded)
+      .map(([key]) => key)
+    if (!loadedKeys.includes('')) loadedKeys.unshift('')
+
+    void (async () => {
+      const updates: Record<string, TreeNodeState> = {}
+      await Promise.all(
+        loadedKeys.map(async (key) => {
+          const result = await fetchDirectory(root, key)
+          if (trimmedRootRef.current !== root) return
+          updates[key] = {
+            entries: result.ok ? result.entries : [],
+            loading: false,
+            loaded: true,
+            error: result.ok ? null : translateTreeError(result.message)
+          }
+        })
+      )
+      if (trimmedRootRef.current !== root) return
+      setNodes((prev) => ({ ...prev, ...updates }))
+    })()
+  }, [])
+
+  useWorkspaceDirtyGitRefresh(workspaceDirtyTick, refreshLoadedDirectories)
 
   useEffect(() => {
     let cancelled = false
@@ -253,11 +285,11 @@ export function WorkspaceFileTree({
       return [
         <div
           key={`${key}__loading`}
-          className="ds-workspace-file-tree__row-pad flex h-7 items-center gap-1.5 text-[12px] text-ds-faint"
+          className="ds-workspace-file-tree__row-pad flex flex-col gap-1.5 py-1.5"
           style={{ paddingLeft: `${indentPx(depth)}px` }}
         >
-          <Loader2 className="pointer-events-none h-3.5 w-3.5 animate-spin" strokeWidth={1.8} />
-          {t('workspaceTreeLoading')}
+          <div className="ds-editor-skeleton__bar h-2 w-[72%] rounded-sm" />
+          <div className="ds-editor-skeleton__bar ml-3 h-2 w-[54%] rounded-sm" />
         </div>
       ]
     }
@@ -338,10 +370,14 @@ export function WorkspaceFileTree({
         <button
           key={entryKey}
           type="button"
+          draggable
           onClick={(event) => {
             event.preventDefault()
             event.stopPropagation()
             onOpenFile(entry.path)
+          }}
+          onDragStart={(event) => {
+            setWorkspacePathDragData(event.dataTransfer, entry.path)
           }}
           onContextMenu={(event) => {
             if (!onFileContextMenu) return

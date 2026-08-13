@@ -70,7 +70,8 @@ export function persistLayoutMode(mode: WorkbenchLayoutMode): void {
 export function readStoredIdeCenterTab(): IdeCenterTab {
   try {
     const raw = window.localStorage.getItem(IDE_CENTER_TAB_KEY)
-    if (raw && VALID_CENTER_TABS.has(raw as IdeCenterTab)) {
+    if (raw === 'search') return 'files'
+    if (raw && VALID_CENTER_TABS.has(raw as IdeCenterTab) && raw !== 'search') {
       return raw as IdeCenterTab
     }
   } catch {

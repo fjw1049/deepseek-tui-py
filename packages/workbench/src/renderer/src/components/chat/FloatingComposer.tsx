@@ -96,6 +96,14 @@ import {
   composerFooterTierForWidth,
   type ComposerFooterTier
 } from '../../lib/composer-footer-layout'
+import {
+  appendComposerSnippet,
+  COMPOSER_INSERT_EVENT,
+  formatComposerPathMention,
+  type ComposerInsertDetail,
+  WORKSPACE_PATH_DRAG_MIME,
+  workspacePathFromDrag
+} from '../../lib/composer-insert'
 
 export type { ComposerMode }
 
@@ -222,12 +230,8 @@ function getSlashQuery(input: string): string | null {
   return trimmed.slice(1).toLowerCase()
 }
 
-function formatAttachmentMention(path: string): string {
-  return /\s/.test(path) ? `@"${path}"` : `@${path}`
-}
-
 function buildOutboundMessage(attachments: ComposerAttachment[], input: string): string {
-  const mentionLines = attachments.map((item) => formatAttachmentMention(item.path))
+  const mentionLines = attachments.map((item) => formatComposerPathMention(item.path))
   return [...mentionLines, input.trim()].filter(Boolean).join('\n')
 }
 
@@ -283,6 +287,8 @@ export function FloatingComposer({
   )
   const sendMessage = useChatStore((s) => s.sendMessage)
   const textareaRef = useRef<HTMLTextAreaElement | null>(null)
+  const inputRef = useRef(input)
+  inputRef.current = input
   const shellRef = useRef<HTMLDivElement | null>(null)
   const footerRef = useRef<HTMLDivElement | null>(null)
   const plusMenuRef = useRef<HTMLDivElement | null>(null)
@@ -778,6 +784,17 @@ export function FloatingComposer({
     focusComposer()
   }, [focusRequestId])
 
+  useEffect(() => {
+    const onInsert = (event: Event): void => {
+      const text = (event as CustomEvent<ComposerInsertDetail>).detail?.text
+      if (typeof text !== 'string' || !text.trim()) return
+      setInput(appendComposerSnippet(inputRef.current, text))
+      focusComposer()
+    }
+    window.addEventListener(COMPOSER_INSERT_EVENT, onInsert)
+    return () => window.removeEventListener(COMPOSER_INSERT_EVENT, onInsert)
+  }, [setInput])
+
   const applySlashCommand = (command: SlashCommand): void => {
     if (command.kind === 'action') {
       setPlusMenuOpen(false)
@@ -1268,6 +1285,18 @@ export function FloatingComposer({
       className={`pointer-events-auto w-full ${
         useChatStageWidth ? 'ds-chat-stage px-3 sm:px-4' : 'max-w-none px-0'
       } ${stageCentered ? 'shrink-0 pb-1 pt-0' : compactChrome ? 'pb-0 pt-0' : 'pb-0 pt-1'}`}
+      onDragOver={(event) => {
+        if (!event.dataTransfer.types.includes(WORKSPACE_PATH_DRAG_MIME)) return
+        event.preventDefault()
+        event.dataTransfer.dropEffect = 'copy'
+      }}
+      onDrop={(event) => {
+        const path = workspacePathFromDrag(event.dataTransfer)
+        if (!path) return
+        event.preventDefault()
+        setInput(appendComposerSnippet(inputRef.current, formatComposerPathMention(path)))
+        focusComposer()
+      }}
     >
       {pendingApprovals.length > 0 || pendingUserInputs.length > 0 ? (
         <div className="ds-no-drag ds-scroll-surface mb-2 max-h-[min(320px,40vh)] space-y-2 overflow-y-auto overscroll-contain">

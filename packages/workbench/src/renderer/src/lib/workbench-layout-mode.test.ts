@@ -54,8 +54,10 @@ describe('workbench-layout-mode', () => {
   })
 
   it('persists ide center tab', () => {
-    persistIdeCenterTab('search')
-    expect(readStoredIdeCenterTab()).toBe('search')
+    persistIdeCenterTab('changes')
+    expect(readStoredIdeCenterTab()).toBe('changes')
+    window.localStorage.setItem('deepseekgui.layout.ideCenterTab', 'search')
+    expect(readStoredIdeCenterTab()).toBe('files')
   })
 
   it('clamps chat rail width', () => {

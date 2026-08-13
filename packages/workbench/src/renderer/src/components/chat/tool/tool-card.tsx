@@ -7,12 +7,18 @@ import { resolveToolRenderer } from './registry'
 import { useDisclosure } from '../model/use-disclosure'
 import { ToolBody, ToolCopyButton, ToolErrorState, ToolHeaderRow } from './primitives'
 import type { ToolBlock } from '../../../agent/types'
+import { useChatStore } from '../../../store/chat-store'
+import { prefetchWorkspaceFile } from '../../../lib/workspace-editor-events'
 
 export interface ToolCardProps {
   block: ToolBlock
   className?: string
-  /** Open a workspace file in the editor panel (file-mutation rows). */
-  onOpenWorkspaceFile?: (path: string, line?: number) => void
+  /** Open a workspace file in the editor panel (file-mutation / read rows). */
+  onOpenWorkspaceFile?: (
+    path: string,
+    line?: number,
+    options?: { review?: boolean }
+  ) => void
 }
 
 const LazyFullOutput = lazy(() => import('./lazy-full-output'))
@@ -57,6 +63,11 @@ export const ToolCard = memo(function ToolCard({
   onOpenWorkspaceFile
 }: ToolCardProps): React.JSX.Element | null {
   const ctx = useMemo(() => buildToolRenderContext(block), [block])
+  const workspaceRoot = useChatStore((s) => s.workspaceRoot)
+  const prefetchPath = ctx.input.path
+  const handlePrefetch = useCallback((): void => {
+    if (prefetchPath && workspaceRoot.trim()) prefetchWorkspaceFile(prefetchPath, workspaceRoot)
+  }, [prefetchPath, workspaceRoot])
   const disclosureKey = `tool:${ctx.toolCallId}`
   const [storedOpen, setDisclosureOpen] = useDisclosure(disclosureKey, false)
 
@@ -85,6 +96,15 @@ export const ToolCard = memo(function ToolCard({
   const open = canExpand && storedOpen
   const Icon = pickIcon(ctx.toolName, ctx.isFileChange, ctx.isCommand)
 
+  const readOffset =
+    ctx.shortName === 'read_file' && ctx.meta?.tool_input && typeof ctx.meta.tool_input === 'object'
+      ? (ctx.meta.tool_input as Record<string, unknown>).offset
+      : undefined
+  const readLine =
+    typeof readOffset === 'number' && Number.isFinite(readOffset) && readOffset >= 1
+      ? Math.floor(readOffset)
+      : undefined
+
   // Visual tiering (mirrors cursor/codex): only running / error / file mutations
   // and shell commands earn a full bordered card. A successful read-only probe
   // (read_file, grep, list_dir…) collapses to a single calm row so a turn with
@@ -103,8 +123,13 @@ export const ToolCard = memo(function ToolCard({
       canExpand={canExpand}
       diffStats={ctx.diffStats}
       onOpenInEditor={
-        onOpenWorkspaceFile && ctx.isFileChange && ctx.input.path
-          ? () => onOpenWorkspaceFile(ctx.input.path!, ctx.editLine)
+        onOpenWorkspaceFile && ctx.input.path && (ctx.isFileChange || ctx.shortName === 'read_file')
+          ? () =>
+              onOpenWorkspaceFile(
+                ctx.input.path!,
+                ctx.isFileChange ? ctx.editLine : readLine,
+                ctx.isFileChange ? { review: true } : undefined
+              )
           : undefined
       }
     />
@@ -174,7 +199,7 @@ export const ToolCard = memo(function ToolCard({
   // Lightweight row: a quiet line on the work-process rail.
   if (!isHeavy) {
     return (
-      <div id={`block-${block.id}`} className="group">
+      <div id={`block-${block.id}`} className="group" onMouseEnter={handlePrefetch}>
         <div
           className={cn(
             'flex items-center rounded-md px-1.5 py-1 -mx-1',
@@ -204,6 +229,7 @@ export const ToolCard = memo(function ToolCard({
         'ds-tool-card group overflow-hidden rounded-[14px] border border-ds-border bg-ds-card/60',
         className
       )}
+      onMouseEnter={handlePrefetch}
     >
       <div
         className={cn(

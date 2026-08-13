@@ -72,4 +72,9 @@ describe('firstChangedEditorLineFromPatch', () => {
     const patch = ['--- a/a.ts', '+++ b/a.ts', '@@', '-a', '+b'].join('\n')
     expect(firstChangedEditorLineFromPatch(patch)).toBeUndefined()
   })
+
+  it('returns undefined for a missing patch', () => {
+    expect(firstChangedEditorLineFromPatch(undefined)).toBeUndefined()
+    expect(firstChangedEditorLineFromPatch('')).toBeUndefined()
+  })
 })

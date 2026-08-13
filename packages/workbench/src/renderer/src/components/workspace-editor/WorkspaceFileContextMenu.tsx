@@ -5,6 +5,7 @@ import {
   Copy,
   ExternalLink,
   FolderOpen,
+  MessageSquarePlus,
   Pencil,
   X
 } from 'lucide-react'
@@ -19,6 +20,7 @@ export type WorkspaceFileContextMenuAction =
   | 'reveal-in-folder'
   | 'copy-path'
   | 'copy-relative-path'
+  | 'quote-in-chat'
   | 'close-split'
 
 type WorkspaceFileContextMenuProps = {
@@ -153,6 +155,10 @@ export function WorkspaceFileContextMenu({
       <button type="button" className={itemClass} onClick={() => run('copy-relative-path')}>
         <Copy className={iconClass} strokeWidth={1.8} />
         <span className="min-w-0 truncate">{t('threadMenuCopyRelativePath')}</span>
+      </button>
+      <button type="button" className={itemClass} onClick={() => run('quote-in-chat')}>
+        <MessageSquarePlus className={iconClass} strokeWidth={1.8} />
+        <span className="min-w-0 truncate">{t('workspaceEditorQuoteInChat')}</span>
       </button>
     </div>
   )

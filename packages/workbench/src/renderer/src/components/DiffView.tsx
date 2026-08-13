@@ -1,5 +1,6 @@
 import { useMemo, useState, type ReactElement } from 'react'
-import { Check, Columns2, Copy, Rows3 } from 'lucide-react'
+import { Check, Columns2, Copy, MessageSquarePlus, Rows3 } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 
 export type DiffRenderStyle = 'unified' | 'split'
 
@@ -19,6 +20,7 @@ type Props = {
    * `flush` — edge-to-edge in the change inspector (no padding card chrome).
    */
   chrome?: 'card' | 'flush'
+  onAddToChat?: () => void
 }
 
 type ParsedDiff = {
@@ -257,7 +259,8 @@ export function DiffView({
   diffStyle: controlledStyle,
   showStyleToggle = false,
   onDiffStyleChange,
-  chrome = 'card'
+  chrome = 'card',
+  onAddToChat
 }: Props): ReactElement {
   const looksLikePatch = useMemo(
     () => patch.split('\n').some((l) => /^[+-]/.test(l) || l.startsWith('@@')),
@@ -318,6 +321,7 @@ export function DiffView({
           diffStyle={diffStyle}
           onDiffStyleChange={setStyle}
           flush={flush}
+          onAddToChat={onAddToChat}
         />
         <pre
           className={`${bodyClass} whitespace-pre text-ds-ink ${flush ? 'px-2 py-1' : 'p-3'}`}
@@ -342,6 +346,7 @@ export function DiffView({
         diffStyle={diffStyle}
         onDiffStyleChange={setStyle}
         flush={flush}
+        onAddToChat={onAddToChat}
       />
       <div className={bodyClass} style={fillParent || flush ? undefined : { maxHeight }}>
         {diffStyle === 'split' ? (
@@ -429,7 +434,8 @@ function DiffHeader({
   showStyleToggle,
   diffStyle,
   onDiffStyleChange,
-  flush = false
+  flush = false,
+  onAddToChat
 }: {
   badge: { label: string; tone: string }
   name: string | null
@@ -441,7 +447,9 @@ function DiffHeader({
   diffStyle: DiffRenderStyle
   onDiffStyleChange: (style: DiffRenderStyle) => void
   flush?: boolean
+  onAddToChat?: () => void
 }): ReactElement {
+  const { t } = useTranslation('common')
   return (
     <div
       className={
@@ -492,6 +500,17 @@ function DiffHeader({
             <Columns2 className="h-3.5 w-3.5" strokeWidth={1.85} />
           </button>
         </div>
+      ) : null}
+      {onAddToChat ? (
+        <button
+          type="button"
+          onClick={onAddToChat}
+          className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded text-ds-faint transition hover:bg-ds-hover hover:text-ds-ink"
+          aria-label={t('workspaceEditorAddToChat')}
+          title={t('workspaceEditorAddToChat')}
+        >
+          <MessageSquarePlus className="h-3.5 w-3.5" strokeWidth={1.85} />
+        </button>
       ) : null}
       <button
         type="button"

@@ -18,6 +18,14 @@ vi.mock('../../lib/workspace-label', () => ({
   workspaceLabelFromPath: (path: string) => path.split('/').filter(Boolean).pop() || path
 }))
 
+vi.mock('../../hooks/use-git-working-changes', () => ({
+  useGitWorkingChanges: () => ({
+    result: null,
+    loading: false,
+    reload: vi.fn(async () => undefined)
+  })
+}))
+
 vi.mock('../../store/workspace-editor-store', () => ({
   useWorkspaceEditorStore: (
     selector: (state: {
@@ -86,5 +94,22 @@ describe('IdeWorkspaceLayout', () => {
     expect(markup).toContain('ds-ide-project-picker__name')
     expect(markup).toContain('ds-ide-activity-bar')
     expect(markup).toContain('bg-ds-canvas')
+  })
+
+  it('keeps the editor mounted when the Changes activity is selected', () => {
+    window.localStorage.setItem('deepseekgui.layout.ideCenterTab', 'changes')
+    const markup = renderToStaticMarkup(
+      createElement(IdeWorkspaceLayout, {
+        workspaceRoot: '/tmp/demo',
+        blocks: [],
+        projectLabel: 'demo',
+        chatRail: createElement('div', null, 'chat-rail'),
+        onExitIdeMode: vi.fn(),
+        onOpenFileInEditor: vi.fn()
+      })
+    )
+    expect(markup).toContain('editor-panel')
+    expect(markup).toContain('ds-ide-changes-stage')
+    expect(markup).toContain('ds-ide-changes-list')
   })
 })

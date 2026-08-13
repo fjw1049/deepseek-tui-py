@@ -10,9 +10,10 @@ import {
   useRef,
   useState
 } from 'react'
-import { Loader2, Pencil, Save, Search, X } from 'lucide-react'
+import { Columns2, Pencil, Save, Search, X } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { isImagePreviewPath } from '@shared/image-preview'
+import { isHtmlPreviewPath } from '@shared/html-preview'
 import type { ChatBlock } from '../../agent/types'
 import { formatFilePathForDisplay } from '../../lib/diff-stats'
 import { useGitWorkingChanges } from '../../hooks/use-git-working-changes'
@@ -24,6 +25,12 @@ import {
   revealWorkspacePathInFolder
 } from '../../lib/open-workspace-path'
 import { copyableRelativePath } from '../../lib/sidebar-chrome'
+import {
+  formatComposerPathMention,
+  insertComposerSnippet
+} from '../../lib/composer-insert'
+import { breadcrumbSegments, collapseBreadcrumbSegments } from '../../lib/editor-breadcrumb'
+import { EDITOR_CLOSE_ACTIVE_TAB_EVENT } from '../../lib/workspace-editor-events'
 import { isShortcutEnabled } from '../../lib/shortcuts-runtime'
 import {
   buildWorkspaceChangePatchMap,
@@ -31,11 +38,14 @@ import {
 } from '../../lib/workspace-change-patches'
 import {
   normalizeEditorPathForTab,
+  orderTabsByIds,
   useWorkspaceEditorStore,
   type EditorPaneId,
   type EditorTab
 } from '../../store/workspace-editor-store'
+import { EditorListSkeleton } from './EditorListSkeleton'
 import { ImageDocumentPreview } from './ImageDocumentPreview'
+import { HtmlDocumentPreview } from './HtmlDocumentPreview'
 import { MarkdownDocumentPreview } from './MarkdownDocumentPreview'
 import {
   WorkspaceFileContextMenu,
@@ -72,6 +82,7 @@ type FileMenuState = {
   x: number
   y: number
   path: string
+  pane?: EditorPaneId
 }
 
 function readStoredTreeWidth(): number {
@@ -110,14 +121,241 @@ function fileNameFromPath(path: string): string {
 
 function EditorSurfaceFallback(): ReactElement {
   return (
-    <div className="flex min-h-0 flex-1 items-center justify-center bg-ds-sidebar">
-      <Loader2 className="h-5 w-5 animate-spin text-ds-faint" strokeWidth={1.8} />
+    <div className="flex min-h-0 flex-1 flex-col bg-ds-sidebar">
+      <EditorListSkeleton />
+    </div>
+  )
+}
+
+function EditorTabMark({
+  editing,
+  dirty,
+  changed,
+  loading
+}: {
+  editing: boolean
+  dirty: boolean
+  changed: boolean
+  loading: boolean
+}): ReactElement | null {
+  if (loading) {
+    return <span className="ml-1 shrink-0 text-ds-faint">…</span>
+  }
+  if (editing) {
+    return <span className="ml-1 shrink-0 text-[10px] text-ds-muted">✎</span>
+  }
+  if (dirty) {
+    return <span className="ds-workspace-editor-tab__dirty" aria-hidden />
+  }
+  if (changed) {
+    return <span className="ds-workspace-editor-tab__changed" aria-hidden />
+  }
+  return null
+}
+
+function EditorBreadcrumb({
+  path,
+  workspaceRoot
+}: {
+  path: string
+  workspaceRoot: string
+}): ReactElement {
+  return (
+    <div className="ds-workspace-editor-breadcrumb flex h-7 shrink-0 items-center gap-1 overflow-hidden border-b border-[color-mix(in_srgb,var(--ds-text)_10%,transparent)] px-2.5 text-[11px] text-ds-faint">
+      {collapseBreadcrumbSegments(breadcrumbSegments(path, workspaceRoot)).map(
+        (segment, index, all) => (
+          <span key={`${segment}-${index}`} className="flex min-w-0 items-center gap-1">
+            {index > 0 ? <span className="shrink-0 text-ds-faint/70">›</span> : null}
+            <span
+              className={
+                index === all.length - 1
+                  ? 'min-w-0 truncate font-medium text-ds-ink'
+                  : 'shrink-0'
+              }
+              title={segment}
+            >
+              {segment}
+            </span>
+          </span>
+        )
+      )}
+    </div>
+  )
+}
+
+function EditorTabStrip({
+  tabs,
+  currentTabId,
+  paneFocused,
+  patchMap,
+  editingTabId,
+  workspaceRoot,
+  emptyLabel,
+  closeLabel,
+  trailing,
+  onSelect,
+  onClose,
+  onContextMenu
+}: {
+  tabs: EditorTab[]
+  currentTabId: string | null
+  paneFocused: boolean
+  patchMap: ReturnType<typeof buildWorkspaceChangePatchMap>
+  editingTabId: string | null
+  workspaceRoot: string
+  emptyLabel: string
+  closeLabel: string
+  trailing: ReactElement | null
+  onSelect: (tabId: string) => void
+  onClose: (tabId: string) => void
+  onContextMenu: (event: ReactMouseEvent<HTMLElement>, path: string) => void
+}): ReactElement {
+  return (
+    <div className="ds-workspace-editor-tabstrip flex shrink-0 items-center gap-1.5 border-b border-ds-border-muted/60">
+      <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto">
+        {tabs.length === 0 ? (
+          <span className="px-2 py-1 text-[12px] text-ds-faint">{emptyLabel}</span>
+        ) : (
+          tabs.map((tab) => {
+            const shown = tab.id === currentTabId
+            const focused = shown && paneFocused
+            const dirty = tab.content !== tab.savedContent
+            const changed = Boolean(lookupPatchForPath(patchMap, tab.path))
+            const editing = editingTabId === tab.id
+            return (
+              <span
+                key={tab.id}
+                className={`ds-workspace-editor-tab inline-flex max-w-[220px] shrink-0 items-center ${
+                  focused
+                    ? 'ds-workspace-editor-tab--active'
+                    : shown
+                      ? 'ds-workspace-editor-tab--open'
+                      : ''
+                }`}
+                onContextMenu={(event) => onContextMenu(event, tab.path)}
+              >
+                <button
+                  type="button"
+                  onClick={() => onSelect(tab.id)}
+                  className="inline-flex min-w-0 items-center truncate px-2 py-1 text-[12px]"
+                  title={formatFilePathForDisplay(tab.path, workspaceRoot) ?? tab.path}
+                >
+                  <span className="truncate">{fileNameFromPath(tab.path)}</span>
+                  <EditorTabMark
+                    editing={editing}
+                    dirty={dirty}
+                    changed={changed}
+                    loading={Boolean(tab.loading)}
+                  />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onClose(tab.id)}
+                  className="ds-workspace-editor-tab__close mr-0.5 inline-flex h-5 w-5 items-center justify-center rounded"
+                  aria-label={closeLabel}
+                >
+                  <X className="h-3 w-3" strokeWidth={2} />
+                </button>
+              </span>
+            )
+          })
+        )}
+      </div>
+      {trailing}
+    </div>
+  )
+}
+
+function PaneTabActions({
+  tab,
+  isEditing,
+  onFind,
+  onStartEdit,
+  onCancelEdit,
+  onSave,
+  onCloseSplit
+}: {
+  tab: EditorTab | null
+  isEditing: boolean
+  onFind: () => void
+  onStartEdit: () => void
+  onCancelEdit: () => void
+  onSave: () => void
+  onCloseSplit?: () => void
+}): ReactElement | null {
+  const { t } = useTranslation('common')
+  const canEditFile = Boolean(tab && tab.kind !== 'image')
+  if (!canEditFile && !onCloseSplit) return null
+
+  return (
+    <div className="flex shrink-0 items-center gap-0.5 pl-1">
+      {canEditFile && tab ? (
+        <>
+          <button
+            type="button"
+            onClick={onFind}
+            disabled={tab.loading}
+            className="inline-flex h-7 w-7 items-center justify-center rounded-md text-ds-muted transition hover:bg-ds-hover/60 hover:text-ds-ink disabled:opacity-45"
+            aria-label={t('workspaceEditorFind')}
+            title={t('workspaceEditorFind')}
+          >
+            <Search className="h-3.5 w-3.5" strokeWidth={1.85} />
+          </button>
+          {!isEditing ? (
+            <button
+              type="button"
+              onClick={onStartEdit}
+              disabled={tab.loading || tab.truncated}
+              className="inline-flex h-7 w-7 items-center justify-center rounded-md text-ds-muted transition hover:bg-ds-hover/60 hover:text-ds-ink disabled:opacity-45"
+              aria-label={t('workspaceEditorEdit')}
+              title={
+                tab.truncated ? t('workspaceEditorTruncated') : t('workspaceEditorEdit')
+              }
+            >
+              <Pencil className="h-3.5 w-3.5" strokeWidth={1.85} />
+            </button>
+          ) : (
+            <>
+              <button
+                type="button"
+                onClick={onCancelEdit}
+                className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[12px] text-ds-muted transition hover:bg-ds-hover/60 hover:text-ds-ink"
+              >
+                {t('workspaceEditorCancelEdit')}
+              </button>
+              <button
+                type="button"
+                onClick={onSave}
+                disabled={tab.loading || tab.content === tab.savedContent}
+                className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[12px] text-ds-muted transition hover:bg-ds-hover/60 hover:text-ds-ink disabled:opacity-45"
+              >
+                <Save className="h-3.5 w-3.5" strokeWidth={1.85} />
+                {t('workspaceEditorSave')}
+              </button>
+            </>
+          )}
+        </>
+      ) : null}
+      {onCloseSplit ? (
+        <span className="ml-1 flex items-center border-l border-[color-mix(in_srgb,var(--ds-text)_12%,transparent)] pl-1">
+          <button
+            type="button"
+            onClick={onCloseSplit}
+            className="inline-flex h-7 w-7 items-center justify-center rounded-md text-ds-muted transition hover:bg-ds-hover/60 hover:text-ds-ink"
+            aria-label={t('workspaceEditorCloseSplit')}
+            title={t('workspaceEditorCloseSplit')}
+          >
+            <Columns2 className="h-3.5 w-3.5" strokeWidth={1.85} />
+          </button>
+        </span>
+      ) : null}
     </div>
   )
 }
 
 type EditorPaneHandle = {
   openFind: () => void
+  getSelectionRange: () => { startLine: number; endLine: number } | null
 }
 
 const EditorPaneView = forwardRef<
@@ -152,21 +390,39 @@ const EditorPaneView = forwardRef<
   const surfaceRef = useRef<WorkspaceEditorSurfaceHandle | null>(null)
   const [sourceFindOpen, setSourceFindOpen] = useState(false)
   const isImageTab = tab?.kind === 'image'
+  const isHtmlPreview =
+    Boolean(tab) && !isImageTab && isHtmlPreviewPath(tab!.path) && !isEditing && !sourceFindOpen
   const isMarkdownPreview =
-    Boolean(tab) && !isImageTab && isMarkdownPath(tab!.path) && !isEditing && !sourceFindOpen
-  const showMonaco = Boolean(tab) && !isImageTab && !isMarkdownPreview
+    Boolean(tab) &&
+    !isImageTab &&
+    !isHtmlPreview &&
+    isMarkdownPath(tab!.path) &&
+    !isEditing &&
+    !sourceFindOpen
+  const showMonaco = Boolean(tab) && !isImageTab && !isHtmlPreview && !isMarkdownPreview
 
   const openFind = useCallback((): void => {
     if (!tab || isImageTab || tab.loading) return
     onFocus()
-    if (isMarkdownPath(tab.path) && !isEditing && !sourceFindOpen) {
+    if (
+      (isMarkdownPath(tab.path) || isHtmlPreviewPath(tab.path)) &&
+      !isEditing &&
+      !sourceFindOpen
+    ) {
       setSourceFindOpen(true)
       return
     }
     surfaceRef.current?.openFind()
   }, [tab, isImageTab, isEditing, sourceFindOpen, onFocus])
 
-  useImperativeHandle(ref, () => ({ openFind }), [openFind])
+  useImperativeHandle(
+    ref,
+    () => ({
+      openFind,
+      getSelectionRange: () => surfaceRef.current?.getSelectionRange() ?? null
+    }),
+    [openFind]
+  )
 
   useEffect(() => {
     setSourceFindOpen(false)
@@ -225,11 +481,17 @@ const EditorPaneView = forwardRef<
         <div className="shrink-0 border-b border-amber-200/70 bg-amber-50/80 px-3 py-2 text-[12px] text-amber-900 dark:border-amber-700/40 dark:bg-amber-950/30 dark:text-amber-100">
           {tab.error}
         </div>
+      ) : tab.truncated ? (
+        <div className="shrink-0 border-b border-amber-200/70 bg-amber-50/80 px-3 py-2 text-[12px] text-amber-900 dark:border-amber-700/40 dark:bg-amber-950/30 dark:text-amber-100">
+          {t('workspaceEditorTruncated')}
+        </div>
       ) : null}
       {tab.loading ? (
         <EditorSurfaceFallback />
       ) : isImageTab ? (
         <ImageDocumentPreview path={tab.path} workspaceRoot={workspaceRoot} />
+      ) : isHtmlPreview ? (
+        <HtmlDocumentPreview path={tab.path} workspaceRoot={workspaceRoot} />
       ) : isMarkdownPreview ? (
         <MarkdownDocumentPreview content={tab.content} />
       ) : showMonaco ? (
@@ -238,9 +500,13 @@ const EditorPaneView = forwardRef<
             ref={surfaceRef}
             tab={tab}
             patch={patch}
-            readOnly={!isEditing}
+            readOnly={!isEditing || Boolean(tab.truncated)}
             onChange={onChange}
             openFindOnReady={sourceFindOpen}
+            onQuoteSelection={(startLine, endLine) => {
+              const relative = copyableRelativePath(tab.path, workspaceRoot) || tab.path
+              insertComposerSnippet(formatComposerPathMention(relative, startLine, endLine))
+            }}
           />
         </Suspense>
       ) : null}
@@ -258,6 +524,16 @@ export function WorkspaceEditorPanel({
   const tabs = useWorkspaceEditorStore((s) => s.tabs)
   const activeTabId = useWorkspaceEditorStore((s) => s.activeTabId)
   const secondaryTabId = useWorkspaceEditorStore((s) => s.secondaryTabId)
+  const primaryTabIds = useWorkspaceEditorStore((s) =>
+    s.primaryTabIds.length === 0 && s.tabs.length > 0
+      ? s.tabs.map((tab) => tab.id)
+      : s.primaryTabIds
+  )
+  const secondaryTabIds = useWorkspaceEditorStore((s) =>
+    s.splitEnabled && s.secondaryTabIds.length === 0 && s.secondaryTabId
+      ? [s.secondaryTabId]
+      : s.secondaryTabIds
+  )
   const focusedPane = useWorkspaceEditorStore((s) => s.focusedPane)
   const splitEnabled = useWorkspaceEditorStore((s) => s.splitEnabled)
   const openFile = useWorkspaceEditorStore((s) => s.openFile)
@@ -266,6 +542,7 @@ export function WorkspaceEditorPanel({
   const setFocusedPane = useWorkspaceEditorStore((s) => s.setFocusedPane)
   const closeSplit = useWorkspaceEditorStore((s) => s.closeSplit)
   const updateTabContent = useWorkspaceEditorStore((s) => s.updateTabContent)
+  const revertTab = useWorkspaceEditorStore((s) => s.revertTab)
   const saveTab = useWorkspaceEditorStore((s) => s.saveTab)
   const resetForWorkspace = useWorkspaceEditorStore((s) => s.resetForWorkspace)
   const { result: gitChanges, reload: reloadGitChanges } = useGitWorkingChanges(trimmedRoot)
@@ -317,14 +594,18 @@ export function WorkspaceEditorPanel({
     [changeSignature]
   )
 
+  const primaryTabs = useMemo(
+    () => orderTabsByIds(tabs, primaryTabIds),
+    [tabs, primaryTabIds]
+  )
+  const secondaryTabs = useMemo(
+    () => orderTabsByIds(tabs, secondaryTabIds),
+    [tabs, secondaryTabIds]
+  )
   const primaryTab = tabs.find((tab) => tab.id === activeTabId) ?? null
   const secondaryTab = tabs.find((tab) => tab.id === secondaryTabId) ?? null
   const focusedTab =
     splitEnabled && focusedPane === 'secondary' ? secondaryTab : primaryTab
-  const focusedIsEditing = Boolean(focusedTab && editingTabId === focusedTab.id)
-  const focusedIsImage = Boolean(focusedTab && focusedTab.kind === 'image')
-  const focusedPaneRef =
-    splitEnabled && focusedPane === 'secondary' ? secondaryPaneRef : primaryPaneRef
 
   const dirtyPaths = useMemo(
     () =>
@@ -351,19 +632,21 @@ export function WorkspaceEditorPanel({
   }, [focusedTab?.id])
 
   useEffect(() => {
-    if (!editingTabId) return
     const onKey = (event: KeyboardEvent): void => {
       if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== 's') return
       if (event.altKey || event.shiftKey) return
       if (!isShortcutEnabled('saveFile')) return
       const target = event.target as HTMLElement | null
       if (!target?.closest('.ds-workspace-editor-pane')) return
+      const tab = focusedTab
+      if (!tab || tab.kind === 'image' || tab.truncated) return
       event.preventDefault()
-      void saveTab(editingTabId, trimmedRoot)
+      if (editingTabId !== tab.id) setEditingTabId(tab.id)
+      if (tab.content !== tab.savedContent) void saveTab(tab.id, trimmedRoot)
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [editingTabId, saveTab, trimmedRoot])
+  }, [editingTabId, focusedTab, saveTab, trimmedRoot])
 
   const beginTreeResize = (event: ReactPointerEvent<HTMLDivElement>): void => {
     if (event.button !== 0) return
@@ -452,15 +735,90 @@ export function WorkspaceEditorPanel({
     window.addEventListener('pointerup', onUp)
   }
 
-  const handleCloseTab = (tabId: string): void => {
-    if (editingTabId === tabId) setEditingTabId(null)
-    closeTab(tabId)
+  const handleCloseTab = useCallback(
+    (tabId: string, pane?: EditorPaneId): void => {
+      const tab = tabs.find((entry) => entry.id === tabId)
+      const inPrimary = primaryTabIds.includes(tabId)
+      const inSecondary = splitEnabled && secondaryTabIds.includes(tabId)
+      const target =
+        pane ??
+        (focusedPane === 'secondary' && inSecondary
+          ? 'secondary'
+          : inPrimary
+            ? 'primary'
+            : inSecondary
+              ? 'secondary'
+              : 'primary')
+      const otherPaneStillHas = target === 'primary' ? inSecondary : inPrimary
+      if (tab && tab.content !== tab.savedContent && !otherPaneStillHas) {
+        if (
+          !window.confirm(
+            t('workspaceEditorCloseDirtyConfirm', { file: fileNameFromPath(tab.path) })
+          )
+        ) {
+          return
+        }
+      }
+      if (editingTabId === tabId && !otherPaneStillHas) setEditingTabId(null)
+      closeTab(tabId, pane ?? target)
+    },
+    [
+      tabs,
+      editingTabId,
+      closeTab,
+      t,
+      splitEnabled,
+      focusedPane,
+      primaryTabIds,
+      secondaryTabIds
+    ]
+  )
+
+  useEffect(() => {
+    const onCloseActive = (): void => {
+      if (!focusedTab) return
+      handleCloseTab(focusedTab.id, splitEnabled ? focusedPane : 'primary')
+    }
+    window.addEventListener(EDITOR_CLOSE_ACTIVE_TAB_EVENT, onCloseActive)
+    return () => window.removeEventListener(EDITOR_CLOSE_ACTIVE_TAB_EVENT, onCloseActive)
+  }, [focusedTab, focusedPane, handleCloseTab, splitEnabled])
+
+  const cancelEditForTab = (tab: EditorTab | null): void => {
+    if (!tab) {
+      setEditingTabId(null)
+      return
+    }
+    if (tab.content !== tab.savedContent) {
+      if (!window.confirm(t('workspaceEditorDiscardConfirm'))) return
+      revertTab(tab.id)
+    }
+    setEditingTabId(null)
   }
 
-  const openFileMenu = (event: ReactMouseEvent, path: string): void => {
+  const paneActions = (tab: EditorTab | null, pane: EditorPaneId): ReactElement | null => (
+    <PaneTabActions
+      tab={tab}
+      isEditing={Boolean(tab && editingTabId === tab.id && !tab.truncated)}
+      onFind={() =>
+        (pane === 'secondary' ? secondaryPaneRef : primaryPaneRef).current?.openFind()
+      }
+      onStartEdit={() => {
+        if (!tab || tab.truncated) return
+        setFocusedPane(pane)
+        setEditingTabId(tab.id)
+      }}
+      onCancelEdit={() => cancelEditForTab(tab)}
+      onSave={() => {
+        if (tab) void saveTab(tab.id, trimmedRoot)
+      }}
+      onCloseSplit={splitEnabled && pane === 'secondary' ? closeSplit : undefined}
+    />
+  )
+
+  const openFileMenu = (event: ReactMouseEvent, path: string, pane?: EditorPaneId): void => {
     event.preventDefault()
     event.stopPropagation()
-    setFileMenu({ x: event.clientX, y: event.clientY, path })
+    setFileMenu({ x: event.clientX, y: event.clientY, path, pane })
   }
 
   const handleFileMenuAction = useCallback(
@@ -478,17 +836,14 @@ export function WorkspaceEditorPanel({
           })
           break
         case 'edit':
-          if (isImagePreviewPath(path)) break
+          if (isImagePreviewPath(path) || tab?.truncated) break
           void openFile(path, trimmedRoot).then(() => setEditingTabId(path))
           break
         case 'split-right':
           void openFile(path, trimmedRoot, undefined, undefined, { toSide: true })
           break
         case 'close':
-          if (tab) {
-            if (editingTabId === tab.id) setEditingTabId(null)
-            closeTab(tab.id)
-          }
+          if (tab) handleCloseTab(tab.id, fileMenu.pane)
           break
         case 'close-split':
           closeSplit()
@@ -504,17 +859,30 @@ export function WorkspaceEditorPanel({
             copyableRelativePath(path, trimmedRoot || path)
           )
           break
+        case 'quote-in-chat': {
+          const relative = copyableRelativePath(path, trimmedRoot) || path
+          insertComposerSnippet(formatComposerPathMention(relative))
+          break
+        }
       }
     },
-    [fileMenu, tabs, trimmedRoot, openFile, closeTab, closeSplit, editingTabId]
+    [fileMenu, tabs, trimmedRoot, openFile, closeSplit, handleCloseTab]
   )
 
-  const selectTab = (tabId: string): void => {
-    setActiveTab(tabId)
+  const selectTab = (tabId: string, pane?: EditorPaneId): void => {
+    setActiveTab(tabId, pane)
   }
 
   const focusPane = (pane: EditorPaneId): void => {
     setFocusedPane(pane)
+  }
+
+  const tabStripShared = {
+    patchMap,
+    editingTabId,
+    workspaceRoot: trimmedRoot,
+    emptyLabel: t('workspaceEditorEmpty'),
+    closeLabel: t('workspaceEditorCloseTab')
   }
 
   return (
@@ -529,6 +897,7 @@ export function WorkspaceEditorPanel({
               activePaths={activePaths}
               dirtyPaths={dirtyPaths}
               patchMap={patchMap}
+              workspaceDirtyTick={workspaceDirtyTick}
               onOpenFile={(path) => {
                 void openFile(path, trimmedRoot)
               }}
@@ -546,104 +915,23 @@ export function WorkspaceEditorPanel({
         )}
 
         <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col bg-ds-sidebar">
-          <div className="flex shrink-0 items-center gap-1.5 border-b border-ds-border-muted/60 px-1.5 py-1.5">
-            <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto">
-              {tabs.length === 0 ? (
-                <span className="px-2 py-1 text-[12px] text-ds-faint">{t('workspaceEditorEmpty')}</span>
-              ) : (
-                tabs.map((tab) => {
-                  const inPrimary = tab.id === activeTabId
-                  const inSecondary = splitEnabled && tab.id === secondaryTabId
-                  const shown = inPrimary || inSecondary
-                  const focused =
-                    (focusedPane === 'primary' && inPrimary) ||
-                    (focusedPane === 'secondary' && inSecondary)
-                  const dirty = tab.content !== tab.savedContent
-                  const changed = Boolean(lookupPatchForPath(patchMap, tab.path))
-                  const editing = editingTabId === tab.id
-                  return (
-                    <span
-                      key={tab.id}
-                      className={`ds-workspace-editor-tab inline-flex max-w-[220px] shrink-0 items-center ${
-                        focused
-                          ? 'ds-workspace-editor-tab--active'
-                          : shown
-                            ? 'ds-workspace-editor-tab--open'
-                            : ''
-                      }`}
-                      onContextMenu={(event) => openFileMenu(event, tab.path)}
-                    >
-                      <button
-                        type="button"
-                        onClick={() => selectTab(tab.id)}
-                        className="truncate px-2 py-1 text-[12px]"
-                        title={formatFilePathForDisplay(tab.path, trimmedRoot) ?? tab.path}
-                      >
-                        {fileNameFromPath(tab.path)}
-                        {editing ? ' ✎' : dirty ? ' ●' : changed ? ' ◦' : ''}
-                        {tab.loading ? ' …' : ''}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleCloseTab(tab.id)}
-                        className="ds-workspace-editor-tab__close mr-0.5 inline-flex h-5 w-5 items-center justify-center rounded"
-                        aria-label={t('workspaceEditorCloseTab')}
-                      >
-                        <X className="h-3 w-3" strokeWidth={2} />
-                      </button>
-                    </span>
-                  )
-                })
-              )}
-            </div>
-            {focusedTab && !focusedIsImage ? (
-              <div className="flex shrink-0 items-center gap-0.5 pl-1">
-                <button
-                  type="button"
-                  onClick={() => focusedPaneRef.current?.openFind()}
-                  disabled={focusedTab.loading}
-                  className="inline-flex h-7 w-7 items-center justify-center rounded-md text-ds-muted transition hover:bg-ds-hover/60 hover:text-ds-ink disabled:opacity-45"
-                  aria-label={t('workspaceEditorFind')}
-                  title={t('workspaceEditorFind')}
-                >
-                  <Search className="h-3.5 w-3.5" strokeWidth={1.85} />
-                </button>
-                {!focusedIsEditing ? (
-                  <button
-                    type="button"
-                    onClick={() => setEditingTabId(focusedTab.id)}
-                    disabled={focusedTab.loading}
-                    className="inline-flex h-7 w-7 items-center justify-center rounded-md text-ds-muted transition hover:bg-ds-hover/60 hover:text-ds-ink disabled:opacity-45"
-                    aria-label={t('workspaceEditorEdit')}
-                    title={t('workspaceEditorEdit')}
-                  >
-                    <Pencil className="h-3.5 w-3.5" strokeWidth={1.85} />
-                  </button>
-                ) : (
-                  <>
-                    <button
-                      type="button"
-                      onClick={() => setEditingTabId(null)}
-                      className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[12px] text-ds-muted transition hover:bg-ds-hover/60 hover:text-ds-ink"
-                    >
-                      {t('workspaceEditorCancelEdit')}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => void saveTab(focusedTab.id, trimmedRoot)}
-                      disabled={
-                        focusedTab.loading || focusedTab.content === focusedTab.savedContent
-                      }
-                      className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[12px] text-ds-muted transition hover:bg-ds-hover/60 hover:text-ds-ink disabled:opacity-45"
-                    >
-                      <Save className="h-3.5 w-3.5" strokeWidth={1.85} />
-                      {t('workspaceEditorSave')}
-                    </button>
-                  </>
-                )}
-              </div>
-            ) : null}
-          </div>
+          {!splitEnabled ? (
+            <>
+              <EditorTabStrip
+                {...tabStripShared}
+                tabs={primaryTabs}
+                currentTabId={activeTabId}
+                paneFocused
+                trailing={paneActions(primaryTab, 'primary')}
+                onSelect={(tabId) => selectTab(tabId)}
+                onClose={(tabId) => handleCloseTab(tabId, 'primary')}
+                onContextMenu={(event, path) => openFileMenu(event, path, 'primary')}
+              />
+              {focusedTab ? (
+                <EditorBreadcrumb path={focusedTab.path} workspaceRoot={trimmedRoot} />
+              ) : null}
+            </>
+          ) : null}
 
           {primaryTab || (splitEnabled && secondaryTab) ? (
             <div ref={splitHostRef} className="flex min-h-0 flex-1 overflow-hidden">
@@ -651,6 +939,23 @@ export function WorkspaceEditorPanel({
                 className="flex min-h-0 min-w-0 flex-col overflow-hidden"
                 style={splitEnabled ? { width: `${splitRatio * 100}%` } : { width: '100%' }}
               >
+                {splitEnabled ? (
+                  <>
+                    <EditorTabStrip
+                      {...tabStripShared}
+                      tabs={primaryTabs}
+                      currentTabId={primaryTab?.id ?? null}
+                      paneFocused={focusedPane === 'primary'}
+                      trailing={paneActions(primaryTab, 'primary')}
+                      onSelect={(tabId) => selectTab(tabId, 'primary')}
+                      onClose={(tabId) => handleCloseTab(tabId, 'primary')}
+                      onContextMenu={(event, path) => openFileMenu(event, path, 'primary')}
+                    />
+                    {primaryTab ? (
+                      <EditorBreadcrumb path={primaryTab.path} workspaceRoot={trimmedRoot} />
+                    ) : null}
+                  </>
+                ) : null}
                 <EditorPaneView
                   ref={primaryPaneRef}
                   tab={primaryTab}
@@ -658,7 +963,9 @@ export function WorkspaceEditorPanel({
                   patch={
                     primaryTab ? lookupPatchForPath(patchMap, primaryTab.path) : undefined
                   }
-                  isEditing={Boolean(primaryTab && editingTabId === primaryTab.id)}
+                  isEditing={Boolean(
+                    primaryTab && editingTabId === primaryTab.id && !primaryTab.truncated
+                  )}
                   focused={!splitEnabled || focusedPane === 'primary'}
                   showFocusChrome={splitEnabled}
                   externalOpenError={externalOpenError}
@@ -681,6 +988,19 @@ export function WorkspaceEditorPanel({
                     />
                   </div>
                   <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-ds-sidebar">
+                    <EditorTabStrip
+                      {...tabStripShared}
+                      tabs={secondaryTabs}
+                      currentTabId={secondaryTab?.id ?? null}
+                      paneFocused={focusedPane === 'secondary'}
+                      trailing={paneActions(secondaryTab, 'secondary')}
+                      onSelect={(tabId) => selectTab(tabId, 'secondary')}
+                      onClose={(tabId) => handleCloseTab(tabId, 'secondary')}
+                      onContextMenu={(event, path) => openFileMenu(event, path, 'secondary')}
+                    />
+                    {secondaryTab ? (
+                      <EditorBreadcrumb path={secondaryTab.path} workspaceRoot={trimmedRoot} />
+                    ) : null}
                     <EditorPaneView
                       ref={secondaryPaneRef}
                       tab={secondaryTab}
@@ -690,7 +1010,11 @@ export function WorkspaceEditorPanel({
                           ? lookupPatchForPath(patchMap, secondaryTab.path)
                           : undefined
                       }
-                      isEditing={Boolean(secondaryTab && editingTabId === secondaryTab.id)}
+                      isEditing={Boolean(
+                        secondaryTab &&
+                          editingTabId === secondaryTab.id &&
+                          !secondaryTab.truncated
+                      )}
                       focused={focusedPane === 'secondary'}
                       showFocusChrome={splitEnabled}
                       externalOpenError={externalOpenError}

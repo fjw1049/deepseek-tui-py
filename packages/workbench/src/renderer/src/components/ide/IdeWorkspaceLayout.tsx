@@ -34,9 +34,11 @@ import {
   type IdeCenterTab
 } from '../../lib/workbench-layout-mode'
 import { workspaceLabelFromPath } from '../../lib/workspace-label'
+import { IDE_QUICK_OPEN_EVENT } from '../../lib/workspace-editor-events'
 import { useWorkspaceEditorStore } from '../../store/workspace-editor-store'
+import { useGitWorkingChanges } from '../../hooks/use-git-working-changes'
 import { IdeProjectPicker, type IdeProjectOption } from './IdeProjectPicker'
-import { IdeWorkspaceSearchSidebar } from './IdeWorkspaceSearchSidebar'
+import { IdeQuickOpenPalette } from './IdeQuickOpenPalette'
 
 const WorkspaceEditorPanel = lazy(() =>
   import('../workspace-editor/WorkspaceEditorPanel').then((module) => ({
@@ -63,7 +65,34 @@ type Props = {
   onRequestedCenterTabConsumed?: () => void
 }
 
-type ActivityItem = IdeCenterTab
+const CHANGES_LIST_WIDTH_KEY = 'deepseekgui.layout.ideChangesListWidth'
+const CHANGES_LIST_DEFAULT = 240
+const CHANGES_LIST_MIN = 180
+const CHANGES_LIST_MAX = 420
+
+function clampChangesListWidth(width: number): number {
+  return Math.min(CHANGES_LIST_MAX, Math.max(CHANGES_LIST_MIN, Math.round(width)))
+}
+
+function readStoredChangesListWidth(): number {
+  try {
+    const raw = window.localStorage.getItem(CHANGES_LIST_WIDTH_KEY)
+    if (!raw) return CHANGES_LIST_DEFAULT
+    const parsed = Number(raw)
+    if (!Number.isFinite(parsed)) return CHANGES_LIST_DEFAULT
+    return clampChangesListWidth(parsed)
+  } catch {
+    return CHANGES_LIST_DEFAULT
+  }
+}
+
+function persistChangesListWidth(width: number): void {
+  try {
+    window.localStorage.setItem(CHANGES_LIST_WIDTH_KEY, String(clampChangesListWidth(width)))
+  } catch {
+    /* ignore */
+  }
+}
 
 function PanelFallback(): ReactElement {
   return <div className="h-full w-full bg-ds-canvas" />
@@ -72,11 +101,13 @@ function PanelFallback(): ReactElement {
 function ActivityButton({
   active,
   label,
+  badge,
   children,
   onClick
 }: {
   active: boolean
   label: string
+  badge?: number
   children: ReactNode
   onClick: () => void
 }): ReactElement {
@@ -87,13 +118,18 @@ function ActivityButton({
       aria-label={label}
       aria-pressed={active}
       onClick={onClick}
-      className={`inline-flex h-9 w-9 items-center justify-center rounded-md transition ${
+      className={`relative inline-flex h-9 w-9 items-center justify-center rounded-md transition ${
         active
           ? 'bg-ds-hover text-ds-ink'
           : 'text-ds-faint hover:bg-ds-hover/55 hover:text-ds-muted'
       }`}
     >
       {children}
+      {badge && badge > 0 ? (
+        <span className="absolute right-0.5 top-0.5 min-w-[14px] rounded-full bg-ds-ink px-1 text-[9px] font-semibold leading-[14px] text-ds-canvas">
+          {badge > 99 ? '99+' : badge}
+        </span>
+      ) : null}
     </button>
   )
 }
@@ -113,28 +149,36 @@ export function IdeWorkspaceLayout({
 }: Props): ReactElement {
   const { t } = useTranslation('common')
   const openEditorFile = useWorkspaceEditorStore((s) => s.openFile)
-  const activeTabPath = useWorkspaceEditorStore((s) => {
-    const active = s.tabs.find((tab) => tab.id === s.activeTabId)
-    return active?.path ?? null
-  })
 
   const [centerTab, setCenterTab] = useState<IdeCenterTab>(readStoredIdeCenterTab)
   /** VS Code-style: click the active activity icon again to collapse the side panel. */
   const [activitySidebarVisible, setActivitySidebarVisible] = useState(
     readStoredIdeActivitySidebarVisible
   )
-  const [searchQuery, setSearchQuery] = useState('')
+  const [quickOpenOpen, setQuickOpenOpen] = useState(false)
   const [chatRailVisible, setChatRailVisible] = useState(true)
   const [chatRailWidth, setChatRailWidth] = useState(readStoredIdeChatRailWidth)
+  const [changesListWidth, setChangesListWidth] = useState(readStoredChangesListWidth)
+  const [changesFocusPath, setChangesFocusPath] = useState<string | null>(null)
   const resizeStateRef = useRef<{
     pointerId: number
     startX: number
     startWidth: number
     pendingWidth: number
   } | null>(null)
+  const changesListResizeRef = useRef<{
+    pointerId: number
+    startX: number
+    startWidth: number
+    pendingWidth: number
+  } | null>(null)
+  const { result: gitChanges } = useGitWorkingChanges(workspaceRoot)
+  const changeBadge = gitChanges?.ok
+    ? gitChanges.files.length
+    : blocks.filter((block) => block.kind === 'tool' && block.toolKind === 'file_change').length
 
   useEffect(() => {
-    persistIdeCenterTab(centerTab)
+    persistIdeCenterTab(centerTab === 'search' ? 'files' : centerTab)
   }, [centerTab])
 
   useEffect(() => {
@@ -143,10 +187,29 @@ export function IdeWorkspaceLayout({
 
   useEffect(() => {
     if (!requestedCenterTab) return
+    if (requestedCenterTab === 'search') {
+      setQuickOpenOpen(true)
+      onRequestedCenterTabConsumed?.()
+      return
+    }
     setCenterTab(requestedCenterTab)
     setActivitySidebarVisible(true)
     onRequestedCenterTabConsumed?.()
   }, [onRequestedCenterTabConsumed, requestedCenterTab])
+
+  useEffect(() => {
+    const onOpenChanges = (event: Event): void => {
+      const path = (event as CustomEvent<{ path?: string }>).detail?.path
+      if (typeof path === 'string' && path.trim()) setChangesFocusPath(path.trim())
+    }
+    const onQuickOpen = (): void => setQuickOpenOpen((open) => !open)
+    window.addEventListener('deepseekgui:open-changes-panel', onOpenChanges)
+    window.addEventListener(IDE_QUICK_OPEN_EVENT, onQuickOpen)
+    return () => {
+      window.removeEventListener('deepseekgui:open-changes-panel', onOpenChanges)
+      window.removeEventListener(IDE_QUICK_OPEN_EVENT, onQuickOpen)
+    }
+  }, [])
 
   const selectActivity = useCallback(
     (item: ActivityItem) => {
@@ -157,13 +220,57 @@ export function IdeWorkspaceLayout({
     [activitySidebarVisible, centerTab]
   )
 
-  const handleSelectSearchFile = useCallback(
+  const handleQuickOpenFile = useCallback(
     (path: string) => {
-      // Stay on search so the result list remains; the editor (hideTree) opens the hit.
+      setQuickOpenOpen(false)
+      setCenterTab('files')
+      setActivitySidebarVisible(true)
       void openEditorFile(path, workspaceRoot)
     },
     [openEditorFile, workspaceRoot]
   )
+
+  const handleRevealChangeFile = useCallback(
+    (path: string, line?: number) => {
+      onOpenFileInEditor(path, line)
+    },
+    [onOpenFileInEditor]
+  )
+
+  const beginChangesListResize = (event: ReactPointerEvent<HTMLDivElement>): void => {
+    if (event.button !== 0) return
+    event.preventDefault()
+    event.stopPropagation()
+    changesListResizeRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startWidth: changesListWidth,
+      pendingWidth: changesListWidth
+    }
+    const onMove = (moveEvent: PointerEvent): void => {
+      const state = changesListResizeRef.current
+      if (!state || moveEvent.pointerId !== state.pointerId) return
+      const next = clampChangesListWidth(state.startWidth + moveEvent.clientX - state.startX)
+      state.pendingWidth = next
+      setChangesListWidth(next)
+    }
+    const onEnd = (endEvent: PointerEvent): void => {
+      const state = changesListResizeRef.current
+      if (!state || endEvent.pointerId !== state.pointerId) return
+      persistChangesListWidth(state.pendingWidth)
+      changesListResizeRef.current = null
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onEnd)
+      window.removeEventListener('pointercancel', onEnd)
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+    }
+    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onEnd)
+    window.addEventListener('pointercancel', onEnd)
+  }
 
   const beginChatRailResize = (event: ReactPointerEvent<HTMLDivElement>): void => {
     if (event.button !== 0) return
@@ -200,11 +307,9 @@ export function IdeWorkspaceLayout({
     window.addEventListener('pointercancel', onEnd)
   }
 
-  const showSearchSidebar = centerTab === 'search' && activitySidebarVisible
-  // Hide the explorer tree when: search owns the list, or the activity panel is collapsed.
-  const editorHideTree =
-    !activitySidebarVisible || centerTab === 'search' || centerTab === 'changes'
-  const showChangesPanel = centerTab === 'changes' && activitySidebarVisible
+  const showChangesList = centerTab === 'changes' && activitySidebarVisible
+  const showChangesDiff = centerTab === 'changes'
+  const editorHideTree = !activitySidebarVisible || centerTab === 'changes'
 
   const projectName =
     projectLabel?.trim() ||
@@ -214,7 +319,7 @@ export function IdeWorkspaceLayout({
   const showProjectPicker = Boolean(onSelectProject)
 
   return (
-    <div className="ds-ide-workspace flex h-full min-h-0 min-w-0 flex-1 flex-col bg-ds-canvas text-ds-ink">
+    <div className="ds-ide-workspace relative flex h-full min-h-0 min-w-0 flex-1 flex-col bg-ds-canvas text-ds-ink">
       <header className="ds-workbench-topbar ds-surface-divider relative z-10 shrink-0">
         <div className="ds-ide-topbar__inner">
           <div className="ds-ide-topbar__leading min-w-0">
@@ -281,47 +386,77 @@ export function IdeWorkspaceLayout({
           <ActivityButton
             active={centerTab === 'changes' && activitySidebarVisible}
             label={t('ideActivityChanges')}
+            badge={changeBadge}
             onClick={() => selectActivity('changes')}
           >
             <FileEdit className="h-4 w-4" strokeWidth={1.85} />
           </ActivityButton>
           <ActivityButton
-            active={centerTab === 'search' && activitySidebarVisible}
+            active={quickOpenOpen}
             label={t('ideActivitySearch')}
-            onClick={() => selectActivity('search')}
+            onClick={() => setQuickOpenOpen((open) => !open)}
           >
             <Search className="h-4 w-4" strokeWidth={1.85} />
           </ActivityButton>
         </nav>
 
-        <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
-          {showSearchSidebar ? (
-            <IdeWorkspaceSearchSidebar
-              workspaceRoot={workspaceRoot}
-              query={searchQuery}
-              onQueryChange={setSearchQuery}
-              selectedPath={activeTabPath}
-              onSelectFile={handleSelectSearchFile}
-            />
-          ) : null}
+          <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
+            {showChangesList ? (
+              <div
+                className="ds-ide-changes-list relative flex h-full min-h-0 shrink-0 flex-col"
+                style={{ width: changesListWidth }}
+              >
+                <Suspense fallback={<PanelFallback />}>
+                  <ChangeInspector
+                    variant="list"
+                    blocks={blocks}
+                    className="h-full min-h-0"
+                    onRevealInEditor={handleRevealChangeFile}
+                    requestedPath={changesFocusPath}
+                    onRequestedPathConsumed={() => setChangesFocusPath(null)}
+                  />
+                </Suspense>
+                <div
+                  role="separator"
+                  aria-orientation="vertical"
+                  aria-label={t('inspectorResizeSplit')}
+                  className="ds-no-drag absolute inset-y-0 right-0 z-20 w-2 translate-x-1/2 cursor-col-resize touch-none"
+                  onPointerDown={beginChangesListResize}
+                />
+              </div>
+            ) : null}
 
-          <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-            <Suspense fallback={<PanelFallback />}>
-              {showChangesPanel ? (
-                <ChangeInspector
-                  variant="review"
-                  blocks={blocks}
-                  className="h-full min-h-0"
-                />
-              ) : (
-                <WorkspaceEditorPanel
-                  workspaceRoot={workspaceRoot}
-                  blocks={blocks}
-                  hideTree={editorHideTree}
-                />
-              )}
-            </Suspense>
-          </div>
+            <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+              <div
+                className={
+                  showChangesDiff
+                    ? 'pointer-events-none invisible absolute inset-0'
+                    : 'flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden'
+                }
+                aria-hidden={showChangesDiff || undefined}
+              >
+                <Suspense fallback={<PanelFallback />}>
+                  <WorkspaceEditorPanel
+                    workspaceRoot={workspaceRoot}
+                    blocks={blocks}
+                    hideTree={editorHideTree}
+                  />
+                </Suspense>
+              </div>
+              {showChangesDiff ? (
+                <div className="ds-ide-changes-stage flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+                  <Suspense fallback={<PanelFallback />}>
+                    <ChangeInspector
+                      variant="diff"
+                      blocks={blocks}
+                      className="h-full min-h-0"
+                      requestedPath={changesFocusPath}
+                      onRequestedPathConsumed={() => setChangesFocusPath(null)}
+                    />
+                  </Suspense>
+                </div>
+              ) : null}
+            </div>
 
           {chatRailVisible ? (
             <aside
@@ -365,6 +500,13 @@ export function IdeWorkspaceLayout({
           ) : null}
         </div>
       </div>
+      {quickOpenOpen ? (
+        <IdeQuickOpenPalette
+          workspaceRoot={workspaceRoot}
+          onSelectFile={handleQuickOpenFile}
+          onClose={() => setQuickOpenOpen(false)}
+        />
+      ) : null}
     </div>
   )
 }

@@ -48,6 +48,9 @@ type Props = {
   width: number
   workspaceRoot: string
   blocks: ChatBlock[]
+  /** Select this path in Changes when the panel opens from a file_change jump. */
+  changesFocusPath?: string | null
+  onChangesFocusPathConsumed?: () => void
   devPreviewBlocks: ChatBlock[]
   latestDevPreviewUrl: string | null
   preferredPreviewFilePath?: string | null
@@ -118,6 +121,8 @@ export function WorkbenchRightSidebar({
   width,
   workspaceRoot,
   blocks,
+  changesFocusPath = null,
+  onChangesFocusPathConsumed,
   devPreviewBlocks,
   latestDevPreviewUrl,
   preferredPreviewFilePath = null,
@@ -193,6 +198,8 @@ export function WorkbenchRightSidebar({
         <ChangeInspector
           blocks={blocks}
           className="h-full max-h-full w-full flex-col"
+          requestedPath={changesFocusPath}
+          onRequestedPathConsumed={onChangesFocusPathConsumed}
         />
       </Suspense>
     )
