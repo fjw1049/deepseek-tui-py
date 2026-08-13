@@ -441,9 +441,7 @@ export function FloatingComposer({
       ? t('workspaceRequiredToCreateThread')
       : busy
         ? t('composerQueuePlaceholder')
-        : compactChrome
-          ? ''
-          : t('composerDefaultPlaceholder')
+        : ''
   const primaryActionDisabled = !canSend || voicePhase !== 'idle'
 
   const slashCommands = useMemo<SlashCommand[]>(() => {
