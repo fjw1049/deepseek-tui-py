@@ -1471,7 +1471,7 @@ export function Workbench(): ReactElement {
                         devPreviewCard={previewLaunchCard}
                       />
                     )}
-                    <div className="mx-auto flex w-full shrink-0 px-[0.95rem] pl-[1.15rem] pb-0 pt-0">
+                    <div className="mx-auto flex w-full shrink-0 px-[0.95rem] pl-[1.15rem] pb-3 pt-0">
                       <ComposerStage
                         input={input}
                         setInput={setInput}

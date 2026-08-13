@@ -9543,8 +9543,8 @@ select:focus-visible,
   margin-bottom: 0.75rem;
 }
 
-/* Dock the composer to the rail floor. The shell is 14px rounded — a leftover
-   bottom gap reads as a curved shelf (square corners would hide it). */
+/* Keep a small floor gap so the 12px-rounded composer doesn't sit on the
+   window edge. Timeline spacer stays collapsed — the wrapper padding is enough. */
 .ds-ide-chat-rail .ds-timeline-composer-clearance {
   padding-bottom: 0.75rem;
 }
@@ -9555,12 +9555,6 @@ select:focus-visible,
 .ds-ide-chat-rail .ds-composer-shell,
 .ds-ide-chat-rail .ds-chat-composer {
   box-shadow: none;
-}
-
-.ds-ide-chat-rail .ds-composer-shell--compact,
-.ds-ide-chat-rail .ds-chat-composer {
-  border-bottom-left-radius: 0.75rem;
-  border-bottom-right-radius: var(--ds-radius-shell);
 }
 
 .ds-ide-chat-rail .ds-user-bubble,
