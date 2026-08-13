@@ -111,6 +111,7 @@ import { createActiveTrailStore, deriveQueryTrailItems } from './queryTrail.logi
 import { ResizableFullscreenDialog } from './ResizableFullscreenDialog'
 import {
   clipMidTurnPrefaceText,
+  shouldParseIncompleteAssistantMarkdown,
   countSubagentRailSteps,
   groupProcessRows,
   isInternalSubagentHandoffSystemText,
@@ -2715,10 +2716,14 @@ function ProcessStreamEntry({
       return <MidTurnPrefaceLine text={block.text} showIndicator={showThinkingIndicator} />
     }
     // Other assistant content that landed in the work trace (interstitial
-    // final-answer segments).
+    // final-answer segments). These are already persisted — do not keep
+    // parseIncompleteMarkdown on for the whole turn.
     return (
       <div className="ds-process-assistant-md ds-markdown text-[13.5px] leading-6 text-ds-muted">
-        <AssistantMarkdown text={block.text} streaming={processing} />
+        <AssistantMarkdown
+          text={block.text}
+          streaming={shouldParseIncompleteAssistantMarkdown(false)}
+        />
       </div>
     )
   }
@@ -3519,7 +3524,7 @@ function MessageBubble({ block }: { block: ChatBlock }): ReactElement | null {
     return <UserMessageBubble block={block} />
   }
   if (block.kind === 'assistant') {
-    const streaming = block.id === 'live-assistant'
+    const streaming = shouldParseIncompleteAssistantMarkdown(block.id === 'live-assistant')
     const createdAtLabel = block.createdAt
       ? formatMessageDateTime(block.createdAt, i18n.language, timestampFormat)
       : null

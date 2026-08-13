@@ -8,7 +8,7 @@ import { useValidatedFileReference } from '../../lib/file-reference-validation'
 import { openWorkspacePathInEditor } from '../../lib/open-workspace-path'
 import { useThreadFilesystemRoot } from '../../lib/use-thread-filesystem-root'
 import { previewWorkspaceFile } from '../../lib/workspace-file-preview'
-import { StreamdownCode } from './StreamdownCode'
+import { StreamdownCode, StreamdownInlineCode } from './StreamdownCode'
 
 /**
  * Tuned for faster, cleaner streaming:
@@ -82,6 +82,7 @@ function StreamdownLi({
 
 const components = {
   code: StreamdownCode,
+  inlineCode: StreamdownInlineCode,
   a: StreamdownLink,
   ul: StreamdownUl,
   ol: StreamdownOl,

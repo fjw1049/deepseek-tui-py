@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import type { ChatBlock } from '../../agent/types'
 import {
   clipMidTurnPrefaceText,
+  shouldParseIncompleteAssistantMarkdown,
   groupProcessRows,
   isSubagentOrchestrationToolName,
   isInternalSubagentHandoffSystemText,
@@ -200,6 +201,13 @@ describe('isInternalSubagentHandoffSystemText', () => {
       isInternalSubagentHandoffSystemText('Resuming turn with 1 sub-agent completion(s)')
     ).toBe(true)
     expect(isInternalSubagentHandoffSystemText('Workflow completed ◆ Workflow: x')).toBe(false)
+  })
+})
+
+describe('shouldParseIncompleteAssistantMarkdown', () => {
+  it('is only true for the live answer bubble', () => {
+    expect(shouldParseIncompleteAssistantMarkdown(true)).toBe(true)
+    expect(shouldParseIncompleteAssistantMarkdown(false)).toBe(false)
   })
 })
 

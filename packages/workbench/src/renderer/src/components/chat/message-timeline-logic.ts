@@ -246,6 +246,15 @@ export function countSubagentRailSteps(items: StepFlowItem[]): number {
   }).length
 }
 
+/**
+ * Incomplete-markdown parsing belongs only on the live answer bubble.
+ * Settled process-rail text must stay static or unclosed `**` / `` ` ``
+ * get promoted into fake fenced blocks mid-turn.
+ */
+export function shouldParseIncompleteAssistantMarkdown(isLiveAnswer: boolean): boolean {
+  return isLiveAnswer
+}
+
 /** Soft cap for process-rail mid-turn prefaces (one short storyline line). */
 export const MID_TURN_PREFACE_MAX_CHARS = 160
 

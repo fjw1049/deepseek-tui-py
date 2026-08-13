@@ -25,6 +25,18 @@ const LANGUAGE_REGEX = /language-([^\s]+)/
 
 type CodeProps = DetailedHTMLProps<HTMLAttributes<HTMLElement>, HTMLElement> & {
   node?: Element | undefined
+  'data-block'?: string | boolean
+}
+
+/**
+ * Streamdown unwraps `<pre>` and stamps `data-block` on the inner `code`.
+ * That flag — not source-map line numbers — is the only safe “this is a fence”
+ * signal. Incomplete markdown can give an inline span a multi-line position
+ * while still parenting it under `<p>`; treating that as a block emits a
+ * `<div>` inside a paragraph and triggers a hydration warning.
+ */
+export function isStreamdownFencedCode(props: object): boolean {
+  return Object.hasOwn(props, 'data-block')
 }
 
 type MarkdownPoint = { line?: number; column?: number }
@@ -148,30 +160,42 @@ function CodeBlock({
   )
 }
 
-function CodeComponent({ node, className, children, ...props }: CodeProps) {
-  const inline = node?.position?.start?.line === node?.position?.end?.line
-
-  if (inline) {
-    const text = extractText(children)
-    const fileReference = inlineFileReference(text)
-    if (fileReference) {
-      return (
-        <InlineFileReferenceCode
-          text={fileReference.text}
-          target={fileReference.target}
-          className={className}
-        />
-      )
-    }
-
+function InlineCodeComponent({
+  node: _node,
+  className,
+  children,
+  ...props
+}: CodeProps): ReactNode {
+  const { 'data-block': _dataBlock, ...rest } = props
+  const text = extractText(children)
+  const fileReference = inlineFileReference(text)
+  if (fileReference) {
     return (
-      <code
-        className={className ? `ds-code-inline ${className}` : 'ds-code-inline'}
-        data-streamdown="inline-code"
-        {...props}
-      >
+      <InlineFileReferenceCode
+        text={fileReference.text}
+        target={fileReference.target}
+        className={className}
+      />
+    )
+  }
+
+  return (
+    <code
+      className={className ? `ds-code-inline ${className}` : 'ds-code-inline'}
+      data-streamdown="inline-code"
+      {...rest}
+    >
+      {children}
+    </code>
+  )
+}
+
+function FencedCodeComponent({ node: _node, className, children, ...props }: CodeProps): ReactNode {
+  if (!isStreamdownFencedCode(props)) {
+    return (
+      <InlineCodeComponent className={className} {...props}>
         {children}
-      </code>
+      </InlineCodeComponent>
     )
   }
 
@@ -186,10 +210,15 @@ function CodeComponent({ node, className, children, ...props }: CodeProps) {
   return <CodeBlock code={code} language={language} />
 }
 
-const MemoCode = memo(CodeComponent, (prev, next) => {
+const MemoFencedCode = memo(FencedCodeComponent, (prev, next) => {
   return prev.className === next.className && sameNodePosition(prev.node, next.node)
 })
 
-MemoCode.displayName = 'StreamdownCode'
+const MemoInlineCode = memo(InlineCodeComponent, (prev, next) => {
+  return prev.className === next.className && sameNodePosition(prev.node, next.node)
+})
 
-export { MemoCode as StreamdownCode }
+MemoFencedCode.displayName = 'StreamdownCode'
+MemoInlineCode.displayName = 'StreamdownInlineCode'
+
+export { MemoFencedCode as StreamdownCode, MemoInlineCode as StreamdownInlineCode }
