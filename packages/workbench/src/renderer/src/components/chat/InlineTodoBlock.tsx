@@ -54,9 +54,7 @@ function TodoItemRow({ item }: { item: TodoItemView }): ReactElement {
 export function InlineTodoBlock({ session, active = false, className = '' }: Props): ReactElement {
   const { t } = useTranslation('common')
   const count = session.items.length
-  const resolvedCount = session.items.filter(
-    (item) => item.status === 'completed' || item.status === 'cancelled'
-  ).length
+  const completedCount = session.items.filter((item) => item.status === 'completed').length
   const { openItems, completedItems } = useMemo(() => {
     const open: TodoItemView[] = []
     const done: TodoItemView[] = []
@@ -81,7 +79,7 @@ export function InlineTodoBlock({ session, active = false, className = '' }: Pro
   }, [session.anchorBlockId])
 
   const statusLabel = session.isComplete
-    ? t('todoInlineDone', { count })
+    ? t('todoInlineDone', { count: completedCount })
     : active
       ? t('todoInlineWorking', { count })
       : t('todoInlineInProgress')
@@ -113,7 +111,7 @@ export function InlineTodoBlock({ session, active = false, className = '' }: Pro
           ].join(' ')}
           aria-hidden
         >
-          {session.isComplete ? '✓' : resolvedCount}
+          {session.isComplete ? '✓' : completedCount}
         </span>
         <span className="min-w-0 flex-1">
           <span className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
@@ -133,7 +131,7 @@ export function InlineTodoBlock({ session, active = false, className = '' }: Pro
             </span>
             {count > 0 ? (
               <span className="text-[13px] tabular-nums text-ds-faint">
-                {t('todoInlineProgress', { done: resolvedCount, total: count })}
+                {t('todoInlineProgress', { done: completedCount, total: count })}
               </span>
             ) : null}
           </span>
@@ -178,7 +176,7 @@ export function InlineTodoBlock({ session, active = false, className = '' }: Pro
                 ) : (
                   <ChevronRight className="h-3.5 w-3.5 shrink-0 opacity-45" strokeWidth={1.8} />
                 )}
-                <span>{t('todoInlineCompletedFold', { count: completedItems.length })}</span>
+                <span>{t('todoInlineCompletedFold', { count: completedCount })}</span>
               </button>
               {completedExpanded ? (
                 <ul className="flex flex-col gap-1 border-l-2 border-ds-border-muted/35 pl-3">

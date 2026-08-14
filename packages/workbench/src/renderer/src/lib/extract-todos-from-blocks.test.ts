@@ -78,9 +78,30 @@ describe('buildTodoSessionForTurn', () => {
 
     const session = buildTodoSessionForTurn(blocks)
     expect(session?.isComplete).toBe(true)
-    expect(session?.completionPct).toBe(100)
+    expect(session?.completionPct).toBe(50)
     expect(session?.inProgressId).toBeNull()
     expect(session?.items[1]?.status).toBe('cancelled')
+  })
+
+  it('counts only completed items toward progress', () => {
+    const blocks: ChatBlock[] = [
+      todoBlock('todo-write', 'checklist', [
+        { id: '1', content: 'A', status: 'completed' },
+        { id: '2', content: 'B', status: 'completed' },
+        { id: '3', content: 'C', status: 'completed' },
+        { id: '4', content: 'D', status: 'completed' },
+        { id: '5', content: 'E', status: 'completed' },
+        { id: '6', content: 'F', status: 'cancelled' },
+        { id: '7', content: 'G', status: 'cancelled' },
+        { id: '8', content: 'H', status: 'cancelled' },
+        { id: '9', content: 'I', status: 'cancelled' }
+      ])
+    ]
+
+    const session = buildTodoSessionForTurn(blocks)
+    expect(session?.isComplete).toBe(true)
+    expect(session?.items.filter((item) => item.status === 'completed')).toHaveLength(5)
+    expect(session?.completionPct).toBe(56)
   })
 
   it('replaces list on a second write in the same turn', () => {

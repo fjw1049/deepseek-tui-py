@@ -72,6 +72,10 @@ function blockCanAdvertiseDevPreview(block: ChatBlock, text: string): boolean {
 function urlLooksLikePagePreview(url: string): boolean {
   try {
     const parsed = new URL(url)
+    // Bare 127.0.0.1 / localhost (port 80/443) is not a frontend preview.
+    // Security notes and SSRF examples used to auto-open that dead URL.
+    const port = parsed.port
+    if (!port || port === '80' || port === '443') return false
     const pathname = decodeURIComponent(parsed.pathname).toLowerCase()
     if (/^\/(?:health|metrics|readyz?|livez?|v\d+)(?:\/|$)/.test(pathname)) return false
     if (/\/(?:health|metrics|readyz?|livez?)(?:\/|$)/.test(pathname)) return false

@@ -150,10 +150,9 @@ export function isTodoToolBlock(block: ChatBlock): block is Extract<ChatBlock, {
 }
 
 function snapshotFromItems(items: TodoItemView[]): Omit<TodoSidebarSnapshot, never> {
-  // Resolved = completed or cancelled. Progress uses that so a turn-end
-  // reconcile to cancelled can show a fully closed checklist (N/N).
-  const resolved = items.filter((item) => isResolvedStatus(item.status)).length
-  const completionPct = items.length ? Math.round((resolved * 100) / items.length) : 0
+  // Percent is completed-only. Cancelled leftovers must not look like 100%.
+  const completed = items.filter((item) => item.status === 'completed').length
+  const completionPct = items.length ? Math.round((completed * 100) / items.length) : 0
   const inProgress = items.find((item) => item.status === 'in_progress')
   return {
     items,

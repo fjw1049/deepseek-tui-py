@@ -40,4 +40,16 @@ describe('extractLatestTurnDevPreviewUrls', () => {
     ]
     expect(extractLatestTurnDevPreviewUrls(blocks)).toEqual(['http://127.0.0.1:3000/'])
   })
+
+  it('does not treat bare 127.0.0.1 / localhost as a preview', () => {
+    const blocks: ChatBlock[] = [
+      { kind: 'user', id: 'u1', text: 'review ssrf' },
+      {
+        kind: 'assistant',
+        id: 'a1',
+        text: 'fetch_url 不得访问浏览器里的 127.0.0.1 和 localhost，避免打到本机服务。'
+      }
+    ]
+    expect(extractLatestTurnDevPreviewUrls(blocks)).toEqual([])
+  })
 })
