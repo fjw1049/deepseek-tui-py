@@ -10,14 +10,10 @@ import {
   useSyncExternalStore
 } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Globe2 } from 'lucide-react'
 import { useShallow } from 'zustand/react/shallow'
 import type { ChatBlock } from '../agent/types'
 import { useChatStore } from '../store/chat-store'
-import {
-  extractLatestTurnDevPreviewUrls,
-  formatDevPreviewUrlLabel
-} from '../lib/dev-preview-detection'
+import { extractLatestTurnDevPreviewUrls } from '../lib/dev-preview-detection'
 import {
   extractLatestTurnHtmlPreviewPaths
 } from '../lib/html-preview-detection'
@@ -395,9 +391,6 @@ export function Workbench(): ReactElement {
   const [htmlPreviewError, setHtmlPreviewError] = useState<string | null>(null)
   const preferredPreviewUrl = workspacePreviewUrl ?? latestDevPreviewUrl
   const preferredPreviewFilePath = workspacePreviewUrl ? workspacePreviewPath : null
-  const showDevPreviewCard =
-    route === 'chat' &&
-    latestDevPreviewUrl !== null
 
   const hasStartedConversation =
     blocks.length > 0 ||
@@ -1081,15 +1074,6 @@ export function Workbench(): ReactElement {
     openRightSidebar('preview')
   }
 
-  const openDevPreview = (): void => {
-    if (latestDevPreviewUrl) {
-      autoOpenedPreviewUrlRef.current = latestDevPreviewUrl
-      setWorkspacePreviewUrl(null)
-      setWorkspacePreviewPath(null)
-    }
-    openRightSidebar('preview')
-  }
-
   const openHtmlPreview = useCallback((): void => {
     const path = latestHtmlPreviewPath?.trim()
     if (!path) {
@@ -1189,11 +1173,6 @@ export function Workbench(): ReactElement {
   const clearPendingPreviewPicks = useCallback((): void => {
     setPendingPreviewPicks([])
   }, [])
-
-  const previewLaunchCard =
-    showDevPreviewCard && latestDevPreviewUrl ? (
-      <DevPreviewLaunchCard url={latestDevPreviewUrl} onOpen={openDevPreview} />
-    ) : null
 
   const htmlPreviewAction = useMemo(
     () =>
@@ -1514,7 +1493,6 @@ export function Workbench(): ReactElement {
                         onSelectSuggestion={(text) => setInput(text)}
                         htmlPreviewAction={htmlPreviewAction}
                         onOpenWorkspaceFile={openFileInEditor}
-                        devPreviewCard={previewLaunchCard}
                       />
                     )}
                     <div className="mx-auto flex w-full shrink-0 px-[0.95rem] pl-[1.15rem] pb-3 pt-0">
@@ -1643,7 +1621,6 @@ export function Workbench(): ReactElement {
                           onSelectSuggestion={(text) => setInput(text)}
                           htmlPreviewAction={htmlPreviewAction}
                           onOpenWorkspaceFile={openFileInEditor}
-                          devPreviewCard={previewLaunchCard}
                         />
                       </div>
                     ) : null}
@@ -1714,7 +1691,6 @@ export function Workbench(): ReactElement {
                       onSelectSuggestion={(text) => setInput(text)}
                       htmlPreviewAction={htmlPreviewAction}
                       onOpenWorkspaceFile={openFileInEditor}
-                      devPreviewCard={previewLaunchCard}
                     />
                     {showOperationColumn ? (
                       <div className="ds-dialogue-gutter shrink-0 pb-2 md:hidden">
@@ -1793,7 +1769,6 @@ export function Workbench(): ReactElement {
                     onSelectSuggestion={(text) => setInput(text)}
                     htmlPreviewAction={htmlPreviewAction}
                     onOpenWorkspaceFile={openFileInEditor}
-                    devPreviewCard={previewLaunchCard}
                   />
                   <div className="mx-auto mb-8 flex w-full shrink-0 -mt-6 pb-0 pt-0">
                     <ComposerStage
@@ -1904,45 +1879,6 @@ export function Workbench(): ReactElement {
           openSettings('general')
         }}
       />
-    </div>
-  )
-}
-
-function DevPreviewLaunchCard({
-  url,
-  onOpen
-}: {
-  url: string
-  onOpen: () => void
-}): ReactElement {
-  const { t } = useTranslation('common')
-  return (
-    <div className="flex min-h-[72px] w-full items-center gap-3 rounded-[12px] border border-ds-border-muted bg-ds-elevated/90 px-4 py-3 shadow-[0_12px_34px_rgba(0,0,0,0.07)] backdrop-blur-xl dark:border-white/[0.09] dark:bg-white/[0.045] dark:shadow-[0_18px_48px_rgba(0,0,0,0.18)]">
-      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-sky-400/20 bg-sky-500/10 text-sky-500 dark:border-sky-300/20 dark:bg-sky-300/10 dark:text-sky-300">
-        <Globe2 className="h-5 w-5" strokeWidth={1.9} />
-      </div>
-      <div className="min-w-0 flex-1">
-        <div className="truncate text-[14.5px] font-semibold text-ds-ink">
-          {t('devPreviewCardTitle')}
-        </div>
-        <div
-          className="mt-1 flex min-w-0 items-center gap-1.5 text-[12.5px] text-ds-muted"
-          title={url}
-        >
-          <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-400 shadow-[0_0_0_3px_rgba(52,211,153,0.12)]" />
-          <span className="truncate">
-            {t('devPreviewCardSubtitle')} · {formatDevPreviewUrlLabel(url)}
-          </span>
-        </div>
-      </div>
-      <button
-        type="button"
-        onClick={onOpen}
-        className="inline-flex h-9 shrink-0 items-center justify-center rounded-full bg-accent px-4 text-[13px] font-semibold text-white shadow-[0_10px_24px_rgba(0,136,255,0.22)] transition hover:brightness-110"
-        title={t('devPreviewCardOpen')}
-      >
-        {t('devPreviewCardOpen')}
-      </button>
     </div>
   )
 }

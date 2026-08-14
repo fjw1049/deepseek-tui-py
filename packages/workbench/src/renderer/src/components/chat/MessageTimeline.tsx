@@ -148,8 +148,6 @@ type Props = {
   htmlPreviewAction?: { path: string; onOpen: () => void } | null
   /** Open a workspace file in the editor panel (final MD report, etc.). */
   onOpenWorkspaceFile?: (path: string, line?: number) => void
-  /** Localhost / URL web preview card (not a workspace file). */
-  devPreviewCard?: ReactElement | null
   stageCentered?: boolean
   useChatStageWidth?: boolean
   withOperationColumn?: boolean
@@ -272,7 +270,6 @@ export function MessageTimeline({
   onSelectSuggestion,
   htmlPreviewAction = null,
   onOpenWorkspaceFile,
-  devPreviewCard,
   stageCentered = false,
   useChatStageWidth = true,
   withOperationColumn = false,
@@ -721,7 +718,6 @@ export function MessageTimeline({
               reasoningDurationMs={reasoningDurationMs}
               htmlPreviewAction={isLatestTurn ? htmlPreviewAction : null}
               onOpenWorkspaceFile={onOpenWorkspaceFile}
-              devPreviewCard={isLatestTurn ? devPreviewCard : null}
               viewportRef={containerRef}
               turnDiffSnapshot={
                 isLatestTurn && latestTurnDiffId
@@ -759,7 +755,6 @@ export function MessageTimeline({
             live={live}
             htmlPreviewAction={htmlPreviewAction}
             onOpenWorkspaceFile={onOpenWorkspaceFile}
-            devPreviewCard={devPreviewCard}
             viewportRef={containerRef}
             liveStartedAt={
               currentTurnUserId &&
@@ -965,7 +960,6 @@ function MessageTurn({
   reasoningDurationMs,
   htmlPreviewAction,
   onOpenWorkspaceFile,
-  devPreviewCard,
   viewportRef,
   turnDiffSnapshot,
   turnDiffTurnId = null,
@@ -981,7 +975,6 @@ function MessageTurn({
   reasoningDurationMs?: number
   htmlPreviewAction?: { path: string; onOpen: () => void } | null
   onOpenWorkspaceFile?: (path: string, line?: number) => void
-  devPreviewCard?: ReactElement | null
   viewportRef: RefObject<HTMLDivElement | null>
   /** Ledger snapshot for the latest turn (live or just-completed). */
   turnDiffSnapshot?: TurnDiffSnapshot
@@ -1184,8 +1177,6 @@ function MessageTurn({
               onOpen={htmlPreviewAction.onOpen}
             />
           ) : null}
-
-          {!isProcessing && devPreviewCard ? devPreviewCard : null}
         </>
       )}
     </div>
@@ -1202,7 +1193,6 @@ const MemoMessageTurn = memo(MessageTurn, (prev, next) => (
   prev.reasoningDurationMs === next.reasoningDurationMs &&
   prev.htmlPreviewAction === next.htmlPreviewAction &&
   prev.onOpenWorkspaceFile === next.onOpenWorkspaceFile &&
-  prev.devPreviewCard === next.devPreviewCard &&
   prev.viewportRef === next.viewportRef &&
   prev.turnDiffSnapshot === next.turnDiffSnapshot &&
   prev.turnDiffTurnId === next.turnDiffTurnId &&
