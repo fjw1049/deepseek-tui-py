@@ -359,6 +359,7 @@ export function Workbench(): ReactElement {
   const previewThreadId = useRef<string | null>(activeThreadId)
   const inputRef = useRef('')
   const autoOpenedPreviewUrlRef = useRef<string | null>(null)
+  const previewAutoOpenSuppressedRef = useRef(false)
   const lastAutoDiagnosticsErrorRef = useRef('')
   const devPreviewBlocks = useMemo<ChatBlock[]>(() => {
     const liveText = liveAssistant.trim()
@@ -788,6 +789,7 @@ export function Workbench(): ReactElement {
     if (previewThreadId.current === activeThreadId) return
     previewThreadId.current = activeThreadId
     autoOpenedPreviewUrlRef.current = null
+    previewAutoOpenSuppressedRef.current = false
     setWorkspacePreviewUrl(null)
     setWorkspacePreviewPath(null)
     setPendingPreviewPicks([])
@@ -799,6 +801,7 @@ export function Workbench(): ReactElement {
 
   useEffect(() => {
     if (!latestDevPreviewUrl || route !== 'chat') return
+    if (previewAutoOpenSuppressedRef.current) return
     if (autoOpenedPreviewUrlRef.current === latestDevPreviewUrl) return
     // Restored threads often already contain a preview URL — do not reopen the
     // browser panel on cold start / idle navigation. Only auto-open when a new
@@ -1057,6 +1060,9 @@ export function Workbench(): ReactElement {
   }
 
   const closeRightSidebarPanel = (): void => {
+    if (rightSidebarTab === 'preview') {
+      previewAutoOpenSuppressedRef.current = true
+    }
     closeRightSidebar()
   }
 
@@ -1068,9 +1074,11 @@ export function Workbench(): ReactElement {
 
   const togglePreviewPanel = (): void => {
     if (rightSidebarOpen && rightSidebarTab === 'preview' && !rightSidebarCollapsed) {
+      previewAutoOpenSuppressedRef.current = true
       closeRightSidebar()
       return
     }
+    previewAutoOpenSuppressedRef.current = false
     openRightSidebar('preview')
   }
 

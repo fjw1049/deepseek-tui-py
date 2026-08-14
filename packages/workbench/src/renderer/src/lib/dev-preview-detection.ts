@@ -10,8 +10,6 @@ const DEV_SERVER_OUTPUT_RE =
   /\b(?:vite v?\d|local:\s*https?:\/\/|network:\s*https?:\/\/|ready in \d+(?:\.\d+)?\s*(?:ms|s)|ready on\s+https?:\/\/|started server|server started|compiled successfully|webpack compiled|app running at|serving at|listening on\s+https?:\/\/)\b/i
 const DEV_PREVIEW_STRONG_CONTEXT_RE =
   /\b(?:preview|website|web\s*(?:app|page|site)|frontend|front-end|ui|dev\s+server|development\s+server|vite|next\s+dev|nuxt\s+dev|astro\s+dev|storybook)\b|(?:网页|页面|预览|浏览器|前端|站点|网站|开发服务器)/i
-const DEV_PREVIEW_ASSISTANT_CONTEXT_RE =
-  /\b(?:preview|website|web\s*(?:app|page|site)|frontend|front-end|ui|dev\s+server|development\s+server|vite|next\s+dev|nuxt\s+dev|astro\s+dev|storybook|served|running|started|open|visit|view)\b|(?:网页|页面|预览|浏览器|前端|站点|网站|开发服务器|本地服务|运行|启动|部署|打开|访问)/i
 const NON_PREVIEW_CONTEXT_RE =
   /\b(?:deepseek(?:-tui)?|runtime|runtime:request|health check|bearer token|sse|threads?)\b|\/(?:health|v\d+\/|metrics|readyz?|livez?)(?:\b|\/|\?)/i
 
@@ -44,7 +42,10 @@ function commandTextFromBlock(block: ChatBlock): string {
 function blockCanAdvertiseDevPreview(block: ChatBlock, text: string): boolean {
   if (block.kind === 'assistant') {
     const outputLooksLikeDevServer = DEV_SERVER_OUTPUT_RE.test(text)
-    const textLooksLikePreview = DEV_PREVIEW_ASSISTANT_CONTEXT_RE.test(text)
+    // Strong context only: words like 打开/运行/访问 are too common in
+    // ordinary replies and used to auto-open the sidebar from a mere
+    // localhost mention (SSRF examples, health checks, etc.).
+    const textLooksLikePreview = DEV_PREVIEW_STRONG_CONTEXT_RE.test(text)
     if (!outputLooksLikeDevServer && !textLooksLikePreview) return false
     if (
       NON_PREVIEW_CONTEXT_RE.test(text) &&

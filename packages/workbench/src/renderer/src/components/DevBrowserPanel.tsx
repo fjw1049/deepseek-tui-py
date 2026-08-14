@@ -316,6 +316,7 @@ export function DevBrowserPanel({
   const webviewRefs = useRef(new Map<string, DevWebviewTag>())
   const iframeLoadedUrlRef = useRef<string | null>(null)
   const preferredUrlRef = useRef<string | null>(null)
+  const dismissedPreferredUrlRef = useRef<string | null>(null)
   const detectedUrls = useMemo(() => extractDetectedDevPreviewUrls(blocks), [blocks])
   const latestDetectedUrl = detectedUrls[0] ?? null
   const useElectronWebview = typeof window.dsGui?.openExternal === 'function'
@@ -561,6 +562,7 @@ export function DevBrowserPanel({
     ): void => {
       const normalized = normalizeBrowseUrlInput(url)
       if (!normalized) return
+      dismissedPreferredUrlRef.current = null
       // Read the latest state via refs (updated every commit) so the reducer
       // stays outside the setTabs updater — side effects inside updaters are
       // double-invoked under StrictMode.
@@ -656,6 +658,7 @@ export function DevBrowserPanel({
       return
     }
     if (preferredUrlRef.current === normalizedPreferredUrl) return
+    if (dismissedPreferredUrlRef.current === normalizedPreferredUrl) return
     preferredUrlRef.current = normalizedPreferredUrl
     setAutoFollow(false)
     const filePath = preferredFilePath?.trim() || null
@@ -748,6 +751,8 @@ export function DevBrowserPanel({
     if (result.tabs === tabs) return
     setTabs(result.tabs)
     if (result.clearedSoleTab) {
+      dismissedPreferredUrlRef.current =
+        preferredUrlRef.current ?? normalizeBrowseUrlInput(activeUrl ?? '') ?? activeUrl
       setDraftUrl('')
       setLoadError(null)
       setLoading(false)
@@ -767,6 +772,7 @@ export function DevBrowserPanel({
       setLoadError(t('browserInvalidUrl'))
       return
     }
+    dismissedPreferredUrlRef.current = null
     if (!options.keepAutoFollow) setAutoFollow(false)
     stopInspectMode()
     setLoadError(null)
@@ -789,8 +795,24 @@ export function DevBrowserPanel({
     setInspectMode(true)
   }
 
+  const clearActivePage = (): void => {
+    setAutoFollow(false)
+    dismissedPreferredUrlRef.current =
+      preferredUrlRef.current ?? normalizeBrowseUrlInput(activeUrl ?? '') ?? activeUrl
+    updateActiveTab({ url: null, title: '', filePath: null })
+    setDraftUrl('')
+    setLoadError(null)
+    setLoading(false)
+    resetNavState()
+  }
+
   const submitUrl = (event: FormEvent<HTMLFormElement>): void => {
     event.preventDefault()
+    if (!draftUrl.trim()) {
+      clearActivePage()
+      return
+    }
+    dismissedPreferredUrlRef.current = null
     loadUrl(draftUrl)
   }
 
