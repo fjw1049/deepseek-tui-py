@@ -102,13 +102,12 @@ REGISTRY: list[CommandEntry] = [
     CommandEntry("/config", "Open configuration editor", _C),
     CommandEntry(
         "/mode",
-        "Switch or cycle mode (agent / plan / yolo / ask / workflow)",
+        "Switch or cycle mode (agent / plan / yolo / ask)",
         _C,
     ),
     CommandEntry("/yolo", "Enable YOLO mode", _C),
     CommandEntry("/agent", "Switch to agent mode", _C),
     CommandEntry("/plan", "Switch to plan mode", _C),
-    CommandEntry("/workflow", "Switch to workflow mode", _C),
     CommandEntry("/logout", "Clear API key", _C),
     CommandEntry("/tokens", "Show token usage", _D),
     CommandEntry("/system", "Show system prompt", _D),
@@ -363,7 +362,7 @@ def cmd_model(args: str, app: DeepSeekTUI) -> CommandResult:
 
 # ── /mode ────────────────────────────────────────────────────────────────
 
-_VALID_MODES: tuple[str, ...] = ("agent", "plan", "yolo", "ask", "workflow")
+_VALID_MODES: tuple[str, ...] = ("agent", "plan", "yolo", "ask")
 
 
 @_register("/mode")
@@ -1032,14 +1031,6 @@ def cmd_yolo(args: str, app: DeepSeekTUI) -> CommandResult:
     from deepseek_tui.engine.handle import AutoApprovalHandler
     app._engine.approval_handler = AutoApprovalHandler()
     return CommandResult(output="YOLO mode enabled — all tool approvals auto-accepted.")
-
-
-# ── /workflow ─────────────────────────────────────────────────────────────
-
-@_register("/workflow")
-def cmd_workflow(args: str, app: DeepSeekTUI) -> CommandResult:
-    """Switch to Workflow mode (shortcut for ``/mode workflow``)."""
-    return cmd_mode("workflow", app)
 
 
 # ── /logout ──────────────────────────────────────────────────────────────

@@ -1,4 +1,4 @@
-"""Terminating structured-output tool for sub-agent workflows."""
+"""Terminating structured-output tool for sub-agent runs."""
 
 from __future__ import annotations
 

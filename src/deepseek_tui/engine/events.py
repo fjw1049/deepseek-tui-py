@@ -117,19 +117,6 @@ class SubAgentMailboxEvent:
 
 
 @dataclass(frozen=True, slots=True)
-class WorkflowProgressEvent:
-    """Workflow orchestration progress while the ``workflow`` tool runs."""
-
-    tool_call_id: str
-    thread_id: str | None
-    workflow_name: str
-    snapshot: object
-    completed: bool = False
-    status: str = "running"
-    run_id: str | None = None
-
-
-@dataclass(frozen=True, slots=True)
 class SessionActivityEvent:
     """Background work snapshot (sub-agents + durable tasks)."""
 
@@ -229,7 +216,6 @@ EngineEvent = (
     | TurnCancelledEvent
     | TurnCompleteEvent
     | SubAgentMailboxEvent
-    | WorkflowProgressEvent
     | SessionActivityEvent
     | UserInputRequiredEvent
     | ModeChangedEvent

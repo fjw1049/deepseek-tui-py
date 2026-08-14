@@ -645,7 +645,7 @@ export function fanoutAggregateStatus(card: FanoutCardState): SubagentLifecycle 
   }
   if (card.workers.every((w) => w.status === 'completed')) return 'completed'
   if (card.workers.every((w) => w.status === 'cancelled')) return 'cancelled'
-  // Mixed terminal (e.g. 4 completed + 1 cancelled after workflow timeout):
+  // Mixed terminal (e.g. 4 completed + 1 cancelled after a timeout):
   // never report "running" — that stuck the composer behind a fake busy turn.
   return 'cancelled'
 }

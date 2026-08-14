@@ -57,7 +57,7 @@ export function ComposerStage(props: Props): ReactElement {
     composerProps.onSend(text)
   }
 
-  // Timeline spacer follows real composer height (ProcessTray / approvals /
+  // Timeline spacer follows real composer height (approvals /
   // queued messages) so overlapping chrome doesn't cover the last answer or
   // make the dialogue appear to jump when the tray mounts.
   useLayoutEffect(() => {

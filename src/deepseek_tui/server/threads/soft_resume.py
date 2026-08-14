@@ -1,7 +1,7 @@
 """Soft-resume reminder text for interrupted/failed Workbench turns.
 
-Builds a structured ``CONTINUE_NUDGE`` that lists resumable sub-agents,
-tasks, and workflows so the parent model prefers resume over re-spawn.
+Builds a structured ``CONTINUE_NUDGE`` that lists resumable sub-agents
+and tasks so the parent model prefers resume over re-spawn.
 """
 
 from __future__ import annotations
@@ -13,9 +13,6 @@ from deepseek_tui.tools.durable_transcript import CONTINUE_NUDGE
 _SUMMARY_LIMIT = 80
 
 _RESUMABLE_AGENT_KINDS = frozenset({"failed", "cancelled", "interrupted"})
-_RESUMABLE_WORKFLOW_STATUSES = frozenset(
-    {"failed", "cancelled", "interrupted", "timed_out"}
-)
 
 
 def _clip(text: str, limit: int = _SUMMARY_LIMIT) -> str:
@@ -54,16 +51,9 @@ def is_resumable_task(task: Any) -> bool:
     return str(value or "") in {"failed", "canceled", "timed_out"}
 
 
-def is_resumable_workflow(run: Any) -> bool:
-    status = getattr(run, "status", None)
-    value = str(getattr(status, "value", status) or "")
-    return value in _RESUMABLE_WORKFLOW_STATUSES
-
-
 def build_soft_resume_reminder(
     agents: list[Any] | None = None,
     tasks: list[Any] | None = None,
-    workflows: list[Any] | None = None,
 ) -> str:
     """Return reminder body (without ``<system-reminder>`` wrapper).
 
@@ -107,39 +97,17 @@ def build_soft_resume_reminder(
             line += f" prompt={summary_s}"
         task_lines.append(line)
 
-    workflow_lines: list[str] = []
-    for run in workflows or []:
-        if not is_resumable_workflow(run):
-            continue
-        run_id = str(getattr(run, "run_id", "") or "").strip()
-        if not run_id:
-            continue
-        status = getattr(run, "status", None)
-        status_s = str(getattr(status, "value", status) or "")
-        name = ""
-        spec = getattr(run, "spec", None)
-        if isinstance(spec, dict):
-            meta = spec.get("meta")
-            if isinstance(meta, dict) and isinstance(meta.get("name"), str):
-                name = meta["name"].strip()
-        line = f"- workflow {run_id} ({status_s})"
-        if name:
-            line += f" name={_clip(name)}"
-        workflow_lines.append(line)
-
-    if not agent_lines and not task_lines and not workflow_lines:
+    if not agent_lines and not task_lines:
         return CONTINUE_NUDGE
 
     lines.append("")
     lines.append(
         "The previous turn was cut short. The following entities can be "
         "resumed from durable checkpoints — prefer resume; do not spawn a "
-        "new sub-agent, create a new task, or start a new workflow for the "
-        "same objective:"
+        "new sub-agent or create a new task for the same objective:"
     )
     lines.extend(agent_lines)
     lines.extend(task_lines)
-    lines.extend(workflow_lines)
     if agent_lines:
         lines.append(
             'For each listed subagent, call agent with only resume="<id>" '
@@ -149,11 +117,5 @@ def build_soft_resume_reminder(
         lines.append(
             'For each listed task, call task_create with only resume="<id>" '
             "(no prompt). Do not create a new task with a fresh prompt."
-        )
-    if workflow_lines:
-        lines.append(
-            'For each listed workflow, call workflow with only run_id="<id>" '
-            "(optionally detach:true). Do not pass name/task to start a new run. "
-            "Skip completed steps; true-resume bound sub-agents when possible."
         )
     return "\n".join(lines)

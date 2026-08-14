@@ -295,7 +295,7 @@ async def test_resync_warm_engine_after_interrupted_turn(runtime_app: object) ->
             id=turn_id,
             thread_id=thread.id,
             status=RuntimeTurnStatus.INTERRUPTED,
-            input_summary="audit workflow",
+            input_summary="audit session",
             created_at=now,
             started_at=now,
             ended_at=now,
@@ -308,8 +308,8 @@ async def test_resync_warm_engine_after_interrupted_turn(runtime_app: object) ->
             turn_id=turn_id,
             kind=TurnItemKind.USER_MESSAGE,
             status=TurnItemLifecycleStatus.COMPLETED,
-            summary="audit workflow",
-            detail="audit workflow",
+            summary="audit session",
+            detail="audit session",
             started_at=now,
             ended_at=now,
         )
@@ -354,5 +354,5 @@ async def test_resync_warm_engine_after_interrupted_turn(runtime_app: object) ->
 
     assert len(synced) == 1
     assert len(synced[0]) == 3  # user + assistant(tool_use) + tool_result
-    assert synced[0][0].content[0].text == "audit workflow"
+    assert synced[0][0].content[0].text == "audit session"
     assert engine.session_messages[2].content[0].tool_use_id == "call_list"

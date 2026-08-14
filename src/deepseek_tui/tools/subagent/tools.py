@@ -311,7 +311,7 @@ async def _execute_spawn(input_data: dict[str, Any], context: ToolContext) -> To
 
         allowed_tools = sorted(FOCUS_PLUGIN_BASE)
     # NOTE: type-level default allowlist is applied in ``run_subagent_loop``
-    # (not here) so direct ``manager.spawn`` callers (tests, workflow) get
+    # (not here) so direct ``manager.spawn`` callers (tests) get
     # the same filtering as LLM-driven ``agent`` spawn calls.
     if agent_type is SubAgentType.CUSTOM and not allowed_tools:
         raise ToolError("Custom sub-agents require a non-empty allowed_tools list")

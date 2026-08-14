@@ -18,8 +18,7 @@ import type {
   UserMessageEventPayload,
   UserInputAnswer,
   UserInputQuestion,
-  UserInputRequestPayload,
-  WorkflowProgressPayload
+  UserInputRequestPayload
 } from './types'
 import type { AppSettingsV1 } from '@shared/app-settings'
 import { unwrapClawRuntimePromptForDisplay, unwrapClawUserPromptForDisplay } from '@shared/app-settings'
@@ -31,13 +30,6 @@ import {
   type SubagentCardState
 } from '../lib/subagent-mailbox'
 import { applySpawnPromptsToSubagentBlocks } from '../lib/extract-subagents-from-blocks'
-import {
-  parseWorkflowProgressPayload,
-  parseWorkflowSnapshot,
-  workflowSnapshotFromToolMeta,
-  workflowRunIdFromToolMeta
-} from '../lib/workflow-snapshot'
-import { upsertWorkflowBlock } from '../store/chat-store-runtime-helpers'
 
 function emitApprovalFromSsePayload(
   sink: ThreadEventSink,
@@ -628,19 +620,6 @@ function isSubagentMailboxItem(it: TurnItemJson): boolean {
   return it.kind === 'status' && meta?.subagent_mailbox === true
 }
 
-function isWorkflowProgressItem(it: TurnItemJson): boolean {
-  const meta = it.metadata && typeof it.metadata === 'object' ? it.metadata : undefined
-  return it.kind === 'status' && meta?.workflow_progress === true
-}
-
-/** Plain-text StatusEvent dumps of workflow progress (duplicate of WorkflowBlock). */
-function isWorkflowStatusTextItem(it: TurnItemJson): boolean {
-  if (it.kind !== 'status') return false
-  if (isWorkflowProgressItem(it)) return false
-  const text = (it.detail ?? it.summary ?? '').trim()
-  return /^(?:Workflow (?:running|completed|failed|cancelled)\b)/i.test(text)
-}
-
 /**
  * Internal orchestrator handoff status — TUI keeps it in the status bar only.
  *
@@ -664,50 +643,6 @@ function isInternalSubagentHandoffStatusItem(it: TurnItemJson): boolean {
   return /^(?:Resuming turn with \d+ sub-agent|Waiting on \d+ sub-agent)/i.test(text)
 }
 
-function readWorkflowProgressFromItem(it: TurnItemJson): WorkflowProgressPayload | null {
-  const detail = typeof it.detail === 'string' ? it.detail.trim() : ''
-  if (!detail) return null
-  try {
-    const parsed = JSON.parse(detail) as Record<string, unknown>
-    const toolCallId =
-      typeof parsed.tool_call_id === 'string'
-        ? parsed.tool_call_id
-        : typeof it.metadata === 'object' && it.metadata && typeof it.metadata.tool_call_id === 'string'
-          ? String(it.metadata.tool_call_id)
-          : ''
-    const payload = {
-      tool_call_id: toolCallId,
-      workflow_name: parsed.workflow_name,
-      snapshot: parsed.snapshot,
-      completed: parsed.completed === true || it.status === 'completed',
-      status: parsed.status,
-      run_id: parsed.run_id
-    }
-    const progress = parseWorkflowProgressPayload(payload)
-    if (progress) return progress
-    const snapshot = parseWorkflowSnapshot(parsed.snapshot)
-    if (!snapshot || !toolCallId) return null
-    return {
-      toolCallId,
-      workflowName:
-        typeof parsed.workflow_name === 'string' ? parsed.workflow_name : snapshot.name,
-      snapshot,
-      completed: parsed.completed === true || it.status === 'completed',
-      status:
-        parsed.status === 'running' ||
-        parsed.status === 'completed' ||
-        parsed.status === 'failed' ||
-        parsed.status === 'cancelled' ||
-        parsed.status === 'timed_out' ||
-        parsed.status === 'interrupted'
-          ? parsed.status
-          : undefined,
-      runId: typeof parsed.run_id === 'string' ? parsed.run_id : undefined
-    }
-  } catch {
-    return null
-  }
-}
 
 function readSubagentMailboxFromItem(it: TurnItemJson): MailboxMessageJson | null {
   const detail = typeof it.detail === 'string' ? it.detail.trim() : ''
@@ -1143,18 +1078,7 @@ export class DeepseekRuntimeProvider implements AgentProvider {
           blocks.push(toolBlockFromItem(it))
         }
       } else if (TOOL_ITEM_KINDS.has(it.kind)) {
-        const toolBlock = toolBlockFromItem(it)
-        blocks.push(toolBlock)
-        const snap = workflowSnapshotFromToolMeta(toolBlock.meta)
-        if (snap) {
-          blocks = upsertWorkflowBlock(blocks, {
-            toolCallId: it.id,
-            workflowName: snap.name,
-            snapshot: snap,
-            completed: statusFromString(it.status) !== 'running',
-            runId: workflowRunIdFromToolMeta(toolBlock.meta)
-          })
-        }
+        blocks.push(toolBlockFromItem(it))
       } else if (it.kind === 'error') {
         blocks.push({ kind: 'system', id: it.id, createdAt: itemCreatedAt(it), text: `⚠ ${it.detail ?? it.summary}` })
       } else if (isSubagentMailboxItem(it)) {
@@ -1169,17 +1093,10 @@ export class DeepseekRuntimeProvider implements AgentProvider {
             blocks = upsertSubagentBlock(blocks, subagentCards, agentId, itemCreatedAt(it))
           }
         }
-      } else if (isWorkflowProgressItem(it)) {
-        const progress = readWorkflowProgressFromItem(it)
-        if (progress) {
-          blocks = upsertWorkflowBlock(blocks, progress)
-        }
       } else if (it.kind === 'status' || it.kind === 'context_compaction') {
         if (isPhaseBridgeItem(it)) continue
         // Mount/unmount notes are session chrome (footer badge), not chat lines.
         if (it.kind === 'status' && isPluginMountStatusItem(it)) continue
-        // Workflow progress text StatusEvents duplicate the WorkflowBlock card.
-        if (it.kind === 'status' && isWorkflowStatusTextItem(it)) continue
         // Sub-agent handoff waits are orchestrator chrome (status bar / dock).
         if (it.kind === 'status' && isInternalSubagentHandoffStatusItem(it)) continue
         const text = it.summary || it.kind
@@ -1707,9 +1624,6 @@ export class DeepseekRuntimeProvider implements AgentProvider {
                   }
                   return
                 }
-                if (it && it.kind === 'status' && isWorkflowStatusTextItem(it)) {
-                  return
-                }
                 if (it && it.kind === 'status' && isInternalSubagentHandoffStatusItem(it)) {
                   return
                 }
@@ -1910,14 +1824,6 @@ export class DeepseekRuntimeProvider implements AgentProvider {
                     questions,
                     ...(taskId ? { taskId } : {})
                   })
-                }
-                return
-              }
-
-              if (ev === 'workflow.progress' && sink.onWorkflowProgress) {
-                const progress = parseWorkflowProgressPayload(payload)
-                if (progress) {
-                  sink.onWorkflowProgress(progress)
                 }
                 return
               }

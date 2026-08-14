@@ -739,17 +739,12 @@ def build_default_registry(config: Config | None = None, *, mode: str = "agent")
             registry.register(tool)
 
     if cfg.features.subagents:
-        from deepseek_tui.tools.workflow import WorkflowListTool, WorkflowTool
-
-        # Plan mode is read-only: no workflow runs, no spawning/resuming or
-        # steering agents — only waiting on existing ones (listing/reading
-        # background work goes through task_list / task_output).
+        # Plan mode is read-only: no spawning/resuming or steering agents —
+        # only waiting on existing ones (listing/reading background work
+        # goes through task_list / task_output).
         # The ``agent`` tool's action enum is generated from the allowed
         # subset, so plan mode never sees spawn/send_input in the schema;
         # ``allow_resume=False`` keeps the resume parameter out as well.
-        if mode != "plan":
-            registry.register(WorkflowTool())
-        registry.register(WorkflowListTool())
         if mode == "plan":
             registry.register(
                 AgentTool(allowed_actions=PLAN_AGENT_ACTIONS, allow_resume=False)
@@ -778,11 +773,11 @@ def build_default_registry(config: Config | None = None, *, mode: str = "agent")
     registry.register(RequestUserInputTool())
     # Plan enter/exit: agent proposes, engine asks the user, then switches mode.
     # Shared runtimes keep both registered; call-time checks enforce mode.
-    if mode != "plan" and mode != "workflow":
+    if mode != "plan":
         registry.register(EnterPlanModeTool())
     if mode == "plan":
         registry.register(ExitPlanModeTool())
-    elif mode not in ("workflow",):
+    else:
         # Agent/yolo/ask catalogs also expose exit so a mid-turn enter can
         # later exit without rebuilding a shared registry. Call-time rejects
         # exit when not in plan mode.

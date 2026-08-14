@@ -1,7 +1,7 @@
 """Per-API-key request rate limiting for outbound LLM calls.
 
 A sliding-window log keyed by an API-key fingerprint, shared process-wide
-so every caller (main turn, sub-agents, detached workflows, automations,
+so every caller (main turn, sub-agents, automations,
 compaction summaries) draws from the same per-minute budget for a given key.
 Calls over the budget fail fast with a ``StreamError`` before any request
 leaves the process — the engine surfaces it as a normal stream error.

@@ -65,9 +65,8 @@ async def _stub_executor(
 def get_real_task_executor() -> ExecutorFunc:
     """Return the real task executor that drives Engine turn loops."""
     from deepseek_tui.engine.dispatch import real_task_executor
-    from deepseek_tui.workflow.detach import wrap_task_executor_for_workflow_detach
 
-    return wrap_task_executor_for_workflow_detach(real_task_executor)
+    return real_task_executor
 
 
 class TaskManager:
@@ -257,8 +256,7 @@ class TaskManager:
         """Re-queue a resumable terminal task for transcript (or detach) resume.
 
         Clears sticky error and appends a timeline entry. Detach jobs keep
-        relying on Workflow checkpoints; plain tasks hydrate transcripts in
-        the executor.
+        their own checkpoints; plain tasks hydrate transcripts in the executor.
         """
         now = _utc_now_iso()
         async with self._lock:

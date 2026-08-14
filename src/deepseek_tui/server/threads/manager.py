@@ -43,7 +43,6 @@ from deepseek_tui.engine.events import (
     TurnCompleteEvent,
     TurnStartedEvent,
     UserInputRequiredEvent,
-    WorkflowProgressEvent,
 )
 from deepseek_tui.server.agent_segments import (
     AGENT_SEGMENT_KEY,
@@ -1878,12 +1877,11 @@ class RuntimeThreadManager:
             engine.sync_session(messages, model=thread.model)
 
     async def _build_soft_resume_reminder_text(self, thread_id: str) -> str:
-        """Collect resumable sub-agents/tasks/workflows and build the nudge."""
+        """Collect resumable sub-agents/tasks and build the nudge."""
         from deepseek_tui.server.threads.soft_resume import build_soft_resume_reminder
 
         agents: list[Any] = []
         tasks: list[Any] = []
-        workflows: list[Any] = []
         state = self._active.get(thread_id)
         if state is not None:
             sub_mgr = getattr(state.engine.tool_context, "subagent_manager", None)
@@ -1915,19 +1913,7 @@ class RuntimeThreadManager:
                             thread_id,
                             exc_info=True,
                         )
-        try:
-            from deepseek_tui.workflow.store import list_runs
-
-            workflows = list(list_runs(workspace=self.workspace, limit=20))
-        except Exception:  # noqa: BLE001 — reminder must not block turn
-            logger.debug(
-                "soft_resume_list_workflows_failed thread=%s",
-                thread_id,
-                exc_info=True,
-            )
-        return build_soft_resume_reminder(
-            agents=agents, tasks=tasks, workflows=workflows
-        )
+        return build_soft_resume_reminder(agents=agents, tasks=tasks)
 
     def _resync_warm_engine_from_store(self, thread_id: str) -> None:
         """Rehydrate a warm engine after an interrupted/failed turn.
@@ -2458,7 +2444,6 @@ class RuntimeThreadManager:
         current_reasoning_item_id: str | None = None
         current_reasoning_text = ""
         tool_items: dict[str, str] = {}  # tool_call_id -> item_id
-        workflow_items: dict[str, str] = {}  # tool_call_id -> item_id (workflow progress)
         tool_call_args: dict[str, Any] = {}  # tool_call_id -> raw arguments
         # tool_call_id -> pre-exec workspace snapshot (shell mutation detection)
         shell_watch: dict[str, ShellMutationSnapshot] = {}
@@ -3200,41 +3185,16 @@ class RuntimeThreadManager:
                     item.ended_at = now
                     if event.success:
                         item.status = TurnItemLifecycleStatus.COMPLETED
-                        if event.tool_name == "workflow":
-                            wf_meta = (
-                                event.metadata.get("workflow")
-                                if isinstance(event.metadata, dict)
-                                else None
-                            )
-                            wf_name = (
-                                wf_meta.get("name")
-                                if isinstance(wf_meta, dict)
-                                else None
-                            )
-                            label = (
-                                str(wf_name).strip()
-                                if isinstance(wf_name, str) and wf_name.strip()
-                                else "workflow"
-                            )
-                            item.summary = summarize_text(
-                                f"workflow: {label} completed", SUMMARY_LIMIT
-                            )
-                        else:
-                            item.summary = summarize_text(
-                                f"{event.tool_name}: {event.content}", SUMMARY_LIMIT
-                            )
+                        item.summary = summarize_text(
+                            f"{event.tool_name}: {event.content}", SUMMARY_LIMIT
+                        )
                     else:
                         recent_tool_had_error = True
                         item.status = TurnItemLifecycleStatus.FAILED
-                        if event.tool_name == "workflow":
-                            item.summary = summarize_text(
-                                f"workflow failed: {event.content}", SUMMARY_LIMIT
-                            )
-                        else:
-                            item.summary = summarize_text(
-                                f"{event.tool_name} failed: {event.content}",
-                                SUMMARY_LIMIT,
-                            )
+                        item.summary = summarize_text(
+                            f"{event.tool_name} failed: {event.content}",
+                            SUMMARY_LIMIT,
+                        )
                     if item.kind == TurnItemKind.FILE_CHANGE:
                         item.detail = file_change_completion_detail(
                             event.tool_name,
@@ -3346,71 +3306,6 @@ class RuntimeThreadManager:
                     None,
                     "elevation.required",
                     elevation_request_to_sse_payload(event.tool_call_id, event),
-                )
-
-            elif isinstance(event, WorkflowProgressEvent):
-                import json as _json
-
-                from deepseek_tui.workflow.models import WorkflowSnapshot
-                from deepseek_tui.workflow.models import snapshot_to_dict
-
-                snap = event.snapshot
-                snapshot_payload = (
-                    snapshot_to_dict(snap)
-                    if isinstance(snap, WorkflowSnapshot)
-                    else snap
-                )
-                payload = {
-                    "tool_call_id": event.tool_call_id,
-                    "workflow_name": event.workflow_name,
-                    "snapshot": snapshot_payload,
-                    "completed": event.completed,
-                    "status": event.status,
-                }
-                if event.run_id:
-                    payload["run_id"] = event.run_id
-                item_id = workflow_items.get(event.tool_call_id)
-                now = datetime.now(timezone.utc)
-                if item_id is None:
-                    item_id = f"item_{uuid.uuid4().hex[:8]}"
-                    workflow_items[event.tool_call_id] = item_id
-                    item = TurnItemRecord(
-                        id=item_id,
-                        turn_id=turn_id,
-                        kind=TurnItemKind.STATUS,
-                        status=TurnItemLifecycleStatus.IN_PROGRESS,
-                        summary=f"workflow:{event.workflow_name}",
-                        detail=_json.dumps(payload, default=str),
-                        metadata={"workflow_progress": True},
-                        started_at=now,
-                    )
-                    self.store.save_item(item)
-                    self._attach_item_to_turn(turn_id, item_id)
-                    await self._emit_event(
-                        thread_id,
-                        turn_id,
-                        item_id,
-                        "item.started",
-                        {"item": item.model_dump(mode="json")},
-                    )
-                else:
-                    item = self.store.load_item(item_id)
-                    item.detail = _json.dumps(payload, default=str)
-                    if event.completed:
-                        if event.status == "failed":
-                            item.status = TurnItemLifecycleStatus.FAILED
-                        elif event.status == "cancelled":
-                            item.status = TurnItemLifecycleStatus.CANCELED
-                        else:
-                            item.status = TurnItemLifecycleStatus.COMPLETED
-                        item.ended_at = now
-                    self.store.save_item(item)
-                await self._emit_event(
-                    thread_id,
-                    turn_id,
-                    item_id,
-                    "workflow.progress",
-                    payload,
                 )
 
             elif isinstance(event, StatusEvent):
@@ -3807,9 +3702,6 @@ class RuntimeThreadManager:
         await self._finalize_orphan_tool_items(
             thread_id, turn_id, tool_items, turn_status
         )
-        await self._finalize_orphan_workflow_items(
-            thread_id, turn_id, workflow_items, turn_status
-        )
 
         await flush_narration_tasks(wait_remaining=True)
 
@@ -4178,72 +4070,6 @@ class RuntimeThreadManager:
                 {"item": item.model_dump(mode="json")},
             )
         tool_items.clear()
-
-    async def _finalize_orphan_workflow_items(
-        self,
-        thread_id: str,
-        turn_id: str,
-        workflow_items: dict[str, str],
-        turn_status: RuntimeTurnStatus,
-    ) -> None:
-        """Close workflow progress items that never received a terminal event."""
-        if not workflow_items:
-            return
-        import json as _json
-
-        now = datetime.now(timezone.utc)
-        interrupted = turn_status in (
-            RuntimeTurnStatus.INTERRUPTED,
-            RuntimeTurnStatus.CANCELED,
-        )
-        workflow_status = "cancelled" if interrupted else "failed"
-        item_status = (
-            TurnItemLifecycleStatus.INTERRUPTED
-            if interrupted
-            else TurnItemLifecycleStatus.FAILED
-        )
-        event_name = "item.interrupted" if interrupted else "item.failed"
-
-        for tool_call_id, item_id in list(workflow_items.items()):
-            try:
-                item = self.store.load_item(item_id)
-            except FileNotFoundError:
-                continue
-            if item.status != TurnItemLifecycleStatus.IN_PROGRESS:
-                continue
-            payload: dict[str, Any]
-            try:
-                parsed = _json.loads(item.detail or "{}")
-                payload = parsed if isinstance(parsed, dict) else {}
-            except _json.JSONDecodeError:
-                payload = {}
-            payload["tool_call_id"] = str(payload.get("tool_call_id") or tool_call_id)
-            payload["completed"] = True
-            payload["status"] = workflow_status
-
-            item.status = item_status
-            item.summary = summarize_text(
-                f"{item.summary}: {workflow_status}",
-                SUMMARY_LIMIT,
-            )
-            item.detail = _json.dumps(payload, default=str)
-            item.ended_at = now
-            self.store.save_item(item)
-            await self._emit_event(
-                thread_id,
-                turn_id,
-                item_id,
-                event_name,
-                {"item": item.model_dump(mode="json")},
-            )
-            await self._emit_event(
-                thread_id,
-                turn_id,
-                item_id,
-                "workflow.progress",
-                payload,
-            )
-        workflow_items.clear()
 
     async def _emit_event(
         self,

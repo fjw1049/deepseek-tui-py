@@ -5,7 +5,7 @@ description: Answer questions about DeepSeek TUI itself — its tools, modes, sk
 
 # DeepSeek TUI self-reference guide
 
-You are answering a question about DeepSeek TUI itself: its tools, modes (agent/plan/yolo/workflow), approval rules, skills, MCP servers, automations, configuration, or any other part of how this app works.
+You are answering a question about DeepSeek TUI itself: its tools, modes (agent/plan/yolo/ask), approval rules, skills, MCP servers, automations, configuration, or any other part of how this app works.
 
 ## Your knowledge of DeepSeek TUI is stale by default
 
@@ -22,7 +22,7 @@ DeepSeek TUI is not in your training data in any reliable form. Never answer que
 | The user is asking about… | Check |
 |---|---|
 | What tools/capabilities exist | Tool definitions visible to you in this session |
-| A mode (agent / plan / yolo / workflow) | Your system prompt's mode and approval sections |
+| A mode (agent / plan / yolo / ask) | Your system prompt's mode and approval sections |
 | A skill | The `## Skills` listing in your system prompt |
 | A config key or feature flag | `.deepseek/config.toml`, then `~/.deepseek/config.toml` |
 | MCP server setup | `.deepseek/mcp.json` |

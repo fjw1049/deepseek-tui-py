@@ -7,18 +7,12 @@ import {
   groupProcessRows,
   isSubagentOrchestrationToolName,
   isInternalSubagentHandoffSystemText,
-  isWorkflowStatusSystemText,
-  isWorkflowToolName,
   placeAssistantContentBlock,
   reasoningDetailTextFromBlocks,
   reasoningNarrationFromBlocks,
-  shouldFoldSubagentsIntoWorkflow,
-  shouldHideRunningWorkflowBlock,
-  shouldHideWorkflowToolBlock,
   splitThink,
   trailingThinkingIndicatorId
 } from './message-timeline-logic'
-import type { WorkflowSnapshotPayload } from '../../lib/workflow-snapshot'
 import {
   buildToolRenderContext,
   resolveToolRenderer,
@@ -91,107 +85,6 @@ describe('isSubagentOrchestrationToolName', () => {
   })
 })
 
-describe('isWorkflowStatusSystemText', () => {
-  it('detects workflow progress status dumps', () => {
-    expect(
-      isWorkflowStatusSystemText(
-        'Workflow running ◆ Workflow: repo_review (0/1 done, 1 running)'
-      )
-    ).toBe(true)
-    expect(isWorkflowStatusSystemText('Workflow completed ◆ Workflow: repo_review')).toBe(
-      true
-    )
-    expect(isWorkflowStatusSystemText('Waiting on 1 sub-agent')).toBe(false)
-  })
-})
-
-function emptyWorkflowSnapshot(name = 'adaptive'): WorkflowSnapshotPayload {
-  return {
-    name,
-    description: '',
-    phases: [],
-    logs: [],
-    agents: [],
-    agent_count: 0,
-    running_count: 0,
-    done_count: 0,
-    error_count: 0
-  }
-}
-
-describe('workflow presentation aggregation', () => {
-  it('recognizes workflow tool names', () => {
-    expect(isWorkflowToolName('workflow')).toBe(true)
-    expect(isWorkflowToolName('workflow_list')).toBe(true)
-    expect(isWorkflowToolName('agent')).toBe(false)
-  })
-
-  it('hides running workflow blocks but keeps terminal ones', () => {
-    const running: ChatBlock = {
-      kind: 'workflow',
-      id: 'tc-1',
-      toolCallId: 'tc-1',
-      workflowName: 'adaptive',
-      status: 'running',
-      snapshot: emptyWorkflowSnapshot()
-    }
-    const done: ChatBlock = { ...running, status: 'completed' }
-    expect(shouldHideRunningWorkflowBlock(running)).toBe(true)
-    expect(shouldHideRunningWorkflowBlock(done)).toBe(false)
-    expect(shouldHideRunningWorkflowBlock({ kind: 'reasoning', id: 'r', text: 'x' })).toBe(false)
-  })
-
-  it('folds subagents only when a workflow block is present', () => {
-    const workflow: ChatBlock = {
-      kind: 'workflow',
-      id: 'tc-1',
-      toolCallId: 'tc-1',
-      workflowName: 'adaptive',
-      status: 'running',
-      snapshot: emptyWorkflowSnapshot()
-    }
-    const subagent: ChatBlock = {
-      kind: 'subagent',
-      id: 'sa-1',
-      cardKind: 'delegate',
-      agentId: 'a1',
-      agentType: 'explore',
-      status: 'running'
-    }
-    expect(shouldFoldSubagentsIntoWorkflow([workflow, subagent])).toBe(true)
-    expect(shouldFoldSubagentsIntoWorkflow([subagent])).toBe(false)
-  })
-
-  it('hides non-error workflow tool cards once a WorkflowBlock exists', () => {
-    const toolOk: ChatBlock = {
-      kind: 'tool',
-      id: 'tc-1',
-      summary: 'workflow: adaptive',
-      status: 'success',
-      meta: { tool_name: 'workflow' }
-    }
-    const toolErr: ChatBlock = {
-      kind: 'tool',
-      id: 'tc-err',
-      summary: 'workflow: bad spec',
-      status: 'error',
-      meta: { tool_name: 'workflow' }
-    }
-    const workflow: ChatBlock = {
-      kind: 'workflow',
-      id: 'tc-1',
-      toolCallId: 'tc-1',
-      workflowName: 'adaptive',
-      status: 'running',
-      snapshot: emptyWorkflowSnapshot()
-    }
-    const blocks = [toolOk, toolErr, workflow]
-    expect(shouldHideWorkflowToolBlock(toolOk, blocks)).toBe(true)
-    expect(shouldHideWorkflowToolBlock(toolErr, blocks)).toBe(false)
-    expect(shouldHideWorkflowToolBlock(toolOk, [toolOk])).toBe(false)
-  })
-})
-
 describe('isInternalSubagentHandoffSystemText', () => {
   it('detects wait/resume handoff chrome', () => {
     expect(isInternalSubagentHandoffSystemText('Waiting on 1 sub-agent(s) to complete...')).toBe(
@@ -200,7 +93,7 @@ describe('isInternalSubagentHandoffSystemText', () => {
     expect(
       isInternalSubagentHandoffSystemText('Resuming turn with 1 sub-agent completion(s)')
     ).toBe(true)
-    expect(isInternalSubagentHandoffSystemText('Workflow completed ◆ Workflow: x')).toBe(false)
+    expect(isInternalSubagentHandoffSystemText('Task completed')).toBe(false)
   })
 })
 

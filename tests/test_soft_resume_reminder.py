@@ -8,7 +8,6 @@ from deepseek_tui.server.threads.soft_resume import (
     build_soft_resume_reminder,
     is_resumable_agent,
     is_resumable_task,
-    is_resumable_workflow,
 )
 from deepseek_tui.tools.durable_transcript import CONTINUE_NUDGE
 from deepseek_tui.tools.subagent.types import (
@@ -103,38 +102,8 @@ def test_lists_resumable_tasks() -> None:
     assert 'task_create with only resume="<id>"' in text
 
 
-def test_lists_resumable_workflows() -> None:
-    text = build_soft_resume_reminder(
-        workflows=[
-            SimpleNamespace(
-                run_id="wf_1",
-                status="interrupted",
-                spec={"meta": {"name": "deploy"}},
-            ),
-            SimpleNamespace(
-                run_id="wf_done",
-                status="completed",
-                spec={"meta": {"name": "skip"}},
-            ),
-            SimpleNamespace(
-                run_id="wf_2",
-                status="failed",
-                spec={"meta": {"name": "x" * 120}},
-            ),
-        ]
-    )
-    assert "workflow wf_1 (interrupted) name=deploy" in text
-    assert "wf_done" not in text
-    assert "workflow wf_2 (failed)" in text
-    assert "…" in text
-    assert 'run_id="<id>"' in text
-    assert "true-resume" in text
-
-
 def test_is_resumable_helpers() -> None:
     assert is_resumable_agent(_agent("a", kind="interrupted"))
     assert not is_resumable_agent(_agent("a", kind="running"))
     assert is_resumable_task(SimpleNamespace(status=TaskStatus.CANCELED))
     assert not is_resumable_task(SimpleNamespace(status=TaskStatus.RUNNING))
-    assert is_resumable_workflow(SimpleNamespace(status="interrupted", run_id="w"))
-    assert not is_resumable_workflow(SimpleNamespace(status="completed", run_id="w"))

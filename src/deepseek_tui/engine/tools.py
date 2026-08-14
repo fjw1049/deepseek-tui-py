@@ -99,7 +99,6 @@ PLAN_MODE_TOOL_ALLOWLIST = frozenset(
         "task_output",
         "update_plan",
         "web_search",
-        "workflow_list",
         "exit_plan_mode",
     }
 )
@@ -111,16 +110,11 @@ _SHELL_TOOLS = frozenset(
 )
 
 
-_WORKFLOW_TOOLS = frozenset({"workflow"})
-
-
 def should_default_defer_tool(name: str, mode: str) -> bool:
     """Whether a tool should be deferred (lazy-loaded) by default."""
     if mode == "yolo":
         return False
     if mode == "agent" and name in _SHELL_TOOLS:
-        return False
-    if mode == "workflow" and name in _WORKFLOW_TOOLS:
         return False
     return name not in _ALWAYS_ACTIVE_TOOLS
 

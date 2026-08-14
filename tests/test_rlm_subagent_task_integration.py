@@ -91,7 +91,7 @@ class TestToolRuntimeIntegration:
 
     @pytest.mark.asyncio
     async def test_subagent_default_model_follows_provider(self, tmp_path: Path):
-        """Workflow/subagent spawn with no model must use provider model."""
+        """Subagent spawn with no model must use provider model."""
         cfg = Config(
             provider="volcengine-ark",
             features=FeatureConfig(tasks=False, subagents=True, mcp=False),

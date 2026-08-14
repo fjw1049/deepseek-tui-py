@@ -21,7 +21,6 @@ decision D3) but is no longer exposed as a tool.
 from __future__ import annotations
 
 from dataclasses import asdict
-from pathlib import Path
 from typing import Any
 
 from deepseek_tui.tools.registry import (
@@ -497,8 +496,7 @@ class TaskOutputTool(ToolSpec):
 class TaskStopTool(ToolSpec):
     """Unified stop for all three background-entity kinds.
 
-    - ``task_id`` → cancel a queued/running durable task (including the
-      workflow-detach durable stop-intent write).
+    - ``task_id`` → cancel a queued/running durable task.
     - ``agent_id`` → cancel a sub-agent.
     - ``process_id`` → terminate a background shell process.
     """
@@ -560,18 +558,4 @@ class TaskStopTool(ToolSpec):
             task = await manager.cancel_task(task_id)
         except KeyError as exc:
             raise ToolError(str(exc)) from exc
-        # Persist durable stop for workflow-detach jobs so a crash mid-cancel
-        # still prevents the next driver from continuing the run.
-        try:
-            from deepseek_tui.workflow.detach import parse_detach_prompt
-            from deepseek_tui.workflow.store import write_stop_intent
-
-            parsed = parse_detach_prompt(task.prompt)
-            if parsed is not None:
-                write_stop_intent(
-                    parsed["run_id"],
-                    workspace=Path(parsed["workspace"]),
-                )
-        except Exception:  # noqa: BLE001 — cancel already succeeded
-            pass
         return _task_result("task_stop", task)

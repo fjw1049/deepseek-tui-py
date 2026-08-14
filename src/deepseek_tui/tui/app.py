@@ -37,7 +37,6 @@ from deepseek_tui.engine.events import (
     TurnCompleteEvent,
     TurnStartedEvent,
     UserInputRequiredEvent,
-    WorkflowProgressEvent,
 )
 from deepseek_tui.engine.handle import EngineHandle, SendMessageOp
 from deepseek_tui.presentation.reducer import TurnPresentationReducer
@@ -832,15 +831,6 @@ class DeepSeekTUI(App[None]):
                 self._schedule_info_sidebar_refresh()
                 if event.message:
                     status.set_phase(f"background: {event.message[:50]}")
-            elif isinstance(event, WorkflowProgressEvent):
-                from deepseek_tui.workflow.models import WorkflowSnapshot
-                from deepseek_tui.workflow.runtime import render_workflow_text
-
-                snap = event.snapshot
-                if isinstance(snap, WorkflowSnapshot):
-                    status.set_phase(
-                        render_workflow_text(snap, completed=event.completed)[:120]
-                    )
             elif isinstance(event, StatusEvent):
                 status.set_status(event.message)
                 if "Waiting on" in event.message and "sub-agent" in event.message:
@@ -1092,8 +1082,8 @@ class DeepSeekTUI(App[None]):
         self.push_screen(FilePicker(), _on_pick)
 
     def action_cycle_mode(self) -> None:
-        """Cycle agent/plan/yolo/ask/workflow modes (Tab)."""
-        modes = ("agent", "plan", "yolo", "ask", "workflow")
+        """Cycle agent/plan/yolo/ask modes (Tab)."""
+        modes = ("agent", "plan", "yolo", "ask")
         current = self.query_one(StatusBar)._mode or "agent"
         try:
             idx = modes.index(current)

@@ -939,20 +939,6 @@ samp {
   box-shadow: var(--ds-shadow-composer);
 }
 
-/* Live workflow chip above the composer — always opaque so it reads as a
-   solid card, not glass floating over the timeline. */
-.ds-process-tray {
-  background: var(--surface-2, #1d1d1d);
-  border: 1px solid var(--ds-border);
-  box-shadow: var(--ds-shadow-card-soft);
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
-}
-
-[data-theme='light'] .ds-process-tray {
-  background: var(--surface-2, #ffffff);
-}
-
 /* Raise z-index while the model picker is open so the upward popover stacks
    above the decorative pet dock. */
 .ds-chat-composer:not(.ds-composer-empty).ds-composer-model-picker-open,
@@ -2004,94 +1990,6 @@ samp {
   overflow: visible;
 }
 
-/* ── Workflow running glow bar ── */
-
-.ds-workflow-running {
-  position: relative;
-  overflow: hidden;
-}
-
-.ds-workflow-running::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  left: 0;
-  width: 3px;
-  border-radius: 3px 0 0 3px;
-  background: linear-gradient(180deg, rgba(14, 165, 233, 0.1), rgba(14, 165, 233, 0.7), rgba(14, 165, 233, 0.1));
-  background-size: 100% 200%;
-  animation: ds-workflow-bar-glow 1.8s ease-in-out infinite;
-}
-
-.ds-workflow-spinner {
-  position: relative;
-  width: 18px;
-  height: 18px;
-  animation: ds-wf-spin 1.2s linear infinite;
-}
-
-.ds-workflow-spinner::before,
-.ds-workflow-spinner::after {
-  content: '';
-  position: absolute;
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-}
-
-.ds-workflow-spinner::before {
-  top: 0;
-  left: 50%;
-  transform: translateX(-50%);
-  box-shadow:
-    0 0 0 0 #38bdf8,
-    6.5px 6.5px 0 0 #a78bfa;
-}
-
-.ds-workflow-spinner::after {
-  bottom: 0;
-  left: 50%;
-  transform: translateX(-50%);
-  box-shadow:
-    0 0 0 0 #34d399,
-    -6.5px -6.5px 0 0 #fb923c;
-}
-
-@keyframes ds-wf-spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-.ds-workflow-tag {
-  display: inline-flex;
-  align-items: center;
-  padding: 1px 8px;
-  border-radius: 9999px;
-  font-family: var(--font-ui);
-  font-size: 12px;
-  font-weight: 500;
-  color: #0ea5e9;
-  background: rgba(14, 165, 233, 0.1);
-  animation: ds-wf-tag-pulse 2s ease-in-out infinite;
-}
-
-@keyframes ds-wf-tag-pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.6; }
-}
-
-@keyframes ds-workflow-bar-glow {
-  0%, 100% {
-    background-position: 0% 0%;
-    opacity: 0.6;
-  }
-  50% {
-    background-position: 0% 100%;
-    opacity: 1;
-  }
-}
-
 /* Amicro-style 2×2 Square Grid — thinking / in-progress indicator. */
 .ds-square-grid {
   display: inline-grid;
@@ -2155,9 +2053,7 @@ samp {
 @media (prefers-reduced-motion: reduce) {
   .ds-shiny-text,
   .ds-work-logo-pulse,
-  .ds-workflow-running::before,
-  .ds-task-card-active,
-  .ds-workflow-spinner {
+  .ds-task-card-active {
     animation: none;
   }
 
@@ -5589,7 +5485,7 @@ html[data-theme='dark'] .ds-code-fullscreen .shiki span {
 }
 
 .ds-timeline-composer-clearance-spacer {
-  /* Prefer live composer height (ProcessTray / approvals); fall back to the
+  /* Prefer live composer height (approvals); fall back to the
      historical clamp so empty-stage layout still clears the pet dock. */
   height: max(clamp(7.5rem, 18vh, 11rem), var(--ds-composer-clearance, 0px));
 }
@@ -9902,26 +9798,6 @@ select:focus-visible,
   line-height: 1.45;
 }
 
-.ds-ide-chat-rail .ds-workflow-block {
-  border-radius: 10px;
-  font-size: var(--ds-ide-font-base);
-}
-
-.ds-ide-chat-rail .ds-workflow-block__title {
-  font-size: var(--ds-ide-font-title);
-}
-
-.ds-ide-chat-rail .ds-workflow-block__icon {
-  width: 1.75rem;
-  height: 1.75rem;
-  border-radius: 0.5rem;
-}
-
-.ds-ide-chat-rail .ds-workflow-block__icon svg {
-  width: 12px;
-  height: 12px;
-}
-
 .ds-ide-chat-rail .ds-subagent-bubble {
   border-radius: 10px;
   padding: var(--ds-ide-card-pad-y) var(--ds-ide-card-pad-x);
@@ -10087,14 +9963,6 @@ select:focus-visible,
 .ds-ide-chat-rail .ds-inline-todo__title,
 .ds-ide-chat-rail .ds-subagent-summary__title {
   font-size: var(--ds-ide-font-title);
-}
-
-.ds-ide-chat-rail .ds-process-tray {
-  border-radius: 10px;
-}
-
-.ds-ide-chat-rail .ds-process-tray button {
-  font-size: var(--ds-ide-font-base);
 }
 
 .ds-ide-chat-rail .ds-turn-change-summary button.h-8,

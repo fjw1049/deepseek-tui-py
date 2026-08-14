@@ -263,7 +263,7 @@ def make_leaf_layout_plugin(root: Path, name: str = "cb") -> Path:
     (plugin / "rules").mkdir(parents=True)
     (plugin / "rules" / "core.md").write_text(
         "---\ndescription: Core directive.\nalwaysApply: true\nenabled: true\n---\n"
-        "You MUST follow the core workflow.\n",
+        "You MUST follow the core process.\n",
         encoding="utf-8",
     )
     (plugin / "rules" / "disabled.md").write_text(
@@ -310,7 +310,7 @@ def test_leaf_skills_files_agents_and_rules(tmp_path: Path) -> None:
     # Rules: enabled core loads, disabled one is skipped.
     assert [r.name for r in contribs.rules] == ["core"]
     assert contribs.rules[0].always_apply is True
-    assert "core workflow" in contribs.rules[0].body
+    assert "core process" in contribs.rules[0].body
 
 
 def test_bare_skill_folder_synthesizes_single_skill_plugin(tmp_path: Path) -> None:
@@ -319,7 +319,7 @@ def test_bare_skill_folder_synthesizes_single_skill_plugin(tmp_path: Path) -> No
     plugin = tmp_path / "ardot-slides"
     plugin.mkdir()
     (plugin / "SKILL.md").write_text(
-        "---\nname: ardot-slides\ndescription: Slide design.\n---\nDeck workflow.\n",
+        "---\nname: ardot-slides\ndescription: Slide design.\n---\nDeck process.\n",
         encoding="utf-8",
     )
     manifest = load_plugin_manifest(plugin)
@@ -1827,7 +1827,7 @@ async def test_active_plugin_whitelist_read_only(tmp_path, monkeypatch) -> None:
         assert {"write_file", "edit_file"} <= wl
         assert {"exec_shell", "code_execution", "agent"} <= wl
         # Orchestration / mutating GitHub stay out unless skill-declared.
-        assert {"task_create", "workflow", "github_close"}.isdisjoint(wl)
+        assert {"task_create", "github_close"}.isdisjoint(wl)
     finally:
         await engine.shutdown_session()
 
@@ -2403,7 +2403,7 @@ async def test_untrusted_plugin_skill_allowed_tools_expand_whitelist(
     skill = plugin / "skills" / "demo-skill" / "SKILL.md"
     skill.write_text(
         "---\nname: demo-skill\ndescription: d\n"
-        "allowed-tools: task_create, workflow\n---\n\nBody.\n",
+        "allowed-tools: task_create, note\n---\n\nBody.\n",
         encoding="utf-8",
     )
 
@@ -2424,7 +2424,7 @@ async def test_untrusted_plugin_skill_allowed_tools_expand_whitelist(
         wl, _servers = engine._active_plugin_whitelist()
         assert wl is not None
         assert FOCUS_PLUGIN_BASE <= wl
-        assert {"task_create", "workflow"} <= wl
+        assert {"task_create", "note"} <= wl
         assert "write_file" in wl and "exec_shell" in wl
         assert "agent" in wl
     finally:

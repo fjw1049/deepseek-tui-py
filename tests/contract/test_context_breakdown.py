@@ -148,7 +148,7 @@ def test_initial_request_tools_apply_native_deferral(tmp_path):
 
     raw_catalog = [
         _api_tool("read_file"),
-        _api_tool("workflow"),
+        _api_tool("note"),
         _api_tool("write_file"),
     ]
 
@@ -159,8 +159,8 @@ def test_initial_request_tools_apply_native_deferral(tmp_path):
     # Core write tools stay always-active (selection-bias guard — see
     # _ALWAYS_ACTIVE_TOOLS in engine/tools.py).
     assert "write_file" in active_names
-    # workflow defers in agent mode (discoverable via tool_search).
-    assert "workflow" not in active_names
+    # note defers in agent mode (discoverable via tool_search).
+    assert "note" not in active_names
 
 
 async def test_live_context_breakdown_counts_initial_active_tools(tmp_path):

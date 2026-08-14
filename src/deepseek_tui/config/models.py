@@ -45,7 +45,7 @@ class ProviderConfig(BaseModel):
     model: str | None = None
     timeout: int = 120
     # Max outbound LLM calls per minute for this provider's API key, shared
-    # process-wide across all callers (main turn, sub-agents, workflows,
+    # process-wide across all callers (main turn, sub-agents,
     # automations). 0 / unset = unlimited. Enforced client-side in
     # ``client.rate_limit`` before any request leaves the process.
     rate_limit: int | None = None

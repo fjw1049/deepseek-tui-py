@@ -29,7 +29,6 @@ def ensure_user_home_layout(home: Path | None = None) -> list[str]:
     actions.extend(_migrate_agents(root))
     actions.extend(_migrate_plugin_host(root))
     actions.extend(_migrate_automations_defs(root))
-    actions.extend(_migrate_workflow_dir(root))
     actions.extend(_migrate_workbench(root))
     actions.extend(_ensure_manifest(root))
     actions.extend(_drop_empty_dirs(root))
@@ -41,7 +40,6 @@ def ensure_user_home_layout(home: Path | None = None) -> list[str]:
         root / "tool_outputs",
         root / "threads",
         root / "sessions",
-        root / "workflow",
         root / "automations" / "runs",
         root / "plugins" / ".host",
     ):
@@ -136,43 +134,6 @@ def _migrate_automations_defs(root: Path) -> list[str]:
             child.unlink(missing_ok=True)
             actions.append(f"dropped duplicate automations/automations/{child.name}")
     _rm_if_empty(nested, actions, "automations/automations/")
-    return actions
-
-
-def _migrate_workflow_dir(root: Path) -> list[str]:
-    """Rename ``workflow-runs/`` → ``workflow/``.
-
-    When both trees exist and a ``run_id`` collides, keep the destination copy
-    and quarantine the legacy tree under ``workflow/.migrated-dupes/`` instead
-    of deleting it — resume safety over aggressive cleanup.
-    """
-    actions: list[str] = []
-    legacy = root / "workflow-runs"
-    dest = root / "workflow"
-    if not legacy.exists():
-        return actions
-    if dest.exists():
-        if legacy.is_dir():
-            quarantine = dest / ".migrated-dupes"
-            for child in list(legacy.iterdir()):
-                target = dest / child.name
-                if not target.exists():
-                    shutil.move(str(child), str(target))
-                    actions.append(f"merged workflow-runs/{child.name} → workflow/")
-                    continue
-                quarantine.mkdir(parents=True, exist_ok=True)
-                q_dest = quarantine / child.name
-                if q_dest.exists():
-                    q_dest = quarantine / f"{child.name}.{_unique_suffix()}"
-                shutil.move(str(child), str(q_dest))
-                actions.append(
-                    f"quarantined duplicate workflow-runs/{child.name} → "
-                    f"workflow/.migrated-dupes/"
-                )
-            _rm_if_empty(legacy, actions, "workflow-runs/")
-        return actions
-    shutil.move(str(legacy), str(dest))
-    actions.append("moved workflow-runs/ → workflow/")
     return actions
 
 
@@ -312,7 +273,7 @@ def _ensure_manifest(root: Path) -> list[str]:
     path = root / _MANIFEST_MARKER
     if path.is_file():
         text = path.read_text(encoding="utf-8")
-        if "workflow-runs/" in text or "workbench/" in text:
+        if "workbench/" in text:
             path.write_text(_DEFAULT_MANIFEST, encoding="utf-8")
             return [f"updated {_MANIFEST_MARKER} (workbench → flat layout)"]
         return []
@@ -368,7 +329,6 @@ notes = "threads/ is the source of truth; sessions/ is TUI legacy (current.json)
 paths = [
   "tasks/",
   "automations/",
-  "workflow/",
   "agents/registries/",
   "agents/runs/",
 ]
@@ -403,5 +363,5 @@ hooks_events_max_mb = 50
 
 [archive]
 unit_primary = "threads"
-unit_secondary = ["tasks", "workflow", "automations/runs"]
+unit_secondary = ["tasks", "automations/runs"]
 """

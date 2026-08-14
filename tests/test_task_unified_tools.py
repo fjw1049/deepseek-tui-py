@@ -206,22 +206,6 @@ async def test_task_stop_task_branch_cancels(tmp_path) -> None:
     assert updated.status is TaskStatus.CANCELED
 
 
-async def test_task_stop_writes_stop_intent_for_workflow_detach(tmp_path) -> None:
-    from deepseek_tui.workflow.detach import encode_detach_prompt
-    from deepseek_tui.workflow.store import has_stop_intent
-
-    run_id = "run_test_stop_intent"
-    prompt = encode_detach_prompt(run_id=run_id, workspace=tmp_path)
-    manager = _task_manager(tmp_path)
-    task = await manager.add_task(NewTaskRequest(prompt=prompt))
-    ctx = ToolContext(working_directory=tmp_path, task_manager=manager)
-
-    result = await TaskStopTool().execute({"task_id": task.id}, ctx)
-
-    assert result.metadata["status"] == "canceled"
-    assert has_stop_intent(run_id, workspace=tmp_path)
-
-
 async def test_task_stop_agent_branch_cancels_subagent(tmp_path) -> None:
     sub = _StubSubAgentManager()
     sub.results["agent_x1"] = _agent_result("agent_x1")

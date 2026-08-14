@@ -1,5 +1,3 @@
-import type { WorkflowSnapshotPayload } from '../lib/workflow-snapshot'
-
 export type AgentProviderId = 'deepseek-runtime'
 
 export type ToolItemKind = 'tool_call' | 'command_execution' | 'file_change'
@@ -190,25 +188,6 @@ export type ChatBlock =
       status: 'pending' | 'approved' | 'rejected' | 'error'
       errorMessage?: string
     }
-  | {
-      kind: 'workflow'
-      id: string
-      toolCallId: string
-      createdAt?: string
-      workflowName: string
-      status: 'running' | 'completed' | 'failed' | 'cancelled' | 'timed_out' | 'interrupted'
-      snapshot: WorkflowSnapshotPayload
-      runId?: string
-    }
-
-export type WorkflowProgressPayload = {
-  toolCallId: string
-  workflowName: string
-  snapshot: WorkflowSnapshotPayload
-  completed: boolean
-  status?: 'running' | 'completed' | 'failed' | 'cancelled' | 'timed_out' | 'interrupted'
-  runId?: string
-}
 
 export type EvolutionProposalPayload = {
   recordId: string
@@ -373,8 +352,6 @@ export type ThreadEventSink = {
   onSystemStatus?(text: string, itemId: string): void
   /** Optional: delegate / fanout sub-agent progress cards. */
   onSubagentMailbox?(ev: SubagentMailboxPayload): void
-  /** Optional: workflow orchestration progress (upsert by toolCallId). */
-  onWorkflowProgress?(ev: WorkflowProgressPayload): void
   /**
    * Optional: session-level mounted-plugin state changed. `null` means
    * explicitly unmounted; the callback is also called on thread load with

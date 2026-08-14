@@ -282,7 +282,6 @@ class TestNativeDeferralWithoutMcp:
         engine = self._engine(tmp_path)
         defer = self._defer_map(await engine._get_tools_with_mcp())
         assert defer["note"] is True
-        assert defer["workflow"] is True
         assert defer["read_file"] is False
         assert defer["exec_shell"] is False
 
@@ -306,4 +305,3 @@ class TestNativeDeferralWithoutMcp:
         engine = self._engine(tmp_path, mode="yolo")
         defer = self._defer_map(await engine._get_tools_with_mcp())
         assert defer["note"] is False
-        assert defer["workflow"] is False

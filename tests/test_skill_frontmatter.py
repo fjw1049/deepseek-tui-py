@@ -18,15 +18,15 @@ def _write_skill(root: Path, name: str, frontmatter: str, body: str = "Body.\n")
 def test_parse_skill_folded_description(tmp_path: Path) -> None:
     path = _write_skill(
         tmp_path,
-        "workflows",
-        "name: data-analysis-workflows\n"
+        "playbooks",
+        "name: data-analysis-playbooks\n"
         "description: >\n"
-        "  Comprehensive data analysis workflows including answering data questions,\n"
+        "  Comprehensive data analysis playbooks including answering data questions,\n"
         "  exploring datasets, and writing SQL queries.\n",
     )
     skill = _parse_skill_file(path)
-    assert skill.name == "data-analysis-workflows"
-    assert "Comprehensive data analysis workflows" in skill.description
+    assert skill.name == "data-analysis-playbooks"
+    assert "Comprehensive data analysis playbooks" in skill.description
     assert ">" not in skill.description
     assert "SQL queries" in skill.description
 

@@ -54,9 +54,9 @@ def test_mailbox_round_narration_prefers_text_over_thinking() -> None:
 
 
 def test_mailbox_round_narration_falls_back_to_thinking() -> None:
-    out = _mailbox_round_narration("", "确认 Workflow 入口后再读文件。")
+    out = _mailbox_round_narration("", "确认 Composer 入口后再读文件。")
     assert out is not None
-    assert "Workflow" in out
+    assert "Composer" in out
 
 
 def test_mailbox_round_narration_empty_when_blank() -> None:

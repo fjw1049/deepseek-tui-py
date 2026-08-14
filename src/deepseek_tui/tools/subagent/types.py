@@ -307,8 +307,8 @@ def subagent_environment_block(locale_tag: str | None = None) -> str:
 
     Every field is process-constant, so sibling sub-agents of the same type
     get a byte-identical system prefix and keep their KV cache hits. Per-spawn
-    values — notably the child's workspace, which a workflow step may point at
-    a per-run worktree — deliberately stay out: tools already resolve relative
+    values — notably the child's workspace — deliberately stay out: tools
+    already resolve relative
     paths against ``agent.workspace``, so the path is enforced structurally
     rather than described in the prompt.
     """
@@ -486,7 +486,7 @@ class SpawnRequest:
     # Persona system prompt for a plugin agent (overrides the built-in
     # ``agent_type`` prompt). ``None`` keeps the standard type prompt.
     system_prompt: str | None = None
-    # Optional per-spawn workspace override (e.g. workflow worktree).
+    # Optional per-spawn workspace override.
     workspace: Path | None = None
     # When True, the parent turn does NOT block on this agent's completion
     # (handoff skips it). Completion still injects via

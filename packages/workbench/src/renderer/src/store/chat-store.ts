@@ -17,7 +17,6 @@ import {
   type MailboxMessageJson
 } from '../lib/subagent-mailbox'
 import { applySpawnPromptsToSubagentBlocks } from '../lib/extract-subagents-from-blocks'
-import { workflowSnapshotFromToolMeta } from '../lib/workflow-snapshot'
 import { sanitizeReasoningPlaceholders } from '../lib/reasoning-text'
 import { getProvider } from '../agent/registry'
 import i18n from '../i18n'
@@ -84,8 +83,7 @@ import {
   threadSnapshotLooksRunning,
   threadStatusLooksActive,
   upsertFinalAnswerBlock,
-  upsertUserBlock,
-  upsertWorkflowBlock
+  upsertUserBlock
 } from './chat-store-runtime-helpers'
 import {
   armBusyWatchdog as armBusyWatchdogImpl,
@@ -801,22 +799,7 @@ function buildThreadEventSink(
           base.workspaceDirtyTick = s.workspaceDirtyTick + 1
         }
         const idx = s.blocks.findIndex((b) => b.kind === 'tool' && b.id === ev.itemId)
-        let blocks = s.blocks
-        const snap = workflowSnapshotFromToolMeta(ev.meta)
-        if (snap) {
-          const wfName =
-            typeof ev.meta?.workflow === 'object' &&
-            ev.meta.workflow !== null &&
-            typeof (ev.meta.workflow as Record<string, unknown>).name === 'string'
-              ? String((ev.meta.workflow as Record<string, unknown>).name)
-              : snap.name
-          blocks = upsertWorkflowBlock(blocks, {
-            toolCallId: ev.itemId,
-            workflowName: wfName,
-            snapshot: snap,
-            completed: ev.status !== 'running'
-          })
-        }
+        const blocks = s.blocks
         if (idx >= 0) {
           const cur = blocks[idx]
           if (cur.kind !== 'tool') {
@@ -860,15 +843,7 @@ function buildThreadEventSink(
           filePath: ev.filePath,
           meta: ev.meta
         }
-        let nextBlocks = applySpawnPromptsToSubagentBlocks([...baseBlocks, block])
-        if (snap) {
-          nextBlocks = upsertWorkflowBlock(nextBlocks, {
-            toolCallId: ev.itemId,
-            workflowName: snap.name,
-            snapshot: snap,
-            completed: false
-          })
-        }
+        const nextBlocks = applySpawnPromptsToSubagentBlocks([...baseBlocks, block])
         return {
           ...base,
           ...flushed,
@@ -1039,10 +1014,14 @@ function buildThreadEventSink(
               ? current.title
               : ev.title
         const nextArchived = ev.archived ?? current.archived
-        // Runtime may use yolo; composer only has agent/plan/ask/workflow.
         const rawMode = typeof ev.mode === 'string' ? ev.mode.trim() : ''
-        const nextThreadMode = rawMode || current.mode
-        const composerModes = new Set(['agent', 'plan', 'ask', 'workflow'])
+        const composerModes = new Set(['agent', 'plan', 'ask'])
+        const nextThreadMode =
+          rawMode === 'yolo'
+            ? 'agent'
+            : composerModes.has(rawMode)
+              ? rawMode
+              : current.mode
         const nextComposerMode =
           rawMode === 'yolo'
             ? 'agent'
@@ -1155,32 +1134,6 @@ function buildThreadEventSink(
         // mailbox ``started.prompt`` — backfill so dock + summary match.
         blocks = applySpawnPromptsToSubagentBlocks(blocks)
         return { blocks }
-      })
-    },
-    onWorkflowProgress: (ev) => {
-      set((s) => {
-        const flushed = flushLiveBlocks(s)
-        const baseBlocks = flushed.blocks ?? s.blocks
-        let nextBlocks = upsertWorkflowBlock(baseBlocks, ev)
-        // Terminal workflow: clear orphan sub-agent cards that never received a
-        // cancelled mailbox (interrupt race). Only keep busy if the turn itself
-        // is still active — a late completed event must not re-stick the UI.
-        if (ev.completed) {
-          nextBlocks = finalizeOrphanSubagentBlocks(nextBlocks)
-        }
-        // After interrupt, currentTurnId is cleared — never revive busy from
-        // late workflow SSE, or the composer freezes again with a queue chip.
-        if (!s.currentTurnId) {
-          return { ...flushed, blocks: nextBlocks }
-        }
-        resetBusyRecoveryAttempts()
-        armBusyWatchdog(set, get)
-        return {
-          ...flushed,
-          busy: true,
-          blocks: nextBlocks,
-          error: s.error === i18n.t('common:runtimeStreamRecovering') ? null : s.error
-        }
       })
     },
     onLiveSegmentComplete: (kind, itemId, createdAt, text, processIntent) => {
@@ -2883,7 +2836,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
 
     // Use current composer mode (same as model/effort). Do not drop to
-    // the sendMessage default — UI may still show workflow/plan/ask.
+    // the sendMessage default — UI may still show plan/ask.
     await get().sendMessage(trimmed, get().composerMode)
   },
 

@@ -27,7 +27,6 @@ from deepseek_tui.engine.events import (
     SandboxDeniedEvent,
     ToolResultEvent,
     UserInputRequiredEvent,
-    WorkflowProgressEvent,
 )
 from deepseek_tui.engine.tools import (
     CODE_EXECUTION_TOOL_NAME,
@@ -858,31 +857,9 @@ class ToolExecutionMixin:
             if denied:
                 return None
 
-        if tool_name == "workflow":
-            # workflow 工具需要回调进引擎（取消事件、进度/状态上报），通过 metadata 临时注入。
-            # 注意：审批门在此之前已执行，被拒会直接 return None，不会走到注入这一步。
-            self.tool_context.metadata["engine_cancel_event"] = self.handle.cancel_event
-            self.tool_context.metadata["workflow_tool_call_id"] = tool_call.id
-
-            def _workflow_emit(ev: WorkflowProgressEvent) -> None:
-                if not self.handle.try_emit(ev):
-                    if getattr(ev, "completed", False):
-                        logger.warning(
-                            "workflow_completed_event_dropped queue_full"
-                        )
-
-            self.tool_context.metadata["workflow_emit"] = _workflow_emit
-        try:
-            return await self.tool_registry.execute(
-                tool_name, arguments, self.tool_context
-            )
-        finally:
-            # 无论 execute 是否抛异常，都清掉临时注入的 metadata，避免污染下一次工具调用。
-            # pop(..., None) 保证即使因 workflow 未走注入分支也不会 KeyError。
-            if tool_name == "workflow":
-                self.tool_context.metadata.pop("engine_cancel_event", None)
-                self.tool_context.metadata.pop("workflow_tool_call_id", None)
-                self.tool_context.metadata.pop("workflow_emit", None)
+        return await self.tool_registry.execute(
+            tool_name, arguments, self.tool_context
+        )
 
     async def _handle_approval_flow(
         self,
@@ -1222,12 +1199,6 @@ class ToolExecutionMixin:
                 "call update_plan and exit_plan_mode when ready.",
                 success=True,
             )
-        if mode == "workflow":
-            return ToolResult(
-                content="Cannot enter plan mode from workflow mode.",
-                success=False,
-            )
-
         response = await self._await_user_input_raw(
             tool_call_id,
             enter_plan_questions(getattr(self, "reply_locale", None)),

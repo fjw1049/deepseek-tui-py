@@ -79,7 +79,6 @@ import { EvolutionBubble } from './EvolutionBubble'
 import { ElevationBubble } from './ElevationBubble'
 import { InlineTodoBlock } from './InlineTodoBlock'
 import { UserInputBubble } from './UserInputBubble'
-import { WorkflowBlock } from './WorkflowBlock'
 import { StepFlow, lifecycleToStepStatus, type StepFlowItem } from './StepFlow'
 import { humanizeAgentType } from '../../lib/agent-type-label'
 import { subagentListTitle } from '../../lib/extract-subagents-from-blocks'
@@ -124,11 +123,7 @@ import {
   groupProcessRows,
   isInternalSubagentHandoffSystemText,
   isSubagentOrchestrationToolName,
-  isWorkflowStatusSystemText,
   placeAssistantContentBlock,
-  shouldFoldSubagentsIntoWorkflow,
-  shouldHideRunningWorkflowBlock,
-  shouldHideWorkflowToolBlock,
   splitThink,
   toolNameFromProcessBlock,
   trailingThinkingIndicatorId,
@@ -875,10 +870,7 @@ function groupTurns(blocks: ChatBlock[]): Turn[] {
     // user message and the assistant reply), which reads as an interruption.
     if (block.kind === 'system') {
       // Orchestrator chrome — keep out of the dialogue turn stream.
-      if (
-        isWorkflowStatusSystemText(block.text) ||
-        isInternalSubagentHandoffSystemText(block.text)
-      ) {
+      if (isInternalSubagentHandoffSystemText(block.text)) {
         continue
       }
       if (current) turns.push(current)
@@ -907,7 +899,6 @@ function blockHasPendingRuntimeWork(block: ChatBlock): boolean {
   if (block.kind === 'subagent') {
     return block.status === 'pending' || block.status === 'running'
   }
-  if (block.kind === 'workflow') return block.status === 'running'
   return false
 }
 
@@ -917,7 +908,6 @@ function blockNeedsAttention(block: ChatBlock): boolean {
   if (block.kind === 'approval') return block.status === 'error'
   if (block.kind === 'user_input') return block.status === 'error'
   if (block.kind === 'subagent') return block.status === 'failed' || block.status === 'cancelled'
-  if (block.kind === 'workflow') return block.status === 'failed' || block.status === 'cancelled'
   return false
 }
 
@@ -925,7 +915,6 @@ function isProcessBlock(block: ChatBlock): boolean {
   return (
     block.kind === 'reasoning' ||
     block.kind === 'tool' ||
-    block.kind === 'workflow' ||
     block.kind === 'approval' ||
     block.kind === 'user_input' ||
     block.kind === 'subagent' ||
@@ -1013,16 +1002,10 @@ function MessageTurn({
 
   const todoSession = useMemo(() => buildTodoSessionForTurn(turn.blocks), [turn.blocks])
   const todoEvents = useMemo(() => buildTodoEventsForTurn(turn.blocks), [turn.blocks])
-  // Workflow turns fold subagents into the DAG / dock; Agent mode keeps the summary.
-  const foldSubagentsIntoWorkflow = useMemo(
-    () => shouldFoldSubagentsIntoWorkflow(turn.blocks),
+  const subagentSummary = useMemo(
+    () => buildSubagentSummaryForTurn(turn.blocks),
     [turn.blocks]
   )
-  const subagentSummary = useMemo(
-    () => (foldSubagentsIntoWorkflow ? null : buildSubagentSummaryForTurn(turn.blocks)),
-    [turn.blocks, foldSubagentsIntoWorkflow]
-  )
-  const subagentStepsByAgentId = useMemo(() => collectSubagentStepsByAgentId(turn.blocks), [turn.blocks])
 
   const { processBlocks, assistantContentBlocks, turnFileChanges, systemBlocks } = useMemo(() => {
     const nextProcessBlocks: ChatBlock[] = []
@@ -1047,10 +1030,7 @@ function MessageTurn({
         continue
       }
       if (block.kind === 'system') {
-        if (
-          !isWorkflowStatusSystemText(block.text) &&
-          !isInternalSubagentHandoffSystemText(block.text)
-        ) {
+        if (!isInternalSubagentHandoffSystemText(block.text)) {
           nextSystemBlocks.push(block)
         }
         continue
@@ -1152,8 +1132,6 @@ function MessageTurn({
                   todoSession={todoSession}
                   todoEvents={todoEvents}
                   subagentSummary={subagentSummary}
-                  foldSubagentsIntoWorkflow={foldSubagentsIntoWorkflow}
-                  subagentStepsByAgentId={subagentStepsByAgentId}
                   onOpenWorkspaceFile={onOpenWorkspaceFile}
                 />
               ) : null}
@@ -1746,23 +1724,9 @@ function shouldHideSubagentToolBlock(block: ChatBlock, summary: SubagentTurnSumm
 function visibleExecutionBlocks(
   blocks: ChatBlock[],
   todoSession: TodoTurnSession | null,
-  subagentSummary: SubagentTurnSummary | null,
-  foldSubagentsIntoWorkflow = false
+  subagentSummary: SubagentTurnSummary | null
 ): ChatBlock[] {
   return blocks.filter((block) => {
-    if (shouldHideRunningWorkflowBlock(block)) return false
-    if (shouldHideWorkflowToolBlock(block, blocks)) return false
-    if (foldSubagentsIntoWorkflow && block.kind === 'subagent') return false
-    // Without a SubagentSummaryPanel, still hide orchestration tool chrome on
-    // workflow-owned turns (mirrors shouldHideSubagentToolBlock).
-    if (
-      foldSubagentsIntoWorkflow &&
-      block.kind === 'tool' &&
-      block.status !== 'error' &&
-      isSubagentOrchestrationToolName(toolNameFromProcessBlock(block))
-    ) {
-      return false
-    }
     if (shouldHideTodoToolBlock(block, todoSession)) return false
     if (
       shouldHideSubagentBlock(block, subagentSummary) &&
@@ -1992,25 +1956,6 @@ function flowItemsForSubagentBlock(block: SubagentBlock): StepFlowItem[] {
     items.push(...workerSteps)
   }
   return items
-}
-
-/** Live tool-step rails for workflow DAG agent rows, keyed by agent id. */
-function collectSubagentStepsByAgentId(blocks: ChatBlock[]): Record<string, StepFlowItem[]> {
-  const out: Record<string, StepFlowItem[]> = {}
-  for (const block of blocks) {
-    if (block.kind !== 'subagent') continue
-    if (block.cardKind === 'delegate') {
-      const items = subagentStepsToFlowItems(block.steps, 0, block.status)
-      if (items.length > 0) out[block.agentId] = items
-      continue
-    }
-    for (const [workerId, steps] of Object.entries(block.workerSteps ?? {})) {
-      const workerStatus = block.workers?.find((worker) => worker.id === workerId)?.status
-      const items = subagentStepsToFlowItems(steps, 0, workerStatus)
-      if (items.length > 0) out[workerId] = items
-    }
-  }
-  return out
 }
 
 function subagentCardTitle(
@@ -2594,8 +2539,6 @@ function ProcessStream({
   todoSession = null,
   todoEvents = [],
   subagentSummary = null,
-  foldSubagentsIntoWorkflow = false,
-  subagentStepsByAgentId,
   onOpenWorkspaceFile
 }: {
   blocks: ChatBlock[]
@@ -2603,15 +2546,12 @@ function ProcessStream({
   todoSession?: TodoTurnSession | null
   todoEvents?: TodoTurnEvent[]
   subagentSummary?: SubagentTurnSummary | null
-  foldSubagentsIntoWorkflow?: boolean
-  subagentStepsByAgentId?: Record<string, StepFlowItem[]>
   onOpenWorkspaceFile?: (path: string, line?: number) => void
 }): ReactElement {
   const visible = visibleExecutionBlocks(
     blocks,
     todoSession,
-    subagentSummary,
-    foldSubagentsIntoWorkflow
+    subagentSummary
   )
   const rows = groupProcessRows(visible)
   // Only the first reasoning segment of a turn earns a live preview. Once a
@@ -2642,7 +2582,6 @@ function ProcessStream({
             todoSession={todoSession}
             todoEvents={todoEvents}
             subagentSummary={subagentSummary}
-            subagentStepsByAgentId={subagentStepsByAgentId}
             showLiveReasoningPreview={showLiveReasoningPreview}
             onOpenWorkspaceFile={onOpenWorkspaceFile}
           />
@@ -2659,7 +2598,6 @@ function ProcessStreamEntry({
   todoSession = null,
   todoEvents = [],
   subagentSummary = null,
-  subagentStepsByAgentId,
   showLiveReasoningPreview = false,
   onOpenWorkspaceFile
 }: {
@@ -2670,7 +2608,6 @@ function ProcessStreamEntry({
   todoSession?: TodoTurnSession | null
   todoEvents?: TodoTurnEvent[]
   subagentSummary?: SubagentTurnSummary | null
-  subagentStepsByAgentId?: Record<string, StepFlowItem[]>
   showLiveReasoningPreview?: boolean
   onOpenWorkspaceFile?: (path: string, line?: number) => void
 }): ReactElement | null {
@@ -2704,9 +2641,6 @@ function ProcessStreamEntry({
   if (todoSession && isTodoToolBlock(block) && todoSession.todoBlockIds.includes(block.id)) {
     return null
   }
-
-  // Live workflow cards live in ProcessTray; terminal cards stay on the timeline.
-  if (shouldHideRunningWorkflowBlock(block)) return null
 
   // Subagent summary card replaces the orchestration tool calls around it.
   if (subagentSummary && block.kind === 'subagent' && block.id === subagentSummary.anchorBlockId) {
@@ -2771,17 +2705,6 @@ function ProcessStreamEntry({
     return <UserInputBubble block={block} />
   }
   if (block.kind === 'subagent') return <SubagentBubble block={block} />
-  if (block.kind === 'workflow') {
-    return (
-      <WorkflowBlock
-        workflowName={block.workflowName}
-        status={block.status}
-        snapshot={block.snapshot}
-        runId={block.runId}
-        subagentStepsByAgentId={subagentStepsByAgentId}
-      />
-    )
-  }
   if (block.kind === 'system') {
     return <p className="text-[12px] text-ds-faint">{block.text}</p>
   }
@@ -3598,17 +3521,6 @@ function MessageBubble({ block }: { block: ChatBlock }): ReactElement | null {
   }
   if (block.kind === 'subagent') {
     return <SubagentBubble block={block} />
-  }
-  if (block.kind === 'workflow') {
-    if (shouldHideRunningWorkflowBlock(block)) return null
-    return (
-      <WorkflowBlock
-        workflowName={block.workflowName}
-        status={block.status}
-        snapshot={block.snapshot}
-        runId={block.runId}
-      />
-    )
   }
   if (block.kind === 'approval') {
     return null

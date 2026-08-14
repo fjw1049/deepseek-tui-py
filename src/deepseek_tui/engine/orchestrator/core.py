@@ -771,7 +771,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         allowed: set[str] = set(FOCUS_PLUGIN_BASE)
         server_names: set[str] = set()
         # Skill allowed-tools always expand the mount surface (extras like
-        # task_* / workflow). Trust is not required for built-in declares.
+        # task_*). Trust is not required for built-in declares.
         for skill in self._active_plugin_skills():
             declared = getattr(skill, "allowed_tools", None)
             if declared:
@@ -1794,7 +1794,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
     ) -> None:
         """
         同步沙箱策略、预处理用户输入、探测工具 profile / skill 聚焦模式 / 语言,
-        把用户消息拼进会话历史并按模式(plan/workflow/中文)追加临时 hint,
+        把用户消息拼进会话历史并按模式(plan/中文)追加临时 hint,
         最后设置每轮工具白名单、发出 TurnStartedEvent 并存崩溃检查点,为下游真正跑 LLM 循环铺好前置状态
         """
         from deepseek_tui.policy.sandbox import sync_execution_sandbox_policy
@@ -2007,17 +2007,12 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             )
 
         mode_hint = ""
-        if self.mode == "workflow":
-            mode_hint = (
-                "\n\n[Turn hint] Use the workflow tool to decompose "
-                "the user's request into a phased workflow spec."
-            )
 
         try:
             # 聚焦模式：置位 per-turn 工具白名单，``_get_tools_with_mcp`` 据此
             # 收窄 catalog。在 finally 中复位，异常/取消也不会泄漏到下一 turn。
             # skill：``FOCUS_SKILL_BASE`` ∪ ``allowed-tools``（并集，可扩
-            # task/workflow 等）。MCP：``FOCUS_MCP_BASE`` ∪ 该 server 工具。
+            # task 等）。MCP：``FOCUS_MCP_BASE`` ∪ 该 server 工具。
             # 显式前缀（/skill、@mcp）优先级最高；两者都未命中且挂载了插件时，
             # 回退到插件白名单（持续态）。都无 -> 全量（None）。
             if focus_skill is not None:
@@ -2099,7 +2094,6 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                 plugin_rules_context=self._render_plugin_rules_context(),
                 workspace=self.tool_context.working_directory,
                 locale_tag=self.reply_locale,
-                workflow_guidelines=self.tool_registry.contains("workflow"),
                 automations_guidelines=self.tool_registry.contains("cron_create"),
             )
             if mode_hint:
@@ -2374,22 +2368,6 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             agent_id = metadata.get("agent_id")
             if isinstance(agent_id, str):
                 self._consumed_subagent_completions.discard(agent_id)
-            return
-
-        if tool_name == "workflow":
-            # Workflow already synthesizes its children into the tool result.
-            # Their parent-completion envelopes must not trigger another
-            # handoff round (which layered a second final answer in the UI).
-            wf = metadata.get("workflow")
-            ids = (
-                wf.get("spawned_agent_ids")
-                if isinstance(wf, dict)
-                else metadata.get("spawned_agent_ids")
-            )
-            if isinstance(ids, list):
-                self._consumed_subagent_completions.update(
-                    aid for aid in ids if isinstance(aid, str) and aid
-                )
             return
 
         if tool_name == "agent":

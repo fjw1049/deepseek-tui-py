@@ -231,14 +231,14 @@ def test_resolve_narration_locale_follows_settings_only() -> None:
     # Message script must not override Workbench / config.ui.locale.
     assert (
         resolve_narration_locale(
-            "Explain how the workflow engine orchestrates turns.",
+            "Explain how the engine orchestrates turns.",
             config_locale="zh",
         )
         == "zh"
     )
     assert (
         resolve_narration_locale(
-            "深入研究代码，了解整个 workflow 的工作原理",
+            "深入研究代码，了解整个引擎的工作原理",
             config_locale="en",
         )
         == "en"

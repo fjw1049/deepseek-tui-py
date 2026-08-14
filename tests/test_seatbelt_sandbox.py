@@ -131,19 +131,14 @@ class TestExecutionSandboxPolicy:
     ) -> None:
         home = tmp_path / "ds_home"
         monkeypatch.setenv("DEEPSEEK_HOME", str(home))
-        from deepseek_tui.config.paths import (
-            user_subagent_runs_dir,
-            user_workflow_runs_dir,
-        )
+        from deepseek_tui.config.paths import user_subagent_runs_dir
 
         policy = ExecutionSandboxPolicy.workspace_write(
             writable_roots=(tmp_path,),
             network_access=True,
         )
         roots = policy.get_writable_roots(tmp_path)
-        wf = user_workflow_runs_dir().resolve()
         sa = user_subagent_runs_dir().resolve()
-        assert any(r.root == wf for r in roots)
         assert any(r.root == sa for r in roots)
 
 

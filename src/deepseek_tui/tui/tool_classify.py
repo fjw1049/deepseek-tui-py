@@ -92,8 +92,6 @@ _BLOCK_TOOLS: dict[str, tuple[str, str]] = {
     # GitHub writes
     "github_comment": ("◈", "comment"),
     "github_close": ("◈", "close"),
-    # Workflow
-    "workflow": ("▶", "workflow"),
     # Structured output
     "structured_output": ("◇", "output"),
     # Automation (write)

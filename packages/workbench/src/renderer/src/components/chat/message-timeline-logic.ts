@@ -40,51 +40,6 @@ export function isSubagentOrchestrationToolName(name: string | undefined): boole
   return !!name && SUBAGENT_ORCHESTRATION_TOOL_RE.test(name.trim())
 }
 
-const WORKFLOW_TOOL_RE = /^(?:workflow|workflow_list)$/i
-
-export function isWorkflowToolName(name: string | undefined): boolean {
-  return !!name && WORKFLOW_TOOL_RE.test(name.trim())
-}
-
-export function turnHasWorkflowBlock(blocks: ChatBlock[]): boolean {
-  return blocks.some((block) => block.kind === 'workflow')
-}
-
-/** Live runs belong in ProcessTray — keep terminal cards on the timeline. */
-export function shouldHideRunningWorkflowBlock(block: ChatBlock): boolean {
-  return block.kind === 'workflow' && block.status === 'running'
-}
-
-/**
- * When a workflow owns the turn, subagent cards fold into the DAG / dock.
- * Agent-mode turns (no workflow block) keep the SubagentSummaryPanel.
- */
-export function shouldFoldSubagentsIntoWorkflow(blocks: ChatBlock[]): boolean {
-  return turnHasWorkflowBlock(blocks)
-}
-
-/**
- * Hide the raw workflow tool card once a WorkflowBlock exists for the same
- * toolCallId. Keep error cards so failed specs (e.g. invalid fanout) remain
- * visible as the reason for a retry.
- */
-export function shouldHideWorkflowToolBlock(
-  block: ChatBlock,
-  blocks: ChatBlock[]
-): boolean {
-  if (block.kind !== 'tool' || block.status === 'error') return false
-  if (!isWorkflowToolName(toolNameFromProcessBlock(block))) return false
-  return blocks.some(
-    (candidate) => candidate.kind === 'workflow' && candidate.toolCallId === block.id
-  )
-}
-
-/** Status bubbles that dump render_workflow_text — duplicate of WorkflowBlock. */
-export function isWorkflowStatusSystemText(text: string | undefined): boolean {
-  const trimmed = text?.trim() ?? ''
-  return /^(?:Workflow (?:running|completed|failed|cancelled)\b)/i.test(trimmed)
-}
-
 /**
  * Sub-agent wait/resume StatusEvents — internal handoff, not chat content.
  * Same English-prefix debt as `isInternalSubagentHandoffStatusItem` in

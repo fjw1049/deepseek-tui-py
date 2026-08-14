@@ -33,7 +33,6 @@ import {
   Mic,
   Trash2,
   Wand2,
-  Workflow,
   X
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
@@ -65,7 +64,6 @@ import {
 import { ContextUsageMeter } from './ContextUsageMeter'
 import { ComposerCommandPanel } from './ComposerCommandPanel'
 import { ComposerVoiceBar, type ComposerVoicePhase } from './ComposerVoiceBar'
-import { ProcessTray } from './ProcessTray'
 import { WorkspaceContextBar } from './WorkspaceContextBar'
 import {
   joinSpeechText,
@@ -410,9 +408,7 @@ export function FloatingComposer({
       ? t('composerModePlan')
       : mode === 'ask'
         ? t('composerModeAsk')
-        : mode === 'workflow'
-          ? t('composerModeWorkflow')
-          : t('composerModeAgent')
+        : t('composerModeAgent')
   const modeBadge = {
     agent: {
       Icon: Bot,
@@ -431,12 +427,6 @@ export function FloatingComposer({
       icon: '#14b8a6',
       gradient: 'linear-gradient(135deg, rgba(20,184,166,0.18), rgba(20,184,166,0.05))',
       border: 'rgba(20,184,166,0.30)'
-    },
-    workflow: {
-      Icon: Workflow,
-      icon: '#8b5cf6',
-      gradient: 'linear-gradient(135deg, rgba(139,92,246,0.18), rgba(139,92,246,0.05))',
-      border: 'rgba(139,92,246,0.30)'
     }
   }[mode]
   const ModeBadgeIcon = modeBadge.Icon
@@ -484,17 +474,6 @@ export function FloatingComposer({
             : t('slashCommandAskDescription'),
         keywords: ['ask', 'question', 'qa', '问答'],
         icon: <MessageCircleQuestion className="h-4 w-4" strokeWidth={1.9} />
-      },
-      {
-        id: 'workflow',
-        kind: 'mode',
-        title: t('slashCommandWorkflowTitle'),
-        description:
-          mode === 'workflow'
-            ? t('slashCommandWorkflowActiveDescription')
-            : t('slashCommandWorkflowDescription'),
-        keywords: ['workflow', 'flow', 'pipeline', '工作流'],
-        icon: <Workflow className="h-4 w-4" strokeWidth={1.9} />
       },
       {
         id: 'model',
@@ -1496,8 +1475,6 @@ export function FloatingComposer({
           </div>
         ) : null}
 
-        <ProcessTray />
-
         <div
           ref={shellRef}
             className={`ds-composer-shell ds-chat-composer flex w-full flex-col transition ${
@@ -1884,7 +1861,7 @@ export function FloatingComposer({
                           : "ds-composer-plus-flyout ds-glass absolute bottom-0 left-full ml-2 w-max overflow-hidden rounded-2xl p-2 before:absolute before:inset-y-0 before:-left-2 before:w-2 before:content-['']"
                       }
                     >
-                      {/* Lock panel width to Plan hint so toggling Ask/Workflow doesn't resize. */}
+                      {/* Lock panel width to Plan hint so toggling Ask doesn't resize. */}
                       <p
                         aria-hidden
                         className="h-0 overflow-hidden px-1.5 text-[12px] leading-5 whitespace-nowrap"
@@ -1896,16 +1873,13 @@ export function FloatingComposer({
                           ? t('composerModeHintPlan')
                           : mode === 'ask'
                             ? t('composerModeHintAsk')
-                            : mode === 'workflow'
-                              ? t('composerModeHintWorkflow')
-                              : t('composerModeHintDefault')}
+                            : t('composerModeHintDefault')}
                       </p>
                       <div className="border-t border-ds-border-muted pt-1">
                         {(
                           [
                             { id: 'plan' as const, label: t('composerModePlanFull') },
-                            { id: 'ask' as const, label: t('composerModeAskFull') },
-                            { id: 'workflow' as const, label: t('composerModeWorkflowFull') }
+                            { id: 'ask' as const, label: t('composerModeAskFull') }
                           ] as const
                         ).map((item) => {
                           const on = mode === item.id

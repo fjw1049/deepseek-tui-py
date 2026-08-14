@@ -100,8 +100,8 @@ class Skill:
     frontmatter key. When set, extends ``FOCUS_SKILL_BASE`` (union).
     ``None`` means "not declared" (skill focus uses ``FOCUS_SKILL_BASE`` alone).
 
-    An intentional addition for the focus-mode feature; mirrors workflow
-    ``allowed_tools`` naming but unions rather than replaces.
+    An intentional addition for the focus-mode feature; unions rather
+    than replaces the focus base.
     """
 
 
@@ -472,7 +472,7 @@ file that follows the standard format:
 ## Guidelines
 
 - Keep instructions concise and actionable.
-- Use bullet points for step-by-step workflows.
+- Use bullet points for step-by-step procedures.
 - Include examples where helpful.
 - Avoid duplicating capabilities already in the base system prompt.
 """
@@ -480,7 +480,7 @@ file that follows the standard format:
 EXECUTION_ROUTER_BODY = """\
 ---
 name: execution-router
-description: Decide whether a task should use a single agent, an existing named workflow, a targeted subagent, or a new workflow. Use before large reviews or when the user asks if workflow/multi-agent is appropriate.
+description: Decide whether a task should use a single agent or a targeted subagent. Use before large reviews or when the user asks if multi-agent is appropriate.
 ---
 
 # Execution Router
@@ -489,7 +489,6 @@ Start with the simplest architecture that meets the quality bar. Escalate only w
 
 ## When to use
 
-- "Is workflow the right approach?"
 - "Single agent vs multi-agent?"
 - Before large repo reviews or research tasks
 
@@ -504,73 +503,12 @@ Identify: target (repo/diff/files), final artifact, success metric, side effects
 Prefer in order:
 
 1. **single-agent** — small scope, one domain, low evidence breadth
-2. **named workflow** — `repo_review`, `diff_review`, `spec_check`, `adaptive`, or project `workflows/*.json`
-3. **mode=dynamic / adaptive** — open-ended orchestration when the graph must be decided at runtime
-4. **targeted subagent** — one focused verifier alongside the main agent
-5. **new/extend workflow** — only when no existing name fits
-
-Call `workflow` with `name` + `task` when recommending a named workflow. Use `{ "mode": "dynamic", "task": "..." }` for adaptive control. Use `items_from` fanout when upstream structured arrays drive parallel work. Use `loop` only for bounded refine/verify cycles.
+2. **targeted subagent** — one focused verifier alongside the main agent
 
 ## Output
 
 Return: Recommendation, Concrete action, Confidence, Scope assumptions, Why, Minimum viable approach.
 """
-
-WORKFLOW_GUIDE_BODY = """\
----
-name: workflow-guide
-description: Create, modify, or explain DeepSeek Workflow IR specs (v1 phases or v2 DAG). Use when authoring named workflows under workflows/ or .deepseek/workflows/, or explaining agent/fanout/pipeline/loop/reduce/dynamic/support.
----
-
-# Workflow Guide
-
-DeepSeek workflows use JSON Workflow IR executed by the `workflow` tool via a DAG ready-set scheduler. v1 `phases` compile to a sequential DAG; v2 uses native `graph.nodes` + `graph.edges`.
-
-## Discovery
-
-Higher priority wins:
-
-1. `<cwd>/workflows/<name>.json` or `<name>/spec.json`
-2. `<cwd>/.deepseek/workflows/`
-3. `~/.deepseek/workflows/`
-4. Bundled presets: `repo_review`, `diff_review`, `spec_check`, `adaptive`
-
-Sugar: `{ "mode": "dynamic", "task": "..." }` injects the adaptive dynamic root.
-
-## Step types
-
-- `agent` — one spawn (`label` + `prompt`, optional `output_schema`)
-- `fanout` — parallel items: static `items` **or** `items_from: {step, path}` (e.g. `$.targets`)
-- `pipeline` — per-item serial stages
-- `loop` — `max_rounds` + optional `until: {path, equals, step?}` over body `steps`
-- `reduce` / `synthesis` — multi-predecessor join via `{{outputs.<id>}}` (`reduce` supports `from` + `source_policy`)
-- `dag` — nested subgraph container
-- `dynamic` — controller that mutates the runtime graph (`spawn`/`fanout`/`reduce`/`support`/`splice_dag`/`nested_workflow`/`synthesize`/`replan`/`stop`) under budgets
-- `support` — allowlisted helpers: `dedupe_findings`, `flatten_previews`, `merge_json`
-
-Templates: `{{task}}`, `{{item}}`, `{{previous}}`, `{{round}}`, `{{outputs.*}}`.
-
-## Authoring rules
-
-- Prefer adapting a bundled preset before inventing topology.
-- For true joins (A,B→C), author v2 edges (or `after` / `reduce.from`); do not fake joins with phase order alone.
-- Upstream of `items_from` should use `output_schema` so structured JSON is reliable.
-- Keep review/research workflows `analysis_only` or read-heavy unless writes are required.
-- For mutating parallel work, set `policy.worktree` to `"on"` (git-only; fail-closed otherwise).
-- Validate by running `workflow` with a small task; interrupted runs resume via `run_id` (restores runtime graph + dynamic state).
-- Per-step `timeout_seconds` (1..3600) on agent-like steps caps one agent call; on timeout the step yields no output (subject to `on_error`).
-- `policy.token_budget` is enforced via char/4 estimate of prompts/outputs — also bound with `max_agents`, `concurrency`, `wall_clock_seconds`, `timeout_seconds`.
-- Long runs the user will not wait for: pass `detach: true` (TaskManager drives the same `run_id`; cancel with `task_stop`).
-- Save reusable specs under `workflows/<name>.json` (shared) or `.deepseek/workflows/` (private).
-
-## Runs
-
-Checkpoints live in `~/.deepseek/workflow/<run_id>/run.json`. Resume with `workflow({ "run_id": "..." })`. Call `workflow_list` to enumerate available workflows and recent runs.
-With `policy.worktree: "on"`, edits land under `~/.deepseek/workflow/<run_id>/tree` on branch `deepseek-wf/<run_id>`; resume reuses that tree.
-Fanout also checkpoints each finished item as `{step}:{item}` so mid-fanout resume skips completed branches.
-Dynamic mutations are stored in `runtime_graph` / `dynamic_states` so mid-controller resumes keep generated nodes.
-"""
-
 
 def install_system_skills(skills_dir: Path | None = None) -> None:
     """Install bundled system skills if not already present.
@@ -582,7 +520,6 @@ def install_system_skills(skills_dir: Path | None = None) -> None:
 
     _install_skill_creator(target)
     _install_bundled_skill(target, "execution-router", EXECUTION_ROUTER_BODY)
-    _install_bundled_skill(target, "workflow-guide", WORKFLOW_GUIDE_BODY)
 
 
 def _install_skill_creator(skills_dir: Path) -> None:
@@ -613,7 +550,7 @@ def uninstall_system_skills(skills_dir: Path | None = None) -> None:
     import shutil
 
     target = skills_dir or default_skills_dir()
-    for name in ("skill-creator", "execution-router", "workflow-guide"):
+    for name in ("skill-creator", "execution-router"):
         dest = target / name
         if dest.is_dir():
             shutil.rmtree(dest)

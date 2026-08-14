@@ -28,14 +28,11 @@ def test_agent_tool_is_always_active_in_agent_mode() -> None:
         "git",
         "project_map",
         "run_tests",
-        "workflow",
         "github_issue_context",
         "github_pr_context",
         "code_execution",
     ):
         assert should_default_defer_tool(name, "agent") is True
-    # workflow mode keeps the workflow tool itself active.
-    assert should_default_defer_tool("workflow", "workflow") is False
     # yolo mode never defers.
     assert should_default_defer_tool("git", "yolo") is False
 

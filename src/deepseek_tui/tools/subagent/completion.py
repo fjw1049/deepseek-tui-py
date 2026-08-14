@@ -97,7 +97,7 @@ def build_completion_payload(snap: SubAgentResult) -> str:
     return payload
 
 
-# Sub-agent run result types (workflow + structured output).
+# Sub-agent run result types (text + structured output).
 
 
 @dataclass(slots=True)

@@ -57,11 +57,6 @@ _FOCUS_REGISTRY_TOOLS = (
 # Write subset kept for callers that want write tools without a full base.
 FOCUS_WRITE_BASE = frozenset({"write_file", "edit_file"})
 
-# Workflow mode — main agent may only drive the workflow engine (plus ask-user).
-# Exploration/edits happen inside workflow-spawned sub-agents, not here.
-WORKFLOW_MODE_TOOLS = frozenset({"workflow", "workflow_list", "request_user_input"})
-
-
 def _detect_focus_prefix(text: str, sigil: str) -> str | None:
     """解析整条消息首个 token 为 ``<sigil><name>`` 的情形，返回 ``name``。
 

@@ -1,8 +1,7 @@
 import type {
   ChatBlock,
   UserInputQuestion,
-  UserMessageEventPayload,
-  WorkflowProgressPayload
+  UserMessageEventPayload
 } from '../agent/types'
 import { finalizeOrphanSubagentBlocks } from '../lib/subagent-mailbox'
 import { normalizeWorkspaceRoot } from '../lib/workspace-path'
@@ -154,7 +153,6 @@ export function hasPendingRuntimeWork(block: ChatBlock): boolean {
   if (block.kind === 'approval') return block.status === 'pending'
   if (block.kind === 'evolution') return block.status === 'pending'
   if (block.kind === 'user_input') return block.status === 'pending'
-  if (block.kind === 'workflow') return block.status === 'running'
   if (block.kind === 'subagent') {
     return block.status === 'pending' || block.status === 'running'
   }
@@ -162,7 +160,7 @@ export function hasPendingRuntimeWork(block: ChatBlock): boolean {
 }
 
 /**
- * After an interrupt (or force-clear), mark in-flight tools/workflows/subagents
+ * After an interrupt (or force-clear), mark in-flight tools/subagents
  * terminal so `hasPendingRuntimeWork` cannot keep the composer stuck in queue mode.
  */
 export function finalizeOrphanRuntimeBlocks(blocks: ChatBlock[]): ChatBlock[] {
@@ -172,10 +170,6 @@ export function finalizeOrphanRuntimeBlocks(blocks: ChatBlock[]): ChatBlock[] {
     if (block.kind === 'tool' && block.status === 'running') {
       changed = true
       return { ...block, status: 'error' as const }
-    }
-    if (block.kind === 'workflow' && block.status === 'running') {
-      changed = true
-      return { ...block, status: 'cancelled' as const }
     }
     return block
   })
@@ -192,71 +186,6 @@ export function moveQueuedMessageToFront(
   if (idx === 0) return queued
   const target = queued[idx]
   return [target, ...queued.slice(0, idx), ...queued.slice(idx + 1)]
-}
-
-export function upsertWorkflowBlock(
-  blocks: ChatBlock[],
-  ev: WorkflowProgressPayload
-): ChatBlock[] {
-  const status: 'running' | 'completed' | 'failed' | 'cancelled' | 'timed_out' | 'interrupted' =
-    ev.completed
-      ? ev.status === 'timed_out'
-        ? 'timed_out'
-        : ev.status === 'interrupted'
-          ? 'interrupted'
-          : ev.status === 'cancelled'
-            ? 'cancelled'
-            : ev.status === 'failed'
-              ? 'failed'
-              : ev.snapshot.error_count > 0 && ev.snapshot.done_count === 0
-                ? 'failed'
-                : 'completed'
-      : 'running'
-  const runId = ev.runId?.trim() || undefined
-  const nextBlock: ChatBlock = {
-    kind: 'workflow',
-    id: ev.toolCallId,
-    toolCallId: ev.toolCallId,
-    workflowName: ev.workflowName,
-    status,
-    snapshot: ev.snapshot,
-    createdAt: new Date().toISOString(),
-    ...(runId ? { runId } : {})
-  }
-  const idx = blocks.findIndex(
-    (b) => b.kind === 'workflow' && b.toolCallId === ev.toolCallId
-  )
-  let next: ChatBlock[]
-  if (idx < 0) {
-    next = [...blocks, nextBlock]
-  } else {
-    const current = blocks[idx]
-    const merged: ChatBlock =
-      current.kind === 'workflow'
-        ? {
-            ...current,
-            ...nextBlock,
-            createdAt: current.createdAt ?? nextBlock.createdAt,
-            runId: runId || current.runId
-          }
-        : nextBlock
-    next = [...blocks]
-    next[idx] = merged
-  }
-  // Same run_id resumed under a new tool_call_id: drop older terminal cards so
-  // ProcessTray does not show cancelled + running side by side.
-  if (runId && status === 'running') {
-    next = next.filter(
-      (b) =>
-        !(
-          b.kind === 'workflow' &&
-          b.runId === runId &&
-          b.toolCallId !== ev.toolCallId &&
-          b.status !== 'running'
-        )
-    )
-  }
-  return next
 }
 
 export function threadSnapshotLooksRunning(blocks: ChatBlock[], threadStatus?: string): boolean {

@@ -33,8 +33,6 @@ _AGENT_TOOLS = [
     "task_stop",
     "update_plan",
     "web_search",
-    "workflow",
-    "workflow_list",
     "write_file",
 ]
 
@@ -54,7 +52,6 @@ _PLAN_TOOLS = [
     "task_output",
     "update_plan",
     "web_search",
-    "workflow_list",
 ]
 
 
@@ -77,7 +74,6 @@ def test_plan_mode_has_no_side_effect_tools() -> None:
         "task_create",
         "task_stop",
         "note",
-        "workflow",
     }
     names = set(build_default_registry(Config(), mode="plan").names())
     assert not (side_effect & names)

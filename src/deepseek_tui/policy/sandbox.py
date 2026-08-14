@@ -107,15 +107,11 @@ class ExecutionSandboxPolicy:
         except OSError:
             roots.append(cwd)
 
-        # User-level runtime (workflow worktrees / subagent transcripts). Do not
-        # expose the whole ~/.deepseek tree (config/secrets stay out of shell write).
+        # User-level runtime (subagent transcripts). Do not expose the whole
+        # ~/.deepseek tree (config/secrets stay out of shell write).
         try:
-            from deepseek_tui.config.paths import (
-                user_subagent_runs_dir,
-                user_workflow_runs_dir,
-            )
+            from deepseek_tui.config.paths import user_subagent_runs_dir
 
-            roots.append(user_workflow_runs_dir().resolve())
             roots.append(user_subagent_runs_dir().resolve())
         except OSError:
             pass

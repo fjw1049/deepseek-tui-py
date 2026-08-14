@@ -11,8 +11,8 @@ import type {
 import type { ComposerModelMeta } from '../lib/composer-model-label'
 import type { StartupPhasePayload } from '@shared/ds-gui-api'
 
-/** Composer execution mode (agent / plan / ask / workflow). */
-export type ComposerMode = 'plan' | 'agent' | 'ask' | 'workflow'
+/** Composer execution mode (agent / plan / ask). */
+export type ComposerMode = 'plan' | 'agent' | 'ask'
 
 export type QueuedUserMessage = {
   id: string

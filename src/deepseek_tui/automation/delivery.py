@@ -271,7 +271,7 @@ You are running a scheduled background task. Follow these rules:
 Tool usage:
 1. Available tools: web_search, fetch_url, read_file, grep_files, file_search, exec_shell, load_skill, and any installed MCP tools (mcp_* / list_mcp_resources / read_mcp_resource) already in your tool list.
 2. Prefer installed MCP tools for structured data sources when they match the task; use web_search/fetch_url as fallback.
-3. Use load_skill when a listed skill matches the report format or workflow.
+3. Use load_skill when a listed skill matches the report format or process.
 4. exec_shell is allowed — prefer short, non-interactive commands; avoid interactive prompts and package installs unless the task requires them.
 5. Do NOT call tool_search_tool_regex or tool_search_tool_bm25 — discovery tools are disabled in cron runs.
 6. Do NOT call request_user_input — nobody is watching this run.

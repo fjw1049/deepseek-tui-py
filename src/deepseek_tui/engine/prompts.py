@@ -39,15 +39,12 @@ class AppMode(enum.Enum):
     AGENT = "agent"
     YOLO = "yolo"
     PLAN = "plan"
-    WORKFLOW = "workflow"
 
     def mode_prompt(self) -> str:
         if self is AppMode.AGENT:
             return AGENT_MODE()
         elif self is AppMode.YOLO:
             return YOLO_MODE()
-        elif self is AppMode.WORKFLOW:
-            return WORKFLOW_MODE()
         return PLAN_MODE()
 
     def approval_prompt(self) -> str:
@@ -438,7 +435,6 @@ def build_system_prompt(
     plugin_rules_context: str | None = None,
     locale_tag: str = "zh",
     project_context_enabled: bool = True,
-    workflow_guidelines: bool = False,
     automations_guidelines: bool = False,
 ) -> str:
     """Build the full system prompt for the engine.
@@ -492,7 +488,7 @@ def build_system_prompt(
 
 
     # Context Management (Agent / Yolo only)
-    if mode in (AppMode.AGENT, AppMode.YOLO, AppMode.WORKFLOW):
+    if mode in (AppMode.AGENT, AppMode.YOLO):
         full_prompt += (
             "\n\n## Context Management\n\n"
             "When the conversation grows long, the system automatically "
@@ -522,13 +518,6 @@ def build_system_prompt(
     # Always-on plugin rules (system-level directives, session-stable).
     if plugin_rules_context and plugin_rules_context.strip():
         full_prompt += "\n\n" + plugin_rules_context
-
-    if workflow_guidelines:
-        from deepseek_tui.workflow.adapters import workflow_guidelines_snippet
-
-        snippet = workflow_guidelines_snippet()
-        if snippet:
-            full_prompt += "\n\n" + snippet
 
     # Short lane hint only (peer style: details stay in cron_* tool
     # descriptions). Injected when cron tools are registered — never a
@@ -806,10 +795,6 @@ def YOLO_MODE() -> str:  # noqa: N802
     return _get("modes/yolo.md")
 
 
-def WORKFLOW_MODE() -> str:  # noqa: N802
-    return _get("modes/workflow.md")
-
-
 def AUTO_APPROVAL() -> str:  # noqa: N802
     return _get("approvals/auto.md")
 
@@ -867,7 +852,7 @@ def compose_prompt(mode: AppMode, personality: Personality = Personality.CALM) -
     Order (most-static to most-volatile for KV prefix cache):
       1. base.md        — core identity, toolbox, execution contract
       2. personality    — voice and tone overlay
-      3. mode delta     — mode-specific permissions and workflow
+      3. mode delta     — mode-specific permissions and process
       4. approval policy — tool-approval behavior
     """
     parts = [
@@ -893,7 +878,6 @@ def load_prompt(name: str) -> str:
         "agent_mode": AGENT_MODE,
         "plan_mode": PLAN_MODE,
         "yolo_mode": YOLO_MODE,
-        "workflow_mode": WORKFLOW_MODE,
         "auto_approval": AUTO_APPROVAL,
         "suggest_approval": SUGGEST_APPROVAL,
         "never_approval": NEVER_APPROVAL,

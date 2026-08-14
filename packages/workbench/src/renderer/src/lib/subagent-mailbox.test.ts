@@ -446,7 +446,7 @@ describe('subagent-mailbox', () => {
     cards = applyMailboxMessage(cards, {
       kind: 'progress',
       agent_id: 'agent_1',
-      status: '先看 chat 组件结构，确认 Workflow 入口',
+      status: '先看 chat 组件结构，确认 Composer 入口',
       seq: 2
     })
     cards = applyMailboxMessage(cards, {

@@ -678,40 +678,6 @@ class AppRuntime:
             return {"ok": False, "error": str(exc), "code": "conflict"}
         return {"ok": True, "task": _task_record_to_dict(record)}
 
-    async def resume_workflow(
-        self,
-        run_id: str,
-        *,
-        detach: bool = True,
-        thread_id: str | None = None,
-    ) -> dict[str, Any]:
-        """Resume a checkpointed workflow (HTTP/UI direct path).
-
-        Uses the detach Task queue so resume does not require a warm parent
-        engine turn. ``detach=False`` is accepted but currently follows the
-        same enqueue path (true in-process sync needs a tool context).
-        """
-        _ = detach  # API symmetry; direct resume always enqueues a detach worker
-        if self._tool_runtime is None or self._tool_runtime.task_manager is None:
-            return {"ok": False, "error": "task manager not configured"}
-        from deepseek_tui.workflow.detach import enqueue_workflow_resume
-
-        workspace = Path(self.working_directory)
-        try:
-            ids = await enqueue_workflow_resume(
-                run_id=run_id,
-                workspace=workspace,
-                task_manager=self._tool_runtime.task_manager,
-                thread_id=thread_id,
-            )
-        except KeyError as exc:
-            return {"ok": False, "error": str(exc), "code": "not_found"}
-        except RuntimeError as exc:
-            return {"ok": False, "error": str(exc), "code": "conflict"}
-        except Exception as exc:  # noqa: BLE001
-            return {"ok": False, "error": str(exc)}
-        return {"ok": True, **ids}
-
     def _automation_manager(self) -> Any:
         if self._tool_runtime is None or self._tool_runtime.automation_manager is None:
             return None
@@ -1217,7 +1183,6 @@ from deepseek_tui.engine.events import (
     TurnCancelledEvent,
     TurnCompleteEvent,
     TurnStartedEvent,
-    WorkflowProgressEvent,
 )
 
 
@@ -1297,24 +1262,6 @@ def engine_event_to_sse(event: EngineEvent) -> dict[str, Any]:
         }
     if isinstance(event, StatusEvent):
         return {"event": "status", "message": event.message}
-    if isinstance(event, WorkflowProgressEvent):
-        from deepseek_tui.workflow.models import WorkflowSnapshot
-        from deepseek_tui.workflow.models import snapshot_to_dict
-
-        snap = event.snapshot
-        snapshot_payload = (
-            snapshot_to_dict(snap) if isinstance(snap, WorkflowSnapshot) else snap
-        )
-        return {
-            "event": "workflow.progress",
-            "tool_call_id": event.tool_call_id,
-            "thread_id": event.thread_id,
-            "workflow_name": event.workflow_name,
-            "snapshot": snapshot_payload,
-            "completed": event.completed,
-            "status": event.status,
-            **({"run_id": event.run_id} if event.run_id else {}),
-        }
     if isinstance(event, AgentRoundCompleteEvent):
         return {
             "event": "agent_round_complete",

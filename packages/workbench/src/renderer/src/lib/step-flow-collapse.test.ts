@@ -172,7 +172,7 @@ describe('collapseStepFlowProbes', () => {
   it('folds mixed consecutive read/search probes with compose counts', () => {
     const items = [
       probe('r0', 'read_file', '…/scheduler.py'),
-      probe('s0', 'search_files', 'run_workflow'),
+      probe('s0', 'search_files', 'run_scheduler'),
       probe('r1', 'read_file', '…/runtime.py'),
       probe('s1', 'search_files', '_collect_errors')
     ]
@@ -197,7 +197,7 @@ describe('collapseStepFlowProbes', () => {
     })
     expect(collapsed[0]?.batchEntries?.[1]).toMatchObject({
       kind: 'search',
-      target: 'run_workflow'
+      target: 'run_scheduler'
     })
   })
 
@@ -337,7 +337,7 @@ describe('subagentStepsToFlowItems collapse', () => {
         toolName: 'search_files',
         ok: true,
         label: '搜索文件',
-        input: 'run_workflow'
+        input: 'run_scheduler'
       },
       {
         id: 't3',

@@ -1,4 +1,4 @@
-"""User-level runtime paths (logs / workflow / agents)."""
+"""User-level runtime paths (logs / agents)."""
 
 from __future__ import annotations
 
@@ -15,10 +15,8 @@ from deepseek_tui.config.paths import (
     user_subagent_runs_dir,
     user_subagents_registries_dir,
     user_subagents_state_path,
-    user_workflow_runs_dir,
     workspace_storage_key,
 )
-from deepseek_tui.workflow.store import workflow_runs_dir
 
 
 def test_runtime_dirs_under_deepseek_home(
@@ -27,12 +25,10 @@ def test_runtime_dirs_under_deepseek_home(
     home = tmp_path / "home"
     monkeypatch.setenv("DEEPSEEK_HOME", str(home))
     assert user_logs_dir() == home / "logs"
-    assert user_workflow_runs_dir() == home / "workflow"
     assert user_agent_runtime_dir() == home / "agents"
     assert user_subagent_runs_dir() == home / "agents" / "runs"
     assert user_subagents_registries_dir() == home / "agents" / "registries"
     assert user_plugin_host_dir() == home / "plugins" / ".host"
-    assert workflow_runs_dir(tmp_path / "repo") == home / "workflow"
 
 
 def test_subagents_state_isolated_by_workspace(
@@ -82,42 +78,3 @@ def test_ensure_user_home_layout_migrates_legacy(
     assert (home / "automations" / "job.json").is_file()
     assert not (home / "automations" / "automations").exists()
     assert (home / "MANIFEST.toml").is_file()
-
-
-def test_ensure_user_home_layout_renames_workflow_runs(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    home = tmp_path / "home"
-    monkeypatch.setenv("DEEPSEEK_HOME", str(home))
-    run = home / "workflow-runs" / "wf_abc"
-    run.mkdir(parents=True)
-    (run / "run.json").write_text("{}", encoding="utf-8")
-
-    actions = ensure_user_home_layout(home)
-    assert any("workflow-runs/" in a and "workflow/" in a for a in actions)
-    assert (home / "workflow" / "wf_abc" / "run.json").is_file()
-    assert not (home / "workflow-runs").exists()
-    assert "workflow-runs/" not in (home / "MANIFEST.toml").read_text(encoding="utf-8")
-
-
-def test_workflow_migrate_quarantines_duplicate_run_ids(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    home = tmp_path / "home"
-    monkeypatch.setenv("DEEPSEEK_HOME", str(home))
-    kept = home / "workflow" / "wf_dup"
-    kept.mkdir(parents=True)
-    (kept / "run.json").write_text('{"side":"new"}', encoding="utf-8")
-    legacy = home / "workflow-runs" / "wf_dup"
-    legacy.mkdir(parents=True)
-    (legacy / "run.json").write_text('{"side":"legacy"}', encoding="utf-8")
-
-    actions = ensure_user_home_layout(home)
-    assert any("quarantined" in a for a in actions)
-    assert (home / "workflow" / "wf_dup" / "run.json").read_text(encoding="utf-8") == (
-        '{"side":"new"}'
-    )
-    quarantined = home / "workflow" / ".migrated-dupes" / "wf_dup" / "run.json"
-    assert quarantined.is_file()
-    assert quarantined.read_text(encoding="utf-8") == '{"side":"legacy"}'
-    assert not (home / "workflow-runs").exists()

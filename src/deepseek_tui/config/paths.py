@@ -5,7 +5,7 @@ User home ``~/.deepseek/`` is layered by lifecycle (see ``MANIFEST.toml``):
 * **L0 identity** — config, AGENTS.md, mcp.json, secrets
 * **L1 capabilities** — skills, plugins (+ ``plugins/.host``)
 * **L2 conversations** — ``threads/`` is canonical; ``sessions/`` is TUI legacy
-* **L3 jobs** — tasks, automations, workflow, ``agents/{registries,runs}``
+* **L3 jobs** — tasks, automations, ``agents/{registries,runs}``
 * **L4 ephemeral** — logs, hooks, tool_outputs, caches
 * **L5 scratch** — default ``workspace/``, notes.txt
 
@@ -138,11 +138,6 @@ def user_mcp_config_path() -> Path:
 def user_logs_dir() -> Path:
     """``~/.deepseek/logs/`` — application rotating logs."""
     return user_deepseek_dir() / "logs"
-
-
-def user_workflow_runs_dir() -> Path:
-    """``~/.deepseek/workflow/`` — workflow checkpoints by ``run_id``."""
-    return user_deepseek_dir() / "workflow"
 
 
 def user_agent_runtime_dir() -> Path:
