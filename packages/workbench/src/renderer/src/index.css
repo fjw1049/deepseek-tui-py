@@ -5745,6 +5745,33 @@ html[data-theme='dark'] .ds-code-fullscreen .shiki span {
   word-break: break-word;
 }
 
+/* Colored prefix in the same inline run as the body — share the text baseline. */
+.ds-user-message-chip {
+  display: inline;
+  margin-right: 0.4em;
+  font-size: inherit;
+  font-weight: 500;
+  line-height: inherit;
+}
+
+.ds-user-message-chip > svg {
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  margin-right: 0.28em;
+  vertical-align: -0.14em;
+  opacity: 0.9;
+}
+
+.ds-user-message-chip > button {
+  display: inline-flex;
+  vertical-align: -0.14em;
+}
+
+.ds-user-message-edit-bubble .ds-user-message-chip {
+  margin-right: 0;
+}
+
 .ds-user-message-edit-bubble {
   width: min(92%, 860px);
   max-width: min(92%, 860px);

@@ -2825,31 +2825,28 @@ function UserFocusChip({
     kind === 'plugin'
       ? {
           Icon: Puzzle,
-          className:
-            'border-[rgba(168,85,247,0.4)] bg-[rgba(168,85,247,0.14)] text-[#a855f7]',
+          className: 'text-[#a855f7]',
           title: t('composerPluginFocus', { name: displayName })
         }
       : kind === 'skill'
         ? {
             Icon: Sparkles,
-            className:
-              'border-[rgba(79,124,255,0.4)] bg-[rgba(79,124,255,0.14)] text-[#4f7cff]',
+            className: 'text-[#4f7cff]',
             title: t('composerSkillFocus', { name })
           }
         : {
             Icon: Plug,
-            className:
-              'border-[rgba(16,185,129,0.4)] bg-[rgba(16,185,129,0.14)] text-[#10b981]',
+            className: 'text-[#10b981]',
             title: t('composerConnectorFocus', { name })
           }
   const Icon = meta.Icon
   return (
     <span
       title={meta.title}
-      className={`mb-1.5 inline-flex max-w-full items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[12px] font-medium ${meta.className}`}
+      className={`ds-user-message-chip ${meta.className}`}
     >
-      <Icon className="h-3 w-3 shrink-0" strokeWidth={2} aria-hidden />
-      <span className="truncate">
+      <Icon strokeWidth={1.75} aria-hidden />
+      <span>
         {kind === 'plugin' ? t('composerPluginBadge', { name: displayName }) : name}
       </span>
     </span>
@@ -2868,10 +2865,10 @@ function PreviewPickChip({
   return (
     <span
       title={t('composerPreviewPickFocus', { name: label })}
-      className="inline-flex max-w-full items-center gap-1 rounded-full border border-[rgba(14,165,233,0.4)] bg-[rgba(14,165,233,0.14)] py-0.5 pl-2.5 pr-1 text-[12px] font-medium text-[#0ea5e9]"
+      className="ds-user-message-chip text-[#0ea5e9]"
     >
-      <Wand2 className="h-3 w-3 shrink-0" strokeWidth={2} aria-hidden />
-      <span className="truncate pr-0.5">{label}</span>
+      <Wand2 strokeWidth={1.75} aria-hidden />
+      <span>{label}</span>
       {onRemove ? (
         <button
           type="button"
@@ -2882,9 +2879,9 @@ function PreviewPickChip({
           }}
           aria-label={t('composerPreviewPickRemove', { name: label })}
           title={t('composerPreviewPickRemove', { name: label })}
-          className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[#0ea5e9]/opacity-70 transition hover:bg-[rgba(14,165,233,0.22)] hover:opacity-100"
+          className="inline-flex h-[1.2em] w-[1.2em] shrink-0 items-center justify-center rounded-full text-[#0ea5e9]/70 transition hover:bg-[rgba(14,165,233,0.22)] hover:opacity-100"
         >
-          <X className="h-3 w-3" strokeWidth={2.25} aria-hidden />
+          <X className="h-[0.75em] w-[0.75em]" strokeWidth={2.25} aria-hidden />
         </button>
       ) : null}
     </span>
@@ -3047,8 +3044,8 @@ function UserMessageBubble({
     return (
       <div id={`block-${block.id}`} className="ds-user-message">
         <div className="ds-user-message-bubble ds-user-message-edit-bubble min-w-0">
-          {editPicks.length > 0 ? (
-            <div className="mb-1.5 flex flex-wrap gap-1.5">
+          {editPicks.length > 0 || focus ? (
+            <div className="mb-1.5 flex flex-wrap items-center gap-1.5">
               {editPicks.map((pick, index) => {
                 const label = formatPreviewPickChipLabel(pick)
                 return (
@@ -3061,9 +3058,9 @@ function UserMessageBubble({
                   />
                 )
               })}
+              {focus ? <UserFocusChip kind={focus.kind} name={focus.name} /> : null}
             </div>
           ) : null}
-          {focus ? <UserFocusChip kind={focus.kind} name={focus.name} /> : null}
           <textarea
             ref={textareaRef}
             value={draft}
@@ -3227,17 +3224,23 @@ function UserMessageBubble({
   return (
     <div id={`block-${block.id}`} className="ds-user-message group relative">
       <div className="ds-user-message-bubble min-w-0">
-        {previewChipLabels.length > 0 ? (
-          <div className="mb-1.5 flex flex-wrap gap-1.5">
-            {previewChipLabels.map((label, index) => (
-              <PreviewPickChip key={`${label}:${index}`} label={label} />
-            ))}
-          </div>
-        ) : null}
-        {focus ? <UserFocusChip kind={focus.kind} name={focus.name} /> : null}
-        {displayBody ? (
-          <div className="whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-justify [text-justify:inter-ideograph]">
-            {displayBody}
+        {previewChipLabels.length > 0 || focus || displayBody ? (
+          <div
+            className={`whitespace-pre-wrap break-words [overflow-wrap:anywhere] ${
+              previewChipLabels.length > 0 || focus
+                ? 'text-start'
+                : 'text-justify [text-justify:inter-ideograph]'
+            }`}
+          >
+            {[
+              ...previewChipLabels.map((label, index) => (
+                <PreviewPickChip key={`${label}:${index}`} label={label} />
+              )),
+              focus ? (
+                <UserFocusChip key="focus" kind={focus.kind} name={focus.name} />
+              ) : null,
+              displayBody || null
+            ]}
           </div>
         ) : null}
       </div>
