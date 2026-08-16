@@ -10,6 +10,7 @@ from __future__ import annotations
 
 
 import asyncio
+import ipaddress
 import json
 import sys
 from collections.abc import AsyncIterator
@@ -266,6 +267,18 @@ def models(
 # Subcommand: serve
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+
+def _is_loopback_host(host: str) -> bool:
+    """True for 127.0.0.0/8, ::1, and ``localhost``."""
+    h = host.strip().lower().strip("[]")
+    if h == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(h).is_loopback
+    except ValueError:
+        return False
+
+
 @app.command()
 def serve(
     host: str = typer.Option("127.0.0.1", "--host", help="Bind host for HTTP."),
@@ -302,6 +315,15 @@ def serve(
 ) -> None:
     """Start the app-server (HTTP by default; --stdio for JSON-RPC pipe)."""
     from deepseek_tui.server import AppServerOptions, run_http, run_stdio
+
+    if insecure and not _is_loopback_host(host):
+        typer.echo(
+            f"Refusing to start: --insecure disables all auth, but --host "
+            f"{host!r} is not a loopback address. Bind to 127.0.0.1 or pass "
+            "--auth-token instead.",
+            err=True,
+        )
+        raise typer.Exit(1)
 
     loaded = _load_config(config, profile, provider, model)
     if stdio:

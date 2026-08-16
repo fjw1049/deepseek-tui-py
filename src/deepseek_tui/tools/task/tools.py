@@ -21,6 +21,7 @@ decision D3) but is no longer exposed as a tool.
 from __future__ import annotations
 
 from dataclasses import asdict
+from pathlib import Path
 from typing import Any
 
 from deepseek_tui.tools.registry import (
@@ -33,7 +34,6 @@ from deepseek_tui.tools.registry import (
 )
 from deepseek_tui.tools.task.helpers import (
     _enforce_max_task_nest_depth,
-    _optional_bool,
     _optional_int,
     _optional_string,
     _require_manager,
@@ -72,9 +72,10 @@ class TaskCreateTool(ToolSpec):
         )
 
     def input_schema(self) -> dict[str, Any]:
-        # trust_mode / auto_approve are intentionally omitted: the model must
-        # not self-escalate privileges. Automation / runtime code can still
-        # set them via NewTaskRequest when enqueueing tasks programmatically.
+        # trust_mode / auto_approve / mode / allow_shell are intentionally
+        # omitted: the model must not self-escalate privileges. Automation /
+        # runtime code can still set them via NewTaskRequest when enqueueing
+        # tasks programmatically.
         return {
             "type": "object",
             "properties": {
@@ -107,22 +108,6 @@ class TaskCreateTool(ToolSpec):
                     "description": (
                         "Workspace directory the task runs in (absolute "
                         "path). Defaults to the current workspace."
-                    ),
-                },
-                "mode": {
-                    "type": "string",
-                    "enum": ["agent", "plan", "yolo"],
-                    "description": (
-                        "App mode for the task. Default 'agent'; 'plan' is "
-                        "read-only analysis; 'yolo' skips approvals — only "
-                        "when the user explicitly asked for it."
-                    ),
-                },
-                "allow_shell": {
-                    "type": "boolean",
-                    "description": (
-                        "Whether the task may run shell commands. Defaults "
-                        "to the session's current policy."
                     ),
                 },
             },
@@ -158,20 +143,21 @@ class TaskCreateTool(ToolSpec):
         _enforce_max_task_nest_depth(context)
         prompt = _require_string(input_data, "prompt")
         origin_thread = context.metadata.get("runtime_thread_id")
-        # Durable tasks are fire-and-forget: default auto-approve so they can
-        # write/run without a live operator. When False, the executor bridges
-        # tool approvals onto the origin thread (same UI as the main session).
+        workspace = self._resolve_workspace(input_data, context)
+        # Tasks inherit the session's live auto-approve flag (written by the
+        # engine per turn; the Workbench thread manager writes it too). When
+        # the session is not auto-approving, the task must not silently gain
+        # it: the executor bridges tool approvals onto the origin thread, or
+        # denies them when no bridge is wired.
         session_auto = context.metadata.get("session_auto_approve")
-        if isinstance(session_auto, bool):
-            auto_approve = session_auto
-        else:
-            auto_approve = True
+        auto_approve = session_auto if isinstance(session_auto, bool) else False
         req = NewTaskRequest(
             prompt=prompt,
             model=_optional_string(input_data, "model"),
-            workspace=_optional_string(input_data, "workspace"),
-            mode=_optional_string(input_data, "mode"),
-            allow_shell=_optional_bool(input_data, "allow_shell"),
+            workspace=workspace,
+            # mode / allow_shell are deliberately NOT taken from model input
+            # (they are not in the schema): the task inherits the manager's
+            # defaults instead of model-chosen privilege escalation.
             trust_mode=False,
             auto_approve=auto_approve,
             thread_id=origin_thread if isinstance(origin_thread, str) else None,
@@ -181,6 +167,34 @@ class TaskCreateTool(ToolSpec):
         except ValueError as exc:
             raise ToolError(str(exc)) from exc
         return _task_result("task_create", task)
+
+    @staticmethod
+    def _resolve_workspace(
+        input_data: dict[str, Any], context: ToolContext
+    ) -> str | None:
+        """Resolve the ``workspace`` argument against the session workspace.
+
+        A detached task runs with the given path as its working directory,
+        so the model must not point it outside the current session
+        workspace. Relative paths are treated as workspace-relative; the
+        session workspace itself is allowed.
+        """
+        raw = _optional_string(input_data, "workspace")
+        if raw is None:
+            return None
+        base = context.working_directory.resolve()
+        candidate = Path(raw).expanduser()
+        if not candidate.is_absolute():
+            candidate = base / candidate
+        resolved = candidate.resolve()
+        try:
+            resolved.relative_to(base)
+        except ValueError:
+            raise ToolError(
+                "workspace must be inside the current session workspace "
+                f"({base}); got {resolved}"
+            ) from None
+        return str(resolved)
 
 
 _TASK_KINDS = ("task", "agent", "process")

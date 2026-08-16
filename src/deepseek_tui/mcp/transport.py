@@ -20,12 +20,13 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
 from abc import ABC, abstractmethod
 from typing import Any
 
 import httpx
 from httpx_sse import aconnect_sse
+
+from deepseek_tui.policy.env_filter import build_child_env
 
 logger = logging.getLogger(__name__)
 
@@ -80,7 +81,9 @@ class StdioTransport(McpTransport):
     async def start(self) -> None:
         if self._process is not None:
             return
-        merged_env = {**os.environ, **self.env}
+        # Scrub secret-like vars from the inherited env; mcp.json's explicit
+        # ``env`` entries (self.env) pass through untouched.
+        merged_env = build_child_env(self.env)
         self._process = await asyncio.create_subprocess_exec(
             self.command,
             *self.args,

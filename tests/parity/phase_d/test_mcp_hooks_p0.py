@@ -117,13 +117,16 @@ class TestAppServerMcpToolRoute:
     async def test_handle_tool_routes_external_mcp(self) -> None:
         from deepseek_tui.server.runtime import AppRuntime
 
-        cfg = Config()
+        # The server tool path now mirrors the engine's approval gate; use an
+        # auto-approve policy so this test exercises routing, not the gate.
+        cfg = Config(approval_policy="auto")
         runtime = await AppRuntime.create(config=cfg)
         assert runtime._tool_runtime is not None
 
         mgr = MagicMock(spec=McpManager)
         mgr.server_names = ["mock"]
         mgr._configs = {"mock": McpServerConfig(name="mock", command="echo")}
+        mgr.declared_capabilities = MagicMock(return_value=[])
         mgr.discover_tools = AsyncMock(
             return_value=[
                 {
@@ -158,6 +161,72 @@ class TestAppServerMcpToolRoute:
         assert result["ok"] is True
         assert "appserver-path" in result.get("content", "")
         mgr.call_tool.assert_awaited_once()
+
+    async def test_handle_tool_denies_mcp_tool_requiring_approval(self) -> None:
+        """Default policy gates MCP tools; the server path has no approval
+        channel, so the call must be denied instead of executed."""
+        from deepseek_tui.server.runtime import AppRuntime
+
+        cfg = Config()  # approval_policy defaults to "on-request"
+        runtime = await AppRuntime.create(config=cfg)
+        assert runtime._tool_runtime is not None
+
+        mgr = MagicMock(spec=McpManager)
+        mgr.server_names = ["mock"]
+        mgr._configs = {"mock": McpServerConfig(name="mock", command="echo")}
+        mgr.declared_capabilities = MagicMock(return_value=[])
+        mgr.call_tool = AsyncMock()
+        runtime._tool_runtime.mcp_manager = mgr
+
+        result = await runtime.handle_tool(
+            {"call": {"name": "mcp_mock_echo", "arguments": {}}}
+        )
+        assert result["ok"] is False
+        assert "approval required" in result["error"]
+        mgr.call_tool.assert_not_awaited()
+
+
+class TestAppServerBuiltinToolApproval:
+    """The server tool path must mirror the engine's approval gate for
+    built-in registry tools too — no silent bypass for token holders."""
+
+    async def test_handle_tool_denies_builtin_requiring_approval(
+        self, tmp_path: Path
+    ) -> None:
+        from deepseek_tui.server.runtime import AppRuntime
+
+        cfg = Config()  # approval_policy defaults to "on-request"
+        runtime = await AppRuntime.create(config=cfg, working_directory=tmp_path)
+        assert runtime._tool_runtime is not None
+        try:
+            for call in (
+                {"name": "exec_shell", "arguments": {"command": "echo hi"}},
+                {"name": "write_file", "arguments": {"path": "x.txt", "content": "x"}},
+            ):
+                result = await runtime.handle_tool({"call": call})
+                assert result["ok"] is False, call["name"]
+                assert "approval required" in result["error"]
+                assert "denied in server tool path" in result["error"]
+            assert not (tmp_path / "x.txt").exists()
+        finally:
+            # Shut the runtime down: user-level MCP config may spawn
+            # background connects that otherwise hang loop teardown.
+            await runtime.shutdown()
+
+    async def test_handle_tool_allows_read_only_builtin(self, tmp_path: Path) -> None:
+        from deepseek_tui.server.runtime import AppRuntime
+
+        (tmp_path / "note.txt").write_text("hello")
+        cfg = Config()
+        runtime = await AppRuntime.create(config=cfg, working_directory=tmp_path)
+        try:
+            result = await runtime.handle_tool(
+                {"call": {"name": "read_file", "arguments": {"path": "note.txt"}}}
+            )
+            assert result["ok"] is True
+            assert "hello" in result.get("content", "")
+        finally:
+            await runtime.shutdown()
 
 
 class TestEngineLifecycleHooks:

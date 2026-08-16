@@ -1,10 +1,15 @@
-"""Sensitive-file guard for read-side tools.
+"""Sensitive-file guard for read-side and write-side tools.
 
 Blocks the model from reading common credential files through tools
 (read_file / grep_files / file_search), matching Claude Code's behaviour
 (Glob/Grep skip ``.env``, Read refuses private keys). Conservative by
 design: an explicit basename list, no broad globs, so false positives are
 rare. Templates and public keys stay readable.
+
+Write-side tools (write_file / edit_file) use ``is_sensitive_write_path``,
+which adds ``.git/hooks`` on top of the read-side blocklist: overwriting a
+hook is code execution on the next git operation, while merely reading one
+is harmless.
 """
 
 from __future__ import annotations
@@ -30,3 +35,14 @@ def is_sensitive_path(path: Path) -> bool:
     if name in _SECRET_BASENAMES:
         return True
     return False
+
+
+def is_sensitive_write_path(path: Path) -> bool:
+    """Write-side guard: the read-side blocklist plus anything under ``.git/hooks``."""
+    if is_sensitive_path(path):
+        return True
+    parts = path.parts
+    return any(
+        parts[i] == ".git" and parts[i + 1] == "hooks"
+        for i in range(len(parts) - 1)
+    )

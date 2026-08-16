@@ -196,6 +196,7 @@ async def decide_approval(request: Request, approval_id: str) -> dict[str, objec
 
 from deepseek_tui.automation.inbox import (
     append_feishu_inbound,
+    default_feishu_chat_id_from_config,
     default_mail_to_from_config,
     email_send_text,
     feishu_receive_id_type,
@@ -219,12 +220,15 @@ class FeishuInboundBody(BaseModel):
 
 
 class FeishuTestSendBody(BaseModel):
-    receive_id: str = Field(min_length=1)
+    # Ignored: the target is locked to the configured default chat so the
+    # request body cannot redirect messages to arbitrary receive_ids.
+    receive_id: str | None = None
     text: str = "DeepSeek Feishu connection test"
     receive_id_type: str | None = None
 
 
 class EmailTestSendBody(BaseModel):
+    # Ignored: the target is locked to the configured default recipient.
     to_addr: str | None = None
     subject: str = "DeepSeek email connection test"
     text: str = "This is a test email confirming SMTP works."
@@ -246,7 +250,14 @@ class TriggerBody(BaseModel):
 def _check_webhook_secret(request: Request) -> None:
     expected = os.getenv("DEEPSEEK_FEISHU_WEBHOOK_SECRET", "").strip()
     if not expected:
-        return
+        # No secret configured means there is no way to authenticate the
+        # sender — reject instead of silently skipping verification.
+        raise api_error(
+            401,
+            "feishu webhook secret not configured "
+            "(set DEEPSEEK_FEISHU_WEBHOOK_SECRET)",
+            error="feishu_webhook_not_configured",
+        )
     auth = request.headers.get("authorization", "")
     header_secret = request.headers.get("x-deepseek-feishu-secret", "")
     token = ""
@@ -348,14 +359,22 @@ async def feishu_inbound(
 @ingress_router.post("/feishu/test-send")
 async def feishu_test_send(body: FeishuTestSendBody) -> dict[str, Any]:
     """Send a short text to verify ``[automation.feishu]`` in config.toml."""
+    receive_id = (default_feishu_chat_id_from_config() or "").strip()
+    if not receive_id:
+        raise api_error(
+            400,
+            "Default chat is required (set automation.feishu_chat_id or "
+            "automation.feishu.chat_id).",
+            error="feishu_recipient_missing",
+        )
     rid_type = (
         body.receive_id_type.strip()
         if body.receive_id_type and body.receive_id_type.strip()
-        else feishu_receive_id_type(body.receive_id)
+        else feishu_receive_id_type(receive_id)
     )
     try:
         await feishu_send_text(
-            receive_id=body.receive_id.strip(),
+            receive_id=receive_id,
             text=body.text.strip() or "DeepSeek Feishu connection test",
             receive_id_type=rid_type,
         )
@@ -367,11 +386,11 @@ async def feishu_test_send(body: FeishuTestSendBody) -> dict[str, Any]:
 @ingress_router.post("/email/test-send")
 async def email_test_send(body: EmailTestSendBody) -> dict[str, Any]:
     """Send a short message to verify ``[automation.email]`` SMTP settings."""
-    to_addr = (body.to_addr or default_mail_to_from_config() or "").strip()
+    to_addr = (default_mail_to_from_config() or "").strip()
     if not to_addr:
         raise api_error(
             400,
-            "Recipient address is required (set automation.mail_to or pass to_addr).",
+            "Recipient address is required (set automation.mail_to).",
             error="email_recipient_missing",
         )
     try:

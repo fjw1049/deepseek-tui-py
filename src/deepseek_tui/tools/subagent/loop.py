@@ -332,9 +332,10 @@ async def run_subagent_loop(
         extra_tools=extra_tools or None,
     )
     approval_policy = getattr(runtime.config, "approval_policy", None)
-    trust_mode = runtime.auto_approve or bool(
-        getattr(runtime, "trust_mode", False)
-    )
+    # Trust is explicit configuration only. ``auto_approve`` must NOT imply
+    # it: an auto-approved (fire-and-forget) child would otherwise bypass
+    # workspace path confinement and get a danger-full-access sandbox.
+    trust_mode = bool(getattr(runtime, "trust_mode", False))
     parent_task_id = getattr(runtime, "active_task_id", None)
     if isinstance(parent_task_id, str):
         parent_task_id = parent_task_id.strip() or None

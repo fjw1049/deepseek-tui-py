@@ -14,6 +14,7 @@ from httpx_sse import aconnect_sse
 
 from deepseek_tui.client.base import LLMClient
 from deepseek_tui.client.chat_messages import build_chat_messages
+from deepseek_tui.client.sanitize import sanitize_extra_body, sanitize_extra_headers
 from deepseek_tui.client.streaming import OpenAIStreamParser
 from deepseek_tui.protocol.messages import MessageRequest
 from deepseek_tui.protocol.responses import StreamEvent
@@ -150,7 +151,7 @@ class DeepSeekClient(LLMClient):
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
-            **self.extra_headers,
+            **sanitize_extra_headers(self.extra_headers),
         }
         payload = self._build_payload(request)
         client = self._get_http_client()
@@ -344,7 +345,7 @@ class DeepSeekClient(LLMClient):
         ):
             payload["reasoning_effort"] = request.reasoning_effort
             payload["thinking"] = {"type": "enabled"}
-        payload.update(request.extra_body)
+        payload.update(sanitize_extra_body(request.extra_body))
         return payload
 
 

@@ -252,6 +252,15 @@ def test_cron_legacy_names_share_fingerprints() -> None:
     assert build_approval_key("automation_create", create_args) == build_approval_key(
         "cron_create", create_args
     )
+    # Different job content must not share a session grant.
+    assert build_approval_key("cron_create", create_args) != build_approval_key(
+        "cron_create",
+        {**create_args, "prompt": "do other work"},
+    )
+    assert build_approval_key("cron_create", create_args) != build_approval_key(
+        "cron_create",
+        {**create_args, "schedule": "0 9 * * *"},
+    )
     delete_a = build_approval_key("cron_delete", {"automation_id": "a1"})
     assert delete_a == build_approval_key(
         "automation_delete", {"automation_id": "a1"}

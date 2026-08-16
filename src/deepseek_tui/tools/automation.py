@@ -137,20 +137,60 @@ def _format_summary_line(record: Any) -> str:
 # ── tool implementations ────────────────────────────────────────────
 
 
+def _allowed_delivery_targets(mode: str) -> list[str]:
+    """Configured recipients the model is allowed to deliver to."""
+    if mode == "feishu":
+        from deepseek_tui.automation.inbox import default_feishu_chat_id_from_config
+
+        value = default_feishu_chat_id_from_config()
+        return [value] if value else []
+    if mode == "email":
+        from deepseek_tui.automation.inbox import default_mail_to_from_config
+
+        value = default_mail_to_from_config()
+        return [value] if value else []
+    if mode == "wecom":
+        from deepseek_tui.automation.inbox import default_wecom_webhook_key_from_config
+
+        value = default_wecom_webhook_key_from_config()
+        return [value] if value else []
+    return []
+
+
+def _delivery_target_allowed(mode: str, target: str, allowed: list[str]) -> bool:
+    if mode == "email":
+        return any(target.lower() == item.lower() for item in allowed)
+    if mode == "wecom":
+        from deepseek_tui.automation.inbox import _parse_wecom_webhook_key
+
+        parsed = _parse_wecom_webhook_key(target) or target
+        return any(
+            parsed == (_parse_wecom_webhook_key(item) or item) for item in allowed
+        )
+    return target in allowed
+
+
 def _resolve_delivery(raw: dict[str, Any] | None) -> dict[str, Any] | None:
-    """Fill default Feishu ``to`` from config when the model omits it."""
+    """Fill default ``to`` from config; reject model-chosen strangers."""
     if raw is None:
         return None
     delivery = dict(raw)
     mode = str(delivery.get("mode", "silent")).strip().lower()
-    if mode == "feishu":
-        to_val = delivery.get("to") or delivery.get("chat_id")
-        if not (isinstance(to_val, str) and to_val.strip()):
-            from deepseek_tui.automation.inbox import default_feishu_chat_id_from_config
-
-            default = default_feishu_chat_id_from_config()
-            if default:
-                delivery["to"] = default
+    if mode in ("silent", "notify", ""):
+        return delivery
+    to_val = delivery.get("to") or delivery.get("chat_id")
+    allowed = _allowed_delivery_targets(mode)
+    if isinstance(to_val, str) and to_val.strip():
+        target = to_val.strip()
+        if not allowed or not _delivery_target_allowed(mode, target, allowed):
+            raise ToolError(
+                f"delivery.to must be a configured {mode} recipient; "
+                "unknown targets are not allowed"
+            )
+        delivery["to"] = target
+        return delivery
+    if allowed:
+        delivery["to"] = allowed[0]
     return delivery
 
 
@@ -262,9 +302,9 @@ class CronCreateTool(ToolSpec):
                         "to": {
                             "type": "string",
                             "description": (
-                                "Recipient: Feishu open_chat_id, email address, "
-                                "or WeCom webhook key/URL. Required for feishu "
-                                "and email; optional for wecom when configured."
+                                "Recipient: must match the configured default "
+                                "(automation.feishu_chat_id / mail_to / "
+                                "wecom.webhook_key). Omit to use that default."
                             ),
                         },
                         "best_effort": {"type": "boolean"},

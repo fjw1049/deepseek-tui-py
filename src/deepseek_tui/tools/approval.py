@@ -97,13 +97,13 @@ class PolicyRule:
 #
 # Fingerprint shapes:
 #
-# - ``exec_shell`` (command) → ``shell:<positional tokens, flags dropped>``
-#   so ``rm a.txt`` ≠ ``rm b.txt``, while ``git status -s`` ≡
-#   ``git status --porcelain``.
+# - ``exec_shell`` (command) → ``shell:<tokens including flags>``
+#   so ``rm a.txt`` ≠ ``rm b.txt`` and ``git push`` ≠ ``git push --force``.
 # - ``exec_shell`` (interact / process_id) → ``shell:interact:<process_id>``
 # - ``task_create(resume=)`` / ``task_resume`` → ``task_create:resume:<id>``
 # - ``task_stop`` / ``task_cancel`` → ``task_stop:<kind>:<id>``
-# - ``cron_*`` / retired ``automation_*`` → shared ``tool:cron_*`` keys
+# - ``cron_create`` / ``automation_create`` → ``cron_create:<name>:<digest>``
+# - ``cron_delete`` / ``automation_delete`` → ``tool:cron_delete:<id>``
 # - ``write_file`` / ``edit_file`` → ``file:<name>:<path>``
 # - ``fetch_url`` / ``web_fetch`` → ``net:<hostname>``
 # - everything else → ``tool:<tool_name>``
@@ -270,7 +270,7 @@ def build_approval_key(tool_name: str, tool_input: Any) -> ApprovalKey:
         suffix = f":{target}" if target else ""
         return ApprovalKey(f"task_stop{suffix}")
     if tool_name in ("cron_create", "automation_create"):
-        return ApprovalKey("tool:cron_create")
+        return ApprovalKey(f"cron_create:{_cron_create_key(tool_input)}")
     if tool_name in ("cron_delete", "automation_delete"):
         target = ""
         if isinstance(tool_input, dict):
@@ -283,12 +283,11 @@ def build_approval_key(tool_name: str, tool_input: Any) -> ApprovalKey:
 
 
 def _command_prefix(tool_input: Any) -> str:
-    """Fingerprint shell commands by positional tokens (flags dropped).
+    """Fingerprint shell commands by all tokens, including flags.
 
-    ``git status -s`` and ``git status --porcelain`` fingerprint identical;
-    ``rm a.txt`` and ``rm b.txt`` fingerprint differently so a session
-    remember cannot cross paths. Flags (``-`` / ``--``) are ignored so
-    cosmetic option differences do not re-prompt.
+    Paths stay distinct (``rm a.txt`` ≠ ``rm b.txt``). Flags stay too:
+    remembering ``git push`` must not unlock ``git push --force``, and
+    ``rm a`` must not unlock ``rm -rf a``.
     """
     command = ""
     if isinstance(tool_input, dict):
@@ -298,16 +297,39 @@ def _command_prefix(tool_input: Any) -> str:
     tokens = command.split()
     if not tokens:
         return "<empty>"
-    positional = [t.lower() for t in tokens if not t.startswith("-")]
-    if not positional:
-        return "<flags-only>"
+    normalized = [t.lower() for t in tokens]
     # Bound key size for very long argument lists while keeping identity.
-    joined = " ".join(positional)
+    joined = " ".join(normalized)
     if len(joined) <= 200:
         return joined
     digest = hashlib.blake2b(joined.encode("utf-8"), digest_size=8).hexdigest()
-    head = " ".join(positional[:3])
+    head = " ".join(normalized[:3])
     return f"{head}:{digest}"
+
+
+def _cron_create_key(tool_input: Any) -> str:
+    """Fingerprint a cron job by name + schedule + prompt + delivery.
+
+    A session grant for job A must not create job B (different prompt,
+    schedule, or destination).
+    """
+    if not isinstance(tool_input, dict):
+        return "<empty>"
+    name = str(tool_input.get("name") or "").strip()
+    when = str(
+        tool_input.get("schedule") or tool_input.get("run_at") or ""
+    ).strip()
+    prompt = str(tool_input.get("prompt") or "")
+    delivery = tool_input.get("delivery")
+    dest = ""
+    if isinstance(delivery, dict):
+        dest = (
+            f"{delivery.get('mode') or ''}:"
+            f"{delivery.get('to') or delivery.get('chat_id') or ''}"
+        )
+    raw = f"{name}\n{when}\n{prompt}\n{dest}"
+    digest = hashlib.blake2b(raw.encode("utf-8"), digest_size=8).hexdigest()
+    return f"{name or '<unnamed>'}:{digest}"
 
 
 def _file_path_key(tool_input: Any) -> str:

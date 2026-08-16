@@ -588,6 +588,10 @@ class SubAgentRuntime:
     # Parent engine's lifecycle HookExecutor. When set, subagent_stop
     # (Claude "SubagentStop") hooks run when a child finishes responding.
     hook_executor: Any | None = None
+    # Explicit trust only — never derived from ``auto_approve``: an
+    # auto-approved (fire-and-forget) child must not silently gain
+    # workspace-confinement bypass / danger-full-access sandbox.
+    trust_mode: bool = False
 
     def would_exceed_depth(self) -> bool:
         return self.spawn_depth + 1 > self.max_spawn_depth
@@ -610,6 +614,7 @@ class SubAgentRuntime:
             active_task_id=self.active_task_id,
             approval_handler=self.approval_handler,
             emit_event=self.emit_event,
+            trust_mode=self.trust_mode,
         )
 
     def child(self) -> SubAgentRuntime:
@@ -630,4 +635,5 @@ class SubAgentRuntime:
             active_task_id=self.active_task_id,
             approval_handler=self.approval_handler,
             emit_event=self.emit_event,
+            trust_mode=self.trust_mode,
         )

@@ -12,10 +12,11 @@ import signal
 import uuid
 from asyncio.subprocess import Process
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn
 
 from deepseek_tui.tools.approval import Decision
 from deepseek_tui.policy.command_safety import SafetyLevel, analyze_command
+from deepseek_tui.policy.env_filter import build_child_env
 from deepseek_tui.policy.sandbox import (
     SANDBOX_MANAGER,
     CommandSpec,
@@ -880,6 +881,19 @@ def _safe_read(fd: int, n: int) -> bytes:
         return b""
 
 
+def _exec_with_scrubbed_env(exec_env: ExecEnv) -> NoReturn:
+    """Exec the command with a fully replaced, scrubbed environment.
+
+    Used in the PTY fork child: ``execvp`` would inherit the parent's
+    ``os.environ`` (including any secrets), so the scrubbed mapping must
+    replace the environment wholesale via ``execvpe`` — merging into
+    ``os.environ`` first would leave secret keys in place.
+    """
+    os.execvpe(
+        exec_env.command[0], exec_env.command, build_child_env(exec_env.env)
+    )
+
+
 async def _run_pty(
     command: str,
     *,
@@ -910,10 +924,7 @@ async def _run_pty(
             if slave_fd > 2:
                 os.close(slave_fd)
             os.chdir(cwd)
-            merged_env = {**os.environ, **exec_env.env}
-            for key, value in merged_env.items():
-                os.environ[key] = value
-            os.execvp(exec_env.command[0], exec_env.command)
+            _exec_with_scrubbed_env(exec_env)
         except Exception:
             os._exit(127)
 
@@ -1001,9 +1012,7 @@ async def _run_pty(
 
 
 async def _shell_env_from_hooks(context: ToolContext, command: str) -> dict[str, str] | None:
-    """Merge ``shell_env`` lifecycle hook output into the subprocess environment."""
-    import os
-
+    """Collect ``shell_env`` lifecycle hook output for the subprocess environment."""
     from deepseek_tui.integrations.hooks import HookContext, HookExecutor
 
     executor = context.metadata.get("hook_executor")
@@ -1018,7 +1027,10 @@ async def _shell_env_from_hooks(context: ToolContext, command: str) -> dict[str,
     extra = await executor.collect_shell_env_async(hook_ctx)
     if not extra:
         return None
-    return {**os.environ, **extra}
+    # Only the hook's own entries: the spawn paths merge them onto a
+    # secret-scrubbed copy of os.environ themselves, and folding os.environ
+    # in here would smuggle credentials into the explicit-override slot.
+    return dict(extra)
 
 
 def _pty_store(context: ToolContext) -> dict[str, PtyProcess]:
@@ -1140,7 +1152,7 @@ def _prepare_shell_exec(
 
 
 async def _spawn_from_exec_env(exec_env: ExecEnv) -> Process:
-    merged_env = {**os.environ, **exec_env.env}
+    merged_env = build_child_env(exec_env.env)
     return await asyncio.create_subprocess_exec(
         exec_env.program(),
         *exec_env.args(),

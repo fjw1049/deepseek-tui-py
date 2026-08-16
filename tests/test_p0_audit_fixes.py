@@ -205,10 +205,14 @@ def test_approval_key_shell_distinguishes_paths() -> None:
     a = build_approval_key("exec_shell", {"command": "rm a.txt"})
     b = build_approval_key("exec_shell", {"command": "rm b.txt"})
     assert a != b
-    # Flags dropped: cosmetic option differences share a fingerprint.
-    s1 = build_approval_key("exec_shell", {"command": "git status -s"})
-    s2 = build_approval_key("exec_shell", {"command": "git status --porcelain"})
-    assert s1 == s2
+    # Flags are part of the fingerprint: a session remember must not
+    # upgrade git push → --force or rm a → rm -rf a.
+    assert build_approval_key("exec_shell", {"command": "git push"}) != (
+        build_approval_key("exec_shell", {"command": "git push --force"})
+    )
+    assert build_approval_key("exec_shell", {"command": "rm a"}) != (
+        build_approval_key("exec_shell", {"command": "rm -rf a"})
+    )
 
 
 def test_approval_key_write_file_includes_path() -> None:
@@ -313,6 +317,8 @@ def test_task_create_schema_omits_privilege_flags() -> None:
     props = TaskCreateTool().input_schema()["properties"]
     assert "auto_approve" not in props
     assert "trust_mode" not in props
+    assert "mode" not in props
+    assert "allow_shell" not in props
     assert "prompt" in props
 
 
@@ -437,3 +443,120 @@ def test_align_insert_index_skips_tool_orphan() -> None:
     # After insert at 1: [user, seam, assistant, tool, tool, user]
     assert msgs[2].role == Role.ASSISTANT
     assert msgs[3].role == Role.TOOL
+
+
+def test_subagent_runtime_trust_mode_not_derived_from_auto_approve(tmp_path) -> None:
+    """auto_approve (fire-and-forget) must not imply trust_mode; trust is
+    explicit configuration and propagates to children only when set."""
+    from deepseek_tui.tools.subagent import SubAgentManager, SubAgentRuntime
+
+    manager = SubAgentManager(workspace=tmp_path)
+    rt = SubAgentRuntime(
+        manager=manager,
+        client=object(),
+        model="m",
+        config=object(),
+        workspace=tmp_path,
+        auto_approve=True,
+    )
+    assert rt.trust_mode is False
+    assert rt.child().trust_mode is False
+
+    trusted = SubAgentRuntime(
+        manager=manager,
+        client=object(),
+        model="m",
+        config=object(),
+        workspace=tmp_path,
+        auto_approve=True,
+        trust_mode=True,
+    )
+    assert trusted.with_spawn_depth(1).trust_mode is True
+    assert trusted.child().trust_mode is True
+
+
+@pytest.mark.asyncio
+async def test_subagent_loop_auto_approve_does_not_grant_trust_mode(
+    tmp_path, monkeypatch
+) -> None:
+    """Loop-level guard: an auto_approve=True runtime must build its tool
+    context with trust_mode=False (workspace confinement + sandbox intact)."""
+    from collections.abc import AsyncIterator
+
+    import deepseek_tui.tools.registry as registry_mod
+    from deepseek_tui.client.base import LLMClient, RetryConfig
+    from deepseek_tui.config.models import Config
+    from deepseek_tui.protocol.messages import MessageRequest
+    from deepseek_tui.protocol.responses import (
+        StreamDone,
+        StreamEvent,
+        StreamTextDelta,
+    )
+    from deepseek_tui.tools.subagent import (
+        Mailbox,
+        SpawnRequest,
+        SubAgentAssignment,
+        SubAgentManager,
+        SubAgentRuntime,
+        SubAgentType,
+        get_real_subagent_executor,
+    )
+
+    class _Client(LLMClient):
+        def __init__(self) -> None:
+            super().__init__(RetryConfig(base_delay=0.0, max_delay=0.0))
+
+        async def stream_chat_completion(
+            self, request: MessageRequest
+        ) -> AsyncIterator[StreamEvent]:
+            yield StreamTextDelta(text="done")
+            yield StreamDone()
+
+    captured: list[ToolContext] = []
+    real_build = registry_mod.build_subagent_registry
+
+    def _spy(*args: Any, **kwargs: Any) -> Any:
+        registry = real_build(*args, **kwargs)
+        original_set_context = registry.set_context
+
+        def _capture(ctx: ToolContext) -> None:
+            captured.append(ctx)
+            original_set_context(ctx)
+
+        registry.set_context = _capture
+        return registry
+
+    monkeypatch.setattr(registry_mod, "build_subagent_registry", _spy)
+
+    mailbox = Mailbox()
+    manager = SubAgentManager(
+        workspace=tmp_path,
+        mailbox=mailbox,
+        executor=get_real_subagent_executor(),
+        default_model="deepseek-chat",
+    )
+    manager.attach_loop_runtime(
+        SubAgentRuntime(
+            manager=manager,
+            client=_Client(),
+            model="deepseek-chat",
+            config=Config(),
+            workspace=tmp_path,
+            mailbox=mailbox,
+            auto_approve=True,
+        )
+    )
+    try:
+        spawned = await manager.spawn(
+            SpawnRequest(
+                prompt="say done",
+                agent_type=SubAgentType.EXPLORE,
+                assignment=SubAgentAssignment(objective="one round, no tools"),
+            )
+        )
+        await manager.wait([spawned.agent_id], mode="all", timeout_ms=10_000)
+    finally:
+        await manager.shutdown()
+
+    assert captured, "sub-agent loop never built a tool context"
+    assert all(ctx.trust_mode is False for ctx in captured)

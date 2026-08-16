@@ -564,7 +564,7 @@ async def run_feishu_inbound_agent(
         thread = await thread_manager.create_thread(
             CreateThreadRequest(
                 mode="agent",
-                auto_approve=True,
+                auto_approve=False,
                 trust_mode=False,
             )
         )
@@ -579,7 +579,7 @@ async def run_feishu_inbound_agent(
     )
     turn = await thread_manager.start_turn(
         thread.id,
-        StartTurnRequest(prompt=prompt, auto_approve=True),
+        StartTurnRequest(prompt=prompt, auto_approve=False),
     )
     summary = await wait_thread_turn_text(
         thread_manager,

@@ -121,9 +121,12 @@ class TestLiveRlmSubagentTask:
         assert combined, "expected assistant text or reasoning content"
         assert "OK" in combined
 
-    async def test_06_task_create_default_auto_approve_true(
+    async def test_06_task_create_default_auto_approve_false(
         self, project_config: Config, tmp_path: Path
     ) -> None:
+        """Without a session auto-approve flag the task must NOT silently
+        gain auto-approve (privilege-escalation fix): controlled tools then
+        bridge to the origin thread or deny instead of running unattended."""
         async def _stub(task, cancel):  # noqa: ANN001
             from deepseek_tui.tools.task import TaskExecutionResult
 
@@ -144,7 +147,7 @@ class TestLiveRlmSubagentTask:
             assert result.success is True
             task_id = result.metadata["task_id"]
             task = await manager.get_task(task_id)
-            assert task.auto_approve is True
+            assert task.auto_approve is False
         finally:
             await manager.shutdown()
 

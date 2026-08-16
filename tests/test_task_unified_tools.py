@@ -323,3 +323,76 @@ def test_agent_action_enum_is_narrowed() -> None:
     ).input_schema()
     assert plan_schema["properties"]["action"]["enum"] == ["wait"]
     assert "resume" not in plan_schema["properties"]
+
+
+# --- task_create: workspace confinement + auto_approve inheritance --------------
+
+
+async def test_task_create_rejects_workspace_outside_session(tmp_path) -> None:
+    ctx = ToolContext(
+        working_directory=tmp_path, task_manager=_task_manager(tmp_path)
+    )
+    with pytest.raises(ToolError, match="workspace must be inside"):
+        await TaskCreateTool().execute(
+            {"prompt": "x", "workspace": str(tmp_path.parent)}, ctx
+        )
+    with pytest.raises(ToolError, match="workspace must be inside"):
+        await TaskCreateTool().execute({"prompt": "x", "workspace": "/"}, ctx)
+    with pytest.raises(ToolError, match="workspace must be inside"):
+        await TaskCreateTool().execute({"prompt": "x", "workspace": ".."}, ctx)
+
+
+async def test_task_create_allows_workspace_inside_session(tmp_path) -> None:
+    manager = _task_manager(tmp_path)
+    ctx = ToolContext(working_directory=tmp_path, task_manager=manager)
+    sub = tmp_path / "nested" / "deeper"
+
+    # The session workspace itself, a nested subdirectory, and a relative
+    # path are all inside the session workspace.
+    for raw in (str(tmp_path), str(sub), "nested/deeper"):
+        result = await TaskCreateTool().execute(
+            {"prompt": "x", "workspace": raw}, ctx
+        )
+        task = await manager.get_task(result.metadata["task_id"])
+        expected = tmp_path if raw == str(tmp_path) else sub
+        assert task.workspace == str(expected)
+
+
+async def test_task_create_auto_approve_defaults_false(tmp_path) -> None:
+    """No session flag (or a non-bool one) must NOT silently auto-approve."""
+    manager = _task_manager(tmp_path)
+    for metadata in ({}, {"session_auto_approve": "yes"}):
+        ctx = ToolContext(
+            working_directory=tmp_path, task_manager=manager, metadata=metadata
+        )
+        result = await TaskCreateTool().execute({"prompt": "work"}, ctx)
+        task = await manager.get_task(result.metadata["task_id"])
+        assert task.auto_approve is False
+
+
+async def test_task_create_auto_approve_inherits_session_flag(tmp_path) -> None:
+    manager = _task_manager(tmp_path)
+    for flag in (True, False):
+        ctx = ToolContext(
+            working_directory=tmp_path,
+            task_manager=manager,
+            metadata={"session_auto_approve": flag},
+        )
+        result = await TaskCreateTool().execute({"prompt": "work"}, ctx)
+        task = await manager.get_task(result.metadata["task_id"])
+        assert task.auto_approve is flag
+
+
+async def test_task_create_ignores_model_supplied_mode_and_allow_shell(
+    tmp_path,
+) -> None:
+    """Model-supplied mode / allow_shell must not self-escalate privileges."""
+    manager = _task_manager(tmp_path)
+    ctx = ToolContext(working_directory=tmp_path, task_manager=manager)
+    result = await TaskCreateTool().execute(
+        {"prompt": "work", "mode": "yolo", "allow_shell": True}, ctx
+    )
+    task = await manager.get_task(result.metadata["task_id"])
+    # TaskManagerConfig defaults: default_mode="agent", allow_shell=False.
+    assert task.mode == "agent"
+    assert task.allow_shell is False

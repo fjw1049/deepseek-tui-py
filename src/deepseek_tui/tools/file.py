@@ -11,7 +11,7 @@ from deepseek_tui.tools.utils.path_suggestions import format_not_found_error
 from deepseek_tui.tools.utils.validation import require_string as _require_string
 from deepseek_tui.tools.registry import ToolCapability, ToolError, ToolResult, ToolSpec
 from deepseek_tui.tools.registry import ToolContext
-from deepseek_tui.tools.utils.sensitive import is_sensitive_path
+from deepseek_tui.tools.utils.sensitive import is_sensitive_path, is_sensitive_write_path
 from deepseek_tui.utils import write_text_atomic
 
 logger = logging.getLogger(__name__)
@@ -163,6 +163,11 @@ class WriteFileTool(ToolSpec):
         rel = _require_string(input_data, "path")
         path = context.resolve_path(rel)
         content = _require_string(input_data, "content")
+        if is_sensitive_write_path(path):
+            raise ToolError(
+                f"refusing to write sensitive file: {path} "
+                "(matched the credential-file blocklist)"
+            )
         if context.changed_since_last_seen(path):
             raise ToolError(_stale_write_message(path))
         existed = path.exists()
@@ -255,6 +260,11 @@ class EditFileTool(ToolSpec):
         path = context.resolve_path(rel)
         old_string = _require_string_with_alias(input_data, "old_string", "search")
         new_string = _require_string_with_alias(input_data, "new_string", "replace")
+        if is_sensitive_write_path(path):
+            raise ToolError(
+                f"refusing to write sensitive file: {path} "
+                "(matched the credential-file blocklist)"
+            )
         replace_all = input_data.get("replace_all", False)
         if not isinstance(replace_all, bool):
             raise ToolError("replace_all must be a boolean")

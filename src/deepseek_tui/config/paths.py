@@ -24,8 +24,12 @@ introduce new "layer-ambiguous" helpers.
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
+from collections.abc import Collection
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 DOT_DEEPSEEK = ".deepseek"
 
@@ -224,7 +228,7 @@ def dotenv_path(workspace: Path | None = None) -> Path:
 # ---------------------------------------------------------------------------
 
 
-def load_dotenv_file(path: Path) -> None:
+def load_dotenv_file(path: Path, blocked_keys: Collection[str] | None = None) -> None:
     if not path.exists():
         return
     for raw_line in path.read_text(encoding="utf-8").splitlines():
@@ -235,6 +239,11 @@ def load_dotenv_file(path: Path) -> None:
         key = key.strip()
         value = value.strip().strip('"').strip("'")
         if key and key not in os.environ:
+            if blocked_keys and key in blocked_keys:
+                logger.warning(
+                    "project .env ignored security-sensitive key: %s (%s)", key, path
+                )
+                continue
             os.environ[key] = value
 
 

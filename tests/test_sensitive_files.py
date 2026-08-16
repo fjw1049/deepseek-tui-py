@@ -11,10 +11,10 @@ from pathlib import Path
 
 import pytest
 
-from deepseek_tui.tools.file import ReadFileTool
+from deepseek_tui.tools.file import EditFileTool, ReadFileTool, WriteFileTool
 from deepseek_tui.tools.registry import ToolContext, ToolError
 from deepseek_tui.tools.search import FileSearchTool, GrepFilesTool
-from deepseek_tui.tools.utils.sensitive import is_sensitive_path
+from deepseek_tui.tools.utils.sensitive import is_sensitive_path, is_sensitive_write_path
 
 
 async def test_read_file_refuses_env(tmp_path: Path):
@@ -107,3 +107,54 @@ def test_is_sensitive_path_matrix():
     assert is_sensitive_path(Path(".pypirc"))
     assert not is_sensitive_path(Path("main.py"))
     assert not is_sensitive_path(Path("environment.py"))
+    # .git/hooks is write-side only: reading a hook stays allowed.
+    assert not is_sensitive_path(Path(".git/hooks/pre-commit"))
+
+
+async def test_write_file_refuses_sensitive_files(tmp_path: Path):
+    for name in (".env", ".env.local", "id_rsa", "server.pem", ".git/hooks/pre-commit"):
+        target = tmp_path / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("secret\n", encoding="utf-8")
+        with pytest.raises(ToolError, match="refusing to write sensitive file"):
+            await WriteFileTool().execute(
+                {"path": name, "content": "poisoned\n"},
+                ToolContext(working_directory=tmp_path),
+            )
+        assert target.read_text(encoding="utf-8") == "secret\n"
+
+
+async def test_edit_file_refuses_sensitive_files(tmp_path: Path):
+    for name in (".env", ".env.local", "id_rsa", "server.pem", ".git/hooks/pre-commit"):
+        target = tmp_path / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("secret\n", encoding="utf-8")
+        with pytest.raises(ToolError, match="refusing to write sensitive file"):
+            await EditFileTool().execute(
+                {"path": name, "old_string": "secret", "new_string": "poisoned"},
+                ToolContext(working_directory=tmp_path),
+            )
+        assert target.read_text(encoding="utf-8") == "secret\n"
+
+
+async def test_write_and_edit_allow_normal_files(tmp_path: Path):
+    result = await WriteFileTool().execute(
+        {"path": "notes.md", "content": "hello\n"},
+        ToolContext(working_directory=tmp_path),
+    )
+    assert result.success
+    result = await EditFileTool().execute(
+        {"path": "notes.md", "old_string": "hello", "new_string": "world"},
+        ToolContext(working_directory=tmp_path),
+    )
+    assert result.success
+    assert (tmp_path / "notes.md").read_text(encoding="utf-8") == "world\n"
+
+
+def test_is_sensitive_write_path_matrix():
+    assert is_sensitive_write_path(Path(".git/hooks/pre-commit"))
+    assert is_sensitive_write_path(Path("repo/.git/hooks/post-merge"))
+    assert is_sensitive_write_path(Path(".env"))
+    assert not is_sensitive_write_path(Path(".git/config"))
+    assert not is_sensitive_write_path(Path("src/hooks/setup.py"))
+    assert not is_sensitive_write_path(Path("main.py"))

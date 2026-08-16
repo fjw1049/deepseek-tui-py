@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import os
+import socket
 import time
 from dataclasses import dataclass
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 import httpx
 
@@ -96,6 +98,7 @@ class FetchUrlTool(ToolSpec):
     async def execute(self, input_data: dict[str, object], context: ToolContext) -> ToolResult:
         url = _require_string(input_data, "url")
         _require_http_url(url)
+        _reject_private_fetch_url(url)
         max_chars = _optional_int(input_data, "max_chars") or _DEFAULT_FETCH_MAX_CHARS
         timeout = context.timeout_ms / 1000 if context.timeout_ms is not None else _DEFAULT_FETCH_TIMEOUT_S
         started = time.monotonic()
@@ -532,6 +535,64 @@ def _require_http_url(url: str) -> None:
         raise ToolError("URL must include a host")
 
 
+_BLOCKED_FETCH_HOSTNAMES = frozenset(
+    {
+        "localhost",
+        "localhost.localdomain",
+        "ip6-localhost",
+        "ip6-loopback",
+        "metadata.google.internal",
+    }
+)
+
+
+def _ip_is_blocked(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
+        ip = ip.ipv4_mapped
+    return bool(
+        ip.is_loopback
+        or ip.is_private
+        or ip.is_link_local
+        or ip.is_multicast
+        or ip.is_reserved
+        or ip.is_unspecified
+    )
+
+
+def _host_is_blocked(host: str) -> bool:
+    """True for loopback, RFC1918, link-local, and well-known metadata names."""
+    name = host.strip().lower().rstrip(".")
+    if name in _BLOCKED_FETCH_HOSTNAMES or name.endswith(".localhost"):
+        return True
+    try:
+        if _ip_is_blocked(ipaddress.ip_address(name)):
+            return True
+    except ValueError:
+        pass
+    try:
+        infos = socket.getaddrinfo(name, None)
+    except socket.gaierror:
+        return False
+    for info in infos:
+        sockaddr = info[4]
+        try:
+            ip = ipaddress.ip_address(sockaddr[0])
+        except (ValueError, IndexError):
+            continue
+        if _ip_is_blocked(ip):
+            return True
+    return False
+
+
+def _reject_private_fetch_url(url: str) -> None:
+    """Refuse fetches that would hit loopback, RFC1918, or link-local hosts."""
+    host = urlparse(url.strip()).hostname
+    if not host or _host_is_blocked(host):
+        raise ToolError(
+            f"fetch_url refuses loopback/private URL: {url}"
+        )
+
+
 def _is_direct_resource_url(url: str) -> bool:
     """Fast path: plain files where raw GET is already the payload."""
     parsed = urlparse(url.strip())
@@ -605,6 +666,10 @@ async def _anysearch_extract(
     return text
 
 
+# Bound on manually followed redirects (SSRF recheck requires following by hand).
+_MAX_FETCH_REDIRECTS = 10
+
+
 async def _http_get(
     client: httpx.AsyncClient,
     url: str,
@@ -615,10 +680,24 @@ async def _http_get(
     merged = {"User-Agent": _BROWSER_UA}
     if headers:
         merged.update(headers)
+    # Follow redirects by hand so every hop is re-checked against the
+    # loopback/private blocklist: a public URL must not 302 the fetch into
+    # 169.254.169.254 or 127.0.0.1 (follow_redirects=True would skip this).
+    current = url
     try:
-        return await client.get(
-            url, params=params, headers=merged, follow_redirects=True
-        )
+        for _ in range(_MAX_FETCH_REDIRECTS + 1):
+            _reject_private_fetch_url(current)
+            response = await client.get(
+                current, params=params, headers=merged, follow_redirects=False
+            )
+            if not response.is_redirect:
+                return response
+            location = response.headers.get("location")
+            if not location:
+                return response
+            current = urljoin(current, location)
+            params = None  # query params belong to the first hop only
+        raise ToolError(f"Too many redirects fetching {url}")
     except (httpx.HTTPError, OSError) as exc:
         raise ToolError(f"Failed to fetch URL {url}: {exc}") from exc
 

@@ -14,6 +14,7 @@ from httpx_sse import aconnect_sse
 
 from deepseek_tui.client.base import LLMClient
 from deepseek_tui.client.normalize import drop_orphaned_tool_blocks
+from deepseek_tui.client.sanitize import sanitize_extra_body, sanitize_extra_headers
 from deepseek_tui.client.streaming import AnthropicStreamParser
 from deepseek_tui.protocol.messages import (
     Message,
@@ -81,7 +82,7 @@ class AnthropicCompatClient(LLMClient):
             "x-api-key": self.api_key,
             "anthropic-version": "2023-06-01",
             "content-type": "application/json",
-            **self.extra_headers,
+            **sanitize_extra_headers(self.extra_headers),
         }
         payload = self._build_payload(request)
         url = self._messages_url()
@@ -145,7 +146,7 @@ class AnthropicCompatClient(LLMClient):
             payload["temperature"] = request.temperature
         if request.top_p is not None:
             payload["top_p"] = request.top_p
-        payload.update(request.extra_body)
+        payload.update(sanitize_extra_body(request.extra_body))
         return payload
 
 

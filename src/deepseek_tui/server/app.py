@@ -560,6 +560,21 @@ def build_fastapi_app(
         user_input_bridge = getattr(app.state, "user_input_bridge", None)
         app.state.runtime_auth = resolved
     else:
+        # Legacy app-server mode exposes the same prompt/tool surface, so it
+        # gets the same default-deny bearer guard as the Workbench runtime
+        # API (auto-generated token unless --insecure).
+        from deepseek_tui.server.auth import (
+            env_runtime_token,
+            resolve_runtime_auth,
+        )
+
+        resolved = resolve_runtime_auth(
+            auth_token,
+            env_runtime_token(),
+            insecure_no_auth=insecure_no_auth,
+        )
+        app.add_middleware(RuntimeAuthMiddleware, auth_token=resolved.token)
+        app.state.runtime_auth = resolved
         elevation_bridge = None
 
     app.state.thread_manager = RuntimeThreadManager(
@@ -651,53 +666,55 @@ async def run_http(
         insecure_no_auth=options.insecure_no_auth,
         cors_origins=options.cors_origins,
     )
-    if options.http_mode:
-        from deepseek_tui.server.auth import (
-            runtime_token_file,
-            write_runtime_token_file,
-        )
+    # Both modes resolve the same bearer auth now, so the token-file
+    # bookkeeping applies to the legacy app-server too.
+    from deepseek_tui.server.auth import (
+        runtime_token_file,
+        write_runtime_token_file,
+    )
 
-        auth = getattr(app.state, "runtime_auth", None)
-        if auth is not None and auth.generated and auth.token:
-            token_path = write_runtime_token_file(auth.token)
-            logger.info(
-                "runtime_api_auth generated bearer token written to %s", token_path
-            )
-            print(
-                "Runtime API auth: generated bearer token (written to "
-                f"{token_path}, mode 0600)."
-            )
-            print("  Read the file or set DEEPSEEK_RUNTIME_TOKEN for a stable token.")
-        elif auth is not None and auth.token:
-            # Only seed the cache when missing — never overwrite an existing
-            # non-empty file. Two concurrent spawn attempts (e.g., CLI + GUI)
-            # would otherwise race and clobber each other's tokens.
-            token_path = runtime_token_file()
-            try:
-                if not token_path.exists() or not token_path.read_text(
-                    encoding="utf-8"
-                ).strip():
-                    token_path = write_runtime_token_file(auth.token)
-                    logger.info(
-                        "runtime_api_auth bearer token written to %s", token_path
-                    )
-            except OSError as exc:  # noqa: BLE001
-                logger.warning("runtime_api_auth token file write failed: %s", exc)
-            print(
-                "Runtime API auth: bearer token required for /v1/* routes "
-                f"(cached at {token_path})."
-            )
-        else:
-            logger.warning("runtime_api_auth disabled (--insecure)")
-            print("Runtime API auth: disabled by explicit insecure mode.")
-            # Surface that any cached token file is being ignored so users
-            # don't assume the file's presence implies the runtime is secured.
-            cached_path = runtime_token_file()
-            if cached_path.exists():
-                print(
-                    f"  Note: ignoring cached token at {cached_path} while "
-                    "--insecure is in effect."
+    auth = getattr(app.state, "runtime_auth", None)
+    if auth is not None and auth.generated and auth.token:
+        token_path = write_runtime_token_file(auth.token)
+        logger.info(
+            "runtime_api_auth generated bearer token written to %s", token_path
+        )
+        print(
+            "Runtime API auth: generated bearer token (written to "
+            f"{token_path}, mode 0600)."
+        )
+        print("  Read the file or set DEEPSEEK_RUNTIME_TOKEN for a stable token.")
+    elif auth is not None and auth.token:
+        # Only seed the cache when missing — never overwrite an existing
+        # non-empty file. Two concurrent spawn attempts (e.g., CLI + GUI)
+        # would otherwise race and clobber each other's tokens.
+        token_path = runtime_token_file()
+        try:
+            if not token_path.exists() or not token_path.read_text(
+                encoding="utf-8"
+            ).strip():
+                token_path = write_runtime_token_file(auth.token)
+                logger.info(
+                    "runtime_api_auth bearer token written to %s", token_path
                 )
+        except OSError as exc:  # noqa: BLE001
+            logger.warning("runtime_api_auth token file write failed: %s", exc)
+        print(
+            "Runtime API auth: bearer token required for /v1/* routes "
+            f"(cached at {token_path})."
+        )
+    else:
+        logger.warning("runtime_api_auth disabled (--insecure)")
+        print("Runtime API auth: disabled by explicit insecure mode.")
+        # Surface that any cached token file is being ignored so users
+        # don't assume the file's presence implies the runtime is secured.
+        cached_path = runtime_token_file()
+        if cached_path.exists():
+            print(
+                f"  Note: ignoring cached token at {cached_path} while "
+                "--insecure is in effect."
+            )
+    if options.http_mode:
         print(f"Runtime API listening on http://{options.host}:{options.port}")
     server_cfg = uvicorn.Config(
         app,

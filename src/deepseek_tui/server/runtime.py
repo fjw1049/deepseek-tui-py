@@ -464,6 +464,32 @@ class AppRuntime:
         if mcp_manager is not None and is_external_mcp_tool(
             tool_name, registry.contains(tool_name)
         ):
+            # Mirror the engine path: gated MCP tools need approval, but this
+            # transport has no approval channel to prompt on — deny instead
+            # of executing silently.
+            from deepseek_tui.tools.approval import approval_request_for_mcp
+
+            approval_request = approval_request_for_mcp(
+                tool_name,
+                getattr(self.config, "approval_policy", None),
+                mcp_manager.declared_capabilities(tool_name),
+            )
+            if approval_request is not None:
+                await self.hooks.emit(
+                    ToolLifecycleEvent(
+                        response_id=response_id,
+                        tool_name=tool_name,
+                        phase="error",
+                        payload={"error": "approval required"},
+                    )
+                )
+                return {
+                    "ok": False,
+                    "error": (
+                        "approval required for external MCP tool; "
+                        "denied in server tool path"
+                    ),
+                }
             try:
                 result = await execute_external_mcp_tool(
                     mcp_manager, tool_name, arguments
@@ -504,6 +530,31 @@ class AppRuntime:
                 )
             )
             return {"ok": False, "error": str(exc)}
+        # Same gate as MCP: this transport has no approval prompt, so
+        # tools that would require one are denied instead of running.
+        from deepseek_tui.tools.approval import approval_request_for_tool
+
+        approval_request = approval_request_for_tool(
+            tool,
+            getattr(self.config, "approval_policy", None),
+            arguments,
+        )
+        if approval_request is not None:
+            await self.hooks.emit(
+                ToolLifecycleEvent(
+                    response_id=response_id,
+                    tool_name=tool_name,
+                    phase="error",
+                    payload={"error": "approval required"},
+                )
+            )
+            return {
+                "ok": False,
+                "error": (
+                    "approval required for built-in tool; "
+                    "denied in server tool path"
+                ),
+            }
         try:
             result = await tool.execute(arguments, self._tool_runtime.context)
         except Exception as exc:  # noqa: BLE001 — surface to caller

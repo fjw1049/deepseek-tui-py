@@ -41,6 +41,63 @@ def _manager(ctx: ToolContext) -> AutomationManager:
     return ctx.metadata[AUTOMATION_MANAGER_KEY]  # type: ignore[return-value]
 
 
+def test_resolve_delivery_rejects_unknown_target(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from deepseek_tui.tools.automation import _resolve_delivery
+
+    monkeypatch.setattr(
+        "deepseek_tui.automation.inbox.default_feishu_chat_id_from_config",
+        lambda: "oc_allowed",
+    )
+    with pytest.raises(ToolError, match="configured"):
+        _resolve_delivery({"mode": "feishu", "to": "oc_stranger"})
+
+
+def test_resolve_delivery_accepts_and_fills_configured_target(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from deepseek_tui.tools.automation import _resolve_delivery
+
+    monkeypatch.setattr(
+        "deepseek_tui.automation.inbox.default_feishu_chat_id_from_config",
+        lambda: "oc_allowed",
+    )
+    assert _resolve_delivery({"mode": "feishu", "to": "oc_allowed"})["to"] == (
+        "oc_allowed"
+    )
+    assert _resolve_delivery({"mode": "feishu"})["to"] == "oc_allowed"
+
+
+def test_resolve_delivery_rejects_when_no_allowlist(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from deepseek_tui.tools.automation import _resolve_delivery
+
+    monkeypatch.setattr(
+        "deepseek_tui.automation.inbox.default_mail_to_from_config",
+        lambda: None,
+    )
+    with pytest.raises(ToolError, match="configured"):
+        _resolve_delivery({"mode": "email", "to": "evil@example.com"})
+
+
+@pytest.mark.asyncio
+async def test_cron_create_rejects_stranger_delivery(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        "deepseek_tui.automation.inbox.default_feishu_chat_id_from_config",
+        lambda: "oc_allowed",
+    )
+    ctx = _context(tmp_path)
+    with pytest.raises(ToolError, match="configured"):
+        await CronCreateTool().execute(
+            {**_CREATE_INPUT, "delivery": {"mode": "feishu", "to": "oc_evil"}},
+            ctx,
+        )
+
+
 @pytest.mark.asyncio
 async def test_cron_create_registers_job(tmp_path: Path) -> None:
     ctx = _context(tmp_path)

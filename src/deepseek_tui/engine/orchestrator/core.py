@@ -1740,6 +1740,13 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                     self.handle.cancel_event
                 )
             self.handle._mark_turn_active()
+            # Publish the live auto-approve flag so task_create inherits the
+            # session's actual approval mode (yolo/auto) instead of silently
+            # defaulting. The Workbench thread manager writes the same key
+            # per turn with the same value.
+            self.tool_context.metadata["session_auto_approve"] = bool(
+                await self.approval_handler.auto_approve_enabled()
+            )
             try:
                 await self._handle_send_message_inner(op, turn_id)
             except asyncio.CancelledError:
