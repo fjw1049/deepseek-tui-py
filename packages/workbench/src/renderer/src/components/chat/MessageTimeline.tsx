@@ -2825,18 +2825,21 @@ function UserFocusChip({
     kind === 'plugin'
       ? {
           Icon: Puzzle,
-          className: 'text-[#a855f7]',
+          className:
+            'border-[rgba(168,85,247,0.22)] bg-[rgba(168,85,247,0.08)] text-[#a855f7]',
           title: t('composerPluginFocus', { name: displayName })
         }
       : kind === 'skill'
         ? {
             Icon: Sparkles,
-            className: 'text-[#4f7cff]',
+            className:
+              'border-[rgba(79,124,255,0.22)] bg-[rgba(79,124,255,0.08)] text-[#4f7cff]',
             title: t('composerSkillFocus', { name })
           }
         : {
             Icon: Plug,
-            className: 'text-[#10b981]',
+            className:
+              'border-[rgba(16,185,129,0.22)] bg-[rgba(16,185,129,0.08)] text-[#10b981]',
             title: t('composerConnectorFocus', { name })
           }
   const Icon = meta.Icon
@@ -2846,7 +2849,7 @@ function UserFocusChip({
       className={`ds-user-message-chip ${meta.className}`}
     >
       <Icon strokeWidth={1.75} aria-hidden />
-      <span>
+      <span className="truncate">
         {kind === 'plugin' ? t('composerPluginBadge', { name: displayName }) : name}
       </span>
     </span>
@@ -2865,10 +2868,12 @@ function PreviewPickChip({
   return (
     <span
       title={t('composerPreviewPickFocus', { name: label })}
-      className="ds-user-message-chip text-[#0ea5e9]"
+      className={`ds-user-message-chip border-[rgba(14,165,233,0.22)] bg-[rgba(14,165,233,0.08)] text-[#0ea5e9] ${
+        onRemove ? 'ds-user-message-chip--action' : ''
+      }`}
     >
       <Wand2 strokeWidth={1.75} aria-hidden />
-      <span>{label}</span>
+      <span className="truncate">{label}</span>
       {onRemove ? (
         <button
           type="button"
