@@ -9517,6 +9517,15 @@ select:focus-visible,
   border-left: 1px solid color-mix(in srgb, var(--ds-text) 14%, transparent);
 }
 
+.ds-ide-chat-rail .ds-terminal-panel {
+  border-top: none;
+}
+
+.ds-terminal-split-handle {
+  min-height: 0.5rem;
+  border-top: 1px solid color-mix(in srgb, var(--ds-text) 14%, transparent);
+}
+
 .ds-ide-chat-rail .ds-chat-stage,
 .ds-ide-chat-rail .ds-dialogue-gutter,
 .ds-ide-chat-rail .ds-timeline-stack {

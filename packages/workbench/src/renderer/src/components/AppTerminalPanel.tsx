@@ -1,5 +1,5 @@
-import type { ReactElement } from 'react'
-import { useCallback, useEffect, useMemo, useRef } from 'react'
+import type { PointerEvent as ReactPointerEvent, ReactElement } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Loader2, Plus, X } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { FitAddon } from '@xterm/addon-fit'
@@ -11,6 +11,7 @@ import { terminalLabelFromPath } from '../lib/workspace-label'
 import {
   closeTerminalSessionById,
   createTerminalSessionForWorkspace,
+  resolveTerminalPanes,
   useTerminalSessionStore,
   type TerminalXtermMount
 } from '../store/terminal-session-store'
@@ -27,6 +28,8 @@ type Props = {
   mountActive: boolean
   visible?: boolean
   onClose?: () => void
+  /** Hide the built-in tab row (IDE chat-rail header owns those tabs). */
+  hideTabs?: boolean
   className?: string
 }
 
@@ -103,11 +106,13 @@ export function AppTerminalPanel({
   mountActive,
   visible = true,
   onClose,
+  hideTabs = false,
   className
 }: Props): ReactElement {
   const { t } = useTranslation('common')
   const sessions = useTerminalSessionStore((s) => s.sessions)
   const activeSessionId = useTerminalSessionStore((s) => s.activeSessionId)
+  const splitSessionId = useTerminalSessionStore((s) => s.splitSessionId)
   const creatingSession = useTerminalSessionStore((s) => s.creatingSession)
   const createError = useTerminalSessionStore((s) => s.createError)
   const hasStartedInitialSession = useTerminalSessionStore((s) => s.hasStartedInitialSession)
@@ -115,6 +120,11 @@ export function AppTerminalPanel({
   const updateSession = useTerminalSessionStore((s) => s.updateSession)
   const markInitialSessionStarted = useTerminalSessionStore((s) => s.markInitialSessionStarted)
   const setXtermMount = useTerminalSessionStore((s) => s.setXtermMount)
+  const panes = useMemo(
+    () => resolveTerminalPanes(activeSessionId, splitSessionId, sessions),
+    [activeSessionId, sessions, splitSessionId]
+  )
+  const [splitRatio, setSplitRatio] = useState(0.5)
 
   const viewportRef = useRef<HTMLDivElement | null>(null)
   const sessionNodeRefs = useRef<Record<string, HTMLDivElement | null>>({})
@@ -129,26 +139,35 @@ export function AppTerminalPanel({
   }, [t, workspaceRoot])
 
   const scheduleFit = useCallback(
-    (sessionId: string | null): void => {
-      if (!sessionId || !mountActive || !visible) return
+    (sessionIds: Array<string | null> | string | null): void => {
+      const ids = (Array.isArray(sessionIds) ? sessionIds : [sessionIds]).filter(
+        (id): id is string => Boolean(id)
+      )
+      if (ids.length === 0 || !mountActive || !visible) return
       if (fitFrameRef.current !== null) {
         window.cancelAnimationFrame(fitFrameRef.current)
       }
       fitFrameRef.current = window.requestAnimationFrame(() => {
-        const handle = terminalHandlesRef.current.get(sessionId)
-        if (!handle) return
-        handle.fitAddon.fit()
-        if (handle.terminal.cols > 0 && handle.terminal.rows > 0) {
-          void window.dsGui?.resizeTerminalSession?.({
-            sessionId,
-            cols: handle.terminal.cols,
-            rows: handle.terminal.rows
-          })
+        for (const sessionId of ids) {
+          const handle = terminalHandlesRef.current.get(sessionId)
+          if (!handle) continue
+          handle.fitAddon.fit()
+          if (handle.terminal.cols > 0 && handle.terminal.rows > 0) {
+            void window.dsGui?.resizeTerminalSession?.({
+              sessionId,
+              cols: handle.terminal.cols,
+              rows: handle.terminal.rows
+            })
+          }
         }
       })
     },
     [mountActive, visible]
   )
+
+  const fitVisiblePanes = useCallback((): void => {
+    scheduleFit([panes.top, panes.bottom])
+  }, [panes.bottom, panes.top, scheduleFit])
 
   const createSession = useCallback(async (): Promise<void> => {
     // Spawn at the fitted viewport size so zsh prompt_sp can erase its EOL mark.
@@ -289,8 +308,8 @@ export function AppTerminalPanel({
   }, [mountActive, scheduleFit, sessions])
 
   useEffect(() => {
-    scheduleFit(activeSessionId)
-  }, [activeSessionId, mountActive, scheduleFit, sessions.length])
+    fitVisiblePanes()
+  }, [fitVisiblePanes, mountActive, panes.bottom, panes.top, sessions.length, splitRatio])
 
   // Keep open terminals in sync with appearance settings (font family/size)
   // and theme changes (data-theme flips or custom palette updates).
@@ -305,7 +324,7 @@ export function AppTerminalPanel({
         handle.terminal.options.fontFamily = fontFamily
         handle.terminal.options.fontSize = fontSize
       }
-      scheduleFit(activeSessionId)
+      fitVisiblePanes()
     }
 
     const unsubscribe = subscribeAppearance(syncTerminalAppearance)
@@ -318,21 +337,21 @@ export function AppTerminalPanel({
       unsubscribe()
       observer.disconnect()
     }
-  }, [activeSessionId, mountActive, scheduleFit])
+  }, [fitVisiblePanes, mountActive])
 
   useEffect(() => {
     if (!mountActive) return
-    const onResize = (): void => scheduleFit(activeSessionId)
+    const onResize = (): void => fitVisiblePanes()
     window.addEventListener('resize', onResize)
     return () => window.removeEventListener('resize', onResize)
-  }, [activeSessionId, mountActive, scheduleFit])
+  }, [fitVisiblePanes, mountActive])
 
   useEffect(() => {
     if (!mountActive || !viewportRef.current || typeof ResizeObserver === 'undefined') return
-    const observer = new ResizeObserver(() => scheduleFit(activeSessionId))
+    const observer = new ResizeObserver(() => fitVisiblePanes())
     observer.observe(viewportRef.current)
     return () => observer.disconnect()
-  }, [activeSessionId, mountActive, scheduleFit])
+  }, [fitVisiblePanes, mountActive])
 
   useEffect(() => {
     if (mountActive) return
@@ -367,6 +386,27 @@ export function AppTerminalPanel({
     }
   }, [])
 
+  const beginSplitResize = (event: ReactPointerEvent<HTMLDivElement>): void => {
+    if (event.button !== 0 || !viewportRef.current) return
+    event.preventDefault()
+    const host = viewportRef.current
+    const startY = event.clientY
+    const startRatio = splitRatio
+    const height = host.clientHeight
+    if (height < 40) return
+
+    const onMove = (moveEvent: PointerEvent): void => {
+      const delta = (moveEvent.clientY - startY) / height
+      setSplitRatio(Math.min(0.75, Math.max(0.25, startRatio + delta)))
+    }
+    const onUp = (): void => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+    }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+  }
+
   const closeSession = (sessionId: string): void => {
     const handle = terminalHandlesRef.current.get(sessionId)
     if (handle) {
@@ -385,6 +425,7 @@ export function AppTerminalPanel({
 
   return (
     <section className={`ds-tool-panel ds-no-drag ds-terminal-panel flex min-h-0 flex-col overflow-hidden ${className ?? ''}`}>
+      {hideTabs ? null : (
       <div className="ds-terminal-panel__tabs flex shrink-0 items-center justify-between gap-1.5 border-b border-ds-border-muted px-2 py-0.5">
         <div className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto">
           {sessions.map((session, index) => {
@@ -454,6 +495,7 @@ export function AppTerminalPanel({
           </button>
         ) : null}
       </div>
+      )}
 
       {createError ? (
         <div className="shrink-0 border-b border-red-200/70 bg-red-50/80 px-3 py-2 text-[12.5px] text-red-700 dark:border-red-500/20 dark:bg-red-500/8 dark:text-red-200">
@@ -461,25 +503,57 @@ export function AppTerminalPanel({
         </div>
       ) : null}
 
-      <div ref={viewportRef} className="min-h-0 flex-1">
+      <div ref={viewportRef} className="flex min-h-0 flex-1 flex-col">
         {sessions.length === 0 ? (
           <div className="flex h-full items-center justify-center px-6 text-center text-[13px] text-ds-faint">
             {creatingSession ? t('terminalStarting') : t('terminalEmpty')}
           </div>
         ) : (
-          sessions.map((session) => (
-            <div
-              key={session.id}
-              className={session.id === activeSessionId ? 'h-full w-full' : 'hidden h-full w-full'}
-            >
+          <>
+            {sessions.map((session) => {
+              const inTop = session.id === panes.top
+              const inBottom = Boolean(panes.bottom) && session.id === panes.bottom
+              const visible = inTop || inBottom
+              return (
+                <div
+                  key={session.id}
+                  className={visible ? 'min-h-0 w-full' : 'hidden h-full w-full'}
+                  style={
+                    visible
+                      ? inBottom
+                        ? { flex: `${1 - splitRatio} 1 0`, order: 2 }
+                        : panes.bottom
+                          ? { flex: `${splitRatio} 1 0`, order: 0 }
+                          : { flex: '1 1 0', order: 0 }
+                      : undefined
+                  }
+                  onMouseDown={() => {
+                    if (session.id !== activeSessionId) setActiveSessionId(session.id)
+                  }}
+                >
+                  <div
+                    ref={(node) => {
+                      sessionNodeRefs.current[session.id] = node
+                    }}
+                    className="ds-terminal-host h-full w-full"
+                  />
+                </div>
+              )
+            })}
+            {panes.bottom ? (
               <div
-                ref={(node) => {
-                  sessionNodeRefs.current[session.id] = node
-                }}
-                className="ds-terminal-host h-full w-full"
-              />
-            </div>
-          ))
+                role="separator"
+                aria-orientation="horizontal"
+                aria-label={t('terminalSplitResize')}
+                title={t('terminalSplitResize')}
+                className="ds-terminal-split-handle ds-no-drag group flex h-2 shrink-0 cursor-row-resize items-center justify-center touch-none select-none"
+                style={{ order: 1 }}
+                onPointerDown={beginSplitResize}
+              >
+                <span className="pointer-events-none h-0.5 w-8 rounded-full bg-ds-border-strong transition group-hover:w-12 group-hover:bg-ds-accent/70" />
+              </div>
+            ) : null}
+          </>
         )}
       </div>
     </section>

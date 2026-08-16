@@ -64,6 +64,8 @@ type Props = {
   /** Imperative center-tab request from parent (e.g. open diff from composer). */
   requestedCenterTab?: IdeCenterTab | null
   onRequestedCenterTabConsumed?: () => void
+  /** Terminal eats the editor column; the chat rail grows to fill. */
+  terminalMaximized?: boolean
 }
 
 const CHANGES_LIST_WIDTH_KEY = 'deepseekgui.layout.ideChangesListWidth'
@@ -146,7 +148,8 @@ export function IdeWorkspaceLayout({
   onExitIdeMode,
   onOpenFileInEditor,
   requestedCenterTab = null,
-  onRequestedCenterTabConsumed
+  onRequestedCenterTabConsumed,
+  terminalMaximized = false
 }: Props): ReactElement {
   const { t } = useTranslation('common')
   const openEditorFile = useWorkspaceEditorStore((s) => s.openFile)
@@ -403,7 +406,7 @@ export function IdeWorkspaceLayout({
         </nav>
 
           <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
-            {showChangesList ? (
+            {terminalMaximized ? null : showChangesList ? (
               <div
                 className="ds-ide-changes-list relative flex h-full min-h-0 shrink-0 flex-col"
                 style={{ width: changesListWidth }}
@@ -428,7 +431,11 @@ export function IdeWorkspaceLayout({
               </div>
             ) : null}
 
-            <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+            <div
+              className={`relative min-h-0 min-w-0 flex-col overflow-hidden ${
+                terminalMaximized ? 'hidden' : 'flex flex-1'
+              }`}
+            >
               <div
                 className={
                   showChangesDiff
@@ -462,12 +469,15 @@ export function IdeWorkspaceLayout({
 
           {chatRailVisible ? (
             <aside
-              className="ds-ide-chat-rail relative flex h-full min-h-0 shrink-0 flex-col bg-ds-canvas"
-              style={{ width: chatRailWidth }}
+              className={`ds-ide-chat-rail relative flex h-full min-h-0 flex-col bg-ds-canvas ${
+                terminalMaximized ? 'min-w-0 flex-1' : 'shrink-0'
+              }`}
+              style={terminalMaximized ? undefined : { width: chatRailWidth }}
             >
               {/* Same seam pattern as WorkbenchRightSidebar: the panel border is
                   the only visible divider; the resize hit-target stays invisible
                   so we never get a double/offset vertical rule. */}
+              {terminalMaximized ? null : (
               <div
                 role="separator"
                 aria-orientation="vertical"
@@ -495,6 +505,7 @@ export function IdeWorkspaceLayout({
                   persistIdeChatRailWidth(clamped)
                 }}
               />
+              )}
               <div className="ds-ide-chat-rail__surface flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
                 {chatRail}
               </div>

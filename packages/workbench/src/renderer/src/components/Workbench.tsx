@@ -37,7 +37,11 @@ import {
   type IdeCenterTab,
   type WorkbenchLayoutMode
 } from '../lib/workbench-layout-mode'
-import { closeAllTerminalSessions } from '../store/terminal-session-store'
+import {
+  closeAllTerminalSessions,
+  createTerminalSessionForWorkspace,
+  useTerminalSessionStore
+} from '../store/terminal-session-store'
 import { useWorkspaceEditorStore } from '../store/workspace-editor-store'
 import { useWorkspaceFsWatch } from '../hooks/use-workspace-fs-watch'
 import {
@@ -329,6 +333,7 @@ export function Workbench(): ReactElement {
     readStoredWidth(RIGHT_PANEL_WIDTH_KEY, RIGHT_CONTEXT_DEFAULT)
   )
   const [bottomTerminalOpen, setBottomTerminalOpen] = useState(false)
+  const [ideTerminalMaximized, setIdeTerminalMaximized] = useState(false)
   const [bottomTerminalHeight, setBottomTerminalHeight] = useState(() =>
     clampWidth(
       readStoredWidth(BOTTOM_TERMINAL_HEIGHT_KEY, BOTTOM_TERMINAL_DEFAULT),
@@ -589,6 +594,8 @@ export function Workbench(): ReactElement {
   const toggleTerminalPanel = useCallback((): void => {
     if (!activeWorkspaceRoot.trim()) return
     if (bottomTerminalOpen) {
+      setIdeTerminalMaximized(false)
+      useTerminalSessionStore.getState().setSplitSessionId(null)
       setBottomTerminalOpen(false)
       return
     }
@@ -1467,19 +1474,52 @@ export function Workbench(): ReactElement {
               onOpenFileInEditor={openFileInEditor}
               requestedCenterTab={requestedIdeCenterTab}
               onRequestedCenterTabConsumed={() => setRequestedIdeCenterTab(null)}
+              terminalMaximized={bottomTerminalOpen && ideTerminalMaximized}
               chatRail={
                 <div className="flex h-full min-h-0 min-w-0 flex-col">
                   <IdeChatRailHeader
                     busy={busy}
+                    terminalOpen={bottomTerminalOpen}
+                    terminalMaximized={ideTerminalMaximized}
                     onNewChat={() => {
+                      setIdeTerminalMaximized(false)
+                      useTerminalSessionStore.getState().setSplitSessionId(null)
+                      setBottomTerminalOpen(false)
                       if (activeWorkspaceRoot.trim()) {
                         startNewChatInWorkspace(activeWorkspaceRoot)
                       } else {
                         startNewChat()
                       }
                     }}
-                    onNewTerminal={toggleTerminalPanel}
+                    onNewTerminal={() => {
+                      if (!activeWorkspaceRoot.trim()) return
+                      if (bottomTerminalOpen) {
+                        void createTerminalSessionForWorkspace(activeWorkspaceRoot)
+                        return
+                      }
+                      if (useTerminalSessionStore.getState().sessions.length === 0) {
+                        useTerminalSessionStore.setState({ hasStartedInitialSession: false })
+                      }
+                      toggleTerminalPanel()
+                    }}
+                    onCloseTerminal={() => {
+                      setIdeTerminalMaximized(false)
+                      useTerminalSessionStore.getState().setSplitSessionId(null)
+                      setBottomTerminalOpen(false)
+                    }}
+                    onToggleMaximize={() => setIdeTerminalMaximized((current) => !current)}
                   />
+                  {bottomTerminalOpen && activeWorkspaceRoot.trim().length > 0 ? (
+                    <AppTerminalPanel
+                      workspaceRoot={activeWorkspaceRoot}
+                      mountSurface="bottom"
+                      mountActive
+                      visible
+                      hideTabs
+                      onClose={() => setBottomTerminalOpen(false)}
+                      className="min-h-0 w-full flex-1 border-0"
+                    />
+                  ) : (
                   <div className="flex min-h-0 min-w-0 flex-1 flex-col">
                     {ideSimpleEmptyHome ? (
                       <div className="flex min-h-0 min-w-0 flex-1 flex-col justify-center pl-[1.15rem] pr-[0.95rem]">
@@ -1537,34 +1577,10 @@ export function Workbench(): ReactElement {
                       />
                     </div>
                   </div>
+                  )}
                 </div>
               }
             />
-            {bottomTerminalOpen && activeWorkspaceRoot.trim().length > 0 ? (
-              <div
-                className="ds-bottom-terminal ds-no-drag flex shrink-0 flex-col border-t-2 border-ds-border"
-                style={{ height: bottomTerminalHeight }}
-              >
-                <div
-                  role="separator"
-                  aria-orientation="horizontal"
-                  aria-label={t('terminalPanelResize')}
-                  title={t('terminalPanelResize')}
-                  className="ds-bottom-terminal__handle ds-no-drag group flex h-2 shrink-0 items-center justify-center cursor-row-resize touch-none select-none"
-                  onPointerDown={beginBottomTerminalResize}
-                >
-                  <span className="pointer-events-none h-0.5 w-8 rounded-full bg-ds-border-strong transition group-hover:w-12 group-hover:bg-ds-accent/70" />
-                </div>
-                <AppTerminalPanel
-                  workspaceRoot={activeWorkspaceRoot}
-                  mountSurface="bottom"
-                  mountActive
-                  visible
-                  onClose={() => setBottomTerminalOpen(false)}
-                  className="min-h-0 w-full flex-1 border-0"
-                />
-              </div>
-            ) : null}
           </div>
         ) : (
         <div ref={mainRowRef} className="flex min-h-0 flex-1">
