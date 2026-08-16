@@ -1741,7 +1741,7 @@ export function FloatingComposer({
                   clearAttachNotice()
                   setPlusMenuOpen((open) => !open)
                 }}
-                className={`ds-no-drag inline-flex items-center justify-center rounded-full border border-ds-border bg-ds-card text-ds-muted shadow-sm transition hover:bg-ds-hover hover:text-ds-ink disabled:cursor-not-allowed disabled:opacity-50 ${
+                className={`ds-no-drag inline-flex items-center justify-center rounded-full text-ds-muted transition hover:bg-ds-hover hover:text-ds-ink disabled:cursor-not-allowed disabled:opacity-50 ${
                   compactChrome ? 'h-7 w-7' : 'h-9 w-9'
                 }`}
                 aria-label={t('composerPlusMenu')}
@@ -2384,7 +2384,7 @@ export function FloatingComposer({
                     type="button"
                     disabled={primaryActionDisabled}
                     onClick={handlePrimaryAction}
-                    className={`ds-no-drag flex shrink-0 items-center justify-center rounded-full border border-accent/15 bg-accent text-white shadow-[0_10px_24px_rgba(79,124,255,0.28)] transition hover:brightness-110 disabled:cursor-not-allowed disabled:border-ds-border disabled:bg-ds-card disabled:text-ds-faint disabled:shadow-none ${
+                    className={`ds-no-drag flex shrink-0 items-center justify-center rounded-full border border-accent/15 bg-accent text-white shadow-[0_10px_24px_rgba(79,124,255,0.28)] transition hover:brightness-110 disabled:cursor-not-allowed disabled:border-transparent disabled:bg-transparent disabled:text-ds-faint disabled:shadow-none ${
                       compactChrome ? 'h-7 w-7' : 'h-9 w-9'
                     }`}
                     aria-label={primaryActionLabel}
