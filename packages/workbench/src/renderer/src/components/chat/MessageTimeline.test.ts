@@ -3,13 +3,18 @@ import { describe, expect, it } from 'vitest'
 import type { ChatBlock } from '../../agent/types'
 import {
   clipMidTurnPrefaceText,
+  computeTailAnchorScrollTop,
+  computeTailAnchorSpacerPx,
+  findLastLiveWorkRowId,
   shouldParseIncompleteAssistantMarkdown,
   groupProcessRows,
   isSubagentOrchestrationToolName,
   isInternalSubagentHandoffSystemText,
   placeAssistantContentBlock,
+  planProcessRenderChunks,
   reasoningDetailTextFromBlocks,
   reasoningNarrationFromBlocks,
+  shouldReleaseTailAnchor,
   splitThink,
   trailingThinkingIndicatorId
 } from './message-timeline-logic'
@@ -462,6 +467,112 @@ describe('trailingThinkingIndicatorId', () => {
       }
     ])
     expect(trailingThinkingIndicatorId(rows, true)).toBeNull()
+  })
+})
+
+describe('planProcessRenderChunks', () => {
+  function toolBlock(id: string, name: string, overrides: Partial<ToolBlock> = {}): ToolBlock {
+    return {
+      kind: 'tool',
+      id,
+      summary: `${name}: x`,
+      status: 'success',
+      toolKind: 'tool_call',
+      ...overrides
+    }
+  }
+
+  it('leaves every row expanded when the turn is settled', () => {
+    const rows = groupProcessRows([
+      toolBlock('t1', 'read_file'),
+      toolBlock('t2', 'read_file'),
+      { kind: 'assistant', id: 'p1', text: 'next', agentSegment: 'mid_turn_preface' },
+      toolBlock('t3', 'read_file'),
+      toolBlock('t4', 'read_file')
+    ])
+    const chunks = planProcessRenderChunks(rows, false)
+    expect(chunks.every((chunk) => chunk.type === 'row')).toBe(true)
+    expect(chunks).toHaveLength(3)
+  })
+
+  it('folds an older probe run once a later work row is the live tail', () => {
+    const rows = groupProcessRows([
+      toolBlock('t1', 'read_file'),
+      toolBlock('t2', 'read_file'),
+      { kind: 'assistant', id: 'p1', text: 'next', agentSegment: 'mid_turn_preface' },
+      toolBlock('t3', 'read_file'),
+      toolBlock('t4', 'read_file')
+    ])
+    expect(findLastLiveWorkRowId(rows, true)).toBe('batch:t3')
+    const chunks = planProcessRenderChunks(rows, true)
+    expect(chunks).toHaveLength(3)
+    expect(chunks[0]).toMatchObject({ type: 'work_summary', id: 'batch:t1' })
+    expect(chunks[0]!.type === 'work_summary' && chunks[0].summary.compose.reads).toBe(2)
+    expect(chunks[1]).toMatchObject({ type: 'row' })
+    expect(chunks[2]).toMatchObject({ type: 'row' })
+  })
+
+  it('does not fold the live tail or a single older tool', () => {
+    const rows = groupProcessRows([
+      toolBlock('t1', 'write_file', { toolKind: 'file_change' }),
+      { kind: 'assistant', id: 'p1', text: 'next', agentSegment: 'mid_turn_preface' },
+      toolBlock('t2', 'read_file')
+    ])
+    const chunks = planProcessRenderChunks(rows, true)
+    expect(chunks.every((chunk) => chunk.type === 'row')).toBe(true)
+  })
+
+  it('keeps errors and running tools out of the summary', () => {
+    const rows = groupProcessRows([
+      toolBlock('t1', 'read_file'),
+      toolBlock('t2', 'read_file', { status: 'error' }),
+      { kind: 'assistant', id: 'p1', text: 'next', agentSegment: 'mid_turn_preface' },
+      toolBlock('t3', 'read_file', { status: 'running' })
+    ])
+    const chunks = planProcessRenderChunks(rows, true)
+    expect(chunks.some((chunk) => chunk.type === 'work_summary')).toBe(false)
+  })
+})
+
+describe('tail-anchor math', () => {
+  it('reserves space so a short turn can sit at the top', () => {
+    expect(
+      computeTailAnchorSpacerPx({
+        viewportHeight: 800,
+        userHeight: 80,
+        contentAfterUser: 0,
+        topInset: 16
+      })
+    ).toBe(704)
+  })
+
+  it('shrinks the reserve as the answer grows and hits zero when it fills the viewport', () => {
+    expect(
+      computeTailAnchorSpacerPx({
+        viewportHeight: 800,
+        userHeight: 80,
+        contentAfterUser: 400,
+        topInset: 16
+      })
+    ).toBe(304)
+    expect(
+      computeTailAnchorSpacerPx({
+        viewportHeight: 800,
+        userHeight: 80,
+        contentAfterUser: 900,
+        topInset: 16
+      })
+    ).toBe(0)
+  })
+
+  it('pins the user bubble just below the top inset', () => {
+    expect(computeTailAnchorScrollTop({ userOffsetTop: 1200, topInset: 16 })).toBe(1184)
+  })
+
+  it('releases when the user scrolls or the reserve is exhausted', () => {
+    expect(shouldReleaseTailAnchor({ spacerPx: 40, userScrolled: true })).toBe(true)
+    expect(shouldReleaseTailAnchor({ spacerPx: 4, userScrolled: false })).toBe(true)
+    expect(shouldReleaseTailAnchor({ spacerPx: 40, userScrolled: false })).toBe(false)
   })
 })
 

@@ -1617,6 +1617,7 @@
   "processed": "已处理",
   "processStepCount": "{{count}} 步",
   "workedFor": "用时 {{duration}}",
+  "workingFor": "工作中 {{duration}}",
   "working": "工作中…",
   "processSteps": "工作过程（{{count}} 步）",
   "processTextLabel": "文本输出",

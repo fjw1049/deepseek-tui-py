@@ -8,7 +8,13 @@
 import type { ChatBlock } from '../../agent/types'
 import { isTodoToolBlock } from '../../lib/extract-todos-from-blocks'
 import { sanitizeReasoningPlaceholders } from '../../lib/reasoning-text'
-import { isMergeableProbeTool } from '../../lib/step-flow-collapse'
+import {
+  addProbeCompose,
+  emptyProbeCompose,
+  isMergeableProbeTool,
+  probeToolKind,
+  type ProbeBatchCompose
+} from '../../lib/step-flow-collapse'
 import type { StepFlowItem } from './StepFlow'
 
 const THINK_TAG_RE = /<think(?:ing)?>([\s\S]*?)(?:<\/(?:think(?:ing)?|redacted_thinking)>|$)/i
@@ -236,4 +242,177 @@ export function clipMidTurnPrefaceText(
     if (ws >= Math.floor(maxChars * 0.6)) cut = cut.slice(0, ws)
   }
   return { preview: `${cut.trimEnd()}…`, clipped: true }
+}
+
+export function processRowId(row: RenderRow): string {
+  return row.type === 'tool_batch' ? `batch:${row.blocks[0]!.id}` : row.block.id
+}
+
+function isRunningWorkRow(row: RenderRow): boolean {
+  if (row.type === 'tool_batch') return row.blocks.some((block) => block.status === 'running')
+  return row.block.kind === 'tool' && row.block.status === 'running'
+}
+
+function hasErrorWorkRow(row: RenderRow): boolean {
+  if (row.type === 'tool_batch') return row.blocks.some((block) => block.status === 'error')
+  return row.block.kind === 'tool' && row.block.status === 'error'
+}
+
+function isQueuedWorkRow(row: RenderRow): boolean {
+  if (row.type === 'tool_batch') {
+    return row.blocks.some((block) => block.status === 'queued' || block.status === 'pending')
+  }
+  return (
+    row.block.kind === 'tool' && (row.block.status === 'queued' || row.block.status === 'pending')
+  )
+}
+
+/** Work rows that may fold into a mid-turn “Ran N…” summary. */
+export function isSummarizableWorkRow(row: RenderRow): boolean {
+  if (isRunningWorkRow(row) || hasErrorWorkRow(row) || isQueuedWorkRow(row)) return false
+  if (row.type === 'tool_batch') return true
+  if (row.block.kind !== 'tool') return false
+  if (isTodoToolBlock(row.block)) return false
+  return !isSubagentOrchestrationToolName(toolNameFromProcessBlock(row.block))
+}
+
+function summarizableUnitCount(row: RenderRow): number {
+  return row.type === 'tool_batch' ? row.blocks.length : 1
+}
+
+/** Newest tool / batch row — the only work that stays expanded while the turn is live. */
+export function findLastLiveWorkRowId(
+  rows: ReadonlyArray<RenderRow>,
+  processing: boolean
+): string | null {
+  if (!processing) return null
+  for (let i = rows.length - 1; i >= 0; i -= 1) {
+    const row = rows[i]!
+    if (row.type === 'tool_batch' || row.block.kind === 'tool') {
+      return processRowId(row)
+    }
+  }
+  return null
+}
+
+export type ProcessWorkSummary = {
+  compose: ProbeBatchCompose
+  editCount: number
+  toolCount: number
+}
+
+export type ProcessRenderChunk =
+  | { type: 'row'; row: RenderRow }
+  | { type: 'work_summary'; id: string; rows: RenderRow[]; summary: ProcessWorkSummary }
+
+const MIN_COLLAPSIBLE_WORK_UNITS = 2
+
+function summarizeWorkRows(rows: ReadonlyArray<RenderRow>): ProcessWorkSummary {
+  const compose = emptyProbeCompose()
+  let editCount = 0
+  let toolCount = 0
+  for (const row of rows) {
+    if (row.type === 'tool_batch') {
+      for (const block of row.blocks) {
+        addProbeCompose(compose, probeToolKind(toolNameFromProcessBlock(block)))
+      }
+      continue
+    }
+    if (row.block.kind !== 'tool') continue
+    if (row.block.toolKind === 'file_change') {
+      editCount += 1
+      continue
+    }
+    const name = toolNameFromProcessBlock(row.block)
+    if (isMergeableProbeTool(name, { command: commandTextFromToolBlock(row.block) })) {
+      addProbeCompose(compose, probeToolKind(name))
+      continue
+    }
+    if (row.block.toolKind === 'command_execution') {
+      addProbeCompose(compose, 'command')
+      continue
+    }
+    toolCount += 1
+  }
+  return { compose, editCount, toolCount }
+}
+
+/**
+ * During a live turn, fold older settled work into one summary so the process
+ * rail does not keep growing. The trailing work row stays expanded. Settled
+ * turns (`processing=false`) return every row unchanged — the WorkMetaRow
+ * already hides the whole rail.
+ */
+export function planProcessRenderChunks(
+  rows: ReadonlyArray<RenderRow>,
+  processing: boolean
+): ProcessRenderChunk[] {
+  if (!processing) return rows.map((row) => ({ type: 'row' as const, row }))
+
+  const lastLiveId = findLastLiveWorkRowId(rows, true)
+  const chunks: ProcessRenderChunk[] = []
+  let buffer: RenderRow[] = []
+
+  const flush = (): void => {
+    if (buffer.length === 0) return
+    const units = buffer.reduce((count, row) => count + summarizableUnitCount(row), 0)
+    if (units >= MIN_COLLAPSIBLE_WORK_UNITS) {
+      chunks.push({
+        type: 'work_summary',
+        id: processRowId(buffer[0]!),
+        rows: buffer,
+        summary: summarizeWorkRows(buffer)
+      })
+    } else {
+      for (const row of buffer) chunks.push({ type: 'row', row })
+    }
+    buffer = []
+  }
+
+  for (const row of rows) {
+    const canFold = isSummarizableWorkRow(row) && processRowId(row) !== lastLiveId
+    if (canFold) {
+      buffer.push(row)
+      continue
+    }
+    flush()
+    chunks.push({ type: 'row', row })
+  }
+  flush()
+  return chunks
+}
+
+export const TAIL_ANCHOR_TOP_INSET_PX = 16
+export const TAIL_ANCHOR_RELEASE_SLACK_PX = 8
+
+/** Extra space below the live turn so the sent user bubble can sit at the top. */
+export function computeTailAnchorSpacerPx(input: {
+  viewportHeight: number
+  topInset?: number
+  userHeight: number
+  contentAfterUser: number
+}): number {
+  const topInset = input.topInset ?? TAIL_ANCHOR_TOP_INSET_PX
+  const roomBelowUser = input.viewportHeight - topInset - input.userHeight
+  if (![roomBelowUser, input.contentAfterUser].every(Number.isFinite)) return 0
+  return Math.max(0, roomBelowUser - Math.max(0, input.contentAfterUser))
+}
+
+export function computeTailAnchorScrollTop(input: {
+  userOffsetTop: number
+  topInset?: number
+}): number {
+  const topInset = input.topInset ?? TAIL_ANCHOR_TOP_INSET_PX
+  if (![input.userOffsetTop, topInset].every(Number.isFinite)) return 0
+  return Math.max(0, input.userOffsetTop - topInset)
+}
+
+export function shouldReleaseTailAnchor(input: {
+  spacerPx: number
+  userScrolled: boolean
+  slackPx?: number
+}): boolean {
+  if (input.userScrolled) return true
+  const slack = input.slackPx ?? TAIL_ANCHOR_RELEASE_SLACK_PX
+  return input.spacerPx <= slack
 }

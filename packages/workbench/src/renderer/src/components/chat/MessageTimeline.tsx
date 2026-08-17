@@ -124,11 +124,15 @@ import {
   isInternalSubagentHandoffSystemText,
   isSubagentOrchestrationToolName,
   placeAssistantContentBlock,
+  planProcessRenderChunks,
   splitThink,
   toolNameFromProcessBlock,
   trailingThinkingIndicatorId,
+  type ProcessWorkSummary,
+  type RenderRow,
   type ToolProcessBlock
 } from './message-timeline-logic'
+import { useTailAnchorScroll } from './use-tail-anchor-scroll'
 
 const LazyStreamdownAssistant = lazy(() =>
   import('./StreamdownAssistant').then((module) => ({ default: module.StreamdownAssistant }))
@@ -377,14 +381,23 @@ export function MessageTimeline({
     }
   }, [hiddenTurnCount, loadEarlierTurns])
 
+  const { spacerPx: tailAnchorSpacerPx, holdRef: tailAnchorHoldRef } = useTailAnchorScroll({
+    containerRef,
+    sentUserId: currentTurnUserId,
+    threadId: activeThreadId,
+    stickToBottomRef,
+    userScrolledAtRef
+  })
+
   const pinTimelineToBottom = useCallback((): void => {
+    if (tailAnchorHoldRef.current) return
     if (!stickToBottomRef.current) return
     // Back off while the user is actively scrolling so stick-to-bottom
     // doesn't fight their gesture.
     if (performance.now() - userScrolledAtRef.current < 350) return
     const el = containerRef.current
     if (el) el.scrollTop = el.scrollHeight
-  }, [])
+  }, [tailAnchorHoldRef])
 
   // Pin on content resize in the same frame the height changes — waiting for
   // a React effect + rAF left one painted frame at the old scrollTop, which
@@ -421,11 +434,9 @@ export function MessageTimeline({
 
   useLayoutEffect(() => {
     if (!currentTurnUserId) return
-    stickToBottomRef.current = true
-    // Instant pin on send — smooth scroll raced with streaming stick-to-bottom
-    // and produced a visible upward bounce.
-    const el = containerRef.current
-    if (el) el.scrollTop = el.scrollHeight
+    // Tail-anchor owns the send scroll: pin the user bubble to the top instead
+    // of jumping to the document bottom.
+    stickToBottomRef.current = false
   }, [currentTurnUserId])
 
   useEffect(() => {
@@ -434,6 +445,7 @@ export function MessageTimeline({
     const container = containerRef.current
     if (target && container) {
       stickToBottomRef.current = false
+      tailAnchorHoldRef.current = false
       // Land the query near the top (≈20% from the top, like synara's
       // viewPosition:0.2) rather than centred, and drive the scroll manually
       // with an ease-out rAF so the animation is consistent and not at the
@@ -769,6 +781,13 @@ export function MessageTimeline({
               if (typeof first !== 'number' || typeof last !== 'number') return undefined
               return Math.max(0, last - first)
             })()}
+          />
+        ) : null}
+        {tailAnchorSpacerPx > 0 ? (
+          <div
+            aria-hidden
+            className="ds-tail-anchor-spacer shrink-0"
+            style={{ height: tailAnchorSpacerPx }}
           />
         ) : null}
         <div ref={endRef} aria-hidden className="h-px w-full shrink-0" />
@@ -1559,10 +1578,10 @@ function WorkMetaRow({
     ? liveActionText
       ? liveActionText
       : durationText
-        ? `${t('processing')} ${durationText}`
-        : t('processing')
+        ? t('workingFor', { duration: durationText })
+        : t('working')
     : durationText
-      ? `${t('processed')} ${durationText}`
+      ? t('workedFor', { duration: durationText })
       : t('processSteps', { count: stepCount })
 
   const showThoughtSuffix =
@@ -1571,37 +1590,40 @@ function WorkMetaRow({
     reasoningDurationMs >= 1000
 
   return (
-    <button
-      type="button"
-      onClick={onToggle}
-      aria-expanded={expanded}
-      className="ds-work-meta-row group flex w-fit max-w-full items-center gap-1.5 rounded-md py-1 text-left text-[15px] font-medium text-ds-muted transition hover:opacity-85"
-    >
-      {processing ? (
-        <span className="mr-0.5 flex h-5 w-5 shrink-0 items-center justify-center">
-          <SquareGrid size="md" className="text-ds-faint" />
+    <div className="ds-work-meta w-full">
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={expanded}
+        className="ds-work-meta-row group flex w-fit max-w-full items-center gap-1.5 rounded-md py-1 text-left text-[15px] font-medium text-ds-muted transition hover:opacity-85"
+      >
+        {processing ? (
+          <span className="mr-0.5 flex h-5 w-5 shrink-0 items-center justify-center">
+            <SquareGrid size="md" className="text-ds-faint" />
+          </span>
+        ) : null}
+        <span className={`min-w-0 truncate tabular-nums ${processing ? 'ds-shiny-text' : ''}`}>
+          {mainLabel}
         </span>
-      ) : null}
-      <span className={`min-w-0 truncate tabular-nums ${processing ? 'ds-shiny-text' : ''}`}>
-        {mainLabel}
-      </span>
-      {liveActionText && durationText ? (
-        <span className="shrink-0 text-ds-faint">· {durationText}</span>
-      ) : null}
-      {showThoughtSuffix ? (
-        <span className="text-ds-faint">
-          · {t('thoughtFor', { duration: formatDuration(reasoningDurationMs!) })}
-        </span>
-      ) : null}
-      {expanded ? (
-        <ChevronDown className="h-3.5 w-3.5 shrink-0 opacity-45" strokeWidth={1.8} />
-      ) : (
-        <ChevronRight
-          className="h-3.5 w-3.5 shrink-0 opacity-40 transition group-hover:opacity-65"
-          strokeWidth={1.8}
-        />
-      )}
-    </button>
+        {liveActionText && durationText ? (
+          <span className="shrink-0 text-ds-faint">· {durationText}</span>
+        ) : null}
+        {showThoughtSuffix ? (
+          <span className="text-ds-faint">
+            · {t('thoughtFor', { duration: formatDuration(reasoningDurationMs!) })}
+          </span>
+        ) : null}
+        {expanded ? (
+          <ChevronDown className="h-3.5 w-3.5 shrink-0 opacity-45" strokeWidth={1.8} />
+        ) : (
+          <ChevronRight
+            className="h-3.5 w-3.5 shrink-0 opacity-40 transition group-hover:opacity-65"
+            strokeWidth={1.8}
+          />
+        )}
+      </button>
+      <div aria-hidden className="h-px w-full bg-ds-border-muted/70" />
+    </div>
   )
 }
 
@@ -2544,6 +2566,7 @@ function ProcessStream({
     subagentSummary
   )
   const rows = groupProcessRows(visible)
+  const chunks = planProcessRenderChunks(rows, processing)
   // Only the first reasoning segment of a turn earns a live preview. Once a
   // completed reasoning item exists, later reasoning stays collapsed so the
   // transcript remains an execution story rather than a scrolling thought log.
@@ -2552,31 +2575,92 @@ function ProcessStream({
   )
   const thinkingIndicatorId = trailingThinkingIndicatorId(rows, processing)
 
+  const renderRow = (row: RenderRow): ReactElement =>
+    row.type === 'tool_batch' ? (
+      <ToolBatchPanel
+        key={`batch-${row.blocks[0]!.id}`}
+        toolName={row.toolName}
+        blocks={row.blocks}
+        mixed={row.mixed}
+        onOpenWorkspaceFile={onOpenWorkspaceFile}
+      />
+    ) : (
+      <ProcessStreamEntry
+        key={row.block.id}
+        block={row.block}
+        processing={processing}
+        showThinkingIndicator={thinkingIndicatorId === row.block.id}
+        todoSession={todoSession}
+        todoEvents={todoEvents}
+        subagentSummary={subagentSummary}
+        showLiveReasoningPreview={showLiveReasoningPreview}
+        onOpenWorkspaceFile={onOpenWorkspaceFile}
+      />
+    )
+
   return (
     <div className="ds-process-rail flex flex-col gap-1.5 pt-1">
-      {rows.map((row) =>
-        row.type === 'tool_batch' ? (
-          <ToolBatchPanel
-            key={`batch-${row.blocks[0]!.id}`}
-            toolName={row.toolName}
-            blocks={row.blocks}
-            mixed={row.mixed}
-            onOpenWorkspaceFile={onOpenWorkspaceFile}
+      {chunks.map((chunk) =>
+        chunk.type === 'work_summary' ? (
+          <SettledWorkSummaryRow
+            key={chunk.id}
+            summary={chunk.summary}
+            rows={chunk.rows}
+            renderRow={renderRow}
           />
         ) : (
-          <ProcessStreamEntry
-            key={row.block.id}
-            block={row.block}
-            processing={processing}
-            showThinkingIndicator={thinkingIndicatorId === row.block.id}
-            todoSession={todoSession}
-            todoEvents={todoEvents}
-            subagentSummary={subagentSummary}
-            showLiveReasoningPreview={showLiveReasoningPreview}
-            onOpenWorkspaceFile={onOpenWorkspaceFile}
-          />
+          renderRow(chunk.row)
         )
       )}
+    </div>
+  )
+}
+
+function SettledWorkSummaryRow({
+  summary,
+  rows,
+  renderRow
+}: {
+  summary: ProcessWorkSummary
+  rows: RenderRow[]
+  renderRow: (row: RenderRow) => ReactElement
+}): ReactElement {
+  const { t } = useTranslation('common')
+  const [expanded, setExpanded] = useState(false)
+  const parts = [
+    ...probeComposeSegments(summary.compose).map((seg) => t(seg.key, { count: seg.count })),
+    summary.editCount > 0
+      ? summary.editCount === 1
+        ? t('groupEditedFile')
+        : t('groupEditedFiles', { count: summary.editCount })
+      : '',
+    summary.toolCount > 0
+      ? summary.toolCount === 1
+        ? t('groupUsedTool')
+        : t('groupUsedTools', { count: summary.toolCount })
+      : ''
+  ].filter(Boolean)
+  const label = parts.join(' · ') || t('processSteps', { count: rows.length })
+
+  return (
+    <div className="ds-work-summary">
+      <button
+        type="button"
+        onClick={() => setExpanded((value) => !value)}
+        aria-expanded={expanded}
+        className="group flex w-fit max-w-full items-center gap-1.5 py-0.5 text-left text-[13.5px] font-medium text-ds-faint transition hover:text-ds-muted"
+      >
+        <span className="min-w-0 truncate">{label}</span>
+        {expanded ? (
+          <ChevronDown className="h-3.5 w-3.5 shrink-0 opacity-45" strokeWidth={1.8} />
+        ) : (
+          <ChevronRight
+            className="h-3.5 w-3.5 shrink-0 opacity-40 transition group-hover:opacity-65"
+            strokeWidth={1.8}
+          />
+        )}
+      </button>
+      {expanded ? <div className="flex flex-col gap-1.5 pt-1">{rows.map(renderRow)}</div> : null}
     </div>
   )
 }
