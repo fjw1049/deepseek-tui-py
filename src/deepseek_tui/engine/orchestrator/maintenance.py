@@ -346,6 +346,15 @@ class SessionMaintenanceMixin:
                 previous_summary=self._compaction_summary_prompt,
             )
         self._record_compaction_summary(result.summary_prompt)
+        if result.success:
+            from deepseek_tui.tools.plan_mode import sync_approved_plan_reminder
+
+            sync_approved_plan_reminder(
+                result.messages,
+                mode=self.mode,
+                working_directory=self.tool_context.working_directory,
+                metadata=self.tool_context.metadata,
+            )
         return result
 
     async def _emergency_compact(
@@ -599,6 +608,14 @@ class SessionMaintenanceMixin:
             else:
                 messages.append(Message.assistant(content, origin=origin))
         messages.extend(recent)
+        from deepseek_tui.tools.plan_mode import sync_approved_plan_reminder
+
+        sync_approved_plan_reminder(
+            messages,
+            mode=self.mode,
+            working_directory=self.tool_context.working_directory,
+            metadata=self.tool_context.metadata,
+        )
 
         # Reset seam tracking for the new cycle
         if self.seam_manager is not None:

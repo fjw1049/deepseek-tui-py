@@ -86,6 +86,7 @@ class ThreadRecord(BaseModel):
     source_session_id: str | None = None
     source_session_path: str | None = None
     memory_mode: str | None = None
+    approved_plan: bool = False
 
 
 class TurnRecord(BaseModel):

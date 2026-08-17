@@ -1457,6 +1457,8 @@ class RuntimeThreadManager:
                 state.engine.turn_loop.client = client
                 state.provider = provider
             state.engine.mode = effective_mode
+            if effective_mode == "plan":
+                state.engine.tool_context.metadata["approved_plan"] = False
             state.engine.tool_context.metadata["turn_latency_turn_id"] = turn_id
             # Inject soft-resume reminder only after we own the turn slot so a
             # rejected concurrent start cannot pollute session_messages.
@@ -1508,6 +1510,8 @@ class RuntimeThreadManager:
         thread.latest_turn_id = turn_id
         thread.provider = provider
         thread.model = model
+        if effective_mode == "plan":
+            thread.approved_plan = False
         thread.updated_at = now
         self.store.save_thread(thread)
 
@@ -1790,6 +1794,9 @@ class RuntimeThreadManager:
                     state.engine, self._trust_mode_for_thread(thread, state)
                 )
                 state.engine.mode = (thread.mode or "agent").strip() or "agent"
+                state.engine.tool_context.metadata["approved_plan"] = bool(
+                    thread.approved_plan
+                )
                 self._touch_lru(thread.id)
                 if trace is not None:
                     trace.engine_load_cache_hit = True
@@ -1850,6 +1857,7 @@ class RuntimeThreadManager:
         self._sync_engine_session(engine, thread)
         self._restore_active_plugin(engine, thread)
         engine.tool_context.metadata["runtime_thread_id"] = thread.id
+        engine.tool_context.metadata["approved_plan"] = bool(thread.approved_plan)
         if self._elevation_bridge is not None:
             engine.tool_context.metadata["elevation_bridge"] = self._elevation_bridge
         engine_task = asyncio.create_task(engine.run(), name=f"engine-{thread.id}")
@@ -3378,11 +3386,26 @@ class RuntimeThreadManager:
                 next_mode = (event.mode or "agent").strip() or "agent"
                 try:
                     thread = self.store.load_thread(thread_id)
-                    if (thread.mode or "agent") != next_mode:
+                    approved = bool(
+                        _engine.tool_context.metadata.get("approved_plan")
+                    ) if _engine is not None else bool(thread.approved_plan)
+                    mode_changed = (thread.mode or "agent") != next_mode
+                    approved_changed = bool(thread.approved_plan) != approved
+                    if mode_changed or approved_changed:
                         previous_mode = thread.mode or "agent"
-                        thread.mode = next_mode  # type: ignore[assignment]
+                        if mode_changed:
+                            thread.mode = next_mode  # type: ignore[assignment]
+                        thread.approved_plan = approved
                         thread.updated_at = datetime.now(timezone.utc)
                         self.store.save_thread(thread)
+                        changes: dict[str, Any] = {
+                            "reason": event.reason,
+                        }
+                        if mode_changed:
+                            changes["mode"] = next_mode
+                            changes["previous_mode"] = previous_mode
+                        if approved_changed:
+                            changes["approved_plan"] = approved
                         await self._emit_event(
                             thread_id,
                             turn_id,
@@ -3390,11 +3413,7 @@ class RuntimeThreadManager:
                             "thread.updated",
                             {
                                 "thread": thread.model_dump(mode="json"),
-                                "changes": {
-                                    "mode": next_mode,
-                                    "previous_mode": previous_mode,
-                                    "reason": event.reason,
-                                },
+                                "changes": changes,
                             },
                         )
                 except Exception:  # noqa: BLE001 — mode sync is best-effort

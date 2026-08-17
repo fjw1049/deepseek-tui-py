@@ -25,6 +25,7 @@ from deepseek_tui.config.paths import (
     user_deepseek_dir,
     user_sessions_dir,
     user_state_db_path,
+    user_thread_plan_path,
     user_threads_dir,
 )
 from deepseek_tui.server.threads.models import TurnItemKind
@@ -230,6 +231,12 @@ def delete_thread_tree(
         checkpoints.delete(cp.turn_id)
     store.delete_events(thread_id)
     store.delete_thread(thread_id)
+    try:
+        plan_path = user_thread_plan_path(thread_id)
+        if plan_path.is_file():
+            plan_path.unlink()
+    except (ValueError, OSError):
+        logger.debug("delete_thread_plan_failed thread=%s", thread_id, exc_info=True)
     after = directory_size(store.root)
     return max(0, before - after)
 

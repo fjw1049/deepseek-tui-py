@@ -142,7 +142,13 @@ class PlanUpdateTool(ToolSpec):
         else:
             raise ToolError("Missing or invalid 'plan' (string markdown or step array)")
 
-        plan_path = context.working_directory / ".deepseek" / "plan.md"
+        from deepseek_tui.tools.plan_mode import resolve_plan_file_path
+
+        plan_path = resolve_plan_file_path(
+            context.working_directory, context.metadata
+        )
+        if plan_path is None:
+            raise ToolError("Cannot resolve plan file path")
         plan_path.parent.mkdir(parents=True, exist_ok=True)
         plan_path.write_text(plan_text, encoding="utf-8")
         sync_plan_store(

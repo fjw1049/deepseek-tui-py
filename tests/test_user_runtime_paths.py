@@ -15,6 +15,7 @@ from deepseek_tui.config.paths import (
     user_subagent_runs_dir,
     user_subagents_registries_dir,
     user_subagents_state_path,
+    user_thread_plan_path,
     workspace_storage_key,
 )
 
@@ -29,6 +30,13 @@ def test_runtime_dirs_under_deepseek_home(
     assert user_subagent_runs_dir() == home / "agents" / "runs"
     assert user_subagents_registries_dir() == home / "agents" / "registries"
     assert user_plugin_host_dir() == home / "plugins" / ".host"
+    assert user_thread_plan_path("thr_abcd1234") == (
+        home / "threads" / "plans" / "thr_abcd1234.md"
+    )
+    with pytest.raises(ValueError):
+        user_thread_plan_path("../evil")
+    with pytest.raises(ValueError):
+        user_thread_plan_path("thr/abcd")
 
 
 def test_subagents_state_isolated_by_workspace(

@@ -7,8 +7,10 @@ the engine asks the user, then switches interaction mode.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
+from deepseek_tui.config.paths import DOT_DEEPSEEK, user_thread_plan_path
 from deepseek_tui.tools.registry import ToolCapability, ToolError, ToolResult, ToolSpec
 
 ENTER_PLAN_MODE_NAME = "enter_plan_mode"
@@ -241,8 +243,52 @@ def parse_exit_plan_response(response: dict[str, Any]) -> str | None:
     return None
 
 
+APPROVED_PLAN_MARKER = "The approved plan file is at"
+
+
+def runtime_thread_id(metadata: dict[str, Any] | None) -> str | None:
+    raw = (metadata or {}).get("runtime_thread_id")
+    if not isinstance(raw, str):
+        return None
+    tid = raw.strip()
+    if not tid:
+        return None
+    try:
+        user_thread_plan_path(tid)
+    except ValueError:
+        return None
+    return tid
+
+
+def resolve_plan_file_path(
+    working_directory: Any, metadata: dict[str, Any] | None
+) -> Path | None:
+    """Workbench: ``~/.deepseek/threads/plans/{id}.md``. TUI: workspace plan.md.
+
+    A present-but-invalid thread id does not fall back to the workspace file.
+    """
+    raw = (metadata or {}).get("runtime_thread_id")
+    if isinstance(raw, str) and raw.strip():
+        tid = runtime_thread_id(metadata)
+        if tid is None:
+            return None
+        return user_thread_plan_path(tid)
+    if working_directory is None:
+        return None
+    return Path(working_directory) / DOT_DEEPSEEK / "plan.md"
+
+
+def plan_file_has_content(path: Path | None) -> bool:
+    if path is None:
+        return False
+    try:
+        return path.is_file() and bool(path.read_text(encoding="utf-8").strip())
+    except OSError:
+        return False
+
+
 def plan_file_exists(working_directory: Any, metadata: dict[str, Any] | None) -> bool:
-    """True when a plan has been written this session or on disk."""
+    """True when a plan has been written this session or on this conversation's file."""
     meta = metadata or {}
     plan_text = meta.get("plan_text") or meta.get("plan")
     if isinstance(plan_text, str) and plan_text.strip():
@@ -250,13 +296,59 @@ def plan_file_exists(working_directory: Any, metadata: dict[str, Any] | None) ->
     steps = meta.get("plan_steps")
     if isinstance(steps, list) and steps:
         return True
-    try:
-        from pathlib import Path
+    return plan_file_has_content(resolve_plan_file_path(working_directory, meta))
 
-        path = Path(working_directory) / ".deepseek" / "plan.md"
-        return path.is_file() and bool(path.read_text(encoding="utf-8").strip())
-    except OSError:
-        return False
+
+def build_approved_plan_reminder_body(plan_path: Path) -> str:
+    return (
+        f"{APPROVED_PLAN_MARKER} {plan_path}.\n"
+        "If this plan is relevant to current work and not complete, "
+        "continue executing it.\n"
+        "If you do not have the current plan content in visible context, "
+        "read that file. Never stop because inline plan content was "
+        "compacted — the file is the source of truth.\n"
+        "Do not mention this reminder to the user."
+    )
+
+
+def is_approved_plan_reminder(message: Any) -> bool:
+    text = message.text_content() if hasattr(message, "text_content") else ""
+    return APPROVED_PLAN_MARKER in (text or "")
+
+
+def sync_approved_plan_reminder(
+    messages: list[Any],
+    *,
+    mode: str,
+    working_directory: Any,
+    metadata: dict[str, Any] | None,
+) -> None:
+    """Keep a path-only approved-plan pointer after leaving plan mode.
+
+    Workbench only. While still in plan mode, or when the thread has no
+    approved plan, drop leftovers. Otherwise inject once until compaction
+    replaces history. Never embeds the plan body.
+    """
+    if runtime_thread_id(metadata) is None:
+        return
+    approved = bool((metadata or {}).get("approved_plan"))
+    if (mode or "").strip() == "plan" or not approved:
+        kept = [m for m in messages if not is_approved_plan_reminder(m)]
+        if len(kept) != len(messages):
+            messages[:] = kept
+        return
+    if any(is_approved_plan_reminder(m) for m in messages):
+        return
+    path = resolve_plan_file_path(working_directory, metadata)
+    if not plan_file_has_content(path):
+        return
+    from deepseek_tui.engine import reminders
+
+    messages.append(
+        reminders.reminder_message(
+            reminders.APPROVED_PLAN, build_approved_plan_reminder_body(path)
+        )
+    )
 
 
 class EnterPlanModeTool(ToolSpec):

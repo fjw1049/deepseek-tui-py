@@ -119,6 +119,29 @@ def user_threads_dir() -> Path:
     return user_deepseek_dir() / "threads"
 
 
+def user_thread_plans_dir() -> Path:
+    """``~/.deepseek/threads/plans/`` — Workbench per-thread plan files."""
+    return user_threads_dir() / "plans"
+
+
+def user_thread_plan_path(thread_id: str) -> Path:
+    """``~/.deepseek/threads/plans/{thread_id}.md``.
+
+    Derived from the thread id, not persisted. Rejects ids that cannot be
+    a single path segment.
+    """
+    tid = (thread_id or "").strip()
+    if (
+        not tid
+        or tid in {".", ".."}
+        or "/" in tid
+        or "\\" in tid
+        or not tid.replace("_", "").replace("-", "").replace(".", "").isalnum()
+    ):
+        raise ValueError(f"invalid thread id for plan path: {thread_id!r}")
+    return user_thread_plans_dir() / f"{tid}.md"
+
+
 def user_skills_dir() -> Path:
     """``~/.deepseek/skills/`` — cross-project user skills."""
     return user_deepseek_dir() / "skills"

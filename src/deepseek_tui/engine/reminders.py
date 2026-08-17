@@ -108,6 +108,15 @@ PLAN_NUDGE = ReminderSpec(
     priority=10,
 )
 
+APPROVED_PLAN = ReminderSpec(
+    name="approved_plan",
+    envelope=Envelope.ALERT,
+    placement=Placement.TAIL,
+    origin=MessageOrigin.SYSTEM_REMINDER,
+    # Standing pointer after leaving plan mode; yields to live alerts.
+    priority=12,
+)
+
 LONG_SESSION_DRIFT = ReminderSpec(
     name="long_session_drift",
     envelope=Envelope.ALERT,
@@ -203,6 +212,7 @@ REGISTRY: tuple[ReminderSpec, ...] = (
     HANDOFF,
     PROMPT_SUBMIT_HOOK_CONTEXT,
     PLAN_NUDGE,
+    APPROVED_PLAN,
     LONG_SESSION_DRIFT,
     CHECKLIST_INCOMPLETE_GATE,
     LSP_DIAGNOSTICS,

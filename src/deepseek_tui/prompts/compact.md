@@ -13,6 +13,8 @@ Two rules about who said what:
 - The transcript labels each line `User:`, `Assistant:` or `Harness:`. Only `User:` lines are the human. `Harness:` lines are automated injections from the runtime, and `Assistant:` lines may *quote or paraphrase* the user — neither is evidence the user said anything. Never turn them into a user request or a user constraint. If you are unsure who wanted something, describe it as a decision, not as a user instruction.
 - The user's own requests are carried verbatim in a separate block and do not depend on you. Do not spend this summary re-paraphrasing them. Spend it on what cannot be recovered any other way: what was tried, what it produced, what was decided, and why.
 
+If the session is executing an approved plan, the plan file is the source of truth — do not restate its full body. In **Key Decisions** keep settled choices that are not already obvious from that file. In **In Progress** / **Next step** write the forward plan: what remains, in order, and the next concrete action. Preserve the plan file path if the transcript named one, so the next turn can re-read it.
+
 ### Goal
 [The user's high-level objective for this session]
 

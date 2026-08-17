@@ -2012,6 +2012,14 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                     reminders.PLAN_NUDGE, PLAN_GROUNDING_REMINDER
                 )
             )
+        from deepseek_tui.tools.plan_mode import sync_approved_plan_reminder
+
+        sync_approved_plan_reminder(
+            working_messages,
+            mode=self.mode,
+            working_directory=self.tool_context.working_directory,
+            metadata=self.tool_context.metadata,
+        )
 
         mode_hint = ""
 

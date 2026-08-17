@@ -1232,6 +1232,7 @@ class ToolExecutionMixin:
                 success=False,
             )
 
+        self._set_approved_plan(False)
         await self.apply_interaction_mode("plan", reason="enter_plan_mode")
         return ToolResult(
             content=(
@@ -1297,6 +1298,7 @@ class ToolExecutionMixin:
             )
         if outcome == EXIT_ACCEPT_YOLO:
             self._stop_after_exit_plan = False
+            self._set_approved_plan(True)
             await self.apply_interaction_mode("yolo", reason="exit_plan_mode")
             return ToolResult(
                 content="Plan accepted (YOLO). Implement the plan now with "
@@ -1305,6 +1307,7 @@ class ToolExecutionMixin:
                 metadata={"outcome": outcome, "mode": "yolo"},
             )
         if outcome == EXIT_LEAVE:
+            self._set_approved_plan(False)
             await self.apply_interaction_mode("agent", reason="exit_plan_mode")
             self._stop_after_exit_plan = True
             return ToolResult(
@@ -1315,6 +1318,7 @@ class ToolExecutionMixin:
             )
         # Default: accept in agent mode
         self._stop_after_exit_plan = False
+        self._set_approved_plan(True)
         await self.apply_interaction_mode("agent", reason="exit_plan_mode")
         return ToolResult(
             content="Plan accepted (Agent). Implement the plan now, "
@@ -1322,6 +1326,9 @@ class ToolExecutionMixin:
             success=True,
             metadata={"outcome": outcome or EXIT_ACCEPT_AGENT, "mode": "agent"},
         )
+
+    def _set_approved_plan(self, approved: bool) -> None:
+        self.tool_context.metadata["approved_plan"] = bool(approved)
 
     async def apply_interaction_mode(
         self, mode: str, *, reason: str = ""
@@ -1337,6 +1344,10 @@ class ToolExecutionMixin:
         if previous == next_mode:
             return
         self.mode = next_mode
+        if next_mode == "plan":
+            self._set_approved_plan(False)
+        elif previous == "plan" and reason != "exit_plan_mode":
+            self._set_approved_plan(False)
         try:
             from deepseek_tui.policy.sandbox import sync_execution_sandbox_policy
 
