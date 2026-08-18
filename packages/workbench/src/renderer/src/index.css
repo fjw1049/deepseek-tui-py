@@ -10033,20 +10033,14 @@ select:focus-visible,
 
 .ds-ide-chat-rail .ds-approval-bubble {
   border-radius: 12px;
-  padding: 0.65rem 0.75rem;
   font-size: var(--ds-ide-font-base);
   line-height: 1.55;
 }
 
 .ds-ide-chat-rail .ds-approval-bubble pre {
-  margin-top: 0.45rem;
   border-radius: 8px;
   padding: 0.45rem 0.55rem;
   font-size: var(--ds-ide-font-code);
-}
-
-.ds-ide-chat-rail .ds-approval-bubble .text-\[14px\] {
-  font-size: var(--ds-ide-font-base);
 }
 
 .ds-ide-chat-rail .ds-user-input-pending {
