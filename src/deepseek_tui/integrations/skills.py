@@ -40,6 +40,7 @@ __all__ = [
     "codex_global_skills_dir",
     "cursor_global_skills_dir",
     "default_skills_dir",
+    "bundled_skills_dir",
     "discover_in_workspace",
     "invalidate_skills_prompt_cache",
     "render_available_skills_context",

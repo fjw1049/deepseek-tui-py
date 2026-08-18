@@ -11,7 +11,7 @@ import { buildMockUsageLedger, mergeUsageLedgers } from '../src/shared/usage-led
 
 function resolveLedgerPath(): string {
   const root = process.env.DEEPSEEK_HOME?.trim() || join(homedir(), '.deepseek')
-  return join(root, 'workbench', 'usage', 'ledger-v1.json')
+  return join(root, 'usage.json')
 }
 
 async function readExisting(path: string) {

@@ -37,6 +37,7 @@ from deepseek_tui.engine.events import (
     TextDeltaEvent,
     ThinkingDeltaEvent,
     ToolCallEvent,
+    GoalUpdatedEvent,
     ModeChangedEvent,
     ToolResultEvent,
     TurnCancelledEvent,
@@ -93,6 +94,7 @@ from deepseek_tui.server.threads.models import (
     SUMMARY_LIMIT,
     CompactThreadRequest,
     CreateThreadRequest,
+    GoalCommandRequest,
     RuntimeEventRecord,
     RuntimeThreadManagerConfig,
     RuntimeTurnStatus,
@@ -196,6 +198,14 @@ class _PendingUserInputRecord:
 
 
 # --- RuntimeThreadManager ----------------------------------------------------
+
+
+def _engine_mode_for_goal(mode: str) -> str:
+    """Goal runs on the agent tool surface; leave plan/ask when entering goal."""
+    from deepseek_tui.goal.types import ALLOWED_GOAL_MODES
+
+    normalized = (mode or "agent").strip() or "agent"
+    return normalized if normalized in ALLOWED_GOAL_MODES else "agent"
 
 
 class RuntimeThreadManager:
@@ -1011,6 +1021,9 @@ class RuntimeThreadManager:
                 "updated_at": now,
                 "latest_turn_id": None,
                 "archived": False,
+                "goal": None,
+                "goal_queue": [],
+                "goal_fork_notice": bool(source.goal),
             }
         )
         self.store.save_thread(forked)
@@ -1550,6 +1563,232 @@ class RuntimeThreadManager:
 
         return turn
 
+    def _persist_thread_goal(self, thread_id: str) -> ThreadRecord:
+        thread = self.store.load_thread(thread_id)
+        state = self._active.get(thread_id)
+        if state is None:
+            return thread
+        dumped = state.engine.goal_service.dump()
+        thread.goal = dumped.goal
+        thread.goal_queue = list(dumped.queue)
+        thread.mode = state.engine.mode
+        thread.updated_at = datetime.now(timezone.utc)
+        self.store.save_thread(thread)
+        return thread
+
+    def _thread_has_active_turn(self, thread_id: str) -> bool:
+        state = self._active.get(thread_id)
+        return state is not None and state.active_turn is not None
+
+    async def _interrupt_active_turn(self, thread_id: str) -> None:
+        async with self._active_lock:
+            state = self._active.get(thread_id)
+            turn_id = (
+                state.active_turn.turn_id
+                if state is not None and state.active_turn is not None
+                else None
+            )
+        if turn_id is None:
+            return
+        try:
+            await self.interrupt_turn(thread_id, turn_id)
+        except ValueError:
+            return
+
+    async def apply_goal_command(
+        self, thread_id: str, req: GoalCommandRequest
+    ) -> dict[str, Any]:
+        from deepseek_tui.engine import reminders
+        from deepseek_tui.goal.commands import parse_goal_command
+        from deepseek_tui.goal.injection import GOAL_CANCELLED_REMINDER
+        from deepseek_tui.goal.types import GOAL_CONTINUATION_KIND, GoalActor, GoalError
+
+        thread = self.store.load_thread(thread_id)
+        handle, _engine_task = await self._ensure_engine_loaded(thread)
+        async with self._active_lock:
+            state = self._active.get(thread_id)
+            if state is None:
+                raise RuntimeError("Thread engine not loaded")
+            engine = state.engine
+        parsed = parse_goal_command(req.args)
+        started_turn = False
+        try:
+            if parsed.kind == "error":
+                raise ValueError(parsed.message)
+            if parsed.kind == "status":
+                pass
+            elif parsed.kind == "create":
+                engine.mode = _engine_mode_for_goal(engine.mode)
+                engine.goal_service.create(
+                    parsed.objective,
+                    replace=parsed.replace,
+                    actor=GoalActor.USER,
+                    mode=engine.mode,
+                )
+                self._persist_thread_goal(thread_id)
+                await self.start_turn(
+                    thread_id,
+                    StartTurnRequest(
+                        prompt=parsed.objective,
+                        input_summary=parsed.objective,
+                        mode=engine.mode,
+                        provider=req.provider,
+                        model=req.model,
+                        reasoning_effort=req.reasoning_effort,
+                    ),
+                )
+                started_turn = True
+            elif parsed.kind == "pause":
+                engine.goal_service.pause(actor=GoalActor.USER)
+                await self._interrupt_active_turn(thread_id)
+            elif parsed.kind == "resume":
+                engine.mode = _engine_mode_for_goal(engine.mode)
+                _snapshot, decision = engine.goal_service.resume(
+                    actor=GoalActor.USER, mode=engine.mode
+                )
+                self._persist_thread_goal(thread_id)
+                if decision.should_continue and not self._thread_has_active_turn(thread_id):
+                    await self.start_turn(
+                        thread_id,
+                        StartTurnRequest(
+                            prompt=decision.prompt,
+                            hidden=True,
+                            internal_kind=GOAL_CONTINUATION_KIND,
+                            input_summary="goal continuation",
+                            mode=engine.mode,
+                            provider=req.provider,
+                            model=req.model,
+                            reasoning_effort=req.reasoning_effort,
+                        ),
+                    )
+                    started_turn = True
+            elif parsed.kind == "cancel":
+                engine.goal_service.cancel(actor=GoalActor.USER)
+                engine.session_messages.append(
+                    reminders.reminder_message(
+                        reminders.GOAL_CANCELLED, GOAL_CANCELLED_REMINDER
+                    )
+                )
+                await self._interrupt_active_turn(thread_id)
+            elif parsed.kind == "next-add":
+                if engine.goal_service.snapshot() is None:
+                    engine.mode = _engine_mode_for_goal(engine.mode)
+                    engine.goal_service.create(
+                        parsed.objective, actor=GoalActor.USER, mode=engine.mode
+                    )
+                    self._persist_thread_goal(thread_id)
+                    await self.start_turn(
+                        thread_id,
+                        StartTurnRequest(
+                            prompt=parsed.objective,
+                            input_summary=parsed.objective,
+                            mode=engine.mode,
+                            provider=req.provider,
+                            model=req.model,
+                            reasoning_effort=req.reasoning_effort,
+                        ),
+                    )
+                    started_turn = True
+                else:
+                    engine.goal_service.enqueue(parsed.objective)
+            elif parsed.kind == "next-manage":
+                pass
+            elif parsed.kind == "next-delete" and parsed.index is not None:
+                engine.goal_service.queue_remove(parsed.index)
+            elif parsed.kind == "next-move" and parsed.index is not None and parsed.dest is not None:
+                engine.goal_service.queue_move(parsed.index, parsed.dest)
+            else:
+                raise ValueError("Unknown /goal command")
+        except GoalError as exc:
+            raise ValueError(exc.message) from exc
+
+        thread = self._persist_thread_goal(thread_id)
+        await self._emit_event(
+            thread_id,
+            thread.latest_turn_id,
+            None,
+            "goal.updated",
+            {
+                "thread": thread.model_dump(mode="json"),
+                "goal": thread.goal,
+                "goal_queue": thread.goal_queue,
+                "status_text": engine.goal_service.format_status(),
+            },
+        )
+        del handle
+        return {
+            "thread": thread.model_dump(mode="json"),
+            "goal": thread.goal,
+            "goal_queue": thread.goal_queue,
+            "status_text": engine.goal_service.format_status(),
+            "started_turn": started_turn,
+        }
+
+    async def _maybe_continue_goal(self, thread_id: str) -> None:
+        from deepseek_tui.goal.types import GOAL_CONTINUATION_KIND
+
+        async with self._active_lock:
+            state = self._active.get(thread_id)
+            if state is None or state.active_turn is not None:
+                return
+            meta = state.engine.tool_context.metadata
+            promote = meta.pop("goal_promote_pending", None)
+            continue_pending = bool(meta.pop("goal_continue_pending", False))
+            engine = state.engine
+        if isinstance(promote, dict):
+            objective = str(promote.get("objective") or "").strip()
+            item_id = str(promote.get("item_id") or "").strip()
+            if not objective or not item_id:
+                return
+            try:
+                await self.start_turn(
+                    thread_id,
+                    StartTurnRequest(
+                        prompt=objective,
+                        input_summary=objective,
+                        mode=engine.mode,
+                    ),
+                )
+            except Exception:
+                logger.exception("goal_promoted_turn_start_failed")
+                snapshot = engine.goal_service.snapshot()
+                if snapshot is not None and snapshot.objective == objective:
+                    from deepseek_tui.goal.types import GoalActor
+
+                    engine.goal_service.cancel(actor=GoalActor.RUNTIME)
+                self._persist_thread_goal(thread_id)
+                return
+            engine.goal_service.acknowledge_promoted(item_id)
+            self._persist_thread_goal(thread_id)
+            return
+        if not continue_pending:
+            return
+        decision = engine.goal_service.peek_continuation(mode=engine.mode)
+        if not decision.should_continue:
+            return
+        try:
+            await self.start_turn(
+                thread_id,
+                StartTurnRequest(
+                    prompt=decision.prompt,
+                    hidden=True,
+                    internal_kind=GOAL_CONTINUATION_KIND,
+                    input_summary="goal continuation",
+                    mode=engine.mode,
+                ),
+            )
+        except Exception:
+            logger.exception("goal_continuation_turn_start_failed")
+            snapshot = engine.goal_service.snapshot()
+            if snapshot is not None and snapshot.status.value == "active":
+                from deepseek_tui.goal.types import GoalActor
+
+                engine.goal_service.pause(
+                    "Paused after goal continuation could not start",
+                    actor=GoalActor.RUNTIME,
+                )
+            self._persist_thread_goal(thread_id)
+
     async def interrupt_turn(self, thread_id: str, turn_id: str) -> TurnRecord:
         async with self._active_lock:
             state = self._active.get(thread_id)
@@ -1873,6 +2112,28 @@ class RuntimeThreadManager:
         self._restore_active_plugin(engine, thread)
         engine.tool_context.metadata["runtime_thread_id"] = thread.id
         engine.tool_context.metadata["approved_plan"] = bool(thread.approved_plan)
+        goal_service = getattr(engine, "goal_service", None)
+        if goal_service is not None:
+            goal_service.restore(thread.goal, thread.goal_queue)
+            dumped = goal_service.dump()
+            if (
+                dumped.goal != thread.goal
+                or list(dumped.queue) != list(thread.goal_queue or [])
+            ):
+                thread.goal = dumped.goal
+                thread.goal_queue = list(dumped.queue)
+                self.store.save_thread(thread)
+        if thread.goal_fork_notice:
+            from deepseek_tui.engine import reminders
+            from deepseek_tui.goal.injection import GOAL_FORK_CLEARED_REMINDER
+
+            engine.session_messages.append(
+                reminders.reminder_message(
+                    reminders.GOAL_CANCELLED, GOAL_FORK_CLEARED_REMINDER
+                )
+            )
+            thread.goal_fork_notice = False
+            self.store.save_thread(thread)
         if self._elevation_bridge is not None:
             engine.tool_context.metadata["elevation_bridge"] = self._elevation_bridge
         engine_task = asyncio.create_task(engine.run(), name=f"engine-{thread.id}")
@@ -3397,6 +3658,26 @@ class RuntimeThreadManager:
                     {"item": item.model_dump(mode="json")},
                 )
 
+            elif isinstance(event, GoalUpdatedEvent):
+                try:
+                    thread = self._persist_thread_goal(thread_id)
+                    await self._emit_event(
+                        thread_id,
+                        turn_id,
+                        None,
+                        "goal.updated",
+                        {
+                            "thread": thread.model_dump(mode="json"),
+                            "goal": event.snapshot,
+                            "goal_queue": list(event.queue),
+                            "change": event.change,
+                            "status": event.status,
+                            "reason": event.reason,
+                        },
+                    )
+                except Exception:  # noqa: BLE001
+                    logger.debug("goal_updated_persist_failed thread=%s", thread_id, exc_info=True)
+
             elif isinstance(event, ModeChangedEvent):
                 next_mode = (event.mode or "agent").strip() or "agent"
                 try:
@@ -3846,6 +4127,7 @@ class RuntimeThreadManager:
             ):
                 state.active_turn = None
             self._touch_lru(thread_id)
+        await self._maybe_continue_goal(thread_id)
 
     # --- helpers -------------------------------------------------------------
 

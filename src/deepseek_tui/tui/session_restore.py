@@ -39,7 +39,11 @@ def session_metadata(
     return {"id": fallback_id, "message_count": len(session_data.get("messages") or [])}
 
 
-def apply_messages_to_engine(engine: Any, messages: list[Message]) -> None:
+def apply_messages_to_engine(
+    engine: Any,
+    messages: list[Message],
+    metadata: dict[str, Any] | None = None,
+) -> None:
     engine.session_messages = list(messages)
     # Bridge lives in messages; seed iterative re-compaction memory if present.
     try:
@@ -50,6 +54,10 @@ def apply_messages_to_engine(engine: Any, messages: list[Message]) -> None:
             engine._compaction_summary_prompt = bridge
     except Exception:  # noqa: BLE001
         pass
+    if metadata:
+        from deepseek_tui.goal.persist import apply_goal_to_engine
+
+        apply_goal_to_engine(engine, metadata)
 
 
 def try_restore_crash_checkpoint(engine: Any) -> tuple[list[Message], dict[str, Any]] | None:
@@ -76,10 +84,9 @@ def try_restore_crash_checkpoint(engine: Any) -> tuple[list[Message], dict[str, 
         logger.warning("crash checkpoint messages invalid", exc_info=True)
         return None
 
-    apply_messages_to_engine(engine, messages)
-
     metadata = raw.get("metadata")
     meta: dict[str, Any] = metadata if isinstance(metadata, dict) else {}
+    apply_messages_to_engine(engine, messages, meta)
 
     turn_counter = raw.get("turn_counter")
     if isinstance(turn_counter, int) and turn_counter >= 0:

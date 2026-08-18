@@ -1390,11 +1390,26 @@ async def resume_thread_agent(
 
 from deepseek_tui.server.threads import (
     CompactThreadRequest,
+    GoalCommandRequest,
     StartTurnRequest,
     SteerTurnRequest,
 )
 
 router_turns = APIRouter(prefix="/v1")
+
+
+@router_turns.post("/threads/{thread_id}/goal")
+async def apply_goal_command(request: Request, thread_id: str) -> JSONResponse:
+    mgr = manager(request)
+    payload = await body(request)
+    req = GoalCommandRequest.model_validate(payload)
+    try:
+        result = await mgr.apply_goal_command(thread_id, req)
+    except FileNotFoundError as exc:
+        raise api_error(404, str(exc), error="thread_not_found") from exc
+    except ValueError as exc:
+        raise classify_turn_value_error(exc) from exc
+    return JSONResponse(content=result)
 
 
 @router_turns.post("/threads/{thread_id}/turns", status_code=201)

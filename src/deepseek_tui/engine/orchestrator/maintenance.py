@@ -295,6 +295,8 @@ class SessionMaintenanceMixin:
                 or self._compaction_summary_prompt,
                 "metadata": {
                     "id": self._cycle_session_id,
+                    "goal": self.goal_service.dump().goal,
+                    "goal_queue": self.goal_service.dump().queue,
                 },
             }
             tmp = session_file.with_suffix(".tmp")

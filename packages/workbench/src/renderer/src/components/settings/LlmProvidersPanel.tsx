@@ -42,7 +42,6 @@ import {
 } from '@shared/app-settings'
 import { buildSilentWavProbeBytes } from '@shared/asr-probe-wav'
 import { resolveProviderIcon, uniquifySvgIds } from '../chat/provider-icons.js'
-import { useChatStore } from '../../store/chat-store'
 
 type Props = {
   form: AppSettingsV1
@@ -350,13 +349,6 @@ export function LlmProvidersPanel({ form, onUpdate }: Props): ReactElement {
                   (id) => id !== detail.id && nextProviders[id]?.apiKey?.trim()
                 ) ?? 'deepseek'
             }
-            if (!next.apiKey.trim()) {
-              void window.dsGui.pruneUsageProvider(detail.id).finally(() => {
-                useChatStore.setState((state) => ({
-                  usageRefreshKey: state.usageRefreshKey + 1
-                }))
-              })
-            }
             onUpdate(patch)
             setDetail(null)
           }}
@@ -379,11 +371,6 @@ export function LlmProvidersPanel({ form, onUpdate }: Props): ReactElement {
             setDetail(null)
           }}
           onDelete={(id) => {
-            void window.dsGui.pruneUsageProvider(id).finally(() => {
-              useChatStore.setState((state) => ({
-                usageRefreshKey: state.usageRefreshKey + 1
-              }))
-            })
             onUpdate({ customEndpoints: endpoints.filter((item) => item.id !== id) })
             setDetail(null)
           }}
@@ -1358,13 +1345,6 @@ function CustomProviderDetailSheet({
                 type="button"
                 className="ds-llm-model-row__remove"
                 onClick={() => {
-                  void window.dsGui
-                    .pruneUsageEndpointModel(endpoint.id, model.id)
-                    .finally(() => {
-                      useChatStore.setState((state) => ({
-                        usageRefreshKey: state.usageRefreshKey + 1
-                      }))
-                    })
                   commitModels(models.filter((item) => item.id !== model.id))
                 }}
                 aria-label={t('deleteEndpointBtn')}

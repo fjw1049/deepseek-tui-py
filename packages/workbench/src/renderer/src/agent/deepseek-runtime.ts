@@ -150,6 +150,7 @@ type ThreadRecordJson = {
   status?: string
   archived?: boolean
   title?: string | null
+  goal?: import('./types').GoalSnapshotJson | null
 }
 
 type TurnItemJson = {
@@ -915,7 +916,8 @@ export class DeepseekRuntimeProvider implements AgentProvider {
         mode: t.mode,
         workspace: t.workspace,
         status: t.status,
-        archived: t.archived === true
+        archived: t.archived === true,
+        goal: t.goal ?? null
       }))
   }
 
@@ -953,7 +955,51 @@ export class DeepseekRuntimeProvider implements AgentProvider {
       model: t.model,
       mode: t.mode,
       workspace: t.workspace,
-      status: t.status
+      status: t.status,
+      goal: t.goal ?? null
+    }
+  }
+
+  async applyGoalCommand(
+    threadId: string,
+    args: string,
+    options?: {
+      provider?: string
+      model?: string
+      reasoningEffort?: string
+    }
+  ): Promise<{
+    goal: import('./types').GoalSnapshotJson | null
+    startedTurn: boolean
+    statusText: string
+    latestTurnId?: string | null
+  }> {
+    const r = await window.dsGui.runtimeRequest(
+      `/v1/threads/${encodeURIComponent(threadId)}/goal`,
+      'POST',
+      JSON.stringify({
+        args,
+        provider: options?.provider,
+        model: options?.model,
+        reasoning_effort: options?.reasoningEffort
+      })
+    )
+    if (!r.ok) throw toRuntimeError(readRuntimeError(r.body, 'goal command failed'))
+    const body = JSON.parse(r.body) as {
+      goal?: import('./types').GoalSnapshotJson | null
+      started_turn?: boolean
+      status_text?: string
+      thread?: { latest_turn_id?: string }
+    }
+    const latestTurnId =
+      typeof body.thread?.latest_turn_id === 'string' && body.thread.latest_turn_id.trim()
+        ? body.thread.latest_turn_id.trim()
+        : null
+    return {
+      goal: body.goal ?? null,
+      startedTurn: body.started_turn === true,
+      statusText: typeof body.status_text === 'string' ? body.status_text : '',
+      latestTurnId
     }
   }
 
@@ -963,6 +1009,7 @@ export class DeepseekRuntimeProvider implements AgentProvider {
     threadStatus?: string
     latestTurnId?: string
     latestUserMessageId?: string
+    goal?: import('./types').GoalSnapshotJson | null
   }> {
     const r = await window.dsGui.runtimeRequest(`/v1/threads/${encodeURIComponent(threadId)}`, 'GET')
     if (!r.ok) throw toRuntimeError(readRuntimeError(r.body, 'failed to load thread'))
@@ -1112,6 +1159,7 @@ export class DeepseekRuntimeProvider implements AgentProvider {
       threadStatus: detail.thread.status ?? latestTurnStatus,
       latestTurnId,
       latestUserMessageId,
+      goal: detail.thread.goal ?? null,
       ...(activePlugin !== undefined ? { activePlugin } : {})
     }
   }
@@ -1790,6 +1838,14 @@ export class DeepseekRuntimeProvider implements AgentProvider {
                 return
               }
 
+
+              if (ev === 'goal.updated' && sink.onGoalUpdated) {
+                const goal = payload.goal
+                sink.onGoalUpdated(
+                  goal && typeof goal === 'object' ? (goal as import('./types').GoalSnapshotJson) : null
+                )
+                return
+              }
 
               if (ev === 'thread.updated' && sink.onThreadUpdated) {
                 const thread = payload.thread as Record<string, unknown> | undefined

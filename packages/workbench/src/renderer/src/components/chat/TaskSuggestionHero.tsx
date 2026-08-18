@@ -158,7 +158,7 @@ export function TaskSuggestionHero({ onSelectSuggestion }: Props): ReactElement 
   const { t } = useTranslation('common')
   const usageRefreshKey = useChatStore((s) => s.usageRefreshKey)
   const composerModelMeta = useChatStore((s) => s.composerModelMeta)
-  const [usageRange, setUsageRange] = useState<UsageRange>('90d')
+  const [usageRange, setUsageRange] = useState<UsageRange>('1y')
   const persistentUsage = usePersistentUsage(usageRange, usageRefreshKey)
   const heatmapUsage = usePersistentUsage('1y', usageRefreshKey)
   const [period, setPeriod] = useState<TrendingPeriod>('daily')

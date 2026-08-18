@@ -207,6 +207,7 @@ SYNTHETIC_ORIGINS = frozenset(
         # Carries the user's words but is not a fresh turn — treating it as
         # one would make the whole ledger read as "the current request".
         MessageOrigin.REQUEST_LEDGER,
+        MessageOrigin.GOAL_CONTINUATION,
     }
 )
 

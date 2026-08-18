@@ -165,6 +165,47 @@ STOP_HOOK_BLOCK = ReminderSpec(
     priority=90,
 )
 
+GOAL_ACTIVE = ReminderSpec(
+    name="goal_active",
+    envelope=Envelope.ALERT,
+    placement=Placement.TAIL,
+    origin=MessageOrigin.SYSTEM_REMINDER,
+    priority=14,
+)
+
+GOAL_PAUSED = ReminderSpec(
+    name="goal_paused",
+    envelope=Envelope.ALERT,
+    placement=Placement.TAIL,
+    origin=MessageOrigin.SYSTEM_REMINDER,
+    priority=14,
+)
+
+GOAL_BLOCKED = ReminderSpec(
+    name="goal_blocked",
+    envelope=Envelope.ALERT,
+    placement=Placement.TAIL,
+    origin=MessageOrigin.SYSTEM_REMINDER,
+    priority=14,
+)
+
+GOAL_CANCELLED = ReminderSpec(
+    name="goal_cancelled",
+    envelope=Envelope.ALERT,
+    placement=Placement.TAIL,
+    origin=MessageOrigin.SYSTEM_REMINDER,
+    priority=16,
+)
+
+GOAL_CONTINUATION = ReminderSpec(
+    name="goal_continuation",
+    envelope=Envelope.ALERT,
+    placement=Placement.TAIL,
+    origin=MessageOrigin.GOAL_CONTINUATION,
+    priority=15,
+    max_chars=8_000,
+)
+
 SOFT_RESUME = ReminderSpec(
     name="soft_resume",
     envelope=Envelope.ALERT,
@@ -213,6 +254,11 @@ REGISTRY: tuple[ReminderSpec, ...] = (
     PROMPT_SUBMIT_HOOK_CONTEXT,
     PLAN_NUDGE,
     APPROVED_PLAN,
+    GOAL_ACTIVE,
+    GOAL_PAUSED,
+    GOAL_BLOCKED,
+    GOAL_CANCELLED,
+    GOAL_CONTINUATION,
     LONG_SESSION_DRIFT,
     CHECKLIST_INCOMPLETE_GATE,
     LSP_DIAGNOSTICS,

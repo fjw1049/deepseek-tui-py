@@ -11,8 +11,8 @@ import type {
 import type { ComposerModelMeta } from '../lib/composer-model-label'
 import type { StartupPhasePayload } from '@shared/ds-gui-api'
 
-/** Composer execution mode (agent / plan / ask). */
-export type ComposerMode = 'plan' | 'agent' | 'ask'
+/** Composer execution mode. Goal is a UI mode; the engine still runs as agent. */
+export type ComposerMode = 'plan' | 'agent' | 'ask' | 'goal'
 
 export type QueuedUserMessage = {
   id: string
@@ -132,6 +132,8 @@ export type ChatState = {
   scrollToBlockId: string | null
   /** Session-level mounted plugin (drives the composer chip). null = none. */
   activePlugin: ActivePluginMeta | null
+  /** Current structured goal for the active thread. null = none. */
+  currentGoal: import('../agent/types').GoalSnapshotJson | null
   usageRefreshKey: number
   /**
    * Bumped when workspace files may have changed on disk (tool/turn edges).
@@ -178,6 +180,7 @@ export type ChatState = {
     mode?: ComposerMode | string,
     overrides?: SendMessageOverrides
   ) => Promise<boolean>
+  applyGoalCommand: (args: string, opts?: { silent?: boolean }) => Promise<boolean>
   drainQueuedMessages: () => Promise<void>
   removeQueuedMessage: (id: string) => void
   /** Remove a queued message and return it so the composer can restore the draft. */

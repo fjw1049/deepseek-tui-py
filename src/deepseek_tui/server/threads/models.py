@@ -87,6 +87,9 @@ class ThreadRecord(BaseModel):
     source_session_path: str | None = None
     memory_mode: str | None = None
     approved_plan: bool = False
+    goal: dict[str, Any] | None = None
+    goal_queue: list[dict[str, Any]] = Field(default_factory=list)
+    goal_fork_notice: bool = False
 
 
 class TurnRecord(BaseModel):
@@ -222,6 +225,13 @@ class SteerTurnRequest(BaseModel):
 
 class CompactThreadRequest(BaseModel):
     reason: str | None = None
+
+
+class GoalCommandRequest(BaseModel):
+    args: str = ""
+    provider: str | None = None
+    model: str | None = None
+    reasoning_effort: str | None = None
 
 
 # --- composite response model ------------------------------------------------

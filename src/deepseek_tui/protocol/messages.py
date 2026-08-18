@@ -41,6 +41,8 @@ class MessageOrigin(str, Enum):
     # as "the current request", and distinct from SYSTEM_REMINDER: its content
     # is the user's own words, which nothing may paraphrase away.
     REQUEST_LEDGER = "request_ledger"
+    # Hidden goal-driver continuation. Not a fresh human request.
+    GOAL_CONTINUATION = "goal_continuation"
 
 
 class TextBlock(BaseModel):

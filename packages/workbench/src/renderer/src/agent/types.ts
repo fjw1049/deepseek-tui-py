@@ -22,6 +22,22 @@ export type UserInputAnswer = {
   value: string
 }
 
+export type GoalSnapshotJson = {
+  goal_id?: string
+  objective: string
+  completion_criterion?: string | null
+  status: 'active' | 'paused' | 'blocked' | 'complete'
+  turns_used?: number
+  tokens_used?: number
+  wall_clock_ms?: number
+  terminal_reason?: string | null
+  budget_limits?: {
+    token_budget?: number | null
+    turn_budget?: number | null
+    wall_clock_budget_ms?: number | null
+  }
+}
+
 export type NormalizedThread = {
   id: string
   title: string
@@ -33,6 +49,7 @@ export type NormalizedThread = {
   workspace?: string
   status?: string
   archived?: boolean
+  goal?: GoalSnapshotJson | null
 }
 
 export type RuntimeConnectionStatus = 'idle' | 'checking' | 'ready' | 'offline'
@@ -358,6 +375,7 @@ export type ThreadEventSink = {
    * the latest persisted state. Drives the composer's persistent mount chip.
    */
   onActivePluginChange?(plugin: ActivePluginMeta | null): void
+  onGoalUpdated?(goal: GoalSnapshotJson | null): void
 }
 
 export interface AgentProvider {
@@ -382,6 +400,7 @@ export interface AgentProvider {
     latestUserMessageId?: string
     /** Latest mounted-plugin state derived from persisted items. */
     activePlugin?: ActivePluginMeta | null
+    goal?: GoalSnapshotJson | null
   }>
   /** Runtime HTTP: GET /v1/items/{id} — lazy-load full tool detail after truncation. */
   fetchItemDetail?(itemId: string): Promise<{ detail: string | null }>
@@ -439,6 +458,20 @@ export interface AgentProvider {
   /** Runtime HTTP: POST /v1/threads/{id}/agents/{agentId}/resume */
   resumeThreadAgent?(threadId: string, agentId: string): Promise<void>
   compactThread?(threadId: string, reason?: string): Promise<void>
+  applyGoalCommand?(
+    threadId: string,
+    args: string,
+    options?: {
+      provider?: string
+      model?: string
+      reasoningEffort?: string
+    }
+  ): Promise<{
+    goal: GoalSnapshotJson | null
+    startedTurn: boolean
+    statusText: string
+    latestTurnId?: string | null
+  }>
   subscribeThreadEvents(
     threadId: string,
     sinceSeq: number,

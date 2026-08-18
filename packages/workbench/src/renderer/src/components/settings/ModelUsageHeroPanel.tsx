@@ -48,7 +48,7 @@ export function ModelUsageHeroPanel({
   const totalTokens = summary?.totals.totalTokens ?? 0
 
   const ranges: Array<{ value: UsageRange; labelKey: string }> = [
-    { value: '90d', labelKey: 'usageHeroRangeAll' },
+    { value: '1y', labelKey: 'usageHeroRangeAll' },
     { value: '30d', labelKey: 'usageHeroRange30d' },
     { value: '7d', labelKey: 'usageHeroRange7d' }
   ]

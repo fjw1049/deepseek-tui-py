@@ -12,6 +12,10 @@ from deepseek_tui.config import Config
 from deepseek_tui.tools.registry import build_default_registry
 
 _AGENT_TOOLS = [
+    "CreateGoal",
+    "GetGoal",
+    "SetGoalBudget",
+    "UpdateGoal",
     "agent",
     "checklist",
     "edit_file",

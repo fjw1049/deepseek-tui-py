@@ -372,7 +372,7 @@ class DeepSeekTUI(App[None]):
             metadata = session_metadata(data, path=path)
         except Exception as exc:  # noqa: BLE001 — pydantic validation errors
             return f"session file invalid: {exc}"
-        apply_messages_to_engine(self._engine, restored)
+        apply_messages_to_engine(self._engine, restored, metadata)
         transcript = self.query_one(Transcript)
         transcript.hydrate_from_messages(restored)
         started = session_started_at_iso(metadata, path=path)
@@ -396,7 +396,7 @@ class DeepSeekTUI(App[None]):
             metadata = session_metadata(data, path=path)
         except Exception as exc:  # noqa: BLE001
             return f"session file invalid: {exc}"
-        apply_messages_to_engine(self._engine, restored)
+        apply_messages_to_engine(self._engine, restored, metadata)
         self.query_one(Transcript).hydrate_from_messages(restored)
         started = session_started_at_iso(metadata, path=path)
         if started:
@@ -1090,19 +1090,9 @@ class DeepSeekTUI(App[None]):
         except ValueError:
             idx = 0
         next_mode = modes[(idx + 1) % len(modes)]
-        previous_mode = current
-        self._interaction_mode = next_mode
-        if self._engine is not None:
-            self._engine.mode = next_mode
-        self.query_one(StatusBar).set_mode(next_mode)
-        self.query_one(ComposerHint).set_mode(next_mode)
-        if self._engine is not None:
-            self.run_worker(
-                self._engine.run_lifecycle_hook(
-                    "mode_change", previous_mode=previous_mode
-                ),
-                name="mode-change-hook",
-            )
+        from deepseek_tui.tui.commands import _switch_mode
+
+        _switch_mode(self, next_mode)
 
     def action_clear_transcript(self) -> None:
         """Clear visible transcript without resetting engine session.

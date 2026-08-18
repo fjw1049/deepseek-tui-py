@@ -215,7 +215,15 @@ class ToolExecutionMixin:
                     tool_calls, api_tools, effective_model
                 )
 
+        goal_terminal = False
         for tool_call in tool_calls:
+            if goal_terminal:
+                content = "Goal reached a terminal state; skipped later tool call."
+                await self._emit_tool_failure(tool_call, content)
+                results.append(
+                    Message.tool_result(tool_call.id, content, is_error=True)
+                )
+                continue
             decision = self._tool_dedup.classify(
                 tool_call.name,
                 tool_call.arguments if isinstance(tool_call.arguments, dict) else {},
@@ -370,6 +378,13 @@ class ToolExecutionMixin:
                             output_for_context,
                             is_error=not result.success,
                         )
+                    )
+                    goal_terminal = (
+                        result.success
+                        and tool_call.name == "UpdateGoal"
+                        and isinstance(tool_call.arguments, dict)
+                        and tool_call.arguments.get("status")
+                        in {"complete", "blocked"}
                     )
                 except ToolError as exc:
                     duration_ms = int((time.monotonic() - tool_started) * 1000)

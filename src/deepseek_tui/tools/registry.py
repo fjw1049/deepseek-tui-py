@@ -678,6 +678,7 @@ def build_default_registry(config: Config | None = None, *, mode: str = "agent")
         TaskStopTool,
     )
     from deepseek_tui.tools.todo import ChecklistTool
+    from deepseek_tui.goal.tools import goal_tools
     from deepseek_tui.tools.plan_mode import EnterPlanModeTool, ExitPlanModeTool
     from deepseek_tui.tools.user_input import RequestUserInputTool
     from deepseek_tui.tools.web import FetchUrlTool, WebSearchTool
@@ -783,6 +784,10 @@ def build_default_registry(config: Config | None = None, *, mode: str = "agent")
         # exit when not in plan mode.
         registry.register(ExitPlanModeTool())
 
+    if mode != "plan":
+        for tool in goal_tools():
+            registry.register(tool)
+
     return registry
 
 
@@ -802,6 +807,10 @@ def build_subagent_registry(
     """
     cfg = config or Config()
     registry = build_default_registry(cfg, mode=mode)
+    from deepseek_tui.goal.types import GOAL_TOOL_NAMES
+
+    for name in GOAL_TOOL_NAMES:
+        registry.remove(name)
     if allowed_tools is not None:
         registry.filter_by_names(set(allowed_tools))
     if extra_tools:

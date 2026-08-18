@@ -136,6 +136,7 @@ REGISTRY: list[CommandEntry] = [
     ),
     CommandEntry("/undo", "Undo last file-modifying tool", _E),
     CommandEntry("/endpoint", "Manage OpenAI/Anthropic-compatible endpoints", _C),
+    CommandEntry("/goal", "Start or manage an autonomous goal", _E),
 ]
 
 # Build lookup dicts for fast dispatch.
@@ -399,6 +400,23 @@ def _switch_mode(app: DeepSeekTUI, mode: str) -> None:
     previous_mode = getattr(app, "_interaction_mode", "agent")
     app._interaction_mode = mode  # type: ignore[attr-defined]
     if app._engine is not None:
+        from deepseek_tui.goal.types import ALLOWED_GOAL_MODES, GoalActor
+
+        snapshot = app._engine.goal_service.snapshot()
+        if (
+            snapshot is not None
+            and snapshot.status.value == "active"
+            and mode not in ALLOWED_GOAL_MODES
+        ):
+            app._engine.goal_service.pause(
+                f"Paused after mode changed to {mode}",
+                actor=GoalActor.RUNTIME,
+            )
+            if app.handle.is_turn_active():
+                app.run_worker(
+                    app.handle.cancel(reason="goal_mode_changed"),
+                    name="goal-mode-change-cancel",
+                )
         app._engine.mode = mode
         app.run_worker(
             app._engine.run_lifecycle_hook("mode_change", previous_mode=previous_mode),
@@ -1437,6 +1455,87 @@ def cmd_mcp(args: str, app: DeepSeekTUI) -> CommandResult:
         )
     except (KeyError, ValueError, OSError, json.JSONDecodeError) as exc:
         return CommandResult(error=f"MCP action failed: {exc}")
+
+
+# ── /goal ────────────────────────────────────────────────────────────────
+
+@_register("/goal")
+def cmd_goal(args: str, app: DeepSeekTUI) -> CommandResult:
+    if app._engine is None:
+        return CommandResult(error="Engine not started")
+    from deepseek_tui.engine import reminders
+    from deepseek_tui.goal.commands import parse_goal_command
+    from deepseek_tui.goal.injection import GOAL_CANCELLED_REMINDER
+    from deepseek_tui.goal.types import ALLOWED_GOAL_MODES, GoalActor, GoalError
+
+    engine = app._engine
+    service = engine.goal_service
+    parsed = parse_goal_command(args)
+    try:
+        if parsed.kind == "error":
+            if parsed.severity == "hint":
+                return CommandResult(output=parsed.message)
+            return CommandResult(error=parsed.message)
+        if parsed.kind == "status":
+            return CommandResult(output=service.format_status())
+        if parsed.kind == "create":
+            if engine.mode not in ALLOWED_GOAL_MODES:
+                _switch_mode(app, "agent")
+            service.create(
+                parsed.objective,
+                replace=parsed.replace,
+                actor=GoalActor.USER,
+                mode=engine.mode,
+            )
+            return CommandResult(submit_message=parsed.objective)
+        if parsed.kind == "pause":
+            service.pause(actor=GoalActor.USER)
+            if app.handle.is_turn_active():
+                import asyncio
+
+                asyncio.create_task(app.handle.cancel(reason="goal_paused"))
+            return CommandResult(output=service.format_status())
+        if parsed.kind == "resume":
+            if engine.mode not in ALLOWED_GOAL_MODES:
+                _switch_mode(app, "agent")
+            _snapshot, decision = service.resume(actor=GoalActor.USER, mode=engine.mode)
+            if decision.should_continue:
+                import asyncio
+
+                asyncio.create_task(engine.launch_goal_continuation())
+            return CommandResult(output=service.format_status())
+        if parsed.kind == "cancel":
+            service.cancel(actor=GoalActor.USER)
+            engine.session_messages.append(
+                reminders.reminder_message(reminders.GOAL_CANCELLED, GOAL_CANCELLED_REMINDER)
+            )
+            if app.handle.is_turn_active():
+                import asyncio
+
+                asyncio.create_task(app.handle.cancel(reason="goal_cancelled"))
+            return CommandResult(output="Goal cancelled.")
+        if parsed.kind == "next-add":
+            if service.snapshot() is None:
+                if engine.mode not in ALLOWED_GOAL_MODES:
+                    _switch_mode(app, "agent")
+                service.create(parsed.objective, actor=GoalActor.USER, mode=engine.mode)
+                return CommandResult(
+                    output="No active goal. Starting this goal now.",
+                    submit_message=parsed.objective,
+                )
+            service.enqueue(parsed.objective)
+            return CommandResult(output=service.format_queue())
+        if parsed.kind == "next-manage":
+            return CommandResult(output=service.format_queue())
+        if parsed.kind == "next-delete" and parsed.index is not None:
+            service.queue_remove(parsed.index)
+            return CommandResult(output=service.format_queue())
+        if parsed.kind == "next-move" and parsed.index is not None and parsed.dest is not None:
+            service.queue_move(parsed.index, parsed.dest)
+            return CommandResult(output=service.format_queue())
+    except GoalError as exc:
+        return CommandResult(error=exc.message)
+    return CommandResult(error="Unknown /goal command")
 
 
 # ── /compact ─────────────────────────────────────────────────────────────

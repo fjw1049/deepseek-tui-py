@@ -16,6 +16,7 @@ import { useNoticeAutoDismiss, type Notice } from '../extensions/marketplace-sha
 import { PetMascotDock } from '../pet/PetMascotDock'
 import { ComposerNoticeToast } from './composer-notice'
 import { FloatingComposer } from './FloatingComposer'
+import { GoalStrip } from './GoalStrip'
 
 type Props = ComponentProps<typeof FloatingComposer> & {
   /** One-shot notice from parent (e.g. preview pick limit); keyed by nonce. */
@@ -87,6 +88,7 @@ export function ComposerStage(props: Props): ReactElement {
         </div>
       ) : null}
       <div className="relative">
+        <GoalStrip />
         {/* Decorative only: rest just above the input (bottom-full) and ignore
             hits so the model picker popover above the composer stays clickable
             on the right. */}

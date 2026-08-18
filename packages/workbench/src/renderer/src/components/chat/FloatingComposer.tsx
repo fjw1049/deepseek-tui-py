@@ -14,6 +14,7 @@ import {
   ChevronRight,
   Clock3,
   FileDiff,
+  Flag,
   GitFork,
   ListTodo,
   Loader2,
@@ -209,15 +210,16 @@ type Props = {
   onClearPreviewPicks?: () => void
 }
 
-type SlashCommandId = ComposerMode | ComposerActionCommandId
+type SlashCommandId = ComposerMode | ComposerActionCommandId | 'goal'
 
 type SlashCommand = {
   id: SlashCommandId
-  kind: 'mode' | 'action'
+  kind: 'mode' | 'action' | 'insert'
   title: string
   description: string
   keywords: string[]
   icon: ReactElement
+  insertText?: string
 }
 
 type PetSlashCommandView = NonNullable<Props['petSlashCommands']>[number]
@@ -278,6 +280,7 @@ export function FloatingComposer({
   // Session-level plugin focus (drives the footer badge) +
   // send action used by the badge exit (× sends `@plugin:off` as a hidden turn).
   const activePlugin = useChatStore((s) => s.activePlugin)
+  const currentGoal = useChatStore((s) => s.currentGoal)
   const pluginLocale = i18n.language
   const displayPluginName = useCallback(
     (id: string | null | undefined): string =>
@@ -448,7 +451,9 @@ export function FloatingComposer({
       ? t('composerModePlan')
       : mode === 'ask'
         ? t('composerModeAsk')
-        : t('composerModeAgent')
+        : mode === 'goal'
+          ? t('composerModeGoal')
+          : t('composerModeAgent')
   const modeBadge = {
     agent: {
       Icon: Bot,
@@ -467,6 +472,12 @@ export function FloatingComposer({
       icon: '#14b8a6',
       gradient: 'linear-gradient(135deg, rgba(20,184,166,0.18), rgba(20,184,166,0.05))',
       border: 'rgba(20,184,166,0.30)'
+    },
+    goal: {
+      Icon: Flag,
+      icon: '#f43f5e',
+      gradient: 'linear-gradient(135deg, rgba(244,63,94,0.18), rgba(244,63,94,0.05))',
+      border: 'rgba(244,63,94,0.30)'
     }
   }[mode]
   const ModeBadgeIcon = modeBadge.Icon
@@ -477,6 +488,8 @@ export function FloatingComposer({
       ? t('workspaceRequiredToCreateThread')
       : busy
         ? t('composerQueuePlaceholder')
+        : mode === 'goal' && !currentGoal
+          ? t('composerGoalPlaceholder')
         : ''
   const primaryActionDisabled = !canSend || voicePhase !== 'idle'
 
@@ -514,6 +527,17 @@ export function FloatingComposer({
             : t('slashCommandAskDescription'),
         keywords: ['ask', 'question', 'qa', '问答'],
         icon: <MessageCircleQuestion className="h-4 w-4" strokeWidth={1.9} />
+      },
+      {
+        id: 'goal',
+        kind: 'mode',
+        title: t('slashCommandGoalTitle'),
+        description:
+          mode === 'goal'
+            ? t('slashCommandGoalActiveDescription')
+            : t('slashCommandGoalDescription'),
+        keywords: ['goal', 'objective', '目标'],
+        icon: <Flag className="h-4 w-4" strokeWidth={1.9} />
       },
       {
         id: 'model',
@@ -828,6 +852,11 @@ export function FloatingComposer({
   }, [setInput])
 
   const applySlashCommand = (command: SlashCommand): void => {
+    if (command.kind === 'insert') {
+      setInput(command.insertText ?? `/${command.id} `)
+      focusComposer()
+      return
+    }
     if (command.kind === 'action') {
       setPlusMenuOpen(false)
       setActiveCommand({ id: command.id as ComposerActionCommandId, args: '' })
@@ -1919,20 +1948,23 @@ export function FloatingComposer({
                         aria-hidden
                         className="h-0 overflow-hidden px-1.5 text-[12px] leading-5 whitespace-nowrap"
                       >
-                        {t('composerModeHintPlan')}
+                        {t('composerModeHintGoal')}
                       </p>
                       <p className="px-1.5 pb-1.5 pt-0.5 text-[12px] leading-5 text-ds-faint">
                         {mode === 'plan'
                           ? t('composerModeHintPlan')
                           : mode === 'ask'
                             ? t('composerModeHintAsk')
+                            : mode === 'goal'
+                              ? t('composerModeHintGoal')
                             : t('composerModeHintDefault')}
                       </p>
                       <div className="border-t border-ds-border-muted pt-1">
                         {(
                           [
                             { id: 'plan' as const, label: t('composerModePlanFull') },
-                            { id: 'ask' as const, label: t('composerModeAskFull') }
+                            { id: 'ask' as const, label: t('composerModeAskFull') },
+                            { id: 'goal' as const, label: t('composerModeGoalFull') }
                           ] as const
                         ).map((item) => {
                           const on = mode === item.id

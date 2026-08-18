@@ -9,6 +9,7 @@ import asyncio
 import logging
 import time
 import uuid
+from contextlib import suppress
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -39,6 +40,7 @@ from deepseek_tui.engine.events import (
     StatusEvent,
     ToolCallEvent,
     ToolResultEvent,
+    GoalUpdatedEvent,
     TurnCancelledEvent,
     TurnCompleteEvent,
     TurnStartedEvent,
@@ -242,6 +244,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         from deepseek_tui.engine.usage_ledger import TurnUsageLedger
 
         self.turn_usage_ledger = TurnUsageLedger()
+        self._goal_accounted_output_tokens = 0
         # When a full runtime is supplied, it wins — unpack registry + context
         # from it so managers stay paired with the context they own.
         if tool_runtime is not None:
@@ -404,6 +407,11 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             hook_executor if isinstance(hook_executor, HookExecutor) else HookExecutor.disabled()
         )
         self.tool_context.metadata["hook_executor"] = self.hook_executor
+        from deepseek_tui.goal.service import GoalService
+        from deepseek_tui.goal.types import GOAL_SERVICE_KEY
+
+        self.goal_service = GoalService(on_update=self._emit_goal_updated)
+        self.tool_context.metadata[GOAL_SERVICE_KEY] = self.goal_service
         # Expose the merged skill registry (workspace + plugin skills) so the
         # ``load_skill`` tool can resolve plugin skills by name. Without this,
         # load_skill re-discovers via discover_in_workspace which does not
@@ -441,6 +449,115 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         self._activity_coordinator = SessionActivityCoordinator(
             self, self.handle.try_emit
         )
+
+    def _emit_goal_updated(self, snapshot: Any, change: Any) -> None:
+        queue = tuple(item.to_dict() for item in self.goal_service.queue_items())
+        self.handle.try_emit(
+            GoalUpdatedEvent(
+                snapshot=None if snapshot is None else snapshot.to_dict(),
+                change=getattr(getattr(change, "kind", None), "value", "") or "lifecycle",
+                status=getattr(getattr(change, "status", None), "value", None),
+                reason=getattr(change, "reason", None) or "",
+                queue=queue,
+            )
+        )
+
+    async def launch_goal_continuation(self) -> bool:
+        """Host-specific: TUI send_op, Workbench flags start_turn."""
+        from deepseek_tui.goal.types import GOAL_CONTINUATION_KIND
+
+        decision = self.goal_service.peek_continuation(mode=self.mode)
+        if not decision.should_continue:
+            return False
+        if self.tool_context.metadata.get("runtime_thread_id"):
+            self.tool_context.metadata["goal_continue_pending"] = True
+            return True
+        await self.handle.send_op(
+            SendMessageOp(
+                content=decision.prompt,
+                hidden=True,
+                internal_kind=GOAL_CONTINUATION_KIND,
+            )
+        )
+        return True
+
+    async def launch_promoted_goal(self, objective: str, item_id: str) -> bool:
+        if self.tool_context.metadata.get("runtime_thread_id"):
+            self.tool_context.metadata["goal_promote_pending"] = {
+                "objective": objective,
+                "item_id": item_id,
+            }
+            return False
+        await self.handle.send_op(SendMessageOp(content=objective))
+        return True
+
+    async def _enforce_goal_wall_clock_deadline(
+        self,
+        goal_id: str,
+        remaining_ms: int,
+    ) -> None:
+        from deepseek_tui.goal.types import GoalActor
+
+        await asyncio.sleep(max(0, remaining_ms) / 1000)
+        snapshot = self.goal_service.snapshot()
+        if (
+            snapshot is None
+            or snapshot.goal_id != goal_id
+            or snapshot.status.value != "active"
+        ):
+            return
+        reason = (
+            "Blocked after goal budget reached: "
+            f"wall-clock budget {snapshot.budget.wall_clock_budget_ms}ms"
+        )
+        self.goal_service.mark_blocked(reason, actor=GoalActor.RUNTIME)
+        await self.handle.cancel(reason="goal_wall_clock_budget_reached")
+
+    async def _finish_goal_turn(
+        self,
+        *,
+        cancelled: bool,
+        failed: bool,
+        error_message: str | None,
+    ) -> None:
+        total_output_tokens = int(
+            self.turn_usage_ledger.totals().get("output_tokens") or 0
+        )
+        output_tokens = max(
+            0,
+            total_output_tokens - self._goal_accounted_output_tokens,
+        )
+        decision = self.goal_service.on_turn_ended(
+            cancelled=cancelled,
+            failed=failed,
+            error_message=error_message,
+            output_tokens=output_tokens,
+            mode=self.mode,
+        )
+        if cancelled or failed:
+            self.goal_service.discard_promoted()
+            return
+        promoted = self.goal_service.consume_promoted()
+        if promoted is not None:
+            try:
+                self.goal_service.create(promoted.objective, mode=self.mode)
+                launched = await self.launch_promoted_goal(
+                    promoted.objective,
+                    promoted.item_id,
+                )
+            except Exception:  # noqa: BLE001 — keep the item queued for retry
+                logger.exception("goal_promote_failed")
+                current = self.goal_service.snapshot()
+                if current is not None and current.objective == promoted.objective:
+                    from deepseek_tui.goal.types import GoalActor
+
+                    self.goal_service.cancel(actor=GoalActor.RUNTIME)
+            else:
+                if launched:
+                    self.goal_service.acknowledge_promoted(promoted.item_id)
+                return
+        if decision.should_continue:
+            await self.launch_goal_continuation()
 
     def sync_session(
         self,
@@ -970,6 +1087,15 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                 t
                 for t in result
                 if (t.get("function") or t).get("name") in PLAN_MODE_TOOL_ALLOWLIST
+            ]
+
+        from deepseek_tui.goal.types import GOAL_CONTROL_TOOL_NAMES
+
+        if self.goal_service.snapshot() is None:
+            result = [
+                t
+                for t in result
+                if (t.get("function") or t).get("name") not in GOAL_CONTROL_TOOL_NAMES
             ]
 
         if trace is not None and build_start is not None:
@@ -1673,6 +1799,18 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                 reason = self.handle.cancel_reason or "user_cancelled"
                 logger.info("turn_hard_cancelled reason=%s", reason)
                 await self.handle.emit(TurnCancelledEvent(reason=reason))
+                await self._finish_goal_turn(
+                    cancelled=True,
+                    failed=False,
+                    error_message=reason,
+                )
+            except Exception as exc:
+                await self._finish_goal_turn(
+                    cancelled=False,
+                    failed=True,
+                    error_message=str(exc),
+                )
+                raise
             finally:
                 self.handle._mark_turn_idle()
 
@@ -1746,6 +1884,14 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                 decision = aggregate_hook_decision(hook_results)
                 if decision.blocked:
                     reason = decision.reason or "blocked by a UserPromptSubmit hook"
+                    snapshot = self.goal_service.snapshot()
+                    if snapshot is not None and snapshot.status.value == "active":
+                        from deepseek_tui.goal.types import GoalActor
+
+                        self.goal_service.mark_blocked(
+                            f"Blocked by UserPromptSubmit hook: {reason}",
+                            actor=GoalActor.RUNTIME,
+                        )
                     logger.info(
                         "user_prompt_blocked_by_hook reason=%r", reason[:200]
                     )
@@ -1870,11 +2016,12 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         # SYSTEM_REMINDER provenance, not REAL_USER — otherwise a harness
         # injection reads back as the human's current request (origin drives
         # compaction, fake-reminder neutralization, and ledger classing).
-        user_origin = (
-            MessageOrigin.SYSTEM_REMINDER
-            if op.internal_kind == "subagent_background_done"
-            else MessageOrigin.REAL_USER
-        )
+        if op.internal_kind == "subagent_background_done":
+            user_origin = MessageOrigin.SYSTEM_REMINDER
+        elif op.internal_kind == "goal_continuation":
+            user_origin = MessageOrigin.GOAL_CONTINUATION
+        else:
+            user_origin = MessageOrigin.REAL_USER
         user_message = Message.user(processed.model_text, origin=user_origin)
 
         prior_count = len(self.session_messages)
@@ -1901,6 +2048,36 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                         "Context from UserPromptSubmit hooks:\n" + hook_context_extra,
                     ),
                 )
+        self.tool_context.metadata["engine_mode"] = self.mode
+        self.goal_service.on_turn_started()
+        from deepseek_tui.goal.types import GOAL_TURN_ID_KEY, GoalStatus
+
+        snap = self.goal_service.snapshot()
+        self.tool_context.metadata[GOAL_TURN_ID_KEY] = None if snap is None else snap.goal_id
+        goal_reminder_message: Message | None = None
+        goal_text = self.goal_service.reminder_text()
+        if goal_text:
+            from deepseek_tui.engine import reminders as goal_reminders
+            spec = goal_reminders.GOAL_ACTIVE
+            if snap is not None and snap.status is GoalStatus.PAUSED:
+                spec = goal_reminders.GOAL_PAUSED
+            elif snap is not None and snap.status is GoalStatus.BLOCKED:
+                spec = goal_reminders.GOAL_BLOCKED
+            goal_reminder_message = goal_reminders.reminder_message(spec, goal_text)
+            working_messages.append(goal_reminder_message)
+        goal_deadline_task: asyncio.Task[None] | None = None
+        if (
+            snap is not None
+            and snap.status is GoalStatus.ACTIVE
+            and snap.budget.remaining_wall_clock_ms is not None
+        ):
+            goal_deadline_task = asyncio.create_task(
+                self._enforce_goal_wall_clock_deadline(
+                    snap.goal_id,
+                    snap.budget.remaining_wall_clock_ms,
+                ),
+                name="goal-wall-clock-deadline",
+            )
         self.working_set.observe_user_message(processed.display_text or "")
         self.working_set.observe_references(processed.references)
         preview = (processed.display_text or "")[:200].replace("\n", " ")
@@ -1996,8 +2173,14 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                 TurnStartedEvent(user_text="" if op.hidden else processed.display_text)
             )
             self.turn_usage_ledger.reset()
+            self._goal_accounted_output_tokens = 0
+            checkpoint_messages = [
+                message
+                for message in working_messages
+                if message is not goal_reminder_message
+            ]
             self._save_crash_checkpoint(
-                working_messages,
+                checkpoint_messages,
                 model=op.model or self.default_model,
             )
             sys_prompt = build_system_prompt(
@@ -2067,6 +2250,11 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                         reason=self.handle.cancel_reason or "user_cancelled"
                     )
                 )
+                await self._finish_goal_turn(
+                    cancelled=True,
+                    failed=False,
+                    error_message=self.handle.cancel_reason,
+                )
                 return
 
             from deepseek_tui.engine.turn import TurnOutcomeStatus
@@ -2078,13 +2266,18 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             # corrupt the context for every later turn. Matches the
             # cancelled path above, which also discards working state.
             if turn_ok:
+                persisted_messages = [
+                    message
+                    for message in working_messages
+                    if message is not goal_reminder_message
+                ]
                 if op.hidden:
                     self.session_messages = [
                         *self.session_messages,
-                        *working_messages[prior_count + 1 :],
+                        *persisted_messages[prior_count + 1 :],
                     ]
                 else:
-                    self.session_messages = working_messages
+                    self.session_messages = persisted_messages
             if not result.cancelled:
                 from deepseek_tui.state.session import clear_checkpoint
 
@@ -2159,9 +2352,18 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                 )
             )
             await self._auto_persist_session()
+            await self._finish_goal_turn(
+                cancelled=False,
+                failed=not turn_ok,
+                error_message=None if turn_ok else result.error_message,
+            )
             if not result.cancelled:
                 self._user_turn_index += 1
         finally:
+            if goal_deadline_task is not None:
+                goal_deadline_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await goal_deadline_task
             self.handle.clear_response_id()
             # Disconnect on_focus media connectors after the turn so they never
             # linger in preload / progressive catalog.
@@ -2765,6 +2967,18 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             # compaction checks (should_compact / L0 / seams) stay blind to
             # mid-turn growth until the whole turn completes.
             round_usage = result.usage
+            goal_budget_blocked = False
+            if round_usage is not None and round_usage.output_tokens:
+                goal_before_usage = self.goal_service.snapshot()
+                if (
+                    goal_before_usage is not None
+                    and goal_before_usage.status.value == "active"
+                ):
+                    self._goal_accounted_output_tokens += round_usage.output_tokens
+                    goal_budget_blocked = (
+                        self.goal_service.account_tokens(round_usage.output_tokens)
+                        is not None
+                    )
             if round_usage is not None and round_usage.input_tokens:
                 self.last_real_input_tokens = round_usage.input_tokens
                 # Prefix-cache baseline, per round. Anything that perturbs the
@@ -2800,6 +3014,14 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                 return replace(result, tool_round_count=tool_round_count)
             if result.assistant_message is not None:
                 messages.append(result.assistant_message)
+            if goal_budget_blocked:
+                from dataclasses import replace
+
+                return replace(
+                    result,
+                    tool_calls=[],
+                    tool_round_count=tool_round_count,
+                )
             if not result.tool_calls:
                 if await self._handle_subagent_turn_handoff(messages):
                     continue

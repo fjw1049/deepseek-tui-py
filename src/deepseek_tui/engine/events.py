@@ -168,6 +168,17 @@ class ModeChangedEvent:
 
 
 @dataclass(frozen=True, slots=True)
+class GoalUpdatedEvent:
+    """Current goal created, paused, resumed, blocked, completed, or cleared."""
+
+    snapshot: dict[str, object] | None
+    change: str
+    status: str | None = None
+    reason: str = ""
+    queue: tuple[dict[str, object], ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class PluginMountEvent:
     """Session-level plugin mount/unmount state change.
 
@@ -219,6 +230,7 @@ EngineEvent = (
     | SessionActivityEvent
     | UserInputRequiredEvent
     | ModeChangedEvent
+    | GoalUpdatedEvent
     | PluginMountEvent
     | SessionStartedEvent
     | SessionEndedEvent

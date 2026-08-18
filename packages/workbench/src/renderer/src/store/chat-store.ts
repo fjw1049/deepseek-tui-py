@@ -46,6 +46,11 @@ import type {
   SettingsRouteSection
 } from './chat-store-types'
 import type { UserInputAnswer, UserInputQuestion } from '../agent/types'
+import {
+  goalComposerSlashArgs,
+  isGoalComposerSlashCommand,
+  shouldCreateGoalFromComposer
+} from '../lib/composer-slash-commands'
 import { createAppActions } from './chat-store-app-actions'
 import {
   hydrateBlockModelLabels,
@@ -110,6 +115,7 @@ const sseAbortRef = {
     sseAbort = value
   }
 }
+let goalModeSwitch: Promise<unknown> = Promise.resolve()
 let composerModelLoadPromise: Promise<void> | null = null
 let bootPromise: Promise<void> | null = null
 let threadWarmupSeq = 0
@@ -373,7 +379,7 @@ async function reloadActiveThreadBlocks(
   if (!threadId || state.runtimeConnection !== 'ready') return
   try {
     const provider = getProvider(state.providerId)
-    const { blocks: rawBlocks, latestSeq, threadStatus } = await provider.getThreadDetail(threadId)
+    const { blocks: rawBlocks, latestSeq, threadStatus, goal } = await provider.getThreadDetail(threadId)
     const hydrated = hydrateBlockModelLabels(threadId, rawBlocks)
     const blocks = threadStatusLooksActive(threadStatus)
       ? hydrated
@@ -390,6 +396,7 @@ async function reloadActiveThreadBlocks(
     set({
       blocks: synced.blocks,
       lastSeq: latestSeq,
+      currentGoal: goal ?? null,
       ...(synced.scrollToBlockId ? { scrollToBlockId: synced.scrollToBlockId } : {})
     })
   } catch {
@@ -429,6 +436,27 @@ async function reconcileStaleBusy(
   } catch {
     /* keep busy; the watchdog remains as a fallback */
   }
+}
+
+function engineModeForComposer(mode: string): ComposerMode | string {
+  return mode === 'goal' ? 'agent' : mode
+}
+
+function composerModeFromGoal(
+  goal: { status?: string } | null | undefined,
+  fallback: ComposerMode
+): ComposerMode {
+  if (goal?.status === 'active') return 'goal'
+  if (!goal && fallback === 'goal') return 'agent'
+  return fallback
+}
+
+function composerModeForLoadedGoal(
+  goal: { status?: string } | null | undefined,
+  fallback: ComposerMode
+): ComposerMode {
+  if (goal && goal.status !== 'complete') return 'goal'
+  return fallback === 'goal' ? 'agent' : fallback
 }
 
 function shouldOpenSettingsForError(error: unknown): boolean {
@@ -1015,19 +1043,25 @@ function buildThreadEventSink(
               : ev.title
         const nextArchived = ev.archived ?? current.archived
         const rawMode = typeof ev.mode === 'string' ? ev.mode.trim() : ''
-        const composerModes = new Set(['agent', 'plan', 'ask'])
+        const composerModes = new Set(['agent', 'plan', 'ask', 'goal'])
         const nextThreadMode =
           rawMode === 'yolo'
             ? 'agent'
-            : composerModes.has(rawMode)
-              ? rawMode
-              : current.mode
+            : rawMode === 'goal'
+              ? current.mode
+              : composerModes.has(rawMode)
+                ? rawMode
+                : current.mode
         const nextComposerMode =
-          rawMode === 'yolo'
-            ? 'agent'
-            : composerModes.has(rawMode)
-              ? (rawMode as typeof s.composerMode)
-              : null
+          s.composerMode === 'goal' && s.currentGoal && ev.threadId === s.activeThreadId
+            ? ('goal' as const)
+            : rawMode === 'yolo'
+              ? 'agent'
+              : rawMode === 'goal'
+                ? 'goal'
+              : composerModes.has(rawMode)
+                ? (rawMode as typeof s.composerMode)
+                : null
         const threadChanged =
           nextTitle !== current.title ||
           nextArchived !== current.archived ||
@@ -1080,6 +1114,11 @@ function buildThreadEventSink(
         }
       }),
     onActivePluginChange: (plugin) => set({ activePlugin: plugin }),
+    onGoalUpdated: (goal) =>
+      set((s) => ({
+        currentGoal: goal,
+        composerMode: composerModeFromGoal(goal, s.composerMode)
+      })),
     onSubagentMailbox: (ev: SubagentMailboxPayload) => {
       const mailboxStatus = ev.message.status
       if (mailboxStatus === 'running' || mailboxStatus === 'pending') {
@@ -1351,6 +1390,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   pinnedCollapsed: false,
   scrollToBlockId: null,
   activePlugin: null,
+  currentGoal: null,
   usageRefreshKey: 0,
   workspaceDirtyTick: 0,
   turnDiffByTurnId: {},
@@ -1374,6 +1414,20 @@ export const useChatStore = create<ChatState>((set, get) => ({
     workspaceLabelFromPath,
     normalizeWorkspaceRoot: (workspaceRoot) => normalizeWorkspaceRoot(workspaceRoot ?? undefined)
   }),
+
+  setComposerMode: (mode) => {
+    const previous = get().composerMode
+    const goal = get().currentGoal
+    if (previous === mode) return
+    set({ composerMode: mode })
+    // Mode toggle is UI-only. Never resume here — that starts a turn and a
+    // missing-key error used to yank the user into Settings → Models.
+    if (previous === 'goal' && mode !== 'goal' && goal?.status === 'active') {
+      goalModeSwitch = goalModeSwitch
+        .then(() => get().applyGoalCommand('pause', { silent: true }))
+        .catch(() => undefined)
+    }
+  },
 
   setStartupPhase: (phase) => {
     if (phase == null) {
@@ -1918,7 +1972,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
         threadStatus,
         latestTurnId,
         latestUserMessageId,
-        activePlugin: loadedPlugin
+        activePlugin: loadedPlugin,
+        goal: loadedGoal
       } = await p.getThreadDetail(activeThreadId)
       // History can leave sub-agent cards stuck at "running" when interrupt
       // skipped the terminal mailbox flush — clear them when the thread itself
@@ -1943,6 +1998,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
         error: busy ? i18n.t('common:runtimeStreamRecovering') : null,
         busy,
         activePlugin: loadedPlugin ?? null,
+        currentGoal: loadedGoal ?? null,
+        composerMode: composerModeForLoadedGoal(loadedGoal, get().composerMode),
         currentTurnId,
         currentTurnUserId,
         queuedMessages: s.queuedMessages,
@@ -2043,7 +2100,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
         threadStatus,
         latestTurnId,
         latestUserMessageId,
-        activePlugin: loadedPlugin
+        activePlugin: loadedPlugin,
+        goal: loadedGoal
       } = await p.getThreadDetail(id)
       const hydrated = hydrateBlockModelLabels(id, rawBlocks)
       const blocks = threadStatusLooksActive(threadStatus)
@@ -2069,6 +2127,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
         error: null,
         busy,
         activePlugin: loadedPlugin ?? null,
+        currentGoal: loadedGoal ?? null,
+        composerMode: composerModeForLoadedGoal(loadedGoal, get().composerMode),
         currentTurnId: busy ? latestTurnId ?? null : null,
         lastCompletedTurnId: null,
         turnDiffByTurnId: {},
@@ -2148,9 +2208,19 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const { providerId } = get()
     const trimmedText = text.trim()
     if (!trimmedText) return false
+    if (isGoalComposerSlashCommand(trimmedText)) {
+      return get().applyGoalCommand(goalComposerSlashArgs(trimmedText))
+    }
     // Prefer explicit arg (composer send / queued), else current UI mode.
     // Critical for rewindAndResend which historically omitted mode.
-    const resolvedMode = (mode?.trim() || get().composerMode || 'agent') as string
+    const resolvedMode = engineModeForComposer(
+      mode?.trim() || get().composerMode || 'agent'
+    ) as string
+    const wantsGoalCreate = shouldCreateGoalFromComposer(
+      trimmedText,
+      get().composerMode,
+      get().currentGoal
+    )
     const hidden =
       overrides?.hidden === true ||
       overrides?.queued?.hidden === true ||
@@ -2201,6 +2271,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
         void get().recoverActiveTurn()
       }
       return true
+    }
+    if (wantsGoalCreate) {
+      return get().applyGoalCommand(trimmedText)
     }
     const now = Date.now()
     const queued = overrides?.queued
@@ -2471,6 +2544,97 @@ export const useChatStore = create<ChatState>((set, get) => ({
           : {})
       })
       await get().refreshThreads()
+      return false
+    }
+  },
+
+  applyGoalCommand: async (args, opts) => {
+    if (get().runtimeConnection !== 'ready') {
+      set({ error: i18n.t('common:runtimeActionNeedsConnection') })
+      return false
+    }
+    const p = getProvider(get().providerId)
+    if (typeof p.applyGoalCommand !== 'function') {
+      set({ error: i18n.t('common:goalCommandUnsupported') })
+      return false
+    }
+    const selectedModel = decodeModelRef(get().composerModel.trim())
+    const modelOptions = {
+      ...(selectedModel.providerId ? { provider: selectedModel.providerId } : {}),
+      ...(selectedModel.modelId ? { model: selectedModel.modelId } : {}),
+      reasoningEffort: get().composerReasoningEffort
+    }
+    let threadId = get().activeThreadId
+    if (!threadId) {
+      try {
+        const settings = await window.dsGui.getSettings()
+        const workspaceRoot = normalizeWorkspaceRoot(settings.workspaceRoot)
+        if (!workspaceRoot) {
+          set({ error: i18n.t('common:workspaceRequiredToCreateThread') })
+          return false
+        }
+        const reusableThreadId = await findReusableEmptyThreadId(get(), p, workspaceRoot)
+        const created = reusableThreadId
+          ? null
+          : await p.createThread({
+              workspace: workspaceRoot,
+              title: getDefaultThreadTitle(),
+              mode: engineModeForComposer(get().composerMode || 'agent') as string,
+              ...(selectedModel.providerId ? { provider: selectedModel.providerId } : {}),
+              ...(selectedModel.modelId ? { model: selectedModel.modelId } : {})
+            })
+        threadId = reusableThreadId ?? created?.id ?? null
+        if (!threadId) {
+          set({ error: i18n.t('common:workspaceRequiredToCreateThread') })
+          return false
+        }
+        if (get().activeThreadId !== threadId) {
+          const modeBeforeSelect = get().composerMode
+          await get().selectThread(threadId)
+          if (modeBeforeSelect === 'goal' && get().composerMode !== 'goal') {
+            set({ composerMode: 'goal' })
+          }
+        }
+      } catch (e) {
+        set({ error: formatRuntimeError(e) })
+        return false
+      }
+    }
+    try {
+      const result = await p.applyGoalCommand(threadId, args, modelOptions)
+      set({
+        currentGoal: result.goal,
+        composerMode: composerModeFromGoal(result.goal, get().composerMode),
+        error: null
+      })
+      if (result.startedTurn) {
+        set({
+          busy: true,
+          currentTurnId: result.latestTurnId ?? get().currentTurnId,
+          error: null
+        })
+        if (!sseAbort) {
+          const ac = (sseAbort = new AbortController())
+          void p.subscribeThreadEvents(
+            threadId,
+            get().lastSeq,
+            buildThreadEventSink(set, get),
+            ac.signal
+          )
+        }
+        armBusyWatchdog(set, get)
+      }
+      await get().refreshThreads()
+      return true
+    } catch (e) {
+      // Stay on the chat. Goal pause/resume/create must not hijack Settings → Models.
+      set({ error: formatRuntimeError(e) })
+      if (!opts?.silent) {
+        void window.dsGui.logError('goal-command', 'Goal command failed', {
+          message: e instanceof Error ? e.message : String(e),
+          threadId
+        })
+      }
       return false
     }
   },

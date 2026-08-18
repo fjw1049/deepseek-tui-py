@@ -84,6 +84,14 @@ describe('usage-ledger', () => {
     const next = pruneUsageProvider(ledger, 'qingyun')
     expect(next.days['2026-06-24'].models['qingyun::claude-sonnet']).toBeUndefined()
     expect(next.days['2026-06-24'].models['deepseek-chat']).toBeDefined()
+    expect(next.days['2026-06-24'].totals).toEqual({
+      input_tokens: 5,
+      output_tokens: 1,
+      total_tokens: 6,
+      cost_usd: 0,
+      cost_cny: 0,
+      turns: 1
+    })
   })
 
   it('builds mock ledger with uneven model usage arcs', () => {

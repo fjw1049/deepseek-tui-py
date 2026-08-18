@@ -153,6 +153,25 @@ function mergeSummaryBucket(target: UsageLedgerBucket, source: UsageLedgerBucket
   target.turns += source.turns
 }
 
+function emptyDayTotals(): Omit<UsageLedgerBucket, 'model'> {
+  return {
+    input_tokens: 0,
+    output_tokens: 0,
+    total_tokens: 0,
+    cost_usd: 0,
+    cost_cny: 0,
+    turns: 0
+  }
+}
+
+function recomputeUsageDayTotals(dayBucket: UsageLedgerDay): void {
+  const totals = emptyDayTotals()
+  for (const bucket of Object.values(dayBucket.models)) {
+    mergeSummaryBucket(totals, bucket)
+  }
+  dayBucket.totals = totals
+}
+
 export function queryUsageLedger(
   ledger: UsageLedgerV1,
   range: UsageRange,
@@ -255,6 +274,7 @@ export function pruneUsageProvider(ledger: UsageLedgerV1, providerId: string): U
     for (const modelRef of Object.keys(dayBucket.models)) {
       if (shouldDrop(modelRef)) delete dayBucket.models[modelRef]
     }
+    recomputeUsageDayTotals(dayBucket)
   }
   return next
 }
@@ -268,6 +288,7 @@ export function pruneUsageEndpointModel(
   const next = normalizeUsageLedger(structuredClone(ledger))
   for (const dayBucket of Object.values(next.days)) {
     delete dayBucket.models[targetRef]
+    recomputeUsageDayTotals(dayBucket)
   }
   return next
 }

@@ -939,6 +939,99 @@ samp {
   box-shadow: var(--ds-shadow-composer);
 }
 
+.ds-goal-strip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin: 0 0 0.5rem;
+  padding: 0.45rem 0.7rem;
+  border: 1px solid var(--ds-border-strong);
+  border-radius: 0.7rem;
+  background: var(--ds-card-strong);
+  min-width: 0;
+}
+
+.ds-goal-strip__main {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.ds-goal-strip__status {
+  flex: 0 0 auto;
+  font-size: 0.68rem;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--ds-fg-muted);
+}
+
+.ds-goal-strip[data-status='active'] .ds-goal-strip__status {
+  color: var(--ds-accent, #3b82f6);
+}
+
+.ds-goal-strip[data-status='blocked'] .ds-goal-strip__status {
+  color: #d97706;
+}
+
+.ds-goal-strip__objective {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.82rem;
+}
+
+.ds-goal-strip__budget {
+  position: relative;
+  flex: 0 0 auto;
+  overflow: hidden;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--ds-fg-muted) 12%, transparent);
+  padding: 0.1rem 0.45rem;
+  font-size: 0.68rem;
+  color: var(--ds-fg-muted);
+}
+
+.ds-goal-strip__budget-bar {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: color-mix(in srgb, var(--ds-accent, #3b82f6) 28%, transparent);
+}
+
+.ds-goal-strip__budget-label {
+  position: relative;
+}
+
+.ds-goal-strip__actions {
+  display: flex;
+  gap: 0.35rem;
+  flex: 0 0 auto;
+}
+
+.ds-goal-strip__btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+  border: 0;
+  background: transparent;
+  color: var(--ds-fg-muted);
+  font-size: 0.74rem;
+  cursor: pointer;
+  padding: 0.1rem 0.25rem;
+}
+
+.ds-goal-strip__btn:hover {
+  color: var(--ds-fg);
+}
+
+.ds-goal-strip__btn--danger:hover {
+  color: #dc2626;
+}
+
 /* Raise z-index while the model picker is open so the upward popover stacks
    above the decorative pet dock. */
 .ds-chat-composer:not(.ds-composer-empty).ds-composer-model-picker-open,
