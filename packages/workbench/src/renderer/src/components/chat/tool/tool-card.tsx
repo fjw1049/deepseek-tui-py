@@ -1,7 +1,6 @@
 import { lazy, memo, Suspense, useCallback, useMemo } from 'react'
 import type { LucideIcon } from 'lucide-react'
-import { FileEdit, Search, Terminal, Wrench } from 'lucide-react'
-import { useTranslation } from 'react-i18next'
+import { FileCode2, Search, Terminal, Wrench } from 'lucide-react'
 import { cn } from './cn'
 import { buildToolRenderContext, isPendingState } from './render-context'
 import { resolveToolRenderer } from './registry'
@@ -33,7 +32,7 @@ export const SHELL_TOOL_NAMES = new Set([
 
 function pickIcon(toolName: string, isFileChange: boolean, isCommand: boolean): LucideIcon {
   if (isCommand || SHELL_TOOL_NAMES.has(toolName)) return Terminal
-  if (isFileChange) return FileEdit
+  if (isFileChange) return FileCode2
   if (
     toolName === 'grep' ||
     toolName === 'grep_files' ||
@@ -52,29 +51,37 @@ function pickIcon(toolName: string, isFileChange: boolean, isCommand: boolean): 
  * Output/Footer inside a collapsible shell. Expand state is persisted via
  * `useDisclosure` so it survives remounts.
  *
- * Default is collapsed for every state (running / success / error), including
- * completed file mutations — header shows path + diff stats; expand to review
- * the patch. An explicit user toggle always wins over the default. Status is a
- * quiet trailing cue ("…" / check / "!") — not a tinted shell — so the work
- * trace stays a calm, consistent list.
+ * Default is collapsed. File mutations auto-open while running (so the live
+ * patch is visible) and collapse again on success unless the user toggled
+ * the card. An explicit user toggle always wins. Status is a quiet trailing
+ * cue ("…" / check / "!") — not a tinted shell — so the work trace stays a
+ * calm, consistent list.
  */
 export const ToolCard = memo(function ToolCard({
   block,
   className,
   onOpenWorkspaceFile
 }: ToolCardProps): React.JSX.Element | null {
-  const { t } = useTranslation('common')
   const ctx = useMemo(() => buildToolRenderContext(block), [block])
+  const fileBase = ctx.input.path?.split(/[/\\]/).pop()
   const headerLabel = ctx.isFileChange
-    ? t('toolBatchTitle', { label: ctx.label || ctx.shortName, count: 1 })
+    ? fileBase || ctx.description || ctx.label || ctx.shortName
     : ctx.label || ctx.shortName
+  const headerTitle = ctx.isFileChange
+    ? ctx.input.path && fileBase && ctx.input.path !== fileBase
+      ? ctx.input.path
+      : undefined
+    : ctx.description || undefined
   const workspaceRoot = useChatStore((s) => s.workspaceRoot)
   const prefetchPath = ctx.input.path
   const handlePrefetch = useCallback((): void => {
     if (prefetchPath && workspaceRoot.trim()) prefetchWorkspaceFile(prefetchPath, workspaceRoot)
   }, [prefetchPath, workspaceRoot])
   const disclosureKey = `tool:${ctx.toolCallId}`
-  const [storedOpen, setDisclosureOpen] = useDisclosure(disclosureKey, false)
+  const [storedOpen, setDisclosureOpen, hasStoredOpen] = useDisclosure(
+    disclosureKey,
+    false
+  )
 
   const isShell = SHELL_TOOL_NAMES.has(ctx.toolName) || ctx.isCommand
 
@@ -98,7 +105,8 @@ export const ToolCard = memo(function ToolCard({
     Boolean(renderer?.renderWhenPending) ||
     !isPendingState(ctx.state)
 
-  const open = canExpand && storedOpen
+  const autoOpenFile = ctx.isFileChange && ctx.state === 'running'
+  const open = canExpand && (hasStoredOpen ? storedOpen : autoOpenFile)
   const Icon = pickIcon(ctx.toolName, ctx.isFileChange, ctx.isCommand)
 
   const readOffset =
@@ -122,11 +130,15 @@ export const ToolCard = memo(function ToolCard({
     <ToolHeaderRow
       icon={Icon}
       label={headerLabel}
-      title={ctx.description || undefined}
+      title={headerTitle}
       state={ctx.state}
       expanded={open}
       canExpand={canExpand}
       diffStats={ctx.diffStats}
+      labelClassName={
+        ctx.isFileChange ? 'font-sans text-[13px] font-medium text-ds-ink' : undefined
+      }
+      titleClassName={ctx.isFileChange ? 'text-[12px]' : undefined}
       onOpenInEditor={
         onOpenWorkspaceFile && ctx.input.path && (ctx.isFileChange || ctx.shortName === 'read_file')
           ? () =>

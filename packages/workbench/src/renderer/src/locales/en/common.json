@@ -1669,6 +1669,7 @@
   "rewindResendConfirmConflictNote": "{{count}} file(s) were changed by another session or editor after this turn; by default they are kept as-is.",
   "rewindResendConfirmForce": "Also overwrite conflicted files (discards those edits)",
   "rewindResendPreviewing": "Checking code changes…",
+  "fileDiffApplying": "Applying changes…",
   "toolActionFile": "Edited file",
   "toolActionCommand": "Ran command",
   "toolActionTool": "Called tool",

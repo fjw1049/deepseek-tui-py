@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactElement } from 'react'
+import { useLayoutEffect, useMemo, useRef, useState, type ReactElement } from 'react'
 import { Check, Columns2, Copy, MessageSquarePlus, Rows3 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { countDiffStats, extractDiffFilePath } from '../lib/diff-stats'
@@ -22,6 +22,10 @@ type Props = {
    */
   chrome?: 'card' | 'flush'
   onAddToChat?: () => void
+  /** Hide the file/stats header when a parent card already shows it. */
+  showHeader?: boolean
+  /** Keep the viewport pinned to the latest row (live file writes). */
+  follow?: boolean
 }
 
 type ParsedDiff = {
@@ -243,7 +247,9 @@ export function DiffView({
   showStyleToggle = false,
   onDiffStyleChange,
   chrome = 'card',
-  onAddToChat
+  onAddToChat,
+  showHeader = true,
+  follow = false
 }: Props): ReactElement {
   const looksLikePatch = useMemo(
     () => patch.split('\n').some((l) => /^[+-]/.test(l) || l.startsWith('@@')),
@@ -262,6 +268,14 @@ export function DiffView({
   const bodyLines = useMemo(() => filterBodyLines(patch.split('\n')), [patch])
   const unifiedRows = useMemo(() => buildUnifiedRows(bodyLines), [bodyLines])
   const splitRows = useMemo(() => buildSplitRows(bodyLines), [bodyLines])
+  const bodyRef = useRef<HTMLDivElement | HTMLPreElement>(null)
+
+  useLayoutEffect(() => {
+    if (!follow) return
+    const viewport = bodyRef.current
+    if (!viewport || viewport.scrollHeight <= viewport.clientHeight) return
+    viewport.scrollTo({ top: viewport.scrollHeight, behavior: 'smooth' })
+  }, [follow, patch])
 
   const setStyle = (next: DiffRenderStyle): void => {
     if (controlledStyle == null) setLocalStyle(next)
@@ -290,23 +304,28 @@ export function DiffView({
   const cellPad = 'px-2'
   const metaPad = 'px-2'
 
+  const header = showHeader ? (
+    <DiffHeader
+      badge={badge}
+      name={displayName}
+      added={looksLikePatch ? parsed.added : null}
+      removed={looksLikePatch ? parsed.removed : null}
+      onCopy={onCopy}
+      copied={copied}
+      showStyleToggle={looksLikePatch && showStyleToggle}
+      diffStyle={diffStyle}
+      onDiffStyleChange={setStyle}
+      flush={flush}
+      onAddToChat={onAddToChat}
+    />
+  ) : null
+
   if (!looksLikePatch) {
     return (
       <div className={shellClass}>
-        <DiffHeader
-          badge={badge}
-          name={displayName}
-          added={null}
-          removed={null}
-          onCopy={onCopy}
-          copied={copied}
-          showStyleToggle={false}
-          diffStyle={diffStyle}
-          onDiffStyleChange={setStyle}
-          flush={flush}
-          onAddToChat={onAddToChat}
-        />
+        {header}
         <pre
+          ref={bodyRef}
           className={`${bodyClass} whitespace-pre text-ds-ink ${flush ? 'px-2 py-1' : 'p-3'}`}
           style={fillParent || flush ? undefined : { maxHeight }}
         >
@@ -318,20 +337,8 @@ export function DiffView({
 
   return (
     <div className={shellClass}>
-      <DiffHeader
-        badge={badge}
-        name={displayName}
-        added={parsed.added}
-        removed={parsed.removed}
-        onCopy={onCopy}
-        copied={copied}
-        showStyleToggle={showStyleToggle}
-        diffStyle={diffStyle}
-        onDiffStyleChange={setStyle}
-        flush={flush}
-        onAddToChat={onAddToChat}
-      />
-      <div className={bodyClass} style={fillParent || flush ? undefined : { maxHeight }}>
+      {header}
+      <div ref={bodyRef} className={bodyClass} style={fillParent || flush ? undefined : { maxHeight }}>
         {diffStyle === 'split' ? (
           <table className="w-full table-fixed border-collapse">
             <colgroup>

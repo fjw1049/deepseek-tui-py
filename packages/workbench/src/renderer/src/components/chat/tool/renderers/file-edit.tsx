@@ -1,6 +1,8 @@
 import { memo } from 'react'
+import { LoaderCircle } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 import { DiffView } from '../../../DiffView'
-import { looksLikeUnifiedDiff, countDiffStats } from '../../../../lib/diff-stats'
+import { looksLikeUnifiedDiff } from '../../../../lib/diff-stats'
 import { languageFromPath, titleFromPath } from '../../code-language'
 import { SharedCodeBlock } from '../../SharedCodeBlock'
 import { ToolBody, ToolErrorState } from '../primitives'
@@ -8,16 +10,18 @@ import type { ToolRenderContext } from '../render-context'
 
 /**
  * Renderer for file mutation tools (write_file / edit_file / apply_patch).
- * Inline unified-diff when the output looks like a patch; otherwise a plain
- * error banner or truncated text fallback. Uses the existing `DiffView`.
+ * The ToolCard host auto-opens this while the write is running and collapses
+ * it on success; Output is the expandable patch / file body.
  */
 export const FileEditRenderer = {
   fullBleed: true,
+  renderWhenPending: true,
   Output: memo(function FileEditOutput({
     context
   }: {
     context: ToolRenderContext
   }): React.JSX.Element | null {
+    const { t } = useTranslation('common')
     if (context.state === 'error' && context.errorText) {
       return (
         <ToolBody>
@@ -26,7 +30,16 @@ export const FileEditRenderer = {
       )
     }
     const output = context.output
-    if (!output) return null
+    const running = context.state === 'running'
+    if (!output) {
+      if (!running) return null
+      return (
+        <div className="flex items-center gap-2 px-3 py-2 text-[12px] text-ds-muted">
+          <LoaderCircle className="size-3.5 shrink-0 animate-spin" strokeWidth={2} />
+          {t('fileDiffApplying')}
+        </div>
+      )
+    }
     if (!looksLikeUnifiedDiff(output)) {
       const path = context.input.path || context.description
       const language = languageFromPath(path)
@@ -43,22 +56,14 @@ export const FileEditRenderer = {
         </div>
       )
     }
-    return <DiffView patch={output} filePath={context.input.path} maxHeight={440} />
-  }),
-
-  Footer: memo(function FileEditFooter({
-    context
-  }: {
-    context: ToolRenderContext
-  }): React.JSX.Element | null {
-    const stats = context.diffStats ?? countDiffStats(context.output)
-    if (!stats) return null
     return (
-      <div className="flex items-center gap-1.5 px-3 pb-2 text-[11px] tabular-nums text-ds-faint">
-        <span className="text-ds-diff-added">+{stats.added}</span>
-        <span className="text-ds-faint/50">·</span>
-        <span className="text-ds-diff-removed">-{stats.removed}</span>
-      </div>
+      <DiffView
+        patch={output}
+        filePath={context.input.path}
+        maxHeight={220}
+        follow={running}
+        showHeader={false}
+      />
     )
   })
 }
