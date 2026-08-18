@@ -17,6 +17,7 @@ import { NoticeView } from './marketplace-ui'
 import { MarketplaceBrowser, type InstallOutcome } from './MarketplaceBrowser'
 import { ExtensionsToolbar } from './ExtensionsToolbar'
 import { ReloadHint } from './ReloadHint'
+import { skillDiscoveryRoots, skillRootFromMdPath } from '@shared/skill-source'
 import type { MarketplaceItem } from '../../../../shared/ds-gui-api'
 
 export function SkillsView(): ReactElement {
@@ -31,15 +32,12 @@ export function SkillsView(): ReactElement {
   const [skillsDir, setSkillsDir] = useState('~/.deepseek/skills')
   const [installedSkills, setInstalledSkills] = useState<InstalledSkill[]>([])
   const [skillsListLoading, setSkillsListLoading] = useState(false)
-  const [previewSkill, setPreviewSkill] = useState<string | null>(null)
+  const [previewSkill, setPreviewSkill] = useState<InstalledSkill | null>(null)
   // Bumped by the panel-header reload hint to force-refresh the ModelScope
   // market catalog in parallel with the local skills dir scan (one click
   // updates 内置 / 已安装 / 市场三个 tab).
   const [marketRefreshSignal, setMarketRefreshSignal] = useState(0)
   const installMenuRef = useRef<HTMLDivElement>(null)
-
-  // Silence unused var until per-workspace skill roots land here too.
-  void workspaceRoot
 
   // Close the install popover when clicking anywhere outside it.
   useEffect(() => {
@@ -62,12 +60,20 @@ export function SkillsView(): ReactElement {
     if (!skillsDir || typeof window.dsGui?.listSkillsInRoot !== 'function') return
     setSkillsListLoading(true)
     try {
-      const result = await window.dsGui.listSkillsInRoot(skillsDir)
-      setInstalledSkills(result.ok ? result.skills : [])
+      const roots = skillDiscoveryRoots(skillsDir, workspaceRoot)
+      const results = await Promise.all(roots.map((root) => window.dsGui.listSkillsInRoot(root)))
+      const byPath = new Map<string, InstalledSkill>()
+      for (const result of results) {
+        if (!result.ok) continue
+        for (const skill of result.skills) {
+          byPath.set(skill.path, skill)
+        }
+      }
+      setInstalledSkills([...byPath.values()].sort((a, b) => a.name.localeCompare(b.name)))
     } finally {
       setSkillsListLoading(false)
     }
-  }, [skillsDir])
+  }, [skillsDir, workspaceRoot])
 
   useEffect(() => {
     void refreshSkillsList()
@@ -126,13 +132,19 @@ export function SkillsView(): ReactElement {
     if (!result.ok) setNotice({ tone: 'error', message: result.message ?? t('pluginActionFailed') })
   }
 
+  const openSkill = async (skill: InstalledSkill): Promise<void> => {
+    if (typeof window.dsGui?.openSkillRoot !== 'function') return
+    const result = await window.dsGui.openSkillRoot(skillRootFromMdPath(skill.path))
+    if (!result.ok) setNotice({ tone: 'error', message: result.message ?? t('pluginActionFailed') })
+  }
+
   const deleteSkill = async (skill: InstalledSkill): Promise<void> => {
     if (skill.builtin || typeof window.dsGui?.deleteSkill !== 'function') return
     if (!window.confirm(t('skillDeleteConfirm', { name: skill.name }))) return
-    setBusyId(skill.id)
+    setBusyId(skill.path)
     setNotice(null)
     try {
-      const result = await window.dsGui.deleteSkill(skillsDir, skill.id)
+      const result = await window.dsGui.deleteSkill(skillRootFromMdPath(skill.path), skill.id)
       if (!result.ok) {
         setNotice({ tone: 'error', message: result.message ?? t('pluginActionFailed') })
         return
@@ -206,8 +218,8 @@ export function SkillsView(): ReactElement {
             skills={filteredSkills}
             loading={skillsListLoading}
             busyId={busyId}
-            onPreview={(skill) => setPreviewSkill(skill.id)}
-            onOpen={() => void openSkillsDir()}
+            onPreview={(skill) => setPreviewSkill(skill)}
+            onOpen={(skill) => void openSkill(skill)}
             onDelete={(skill) => void deleteSkill(skill)}
             headerRight={
               <ReloadHint
@@ -230,7 +242,11 @@ export function SkillsView(): ReactElement {
         </div>
       </div>
 
-      <SkillPreviewDialog skillName={previewSkill} skillsDir={skillsDir} onClose={() => setPreviewSkill(null)} />
+      <SkillPreviewDialog
+        skillName={previewSkill?.id ?? null}
+        skillsDir={previewSkill ? skillRootFromMdPath(previewSkill.path) : skillsDir}
+        onClose={() => setPreviewSkill(null)}
+      />
     </div>
   )
 }

@@ -634,8 +634,13 @@ export function registerAppIpcHandlers(options: RegisterAppIpcHandlersOptions): 
       if (!target) {
         return { ok: false as const, message: 'Skill directory is required.', skills: [] as const }
       }
-      await mkdir(target, { recursive: true })
-      const entries = await readdir(target, { withFileTypes: true })
+      const entries = await readdir(target, { withFileTypes: true }).catch((error) => {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
+        throw error
+      })
+      if (!entries) {
+        return { ok: true as const, skills: [] as const }
+      }
       const skills: Array<{ id: string; name: string; path: string; description: string; builtin: boolean }> = []
       for (const entry of entries) {
         if (!entry.isDirectory()) continue

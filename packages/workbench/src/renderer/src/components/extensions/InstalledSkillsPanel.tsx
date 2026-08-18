@@ -1,8 +1,10 @@
 import type { MouseEvent as ReactMouseEvent, ReactElement } from 'react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { FileText, FolderOpen, Loader2, Trash2 } from 'lucide-react'
+import { FolderOpen, Loader2, Trash2 } from 'lucide-react'
+import { skillSourceTagFromPath, type SkillSourceTag } from '@shared/skill-source'
 import { GlassSegmentedControl } from '../settings/GlassSegmentedControl'
+import { SkillSourceIcon } from './SkillSourceIcon'
 
 export type InstalledSkill = {
   id: string
@@ -10,6 +12,21 @@ export type InstalledSkill = {
   path: string
   description: string
   builtin: boolean
+}
+
+const SOURCE_LABEL_KEYS: Record<SkillSourceTag, string> = {
+  claude: 'skillSourceClaude',
+  codex: 'skillSourceCodex',
+  cursor: 'skillSourceCursor',
+  qwen: 'skillSourceQwen',
+  gemini: 'skillSourceGemini',
+  codebuddy: 'skillSourceCodebuddy',
+  opencode: 'skillSourceOpencode',
+  own: 'skillSourceOwn'
+}
+
+function skillSourceLabelKey(tag: SkillSourceTag): string {
+  return SOURCE_LABEL_KEYS[tag]
 }
 
 type SkillTab = 'installed' | 'marketplace'
@@ -72,9 +89,9 @@ export function InstalledSkillsPanel({
         <ul className="divide-y divide-ds-border-muted/70">
           {skills.map((skill) => (
             <SkillRow
-              key={skill.id}
+              key={skill.path}
               skill={skill}
-              busy={busyId === skill.id}
+              busy={busyId === skill.path}
               onPreview={() => onPreview(skill)}
               onOpen={() => onOpen(skill)}
               onDelete={() => onDelete(skill)}
@@ -125,11 +142,14 @@ function SkillRow({
       title={t('skillPreviewHint')}
       className="group flex cursor-pointer items-center gap-4 px-5 py-4 transition hover:bg-ds-subtle/50 active:bg-ds-subtle/70 focus:bg-ds-subtle/50 focus:outline-none"
     >
-      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-ds-border bg-ds-card text-ds-muted">
-        <FileText className="h-4.5 w-4.5" strokeWidth={1.6} />
-      </div>
+      <SkillSourceIcon path={skill.path} />
       <div className="min-w-0 flex-1">
-        <div className="truncate text-[15px] font-semibold text-ds-ink">{skill.name}</div>
+        <div className="flex min-w-0 items-center gap-2">
+          <div className="truncate text-[15px] font-semibold text-ds-ink">{skill.name}</div>
+          <span className="inline-flex shrink-0 items-center rounded px-1 py-px text-[10px] font-medium leading-4 text-emerald-700 bg-emerald-50 dark:bg-emerald-950/40 dark:text-emerald-300">
+            {t(skillSourceLabelKey(skillSourceTagFromPath(skill.path)))}
+          </span>
+        </div>
         <p className="mt-0.5 line-clamp-1 text-[13px] leading-5 text-ds-muted" title={skill.description || skill.path}>
           {skill.description || skill.path}
         </p>

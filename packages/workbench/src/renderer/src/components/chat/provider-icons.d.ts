@@ -13,6 +13,8 @@ export function resolveProviderIcon(parts?: {
   label?: string
 }): ProviderIcon
 
+export function providerIconByKey(key: string): ProviderIcon
+
 export {
   modelIconMatchText,
   resolveProviderIconBrand

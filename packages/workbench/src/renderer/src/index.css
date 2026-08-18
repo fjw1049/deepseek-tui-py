@@ -8497,6 +8497,76 @@ select:focus-visible,
   height: 100%;
 }
 
+.ds-skill-brand {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border-radius: 11px;
+  background: #ffffff;
+  box-shadow:
+    inset 0 0 0 1px rgba(15, 23, 42, 0.08),
+    0 1px 2px rgba(15, 23, 42, 0.04);
+}
+
+.ds-skill-brand svg {
+  display: block;
+  width: 58%;
+  height: 58%;
+}
+
+.ds-skill-brand.is-app {
+  background: transparent;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.12);
+}
+
+.ds-skill-brand.is-app svg {
+  width: 100%;
+  height: 100%;
+}
+
+.ds-skill-brand[data-brand='claude'] {
+  color: #d97757;
+}
+
+.ds-skill-brand[data-brand='codex'],
+.ds-skill-brand[data-brand='cursor'],
+.ds-skill-brand[data-brand='own'] {
+  color: #111111;
+}
+
+.ds-skill-brand[data-brand='gemini'] {
+  color: #8e75b2;
+}
+
+.ds-skill-brand[data-brand='qwen'] {
+  color: #615ced;
+}
+
+.ds-skill-brand[data-brand='codebuddy'] {
+  color: #1a66ff;
+}
+
+[data-theme='dark'] .ds-skill-brand:not(.is-app) {
+  background: #1c1c1e;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+}
+
+[data-theme='dark'] .ds-skill-brand[data-brand='claude'] {
+  color: #e39b78;
+}
+
+[data-theme='dark'] .ds-skill-brand[data-brand='codex'],
+[data-theme='dark'] .ds-skill-brand[data-brand='cursor'],
+[data-theme='dark'] .ds-skill-brand[data-brand='own'] {
+  color: #f4f4f4;
+}
+
+[data-theme='dark'] .ds-skill-brand[data-brand='codebuddy'] {
+  color: #6ea2ff;
+}
+
 .ds-llm-card__body {
   display: flex;
   min-width: 0;

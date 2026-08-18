@@ -7,6 +7,9 @@ import glmSvg from '../../assets/provider-icons/glm.svg?raw'
 import kimiSvg from '../../assets/provider-icons/kimi.svg?raw'
 import qwenSvg from '../../assets/provider-icons/qwen.svg?raw'
 import minimaxSvg from '../../assets/provider-icons/minimax.svg?raw'
+import cursorSvg from '../../assets/provider-icons/cursor.svg?raw'
+import codebuddySvg from '../../assets/provider-icons/codebuddy.svg?raw'
+import ownGridSvg from '../../assets/provider-icons/own-grid.svg?raw'
 import doubaoPng from '../../assets/provider-icons/doubao.png'
 import { resolveProviderIconBrand } from './provider-icon-match'
 
@@ -36,6 +39,9 @@ const ICONS = {
     svg: photoIconSvg(doubaoPng),
     colored: true
   },
+  cursor: { key: 'cursor', color: 'var(--ds-text, #1A1A1A)', svg: cursorSvg },
+  codebuddy: { key: 'codebuddy', color: '#2B6CFF', svg: codebuddySvg },
+  own: { key: 'own', color: '#1B4DFF', svg: ownGridSvg },
 }
 
 const UNKNOWN_ICON = {
@@ -71,4 +77,9 @@ export { modelIconMatchText, resolveProviderIconBrand } from './provider-icon-ma
 export function resolveProviderIcon(parts = {}) {
   const brand = resolveProviderIconBrand(parts)
   return ICONS[brand] || UNKNOWN_ICON
+}
+
+/** Direct catalogue lookup — skill sources and settings tiles, not model-name matching. */
+export function providerIconByKey(key) {
+  return ICONS[key] || UNKNOWN_ICON
 }

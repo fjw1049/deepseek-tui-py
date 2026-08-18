@@ -24,6 +24,27 @@ def test_bundled_dir_exists_and_is_last(tmp_path: Path) -> None:
     assert dirs[-1].resolve() == bundled.resolve()
 
 
+def test_workspace_ecosystem_skill_dirs_are_scanned(tmp_path: Path) -> None:
+    for rel in (
+        ".claude/skills",
+        ".codex/skills",
+        ".cursor/skills",
+        ".agent/skills",
+        ".qwen/skills",
+        ".gemini/skills",
+        ".codebuddy/skills",
+    ):
+        (tmp_path / rel).mkdir(parents=True)
+    dirs = {path.resolve() for path in skills_directories(workspace=tmp_path)}
+    assert (tmp_path / ".claude" / "skills").resolve() in dirs
+    assert (tmp_path / ".codex" / "skills").resolve() in dirs
+    assert (tmp_path / ".cursor" / "skills").resolve() in dirs
+    assert (tmp_path / ".agent" / "skills").resolve() in dirs
+    assert (tmp_path / ".qwen" / "skills").resolve() in dirs
+    assert (tmp_path / ".gemini" / "skills").resolve() in dirs
+    assert (tmp_path / ".codebuddy" / "skills").resolve() in dirs
+
+
 def test_docs_skill_discovered(tmp_path: Path) -> None:
     registry = discover_in_workspace(workspace=tmp_path)
     skill = registry.get("deepseek-tui-docs")

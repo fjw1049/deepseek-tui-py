@@ -37,6 +37,8 @@ __all__ = [
     "SkillRegistry",
     "agents_global_skills_dir",
     "claude_global_skills_dir",
+    "codex_global_skills_dir",
+    "cursor_global_skills_dir",
     "default_skills_dir",
     "discover_in_workspace",
     "invalidate_skills_prompt_cache",
@@ -85,6 +87,30 @@ def claude_global_skills_dir() -> Path | None:
     if not home:
         return None
     return home / ".claude" / "skills"
+
+
+def cursor_global_skills_dir() -> Path | None:
+    """``~/.cursor/skills`` — Cursor global."""
+    home = Path.home()
+    if not home:
+        return None
+    return home / ".cursor" / "skills"
+
+
+def codex_global_skills_dir() -> Path | None:
+    """``~/.codex/skills`` — Codex global."""
+    home = Path.home()
+    if not home:
+        return None
+    return home / ".codex" / "skills"
+
+
+def _user_ecosystem_skills_dir(folder: str) -> Path | None:
+    """``~/<folder>/skills`` for additional vendor homes."""
+    home = Path.home()
+    if not home:
+        return None
+    return home / folder / "skills"
 
 
 @dataclass(frozen=True, slots=True)
@@ -255,15 +281,18 @@ def skills_directories(
 
     Precedence (first match wins on name conflicts):
 
-    1. ``<workspace>/.agents/skills`` — deepseek-native convention.
+    1. ``<workspace>/.agents/skills`` / ``.agent/skills`` — Agent Skills / Cursor.
     2. ``<workspace>/skills`` — flat, project-local.
     3. ``<workspace>/.deepseek/skills`` — project-local DeepSeek dir.
     4. ``<workspace>/.opencode/skills`` — OpenCode interop.
     5. ``<workspace>/.claude/skills`` — Claude Code interop.
     6. ``<workspace>/.cursor/skills`` — Cursor interop.
-    7. ``agents_global_skills_dir`` — agentskills.io global.
-    8. ``claude_global_skills_dir`` — Claude-ecosystem global (#902).
-    9. ``default_skills_dir`` — DeepSeek global, user-installed.
+    7. ``<workspace>/.codex/skills`` — Codex interop.
+    8. ``<workspace>/.qwen/skills`` / ``.gemini/skills`` / ``.codebuddy/skills``.
+    9. ``agents_global_skills_dir`` — agentskills.io / Cursor global.
+    10. ``claude_global_skills_dir`` — Claude-ecosystem global (#902).
+    11. ``cursor`` / ``codex`` / ``qwen`` / ``gemini`` / ``codebuddy`` globals.
+    12. ``default_skills_dir`` — DeepSeek global, user-installed.
 
     An explicit ``skills_dir`` override (tests, CLI flag) is honored first
     so deterministic precedence holds for callers that pin a directory.
@@ -290,14 +319,24 @@ def skills_directories(
 
     if workspace:
         _add(workspace / ".agents" / "skills")
+        _add(workspace / ".agent" / "skills")
         _add(workspace / "skills")
         _add(workspace / ".deepseek" / "skills")
         _add(workspace / ".opencode" / "skills")
         _add(workspace / ".claude" / "skills")
         _add(workspace / ".cursor" / "skills")
+        _add(workspace / ".codex" / "skills")
+        _add(workspace / ".qwen" / "skills")
+        _add(workspace / ".gemini" / "skills")
+        _add(workspace / ".codebuddy" / "skills")
 
     _add(agents_global_skills_dir())
     _add(claude_global_skills_dir())
+    _add(cursor_global_skills_dir())
+    _add(codex_global_skills_dir())
+    _add(_user_ecosystem_skills_dir(".qwen"))
+    _add(_user_ecosystem_skills_dir(".gemini"))
+    _add(_user_ecosystem_skills_dir(".codebuddy"))
     if skills_dir is None:
         _add(default_skills_dir())
     _add(bundled_skills_dir())
