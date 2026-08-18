@@ -354,6 +354,13 @@ export function LlmProvidersPanel({ form, onUpdate }: Props): ReactElement {
                   (id) => id !== detail.id && nextProviders[id]?.apiKey?.trim()
                 ) ?? 'deepseek'
             }
+            if (!next.apiKey.trim()) {
+              void window.dsGui.pruneUsageProvider(detail.id).finally(() => {
+                useChatStore.setState((state) => ({
+                  usageRefreshKey: state.usageRefreshKey + 1
+                }))
+              })
+            }
             onUpdate(patch)
             setDetail(null)
           }}
@@ -934,6 +941,22 @@ function BuiltinProviderDetailSheet({
       onClose={onClose}
       footer={
         <>
+          {config.apiKey.trim() ? (
+            <button
+              type="button"
+              onClick={() =>
+                onSave({
+                  apiKey: '',
+                  models: [],
+                  lastFetchedModels: []
+                })
+              }
+              className="ds-llm-sheet__btn ds-llm-sheet__btn--danger"
+            >
+              <Trash2 className="h-3.5 w-3.5" strokeWidth={2} />
+              {t('llmClearProviderBtn')}
+            </button>
+          ) : null}
           <button type="button" onClick={onClose} className="ds-llm-sheet__btn">
             {t('llmProviderCancel')}
           </button>
@@ -954,7 +977,7 @@ function BuiltinProviderDetailSheet({
               onSave({
                 apiKey: key,
                 models: nextModels,
-                ...(lastFetchedModels?.length ? { lastFetchedModels } : {})
+                lastFetchedModels: key && lastFetchedModels?.length ? lastFetchedModels : []
               })
             }}
             className="ds-llm-sheet__btn ds-llm-sheet__btn--primary"
@@ -1502,7 +1525,16 @@ function AsrProviderDetailSheet({
       onClose={onClose}
       footer={
         <>
-          {onDelete ? (
+          {builtin && provider.apiKey.trim() ? (
+            <button
+              type="button"
+              onClick={() => onSave({ ...draftProvider(), apiKey: '' })}
+              className="ds-llm-sheet__btn ds-llm-sheet__btn--danger"
+            >
+              <Trash2 className="h-3.5 w-3.5" strokeWidth={2} />
+              {t('llmClearProviderBtn')}
+            </button>
+          ) : onDelete ? (
             <button
               type="button"
               onClick={() => onDelete(provider.id)}

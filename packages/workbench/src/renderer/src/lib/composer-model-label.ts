@@ -56,13 +56,14 @@ export function filterComposerModelOptions(
   composerModel: string,
   composerPickList: string[]
 ): string[] {
-  const ordered = new Set<string>(DEFAULT_COMPOSER_MODEL_IDS)
+  const ordered = new Set<string>()
   if (composerModel.trim()) ordered.add(composerModel.trim())
   for (const id of composerPickList) {
     const trimmed = id.trim()
     if (trimmed && trimmed !== 'auto') ordered.add(trimmed)
   }
-  const preferred = new Set<string>(DEFAULT_COMPOSER_MODEL_IDS)
-  const tail = [...ordered].filter((id) => !preferred.has(id)).sort((a, b) => a.localeCompare(b))
-  return [...DEFAULT_COMPOSER_MODEL_IDS, ...tail]
+  const preferred = DEFAULT_COMPOSER_MODEL_IDS.filter((id) => ordered.has(id))
+  const preferredSet = new Set(preferred)
+  const tail = [...ordered].filter((id) => !preferredSet.has(id)).sort((a, b) => a.localeCompare(b))
+  return [...preferred, ...tail]
 }

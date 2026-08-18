@@ -170,6 +170,7 @@
   "llmSetAsDefault": "Set as default provider",
   "llmIsDefault": "This is the default provider",
   "llmProviderCancel": "Cancel",
+  "llmClearProviderBtn": "Clear",
   "sectionRuntime": "Runtime",
   "sectionPet": "Desktop pet",
   "language": "Language",

@@ -1182,11 +1182,13 @@ export function mergeLlmProviders(
   for (const id of BUILTIN_LLM_PROVIDER_IDS) {
     const part = patch[id]
     if (!part) continue
+    const clearing = part.apiKey !== undefined && !part.apiKey.trim()
     next[id] = normalizeLlmProviderConfig({
       ...current[id],
       ...part,
-      models: part.models ?? current[id].models,
-      lastFetchedModels: part.lastFetchedModels ?? current[id].lastFetchedModels
+      models: part.models ?? (clearing ? [] : current[id].models),
+      lastFetchedModels:
+        part.lastFetchedModels ?? (clearing ? [] : current[id].lastFetchedModels)
     })
   }
   return next

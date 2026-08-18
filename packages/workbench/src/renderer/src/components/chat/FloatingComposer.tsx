@@ -431,7 +431,7 @@ export function FloatingComposer({
     () => filterComposerModelOptions(composerModel, composerPickList),
     [composerModel, composerPickList]
   )
-  const activeModelId = composerModel.trim() || modelOptions[0] || 'deepseek-v4-pro'
+  const activeModelId = composerModel.trim() || modelOptions[0] || ''
   const activeModelLabel = formatComposerModelLabel(activeModelId, composerModelMeta)
   const selectorModels = useMemo(
     () =>

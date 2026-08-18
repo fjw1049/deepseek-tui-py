@@ -1334,7 +1334,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   inspectorSelectedId: null,
   gitCommitSelectionKey: null,
   gitCommitSelectedPaths: [],
-  composerModel: 'deepseek-v4-pro',
+  composerModel: '',
   composerPickList: mergeComposerPickList(false, []),
   composerModelMeta: {},
   composerMode: 'agent',

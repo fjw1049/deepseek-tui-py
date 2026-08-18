@@ -15,13 +15,12 @@ export const PINNED_THREADS_LIMIT = 10
 export function readStoredComposerModel(allowedIds: readonly string[]): string {
   try {
     const raw = localStorage.getItem(COMPOSER_MODEL_STORAGE_KEY)
-    if (raw === null) return DEFAULT_COMPOSER_MODEL
-    if (raw === '') return DEFAULT_COMPOSER_MODEL
-    if (allowedIds.includes(raw)) return raw
+    if (raw && allowedIds.includes(raw)) return raw
   } catch {
     /* ignore */
   }
-  return DEFAULT_COMPOSER_MODEL
+  if (allowedIds.includes(DEFAULT_COMPOSER_MODEL)) return DEFAULT_COMPOSER_MODEL
+  return allowedIds[0] ?? ''
 }
 
 export function persistComposerModel(model: string): void {
@@ -54,16 +53,17 @@ export function persistComposerEffort(effort: string): void {
 }
 
 export function mergeComposerPickList(upstreamOk: boolean, upstreamIds: string[]): string[] {
-  const ordered = new Set<string>(DEFAULT_COMPOSER_MODEL_IDS)
+  const ordered = new Set<string>()
   if (upstreamOk) {
     for (const id of upstreamIds) {
       const trimmed = id.trim()
       if (trimmed && trimmed !== 'auto') ordered.add(trimmed)
     }
   }
-  const preferred = new Set<string>(DEFAULT_COMPOSER_MODEL_IDS)
-  const tail = [...ordered].filter((id) => !preferred.has(id)).sort((a, b) => a.localeCompare(b))
-  return [...DEFAULT_COMPOSER_MODEL_IDS, ...tail]
+  const preferred = DEFAULT_COMPOSER_MODEL_IDS.filter((id) => ordered.has(id))
+  const preferredSet = new Set(preferred)
+  const tail = [...ordered].filter((id) => !preferredSet.has(id)).sort((a, b) => a.localeCompare(b))
+  return [...preferred, ...tail]
 }
 
 export function optimisticUserModelLabel(

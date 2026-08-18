@@ -94,10 +94,8 @@ export function createAppActions(options: CreateAppActionsOptions): Pick<
       }
       if (typeof window.dsGui === 'undefined') return
       const task = (async () => {
-        const res = await window.dsGui.fetchUpstreamModels()
-        const upstreamIds = res.ok ? [...res.modelIds] : []
-        // Inject built-in vendor + custom endpoint models for the picker.
-        // Collect {ref → endpoint name} so chips can show ``Kimi/kimi-k2.5``.
+        // Picker is settings-driven: only enabled models from configured vendors.
+        const upstreamIds: string[] = []
         const metaMap: Record<string, ComposerModelMeta> = {}
         try {
           const settings = await window.dsGui.getSettings()
@@ -129,11 +127,11 @@ export function createAppActions(options: CreateAppActionsOptions): Pick<
             }
           }
         } catch { /* custom models are a bonus, not critical */ }
-        const pick = mergeComposerPickList(res.ok || upstreamIds.length > 0, upstreamIds)
+        const pick = mergeComposerPickList(upstreamIds.length > 0, upstreamIds)
         const allowed = new Set(pick)
         set((state) => {
           let model = state.composerModel
-          if (model !== '' && !allowed.has(model)) {
+          if (model === '' || !allowed.has(model)) {
             model = readStoredComposerModel(pick)
           }
           if (model !== '' && !allowed.has(model)) model = ''

@@ -170,6 +170,7 @@
   "llmSetAsDefault": "设为默认供应商",
   "llmIsDefault": "当前为默认供应商",
   "llmProviderCancel": "取消",
+  "llmClearProviderBtn": "清空",
   "sectionRuntime": "运行时",
   "sectionPet": "桌面宠物",
   "language": "语言",
