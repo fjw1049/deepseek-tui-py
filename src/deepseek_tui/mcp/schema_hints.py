@@ -25,9 +25,8 @@ def format_schema_hint(parameters: dict[str, Any] | None) -> str:
     """Render a truncated schema block for model-facing error text."""
     if not parameters:
         return (
-            "Do not guess parameter names — call tool_search_tool_bm25 "
-            "(or tool_search_tool_regex) to retrieve this tool's input schema, "
-            "then retry with the exact fields it lists."
+            "Do not guess parameter names — retry with the exact fields "
+            "from this tool's input schema in the current catalog."
         )
 
     compact = _compact_parameters(parameters)
@@ -42,7 +41,7 @@ def format_schema_hint(parameters: dict[str, Any] | None) -> str:
         rendered,
         "Do not guess parameter names. If this snippet is incomplete"
         + (" (truncated)" if truncated else "")
-        + ", call tool_search_tool_bm25 for the full schema, then retry.",
+        + ", retry using the exact fields from this tool's catalog schema.",
     ]
     return "\n".join(lines)
 

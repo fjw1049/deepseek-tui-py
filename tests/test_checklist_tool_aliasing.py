@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import pytest
 
-from deepseek_tui.engine.tools import _ALWAYS_ACTIVE_TOOLS
 from deepseek_tui.tools.registry import (
     ApprovalRequirement,
     ToolContext,
@@ -69,11 +68,12 @@ def test_schema_exposes_write_and_update_params() -> None:
     assert "items" not in properties
 
 
-def test_canonical_name_is_always_active() -> None:
-    """The model sees exactly one always-active checklist tool."""
-    assert _CANONICAL_NAME in _ALWAYS_ACTIVE_TOOLS
+def test_canonical_name_is_registered() -> None:
+    """The model sees exactly one checklist tool."""
+    names = set(build_default_registry().names())
+    assert _CANONICAL_NAME in names
     for legacy in _LEGACY_NAMES:
-        assert legacy not in _ALWAYS_ACTIVE_TOOLS
+        assert legacy not in names
 
 
 @pytest.mark.asyncio

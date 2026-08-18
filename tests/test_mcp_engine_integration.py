@@ -245,10 +245,8 @@ class TestExecuteMcpTool:
 # --- Native deferral on MCP-less branches ------------------------------------
 
 
-class TestNativeDeferralWithoutMcp:
-    """apply_native_tool_deferral must run on every _get_tools_with_mcp
-    branch — a missing/cold/empty MCP discovery must not silently ship the
-    full (undeferred) tool set to the model."""
+class TestCatalogWithoutMcp:
+    """Missing/cold/empty MCP discovery still ships the full native catalog."""
 
     def _engine(self, tmp_path, mcp_manager=None, mode="agent"):
         from deepseek_tui.engine.handle import EngineHandle
@@ -270,38 +268,26 @@ class TestNativeDeferralWithoutMcp:
         return engine
 
     @staticmethod
-    def _defer_map(tools):
-        return {
-            t.get("function", t).get("name"): bool(
-                t.get("function", t).get("defer_loading", False)
-            )
-            for t in tools
-        }
+    def _names(tools):
+        return {t.get("function", t).get("name") for t in tools}
 
-    async def test_no_mcp_manager_defers_non_core_tools(self, tmp_path):
+    async def test_no_mcp_manager_includes_native_tools(self, tmp_path):
         engine = self._engine(tmp_path)
-        defer = self._defer_map(await engine._get_tools_with_mcp())
-        assert defer["note"] is True
-        assert defer["read_file"] is False
-        assert defer["exec_shell"] is False
+        names = self._names(await engine._get_tools_with_mcp())
+        assert {"note", "read_file", "exec_shell"} <= names
+        assert "code_execution" not in names
+        assert "tool_search_tool_bm25" not in names
 
-    async def test_empty_mcp_discovery_defers_non_core_tools(self, tmp_path):
+    async def test_empty_mcp_discovery_includes_native_tools(self, tmp_path):
         mgr = McpManager([McpServerConfig(name="test_server", command="echo")])
         mgr._discovered_tools_cache = []
         engine = self._engine(tmp_path, mcp_manager=mgr)
-        defer = self._defer_map(await engine._get_tools_with_mcp())
-        assert defer["note"] is True
-        assert defer["read_file"] is False
+        names = self._names(await engine._get_tools_with_mcp())
+        assert {"note", "read_file"} <= names
 
-    async def test_cold_mcp_discovery_defers_non_core_tools(self, tmp_path):
+    async def test_cold_mcp_discovery_includes_native_tools(self, tmp_path):
         mgr = McpManager([McpServerConfig(name="test_server", command="echo")])
         mgr.schedule_background_discover = lambda: None
         engine = self._engine(tmp_path, mcp_manager=mgr)
-        defer = self._defer_map(await engine._get_tools_with_mcp())
-        assert defer["note"] is True
-        assert defer["read_file"] is False
-
-    async def test_yolo_mode_defers_nothing_without_mcp(self, tmp_path):
-        engine = self._engine(tmp_path, mode="yolo")
-        defer = self._defer_map(await engine._get_tools_with_mcp())
-        assert defer["note"] is False
+        names = self._names(await engine._get_tools_with_mcp())
+        assert {"note", "read_file"} <= names

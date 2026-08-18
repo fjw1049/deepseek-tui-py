@@ -8,7 +8,6 @@ import pytest
 
 from deepseek_tui.config import Config
 from deepseek_tui.engine.dispatch import should_stop_after_plan_tool
-from deepseek_tui.engine.tools import should_default_defer_tool
 from deepseek_tui.protocol.messages import Message
 from deepseek_tui.tools.plan_mode import (
     APPROVED_PLAN_MARKER,
@@ -100,11 +99,6 @@ def test_questions_follow_locale() -> None:
 def test_update_plan_no_longer_stops_turn() -> None:
     assert should_stop_after_plan_tool("plan", "update_plan", True) is False
     assert should_stop_after_plan_tool("plan", "exit_plan_mode", True) is False
-
-
-def test_enter_exit_always_active() -> None:
-    assert should_default_defer_tool("enter_plan_mode", "agent") is False
-    assert should_default_defer_tool("exit_plan_mode", "plan") is False
 
 
 def test_plan_catalog_has_exit_not_enter() -> None:

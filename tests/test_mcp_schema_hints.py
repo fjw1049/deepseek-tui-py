@@ -37,7 +37,7 @@ def test_format_schema_hint_includes_required_and_search_guidance() -> None:
     )
     assert "query" in hint
     assert "required" in hint
-    assert "tool_search_tool_bm25" in hint
+    assert "catalog schema" in hint or "input schema" in hint
 
 
 def test_enrich_attaches_schema_only_for_arg_errors() -> None:
@@ -47,12 +47,13 @@ def test_enrich_attaches_schema_only_for_arg_errors() -> None:
     )
     assert "mcp_demo_search" in enriched
     assert '"q"' in enriched or "'q'" in enriched or "q" in enriched
-    assert "tool_search_tool_bm25" in enriched
+    assert "input schema" in enriched or "catalog schema" in enriched
 
     plain = enrich_mcp_argument_error(
         "mcp_demo_search", "connection reset by peer", schema
     )
-    assert "tool_search_tool_bm25" not in plain
+    assert "input schema" not in plain
+    assert "catalog schema" not in plain
     assert "connection reset" in plain
 
 
@@ -71,7 +72,7 @@ def test_mcp_response_is_error_gets_schema_hint() -> None:
     )
     assert result.success is False
     assert "query" in result.content
-    assert "tool_search_tool_bm25" in result.content
+    assert "input schema" in result.content or "catalog schema" in result.content
 
 
 @pytest.mark.asyncio
@@ -98,7 +99,7 @@ async def test_execute_external_mcp_tool_enriches_mcp_error() -> None:
     with pytest.raises(ToolError, match="Missing required field") as excinfo:
         await execute_external_mcp_tool(manager, "mcp_demo_search", {})
     msg = str(excinfo.value)
-    assert "tool_search_tool_bm25" in msg
+    assert "input schema" in msg or "catalog schema" in msg
     assert "query" in msg
 
 

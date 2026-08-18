@@ -1,26 +1,15 @@
 """Tool catalog and response parser.
 
-Consolidates tool_catalog.py and tool_parser.py.
-Deferred tool catalog and built-in advanced tool helpers.
-
 The streaming turn loop owns when tools are offered or executed. This module
-owns the catalog-level policy around deferred loading, tool search, missing
-tool suggestions, and the small set of built-in advanced tools that are not
-registered by the normal tool registry.
+owns catalog merge, missing-tool suggestions, and text-based tool-call parsing.
 """
 
 from __future__ import annotations
 
-import asyncio
 import json
-import os
 import re
-import signal
-import subprocess
-from pathlib import Path
 from typing import Any
 
-from deepseek_tui.tools.registry import ToolError, ToolResult
 from dataclasses import dataclass
 
 import logging
@@ -30,56 +19,6 @@ logger = logging.getLogger(__name__)
 # --- Constants ------------------------------------------------------------
 
 REQUEST_USER_INPUT_NAME = "request_user_input"
-CODE_EXECUTION_TOOL_NAME = "code_execution"
-
-TOOL_SEARCH_REGEX_NAME = "tool_search_tool_regex"
-TOOL_SEARCH_BM25_NAME = "tool_search_tool_bm25"
-
-# --- Tool search predicate ------------------------------------------------
-
-
-def is_tool_search_tool(name: str) -> bool:
-    return name in (TOOL_SEARCH_REGEX_NAME, TOOL_SEARCH_BM25_NAME)
-
-
-# --- Deferred loading policy ----------------------------------------------
-
-_ALWAYS_ACTIVE_TOOLS = frozenset(
-    {
-        "read_file",
-        "grep_files",
-        "file_search",
-        # Core write tools — keep visible so the model does not fall back to
-        # shell heredocs / cp for ordinary file edits (selection bias).
-        "write_file",
-        "edit_file",
-        # Shell family (also force-active in agent mode via _SHELL_TOOLS).
-        "exec_shell",
-        "load_skill",
-        "update_plan",
-        "checklist",
-        "task_create",
-        "task_list",
-        "task_output",
-        "task_stop",
-        # Sub-agent orchestration — keep visible alongside task_* so the
-        # model does not reach for task_create when the user asks for a
-        # sub-agent (both families were originally deferred; task_* was
-        # promoted to always-active in Python and created a selection bias).
-        "agent",
-        "web_search",
-        "fetch_url",
-        REQUEST_USER_INPUT_NAME,
-        "enter_plan_mode",
-        "exit_plan_mode",
-        # Cron trio — only present in the catalog when features.automations
-        # is on (registry gate). Keep always-active so the model can schedule
-        # from the main chat without tool_search first.
-        "cron_create",
-        "cron_list",
-        "cron_delete",
-    }
-)
 
 # Tools visible/executable while interaction mode is plan. Used to filter a
 # shared (agent-built) registry when mode flips mid-session without rebuild.
@@ -103,53 +42,17 @@ PLAN_MODE_TOOL_ALLOWLIST = frozenset(
     }
 )
 
-_SHELL_TOOLS = frozenset(
-    {
-        "exec_shell",
-    }
-)
-
-
-def should_default_defer_tool(name: str, mode: str) -> bool:
-    """Whether a tool should be deferred (lazy-loaded) by default."""
-    if mode == "yolo":
-        return False
-    if mode == "agent" and name in _SHELL_TOOLS:
-        return False
-    return name not in _ALWAYS_ACTIVE_TOOLS
-
-
-def apply_native_tool_deferral(
-    catalog: list[dict[str, Any]], mode: str
-) -> None:
-    """Set ``defer_loading`` on each native tool dict in-place."""
-    for tool in catalog:
-        fn = tool.get("function", tool)
-        tool_name = fn.get("name", "")
-        fn["defer_loading"] = should_default_defer_tool(tool_name, mode)
-
-
-def apply_mcp_tool_deferral(
-    catalog: list[dict[str, Any]], mode: str
-) -> None:
-    """Set ``defer_loading`` on each MCP tool dict in-place."""
-    # Everything in the MCP catalog defers outside yolo mode; the model
-    # discovers entries via tool_search or activates them by calling directly.
-    keep_loaded = frozenset()
-    for tool in catalog:
-        fn = tool.get("function", tool)
-        tool_name = fn.get("name", "")
-        fn["defer_loading"] = mode != "yolo" and tool_name not in keep_loaded
-
-
 def build_model_tool_catalog(
     native_tools: list[dict[str, Any]],
     mcp_tools: list[dict[str, Any]],
-    mode: str,
+    mode: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Combine native and MCP tools with deferral applied and sorted."""
-    apply_native_tool_deferral(native_tools, mode)
-    apply_mcp_tool_deferral(mcp_tools, mode)
+    """Combine native and MCP tools, sorted by name.
+
+    ``mode`` is accepted for call-site compatibility and ignored: the full
+    discovered catalog is sent as-is.
+    """
+    del mode
 
     def _sort_key(t: dict[str, Any]) -> str:
         fn = t.get("function", t)
@@ -174,240 +77,6 @@ def build_model_tool_catalog(
             continue
         deduped_mcp.append(tool)
     return native_tools + deduped_mcp
-
-
-# --- Advanced tooling injection -------------------------------------------
-
-
-def ensure_advanced_tooling(
-    tools: list[dict[str, Any]],
-    *,
-    include_tool_search: bool = True,
-    include_code_execution: bool = True,
-    mode: str | None = None,
-) -> None:
-    """Ensure built-in advanced tools (code_execution, tool_search) are present.
-
-    ``mode`` (when given) defers ``code_execution`` under the same policy as
-    registry tools; tool_search always stays active so deferred tools remain
-    discoverable.
-    """
-    existing = set()
-    for t in tools:
-        fn = t.get("function", t)
-        existing.add(fn.get("name"))
-
-    if CODE_EXECUTION_TOOL_NAME not in existing and include_code_execution:
-        code_defer = (
-            should_default_defer_tool(CODE_EXECUTION_TOOL_NAME, mode)
-            if mode is not None
-            else False
-        )
-        tools.append(
-            {
-                "type": "function",
-                "function": {
-                    "name": CODE_EXECUTION_TOOL_NAME,
-                    "description": (
-                        "Execute Python code in a local subprocess (workspace "
-                        "cwd, no sandbox) and return stdout/stderr/return_code "
-                        "as JSON. Requires user approval."
-                    ),
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "code": {
-                                "type": "string",
-                                "description": "Python source code to execute.",
-                            }
-                        },
-                        "required": ["code"],
-                    },
-                    "allowed_callers": ["direct"],
-                    "defer_loading": code_defer,
-                },
-            }
-        )
-
-    if TOOL_SEARCH_REGEX_NAME not in existing and include_tool_search:
-        tools.append(
-            {
-                "type": "function",
-                "function": {
-                    "name": TOOL_SEARCH_REGEX_NAME,
-                    "description": (
-                        "Search deferred tool definitions using a regex query "
-                        "and return matching tool references."
-                    ),
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "query": {
-                                "type": "string",
-                                "description": (
-                                    "Regex pattern to search tool "
-                                    "names/descriptions/schema."
-                                ),
-                            }
-                        },
-                        "required": ["query"],
-                    },
-                    "allowed_callers": ["direct"],
-                    "defer_loading": False,
-                },
-            }
-        )
-
-    if TOOL_SEARCH_BM25_NAME not in existing and include_tool_search:
-        tools.append(
-            {
-                "type": "function",
-                "function": {
-                    "name": TOOL_SEARCH_BM25_NAME,
-                    "description": (
-                        "Search deferred tool definitions using natural-language "
-                        "matching and return matching tool references."
-                    ),
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "query": {
-                                "type": "string",
-                                "description": "Natural language query for tool discovery.",
-                            }
-                        },
-                        "required": ["query"],
-                    },
-                    "allowed_callers": ["direct"],
-                    "defer_loading": False,
-                },
-            }
-        )
-
-
-# --- Active tool set ------------------------------------------------------
-
-
-def initial_active_tools(tools: list[dict[str, Any]]) -> set[str]:
-    """Get initial set of active (non-deferred) tool names."""
-    active: set[str] = set()
-    for t in tools:
-        fn = t.get("function", t)
-        name = fn.get("name")
-        if not isinstance(name, str):
-            continue
-        if not fn.get("defer_loading", False) or is_tool_search_tool(name):
-            active.add(name)
-    if not active and tools:
-        fn = tools[0].get("function", tools[0])
-        first = fn.get("name")
-        if isinstance(first, str):
-            active.add(first)
-    return active
-
-
-def active_tools_for_step(
-    tools: list[dict[str, Any]],
-    active_names: set[str],
-    force_update_plan_first: bool,
-) -> list[dict[str, Any]]:
-    """Filter the catalog to only active tools for this turn step."""
-    if force_update_plan_first:
-        for t in tools:
-            fn = t.get("function", t)
-            if fn.get("name") == "update_plan":
-                return [t]
-        return []
-
-    head: list[dict[str, Any]] = []
-    tail: list[dict[str, Any]] = []
-    for t in tools:
-        fn = t.get("function", t)
-        name = fn.get("name")
-        if name not in active_names:
-            continue
-        if fn.get("defer_loading", False):
-            tail.append(t)
-        else:
-            head.append(t)
-    return head + tail
-
-
-def maybe_activate_requested_deferred_tool(
-    tool_name: str,
-    catalog: list[dict[str, Any]],
-    active_tools: set[str],
-) -> bool:
-    """Activate a deferred tool if the model requests it. Returns True if activated."""
-    if tool_name in active_tools:
-        return False
-    for t in catalog:
-        fn = t.get("function", t)
-        if fn.get("name") == tool_name and fn.get("defer_loading", False):
-            active_tools.add(tool_name)
-            return True
-    return False
-
-
-# --- Tool search ----------------------------------------------------------
-
-
-def _tool_search_haystack(tool: dict[str, Any]) -> str:
-    fn = tool.get("function", tool)
-    name = fn.get("name", "").lower()
-    desc = fn.get("description", "").lower()
-    schema = json.dumps(fn.get("parameters", {})).lower()
-    return f"{name}\n{desc}\n{schema}"
-
-
-def discover_tools_with_regex(
-    catalog: list[dict[str, Any]], query: str
-) -> list[str]:
-    """Search tool catalog by regex; return up to 5 matching names."""
-    try:
-        pattern = re.compile(query)
-    except re.error as exc:
-        raise ToolError(f"Invalid regex query: {exc}") from exc
-
-    matches: list[str] = []
-    for tool in catalog:
-        fn = tool.get("function", tool)
-        name = fn.get("name", "")
-        if is_tool_search_tool(name):
-            continue
-        if pattern.search(_tool_search_haystack(tool)):
-            matches.append(name)
-            if len(matches) >= 5:
-                break
-    return matches
-
-
-def discover_tools_with_bm25_like(
-    catalog: list[dict[str, Any]], query: str
-) -> list[str]:
-    """Simple BM25-like scoring: count query term hits in tool metadata."""
-    terms = [t.strip().lower() for t in query.split() if t.strip()]
-    if not terms:
-        return []
-
-    scored: list[tuple[int, str]] = []
-    for tool in catalog:
-        fn = tool.get("function", tool)
-        name = fn.get("name", "")
-        if is_tool_search_tool(name):
-            continue
-        hay = _tool_search_haystack(tool)
-        score = 0
-        for term in terms:
-            if term in hay:
-                score += 1
-            if term in name.lower():
-                score += 2
-        if score > 0:
-            scored.append((score, name))
-
-    scored.sort(key=lambda x: (-x[0], x[1]))
-    return [name for _, name in scored[:5]]
 
 
 # --- Edit distance & suggestions ------------------------------------------
@@ -474,137 +143,11 @@ def missing_tool_error_message(
     if not suggestions:
         return (
             f"Tool '{tool_name}' is not available in the current tool catalog. "
-            f"Verify mode/feature flags, or use {TOOL_SEARCH_BM25_NAME} with a short query."
+            "Verify mode, feature flags, or the tool name."
         )
     return (
         f"Tool '{tool_name}' is not available in the current tool catalog. "
-        f"Did you mean: {', '.join(suggestions)}? "
-        f"You can also use {TOOL_SEARCH_BM25_NAME} to discover tools."
-    )
-
-
-# --- Built-in tool executors ----------------------------------------------
-
-
-def execute_tool_search(
-    tool_name: str,
-    input_data: dict[str, Any],
-    catalog: list[dict[str, Any]],
-    active_tools: set[str],
-) -> ToolResult:
-    """Execute a tool search (regex or BM25-like) and activate discovered tools."""
-    query = input_data.get("query", "")
-    if not isinstance(query, str) or not query.strip():
-        raise ToolError("Missing required field 'query'")
-
-    if tool_name == TOOL_SEARCH_REGEX_NAME:
-        discovered = discover_tools_with_regex(catalog, query)
-    else:
-        discovered = discover_tools_with_bm25_like(catalog, query)
-
-    for name in discovered:
-        active_tools.add(name)
-
-    references = [
-        {"type": "tool_reference", "tool_name": name} for name in discovered
-    ]
-    payload = {
-        "type": "tool_search_tool_search_result",
-        "tool_references": references,
-    }
-    return ToolResult(
-        success=True,
-        content=json.dumps(payload),
-        metadata={"tool_references": discovered},
-    )
-
-
-def _kill_code_exec_group(proc: asyncio.subprocess.Process) -> None:
-    """Kill the code_execution child's whole process group.
-
-    Pairs with ``start_new_session=True``: the child is its own session/group
-    leader, so ``killpg(getpgid(pid))`` reaches descendants (user code may
-    spawn its own children) that a bare ``proc.kill()`` would orphan.
-    Best-effort against already-reaped processes.
-    """
-    try:
-        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-    except (ProcessLookupError, PermissionError):
-        try:
-            proc.kill()
-        except ProcessLookupError:
-            pass
-
-
-async def execute_code_execution_tool(
-    input_data: dict[str, Any], workspace: Path
-) -> ToolResult:
-    """Run model-provided Python code in a subprocess."""
-    code = input_data.get("code", "")
-    if not isinstance(code, str) or not code.strip():
-        raise ToolError("Missing required field 'code'")
-
-    proc = None
-    try:
-        proc = await asyncio.wait_for(
-            asyncio.create_subprocess_exec(
-                "python3",
-                "-c",
-                code,
-                cwd=str(workspace),
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                # New session so user code that spawns children (e.g.
-                # subprocess.run("sleep 30")) shares one process group; the
-                # kill paths then use killpg() to tear down the whole tree
-                # instead of orphaning those grandchildren.
-                start_new_session=True,
-            ),
-            timeout=120,
-        )
-        stdout_bytes, stderr_bytes = await asyncio.wait_for(
-            proc.communicate(), timeout=120
-        )
-    except asyncio.CancelledError:
-        # Hard turn cancel (turn_task.cancel()) propagates here while the
-        # subprocess is still running. wait_for re-raises CancelledError (not
-        # TimeoutError), so without this branch the child is orphaned. Kill
-        # the whole process group before re-raising so the cancel tears down
-        # the tree, not just the direct child.
-        if proc is not None and proc.returncode is None:
-            _kill_code_exec_group(proc)
-            try:
-                await asyncio.wait_for(proc.wait(), timeout=5)
-            except (asyncio.TimeoutError, asyncio.CancelledError):
-                pass
-        raise
-    except asyncio.TimeoutError as exc:
-        # Reap the subprocess on timeout; otherwise it keeps running and
-        # accumulates as an orphan across repeated timeouts.
-        if proc is not None and proc.returncode is None:
-            _kill_code_exec_group(proc)
-            try:
-                await asyncio.wait_for(proc.wait(), timeout=5)
-            except asyncio.TimeoutError:
-                pass
-        raise ToolError("code_execution timed out after 120s") from exc
-
-    stdout = stdout_bytes.decode("utf-8", errors="replace") if stdout_bytes else ""
-    stderr = stderr_bytes.decode("utf-8", errors="replace") if stderr_bytes else ""
-    return_code = proc.returncode or 0
-    success = return_code == 0
-
-    payload = {
-        "type": "code_execution_result",
-        "stdout": stdout,
-        "stderr": stderr,
-        "return_code": return_code,
-        "content": [],
-    }
-    return ToolResult(
-        success=success,
-        content=json.dumps(payload),
-        metadata=payload,
+        f"Did you mean: {', '.join(suggestions)}?"
     )
 
 

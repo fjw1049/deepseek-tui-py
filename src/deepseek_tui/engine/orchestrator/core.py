@@ -28,7 +28,6 @@ from deepseek_tui.engine.cycle import (
     SessionActivityCoordinator,
 )
 from deepseek_tui.engine.dispatch import (
-    is_mcp_tool,
     should_force_update_plan_first,
 )
 from deepseek_tui.engine.events import (
@@ -69,17 +68,11 @@ from deepseek_tui.engine.orchestrator.maintenance import SessionMaintenanceMixin
 from deepseek_tui.engine.orchestrator.tooling import ToolExecutionMixin
 from deepseek_tui.engine.prompts import (
     build_system_prompt,
-    profile_includes_tool_search,
 )
 from deepseek_tui.engine.seam import SeamConfig, SeamManager
 from deepseek_tui.engine.tools import (
     PLAN_MODE_TOOL_ALLOWLIST,
-    active_tools_for_step,
-    apply_mcp_tool_deferral,
-    apply_native_tool_deferral,
     build_model_tool_catalog,
-    ensure_advanced_tooling,
-    initial_active_tools,
 )
 from deepseek_tui.engine.turn import TurnLoop, TurnResult, prepare_turn_for_model
 from deepseek_tui.integrations.lsp import DiagnosticBlock
@@ -286,10 +279,6 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         # system prompt (KV prefix cache).
         self._compaction_summary_prompt: str | None = None
         self.turn_loop = TurnLoop(client, compact_fn=self._emergency_compact)
-        # Deferred tools activated during the session (tool_search hits or
-        # direct calls). Merged into every round's active set so an
-        # activation survives past the round that produced it.
-        self._activated_tool_names: set[str] = set()
         # Cumulative session cost (USD / CNY), accumulated per turn from
         # the DeepSeek usage payload via the pricing module. The footer
         # reads these to render the cost chip and the ``/cost`` slash
@@ -891,32 +880,6 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         block = render_plugin_rules_context(rules, active_plugin=active)
         return block or None
 
-    def _advanced_tool_flags(self) -> tuple[bool, bool]:
-        """Whether ``tool_search`` / ``code_execution`` are included this turn.
-
-        ``ensure_advanced_tooling`` re-adds these two meta-tools to the catalog
-        AFTER the focus whitelist filter, so without gating them here they
-        would bypass the whitelist. When a focus whitelist is active, each
-        meta-tool is included only if named in the whitelist (scenario base
-        includes ``code_execution`` by default; ``tool_search_*`` stays out
-        unless declared). Otherwise the normal profile-based defaults apply.
-        """
-        wl = self._focus_tool_whitelist
-        if wl is None:
-            return (
-                profile_includes_tool_search(self.tool_profile),
-                self.tool_profile is None,
-            )
-        from deepseek_tui.engine.tools import (
-            CODE_EXECUTION_TOOL_NAME,
-            TOOL_SEARCH_BM25_NAME,
-            TOOL_SEARCH_REGEX_NAME,
-        )
-
-        include_search = bool({TOOL_SEARCH_BM25_NAME, TOOL_SEARCH_REGEX_NAME} & wl)
-        include_code = CODE_EXECUTION_TOOL_NAME in wl
-        return include_search, include_code
-
     async def _get_tools_with_mcp(self) -> list[dict[str, Any]]:
         """Build the full tool list: native registry + discovered MCP tools."""
         from deepseek_tui.server.metrics import get_turn_latency, now_ms
@@ -932,9 +895,6 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         native_tools = self.tool_registry.to_api_tools()
         mcp = self.mcp_manager
         profile = self.tool_profile or TOOL_PROFILE_FULL
-        # Deferral must apply on every branch, not only the one that goes
-        # through build_model_tool_catalog — otherwise a missing/cold/empty
-        # MCP discovery silently ships the full tool set to the model.
         mode = (self.mode or "agent").strip() or "agent"
         if mode == "plan":
             # Shared agent registries still expose write tools; filter the
@@ -946,7 +906,6 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             ]
         if mcp is None:
             result = filter_tools_for_profile(list(native_tools), profile)
-            apply_native_tool_deferral(result, mode)
         else:
             mcp_tools = self._mcp_tools_cache
             if mcp_tools is None:
@@ -956,10 +915,8 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                 mcp.schedule_background_discover()
                 logger.info("mcp_discover_deferred native_tools=%d", len(native_tools))
                 result = filter_tools_for_profile(list(native_tools), profile)
-                apply_native_tool_deferral(result, mode)
             elif not mcp_tools:
                 result = filter_tools_for_profile(list(native_tools), profile)
-                apply_native_tool_deferral(result, mode)
             else:
                 self._mcp_tools_cache = list(mcp_tools)
                 combined = build_model_tool_catalog(
@@ -983,10 +940,9 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                 )
                 result = filter_tools_for_profile(combined, profile)
 
-        # 聚焦模式：收窄到最小工具白名单。在 catalog 层直接裁剪（而非依赖
-        # defer_loading），确保模型无法经 tool-search 调回被屏蔽的工具。
-        # MCP 工具额外按 server 级放行：lazy server 未 discovery 时工具名
-        # 未知，通过 _match_configured_server 前缀匹配兜底（修白名单竞态）。
+        # 聚焦模式：收窄到最小工具白名单。MCP 工具额外按 server 级放行：
+        # lazy server 未 discovery 时工具名未知，通过
+        # _match_configured_server 前缀匹配兜底。
         if self._focus_tool_whitelist is not None:
             whitelist = self._focus_tool_whitelist
             allowed_servers = self._focus_allowed_servers
@@ -1008,14 +964,6 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                 return False
 
             result = [t for t in result if _passes_focus(t)]
-            # Without tool_search, deferred tools in the confined catalog are
-            # unreachable — activate everything that passed the whitelist.
-            include_search, _include_code = self._advanced_tool_flags()
-            if not include_search:
-                for tool in result:
-                    fn = tool.get("function", tool)
-                    if isinstance(fn, dict):
-                        fn["defer_loading"] = False
 
         if mode == "plan":
             result = [
@@ -1491,8 +1439,8 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
 
         - ``system_prompt`` — base system prompt body
         - ``tools`` — legacy combined JSON schema bucket
-        - ``tool_definitions`` — initially active built-in tool schemas
-        - ``mcp`` — initially active MCP tool schemas
+        - ``tool_definitions`` — built-in tool schemas sent to the model
+        - ``mcp`` — discovered MCP tool schemas sent to the model
         - ``skills`` — available skills prompt section
         - ``rules`` — project instruction files (AGENTS / CLAUDE / instructions)
         - ``conversation`` — accumulated user/assistant/tool messages
@@ -1527,7 +1475,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         """Estimate context using the same tool catalog sent to the model.
 
         Unlike :meth:`context_breakdown`, this async path considers dynamically
-        discovered MCP tools, then applies TurnLoop's initial active filter.
+        discovered MCP tools.
 
         Never blocks on cold MCP discovery — Workbench polls this endpoint and
         must not wait on subprocess startup.
@@ -1554,46 +1502,13 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
     def _initial_request_tools_for_context(
         self, api_tools: list[dict[str, Any]]
     ) -> list[dict[str, Any]]:
-        """Initial active-tool filtering for context counts.
-
-        Replays the same ordering the streaming turn uses so the breakdown
-        counts only the tools sent on the first request: apply native/MCP
-        deferral, append the always-active advanced tools, then keep the
-        initially active set. Deferral is idempotent, so this is safe whether
-        the caller passes a raw registry catalog (``context_breakdown``) or a
-        catalog that already went through ``build_model_tool_catalog``
-        (``context_breakdown_live``).
-        """
+        """Shallow-copy the catalog sent on the first request for token counts."""
         tools = [dict(tool) for tool in api_tools]
         for tool in tools:
             function = tool.get("function")
             if isinstance(function, dict):
                 tool["function"] = dict(function)
-        if not tools:
-            return []
-
-        def _name(tool: dict[str, Any]) -> str:
-            function = tool.get("function")
-            if isinstance(function, dict) and isinstance(function.get("name"), str):
-                return function["name"]
-            return ""
-
-        mode = (self.mode or "agent").strip() or "agent"
-        native = [t for t in tools if not is_mcp_tool(_name(t))]
-        mcp = [t for t in tools if is_mcp_tool(_name(t))]
-        apply_native_tool_deferral(native, mode)
-        apply_mcp_tool_deferral(mcp, mode)
-        catalog = native + mcp
-
-        _include_search, _include_code = self._advanced_tool_flags()
-        ensure_advanced_tooling(
-            catalog,
-            include_tool_search=_include_search,
-            include_code_execution=_include_code,
-            mode=mode,
-        )
-        active_names = initial_active_tools(catalog)
-        return active_tools_for_step(catalog, active_names, force_update_plan_first=False)
+        return tools
 
     async def shutdown(self) -> None:
         """Drain managers owned by the tool runtime if Engine built it."""
@@ -2647,9 +2562,6 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         再带上工具向 LLM 发一次请求;若模型回工具调用就执行工具、把结果塞回消息列表进入下一轮,直到模型给出最终答案(或触发取消/错误上限),返回 TurnResult
         """
         tools = await self._get_tools_with_mcp()
-        # Advanced meta-tool (tool_search / code_execution) inclusion is gated
-        # by the focus whitelist so a plugin mount can actually confine them.
-        _turn_include_search, _turn_include_code = self._advanced_tool_flags()
         self.turn_counter += 1
         self._tool_dedup.reset_turn()
         step_error_count = 0
@@ -2843,12 +2755,8 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                     self.handle.emit,
                     self.handle.cancel_event,
                     tools=tools,
-                    include_tool_search=_turn_include_search,
-                    include_code_execution=_turn_include_code,
-                    extra_active_tools=self._activated_tool_names,
                     latency_turn_id=latency_turn_id,
                     round_idx=round_idx,
-                    mode=self.mode,
                 )
             # Refresh the real pressure signal *within* the turn, not just at
             # turn end: every round's StreamDone carries the provider's

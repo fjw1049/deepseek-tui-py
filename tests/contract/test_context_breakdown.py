@@ -137,7 +137,7 @@ def test_context_breakdown_back_derives_conversation_when_real_overshoots(tmp_pa
     )
 
 
-def test_initial_request_tools_apply_native_deferral(tmp_path):
+def test_initial_request_tools_keep_full_catalog(tmp_path):
     engine = Engine(
         handle=EngineHandle(),
         client=object(),  # type: ignore[arg-type]
@@ -156,14 +156,11 @@ def test_initial_request_tools_apply_native_deferral(tmp_path):
     active_names = {tool["function"]["name"] for tool in active}
 
     assert "read_file" in active_names
-    # Core write tools stay always-active (selection-bias guard — see
-    # _ALWAYS_ACTIVE_TOOLS in engine/tools.py).
     assert "write_file" in active_names
-    # note defers in agent mode (discoverable via tool_search).
-    assert "note" not in active_names
+    assert "note" in active_names
 
 
-async def test_live_context_breakdown_counts_initial_active_tools(tmp_path):
+async def test_live_context_breakdown_counts_native_and_mcp_tools(tmp_path):
     engine = Engine(
         handle=EngineHandle(),
         client=object(),  # type: ignore[arg-type]
@@ -174,7 +171,6 @@ async def test_live_context_breakdown_counts_initial_active_tools(tmp_path):
     async def fake_tools_with_mcp() -> list[dict[str, object]]:
         read_file = _api_tool("read_file")
         dynamic_mcp = _api_tool("mcp__github__list_issues")
-        dynamic_mcp["function"]["defer_loading"] = True  # type: ignore[index]
         return [read_file, dynamic_mcp]
 
     engine._get_tools_with_mcp = fake_tools_with_mcp  # type: ignore[method-assign]
@@ -182,5 +178,5 @@ async def test_live_context_breakdown_counts_initial_active_tools(tmp_path):
     breakdown = await engine.context_breakdown_live("deepseek-chat")
 
     assert breakdown["tool_definitions"] > 0
-    assert breakdown["mcp"] == 0
+    assert breakdown["mcp"] > 0
     assert breakdown["tools"] == breakdown["tool_definitions"] + breakdown["mcp"]

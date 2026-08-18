@@ -35,11 +35,6 @@ from deepseek_tui.engine.events import (
     FakeWrapperFilter,
     contains_fake_tool_wrapper,
 )
-from deepseek_tui.engine.tools import (
-    active_tools_for_step,
-    ensure_advanced_tooling,
-    initial_active_tools,
-)
 from deepseek_tui.engine.tools import has_tool_call_markers, parse_tool_calls
 from deepseek_tui.protocol.messages import Message
 from deepseek_tui.protocol.messages import MessageRequest
@@ -111,7 +106,6 @@ class _TurnState:
     """Internal turn state tracking."""
     context_recovery_attempts: int = 0
     stream_retry_attempts: int = 0
-    active_tool_names: set[str] = field(default_factory=set)
     turn_error: str | None = None
 
 
@@ -132,12 +126,8 @@ class TurnLoop:
         cancel_event: asyncio.Event,
         tools: list[dict[str, Any]] | None = None,
         *,
-        include_tool_search: bool = True,
-        include_code_execution: bool = True,
-        extra_active_tools: set[str] | None = None,
         latency_turn_id: str | None = None,
         round_idx: int = 0,
-        mode: str | None = None,
     ) -> TurnResult:
         """Run a single turn of the conversation loop.
 
@@ -152,21 +142,6 @@ class TurnLoop:
         """
         state = _TurnState()
         tool_catalog = tools or []
-        # 延迟加载，模型至少能直接调用工具发现能力，代码执行及其余工具按
-        # 延迟加载策略按需激活（mode 缺省时保持旧行为：code_execution 直接激活）
-        if tool_catalog:
-            ensure_advanced_tooling(
-                tool_catalog,
-                include_tool_search=include_tool_search,
-                include_code_execution=include_code_execution,
-                mode=mode,
-            )
-
-        state.active_tool_names = initial_active_tools(tool_catalog)
-        if extra_active_tools:
-            # Deferred tools activated earlier in the session (via
-            # tool_search or a direct call) stay advertised on later rounds.
-            state.active_tool_names |= extra_active_tools
 
         # Main streaming turn loop
         result = await self._run_turn_loop(
@@ -244,16 +219,8 @@ class TurnLoop:
                     outcome=TurnOutcomeStatus.INTERRUPTED,
                 )
 
-            # Build the active-tool view first so the budget precheck can
-            # account for tool schema overhead.
-            # 重建 stream 请求 — 只发「当前激活」的工具
-            active_tools = None
-            if tool_catalog:
-                active_tools = active_tools_for_step(
-                    tool_catalog,
-                    state.active_tool_names,
-                    force_update_plan_first=False,
-                )
+            # Rebuild the stream request with the full catalog for this turn.
+            active_tools = tool_catalog or None
 
             # Check context budget before requesting
             output_token_limit = request.max_tokens or max_output_tokens_for_model(

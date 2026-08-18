@@ -1820,12 +1820,12 @@ async def test_active_plugin_whitelist_read_only(tmp_path, monkeypatch) -> None:
         assert "ro-plugin" in note
         wl, _servers = engine._active_plugin_whitelist()
         assert wl is not None
-        # Scenario base is generous: explore + write + code_execution + shell
+        # Scenario base is generous: explore + write + shell
         # + agents (authors rarely declare allowed-tools). Manifest
         # permissions: ["read"] is advisory UI, not a tool-surface cut.
         assert {"read_file", "grep_files", "file_search", "load_skill"} <= wl
         assert {"write_file", "edit_file"} <= wl
-        assert {"exec_shell", "code_execution", "agent"} <= wl
+        assert {"exec_shell", "agent"} <= wl
         # Orchestration / mutating GitHub stay out unless skill-declared.
         assert {"task_create", "github_close"}.isdisjoint(wl)
     finally:
@@ -1932,15 +1932,10 @@ async def test_active_plugin_whitelist_trust_gate_blocks_mcp(
         await engine.shutdown_session()
 
 
-async def test_plugin_mount_confines_advanced_meta_tools(
+async def test_plugin_mount_catalog_has_no_removed_meta_tools(
     tmp_path, monkeypatch
 ) -> None:
-    """Meta-tools follow the focus whitelist (no ensure_advanced_tooling bypass).
-
-    Scenario base includes ``code_execution`` by default; ``tool_search_*``
-    stays out unless named. Regression: ensure_advanced_tooling used to
-    re-add both after the catalog filter.
-    """
+    """Removed engine meta-tools must not reappear after a plugin mount."""
     from unittest.mock import AsyncMock
 
     monkeypatch.setenv("DEEPSEEK_HOME", str(tmp_path / "home"))
@@ -1970,23 +1965,13 @@ async def test_plugin_mount_confines_advanced_meta_tools(
         engine._focus_tool_whitelist = (
             wl_result[0] if wl_result is not None else None
         )
-        # Scenario base includes code_execution; tool_search stays gated off.
-        assert engine._advanced_tool_flags() == (False, True)
-
-        engine._focus_tool_whitelist = frozenset({"read_file"})
-        assert engine._advanced_tool_flags() == (False, False)
-
-        engine._focus_tool_whitelist = frozenset({"read_file", "code_execution"})
-        assert engine._advanced_tool_flags() == (False, True)
-
-        engine._focus_tool_whitelist = frozenset(
-            {"read_file", "tool_search_tool_bm25", "tool_search_tool_regex"}
-        )
-        assert engine._advanced_tool_flags() == (True, False)
-
-        engine._focus_tool_whitelist = None
-        _search, _code = engine._advanced_tool_flags()
-        assert _code is True  # tool_profile None -> code_execution included
+        names = {
+            (t.get("function") or t).get("name")
+            for t in await engine._get_tools_with_mcp()
+        }
+        assert "code_execution" not in names
+        assert "tool_search_tool_bm25" not in names
+        assert "tool_search_tool_regex" not in names
     finally:
         await engine.shutdown_session()
 
@@ -2467,6 +2452,6 @@ async def test_agent_spawn_untrusted_plugin_confined_to_scenario_base(
     assert spawned.allowed_tools is not None
     assert set(spawned.allowed_tools) == set(FOCUS_PLUGIN_BASE)
     assert "agent" in spawned.allowed_tools
-    assert "code_execution" in spawned.allowed_tools
+    assert "code_execution" not in spawned.allowed_tools
     assert "exec_shell" in spawned.allowed_tools
     await manager.shutdown()

@@ -11,15 +11,9 @@ from typing import Any
 from deepseek_tui.engine.prompts import AppMode as _AppMode
 from deepseek_tui.protocol.messages import Message, TextBlock
 
-# Meta-tools that are NOT registered on ToolRegistry. Focus gating still
-# names them so ``_advanced_tool_flags`` / ``ensure_advanced_tooling`` can
-# re-inject them after the registry whitelist filter.
-FOCUS_META_TOOLS = frozenset({"code_execution"})
-
 # Shared kernel for all focus paths (MCP / skill / plugin). Explore + write +
 # shell + web + ask-user. Note ``grep_files`` (not ``grep``) — name mismatch
 # historically silently excluded grep from every focus mode.
-# Registry names only here; meta tools are OR'd in via FOCUS_META_TOOLS.
 _FOCUS_KERNEL_REGISTRY = frozenset(
     {
         "read_file",
@@ -33,7 +27,7 @@ _FOCUS_KERNEL_REGISTRY = frozenset(
         "request_user_input",
     }
 )
-FOCUS_KERNEL = _FOCUS_KERNEL_REGISTRY | FOCUS_META_TOOLS
+FOCUS_KERNEL = _FOCUS_KERNEL_REGISTRY
 
 # @connector — kernel only; server tools are unioned at the call site.
 # No load_skill / checklist / agent (those steal selection from MCP tools).

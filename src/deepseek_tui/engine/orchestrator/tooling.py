@@ -1,7 +1,7 @@
 """Tool-execution half of the Engine (mixin).
 
-Sequential + parallel tool dispatch, approval/elevation flow, tool_search
-activation, and interactive user-input waits.
+Sequential + parallel tool dispatch, approval/elevation flow, and
+interactive user-input waits.
 """
 
 from __future__ import annotations
@@ -29,13 +29,8 @@ from deepseek_tui.engine.events import (
     UserInputRequiredEvent,
 )
 from deepseek_tui.engine.tools import (
-    CODE_EXECUTION_TOOL_NAME,
     PLAN_MODE_TOOL_ALLOWLIST,
     REQUEST_USER_INPUT_NAME,
-    execute_code_execution_tool,
-    execute_tool_search,
-    is_tool_search_tool,
-    maybe_activate_requested_deferred_tool,
     missing_tool_error_message,
 )
 from deepseek_tui.tools.plan_mode import (
@@ -749,42 +744,6 @@ class ToolExecutionMixin:
         )
         # 写文件类工具执行前拍快照（供 /undo）。
         self._take_pre_tool_snapshot(tool_call.id, tool_name, tool_call.arguments)
-
-        # --- Special built-in tools (not in ToolRegistry) ---
-        if is_tool_search_tool(tool_name):
-            # Discovered tools land in the session-level activation set so
-            # they stay advertised on subsequent rounds/turns.
-            return execute_tool_search(
-                tool_name, tool_call.arguments, api_tools,
-                self._activated_tool_names,
-            )
-
-        # A direct call to a deferred tool activates it for later rounds.
-        maybe_activate_requested_deferred_tool(
-            tool_name, api_tools, self._activated_tool_names
-        )
-
-        if tool_name == CODE_EXECUTION_TOOL_NAME:
-            # Arbitrary local Python execution must go through the same
-            # approval gate as registry tools with EXECUTES_CODE.
-            from deepseek_tui.tools.approval import (
-                approval_request_for_capabilities,
-            )
-            from deepseek_tui.tools.registry import ToolCapability
-
-            approval_request = approval_request_for_capabilities(
-                tool_name,
-                [ToolCapability.EXECUTES_CODE],
-                self.exec_policy.approval_policy,
-                reason="Execute model-provided Python code in a local subprocess",
-            )
-            if approval_request is not None:
-                denied = await self._handle_approval_flow(tool_call, approval_request)
-                if denied:
-                    return None
-            return await execute_code_execution_tool(
-                tool_call.arguments, self.tool_context.working_directory
-            )
 
         if tool_name == REQUEST_USER_INPUT_NAME:
             return await self._await_user_input(tool_call.id, tool_call.arguments)

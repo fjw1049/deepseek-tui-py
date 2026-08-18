@@ -202,7 +202,7 @@ def render_plugin_context(
         "workspace are normally rejected) for this directory only, for read operations.",
         "- Write operations remain confined to the workspace.",
         "- Scenario tools: the API tool list for this session is authoritative "
-        "(explore, write, code_execution, shell, agents, web/session helpers as "
+        "(explore, write, shell, agents, web/session helpers as "
         "offered). Do not invent or forge tool-call markup for tools that are "
         "not in that list. Names in the static Toolbox that are absent from the "
         "API tools are unavailable while this plugin is mounted.",
@@ -646,7 +646,7 @@ TOOL_PROFILE_FULL = "full"
 TOOL_PROFILE_AUTOMATION_COMPOSER = "automation_composer"
 TOOL_PROFILE_CRON = "cron"
 
-# Composer: schedule creation only — no MCP, no tool_search, no shell.
+# Composer: schedule creation only — no MCP, no shell.
 _AUTOMATION_COMPOSER_NATIVE = frozenset(
     {
         "cron_create",
@@ -658,7 +658,7 @@ _AUTOMATION_COMPOSER_NATIVE = frozenset(
 # Cron execution: read/search/fetch + shell + skills.
 # Installed MCP tools (mcp_*) are admitted separately in
 # filter_tools_for_profile — they are whatever the shared McpManager
-# already discovered. Write tools / tool_search / request_user_input
+# already discovered. Write tools / request_user_input
 # stay out (detached auto_approve turn).
 _CRON_NATIVE = frozenset(
     {
@@ -699,10 +699,6 @@ def detect_tool_profile_from_prompt(prompt: str) -> str:
     return TOOL_PROFILE_FULL
 
 
-def profile_includes_tool_search(profile: str | None) -> bool:
-    return profile in (None, TOOL_PROFILE_FULL)
-
-
 def _tool_name(entry: dict[str, Any]) -> str:
     fn = entry.get("function", entry)
     return str(fn.get("name", ""))
@@ -721,10 +717,7 @@ def filter_tools_for_profile(
         for entry in tools:
             name = _tool_name(entry)
             if name in allowed_native:
-                clone = _copy_tool_entry(entry)
-                fn = clone.get("function", clone)
-                fn["defer_loading"] = False
-                out.append(clone)
+                out.append(_copy_tool_entry(entry))
         return out
 
     if profile == TOOL_PROFILE_CRON:
@@ -732,10 +725,7 @@ def filter_tools_for_profile(
         for entry in tools:
             name = _tool_name(entry)
             if name in _CRON_NATIVE or _is_cron_allowed_mcp_tool(name):
-                clone = _copy_tool_entry(entry)
-                fn = clone.get("function", clone)
-                fn["defer_loading"] = False
-                out.append(clone)
+                out.append(_copy_tool_entry(entry))
         return out
 
     return tools

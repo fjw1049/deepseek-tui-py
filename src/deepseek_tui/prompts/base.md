@@ -105,7 +105,6 @@ Pick the right lane by one question — **do you need the result in this convers
 
 Tool descriptions are authoritative for parameters, usage details, and edge cases; the notes below cover cross-tool policy only.
 
-- Tools not in the visible list — `code_execution`, MCP tools — are deferred by default: discover them with `tool_search_tool_bm25` / `tool_search_tool_regex`, or just call them and they activate automatically.
 - When the user names a skill or the task matches one in `## Skills`, call `load_skill` with the skill id — one call pulls the `SKILL.md` body and companion-file list, faster than `read_file` + `file_search`.
 - When the user asks about DeepSeek TUI itself — what it can do, a mode, a config key, MCP setup — load the `deepseek-tui-docs` skill first and answer from live surfaces, not from memory.
 - **Prefer dedicated tools over raw shell**: `read_file` over `cat`, `grep_files` over `grep`, `edit_file`/`write_file` over `sed`/heredocs, `fetch_url` over `curl`. Reserve `exec_shell` for genuine shell work — builds, tests, git, package installs, process management.

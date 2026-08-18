@@ -10,19 +10,12 @@ from deepseek_tui.config import Config
 from deepseek_tui.engine.orchestrator.helpers import (
     FOCUS_KERNEL,
     FOCUS_MCP_BASE,
-    FOCUS_META_TOOLS,
     FOCUS_PLUGIN_BASE,
     FOCUS_READ_BASE,
     FOCUS_SKILL_BASE,
     FOCUS_WRITE_BASE,
     _FOCUS_KERNEL_REGISTRY,
     _FOCUS_REGISTRY_TOOLS,
-)
-from deepseek_tui.engine.tools import (
-    TOOL_SEARCH_BM25_NAME,
-    TOOL_SEARCH_REGEX_NAME,
-    _ALWAYS_ACTIVE_TOOLS,
-    _SHELL_TOOLS,
 )
 from deepseek_tui.tools.registry import build_default_registry
 
@@ -42,13 +35,12 @@ def test_focus_registry_tools_subset_of_default_registry() -> None:
 
 
 def test_focus_base_layering() -> None:
-    assert FOCUS_META_TOOLS == frozenset({"code_execution"})
-    assert FOCUS_KERNEL == _FOCUS_KERNEL_REGISTRY | FOCUS_META_TOOLS
+    assert FOCUS_KERNEL == _FOCUS_KERNEL_REGISTRY
     assert FOCUS_MCP_BASE == FOCUS_KERNEL
     assert FOCUS_SKILL_BASE == FOCUS_KERNEL | frozenset({"load_skill", "checklist"})
     assert FOCUS_PLUGIN_BASE == FOCUS_SKILL_BASE | frozenset({"agent"})
     assert FOCUS_READ_BASE is FOCUS_PLUGIN_BASE or FOCUS_READ_BASE == FOCUS_PLUGIN_BASE
-    assert FOCUS_READ_BASE == _FOCUS_REGISTRY_TOOLS | FOCUS_META_TOOLS
+    assert FOCUS_READ_BASE == _FOCUS_REGISTRY_TOOLS
     assert FOCUS_WRITE_BASE <= FOCUS_KERNEL
 
     # MCP ⊂ SKILL ⊂ PLUGIN
@@ -57,8 +49,7 @@ def test_focus_base_layering() -> None:
     for base in (FOCUS_MCP_BASE, FOCUS_SKILL_BASE, FOCUS_PLUGIN_BASE):
         assert "note" not in base
         assert "update_plan" not in base
-        assert TOOL_SEARCH_BM25_NAME not in base
-        assert TOOL_SEARCH_REGEX_NAME not in base
+        assert "code_execution" not in base
         assert "recall_archive" not in base
         assert "exec_wait" not in base
         assert "exec_interact" not in base
@@ -80,11 +71,9 @@ def test_current_time_not_registered_without_automations() -> None:
 
 
 def test_shell_active_sets_have_no_ghost_aliases() -> None:
-    assert "exec_wait" not in _ALWAYS_ACTIVE_TOOLS
-    assert "exec_interact" not in _ALWAYS_ACTIVE_TOOLS
-    assert "exec_wait" not in _SHELL_TOOLS
-    assert "exec_interact" not in _SHELL_TOOLS
-    assert {"exec_shell"} <= _SHELL_TOOLS
+    assert "exec_wait" not in FOCUS_KERNEL
+    assert "exec_interact" not in FOCUS_KERNEL
+    assert "exec_shell" in FOCUS_KERNEL
 
 
 @pytest.mark.asyncio
