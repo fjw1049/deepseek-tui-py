@@ -64,8 +64,14 @@ function readUiScale(): number {
 }
 
 function wrapperClass(disabled: boolean | undefined, extra: string): string {
+  const hasWidth = /(^|\s)w-/.test(extra)
+  const hasHeight = /(^|\s)h-/.test(extra)
+  const hasRadius = /(^|\s)rounded-/.test(extra)
   return [
-    'relative h-8 w-full min-w-0 rounded-lg border border-ds-border bg-ds-card shadow-sm',
+    'relative min-w-0 border border-ds-border bg-ds-card shadow-sm',
+    hasHeight ? '' : 'h-8',
+    hasWidth ? '' : 'w-full',
+    hasRadius ? '' : 'rounded-lg',
     'transition focus-within:border-accent/40 focus-within:ring-1 focus-within:ring-accent/30',
     disabled ? 'cursor-not-allowed opacity-55' : '',
     extra

@@ -25,6 +25,7 @@ import {
 } from '../../lib/automation-task-form-model'
 import { loadChannelDeliveryState } from '../../lib/resolve-channel-delivery'
 import { useChatStore } from '../../store/chat-store'
+import { SettingsSelect } from '../settings/SettingsSelect'
 
 type Props = {
   runtimeReady: boolean
@@ -333,14 +334,15 @@ export function AutomationTaskForm({
               </label>
               <label className="grid gap-2">
                 <span className="text-[13px] font-semibold text-ds-ink">{t('automationStatusLabel')}</span>
-                <select
+                <SettingsSelect
                   value={createPaused ? 'paused' : 'active'}
                   onChange={(event) => setCreatePaused(event.target.value === 'paused')}
-                  className="ds-select rounded-2xl border border-ds-border bg-ds-main py-3 pl-4 pr-10 text-[14px] text-ds-ink outline-none focus:border-accent/60"
+                  wrapperClassName="h-12 rounded-2xl"
+                  selectClassName="bg-ds-main"
                 >
                   <option value="active">{t('automationStatusActive')}</option>
                   <option value="paused">{t('automationStatusPaused')}</option>
-                </select>
+                </SettingsSelect>
               </label>
             </div>
 
@@ -350,17 +352,17 @@ export function AutomationTaskForm({
                 {t('automationScheduleLabel')}
               </div>
               <div className="grid gap-3 md:grid-cols-[220px_1fr]">
-                <select
+                <SettingsSelect
                   value={scheduleKind}
                   onChange={(event) => setScheduleKind(event.target.value as AutomationScheduleKind)}
-                  className="ds-select rounded-2xl border border-ds-border bg-ds-card py-3 pl-4 pr-10 text-[14px] text-ds-ink outline-none focus:border-accent/60"
+                  wrapperClassName="h-12 rounded-2xl"
                 >
                   <option value="once">{t('automationScheduleOnce')}</option>
                   <option value="hourly">{t('automationScheduleHourly')}</option>
                   <option value="daily">{t('automationScheduleDaily')}</option>
                   <option value="weekly">{t('automationScheduleWeekly')}</option>
                   <option value="custom">{t('automationScheduleCustom')}</option>
-                </select>
+                </SettingsSelect>
                 <div className="grid gap-3">
                   {scheduleKind === 'once' ? (
                     <input
@@ -422,7 +424,7 @@ export function AutomationTaskForm({
               <div className="mb-3 text-[13px] font-semibold text-ds-ink">{t('automationDeliveryLabel')}</div>
               <div className="grid gap-3 md:grid-cols-[220px_1fr]">
                 <label className="grid gap-2">
-                  <select
+                  <SettingsSelect
                     value={deliveryMode}
                     onChange={(event) => {
                       const next = event.target.value as AutomationDeliveryMode
@@ -431,13 +433,13 @@ export function AutomationTaskForm({
                       else if (next === 'email' && emailChannelReady) setDeliveryTarget('')
                       else if (next === 'wecom' || next === 'none') setDeliveryTarget('')
                     }}
-                    className="ds-select rounded-2xl border border-ds-border bg-ds-card py-3 pl-4 pr-10 text-[14px] text-ds-ink outline-none focus:border-accent/60"
+                    wrapperClassName="h-12 rounded-2xl"
                   >
                     <option value="none">{t('automationDeliveryNone')}</option>
                     <option value="feishu">{t('automationDeliveryFeishu')}</option>
                     <option value="wecom">{t('automationDeliveryWecom')}</option>
                     <option value="email">{t('automationDeliveryEmail')}</option>
-                  </select>
+                  </SettingsSelect>
                 </label>
                 <div className="flex min-h-[52px] items-center">
                   {deliveryMode === 'none' ? (

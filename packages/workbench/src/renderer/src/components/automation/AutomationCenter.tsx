@@ -41,6 +41,7 @@ import {
   templateDeliveryCardHint,
   type ChannelDeliveryState
 } from '../../lib/resolve-channel-delivery'
+import { SettingsSelect } from '../settings/SettingsSelect'
 import { AutomationListCard } from './AutomationListCard'
 import { AutomationTaskForm } from './AutomationTaskForm'
 
@@ -513,23 +514,23 @@ export function AutomationCenter({
                     className="min-w-0 w-full bg-transparent py-2 pl-6 text-[13px] text-ds-ink outline-none placeholder:text-ds-faint"
                   />
                 </label>
-                <select
+                <SettingsSelect
                   value={status}
                   onChange={(e) => setStatus(e.target.value as StatusFilter)}
-                  className="rounded-lg border border-ds-border bg-ds-card px-3 py-2 text-[13px] text-ds-ink"
+                  wrapperClassName="w-[9.5rem] shrink-0"
                 >
                   <option value="all">{t('automationFilterAll')}</option>
                   <option value="active">{t('automationEnabled')}</option>
                   <option value="paused">{t('automationPaused')}</option>
-                </select>
-                <select
+                </SettingsSelect>
+                <SettingsSelect
                   value={sort}
                   onChange={(e) => setSort(e.target.value as SortMode)}
-                  className="rounded-lg border border-ds-border bg-ds-card px-3 py-2 text-[13px] text-ds-ink"
+                  wrapperClassName="w-[9.5rem] shrink-0"
                 >
                   <option value="active-first">{t('automationSortActiveFirst')}</option>
                   <option value="newest">{t('automationSortNewest')}</option>
-                </select>
+                </SettingsSelect>
                 <button
                   type="button"
                   onClick={() => void refresh({ notify: true })}
