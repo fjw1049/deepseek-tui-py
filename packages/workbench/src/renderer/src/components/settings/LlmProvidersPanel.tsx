@@ -206,11 +206,7 @@ export function LlmProvidersPanel({ form, onUpdate }: Props): ReactElement {
   const defaultId = form.defaultLlmProviderId ?? 'deepseek'
 
   return (
-    <section className="ds-llm-panel">
-      <header className="ds-llm-panel__header">
-        <h2 className="ds-llm-panel__title">{t('llmProvidersTitle')}</h2>
-      </header>
-
+    <section className="ds-llm-panel ds-llm-panel--embedded">
       <div className="ds-llm-panel__section">
         <div className="ds-llm-panel__section-head">
           <h3 className="ds-llm-panel__section-title">{t('llmSectionLlm')}</h3>
@@ -218,9 +214,9 @@ export function LlmProvidersPanel({ form, onUpdate }: Props): ReactElement {
             type="button"
             className="ds-llm-panel__add-btn"
             onClick={() => setDetail({ kind: 'add-llm' })}
+            aria-label={t('llmAddProviderBtn')}
           >
             <Plus className="h-3.5 w-3.5" strokeWidth={2.2} />
-            {t('llmAddProviderBtn')}
           </button>
         </div>
         <div className="ds-llm-panel__grid">
@@ -290,9 +286,9 @@ export function LlmProvidersPanel({ form, onUpdate }: Props): ReactElement {
             type="button"
             className="ds-llm-panel__add-btn"
             onClick={() => setDetail({ kind: 'add-asr' })}
+            aria-label={t('asrAddProviderBtn')}
           >
             <Plus className="h-3.5 w-3.5" strokeWidth={2.2} />
-            {t('asrAddProviderBtn')}
           </button>
         </div>
         <div className="ds-llm-panel__stack">

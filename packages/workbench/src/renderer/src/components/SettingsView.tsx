@@ -872,7 +872,9 @@ export function SettingsView(): ReactElement {
 
           {category === 'models' && (
             <>
-              <LlmProvidersPanel form={form} onUpdate={(patch) => update(patch)} />
+              <SettingsCard title={t('llmProvidersTitle')}>
+                <LlmProvidersPanel form={form} onUpdate={(patch) => update(patch)} />
+              </SettingsCard>
 
               <SettingsCard title={t('modelUsageSection')} className="mt-6">
                 <ModelUsagePanel

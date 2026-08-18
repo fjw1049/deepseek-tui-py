@@ -8360,16 +8360,12 @@ select:focus-visible,
   overflow: hidden;
 }
 
-.ds-llm-panel__header {
-  padding: 1.05rem 1.25rem 0.35rem;
-}
-
-.ds-llm-panel__title {
-  margin: 0;
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.01em;
-  color: var(--ds-text-muted);
+.ds-llm-panel--embedded {
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  overflow: visible;
 }
 
 .ds-llm-panel__section {
@@ -8399,24 +8395,22 @@ select:focus-visible,
 
 .ds-llm-panel__add-btn {
   display: inline-flex;
+  width: 1.5rem;
+  height: 1.5rem;
   align-items: center;
-  gap: 0.3rem;
-  border: 1px solid var(--ds-border);
-  border-radius: 999px;
-  background: var(--ds-card-strong, var(--ds-card));
-  padding: 0.28rem 0.7rem;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--ds-text);
+  justify-content: center;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  padding: 0;
+  color: var(--ds-text-muted, var(--ds-text));
   transition:
-    background 140ms ease,
-    border-color 140ms ease,
+    color 140ms ease,
     transform 100ms ease;
 }
 
 .ds-llm-panel__add-btn:hover {
-  background: var(--ds-material-card-hover, var(--ds-card-hover));
-  border-color: var(--ds-border-strong, var(--ds-border));
+  color: var(--ds-text);
 }
 
 .ds-llm-panel__add-btn:active {
