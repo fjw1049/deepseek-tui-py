@@ -12,7 +12,10 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from deepseek_tui.config.providers import context_window_for_model
+from deepseek_tui.config.providers import (
+    DEFAULT_CONTEXT_WINDOW_TOKENS,
+    context_window_for_model,
+)
 from deepseek_tui.protocol.messages import Message, MessageOrigin, Role, TextBlock
 
 # Ratio ladder (confirmed product policy).
@@ -94,7 +97,7 @@ def measure_context_pressure(
     tools: list[dict[str, Any]] | None = None,
 ) -> ContextPressure:
     """Prefer provider ``input_tokens``; fall back to a char-based estimate."""
-    window = max(1, int(context_window_for_model(model) or 128_000))
+    window = max(1, int(context_window_for_model(model) or DEFAULT_CONTEXT_WINDOW_TOKENS))
     if real_input_tokens > 0:
         tokens = int(real_input_tokens)
         source: PressureSource = "real"

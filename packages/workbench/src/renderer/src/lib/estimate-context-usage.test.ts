@@ -28,6 +28,12 @@ describe('snapshotFromContextBreakdown', () => {
 })
 
 describe('estimateContextUsageFallback', () => {
+  it('defaults unknown models to 500k, not 128k', () => {
+    expect(estimateContextUsageFallback([], 'kimi-k3').maxTokens).toBe(500_000)
+    expect(estimateContextUsageFallback([], 'glm-5.1').maxTokens).toBe(500_000)
+    expect(estimateContextUsageFallback([], 'custom-foo').maxTokens).toBe(500_000)
+  })
+
   it('includes engine baseline on an empty transcript', () => {
     const usage = estimateContextUsageFallback([], 'deepseek-chat')
     expect(usage.usedTokens).toBe(

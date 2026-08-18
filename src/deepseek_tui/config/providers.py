@@ -23,12 +23,12 @@ __all__ = [
 # Constants
 # ---------------------------------------------------------------------------
 
-DEFAULT_CONTEXT_WINDOW_TOKENS = 128_000
+# Unknown / custom models default to 500K. Do not reintroduce a 128K
+# fallback — that value is only correct for specific known models (e.g. GPT-4o).
+DEFAULT_CONTEXT_WINDOW_TOKENS = 500_000
 DEEPSEEK_V4_CONTEXT_WINDOW_TOKENS = 1_000_000
-# Default window for custom provider models the static table below doesn't
-# recognize (e.g. ``[providers.hs] model = "glm-5.2"``). Overridable per
-# provider via ``[providers.X] context_window = ...``.
-CUSTOM_MODEL_CONTEXT_WINDOW_TOKENS = 500_000
+# Same number as DEFAULT; kept as a named alias for register_provider_context_windows.
+CUSTOM_MODEL_CONTEXT_WINDOW_TOKENS = DEFAULT_CONTEXT_WINDOW_TOKENS
 
 
 # ---------------------------------------------------------------------------
@@ -153,7 +153,7 @@ def context_window_for_model(model: str) -> int:
     Config-registered overrides (``[providers.X] context_window`` / custom
     model default) win; otherwise delegates to the logic in
     :func:`_context_window_for_model_optional` and falls back to
-    :data:`DEFAULT_CONTEXT_WINDOW_TOKENS` when the model is unknown.
+    :data:`DEFAULT_CONTEXT_WINDOW_TOKENS` (500K) when the model is unknown.
     """
     override = context_window_override(model)
     if override is not None:

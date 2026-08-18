@@ -139,9 +139,12 @@ def should_advance_cycle(
     """Determine if a cycle boundary should fire (ratio ≥ cycle_ratio)."""
     if not config.enabled or in_flight:
         return False
-    from deepseek_tui.config.providers import context_window_for_model
+    from deepseek_tui.config.providers import (
+        DEFAULT_CONTEXT_WINDOW_TOKENS,
+        context_window_for_model,
+    )
 
-    window = max(1, int(context_window_for_model(model) or 128_000))
+    window = max(1, int(context_window_for_model(model) or DEFAULT_CONTEXT_WINDOW_TOKENS))
     # reserved_headroom_tokens kept for API compat; ratio already leaves room.
     _ = reserved_headroom_tokens
     ratio = active_input_tokens / window

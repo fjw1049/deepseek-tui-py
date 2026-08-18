@@ -1,3 +1,4 @@
+import { CUSTOM_MODEL_CONTEXT_WINDOW_DEFAULT } from '@shared/app-settings-context-window'
 import type { ChatBlock } from '../agent/types'
 
 export type ContextBreakdownJson = {
@@ -20,7 +21,7 @@ export type ContextUsageSnapshot = {
   level: 'ok' | 'high' | 'critical'
 }
 
-const DEFAULT_CONTEXT_WINDOW = 128_000
+const DEFAULT_CONTEXT_WINDOW = CUSTOM_MODEL_CONTEXT_WINDOW_DEFAULT
 
 /** Fallback when runtime context API is unavailable (TUI-style buckets). */
 export const ENGINE_SYSTEM_BASELINE_TOKENS = 600
