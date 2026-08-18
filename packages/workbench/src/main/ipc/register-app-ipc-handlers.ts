@@ -76,7 +76,7 @@ import {
   formatAlternateRuntimeHint,
   resolveEffectiveRuntimeToken
 } from '../deepseek-process'
-import { commitGitChanges, createAndSwitchGitBranch, getGitBranches, getGitLog, getGitWorkingChanges, stashAndSwitchGitBranch, suggestGitCommitMessage, switchGitBranch } from '../services/git-service'
+import { commitGitChanges, createAndSwitchGitBranch, getGitBranches, getGitHubRepository, getGitLog, getGitWorkingChanges, stashAndSwitchGitBranch, suggestGitCommitMessage, switchGitBranch } from '../services/git-service'
 import { unwatchWorkspaceFs, watchWorkspaceFs } from '../services/workspace-fs-watch-service'
 import { getTrendingRepos } from '../services/trending-repos'
 import {
@@ -1183,6 +1183,11 @@ export function registerAppIpcHandlers(options: RegisterAppIpcHandlersOptions): 
   )
   ipcMain.handle('git:log', async (_, workspaceRoot: unknown) =>
     getGitLog(parseIpcPayload('git:log', workspaceRootSchema, workspaceRoot))
+  )
+  ipcMain.handle('git:github-repository', async (_, workspaceRoot: unknown) =>
+    getGitHubRepository(
+      parseIpcPayload('git:github-repository', workspaceRootSchema, workspaceRoot)
+    )
   )
   ipcMain.handle('git:working-changes', async (_, workspaceRoot: unknown) => {
     const root = parseIpcPayload('git:working-changes', workspaceRootSchema, workspaceRoot)

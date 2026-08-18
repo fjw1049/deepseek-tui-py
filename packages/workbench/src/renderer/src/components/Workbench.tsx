@@ -26,6 +26,11 @@ import {
   type WorkspaceFilePreviewDetail
 } from '../lib/workspace-file-preview'
 import {
+  OPEN_PREVIEW_URL_EVENT,
+  type OpenPreviewUrlDetail
+} from '../lib/open-preview-url'
+import { normalizeBrowseUrlInput } from '@shared/dev-preview-url'
+import {
   persistRightSidebarCollapsed,
   persistRightSidebarOpen,
   persistRightSidebarTab,
@@ -390,13 +395,18 @@ export function Workbench(): ReactElement {
   const latestHtmlPreviewPath = detectedHtmlPreviewPaths[0] ?? null
   const [workspacePreviewUrl, setWorkspacePreviewUrl] = useState<string | null>(null)
   const [workspacePreviewPath, setWorkspacePreviewPath] = useState<string | null>(null)
+  const [browsePreviewUrl, setBrowsePreviewUrl] = useState<string | null>(null)
   const [composerFocusRequestId, setComposerFocusRequestId] = useState(0)
   const [pendingPreviewPicks, setPendingPreviewPicks] = useState<PreviewElementPick[]>([])
   const [previewPickNotice, setPreviewPickNotice] = useState<Notice | null>(null)
   const [previewPickNoticeNonce, setPreviewPickNoticeNonce] = useState(0)
   const [htmlPreviewError, setHtmlPreviewError] = useState<string | null>(null)
-  const preferredPreviewUrl = workspacePreviewUrl ?? latestDevPreviewUrl
-  const preferredPreviewFilePath = workspacePreviewUrl ? workspacePreviewPath : null
+  const preferredPreviewUrl = browsePreviewUrl ?? workspacePreviewUrl ?? latestDevPreviewUrl
+  const preferredPreviewFilePath = browsePreviewUrl
+    ? null
+    : workspacePreviewUrl
+      ? workspacePreviewPath
+      : null
 
   const hasStartedConversation =
     blocks.length > 0 ||
@@ -756,6 +766,7 @@ export function Workbench(): ReactElement {
               openEditorTarget(detail.path, root, detail.line, detail.column)
               return
             }
+            setBrowsePreviewUrl(null)
             setWorkspacePreviewUrl(result.url)
             setWorkspacePreviewPath(detail.path)
           } catch (error) {
@@ -793,12 +804,26 @@ export function Workbench(): ReactElement {
   }, [layoutMode, openRightSidebar])
 
   useEffect(() => {
+    const onOpenPreviewUrl = (event: Event): void => {
+      const url = (event as CustomEvent<OpenPreviewUrlDetail>).detail?.url
+      const normalized = typeof url === 'string' ? normalizeBrowseUrlInput(url) : null
+      if (!normalized) return
+      previewAutoOpenSuppressedRef.current = false
+      setBrowsePreviewUrl(normalized)
+      openRightSidebar('preview')
+    }
+    window.addEventListener(OPEN_PREVIEW_URL_EVENT, onOpenPreviewUrl)
+    return () => window.removeEventListener(OPEN_PREVIEW_URL_EVENT, onOpenPreviewUrl)
+  }, [openRightSidebar])
+
+  useEffect(() => {
     if (previewThreadId.current === activeThreadId) return
     previewThreadId.current = activeThreadId
     autoOpenedPreviewUrlRef.current = null
     previewAutoOpenSuppressedRef.current = false
     setWorkspacePreviewUrl(null)
     setWorkspacePreviewPath(null)
+    setBrowsePreviewUrl(null)
     setPendingPreviewPicks([])
     setHtmlPreviewError(null)
     if (rightSidebarOpen && rightSidebarTab === 'preview') {
@@ -1126,12 +1151,14 @@ export function Workbench(): ReactElement {
         if (!result.ok) {
           console.error('[html-preview]', result.message, { path, root })
           openRightSidebar('preview')
+          setBrowsePreviewUrl(null)
           setWorkspacePreviewUrl(null)
           setWorkspacePreviewPath(null)
           setHtmlPreviewError(result.message)
           return
         }
         setHtmlPreviewError(null)
+        setBrowsePreviewUrl(null)
         setWorkspacePreviewUrl(result.url)
         setWorkspacePreviewPath(path)
         openRightSidebar('preview')

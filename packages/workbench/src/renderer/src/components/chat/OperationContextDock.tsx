@@ -7,11 +7,13 @@ import {
   type ReactElement
 } from 'react'
 import {
+  ArrowUpRight,
   Check,
   ChevronDown,
   ChevronRight,
   ChevronsLeftRight,
   GitBranch,
+  Github,
   ListChecks,
   ListTodo,
   PanelsTopLeft,
@@ -25,6 +27,10 @@ import { useTranslation } from 'react-i18next'
 import { useShallow } from 'zustand/react/shallow'
 import { ChangeDiffStatsLabel } from '../ChangeDiffStatsLabel'
 import { useGitBranches } from '../../hooks/use-git-branches'
+import type { GitRemoteProvider } from '@shared/github-repository'
+import gitlabTanukiUrl from '../../assets/brand/gitlab-tanuki.svg'
+import { useGitHubRepository } from '../../hooks/use-github-repository'
+import { openPreviewUrl } from '../../lib/open-preview-url'
 import { useDockSubagents, type DockSubagentView } from '../../hooks/use-dock-subagents'
 import { fetchTaskDetail, useLiveTasks } from '../../hooks/use-thread-tasks'
 import { useGitWorkingChanges } from '../../hooks/use-git-working-changes'
@@ -99,6 +105,27 @@ function persistDockCompact(value: boolean): void {
 
 function prefersReducedMotion(): boolean {
   return window.matchMedia('(prefers-reduced-motion: reduce)').matches
+}
+
+function RemoteProviderIcon({
+  provider,
+  className
+}: {
+  provider: GitRemoteProvider
+  className: string
+}): ReactElement {
+  if (provider === 'gitlab') {
+    return (
+      <img
+        src={gitlabTanukiUrl}
+        alt=""
+        draggable={false}
+        className={`${className} rounded-full bg-white object-cover`}
+      />
+    )
+  }
+  if (provider === 'github') return <Github className={className} strokeWidth={1.75} />
+  return <GitBranch className={className} strokeWidth={1.75} />
 }
 
 const ROW_ICON_TINTS = {
@@ -377,10 +404,13 @@ export function OperationContextDock({
   const root = resolveActiveThreadWorkspace(activeThreadId, threads, workspaceRoot)
   const { result: gitResult, loading: gitLoading, reload: reloadGitBranches } = useGitBranches(root)
   const { result: gitChanges, loading: gitChangesLoading, reload: reloadGitChanges } = useGitWorkingChanges(root)
+  const { result: githubResult, reload: reloadGithubRepository } = useGitHubRepository(root)
+  const githubRepo = githubResult?.ok ? githubResult : null
   const refreshGitState = useCallback((): void => {
     void reloadGitBranches()
     void reloadGitChanges()
-  }, [reloadGitBranches, reloadGitChanges])
+    void reloadGithubRepository()
+  }, [reloadGitBranches, reloadGitChanges, reloadGithubRepository])
   useWorkspaceDirtyGitRefresh(workspaceDirtyTick, refreshGitState)
   const todoSnapshot = useMemo(() => extractTodosFromBlocks(blocks), [blocks])
   const todos = todoSnapshot?.items ?? []
@@ -453,6 +483,11 @@ export function OperationContextDock({
   const openChangesPanel = (): void => {
     if (!hasChanges) return
     onOpenChanges?.()
+  }
+
+  const openGithubRepository = (): void => {
+    if (!githubRepo) return
+    openPreviewUrl(githubRepo.url)
   }
 
   const [collapsed, setCollapsed] = useState({ git: true, process: true, tasks: true })
@@ -588,6 +623,17 @@ export function OperationContextDock({
           >
             <Globe2 className="h-[15px] w-[15px]" strokeWidth={1.75} />
           </button>
+          {githubRepo ? (
+            <button
+              type="button"
+              className="ds-operation-dock-rail__btn"
+              onClick={openGithubRepository}
+              title={t('operationDockOpenRepository', { repo: githubRepo.nameWithOwner })}
+              aria-label={t('operationDockOpenRepository', { repo: githubRepo.nameWithOwner })}
+            >
+              <RemoteProviderIcon provider={githubRepo.provider} className="h-[15px] w-[15px]" />
+            </button>
+          ) : null}
           <button
             type="button"
             className="ds-operation-dock-rail__btn"
@@ -702,6 +748,25 @@ export function OperationContextDock({
       </button>
 
       <div className="my-2 border-t border-ds-border-muted/40" />
+
+      {githubRepo ? (
+        <>
+          <p className="px-1.5 pb-1 text-[11px] font-medium tracking-[0.01em] text-ds-faint">
+            {t('operationDockRepository')}
+          </p>
+          <button
+            type="button"
+            onClick={openGithubRepository}
+            title={t('operationDockOpenRepository', { repo: githubRepo.nameWithOwner })}
+            className={`${DOCK_ROW_CLASS} cursor-pointer text-ds-ink hover:bg-ds-hover/60`}
+          >
+            <RemoteProviderIcon provider={githubRepo.provider} className="h-4 w-4 shrink-0" />
+            <span className="min-w-0 flex-1 truncate">{githubRepo.nameWithOwner}</span>
+            <ArrowUpRight className="h-3.5 w-3.5 shrink-0 text-ds-faint" strokeWidth={1.85} />
+          </button>
+          <div className="my-2 border-t border-ds-border-muted/40" />
+        </>
+      ) : null}
 
       <SectionHeader
         label={t('operationDockGitTitle')}

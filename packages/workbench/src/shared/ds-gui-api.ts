@@ -2,6 +2,7 @@ import type { AppSettingsPatch, AppSettingsV1, EndpointProtocol } from './app-se
 import type { EditorListResult, EditorOpenResult, OpenEditorPathOptions } from './editor'
 import type { GitBranchesResult } from './git-branches'
 import type { GitCommitMessageSuggestionResult, GitCommitResult } from './git-commit'
+import type { GitHubRepositoryResult } from './github-repository'
 import type { GitLogResult } from './git-log'
 import type { GitWorkingChangesResult } from './git-working-changes'
 import type {
@@ -377,6 +378,7 @@ export type DsGuiApi = {
   onWorkspaceFsChanged: (handler: (payload: { root: string }) => void) => () => void
   getGitBranches: (workspaceRoot: string) => Promise<GitBranchesResult>
   getGitLog: (workspaceRoot: string) => Promise<GitLogResult>
+  getGitHubRepository: (workspaceRoot: string) => Promise<GitHubRepositoryResult>
   getGitWorkingChanges: (workspaceRoot: string) => Promise<GitWorkingChangesResult>
   switchGitBranch: (workspaceRoot: string, branch: string) => Promise<GitBranchesResult>
   stashAndSwitchGitBranch: (workspaceRoot: string, branch: string) => Promise<GitBranchesResult>

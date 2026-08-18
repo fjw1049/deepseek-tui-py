@@ -99,6 +99,8 @@ const api = {
   getGitBranches: (workspaceRoot) =>
     ipcRenderer.invoke('git:branches', workspaceRoot),
   getGitLog: (workspaceRoot) => ipcRenderer.invoke('git:log', workspaceRoot),
+  getGitHubRepository: (workspaceRoot) =>
+    ipcRenderer.invoke('git:github-repository', workspaceRoot),
   getGitWorkingChanges: (workspaceRoot) =>
     ipcRenderer.invoke('git:working-changes', workspaceRoot),
   switchGitBranch: (workspaceRoot, branch) =>

@@ -11,6 +11,10 @@ import type {
   GitWorkingChangeStatus,
   GitWorkingChangesResult
 } from '../../shared/git-working-changes'
+import {
+  parseGitRemoteRepository,
+  type GitHubRepositoryResult
+} from '../../shared/github-repository'
 
 const execFileAsync = promisify(execFile)
 const DIFF_MAX_BUFFER = 50 * 1024 * 1024
@@ -627,6 +631,72 @@ async function readGitUpstream(cwd: string): Promise<GitLogUpstream | null> {
     hash: upstreamHash,
     ahead: Number.isFinite(ahead) ? ahead : 0,
     behind: Number.isFinite(behind) ? behind : 0
+  }
+}
+
+function gitHubRepositoryFailure(error: unknown): GitHubRepositoryResult {
+  const message = error instanceof Error ? error.message : String(error)
+  if (/not a git repository/i.test(message)) {
+    return {
+      ok: false,
+      reason: 'not_git_repo',
+      message: 'The working directory is not a Git repository.'
+    }
+  }
+  if (/ENOENT/i.test(message) || /spawn git/i.test(message)) {
+    return { ok: false, reason: 'git_unavailable', message: 'Git executable was not found.' }
+  }
+  return { ok: false, reason: 'error', message }
+}
+
+function uniqueRemoteNames(values: Array<string | null | undefined>): string[] {
+  const seen = new Set<string>()
+  const names: string[] = []
+  for (const value of values) {
+    const name = value?.trim() ?? ''
+    if (!name || seen.has(name)) continue
+    seen.add(name)
+    names.push(name)
+  }
+  return names
+}
+
+export async function getGitHubRepository(workspaceRoot: string): Promise<GitHubRepositoryResult> {
+  const cwd = workspaceRoot.trim()
+  if (!cwd) {
+    return { ok: false, reason: 'no_workspace', message: 'No working directory selected.' }
+  }
+
+  try {
+    await runGit(cwd, ['rev-parse', '--show-toplevel'])
+    const remoteNames = (await tryGitStdout(cwd, ['remote']))
+      ?.split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean) ?? []
+    if (remoteNames.length === 0) {
+      return { ok: false, reason: 'no_github_remote', message: 'No git remotes configured.' }
+    }
+
+    const currentBranch = await tryGitStdout(cwd, ['branch', '--show-current'])
+    const trackingRemote = currentBranch
+      ? await tryGitStdout(cwd, ['config', '--get', `branch.${currentBranch}.remote`])
+      : null
+    const candidates = uniqueRemoteNames([
+      trackingRemote,
+      remoteNames.includes('origin') ? 'origin' : null,
+      ...remoteNames
+    ])
+
+    for (const remoteName of candidates) {
+      const remoteUrl = await tryGitStdout(cwd, ['remote', 'get-url', remoteName])
+      const parsed = parseGitRemoteRepository(remoteUrl)
+      if (!parsed) continue
+      return { ok: true, ...parsed }
+    }
+
+    return { ok: false, reason: 'no_github_remote', message: 'No browsable git remote found.' }
+  } catch (error) {
+    return gitHubRepositoryFailure(error)
   }
 }
 
