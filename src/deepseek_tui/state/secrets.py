@@ -335,7 +335,11 @@ class Secrets:
 
 
 class SecretsManager:
-    """Stable high-level wrapper: keyring → env → config.toml → None."""
+    """Stable high-level wrapper: env → config.toml → None.
+
+    System keyring is not consulted. Settings writes the live key into
+    config.toml; leftover Keychain entries go stale and must not win.
+    """
 
     SERVICE_NAME = DEFAULT_SERVICE
 
@@ -357,14 +361,6 @@ class SecretsManager:
 
     def resolve_api_key(self, config: Config, provider_name: str | None = None) -> str | None:
         provider = provider_name or config.provider
-
-        if not os.environ.get("DEEPSEEK_SKIP_KEYRING"):
-            try:
-                stored = self._ensure_secrets().get(provider)
-            except Exception:
-                stored = None
-            if stored is not None and stored.strip():
-                return stored
 
         env_val = env_for(provider)
         if env_val is not None and env_val.strip():

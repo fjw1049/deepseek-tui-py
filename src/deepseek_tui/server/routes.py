@@ -147,6 +147,8 @@ def classify_turn_value_error(exc: ValueError) -> Exception:
     """
     msg = str(exc)
     lowered = msg.lower()
+    if lowered.startswith("missing_api_key"):
+        return api_error(400, msg, error="missing_api_key")
     if "already has an active turn" in lowered:
         return api_error(409, msg, error="turn_conflict")
     if "is not active" in lowered or "is not loaded" in lowered:

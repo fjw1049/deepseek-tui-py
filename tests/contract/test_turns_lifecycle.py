@@ -31,3 +31,21 @@ async def test_start_turn_empty_prompt_is_400(client: AsyncClient) -> None:
     )
     assert r.status_code == 400
     assert r.json()["detail"]["error"] == "invalid_request"
+
+
+@pytest.mark.asyncio
+async def test_start_turn_missing_api_key_is_400(client: AsyncClient, monkeypatch):
+    monkeypatch.setenv("DEEPSEEK_SKIP_KEYRING", "1")
+    monkeypatch.setattr(
+        "deepseek_tui.state.secrets.SecretsManager.resolve_api_key",
+        lambda self, config, provider_name=None: None,
+    )
+
+    create = await client.post("/v1/threads", json={"provider": "kimi"})
+    thread_id = create.json()["id"]
+    r = await client.post(
+        f"/v1/threads/{thread_id}/turns",
+        json={"prompt": "hello", "provider": "kimi"},
+    )
+    assert r.status_code == 400
+    assert r.json()["detail"]["error"] == "missing_api_key"

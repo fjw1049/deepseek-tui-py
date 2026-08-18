@@ -598,7 +598,7 @@ def cmd_endpoint(args: str, app: DeepSeekTUI) -> CommandResult:
             return CommandResult(
                 error=(
                     f"No API key stored for '{name}'. Configure its provider "
-                    "key via keyring/config/environment before adding the endpoint."
+                    "key in Settings → Models, config.toml, or the environment."
                 )
             )
 

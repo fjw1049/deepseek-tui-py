@@ -91,6 +91,10 @@ async def test_thread_warmup_endpoint_loads_engine(
         return SimpleNamespace(tool_context=ctx, run=AsyncMock())
 
     monkeypatch.setattr("deepseek_tui.engine.orchestrator.Engine.create", fake_create)
+    monkeypatch.setattr(
+        "deepseek_tui.server.threads.manager.RuntimeThreadManager._get_llm_client",
+        lambda self, provider=None: SimpleNamespace(),
+    )
 
     create = await client.post("/v1/threads", json={"model": "deepseek-chat"})
     assert create.status_code == 201
@@ -104,6 +108,32 @@ async def test_thread_warmup_endpoint_loads_engine(
     second = await client.post(f"/v1/threads/{thread_id}/warmup")
     assert second.status_code == 200
     assert calls == 1
+
+
+@pytest.mark.asyncio
+async def test_thread_warmup_skips_when_provider_has_no_api_key(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("DEEPSEEK_SKIP_KEYRING", "1")
+    monkeypatch.delenv("KIMI_API_KEY", raising=False)
+    monkeypatch.delenv("MOONSHOT_API_KEY", raising=False)
+    monkeypatch.setattr(
+        "deepseek_tui.state.secrets.SecretsManager.resolve_api_key",
+        lambda self, config, provider_name=None: None,
+    )
+
+    create = await client.post(
+        "/v1/threads", json={"provider": "kimi", "model": "kimi-k3"}
+    )
+    assert create.status_code == 201
+    thread_id = create.json()["id"]
+
+    warmup = await client.post(f"/v1/threads/{thread_id}/warmup")
+    assert warmup.status_code == 200
+    body = warmup.json()
+    assert body["status"] == "skipped"
+    assert body["reason"] == "missing_api_key"
+    assert body["thread_id"] == thread_id
 
 
 @pytest.mark.asyncio

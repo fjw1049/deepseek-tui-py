@@ -1,7 +1,7 @@
 """Unit tests for provider/model access fixes.
 
 Covers:
-- ``SecretsManager.resolve_api_key`` keyring → env → config.toml precedence
+- ``SecretsManager.resolve_api_key`` env → config.toml precedence (no keyring)
 - ``DeepSeekClient`` chat-completions URL normalization (no double ``/v1``)
 - ``Config.effective_provider_config`` PROVIDER_DEFAULTS gap-filling
 - SSE chunk JSON-decode tolerance in the streaming client
@@ -41,15 +41,14 @@ def _clear_provider_env(monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv(var, raising=False)
 
 
-def test_resolve_api_key_prefers_keyring(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("DEEPSEEK_API_KEY", "env-key")
+def test_resolve_api_key_ignores_keyring(monkeypatch: pytest.MonkeyPatch) -> None:
     store = InMemoryKeyringStore()
     store.set("deepseek", "keyring-key")
     config = Config(providers={"deepseek": ProviderConfig(api_key="toml-key")})
-    assert _manager(store).resolve_api_key(config) == "keyring-key"
+    assert _manager(store).resolve_api_key(config) == "toml-key"
 
 
-def test_resolve_api_key_falls_back_to_env_when_keyring_empty(
+def test_resolve_api_key_prefers_env_over_config(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("DEEPSEEK_API_KEY", "env-key")
@@ -73,15 +72,6 @@ def test_resolve_api_key_top_level_fallback_and_none() -> None:
     mgr = _manager(InMemoryKeyringStore())
     assert mgr.resolve_api_key(Config(api_key="top-key")) == "top-key"
     assert mgr.resolve_api_key(Config()) is None
-
-
-def test_resolve_api_key_ignores_blank_keyring_value(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("DEEPSEEK_API_KEY", "env-key")
-    store = InMemoryKeyringStore()
-    store.set("deepseek", "   ")
-    assert _manager(store).resolve_api_key(Config()) == "env-key"
 
 
 # ── DeepSeekClient URL normalization ─────────────────────────────────────

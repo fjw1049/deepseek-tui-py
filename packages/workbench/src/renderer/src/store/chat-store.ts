@@ -2355,10 +2355,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
       ) {
         await get().warmActiveThread(activeThreadId)
         if (get().activeThreadId !== activeThreadId) return false
-        const nextWarmup = get().activeThreadWarmup
-        if (nextWarmup.threadId === activeThreadId && nextWarmup.status === 'failed') {
-          throw new Error('Thread warmup failed')
-        }
       }
       const seqAtSend = get().lastSeq
       const { turnId, userMessageItemId } = await p.sendUserMessage(activeThreadId, trimmedText, {

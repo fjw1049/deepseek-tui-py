@@ -1413,6 +1413,11 @@ class RuntimeThreadManager:
         )
         bind_turn_latency(trace)
 
+        # Load the engine for the provider this turn will actually call.
+        # A stale thread.provider (e.g. leftover "kimi" after the user only
+        # configured DeepSeek) must not force a missing-key crash here.
+        thread.provider = provider
+        thread.model = model
         handle, engine_task = await self._ensure_engine_loaded(thread, trace=trace)
         trace.runtime_turn_created_ms = now_ms()
 
@@ -1764,7 +1769,17 @@ class RuntimeThreadManager:
         """
         started = now_ms()
         thread = self.store.load_thread(thread_id)
-        await self._ensure_engine_loaded(thread)
+        try:
+            await self._ensure_engine_loaded(thread)
+        except ValueError as exc:
+            if str(exc).startswith("missing_api_key"):
+                return {
+                    "thread_id": thread_id,
+                    "status": "skipped",
+                    "reason": "missing_api_key",
+                    "elapsed_ms": max(0, now_ms() - started),
+                }
+            raise
         return {
             "thread_id": thread_id,
             "status": "ready",
