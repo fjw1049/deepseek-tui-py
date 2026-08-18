@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useId,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -11,6 +12,7 @@ import {
 import { createPortal } from 'react-dom'
 import { Check, ChevronDown, Folder, Import, LayoutGrid, Loader2, Plus, Search } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
+import { useComboboxNav } from '../../hooks/use-combobox-nav'
 import { useLightDismiss } from '../../hooks/use-light-dismiss'
 import { useChatStore } from '../../store/chat-store'
 import { workspaceLabelFromPath } from '../../lib/workspace-label'
@@ -30,6 +32,13 @@ type Props = {
 }
 
 const MENU_WIDTH = 340
+const RECENT_LIMIT = 4
+
+type ProjectGroup = {
+  id: string
+  label: string | null
+  items: ProjectOption[]
+}
 
 type ProjectOption = {
   path: string
@@ -71,6 +80,7 @@ export function ProjectContextPicker({
   const triggerRef = useRef<HTMLButtonElement | null>(null)
   const menuRef = useRef<HTMLDivElement | null>(null)
   const inputRef = useRef<HTMLInputElement | null>(null)
+  const listId = useId()
 
   const activePath = normalizeWorkspaceRoot(workspaceRoot)
   const isTemporary = isChatsWorkspace(workspaceRoot) || !activePath
@@ -114,6 +124,51 @@ export function ProjectContextPicker({
     )
   }, [projectOptions, query])
 
+  const projectGroups = useMemo<ProjectGroup[]>(() => {
+    const searching = query.trim().length > 0
+    if (searching || filteredProjects.length < 3) {
+      return [{ id: 'all', label: null, items: filteredProjects }]
+    }
+    const ranked = [...threads].sort(
+      (a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt)
+    )
+    const recentPaths: string[] = []
+    const seen = new Set<string>()
+    for (const thread of ranked) {
+      const path = normalizeWorkspaceRoot(thread.workspace)
+      if (
+        !path ||
+        seen.has(path) ||
+        isChatsWorkspace(path) ||
+        isInternalTemporaryWorkspace(path) ||
+        isClawWorkspacePath(path)
+      ) {
+        continue
+      }
+      seen.add(path)
+      recentPaths.push(path)
+      if (recentPaths.length >= RECENT_LIMIT) break
+    }
+    const recentSet = new Set(recentPaths)
+    const recent = recentPaths
+      .map((path) => filteredProjects.find((item) => item.path === path))
+      .filter((item): item is ProjectOption => item != null)
+    const rest = filteredProjects.filter((item) => !recentSet.has(item.path))
+    if (recent.length === 0 || rest.length === 0) {
+      return [{ id: 'all', label: null, items: filteredProjects }]
+    }
+    return [
+      { id: 'recent', label: t('contextBarRecentProjects'), items: recent },
+      { id: 'all', label: t('contextBarAllProjects'), items: rest }
+    ]
+  }, [filteredProjects, query, t, threads])
+
+  const flatProjects = useMemo(
+    () => projectGroups.flatMap((group) => group.items),
+    [projectGroups]
+  )
+  const nav = useComboboxNav(flatProjects.length, open)
+
   useEffect(() => {
     setOpen(false)
     setQuery('')
@@ -124,6 +179,12 @@ export function ProjectContextPicker({
     if (!open) return
     window.setTimeout(() => inputRef.current?.focus(), 0)
   }, [open])
+
+  useEffect(() => {
+    if (!open) return
+    const row = menuRef.current?.querySelector(`[data-combobox-index="${nav.highlighted}"]`)
+    row?.scrollIntoView({ block: 'nearest' })
+  }, [nav.highlighted, open])
 
   const updateMenuPosition = useCallback((): void => {
     const trigger = triggerRef.current
@@ -227,7 +288,9 @@ export function ProjectContextPicker({
     <div
       ref={menuRef}
       style={menuStyle}
-      className="ds-project-context-menu z-50 overflow-hidden"
+      className={`ds-project-context-menu ds-morph-pop z-50 overflow-hidden ${
+        menuPlacement === 'below' ? 'ds-morph-pop--below' : ''
+      }`}
       onMouseDown={(event) => event.stopPropagation()}
     >
       <div className="ds-project-context-menu__header">
@@ -235,13 +298,22 @@ export function ProjectContextPicker({
           <Search className="h-3.5 w-3.5 shrink-0 opacity-45" strokeWidth={1.85} aria-hidden />
           <input
             ref={inputRef}
+            role="combobox"
+            aria-expanded={open}
+            aria-controls={listId}
+            aria-autocomplete="list"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === 'Escape') {
                 e.preventDefault()
                 setOpen(false)
+                return
               }
+              nav.onKeyDown(e, (index) => {
+                const item = flatProjects[index]
+                if (item) void selectProject(item.path)
+              })
             }}
             placeholder={t('contextBarSearchProjects')}
             className="ds-project-context-menu__search-input"
@@ -249,37 +321,53 @@ export function ProjectContextPicker({
         </label>
       </div>
 
-      <div className="ds-project-context-menu__list">
-        {filteredProjects.length === 0 ? (
+      <div id={listId} role="listbox" className="ds-project-context-menu__list">
+        {flatProjects.length === 0 ? (
           <div className="ds-project-context-menu__empty">{t('contextBarNoMatchingProjects')}</div>
         ) : (
-          filteredProjects.map((item) => {
-            const selected = !isTemporary && item.path === activePath
-            return (
-              <button
-                key={item.path}
-                type="button"
-                disabled={acting}
-                className={`ds-project-context-menu__row ${
-                  selected ? 'ds-project-context-menu__row--active' : ''
-                }`}
-                onClick={() => void selectProject(item.path)}
-              >
-                <span className="ds-project-context-menu__icon" aria-hidden>
-                  <Folder className="h-3.5 w-3.5" strokeWidth={1.85} />
-                </span>
-                <span className="min-w-0 flex-1">
-                  <span className="ds-project-context-menu__row-title">{item.label}</span>
-                  <span className="ds-project-context-menu__row-path" title={item.path}>
-                    {projectPathHint(item.path)}
-                  </span>
-                </span>
-                {selected ? (
-                  <Check className="h-4 w-4 shrink-0 text-accent" strokeWidth={2.2} />
+          (() => {
+            let flatIndex = 0
+            return projectGroups.map((group) => (
+              <div key={group.id}>
+                {group.label ? (
+                  <div className="ds-project-context-menu__group-label">{group.label}</div>
                 ) : null}
-              </button>
-            )
-          })
+                {group.items.map((item) => {
+                  const index = flatIndex++
+                  const selected = !isTemporary && item.path === activePath
+                  const highlighted = index === nav.highlighted
+                  return (
+                    <button
+                      key={item.path}
+                      type="button"
+                      role="option"
+                      aria-selected={selected}
+                      data-combobox-index={index}
+                      disabled={acting}
+                      className={`ds-project-context-menu__row ${
+                        selected ? 'ds-project-context-menu__row--active' : ''
+                      } ${highlighted ? 'ds-project-context-menu__row--highlight' : ''}`}
+                      onMouseEnter={() => nav.setHighlighted(index)}
+                      onClick={() => void selectProject(item.path)}
+                    >
+                      <span className="ds-project-context-menu__icon" aria-hidden>
+                        <Folder className="h-3.5 w-3.5" strokeWidth={1.85} />
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="ds-project-context-menu__row-title">{item.label}</span>
+                        <span className="ds-project-context-menu__row-path" title={item.path}>
+                          {projectPathHint(item.path)}
+                        </span>
+                      </span>
+                      {selected ? (
+                        <Check className="h-4 w-4 shrink-0 text-accent" strokeWidth={2.2} />
+                      ) : null}
+                    </button>
+                  )
+                })}
+              </div>
+            ))
+          })()
         )}
       </div>
 

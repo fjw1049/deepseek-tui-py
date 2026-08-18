@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type ReactElement
@@ -11,6 +12,7 @@ import {
   sandboxModeForApprovalPolicy,
   type ApprovalPolicy
 } from '@shared/app-settings'
+import { useComboboxNav } from '../../hooks/use-combobox-nav'
 import { useLightDismiss } from '../../hooks/use-light-dismiss'
 import { OPEN_APPROVAL_POLICY_EVENT } from '../../lib/shortcuts-runtime'
 import { useChatStore } from '../../store/chat-store'
@@ -109,35 +111,39 @@ export function ComposerApprovalPolicySelector({
       ? tierAccent[policy]
       : undefined
 
-  const options: Array<{
-    id: ComposerApprovalTier
-    title: string
-    description: string
-    Icon: typeof Hand
-    accent: string
-  }> = [
-    {
-      id: 'on-request',
-      title: t('settings:approvalOnRequest'),
-      description: t('common:composerApprovalOnRequestDesc'),
-      Icon: Hand,
-      accent: tierAccent['on-request']
-    },
-    {
-      id: 'untrusted',
-      title: t('settings:approvalUntrusted'),
-      description: t('common:composerApprovalUntrustedDesc'),
-      Icon: Shield,
-      accent: tierAccent.untrusted
-    },
-    {
-      id: 'auto',
-      title: t('settings:approvalAuto'),
-      description: t('common:composerApprovalAutoDesc'),
-      Icon: Zap,
-      accent: tierAccent.auto
-    }
-  ]
+  const options = useMemo(
+    () => [
+      {
+        id: 'on-request' as const,
+        title: t('settings:approvalOnRequest'),
+        description: t('common:composerApprovalOnRequestDesc'),
+        Icon: Hand,
+        accent: tierAccent['on-request']
+      },
+      {
+        id: 'untrusted' as const,
+        title: t('settings:approvalUntrusted'),
+        description: t('common:composerApprovalUntrustedDesc'),
+        Icon: Shield,
+        accent: tierAccent.untrusted
+      },
+      {
+        id: 'auto' as const,
+        title: t('settings:approvalAuto'),
+        description: t('common:composerApprovalAutoDesc'),
+        Icon: Zap,
+        accent: tierAccent.auto
+      }
+    ],
+    [t]
+  )
+  const { highlighted, setHighlighted, onKeyDown } = useComboboxNav(options.length, open)
+
+  useEffect(() => {
+    if (!open) return
+    const index = options.findIndex((option) => option.id === policy)
+    setHighlighted(index >= 0 ? index : 0)
+  }, [open, options, policy, setHighlighted])
 
   const selectPolicy = async (next: ComposerApprovalTier): Promise<void> => {
     if (saving || next === policy) {
@@ -162,6 +168,23 @@ export function ComposerApprovalPolicySelector({
       setSaving(false)
     }
   }
+
+  useEffect(() => {
+    if (!open) return
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        setMenuOpen(false)
+        return
+      }
+      onKeyDown(event, (index) => {
+        const option = options[index]
+        if (option) void selectPolicy(option.id)
+      })
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onKeyDown, open, options, setMenuOpen])
 
   return (
     <div ref={wrapRef} className="relative shrink-0">
@@ -190,7 +213,7 @@ export function ComposerApprovalPolicySelector({
 
       {open ? (
         <div className="absolute bottom-full left-0 z-40 mb-2 w-[min(100vw-2rem,320px)]">
-          <div className="ds-glass overflow-hidden rounded-2xl p-2 shadow-[0_18px_48px_rgba(15,23,42,0.18)]">
+          <div className="ds-glass ds-morph-pop overflow-hidden rounded-2xl p-2 shadow-[0_18px_48px_rgba(15,23,42,0.18)]">
             <div className="flex items-start justify-between gap-3 px-2 pb-2 pt-1.5">
               <p className="text-[13px] font-semibold leading-5 text-ds-ink">
                 {t('settings:approvalPolicy')}
@@ -207,8 +230,8 @@ export function ComposerApprovalPolicySelector({
                 {t('common:composerApprovalLearnMore')}
               </button>
             </div>
-            <div className="space-y-0.5">
-              {options.map((option) => {
+            <div className="ds-morph-stagger space-y-0.5">
+              {options.map((option, index) => {
                 const selected = policy === option.id
                 const OptionIcon = option.Icon
                 return (
@@ -219,9 +242,10 @@ export function ComposerApprovalPolicySelector({
                     aria-checked={selected}
                     disabled={saving}
                     onMouseDown={(event) => event.preventDefault()}
+                    onMouseEnter={() => setHighlighted(index)}
                     onClick={() => void selectPolicy(option.id)}
                     className={`flex w-full items-start gap-2.5 rounded-xl px-2.5 py-2.5 text-left transition ${
-                      selected ? 'bg-ds-hover' : 'hover:bg-ds-hover/70'
+                      selected || highlighted === index ? 'bg-ds-hover' : 'hover:bg-ds-hover/70'
                     }`}
                   >
                     <OptionIcon

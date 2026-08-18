@@ -70,6 +70,7 @@ import {
   useAudioRecorder,
   type RecordedAudio
 } from '../../hooks/use-audio-recorder'
+import { useComboboxNav } from '../../hooks/use-combobox-nav'
 import { useLightDismiss } from '../../hooks/use-light-dismiss'
 import {
   isComposerVoiceBridgeReady,
@@ -290,6 +291,9 @@ export function FloatingComposer({
   const shellRef = useRef<HTMLDivElement | null>(null)
   const footerRef = useRef<HTMLDivElement | null>(null)
   const plusMenuRef = useRef<HTMLDivElement | null>(null)
+  const skillSearchRef = useRef<HTMLInputElement | null>(null)
+  const connectorSearchRef = useRef<HTMLInputElement | null>(null)
+  const pluginSearchRef = useRef<HTMLInputElement | null>(null)
   const [footerWidth, setFooterWidth] = useState<number | null>(null)
   const footerLayoutOpts = useMemo(() => ({ dense: compactChrome }), [compactChrome])
   const footerTier = useMemo(
@@ -343,6 +347,42 @@ export function FloatingComposer({
   const [pluginsLoading, setPluginsLoading] = useState(false)
   const [pluginsLoaded, setPluginsLoaded] = useState(false)
   const [pluginQuery, setPluginQuery] = useState('')
+  const filteredSkills = useMemo(() => {
+    const q = skillQuery.trim().toLowerCase()
+    if (!q) return composerSkills
+    return composerSkills.filter(
+      (skill) =>
+        skill.name.toLowerCase().includes(q) ||
+        (skill.description ?? '').toLowerCase().includes(q)
+    )
+  }, [composerSkills, skillQuery])
+  const filteredConnectors = useMemo(
+    () => filterComposerConnectorRows(composerConnectors, connectorSection, connectorQuery),
+    [composerConnectors, connectorQuery, connectorSection]
+  )
+  const filteredPlugins = useMemo(() => {
+    const q = pluginQuery.trim().toLowerCase()
+    if (!q) return composerPlugins
+    return composerPlugins.filter((plugin) => {
+      const title = displayPluginName(plugin.name).toLowerCase()
+      return (
+        plugin.name.toLowerCase().includes(q) ||
+        title.includes(q) ||
+        (plugin.description ?? '').toLowerCase().includes(q)
+      )
+    })
+  }, [composerPlugins, displayPluginName, pluginQuery])
+  const plusListCount =
+    plusSubmenu === 'skills'
+      ? filteredSkills.length
+      : plusSubmenu === 'connectors'
+        ? filteredConnectors.length
+        : plusSubmenu === 'plugins'
+          ? filteredPlugins.length
+          : 0
+  const plusListOpen =
+    plusSubmenu === 'skills' || plusSubmenu === 'connectors' || plusSubmenu === 'plugins'
+  const plusNav = useComboboxNav(plusListCount, plusListOpen)
   const [activeCommand, setActiveCommand] = useState<{
     id: ComposerActionCommandId
     args: string
@@ -723,6 +763,19 @@ export function FloatingComposer({
       setPluginQuery('')
     }
   }, [plusMenuOpen])
+
+  useEffect(() => {
+    if (plusSubmenu === 'skills') skillSearchRef.current?.focus()
+    else if (plusSubmenu === 'connectors') connectorSearchRef.current?.focus()
+    else if (plusSubmenu === 'plugins') pluginSearchRef.current?.focus()
+  }, [plusSubmenu])
+
+  useEffect(() => {
+    if (!plusListOpen) return
+    plusMenuRef.current
+      ?.querySelector('[data-plus-highlight="true"]')
+      ?.scrollIntoView({ block: 'nearest' })
+  }, [plusListOpen, plusNav.highlighted])
 
   useEffect(() => {
     if (!footerPlan.showPlus && plusMenuOpen) {
@@ -1756,7 +1809,7 @@ export function FloatingComposer({
                     IDE compactChrome: stack above + left-align — the rail sits on
                     the window's right edge, so a right flyout is clipped.
                   */}
-                  <div className="ds-glass min-w-[220px] overflow-hidden rounded-2xl p-1.5">
+                  <div className="ds-glass ds-morph-pop min-w-[220px] overflow-hidden rounded-2xl p-1.5">
                     {/* Add files: no submenu, runs immediately. */}
                     <button
                       type="button"
@@ -1927,9 +1980,26 @@ export function FloatingComposer({
                       <div className="mb-2 flex shrink-0 items-center gap-2 rounded-xl border border-ds-border bg-ds-card px-2.5 py-1.5">
                         <Search className="h-4 w-4 shrink-0 text-ds-faint" strokeWidth={1.8} />
                         <input
+                          ref={skillSearchRef}
                           type="text"
+                          role="combobox"
+                          aria-expanded
+                          aria-autocomplete="list"
                           value={skillQuery}
                           onChange={(event) => setSkillQuery(event.target.value)}
+                          onKeyDown={(event) => {
+                            if (event.key === 'Escape') {
+                              event.preventDefault()
+                              setPlusMenuOpen(false)
+                              return
+                            }
+                            plusNav.onKeyDown(event, (index) => {
+                              const skill = filteredSkills[index]
+                              if (!skill) return
+                              handlePickSkill(skill.name)
+                              setPlusMenuOpen(false)
+                            })
+                          }}
                           placeholder={t('composerSkillSearchPlaceholder')}
                           className="min-w-0 flex-1 bg-transparent text-[13px] text-ds-ink placeholder:text-ds-faint focus:outline-none"
                         />
@@ -1943,32 +2013,25 @@ export function FloatingComposer({
                           <div className="px-1.5 py-3 text-[12px] text-ds-faint">
                             {t('composerSkillsNeedRuntime')}
                           </div>
+                        ) : filteredSkills.length === 0 ? (
+                          <div className="px-1.5 py-3 text-[12px] text-ds-faint">
+                            {t('composerSkillsEmpty')}
+                          </div>
                         ) : (
-                          (() => {
-                            const q = skillQuery.trim().toLowerCase()
-                            const filtered = composerSkills.filter(
-                              (skill) =>
-                                !q ||
-                                skill.name.toLowerCase().includes(q) ||
-                                (skill.description ?? '').toLowerCase().includes(q)
-                            )
-                            if (filtered.length === 0) {
-                              return (
-                                <div className="px-1.5 py-3 text-[12px] text-ds-faint">
-                                  {t('composerSkillsEmpty')}
-                                </div>
-                              )
-                            }
-                            return filtered.map((skill) => (
+                          filteredSkills.map((skill, index) => (
                               <button
                                 key={skill.name}
                                 type="button"
+                                data-plus-highlight={index === plusNav.highlighted ? 'true' : undefined}
                                 onMouseDown={(event) => event.preventDefault()}
+                                onMouseEnter={() => plusNav.setHighlighted(index)}
                                 onClick={() => {
                                   handlePickSkill(skill.name)
                                   setPlusMenuOpen(false)
                                 }}
-                                className="block w-full rounded-xl px-2.5 py-2 text-left transition hover:bg-ds-hover"
+                                className={`block w-full rounded-xl px-2.5 py-2 text-left transition hover:bg-ds-hover ${
+                                  index === plusNav.highlighted ? 'ds-combobox-row--highlight' : ''
+                                }`}
                               >
                                 <div className="flex items-center gap-2 text-[13px] font-medium text-ds-ink">
                                   <Package className="h-4 w-4 shrink-0" strokeWidth={1.8} />
@@ -1981,7 +2044,6 @@ export function FloatingComposer({
                                 ) : null}
                               </button>
                             ))
-                          })()
                         )}
                       </div>
                     </div>
@@ -2020,9 +2082,26 @@ export function FloatingComposer({
                       <div className="mb-2 flex shrink-0 items-center gap-2 rounded-xl border border-ds-border bg-ds-card px-2.5 py-1.5">
                         <Search className="h-4 w-4 shrink-0 text-ds-faint" strokeWidth={1.8} />
                         <input
+                          ref={connectorSearchRef}
                           type="text"
+                          role="combobox"
+                          aria-expanded
+                          aria-autocomplete="list"
                           value={connectorQuery}
                           onChange={(event) => setConnectorQuery(event.target.value)}
+                          onKeyDown={(event) => {
+                            if (event.key === 'Escape') {
+                              event.preventDefault()
+                              setPlusMenuOpen(false)
+                              return
+                            }
+                            plusNav.onKeyDown(event, (index) => {
+                              const connector = filteredConnectors[index]
+                              if (!connector?.enabled) return
+                              handlePickConnector(connector.id)
+                              setPlusMenuOpen(false)
+                            })
+                          }}
                           placeholder={t('composerConnectorSearchPlaceholder')}
                           className="min-w-0 flex-1 bg-transparent text-[13px] text-ds-ink placeholder:text-ds-faint focus:outline-none"
                         />
@@ -2032,31 +2111,23 @@ export function FloatingComposer({
                           <div className="flex items-center justify-center px-1.5 py-4 text-ds-faint">
                             <Loader2 className="h-4 w-4 animate-spin" />
                           </div>
+                        ) : filteredConnectors.length === 0 ? (
+                          <div className="px-1.5 py-3 text-[12px] text-ds-faint">
+                            {connectorSection === 'activated'
+                              ? t('connectorSectionActivatedEmpty')
+                              : !runtimeReady
+                                ? t('composerConnectorsNeedRuntime')
+                                : t('connectorSectionBuiltinEmpty')}
+                          </div>
                         ) : (
-                          (() => {
-                            const filtered = filterComposerConnectorRows(
-                              composerConnectors,
-                              connectorSection,
-                              connectorQuery
-                            )
-                            if (filtered.length === 0) {
-                              return (
-                                <div className="px-1.5 py-3 text-[12px] text-ds-faint">
-                                  {connectorSection === 'activated'
-                                    ? t('connectorSectionActivatedEmpty')
-                                    : !runtimeReady
-                                      ? t('composerConnectorsNeedRuntime')
-                                      : t('connectorSectionBuiltinEmpty')}
-                                </div>
-                              )
-                            }
-                            return filtered.map((connector) => {
+                          filteredConnectors.map((connector, index) => {
                               const selectable = connector.enabled
                               return (
                               <button
                                 key={connector.id}
                                 type="button"
                                 disabled={!selectable}
+                                data-plus-highlight={index === plusNav.highlighted ? 'true' : undefined}
                                 title={
                                   selectable
                                     ? connector.loadPolicy === 'on_focus'
@@ -2065,6 +2136,7 @@ export function FloatingComposer({
                                     : t('composerConnectorDisconnected', { name: connector.title })
                                 }
                                 onMouseDown={(event) => event.preventDefault()}
+                                onMouseEnter={() => plusNav.setHighlighted(index)}
                                 onClick={() => {
                                   if (!selectable) return
                                   handlePickConnector(connector.id)
@@ -2072,7 +2144,9 @@ export function FloatingComposer({
                                 }}
                                 className={`block w-full rounded-xl px-2.5 py-2 text-left transition ${
                                   selectable
-                                    ? 'hover:bg-ds-hover'
+                                    ? index === plusNav.highlighted
+                                      ? 'ds-combobox-row--highlight'
+                                      : 'hover:bg-ds-hover'
                                     : 'cursor-not-allowed opacity-40'
                                 }`}
                               >
@@ -2101,7 +2175,6 @@ export function FloatingComposer({
                               </button>
                               )
                             })
-                          })()
                         )}
                       </div>
                     </div>
@@ -2118,9 +2191,26 @@ export function FloatingComposer({
                       <div className="mb-2 flex shrink-0 items-center gap-2 rounded-xl border border-ds-border bg-ds-card px-2.5 py-1.5">
                         <Search className="h-4 w-4 shrink-0 text-ds-faint" strokeWidth={1.8} />
                         <input
+                          ref={pluginSearchRef}
                           type="text"
+                          role="combobox"
+                          aria-expanded
+                          aria-autocomplete="list"
                           value={pluginQuery}
                           onChange={(event) => setPluginQuery(event.target.value)}
+                          onKeyDown={(event) => {
+                            if (event.key === 'Escape') {
+                              event.preventDefault()
+                              setPlusMenuOpen(false)
+                              return
+                            }
+                            plusNav.onKeyDown(event, (index) => {
+                              const plugin = filteredPlugins[index]
+                              if (!plugin) return
+                              handlePickPlugin(plugin.name)
+                              setPlusMenuOpen(false)
+                            })
+                          }}
                           placeholder={t('composerPluginSearchPlaceholder')}
                           className="min-w-0 flex-1 bg-transparent text-[13px] text-ds-ink placeholder:text-ds-faint focus:outline-none"
                         />
@@ -2134,26 +2224,12 @@ export function FloatingComposer({
                           <div className="px-1.5 py-3 text-[12px] text-ds-faint">
                             {t('composerPluginsNeedRuntime')}
                           </div>
+                        ) : filteredPlugins.length === 0 ? (
+                          <div className="px-1.5 py-3 text-[12px] text-ds-faint">
+                            {t('composerPluginsEmpty')}
+                          </div>
                         ) : (
-                          (() => {
-                            const q = pluginQuery.trim().toLowerCase()
-                            const filtered = composerPlugins.filter((p) => {
-                              if (!q) return true
-                              const title = displayPluginName(p.name).toLowerCase()
-                              return (
-                                p.name.toLowerCase().includes(q) ||
-                                title.includes(q) ||
-                                (p.description ?? '').toLowerCase().includes(q)
-                              )
-                            })
-                            if (filtered.length === 0) {
-                              return (
-                                <div className="px-1.5 py-3 text-[12px] text-ds-faint">
-                                  {t('composerPluginsEmpty')}
-                                </div>
-                              )
-                            }
-                            return filtered.map((plugin) => {
+                          filteredPlugins.map((plugin, index) => {
                               const alreadyMounted =
                                 activePlugin?.name.toLowerCase() === plugin.name.toLowerCase()
                               const visual = pluginVisual(plugin.name)
@@ -2163,12 +2239,16 @@ export function FloatingComposer({
                                 <button
                                   key={plugin.name}
                                   type="button"
+                                  data-plus-highlight={index === plusNav.highlighted ? 'true' : undefined}
                                   onMouseDown={(event) => event.preventDefault()}
+                                  onMouseEnter={() => plusNav.setHighlighted(index)}
                                   onClick={() => {
                                     handlePickPlugin(plugin.name)
                                     setPlusMenuOpen(false)
                                   }}
-                                  className="block w-full rounded-xl px-2.5 py-2 text-left transition hover:bg-ds-hover"
+                                  className={`block w-full rounded-xl px-2.5 py-2 text-left transition hover:bg-ds-hover ${
+                                    index === plusNav.highlighted ? 'ds-combobox-row--highlight' : ''
+                                  }`}
                                 >
                                   <div className="flex items-center gap-2 text-[13px] font-medium text-ds-ink">
                                     <span
@@ -2202,7 +2282,6 @@ export function FloatingComposer({
                                 </button>
                               )
                             })
-                          })()
                         )}
                       </div>
                     </div>
