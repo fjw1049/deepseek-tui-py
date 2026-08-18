@@ -38,9 +38,11 @@ import {
   Wrench,
   X
 } from 'lucide-react'
+import { isHtmlPreviewPath } from '@shared/html-preview'
 import {
   formatHtmlPreviewPathLabel,
-  selectPrimaryMarkdownResult
+  type OpenableTurnResult,
+  selectOpenableTurnResults
 } from '../../lib/html-preview-detection'
 import { TaskSuggestionHero, TaskSuggestionOfflineHero } from './TaskSuggestionHero'
 import { SquareGrid } from './SquareGrid'
@@ -1288,64 +1290,25 @@ function TurnChangeSummary({
     enabled: expanded,
     root: viewportRef
   })
-  const primaryMarkdown = useMemo(() => selectPrimaryMarkdownResult(changes), [changes])
-  const primaryMarkdownPath = primaryMarkdown?.filePath?.trim() ?? ''
-  const primaryMarkdownLabel = primaryMarkdownPath
-    ? formatHtmlPreviewPathLabel(primaryMarkdownPath)
-    : ''
+  const openableResults = useMemo(() => selectOpenableTurnResults(changes), [changes])
+  const compactOpenable = openableResults.length > 1
   const previewPath = htmlPreview?.path?.trim() ?? ''
-  // Nest HTML preview only when it matches a real file_change in this turn.
-  const nestedHtmlPreview =
-    htmlPreview && previewPath
-      ? changes.some(
-          (change) =>
-            change.status !== 'error' &&
-            Boolean(change.filePath) &&
-            pathsReferToSameFile(change.filePath!, previewPath)
-        )
-        ? htmlPreview
-        : null
-      : null
-  const nestedPreviewPath = nestedHtmlPreview?.path?.trim() ?? ''
-  const previewLabel = nestedPreviewPath ? formatHtmlPreviewPathLabel(nestedPreviewPath) : ''
+
+  const openTurnResult = (result: OpenableTurnResult): void => {
+    if (
+      result.kind === 'html' &&
+      htmlPreview &&
+      previewPath &&
+      pathsReferToSameFile(result.path, previewPath)
+    ) {
+      htmlPreview.onOpen()
+      return
+    }
+    onOpenWorkspaceFile?.(result.path)
+  }
 
   return (
     <section className="ds-turn-change-summary ds-card-strong overflow-hidden rounded-[14px] border border-ds-border shadow-[0_16px_40px_rgba(86,103,136,0.08)]">
-      {primaryMarkdownPath ? (
-        <div className="border-b border-ds-border-muted/70 bg-gradient-to-b from-ds-card-muted/30 to-transparent px-4 py-3">
-          <div className="relative flex items-center gap-3 overflow-hidden rounded-[12px] border border-ds-border bg-ds-elevated/90 py-2.5 pl-3.5 pr-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
-            <span
-              aria-hidden
-              className="absolute inset-y-2 left-0 w-[3px] rounded-full bg-accent/70"
-            />
-            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[11px] bg-accent/10 text-accent">
-              <FileText className="h-4 w-4" strokeWidth={1.9} />
-            </span>
-            <div className="min-w-0 flex-1">
-              <div className="truncate text-[13.5px] font-semibold tracking-[-0.01em] text-ds-ink">
-                {primaryMarkdownLabel}
-              </div>
-              <div className="mt-0.5 truncate text-[11.5px] text-ds-muted">
-                {t('turnMarkdownResultHint')}
-              </div>
-            </div>
-            {onOpenWorkspaceFile ? (
-              <button
-                type="button"
-                onClick={(event) => {
-                  event.stopPropagation()
-                  onOpenWorkspaceFile(primaryMarkdownPath)
-                }}
-                className="inline-flex h-8 shrink-0 items-center justify-center rounded-full bg-accent px-3.5 text-[12.5px] font-semibold text-white shadow-[0_8px_18px_rgba(0,136,255,0.2)] transition hover:brightness-110 active:scale-[0.97]"
-                title={t('turnMarkdownResultOpen')}
-              >
-                {t('turnMarkdownResultOpen')}
-              </button>
-            ) : null}
-          </div>
-        </div>
-      ) : null}
-
       <button
         type="button"
         onClick={() => {
@@ -1387,47 +1350,65 @@ function TurnChangeSummary({
             ? changes.map((change, index) => {
             const stats = fileStats[index]
             const open = activeId === change.id
-            const primary = change.filePath ?? t('toolActionFile')
-            const isPreviewTarget =
-              Boolean(nestedPreviewPath) &&
-              Boolean(change.filePath) &&
-              pathsReferToSameFile(change.filePath!, nestedPreviewPath)
+            const filePath = change.filePath?.trim() ?? ''
+            const primary = filePath || t('toolActionFile')
+            const canOpenFile = Boolean(onOpenWorkspaceFile && filePath)
+            const isHtmlFile = Boolean(filePath && isHtmlPreviewPath(filePath))
 
             return (
               <div key={change.id} className="border-b border-ds-border-muted/60 last:border-b-0">
-                <button
-                  type="button"
-                  onClick={() => setActiveId(open ? null : change.id)}
-                  aria-expanded={open}
-                  className={`flex w-full items-start gap-3 px-5 py-3 text-left transition ${
+                <div
+                  className={`flex w-full items-start gap-3 px-5 py-3 ${
                     open ? 'bg-ds-hover/45' : 'hover:bg-ds-hover/35'
                   }`}
                 >
-                  <span className="min-w-0 flex-1">
-                    <span className="flex min-w-0 items-center gap-2">
-                      <span className="ds-turn-change-summary__path block break-all text-[14px] font-medium text-ds-ink">
-                        {primary}
-                      </span>
-                      {isPreviewTarget ? (
-                        <span className="inline-flex shrink-0 items-center gap-1 rounded-md bg-amber-500/10 px-1.5 py-0.5 text-[10.5px] font-medium text-amber-700 dark:text-amber-300">
-                          <Globe2 className="h-3 w-3" strokeWidth={2} />
-                          HTML
+                  {canOpenFile ? (
+                    <button
+                      type="button"
+                      onClick={() => onOpenWorkspaceFile?.(filePath)}
+                      title={t('turnMarkdownResultOpen')}
+                      className="min-w-0 flex-1 text-left"
+                    >
+                      <span className="flex min-w-0 items-center gap-2">
+                        <span className="ds-turn-change-summary__path block break-all text-[14px] font-medium text-ds-ink">
+                          {primary}
                         </span>
-                      ) : null}
-                    </span>
-                  </span>
-                  {stats ? (
-                    <span className="shrink-0 text-[12px] tabular-nums">
-                      <span className="text-ds-diff-added">+{stats.added}</span>
-                      <span className="ml-1.5 text-ds-diff-removed">-{stats.removed}</span>
-                    </span>
-                  ) : null}
-                  {open ? (
-                    <ChevronDown className="mt-0.5 h-4 w-4 shrink-0 text-ds-faint" strokeWidth={1.8} />
+                        {isHtmlFile ? (
+                          <span className="inline-flex shrink-0 items-center gap-1 rounded-md bg-amber-500/10 px-1.5 py-0.5 text-[10.5px] font-medium text-amber-700 dark:text-amber-300">
+                            <Globe2 className="h-3 w-3" strokeWidth={2} />
+                            HTML
+                          </span>
+                        ) : null}
+                      </span>
+                    </button>
                   ) : (
-                    <ChevronRight className="mt-0.5 h-4 w-4 shrink-0 text-ds-faint" strokeWidth={1.8} />
+                    <span className="min-w-0 flex-1">
+                      <span className="flex min-w-0 items-center gap-2">
+                        <span className="ds-turn-change-summary__path block break-all text-[14px] font-medium text-ds-ink">
+                          {primary}
+                        </span>
+                      </span>
+                    </span>
                   )}
-                </button>
+                  <button
+                    type="button"
+                    onClick={() => setActiveId(open ? null : change.id)}
+                    aria-expanded={open}
+                    className="flex shrink-0 items-start gap-3 text-left"
+                  >
+                    {stats ? (
+                      <span className="shrink-0 text-[12px] tabular-nums">
+                        <span className="text-ds-diff-added">+{stats.added}</span>
+                        <span className="ml-1.5 text-ds-diff-removed">-{stats.removed}</span>
+                      </span>
+                    ) : null}
+                    {open ? (
+                      <ChevronDown className="mt-0.5 h-4 w-4 shrink-0 text-ds-faint" strokeWidth={1.8} />
+                    ) : (
+                      <ChevronRight className="mt-0.5 h-4 w-4 shrink-0 text-ds-faint" strokeWidth={1.8} />
+                    )}
+                  </button>
+                </div>
 
                 {open && change.detail ? (
                   <div className="bg-ds-card-muted/45 px-4 pb-4 pt-1">
@@ -1446,39 +1427,112 @@ function TurnChangeSummary({
         </div>
       ) : null}
 
-      {nestedHtmlPreview && nestedPreviewPath ? (
+      {openableResults.length > 0 ? (
         <div className="border-t border-ds-border-muted/70 bg-gradient-to-b from-ds-card-muted/25 to-transparent px-4 py-3">
-          <div className="relative flex items-center gap-3 overflow-hidden rounded-[12px] border border-amber-500/15 bg-ds-elevated/85 py-2.5 pl-3.5 pr-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] dark:border-amber-300/15 dark:bg-white/[0.035]">
-            <span
-              aria-hidden
-              className="absolute inset-y-2 left-0 w-[3px] rounded-full bg-amber-500/70 dark:bg-amber-300/60"
-            />
-            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[11px] bg-amber-500/10 text-amber-600 dark:bg-amber-300/10 dark:text-amber-300">
-              <Globe2 className="h-4 w-4" strokeWidth={1.9} />
-            </span>
-            <div className="min-w-0 flex-1">
-              <div className="truncate text-[13.5px] font-semibold tracking-[-0.01em] text-ds-ink">
-                {previewLabel}
-              </div>
-              <div className="mt-0.5 truncate text-[11.5px] text-ds-muted">
-                {t('htmlPreviewNestedHint')}
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={(event) => {
-                event.stopPropagation()
-                nestedHtmlPreview.onOpen()
-              }}
-              className="inline-flex h-8 shrink-0 items-center justify-center rounded-full bg-accent px-3.5 text-[12.5px] font-semibold text-white shadow-[0_8px_18px_rgba(0,136,255,0.2)] transition hover:brightness-110 active:scale-[0.97]"
-              title={t('htmlPreviewCardOpen')}
-            >
-              {t('htmlPreviewCardOpen')}
-            </button>
+          <div className={compactOpenable ? 'flex flex-col gap-1' : undefined}>
+            {openableResults.map((result) => (
+              <TurnOpenableResultRow
+                key={result.path}
+                result={result}
+                compact={compactOpenable}
+                onOpen={() => openTurnResult(result)}
+              />
+            ))}
           </div>
         </div>
       ) : null}
     </section>
+  )
+}
+
+function TurnOpenableResultRow({
+  result,
+  compact,
+  onOpen
+}: {
+  result: OpenableTurnResult
+  compact: boolean
+  onOpen: () => void
+}): ReactElement {
+  const { t } = useTranslation('common')
+  const label = formatHtmlPreviewPathLabel(result.path)
+  const isHtml = result.kind === 'html'
+  const openLabel = isHtml ? t('htmlPreviewCardOpen') : t('turnMarkdownResultOpen')
+  const hint = isHtml ? t('htmlPreviewNestedHint') : t('turnMarkdownResultHint')
+
+  if (compact) {
+    return (
+      <div className="flex items-center gap-3 py-1.5">
+        <span
+          className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-[10px] ${
+            isHtml
+              ? 'bg-amber-500/10 text-amber-600 dark:bg-amber-300/10 dark:text-amber-300'
+              : 'bg-accent/10 text-accent'
+          }`}
+        >
+          {isHtml ? (
+            <Globe2 className="h-4 w-4" strokeWidth={1.9} />
+          ) : (
+            <FileText className="h-4 w-4" strokeWidth={1.9} />
+          )}
+        </span>
+        <div className="min-w-0 flex-1 truncate text-[13.5px] font-semibold tracking-[-0.01em] text-ds-ink">
+          {label}
+        </div>
+        <button
+          type="button"
+          onClick={onOpen}
+          className="inline-flex h-8 shrink-0 items-center justify-center rounded-full bg-accent px-3.5 text-[12.5px] font-semibold text-white shadow-[0_8px_18px_rgba(0,136,255,0.2)] transition hover:brightness-110 active:scale-[0.97]"
+          title={openLabel}
+        >
+          {openLabel}
+        </button>
+      </div>
+    )
+  }
+
+  return (
+    <div
+      className={`relative flex items-center gap-3 overflow-hidden rounded-[12px] border bg-ds-elevated/90 py-2.5 pl-3.5 pr-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] ${
+        isHtml
+          ? 'border-amber-500/15 dark:border-amber-300/15 dark:bg-white/[0.035]'
+          : 'border-ds-border'
+      }`}
+    >
+      <span
+        aria-hidden
+        className={`absolute inset-y-2 left-0 w-[3px] rounded-full ${
+          isHtml ? 'bg-amber-500/70 dark:bg-amber-300/60' : 'bg-accent/70'
+        }`}
+      />
+      <span
+        className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-[11px] ${
+          isHtml
+            ? 'bg-amber-500/10 text-amber-600 dark:bg-amber-300/10 dark:text-amber-300'
+            : 'bg-accent/10 text-accent'
+        }`}
+      >
+        {isHtml ? (
+          <Globe2 className="h-4 w-4" strokeWidth={1.9} />
+        ) : (
+          <FileText className="h-4 w-4" strokeWidth={1.9} />
+        )}
+      </span>
+      <div className="min-w-0 flex-1">
+        <div className="truncate text-[13.5px] font-semibold tracking-[-0.01em] text-ds-ink">
+          {label}
+        </div>
+        <div className="mt-0.5 truncate text-[11.5px] text-ds-muted">{hint}</div>
+      </div>
+      <button
+        type="button"
+        onClick={onOpen}
+        className="inline-flex h-8 shrink-0 items-center justify-center rounded-full bg-accent px-3.5 text-[12.5px] font-semibold text-white shadow-[0_8px_18px_rgba(0,136,255,0.2)] transition hover:brightness-110 active:scale-[0.97]"
+        title={openLabel}
+      >
+        {openLabel}
+      </button>
+    </div>
   )
 }
 

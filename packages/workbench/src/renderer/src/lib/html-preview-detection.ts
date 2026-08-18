@@ -91,6 +91,59 @@ function markdownRank(path: string): number {
   return 1
 }
 
+export type OpenableTurnResultKind = 'markdown' | 'html'
+
+export type OpenableTurnResult = {
+  path: string
+  kind: OpenableTurnResultKind
+}
+
+const MAX_OPENABLE_TURN_RESULTS = 4
+
+function resultRank(path: string, kind: OpenableTurnResultKind): number {
+  if (kind === 'html') return 3
+  return markdownRank(path)
+}
+
+function pathKey(path: string): string {
+  return path.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
+}
+
+/**
+ * Openable artifacts from a turn's file_change list: `.md` / `.mdx` / `.html`.
+ * Prefers HTML and report/research_* names; later writes win ties. Caps at 4.
+ */
+export function selectOpenableTurnResults(changes: ToolBlock[]): OpenableTurnResult[] {
+  const latestByKey = new Map<
+    string,
+    { path: string; kind: OpenableTurnResultKind; rank: number; index: number }
+  >()
+
+  for (let i = 0; i < changes.length; i += 1) {
+    const change = changes[i]!
+    if (change.status === 'error') continue
+    const path = change.filePath?.trim()
+    if (!path || isRemoteUrlPath(path)) continue
+    const kind: OpenableTurnResultKind | null = isHtmlPreviewPath(path)
+      ? 'html'
+      : isMarkdownPath(path)
+        ? 'markdown'
+        : null
+    if (!kind) continue
+    latestByKey.set(pathKey(path), {
+      path,
+      kind,
+      rank: resultRank(path, kind),
+      index: i
+    })
+  }
+
+  return [...latestByKey.values()]
+    .sort((a, b) => (b.rank !== a.rank ? b.rank - a.rank : b.index - a.index))
+    .slice(0, MAX_OPENABLE_TURN_RESULTS)
+    .map(({ path, kind }) => ({ path, kind }))
+}
+
 /**
  * Pick the primary Markdown write from a turn's file_change list.
  * Prefers report/research_* names; otherwise the last successful `.md` write.

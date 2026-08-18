@@ -4,6 +4,7 @@ import {
   extractLatestTurnHtmlPreviewPaths,
   formatHtmlPreviewPathLabel,
   isRemoteUrlPath,
+  selectOpenableTurnResults,
   selectPrimaryMarkdownResult
 } from './html-preview-detection'
 
@@ -152,6 +153,122 @@ describe('selectPrimaryMarkdownResult', () => {
       }
     ]
     expect(selectPrimaryMarkdownResult(changes)?.filePath).toBe('summary.md')
+  })
+})
+
+describe('selectOpenableTurnResults', () => {
+  it('includes markdown and html, skips source edits', () => {
+    const changes: ToolBlock[] = [
+      {
+        kind: 'tool',
+        id: 't1',
+        toolKind: 'file_change',
+        status: 'success',
+        summary: 'code',
+        filePath: 'src/app.ts'
+      },
+      {
+        kind: 'tool',
+        id: 't2',
+        toolKind: 'file_change',
+        status: 'success',
+        summary: 'note',
+        filePath: 'random-note.md'
+      },
+      {
+        kind: 'tool',
+        id: 't3',
+        toolKind: 'file_change',
+        status: 'success',
+        summary: 'page',
+        filePath: 'out/index.html'
+      }
+    ]
+    expect(selectOpenableTurnResults(changes)).toEqual([
+      { path: 'out/index.html', kind: 'html' },
+      { path: 'random-note.md', kind: 'markdown' }
+    ])
+  })
+
+  it('prefers report names and later writes, caps at 4', () => {
+    const changes: ToolBlock[] = [
+      {
+        kind: 'tool',
+        id: 't1',
+        toolKind: 'file_change',
+        status: 'success',
+        summary: 'a',
+        filePath: 'a.md'
+      },
+      {
+        kind: 'tool',
+        id: 't2',
+        toolKind: 'file_change',
+        status: 'success',
+        summary: 'b',
+        filePath: 'b.md'
+      },
+      {
+        kind: 'tool',
+        id: 't3',
+        toolKind: 'file_change',
+        status: 'success',
+        summary: 'c',
+        filePath: 'c.md'
+      },
+      {
+        kind: 'tool',
+        id: 't4',
+        toolKind: 'file_change',
+        status: 'success',
+        summary: 'report',
+        filePath: 'research_report.md'
+      },
+      {
+        kind: 'tool',
+        id: 't5',
+        toolKind: 'file_change',
+        status: 'success',
+        summary: 'd',
+        filePath: 'd.md'
+      },
+      {
+        kind: 'tool',
+        id: 't6',
+        toolKind: 'file_change',
+        status: 'success',
+        summary: 'rewrite',
+        filePath: 'a.md'
+      }
+    ]
+    expect(selectOpenableTurnResults(changes).map((item) => item.path)).toEqual([
+      'research_report.md',
+      'a.md',
+      'd.md',
+      'c.md'
+    ])
+  })
+
+  it('skips failed writes and remote html urls', () => {
+    const changes: ToolBlock[] = [
+      {
+        kind: 'tool',
+        id: 't1',
+        toolKind: 'file_change',
+        status: 'error',
+        summary: 'fail',
+        filePath: 'broken.md'
+      },
+      {
+        kind: 'tool',
+        id: 't2',
+        toolKind: 'file_change',
+        status: 'success',
+        summary: 'remote',
+        filePath: 'https://example.com/a.html'
+      }
+    ]
+    expect(selectOpenableTurnResults(changes)).toEqual([])
   })
 })
 
