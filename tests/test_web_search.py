@@ -2,7 +2,13 @@ from __future__ import annotations
 
 import pytest
 
-from deepseek_tui.tools.web import WebSearchTool, _merge_hits, _normalize_url, _SearchHit
+from deepseek_tui.tools.web import (
+    WebSearchTool,
+    _looks_like_search_key_failure,
+    _merge_hits,
+    _normalize_url,
+    _SearchHit,
+)
 
 
 def test_normalize_url_strips_www_and_trailing_slash() -> None:
@@ -262,8 +268,65 @@ async def test_web_search_respects_providers_list(monkeypatch: pytest.MonkeyPatc
 @pytest.mark.asyncio
 async def test_web_search_empty_providers_fails() -> None:
     tool = WebSearchTool(providers=[])
-    with pytest.raises(Exception, match="no providers enabled"):
+    with pytest.raises(Exception, match="no providers enabled") as excinfo:
         await tool.execute({"query": "x"}, context=object())  # type: ignore[arg-type]
+    assert "mcp_*bing*" in str(excinfo.value)
+
+
+@pytest.mark.asyncio
+async def test_web_search_key_error_points_to_bing_mcp() -> None:
+    tool = WebSearchTool(tavily_api_key="", providers=["tavily"])
+    with pytest.raises(Exception, match="tavily_api_key is missing") as excinfo:
+        await tool.execute({"query": "x"}, context=object())  # type: ignore[arg-type]
+    assert "mcp_*bing*" in str(excinfo.value)
+
+
+@pytest.mark.asyncio
+async def test_web_search_no_results_does_not_mention_bing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_anysearch(
+        _client: object,
+        *,
+        query: str,
+        max_results: int,
+        api_key: str | None,
+    ) -> list[_SearchHit]:
+        return []
+
+    monkeypatch.setattr("deepseek_tui.tools.web._search_anysearch", fake_anysearch)
+
+    class _FakeClient:
+        async def __aenter__(self) -> _FakeClient:
+            return self
+
+        async def __aexit__(self, *args: object) -> None:
+            return None
+
+    monkeypatch.setattr(
+        "deepseek_tui.tools.web.httpx.AsyncClient",
+        lambda **_kwargs: _FakeClient(),
+    )
+
+    tool = WebSearchTool(providers=["anysearch"])
+    with pytest.raises(Exception, match="no results") as excinfo:
+        await tool.execute({"query": "x"}, context=object())  # type: ignore[arg-type]
+    assert "mcp_*bing*" not in str(excinfo.value)
+
+
+def test_web_search_description_mentions_bing_fallback() -> None:
+    tool = WebSearchTool(
+        tavily_api_key="tv",
+        anysearch_api_key="as",
+        providers=["anysearch", "tavily"],
+    )
+    assert "mcp_*bing*" in tool.description()
+
+
+def test_looks_like_search_key_failure() -> None:
+    assert _looks_like_search_key_failure("tavily: tavily_api_key is missing")
+    assert _looks_like_search_key_failure("anysearch: AnySearch API returned 401: bad key")
+    assert not _looks_like_search_key_failure("anysearch: no results")
 
 
 @pytest.mark.asyncio

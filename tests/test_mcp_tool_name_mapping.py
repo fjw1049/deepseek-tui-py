@@ -8,9 +8,6 @@ no entry.
 
 from __future__ import annotations
 
-import json
-from pathlib import Path
-
 import pytest
 
 from deepseek_tui.mcp.client import parse_qualified_tool_name, qualify_tool_name
@@ -31,37 +28,11 @@ def test_parse_fallback_is_ambiguous_for_underscore_server() -> None:
     )
 
 
-@pytest.fixture
-def config_path(tmp_path: Path) -> Path:
-    path = tmp_path / "mcp.json"
-    path.write_text(
-        json.dumps(
-            {"servers": {"my_server": {"command": "echo", "enabled": True}}}
-        ),
-        encoding="utf-8",
-    )
-    return path
-
-
-def test_cached_tool_map_survives_disk_roundtrip(config_path: Path) -> None:
+def test_cached_tool_map_resolves_underscore_server() -> None:
     qualified = qualify_tool_name("my_server", "do_thing")
-    mgr = McpManager(config_path=config_path)
-    mgr._tool_map = {qualified: ("my_server", "do_thing")}
-    mgr._cached_tool_map = dict(mgr._tool_map)
-    mgr._discovered_tools_cache = [
-        {
-            "type": "function",
-            "function": {"name": qualified, "description": "", "parameters": {}},
-        }
-    ]
-    mgr._persist_discovered_tools_cache_to_disk()
-
-    # A fresh manager reloads the cache + tool map from disk; the rebuilt
-    # mapping must point at the real server, not the mis-parsed "my".
-    fresh = McpManager(config_path=config_path)
-    assert fresh._discovered_tools_cache is not None
-    fresh._rebuild_tool_map_from_cache()
-    assert fresh._tool_map[qualified] == ("my_server", "do_thing")
+    mgr = McpManager([])
+    mgr._cached_tool_map = {qualified: ("my_server", "do_thing")}
+    assert mgr._resolve_qualified(qualified) == ("my_server", "do_thing")
 
 
 def test_rebuild_falls_back_to_parsing_without_cached_map() -> None:

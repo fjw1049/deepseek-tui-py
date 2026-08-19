@@ -90,7 +90,8 @@ def classify_task_error_for_user(error: str) -> str:
         "web_search" in lower and "not configured" in lower
     ):
         return (
-            "网络搜索失败。请检查 ANYSEARCH_API_KEY / TAVILY_API_KEY "
+            "网络搜索失败。可改用默认的 Bing Search 连接器（无需 Tavily/AnySearch key）。"
+            "若仍要走 web_search，请检查 ANYSEARCH_API_KEY / TAVILY_API_KEY "
             "或 config.toml 中的 anysearch_api_key / tavily_api_key 后重启服务。"
         )
 
@@ -270,7 +271,7 @@ You are running a scheduled background task. Follow these rules:
 
 Tool usage:
 1. Available tools: web_search, fetch_url, read_file, grep_files, file_search, exec_shell, load_skill, and any installed MCP tools (mcp_* / list_mcp_resources / read_mcp_resource) already in your tool list.
-2. Prefer installed MCP tools for structured data sources when they match the task; use web_search/fetch_url as fallback.
+2. Prefer installed MCP tools for structured data sources when they match the task; use web_search/fetch_url as fallback. If web_search fails on an AnySearch/Tavily key and a Bing Search MCP tool is in this turn's list (mcp_*bing*), use it. If it is not listed, do not mention MCP or wait for a key.
 3. Use load_skill when a listed skill matches the report format or process.
 4. exec_shell is allowed — prefer short, non-interactive commands; avoid interactive prompts and package installs unless the task requires them.
 5. Do NOT call request_user_input — nobody is watching this run.

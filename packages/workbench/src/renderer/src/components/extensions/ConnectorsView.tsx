@@ -2,7 +2,7 @@ import type { ReactElement } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { FolderOpen, Plus, Search } from 'lucide-react'
-import { withDefaultOnFocusPolicy } from '../../lib/connector-groups'
+import { ensurePresetConnectors, presetConnectorTitle, withInstallLoadPolicy } from '../../lib/connector-groups'
 import {
   listMcpServers,
   mergeMcpServerIntoConfig,
@@ -41,7 +41,7 @@ export function ConnectorsView(): ReactElement {
   const [mcpLoaded, setMcpLoaded] = useState(false)
   // Bumped by the panel-header reload hint to force-refresh the ModelScope
   // market catalog in parallel with the local mcp.json reload (one click
-  // updates 内置 / 已安装 / 市场三个 tab).
+  // updates 默认 / 激活 / 媒体 / 市场四个 tab).
   const [marketRefreshSignal, setMarketRefreshSignal] = useState(0)
   // Serialize mcp.json read-modify-write operations. Without this, concurrent
   // installs from the marketplace (different items, each calling appendMcpServer)
@@ -78,9 +78,23 @@ export function ConnectorsView(): ReactElement {
     void readMcpConfig().catch((e) => setNotice({ tone: 'error', message: e instanceof Error ? e.message : String(e) }))
   }, [mcpLoaded, readMcpConfig])
 
+  useEffect(() => {
+    if (!mcpLoaded || typeof window.dsGui?.setMcpConfigFile !== 'function') return
+    const { changed } = ensurePresetConnectors(mcpConfigText)
+    if (!changed) return
+    void withMcpWriteLock(async () => {
+      const latest = await readMcpConfig()
+      const ensured = ensurePresetConnectors(latest)
+      if (!ensured.changed) return
+      await window.dsGui.setMcpConfigFile(ensured.next)
+      setMcpConfigText(ensured.next)
+      void reloadMcpWithRuntime(readMcpConfig).catch(() => undefined)
+    })
+  }, [mcpLoaded, mcpConfigText, readMcpConfig, withMcpWriteLock])
+
   const reloadMcp = async (): Promise<boolean> => {
     // Bump the market catalog refresh signal alongside the local reload so one
-    // click updates all three tabs (内置 / 已安装 / ModelScope 市场).
+    // click updates all four tabs (默认 / 激活 / 媒体 / 市场).
     setMarketRefreshSignal((n) => n + 1)
     try {
       const result = await reloadMcpWithRuntime(readMcpConfig)
@@ -116,7 +130,7 @@ export function ConnectorsView(): ReactElement {
     const titleById = new Map(MEDIA_CATALOG.map((item) => [item.id, item.title]))
     const userConnectors = listMcpServers(mcpConfigText).map((server) => ({
       id: server.id,
-      name: titleById.get(server.id) ?? server.id,
+      name: titleById.get(server.id) ?? presetConnectorTitle(server.id) ?? server.id,
       summary: server.summary,
       enabled: server.enabled,
       loadPolicy: server.loadPolicy,
@@ -142,8 +156,8 @@ export function ConnectorsView(): ReactElement {
           setNotice({ tone: 'info', message: t('pluginAlreadyAdded') })
           return
         }
-        // ModelScope / manual installs default to on_focus (not progressive).
-        const next = mergeMcpServerIntoConfig(content, id, withDefaultOnFocusPolicy(entry))
+        // Marketplace / manual installs default to on_focus; Bing stays progressive.
+        const next = mergeMcpServerIntoConfig(content, id, withInstallLoadPolicy(id, entry))
         const result = await window.dsGui.setMcpConfigFile(next)
         setMcpConfigText(next)
         setMcpLoaded(true)

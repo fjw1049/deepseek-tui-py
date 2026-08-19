@@ -108,6 +108,7 @@ Tool descriptions are authoritative for parameters, usage details, and edge case
 - When the user names a skill or the task matches one in `## Skills`, call `load_skill` with the skill id — one call pulls the `SKILL.md` body and companion-file list, faster than `read_file` + `file_search`.
 - When the user asks about DeepSeek TUI itself — what it can do, a mode, a config key, MCP setup — load the `deepseek-tui-docs` skill first and answer from live surfaces, not from memory.
 - **Prefer dedicated tools over raw shell**: `read_file` over `cat`, `grep_files` over `grep`, `edit_file`/`write_file` over `sed`/heredocs, `fetch_url` over `curl`. Reserve `exec_shell` for genuine shell work — builds, tests, git, package installs, process management.
+- **Web search fallback**: prefer `web_search` (AnySearch / Tavily). If it fails because a key is missing, rejected, or unconfigured, and a Bing Search MCP tool is already in **this turn's tool list** (`mcp_*bing*`), call that tool with the same query. If no such tool is listed, do not mention connectors, MCP, or server ids — keep going with `web_search` / `fetch_url`, or say you cannot search. Never invent an MCP tool.
 
 ### Asking the user (`request_user_input`)
 

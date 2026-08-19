@@ -13,8 +13,8 @@ DEFAULT_TIMEOUTS: dict[str, float] = {
     "read_timeout": 120.0,
 }
 
-# progressive — startup preload + catalog + tool_search (default / 已安装)
-# on_focus — never preload or progressive-search; only after ``@connector``
+# progressive — startup preload + catalog + tool_search (默认)
+# on_focus — never preload or progressive-search; only after ``@connector`` (激活)
 LOAD_POLICY_PROGRESSIVE = "progressive"
 LOAD_POLICY_ON_FOCUS = "on_focus"
 VALID_LOAD_POLICIES = frozenset({LOAD_POLICY_PROGRESSIVE, LOAD_POLICY_ON_FOCUS})

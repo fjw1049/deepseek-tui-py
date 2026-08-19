@@ -1,5 +1,5 @@
 import { MEDIA_CATALOG } from '../components/extensions/media-catalog'
-import { classifyConnector, type ConnectorGroup } from './connector-groups'
+import { classifyConnector, presetConnectorTitle, type ConnectorGroup } from './connector-groups'
 import {
   listMcpServers,
   normalizeMcpLoadPolicy,
@@ -33,7 +33,7 @@ type RuntimeServer = {
 export type BuildComposerConnectorRowsInput = {
   /** Live runtime `/v1/mcp/servers` (connection dots). */
   runtimeServers?: RuntimeServer[]
-  /** Disk `mcp.json` — source of truth for 自带 / 已激活. */
+  /** Disk `mcp.json` — source of truth for 默认 / 激活. */
   diskServers?: McpServerSummary[]
 }
 
@@ -44,7 +44,7 @@ export function mediaConnectorTitle(id: string): string | null {
 }
 
 /**
- * Build 自带 / 已激活 rows from mcp.json (+ runtime connection dots).
+ * Build 默认 / 激活 rows from mcp.json (+ runtime connection dots).
  * Unconfigured media catalog stubs are not listed — configure under Connectors → Media.
  */
 export function buildComposerConnectorRows(
@@ -65,11 +65,11 @@ export function buildComposerConnectorRows(
     const runtime = runtimeByName.get(disk.id)
     const loadPolicy = normalizeMcpLoadPolicy(disk.loadPolicy)
     const media = MEDIA_BY_ID.get(disk.id)
-    const section = classifyConnector(disk.id)
+    const section = classifyConnector(disk.id, loadPolicy)
 
     byId.set(disk.id, {
       id: disk.id,
-      title: media?.title ?? disk.id,
+      title: media?.title ?? presetConnectorTitle(disk.id) ?? disk.id,
       summary: media?.description ?? disk.summary,
       connected: runtime?.connected === true,
       enabled: true,
@@ -87,18 +87,18 @@ export function buildComposerConnectorRows(
     const loadPolicy = s.load_policy === 'on_focus' ? 'on_focus' : 'progressive'
     byId.set(s.name, {
       id: s.name,
-      title: media?.title ?? s.name,
+      title: media?.title ?? presetConnectorTitle(s.name) ?? s.name,
       summary: media?.description ?? s.transport ?? '',
       connected: s.connected === true,
       enabled: true,
       loadPolicy,
-      section: classifyConnector(s.name),
+      section: classifyConnector(s.name, loadPolicy),
       needsConfig: false
     })
   }
 
   return [...byId.values()].sort((a, b) => {
-    if (a.section !== b.section) return a.section === 'builtin' ? -1 : 1
+    if (a.section !== b.section) return a.section === 'default' ? -1 : 1
     return a.title.localeCompare(b.title, 'zh')
   })
 }
@@ -113,17 +113,14 @@ export function diskServersFromMcpConfig(raw: string): McpServerSummary[] {
 
 export function filterComposerConnectorRows(
   rows: ComposerConnectorRow[],
-  section: ComposerConnectorSection,
   query: string
 ): ComposerConnectorRow[] {
   const q = query.trim().toLowerCase()
-  return rows.filter((c) => {
-    if (c.section !== section) return false
-    if (!q) return true
-    return (
+  if (!q) return rows
+  return rows.filter(
+    (c) =>
       c.id.toLowerCase().includes(q) ||
       c.title.toLowerCase().includes(q) ||
       c.summary.toLowerCase().includes(q)
-    )
-  })
+  )
 }

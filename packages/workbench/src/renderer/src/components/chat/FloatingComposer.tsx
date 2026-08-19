@@ -83,8 +83,7 @@ import {
   diskServersFromMcpConfig,
   filterComposerConnectorRows,
   mediaConnectorTitle,
-  type ComposerConnectorRow,
-  type ComposerConnectorSection
+  type ComposerConnectorRow
 } from '../../lib/composer-connectors'
 import type { PreviewElementPick } from '../../lib/preview-element-picker'
 import {
@@ -326,7 +325,6 @@ export function FloatingComposer({
   const [connectorsLoading, setConnectorsLoading] = useState(false)
   const [connectorsLoaded, setConnectorsLoaded] = useState(false)
   const [connectorQuery, setConnectorQuery] = useState('')
-  const [connectorSection, setConnectorSection] = useState<ComposerConnectorSection>('builtin')
   const [attachNotice, setAttachNotice] = useState<Notice | null>(null)
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([])
   // Simulated-upload interval handles keyed by attachment id, cleared on remove,
@@ -360,8 +358,8 @@ export function FloatingComposer({
     )
   }, [composerSkills, skillQuery])
   const filteredConnectors = useMemo(
-    () => filterComposerConnectorRows(composerConnectors, connectorSection, connectorQuery),
-    [composerConnectors, connectorQuery, connectorSection]
+    () => filterComposerConnectorRows(composerConnectors, connectorQuery),
+    [composerConnectors, connectorQuery]
   )
   const filteredPlugins = useMemo(() => {
     const q = pluginQuery.trim().toLowerCase()
@@ -783,7 +781,6 @@ export function FloatingComposer({
       setPlusSubmenu(null)
       setSkillQuery('')
       setConnectorQuery('')
-      setConnectorSection('builtin')
       setPluginQuery('')
     }
   }, [plusMenuOpen])
@@ -2089,28 +2086,6 @@ export function FloatingComposer({
                           : "ds-composer-plus-flyout ds-glass absolute bottom-0 left-full ml-2 flex max-h-[min(420px,52vh)] w-[300px] flex-col overflow-hidden rounded-2xl p-2 before:absolute before:inset-y-0 before:-left-2 before:w-2 before:content-['']"
                       }
                     >
-                      <div className="mb-2 flex shrink-0 gap-1 rounded-xl bg-ds-subtle/70 p-0.5">
-                        {(
-                          [
-                            ['builtin', t('connectorSectionBuiltin')],
-                            ['activated', t('connectorSectionActivated')]
-                          ] as const
-                        ).map(([value, label]) => (
-                          <button
-                            key={value}
-                            type="button"
-                            onMouseDown={(event) => event.preventDefault()}
-                            onClick={() => setConnectorSection(value)}
-                            className={`min-w-0 flex-1 rounded-[10px] px-2 py-1.5 text-[12px] font-semibold transition ${
-                              connectorSection === value
-                                ? 'bg-ds-card text-ds-ink shadow-sm'
-                                : 'text-ds-muted hover:text-ds-ink'
-                            }`}
-                          >
-                            {label}
-                          </button>
-                        ))}
-                      </div>
                       <div className="mb-2 flex shrink-0 items-center gap-2 rounded-xl border border-ds-border bg-ds-card px-2.5 py-1.5">
                         <Search className="h-4 w-4 shrink-0 text-ds-faint" strokeWidth={1.8} />
                         <input
@@ -2145,11 +2120,9 @@ export function FloatingComposer({
                           </div>
                         ) : filteredConnectors.length === 0 ? (
                           <div className="px-1.5 py-3 text-[12px] text-ds-faint">
-                            {connectorSection === 'activated'
-                              ? t('connectorSectionActivatedEmpty')
-                              : !runtimeReady
-                                ? t('composerConnectorsNeedRuntime')
-                                : t('connectorSectionBuiltinEmpty')}
+                            {!runtimeReady
+                              ? t('composerConnectorsNeedRuntime')
+                              : t('composerConnectorsEmpty')}
                           </div>
                         ) : (
                           filteredConnectors.map((connector, index) => {
@@ -2162,9 +2135,11 @@ export function FloatingComposer({
                                 data-plus-highlight={index === plusNav.highlighted ? 'true' : undefined}
                                 title={
                                   selectable
-                                    ? connector.loadPolicy === 'on_focus'
-                                      ? t('composerConnectorOnFocusHint')
-                                      : undefined
+                                    ? connector.connected
+                                      ? undefined
+                                      : connector.loadPolicy === 'on_focus'
+                                        ? t('composerConnectorOnFocusHint')
+                                        : t('composerConnectorConnectingHint')
                                     : t('composerConnectorDisconnected', { name: connector.title })
                                 }
                                 onMouseDown={(event) => event.preventDefault()}
@@ -2182,24 +2157,25 @@ export function FloatingComposer({
                                     : 'cursor-not-allowed opacity-40'
                                 }`}
                               >
-                                <div className="flex items-center gap-2 text-[13px] font-medium text-ds-ink">
+                                <div className="flex items-start gap-2 text-[13px] font-medium text-ds-ink">
                                   <span
-                                    className={`h-2 w-2 shrink-0 rounded-full ${
+                                    className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${
                                       connector.connected
                                         ? 'bg-emerald-500'
-                                        : connector.loadPolicy === 'on_focus'
+                                        : connector.section === 'default' ||
+                                            connector.loadPolicy === 'on_focus'
                                           ? 'bg-amber-400'
                                           : 'bg-red-500'
                                     }`}
                                     aria-hidden
                                   />
-                                  <Plug className="h-4 w-4 shrink-0" strokeWidth={1.8} />
-                                  <span className="truncate">{connector.title}</span>
-                                  {connector.loadPolicy === 'on_focus' ? (
-                                    <span className="shrink-0 rounded-full bg-ds-subtle px-1.5 py-0.5 text-[10px] font-medium text-ds-muted">
-                                      {t('composerConnectorOnFocusHint')}
-                                    </span>
-                                  ) : null}
+                                  <Plug className="mt-0.5 h-4 w-4 shrink-0" strokeWidth={1.8} />
+                                  <span className="min-w-0 flex-1 truncate">{connector.title}</span>
+                                  <span className="mt-0.5 shrink-0 rounded-full bg-ds-subtle px-1.5 py-0.5 text-[10px] font-medium text-ds-muted">
+                                    {connector.section === 'default'
+                                      ? t('connectorTabDefault')
+                                      : t('connectorTabActivated')}
+                                  </span>
                                 </div>
                                 <div className="mt-0.5 line-clamp-2 pl-[26px] text-[11px] leading-4 text-ds-faint">
                                   {connector.summary || connector.id}

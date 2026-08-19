@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { classifyConnector, withDefaultOnFocusPolicy } from './connector-groups'
+import {
+  classifyConnector,
+  ensurePresetConnectors,
+  withDefaultOnFocusPolicy
+} from './connector-groups'
 import {
   buildComposerConnectorRows,
   diskServersFromMcpConfig,
@@ -8,10 +12,17 @@ import {
 } from './composer-connectors'
 
 describe('connector-groups', () => {
-  it('classifies yahoo as builtin and others as activated', () => {
-    expect(classifyConnector('yahoo-finance')).toBe('builtin')
+  it('classifies bing as default and yahoo as activated', () => {
+    expect(classifyConnector('bing-search')).toBe('default')
+    expect(classifyConnector('bing-cn-mcp-server')).toBe('default')
+    expect(classifyConnector('yahoo-finance')).toBe('activated')
     expect(classifyConnector('tikhub-zhihu')).toBe('activated')
     expect(classifyConnector('some-market-mcp')).toBe('activated')
+  })
+
+  it('puts explicit progressive servers under default', () => {
+    expect(classifyConnector('custom-search', 'progressive')).toBe('default')
+    expect(classifyConnector('custom-search', 'on_focus')).toBe('activated')
   })
 
   it('defaults missing load_policy to on_focus', () => {
@@ -22,18 +33,57 @@ describe('connector-groups', () => {
       withDefaultOnFocusPolicy({ command: 'npx', load_policy: 'progressive' }).load_policy
     ).toBe('progressive')
   })
+
+  it('seeds bing + yahoo on empty mcp.json', () => {
+    const { next, changed } = ensurePresetConnectors('{\n  "mcpServers": {}\n}\n')
+    expect(changed).toBe(true)
+    const servers = diskServersFromMcpConfig(next)
+    expect(servers.find((s) => s.id === 'bing-search')?.loadPolicy).toBe('progressive')
+    expect(servers.find((s) => s.id === 'yahoo-finance')?.loadPolicy).toBe('on_focus')
+  })
+
+  it('migrates existing bing alias and yahoo policies without duplicating bing', () => {
+    const raw = JSON.stringify({
+      mcpServers: {
+        'bing-cn-mcp-server': {
+          command: 'npx',
+          args: ['bing-cn-mcp'],
+          load_policy: 'on_focus'
+        },
+        'yahoo-finance': {
+          command: 'uvx',
+          args: ['mcp-yahoo-finance'],
+          enabled: true
+        }
+      }
+    })
+    const { next, changed } = ensurePresetConnectors(raw)
+    expect(changed).toBe(true)
+    const servers = diskServersFromMcpConfig(next)
+    expect(servers.map((s) => s.id)).toEqual(['bing-cn-mcp-server', 'yahoo-finance'])
+    expect(servers.find((s) => s.id === 'bing-cn-mcp-server')?.loadPolicy).toBe('progressive')
+    expect(servers.find((s) => s.id === 'yahoo-finance')?.loadPolicy).toBe('on_focus')
+    expect(servers.find((s) => s.id === 'bing-cn-mcp-server')?.summary).toContain('-y')
+  })
 })
 
 describe('composer-connectors', () => {
-  it('puts yahoo under builtin and tikhub under activated', () => {
+  it('puts bing under default and yahoo / tikhub under activated', () => {
     const diskServers = diskServersFromMcpConfig(
       JSON.stringify({
         mcp: {
           servers: {
+            'bing-search': {
+              command: 'npx',
+              args: ['-y', 'bing-cn-mcp'],
+              enabled: true,
+              load_policy: 'progressive'
+            },
             'yahoo-finance': {
               command: 'uvx',
               args: ['mcp-yahoo-finance'],
-              enabled: true
+              enabled: true,
+              load_policy: 'on_focus'
             },
             'tikhub-wechat': {
               command: 'npx',
@@ -52,37 +102,45 @@ describe('composer-connectors', () => {
       runtimeServers: []
     })
 
-    const builtin = filterComposerConnectorRows(rows, 'builtin', '')
-    const activated = filterComposerConnectorRows(rows, 'activated', '')
+    const visible = filterComposerConnectorRows(rows, '')
 
-    expect(builtin.map((r) => r.id)).toEqual(['yahoo-finance'])
-    expect(activated.map((r) => r.id)).toContain('tikhub-wechat')
-    expect(activated.find((r) => r.id === 'tikhub-wechat')?.title).toBe('微信公众号')
+    expect(visible.map((r) => r.id)).toEqual(['bing-search', 'tikhub-wechat', 'yahoo-finance'])
+    expect(visible[0]?.title).toBe('Bing Search')
+    expect(visible[0]?.section).toBe('default')
+    expect(visible.find((r) => r.id === 'tikhub-wechat')?.title).toBe('微信公众号')
+    expect(visible.find((r) => r.id === 'tikhub-wechat')?.section).toBe('activated')
+    expect(visible.find((r) => r.id === 'yahoo-finance')?.title).toBe('Yahoo Finance')
+    expect(visible.find((r) => r.id === 'yahoo-finance')?.section).toBe('activated')
+    expect(filterComposerConnectorRows(rows, 'yahoo').map((r) => r.id)).toEqual(['yahoo-finance'])
   })
 
-  it('merges runtime connected dots onto disk builtin servers', () => {
+  it('merges runtime connected dots onto disk default servers', () => {
     const diskServers = diskServersFromMcpConfig(
       JSON.stringify({
         mcpServers: {
-          'yahoo-finance': { command: 'uvx', args: ['mcp-yahoo-finance'], enabled: true }
+          'bing-search': {
+            command: 'npx',
+            args: ['-y', 'bing-cn-mcp'],
+            enabled: true,
+            load_policy: 'progressive'
+          }
         }
       })
     )
     const rows = buildComposerConnectorRows({
       diskServers,
       runtimeServers: [
-        { name: 'yahoo-finance', enabled: true, connected: true, transport: 'stdio' }
+        { name: 'bing-search', enabled: true, connected: true, transport: 'stdio' }
       ]
     })
-    expect(rows.find((r) => r.id === 'yahoo-finance')?.connected).toBe(true)
-    expect(rows.find((r) => r.id === 'yahoo-finance')?.section).toBe('builtin')
+    expect(rows.find((r) => r.id === 'bing-search')?.connected).toBe(true)
+    expect(rows.find((r) => r.id === 'bing-search')?.section).toBe('default')
   })
 
   it('does not list unconfigured media catalog stubs', () => {
     const rows = buildComposerConnectorRows({ diskServers: [], runtimeServers: [] })
     expect(rows).toEqual([])
-    expect(filterComposerConnectorRows(rows, 'activated', '')).toEqual([])
-    expect(filterComposerConnectorRows(rows, 'builtin', '')).toEqual([])
+    expect(filterComposerConnectorRows(rows, '')).toEqual([])
   })
 
   it('skips disabled disk servers', () => {

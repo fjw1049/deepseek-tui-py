@@ -659,6 +659,7 @@ async def run_http(
     runtime = await AppRuntime.create(
         config=config, working_directory=options.working_directory
     )
+    await runtime.warmup_default_connectors()
     app = build_fastapi_app(
         runtime,
         http_mode=options.http_mode,
@@ -742,6 +743,7 @@ async def run_stdio(
     Method → AppRuntime mapping mirrors the HTTP routes 1:1.
     """
     runtime = await AppRuntime.create(config=config)
+    await runtime.warmup_default_connectors()
     reader = asyncio.StreamReader()
     protocol = asyncio.StreamReaderProtocol(reader)
     loop = asyncio.get_event_loop()

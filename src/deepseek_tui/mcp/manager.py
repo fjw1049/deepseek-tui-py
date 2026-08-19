@@ -216,11 +216,9 @@ class McpManager:
         self._connect_task: asyncio.Task[None] | None = None
         self._discover_inflight: asyncio.Task[list[dict[str, Any]]] | None = None
         self._discover_lock = asyncio.Lock()
-        self._discovered_tools_cache_path: Path | None = None
         self._preload = McpPreloadTracker()
         self._discover_errors: dict[str, str] = {}
-        # on_focus servers: discovered only under @connector; never merged into
-        # the progressive disk cache / tool_search catalog.
+        # on_focus servers: discovered only under @connector.
         self._focus_api_tools: dict[str, list[dict[str, Any]]] = {}
         self._focus_tool_map: dict[str, tuple[str, str]] = {}
         if self._config_path is not None:
@@ -232,15 +230,12 @@ class McpManager:
                 self._configs[cfg.name] = cfg
         if self._config_path is not None and self._config_path.exists():
             self._record_config_fingerprint(self._config_path)
-            self._discovered_tools_cache_path = (
-                self._config_path.parent / "mcp-tools-cache.json"
-            )
-            self._load_discovered_tools_cache_from_disk()
-        if self._discovered_tools_cache is not None:
-            self._preload.mark_ready_from_disk(
-                tools_count=len(self._discovered_tools_cache),
-                enabled_servers=len(self._progressive_enabled_server_names()),
-            )
+            leftover = self._config_path.parent / "mcp-tools-cache.json"
+            if leftover.exists():
+                try:
+                    leftover.unlink()
+                except OSError:
+                    pass
 
     def _enabled_server_names(self) -> list[str]:
         return [name for name, cfg in self._configs.items() if cfg.enabled]
@@ -299,7 +294,7 @@ class McpManager:
 
         Order:
         1. Authoritative tool maps (real ``(server, tool)`` captured at
-           discovery / disk cache) — only source of truth for raw tool names.
+           discovery) — only source of truth for raw tool names.
         2. If a configured server claims the qualified prefix but no map
            entry exists, return ``None`` (fail closed). Never invent a raw
            tool name from the sanitized suffix (``do-thing`` → ``do_thing``).
@@ -386,19 +381,7 @@ class McpManager:
             self._preload.completed_at_ms = None
             self._preload.error = None
         if self._discovered_tools_cache is not None and not force:
-            self._preload.mark_ready_from_disk(
-                tools_count=len(self._discovered_tools_cache),
-                enabled_servers=len(enabled),
-            )
-            logger.info(
-                "mcp_preload_skip tools=%d reason=disk_cache enabled_servers=%d",
-                len(self._discovered_tools_cache),
-                len(enabled),
-            )
-            # Tools served from disk cache without any live connection; warm the
-            # real connections in the background so the connector dots turn
-            # green after a restart without a manual reload.
-            self._schedule_background_connect()
+            self._preload.phase = "ready"
             return
         try:
             loop = asyncio.get_running_loop()
@@ -462,6 +445,19 @@ class McpManager:
         # background so ``is_server_running`` (the connector dot) reflects
         # "usable now" after a restart without a manual reload.
         self._schedule_background_connect()
+
+    async def await_startup_preload(
+        self, timeout_s: float = DEFAULT_PRELOAD_TIMEOUT_S
+    ) -> list[dict[str, Any]]:
+        """Discover progressive MCP tools once at process start."""
+        if self._discovered_tools_cache is not None:
+            return list(self._discovered_tools_cache)
+        task = self._preload._task
+        if task is not None and not task.done():
+            await task
+            return list(self._discovered_tools_cache or [])
+        await self._run_startup_preload(timeout_s)
+        return list(self._discovered_tools_cache or [])
 
     def _schedule_background_connect(self) -> None:
         """Background ``start_all`` so enabled servers hold live connections.
@@ -586,88 +582,6 @@ class McpManager:
             self._stale_cache = self._discovered_tools_cache
         self._discovered_tools_cache = None
 
-    def _load_discovered_tools_cache_from_disk(self) -> None:
-        path = self._discovered_tools_cache_path
-        if path is None or not path.exists() or self._config_hash is None:
-            return
-        try:
-            raw = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError, ValueError):
-            return
-        if not isinstance(raw, dict):
-            return
-        tools = raw.get("tools")
-        if not isinstance(tools, list):
-            return
-        tool_map = raw.get("tool_map")
-        if isinstance(tool_map, dict):
-            self._cached_tool_map = {
-                qualified: (str(pair[0]), str(pair[1]))
-                for qualified, pair in tool_map.items()
-                if isinstance(qualified, str)
-                and isinstance(pair, list)
-                and len(pair) == 2
-            }
-        filtered_tools, filtered_map = self._strip_on_focus_from_cache(tools)
-        self._cached_tool_map = filtered_map
-        if raw.get("config_hash") == self._config_hash:
-            # Fresh cache — use directly.
-            self._discovered_tools_cache = filtered_tools
-        else:
-            # Stale cache (config changed) — serve immediately, refresh later.
-            self._stale_cache = filtered_tools
-
-    def _strip_on_focus_from_cache(
-        self, tools: list[Any]
-    ) -> tuple[list[dict[str, Any]], dict[str, tuple[str, str]]]:
-        """Drop on_focus server tools from a disk cache payload."""
-        kept: list[dict[str, Any]] = []
-        kept_map: dict[str, tuple[str, str]] = {}
-        for entry in tools:
-            if not isinstance(entry, dict):
-                continue
-            fn = entry.get("function", entry)
-            if not isinstance(fn, dict):
-                continue
-            qualified = fn.get("name")
-            if not isinstance(qualified, str):
-                continue
-            mapping = self._cached_tool_map.get(qualified)
-            if mapping is None:
-                # Prefix match against configured servers.
-                server = self._match_configured_server(qualified)
-                if server is not None and self.is_on_focus_server(server):
-                    continue
-                kept.append(entry)
-                continue
-            if self.is_on_focus_server(mapping[0]):
-                continue
-            kept.append(entry)
-            kept_map[qualified] = mapping
-        return kept, kept_map
-
-    def _persist_discovered_tools_cache_to_disk(self) -> None:
-        path = self._discovered_tools_cache_path
-        if (
-            path is None
-            or self._config_hash is None
-            or self._discovered_tools_cache is None
-        ):
-            return
-        try:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            payload = {
-                "config_hash": self._config_hash,
-                "tools": self._discovered_tools_cache,
-                "tool_map": {
-                    qualified: list(pair)
-                    for qualified, pair in self._cached_tool_map.items()
-                },
-            }
-            path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-        except OSError:
-            return
-
     async def reload_if_config_changed(self) -> bool:
         """Lazy reload when config file mtime/content changed."""
         if self._config_path is None or not self._config_path.exists():
@@ -787,7 +701,6 @@ class McpManager:
                 f"MCP server '{name}' is disabled. Enable it in Connectors first."
             )
         if not cfg.is_on_focus:
-            # Progressive path: ensure catalog is warm.
             return await self.discover_tools()
 
         if name in self._focus_api_tools:
@@ -858,8 +771,11 @@ class McpManager:
         return tools
 
     def schedule_background_discover(self) -> None:
-        """Kick off tool discovery without blocking the caller."""
-        if self.cached_tools() is not None or self._discover_inflight is not None:
+        """Kick off tool discovery without blocking the caller.
+
+        In-process cache is enough. Restart always rediscovers.
+        """
+        if self._discovered_tools_cache is not None or self._discover_inflight is not None:
             return
         task = self._preload._task
         if task is not None and not task.done():
@@ -989,7 +905,6 @@ class McpManager:
             for q, m in self._tool_map.items()
             if q not in self._focus_tool_map
         }
-        self._persist_discovered_tools_cache_to_disk()
 
         # Schedule background retry for servers that timed out so their tools
         # become available on subsequent turns without blocking the user now.
@@ -1033,7 +948,6 @@ class McpManager:
         if new_tools and self._discovered_tools_cache is not None:
             self._discovered_tools_cache.extend(new_tools)
             self._discovered_tools_cache.sort(key=lambda t: t["function"]["name"])
-            self._persist_discovered_tools_cache_to_disk()
 
     async def _refresh_cache_in_background(self) -> None:
         """Re-discover tools in background and replace the stale cache.

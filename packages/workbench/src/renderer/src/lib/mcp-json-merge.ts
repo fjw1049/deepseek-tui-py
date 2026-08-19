@@ -298,3 +298,39 @@ export function setMcpServerEnabled(raw: string, serverId: string, enabled: bool
   }
   return `${JSON.stringify(doc, null, 2)}\n`
 }
+
+export function setMcpServerLoadPolicy(
+  raw: string,
+  serverId: string,
+  loadPolicy: McpLoadPolicy
+): string {
+  const doc = parseMcpConfigDocument(raw)
+  const servers = serversTable(doc)
+  const current = asMcpServerEntry(servers[serverId])
+  if (!servers[serverId]) {
+    throw new Error(`MCP server "${serverId}" not found.`)
+  }
+  servers[serverId] = {
+    ...current,
+    load_policy: loadPolicy
+  }
+  return `${JSON.stringify(doc, null, 2)}\n`
+}
+
+export function patchMcpServerEntry(
+  raw: string,
+  serverId: string,
+  patch: Partial<McpServerEntry>
+): string {
+  const doc = parseMcpConfigDocument(raw)
+  const servers = serversTable(doc)
+  const current = asMcpServerEntry(servers[serverId])
+  if (!servers[serverId]) {
+    throw new Error(`MCP server "${serverId}" not found.`)
+  }
+  servers[serverId] = {
+    ...current,
+    ...patch
+  }
+  return `${JSON.stringify(doc, null, 2)}\n`
+}

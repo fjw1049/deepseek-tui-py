@@ -161,53 +161,16 @@ async def test_ensure_focus_disabled_raises() -> None:
         await mgr.ensure_focus_server_discovered("tikhub-wechat")
 
 
-@pytest.mark.asyncio
-async def test_disk_cache_strips_on_focus_tools(tmp_path: Path) -> None:
+def test_startup_deletes_legacy_tools_cache(tmp_path: Path) -> None:
     cfg_path = tmp_path / "mcp.json"
     cfg_path.write_text(
-        json.dumps(
-            {
-                "mcpServers": {
-                    "fetch": {"command": "echo"},
-                    "tikhub-wechat": {
-                        "command": "echo",
-                        "load_policy": "on_focus",
-                        "catalog": "media",
-                    },
-                }
-            }
-        ),
+        json.dumps({"mcpServers": {"fetch": {"command": "echo"}}}),
         encoding="utf-8",
     )
-    from deepseek_tui.mcp.store import hash_mcp_document, load_raw_document
-
-    doc = load_raw_document(cfg_path)
     cache_path = tmp_path / "mcp-tools-cache.json"
-    fetch_q = qualify_tool_name("fetch", "a")
-    media_q = qualify_tool_name("tikhub-wechat", "b")
-    cache_path.write_text(
-        json.dumps(
-            {
-                "config_hash": hash_mcp_document(doc),
-                "tools": [
-                    {"type": "function", "function": {"name": fetch_q, "description": ""}},
-                    {"type": "function", "function": {"name": media_q, "description": ""}},
-                ],
-                "tool_map": {
-                    fetch_q: ["fetch", "a"],
-                    media_q: ["tikhub-wechat", "b"],
-                },
-            }
-        ),
-        encoding="utf-8",
-    )
-
-    configs = servers_from_document(doc)
-    mgr = McpManager(configs, config_path=cfg_path)
-    cached = mgr.cached_tools() or []
-    names = {t["function"]["name"] for t in cached}
-    assert fetch_q in names
-    assert media_q not in names
+    cache_path.write_text("{}", encoding="utf-8")
+    McpManager(config_path=cfg_path)
+    assert not cache_path.exists()
 
 
 @pytest.mark.asyncio

@@ -15,7 +15,7 @@ export type ConnectorItem = {
   catalog?: string
 }
 
-type ConnectorTab = 'installed' | 'media' | 'marketplace'
+type ConnectorTab = 'default' | 'activated' | 'media' | 'marketplace'
 
 type Props = {
   connectors: ConnectorItem[]
@@ -32,8 +32,8 @@ type Props = {
 }
 
 /**
- * Installed-connectors list with 已安装 / 媒体 / ModelScope 市场 tabs.
- * 「已安装」splits into 自带 (yahoo) and 已激活 (media / market / manual).
+ * Connector list with 默认 / 激活 / 媒体 / 市场 tabs.
+ * 默认 = always loaded (progressive). 激活 = plug-and-play (@ / on_focus).
  */
 export function InstalledConnectorsPanel({
   connectors,
@@ -46,15 +46,19 @@ export function InstalledConnectorsPanel({
   headerRight
 }: Props): ReactElement {
   const { t } = useTranslation('common')
-  const [tab, setTab] = useState<ConnectorTab>('installed')
+  const [tab, setTab] = useState<ConnectorTab>('default')
 
-  const { builtin, activated } = useMemo(
+  const { default: defaultConnectors, activated } = useMemo(
     () => partitionConnectorsByGroup(connectors),
     [connectors]
   )
+  const tabConnectors = tab === 'default' ? defaultConnectors : activated
+  const tabEmpty =
+    tab === 'default' ? t('connectorSectionDefaultEmpty') : t('connectorSectionActivatedEmpty')
 
   const tabItems = [
-    { value: 'installed' as const, label: t('skillTabInstalled') },
+    { value: 'default' as const, label: t('connectorTabDefault') },
+    { value: 'activated' as const, label: t('connectorTabActivated') },
     { value: 'media' as const, label: t('mediaCatalogTab') },
     { value: 'marketplace' as const, label: t('marketplaceTitle') }
   ]
@@ -62,7 +66,13 @@ export function InstalledConnectorsPanel({
   return (
     <div className="ds-content-card overflow-hidden rounded-2xl">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-ds-border-muted px-5 py-3.5">
-        <GlassSegmentedControl value={tab} onChange={setTab} items={tabItems} segmentClassName="px-3 py-1.5" />
+        <GlassSegmentedControl
+          value={tab}
+          onChange={setTab}
+          items={tabItems}
+          className="min-w-0"
+          segmentClassName="px-2.5 py-1.5"
+        />
         {headerRight ? <div className="min-w-0">{headerRight}</div> : null}
       </div>
 
@@ -73,66 +83,11 @@ export function InstalledConnectorsPanel({
           <Loader2 className="h-4 w-4 animate-spin" strokeWidth={2} />
           {t('skillsLoading')}
         </div>
-      ) : connectors.length === 0 ? (
-        <div className="px-5 py-10 text-center text-[13px] text-ds-faint">
-          {t('connectorsInstalledEmpty')}
-        </div>
-      ) : (
-        <div className="space-y-3 bg-ds-subtle/40 px-4 py-4 dark:bg-ds-subtle/20 sm:px-5 sm:py-5">
-          <ConnectorGroupCard
-            title={t('connectorSectionBuiltin')}
-            empty={t('connectorSectionBuiltinEmpty')}
-            connectors={builtin}
-            busyId={busyId}
-            onToggle={onToggle}
-            onDelete={onDelete}
-          />
-          <ConnectorGroupCard
-            title={t('connectorSectionActivated')}
-            empty={t('connectorSectionActivatedEmpty')}
-            connectors={activated}
-            busyId={busyId}
-            onToggle={onToggle}
-            onDelete={onDelete}
-          />
-        </div>
-      )}
-      {/* MarketplaceBrowser stays mounted across tabs so the parent's top
-          "重新加载" refresh signal reaches it even while the market tab is
-          hidden — otherwise the signal would fire into an unmounted component
-          and the catalog would never re-fetch. */}
-      <div className={tab === 'marketplace' ? '' : 'hidden'}>
-        {marketplaceSlot ?? null}
-      </div>
-    </div>
-  )
-}
-
-function ConnectorGroupCard({
-  title,
-  empty,
-  connectors,
-  busyId,
-  onToggle,
-  onDelete
-}: {
-  title: string
-  empty: string
-  connectors: ConnectorItem[]
-  busyId: string | null
-  onToggle: (connector: ConnectorItem, enabled: boolean) => void
-  onDelete: (connector: ConnectorItem) => void
-}): ReactElement {
-  return (
-    <section className="ds-content-card overflow-hidden rounded-2xl">
-      <div className="px-5 pb-1.5 pt-4 text-[11px] font-semibold uppercase tracking-[0.04em] text-ds-faint">
-        {title}
-      </div>
-      {connectors.length === 0 ? (
-        <div className="px-5 pb-5 pt-1 text-[13px] text-ds-faint">{empty}</div>
+      ) : tabConnectors.length === 0 ? (
+        <div className="px-5 py-10 text-center text-[13px] text-ds-faint">{tabEmpty}</div>
       ) : (
         <ul className="divide-y divide-ds-border-muted/70">
-          {connectors.map((connector) => (
+          {tabConnectors.map((connector) => (
             <ConnectorRow
               key={connector.id}
               connector={connector}
@@ -143,7 +98,14 @@ function ConnectorGroupCard({
           ))}
         </ul>
       )}
-    </section>
+      {/* MarketplaceBrowser stays mounted across tabs so the parent's top
+          "重新加载" refresh signal reaches it even while the market tab is
+          hidden — otherwise the signal would fire into an unmounted component
+          and the catalog would never re-fetch. */}
+      <div className={tab === 'marketplace' ? '' : 'hidden'}>
+        {marketplaceSlot ?? null}
+      </div>
+    </div>
   )
 }
 

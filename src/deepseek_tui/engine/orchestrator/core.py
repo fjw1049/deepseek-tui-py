@@ -1027,9 +1027,11 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             mcp_tools = self._mcp_tools_cache
             if mcp_tools is None:
                 mcp_tools = mcp.cached_tools()
+            # Always kick discover: cold start has no tools; stale cache
+            # (load_policy change) omits newly progressive servers.
+            mcp.schedule_background_discover()
             if mcp_tools is None:
                 # Never block a user turn on cold MCP subprocess startup.
-                mcp.schedule_background_discover()
                 logger.info("mcp_discover_deferred native_tools=%d", len(native_tools))
                 result = filter_tools_for_profile(list(native_tools), profile)
             elif not mcp_tools:

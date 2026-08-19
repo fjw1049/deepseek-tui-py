@@ -35,6 +35,25 @@ _DEFAULT_FETCH_MAX_CHARS = 30_000
 _MAX_SEARCH_SNIPPET_CHARS = 800
 _MAX_SEARCH_ANSWER_CHARS = 2_000
 _MAX_SEARCH_CONTENT_CHARS = 12_000
+_BING_SEARCH_FALLBACK_HINT = (
+    " AnySearch/Tavily key failed — if a Bing Search MCP tool is in this "
+    "turn's list (mcp_*bing*), call it with the same query; if none is "
+    "listed, do not mention MCP or ask the user for a search API key."
+)
+_SEARCH_KEY_FAILURE_MARKERS = (
+    "api key",
+    "api_key",
+    "unauthorized",
+    "invalid key",
+    "invalid api",
+    "authentication",
+    "forbidden",
+    "401",
+    "403",
+    "no providers enabled",
+    "not configured",
+    "is missing",
+)
 _DEFAULT_FETCH_TIMEOUT_S = 25.0
 _BROWSER_UA = (
     "Mozilla/5.0 (compatible; DeepSeekTUI/1.0; +https://github.com/deepseek-ai)"
@@ -198,6 +217,11 @@ class FetchUrlTool(ToolSpec):
 _KNOWN_WEB_SEARCH_PROVIDERS = frozenset({"anysearch", "tavily"})
 
 
+def _looks_like_search_key_failure(detail: str) -> bool:
+    lower = detail.lower()
+    return any(marker in lower for marker in _SEARCH_KEY_FAILURE_MARKERS)
+
+
 def _normalize_web_search_providers(providers: list[str] | None) -> list[str] | None:
     """Return enabled provider ids, or ``None`` for legacy auto-selection."""
     if providers is None:
@@ -236,15 +260,19 @@ class WebSearchTool(ToolSpec):
         active = self._active_providers()
         if not active:
             return (
-                "Search the web (no providers enabled — configure "
-                "web_search_providers / API keys in settings)."
+                "Search the web (no providers enabled). If a Bing Search MCP "
+                "tool is in this turn's list (mcp_*bing*), use that instead "
+                "of asking the user for an AnySearch/Tavily key."
             )
         label = " → ".join(
             "AnySearch" if name == "anysearch" else "Tavily" for name in active
         )
         return (
             f"Search the web via {label} (priority fallback), "
-            "and return titles, URLs, and snippets."
+            "and return titles, URLs, and snippets. If this tool errors on a "
+            "missing or rejected AnySearch/Tavily key and a Bing Search MCP "
+            "tool is in this turn's list (mcp_*bing*), call it with the same "
+            "query. If none is listed, do not mention MCP."
         )
 
     def _active_providers(self) -> list[str]:
@@ -291,7 +319,8 @@ class WebSearchTool(ToolSpec):
         if not active:
             raise ToolError(
                 "web_search failed: no providers enabled "
-                "(configure web_search_providers in settings)"
+                "(configure web_search_providers in settings)."
+                + _BING_SEARCH_FALLBACK_HINT
             )
 
         # Priority fallback: try providers in order; first non-empty success wins.
@@ -348,7 +377,10 @@ class WebSearchTool(ToolSpec):
 
         if not hits:
             detail = "; ".join(errors) if errors else "no results"
-            raise ToolError(f"web_search failed: {detail}")
+            message = f"web_search failed: {detail}"
+            if _looks_like_search_key_failure(detail):
+                message += _BING_SEARCH_FALLBACK_HINT
+            raise ToolError(message)
 
         lines: list[str] = []
         if answer:

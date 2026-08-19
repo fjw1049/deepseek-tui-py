@@ -32,14 +32,13 @@ def test_preload_status_disabled_without_servers() -> None:
     assert status["ready"] is True
 
 
-def test_schedule_preload_skips_when_disk_cache_warm() -> None:
+def test_schedule_preload_skips_when_already_discovered() -> None:
     mgr = McpManager([
         McpServerConfig(name="fetch", command="uvx", args=["mcp-server-fetch"]),
     ])
     mgr._discovered_tools_cache = [{"type": "function", "function": {"name": "mcp_fetch_x"}}]
     mgr.schedule_startup_preload()
     assert mgr.preload_status()["phase"] == "ready"
-    assert mgr.preload_status()["from_disk_cache"] is True
     assert mgr._preload._task is None
 
 
@@ -67,3 +66,43 @@ async def test_schedule_preload_runs_discover(monkeypatch: pytest.MonkeyPatch) -
     status = mgr.preload_status()
     assert status["phase"] == "ready"
     assert status["tools_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_background_discover_refreshes_stale_cache(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mgr = McpManager([
+        McpServerConfig(name="bing-search", command="npx", args=["-y", "bing-cn-mcp"]),
+    ])
+    mgr._stale_cache = [{"type": "function", "function": {"name": "mcp_old"}}]
+    called = asyncio.Event()
+
+    async def fake_discover() -> list[dict]:
+        called.set()
+        return []
+
+    monkeypatch.setattr(mgr, "discover_tools", fake_discover)
+    mgr.schedule_background_discover()
+    await asyncio.wait_for(called.wait(), timeout=1.0)
+
+
+@pytest.mark.asyncio
+async def test_background_discover_skips_fresh_cache(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mgr = McpManager([
+        McpServerConfig(name="bing-search", command="npx", args=["-y", "bing-cn-mcp"]),
+    ])
+    mgr._discovered_tools_cache = [{"type": "function", "function": {"name": "mcp_bing"}}]
+    called = False
+
+    async def fake_discover() -> list[dict]:
+        nonlocal called
+        called = True
+        return []
+
+    monkeypatch.setattr(mgr, "discover_tools", fake_discover)
+    mgr.schedule_background_discover()
+    await asyncio.sleep(0.05)
+    assert called is False

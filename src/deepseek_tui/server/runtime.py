@@ -197,6 +197,18 @@ class AppRuntime:
         runtime.schedule_mcp_preload()
         return runtime
 
+    async def warmup_default_connectors(self) -> None:
+        """Discover progressive MCP tools before the server accepts traffic."""
+        if not getattr(self.config.features, "mcp", False):
+            return
+        tr = self._tool_runtime
+        if tr is None:
+            return
+        mcp = getattr(tr, "mcp_manager", None)
+        if mcp is None:
+            return
+        await mcp.await_startup_preload()
+
     async def shutdown(self) -> None:
         if self._tool_runtime is not None:
             await self._tool_runtime.shutdown()
