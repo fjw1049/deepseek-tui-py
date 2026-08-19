@@ -438,6 +438,33 @@ async function reconcileStaleBusy(
   }
 }
 
+/**
+ * Re-read the goal after a `/goal` command failed. The runtime cancels a
+ * freshly created goal whose first turn could not start (missing key, engine
+ * not loaded, ...), but that rollback reaches the UI through no other channel:
+ * the HTTP call raised instead of returning the goal, and a create that never
+ * started a turn opened no SSE subscription. Without this the strip keeps
+ * rendering a goal the runtime already dropped.
+ */
+export async function resyncGoalAfterFailedCommand(
+  threadId: string,
+  provider: Pick<ReturnType<typeof getProvider>, 'getThreadDetail'>,
+  get: () => ChatState,
+  set: (partial: Partial<ChatState> | ((state: ChatState) => Partial<ChatState>)) => void
+): Promise<void> {
+  try {
+    const { goal } = await provider.getThreadDetail(threadId)
+    // Late arrival: the user switched threads while the re-read was in flight.
+    if (get().activeThreadId !== threadId) return
+    set((s) => ({
+      currentGoal: goal ?? null,
+      composerMode: composerModeFromGoal(goal, s.composerMode)
+    }))
+  } catch {
+    /* keep the displayed goal; the next thread load reconciles it */
+  }
+}
+
 function engineModeForComposer(mode: string): ComposerMode | string {
   return mode === 'goal' ? 'agent' : mode
 }
@@ -2635,6 +2662,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
           threadId
         })
       }
+      // A failed `/goal create` rolls the goal back server-side, and that
+      // rollback ships no goal.updated event (the request raised, and a
+      // create that never started a turn has no SSE subscription). Re-read
+      // the authoritative goal so the strip cannot keep showing a goal the
+      // runtime already cancelled.
+      await resyncGoalAfterFailedCommand(threadId, p, get, set)
       return false
     }
   },

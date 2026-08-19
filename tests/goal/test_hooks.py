@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
@@ -23,6 +28,7 @@ from deepseek_tui.goal.types import (
 from deepseek_tui.protocol.messages import Message, MessageOrigin
 from deepseek_tui.protocol.responses import ToolCall, Usage
 from deepseek_tui.server.threads.manager import _engine_mode_for_goal
+from deepseek_tui.server.threads.models import GoalCommandRequest
 from deepseek_tui.tools.registry import build_default_registry, build_subagent_registry
 
 
@@ -237,3 +243,252 @@ async def test_goal_reminder_is_not_persisted_in_session_history(engine_ctx) -> 
 
     persisted_text = "\n".join(message.text_content() for message in engine.session_messages)
     assert "active goal (goal mode)" not in persisted_text
+
+
+async def _goal_command_manager(tmp_path: Path) -> tuple[Any, Any]:
+    """Manager + thread pair for /goal command tests (stub LLM client)."""
+    from collections.abc import AsyncIterator
+
+    from deepseek_tui.client.base import LLMClient
+    from deepseek_tui.config.models import FeatureConfig
+    from deepseek_tui.protocol.messages import MessageRequest
+    from deepseek_tui.protocol.responses import StreamEvent
+    from deepseek_tui.server.threads.manager import RuntimeThreadManager
+    from deepseek_tui.server.threads.models import (
+        CreateThreadRequest,
+        RuntimeThreadManagerConfig,
+    )
+
+    class _StubClient(LLMClient):
+        async def stream_chat_completion(
+            self, request: MessageRequest
+        ) -> AsyncIterator[StreamEvent]:
+            yield StreamEvent()
+
+    manager = RuntimeThreadManager(
+        config=Config(
+            features=FeatureConfig(
+                mcp=False, tasks=False, subagents=False, automations=False
+            )
+        ),
+        workspace=tmp_path,
+        manager_cfg=RuntimeThreadManagerConfig(
+            data_dir=tmp_path / "runtime",
+            task_data_dir=tmp_path / "tasks",
+        ),
+        llm_client=_StubClient(),
+    )
+    thread = await manager.create_thread(
+        CreateThreadRequest(workspace=str(manager.workspace))
+    )
+    return manager, thread
+
+
+@pytest.mark.asyncio
+async def test_goal_command_create_rolls_back_when_turn_fails_to_start(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """/goal create must not leave an active goal with no running turn."""
+    manager, thread = await _goal_command_manager(tmp_path)
+
+    async def _boom(*args: object, **kwargs: object) -> None:
+        raise RuntimeError("start_turn failed")
+
+    monkeypatch.setattr(manager, "start_turn", _boom)
+
+    with pytest.raises(RuntimeError, match="start_turn failed"):
+        await manager.apply_goal_command(
+            thread.id, GoalCommandRequest(args="Ship it")
+        )
+
+    state = manager._active.get(thread.id)
+    assert state is not None
+    snapshot = state.engine.goal_service.snapshot()
+    assert snapshot is None, "goal must be cancelled when its first turn cannot start"
+
+    stored = manager.store.load_thread(thread.id)
+    assert stored.goal is None
+
+    with contextlib.suppress(asyncio.CancelledError):
+        state.engine_task.cancel()
+        await state.engine_task
+
+
+@pytest.mark.asyncio
+async def test_goal_command_create_keeps_goal_when_turn_slot_is_busy(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """/goal create during a live turn: start_turn is rejected, but the goal
+    must survive - the live turn's natural end chains into it via
+    _maybe_continue_goal. This mirrors the streaming /goal slash command."""
+    from deepseek_tui.server.threads.manager import _ActiveTurnState
+
+    manager, thread = await _goal_command_manager(tmp_path)
+    await manager._ensure_engine_loaded(
+        manager.store.load_thread(thread.id)
+    )
+    state = manager._active.get(thread.id)
+    assert state is not None
+
+    async with manager._active_lock:
+        state.active_turn = _ActiveTurnState(turn_id="turn_live")
+
+    async def _busy(*args: object, **kwargs: object) -> None:
+        raise ValueError("Thread already has an active turn")
+
+    monkeypatch.setattr(manager, "start_turn", _busy)
+
+    with pytest.raises(ValueError, match="already has an active turn"):
+        await manager.apply_goal_command(
+            thread.id, GoalCommandRequest(args="Ship during stream")
+        )
+
+    snapshot = state.engine.goal_service.snapshot()
+    assert snapshot is not None, "busy turn must not cancel the fresh goal"
+    assert snapshot.status is GoalStatus.ACTIVE
+    assert snapshot.objective == "Ship during stream"
+
+    stored = manager.store.load_thread(thread.id)
+    assert stored.goal is not None
+
+    with contextlib.suppress(asyncio.CancelledError):
+        state.engine_task.cancel()
+        await state.engine_task
+
+
+@pytest.mark.asyncio
+async def test_goal_command_create_rollback_spares_replaced_goal(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """If a concurrent replace swapped the goal between create and rollback,
+    the rollback must not cancel the newer goal."""
+    manager, thread = await _goal_command_manager(tmp_path)
+    await manager._ensure_engine_loaded(
+        manager.store.load_thread(thread.id)
+    )
+    state = manager._active.get(thread.id)
+    assert state is not None
+
+    async def _boom_then_replace(*args: object, **kwargs: object) -> None:
+        state.engine.goal_service.cancel()
+        state.engine.goal_service.create("concurrent replacement")
+        raise RuntimeError("start_turn failed")
+
+    monkeypatch.setattr(manager, "start_turn", _boom_then_replace)
+
+    with pytest.raises(RuntimeError, match="start_turn failed"):
+        await manager.apply_goal_command(
+            thread.id, GoalCommandRequest(args="original objective")
+        )
+
+    snapshot = state.engine.goal_service.snapshot()
+    assert snapshot is not None
+    assert snapshot.objective == "concurrent replacement"
+    assert snapshot.status is GoalStatus.ACTIVE
+
+    with contextlib.suppress(asyncio.CancelledError):
+        state.engine_task.cancel()
+        await state.engine_task
+
+
+@pytest.mark.asyncio
+async def test_goal_command_next_add_rolls_back_when_turn_fails_to_start(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """/goal next with no current goal starts it - same rollback rule."""
+    manager, thread = await _goal_command_manager(tmp_path)
+
+    async def _boom(*args: object, **kwargs: object) -> None:
+        raise RuntimeError("start_turn failed")
+
+    monkeypatch.setattr(manager, "start_turn", _boom)
+
+    with pytest.raises(RuntimeError, match="start_turn failed"):
+        await manager.apply_goal_command(
+            thread.id, GoalCommandRequest(args="next Ship it")
+        )
+
+    state = manager._active.get(thread.id)
+    assert state is not None
+    snapshot = state.engine.goal_service.snapshot()
+    assert snapshot is None
+
+    stored = manager.store.load_thread(thread.id)
+    assert stored.goal is None
+
+    with contextlib.suppress(asyncio.CancelledError):
+        state.engine_task.cancel()
+        await state.engine_task
+
+
+@pytest.mark.asyncio
+async def test_tui_goal_resume_skips_manual_launch_while_turn_active() -> None:
+    """TUI /goal resume must not queue a second continuation chain while
+    a turn is live - the turn's natural end chains the next goal turn."""
+    import asyncio
+
+    from deepseek_tui.tui.commands import cmd_goal
+
+    service = GoalService()
+    service.create("keep going")
+    service.pause()
+
+    launch_calls: list[object] = []
+
+    async def _record_launch() -> bool:
+        launch_calls.append(object())
+        return True
+
+    engine = SimpleNamespace(
+        mode="agent",
+        goal_service=service,
+        launch_goal_continuation=_record_launch,
+        session_messages=[],
+    )
+    app = SimpleNamespace(
+        _engine=engine,
+        handle=SimpleNamespace(is_turn_active=lambda: True),
+    )
+
+    result = cmd_goal("resume", app)  # type: ignore[arg-type]
+    await asyncio.sleep(0)
+
+    assert result.error == ""
+    assert service.snapshot() is not None
+    assert service.snapshot().status is GoalStatus.ACTIVE
+    assert launch_calls == [], "manual continuation must be skipped mid-turn"
+
+
+@pytest.mark.asyncio
+async def test_tui_goal_resume_launches_when_idle() -> None:
+    """Idle engine: /goal resume queues exactly one continuation."""
+    import asyncio
+
+    from deepseek_tui.tui.commands import cmd_goal
+
+    service = GoalService()
+    service.create("keep going")
+    service.pause()
+
+    launch_calls: list[object] = []
+
+    async def _record_launch() -> bool:
+        launch_calls.append(object())
+        return True
+
+    engine = SimpleNamespace(
+        mode="agent",
+        goal_service=service,
+        launch_goal_continuation=_record_launch,
+        session_messages=[],
+    )
+    app = SimpleNamespace(
+        _engine=engine,
+        handle=SimpleNamespace(is_turn_active=lambda: False),
+    )
+
+    result = cmd_goal("resume", app)  # type: ignore[arg-type]
+    await asyncio.sleep(0)
+
+    assert result.error == ""
+    assert len(launch_calls) == 1

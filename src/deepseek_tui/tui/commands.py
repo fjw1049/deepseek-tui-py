@@ -1499,7 +1499,11 @@ def cmd_goal(args: str, app: DeepSeekTUI) -> CommandResult:
             if engine.mode not in ALLOWED_GOAL_MODES:
                 _switch_mode(app, "agent")
             _snapshot, decision = service.resume(actor=GoalActor.USER, mode=engine.mode)
-            if decision.should_continue:
+            if decision.should_continue and not app.handle.is_turn_active():
+                # Match the Workbench guard: a live turn's natural end chains
+                # the next goal turn via _finish_goal_turn. Queueing an extra
+                # continuation here would interleave two chains and burn the
+                # goal's turn budget twice as fast.
                 import asyncio
 
                 asyncio.create_task(engine.launch_goal_continuation())

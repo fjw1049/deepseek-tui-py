@@ -1580,6 +1580,29 @@ class RuntimeThreadManager:
         state = self._active.get(thread_id)
         return state is not None and state.active_turn is not None
 
+    def _rollback_goal_if_unclaimed(
+        self, thread_id: str, engine: Engine, goal_id: str
+    ) -> None:
+        """Cancel a freshly created goal whose turn failed to start.
+
+        Two guards:
+        - A live turn on the thread means ``start_turn`` was rejected with
+          "Thread already has an active turn", not a real start failure. Keep
+          the goal: the live turn's natural end chains into it via
+          ``_maybe_continue_goal``.
+        - ``goal_id`` must still be current, so a concurrent replace/cancel
+          cannot be rolled back by mistake.
+        """
+        if self._thread_has_active_turn(thread_id):
+            return
+        snapshot = engine.goal_service.snapshot()
+        if snapshot is None or snapshot.goal_id != goal_id:
+            return
+        from deepseek_tui.goal.types import GoalActor
+
+        engine.goal_service.cancel(actor=GoalActor.RUNTIME)
+        self._persist_thread_goal(thread_id)
+
     async def _interrupt_active_turn(self, thread_id: str) -> None:
         async with self._active_lock:
             state = self._active.get(thread_id)
@@ -1619,24 +1642,38 @@ class RuntimeThreadManager:
                 pass
             elif parsed.kind == "create":
                 engine.mode = _engine_mode_for_goal(engine.mode)
-                engine.goal_service.create(
+                created = engine.goal_service.create(
                     parsed.objective,
                     replace=parsed.replace,
                     actor=GoalActor.USER,
                     mode=engine.mode,
                 )
                 self._persist_thread_goal(thread_id)
-                await self.start_turn(
-                    thread_id,
-                    StartTurnRequest(
-                        prompt=parsed.objective,
-                        input_summary=parsed.objective,
-                        mode=engine.mode,
-                        provider=req.provider,
-                        model=req.model,
-                        reasoning_effort=req.reasoning_effort,
-                    ),
-                )
+                try:
+                    await self.start_turn(
+                        thread_id,
+                        StartTurnRequest(
+                            prompt=parsed.objective,
+                            input_summary=parsed.objective,
+                            mode=engine.mode,
+                            provider=req.provider,
+                            model=req.model,
+                            reasoning_effort=req.reasoning_effort,
+                        ),
+                    )
+                except Exception:
+                    # The goal's first turn could not start. Distinguish:
+                    # - a live turn rejected the start ("Thread already has an
+                    #   active turn"): keep the goal - that turn's natural end
+                    #   chains into it via _maybe_continue_goal.
+                    # - anything else (missing key, engine not loaded, ...):
+                    #   cancel, mirroring _maybe_continue_goal's promote path,
+                    #   so no active goal sits around with no turn.
+                    logger.exception("goal_create_turn_start_failed")
+                    self._rollback_goal_if_unclaimed(
+                        thread_id, engine, created.goal_id
+                    )
+                    raise
                 started_turn = True
             elif parsed.kind == "pause":
                 engine.goal_service.pause(actor=GoalActor.USER)
@@ -1673,21 +1710,29 @@ class RuntimeThreadManager:
             elif parsed.kind == "next-add":
                 if engine.goal_service.snapshot() is None:
                     engine.mode = _engine_mode_for_goal(engine.mode)
-                    engine.goal_service.create(
+                    created = engine.goal_service.create(
                         parsed.objective, actor=GoalActor.USER, mode=engine.mode
                     )
                     self._persist_thread_goal(thread_id)
-                    await self.start_turn(
-                        thread_id,
-                        StartTurnRequest(
-                            prompt=parsed.objective,
-                            input_summary=parsed.objective,
-                            mode=engine.mode,
-                            provider=req.provider,
-                            model=req.model,
-                            reasoning_effort=req.reasoning_effort,
-                        ),
-                    )
+                    try:
+                        await self.start_turn(
+                            thread_id,
+                            StartTurnRequest(
+                                prompt=parsed.objective,
+                                input_summary=parsed.objective,
+                                mode=engine.mode,
+                                provider=req.provider,
+                                model=req.model,
+                                reasoning_effort=req.reasoning_effort,
+                            ),
+                        )
+                    except Exception:
+                        # Same rollback as the create branch.
+                        logger.exception("goal_create_turn_start_failed")
+                        self._rollback_goal_if_unclaimed(
+                            thread_id, engine, created.goal_id
+                        )
+                        raise
                     started_turn = True
                 else:
                     engine.goal_service.enqueue(parsed.objective)
