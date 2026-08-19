@@ -6377,14 +6377,12 @@ select:focus-visible,
 }
 
 .ds-workbench-main {
-  --seam-line: rgba(0, 0, 0, 0.1);
+  --seam-line: rgba(0, 0, 0, 0.16);
   --seam-shadow-color: rgba(0, 0, 0, 0.14);
-  /* Soft float on every edge so the card reads raised vs chrome, not only
-     along the left seam. */
-  --card-float-shadow:
-    0 1px 2px rgba(0, 0, 0, 0.04),
-    0 4px 18px -6px rgba(0, 0, 0, 0.1);
+  /* 1px hard ring — a line, not a fill band and not a blur halo. */
+  --card-float-shadow: 0 0 0 1px var(--seam-line);
   margin: 0;
+  border: none;
   border-radius: var(--ds-radius-shell);
   background: var(--ds-material-panel);
   box-shadow: var(--card-float-shadow);
@@ -6396,12 +6394,10 @@ select:focus-visible,
 }
 
 [data-theme='dark'] .ds-workbench-main {
-  --seam-line: rgba(255, 255, 255, 0.08);
+  --seam-line: rgba(255, 255, 255, 0.16);
   /* Soft left seam only — avoid a second dark halo on the board. */
   --seam-shadow-color: rgba(0, 0, 0, 0.16);
-  /* One tight elevation. A large dark blur paints multi-tone bands on the
-     solid board under the card radius and reads as stitching. */
-  --card-float-shadow: 0 1px 3px rgba(0, 0, 0, 0.28);
+  --card-float-shadow: 0 0 0 1px var(--seam-line);
 }
 
 /* Only when the left sidebar is visible does the seam exist: round the card's
@@ -6466,8 +6462,8 @@ select:focus-visible,
   z-index: 40;
   pointer-events: none;
   border-radius: inherit;
-  /* Full perimeter hairline — matches top/right/bottom to the left seam. */
-  box-shadow: inset 0 0 0 1px var(--seam-line);
+  /* Border on .ds-workbench-main is the stroke; do not paint an inner band. */
+  box-shadow: none;
   transition: opacity 300ms cubic-bezier(0.32, 0.72, 0, 1);
 }
 
@@ -6500,9 +6496,9 @@ select:focus-visible,
 }
 
 .ds-workbench-sidebar-wrap + .ds-workbench-main .ds-surface-divider {
-  /* Stay inside the full perimeter hairline on every edge. */
-  background-size: calc(100% - 2px) 1px;
-  background-position: center bottom;
+  /* Card border already insets the surface; divider can run full inner width. */
+  background-size: 100% 1px;
+  background-position: left bottom;
 }
 
 .ds-workbench-right-panel {
