@@ -14,6 +14,15 @@ if TYPE_CHECKING:
     from deepseek_tui.integrations.hooks import HookDispatcher
 
 
+# ``internal_kind`` for the hidden op that re-delivers a background sub-agent's
+# result. The producer and the consumer that maps it to
+# ``MessageOrigin.SYSTEM_REMINDER`` are in different methods, so a literal on
+# both sides would fail silently on a typo — the injection would fall through
+# to REAL_USER and read back as the human's request. Mirrors
+# ``GOAL_CONTINUATION_KIND``.
+SUBAGENT_BACKGROUND_DONE_KIND = "subagent_background_done"
+
+
 @dataclass(frozen=True, slots=True)
 class SendMessageOp:
     content: str

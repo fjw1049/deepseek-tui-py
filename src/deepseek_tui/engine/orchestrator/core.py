@@ -47,6 +47,7 @@ from deepseek_tui.engine.events import (
 )
 from deepseek_tui.protocol.responses import ToolCall
 from deepseek_tui.engine.handle import (
+    SUBAGENT_BACKGROUND_DONE_KIND,
     ApprovalHandler,
     AutoApprovalHandler,
     CancelRequestOp,
@@ -2018,9 +2019,11 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         # SYSTEM_REMINDER provenance, not REAL_USER — otherwise a harness
         # injection reads back as the human's current request (origin drives
         # compaction, fake-reminder neutralization, and ledger classing).
-        if op.internal_kind == "subagent_background_done":
+        from deepseek_tui.goal.types import GOAL_CONTINUATION_KIND
+
+        if op.internal_kind == SUBAGENT_BACKGROUND_DONE_KIND:
             user_origin = MessageOrigin.SYSTEM_REMINDER
-        elif op.internal_kind == "goal_continuation":
+        elif op.internal_kind == GOAL_CONTINUATION_KIND:
             user_origin = MessageOrigin.GOAL_CONTINUATION
         else:
             user_origin = MessageOrigin.REAL_USER
@@ -2473,7 +2476,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             SendMessageOp(
                 content=body,
                 hidden=True,
-                internal_kind="subagent_background_done",
+                internal_kind=SUBAGENT_BACKGROUND_DONE_KIND,
             )
         )
 

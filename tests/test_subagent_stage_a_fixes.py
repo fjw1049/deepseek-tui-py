@@ -256,3 +256,73 @@ async def test_background_completion_wakes_idle_parent(engine_ctx: tuple) -> Non
     assert op.hidden is True
     assert op.internal_kind == "subagent_background_done"
     assert "subagent.done" in op.content
+
+
+def test_background_done_kind_constant_matches_the_wire_value() -> None:
+    """The literal above is the protocol value; the constant must equal it.
+
+    Renaming the constant's *value* would silently stop the turn handler from
+    recognising the op, so pin them against each other rather than importing
+    the constant into the assertion above.
+    """
+    from deepseek_tui.engine.handle import SUBAGENT_BACKGROUND_DONE_KIND
+
+    assert SUBAGENT_BACKGROUND_DONE_KIND == "subagent_background_done"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("kind_ref", "expected_origin"),
+    [
+        ("subagent_background_done", "SYSTEM_REMINDER"),
+        ("goal_continuation", "GOAL_CONTINUATION"),
+    ],
+    ids=["subagent_background_done", "goal_continuation"],
+)
+async def test_hidden_internal_turn_carries_its_own_provenance(
+    engine_ctx, kind_ref: str, expected_origin: str
+) -> None:
+    """A harness re-injection must not read back as the human's request.
+
+    ``origin`` drives compaction attribution, fake-reminder neutralization and
+    ledger classing, so an internal turn arriving as ``REAL_USER`` would be
+    summarised as something the user asked for. Both hidden kinds map to their
+    own origin in one branch chain, so cover them together.
+    """
+    from unittest.mock import AsyncMock as _AsyncMock
+
+    from deepseek_tui.engine.context_pressure import is_synthetic_user_message
+    from deepseek_tui.engine.turn import TurnResult
+    from deepseek_tui.protocol.messages import Message, MessageOrigin
+
+    engine, _handle = engine_ctx
+
+    # The hidden turn deliberately keeps the synthetic message out of
+    # ``session_messages`` (only what follows it is appended), so inspect the
+    # list actually handed to the model.
+    seen: list[Message] = []
+
+    async def _capture(request, *args, **kwargs):
+        seen.extend(request.messages)
+        return TurnResult(
+            assistant_message=Message.assistant("noted"),
+            usage=None,
+            tool_calls=[],
+        )
+
+    engine.turn_loop.run = _AsyncMock(side_effect=_capture)
+
+    marker = f"internal-marker-{kind_ref}"
+    op = SendMessageOp(content=marker, hidden=True, internal_kind=kind_ref)
+    await engine._handle_send_message_inner(op, f"turn-{kind_ref}")
+
+    injected = [
+        m
+        for m in seen
+        if m.role.value == "user" and marker in (m.text_content() or "")
+    ]
+    assert injected, "the internal message should reach the model"
+    for message in injected:
+        assert message.origin is getattr(MessageOrigin, expected_origin)
+        assert message.origin is not MessageOrigin.REAL_USER
+        assert is_synthetic_user_message(message)
