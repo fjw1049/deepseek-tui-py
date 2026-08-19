@@ -17,7 +17,7 @@ def build_turn_usage_record(*, usage: Any, model: str) -> dict[str, Any]:
     from deepseek_tui.protocol.responses import Usage
 
     u = usage if isinstance(usage, Usage) else Usage.model_validate(usage)
-    input_tokens = max(0, int(u.input_tokens))
+    input_tokens = max(0, int(u.total_input_tokens))
     output_tokens = max(0, int(u.output_tokens))
     record: dict[str, Any] = {
         "input_tokens": input_tokens,

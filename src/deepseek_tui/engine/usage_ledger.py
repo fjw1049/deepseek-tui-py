@@ -50,7 +50,7 @@ class TurnUsageLedger:
     ) -> None:
         if usage is None:
             return
-        if usage.input_tokens <= 0 and usage.output_tokens <= 0:
+        if usage.total_input_tokens <= 0 and usage.output_tokens <= 0:
             return
         self.items.append(
             UsageLineItem(
@@ -102,7 +102,7 @@ class TurnUsageLedger:
 
         for item in self.items:
             u = item.usage
-            input_tokens += u.input_tokens
+            input_tokens += u.total_input_tokens
             output_tokens += u.output_tokens
             cache_hit_tokens += u.cache_read_input_tokens
             cache_miss_tokens += u.cache_creation_input_tokens
@@ -119,7 +119,7 @@ class TurnUsageLedger:
                     "cost_cny": 0.0,
                 },
             )
-            model_bucket["input_tokens"] += u.input_tokens
+            model_bucket["input_tokens"] += u.total_input_tokens
             model_bucket["output_tokens"] += u.output_tokens
             model_bucket["cache_hit_tokens"] += u.cache_read_input_tokens
             model_bucket["cache_miss_tokens"] += u.cache_creation_input_tokens

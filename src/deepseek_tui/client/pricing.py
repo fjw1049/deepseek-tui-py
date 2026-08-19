@@ -178,8 +178,10 @@ def _estimate_in_currency(rates: _CurrencyPricing, usage: Usage) -> float:
     accounted = hit_tokens + miss_tokens
     # Defensive: when only `prompt_tokens` is reported (older payloads
     # or off-API providers), bill the unaccounted remainder at miss
-    # rates so we never silently undercount.
-    uncategorised = max(0, usage.input_tokens - accounted)
+    # rates so we never silently undercount. Reading the normalised total
+    # also picks up Anthropic-style payloads, where the uncached remainder
+    # sits outside the hit/miss counters and would otherwise go unbilled.
+    uncategorised = max(0, usage.total_input_tokens - accounted)
     hit_cost = hit_tokens / 1_000_000 * rates.input_cache_hit_per_million
     miss_cost = (miss_tokens + uncategorised) / 1_000_000 * rates.input_cache_miss_per_million
     out_cost = usage.output_tokens / 1_000_000 * rates.output_per_million

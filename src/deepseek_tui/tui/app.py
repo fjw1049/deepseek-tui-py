@@ -785,7 +785,9 @@ class DeepSeekTUI(App[None]):
                 status.set_finished()
                 total_tokens = 0
                 if event.usage is not None:
-                    total_tokens = event.usage.input_tokens + event.usage.output_tokens
+                    total_tokens = (
+                        event.usage.total_input_tokens + event.usage.output_tokens
+                    )
                     status.set_tokens(total_tokens)
                 # Cost + cache chips are populated only when the event
                 # actually carries them (off-platform providers leave

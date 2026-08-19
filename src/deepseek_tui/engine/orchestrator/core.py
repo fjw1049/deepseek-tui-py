@@ -2233,19 +2233,19 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                     self.handle.cancel_reason or "user_cancelled",
                 )
                 # Even on cancel, if the provider returned a StreamDone
-                # before the cancel landed, result.usage.input_tokens is a
-                # valid pressure reading — more accurate than the char-based
-                # estimate. Record it so the next turn's should_compact /
+                # before the cancel landed, result.usage is a valid pressure
+                # reading — more accurate than the char-based estimate.
+                # Record it so the next turn's should_compact /
                 # seam / cycle decisions aren't forced back to the ~6x-
                 # undercounting estimate. If no usage arrived (cancel too
                 # early), keep the previous value rather than zeroing — a
                 # stale-but-real reading beats falling back to the estimate.
                 cancelled_usage = result.usage
-                if (
-                    cancelled_usage is not None
-                    and getattr(cancelled_usage, "input_tokens", 0)
-                ):
-                    self.last_real_input_tokens = cancelled_usage.input_tokens
+                cancelled_input = getattr(
+                    cancelled_usage, "total_input_tokens", 0
+                )
+                if cancelled_input:
+                    self.last_real_input_tokens = cancelled_input
                 await self._emit_checklist_turn_end_reconcile()
                 await self.handle.emit(
                     TurnCancelledEvent(
@@ -2290,8 +2290,9 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             # synthesized outside the round loop. result.usage is the final
             # round's StreamDone usage, which is the largest input of the
             # turn (messages only grow between rounds).
-            if usage is not None and getattr(usage, "input_tokens", 0):
-                self.last_real_input_tokens = usage.input_tokens
+            turn_input_tokens = getattr(usage, "total_input_tokens", 0)
+            if turn_input_tokens:
+                self.last_real_input_tokens = turn_input_tokens
             ledger_totals = self.turn_usage_ledger.totals()
             combined_usage = self.turn_usage_ledger.combined_usage()
             if combined_usage is not None:
@@ -2981,8 +2982,8 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                         self.goal_service.account_tokens(round_usage.output_tokens)
                         is not None
                     )
-            if round_usage is not None and round_usage.input_tokens:
-                self.last_real_input_tokens = round_usage.input_tokens
+            if round_usage is not None and round_usage.total_input_tokens:
+                self.last_real_input_tokens = round_usage.total_input_tokens
                 # Prefix-cache baseline, per round. Anything that perturbs the
                 # stable system prefix mid-turn shows up here as a sudden ratio
                 # drop. Both counters zero means the provider reported nothing

@@ -42,6 +42,26 @@ class Usage(BaseModel):
     )
     reasoning_tokens: int = 0
 
+    @property
+    def total_input_tokens(self) -> int:
+        """Full prompt size, normalised across the two provider conventions.
+
+        DeepSeek's ``prompt_tokens`` is the whole prompt and hit/miss are its
+        internal split, so the cache counters are already included. Anthropic's
+        ``input_tokens`` is only the part that neither hit nor wrote the cache,
+        so the counters must be added. Reading ``input_tokens`` directly is
+        wrong on Anthropic-style gateways: with a warm prefix it reports a few
+        hundred tokens for a 150K prompt.
+
+        Distinguished by containment — the cache counters cannot exceed an
+        inclusive ``input_tokens``, and cannot fit inside an exclusive one
+        whenever caching actually happened.
+        """
+        cached = self.cache_read_input_tokens + self.cache_creation_input_tokens
+        if self.input_tokens >= cached:
+            return self.input_tokens
+        return self.input_tokens + cached
+
     @model_validator(mode="before")
     @classmethod
     def _extract_nested_reasoning(cls, data: Any) -> Any:
