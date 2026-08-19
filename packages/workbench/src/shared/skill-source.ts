@@ -45,11 +45,18 @@ function joinSkillRoot(base: string, parts: readonly string[]): string {
   return [prefix, ...parts].join(sep)
 }
 
-/** Classify a skill file/folder path by its ecosystem directory. */
+/**
+ * Classify a skill file/folder path by its ecosystem directory.
+ *
+ * Scans right-to-left so the directory closest to the SKILL.md wins: a
+ * workspace nested under another ecosystem's home (e.g.
+ * `~/.claude/projects/foo/.deepseek/skills/x/SKILL.md`) belongs to the
+ * inner `.deepseek`, not the outer `.claude` ancestor.
+ */
 export function skillSourceFromPath(filePath: string): SkillSource {
   const parts = filePath.replace(/\\/g, '/').split('/')
-  for (const part of parts) {
-    const lower = part.toLowerCase()
+  for (let index = parts.length - 1; index >= 0; index -= 1) {
+    const lower = parts[index].toLowerCase()
     if (lower === '.claude') return 'claude'
     if (lower === '.codex') return 'codex'
     if (lower === '.cursor' || lower === '.agent' || lower === '.agents') return 'cursor'

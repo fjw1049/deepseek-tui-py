@@ -25,6 +25,18 @@ describe('skillSourceFromPath', () => {
     expect(skillSourceFromPath('/tmp/proj/skills/local/SKILL.md')).toBe('own')
     expect(skillSourceFromPath('C:\\Users\\me\\.claude\\skills\\x\\SKILL.md')).toBe('claude')
   })
+
+  it('lets the innermost ecosystem dir win over an outer ancestor', () => {
+    expect(
+      skillSourceFromPath('/Users/me/.claude/projects/foo/.deepseek/skills/mine/SKILL.md')
+    ).toBe('own')
+    expect(skillSourceFromPath('/Users/me/.cursor/work/proj/.claude/skills/review/SKILL.md')).toBe(
+      'claude'
+    )
+    expect(
+      skillSourceFromPath('C:\\Users\\me\\.claude\\proj\\.deepseek\\skills\\mine\\SKILL.md')
+    ).toBe('own')
+  })
 })
 
 describe('skillSourceTagFromPath', () => {
