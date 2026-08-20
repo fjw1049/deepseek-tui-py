@@ -295,9 +295,12 @@ class SubAgentManager:
             if agent.status.kind is SubAgentStatusKind.RUNNING:
                 raise RuntimeError(f"Agent {agent_id} is already running")
             if agent.status.kind is SubAgentStatusKind.COMPLETED:
-                raise RuntimeError(
-                    f"Agent {agent_id} already completed; spawn a new agent instead"
-                )
+                from deepseek_tui.tools.subagent.handoff_ledger import is_resumable
+
+                if not is_resumable(agent.snapshot()):
+                    raise RuntimeError(
+                        f"Agent {agent_id} already completed; spawn a new agent instead"
+                    )
             agent.status = SubAgentStatus.running()
             agent.result = None
             agent.structured_result = None

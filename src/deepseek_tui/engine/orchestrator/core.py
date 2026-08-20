@@ -2477,10 +2477,17 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             self._consumed_subagent_completions.add(item.agent_id)
         from deepseek_tui.engine import reminders
 
-        body = "\n\n".join(
+        parts: list[str] = []
+        ledger = await self._subagent_handoff_ledger(completions)
+        if ledger:
+            rendered = reminders.render(reminders.SUBAGENT_HANDOFF, ledger)
+            if rendered:
+                parts.append(rendered)
+        parts.extend(
             reminders.render(reminders.SUBAGENT_DONE, item.payload)
             for item in completions
         )
+        body = "\n\n".join(part for part in parts if part)
         logger.info(
             "subagent_idle_delivery count=%d",
             len(completions),
@@ -2492,6 +2499,23 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                 internal_kind=SUBAGENT_BACKGROUND_DONE_KIND,
             )
         )
+
+    async def _subagent_handoff_ledger(
+        self, completions: list[SubAgentCompletion]
+    ) -> str | None:
+        """Batch scorecard for the parent. ``None`` when a ledger would be noise."""
+        mgr = self.tool_context.subagent_manager
+        if mgr is None or not completions:
+            return None
+        from deepseek_tui.tools.subagent.handoff_ledger import build_handoff_ledger
+
+        snaps = []
+        for item in completions:
+            try:
+                snaps.append(await mgr.get_result(item.agent_id))
+            except KeyError:
+                continue
+        return build_handoff_ledger(snaps)
 
     def _drain_subagent_completions(self) -> list[SubAgentCompletion]:
         out: list[SubAgentCompletion] = []
@@ -2808,6 +2832,11 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         count = len(completions)
         from deepseek_tui.engine import reminders
 
+        ledger = await self._subagent_handoff_ledger(completions)
+        if ledger:
+            messages.append(
+                reminders.reminder_message(reminders.SUBAGENT_HANDOFF, ledger)
+            )
         for item in completions:
             # Mark consumed so idle-delivery cannot re-inject the same payload
             # if a race schedules a wake after this handoff drains the queue.

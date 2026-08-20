@@ -152,6 +152,52 @@ async def test_turn_handoff_injects_completion_messages(engine_ctx: tuple) -> No
 
 
 @pytest.mark.asyncio
+async def test_turn_handoff_ledger_leads_when_a_slot_is_empty(
+    engine_ctx: tuple,
+) -> None:
+    from deepseek_tui.tools.subagent.agent import SubAgent
+    from deepseek_tui.tools.subagent.types import SubAgentStatus
+
+    engine, _handle = engine_ctx
+    mgr = engine.tool_context.subagent_manager
+    assert mgr is not None
+
+    def _plant(agent_id: str, result: str) -> None:
+        agent = SubAgent(
+            agent_type=SubAgentType.EXPLORE,
+            prompt="hi",
+            assignment=SubAgentAssignment(objective="hi"),
+            model="deepseek-chat",
+            nickname=None,
+            allowed_tools=None,
+            session_boot_id=mgr._session_boot_id,
+            workspace=engine.tool_context.working_directory,
+        )
+        agent.id = agent_id
+        agent.status = SubAgentStatus.completed()
+        agent.result = result
+        mgr._agents[agent_id] = agent
+
+    _plant("agent_ok01", "### SUMMARY\n已修复 maintenance.py:228。")
+    _plant("agent_empty01", "Done.")
+    engine._enqueue_subagent_completion(
+        SubAgentCompletion(agent_id="agent_ok01", payload="ok")
+    )
+    engine._enqueue_subagent_completion(
+        SubAgentCompletion(agent_id="agent_empty01", payload="empty")
+    )
+
+    messages = []
+    injected = await engine._handle_subagent_turn_handoff(messages)
+    assert injected is True
+    assert len(messages) == 3
+    first = str(messages[0].content)
+    assert "subagent_handoff" in first or "<subagent_handoff>" in first
+    assert "empty: 1" in first
+    assert "agent(resume=" in first
+
+
+@pytest.mark.asyncio
 async def test_turn_handoff_skips_agent_wait_consumed_completion(
     engine_ctx: tuple,
 ) -> None:

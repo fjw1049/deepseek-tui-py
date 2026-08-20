@@ -5,12 +5,11 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from deepseek_tui.tools.subagent.agent import SubAgent
-from deepseek_tui.tools.subagent.completion import AgentRunOutput
+from deepseek_tui.tools.subagent.completion import AgentRunOutput, has_summary_section
 from deepseek_tui.tools.subagent.mailbox import MailboxMessage
 from deepseek_tui.tools.subagent.types import (
     DEFAULT_MAX_STEPS,
@@ -235,60 +234,8 @@ _SUBAGENT_SUMMARY_CONTINUATION_NUDGE = (
 )
 
 
-# A SUMMARY that parses but says nothing still passes a heading-only check and
-# then reaches the parent as the whole deliverable ("Done." in a sidebar line).
-# Kimi gates its handoff on a 200-character floor, but a length floor does not
-# transfer here: measured against real reports, a complete Chinese summary runs
-# 14-43 characters while the stubs worth rejecting run 4-14, so the bands
-# overlap and any threshold that catches "已完成。" also rejects
-# "审计完成，未发现阻塞性问题。".
-#
-# What separates them is not length but substance — a real summary names
-# something checkable. So require a token the parent could act on: a number, a
-# path, an identifier, or a verdict keyword. That holds in both languages and
-# does not penalise CJK density.
-# Without a checkable token, a body has to be long enough to be saying
-# something. Latin script needs a higher bar than CJK for the same content, so
-# the bound scales: CJK bodies are dense, ASCII ones are not.
-_SUMMARY_STUB_MAX_CHARS = 12
-_SUMMARY_STUB_MAX_CHARS_ASCII = 24
-_CJK_RE = re.compile(r"[㐀-䶿一-鿿぀-ヿ가-힯]")
-_SUMMARY_SUBSTANCE_RE = re.compile(
-    r"""(
-        \d                      # any digit: counts, line numbers, exit codes
-      | [\w./-]+\.[a-zA-Z]{1,5}  # a filename with an extension
-      | [A-Za-z_][\w]*_[\w]+   # a snake_case identifier
-      | \b(?:PASS|FAIL|FLAKY|BLOCKER|MAJOR|MINOR|NIT)\b
-      | `[^`]+`                 # anything the model chose to quote as code
-    )""",
-    re.VERBOSE,
-)
+_has_summary_section = has_summary_section
 
-
-def _has_summary_section(text: str | None) -> bool:
-    """True when ``### SUMMARY`` is present and its body says something.
-
-    Checks the body, not just the heading: the heading alone used to pass, so a
-    terse ``### SUMMARY\\n Done.`` satisfied the contract and then surfaced to
-    the parent as the entire deliverable. A short body is accepted when it
-    carries a checkable token (a count, a path, an identifier, a verdict);
-    otherwise it has to clear the stub length.
-    """
-    if not text or "### SUMMARY" not in text:
-        return False
-    from deepseek_tui.tools.subagent.completion import summary_section_text
-
-    body = summary_section_text(text)
-    if not body:
-        return False
-    if _SUMMARY_SUBSTANCE_RE.search(body):
-        return True
-    bound = (
-        _SUMMARY_STUB_MAX_CHARS
-        if _CJK_RE.search(body)
-        else _SUMMARY_STUB_MAX_CHARS_ASCII
-    )
-    return len(body) > bound
 
 
 def _assistant_text_and_thinking(message: Any | None) -> tuple[str, str]:

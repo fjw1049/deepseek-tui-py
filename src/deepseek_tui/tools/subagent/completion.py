@@ -3,13 +3,47 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from typing import Any
 
 from deepseek_tui.tools.subagent.types import SubAgentResult, SubAgentStatusKind
 
+# A SUMMARY that parses but says nothing still passes a heading-only check and
+# then reaches the parent as the whole deliverable ("Done." in a sidebar line).
+# What separates a real report from a stub is a checkable token — a number, a
+# path, an identifier, or a verdict — not raw length. Without a token, the
+# body has to clear a script-scaled stub bound (CJK is denser than ASCII).
+_SUMMARY_STUB_MAX_CHARS = 12
+_SUMMARY_STUB_MAX_CHARS_ASCII = 24
+_CJK_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]")
+_SUMMARY_SUBSTANCE_RE = re.compile(
+    r"""(
+        \d                      # any digit: counts, line numbers, exit codes
+      | [\w./-]+\.[a-zA-Z]{1,5}  # a filename with an extension
+      | [A-Za-z_][\w]*_[\w]+   # a snake_case identifier
+      | \b(?:PASS|FAIL|FLAKY|BLOCKER|MAJOR|MINOR|NIT)\b
+      | `[^`]+`                 # anything the model chose to quote as code
+    )""",
+    re.VERBOSE,
+)
 
-# Sub-agent completion payloads for parent turn handoff.
+
+def has_summary_section(text: str | None) -> bool:
+    """True when ``### SUMMARY`` is present and its body says something."""
+    if not text or "### SUMMARY" not in text:
+        return False
+    body = summary_section_text(text)
+    if not body:
+        return False
+    if _SUMMARY_SUBSTANCE_RE.search(body):
+        return True
+    bound = (
+        _SUMMARY_STUB_MAX_CHARS
+        if _CJK_RE.search(body)
+        else _SUMMARY_STUB_MAX_CHARS_ASCII
+    )
+    return len(body) > bound
 
 
 @dataclass(frozen=True, slots=True)
@@ -141,9 +175,6 @@ def build_completion_payload(snap: SubAgentResult) -> str:
     if len(payload) > _MAX_PAYLOAD_CHARS:
         payload = payload[:_MAX_PAYLOAD_CHARS] + "\n…[truncated]"
     return payload
-
-
-# Sub-agent run result types (text + structured output).
 
 
 @dataclass(slots=True)

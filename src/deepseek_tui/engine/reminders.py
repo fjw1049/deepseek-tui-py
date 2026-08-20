@@ -142,6 +142,16 @@ LSP_DIAGNOSTICS = ReminderSpec(
     priority=30,
 )
 
+SUBAGENT_HANDOFF = ReminderSpec(
+    name="subagent_handoff",
+    envelope=Envelope.ALERT,
+    placement=Placement.TAIL,
+    origin=MessageOrigin.SYSTEM_REMINDER,
+    # Just ahead of SUBAGENT_DONE so the ledger is the first thing read.
+    priority=39,
+    max_chars=2_000,
+)
+
 SUBAGENT_DONE = ReminderSpec(
     name="subagent_done",
     envelope=Envelope.ALERT,
@@ -260,6 +270,7 @@ REGISTRY: tuple[ReminderSpec, ...] = (
     LONG_SESSION_DRIFT,
     CHECKLIST_INCOMPLETE_GATE,
     LSP_DIAGNOSTICS,
+    SUBAGENT_HANDOFF,
     SUBAGENT_DONE,
     PROCESS_DONE,
     SOFT_RESUME,
