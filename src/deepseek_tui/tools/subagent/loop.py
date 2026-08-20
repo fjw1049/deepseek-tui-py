@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -196,21 +197,23 @@ def _structured_output_contract() -> str:
         "- Your final action MUST be a structured_output tool call.\n"
         "- The structured_output arguments are the return value of this subagent.\n"
         "- Do not emit a prose final answer instead of structured_output.\n"
-        "- Do not write the five-section Markdown report; the JSON tool call "
+        "- Do not write the Markdown report; the JSON tool call "
         "is the only deliverable.\n"
         "- If you need to inspect files or run commands first, do so, then call "
         "structured_output exactly once."
     )
 
 
-# Keep wording aligned with prompts/sub_output.md (five H3s).
+# Keep wording aligned with prompts/sub_output.md (### SUMMARY is the only
+# required heading; the rest of the report shape is the child's choice).
 _SUBAGENT_FINAL_REPORT_NUDGE = (
     "You have gathered enough information. Stop exploring and do NOT call any "
-    "more tools. Write your final report now as your assistant message, ending "
-    "with the mandatory Output contract sections as Markdown H3s: "
-    "### SUMMARY, ### EVIDENCE, ### CHANGES, ### RISKS, ### BLOCKERS "
-    '(use "None." / "None observed." where the contract allows). '
-    "Do not propose follow-up work or ask the parent what to do next."
+    "more tools. Write your final report now as your assistant message. It "
+    "must contain a `### SUMMARY` H3 stating the outcome in prose; below it, "
+    "organise the rest as the task calls for, carrying the evidence, writes, "
+    "risks and unfinished work that apply to your run. Do not add a heading "
+    'just to write "None." under it. Do not propose follow-up work or ask the '
+    "parent what to do next."
 )
 
 _SUBAGENT_STRUCTURED_OUTPUT_NUDGE = (
@@ -221,17 +224,70 @@ _SUBAGENT_STRUCTURED_OUTPUT_NUDGE = (
 
 
 _SUBAGENT_SUMMARY_CONTINUATION_NUDGE = (
-    "Your previous response did not include the mandatory output contract. "
-    "Write your final report now as your assistant message, ending with the "
-    "Markdown H3 sections: ### SUMMARY, ### EVIDENCE, ### CHANGES, "
-    '### RISKS, ### BLOCKERS (use "None." where the contract allows). '
-    "Do not call any tools."
+    "Your previous response did not carry a usable report. The parent cannot "
+    "see your context — this message is the entire handoff. Write it now as "
+    "your assistant message: a `### SUMMARY` H3 with the outcome in prose "
+    "(not just \"Done.\"), then whatever structure the task calls for, "
+    "carrying the concrete evidence (`path:line`, commands and exit codes), "
+    "every file you wrote, risks you did not address, and anything left "
+    "unfinished. Do not call any tools."
+)
+
+
+# A SUMMARY that parses but says nothing still passes a heading-only check and
+# then reaches the parent as the whole deliverable ("Done." in a sidebar line).
+# Kimi gates its handoff on a 200-character floor, but a length floor does not
+# transfer here: measured against real reports, a complete Chinese summary runs
+# 14-43 characters while the stubs worth rejecting run 4-14, so the bands
+# overlap and any threshold that catches "已完成。" also rejects
+# "审计完成，未发现阻塞性问题。".
+#
+# What separates them is not length but substance — a real summary names
+# something checkable. So require a token the parent could act on: a number, a
+# path, an identifier, or a verdict keyword. That holds in both languages and
+# does not penalise CJK density.
+# Without a checkable token, a body has to be long enough to be saying
+# something. Latin script needs a higher bar than CJK for the same content, so
+# the bound scales: CJK bodies are dense, ASCII ones are not.
+_SUMMARY_STUB_MAX_CHARS = 12
+_SUMMARY_STUB_MAX_CHARS_ASCII = 24
+_CJK_RE = re.compile(r"[㐀-䶿一-鿿぀-ヿ가-힯]")
+_SUMMARY_SUBSTANCE_RE = re.compile(
+    r"""(
+        \d                      # any digit: counts, line numbers, exit codes
+      | [\w./-]+\.[a-zA-Z]{1,5}  # a filename with an extension
+      | [A-Za-z_][\w]*_[\w]+   # a snake_case identifier
+      | \b(?:PASS|FAIL|FLAKY|BLOCKER|MAJOR|MINOR|NIT)\b
+      | `[^`]+`                 # anything the model chose to quote as code
+    )""",
+    re.VERBOSE,
 )
 
 
 def _has_summary_section(text: str | None) -> bool:
-    """True when *text* contains the mandatory ``### SUMMARY`` heading."""
-    return bool(text) and "### SUMMARY" in text
+    """True when ``### SUMMARY`` is present and its body says something.
+
+    Checks the body, not just the heading: the heading alone used to pass, so a
+    terse ``### SUMMARY\\n Done.`` satisfied the contract and then surfaced to
+    the parent as the entire deliverable. A short body is accepted when it
+    carries a checkable token (a count, a path, an identifier, a verdict);
+    otherwise it has to clear the stub length.
+    """
+    if not text or "### SUMMARY" not in text:
+        return False
+    from deepseek_tui.tools.subagent.completion import summary_section_text
+
+    body = summary_section_text(text)
+    if not body:
+        return False
+    if _SUMMARY_SUBSTANCE_RE.search(body):
+        return True
+    bound = (
+        _SUMMARY_STUB_MAX_CHARS
+        if _CJK_RE.search(body)
+        else _SUMMARY_STUB_MAX_CHARS_ASCII
+    )
+    return len(body) > bound
 
 
 def _assistant_text_and_thinking(message: Any | None) -> tuple[str, str]:

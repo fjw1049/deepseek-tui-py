@@ -20,8 +20,12 @@ class SubAgentCompletion:
     payload: str
 
 
-def _summary_section_text(body: str) -> str | None:
-    """Pull prose under ``### SUMMARY`` when the five-section report is present."""
+def summary_section_text(body: str) -> str | None:
+    """Pull the prose under ``### SUMMARY``, or None when there is none.
+
+    Shared with the sub-agent loop's output gate, which checks the same body
+    for substance before accepting a report.
+    """
     marker = "### SUMMARY"
     if marker not in body:
         return None
@@ -50,7 +54,7 @@ def summarize_subagent_result(snap: SubAgentResult) -> str:
     body = (snap.result or "").strip()
     if not body:
         return f"Completed ({snap.agent_type.value})"
-    section = _summary_section_text(body)
+    section = summary_section_text(body)
     first = (section or body.splitlines()[0]).strip()
     if len(first) > 240:
         return first[:237] + "..."
@@ -85,13 +89,55 @@ def subagent_done_sentinel(snap: SubAgentResult) -> str:
 
 
 _MAX_PAYLOAD_CHARS = 8_000
+# Room for the one-line summary, the sentinel JSON, and the re-read pointer that
+# replaces an elided tail. Measured against the sentinel's own budget rather
+# than guessed: the reminder spec caps this payload at _MAX_PAYLOAD_CHARS.
+_PAYLOAD_ENVELOPE_RESERVE = 1_200
+
+
+def _report_block(snap: SubAgentResult, budget: int) -> str | None:
+    """Render the child's full report for the parent, trimmed to *budget*.
+
+    The parent used to receive only the 240-char sidebar line and had to spend a
+    ``task_output`` round-trip to read what the child actually wrote — for every
+    delegation, including foreground ones whose result it needs immediately.
+    Kimi and grok both hand the parent the child's final message verbatim; the
+    reminder budget here was already sized for it (see ``SUBAGENT_DONE``).
+
+    Trimming keeps the head: the contract puts ``### SUMMARY`` first, so the head
+    is the conclusion. An elided tail is recoverable — the pointer says how.
+    """
+    body = (snap.result or "").strip()
+    if not body or budget <= 0:
+        return None
+    if len(body) <= budget:
+        return body
+    pointer = (
+        f"\n\n[report truncated at {budget} chars — read the rest with "
+        f"task_output(agent_id=\"{snap.agent_id}\")]"
+    )
+    head = max(0, budget - len(pointer))
+    if head <= 0:
+        return None
+    return body[:head].rstrip() + pointer
 
 
 def build_completion_payload(snap: SubAgentResult) -> str:
-    """Human summary on line 1, sentinel on line 2."""
+    """One-line summary, the sentinel, then the child's report in full.
+
+    Ordered so the cheap signal comes first: a parent that only skims the first
+    line still learns the outcome, and the report below saves it a round-trip
+    when it needs the detail.
+    """
     summary = summarize_subagent_result(snap)
     sentinel = subagent_done_sentinel(snap)
     payload = f"{summary}\n{sentinel}"
+    report = _report_block(
+        snap, _MAX_PAYLOAD_CHARS - len(payload) - _PAYLOAD_ENVELOPE_RESERVE
+    )
+    # Skip the block when it would only restate the summary line verbatim.
+    if report and report != summary:
+        payload = f"{payload}\n\n{report}"
     if len(payload) > _MAX_PAYLOAD_CHARS:
         payload = payload[:_MAX_PAYLOAD_CHARS] + "\n…[truncated]"
     return payload

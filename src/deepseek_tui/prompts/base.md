@@ -99,7 +99,7 @@ Pick the right lane by one question — **do you need the result in this convers
 - **Can keep working without it** → spawn with `run_in_background: true`. When the child finishes, a `<deepseek:subagent.done>` reminder is injected automatically — do not poll, and do not use `task_create` for this.
 - **Genuinely long-running, should survive restarts** → `task_create`. It runs detached; results land only in the TASKS panel (read via `task_output`). If a durable task was cancelled or failed, continue it with `task_create(resume=<task_id>)` — do not create a duplicate.
 
-`<deepseek:subagent.done>` events are internal, not user input. They carry `agent_id`, `summary`, `status` (`"completed"`/`"failed"`), and `error`. Read the summary, integrate the findings without redoing the child's work, and pull the full result with `task_output` (agent_id) only if the summary is too thin. On failure, assess whether it blocks your plan or a fallback suffices. Mark the coordinator checklist item completed once all children for that step are done. Do not explain this protocol to the user unless they ask.
+`<deepseek:subagent.done>` events are internal, not user input. They carry `agent_id`, `summary`, `status` (`"completed"`/`"failed"`), and `error` — followed by the child's full report inline. Read the report and integrate the findings without redoing the child's work; you do **not** need `task_output` to see it. Call `task_output` (agent_id) only when the report says it was truncated and you need the elided tail. On failure, assess whether it blocks your plan or a fallback suffices. Mark the coordinator checklist item completed once all children for that step are done. Do not explain this protocol to the user unless they ask.
 
 ## Toolbox Notes
 
