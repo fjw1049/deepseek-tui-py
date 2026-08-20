@@ -184,12 +184,7 @@ class ContextConfig(BaseModel):
     """Layered context policy — ratios of the live model context window."""
 
     enabled: bool = False
-    verbatim_window_turns: int = 5
-    seam_model: str = "deepseek-v4-flash"
-    seam_l1_ratio: float = 0.20
-    seam_l2_ratio: float = 0.40
     l0_prune_ratio: float = 0.50
-    seam_l3_ratio: float = 0.55
     rewrite_ratio: float = 0.75
     cycle_ratio: float = 0.90
 
@@ -446,11 +441,8 @@ class Config(BaseModel):
     skills: SkillsConfig = Field(default_factory=SkillsConfig)
     automation: AutomationConfig = Field(default_factory=AutomationConfig)
     tools_file: Path | None = None
-    # Cycle / seam toggles consumed by ``Engine.create``. Off by default
-    # so existing tests stay deterministic; long-running real sessions can
-    # flip these via TOML once they're ready for cycle archive-and-replay.
+    # Cycle archive-and-replan, consumed by ``Engine.create``.
     cycle_enabled: bool = True
-    seam_enabled: bool = True
 
     def resolved_database_path(self) -> Path:
         return self.state.database_path.expanduser()

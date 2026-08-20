@@ -508,7 +508,6 @@ async def run_error_escalation_checkpoint(
 
 
 from deepseek_tui.client.base import LLMClient
-from deepseek_tui.engine.seam import truncate_chars as _truncate_chars
 from deepseek_tui.protocol.messages import Message
 
 # Configuration constants
@@ -716,6 +715,15 @@ def _render_tool_args(args: dict[str, Any]) -> str:
     return ", ".join(parts)
 
 
+def _truncate_chars(text: str, max_chars: int) -> str:
+    """Keep the first *max_chars* characters, respecting Unicode."""
+    if max_chars == 0:
+        return ""
+    if len(text) <= max_chars:
+        return text
+    return text[:max_chars]
+
+
 def _tail_chars(text: str, max_chars: int) -> str:
     """Extract last max_chars characters from text."""
     if max_chars <= 0:
@@ -839,7 +847,7 @@ def should_compact(
 
     Primary signal is context-used *ratio* vs ``config.rewrite_ratio``
     (default 0.75). Below ``auto_floor_ratio`` (default 0.20) auto rewrite
-    never fires — soft seams / L0 handle that band.
+    never fires — L0 pruning handles that band.
 
     Pass *system_prompt* and *tools* whenever available: on the estimate
     path they are a multi-thousand-token constant that the message list
@@ -1000,7 +1008,7 @@ async def _create_summary(
     # Format conversation for summarization
     conversation_text = ""
     for msg in messages:
-        # Reminders, seam summaries and cycle seeds all ride the user role.
+        # Reminders and cycle seeds all ride the user role.
         # Labelling them "User" lets the summarizer attribute harness text to
         # the human, which then replays as a user constraint after compaction.
         if msg.role != "user":

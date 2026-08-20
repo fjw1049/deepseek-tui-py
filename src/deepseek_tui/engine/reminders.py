@@ -2,9 +2,9 @@
 
 Two problems this exists to solve.
 
-**One envelope was doing two jobs.** Soft seams and cycle seeds shipped inside
+**One envelope was doing two jobs.** Cycle seeds shipped inside
 `<system-reminder>`, the same wrapper as "your last edit produced errors" and
-"a Stop hook blocked you". But a seam is not an alert — it is a *stand-in for
+"a Stop hook blocked you". But a seed is not an alert — it is a *stand-in for
 history*, and it has to sit at the point in the transcript that the history it
 replaces used to occupy. An alert is the opposite: it is about right now, and
 belongs as close to the model's attention as we can put it. With one envelope
@@ -33,10 +33,6 @@ class Envelope(str, Enum):
     # Live alert: the world changed, or a rule is being restated. Authority is
     # one-way (see base.md) — may tighten constraints, never loosen them.
     ALERT = "system-reminder"
-    # Stand-in for history the harness compressed away. Self-enveloping: the
-    # seam builder already emits `<archived_context level=... range=...>`, so
-    # wrapping it again would only bury the attributes the model reads.
-    ARCHIVE = "archived_context"
     # Everything carried across a cycle boundary when the transcript is reset.
     CARRYOVER = "cycle_carryover"
 
@@ -233,13 +229,6 @@ SUBAGENT_STOP_HOOK_BLOCK = ReminderSpec(
 
 # --- In history: stand-ins for content that used to be there ---------------
 
-SOFT_SEAM = ReminderSpec(
-    name="soft_seam",
-    envelope=Envelope.ARCHIVE,
-    placement=Placement.IN_HISTORY,
-    origin=MessageOrigin.SOFT_SEAM,
-)
-
 CYCLE_SEED = ReminderSpec(
     name="cycle_seed",
     envelope=Envelope.CARRYOVER,
@@ -267,7 +256,6 @@ REGISTRY: tuple[ReminderSpec, ...] = (
     SUBAGENT_OUTPUT_NUDGE,
     STOP_HOOK_BLOCK,
     SUBAGENT_STOP_HOOK_BLOCK,
-    SOFT_SEAM,
     CYCLE_SEED,
 )
 
@@ -285,10 +273,6 @@ def render(spec: ReminderSpec, body: str) -> str:
             f"{summarize_text_head_tail(text, spec.max_chars)}\n"
             f"[{spec.name}: {omitted} chars omitted from the middle]"
         )
-    if spec.envelope is Envelope.ARCHIVE:
-        # Already carries its own opening tag with the attributes that say
-        # which slice of history it stands for.
-        return text
     open_tag = f"<{spec.envelope.value}>"
     if text.startswith(open_tag):
         return text

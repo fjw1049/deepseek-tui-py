@@ -72,7 +72,6 @@ from deepseek_tui.engine.orchestrator.tooling import ToolExecutionMixin
 from deepseek_tui.engine.prompts import (
     build_system_prompt,
 )
-from deepseek_tui.engine.seam import SeamConfig, SeamManager
 from deepseek_tui.engine.tools import (
     PLAN_MODE_TOOL_ALLOWLIST,
     build_model_tool_catalog,
@@ -420,14 +419,12 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         # by name even though they are listed in the system prompt.
         if skill_registry is not None:
             self.tool_context.metadata["skill_registry"] = skill_registry
-        # Cycle / seam managers — instantiated but disabled by default. The
-        # full archive-and-replan logic lives in cycle_manager.py /
-        # seam_manager.py; ``Engine`` keeps surface integration minimal:
-        # ``_maybe_advance_cycle`` runs at the start of each conversation
-        # and only fires when the user opts in via ``Config.cycle_enabled``.
-        # See HANDOVER pre-realapi-batch-2 entry for the deferred deep work.
+        # Cycle manager — instantiated but disabled by default. The full
+        # archive-and-replan logic lives in cycle.py; ``Engine`` keeps surface
+        # integration minimal: ``_maybe_advance_cycle`` runs at the start of
+        # each conversation and only fires when the user opts in via
+        # ``Config.cycle_enabled``.
         self.cycle_config = CycleConfig(enabled=False)
-        self.seam_manager: SeamManager | None = None
         self._cycle_session_id: str = ""
         self._cycle_n: int = 0
         self._cycle_started_at: int = 0
@@ -1358,7 +1355,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         engine.capacity_controller = CapacityController(
             config=CapacityControllerConfig.from_app_config(cfg.capacity)
         )
-        # Cycle / Seam wiring — ratios from ContextConfig; absolute token
+        # Cycle wiring — ratios from ContextConfig; absolute token
         # cutoffs are derived per request from the live model window.
         ctx_cfg = getattr(cfg, "context", None)
         engine.cycle_config = CycleConfig(
@@ -1371,23 +1368,6 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         engine.compaction_config.l0_prune_ratio = float(
             getattr(ctx_cfg, "l0_prune_ratio", 0.50) or 0.50
         )
-        if bool(getattr(cfg, "seam_enabled", False)):
-            seam_cfg = SeamConfig(
-                enabled=True,
-                verbatim_window_turns=int(
-                    getattr(ctx_cfg, "verbatim_window_turns", 5) or 5
-                ),
-                l1_ratio=float(getattr(ctx_cfg, "seam_l1_ratio", 0.20) or 0.20),
-                l2_ratio=float(getattr(ctx_cfg, "seam_l2_ratio", 0.40) or 0.40),
-                l3_ratio=float(getattr(ctx_cfg, "seam_l3_ratio", 0.55) or 0.55),
-                seam_model=str(
-                    getattr(ctx_cfg, "seam_model", "deepseek-v4-flash")
-                    or "deepseek-v4-flash"
-                ),
-            )
-            engine.seam_manager = SeamManager(
-                flash_client=engine.client, config=seam_cfg
-            )
         engine._cycle_session_id = uuid.uuid4().hex
         engine._cycle_started_at = int(time.time())
         engine.mode = mode
@@ -2239,7 +2219,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                 # before the cancel landed, result.usage is a valid pressure
                 # reading — more accurate than the char-based estimate.
                 # Record it so the next turn's should_compact /
-                # seam / cycle decisions aren't forced back to the ~6x-
+                # cycle decisions aren't forced back to the ~6x-
                 # undercounting estimate. If no usage arrived (cancel too
                 # early), keep the previous value rather than zeroing — a
                 # stale-but-real reading beats falling back to the estimate.
@@ -2882,10 +2862,6 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             self._maybe_l0_prune_tool_results(
                 messages, model, system_prompt=system_prompt, tools=tools
             )
-            # Soft seams L1/L2/L3 at 20%/40%/55% of the model window.
-            await self._maybe_layered_context_checkpoint(
-                messages, model, system_prompt=system_prompt, tools=tools
-            )
             should_trigger = (
                 self._compact_cooldown_rounds <= 0
                 and should_compact(
@@ -2970,7 +2946,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             # turn end: every round's StreamDone carries the provider's
             # input_tokens and messages only grow between rounds, so this is
             # monotonic. Otherwise the /context panel and the pre-request
-            # compaction checks (should_compact / L0 / seams) stay blind to
+            # compaction checks (should_compact / L0) stay blind to
             # mid-turn growth until the whole turn completes.
             round_usage = result.usage
             goal_budget_blocked = False

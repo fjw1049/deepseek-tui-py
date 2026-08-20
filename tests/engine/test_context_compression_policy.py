@@ -25,14 +25,13 @@ from deepseek_tui.protocol.messages import Message, MessageRequest, Role
 
 def test_thresholds_scale_with_window():
     t1m = thresholds_for_window(1_000_000)
-    assert t1m["seam_l1"] == 200_000
     assert t1m["l0_prune"] == 500_000
     assert t1m["rewrite"] == 750_000
     assert t1m["cycle"] == 900_000
 
     t128 = thresholds_for_window(128_000)
     assert t128["rewrite"] == int(128_000 * 0.75)
-    assert t128["seam_l1"] < t1m["seam_l1"]
+    assert t128["l0_prune"] < t1m["l0_prune"]
 
 
 def test_should_compact_uses_rewrite_ratio():

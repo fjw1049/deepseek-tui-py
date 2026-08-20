@@ -3,10 +3,9 @@
 Two invariants live here.
 
 An alert and a history substitute must not share an envelope. `<system-reminder>`
-means "this is about now, act on it"; `<archived_context>` and `<cycle_carryover>`
-mean "this is what already happened". While both wore the reminder tag there was
-nothing to base a position rule on, so position was whatever the append order
-happened to be.
+means "this is about now, act on it"; `<cycle_carryover>` means "this is what
+already happened". While both wore the reminder tag there was nothing to base a
+position rule on, so position was whatever the append order happened to be.
 
 And the envelope must never travel without the provenance tag. Wrapping and
 tagging used to be two separate calls at each site, which is how four sites
@@ -42,15 +41,6 @@ def test_alerts_and_history_substitutes_use_different_envelopes() -> None:
     assert alerts == {Envelope.ALERT}
     assert Envelope.ALERT not in history
     assert history, "the split is pointless if nothing is on the history side"
-
-
-def test_a_seam_is_not_wrapped_as_a_reminder() -> None:
-    seam = '<archived_context level="2" range="msg 1-9">gist</archived_context>'
-    out = render(reminders.SOFT_SEAM, seam)
-    assert "<system-reminder>" not in out
-    # Self-enveloping: re-wrapping would bury the attributes the model reads
-    # to know which stretch of history this stands for.
-    assert out == seam
 
 
 def test_a_cycle_seed_carries_its_own_tag() -> None:

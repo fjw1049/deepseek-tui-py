@@ -1,6 +1,6 @@
 """Unified context-pressure signal and ratio-tier policy.
 
-All compaction layers (L0 prune, soft seams, rewrite, cycle) should read
+All compaction layers (L0 prune, rewrite, cycle) should read
 :func:`measure_context_pressure` instead of inventing absolute thresholds
 tuned to a single 1M window.
 """
@@ -18,11 +18,10 @@ from deepseek_tui.config.providers import (
 )
 from deepseek_tui.protocol.messages import Message, MessageOrigin, Role, TextBlock
 
-# Ratio ladder (confirmed product policy).
-RATIO_SEAM_L1 = 0.20
-RATIO_SEAM_L2 = 0.40
+# Ratio ladder (confirmed product policy). Every rung reclaims window:
+# L0 prunes old tool bodies deterministically, rewrite summarises history,
+# cycle archives it to disk.
 RATIO_L0_PRUNE = 0.50
-RATIO_SEAM_L3 = 0.55
 RATIO_REWRITE = 0.75
 RATIO_CYCLE = 0.90
 RATIO_AUTO_FLOOR = 0.20  # below this: ingress truncation only
@@ -30,6 +29,18 @@ RATIO_AUTO_FLOOR = 0.20  # below this: ingress truncation only
 COMPACTION_BRIDGE_PREFIX = (
     "The conversation history before this point was compacted into the "
     "following summary:\n"
+)
+# Read-side counterpart to the honesty rule in prompts/compact.md. The summary
+# is your own working notes, and a step it records as done may never have been
+# verified — so treat it as a lead to check, not as evidence. Kept out of
+# ``COMPACTION_BRIDGE_PREFIX`` itself because ``is_compaction_bridge_message``
+# matches that string in sessions persisted before this note existed.
+COMPACTION_BRIDGE_SUFFIX = (
+    "\nThese are your own notes, not proof. Where the summary says a step was "
+    "done, a test passed, or a fix worked, verify it yourself before building "
+    "on it. User requests quoted below the summary are preserved verbatim; "
+    "everything else is a paraphrase that drifts a little on every "
+    "re-summarisation."
 )
 ARCHIVED_CONTEXT_OPEN = "<archived_context>"
 ARCHIVED_CONTEXT_CLOSE = "</archived_context>"
@@ -123,10 +134,7 @@ def thresholds_for_window(window: int) -> dict[str, int]:
     """Absolute token thresholds derived from a context window."""
     w = max(1, int(window))
     return {
-        "seam_l1": int(w * RATIO_SEAM_L1),
-        "seam_l2": int(w * RATIO_SEAM_L2),
         "l0_prune": int(w * RATIO_L0_PRUNE),
-        "seam_l3": int(w * RATIO_SEAM_L3),
         "rewrite": int(w * RATIO_REWRITE),
         "cycle": int(w * RATIO_CYCLE),
         "auto_floor": int(w * RATIO_AUTO_FLOOR),
@@ -202,6 +210,9 @@ SYNTHETIC_ORIGINS = frozenset(
     {
         MessageOrigin.SYSTEM_REMINDER,
         MessageOrigin.COMPACTION_BRIDGE,
+        # No live producer — soft seams were removed. A session persisted
+        # while they existed still carries them, and they must not read back
+        # as something the human said.
         MessageOrigin.SOFT_SEAM,
         MessageOrigin.CYCLE_SEED,
         # Carries the user's words but is not a fresh turn — treating it as
@@ -253,12 +264,16 @@ def infer_legacy_origin(message: Message) -> MessageOrigin | None:
         return None
     if is_compaction_bridge_message(message):
         return MessageOrigin.COMPACTION_BRIDGE
-    # Before the generic reminder check: seams ride inside a reminder
+    # Before the generic reminder check: seams rode inside a reminder
     # envelope, so testing for the envelope first would label every one of
     # them SYSTEM_REMINDER. The old rule looked for the bare
-    # ``<archived_context>`` alongside ``level="``, which a real seam can
-    # never satisfy — it always carries attributes, so the opening tag is
-    # never bare. Matching the prefix is what ``seam.py`` itself does.
+    # ``<archived_context>`` alongside ``level="``, which a seam can
+    # never satisfy — it always carried attributes, so the opening tag is
+    # never bare.
+    #
+    # Soft seams were removed, so nothing produces these any more. Kept
+    # because a session persisted while they existed still has them on disk
+    # and must keep classifying the way it always did.
     if '<archived_context level="' in text:
         return MessageOrigin.SOFT_SEAM
     if text.startswith(SYSTEM_REMINDER_OPEN) or "<system-reminder>" in text[:80]:
@@ -285,7 +300,7 @@ def messages_from_dicts(raw_messages: Iterable[Any]) -> list[Message]:
 
     The only sanctioned way to turn stored dicts back into ``Message``
     objects. Loading them directly would silently produce a transcript where
-    every reminder, seam and bridge reads as something the human said.
+    every reminder and bridge reads as something the human said.
     """
     out: list[Message] = []
     for item in raw_messages:
@@ -434,6 +449,26 @@ def extract_compaction_bridge_text(messages: list[Message]) -> str | None:
     return None
 
 
+def unwrap_archived_context(text: str | None) -> str | None:
+    """Strip the bridge envelope, returning just the summary the model wrote.
+
+    The bridge body carries a prefix, a caveat, and the working-set list around
+    the ``<archived_context>`` block. Re-compaction replays the previous summary
+    to the summarizer, and feeding it the whole envelope makes it re-summarise
+    our own framing — the caveat and the "compacted into the following summary"
+    line come back as if they were session content, and stack on every pass.
+    """
+    if not text:
+        return None
+    start = text.find(ARCHIVED_CONTEXT_OPEN)
+    if start == -1:
+        return text.strip() or None
+    inner_start = start + len(ARCHIVED_CONTEXT_OPEN)
+    end = text.find(ARCHIVED_CONTEXT_CLOSE, inner_start)
+    inner = text[inner_start:end] if end != -1 else text[inner_start:]
+    return inner.strip() or None
+
+
 def build_compaction_bridge_text(
     summary: str,
     *,
@@ -441,6 +476,8 @@ def build_compaction_bridge_text(
 ) -> str:
     """Format a user-role bridge message body (cache-friendly composition)."""
     body = f"{COMPACTION_BRIDGE_PREFIX}{ARCHIVED_CONTEXT_OPEN}\n{summary.strip()}\n{ARCHIVED_CONTEXT_CLOSE}"
+    # Outside the tags: a caveat about the block, not part of the archived text.
+    body += COMPACTION_BRIDGE_SUFFIX
     if working_set_paths:
         body += "\n\n**Working Set Files:**\n"
         for path in working_set_paths[:10]:

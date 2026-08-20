@@ -34,6 +34,9 @@ class MessageOrigin(str, Enum):
     REAL_USER = "real_user"
     SYSTEM_REMINDER = "system_reminder"
     COMPACTION_BRIDGE = "compaction_bridge"
+    # Retired: soft seams (L1/L2/L3) no longer exist, so nothing writes this.
+    # Kept because sessions persisted while they did still carry it on disk —
+    # removing the member would fail to deserialize them.
     SOFT_SEAM = "soft_seam"
     CYCLE_SEED = "cycle_seed"
     # Harness-rendered replay of everything the human has asked for so far.

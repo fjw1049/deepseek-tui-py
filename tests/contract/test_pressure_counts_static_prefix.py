@@ -4,7 +4,7 @@
 but every production call site omitted them, so the estimate path — the first
 turn of every session, and any turn before a provider ``input_tokens`` lands —
 silently ignored several thousand tokens of static prefix. Every threshold in
-the ladder (seam L1/L2/L3, L0 prune, rewrite, cycle) read low as a result.
+the ladder (L0 prune, rewrite, cycle) read low as a result.
 
 The real-token path is unaffected: the provider's ``input_tokens`` already
 counts the prefix, so adding it again would double-count.
@@ -123,7 +123,6 @@ def test_every_pressure_consumer_in_the_turn_loop_is_wired() -> None:
     consumers = (
         "_maybe_advance_cycle",
         "_maybe_l0_prune_tool_results",
-        "_maybe_layered_context_checkpoint",
         "should_compact",
         "_maybe_inject_long_session_reminder",
     )

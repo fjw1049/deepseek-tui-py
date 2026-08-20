@@ -119,91 +119,9 @@ class SessionMaintenanceMixin:
         except Exception:  # noqa: BLE001
             logger.debug("checkpoint save failed", exc_info=True)
 
-    async def _maybe_layered_context_checkpoint(
-        self,
-        messages: list[Message],
-        model: str,
-        *,
-        system_prompt: str | None = None,
-        tools: list[dict[str, Any]] | None = None,
-    ) -> None:
-        """Pre-request soft seam — mirrors ``layered_context_checkpoint`` (#159).
-        阈值分级(seam.py:23-31),按当前输入 token 递进,每级只触发一次、且必须按序:
-
-        L1 = 192K、L2 = 384K、L3 = 576K
-        对应产物字数上限逐级收紧:800 / 600 / 400 词
-        """
-        seam = self.seam_manager
-        if seam is None or not seam.config.enabled:
-            return
-
-        from deepseek_tui.engine.context_pressure import measure_context_pressure
-
-        pressure = measure_context_pressure(
-            model,
-            messages,
-            real_input_tokens=self.last_real_input_tokens,
-            system_prompt=system_prompt,
-            tools=tools,
-        )
-        seam.config.apply_window(pressure.window)
-        tokens = pressure.tokens
-        highest = await seam.highest_level()
-        level = seam.seam_level_for(tokens, highest)
-        if level is None:
-            return
-        msg_count = len(messages)
-        verbatim_start = seam.verbatim_window_start(msg_count)
-        if verbatim_start <= 0:
-            return
-        pinned = self.working_set.pinned_message_indices(
-            messages, self.tool_context.working_directory
-        )
-        try:
-            existing = seam.collect_seam_texts(messages)
-            from deepseek_tui.engine.usage_ledger import usage_source
-
-            with usage_source("seam"):
-                if existing:
-                    recent = messages[:verbatim_start]
-                    seam_text = await seam.recompact(
-                        existing, recent, level, 0, verbatim_start
-                    )
-                else:
-                    seam_text = await seam.produce_soft_seam(
-                        messages,
-                        level,
-                        0,
-                        verbatim_start,
-                        pinned_indices=sorted(pinned),
-                    )
-        except Exception as err:  # noqa: BLE001
-            logger.warning("layered_context_checkpoint failed: %s", err)
-            return
-        if seam_text and seam_text.strip():
-            # Insert seam at verbatim window boundary — between old messages
-            # and recent verbatim turns. This preserves prefix cache (no
-            # deletion of prior messages) while placing the summary where
-            # the LLM can use it as a bridge between stale prefix and fresh
-            # context.
-            #
-            # Align off Role.TOOL so we never split assistant(tool_calls)
-            # from its tool results (API orphan sequences).
-            from deepseek_tui.protocol.messages import Role
-
-            insert_at = verbatim_start
-            while insert_at > 0 and messages[insert_at].role == Role.TOOL:
-                insert_at -= 1
-            from deepseek_tui.engine import reminders
-
-            messages.insert(
-                insert_at, reminders.reminder_message(reminders.SOFT_SEAM, seam_text)
-            )
-
     # Long-session drift reminder: first injection once the context passes
     # _DRIFT_REMINDER_FIRST_RATIO of the window, then again after each
-    # further _DRIFT_REMINDER_STEP_RATIO of growth (0.4 → 0.6 → 0.8,
-    # interleaved between the seam levels).
+    # further _DRIFT_REMINDER_STEP_RATIO of growth (0.4 → 0.6 → 0.8).
     _DRIFT_REMINDER_FIRST_RATIO = 0.40
     _DRIFT_REMINDER_STEP_RATIO = 0.20
 
@@ -308,14 +226,24 @@ class SessionMaintenanceMixin:
     _COMPACTION_SUMMARY_MAX_CHARS = 20_000
 
     def _record_compaction_summary(self, summary_prompt: str | None) -> None:
-        """Remember the latest bridge text for iterative re-compaction.
+        """Remember the latest summary for iterative re-compaction.
 
         Does **not** accumulate into the system prompt. The live bridge is
         a leading user message in ``messages``.
+
+        Stores the summary *inside* the ``<archived_context>`` block rather than
+        the whole bridge body: the next compaction replays this as
+        ``<previous-summary>``, and handing it our own prefix and caveat would
+        have the summarizer fold that framing into the next summary, once per
+        pass.
         """
         if not summary_prompt:
             return
-        text = summary_prompt
+        from deepseek_tui.engine.context_pressure import unwrap_archived_context
+
+        text = unwrap_archived_context(summary_prompt)
+        if not text:
+            return
         if len(text) > self._COMPACTION_SUMMARY_MAX_CHARS:
             text = text[-self._COMPACTION_SUMMARY_MAX_CHARS :]
         self._compaction_summary_prompt = text
@@ -398,8 +326,10 @@ class SessionMaintenanceMixin:
             pressure=pressure,
         ):
             return 0
-        # Prefer not to mutate inside the recent verbatim / seam window:
-        # only prune messages before the last soft-seam insert when present.
+        # Stop before an ``<archived_context level=...>`` block if one is
+        # present. Nothing produces those any more (soft seams were removed),
+        # but a resumed pre-existing session can still carry one, and the
+        # messages after it are the recent verbatim window.
         boundary = len(messages)
         for i, msg in enumerate(messages):
             text = ""
@@ -451,9 +381,9 @@ class SessionMaintenanceMixin:
     ) -> None:
         """Archive a full cycle to disk and trim history when threshold crossed.
 
-        Produces a model-curated briefing via produce_briefing (or Flash seam
-        briefing if seams exist) so the next cycle starts with context about
-        decisions, constraints, and progress from the archived history.
+        Produces a model-curated briefing via produce_briefing so the next
+        cycle starts with context about decisions, constraints, and progress
+        from the archived history.
         """
         if not messages:
             return
@@ -522,23 +452,14 @@ class SessionMaintenanceMixin:
         )
         structured_block = structured.to_system_block()
 
-        # Try Flash briefing from seams first (cheap); fall back to full
-        # produce_briefing if no seams or if Flash fails.
         try:
             with usage_source("cycle_briefing"):
-                if self.seam_manager is not None:
-                    existing_seams = self.seam_manager.collect_seam_texts(messages)
-                    if existing_seams:
-                        briefing_text = await self.seam_manager.produce_flash_briefing(
-                            existing_seams, structured_state=structured_block
-                        )
-                if not briefing_text:
-                    briefing_text = await produce_briefing(
-                        self.client,
-                        model,
-                        messages,
-                        self.cycle_config.briefing_max_for(model),
-                    )
+                briefing_text = await produce_briefing(
+                    self.client,
+                    model,
+                    messages,
+                    self.cycle_config.briefing_max_for(model),
+                )
         except Exception as exc:  # noqa: BLE001
             logger.warning("cycle_briefing_failed error=%s", exc)
             # Continue without briefing — still better than crashing
@@ -570,11 +491,11 @@ class SessionMaintenanceMixin:
         )
 
         # Convert seed dicts to Message objects and preserve recent messages.
-        # When the briefing came back empty (Flash refused, timed out, or no
-        # seams existed), preserving only 4 recent messages would silently
-        # discard the entire pre-cycle history with no replacement. Fall back
-        # to a larger verbatim window so the next cycle at least has recent
-        # context to work from, and warn so the empty briefing is observable.
+        # When the briefing came back empty (the model refused or timed out),
+        # preserving only 4 recent messages would silently discard the entire
+        # pre-cycle history with no replacement. Fall back to a larger verbatim
+        # window so the next cycle at least has recent context to work from,
+        # and warn so the empty briefing is observable.
         if briefing_text:
             keep = min(4, len(messages))
         else:
@@ -618,10 +539,6 @@ class SessionMaintenanceMixin:
             working_directory=self.tool_context.working_directory,
             metadata=self.tool_context.metadata,
         )
-
-        # Reset seam tracking for the new cycle
-        if self.seam_manager is not None:
-            await self.seam_manager.reset()
 
         self._cycle_n += 1
         self._cycle_started_at = int(time.time())

@@ -374,7 +374,7 @@ def _message_to_dict(msg: Any) -> dict[str, Any]:
         return msg.to_dict()
     # ``Message`` is a pydantic model, so this is the path it takes. Dumping
     # it properly keeps ``origin`` in the archive: without it a restored
-    # cycle would read every reminder and seam as something the human said.
+    # cycle would read every reminder as something the human said.
     dump = getattr(msg, "model_dump", None)
     if callable(dump):
         return dump(mode="json")
