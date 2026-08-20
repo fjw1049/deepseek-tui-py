@@ -225,12 +225,13 @@ _SUBAGENT_STRUCTURED_OUTPUT_NUDGE = (
 
 _SUBAGENT_SUMMARY_CONTINUATION_NUDGE = (
     "Your previous response did not carry a usable report. The parent cannot "
-    "see your context — this message is the entire handoff. Write it now as "
-    "your assistant message: a `### SUMMARY` H3 with the outcome in prose "
-    "(not just \"Done.\"), then whatever structure the task calls for, "
-    "carrying the concrete evidence (`path:line`, commands and exit codes), "
-    "every file you wrote, risks you did not address, and anything left "
-    "unfinished. Do not call any tools."
+    "see your context — the next assistant message is the entire handoff. "
+    "If the assignment is still unfinished, use tools to finish it, then write "
+    "the report. If the work is done, write the report now: a `### SUMMARY` H3 "
+    "with the outcome in prose (not just \"Done.\"), then whatever structure "
+    "the task calls for, carrying the concrete evidence (`path:line`, commands "
+    "and exit codes), every file you wrote, risks you did not address, and "
+    "anything left unfinished."
 )
 
 
@@ -334,6 +335,7 @@ async def run_subagent_loop(
     the original prompt.
     """
     from deepseek_tui.engine import reminders
+    from deepseek_tui.engine.completion_requirement import CompletionRequirement
     from deepseek_tui.engine.turn import TurnLoop
     from deepseek_tui.protocol.messages import Message, MessageOrigin
     from deepseek_tui.protocol.messages import MessageRequest
@@ -491,6 +493,34 @@ async def run_subagent_loop(
 
     async def _noop_emit(_event: object) -> None:
         return None
+
+    # Markdown children must leave a usable ### SUMMARY. Recovery keeps the
+    # tool catalog; exhausted recoveries accept the last result.
+    summary_requirement = CompletionRequirement(
+        name="subagent_summary",
+        reminder=_SUBAGENT_SUMMARY_CONTINUATION_NUDGE,
+        max_retries=2,
+    )
+    summary_recoveries = 0
+
+    def _try_summary_recovery() -> bool:
+        nonlocal summary_recoveries, force_summary
+        if use_structured_output:
+            return False
+        if not summary_requirement.should_recover(
+            satisfied=_has_summary_section(final_text),
+            fired=summary_recoveries,
+            abort=_subagent_cancelled(cancel, agent),
+        ):
+            return False
+        summary_recoveries += 1
+        force_summary = False
+        messages.append(
+            reminders.reminder_message(
+                reminders.SUBAGENT_OUTPUT_NUDGE, summary_requirement.reminder
+            )
+        )
+        return True
 
     # True once a subagent_stop hook has blocked completion (delivered to
     # hooks as ``stop_hook_active`` so they can avoid blocking forever).
@@ -655,6 +685,9 @@ async def run_subagent_loop(
 
             if not result.tool_calls:
                 if round_text:
+                    if _try_summary_recovery():
+                        _save_complete_checkpoint("round")
+                        continue
                     if await _subagent_stop_allowed():
                         break
                     # Blocked: give the agent its tools back and keep going.
@@ -677,6 +710,9 @@ async def run_subagent_loop(
                     continue
                 if round_thinking:
                     final_text = round_thinking
+                if _try_summary_recovery():
+                    _save_complete_checkpoint("round")
+                    continue
                 if await _subagent_stop_allowed():
                     break
                 force_summary = False
@@ -770,48 +806,6 @@ async def run_subagent_loop(
         raise RuntimeError("sub-agent did not return structured_output")
     if not final_text and last_thinking:
         final_text = last_thinking
-    # Summary quality gate: if the agent stopped without producing the
-    # mandatory SUMMARY section (e.g. a terse "Done."), nudge once for a
-    # proper report. Mirrors Kimi's summaryPolicy but checks the contract
-    # section rather than a raw character count.
-    if (
-        not use_structured_output
-        and structured_value is None
-        and not _has_summary_section(final_text)
-        and not _subagent_cancelled(cancel, agent)
-    ):
-        messages.append(
-            reminders.reminder_message(
-                reminders.SUBAGENT_OUTPUT_NUDGE, _SUBAGENT_SUMMARY_CONTINUATION_NUDGE
-            )
-        )
-        continuation_request = MessageRequest(
-            model=agent.model,
-            messages=messages,
-            system_prompt=system_prompt,
-            tools=[],
-            tool_choice=None,
-            max_tokens=agent.agent_type.max_tokens(),
-            stream=True,
-        )
-        gate = getattr(runtime.manager, "llm_semaphore", None)
-        try:
-            if gate is not None:
-                async with gate:
-                    cont = await turn_loop.run(
-                        continuation_request, _noop_emit, cancel, tools=[]
-                    )
-            else:
-                cont = await turn_loop.run(
-                    continuation_request, _noop_emit, cancel, tools=[]
-                )
-        except asyncio.CancelledError:
-            raise
-        cont_text, cont_thinking = _assistant_text_and_thinking(cont.assistant_message)
-        if cont_text:
-            final_text = cont_text
-        elif cont_thinking:
-            final_text = cont_thinking
     clear_transcript(transcript_path)
     return AgentRunOutput(text=final_text, structured=structured_value)
 

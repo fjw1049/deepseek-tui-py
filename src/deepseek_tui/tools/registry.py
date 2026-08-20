@@ -155,6 +155,10 @@ class ToolContext:
     # Optional sink for File Mutation Ledger (main turn + subagents).
     # Receives a mutation dict matching ToolResult metadata["mutation"].
     on_file_mutation: Callable[[dict[str, Any]], None] | None = None
+    # Optional sink when a background shell process (explicit or
+    # timeout-converted) exits. Payload keys: process_id, command,
+    # returncode, output.
+    on_shell_process_done: Callable[[dict[str, Any]], None] | None = None
     # Optional pre-write hook (server turn checkpoints for rewind): called
     # with the workspace-relative path and the file's current text (None when
     # the file does not exist yet) right before a write tool overwrites it.
@@ -192,6 +196,17 @@ class ToolContext:
         except OSError:
             return False
         return (stat.st_mtime_ns, stat.st_size) != seen
+
+    def report_shell_process_done(self, payload: dict[str, Any]) -> None:
+        """Notify the engine that a background shell process finished."""
+        if self.on_shell_process_done is None:
+            return
+        try:
+            self.on_shell_process_done(payload)
+        except Exception:
+            logging.getLogger(__name__).debug(
+                "on_shell_process_done_failed", exc_info=True
+            )
 
     def report_file_mutation(self, mutation: dict[str, Any]) -> None:
         """Notify the turn ledger about a successful workspace file write."""

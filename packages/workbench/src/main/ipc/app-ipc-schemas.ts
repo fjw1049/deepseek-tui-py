@@ -205,6 +205,13 @@ export const workspaceFileWritePayloadSchema = z
   })
   .strict()
 
+export const workspacePasteTextPayloadSchema = z
+  .object({
+    workspaceRoot: workspaceRootSchema,
+    content: z.string().min(1).max(MAX_BODY_BYTES)
+  })
+  .strict()
+
 export const workspaceListDirectoryPayloadSchema = z
   .object({
     workspaceRoot: trimmedString(MAX_PATH_LENGTH),

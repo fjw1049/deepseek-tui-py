@@ -21,6 +21,7 @@ if TYPE_CHECKING:
 # to REAL_USER and read back as the human's request. Mirrors
 # ``GOAL_CONTINUATION_KIND``.
 SUBAGENT_BACKGROUND_DONE_KIND = "subagent_background_done"
+PROCESS_BACKGROUND_DONE_KIND = "process_background_done"
 
 
 @dataclass(frozen=True, slots=True)

@@ -146,6 +146,8 @@ const api = {
     ipcRenderer.invoke('file:read-workspace', options),
   writeWorkspaceFile: (options) =>
     ipcRenderer.invoke('file:write-workspace', options),
+  writePasteTextFile: (options) =>
+    ipcRenderer.invoke('file:write-paste-text', options),
   getWorkspaceHtmlPreviewUrl: (options) =>
     ipcRenderer.invoke('workspace:html-preview-url', options),
   listWorkspaceDirectory: (workspaceRoot, directoryPath) =>

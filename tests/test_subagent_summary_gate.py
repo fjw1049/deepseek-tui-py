@@ -19,7 +19,10 @@ from __future__ import annotations
 import pytest
 
 from deepseek_tui.tools.subagent.completion import summary_section_text
-from deepseek_tui.tools.subagent.loop import _has_summary_section
+from deepseek_tui.tools.subagent.loop import (
+    _SUBAGENT_SUMMARY_CONTINUATION_NUDGE,
+    _has_summary_section,
+)
 
 
 def _report(body: str) -> str:
@@ -80,7 +83,7 @@ REJECTED = [
 
 @pytest.mark.parametrize("body", REJECTED)
 def test_content_free_summaries_are_rejected(body: str) -> None:
-    """Rejection costs one tools-off retry, which is the cheap direction."""
+    """Rejection costs up to two tools-on recoveries, then the last result."""
     assert _has_summary_section(_report(body)) is False
 
 
@@ -110,6 +113,12 @@ def test_body_stops_at_the_next_heading() -> None:
     text = "### SUMMARY\n做完了。\n\n### EVIDENCE\n- src/deepseek_tui/engine/turn.py:42"
     assert summary_section_text(text) == "做完了。"
     assert _has_summary_section(text) is False
+
+
+def test_summary_recovery_keeps_tools_available() -> None:
+    """The recovery reminder must not strip the child's ability to finish."""
+    assert "Do not call any tools" not in _SUBAGENT_SUMMARY_CONTINUATION_NUDGE
+    assert "use tools" in _SUBAGENT_SUMMARY_CONTINUATION_NUDGE
 
 
 def test_gate_and_sidebar_read_the_same_body() -> None:

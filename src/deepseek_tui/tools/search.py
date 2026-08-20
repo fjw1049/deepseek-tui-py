@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import fnmatch
 import logging
 import os
 import re
@@ -56,10 +57,11 @@ class GrepFilesTool(ToolSpec):
             "'content' (matching lines as path:line_number:line, with "
             "optional -A/-B/-C context lines), or 'count_matches' "
             "(path:match_count plus a total). Locate with "
-            "files_with_matches, then drill in with content. ``head_limit`` "
-            "caps the returned entries (default 200). Prefer this over "
-            "grep/rg via exec_shell — this tool caps output and skips "
-            "sensitive files (.env, private keys)."
+            "files_with_matches, then drill in with content. ``glob`` "
+            "filters by filename (``*.py`` matches any Python file). "
+            "``head_limit`` caps the returned entries (default 200). "
+            "Prefer this over grep/rg via exec_shell — this tool caps "
+            "output and skips sensitive files (.env, private keys)."
         )
 
     def input_schema(self) -> dict[str, object]:
@@ -86,11 +88,20 @@ class GrepFilesTool(ToolSpec):
                 "output_mode": {
                     "type": "string",
                     "enum": ["content", "files_with_matches", "count_matches"],
-                    "default": "content",
+                    "default": "files_with_matches",
                     "description": (
-                        "content: matching lines with line numbers; "
-                        "files_with_matches: only paths with at least one match; "
-                        "count_matches: per-file match counts plus a total."
+                        "files_with_matches: only paths with at least one match "
+                        "(default); content: matching lines with line numbers; "
+                        "count_matches: per-file match counts plus a total. "
+                        "Passing -A/-B/-C without a mode selects content."
+                    ),
+                },
+                "glob": {
+                    "type": "string",
+                    "description": (
+                        "Filename filter (glob). '*.py' matches any Python "
+                        "file by name; 'src/*.ts' matches TypeScript files "
+                        "directly under src/ (relative to the search root)."
                     ),
                 },
                 "head_limit": {
@@ -127,11 +138,14 @@ class GrepFilesTool(ToolSpec):
         pattern = _require_string(input_data, "pattern")
         root = context.resolve_path(_require_string(input_data, "path"), allow_read_roots=True)
         ignore_case = bool(input_data.get("ignore_case", False))
-        output_mode = input_data.get("output_mode", "content")
-        if output_mode not in ("content", "files_with_matches", "count_matches"):
-            raise ToolError(
-                "output_mode must be one of: content, files_with_matches, count_matches"
-            )
+        output_mode = _resolve_output_mode(input_data)
+        glob = input_data.get("glob")
+        if glob is None:
+            glob_pattern = None
+        elif not isinstance(glob, str):
+            raise ToolError("glob must be a string")
+        else:
+            glob_pattern = glob or None
         head_limit = _optional_non_negative_int(input_data, "head_limit")
         if head_limit is None:
             head_limit = _MAX_MATCHES
@@ -157,6 +171,7 @@ class GrepFilesTool(ToolSpec):
             before=context_before if output_mode == "content" else 0,
             after=context_after if output_mode == "content" else 0,
             head_limit=head_limit,
+            glob=glob_pattern,
         )
         logger.info(
             "grep_files pattern=%r root=%s ignore_case=%s mode=%s match_count=%d",
@@ -272,9 +287,37 @@ class FileSearchTool(ToolSpec):
 
 
 
-def _iter_files(root: Path) -> Iterable[Path]:
+def _resolve_output_mode(input_data: dict[str, object]) -> str:
+    output_mode = input_data.get("output_mode")
+    if output_mode is None:
+        # Context flags only make sense on matching lines.
+        if any(key in input_data for key in ("-A", "-B", "-C")):
+            return "content"
+        return "files_with_matches"
+    if output_mode not in ("content", "files_with_matches", "count_matches"):
+        raise ToolError(
+            "output_mode must be one of: content, files_with_matches, count_matches"
+        )
+    return output_mode
+
+
+def _path_matches_glob(path: Path, root: Path, pattern: str) -> bool:
+    """Match ``*.py`` against the basename, ``src/*.ts`` against the relpath."""
+    if fnmatch.fnmatch(path.name, pattern):
+        return True
+    base = root if root.is_dir() else root.parent
+    try:
+        rel = path.relative_to(base)
+    except ValueError:
+        return False
+    return fnmatch.fnmatch(rel.as_posix(), pattern)
+
+
+def _iter_files(root: Path, glob: str | None = None) -> Iterable[Path]:
     if root.is_file():
-        if not is_sensitive_path(root):
+        if not is_sensitive_path(root) and (
+            glob is None or _path_matches_glob(root, root, glob)
+        ):
             yield root
         return
     for dirpath, dirnames, filenames in os.walk(root):
@@ -287,6 +330,8 @@ def _iter_files(root: Path) -> Iterable[Path]:
             # the model must not read them via grep/file_search either.
             if is_sensitive_path(path):
                 continue
+            if glob is not None and not _path_matches_glob(path, root, glob):
+                continue
             yield path
 
 
@@ -297,6 +342,7 @@ def _grep_files(
     before: int = 0,
     after: int = 0,
     head_limit: int = _MAX_MATCHES,
+    glob: str | None = None,
 ) -> tuple[list[tuple[Path, int, str, bool]], dict[Path, int], int]:
     """Return ``(rows, file_counts, total_matches)``.
 
@@ -310,7 +356,7 @@ def _grep_files(
     file_counts: dict[Path, int] = {}
     total = 0
     shown_matches = 0
-    for path in _iter_files(root):
+    for path in _iter_files(root, glob):
         try:
             text = path.read_text(encoding="utf-8")
         except (UnicodeDecodeError, OSError):

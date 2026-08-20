@@ -47,6 +47,7 @@ from deepseek_tui.engine.events import (
 )
 from deepseek_tui.protocol.responses import ToolCall
 from deepseek_tui.engine.handle import (
+    PROCESS_BACKGROUND_DONE_KIND,
     SUBAGENT_BACKGROUND_DONE_KIND,
     ApprovalHandler,
     AutoApprovalHandler,
@@ -216,6 +217,28 @@ def _index_rule_proxies(plugin_index: dict[str, dict[str, Any]]) -> list[Any]:
                 )
             )
     return out
+
+
+def _format_process_done(payload: dict[str, Any]) -> str:
+    process_id = payload.get("process_id") or ""
+    command = payload.get("command") or ""
+    returncode = payload.get("returncode")
+    output = str(payload.get("output") or "").strip()
+    lines = [
+        "Background shell process finished.",
+        f"process_id: {process_id}",
+        f"command: {command}",
+        f"exit_code: {returncode}",
+    ]
+    if output:
+        lines.extend(["", output])
+    lines.extend(
+        [
+            "",
+            f'Full output is still available via task_output(process_id="{process_id}").',
+        ]
+    )
+    return "\n".join(lines)
 
 
 class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
@@ -444,6 +467,13 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             asyncio.Queue(maxsize=64)
         )
         self._consumed_subagent_completions: set[str] = set()
+        self._process_completions: asyncio.Queue[dict[str, Any]] = asyncio.Queue(
+            maxsize=64
+        )
+        self._consumed_process_completions: set[str] = set()
+        self.tool_context.on_shell_process_done = (
+            self._enqueue_shell_process_completion
+        )
         self._activity_coordinator = SessionActivityCoordinator(
             self, self.handle.try_emit
         )
@@ -2001,7 +2031,10 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         # compaction, fake-reminder neutralization, and ledger classing).
         from deepseek_tui.goal.types import GOAL_CONTINUATION_KIND
 
-        if op.internal_kind == SUBAGENT_BACKGROUND_DONE_KIND:
+        if op.internal_kind in (
+            SUBAGENT_BACKGROUND_DONE_KIND,
+            PROCESS_BACKGROUND_DONE_KIND,
+        ):
             user_origin = MessageOrigin.SYSTEM_REMINDER
         elif op.internal_kind == GOAL_CONTINUATION_KIND:
             user_origin = MessageOrigin.GOAL_CONTINUATION
@@ -2471,6 +2504,102 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                 continue
             out.append(completion)
         return out
+
+    def _enqueue_shell_process_completion(self, payload: dict[str, Any]) -> None:
+        """Thread-safe enqueue when a background shell process exits."""
+        process_id = payload.get("process_id")
+        if not isinstance(process_id, str):
+            return
+        if process_id in self._consumed_process_completions:
+            return
+        try:
+            self._process_completions.put_nowait(payload)
+        except asyncio.QueueFull:
+            logger.error(
+                "shell_process_completion_dropped process_id=%s queue_full=64",
+                process_id,
+            )
+            return
+        self._schedule_idle_process_completion_delivery()
+
+    def _schedule_idle_process_completion_delivery(self) -> None:
+        task = getattr(self, "_idle_process_delivery_task", None)
+        if task is not None and not task.done():
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        self._idle_process_delivery_task = loop.create_task(
+            self._deliver_process_completions_when_idle(),
+            name="shell-idle-completion-delivery",
+        )
+
+    async def _deliver_process_completions_when_idle(self) -> None:
+        """Inject pending background-shell results once the engine is idle."""
+        for _ in range(12_000):  # ~10 min at 50ms
+            if not self.handle.is_turn_active():
+                break
+            await asyncio.sleep(0.05)
+        else:
+            logger.warning("process_idle_delivery_gave_up turn_still_active")
+            return
+        await asyncio.sleep(0.05)
+        if self.handle.is_turn_active():
+            self._schedule_idle_process_completion_delivery()
+            return
+        completions = self._drain_process_completions()
+        if not completions:
+            return
+        for item in completions:
+            process_id = item.get("process_id")
+            if isinstance(process_id, str):
+                self._consumed_process_completions.add(process_id)
+        from deepseek_tui.engine import reminders
+
+        body = "\n\n".join(
+            reminders.render(reminders.PROCESS_DONE, _format_process_done(item))
+            for item in completions
+        )
+        logger.info("process_idle_delivery count=%d", len(completions))
+        await self.handle.send_op(
+            SendMessageOp(
+                content=body,
+                hidden=True,
+                internal_kind=PROCESS_BACKGROUND_DONE_KIND,
+            )
+        )
+
+    def _drain_process_completions(self) -> list[dict[str, Any]]:
+        out: list[dict[str, Any]] = []
+        while True:
+            try:
+                payload = self._process_completions.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+            process_id = payload.get("process_id")
+            if isinstance(process_id, str) and process_id in self._consumed_process_completions:
+                continue
+            out.append(payload)
+        return out
+
+    def _mark_process_tool_result_consumed(
+        self,
+        tool_name: str,
+        metadata: dict[str, Any] | None,
+        arguments: dict[str, Any] | None = None,
+    ) -> None:
+        """Drop idle notification when task_output/task_stop already collected."""
+        if tool_name not in ("task_output", "task_stop"):
+            return
+        if not isinstance(arguments, dict) or not arguments.get("process_id"):
+            return
+        if not isinstance(metadata, dict):
+            return
+        process_id = metadata.get("process_id")
+        status = metadata.get("status")
+        if isinstance(process_id, str) and status in {"completed", "cancelled"}:
+            self._consumed_process_completions.add(process_id)
 
     def _mark_subagent_tool_result_consumed(
         self,

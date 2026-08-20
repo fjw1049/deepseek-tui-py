@@ -619,6 +619,10 @@ class DeepSeekTUI(App[None]):
             f"Paste active — Enter inserts newline for {ms}ms"
         )
 
+    def on_composer_paste_as_file(self, event: Composer.PasteAsFile) -> None:
+        name = event.path.replace("\\", "/").rsplit("/", 1)[-1]
+        self.query_one(StatusBar).set_status(f"Pasted as {name}")
+
     def on_slash_menu_selected(self, event: SlashMenu.Selected) -> None:
         """Fill composer with selected slash command."""
         composer = self.query_one(Composer)

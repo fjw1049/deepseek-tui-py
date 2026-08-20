@@ -16,6 +16,7 @@ import pytest
 
 from deepseek_tui.client.base import LLMClient, RetryConfig
 from deepseek_tui.config.models import Config
+from deepseek_tui.engine.turn import MAX_EMPTY_RESPONSE_RESAMPLES
 from deepseek_tui.protocol.messages import MessageRequest
 from deepseek_tui.protocol.responses import (
     StreamDone,
@@ -139,27 +140,32 @@ async def test_visible_text_still_preferred_over_reasoning(
     assert snapshot.result == "最终结论：架构清晰。"
 
 
+_STALL_THINKING = [
+    StreamThinkingDelta(thinking="Let me also look at the other route files."),
+    StreamDone(usage=None),
+]
+_REAL_SUMMARY = [
+    StreamTextDelta(text=(
+        "### SUMMARY\n最终报告：115 个测试文件，649 个用例，覆盖率良好。\n\n"
+        "### EVIDENCE\nNone.\n\n### CHANGES\nNone.\n\n"
+        "### RISKS\nNone.\n\n### BLOCKERS\nNone."
+    )),
+    StreamDone(usage=None),
+]
+
+
 @pytest.mark.asyncio
 async def test_stalled_round_triggers_forced_summary(tmp_path: Path) -> None:
-    """A reasoning-only stall round must trigger one tools-off summary nudge
-    that yields a real report, rather than surfacing the stall fragment."""
+    """A reasoning-only stall must survive empty-resample, then the tools-off
+    summary nudge, rather than surfacing the stall fragment."""
     clients: list[_ScriptedClient] = []
     snapshot = await _run_single_subagent(
         [
-            # Round 1: model stalls — reasoning fragment, no text, no tool calls.
-            [
-                StreamThinkingDelta(thinking="Let me also look at the other route files."),
-                StreamDone(usage=None),
-            ],
-            # Round 2: forced summary (tools off) — real prose report.
-            [
-                StreamTextDelta(text=(
-                    "### SUMMARY\n最终报告：115 个测试文件，649 个用例，覆盖率良好。\n\n"
-                    "### EVIDENCE\nNone.\n\n### CHANGES\nNone.\n\n"
-                    "### RISKS\nNone.\n\n### BLOCKERS\nNone."
-                )),
-                StreamDone(usage=None),
-            ],
+            # TurnLoop resamples a reasoning-only StreamDone before accepting
+            # it. Repeat the stall so those attempts do not eat the
+            # forced-summary script.
+            *[_STALL_THINKING] * (1 + MAX_EMPTY_RESPONSE_RESAMPLES),
+            _REAL_SUMMARY,
         ],
         tmp_path,
         client_out=clients,
@@ -171,7 +177,28 @@ async def test_stalled_round_triggers_forced_summary(tmp_path: Path) -> None:
     assert "Let me also look" not in (snapshot.result or "")
 
     client = clients[0]
+    stall_calls = 1 + MAX_EMPTY_RESPONSE_RESAMPLES
+    assert client.calls == stall_calls + 1
+    assert all(req.tools for req in client.requests[:stall_calls])
+    assert not client.requests[stall_calls].tools
+
+
+@pytest.mark.asyncio
+async def test_stub_visible_stop_recovers_with_tools(tmp_path: Path) -> None:
+    """A visible but contract-free stop must recover with the tool catalog on."""
+    clients: list[_ScriptedClient] = []
+    snapshot = await _run_single_subagent(
+        [
+            [StreamTextDelta(text="Done."), StreamDone(usage=None)],
+            _REAL_SUMMARY,
+        ],
+        tmp_path,
+        client_out=clients,
+    )
+
+    assert snapshot.status.kind.value == "completed"
+    assert "### SUMMARY" in (snapshot.result or "")
+    client = clients[0]
     assert client.calls == 2
-    # Round 1 offered tools; the forced-summary round 2 stripped them.
     assert client.requests[0].tools
-    assert not client.requests[1].tools
+    assert client.requests[1].tools

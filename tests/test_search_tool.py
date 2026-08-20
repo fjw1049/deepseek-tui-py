@@ -34,7 +34,8 @@ async def test_grep_caps_match_count(tmp_path: Path):
     (tmp_path / "big.txt").write_text(lines, encoding="utf-8")
 
     result = await GrepFilesTool().execute(
-        {"pattern": "needle", "path": "."}, ToolContext(working_directory=tmp_path)
+        {"pattern": "needle", "path": ".", "output_mode": "content"},
+        ToolContext(working_directory=tmp_path),
     )
 
     assert result.metadata["count"] == _MAX_MATCHES + 50
@@ -49,7 +50,8 @@ async def test_grep_caps_line_length(tmp_path: Path):
     (tmp_path / "min.js").write_text(long_line + "\n", encoding="utf-8")
 
     result = await GrepFilesTool().execute(
-        {"pattern": "needle", "path": "."}, ToolContext(working_directory=tmp_path)
+        {"pattern": "needle", "path": ".", "output_mode": "content"},
+        ToolContext(working_directory=tmp_path),
     )
 
     assert "(line truncated)" in result.content
@@ -159,7 +161,7 @@ async def test_grep_head_limit_caps_matches(tmp_path: Path):
     )
 
     result = await GrepFilesTool().execute(
-        {"pattern": "needle", "path": ".", "head_limit": 3},
+        {"pattern": "needle", "path": ".", "output_mode": "content", "head_limit": 3},
         ToolContext(working_directory=tmp_path),
     )
 
@@ -188,3 +190,54 @@ async def test_grep_adjacent_match_not_marked_as_context(tmp_path: Path):
     assert "a.txt-2-two" in result.content
     assert "a.txt-5-five" in result.content
     assert result.metadata["shown"] == 2
+
+
+async def test_grep_default_mode_is_files_with_matches(tmp_path: Path):
+    (tmp_path / "a.py").write_text("needle\nneedle\n", encoding="utf-8")
+    (tmp_path / "b.py").write_text("nothing\n", encoding="utf-8")
+
+    result = await GrepFilesTool().execute(
+        {"pattern": "needle", "path": "."}, ToolContext(working_directory=tmp_path)
+    )
+
+    assert result.metadata["output_mode"] == "files_with_matches"
+    lines = result.content.splitlines()
+    assert lines == [str(tmp_path / "a.py")]
+    assert "needle" not in result.content
+
+
+async def test_grep_glob_filters_by_filename(tmp_path: Path):
+    (tmp_path / "keep.py").write_text("needle\n", encoding="utf-8")
+    (tmp_path / "skip.txt").write_text("needle\n", encoding="utf-8")
+    nested = tmp_path / "src"
+    nested.mkdir()
+    (nested / "nested.py").write_text("needle\n", encoding="utf-8")
+
+    result = await GrepFilesTool().execute(
+        {"pattern": "needle", "path": ".", "glob": "*.py"},
+        ToolContext(working_directory=tmp_path),
+    )
+
+    assert result.metadata["output_mode"] == "files_with_matches"
+    assert result.metadata["count"] == 2
+    assert "keep.py" in result.content
+    assert "nested.py" in result.content
+    assert "skip.txt" not in result.content
+
+
+async def test_grep_glob_matches_relative_path(tmp_path: Path):
+    (tmp_path / "root.py").write_text("needle\n", encoding="utf-8")
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "only.ts").write_text("needle\n", encoding="utf-8")
+    (src / "other.py").write_text("needle\n", encoding="utf-8")
+
+    result = await GrepFilesTool().execute(
+        {"pattern": "needle", "path": ".", "glob": "src/*.ts"},
+        ToolContext(working_directory=tmp_path),
+    )
+
+    assert result.metadata["count"] == 1
+    assert "only.ts" in result.content
+    assert "root.py" not in result.content
+    assert "other.py" not in result.content

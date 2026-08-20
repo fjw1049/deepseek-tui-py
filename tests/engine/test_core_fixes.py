@@ -268,7 +268,9 @@ async def test_glm_gets_reasoning_output_headroom():
     exhausted by reasoning alone, truncating the round before any answer
     content was produced. It must request enough output headroom to finish
     thinking *and* emit the answer."""
-    client = _ScriptedClient([[StreamDone(usage=None)]])
+    client = _ScriptedClient(
+        [[StreamTextDelta(text="ok"), StreamDone(usage=None)]]
+    )
     loop = TurnLoop(client)
 
     await loop.run(
@@ -287,7 +289,9 @@ async def test_glm_gets_reasoning_output_headroom():
 @pytest.mark.asyncio
 async def test_turn_loop_does_not_inject_removed_meta_tools():
     """TurnLoop must send the catalog as-is — no code_execution / tool_search."""
-    client = _ScriptedClient([[StreamDone(usage=None)]])
+    client = _ScriptedClient(
+        [[StreamTextDelta(text="ok"), StreamDone(usage=None)]]
+    )
     loop = TurnLoop(client)
 
     await loop.run(

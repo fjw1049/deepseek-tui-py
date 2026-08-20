@@ -1,7 +1,7 @@
 import { app, shell } from 'electron'
 import { execFile } from 'node:child_process'
 import { existsSync, type Dirent } from 'node:fs'
-import { access, open as openFile, readFile, readdir, realpath, stat, unlink, writeFile } from 'node:fs/promises'
+import { access, mkdir, open as openFile, readFile, readdir, realpath, stat, unlink, writeFile } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { randomUUID } from 'node:crypto'
@@ -19,6 +19,8 @@ import type {
   WorkspaceFileWriteResult,
   WorkspaceFileWriteTarget,
   WorkspaceListDirectoryResult,
+  WorkspacePasteTextResult,
+  WorkspacePasteTextTarget,
   WorkspaceSearchEntriesResult,
   WorkspaceTreeEntry
 } from '../../shared/workspace-file'
@@ -853,6 +855,65 @@ export async function writeWorkspaceFile(
 
     await writeFile(targetPath, payload.content, 'utf8')
     return { ok: true, path: targetPath }
+  } catch (error) {
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : String(error)
+    }
+  }
+}
+
+const PASTE_DIR_SEGMENTS = ['.deepseek', 'pastes'] as const
+
+function pasteStamp(now = new Date()): string {
+  const pad = (n: number): string => String(n).padStart(2, '0')
+  return (
+    `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-` +
+    `${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`
+  )
+}
+
+function uniquePasteName(destDir: string): string {
+  const stamp = pasteStamp()
+  let name = `paste-${stamp}.txt`
+  let n = 2
+  while (existsSync(join(destDir, name))) {
+    name = `paste-${stamp}-${n}.txt`
+    n += 1
+  }
+  return name
+}
+
+export async function writePasteTextFile(
+  payload: WorkspacePasteTextTarget
+): Promise<WorkspacePasteTextResult> {
+  try {
+    const root = payload.workspaceRoot.trim()
+    if (!root) {
+      return { ok: false, message: 'Workspace root is required.' }
+    }
+    const bytes = Buffer.byteLength(payload.content, 'utf8')
+    if (bytes > MAX_FILE_WRITE_BYTES) {
+      return { ok: false, message: 'Pasted text exceeds the maximum write size.' }
+    }
+    if (Buffer.from(payload.content).includes(0)) {
+      return { ok: false, message: 'Binary content cannot be saved as a text paste.' }
+    }
+
+    const workspacePath = await canonicalPath(resolve(expandHomePath(root)))
+    const destDir = join(workspacePath, ...PASTE_DIR_SEGMENTS)
+    await mkdir(destDir, { recursive: true })
+    const name = uniquePasteName(destDir)
+    const dest = join(destDir, name)
+    const bounded = await enforceWorkspaceBoundary(dest, workspacePath)
+    await writeFile(bounded, payload.content, 'utf8')
+    return {
+      ok: true,
+      path: bounded,
+      relativePath: relativePathFromWorkspace(workspacePath, bounded),
+      name,
+      size: bytes
+    }
   } catch (error) {
     return {
       ok: false,

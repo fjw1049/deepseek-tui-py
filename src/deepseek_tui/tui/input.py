@@ -98,6 +98,14 @@ class Composer(TextArea):
 
         pass
 
+    class PasteAsFile(Message):
+        """Posted when a large paste was spilled to a workspace ``.txt``."""
+
+        def __init__(self, path: str, mention: str) -> None:
+            super().__init__()
+            self.path = path
+            self.mention = mention
+
     def __init__(self) -> None:
         super().__init__(language=None)
         self.show_line_numbers = False
@@ -116,8 +124,17 @@ class Composer(TextArea):
             return
         event.prevent_default()
         event.stop()
-        self.insert(event.text)
-        if "\n" in event.text or "\r" in event.text:
+        inserted = event.text
+        if is_large_paste(event.text):
+            try:
+                workspace = _composer_workspace(self)
+                path = write_paste_txt(event.text, workspace)
+                inserted = mention_for_paste(path, workspace)
+                self.post_message(self.PasteAsFile(str(path), inserted))
+            except OSError:
+                inserted = event.text
+        self.insert(inserted)
+        if "\n" in inserted or "\r" in inserted:
             self._paste_suppress_until = (
                 time.monotonic() + PASTE_ENTER_SUPPRESS_WINDOW_SECS
             )
@@ -183,6 +200,15 @@ class Composer(TextArea):
         self.post_message(self.TextChanged(self.text))
 
 
+def _composer_workspace(widget: Composer) -> Path:
+    app = getattr(widget, "app", None)
+    engine = getattr(app, "_engine", None)
+    working = getattr(getattr(engine, "tool_context", None), "working_directory", None)
+    if working:
+        return Path(working)
+    return Path.cwd()
+
+
 def _open_external_editor(initial_content: str) -> str | None:
     editor = os.environ.get("VISUAL") or os.environ.get("EDITOR")
     if not editor:
@@ -205,6 +231,11 @@ def _open_external_editor(initial_content: str) -> str | None:
 
 
 
+from deepseek_tui.state.paste_file import (
+    is_large_paste,
+    mention_for_paste,
+    write_paste_txt,
+)
 from deepseek_tui.tui.commands import get_completions
 
 

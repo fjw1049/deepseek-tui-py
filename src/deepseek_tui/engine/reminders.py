@@ -152,6 +152,15 @@ SUBAGENT_DONE = ReminderSpec(
     max_chars=8_000,
 )
 
+PROCESS_DONE = ReminderSpec(
+    name="process_done",
+    envelope=Envelope.ALERT,
+    placement=Placement.TAIL,
+    origin=MessageOrigin.SYSTEM_REMINDER,
+    priority=41,
+    max_chars=8_000,
+)
+
 STOP_HOOK_BLOCK = ReminderSpec(
     name="stop_hook_block",
     envelope=Envelope.ALERT,
@@ -252,6 +261,7 @@ REGISTRY: tuple[ReminderSpec, ...] = (
     CHECKLIST_INCOMPLETE_GATE,
     LSP_DIAGNOSTICS,
     SUBAGENT_DONE,
+    PROCESS_DONE,
     SOFT_RESUME,
     SUBAGENT_OUTPUT_NUDGE,
     STOP_HOOK_BLOCK,

@@ -64,3 +64,18 @@ export type WorkspaceFileWriteResult =
       path: string
     }
   | { ok: false; message: string }
+
+export type WorkspacePasteTextTarget = {
+  workspaceRoot: string
+  content: string
+}
+
+export type WorkspacePasteTextResult =
+  | {
+      ok: true
+      path: string
+      relativePath: string
+      name: string
+      size: number
+    }
+  | { ok: false; message: string }

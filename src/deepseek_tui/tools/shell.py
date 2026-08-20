@@ -34,7 +34,9 @@ _PTY_STORE_KEY = "shell_pty_processes"
 _EXEC_ENV_STORE_KEY = "shell_exec_envs"
 _COLLECTOR_STORE_KEY = "shell_process_collectors"
 _COMMAND_STORE_KEY = "shell_process_commands"
+_WATCHER_STORE_KEY = "shell_process_watchers"
 _MAX_STORED_PROCESSES = 20
+_PROCESS_DONE_OUTPUT_CHARS = 4000
 
 
 # Default + max foreground timeouts.
@@ -56,11 +58,11 @@ class ExecShellTool(ToolSpec):
             "To send input to a running background process, pass its "
             "'process_id' with 'input' (and/or close_stdin=true) instead of "
             "'command' — the two are mutually exclusive. "
-            "Foreground commands are killed after timeout_ms milliseconds "
-            "(default 120000, max 600000); use background=true for servers, "
-            "watchers, and full test suites, and if a foreground command "
-            "times out, rerun it in the background instead of retrying "
-            "foreground. Do not use this to fetch a URL — "
+            "Foreground commands that exceed timeout_ms (default 120000, "
+            "max 600000) keep running in the background and return a "
+            "process_id; you are notified when they finish. Use "
+            "background=true up front for servers, watchers, and full "
+            "test suites. Do not use this to fetch a URL — "
             "use fetch_url instead; only shell out with curl/wget when fetch_url "
             "is unavailable or you need shell piping around the response. "
             "Do not mutate source files via sed/python/heredoc — use edit_file "
@@ -111,7 +113,8 @@ class ExecShellTool(ToolSpec):
                     "minimum": 1,
                     "maximum": EXEC_MAX_TIMEOUT_MS,
                     "description": (
-                        f"Foreground timeout in milliseconds. "
+                        f"How long to wait in the foreground before moving "
+                        f"the command to the background. "
                         f"Default {EXEC_DEFAULT_TIMEOUT_MS}, max {EXEC_MAX_TIMEOUT_MS}."
                     ),
                 },
@@ -210,16 +213,16 @@ class ExecShellTool(ToolSpec):
         )
         process = await _spawn_from_exec_env(exec_env)
         if background:
-            process_id = str(uuid.uuid4())
-            _process_store(context)[process_id] = process
-            _exec_env_store(context)[process_id] = exec_env
-            _command_store(context)[process_id] = command
+            process_id = _register_background_process(
+                context, process, command=command, exec_env=exec_env
+            )
             metadata: dict[str, Any] = {
                 "background": True,
                 "pid": process.pid,
                 "pty": False,
                 "sandboxed": exec_env.is_sandboxed(),
                 "sandbox_type": exec_env.sandbox_type.value,
+                "process_id": process_id,
             }
             return ToolResult(
                 success=True,
@@ -227,9 +230,13 @@ class ExecShellTool(ToolSpec):
                 metadata=metadata,
             )
 
+        # Shield the communicate() task so a foreground timeout can
+        # re-home it as the background collector. wait_for() would
+        # otherwise cancel communicate() and leave the pipes unusable.
+        collector = asyncio.ensure_future(process.communicate())
         try:
             stdout, stderr = await asyncio.wait_for(
-                process.communicate(), timeout=timeout_ms / 1000.0
+                asyncio.shield(collector), timeout=timeout_ms / 1000.0
             )
         except asyncio.CancelledError:
             # Hard turn cancel (turn_task.cancel()) lands here while the
@@ -239,6 +246,8 @@ class ExecShellTool(ToolSpec):
             # like the `sleep` under `bash -c`) before re-raising so the
             # cancel tears down the tree, not just the direct child.
             _kill_process_group(process)
+            if not collector.done():
+                collector.cancel()
             try:
                 await asyncio.wait_for(process.wait(), timeout=1.0)
             except (asyncio.TimeoutError, asyncio.CancelledError, ProcessLookupError):
@@ -259,28 +268,15 @@ class ExecShellTool(ToolSpec):
                 from deepseek_tui.utils.network_escalation import record_host_timeout
 
                 record_host_timeout(context, _url)
-            # Kill so we don't leak a zombie when the model fires off a
-            # runaway command. Kill the whole process group (child +
-            # descendants) - a bare terminate() only reaches the direct child
-            # and orphans grandchildren like `sleep` under `bash -c`.
-            _kill_process_group(process)
-            try:
-                await asyncio.wait_for(process.wait(), timeout=1.0)
-            except (ProcessLookupError, asyncio.TimeoutError):
-                pass
-            return ToolResult(
-                success=False,
-                content=(
-                    f"Command timed out after {timeout_ms} ms and was killed: "
-                    f"{command}\n\n"
-                    + _timeout_fallback_hint(command, context)
-                ),
-                metadata={
-                    "timed_out": True,
-                    "timeout_ms": timeout_ms,
-                    "returncode": process.returncode,
-                    "job_hint": _timeout_job_hint(command, context),
-                },
+            process_id = _register_background_process(
+                context,
+                process,
+                command=command,
+                exec_env=exec_env,
+                collector=collector,
+            )
+            return _timeout_background_result(
+                command, context, process_id, timeout_ms, process.pid
             )
         logger.info(
             "exec_shell_end command=%r returncode=%s stdout_bytes=%d stderr_bytes=%d",
@@ -397,6 +393,141 @@ def _timeout_job_hint(command: str, context: ToolContext) -> str:
             return "exec_shell_background"
         return "task_create"
     return "exec_shell_background"
+
+
+def _timeout_background_result(
+    command: str,
+    context: ToolContext,
+    process_id: str,
+    timeout_ms: int,
+    pid: int | None,
+    *,
+    pty: bool = False,
+) -> ToolResult:
+    content = (
+        f"Command timed out after {timeout_ms} ms and is still running "
+        f"in the background.\n"
+        f"process_id: {process_id}\n"
+        "You will be notified when it finishes, or collect output with "
+        f"task_output(process_id={process_id!r}, block=true)."
+    )
+    if "curl" in command and _extract_http_url(command) is not None:
+        content = f"{content}\n\n{_timeout_fallback_hint(command, context)}"
+    metadata: dict[str, Any] = {
+        "timed_out": True,
+        "background": True,
+        "timeout_ms": timeout_ms,
+        "process_id": process_id,
+        "pid": pid,
+        "pty": pty,
+        "job_hint": _timeout_job_hint(command, context),
+    }
+    return ToolResult(success=True, content=content, metadata=metadata)
+
+
+def _register_background_process(
+    context: ToolContext,
+    process: Process,
+    *,
+    command: str,
+    exec_env: ExecEnv,
+    collector: asyncio.Task[tuple[bytes | None, bytes | None]] | None = None,
+) -> str:
+    process_id = str(uuid.uuid4())
+    _process_store(context)[process_id] = process
+    _exec_env_store(context)[process_id] = exec_env
+    _command_store(context)[process_id] = command
+    if collector is not None:
+        _collector_store(context)[process_id] = collector
+    else:
+        _ensure_collector(context, process_id, process)
+    _arm_process_completion_watch(context, process_id)
+    return process_id
+
+
+def _register_background_pty(
+    context: ToolContext,
+    proc: "PtyProcess",
+    *,
+    command: str,
+    exec_env: ExecEnv,
+) -> str:
+    process_id = str(uuid.uuid4())
+    _pty_store(context)[process_id] = proc
+    _exec_env_store(context)[process_id] = exec_env
+    _command_store(context)[process_id] = command
+    _arm_process_completion_watch(context, process_id)
+    return process_id
+
+
+def _watcher_store(context: ToolContext) -> dict[str, asyncio.Task[None]]:
+    store = context.metadata.get(_WATCHER_STORE_KEY)
+    if store is None:
+        store = {}
+        context.metadata[_WATCHER_STORE_KEY] = store
+    if not isinstance(store, dict):
+        raise ToolError("shell watcher store is invalid")
+    return store
+
+
+def _arm_process_completion_watch(context: ToolContext, process_id: str) -> None:
+    store = _watcher_store(context)
+    existing = store.get(process_id)
+    if existing is not None and not existing.done():
+        return
+    store[process_id] = asyncio.get_running_loop().create_task(
+        _notify_when_process_done(context, process_id),
+        name=f"shell-done-{process_id[:8]}",
+    )
+
+
+async def _notify_when_process_done(context: ToolContext, process_id: str) -> None:
+    command = _command_store(context).get(process_id, "")
+    try:
+        pty_proc = _get_pty(context, process_id)
+        if pty_proc is not None:
+            await pty_proc.wait()
+            if _get_pty(context, process_id) is None:
+                return
+            returncode = pty_proc.exit_code
+            output = pty_proc.output.decode("utf-8", errors="replace")
+        else:
+            try:
+                process = _get_process(context, process_id)
+            except ToolError:
+                return
+            collector = _ensure_collector(context, process_id, process)
+            stdout, stderr = await collector
+            if process_id not in _process_store(context):
+                return
+            returncode = process.returncode
+            output = _decode_output(stdout, stderr)
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        logger.debug("shell_process_watch_failed process_id=%s", process_id, exc_info=True)
+        return
+    _emit_shell_process_done(context, process_id, command, returncode, output)
+
+
+def _emit_shell_process_done(
+    context: ToolContext,
+    process_id: str,
+    command: str,
+    returncode: int | None,
+    output: str,
+) -> None:
+    snippet = output.strip()
+    if len(snippet) > _PROCESS_DONE_OUTPUT_CHARS:
+        snippet = snippet[:_PROCESS_DONE_OUTPUT_CHARS] + "\n…[truncated]"
+    context.report_shell_process_done(
+        {
+            "process_id": process_id,
+            "command": command,
+            "returncode": returncode,
+            "output": snippet,
+        }
+    )
 
 
 async def wait_background_process(
@@ -934,10 +1065,9 @@ async def _run_pty(
     proc.start_reader()
 
     if background:
-        process_id = str(uuid.uuid4())
-        _pty_store(context)[process_id] = proc
-        _exec_env_store(context)[process_id] = exec_env
-        _command_store(context)[process_id] = command
+        process_id = _register_background_pty(
+            context, proc, command=command, exec_env=exec_env
+        )
         return ToolResult(
             success=True,
             content=process_id,
@@ -947,12 +1077,12 @@ async def _run_pty(
                 "pty": True,
                 "sandboxed": exec_env.is_sandboxed(),
                 "sandbox_type": exec_env.sandbox_type.value,
+                "process_id": process_id,
             },
         )
 
     # Foreground PTY commands get the same timeout as the non-PTY path;
     # an `await proc.wait()` with no bound could hang the tool round forever.
-    timed_out = False
     try:
         await asyncio.wait_for(proc.wait(), timeout=timeout_ms / 1000)
     except asyncio.CancelledError:
@@ -969,28 +1099,13 @@ async def _run_pty(
             pass
         raise
     except asyncio.TimeoutError:
-        timed_out = True
-        _kill_pty_process_group(proc)
-        try:
-            await asyncio.wait_for(proc.wait(), timeout=5)
-        except asyncio.TimeoutError:
-            pass
-    text = proc.output.decode("utf-8", errors="replace")
-    if timed_out:
-        return ToolResult(
-            success=False,
-            content=(
-                f"Command timed out after {timeout_ms}ms (pty)."
-                + (f"\nPartial output:\n{text.strip()}" if text.strip() else "")
-            ),
-            metadata={
-                "returncode": proc.exit_code,
-                "stdout": text,
-                "stderr": "",
-                "status": "timeout",
-                "pty": True,
-            },
+        process_id = _register_background_pty(
+            context, proc, command=command, exec_env=exec_env
         )
+        return _timeout_background_result(
+            command, context, process_id, timeout_ms, pid, pty=True
+        )
+    text = proc.output.decode("utf-8", errors="replace")
     metadata: dict[str, Any] = {
         "returncode": proc.exit_code,
         "stdout": text,

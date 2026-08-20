@@ -23,13 +23,23 @@ from deepseek_tui.utils.network_escalation import (
     host_timeout_count,
     should_escalate,
 )
-from deepseek_tui.tools.registry import ToolContext
-from deepseek_tui.tools.shell import ExecShellTool
+from deepseek_tui.tools.registry import ToolContext, ToolError
+from deepseek_tui.tools.shell import ExecShellTool, cancel_background_process
+
 
 # Short enough to keep the test fast, long enough to reliably exceed the
 # foreground timeout_ms below.
 _SLEEP_CMD = "sleep 10"
 _TIMEOUT_MS = 150
+
+
+async def _cancel(ctx: ToolContext, process_id: object) -> None:
+    if not isinstance(process_id, str) or not process_id:
+        return
+    try:
+        await cancel_background_process(ctx, process_id)
+    except ToolError:
+        pass
 
 
 async def test_single_curl_timeout_counts_host_once_not_twice(tmp_path: Path):
@@ -53,20 +63,24 @@ async def test_single_curl_timeout_counts_host_once_not_twice(tmp_path: Path):
         {"command": f"curl -sL {url} ; {_SLEEP_CMD}", "timeout_ms": _TIMEOUT_MS},
         ctx,
     )
+    try:
+        assert result.success is True
+        assert result.metadata.get("timed_out") is True
+        assert result.metadata.get("background") is True
+        assert isinstance(result.metadata.get("process_id"), str)
 
-    assert result.success is False
-    assert result.metadata.get("timed_out") is True
-
-    # The core assertion: one timeout → count is 1, NOT 2.
-    assert host_timeout_count(ctx, url) == 1, (
-        "single timeout bumped the host counter more than once — the "
-        "duplicate record_host_timeout call in execute() was not removed"
-    )
-    # And therefore a single timeout must NOT escalate.
-    assert should_escalate(ctx, url) is False, (
-        "a single timeout escalated to the mirror/CDN hint — the "
-        "double-count bug made the threshold (2) fire after one timeout"
-    )
+        # The core assertion: one timeout → count is 1, NOT 2.
+        assert host_timeout_count(ctx, url) == 1, (
+            "single timeout bumped the host counter more than once — the "
+            "duplicate record_host_timeout call in execute() was not removed"
+        )
+        # And therefore a single timeout must NOT escalate.
+        assert should_escalate(ctx, url) is False, (
+            "a single timeout escalated to the mirror/CDN hint — the "
+            "double-count bug made the threshold (2) fire after one timeout"
+        )
+    finally:
+        await _cancel(ctx, result.metadata.get("process_id"))
 
 
 async def test_two_curl_timeouts_on_same_host_do_escalate(tmp_path: Path):
@@ -76,15 +90,21 @@ async def test_two_curl_timeouts_on_same_host_do_escalate(tmp_path: Path):
     ctx = ToolContext(working_directory=tmp_path)
     tool = ExecShellTool()
     url = "https://example.com/slow"
+    process_ids: list[object] = []
 
-    for _ in range(2):
-        await tool.execute(
-            {"command": f"curl -sL {url} ; {_SLEEP_CMD}", "timeout_ms": _TIMEOUT_MS},
-            ctx,
-        )
+    try:
+        for _ in range(2):
+            result = await tool.execute(
+                {"command": f"curl -sL {url} ; {_SLEEP_CMD}", "timeout_ms": _TIMEOUT_MS},
+                ctx,
+            )
+            process_ids.append(result.metadata.get("process_id"))
 
-    assert host_timeout_count(ctx, url) == 2
-    assert should_escalate(ctx, url) is True
+        assert host_timeout_count(ctx, url) == 2
+        assert should_escalate(ctx, url) is True
+    finally:
+        for process_id in process_ids:
+            await _cancel(ctx, process_id)
 
 
 async def test_non_url_timeout_does_not_record_any_host(tmp_path: Path):
@@ -93,7 +113,9 @@ async def test_non_url_timeout_does_not_record_any_host(tmp_path: Path):
     ctx = ToolContext(working_directory=tmp_path)
     tool = ExecShellTool()
 
-    await tool.execute({"command": _SLEEP_CMD, "timeout_ms": _TIMEOUT_MS}, ctx)
-
-    assert host_timeout_count(ctx, "https://example.com/x") == 0
-    assert should_escalate(ctx, "https://example.com/x") is False
+    result = await tool.execute({"command": _SLEEP_CMD, "timeout_ms": _TIMEOUT_MS}, ctx)
+    try:
+        assert host_timeout_count(ctx, "https://example.com/x") == 0
+        assert should_escalate(ctx, "https://example.com/x") is False
+    finally:
+        await _cancel(ctx, result.metadata.get("process_id"))

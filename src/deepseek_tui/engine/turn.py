@@ -61,6 +61,48 @@ STREAM_CHUNK_TIMEOUT_SECS = 90
 STREAM_MAX_DURATION_SECS = 1800
 STREAM_MAX_CONTENT_BYTES = 10 * 1024 * 1024
 MAX_TRANSPARENT_STREAM_RETRIES = 2
+# Separate from transport retries: the stream finished, but produced no
+# user-visible work. Thinking-only counts as empty here.
+MAX_EMPTY_RESPONSE_RESAMPLES = 2
+
+
+class EmptyResponseReason(enum.Enum):
+    """Why a completed stream is treated as empty and eligible to resample."""
+
+    NO_VISIBLE_CONTENT = "no_visible_content"
+    REASONING_ONLY = "reasoning_only"
+
+
+def empty_response_reason(
+    *,
+    text: str,
+    thinking: str,
+    tool_call_count: int,
+) -> EmptyResponseReason | None:
+    """Classify a finished sample. ``None`` means the turn produced work.
+
+    Visible text or any tool call is enough. Reasoning alone is not — the
+    model thought and then stopped without answering or acting.
+    """
+    if tool_call_count > 0:
+        return None
+    if text.strip():
+        return None
+    if thinking.strip():
+        return EmptyResponseReason.REASONING_ONLY
+    return EmptyResponseReason.NO_VISIBLE_CONTENT
+
+
+def should_resample_empty(
+    reason: EmptyResponseReason | None,
+    *,
+    fired: int,
+    cancelled: bool,
+    max_resamples: int = MAX_EMPTY_RESPONSE_RESAMPLES,
+) -> bool:
+    """Resample a successful-but-empty stream. Budget is not the transport one."""
+    return reason is not None and not cancelled and fired < max_resamples
+
 
 # Compact callback may return a bare message list or
 # ``(messages, bridge_text)``. The bridge is already embedded as a leading
@@ -176,6 +218,7 @@ class TurnLoop:
         # never advance the outer retry loop when the provider fails before
         # any content is received, spinning forever.
         transparent_retries = 0
+        empty_resamples = 0
         trace = get_turn_latency(latency_turn_id) if latency_turn_id else None
         round_trace = trace.current_round() if trace is not None else None
         if round_trace is not None and round_trace.round_idx != round_idx:
@@ -496,6 +539,31 @@ class TurnLoop:
                                 tool_calls.append(converted)
                                 await emit(ToolCallEvent(tool_call=converted))
                             buffer.text_parts[:] = [parsed.clean_text]
+
+                    reason = empty_response_reason(
+                        text="".join(buffer.text_parts),
+                        thinking="".join(buffer.thinking_parts),
+                        tool_call_count=len(tool_calls),
+                    )
+                    if should_resample_empty(
+                        reason,
+                        fired=empty_resamples,
+                        cancelled=cancel_event.is_set(),
+                    ):
+                        empty_resamples += 1
+                        logger.warning(
+                            "empty_response_resample attempt=%d/%d reason=%s",
+                            empty_resamples,
+                            MAX_EMPTY_RESPONSE_RESAMPLES,
+                            reason.value if reason is not None else "none",
+                        )
+                        # Drop this sample so the next attempt is not appended
+                        # onto an empty / thinking-only buffer. Deltas already
+                        # yielded stay on screen; the persisted message is the
+                        # last attempt only.
+                        buffer = AssistantResponseBuffer()
+                        tool_calls = []
+                        continue
 
                     mark_llm_stream_end()
                     state.context_recovery_attempts = 0

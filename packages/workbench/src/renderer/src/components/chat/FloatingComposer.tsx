@@ -103,6 +103,7 @@ import {
   WORKSPACE_PATH_DRAG_MIME,
   workspacePathFromDrag
 } from '../../lib/composer-insert'
+import { isLargePaste } from '../../lib/composer-paste-file'
 
 export type { ComposerMode }
 
@@ -1247,6 +1248,58 @@ export function FloatingComposer({
     focusComposer()
   }
 
+  const insertTextAtCursor = (text: string): void => {
+    const el = textareaRef.current
+    const current = inputRef.current
+    if (!el) {
+      setInput(appendComposerSnippet(current, text))
+      return
+    }
+    const start = el.selectionStart
+    const end = el.selectionEnd
+    setInput(`${current.slice(0, start)}${text}${current.slice(end)}`)
+  }
+
+  const handleLargePaste = async (text: string): Promise<void> => {
+    if (!effectiveWorkspaceRoot) {
+      insertTextAtCursor(text)
+      return
+    }
+    if (typeof window.dsGui === 'undefined' || typeof window.dsGui.writePasteTextFile !== 'function') {
+      showAttachNotice(t('composerPasteNeedRestart'), 'info')
+      insertTextAtCursor(text)
+      return
+    }
+    const result = await window.dsGui.writePasteTextFile({
+      workspaceRoot: effectiveWorkspaceRoot,
+      content: text
+    })
+    if (!result.ok) {
+      showAttachNotice(result.message ?? t('composerPasteFailed'))
+      insertTextAtCursor(text)
+      return
+    }
+    const id = `att-${result.relativePath}`
+    if (attachments.some((item) => item.path === result.relativePath)) {
+      showAttachNotice(t('composerPasteSaved', { name: result.name }), 'info')
+      return
+    }
+    setAttachments([
+      ...attachments,
+      {
+        id,
+        path: result.relativePath,
+        name: result.name,
+        size: result.size,
+        status: 'uploading',
+        progress: 0
+      }
+    ])
+    simulateUpload(id)
+    showAttachNotice(t('composerPasteSaved', { name: result.name }), 'info')
+    focusComposer()
+  }
+
   const removeAttachment = (id: string): void => {
     clearAttachTimer(id)
     setAttachments((prev) => prev.filter((item) => item.id !== id))
@@ -1734,6 +1787,12 @@ export function FloatingComposer({
             onChange={(e) => {
               setInput(e.target.value)
               if (voiceActive) resetVoiceSession()
+            }}
+            onPaste={(event) => {
+              const text = event.clipboardData?.getData('text/plain') ?? ''
+              if (!isLargePaste(text)) return
+              event.preventDefault()
+              void handleLargePaste(text)
             }}
             onFocus={() => setFocused(true)}
             onBlur={() => setFocused(false)}
