@@ -91,6 +91,61 @@ def test_bridge_composition_is_user_message_not_system():
     assert not is_compaction_bridge_message(seam)
 
 
+def test_bridge_warns_the_reader_the_summary_is_unverified():
+    """The write-side contract asks for unverified claims to be labelled; the
+    read side has to say the same thing, or the next turn treats the summary as
+    evidence and builds on a step that may never have happened."""
+    bridge = build_compaction_bridge_text("### Goal\nG\n\n### Next step\nN\n")
+    assert "notes, not proof" in bridge
+    assert "verify it yourself" in bridge
+
+
+def test_bridge_caveat_sits_outside_the_archived_block():
+    """Inside the tags it would read as part of the archived conversation."""
+    from deepseek_tui.engine.context_pressure import unwrap_archived_context
+
+    bridge = build_compaction_bridge_text("### Goal\nG\n\n### Next step\nN\n")
+    inner = unwrap_archived_context(bridge)
+    assert inner == "### Goal\nG\n\n### Next step\nN"
+    assert "notes, not proof" not in inner
+    assert COMPACTION_BRIDGE_PREFIX not in inner
+
+
+def test_replayed_summary_carries_no_envelope():
+    """Re-compaction feeds the previous summary back to the summarizer.
+
+    Handing it the whole bridge body would have the summarizer fold our own
+    framing — the prefix, the caveat, the working-set list — into the next
+    summary, stacking one more copy on every pass. Only the model's own text
+    may be replayed.
+    """
+    from deepseek_tui.engine.context_pressure import unwrap_archived_context
+
+    summary = "### Goal\nShip it.\n\n### Next step\nRun the gate.\n"
+    bridge = build_compaction_bridge_text(summary, working_set_paths=["a.py"])
+    replayed = unwrap_archived_context(bridge)
+
+    assert replayed == summary.strip()
+    for envelope in (COMPACTION_BRIDGE_PREFIX, "notes, not proof", "a.py"):
+        assert envelope not in replayed
+
+    # Idempotent: a summary already unwrapped survives another pass unchanged,
+    # so repeated compactions converge instead of eroding the text.
+    assert unwrap_archived_context(replayed) == replayed
+
+
+def test_unwrap_handles_absent_and_unterminated_blocks():
+    from deepseek_tui.engine.context_pressure import unwrap_archived_context
+
+    assert unwrap_archived_context(None) is None
+    assert unwrap_archived_context("") is None
+    assert unwrap_archived_context("   ") is None
+    # No tags at all: a bare summary is already the inner text.
+    assert unwrap_archived_context("bare summary") == "bare summary"
+    # Truncated mid-stream by an output cap — keep what arrived.
+    assert unwrap_archived_context("x <archived_context>\nabc") == "abc"
+
+
 def test_apply_compact_result_does_not_mutate_system():
     req = MessageRequest(
         model="deepseek-chat",

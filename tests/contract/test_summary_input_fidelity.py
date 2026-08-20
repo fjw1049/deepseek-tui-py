@@ -169,8 +169,58 @@ def test_contract_tells_the_summarizer_the_ledger_covers_user_wording() -> None:
     assert "prior_user_requests" in contract
 
 
+def _unwrapped(text: str) -> str:
+    """Collapse newlines so an assertion tests wording, not line breaks.
+
+    The contract is hand-wrapped prose; asserting on a phrase that happens to
+    straddle a wrap point makes the test fail on reflow rather than on meaning.
+    """
+    return " ".join(text.split())
+
+
 def test_contract_asks_for_an_anchored_next_step() -> None:
-    assert "Anchor it" in COMPACT_TEMPLATE()
+    contract = _unwrapped(COMPACT_TEMPLATE())
+    assert "anchored" in contract
+    # An anchor is only usable if it names something copied from the transcript.
+    assert "copied exactly" in contract
+
+
+def test_contract_asks_for_the_remaining_plan_not_just_one_step() -> None:
+    """One anchored line resumes the next action; it does not carry the task.
+
+    The compacting turn holds more context than any later turn will, so the
+    decisions it has already settled have to be written down here or the next
+    turn re-opens them.
+    """
+    contract = _unwrapped(COMPACT_TEMPLATE())
+    assert "remaining steps in order" in contract
+
+
+def test_contract_asks_what_the_session_never_established() -> None:
+    """Assumptions replayed as facts are the failure mode compaction adds."""
+    contract = COMPACT_TEMPLATE()
+    assert "### Unknowns" in contract
+    assert "unverified" in contract
+
+
+def test_contract_lets_the_shape_follow_the_task() -> None:
+    """Only Goal and Next step are validated, so only those are mandatory.
+
+    Requiring every heading is what produced sections whose entire content was
+    "None" — tokens spent to satisfy a template rather than to carry state.
+    """
+    contract = _unwrapped(COMPACT_TEMPLATE())
+    assert "### Goal" in contract and "### Next step" in contract
+    assert "Do not keep a heading just to write `None` under it" in contract
+    # The old rule demanded the opposite; it must not survive anywhere.
+    assert "Keep every heading" not in contract
+
+
+def test_contract_is_first_person_notes_to_self() -> None:
+    """A third-party report invites table-filling; notes-to-self invite thought."""
+    contract = _unwrapped(COMPACT_TEMPLATE())
+    assert "handoff note to yourself" in contract
+    assert "first person" in contract
 
 
 @pytest.mark.asyncio

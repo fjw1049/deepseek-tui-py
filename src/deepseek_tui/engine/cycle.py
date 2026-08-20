@@ -294,7 +294,11 @@ def build_seed_messages(
         ts = datetime.fromtimestamp(briefing.timestamp, tz=timezone.utc).isoformat()
         seed_parts.append(
             f"[CYCLE BRIEFING — written by you on cycle {briefing.cycle} at {ts}]\n\n"
-            f"<carry_forward>\n{briefing.briefing_text.strip()}\n</carry_forward>"
+            f"<carry_forward>\n{briefing.briefing_text.strip()}\n</carry_forward>\n\n"
+            "These are your own notes, not proof. Where the briefing says a step "
+            "was done, a test passed, or a fix worked, verify it yourself before "
+            "building on it — the cycle that wrote this could not re-check its "
+            "own claims either."
         )
 
     if archive_path:

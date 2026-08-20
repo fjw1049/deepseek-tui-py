@@ -1046,23 +1046,26 @@ async def _create_summary(
 
     handoff_contract = COMPACT_TEMPLATE().strip()
     system_prompt = (
-        "You write structured compaction handoffs for a coding agent. "
-        "Follow the contract exactly. Prefer structure and continuity over "
-        "prose polish. Do not call tools. Lines labelled 'Harness:' are "
-        "automated injections from the agent runtime, not the human — never "
-        "record their wording as a user request or user constraint."
+        "You are the coding agent whose session is being compacted, writing a "
+        "handoff note to your own next turn. Follow the contract. Prefer "
+        "continuity and concrete detail over prose polish, and keep the shape "
+        "the task calls for rather than filling every heading. Do not call "
+        "tools. Lines labelled 'Harness:' are automated injections from the "
+        "agent runtime, not the human — never record their wording as a user "
+        "request or user constraint."
     )
     previous_block = ""
     if previous_summary and previous_summary.strip():
         previous_block = (
-            "Previous compaction summary (authoritative; PRESERVE still-true "
+            "Your previous handoff note (authoritative; PRESERVE still-true "
             "facts, ADD new progress, UPDATE Next step):\n"
             f"<previous-summary>\n{previous_summary.strip()}\n</previous-summary>\n\n"
         )
     user_prompt = (
         f"{handoff_contract}\n\n"
-        f"Keep the filled handoff under {limits.word_limit} words when possible; "
-        "structure and required headings take priority over the word limit.\n\n"
+        f"Keep the note under {limits.word_limit} words when possible; the two "
+        "required headings and the detail needed to continue take priority over "
+        "the word limit.\n\n"
         f"{previous_block}"
         "---\n\n"
         "Conversation to archive:\n\n"

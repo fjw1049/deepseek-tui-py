@@ -28,8 +28,26 @@ Write concrete prose, not bullet-point summaries of the transcript. Cover:
 - **Approaches that failed.** Dead ends with enough detail that the next
   cycle won't repeat them. Name the approach and the specific reason it
   didn't work, not just "tried X, didn't work".
+- **What you have not verified.** Anything you or an earlier turn claimed was
+  done — tests "passing", a fix "working", a file "created" — without seeing the
+  evidence. Say so plainly and mark it unverified. The next cycle cannot
+  re-check the transcript for you; if this briefing states it as fact, it
+  becomes fact, and the cycle builds on it.
+- **What this cycle never established.** Context the next step depends on that
+  was never actually confirmed here: a file referenced but not read, a schema or
+  signature assumed but not inspected, a question you asked the user who has not
+  answered. Naming the gap is what sends the next cycle to check it instead of
+  assuming it.
 - **Open questions for the user.** Things you're blocked on that the next
   cycle should ask about if the user doesn't volunteer them.
+- **The next concrete action, anchored.** Name the file, symbol, command or
+  error it acts on, copied exactly. "Continue the refactor" is unusable;
+  "add the `--json` flag to `cli/report.py:build_parser`" can be acted on
+  without re-reading anything. Then give the remaining sequence: what follows,
+  in order, and the decisions you have already made for those steps so the next
+  cycle does not reopen them. You hold more context on this task right now than
+  you ever will again — whatever you settle here is one less thing to
+  rediscover.
 
 ## What NOT to put in `<carry_forward>`
 
