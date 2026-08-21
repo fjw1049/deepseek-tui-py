@@ -1,4 +1,5 @@
 import {
+  Fragment,
   useCallback,
   useEffect,
   useMemo,
@@ -9,21 +10,56 @@ import {
 } from 'react'
 import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
-import { Clock, CornerDownLeft, Folder, MessageSquare, Search, X } from 'lucide-react'
-import { formatShortcutLabel, shortcutChordTokens } from '@shared/shortcuts'
+import {
+  Columns3,
+  Folder,
+  MessageSquare,
+  Plus,
+  Search,
+  Settings,
+  type LucideIcon
+} from 'lucide-react'
+import { shortcutChordTokens, type ShortcutChord } from '@shared/shortcuts'
 import type { NormalizedThread } from '../../agent/types'
-import { formatRelativeTime } from '../../lib/format-relative-time'
 import { workspaceLabelFromPath } from '../../lib/workspace-label'
 
 type Props = {
   open: boolean
   threads: NormalizedThread[]
+  runtimeReady: boolean
   onClose: () => void
   onSelectThread: (id: string) => void
+  onNewChat: () => void
+  onAddProject: () => void
+  onOpenKanban: () => void
+  onOpenSettings: () => void
 }
 
-const RECENT_LIMIT = 40
+const RECENT_LIMIT = 16
 const RESULT_LIMIT = 50
+
+type ActionItem = {
+  kind: 'action'
+  id: string
+  label: string
+  shortcut: string
+  icon: LucideIcon
+  run: () => void
+}
+
+type ThreadItem = {
+  kind: 'thread'
+  id: string
+  thread: NormalizedThread
+}
+
+type SearchItem = ActionItem | ThreadItem
+
+type SearchSection = {
+  id: string
+  title: string
+  items: SearchItem[]
+}
 
 function threadMatchesQuery(thread: NormalizedThread, query: string): boolean {
   const q = query.trim().toLowerCase()
@@ -39,13 +75,26 @@ function sortByRecent(threads: NormalizedThread[]): NormalizedThread[] {
   return [...threads].sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
 }
 
+function shortcutText(chord: ShortcutChord): string {
+  return shortcutChordTokens(chord).join(' ')
+}
+
+function labelMatchesQuery(label: string, query: string): boolean {
+  return label.toLowerCase().includes(query.trim().toLowerCase())
+}
+
 export function ConversationSearchModal({
   open,
   threads,
+  runtimeReady,
   onClose,
-  onSelectThread
+  onSelectThread,
+  onNewChat,
+  onAddProject,
+  onOpenKanban,
+  onOpenSettings
 }: Props): ReactElement | null {
-  const { t, i18n } = useTranslation('common')
+  const { t } = useTranslation('common')
   const inputRef = useRef<HTMLInputElement>(null)
   const listRef = useRef<HTMLUListElement>(null)
   const [query, setQuery] = useState('')
@@ -54,21 +103,102 @@ export function ConversationSearchModal({
   const trimmedQuery = query.trim()
   const browsingRecent = trimmedQuery.length === 0
 
+  const actions = useMemo<ActionItem[]>(() => {
+    const items: ActionItem[] = []
+    if (runtimeReady) {
+      items.push({
+        kind: 'action',
+        id: 'new-chat',
+        label: t('newChat'),
+        shortcut: shortcutText({ key: 'n' }),
+        icon: Plus,
+        run: onNewChat
+      })
+    }
+    items.push(
+      {
+        kind: 'action',
+        id: 'add-project',
+        label: t('conversationSearchActionAddProject'),
+        shortcut: shortcutText({ key: 'p' }),
+        icon: Folder,
+        run: onAddProject
+      },
+      {
+        kind: 'action',
+        id: 'kanban',
+        label: t('kanbanNav'),
+        shortcut: shortcutText({ key: 'j' }),
+        icon: Columns3,
+        run: onOpenKanban
+      },
+      {
+        kind: 'action',
+        id: 'settings',
+        label: t('settings'),
+        shortcut: '',
+        icon: Settings,
+        run: onOpenSettings
+      }
+    )
+    return items
+  }, [onAddProject, onNewChat, onOpenKanban, onOpenSettings, runtimeReady, t])
+
   const recentThreads = useMemo(
     () => sortByRecent(threads).slice(0, RECENT_LIMIT),
     [threads]
   )
 
-  const results = useMemo(() => {
+  const resultThreads = useMemo(() => {
     if (browsingRecent) return [] as NormalizedThread[]
     return sortByRecent(threads.filter((thread) => threadMatchesQuery(thread, trimmedQuery))).slice(
       0,
       RESULT_LIMIT
     )
-  }, [threads, trimmedQuery, browsingRecent])
+  }, [browsingRecent, threads, trimmedQuery])
 
-  const rows = browsingRecent ? recentThreads : results
-  const rowCount = rows.length
+  const sections = useMemo<SearchSection[]>(() => {
+    const visibleActions = browsingRecent
+      ? actions
+      : actions.filter((action) => labelMatchesQuery(action.label, trimmedQuery))
+    const threadItems: ThreadItem[] = (browsingRecent ? recentThreads : resultThreads).map(
+      (thread) => ({
+        kind: 'thread',
+        id: thread.id,
+        thread
+      })
+    )
+    const next: SearchSection[] = []
+    if (visibleActions.length > 0) {
+      next.push({
+        id: 'suggested',
+        title: t('conversationSearchSuggested'),
+        items: visibleActions
+      })
+    }
+    if (threadItems.length > 0) {
+      next.push({
+        id: browsingRecent ? 'recent' : 'results',
+        title: browsingRecent
+          ? t('conversationSearchRecent')
+          : t('conversationSearchResults'),
+        items: threadItems
+      })
+    }
+    return next
+  }, [actions, browsingRecent, recentThreads, resultThreads, t, trimmedQuery])
+
+  const flatItems = useMemo(
+    () => sections.flatMap((section) => section.items),
+    [sections]
+  )
+  const rowCount = flatItems.length
+  const isEmpty = rowCount === 0
+  const itemIndexById = useMemo(() => {
+    const map = new Map<string, number>()
+    flatItems.forEach((item, index) => map.set(item.id, index))
+    return map
+  }, [flatItems])
 
   useEffect(() => {
     if (!open) return
@@ -85,7 +215,7 @@ export function ConversationSearchModal({
   useEffect(() => {
     const active = listRef.current?.querySelector<HTMLElement>('[aria-selected="true"]')
     active?.scrollIntoView({ block: 'nearest' })
-  }, [activeIndex, rows])
+  }, [activeIndex, flatItems])
 
   useEffect(() => {
     if (!open) return
@@ -99,9 +229,14 @@ export function ConversationSearchModal({
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [open, onClose])
 
-  const selectThread = useCallback(
-    (threadId: string) => {
-      onSelectThread(threadId)
+  const activateItem = useCallback(
+    (item: SearchItem) => {
+      if (item.kind === 'action') {
+        onClose()
+        item.run()
+        return
+      }
+      onSelectThread(item.thread.id)
       onClose()
     },
     [onClose, onSelectThread]
@@ -122,16 +257,11 @@ export function ConversationSearchModal({
     }
     if (event.key !== 'Enter') return
     event.preventDefault()
-    const thread = rows[activeIndex]
-    if (thread) selectThread(thread.id)
+    const item = flatItems[activeIndex]
+    if (item) activateItem(item)
   }
 
   if (!open) return null
-
-  const shortcutChord = { key: 'k' } as const
-  const shortcutLabel = formatShortcutLabel(shortcutChord)
-  const shortcutTokens = shortcutChordTokens(shortcutChord)
-  const isEmpty = rowCount === 0
 
   return createPortal(
     <div
@@ -142,7 +272,7 @@ export function ConversationSearchModal({
       }}
     >
       <div
-        className="ds-modal-surface ds-endpoint-sheet ds-search-modal"
+        className="ds-modal-surface ds-endpoint-sheet ds-search-modal ds-search-modal--palette"
         role="dialog"
         aria-modal="true"
         aria-label={t('conversationSearchTitle')}
@@ -164,114 +294,64 @@ export function ConversationSearchModal({
             autoComplete="off"
             spellCheck={false}
           />
-          <div className="ds-search-modal__header-right">
-            <div className="ds-shortcut-keys shrink-0" aria-label={shortcutLabel}>
-              {shortcutTokens.map((token, index) => (
-                <kbd
-                  key={`${token}-${index}`}
-                  className={`ds-keycap${token.length > 1 ? ' ds-keycap--wide' : ''}`}
-                >
-                  {token}
-                </kbd>
-              ))}
-            </div>
-            <button
-              type="button"
-              className="ds-search-modal__close"
-              onClick={onClose}
-              aria-label={t('conversationSearchClose')}
-            >
-              <X className="h-3.5 w-3.5" strokeWidth={2} />
-            </button>
-          </div>
         </div>
 
-        <div
-          className={`ds-search-modal__body${isEmpty ? ' ds-search-modal__body--empty' : ''}`}
-        >
+        <div className={`ds-search-modal__body${isEmpty ? ' ds-search-modal__body--empty' : ''}`}>
           {isEmpty ? (
             <div className="ds-search-modal__empty">
-              <Search className="ds-search-modal__empty-icon" strokeWidth={1.5} aria-hidden />
-              <p className="ds-search-modal__empty-title">
-                {browsingRecent
-                  ? t('conversationSearchNoRecent')
-                  : t('conversationSearchNoResults')}
-              </p>
-              <p className="ds-search-modal__empty-hint">{t('conversationSearchHint')}</p>
+              <p className="ds-search-modal__empty-title">{t('conversationSearchNoResults')}</p>
             </div>
           ) : (
-            <>
-              {browsingRecent ? (
-                <div className="ds-search-modal__section">{t('conversationSearchRecent')}</div>
-              ) : null}
-              <ul ref={listRef} className="ds-search-modal__list" role="listbox">
-                {rows.map((thread, index) => {
-                  const workspace = thread.workspace?.trim()
-                  const folder = workspace ? workspaceLabelFromPath(workspace) : ''
-                  const active = index === activeIndex
-                  return (
-                    <li key={thread.id}>
-                      <button
-                        type="button"
-                        role="option"
-                        aria-selected={active}
-                        className={`ds-search-modal__row ${
-                          active ? 'ds-search-modal__row--active' : ''
-                        }`}
-                        onMouseEnter={() => setActiveIndex(index)}
-                        onClick={() => selectThread(thread.id)}
-                      >
-                        <span className="ds-search-modal__row-icon-wrap" aria-hidden>
-                          <MessageSquare strokeWidth={1.7} />
-                        </span>
-                        <span className="ds-search-modal__row-main">
-                          <span className="ds-search-modal__row-title">{thread.title}</span>
-                          <span className="ds-search-modal__row-meta">
-                            {folder ? (
-                              <span className="ds-search-modal__meta-chip">
-                                <Folder strokeWidth={1.8} aria-hidden />
-                                {folder}
-                              </span>
-                            ) : null}
-                            <span className="ds-search-modal__meta-chip">
-                              <Clock strokeWidth={1.8} aria-hidden />
-                              {formatRelativeTime(thread.updatedAt, i18n.language)}
-                            </span>
+            <ul ref={listRef} className="ds-search-modal__list" role="listbox">
+              {sections.map((section) => (
+                <Fragment key={section.id}>
+                  <li className="ds-search-modal__block" role="presentation">
+                    <div className="ds-search-modal__section">{section.title}</div>
+                  </li>
+                  {section.items.map((item) => {
+                    const index = itemIndexById.get(item.id) ?? 0
+                    const active = index === activeIndex
+                    const Icon = item.kind === 'action' ? item.icon : MessageSquare
+                    const title = item.kind === 'action' ? item.label : item.thread.title
+                    const trailing =
+                      item.kind === 'action'
+                        ? item.shortcut
+                        : item.thread.workspace?.trim()
+                          ? workspaceLabelFromPath(item.thread.workspace)
+                          : ''
+                    return (
+                      <li key={item.id}>
+                        <button
+                          type="button"
+                          role="option"
+                          aria-selected={active}
+                          className={`ds-search-modal__row${
+                            active ? ' ds-search-modal__row--active' : ''
+                          }`}
+                          onMouseEnter={() => setActiveIndex(index)}
+                          onClick={() => activateItem(item)}
+                        >
+                          <span className="ds-search-modal__row-icon-wrap" aria-hidden>
+                            <Icon strokeWidth={1.7} />
                           </span>
-                        </span>
-                        {active ? (
-                          <CornerDownLeft
-                            className="ds-search-modal__enter"
-                            strokeWidth={1.75}
-                            aria-hidden
-                          />
-                        ) : null}
-                      </button>
-                    </li>
-                  )
-                })}
-              </ul>
-            </>
+                          <span className="ds-search-modal__row-title">{title}</span>
+                          {trailing ? (
+                            <span className="ds-search-modal__row-trailing">{trailing}</span>
+                          ) : null}
+                        </button>
+                      </li>
+                    )
+                  })}
+                </Fragment>
+              ))}
+            </ul>
           )}
         </div>
 
-        {!isEmpty ? (
-          <div className="ds-search-modal__footer" aria-hidden>
-            <span>
-              <kbd className="ds-keycap">↑</kbd>
-              <kbd className="ds-keycap">↓</kbd>
-              <span className="ds-search-modal__footer-label">
-                {t('conversationSearchFooterSelect')}
-              </span>
-            </span>
-            <span>
-              <kbd className="ds-keycap">↵</kbd>
-              <span className="ds-search-modal__footer-label">
-                {t('conversationSearchFooterOpen')}
-              </span>
-            </span>
-          </div>
-        ) : null}
+        <div className="ds-search-modal__footer">
+          <span className="ds-search-modal__footer-hint">{t('conversationSearchFooterHint')}</span>
+          <span className="ds-search-modal__footer-open">{t('conversationSearchFooterOpen')}</span>
+        </div>
       </div>
     </div>,
     document.body

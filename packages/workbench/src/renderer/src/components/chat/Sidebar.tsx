@@ -297,8 +297,13 @@ export function Sidebar({
       <ConversationSearchModal
         open={searchModalOpen}
         threads={threads}
+        runtimeReady={runtimeReady}
         onClose={() => setSearchModalOpen(false)}
         onSelectThread={onSelectThread}
+        onNewChat={onNewChat}
+        onAddProject={() => void chooseWorkspace()}
+        onOpenKanban={() => setRoute('kanban')}
+        onOpenSettings={() => onOpenSettings('general')}
       />
     </aside>
   )

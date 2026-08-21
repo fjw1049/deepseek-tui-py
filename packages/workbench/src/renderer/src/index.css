@@ -4568,6 +4568,141 @@ samp {
   opacity: 0.9;
 }
 
+/* Conversation ⌘K palette — scoped so IDE Quick Open keeps the shared sheet. */
+.ds-search-modal--palette {
+  width: min(640px, 100%);
+  max-height: min(72vh, 560px);
+  border-radius: 12px;
+}
+
+.ds-search-modal--palette .ds-search-modal__header {
+  gap: 12px;
+  padding: 14px 16px 12px;
+}
+
+.ds-search-modal--palette .ds-search-modal__header::after {
+  background: color-mix(in srgb, var(--ds-border-muted) 88%, transparent);
+}
+
+.ds-search-modal--palette .ds-search-modal__search-icon {
+  width: 16px;
+  height: 16px;
+  opacity: 0.72;
+}
+
+.ds-search-modal--palette .ds-search-modal__input {
+  font-size: 15px;
+  letter-spacing: -0.016em;
+  line-height: 1.4;
+  caret-color: var(--ds-text);
+}
+
+.ds-search-modal--palette .ds-search-modal__body {
+  max-height: min(48vh, 380px);
+  padding: 6px 8px 8px;
+}
+
+.ds-search-modal--palette .ds-search-modal__body--empty {
+  min-height: 88px;
+}
+
+.ds-search-modal--palette .ds-search-modal__empty {
+  gap: 0;
+  padding: 20px 16px;
+}
+
+.ds-search-modal--palette .ds-search-modal__empty-title {
+  color: var(--ds-text-faint);
+  font-size: 13px;
+  font-weight: 400;
+}
+
+.ds-search-modal--palette .ds-search-modal__block:not(:first-child) {
+  margin-top: 4px;
+  padding-top: 8px;
+  border-top: 1px solid color-mix(in srgb, var(--ds-border-muted) 80%, transparent);
+}
+
+.ds-search-modal--palette .ds-search-modal__section {
+  padding: 6px 10px 4px;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+}
+
+.ds-search-modal--palette .ds-search-modal__row {
+  min-height: 36px;
+  gap: 10px;
+  padding: 7px 10px;
+  border-radius: 8px;
+}
+
+.ds-search-modal--palette .ds-search-modal__row:hover {
+  background: var(--ds-surface-hover);
+}
+
+.ds-search-modal--palette .ds-search-modal__row--active,
+.ds-search-modal--palette .ds-search-modal__row--active:hover {
+  background: color-mix(in srgb, var(--ds-surface-hover) 180%, transparent);
+}
+
+.ds-search-modal--palette .ds-search-modal__row-icon-wrap {
+  width: 18px;
+  height: 18px;
+  border-radius: 0;
+  background: transparent;
+  color: var(--ds-text-muted);
+}
+
+.ds-search-modal--palette .ds-search-modal__row--active .ds-search-modal__row-icon-wrap {
+  background: transparent;
+  color: var(--ds-text);
+}
+
+.ds-search-modal--palette .ds-search-modal__row-icon-wrap svg {
+  width: 15px;
+  height: 15px;
+}
+
+.ds-search-modal--palette .ds-search-modal__row-title {
+  max-width: none;
+  flex: 1 1 auto;
+  font-size: 13.5px;
+  font-weight: 400;
+  letter-spacing: -0.012em;
+}
+
+.ds-search-modal--palette .ds-search-modal__row-trailing {
+  flex-shrink: 0;
+  margin-left: auto;
+  color: var(--ds-text-faint);
+  font-size: 12px;
+  font-weight: 400;
+  letter-spacing: 0.01em;
+  line-height: 1.3;
+  font-variant-numeric: tabular-nums;
+}
+
+.ds-search-modal--palette .ds-search-modal__footer {
+  justify-content: space-between;
+  gap: 16px;
+  padding: 8px 14px 10px;
+  font-size: 12px;
+}
+
+.ds-search-modal--palette .ds-search-modal__footer-hint {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ds-text-faint);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ds-search-modal--palette .ds-search-modal__footer-open {
+  flex-shrink: 0;
+  color: var(--ds-text-muted);
+}
+
 .ds-markdown {
   color: var(--ds-text);
   font-family: var(--font-ui);
