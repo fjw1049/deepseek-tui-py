@@ -20,6 +20,7 @@ Delegates to ``context.subagent_manager``.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from dataclasses import asdict
@@ -467,14 +468,102 @@ async def _execute_send_input(
     )
 
 
+def _parse_wait_process_ids(data: dict[str, Any]) -> list[str]:
+    """Collect background-shell wait targets from ``process_ids``.
+
+    A bare ``process_id`` is accepted but not advertised: the schema exposes
+    only ``process_ids`` for waiting, because ``process_id`` is a retired
+    param on this tool (single-process reads live on ``task_output``).
+    """
+    ids: list[str] = []
+    raw = data.get("process_ids")
+    if isinstance(raw, list):
+        for value in raw:
+            if isinstance(value, str) and value.strip():
+                process_id = value.strip()
+                if process_id not in ids:
+                    ids.append(process_id)
+    single = _pick_str(data, "process_id")
+    if single and single not in ids:
+        ids.append(single)
+    return ids
+
+
+async def _wait_on_processes(
+    process_ids: list[str],
+    context: ToolContext,
+    *,
+    mode: str,
+    timeout_ms: int,
+) -> ToolResult:
+    """``action='wait'`` over background shell processes.
+
+    Mirrors the sub-agent wait modes so the model has one waiting idiom for
+    both kinds of concurrent work: ``all`` blocks until every process exits,
+    ``any``/``first`` return as soon as one does. Processes that are still
+    running stay registered and collectable.
+    """
+    from deepseek_tui.tools import shell as _shell
+
+    async def collect(process_id: str) -> dict[str, Any]:
+        result = await _shell.wait_background_process(
+            context, process_id, timeout_ms=timeout_ms
+        )
+        meta = dict(result.metadata or {})
+        meta.setdefault("process_id", process_id)
+        meta["success"] = result.success
+        meta["output"] = result.content
+        return meta
+
+    tasks = {
+        asyncio.ensure_future(collect(pid)): pid for pid in process_ids
+    }
+    return_when = (
+        asyncio.ALL_COMPLETED if mode == "all" else asyncio.FIRST_COMPLETED
+    )
+    done, pending = await asyncio.wait(tasks.keys(), return_when=return_when)
+    for task in pending:
+        # Leave the process registered: cancelling only abandons this wait,
+        # and a later task_output / handoff can still collect it.
+        task.cancel()
+    payload: list[dict[str, Any]] = []
+    for task in done:
+        try:
+            payload.append(task.result())
+        except Exception as exc:  # noqa: BLE001
+            payload.append({"process_id": tasks[task], "error": str(exc)})
+    waited = [tasks[task] for task in done]
+    return ToolResult(
+        success=True,
+        content=json.dumps(payload, ensure_ascii=False),
+        metadata={
+            "processes": payload,
+            "wait_mode": mode,
+            "waited_ids": waited,
+            "pending_ids": [tasks[task] for task in pending],
+        },
+    )
+
+
 async def _execute_wait(input_data: dict[str, Any], context: ToolContext) -> ToolResult:
-    manager = _require_manager(context)
     mode = _parse_wait_mode(input_data)
     timeout_ms = _pick_int(input_data, "timeout_ms", default=DEFAULT_RESULT_TIMEOUT_MS)
     timeout_ms = max(
         MIN_WAIT_TIMEOUT_MS,
         min(MAX_RESULT_TIMEOUT_MS, int(timeout_ms or DEFAULT_RESULT_TIMEOUT_MS)),
     )
+    # Background shell processes are a valid wait target, like they already are
+    # for action=result / action=cancel.
+    process_ids = _parse_wait_process_ids(input_data)
+    if process_ids:
+        if _parse_wait_ids(input_data):
+            raise ToolError(
+                "pass either agent ids or process ids to wait on, not both"
+            )
+        return await _wait_on_processes(
+            process_ids, context, mode=mode, timeout_ms=timeout_ms
+        )
+    manager = _require_manager(context)
     agent_ids = _parse_wait_ids(input_data)
     if not agent_ids:
         agent_ids = _running_agent_ids(manager)
@@ -559,7 +648,9 @@ _ACTION_BLURBS: dict[str, str] = {
         "wait: wait for one or more sub-agents to reach a terminal state "
         "('agent_ids' list or a single 'agent_id'; 'wait_mode' any/all/"
         "first, default any; 'timeout_ms'). With no ids, waits on all "
-        "currently running sub-agents."
+        "currently running sub-agents. Also waits on background shell "
+        "processes via 'process_ids'/'process_id' (same wait_mode); agent "
+        "ids and process ids cannot be mixed in one call."
     ),
 }
 
@@ -700,6 +791,15 @@ class AgentTool(ToolSpec):
                     "description": (
                         "Agent IDs to wait on (action=wait). When omitted, "
                         "waits on all running sub-agents."
+                    ),
+                },
+                "process_ids": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        "Background shell process ids to wait on "
+                        "(action=wait), with 'wait_mode'. Cannot be mixed "
+                        "with agent ids in one call."
                     ),
                 },
                 "timeout_ms": {

@@ -35,6 +35,7 @@ _EXEC_ENV_STORE_KEY = "shell_exec_envs"
 _COLLECTOR_STORE_KEY = "shell_process_collectors"
 _COMMAND_STORE_KEY = "shell_process_commands"
 _WATCHER_STORE_KEY = "shell_process_watchers"
+_DETACHED_STORE_KEY = "shell_process_detached"
 _MAX_STORED_PROCESSES = 20
 _PROCESS_DONE_OUTPUT_CHARS = 4000
 
@@ -214,7 +215,7 @@ class ExecShellTool(ToolSpec):
         process = await _spawn_from_exec_env(exec_env)
         if background:
             process_id = _register_background_process(
-                context, process, command=command, exec_env=exec_env
+                context, process, command=command, exec_env=exec_env, detached=True
             )
             metadata: dict[str, Any] = {
                 "background": True,
@@ -274,6 +275,9 @@ class ExecShellTool(ToolSpec):
                 command=command,
                 exec_env=exec_env,
                 collector=collector,
+                # Not detached: the model asked for this result in the
+                # foreground, so the turn hands it off instead of ending.
+                detached=False,
             )
             return _timeout_background_result(
                 command, context, process_id, timeout_ms, process.pid
@@ -432,11 +436,13 @@ def _register_background_process(
     command: str,
     exec_env: ExecEnv,
     collector: asyncio.Task[tuple[bytes | None, bytes | None]] | None = None,
+    detached: bool,
 ) -> str:
     process_id = str(uuid.uuid4())
     _process_store(context)[process_id] = process
     _exec_env_store(context)[process_id] = exec_env
     _command_store(context)[process_id] = command
+    _detached_store(context)[process_id] = detached
     if collector is not None:
         _collector_store(context)[process_id] = collector
     else:
@@ -451,13 +457,50 @@ def _register_background_pty(
     *,
     command: str,
     exec_env: ExecEnv,
+    detached: bool,
 ) -> str:
     process_id = str(uuid.uuid4())
     _pty_store(context)[process_id] = proc
     _exec_env_store(context)[process_id] = exec_env
     _command_store(context)[process_id] = command
+    _detached_store(context)[process_id] = detached
     _arm_process_completion_watch(context, process_id)
     return process_id
+
+
+def _detached_store(context: ToolContext) -> dict[str, bool]:
+    """Per-process 'the turn must not block on this' flag.
+
+    ``True`` for an explicit ``background=true`` job (servers, watchers — the
+    caller asked for detachment). ``False`` for a foreground command the
+    timeout re-homed into the background: the model is still waiting on that
+    result, so the turn should hand it off rather than end without it.
+    """
+    store = context.metadata.get(_DETACHED_STORE_KEY)
+    if store is None:
+        store = {}
+        context.metadata[_DETACHED_STORE_KEY] = store
+    if not isinstance(store, dict):
+        raise ToolError("shell detached store is invalid")
+    return store
+
+
+def running_attached_count(context: ToolContext) -> int:
+    """Live background processes the parent turn should block on.
+
+    Mirrors ``SubAgentManager.running_foreground_count``: explicitly detached
+    jobs are excluded, so a dev server never holds a turn open. Their
+    completion still arrives via the idle hidden follow-up turn.
+    """
+    detached = _detached_store(context)
+    count = 0
+    for process_id, proc in _pty_store(context).items():
+        if not detached.get(process_id, True) and not proc.done:
+            count += 1
+    for process_id, process in _process_store(context).items():
+        if not detached.get(process_id, True) and process.returncode is None:
+            count += 1
+    return count
 
 
 def _watcher_store(context: ToolContext) -> dict[str, asyncio.Task[None]]:
@@ -744,6 +787,7 @@ def _process_store(context: ToolContext) -> dict[str, Process]:
         for pid in terminated:
             del store[pid]
             _pop_collector(context, pid)
+            _detached_store(context).pop(pid, None)
     return store
 
 
@@ -788,6 +832,7 @@ def _get_process(context: ToolContext, process_id: str) -> Process:
 def _pop_process(context: ToolContext, process_id: str) -> Process:
     process = _get_process(context, process_id)
     _process_store(context).pop(process_id, None)
+    _detached_store(context).pop(process_id, None)
     return process
 
 
@@ -1066,7 +1111,7 @@ async def _run_pty(
 
     if background:
         process_id = _register_background_pty(
-            context, proc, command=command, exec_env=exec_env
+            context, proc, command=command, exec_env=exec_env, detached=True
         )
         return ToolResult(
             success=True,
@@ -1100,7 +1145,7 @@ async def _run_pty(
         raise
     except asyncio.TimeoutError:
         process_id = _register_background_pty(
-            context, proc, command=command, exec_env=exec_env
+            context, proc, command=command, exec_env=exec_env, detached=False
         )
         return _timeout_background_result(
             command, context, process_id, timeout_ms, pid, pty=True
@@ -1162,6 +1207,7 @@ def _pty_store(context: ToolContext) -> dict[str, PtyProcess]:
         ]
         for pid in terminated:
             del store[pid]
+            _detached_store(context).pop(pid, None)
     return store
 
 
@@ -1171,6 +1217,7 @@ def _get_pty(context: ToolContext, process_id: str) -> PtyProcess | None:
 
 def _pop_pty(context: ToolContext, process_id: str) -> PtyProcess | None:
     store = _pty_store(context)
+    _detached_store(context).pop(process_id, None)
     return store.pop(process_id, None)
 
 
@@ -1208,6 +1255,7 @@ def list_background_processes(context: ToolContext) -> list[dict[str, Any]]:
     processes = _process_store(context)
     ptys = _pty_store(context)
     commands = _command_store(context)
+    detached = _detached_store(context)
     live_ids = set(processes) | set(ptys)
     for pid in list(commands):
         if pid not in live_ids:
@@ -1220,6 +1268,7 @@ def list_background_processes(context: ToolContext) -> list[dict[str, Any]]:
                 "command": commands.get(pid, ""),
                 "status": "completed" if pty_proc.done else "running",
                 "pty": True,
+                "detached": detached.get(pid, True),
             }
         )
     for pid, process in processes.items():
@@ -1229,6 +1278,7 @@ def list_background_processes(context: ToolContext) -> list[dict[str, Any]]:
                 "command": commands.get(pid, ""),
                 "status": "completed" if process.returncode is not None else "running",
                 "pty": False,
+                "detached": detached.get(pid, True),
             }
         )
     return out

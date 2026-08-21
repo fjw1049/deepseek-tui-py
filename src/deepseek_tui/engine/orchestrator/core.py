@@ -219,6 +219,12 @@ def _index_rule_proxies(plugin_index: dict[str, dict[str, Any]]) -> list[Any]:
     return out
 
 
+# In-turn wait for a background shell to finish. Shorter than the sub-agent
+# handoff budget on purpose: the command already spent up to
+# EXEC_MAX_TIMEOUT_MS (600s) in the foreground before it was re-homed.
+SHELL_HANDOFF_TIMEOUT_SECS = 120.0
+
+
 def _format_process_done(payload: dict[str, Any]) -> str:
     process_id = payload.get("process_id") or ""
     command = payload.get("command") or ""
@@ -2852,6 +2858,96 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         logger.info("subagent_handoff count=%d", count)
         return True
 
+    async def _handle_shell_process_turn_handoff(
+        self, messages: list[Message]
+    ) -> bool:
+        """Wait for non-detached background shells and inject their results.
+
+        The shell counterpart of :meth:`_handle_subagent_turn_handoff`. Without
+        it a foreground command that the timeout re-homed into the background
+        never reaches the model: the turn ends, the op-loop consumer goes away
+        (single-turn CLI cancels it outright), and the idle delivery path posts
+        ``PROCESS_DONE`` into a queue nobody reads. Blocking here keeps the
+        engine alive until the result exists, which is what ``exec_shell``
+        already promises ("you are notified when they finish").
+
+        Only ``detached=False`` processes hold the turn — an explicit
+        ``background=true`` server or watcher is excluded by
+        ``running_attached_count`` and still arrives via idle delivery.
+
+        Returns True when completions were injected and the turn should continue.
+        """
+        from deepseek_tui.tools.shell import running_attached_count
+
+        completions = self._drain_process_completions()
+        try:
+            running = running_attached_count(self.tool_context)
+        except Exception:  # noqa: BLE001
+            running = 0
+        if running > 0:
+            await self.handle.emit(
+                StatusEvent(
+                    message=f"Waiting on {running} background shell process(es)..."
+                )
+            )
+            # Deliberately shorter than the sub-agent handoff budget: a shell
+            # already burned up to EXEC_MAX_TIMEOUT_MS (600s) in the
+            # foreground, so a second 600s wait would stall a turn for 20
+            # minutes. The process keeps running past this bound; only the
+            # in-turn wait gives up, and idle delivery still fires.
+            deadline = time.monotonic() + SHELL_HANDOFF_TIMEOUT_SECS
+            while running > 0:
+                if self.handle.cancel_event.is_set():
+                    # Hard cancel: do not inject; caller aborts the turn.
+                    return False
+                if time.monotonic() > deadline:
+                    logger.warning(
+                        "shell_handoff_timeout running=%d collected=%d",
+                        running,
+                        len(completions),
+                    )
+                    break
+                try:
+                    payload = await asyncio.wait_for(
+                        self._process_completions.get(), timeout=0.25
+                    )
+                    process_id = payload.get("process_id")
+                    if (
+                        not isinstance(process_id, str)
+                        or process_id not in self._consumed_process_completions
+                    ):
+                        completions.append(payload)
+                except asyncio.TimeoutError:
+                    pass
+                completions.extend(self._drain_process_completions())
+                running = running_attached_count(self.tool_context)
+            completions.extend(self._drain_process_completions())
+
+        if not completions:
+            return False
+
+        from deepseek_tui.engine import reminders
+
+        for item in completions:
+            # Mark consumed so idle delivery cannot re-inject the same payload
+            # if a race schedules a wake after this handoff drains the queue.
+            process_id = item.get("process_id")
+            if isinstance(process_id, str):
+                self._consumed_process_completions.add(process_id)
+            messages.append(
+                reminders.reminder_message(
+                    reminders.PROCESS_DONE, _format_process_done(item)
+                )
+            )
+        count = len(completions)
+        await self.handle.emit(
+            StatusEvent(
+                message=f"Resuming turn with {count} shell result(s)"
+            )
+        )
+        logger.info("shell_handoff count=%d", count)
+        return True
+
     def _log_prefix_break(
         self,
         round_idx: int,
@@ -3164,6 +3260,12 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                 )
             if not result.tool_calls:
                 if await self._handle_subagent_turn_handoff(messages):
+                    continue
+                # Same gate for background shells the timeout re-homed: the
+                # model is still owed that result, so hand it off rather than
+                # ending the turn (and tearing down the op-loop consumer)
+                # while the process is mid-flight.
+                if await self._handle_shell_process_turn_handoff(messages):
                     continue
                 # Steer text queued after this round's drain — the usual case
                 # is the user typing while the final answer streams. Steers are

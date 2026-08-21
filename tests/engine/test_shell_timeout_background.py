@@ -3,14 +3,16 @@
 from __future__ import annotations
 
 import asyncio
-
 from pathlib import Path
+
+import pytest
 
 from deepseek_tui.tools.registry import ToolContext
 from deepseek_tui.tools.shell import (
     ExecShellTool,
     cancel_background_process,
     list_background_processes,
+    running_attached_count,
     wait_background_process,
 )
 
@@ -141,6 +143,118 @@ async def test_engine_wires_process_done_sink_and_idle_delivery(engine_ctx):
     assert process_id in op.content
     assert "engine-notify" in op.content
     assert "<system-reminder>" in op.content
+
+
+async def test_timeout_converted_process_is_attached_but_background_is_not(
+    tmp_path: Path,
+):
+    """Only the timeout-converted job holds a turn open."""
+    ctx = ToolContext(working_directory=tmp_path)
+    timed_out = await ExecShellTool().execute(
+        {"command": "sleep 0.4 && echo attached", "timeout_ms": 50}, ctx
+    )
+    assert running_attached_count(ctx) == 1
+
+    detached = await ExecShellTool().execute(
+        {"command": "sleep 0.4 && echo detached", "background": True}, ctx
+    )
+    # The explicit background job must not add to the blocking count.
+    assert running_attached_count(ctx) == 1
+
+    listing = {item["process_id"]: item for item in list_background_processes(ctx)}
+    assert listing[timed_out.metadata["process_id"]]["detached"] is False
+    assert listing[detached.content]["detached"] is True
+
+    await wait_background_process(ctx, timed_out.metadata["process_id"])
+    assert running_attached_count(ctx) == 0
+    await cancel_background_process(ctx, detached.content)
+
+
+async def test_turn_handoff_waits_for_attached_process(engine_ctx):
+    """The turn-end gate blocks until a re-homed shell delivers its result."""
+    engine, _handle = engine_ctx
+    messages: list[object] = []
+
+    result = await ExecShellTool().execute(
+        {"command": "sleep 0.3 && echo handed-off", "timeout_ms": 50},
+        engine.tool_context,
+    )
+    process_id = result.metadata["process_id"]
+    assert running_attached_count(engine.tool_context) == 1
+
+    injected = await engine._handle_shell_process_turn_handoff(messages)
+
+    assert injected is True
+    assert len(messages) == 1
+    body = str(messages[0].content)
+    assert "<system-reminder>" in body
+    assert "Background shell process finished." in body
+    assert process_id in body
+    assert "handed-off" in body
+    # Consumed, so idle delivery cannot inject the same payload twice.
+    assert process_id in engine._consumed_process_completions
+
+
+async def test_turn_handoff_ignores_detached_process(engine_ctx):
+    """An explicit background=true job must never hold the turn open."""
+    engine, _handle = engine_ctx
+    messages: list[object] = []
+
+    result = await ExecShellTool().execute(
+        {"command": "sleep 5", "background": True}, engine.tool_context
+    )
+    assert running_attached_count(engine.tool_context) == 0
+
+    injected = await engine._handle_shell_process_turn_handoff(messages)
+
+    assert injected is False
+    assert messages == []
+    await cancel_background_process(engine.tool_context, result.content)
+
+
+async def test_agent_wait_action_waits_on_process_ids(tmp_path: Path):
+    """action='wait' covers background shells, with wait_mode=all."""
+    from deepseek_tui.tools.subagent.tools import AgentTool
+
+    ctx = ToolContext(working_directory=tmp_path)
+    first = await ExecShellTool().execute(
+        {"command": "sleep 0.15 && echo one", "background": True}, ctx
+    )
+    second = await ExecShellTool().execute(
+        {"command": "sleep 0.3 && echo two", "background": True}, ctx
+    )
+
+    result = await AgentTool().execute(
+        {
+            "action": "wait",
+            "process_ids": [first.content, second.content],
+            "wait_mode": "all",
+            "timeout_ms": 5000,
+        },
+        ctx,
+    )
+
+    assert result.success is True
+    assert set(result.metadata["waited_ids"]) == {first.content, second.content}
+    outputs = " ".join(str(p.get("output", "")) for p in result.metadata["processes"])
+    assert "one" in outputs
+    assert "two" in outputs
+
+
+async def test_agent_wait_rejects_mixed_agent_and_process_ids(tmp_path: Path):
+    from deepseek_tui.tools.registry import ToolError
+    from deepseek_tui.tools.subagent.tools import AgentTool
+
+    ctx = ToolContext(working_directory=tmp_path)
+    with pytest.raises(ToolError, match="not both"):
+        await AgentTool().execute(
+            {
+                "action": "wait",
+                "process_ids": ["p1"],
+                "agent_ids": ["a1"],
+            },
+            ctx,
+        )
 
 
 async def test_engine_skips_idle_delivery_after_task_output(engine_ctx):
