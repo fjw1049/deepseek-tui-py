@@ -104,6 +104,7 @@ async def _execute_subagent_tool(
     auto_approve: bool,
     tool_call_id: str = "",
     runtime: SubAgentRuntime | None = None,
+    model: str = "",
 ) -> str:
     from deepseek_tui.tools.approval import (
         ApprovalDecision,
@@ -183,7 +184,14 @@ async def _execute_subagent_tool(
         result = await registry.execute(tool_name, tool_input, context)  # type: ignore[arg-type]
         if not result.success:
             return f"Error: {result.content}"
-        return result.content
+        # Same ingress compaction the parent orchestrator applies before a
+        # tool result enters the transcript. Sub-agents used to append
+        # result.content raw, so one oversized result (observed: a 7 714-path
+        # file_search ≈ 320k tokens) permanently ballooned the child's
+        # context and degraded every following round.
+        from deepseek_tui.engine.context import compact_tool_result_for_context
+
+        return compact_tool_result_for_context(model, tool_name, result)
     except ToolError as exc:
         return f"Error: {exc}"
     except Exception as exc:  # noqa: BLE001
@@ -711,6 +719,7 @@ async def run_subagent_loop(
                         auto_approve=runtime.auto_approve,
                         tool_call_id=tc.id,
                         runtime=runtime,
+                        model=agent.model,
                     )
                     ok = not output.startswith("Error:")
                 if runtime.mailbox is not None:

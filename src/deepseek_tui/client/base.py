@@ -82,7 +82,12 @@ class LLMClient(ABC):
 
 
 class MeteredLLMClient(LLMClient):
-    """Wrap an LLM client and record ``StreamDone`` usage into a turn ledger."""
+    """Wrap an LLM client and record ``StreamDone`` usage into a turn ledger.
+
+    Records exactly one ledger line per streamed request — the *last*
+    usage-bearing ``StreamDone`` — so a parser or provider that emits more
+    than one done event cannot double-bill the turn.
+    """
 
     def __init__(
         self,
@@ -94,7 +99,22 @@ class MeteredLLMClient(LLMClient):
         self._ledger = ledger
 
     async def stream_chat_completion(self, request: MessageRequest) -> AsyncIterator[StreamEvent]:
-        async for event in self._inner.stream_chat_completion(request):
-            if isinstance(event, StreamDone) and event.usage is not None:
-                self._ledger.record_metered(model=request.model, usage=event.usage)
-            yield event
+        from deepseek_tui.engine.usage_ledger import current_usage_source
+
+        last_usage = None
+        # Captured alongside the usage: the finally block may run after the
+        # caller's ``usage_source(...)`` scope has already been reset.
+        source: str | None = None
+        try:
+            async for event in self._inner.stream_chat_completion(request):
+                if isinstance(event, StreamDone) and event.usage is not None:
+                    last_usage = event.usage
+                    source = current_usage_source()
+                yield event
+        finally:
+            if last_usage is not None:
+                self._ledger.add(
+                    model=request.model,
+                    source=source or "unknown",
+                    usage=last_usage,
+                )

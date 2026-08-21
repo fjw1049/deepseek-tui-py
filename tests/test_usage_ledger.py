@@ -89,6 +89,38 @@ async def test_metered_client_records_stream_done_usage() -> None:
     assert ledger.items[0].usage.input_tokens == 42
 
 
+class _DoubleDoneClient(LLMClient):
+    """Provider/parser that (incorrectly) emits StreamDone twice."""
+
+    def __init__(self, usage: Usage) -> None:
+        super().__init__(RetryConfig(base_delay=0.0, max_delay=0.0))
+        self.usage = usage
+
+    async def stream_chat_completion(
+        self, request: MessageRequest
+    ) -> AsyncIterator[StreamEvent]:
+        yield StreamDone(usage=self.usage)
+        yield StreamDone(usage=self.usage)
+
+
+@pytest.mark.asyncio
+async def test_metered_client_records_once_despite_duplicate_done() -> None:
+    """One request = one ledger line, even if the stream emits N done events."""
+    ledger = TurnUsageLedger()
+    inner = _DoubleDoneClient(Usage(input_tokens=100, output_tokens=10))
+    client = MeteredLLMClient(inner, ledger)
+
+    with usage_source("agent_round"):
+        async for _event in client.stream_chat_completion(
+            MessageRequest(model="deepseek-chat", messages=[])
+        ):
+            pass
+
+    assert len(ledger.items) == 1
+    assert ledger.items[0].source == "agent_round"
+    assert ledger.items[0].usage.input_tokens == 100
+
+
 def test_turn_usage_from_engine_prefers_ledger() -> None:
     class _Engine:
         turn_usage_ledger = TurnUsageLedger()

@@ -41,6 +41,10 @@ _IGNORED_DIRS = frozenset(
 # Hard caps on grep output so one call can never dominate the context window.
 _MAX_MATCHES = 200
 _MAX_LINE_LEN = 300
+# Same rationale for file_search: a bare pattern='' at the workspace root
+# can match thousands of paths (observed: 7 714 ≈ 320k tokens), which blew
+# up sub-agent contexts that receive tool output uncompacted.
+_MAX_FILE_RESULTS = 500
 
 
 class GrepFilesTool(ToolSpec):
@@ -278,9 +282,16 @@ class FileSearchTool(ToolSpec):
             root,
             len(matches),
         )
+        shown = matches[:_MAX_FILE_RESULTS]
+        lines = list(shown)
+        if len(matches) > len(shown):
+            lines.append(
+                f"… (showing {len(shown)} of {len(matches)} files; "
+                "narrow the path or use a more specific pattern)"
+            )
         return ToolResult(
             success=True,
-            content="\n".join(matches),
+            content="\n".join(lines),
             metadata={"path": str(root), "count": len(matches)},
         )
 

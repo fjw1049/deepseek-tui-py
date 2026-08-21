@@ -137,8 +137,11 @@ class OpenAIStreamParser:
             for index in sorted(self._tool_calls):
                 events.append(StreamToolCallComplete(tool_call=self._tool_calls[index].build()))
             self._tool_calls.clear()
-        elif finish_reason == "stop":
-            events.append(StreamDone(usage=self._usage))
+        # finish_reason == "stop" intentionally emits nothing here. StreamDone
+        # is emitted exactly once, in finalize(): some providers attach usage
+        # to the finish chunk, others send a trailing usage-only chunk, and
+        # emitting on both paths double-counted usage downstream
+        # (MeteredLLMClient records every usage-bearing StreamDone).
 
         return events
 
@@ -148,8 +151,9 @@ class OpenAIStreamParser:
             for index in sorted(self._tool_calls):
                 events.append(StreamToolCallComplete(tool_call=self._tool_calls[index].build()))
             self._tool_calls.clear()
-        if not events or not isinstance(events[-1], StreamDone):
-            events.append(StreamDone(usage=self._usage))
+        # The single StreamDone for this request, carrying the final usage
+        # (updated by whichever chunk delivered it last).
+        events.append(StreamDone(usage=self._usage))
         return events
 
 

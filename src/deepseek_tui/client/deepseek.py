@@ -70,6 +70,20 @@ def _map_tool_choice_for_chat(
     return choice
 
 
+def _is_forced_tool_choice(mapped: str | dict[str, Any] | None) -> bool:
+    """True when tool_choice forces the model to call a tool.
+
+    Thinking mode and forced tool calls are mutually exclusive on
+    thinking-capable endpoints (e.g. DeepSeek official rejects the combo
+    with HTTP 400 "Thinking mode does not support this tool_choice").
+    Callers forcing a tool call want the structured output, not the
+    reasoning, so the tool call wins and thinking is dropped.
+    """
+    if mapped == "required":
+        return True
+    return isinstance(mapped, dict) and mapped.get("type") == "function"
+
+
 class DeepSeekClient(LLMClient):
     def __init__(
         self,
@@ -342,6 +356,7 @@ class DeepSeekClient(LLMClient):
             request.reasoning_effort is not None
             and request.reasoning_effort != "off"
             and self.thinking_supported
+            and not _is_forced_tool_choice(payload.get("tool_choice"))
         ):
             payload["reasoning_effort"] = request.reasoning_effort
             payload["thinking"] = {"type": "enabled"}

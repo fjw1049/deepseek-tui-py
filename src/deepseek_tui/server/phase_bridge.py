@@ -505,7 +505,10 @@ async def compute_narration_plan(
         tool_choice={"type": "tool", "name": NARRATION_TOOL_NAME},
         max_tokens=240,
         temperature=0.1,
-        reasoning_effort="low",
+        # Narration forces a named tool call, and thinking-capable endpoints
+        # (any provider) may reject forced tool_choice in thinking mode.
+        # A one-line progress summary needs no reasoning — keep it off.
+        reasoning_effort="off",
     )
 
     async def _run() -> NarrationPlan | None:
