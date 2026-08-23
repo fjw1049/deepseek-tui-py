@@ -24,6 +24,8 @@ from deepseek_tui.engine.orchestrator.core import _STOP_HOOK_MAX_FIRES
 from deepseek_tui.engine.turn import TurnResult
 from deepseek_tui.integrations.hooks import HookResult
 from deepseek_tui.protocol.messages import Message
+from deepseek_tui.protocol.responses import ToolCall
+from deepseek_tui.tools.registry import build_default_registry
 from deepseek_tui.tools.runtime import create_tool_runtime
 
 
@@ -150,6 +152,130 @@ async def test_blocking_turn_end_hook_gives_up_before_the_round_trip_limit(
         # it does not walk to the round-trip limit.
         assert loop.rounds == _STOP_HOOK_MAX_FIRES + 1
         assert loop.rounds < engine.max_tool_round_trips
+    finally:
+        await engine.shutdown_session()
+        await runtime.shutdown()
+        handle.drain_events()
+
+
+class _ScriptedLoop:
+    def __init__(self, script: list[TurnResult]) -> None:
+        self.script = script
+        self.rounds = 0
+
+    async def run(self, request, emit, cancel_event, **kwargs) -> TurnResult:
+        step = self.script[self.rounds]
+        self.rounds += 1
+        return step
+
+
+async def _seed_checklist(engine: Engine, todos: list[dict]) -> None:
+    registry = build_default_registry(mode="agent")
+    await registry.execute("checklist", {"todos": todos}, engine.tool_context)
+
+
+async def _apply_tools(engine: Engine, tool_calls: list[ToolCall], model=None):
+    registry = build_default_registry(mode="agent")
+    results = []
+    for tc in tool_calls:
+        if tc.name == "checklist":
+            executed = await registry.execute(
+                "checklist", tc.arguments, engine.tool_context
+            )
+            content = executed.content
+        else:
+            content = "ok"
+        results.append(Message.tool_result(tc.id, content))
+    return results
+
+
+async def test_done_stop_is_kept_when_checklist_is_only_reconciled(
+    tmp_path: Path,
+) -> None:
+    engine, handle, runtime = await _engine(tmp_path)
+    await _seed_checklist(engine, [{"content": "research", "status": "in_progress"}])
+    report = Message.assistant("here is the full workflow report")
+    loop = _ScriptedLoop(
+        [
+            TurnResult(assistant_message=report, tool_calls=[]),
+            TurnResult(
+                assistant_message=Message.assistant(""),
+                tool_calls=[
+                    ToolCall(
+                        id="c1",
+                        name="checklist",
+                        arguments={"op": "update", "id": "1", "status": "completed"},
+                    )
+                ],
+            ),
+            TurnResult(
+                assistant_message=Message.assistant("please give me your task"),
+                tool_calls=[],
+            ),
+        ]
+    )
+    engine.turn_loop = loop
+    engine._execute_tool_calls = lambda calls, model=None: _apply_tools(
+        engine, calls, model
+    )
+    try:
+        result = await engine._run_conversation(
+            messages=[Message.user("research the workflow")],
+            model="deepseek-chat",
+            system_prompt="sys",
+            max_tokens=None,
+        )
+
+        # Tracking closed the list. Do not generate a replacement answer.
+        assert loop.rounds == 2
+        assert result.assistant_message is report
+    finally:
+        await engine.shutdown_session()
+        await runtime.shutdown()
+        handle.drain_events()
+
+
+async def test_open_checklist_after_stop_keeps_working(tmp_path: Path) -> None:
+    engine, handle, runtime = await _engine(tmp_path)
+    await _seed_checklist(engine, [{"content": "implement foo", "status": "pending"}])
+    loop = _ScriptedLoop(
+        [
+            TurnResult(
+                assistant_message=Message.assistant("looking into it"),
+                tool_calls=[],
+            ),
+            TurnResult(
+                assistant_message=Message.assistant(""),
+                tool_calls=[
+                    ToolCall(
+                        id="r1",
+                        name="read_file",
+                        arguments={"path": "src/foo.py"},
+                    )
+                ],
+            ),
+            TurnResult(
+                assistant_message=Message.assistant("implemented foo"),
+                tool_calls=[],
+            ),
+        ]
+    )
+    engine.turn_loop = loop
+    engine._execute_tool_calls = lambda calls, model=None: _apply_tools(
+        engine, calls, model
+    )
+    try:
+        result = await engine._run_conversation(
+            messages=[Message.user("implement foo")],
+            model="deepseek-chat",
+            system_prompt="sys",
+            max_tokens=None,
+        )
+
+        # The first stop was premature: a real tool ran, so the loop continued.
+        assert loop.rounds == 3
+        assert result.assistant_message is not None
+        assert result.assistant_message.text_content() == "implemented foo"
     finally:
         await engine.shutdown_session()
         await runtime.shutdown()

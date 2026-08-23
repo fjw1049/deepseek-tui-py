@@ -12,7 +12,6 @@ from deepseek_tui.tools.subagent.agent import SubAgent
 from deepseek_tui.tools.subagent.completion import (
     AgentRunOutput,
     has_summary_section,
-    looks_like_unfinished_narration,
 )
 from deepseek_tui.tools.subagent.mailbox import MailboxMessage
 from deepseek_tui.tools.subagent.types import (
@@ -746,11 +745,10 @@ async def run_subagent_loop(
                 runtime.mailbox.send(MailboxMessage.progress(agent.id, narration))
 
             if not result.tool_calls:
-                # A next-action note ("继续读 X") is the same stall as an
-                # empty thinking round: the child is not done, it just said
-                # the next step out loud instead of calling a tool.
-                unfinished = looks_like_unfinished_narration(round_text)
-                if round_text and not unfinished:
+                # The only stop signal is a ### SUMMARY report. Length and
+                # wording do not graduate the child — no heading means the
+                # assignment is still open, same as an empty thinking round.
+                if round_text and _has_summary_section(round_text):
                     if _try_summary_recovery():
                         _save_complete_checkpoint("round")
                         continue
@@ -760,11 +758,10 @@ async def run_subagent_loop(
                     force_summary = False
                     _save_complete_checkpoint("round")
                     continue
-                # An empty round — or a next-action note — is a stall, not a
-                # finish. Forcing the summary here confiscated the tool
-                # catalog, so a child that had stalled halfway could not resume
-                # even in principle; it could only write up what it already had.
-                # Keep the tools and ask for the next concrete action instead.
+                # No report. Keep the tools and ask for the next concrete
+                # action. Forcing the summary here used to confiscate the
+                # catalog, so a child that had stalled halfway could not
+                # resume even in principle.
                 if (
                     not force_summary
                     and structured_value is None

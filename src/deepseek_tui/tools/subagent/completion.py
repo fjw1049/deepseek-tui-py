@@ -46,32 +46,6 @@ def has_summary_section(text: str | None) -> bool:
     return len(body) > bound
 
 
-# A next-step note ("继续读 X", "let me check Y") is not a report. Tonight's
-# F2 emitted one with no tool call; treating it as a finish confiscated the
-# rest of the run. Keep this tight: a long essay without a heading is a
-# missing-contract report, not a stall.
-_UNFINISHED_NARRATION_MAX_CHARS = 200
-_NEXT_ACTION_RE = re.compile(
-    r"("
-    r"继续读|接下来|我再[读看查]|让我[读看查]|先读|然后读"
-    r"|let me (?:read|check|look|inspect)"
-    r"|i(?:'ll| will) (?:read|check|look)"
-    r"|going to read|continue reading|next i(?:'ll| will)"
-    r")",
-    re.IGNORECASE,
-)
-
-
-def looks_like_unfinished_narration(text: str | None) -> bool:
-    """True when *text* is a short next-action note, not a handoff."""
-    if not text or has_summary_section(text):
-        return False
-    stripped = text.strip()
-    if len(stripped) >= _UNFINISHED_NARRATION_MAX_CHARS:
-        return False
-    return _NEXT_ACTION_RE.search(stripped) is not None
-
-
 @dataclass(frozen=True, slots=True)
 class SubAgentCompletion:
     """Notification that a direct child sub-agent finished."""

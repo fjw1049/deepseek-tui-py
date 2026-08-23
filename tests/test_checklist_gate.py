@@ -7,6 +7,10 @@ block changes nothing — unfinished work keeps getting pushed without the
 livelock a fire-until-empty gate would have. It never judges whether the
 work is done.
 
+A no-tool stop with visible text is held. Checklist-only tools that
+clear the list keep that stop (tracking was stale). Any other tool
+means the stop was premature and the loop continues.
+
 These tests exercise the isolable pieces: the ``_open_checklist_summary`` and
 ``_next_checklist_gate_summary`` helpers on the Engine (fed via the real
 ``checklist`` tool so the store shape is authentic) and the reminder
@@ -24,6 +28,7 @@ from deepseek_tui.engine.handle import EngineHandle
 from deepseek_tui.engine.orchestrator import Engine
 from deepseek_tui.engine.orchestrator.core import _CHECKLIST_GATE_MAX_FIRES
 from deepseek_tui.engine.prompts import CHECKLIST_GATE_REMINDER
+from deepseek_tui.protocol.responses import ToolCall
 from deepseek_tui.tools.registry import ToolContext, build_default_registry
 
 
@@ -128,6 +133,68 @@ async def test_gate_refires_while_the_model_keeps_making_progress() -> None:
     assert second != first
     assert "#2 pending" in second
     assert "#1" not in second
+
+
+def _checklist_update(item_id: str, status: str) -> ToolCall:
+    return ToolCall(
+        id=f"call_{item_id}",
+        name="checklist",
+        arguments={"op": "update", "id": item_id, "status": status},
+    )
+
+
+@pytest.mark.asyncio
+async def test_held_stop_survives_when_tracking_clears_the_list() -> None:
+    engine, ctx = _engine_with_context()
+    await _write(ctx, [{"content": "A", "status": "in_progress"}])
+    await _update(ctx, "1", "completed")
+    assert engine._accept_held_stop_after_tools(
+        held=True,
+        tool_calls=[_checklist_update("1", "completed")],
+        tool_errors=0,
+    )
+
+
+@pytest.mark.asyncio
+async def test_held_stop_does_not_survive_when_items_remain_open() -> None:
+    engine, ctx = _engine_with_context()
+    await _write(
+        ctx,
+        [
+            {"content": "A", "status": "in_progress"},
+            {"content": "B", "status": "pending"},
+        ],
+    )
+    assert not engine._accept_held_stop_after_tools(
+        held=True,
+        tool_calls=[_checklist_update("1", "in_progress")],
+        tool_errors=0,
+    )
+
+
+@pytest.mark.asyncio
+async def test_held_stop_does_not_survive_real_work() -> None:
+    engine, ctx = _engine_with_context()
+    await _write(ctx, [{"content": "A", "status": "pending"}])
+    assert not engine._accept_held_stop_after_tools(
+        held=True,
+        tool_calls=[
+            ToolCall(id="r1", name="read_file", arguments={"path": "src/a.py"}),
+        ],
+        tool_errors=0,
+    )
+
+
+def test_empty_or_mixed_batches_are_not_tracking_only() -> None:
+    engine, _ = _engine_with_context()
+    assert not engine._is_checklist_batch([])
+    assert engine._is_checklist_batch([_checklist_update("1", "completed")])
+    assert not engine._is_checklist_batch(
+        [
+            _checklist_update("1", "completed"),
+            ToolCall(id="r1", name="read_file", arguments={"path": "src/a.py"}),
+        ]
+    )
 
 
 @pytest.mark.asyncio

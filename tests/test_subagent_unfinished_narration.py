@@ -1,10 +1,10 @@
-"""Next-action prose is a stall; the checkpoint outlives the report.
+"""No ### SUMMARY is a stall; the checkpoint outlives the report.
 
 Tonight's F2 wrote "继续读 plugins/store.py 与 source.py." with no tool call.
 The loop treated that as a finish, then wiped the transcript so resume
 restarted from the original prompt and threw away 35 steps of reading.
-Kimi keeps context memory after distillSummary; we do the same, and also
-refuse to graduate a next-step note.
+Kimi keeps context memory after distillSummary; we do the same. The only
+handoff is a SUMMARY heading — length and wording do not graduate the child.
 """
 
 from __future__ import annotations
@@ -37,10 +37,7 @@ from deepseek_tui.tools.subagent import (
     SubAgentType,
     get_real_subagent_executor,
 )
-from deepseek_tui.tools.subagent.completion import (
-    has_summary_section,
-    looks_like_unfinished_narration,
-)
+from deepseek_tui.tools.subagent.completion import has_summary_section
 
 
 class _ScriptedClient(LLMClient):
@@ -92,28 +89,25 @@ _LONG_NO_HEADING = [
         text=(
             "I walked the plugin loader, the source registry, and the store "
             "layer, and the wiring is consistent across those three modules "
-            "but this note still has no report heading so it is not a handoff."
+            "but this note still has no report heading so it is not a handoff "
+            "and should be treated as a finished write-up."
         )
     ),
     StreamDone(usage=None),
 ]
 
 
-def test_next_action_notes_are_unfinished_narration() -> None:
-    assert looks_like_unfinished_narration(
-        "继续读 plugins/store.py 与 source.py。"
-    )
-    assert looks_like_unfinished_narration("Next I'll read the other route files.")
-    assert looks_like_unfinished_narration("Let me check source.py next.")
-    assert not looks_like_unfinished_narration(
-        "### SUMMARY\n共 115 个测试文件、649 个用例。"
-    )
-    assert not looks_like_unfinished_narration("Done.")
-    assert not looks_like_unfinished_narration(
+def test_only_a_summary_heading_is_a_report() -> None:
+    assert not has_summary_section("继续读 plugins/store.py 与 source.py。")
+    assert not has_summary_section("Done.")
+    long_enough = (
         "I walked the plugin loader, the source registry, and the store "
         "layer, and the wiring is consistent across those three modules "
-        "but this note still has no report heading so it is not a handoff."
+        "but this note still has no report heading so it is not a handoff "
+        "and should be treated as a finished write-up."
     )
+    assert not has_summary_section(long_enough)
+    assert has_summary_section("### SUMMARY\n共 115 个测试文件、649 个用例。")
 
 
 async def _attach(
@@ -175,9 +169,20 @@ async def test_empty_completion_keeps_the_transcript_for_resume(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("DEEPSEEK_HOME", str(tmp_path / "ds_home"))
-    # Two heading-less essays (two continuations), then accept.
+    follow_up = [
+        StreamTextDelta(
+            text=(
+                "### SUMMARY\n补看了 store.py，接口在第 40 行。\n\n"
+                "### EVIDENCE\nplugins/store.py:40"
+            )
+        ),
+        StreamDone(usage=None),
+    ]
+    # Heading-less essays keep running. Two stalls, then a forced
+    # summary round writes the real report; resume continues from there.
     manager, client = await _attach(
-        tmp_path, [_LONG_NO_HEADING, _LONG_NO_HEADING, _LONG_NO_HEADING, _REAL_SUMMARY]
+        tmp_path,
+        [_LONG_NO_HEADING, _LONG_NO_HEADING, _LONG_NO_HEADING, _REAL_SUMMARY, follow_up],
     )
     try:
         spawned = await manager.spawn(
@@ -192,13 +197,13 @@ async def test_empty_completion_keeps_the_transcript_for_resume(
         await manager.wait([spawned.agent_id], mode="all", timeout_ms=10_000)
         first = await manager.get_result(spawned.agent_id)
         assert first.status.kind.value == "completed"
-        assert not has_summary_section(first.result)
+        assert has_summary_section(first.result)
 
         existing = load_transcript(
             subagent_transcript_path(tmp_path, first.agent_id)
         )
         assert existing is not None
-        assert existing.steps_taken == 3
+        assert existing.steps_taken == 4
 
         await manager.resume(first.agent_id)
         await manager.wait([first.agent_id], mode="all", timeout_ms=10_000)
@@ -206,13 +211,13 @@ async def test_empty_completion_keeps_the_transcript_for_resume(
     finally:
         await manager.shutdown()
 
-    assert second.steps_taken == 4
+    assert second.steps_taken == 5
     assert has_summary_section(second.result)
-    assert "649" in (second.result or "")
+    assert "store.py" in (second.result or "")
     # Resume reused the checkpoint; it did not restart from the raw prompt.
     assert any(
         "Continue from the checkpoint" in _request_text(req)
-        for req in client.requests[3:]
+        for req in client.requests[4:]
     )
 
 

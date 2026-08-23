@@ -2729,6 +2729,31 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             for it in open_items
         )
 
+    @staticmethod
+    def _is_checklist_batch(tool_calls: list[Any]) -> bool:
+        """True when the batch is checklist-only — tracking, not work."""
+        names = [getattr(tc, "name", "") for tc in tool_calls]
+        return bool(names) and all(name == "checklist" for name in names)
+
+    def _accept_held_stop_after_tools(
+        self,
+        *,
+        held: bool,
+        tool_calls: list[Any],
+        tool_errors: int,
+    ) -> bool:
+        """Keep a prior no-tool stop after tracking that cleared the list.
+
+        The model already decided to stop. Checklist updates only reconcile
+        the todo card. If anything is still open, work remains and the
+        loop continues. A non-checklist tool means the stop was premature.
+        """
+        if not held or tool_errors:
+            return False
+        if not self._is_checklist_batch(tool_calls):
+            return False
+        return not self._open_checklist_summary()
+
     def _next_checklist_gate_summary(
         self, *, fired: int, last_open: str | None
     ) -> str | None:
@@ -3028,13 +3053,14 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         # that block anyway; the round-trip limit is the last resort.
         stop_hook_active = False
         stop_hook_fires = 0
-        # Checklist turn-end gate bookkeeping. The gate blocks ending the turn
-        # while the model keeps resolving open items and releases as soon as a
-        # block changes nothing (see _next_checklist_gate_summary). It never
-        # judges whether the work is actually done — that stays the model's
-        # call, preserving the completion gate.
+        # Checklist turn-end gate bookkeeping. A no-tool stop with open items
+        # is held. The next batch decides: checklist-only and the list is
+        # clear → that stop is the result (tracking was stale); any other
+        # tool → the stop was premature, keep working. The gate never judges
+        # whether the work is done — see _next_checklist_gate_summary.
         checklist_gate_fires = 0
         checklist_gate_last_open: str | None = None
+        held_stop_result: TurnResult | None = None
         for round_idx in range(self.max_tool_round_trips + 1):
             trace = get_turn_latency(latency_turn_id) if latency_turn_id else None
             round_trace = trace.start_round(round_idx) if trace is not None else None
@@ -3278,10 +3304,10 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                     logger.info("turn_end_deferred_pending_steer")
                     continue
                 # Checklist turn-end gate: if the model is about to stop with
-                # open checklist items, inject a reminder that makes it face
-                # each one. Re-fires while the model keeps making progress, so
-                # a genuine "I'm done / won't do the rest" costs one extra
-                # round instead of looping.
+                # open checklist items, hold this stop and inject a reminder
+                # that makes it face each one. Re-fires while the model keeps
+                # making progress, so a genuine "I'm done / won't do the rest"
+                # costs one extra round instead of looping.
                 gate_summary = self._next_checklist_gate_summary(
                     fired=checklist_gate_fires,
                     last_open=checklist_gate_last_open,
@@ -3289,6 +3315,8 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                 if gate_summary is not None:
                     checklist_gate_fires += 1
                     checklist_gate_last_open = gate_summary
+                    if _assistant_preface_text(result.assistant_message):
+                        held_stop_result = result
                     from deepseek_tui.engine import reminders
                     from deepseek_tui.engine.prompts import (
                         CHECKLIST_GATE_REMINDER,
@@ -3398,6 +3426,19 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                 )
             else:
                 consecutive_tool_error_steps = 0
+
+            if self._accept_held_stop_after_tools(
+                held=held_stop_result is not None,
+                tool_calls=result.tool_calls,
+                tool_errors=tool_errors,
+            ):
+                logger.info("checklist_gate_kept_stop")
+                from dataclasses import replace
+
+                assert held_stop_result is not None
+                return replace(held_stop_result, tool_round_count=tool_round_count)
+            if not self._is_checklist_batch(result.tool_calls):
+                held_stop_result = None
 
             # Stop only when exit_plan_mode left without implementing.
             # Accept paths must continue so the model can start the work.
