@@ -66,7 +66,7 @@ class _ScriptedClient(LLMClient):
 
 @pytest.fixture(autouse=True)
 def _small_step_budget(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Burning 100 real rounds to prove this would only make the test slow."""
+    """Burning 200 real rounds to prove this would only make the test slow."""
     monkeypatch.setattr(
         "deepseek_tui.tools.subagent.loop.DEFAULT_MAX_STEPS", _MAX_STEPS
     )

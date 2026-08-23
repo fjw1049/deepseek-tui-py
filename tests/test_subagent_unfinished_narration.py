@@ -175,9 +175,9 @@ async def test_empty_completion_keeps_the_transcript_for_resume(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("DEEPSEEK_HOME", str(tmp_path / "ds_home"))
-    # One heading-less essay, one continuation, then accept.
+    # Two heading-less essays (two continuations), then accept.
     manager, client = await _attach(
-        tmp_path, [_LONG_NO_HEADING, _LONG_NO_HEADING, _REAL_SUMMARY]
+        tmp_path, [_LONG_NO_HEADING, _LONG_NO_HEADING, _LONG_NO_HEADING, _REAL_SUMMARY]
     )
     try:
         spawned = await manager.spawn(
@@ -198,7 +198,7 @@ async def test_empty_completion_keeps_the_transcript_for_resume(
             subagent_transcript_path(tmp_path, first.agent_id)
         )
         assert existing is not None
-        assert existing.steps_taken == 2
+        assert existing.steps_taken == 3
 
         await manager.resume(first.agent_id)
         await manager.wait([first.agent_id], mode="all", timeout_ms=10_000)
@@ -206,13 +206,13 @@ async def test_empty_completion_keeps_the_transcript_for_resume(
     finally:
         await manager.shutdown()
 
-    assert second.steps_taken == 3
+    assert second.steps_taken == 4
     assert has_summary_section(second.result)
     assert "649" in (second.result or "")
     # Resume reused the checkpoint; it did not restart from the raw prompt.
     assert any(
         "Continue from the checkpoint" in _request_text(req)
-        for req in client.requests[2:]
+        for req in client.requests[3:]
     )
 
 

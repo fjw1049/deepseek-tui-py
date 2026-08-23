@@ -13,7 +13,7 @@ def _epoch_ms() -> int:
     return int(datetime.now(timezone.utc).timestamp() * 1000)
 
 
-DEFAULT_MAX_STEPS = 100
+DEFAULT_MAX_STEPS = 200
 DEFAULT_MAX_AGENTS = 10
 DEFAULT_MAX_SPAWN_DEPTH = 3
 # Per-round LLM output caps for the sub-agent loop. Read-heavy types stay

@@ -511,13 +511,13 @@ async def run_subagent_loop(
     async def _noop_emit(_event: object) -> None:
         return None
 
-    # Kimi distillSummary: one continuation on the same memory, then accept.
+    # Missing ### SUMMARY: two continuations on the same memory, then accept.
     # The predicate stays has_summary_section — length alone cannot split
     # CJK stubs from real reports.
     summary_requirement = CompletionRequirement(
         name="subagent_summary",
         reminder=_SUBAGENT_SUMMARY_CONTINUATION_NUDGE,
-        max_retries=1,
+        max_retries=2,
     )
     summary_recoveries = 0
 
