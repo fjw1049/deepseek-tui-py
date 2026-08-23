@@ -96,12 +96,13 @@ async def test_eight_children_handoff_scores_empty_and_failed(
     for aid in empty_ids + failed_ids:
         assert aid in ledger
 
-    # Empty completed is resumable; a good report is not.
+    # Ledger still scores a good report completed (no resume_hint in the
+    # scorecard), but resume itself is allowed on either slot.
     good_id = next(
         s.agent_id for s in waited if (s.result or "").startswith("### SUMMARY")
     )
-    with pytest.raises(RuntimeError, match="already completed"):
-        await mgr.resume(good_id)
+    resumed_good = await mgr.resume(good_id)
+    assert resumed_good.status.kind is SubAgentStatusKind.RUNNING
     resumed = await mgr.resume(empty_ids[0])
     assert resumed.status.kind is SubAgentStatusKind.RUNNING
 

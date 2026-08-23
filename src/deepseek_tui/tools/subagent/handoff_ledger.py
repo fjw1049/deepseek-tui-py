@@ -26,6 +26,7 @@ _RESUME_HINT = (
 
 class HandoffOutcome(str, Enum):
     COMPLETED = "completed"
+    MAX_STEPS = "max_steps_reached"
     EMPTY = "empty"
     FAILED = "failed"
     CANCELLED = "cancelled"
@@ -42,6 +43,11 @@ def classify_handoff(snap: SubAgentResult) -> HandoffOutcome:
         return HandoffOutcome.INTERRUPTED
     if kind is SubAgentStatusKind.RUNNING:
         return HandoffOutcome.INTERRUPTED
+    # The step budget ran out mid-assignment. Whatever report the child wrote is
+    # still worth reading, but the slot is not finished: it keeps its id so the
+    # parent can resume it instead of summarising over the gap.
+    if snap.max_steps_reached:
+        return HandoffOutcome.MAX_STEPS
     if snap.structured is not None:
         return HandoffOutcome.COMPLETED
     if has_summary_section(snap.result):
@@ -66,6 +72,7 @@ def build_handoff_ledger(snaps: Sequence[SubAgentResult]) -> str | None:
         counts[outcome] = counts.get(outcome, 0) + 1
     order = (
         HandoffOutcome.COMPLETED,
+        HandoffOutcome.MAX_STEPS,
         HandoffOutcome.EMPTY,
         HandoffOutcome.FAILED,
         HandoffOutcome.CANCELLED,

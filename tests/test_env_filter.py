@@ -24,6 +24,10 @@ def test_secret_suffixes_detected_case_insensitive():
         "TLS_PRIVATE_KEY",
         "GOOGLE_CREDENTIALS",
         "APP_SECRET",
+        "OPENAI_KEY",
+        "APIKEY",
+        "DEEPSEEK_APIKEY",
+        "OPENAI_APIKEY",
     ):
         assert is_secret_env_name(name)
 

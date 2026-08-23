@@ -3,17 +3,16 @@
 from __future__ import annotations
 
 import asyncio
-import fnmatch
 import logging
 import os
 import re
 from collections.abc import Iterable
 from pathlib import Path
 
-from deepseek_tui.tools.utils.validation import require_string as _require_string
-from deepseek_tui.tools.registry import ToolCapability, ToolError, ToolResult, ToolSpec
-from deepseek_tui.tools.registry import ToolContext
+from deepseek_tui.tools.registry import ToolCapability, ToolContext, ToolError, ToolResult, ToolSpec
+from deepseek_tui.tools.utils.gitignore import GitIgnoreMatcher, matches_path_glob
 from deepseek_tui.tools.utils.sensitive import is_sensitive_path
+from deepseek_tui.tools.utils.validation import require_string as _require_string
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +44,8 @@ _MAX_LINE_LEN = 300
 # can match thousands of paths (observed: 7 714 ≈ 320k tokens), which blew
 # up sub-agent contexts that receive tool output uncompacted.
 _MAX_FILE_RESULTS = 500
+_MAX_SEARCH_FILE_BYTES = 1024 * 1024
+_GLOB_CHARS = frozenset("*?[")
 
 
 class GrepFilesTool(ToolSpec):
@@ -64,6 +65,8 @@ class GrepFilesTool(ToolSpec):
             "files_with_matches, then drill in with content. ``glob`` "
             "filters by filename (``*.py`` matches any Python file). "
             "``head_limit`` caps the returned entries (default 200). "
+            "Respects .gitignore (and says how many paths it hid) and "
+            "skips files over 1 MiB. "
             "Prefer this over grep/rg via exec_shell — this tool caps "
             "output and skips sensitive files (.env, private keys)."
         )
@@ -168,7 +171,7 @@ class GrepFilesTool(ToolSpec):
         except re.error as exc:
             logger.warning("grep_files_invalid_regex pattern=%r error=%s", pattern, exc)
             raise ToolError(f"invalid regex pattern: {exc}") from exc
-        rows, file_counts, total = await asyncio.to_thread(
+        rows, file_counts, total, skipped_large, skipped_ignored = await asyncio.to_thread(
             _grep_files,
             root,
             compiled,
@@ -186,9 +189,9 @@ class GrepFilesTool(ToolSpec):
             total,
         )
         if output_mode == "files_with_matches":
-            paths = list(file_counts)
+            paths = [_display_rel(p, root) for p in file_counts]
             shown = paths[:head_limit]
-            content_lines = [str(p) for p in shown]
+            content_lines = list(shown)
             if len(paths) > len(shown):
                 content_lines.append(
                     f"… (showing {len(shown)} of {len(paths)} files; "
@@ -197,7 +200,7 @@ class GrepFilesTool(ToolSpec):
             truncated = len(paths) > len(shown)
             shown_count: int = len(shown)
         elif output_mode == "count_matches":
-            items = list(file_counts.items())
+            items = [(_display_rel(p, root), n) for p, n in file_counts.items()]
             shown_items = items[:head_limit]
             content_lines = [f"{p}:{n}" for p, n in shown_items]
             if len(items) > len(shown_items):
@@ -209,7 +212,11 @@ class GrepFilesTool(ToolSpec):
             shown_count = len(shown_items)
         else:
             content_lines = [
-                f"{p}:{n}:{line}" if not is_context else f"{p}-{n}-{line}"
+                (
+                    f"{_display_rel(p, root)}:{n}:{line}"
+                    if not is_context
+                    else f"{_display_rel(p, root)}-{n}-{line}"
+                )
                 for p, n, line, is_context in rows
             ]
             shown_matches = sum(1 for r in rows if not r[3])
@@ -220,6 +227,13 @@ class GrepFilesTool(ToolSpec):
                 )
             truncated = total > shown_matches
             shown_count = shown_matches
+        if skipped_large:
+            content_lines.append(
+                f"… (skipped {skipped_large} file(s) over {_MAX_SEARCH_FILE_BYTES} bytes)"
+            )
+        note = _gitignore_skip_note(skipped_ignored)
+        if note is not None:
+            content_lines.append(note)
         return ToolResult(
             success=True,
             content="\n".join(content_lines),
@@ -229,6 +243,8 @@ class GrepFilesTool(ToolSpec):
                 "count": total,
                 "shown": shown_count,
                 "truncated": truncated,
+                "skipped_large": skipped_large,
+                "skipped_ignored": skipped_ignored,
             },
         )
 
@@ -239,11 +255,15 @@ class FileSearchTool(ToolSpec):
 
     def description(self) -> str:
         return (
-            "Find files whose NAME contains a substring, under a directory "
-            "(recursive; skips .git, node_modules, virtualenvs, build "
-            "output, and credential files). Also the way to list a "
-            "directory's files. Prefer this over find/ls -R via exec_shell. "
-            "Not for searching file CONTENTS — use grep_files for that."
+            "Find files under a directory (recursive; skips .git, "
+            "node_modules, virtualenvs, build output, credential files, and "
+            ".gitignore matches). A pattern without glob characters "
+            "(* ? [) is a file-name substring: 'config' matches config.py. "
+            "A pattern with glob characters matches the relative path: "
+            "'*.ts' or 'src/**/*.py'. Use '' to list files. max_depth=1 "
+            "lists only the given directory (shallow ls). Prefer this over "
+            "find/ls -R via exec_shell. Not for file CONTENTS — use "
+            "grep_files."
         )
 
     def input_schema(self) -> dict[str, object]:
@@ -253,9 +273,9 @@ class FileSearchTool(ToolSpec):
                 "pattern": {
                     "type": "string",
                     "description": (
-                        "Substring matched against each file name (not a "
-                        "glob or regex): 'config' matches config.py and "
-                        "app_config.toml. Use '' to list every file."
+                        "File-name substring, or a glob if it contains "
+                        "* ? or [. 'config' matches config.py; '*.ts' "
+                        "matches any TypeScript file. Use '' to list files."
                     ),
                 },
                 "path": {
@@ -263,6 +283,14 @@ class FileSearchTool(ToolSpec):
                     "description": (
                         "Directory to search, workspace-relative; '.' for "
                         "the whole workspace."
+                    ),
+                },
+                "max_depth": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": (
+                        "Maximum directory depth. 1 lists only this "
+                        "directory (no recursion). Omit for unlimited."
                     ),
                 },
             },
@@ -275,7 +303,12 @@ class FileSearchTool(ToolSpec):
     async def execute(self, input_data: dict[str, object], context: ToolContext) -> ToolResult:
         pattern = _require_string(input_data, "pattern")
         root = context.resolve_path(_require_string(input_data, "path"), allow_read_roots=True)
-        matches = await asyncio.to_thread(_file_search, root, pattern)
+        max_depth = _optional_non_negative_int(input_data, "max_depth")
+        if max_depth == 0:
+            raise ToolError("max_depth must be >= 1")
+        matches, skipped_ignored = await asyncio.to_thread(
+            _file_search, root, pattern, max_depth
+        )
         logger.info(
             "file_search pattern=%r root=%s match_count=%d",
             pattern,
@@ -289,10 +322,17 @@ class FileSearchTool(ToolSpec):
                 f"… (showing {len(shown)} of {len(matches)} files; "
                 "narrow the path or use a more specific pattern)"
             )
+        note = _gitignore_skip_note(skipped_ignored)
+        if note is not None:
+            lines.append(note)
         return ToolResult(
             success=True,
             content="\n".join(lines),
-            metadata={"path": str(root), "count": len(matches)},
+            metadata={
+                "path": str(root),
+                "count": len(matches),
+                "skipped_ignored": skipped_ignored,
+            },
         )
 
 
@@ -313,36 +353,104 @@ def _resolve_output_mode(input_data: dict[str, object]) -> str:
 
 
 def _path_matches_glob(path: Path, root: Path, pattern: str) -> bool:
-    """Match ``*.py`` against the basename, ``src/*.ts`` against the relpath."""
-    if fnmatch.fnmatch(path.name, pattern):
-        return True
+    """Match ``*.py`` against the basename, ``src/*.ts`` against the relpath.
+
+    ``*`` stays inside one path component (same rule as gitignore). A
+    basename-only pattern like ``*.py`` still matches at any depth because
+    it is tested against ``path.name``.
+    """
+    if "/" not in pattern:
+        return matches_path_glob(path.name, pattern)
     base = root if root.is_dir() else root.parent
     try:
         rel = path.relative_to(base)
     except ValueError:
         return False
-    return fnmatch.fnmatch(rel.as_posix(), pattern)
+    return matches_path_glob(rel.as_posix(), pattern)
 
 
-def _iter_files(root: Path, glob: str | None = None) -> Iterable[Path]:
+def _gitignore_skip_note(count: int) -> str | None:
+    if count <= 0:
+        return None
+    return f"… (skipped {count} path(s) matching .gitignore)"
+
+
+def _is_glob_pattern(pattern: str) -> bool:
+    return any(ch in pattern for ch in _GLOB_CHARS)
+
+
+def _walk_depth(dirpath: str, root: Path) -> int:
+    try:
+        return len(Path(dirpath).relative_to(root).parts)
+    except ValueError:
+        return 0
+
+
+def _iter_files(
+    root: Path,
+    glob: str | None = None,
+    *,
+    max_depth: int | None = None,
+    skip_over_bytes: int | None = None,
+    skipped_large: list[int] | None = None,
+    skipped_ignored: list[int] | None = None,
+) -> Iterable[Path]:
+    ignore = GitIgnoreMatcher(root if root.is_dir() else root.parent)
     if root.is_file():
+        if ignore.ignored(root, is_dir=False):
+            if skipped_ignored is not None:
+                skipped_ignored[0] += 1
+            return
         if not is_sensitive_path(root) and (
             glob is None or _path_matches_glob(root, root, glob)
         ):
+            if skip_over_bytes is not None:
+                try:
+                    if root.stat().st_size > skip_over_bytes:
+                        if skipped_large is not None:
+                            skipped_large[0] += 1
+                        return
+                except OSError:
+                    return
             yield root
         return
     for dirpath, dirnames, filenames in os.walk(root):
-        # Prune ignored directories in place so os.walk never descends
-        # into them (sorted for deterministic output order).
-        dirnames[:] = sorted(d for d in dirnames if d not in _IGNORED_DIRS)
+        current = Path(dirpath)
+        ignore.add_dir(current)
+        depth = _walk_depth(dirpath, root)
+        kept_dirs: list[str] = []
+        ignored_dirs = 0
+        for name in dirnames:
+            if name in _IGNORED_DIRS:
+                continue
+            if ignore.ignored(current / name, is_dir=True):
+                ignored_dirs += 1
+                continue
+            kept_dirs.append(name)
+        if skipped_ignored is not None:
+            skipped_ignored[0] += ignored_dirs
+        if max_depth is not None and depth + 1 >= max_depth:
+            dirnames[:] = []
+        else:
+            dirnames[:] = sorted(kept_dirs)
         for name in sorted(filenames):
-            path = Path(dirpath) / name
-            # Never surface credential files (.env, private keys, ...) —
-            # the model must not read them via grep/file_search either.
+            path = current / name
             if is_sensitive_path(path):
+                continue
+            if ignore.ignored(path, is_dir=False):
+                if skipped_ignored is not None:
+                    skipped_ignored[0] += 1
                 continue
             if glob is not None and not _path_matches_glob(path, root, glob):
                 continue
+            if skip_over_bytes is not None:
+                try:
+                    if path.stat().st_size > skip_over_bytes:
+                        if skipped_large is not None:
+                            skipped_large[0] += 1
+                        continue
+                except OSError:
+                    continue
             yield path
 
 
@@ -354,8 +462,8 @@ def _grep_files(
     after: int = 0,
     head_limit: int = _MAX_MATCHES,
     glob: str | None = None,
-) -> tuple[list[tuple[Path, int, str, bool]], dict[Path, int], int]:
-    """Return ``(rows, file_counts, total_matches)``.
+) -> tuple[list[tuple[Path, int, str, bool]], dict[Path, int], int, int, int]:
+    """Return ``(rows, file_counts, total_matches, skipped_large, skipped_ignored)``.
 
     ``rows`` are ``(path, line_number, line, is_context)`` tuples in output
     order; matching rows are capped at ``head_limit`` (context rows ride
@@ -367,7 +475,15 @@ def _grep_files(
     file_counts: dict[Path, int] = {}
     total = 0
     shown_matches = 0
-    for path in _iter_files(root, glob):
+    skipped = [0]
+    ignored = [0]
+    for path in _iter_files(
+        root,
+        glob,
+        skip_over_bytes=_MAX_SEARCH_FILE_BYTES,
+        skipped_large=skipped,
+        skipped_ignored=ignored,
+    ):
         try:
             text = path.read_text(encoding="utf-8")
         except (UnicodeDecodeError, OSError):
@@ -395,7 +511,7 @@ def _grep_files(
                 if len(line) > _MAX_LINE_LEN:
                     line = line[:_MAX_LINE_LEN] + "… (line truncated)"
                 rows.append((path, line_no, line, j not in match_lines))
-    return rows, file_counts, total
+    return rows, file_counts, total, skipped[0], ignored[0]
 
 
 def _optional_non_negative_int(
@@ -411,5 +527,29 @@ def _optional_non_negative_int(
     return value
 
 
-def _file_search(root: Path, pattern: str) -> list[str]:
-    return [str(path) for path in _iter_files(root) if pattern in path.name]
+def _display_rel(path: Path, root: Path) -> str:
+    base = root if root.is_dir() else root.parent
+    try:
+        return path.relative_to(base).as_posix()
+    except ValueError:
+        return str(path)
+
+
+def _file_matches_pattern(path: Path, root: Path, pattern: str) -> bool:
+    if not pattern:
+        return True
+    if _is_glob_pattern(pattern):
+        return _path_matches_glob(path, root, pattern)
+    return pattern in path.name
+
+
+def _file_search(
+    root: Path, pattern: str, max_depth: int | None
+) -> tuple[list[str], int]:
+    ignored = [0]
+    matches = [
+        _display_rel(path, root)
+        for path in _iter_files(root, max_depth=max_depth, skipped_ignored=ignored)
+        if _file_matches_pattern(path, root, pattern)
+    ]
+    return matches, ignored[0]

@@ -27,6 +27,7 @@ from deepseek_tui.workspace.shell_write_guard import check_shell_write
         "node -e \"require('fs').writeFileSync('src/a.js','x')\"",
         "cp scratch/x.py src/dest.py",
         "mv scratch/x.py src/dest.py",
+        "mv src/a.py /tmp/out.py",
         "rm src/foo.py",
         "rm -f packages/workbench/src/a.ts",
         "bash -c \"sed -i 's/a/b/' src/main.py\"",

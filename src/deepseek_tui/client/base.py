@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import random
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
@@ -29,12 +30,22 @@ class RetryConfig:
     max_error_retries: int = 5
     base_delay: float = 0.2
     max_delay: float = 10.0
+    # Fraction of the backoff to spread each delay by. Sub-agents run
+    # concurrently against one provider, so without jitter a shared 429 or 5xx
+    # makes them all back off and retry in lockstep, reproducing the burst that
+    # caused it. Multiplicative, so a zero delay stays zero.
+    jitter: float = 0.25
+
+    def _spread(self, delay: float) -> float:
+        if delay <= 0.0 or self.jitter <= 0.0:
+            return delay
+        return delay * (1.0 + random.uniform(-self.jitter, self.jitter))
 
     def transparent_delay(self, attempt: int) -> float:
-        return float(min(self.base_delay * (2**attempt), self.max_delay))
+        return self._spread(min(self.base_delay * (2**attempt), self.max_delay))
 
     def error_delay(self, attempt: int) -> float:
-        return float(min(self.base_delay * (2**attempt), self.max_delay))
+        return self._spread(min(self.base_delay * (2**attempt), self.max_delay))
 
 
 class LLMClient(ABC):

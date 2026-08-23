@@ -1,6 +1,9 @@
 """Git and GitHub tools.
 
 Consolidates git_tools.py and github_tools.py.
+
+Not registered in the default catalog (see ``build_default_registry``).
+Git operations go through ``exec_shell``.
 """
 
 from __future__ import annotations

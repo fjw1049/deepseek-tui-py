@@ -79,6 +79,7 @@ class SubAgent:
         self.structured_result: Any | None = None
         self.output_schema = output_schema
         self.steps_taken: int = 0
+        self.max_steps_reached: bool = False
         self.started_at_ms: int = _epoch_ms()
         self.allowed_tools = allowed_tools
         self.session_boot_id = session_boot_id
@@ -107,4 +108,5 @@ class SubAgent:
             duration_ms=duration_ms,
             from_prior_session=False,
             structured=self.structured_result,
+            max_steps_reached=self.max_steps_reached,
         )

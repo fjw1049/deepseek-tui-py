@@ -18,8 +18,13 @@ DEFAULT_MAX_AGENTS = 10
 DEFAULT_MAX_SPAWN_DEPTH = 3
 # Per-round LLM output caps for the sub-agent loop. Read-heavy types stay
 # smaller; write/general types need headroom for patches and long reports.
-SUBAGENT_MAX_TOKENS_READ = 8_192
-SUBAGENT_MAX_TOKENS_WRITE = 16_384
+# Both tiers doubled once truncation stopped passing as a finished report: on
+# a reasoning model the thinking is spent from this same cap before the report
+# starts, so the old 8K left read types truncating mid-report. This is the
+# same reasoning behind the 32K GLM default in ``config.providers`` — a cap is
+# not a spend, only generated tokens bill.
+SUBAGENT_MAX_TOKENS_READ = 16_384
+SUBAGENT_MAX_TOKENS_WRITE = 32_768
 _MAX_TERMINAL_AGENTS_IN_MEMORY = 30
 # Upper bound for the final result we surface on the Workbench sub-agent card.
 # The previous 500-char cap chopped real reports mid-sentence; the card detail
@@ -475,6 +480,7 @@ class SubAgentResult:
     duration_ms: int
     from_prior_session: bool = False
     structured: Any | None = None
+    max_steps_reached: bool = False
 
 
 @dataclass(slots=True)

@@ -9,7 +9,11 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from deepseek_tui.tools.subagent.agent import SubAgent
-from deepseek_tui.tools.subagent.completion import AgentRunOutput, has_summary_section
+from deepseek_tui.tools.subagent.completion import (
+    AgentRunOutput,
+    has_summary_section,
+    looks_like_unfinished_narration,
+)
 from deepseek_tui.tools.subagent.mailbox import MailboxMessage
 from deepseek_tui.tools.subagent.types import (
     DEFAULT_MAX_STEPS,
@@ -231,18 +235,72 @@ _SUBAGENT_STRUCTURED_OUTPUT_NUDGE = (
 
 
 _SUBAGENT_SUMMARY_CONTINUATION_NUDGE = (
-    "Your previous response did not carry a usable report. The parent cannot "
-    "see your context — the next assistant message is the entire handoff. "
-    "If the assignment is still unfinished, use tools to finish it, then write "
-    "the report. If the work is done, write the report now: a `### SUMMARY` H3 "
-    "with the outcome in prose (not just \"Done.\"), then whatever structure "
-    "the task calls for, carrying the concrete evidence (`path:line`, commands "
-    "and exit codes), every file you wrote, risks you did not address, and "
-    "anything left unfinished."
+    "Your previous response was too brief. The parent cannot see your "
+    "context — the next assistant message is the entire handoff. Provide a "
+    "more complete report: specific technical details, findings, and "
+    "everything the parent must know. If the assignment is still unfinished, "
+    "use tools to finish it, then write the report."
+)
+
+
+# A round that came back FAILED, or whose response was cut off at the output
+# cap, is re-run on this budget before the whole run fails. The transport layer
+# has already spent its own retries by the time either reaches us, so this is
+# deliberately small: enough to ride out one bad upstream response, not enough
+# to turn a deterministic failure into a retry storm.
+MAX_SUBAGENT_ROUND_FAILURES = 2
+# Consecutive stalled rounds (no text, no tool call — the model spent the round
+# thinking) tolerated with the tool catalog still in hand. Past this the forced
+# summary takes over, because a child that will not act still owes the parent a
+# report.
+MAX_SUBAGENT_EMPTY_ROUNDS = 2
+# Consecutive failing tool calls before the loop says so. Tool errors arrive as
+# ordinary tool results, so nothing in the transcript tells the model that this
+# is the fifth identical failure rather than the first; without a marker a child
+# can spend its whole step budget re-issuing one broken call.
+MAX_CONSECUTIVE_TOOL_FAILURES = 5
+
+_SUBAGENT_STALLED_ROUND_NUDGE = (
+    "That round produced no tool call and no report, so it reads as a stall "
+    "rather than as finished work. A next-step note (\"I'll read X next\") "
+    "is a stall too — say it with a tool call, or write the report. Nothing "
+    "has been decided for you: you still have your tools. If the assignment "
+    "is unfinished, take the next concrete action now. If it is genuinely "
+    "finished, write the report."
+)
+
+_SUBAGENT_TOOL_FAILURE_NUDGE = (
+    "Your last {n} tool calls in a row all came back as errors, so repeating the "
+    "same approach will not get you further. Read what the errors actually say, "
+    "then change something concrete: a different path, a different tool, or a "
+    "smaller step you can verify. If the assignment cannot be done this way, say "
+    "so in your report rather than retrying."
+)
+
+_SUBAGENT_TRUNCATED_NUDGE = (
+    "Your previous response was cut off at the output cap before it reached an "
+    "end, so it has been discarded. Do not continue from where it stopped — "
+    "redo the round and make it fit: quote fewer lines, tighten the prose, and "
+    "put the outcome first."
 )
 
 
 _has_summary_section = has_summary_section
+
+
+async def _compact_subagent_messages(messages: list[Message]) -> list[Message]:
+    """Overflow relief for a child, handed to ``TurnLoop`` as ``compact_fn``.
+
+    The parent passes an LLM-backed compaction. A child that is already over
+    budget cannot afford another round-trip, and its context is dominated by
+    tool output rather than dialogue, so dropping old tool bodies is both
+    cheaper and better targeted. When there is nothing left to prune the
+    request overflows again and the loop fails the run loudly.
+    """
+    from deepseek_tui.engine.capacity import prune_old_tool_results
+
+    prune_old_tool_results(messages)
+    return messages
 
 
 
@@ -291,13 +349,12 @@ async def run_subagent_loop(
     """
     from deepseek_tui.engine import reminders
     from deepseek_tui.engine.completion_requirement import CompletionRequirement
-    from deepseek_tui.engine.turn import TurnLoop
+    from deepseek_tui.engine.turn import TurnLoop, TurnOutcomeStatus
     from deepseek_tui.protocol.messages import Message, MessageOrigin
     from deepseek_tui.protocol.messages import MessageRequest
     from deepseek_tui.tools.durable_transcript import (
         CONTINUE_NUDGE,
         DurableTranscript,
-        clear_transcript,
         dicts_to_messages,
         load_transcript,
         messages_to_dicts,
@@ -424,11 +481,16 @@ async def run_subagent_loop(
         if text:
             messages.append(Message.user(text, origin=MessageOrigin.REAL_USER))
 
-    turn_loop = TurnLoop(runtime.client)
+    turn_loop = TurnLoop(runtime.client, compact_fn=_compact_subagent_messages)
     final_text = ""
     last_thinking = ""
     structured_value: Any | None = None
     last_usage: object | None = None
+    # Consecutive bad rounds. Any round that makes progress clears them, so the
+    # budgets bound a run of failures rather than a whole run's worth.
+    round_failures = 0
+    empty_rounds = 0
+    tool_failures = 0
     # Only persist completed rounds. Mid-tool cancel keeps the previous snapshot.
     # Snapshot *before* the ephemeral resume nudge appended below — it's purely
     # a live prompt hint (resume regenerates it), never something we want baked
@@ -449,12 +511,13 @@ async def run_subagent_loop(
     async def _noop_emit(_event: object) -> None:
         return None
 
-    # Markdown children must leave a usable ### SUMMARY. Recovery keeps the
-    # tool catalog; exhausted recoveries accept the last result.
+    # Kimi distillSummary: one continuation on the same memory, then accept.
+    # The predicate stays has_summary_section — length alone cannot split
+    # CJK stubs from real reports.
     summary_requirement = CompletionRequirement(
         name="subagent_summary",
         reminder=_SUBAGENT_SUMMARY_CONTINUATION_NUDGE,
-        max_retries=2,
+        max_retries=1,
     )
     summary_recoveries = 0
 
@@ -621,6 +684,50 @@ async def run_subagent_loop(
                 _save_cancel_checkpoint()
                 raise asyncio.CancelledError
 
+            if result.outcome is TurnOutcomeStatus.INTERRUPTED:
+                _save_cancel_checkpoint()
+                raise asyncio.CancelledError
+
+            # Overflow is deterministic: ``compact_fn`` has already run and the
+            # same messages would overflow again, so there is nothing to retry.
+            if result.outcome is TurnOutcomeStatus.CONTEXT_OVERFLOW:
+                raise RuntimeError(
+                    "sub-agent context overflow: "
+                    f"{result.error_message or 'context could not be shortened'}"
+                )
+
+            # A failed round used to be indistinguishable from "prose, no tool
+            # calls": the loop broke out and the manager reported success with a
+            # half-written fragment as the deliverable. Re-run it, then fail.
+            if result.outcome is not TurnOutcomeStatus.SUCCESS:
+                round_failures += 1
+                if round_failures > MAX_SUBAGENT_ROUND_FAILURES:
+                    raise RuntimeError(
+                        "sub-agent LLM round failed: "
+                        f"{result.error_message or 'unknown error'}"
+                    )
+                continue
+
+            # Truncation is deterministic too — the same request hits the same
+            # cap at the same place — so the fragment is dropped and the round
+            # re-run asking for less, never continued from mid-sentence.
+            if result.truncated:
+                round_failures += 1
+                if round_failures > MAX_SUBAGENT_ROUND_FAILURES:
+                    raise RuntimeError(
+                        "sub-agent response truncated at the output cap on "
+                        f"{round_failures} consecutive rounds; narrow the "
+                        "assignment or raise the cap for this agent type"
+                    )
+                messages.append(
+                    reminders.reminder_message(
+                        reminders.SUBAGENT_OUTPUT_NUDGE, _SUBAGENT_TRUNCATED_NUDGE
+                    )
+                )
+                continue
+
+            round_failures = 0
+
             if result.assistant_message is not None:
                 messages.append(result.assistant_message)
 
@@ -639,7 +746,11 @@ async def run_subagent_loop(
                 runtime.mailbox.send(MailboxMessage.progress(agent.id, narration))
 
             if not result.tool_calls:
-                if round_text:
+                # A next-action note ("继续读 X") is the same stall as an
+                # empty thinking round: the child is not done, it just said
+                # the next step out loud instead of calling a tool.
+                unfinished = looks_like_unfinished_narration(round_text)
+                if round_text and not unfinished:
                     if _try_summary_recovery():
                         _save_complete_checkpoint("round")
                         continue
@@ -647,6 +758,25 @@ async def run_subagent_loop(
                         break
                     # Blocked: give the agent its tools back and keep going.
                     force_summary = False
+                    _save_complete_checkpoint("round")
+                    continue
+                # An empty round — or a next-action note — is a stall, not a
+                # finish. Forcing the summary here confiscated the tool
+                # catalog, so a child that had stalled halfway could not resume
+                # even in principle; it could only write up what it already had.
+                # Keep the tools and ask for the next concrete action instead.
+                if (
+                    not force_summary
+                    and structured_value is None
+                    and empty_rounds < MAX_SUBAGENT_EMPTY_ROUNDS
+                ):
+                    empty_rounds += 1
+                    messages.append(
+                        reminders.reminder_message(
+                            reminders.SUBAGENT_OUTPUT_NUDGE,
+                            _SUBAGENT_STALLED_ROUND_NUDGE,
+                        )
+                    )
                     _save_complete_checkpoint("round")
                     continue
                 if not force_summary and structured_value is None:
@@ -673,6 +803,10 @@ async def run_subagent_loop(
                 force_summary = False
                 _save_complete_checkpoint("round")
                 continue
+
+            # Tool calls are progress: the stall budget bounds a run of rounds
+            # that do nothing, not the run as a whole.
+            empty_rounds = 0
 
             from deepseek_tui.protocol.messages import ToolUseBlock
 
@@ -734,12 +868,30 @@ async def run_subagent_loop(
                             output_summary=_mailbox_output_summary(output),
                         )
                     )
+                tool_failures = 0 if ok else tool_failures + 1
                 messages.append(Message.tool_result(tc.id, output, is_error=not ok))
                 if structured_value is not None:
                     break
+
+            if tool_failures >= MAX_CONSECUTIVE_TOOL_FAILURES:
+                messages.append(
+                    reminders.reminder_message(
+                        reminders.SUBAGENT_OUTPUT_NUDGE,
+                        _SUBAGENT_TOOL_FAILURE_NUDGE.format(n=tool_failures),
+                    )
+                )
+                # Cleared so a child that keeps failing gets told again rather
+                # than once; the step budget stays the hard bound.
+                tool_failures = 0
             _save_complete_checkpoint("round")
             if structured_value is not None:
                 break
+        else:
+            # Reached only when the loop condition went false. Every `break`
+            # above is the child ending its own run, so this is the one exit
+            # that means the budget ran out from under it. Whatever it did write
+            # still goes to the parent — labelled, not passed off as finished.
+            agent.max_steps_reached = True
     except asyncio.CancelledError:
         _save_cancel_checkpoint()
         raise
@@ -762,7 +914,10 @@ async def run_subagent_loop(
         raise RuntimeError("sub-agent did not return structured_output")
     if not final_text and last_thinking:
         final_text = last_thinking
-    clear_transcript(transcript_path)
+    # Keep the checkpoint for resume. Report shape is not a reason to wipe
+    # memory — Kimi leaves context memory in place after distillSummary.
+    # close() is the only wipe.
+    _save_complete_checkpoint("round")
     return AgentRunOutput(text=final_text, structured=structured_value)
 
 

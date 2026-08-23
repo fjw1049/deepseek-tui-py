@@ -65,6 +65,7 @@ class OpenAIStreamParser:
     def __init__(self) -> None:
         self._tool_calls: dict[int, _ToolCallBuilder] = {}
         self._usage: Usage | None = None
+        self._truncated = False
 
     def parse_chunk(self, payload: dict[str, Any]) -> list[StreamEvent]:
         events: list[StreamEvent] = []
@@ -133,6 +134,11 @@ class OpenAIStreamParser:
                             )
 
         finish_reason = choice.get("finish_reason")
+        if finish_reason == "length":
+            # Carried to finalize(): the cap cut this sample short, so what
+            # follows is a fragment — a half sentence, or tool-call arguments
+            # that will not parse — not an answer.
+            self._truncated = True
         if finish_reason == "tool_calls":
             for index in sorted(self._tool_calls):
                 events.append(StreamToolCallComplete(tool_call=self._tool_calls[index].build()))
@@ -153,7 +159,7 @@ class OpenAIStreamParser:
             self._tool_calls.clear()
         # The single StreamDone for this request, carrying the final usage
         # (updated by whichever chunk delivered it last).
-        events.append(StreamDone(usage=self._usage))
+        events.append(StreamDone(usage=self._usage, truncated=self._truncated))
         return events
 
 
@@ -164,6 +170,7 @@ class AnthropicStreamParser:
         self._tool_calls: dict[int, _ToolCallBuilder] = {}
         self._usage = Usage()
         self._done = False
+        self._truncated = False
 
     def parse_event(
         self, event_name: str, payload: dict[str, Any]
@@ -232,6 +239,9 @@ class AnthropicStreamParser:
                 current = self._usage.model_dump()
                 current.update(usage)
                 self._usage = Usage.model_validate(current)
+            delta = payload.get("delta")
+            if isinstance(delta, dict) and delta.get("stop_reason") == "max_tokens":
+                self._truncated = True
             return events
 
         if event_type == "error":
@@ -252,5 +262,5 @@ class AnthropicStreamParser:
             events.append(StreamToolCallComplete(tool_call=self._tool_calls[index].build()))
         self._tool_calls.clear()
         self._done = True
-        events.append(StreamDone(usage=self._usage))
+        events.append(StreamDone(usage=self._usage, truncated=self._truncated))
         return events

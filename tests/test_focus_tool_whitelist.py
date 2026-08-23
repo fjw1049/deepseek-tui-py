@@ -37,7 +37,17 @@ def test_focus_registry_tools_subset_of_default_registry() -> None:
 def test_focus_base_layering() -> None:
     assert FOCUS_KERNEL == _FOCUS_KERNEL_REGISTRY
     assert FOCUS_MCP_BASE == FOCUS_KERNEL
-    assert FOCUS_SKILL_BASE == FOCUS_KERNEL | frozenset({"load_skill", "checklist"})
+    assert FOCUS_KERNEL == frozenset(
+        {
+            "read_file",
+            "grep_files",
+            "file_search",
+            "write_file",
+            "edit_file",
+            "exec_shell",
+        }
+    )
+    assert FOCUS_SKILL_BASE == FOCUS_KERNEL | frozenset({"load_skill", "web_search"})
     assert FOCUS_PLUGIN_BASE == FOCUS_SKILL_BASE | frozenset({"agent"})
     assert FOCUS_READ_BASE is FOCUS_PLUGIN_BASE or FOCUS_READ_BASE == FOCUS_PLUGIN_BASE
     assert FOCUS_READ_BASE == _FOCUS_REGISTRY_TOOLS
@@ -53,12 +63,28 @@ def test_focus_base_layering() -> None:
         assert "recall_archive" not in base
         assert "exec_wait" not in base
         assert "exec_interact" not in base
+        assert "fetch_url" not in base
+        assert "request_user_input" not in base
+        assert "checklist" not in base
+    assert "web_search" not in FOCUS_MCP_BASE
+    assert "web_search" in FOCUS_SKILL_BASE
+    assert "web_search" in FOCUS_PLUGIN_BASE
 
 
 def test_mcp_base_excludes_skill_and_agent_noise() -> None:
     assert "load_skill" not in FOCUS_MCP_BASE
     assert "checklist" not in FOCUS_MCP_BASE
     assert "agent" not in FOCUS_MCP_BASE
+    assert "web_search" not in FOCUS_MCP_BASE
+    assert "fetch_url" not in FOCUS_MCP_BASE
+    assert "request_user_input" not in FOCUS_MCP_BASE
+
+
+def test_skill_base_is_kernel_plus_load_skill_and_web_search() -> None:
+    assert "load_skill" in FOCUS_SKILL_BASE
+    assert "web_search" in FOCUS_SKILL_BASE
+    assert "agent" not in FOCUS_SKILL_BASE
+    assert FOCUS_SKILL_BASE - FOCUS_KERNEL == frozenset({"load_skill", "web_search"})
 
 
 def test_current_time_not_registered_without_automations() -> None:
@@ -98,6 +124,8 @@ async def test_mcp_focus_whitelist_uses_mcp_base(tmp_path) -> None:
         assert "agent" not in tools
         assert "load_skill" not in tools
         assert "checklist" not in tools
+        assert "web_search" not in tools
+        assert "request_user_input" not in tools
     finally:
         await engine.shutdown_session()
 

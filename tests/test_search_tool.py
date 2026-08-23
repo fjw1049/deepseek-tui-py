@@ -202,7 +202,7 @@ async def test_grep_default_mode_is_files_with_matches(tmp_path: Path):
 
     assert result.metadata["output_mode"] == "files_with_matches"
     lines = result.content.splitlines()
-    assert lines == [str(tmp_path / "a.py")]
+    assert lines == ["a.py"]
     assert "needle" not in result.content
 
 
@@ -241,3 +241,146 @@ async def test_grep_glob_matches_relative_path(tmp_path: Path):
     assert "only.ts" in result.content
     assert "root.py" not in result.content
     assert "other.py" not in result.content
+
+
+async def test_grep_skips_gitignore_and_large_files(tmp_path: Path):
+    from deepseek_tui.tools.search import _MAX_SEARCH_FILE_BYTES, FileSearchTool
+
+    (tmp_path / ".gitignore").write_text("ignored.py\n", encoding="utf-8")
+    (tmp_path / "keep.py").write_text("needle\n", encoding="utf-8")
+    (tmp_path / "ignored.py").write_text("needle\n", encoding="utf-8")
+    (tmp_path / "huge.py").write_bytes(b"needle\n" + b"x" * (_MAX_SEARCH_FILE_BYTES + 8))
+
+    result = await GrepFilesTool().execute(
+        {"pattern": "needle", "path": "."},
+        ToolContext(working_directory=tmp_path),
+    )
+    assert "keep.py" in result.content
+    assert "ignored.py" not in result.content
+    assert result.metadata["skipped_large"] == 1
+    assert "skipped 1 file" in result.content
+
+    listing = await FileSearchTool().execute(
+        {"pattern": "", "path": "."},
+        ToolContext(working_directory=tmp_path),
+    )
+    assert "keep.py" in listing.content
+    assert "ignored.py" not in listing.content
+
+
+async def test_grep_says_how_much_gitignore_hid(tmp_path: Path):
+    """Silent filtering is unfalsifiable from where the agent sits.
+
+    A search that quietly drops paths looks identical to a search that found
+    nothing there, so an agent told "this file exists" and seeing no hit has no
+    way to tell which happened — and no reason to reach for exec_shell. Say it,
+    the way the oversize skip already does.
+    """
+    (tmp_path / ".gitignore").write_text("secret.py\ngenfiles/\n", encoding="utf-8")
+    (tmp_path / "keep.py").write_text("needle\n", encoding="utf-8")
+    (tmp_path / "secret.py").write_text("needle\n", encoding="utf-8")
+    (tmp_path / "genfiles").mkdir()
+    (tmp_path / "genfiles" / "out.py").write_text("needle\n", encoding="utf-8")
+
+    result = await GrepFilesTool().execute(
+        {"pattern": "needle", "path": "."},
+        ToolContext(working_directory=tmp_path),
+    )
+
+    assert "keep.py" in result.content
+    assert "secret.py" not in result.content
+    # The excluded file and the pruned directory each count once.
+    assert result.metadata["skipped_ignored"] == 2
+    assert ".gitignore" in result.content
+
+
+async def test_file_search_says_how_much_gitignore_hid(tmp_path: Path):
+    from deepseek_tui.tools.search import FileSearchTool
+
+    (tmp_path / ".gitignore").write_text("secret.py\n", encoding="utf-8")
+    (tmp_path / "keep.py").write_text("", encoding="utf-8")
+    (tmp_path / "secret.py").write_text("", encoding="utf-8")
+
+    result = await FileSearchTool().execute(
+        {"pattern": "", "path": "."},
+        ToolContext(working_directory=tmp_path),
+    )
+
+    assert "keep.py" in result.content
+    assert result.metadata["skipped_ignored"] == 1
+    assert ".gitignore" in result.content
+
+
+async def test_searches_stay_quiet_when_nothing_was_hidden(tmp_path: Path):
+    from deepseek_tui.tools.search import FileSearchTool
+
+    (tmp_path / "a.py").write_text("needle\n", encoding="utf-8")
+
+    grep = await GrepFilesTool().execute(
+        {"pattern": "needle", "path": "."},
+        ToolContext(working_directory=tmp_path),
+    )
+    listing = await FileSearchTool().execute(
+        {"pattern": "", "path": "."},
+        ToolContext(working_directory=tmp_path),
+    )
+
+    assert ".gitignore" not in grep.content
+    assert ".gitignore" not in listing.content
+    assert grep.metadata["skipped_ignored"] == 0
+    assert listing.metadata["skipped_ignored"] == 0
+
+
+async def test_grep_glob_star_does_not_cross_directories(tmp_path: Path):
+    """``fnmatch``'s ``*`` matches ``/``; the glob docs say ``src/*.ts`` is one level."""
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "only.ts").write_text("needle\n", encoding="utf-8")
+    nested = src / "deep"
+    nested.mkdir()
+    (nested / "nested.ts").write_text("needle\n", encoding="utf-8")
+
+    result = await GrepFilesTool().execute(
+        {"pattern": "needle", "path": ".", "glob": "src/*.ts"},
+        ToolContext(working_directory=tmp_path),
+    )
+
+    assert result.metadata["count"] == 1
+    assert "only.ts" in result.content
+    assert "nested.ts" not in result.content
+
+
+async def test_file_search_glob_and_shallow_depth(tmp_path: Path):
+    from deepseek_tui.tools.search import FileSearchTool
+
+    (tmp_path / "root.py").write_text("", encoding="utf-8")
+    src = tmp_path / "src" / "nested"
+    src.mkdir(parents=True)
+    (src / "deep.py").write_text("", encoding="utf-8")
+    (tmp_path / "src" / "mid.ts").write_text("", encoding="utf-8")
+
+    globbed = await FileSearchTool().execute(
+        {"pattern": "*.py", "path": "."},
+        ToolContext(working_directory=tmp_path),
+    )
+    assert "root.py" in globbed.content
+    assert "src/nested/deep.py" in globbed.content
+    assert "mid.ts" not in globbed.content
+
+    shallow = await FileSearchTool().execute(
+        {"pattern": "", "path": ".", "max_depth": 1},
+        ToolContext(working_directory=tmp_path),
+    )
+    lines = [line for line in shallow.content.splitlines() if not line.startswith("…")]
+    assert lines == ["root.py"]
+
+
+async def test_file_search_returns_workspace_relative_paths(tmp_path: Path):
+    from deepseek_tui.tools.search import FileSearchTool
+
+    (tmp_path / "a.py").write_text("", encoding="utf-8")
+    result = await FileSearchTool().execute(
+        {"pattern": "a.py", "path": "."},
+        ToolContext(working_directory=tmp_path),
+    )
+    assert result.content.splitlines() == ["a.py"]

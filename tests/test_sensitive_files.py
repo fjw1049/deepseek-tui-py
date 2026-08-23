@@ -105,6 +105,11 @@ def test_is_sensitive_path_matrix():
     assert is_sensitive_path(Path(".netrc"))
     assert is_sensitive_path(Path(".npmrc"))
     assert is_sensitive_path(Path(".pypirc"))
+    assert is_sensitive_path(Path(".envrc"))
+    assert is_sensitive_path(Path("secrets.json"))
+    assert is_sensitive_path(Path("secrets.yaml"))
+    assert is_sensitive_path(Path("secrets.yml"))
+    assert is_sensitive_path(Path(".secrets"))
     assert not is_sensitive_path(Path("main.py"))
     assert not is_sensitive_path(Path("environment.py"))
     # .git/hooks is write-side only: reading a hook stays allowed.

@@ -11,9 +11,10 @@ from typing import Any
 from deepseek_tui.engine.prompts import AppMode as _AppMode
 from deepseek_tui.protocol.messages import Message, TextBlock
 
-# Shared kernel for all focus paths (MCP / skill / plugin). Explore + write +
-# shell + web + ask-user. Note ``grep_files`` (not ``grep``) — name mismatch
+# Shared kernel for all focus paths (MCP / skill / plugin): workspace
+# primitives only. Note ``grep_files`` (not ``grep``) — name mismatch
 # historically silently excluded grep from every focus mode.
+# Ask-user stays on the unfocused catalog. Skills get web_search below.
 _FOCUS_KERNEL_REGISTRY = frozenset(
     {
         "read_file",
@@ -22,19 +23,16 @@ _FOCUS_KERNEL_REGISTRY = frozenset(
         "write_file",
         "edit_file",
         "exec_shell",
-        "web_search",
-        "fetch_url",
-        "request_user_input",
     }
 )
 FOCUS_KERNEL = _FOCUS_KERNEL_REGISTRY
 
 # @connector — kernel only; server tools are unioned at the call site.
-# No load_skill / checklist / agent (those steal selection from MCP tools).
+# No load_skill / agent (those steal selection from MCP tools).
 FOCUS_MCP_BASE = FOCUS_KERNEL
 
-# /skill — kernel + load body + light multi-step helper. No agent by default.
-FOCUS_SKILL_BASE = FOCUS_KERNEL | frozenset({"load_skill", "checklist"})
+# /skill — kernel + load body + web search. No agent by default.
+FOCUS_SKILL_BASE = FOCUS_KERNEL | frozenset({"load_skill", "web_search"})
 
 # Plugin mount — skill base + agent (scenario feels like a mini workspace).
 FOCUS_PLUGIN_BASE = FOCUS_SKILL_BASE | frozenset({"agent"})
@@ -45,7 +43,7 @@ FOCUS_READ_BASE = FOCUS_PLUGIN_BASE
 # Registry-only names across all focus bases (for subset-of-registry tests).
 _FOCUS_REGISTRY_TOOLS = (
     _FOCUS_KERNEL_REGISTRY
-    | frozenset({"load_skill", "checklist", "agent"})
+    | frozenset({"load_skill", "web_search", "agent"})
 )
 
 # Write subset kept for callers that want write tools without a full base.

@@ -330,8 +330,12 @@ def test_subagent_max_tokens_by_type() -> None:
         max_tokens_for_subagent_type,
     )
 
-    assert SUBAGENT_MAX_TOKENS_READ == 8_192
-    assert SUBAGENT_MAX_TOKENS_WRITE == 16_384
+    # Read types stay cheaper than write types, but both must clear a
+    # reasoning model's thinking budget — the cap is shared with it, and a
+    # round that hits the cap is now discarded rather than accepted truncated.
+    assert SUBAGENT_MAX_TOKENS_READ == 16_384
+    assert SUBAGENT_MAX_TOKENS_WRITE == 32_768
+    assert SUBAGENT_MAX_TOKENS_READ < SUBAGENT_MAX_TOKENS_WRITE
     for kind in (
         SubAgentType.EXPLORE,
         SubAgentType.PLAN,

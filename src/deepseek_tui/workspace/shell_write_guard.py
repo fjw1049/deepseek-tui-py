@@ -292,7 +292,6 @@ def check_shell_write(
                         "Use edit_file / write_file (or git).",
                     )
         elif tool in {"cp", "mv"} and operands:
-            # Only the destination matters for "writing source".
             dest = operands[-1]
             if looks_like_source_path(dest, workspace=workspace):
                 return _deny(
@@ -300,5 +299,14 @@ def check_shell_write(
                     f"Shell cannot {tool} onto source path {dest!r}. "
                     "Use edit_file / write_file.",
                 )
+            # mv removes the source; moving a source file to /tmp is a delete.
+            if tool == "mv":
+                for src in operands[:-1]:
+                    if looks_like_source_path(src, workspace=workspace):
+                        return _deny(
+                            src,
+                            f"Shell cannot mv source path {src!r} away. "
+                            "Use edit_file / write_file.",
+                        )
 
     return ShellWriteVerdict(allowed=True)

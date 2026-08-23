@@ -289,18 +289,13 @@ class SubAgentManager:
         Reopens status to Running and re-spawns the driver. The loop hydrates
         any checkpoint under ``~/.deepseek/agents/runs/<id>/``; without a
         transcript it restarts from the original prompt (legacy behavior).
+        A completed report does not block this — the parent decides whether
+        the handoff actually covered the assignment.
         """
         async with self._lock:
             agent = self._require_agent(agent_id)
             if agent.status.kind is SubAgentStatusKind.RUNNING:
                 raise RuntimeError(f"Agent {agent_id} is already running")
-            if agent.status.kind is SubAgentStatusKind.COMPLETED:
-                from deepseek_tui.tools.subagent.handoff_ledger import is_resumable
-
-                if not is_resumable(agent.snapshot()):
-                    raise RuntimeError(
-                        f"Agent {agent_id} already completed; spawn a new agent instead"
-                    )
             agent.status = SubAgentStatus.running()
             agent.result = None
             agent.structured_result = None
@@ -321,9 +316,19 @@ class SubAgentManager:
     async def close(self, agent_id: str) -> SubAgentResult:
         """Terminate and remove an agent from the active map."""
         snapshot = await self.cancel(agent_id)
+        workspace: Path | None = None
         async with self._lock:
-            self._agents.pop(agent_id, None)
+            agent = self._agents.pop(agent_id, None)
+            if agent is not None:
+                workspace = Path(agent.workspace)
             self._persist_best_effort()
+        if workspace is not None:
+            from deepseek_tui.tools.durable_transcript import (
+                clear_transcript,
+                subagent_transcript_path,
+            )
+
+            clear_transcript(subagent_transcript_path(workspace, agent_id))
         return snapshot
 
     async def wait(

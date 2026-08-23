@@ -274,3 +274,112 @@ def test_resolve_path_default_context_unchanged(tmp_path) -> None:
 
     with pytest.raises(ValueError, match="escapes workspace"):
         ctx.resolve_path(str(outside), allow_read_roots=True)
+
+
+@pytest.mark.asyncio
+async def test_read_file_rejects_oversize_unpageable_file(tmp_path) -> None:
+    from deepseek_tui.tools.file import _MAX_READ_FILE_BYTES
+    from deepseek_tui.tools.registry import ToolError
+
+    target = tmp_path / "huge.bin"
+    target.write_bytes(b"x" * (_MAX_READ_FILE_BYTES + 10))
+
+    with pytest.raises(ToolError, match="byte read limit"):
+        await ReadFileTool().execute(
+            {"path": "huge.bin"}, ToolContext(working_directory=tmp_path)
+        )
+
+
+@pytest.mark.asyncio
+async def test_read_file_pages_past_the_byte_budget(tmp_path) -> None:
+    """The byte budget bounds what a page returns, not how far it may reach.
+
+    ``bytes_scanned`` counted from byte 0 on every call, so once a file passed
+    1 MiB every offset beyond that point aborted: the scan stopped before it
+    reached the requested line and the tool reported the file unreadable. The
+    skipped bytes are discarded, so they cost nothing and must not be charged
+    against the page budget — otherwise the back half of any large file is
+    unreachable through ``read_file`` at all.
+    """
+    from deepseek_tui.tools.file import _MAX_READ_FILE_BYTES
+
+    target = tmp_path / "big.log"
+    target.write_text(
+        "".join(f"line {i:06d} " + "." * 20 + "\n" for i in range(1, 40_001)),
+        encoding="utf-8",
+    )
+    assert target.stat().st_size > _MAX_READ_FILE_BYTES
+
+    result = await ReadFileTool().execute(
+        {"path": "big.log", "offset": 39_998, "limit": 3},
+        ToolContext(working_directory=tmp_path),
+    )
+
+    assert result.success is True
+    lines = [line for line in result.content.splitlines() if "\t" in line]
+    assert lines[0].startswith("39998\tline 039998")
+    assert lines[-1].startswith("40000\tline 040000")
+
+
+@pytest.mark.asyncio
+async def test_read_file_omits_total_lines_when_the_scan_stops_early(
+    tmp_path, monkeypatch
+) -> None:
+    """A partial scan must not report 'scanned so far' as the file length."""
+    import deepseek_tui.tools.file as file_tools
+
+    monkeypatch.setattr(file_tools, "_MAX_READ_SCAN_BYTES", 4096)
+    (tmp_path / "big.log").write_text(
+        "".join(f"line {i:06d}\n" for i in range(1, 30_001)), encoding="utf-8"
+    )
+
+    result = await ReadFileTool().execute(
+        {"path": "big.log", "offset": 1, "limit": 2},
+        ToolContext(working_directory=tmp_path),
+    )
+
+    assert result.success is True
+    assert "1\tline 000001" in result.content
+    assert "total_lines" not in result.metadata
+    assert "use offset to continue" in result.content
+    assert " of " not in [
+        line for line in result.content.splitlines() if "use offset to continue" in line
+    ][0]
+
+
+@pytest.mark.asyncio
+async def test_read_file_points_forward_when_the_offset_is_unreachable(
+    tmp_path, monkeypatch
+) -> None:
+    """The old message said "use a smaller offset" — the opposite of the fix."""
+    import deepseek_tui.tools.file as file_tools
+    from deepseek_tui.tools.registry import ToolError
+
+    # The budget is checked once per 64 KiB chunk, so the file has to be worth
+    # more than one chunk for the give-up path to be reachable at all.
+    monkeypatch.setattr(file_tools, "_MAX_READ_SCAN_BYTES", 4096)
+    target = tmp_path / "big.log"
+    target.write_text(
+        "".join(f"line {i:06d}\n" for i in range(1, 30_001)), encoding="utf-8"
+    )
+
+    with pytest.raises(ToolError) as excinfo:
+        await ReadFileTool().execute(
+            {"path": "big.log", "offset": 29_900},
+            ToolContext(working_directory=tmp_path),
+        )
+
+    message = str(excinfo.value)
+    assert "smaller offset" not in message
+    assert "exec_shell" in message
+
+
+@pytest.mark.asyncio
+async def test_read_file_rejects_binary_nul(tmp_path) -> None:
+    from deepseek_tui.tools.registry import ToolError
+
+    (tmp_path / "pic.bin").write_bytes(b"hello\x00world\n")
+    with pytest.raises(ToolError, match="not a UTF-8 text file"):
+        await ReadFileTool().execute(
+            {"path": "pic.bin"}, ToolContext(working_directory=tmp_path)
+        )

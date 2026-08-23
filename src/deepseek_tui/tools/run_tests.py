@@ -1,4 +1,8 @@
-"""Test runner tool (pytest/cargo/npm auto-detection)."""
+"""Test runner tool (pytest/cargo/npm auto-detection).
+
+Not registered in the default catalog (see ``build_default_registry``).
+Test commands go through ``exec_shell``.
+"""
 
 from __future__ import annotations
 

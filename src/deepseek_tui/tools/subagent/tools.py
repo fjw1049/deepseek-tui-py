@@ -94,6 +94,7 @@ def _result_to_json(result: SubAgentResult) -> dict[str, Any]:
         "steps_taken": result.steps_taken,
         "duration_ms": result.duration_ms,
         "from_prior_session": result.from_prior_session,
+        "max_steps_reached": result.max_steps_reached,
     }
 
 
@@ -695,10 +696,11 @@ class AgentTool(ToolSpec):
         if self._allow_resume:
             text += (
                 ". Alternatively, pass 'resume' with a sub-agent id (and no "
-                "'action' — the two are mutually exclusive) to resume a "
-                "cancelled/interrupted/failed sub-agent from its durable "
-                "transcript checkpoint, skipping completed tool rounds. Do "
-                "not spawn a new agent for the same work."
+                "'action' — the two are mutually exclusive) to continue that "
+                "child from its durable transcript. Prefer resume over "
+                "spawning a new agent when the work continues earlier work "
+                "the same child already did, or when its report did not "
+                "cover the assignment."
             )
         return text
 
@@ -826,10 +828,11 @@ class AgentTool(ToolSpec):
             schema["properties"]["resume"] = {
                 "type": "string",
                 "description": (
-                    "Resume a cancelled/interrupted/failed sub-agent by id, "
-                    "restarting it from its durable transcript checkpoint "
-                    "(completed tool rounds are skipped). Mutually exclusive "
-                    "with 'action' — pass only one."
+                    "Continue a sub-agent by id from its durable transcript "
+                    "(completed tool rounds are skipped). Use this for "
+                    "follow-up on the same child, including one that already "
+                    "reported, instead of spawning a new agent. Mutually "
+                    "exclusive with 'action' — pass only one."
                 ),
             }
             # 'action' stays effectively required, but 'resume' is the

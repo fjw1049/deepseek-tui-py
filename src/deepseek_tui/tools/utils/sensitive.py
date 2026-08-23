@@ -18,7 +18,19 @@ from pathlib import Path
 
 _ENV_TEMPLATES = frozenset({".env.example", ".env.sample", ".env.template"})
 _PRIVATE_KEY_NAMES = frozenset({"id_rsa", "id_dsa", "id_ecdsa", "id_ed25519"})
-_SECRET_BASENAMES = frozenset({"credentials", ".netrc", ".npmrc", ".pypirc"})
+_SECRET_BASENAMES = frozenset(
+    {
+        "credentials",
+        ".netrc",
+        ".npmrc",
+        ".pypirc",
+        ".envrc",
+        "secrets.json",
+        "secrets.yaml",
+        "secrets.yml",
+        ".secrets",
+    }
+)
 
 
 def is_sensitive_path(path: Path) -> bool:

@@ -1,6 +1,9 @@
 """Utility tools.
 
 Consolidates utility_tools.py.
+
+Not registered in the default catalog (see ``build_default_registry``).
+File listing and search go through ``file_search`` / ``grep_files``.
 """
 
 from __future__ import annotations

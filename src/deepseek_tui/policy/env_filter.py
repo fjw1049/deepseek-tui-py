@@ -29,6 +29,10 @@ _SECRET_SUFFIXES = (
     "_ACCESS_KEY_ID",
     "_PRIVATE_KEY",
     "_CREDENTIALS",
+    "_KEY",
+    # ``APIKEY`` (no underscore) covers ``DEEPSEEK_APIKEY`` / ``OPENAI_APIKEY``.
+    # ``_API_KEY`` above does not: those names do not end in ``_KEY``.
+    "APIKEY",
 )
 
 

@@ -3,13 +3,11 @@
 ``write_file`` replaces the whole file, so if the file moved on disk after
 the agent read it — a formatter ran, the user edited it, a shell command
 rewrote it, a parallel subagent touched it — the write destroys that change
-with no error and no trace the model can see. The tool description has
-always said "you must have used read_file on it earlier"; nothing enforced
-it, and nothing noticed when the read went out of date.
+with no error and no trace the model can see. If this session already
+read the file and it changed on disk, the write is refused.
 
-``edit_file`` is deliberately *not* guarded the same way: it only replaces
-text it matched, so a stale edit changes what it aimed at rather than
-everything else. It gets a better failure message instead.
+``edit_file`` uses the same stale check on the success path: a match is
+not enough if the file moved after this session last read it.
 """
 
 from __future__ import annotations
@@ -161,20 +159,18 @@ async def test_the_agents_own_edit_does_not_make_a_later_write_stale(
 
 
 @pytest.mark.asyncio
-async def test_a_stale_edit_that_still_matches_is_allowed(
+async def test_a_stale_edit_that_still_matches_is_refused(
     workspace: Path, ctx: ToolContext
 ) -> None:
-    """It replaces what it matched, not everything else — far weaker blast
-    radius than a full overwrite, so blocking it would cost more than it saves."""
+    """A leftover match must not cover up a concurrent append."""
     target = workspace / "c.py"
     target.write_text("keep me\nTARGET\n", encoding="utf-8")
     await _read(ctx, "c.py")
     _touch_externally(target, "keep me\nTARGET\nappended by someone else\n")
 
-    assert (await _edit(ctx, "c.py", "TARGET", "REPLACED")).success
-    text = target.read_text(encoding="utf-8")
-    assert "REPLACED" in text
-    assert "appended by someone else" in text
+    with pytest.raises(ToolError, match="changed on disk"):
+        await _edit(ctx, "c.py", "TARGET", "REPLACED")
+    assert "appended by someone else" in target.read_text(encoding="utf-8")
 
 
 @pytest.mark.asyncio

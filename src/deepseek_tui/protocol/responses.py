@@ -129,6 +129,10 @@ class StreamError(BaseModel):
 class StreamDone(BaseModel):
     type: Literal[StreamEventType.DONE] = StreamEventType.DONE
     usage: Usage | None = None
+    # The provider stopped because the output cap was reached
+    # (``finish_reason: "length"``), so this sample is a fragment. Without
+    # the flag a truncated answer is indistinguishable from a finished one.
+    truncated: bool = False
 
 
 StreamEvent = Annotated[

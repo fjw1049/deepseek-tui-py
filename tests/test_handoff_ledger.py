@@ -128,7 +128,7 @@ async def test_empty_completed_can_resume(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_usable_completed_still_cannot_resume(tmp_path: Path) -> None:
+async def test_usable_completed_can_resume(tmp_path: Path) -> None:
     from deepseek_tui.tools.subagent.manager import SubAgentManager
 
     mgr = SubAgentManager(workspace=tmp_path, executor=_stub_executor)
@@ -145,5 +145,8 @@ async def test_usable_completed_still_cannot_resume(tmp_path: Path) -> None:
     done.status = SubAgentStatus.completed()
     done.result = "### SUMMARY\n已修复 maintenance.py:228。"
     mgr._agents[done.id] = done
-    with pytest.raises(RuntimeError, match="already completed"):
-        await mgr.resume(done.id)
+    # Ledger still scores this completed so the parent is not told to resume
+    # every successful child; the call itself is allowed.
+    assert is_resumable(done.snapshot()) is False
+    snap = await mgr.resume(done.id)
+    assert snap.status.kind.value == "running"

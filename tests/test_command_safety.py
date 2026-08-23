@@ -15,8 +15,10 @@ def test_printenv_and_set_require_approval():
     assert _level("set") == SafetyLevel.REQUIRES_APPROVAL
 
 
-def test_find_plain_stays_safe():
-    assert _level("find . -name '*.py'") == SafetyLevel.SAFE
+def test_find_plain_requires_approval():
+    # find/fd are not auto-safe: -exec is too easy to hide behind the first word.
+    assert _level("find . -name '*.py'") == SafetyLevel.REQUIRES_APPROVAL
+    assert _level("fd -e py") == SafetyLevel.REQUIRES_APPROVAL
 
 
 def test_find_executing_or_writing_actions_require_approval():

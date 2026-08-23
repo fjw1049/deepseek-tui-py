@@ -63,7 +63,21 @@ STREAM_MAX_CONTENT_BYTES = 10 * 1024 * 1024
 MAX_TRANSPARENT_STREAM_RETRIES = 2
 # Separate from transport retries: the stream finished, but produced no
 # user-visible work. Thinking-only counts as empty here.
-MAX_EMPTY_RESPONSE_RESAMPLES = 2
+#
+# Ten, not two, because an empty response is a provider hiccup rather than a
+# verdict on the request: resampling costs one round-trip and usually works.
+# Kimi Code spends the same budget (DEFAULT_MAX_RETRY_ATTEMPTS = 10) and Grok
+# folds empties into a 15-attempt transport budget; a child that gave up after
+# two was the single largest source of runs that ended without a report.
+MAX_EMPTY_RESPONSE_RESAMPLES = 10
+# Separate again: the stream broke after emitting content. Transport retry
+# stays out of this case because a replay would duplicate the deltas already
+# buffered, so the sample is discarded first and then replayed here.
+#
+# Deliberately below the empty budget: every attempt throws away tokens the
+# provider already generated and billed, so the same generosity costs real
+# money here.
+MAX_MIDSTREAM_RESAMPLES = 5
 
 
 class EmptyResponseReason(enum.Enum):
@@ -104,6 +118,28 @@ def should_resample_empty(
     return reason is not None and not cancelled and fired < max_resamples
 
 
+def should_resample_midstream(
+    *,
+    any_content_received: bool,
+    fired: int,
+    cancelled: bool,
+    retryable: bool,
+    max_resamples: int = MAX_MIDSTREAM_RESAMPLES,
+) -> bool:
+    """Replay a stream that broke *after* it had already emitted content.
+
+    Complement of ``_should_transparently_retry``, which deliberately covers
+    only the pre-content case. Here the caller must discard the partial
+    sample first, otherwise the replay appends duplicate deltas.
+    """
+    return (
+        retryable
+        and any_content_received
+        and not cancelled
+        and fired < max_resamples
+    )
+
+
 # Compact callback may return a bare message list or
 # ``(messages, bridge_text)``. The bridge is already embedded as a leading
 # user message — do NOT mutate system_prompt (that destroys the KV prefix).
@@ -141,6 +177,11 @@ class TurnResult:
     outcome: TurnOutcomeStatus = TurnOutcomeStatus.SUCCESS
     error_message: str | None = None
     tool_round_count: int = 0
+    # The output cap cut the sample short. The turn still SUCCEEDs — the
+    # transport did its job — but the content is a fragment, and re-sampling
+    # the same request would truncate at the same place, so the decision of
+    # what a fragment is worth belongs to the caller.
+    truncated: bool = False
 
 
 @dataclass
@@ -219,6 +260,8 @@ class TurnLoop:
         # any content is received, spinning forever.
         transparent_retries = 0
         empty_resamples = 0
+        midstream_resamples = 0
+        truncated = False
         trace = get_turn_latency(latency_turn_id) if latency_turn_id else None
         round_trace = trace.current_round() if trace is not None else None
         if round_trace is not None and round_trace.round_idx != round_idx:
@@ -341,6 +384,7 @@ class TurnLoop:
             # Attempt to stream response with timeout guards
             try:
                 any_content_received = False
+                truncated = False
                 stream_start = time.monotonic()
                 content_bytes = 0
                 fake_filter = FakeWrapperFilter()
@@ -464,6 +508,28 @@ class TurnLoop:
                                 stream_event.message,
                             )
                             break  # break inner loop to retry
+                        # The stream broke mid-answer. Replaying onto the
+                        # existing buffer would append duplicate deltas and
+                        # surface the doubled partial as SUCCESS, so drop the
+                        # half sample and re-request from scratch. Deltas
+                        # already yielded stay on screen; the persisted
+                        # message is the last attempt only.
+                        if should_resample_midstream(
+                            any_content_received=any_content_received,
+                            fired=midstream_resamples,
+                            cancelled=cancel_event.is_set(),
+                            retryable=stream_event.retryable,
+                        ):
+                            midstream_resamples += 1
+                            logger.warning(
+                                "stream_midstream_resample attempt=%d/%d reason=%s",
+                                midstream_resamples,
+                                MAX_MIDSTREAM_RESAMPLES,
+                                stream_event.message,
+                            )
+                            buffer = AssistantResponseBuffer()
+                            tool_calls = []
+                            break  # replay a clean stream
                         logger.warning(
                             "stream_error_emit message=%s retryable=%s",
                             stream_event.message,
@@ -475,10 +541,6 @@ class TurnLoop:
                                 retryable=stream_event.retryable,
                             )
                         )
-                        # Fail the turn now. Continuing to consume would let
-                        # the client-level retry replay the whole stream and
-                        # append duplicate deltas onto the existing buffer,
-                        # then surface the partial turn as SUCCESS.
                         return TurnResult(
                             assistant_message=buffer.build_message(),
                             usage=usage,
@@ -489,6 +551,7 @@ class TurnLoop:
                         )
                     elif isinstance(stream_event, StreamDone):
                         usage = stream_event.usage
+                        truncated = stream_event.truncated
                         mark_llm_stream_end()
                         if not stream_done_logged:
                             stream_done_logged = True
@@ -588,6 +651,23 @@ class TurnLoop:
                         state.stream_retry_attempts, MAX_STREAM_RETRIES,
                     )
                     continue
+                # Idling out mid-answer is the long-reasoning failure mode.
+                # Same rule as a mid-stream error: drop the half sample, replay.
+                if should_resample_midstream(
+                    any_content_received=any_content_received,
+                    fired=midstream_resamples,
+                    cancelled=cancel_event.is_set(),
+                    retryable=True,
+                ):
+                    midstream_resamples += 1
+                    logger.warning(
+                        "stream_midstream_resample attempt=%d/%d reason=timeout",
+                        midstream_resamples,
+                        MAX_MIDSTREAM_RESAMPLES,
+                    )
+                    buffer = AssistantResponseBuffer()
+                    tool_calls = []
+                    continue
                 await emit(ErrorEvent(message=msg, retryable=False))
                 return TurnResult(
                     assistant_message=buffer.build_message(),
@@ -614,6 +694,10 @@ class TurnLoop:
                     await emit(
                         ErrorEvent(message="Stream interrupted, retrying...", retryable=True)
                     )
+                    # Content already buffered would be duplicated by the
+                    # replay; the partial sample is worth less than a clean one.
+                    buffer = AssistantResponseBuffer()
+                    tool_calls = []
                     continue
                 else:
                     await emit(ErrorEvent(message=err_msg, retryable=False))
@@ -631,6 +715,7 @@ class TurnLoop:
             tool_calls=tool_calls,
             cancelled=False,
             outcome=TurnOutcomeStatus.SUCCESS,
+            truncated=truncated,
         )
 
 

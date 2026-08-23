@@ -156,8 +156,13 @@ _REAL_SUMMARY = [
 
 @pytest.mark.asyncio
 async def test_stalled_round_triggers_forced_summary(tmp_path: Path) -> None:
-    """A reasoning-only stall must survive empty-resample, then the tools-off
-    summary nudge, rather than surfacing the stall fragment."""
+    """A reasoning-only stall must survive empty-resample and never surface the
+    stall fragment as the deliverable.
+
+    One stall keeps the tool catalog so the child can still resume; the tools-off
+    summary fallback only arrives once MAX_SUBAGENT_EMPTY_ROUNDS of them are
+    spent, which ``test_subagent_stall_retry.py`` covers.
+    """
     clients: list[_ScriptedClient] = []
     snapshot = await _run_single_subagent(
         [
@@ -180,7 +185,7 @@ async def test_stalled_round_triggers_forced_summary(tmp_path: Path) -> None:
     stall_calls = 1 + MAX_EMPTY_RESPONSE_RESAMPLES
     assert client.calls == stall_calls + 1
     assert all(req.tools for req in client.requests[:stall_calls])
-    assert not client.requests[stall_calls].tools
+    assert client.requests[stall_calls].tools, "the stall confiscated the tools"
 
 
 @pytest.mark.asyncio

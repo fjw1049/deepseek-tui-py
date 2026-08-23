@@ -86,7 +86,7 @@ class SafetyAnalysis:
 # credentials.
 SAFE_COMMANDS = {
     "ls", "dir", "pwd", "cat", "head", "tail", "less", "more", "grep", "rg", "ag",
-    "find", "fd", "which", "whereis", "type", "echo", "printf", "date", "cal",
+    "which", "whereis", "type", "echo", "printf", "date", "cal",
     "uptime", "whoami", "id", "hostname", "uname", "ps",
     "top", "htop", "df", "du", "free", "vmstat", "wc", "sort", "uniq", "cut", "tr",
     "stat", "file", "tree", "lsof", "lsblk", "blkid",
@@ -218,8 +218,8 @@ def analyze_command(command: str) -> SafetyAnalysis:
     # Check if it's a known safe command (read-only)
     first_word = command_trimmed.split()[0] if command_trimmed.split() else ""
 
-    # find with action flags (-exec/-delete/-fprint ...) executes commands
-    # or writes/deletes files — not read-only even though plain find is.
+    # find is no longer auto-safe. Keep the action-flag check so -exec
+    # still gets a specific reason if it is re-added to SAFE later.
     if first_word == "find" and _find_has_dangerous_action(command_trimmed):
         return SafetyAnalysis.requires_approval(
             command,

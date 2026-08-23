@@ -645,7 +645,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         discovery 的工具也能按 server 级放行（修白名单竞态：lazy server 在
         首次工具调用前 tool 名未知，按 server 名前缀匹配兜底放行）。
 
-        连接器聚焦不仅查询连接器，还要能对工作区动手（kernel 含写/exec/web）。
+        连接器聚焦不仅查询连接器，还要能对工作区动手（kernel：读改搜跑）。
         """
         tool_names = frozenset(
             self._server_tool_names(server) | FOCUS_MCP_BASE
