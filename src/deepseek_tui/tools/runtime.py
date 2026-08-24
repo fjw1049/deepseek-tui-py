@@ -158,7 +158,7 @@ def build_subagent_manager(
         max_agents=max_agents,
         state_path=resolved_state_path,
         mailbox=mailbox,
-        executor=_safe_subagent_executor(),
+        executor=_safe_subagent_executor(cfg),
         default_model=default_runtime_model(
             cfg, override=cfg.subagents.default_model
         ),
@@ -220,7 +220,7 @@ async def create_tool_runtime(
             trust_mode=getattr(cfg, "trust_mode", False),
             worker_count=1,
         )
-        task_exec = _safe_task_executor()
+        task_exec = _safe_task_executor(cfg)
         task_manager = TaskManager(task_cfg, executor=task_exec)
         await task_manager.start()
 
@@ -419,43 +419,56 @@ async def create_tool_runtime(
     )
 
 
-def _has_api_key() -> bool:
-    """Check if a DeepSeek API key is available for real executors."""
+def _has_api_key(cfg: Config | None = None) -> bool:
+    """Check if an API key is available for real executors.
+
+    Uses the same resolution chain as ``build_llm_client`` (env ->
+    ``[providers.<provider>]`` -> top-level) so a session provider switch
+    (e.g. ``provider = "endpoint"`` with its own key) keeps real
+    sub-agent/task executors instead of silently degrading to stubs.
+    """
     import os
+
+    from deepseek_tui.state.secrets import SecretsManager
 
     if os.environ.get("DEEPSEEK_API_KEY"):
         return True
     try:
         from deepseek_tui.config.loader import ConfigLoader
 
-        cfg = ConfigLoader().load()
-        if cfg.api_key:
-            return True
-        pc = cfg.effective_provider_config()
-        if pc.api_key:
-            return True
+        config = cfg or ConfigLoader().load()
+        return bool(SecretsManager().resolve_api_key(config))
     except Exception:  # noqa: BLE001
-        pass
-    return False
+        return False
 
 
-def _safe_task_executor() -> Any:
+def _safe_task_executor(cfg: Config | None = None) -> Any:
     """Return real executor if API key available, else stub."""
-    if _has_api_key():
+    if _has_api_key(cfg):
         from deepseek_tui.tools.task import get_real_task_executor
 
         return get_real_task_executor()
+    logger.warning(
+        "Task executor degraded to stub: no API key resolvable for "
+        "provider '%s'; durable tasks will return synthetic results.",
+        getattr(cfg, "provider", "<unset>"),
+    )
     from deepseek_tui.tools.task import _stub_executor
 
     return _stub_executor
 
 
-def _safe_subagent_executor() -> Any:
+def _safe_subagent_executor(cfg: Config | None = None) -> Any:
     """Return real executor if API key available, else stub."""
-    if _has_api_key():
+    if _has_api_key(cfg):
         from deepseek_tui.tools.subagent import get_real_subagent_executor
 
         return get_real_subagent_executor()
+    logger.warning(
+        "Sub-agent executor degraded to stub: no API key resolvable for "
+        "provider '%s'; spawned agents will return synthetic results.",
+        getattr(cfg, "provider", "<unset>"),
+    )
     from deepseek_tui.tools.subagent import _stub_executor
 
     return _stub_executor
