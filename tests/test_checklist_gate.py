@@ -244,6 +244,20 @@ def test_gate_reminder_does_not_offer_in_progress_as_a_resting_state() -> None:
     assert "closed as cancelled" in body
 
 
+def test_gate_reminder_does_not_ask_to_rewrite_or_anchor_a_held_stop() -> None:
+    """Tracking-only keeps the first stop; real work writes one new answer.
+
+    The harness already preserves a held stop when the next batch is
+    checklist-only. The reminder must not tell the model to rewrite that
+    reply, and must not tell it to treat the first stop as canon after
+    real tools run — that would lock in a stale report.
+    """
+    body = CHECKLIST_GATE_REMINDER.format(open_summary="#2 in_progress")
+    assert "do not rewrite that reply" in body
+    assert "treat the previous reply as a draft" in body
+    assert "one complete final answer" in body
+
+
 @pytest.mark.asyncio
 async def test_reconcile_cancels_open_items_only() -> None:
     from deepseek_tui.tools.todo import reconcile_open_checklist_items

@@ -559,7 +559,9 @@ LONG_SESSION_REMINDER = (
 # open item before ending, so a "wrote the plan, did the work, forgot to
 # track it" turn cannot slip through silently. Re-fires while each block
 # moves the checklist forward and releases once one changes nothing; see
-# Engine._next_checklist_gate_summary.
+# Engine._next_checklist_gate_summary. The draft/one-final-answer clause
+# is prompt-only: tracking-only still keeps the held stop in the
+# orchestrator; real work still discards it.
 CHECKLIST_GATE_REMINDER = (
     "Before ending the turn — your checklist still has open items "
     "({open_summary}). Resolve each one now:\n"
@@ -573,8 +575,12 @@ CHECKLIST_GATE_REMINDER = (
     "Never mark an item completed while its tests fail or its implementation "
     "is partial — cancel it with the reason instead. Items still open when "
     "the turn ends are closed as cancelled, so leaving one open without "
-    "explanation reads to the user as work silently dropped. Do not mention "
-    "this reminder to the user."
+    "explanation reads to the user as work silently dropped. If you already "
+    "wrote a user-facing reply and only tracking is left, update the "
+    "checklist and stop — do not rewrite that reply. If more work remains, "
+    "treat the previous reply as a draft and write one complete final "
+    "answer when you actually stop. Do not mention this reminder to the "
+    "user."
 )
 
 
