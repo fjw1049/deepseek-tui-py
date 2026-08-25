@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { openWorkspaceFilePreferInApp, uniqueWorkspaceRoots } from './open-workspace-file'
+import {
+  openWorkspaceFilePreferInApp,
+  orderRootsForPath,
+  uniqueWorkspaceRoots
+} from './open-workspace-file'
 
 describe('open workspace file prefer in-app', () => {
   afterEach(() => {
@@ -7,91 +11,44 @@ describe('open workspace file prefer in-app', () => {
     vi.restoreAllMocks()
   })
 
-  it('opens in-app only when the file exists in the current project', async () => {
+  it('opens the first root that the in-app editor can load', async () => {
     const openInApp = vi.fn(async () => true)
-    const openEditorPath = vi.fn(async () => ({ ok: true, path: 'src/app.ts' }))
-    vi.stubGlobal('window', {
-      dsGui: {
-        resolveWorkspaceFile: vi.fn(async () => ({ ok: true, path: '/proj/src/app.ts' })),
-        openEditorPath
-      }
-    })
 
     await expect(
       openWorkspaceFilePreferInApp({ path: 'src/app.ts', line: 4 }, '/proj', openInApp)
     ).resolves.toBe('in-app')
     expect(openInApp).toHaveBeenCalledWith('src/app.ts', '/proj', 4, undefined)
+  })
+
+  it('tries the thread root when the project root cannot open the file', async () => {
+    const openInApp = vi.fn(async (_path: string, root: string) => root === '/tmp/session')
+
+    await expect(
+      openWorkspaceFilePreferInApp({ path: 'a.ts' }, ['/proj', '/tmp/session'], openInApp)
+    ).resolves.toBe('in-app')
+    expect(openInApp).toHaveBeenNthCalledWith(1, 'a.ts', '/proj', undefined, undefined)
+    expect(openInApp).toHaveBeenNthCalledWith(2, 'a.ts', '/tmp/session', undefined, undefined)
+  })
+
+  it('does not open VS Code or Finder from the file-open path', async () => {
+    const openInApp = vi.fn(async () => false)
+    const openEditorPath = vi.fn(async () => ({ ok: true, path: 'src/app.ts' }))
+    const showItemInFolder = vi.fn(async () => undefined)
+    vi.stubGlobal('window', {
+      dsGui: { openEditorPath, showItemInFolder }
+    })
+
+    await expect(
+      openWorkspaceFilePreferInApp({ path: 'src/app.ts' }, '/proj', openInApp)
+    ).resolves.toBe('none')
     expect(openEditorPath).not.toHaveBeenCalled()
+    expect(showItemInFolder).not.toHaveBeenCalled()
   })
 
-  it('opens VS Code without touching the in-app editor when the file is outside the project', async () => {
-    const openInApp = vi.fn(async () => true)
-    const openEditorPath = vi.fn(async () => ({ ok: true, path: '/other/a.ts' }))
-    vi.stubGlobal('window', {
-      dsGui: {
-        resolveWorkspaceFile: vi.fn(async () => ({
-          ok: false,
-          message: 'Path must stay within the selected workspace'
-        })),
-        openEditorPath
-      }
-    })
-
-    await expect(
-      openWorkspaceFilePreferInApp({ path: '/other/a.ts' }, '/proj', openInApp)
-    ).resolves.toBe('external')
-    expect(openInApp).not.toHaveBeenCalled()
-    expect(openEditorPath).toHaveBeenCalledWith(
-      expect.objectContaining({
-        path: '/other/a.ts',
-        workspaceRoot: '/proj',
-        allowOutsideWorkspace: true,
-        searchRoots: ['/proj']
-      })
-    )
-  })
-
-  it('opens VS Code when the file is not in the current project', async () => {
-    const openInApp = vi.fn(async () => true)
-    const openEditorPath = vi.fn(async () => ({ ok: true, path: 'missing.ts' }))
-    vi.stubGlobal('window', {
-      dsGui: {
-        resolveWorkspaceFile: vi.fn(async () => ({
-          ok: false,
-          message: 'File not found: missing.ts'
-        })),
-        openEditorPath
-      }
-    })
-
-    await expect(
-      openWorkspaceFilePreferInApp({ path: 'missing.ts' }, '/proj', openInApp)
-    ).resolves.toBe('external')
-    expect(openInApp).not.toHaveBeenCalled()
-    expect(openEditorPath).toHaveBeenCalled()
-  })
-
-  it('passes extra roots so VS Code can open a file outside the current project', async () => {
-    const openInApp = vi.fn(async () => true)
-    const openEditorPath = vi.fn(async () => ({ ok: true, path: '/tmp/session/a.ts' }))
-    vi.stubGlobal('window', {
-      dsGui: {
-        resolveWorkspaceFile: vi.fn(async () => ({ ok: false, message: 'File not found' })),
-        openEditorPath
-      }
-    })
-
-    await expect(
-      openWorkspaceFilePreferInApp({ path: 'a.ts' }, '/proj', openInApp, ['/tmp/session'])
-    ).resolves.toBe('external')
-    expect(openInApp).not.toHaveBeenCalled()
-    expect(openEditorPath).toHaveBeenCalledWith(
-      expect.objectContaining({
-        path: 'a.ts',
-        allowOutsideWorkspace: true,
-        searchRoots: ['/tmp/session', '/proj']
-      })
-    )
+  it('prefers the workspace root that already contains an absolute file', () => {
+    expect(
+      orderRootsForPath('/proj/src/app.ts', ['/tmp/session', '/proj', '/proj/src'])
+    ).toEqual(['/proj/src', '/proj', '/tmp/session'])
   })
 
   it('deduplicates workspace roots', () => {

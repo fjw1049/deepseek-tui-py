@@ -46,6 +46,7 @@ describe('workspace-service boundary checks', () => {
     expect(result.ok).toBe(true)
     if (result.ok) {
       expect(result.path).toBe(await realpath(join(workspaceRoot, 'inside.txt')))
+      expect(result.kind).toBe('file')
     }
   })
 
@@ -83,6 +84,19 @@ describe('workspace-service boundary checks', () => {
     expect(result.ok).toBe(true)
     if (result.ok) {
       expect(result.path).toBe(await realpath(join(workspaceRoot, 'src', 'nested.ts')))
+      expect(result.kind).toBe('file')
+    }
+  })
+
+  it('resolves a workspace directory with kind directory', async () => {
+    await mkdir(join(workspaceRoot, 'src'), { recursive: true })
+    const result = await resolveWorkspaceFile({
+      path: 'src',
+      workspaceRoot
+    })
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      expect(result.kind).toBe('directory')
     }
   })
 
@@ -106,6 +120,15 @@ describe('workspace-service boundary checks', () => {
   it('resolves an outside file for the external editor without workspace bounds', async () => {
     const result = await resolveExternalEditorPath(outsideFile, [workspaceRoot])
     expect(result).toBe(resolve(outsideFile))
+  })
+
+  it('does not invent a missing path for the external editor', async () => {
+    await expect(resolveExternalEditorPath('missing.ts', [workspaceRoot])).rejects.toThrow(
+      'File not found'
+    )
+    await expect(resolveExternalEditorPath(workspaceRoot, [workspaceRoot])).rejects.toThrow(
+      'File not found'
+    )
   })
 
   it('lists the workspace root directory', async () => {

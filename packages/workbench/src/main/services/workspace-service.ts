@@ -708,9 +708,13 @@ export async function resolveExternalEditorPath(
   if (candidates.length === 0) addCandidate(expanded)
 
   for (const candidate of candidates) {
-    if (await pathExists(candidate)) return candidate
+    try {
+      if ((await stat(candidate)).isFile()) return candidate
+    } catch {
+      /* try the next candidate */
+    }
   }
-  return candidates[0] ?? resolve(expanded)
+  throw new Error(`File not found: ${rawPath}`)
 }
 
 function formatPathForEditor(targetPath: string, line?: number, column?: number): string {
@@ -1012,7 +1016,8 @@ export async function resolveWorkspaceFile(
     }
 
     const targetPath = await resolveOpenTargetPath(payload.path, payload.workspaceRoot)
-    return { ok: true, path: targetPath }
+    const kind = (await stat(targetPath)).isDirectory() ? 'directory' : 'file'
+    return { ok: true, path: targetPath, kind }
   } catch (error) {
     return {
       ok: false,

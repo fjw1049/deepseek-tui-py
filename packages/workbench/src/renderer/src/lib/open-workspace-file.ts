@@ -1,4 +1,4 @@
-import { openWorkspacePathInEditor, type WorkspacePathTarget } from './open-workspace-path'
+import type { WorkspacePathTarget } from './open-workspace-path'
 
 export function uniqueWorkspaceRoots(...roots: Array<string | undefined>): string[] {
   const seen = new Set<string>()
@@ -14,22 +14,23 @@ export function uniqueWorkspaceRoots(...roots: Array<string | undefined>): strin
   return unique
 }
 
-export async function canOpenWorkspaceFileInApp(
-  path: string,
-  workspaceRoot?: string
-): Promise<boolean> {
-  const root = workspaceRoot?.trim() ?? ''
-  if (!root || !path.trim()) return false
-  if (typeof window.dsGui?.resolveWorkspaceFile !== 'function') return false
-  try {
-    const result = await window.dsGui.resolveWorkspaceFile({
-      path,
-      workspaceRoot: root
-    })
-    return result.ok
-  } catch {
-    return false
+function normalizePathKey(value: string): string {
+  return value.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
+}
+
+/** Prefer the workspace root that already contains an absolute file path. */
+export function orderRootsForPath(path: string, roots: string[]): string[] {
+  const target = normalizePathKey(path)
+  if (!target.startsWith('/') && !/^[a-z]:\//.test(target)) return roots
+  const containing: string[] = []
+  const rest: string[] = []
+  for (const root of roots) {
+    const key = normalizePathKey(root)
+    if (target === key || target.startsWith(`${key}/`)) containing.push(root)
+    else rest.push(root)
   }
+  containing.sort((left, right) => right.length - left.length)
+  return [...containing, ...rest]
 }
 
 export async function openWorkspaceFilePreferInApp(
@@ -40,21 +41,17 @@ export async function openWorkspaceFilePreferInApp(
     root: string,
     line?: number,
     column?: number
-  ) => Promise<boolean>,
-  externalRoots?: string[]
-): Promise<'in-app' | 'external'> {
-  const roots = uniqueWorkspaceRoots(
-    ...(Array.isArray(workspaceRoot) ? workspaceRoot : [workspaceRoot])
+  ) => Promise<boolean>
+): Promise<'in-app' | 'none'> {
+  const roots = orderRootsForPath(
+    target.path,
+    uniqueWorkspaceRoots(
+      ...(Array.isArray(workspaceRoot) ? workspaceRoot : [workspaceRoot])
+    )
   )
   for (const root of roots) {
-    if (!(await canOpenWorkspaceFileInApp(target.path, root))) continue
     const opened = await openInApp(target.path, root, target.line, target.column)
     if (opened) return 'in-app'
   }
-  const searchRoots = uniqueWorkspaceRoots(...(externalRoots ?? []), ...roots)
-  await openWorkspacePathInEditor(target, searchRoots[0], {
-    allowOutsideWorkspace: true,
-    searchRoots
-  })
-  return 'external'
+  return 'none'
 }

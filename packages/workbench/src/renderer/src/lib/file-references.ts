@@ -1,4 +1,4 @@
-import { looksLikeDirectoryPath } from './file-chip'
+import { classifyWorkspacePath } from './file-chip'
 import { isMaterialRecognizedFile } from './file-icon'
 
 export type FileReferenceTarget = {
@@ -126,10 +126,10 @@ export function findFileReferences(text: string): FileReferenceMatch[] {
     ...collectMatches(text, PATH_WITH_SEPARATOR, false),
     ...collectMatches(text, PATH_BARE_FILE, false),
     ...collectMatches(text, PATH_DIRECTORY, false)
-  ]).filter(
-    (match) =>
-      looksLikeDirectoryPath(match.target.path) || isMaterialRecognizedFile(match.target.path)
-  )
+  ]).filter((match) => {
+    if (isMaterialRecognizedFile(match.target.path)) return true
+    return classifyWorkspacePath(match.target.path) === 'directory'
+  })
 }
 
 export function createFileReferenceHref(target: FileReferenceTarget): string {

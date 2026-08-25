@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   basenameOfPath,
+  classifyWorkspacePath,
   formatFileLineRange,
   looksLikeDirectoryPath,
   looksLikeFilePath,
@@ -48,5 +49,16 @@ describe('file-chip helpers', () => {
     expect(looksLikeDirectoryPath('~/.deepseek/agents/registries/')).toBe(true)
     expect(looksLikeDirectoryPath('~/.deepseek/agents/registries')).toBe(true)
     expect(looksLikeDirectoryPath('src/foo.ts')).toBe(false)
+    expect(looksLikeDirectoryPath('/Users/demo/src/app.ts')).toBe(false)
+  })
+
+  it('classifies files and folders without mixing them', () => {
+    expect(classifyWorkspacePath('src/app.ts')).toBe('file')
+    expect(classifyWorkspacePath('/Users/demo/src/app.ts')).toBe('file')
+    expect(classifyWorkspacePath('Makefile')).toBe('file')
+    expect(classifyWorkspacePath('~/.deepseek/agents/registries/')).toBe('directory')
+    expect(classifyWorkspacePath('~/.deepseek/agents/registries')).toBe('directory')
+    expect(classifyWorkspacePath('src/app.ts', 'directory')).toBe('file')
+    expect(classifyWorkspacePath('~/.deepseek/agents/registries', 'file')).toBe('file')
   })
 })

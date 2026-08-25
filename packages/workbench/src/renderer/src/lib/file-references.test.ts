@@ -29,6 +29,12 @@ describe('findFileReferences', () => {
     ])
   })
 
+  it('keeps absolute source files as files, not directories', () => {
+    expect(
+      findFileReferences('see /Users/demo/src/app.ts please').map((m) => m.target.path)
+    ).toEqual(['/Users/demo/src/app.ts'])
+  })
+
   it('linkifies home and absolute directory paths', () => {
     expect(
       findFileReferences('check ~/.deepseek/agents/registries/ then continue').map((m) => m.target.path)

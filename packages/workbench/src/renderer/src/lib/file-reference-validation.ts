@@ -57,37 +57,49 @@ export function useValidatedFileReference(
   target: FileReferenceTarget | null,
   workspaceRoot?: string
 ): ValidationState {
-  const key = useMemo(() => cacheKey(target, workspaceRoot), [target, workspaceRoot])
+  const path = target?.path ?? ''
+  const line = target?.line
+  const column = target?.column
+  const key = useMemo(
+    () => cacheKey(path ? { path, line, column } : null, workspaceRoot),
+    [column, line, path, workspaceRoot]
+  )
   const [state, setState] = useState<ValidationState>(() => {
-    if (!target?.path) return { status: 'idle' }
+    if (!path) return { status: 'idle' }
     const cached = validationCache.get(key)
-    if (!cached) return { status: 'pending' }
-    if (cached instanceof Promise) return { status: 'pending' }
+    if (!cached || cached instanceof Promise) return { status: 'pending' }
     return cached
   })
 
   useEffect(() => {
-    if (!target?.path) {
-      setState({ status: 'idle' })
+    if (!path) {
+      setState((prev) => (prev.status === 'idle' ? prev : { status: 'idle' }))
       return
     }
 
     const cached = validationCache.get(key)
     if (cached && !(cached instanceof Promise)) {
-      setState(cached)
+      setState((prev) => (prev === cached ? prev : cached))
       return
     }
 
     let cancelled = false
-    setState({ status: 'pending' })
-    void validateFileReference(target, workspaceRoot).then((next) => {
+    setState((prev) => (prev.status === 'pending' ? prev : { status: 'pending' }))
+    void validateFileReference(
+      {
+        path,
+        ...(line && line > 0 ? { line } : {}),
+        ...(column && column > 0 ? { column } : {})
+      },
+      workspaceRoot
+    ).then((next) => {
       if (!cancelled) setState(next)
     })
 
     return () => {
       cancelled = true
     }
-  }, [key, target, workspaceRoot])
+  }, [column, key, line, path, workspaceRoot])
 
   return state
 }

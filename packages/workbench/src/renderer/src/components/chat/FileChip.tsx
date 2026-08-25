@@ -1,8 +1,8 @@
-import type { MouseEvent, ReactElement, ReactNode } from 'react'
+import { useMemo, type MouseEvent, type ReactElement, type ReactNode } from 'react'
 import {
   basenameOfPath,
+  classifyWorkspacePath,
   formatFileLineRange,
-  looksLikeDirectoryPath,
   parseComposerPathMentions
 } from '../../lib/file-chip'
 import { useValidatedFileReference } from '../../lib/file-reference-validation'
@@ -18,7 +18,7 @@ export function FileTypeIcon({
   path: string
   className?: string
 }): ReactElement {
-  return <FileKindIcon path={path} directory={looksLikeDirectoryPath(path)} className={className} />
+  return <FileKindIcon path={path} directory={classifyWorkspacePath(path) === 'directory'} className={className} />
 }
 
 export type FileChipProps = {
@@ -42,10 +42,16 @@ export function FileChip({
   skipValidation = false
 }: FileChipProps): ReactElement {
   const workspaceRoot = useThreadFilesystemRoot()
-  const target = { path, ...(line && line > 0 ? { line } : {}) }
-  const validation = useValidatedFileReference(skipValidation ? null : target, workspaceRoot || undefined)
-  const resolvedPath = validation.status === 'valid' ? validation.path : path
-  const directory = looksLikeDirectoryPath(path)
+  const target = useMemo(
+    () => (skipValidation ? null : { path, ...(line && line > 0 ? { line } : {}) }),
+    [line, path, skipValidation]
+  )
+  const validation = useValidatedFileReference(target, workspaceRoot || undefined)
+  const kind = classifyWorkspacePath(
+    path,
+    validation.status === 'valid' ? validation.kind : undefined
+  )
+  const directory = kind === 'directory'
   const name = label ?? basenameOfPath(path)
   const lineLabel = formatFileLineRange(line, endLine)
   const title = `${path}${formatFileLineRange(line, endLine)}`
@@ -68,13 +74,17 @@ export function FileChip({
   const activate = (event: MouseEvent<HTMLButtonElement>): void => {
     event.preventDefault()
     event.stopPropagation()
-    if (directory) {
+    if (kind === 'directory') {
       void revealWorkspacePathInFolder(path)
       return
     }
-    const resolved = { path: resolvedPath, ...(line && line > 0 ? { line } : {}) }
+    const openPath =
+      validation.status === 'valid' && validation.kind !== 'directory' && validation.path
+        ? validation.path
+        : path
     previewWorkspaceFile({
-      ...resolved,
+      path: openPath,
+      ...(line && line > 0 ? { line } : {}),
       workspaceRoot: workspaceRoot || undefined
     })
   }

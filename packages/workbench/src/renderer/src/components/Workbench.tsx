@@ -48,10 +48,7 @@ import {
   createTerminalSessionForWorkspace,
   useTerminalSessionStore
 } from '../store/terminal-session-store'
-import {
-  normalizeEditorPathForTab,
-  useWorkspaceEditorStore
-} from '../store/workspace-editor-store'
+import { useWorkspaceEditorStore } from '../store/workspace-editor-store'
 import { useWorkspaceFsWatch } from '../hooks/use-workspace-fs-watch'
 import {
   isChatsWorkspace,
@@ -554,17 +551,12 @@ export function Workbench(): ReactElement {
       line?: number,
       column?: number
     ): Promise<boolean> => {
-      const opened = await openEditorFile(path, workspaceRoot, line, column)
-      if (!opened) {
-        useWorkspaceEditorStore.getState().closeTab(normalizeEditorPathForTab(path))
-        return false
-      }
       if (layoutMode === 'ide') {
         setRequestedIdeCenterTab('files')
       } else {
         openRightSidebar('editor')
       }
-      return true
+      return openEditorFile(path, workspaceRoot, line, column)
     },
     [layoutMode, openEditorFile, openRightSidebar]
   )
@@ -579,9 +571,8 @@ export function Workbench(): ReactElement {
       }
       void openWorkspaceFilePreferInApp(
         { path, ...(line && line > 0 ? { line } : {}) },
-        uniqueWorkspaceRoots(activeWorkspaceRoot),
-        openInAppEditorSurface,
-        uniqueWorkspaceRoots(threadFilesystemRoot)
+        uniqueWorkspaceRoots(activeWorkspaceRoot, threadFilesystemRoot),
+        openInAppEditorSurface
       )
     },
     [activeWorkspaceRoot, layoutMode, openInAppEditorSurface, threadFilesystemRoot]
@@ -753,27 +744,28 @@ export function Workbench(): ReactElement {
     const openEditorTarget = (
       path: string,
       projectRoots: string[],
-      externalRoots: string[],
       line?: number,
       column?: number
     ): void => {
       void openWorkspaceFilePreferInApp(
         { path, ...(line && line > 0 ? { line } : {}), ...(column && column > 0 ? { column } : {}) },
         projectRoots,
-        openInAppEditorSurface,
-        externalRoots
+        openInAppEditorSurface
       )
     }
 
     const onPreview = (event: Event): void => {
       const detail = (event as CustomEvent<WorkspaceFilePreviewDetail>).detail
       if (!detail?.path) return
-      const roots = uniqueWorkspaceRoots(activeWorkspaceRoot)
-      const externalRoots = uniqueWorkspaceRoots(threadFilesystemRoot, detail.workspaceRoot)
+      const roots = uniqueWorkspaceRoots(
+        activeWorkspaceRoot,
+        threadFilesystemRoot,
+        detail.workspaceRoot
+      )
       const root = roots[0] ?? ''
       if (isHtmlPreviewPath(detail.path) && root) {
         if (layoutMode === 'ide') {
-          openEditorTarget(detail.path, roots, externalRoots, detail.line, detail.column)
+          openEditorTarget(detail.path, roots, detail.line, detail.column)
           return
         }
         openRightSidebar('preview')
@@ -792,7 +784,7 @@ export function Workbench(): ReactElement {
             })
             if (!result.ok) {
               console.error('[html-preview]', result.message)
-              openEditorTarget(detail.path, roots, externalRoots, detail.line, detail.column)
+              openEditorTarget(detail.path, roots, detail.line, detail.column)
               return
             }
             setBrowsePreviewUrl(null)
@@ -800,12 +792,12 @@ export function Workbench(): ReactElement {
             setWorkspacePreviewPath(detail.path)
           } catch (error) {
             console.error('[html-preview] failed to resolve preview URL', error)
-            openEditorTarget(detail.path, roots, externalRoots, detail.line, detail.column)
+            openEditorTarget(detail.path, roots, detail.line, detail.column)
           }
         })()
         return
       }
-      openEditorTarget(detail.path, roots, externalRoots, detail.line, detail.column)
+      openEditorTarget(detail.path, roots, detail.line, detail.column)
     }
 
     window.addEventListener(WORKSPACE_FILE_PREVIEW_EVENT, onPreview)

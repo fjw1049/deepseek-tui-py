@@ -31,13 +31,27 @@ export function looksLikeFilePath(value: string): boolean {
   return isMaterialRecognizedFile(path)
 }
 
-export function looksLikeDirectoryPath(value: string): boolean {
+const FILE_EXTENSION_RE = /\.[A-Za-z0-9][A-Za-z0-9+_-]{0,19}$/
+
+export function classifyWorkspacePath(
+  value: string,
+  statKind?: 'file' | 'directory'
+): 'file' | 'directory' {
   const path = value.trim()
-  if (!looksLikeFilePath(path)) return false
-  if (path.endsWith('/') || path.endsWith('\\')) return true
+  if (!path) return 'file'
+  if (path.endsWith('/') || path.endsWith('\\')) return 'directory'
   const base = basenameOfPath(path)
-  if (isMaterialRecognizedFile(base) || isMaterialRecognizedFile(path)) return false
-  return path.startsWith('~/') || path.startsWith('/') || path.startsWith('./') || path.startsWith('../')
+  const looksLikeFile =
+    isMaterialRecognizedFile(path) ||
+    isMaterialRecognizedFile(base) ||
+    FILE_EXTENSION_RE.test(base)
+  if (looksLikeFile) return 'file'
+  if (statKind === 'file' || statKind === 'directory') return statKind
+  return 'directory'
+}
+
+export function looksLikeDirectoryPath(value: string, statKind?: 'file' | 'directory'): boolean {
+  return classifyWorkspacePath(value, statKind) === 'directory'
 }
 
 export function formatFileLineRange(line?: number, endLine?: number): string {
