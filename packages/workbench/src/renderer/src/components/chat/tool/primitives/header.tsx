@@ -2,6 +2,7 @@ import type { LucideIcon } from 'lucide-react'
 import { ChevronDown, ChevronRight, FileCode } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { cn } from '../cn'
+import { FileChip } from '../../FileChip'
 import { ToolStatusIndicator } from './status'
 import type { ToolUIState } from '../render-context'
 import { ChangeDiffStatsLabel } from '../../../ChangeDiffStatsLabel'
@@ -22,6 +23,9 @@ export interface ToolHeaderRowProps {
   diffStats?: DiffStats
   /** Open the edited file in the workspace editor (at the first changed line). */
   onOpenInEditor?: () => void
+  /** When set, render a clickable file chip instead of the plain title. */
+  filePath?: string
+  fileLine?: number
 }
 
 /**
@@ -42,7 +46,9 @@ export function ToolHeaderRow({
   labelClassName,
   titleClassName,
   diffStats,
-  onOpenInEditor
+  onOpenInEditor,
+  filePath,
+  fileLine
 }: ToolHeaderRowProps): React.JSX.Element {
   const { t } = useTranslation('common')
   return (
@@ -58,7 +64,11 @@ export function ToolHeaderRow({
       >
         {label}
       </span>
-      {title ? (
+      {filePath ? (
+        <span className="min-w-0 flex-1 truncate">
+          <FileChip path={filePath} line={fileLine} skipValidation variant="list" />
+        </span>
+      ) : title ? (
         <span
           className={cn(
             'ds-tool-header-row__title min-w-0 flex-1 truncate text-[13px] tabular-nums text-ds-faint',

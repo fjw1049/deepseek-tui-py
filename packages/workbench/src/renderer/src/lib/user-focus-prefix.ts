@@ -1,3 +1,5 @@
+import { looksLikeFilePath } from './file-chip'
+
 /**
  * Parse wire-format focus prefixes that the composer prepends on send:
  *   `@plugin:<name> …`  — session plugin mount
@@ -5,6 +7,8 @@
  *   `@<connector> …`    — per-turn MCP connector focus
  *
  * Used by the timeline to render an icon+name chip instead of raw tokens.
+ * Leading `@path/to/file` is not a connector — those stay in the body so
+ * the file chip can open them in the main editor.
  */
 
 export type UserFocusKind = 'plugin' | 'skill' | 'connector'
@@ -48,9 +52,11 @@ export function parseUserFocusPrefix(text: string): UserFocusPrefix | null {
 
   const connector = /^@([^\s]+)(?:\s+([\s\S]*))?$/.exec(trimmed)
   if (connector) {
+    const rawName = connector[1] ?? ''
+    if (looksLikeFilePath(rawName.replace(/:\d+(-\d+)?$/, ''))) return null
     return {
       kind: 'connector',
-      name: connector[1] ?? '',
+      name: rawName,
       body: (connector[2] ?? '').replace(/^\s+/, '')
     }
   }

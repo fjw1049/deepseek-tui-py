@@ -71,6 +71,33 @@ function ignoreUnchangedContentPlugin(seedRoots: string[]): Plugin {
   }
 }
 
+/** Bundle Material Icon Theme SVGs so file chips do not depend on a glob into node_modules. */
+function materialIconsPlugin(): Plugin {
+  const virtualId = 'virtual:material-icons'
+  const resolvedId = `\0${virtualId}`
+  const iconsDir = resolve('node_modules/vscode-material-icons/generated/icons')
+
+  return {
+    name: 'workbench:material-icons',
+    resolveId(id) {
+      if (id === virtualId) return resolvedId
+    },
+    load(id) {
+      if (id !== resolvedId) return
+      if (!existsSync(iconsDir)) {
+        return 'export const materialIconSvgByName = {}'
+      }
+      const files = readdirSync(iconsDir).filter((name) => name.endsWith('.svg'))
+      const entries = files.map((file) => {
+        const name = file.replace(/\.svg$/i, '')
+        const svg = readFileSync(join(iconsDir, file), 'utf8')
+        return `${JSON.stringify(name)}:${JSON.stringify(svg)}`
+      })
+      return `export const materialIconSvgByName = {${entries.join(',')}}`
+    }
+  }
+}
+
 /** electron-vite inserts `import __cjs_mod__ from 'node:module'` which breaks with external zod v4. */
 function fixEsmShimPlugin(): Plugin {
   const brokenShim =
@@ -130,10 +157,18 @@ export default defineConfig({
     // invalidates the in-flight chunk hash -> "Failed to fetch dynamically
     // imported module" -> white screen when opening a chat.
     optimizeDeps: {
-      include: ['streamdown', 'shiki', 'mermaid', 'remark-gfm', 'rehype-harden']
+      include: [
+        'streamdown',
+        'shiki',
+        'mermaid',
+        'remark-gfm',
+        'rehype-harden',
+        'vscode-material-icons'
+      ]
     },
     plugins: [
       react(),
+      materialIconsPlugin(),
       ignoreUnchangedContentPlugin(['src/renderer/src', 'src/shared'])
     ],
     server: {

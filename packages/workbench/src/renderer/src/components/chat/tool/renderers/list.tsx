@@ -1,4 +1,6 @@
 import { memo, type ReactNode } from 'react'
+import { findFileReferences } from '../../../../lib/file-references'
+import { FileChip } from '../../FileChip'
 import { ToolEmptyState } from '../primitives'
 import type { ToolRenderContext } from '../render-context'
 
@@ -78,19 +80,35 @@ export const ListRenderer = {
     return (
       <div className="max-h-72 overflow-auto bg-ds-subtle/50 py-1 font-mono text-[12px] leading-[1.55]">
         <ul>
-          {rows.map((line, index) => (
-            <li
-              key={index}
-              className="flex gap-2 px-3 py-0.5 transition hover:bg-ds-hover/40"
-            >
-              <span className="w-7 shrink-0 select-none text-right tabular-nums text-ds-faint/70">
-                {index + 1}
-              </span>
-              <span className="min-w-0 flex-1 whitespace-pre-wrap break-all text-ds-ink/90">
-                <HighlightedLine text={line} pattern={pattern} />
-              </span>
-            </li>
-          ))}
+          {rows.map((line, index) => {
+            const fileRef = findFileReferences(line)[0]
+            const rest = fileRef && fileRef.start === 0 ? line.slice(fileRef.end) : line
+            return (
+              <li
+                key={index}
+                className="flex gap-2 px-3 py-0.5 transition hover:bg-ds-hover/40"
+              >
+                <span className="w-7 shrink-0 select-none text-right tabular-nums text-ds-faint/70">
+                  {index + 1}
+                </span>
+                <span className="min-w-0 flex-1 whitespace-pre-wrap break-all text-ds-ink/90">
+                  {fileRef && fileRef.start === 0 ? (
+                    <>
+                      <FileChip
+                        path={fileRef.target.path}
+                        line={fileRef.target.line}
+                        skipValidation
+                        variant="list"
+                      />
+                      <HighlightedLine text={rest} pattern={pattern} />
+                    </>
+                  ) : (
+                    <HighlightedLine text={line} pattern={pattern} />
+                  )}
+                </span>
+              </li>
+            )
+          })}
         </ul>
         {hidden > 0 ? (
           <p className="px-3 py-1 text-[11px] text-ds-faint">+{hidden} more lines</p>

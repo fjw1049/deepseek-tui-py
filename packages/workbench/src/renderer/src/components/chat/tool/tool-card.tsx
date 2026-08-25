@@ -63,15 +63,13 @@ export const ToolCard = memo(function ToolCard({
   onOpenWorkspaceFile
 }: ToolCardProps): React.JSX.Element | null {
   const ctx = useMemo(() => buildToolRenderContext(block), [block])
-  const fileBase = ctx.input.path?.split(/[/\\]/).pop()
-  const headerLabel = ctx.isFileChange
-    ? fileBase || ctx.description || ctx.label || ctx.shortName
-    : ctx.label || ctx.shortName
-  const headerTitle = ctx.isFileChange
-    ? ctx.input.path && fileBase && ctx.input.path !== fileBase
-      ? ctx.input.path
-      : undefined
-    : ctx.description || undefined
+  const filePath = ctx.input.path
+  const headerLabel = filePath
+    ? ctx.label || ctx.shortName
+    : ctx.isFileChange
+      ? ctx.description || ctx.label || ctx.shortName
+      : ctx.label || ctx.shortName
+  const headerTitle = filePath || ctx.isFileChange ? undefined : ctx.description || undefined
   const workspaceRoot = useChatStore((s) => s.workspaceRoot)
   const prefetchPath = ctx.input.path
   const handlePrefetch = useCallback((): void => {
@@ -131,14 +129,12 @@ export const ToolCard = memo(function ToolCard({
       icon={Icon}
       label={headerLabel}
       title={headerTitle}
+      filePath={filePath}
+      fileLine={ctx.isFileChange ? ctx.editLine : readLine}
       state={ctx.state}
       expanded={open}
       canExpand={canExpand}
       diffStats={ctx.diffStats}
-      labelClassName={
-        ctx.isFileChange ? 'font-sans text-[13px] font-medium text-ds-ink' : undefined
-      }
-      titleClassName={ctx.isFileChange ? 'text-[12px]' : undefined}
       onOpenInEditor={
         onOpenWorkspaceFile && ctx.input.path && (ctx.isFileChange || ctx.shortName === 'read_file')
           ? () =>

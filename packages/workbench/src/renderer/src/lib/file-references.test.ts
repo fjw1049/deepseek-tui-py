@@ -12,6 +12,23 @@ describe('findFileReferences', () => {
     )
   })
 
+  it('linkifies bare filenames with known extensions', () => {
+    expect(findFileReferences('created FileChip.tsx and notes.md today').map((m) => m.target.path)).toEqual([
+      'FileChip.tsx',
+      'notes.md'
+    ])
+    expect(findFileReferences('also wrote lib/app.ex and Main.kt').map((m) => m.target.path)).toEqual([
+      'lib/app.ex',
+      'Main.kt'
+    ])
+  })
+
+  it('does not treat a basename inside a longer path as a second match', () => {
+    expect(findFileReferences('see src/lib/file-chip.ts please').map((m) => m.target.path)).toEqual([
+      'src/lib/file-chip.ts'
+    ])
+  })
+
   it('recognizes common image extensions', () => {
     for (const ext of ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'JPG']) {
       const path = `/tmp/preview/chart.${ext}`

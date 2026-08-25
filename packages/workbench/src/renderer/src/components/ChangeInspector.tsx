@@ -10,6 +10,7 @@ import {
 import { useTranslation } from 'react-i18next'
 import { useShallow } from 'zustand/react/shallow'
 import { FileEdit } from 'lucide-react'
+import { FileTypeIcon } from './chat/FileChip'
 import type { GitWorkingChangeStage } from '@shared/git-working-changes'
 import type { ChatBlock } from '../agent/types'
 import { ChangeDiffStatsLabel } from './ChangeDiffStatsLabel'
@@ -397,6 +398,9 @@ export function ChangeInspector({
                   {compactList ? (
                     <>
                       <span className="min-w-0 flex-1 truncate text-[12.5px]">
+                        {item.filePath ? (
+                          <FileTypeIcon path={item.filePath} className="mr-1.5 inline-block h-3.5 w-3.5 align-[-0.2em]" />
+                        ) : null}
                         <span
                           className={`font-medium ${
                             item.status === 'error' ? 'text-red-700' : 'text-ds-ink'
@@ -423,6 +427,9 @@ export function ChangeInspector({
                   ) : (
                     <>
                       <div className="flex min-w-0 items-center gap-2">
+                        {item.filePath ? (
+                          <FileTypeIcon path={item.filePath} className="h-3.5 w-3.5 shrink-0" />
+                        ) : null}
                         <div className="min-w-0 flex-1 truncate text-[13px] text-ds-ink">
                           {displayPath ?? t('toolActionFile')}
                         </div>

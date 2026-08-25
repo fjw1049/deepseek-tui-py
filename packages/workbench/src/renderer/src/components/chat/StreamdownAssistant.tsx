@@ -4,11 +4,8 @@ import remarkGfm from 'remark-gfm'
 import { harden } from 'rehype-harden'
 import 'streamdown/styles.css'
 import { parseFileReferenceHref, rehypeFileReferences } from '../../lib/file-references'
-import { useValidatedFileReference } from '../../lib/file-reference-validation'
-import { openWorkspacePathInEditor } from '../../lib/open-workspace-path'
-import { useThreadFilesystemRoot } from '../../lib/use-thread-filesystem-root'
-import { previewWorkspaceFile } from '../../lib/workspace-file-preview'
 import { StreamdownCode, StreamdownInlineCode } from './StreamdownCode'
+import { FileChip } from './FileChip'
 
 /**
  * Tuned for faster, cleaner streaming:
@@ -97,70 +94,29 @@ function StreamdownLink({
   className,
   title
 }: StreamdownLinkProps): ReactElement {
-  const workspaceRoot = useThreadFilesystemRoot()
   const fileTarget = parseFileReferenceHref(href)
-  const validation = useValidatedFileReference(fileTarget, workspaceRoot || undefined)
-  const isExternal = href ? /^(https?:|mailto:)/i.test(href) : false
   const cleanClassName = className?.replace(/\bds-file-reference-link\b/g, '').trim()
+  const isExternal = href ? /^(https?:|mailto:)/i.test(href) : false
 
-  if (fileTarget && validation.status !== 'valid') {
+  if (fileTarget) {
     return (
-      <span className={cleanClassName} title={title}>
-        {children}
-      </span>
+      <FileChip
+        path={fileTarget.path}
+        line={fileTarget.line}
+        className={cleanClassName}
+      />
     )
   }
 
-  const resolvedFileTarget =
-    fileTarget && validation.status === 'valid'
-      ? { ...fileTarget, path: validation.path }
-      : null
-
   const handleClick = (event: MouseEvent<HTMLAnchorElement>): void => {
-    if (resolvedFileTarget) {
-      event.preventDefault()
-      previewWorkspaceFile({
-        ...resolvedFileTarget,
-        workspaceRoot: workspaceRoot || undefined
-      })
-      return
-    }
-
     if (isExternal && href && typeof window.dsGui?.openExternal === 'function') {
       event.preventDefault()
       void window.dsGui.openExternal(href)
     }
   }
 
-  const handleDoubleClick = (event: MouseEvent<HTMLAnchorElement>): void => {
-    if (!resolvedFileTarget) return
-    event.preventDefault()
-    void openWorkspacePathInEditor(
-      resolvedFileTarget,
-      workspaceRoot || undefined
-    ).then((result) => {
-      if (!result.ok) {
-        void window.dsGui?.logError?.('editor-open', 'Failed to open file reference', {
-          message: result.message,
-          target: resolvedFileTarget
-        })
-      }
-    })
-  }
-
   return (
-    <a
-      href={href}
-      title={title}
-      className={[
-        resolvedFileTarget ? 'ds-file-reference-link' : '',
-        cleanClassName
-      ]
-        .filter(Boolean)
-        .join(' ')}
-      onClick={handleClick}
-      onDoubleClick={handleDoubleClick}
-    >
+    <a href={href} title={title} className={cleanClassName} onClick={handleClick}>
       {children}
     </a>
   )

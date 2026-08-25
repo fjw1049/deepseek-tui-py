@@ -109,6 +109,7 @@ import {
   type TodoTurnSession
 } from '../../lib/extract-todos-from-blocks'
 import { parseUserFocusPrefix, composeUserFocusMessage } from '../../lib/user-focus-prefix'
+import { FileChip, UserMessageRichText } from './FileChip'
 import {
   formatPreviewPickChipLabel,
   formatPreviewPickWireMessage,
@@ -1378,34 +1379,23 @@ function TurnChangeSummary({
                     open ? 'bg-ds-hover/45' : 'hover:bg-ds-hover/35'
                   }`}
                 >
-                  {canOpenFile ? (
-                    <button
-                      type="button"
-                      onClick={() => onOpenWorkspaceFile?.(filePath)}
-                      title={t('turnMarkdownResultOpen')}
-                      className="min-w-0 flex-1 text-left"
-                    >
-                      <span className="flex min-w-0 items-center gap-2">
+                  <span className="min-w-0 flex-1">
+                    <span className="flex min-w-0 items-center gap-2">
+                      {filePath ? (
+                        <FileChip path={filePath} variant="list" skipValidation />
+                      ) : (
                         <span className="ds-turn-change-summary__path block break-all text-[14px] font-medium text-ds-ink">
                           {primary}
                         </span>
-                        {isHtmlFile ? (
-                          <span className="inline-flex shrink-0 items-center gap-1 rounded-md bg-amber-500/10 px-1.5 py-0.5 text-[10.5px] font-medium text-amber-700 dark:text-amber-300">
-                            <Globe2 className="h-3 w-3" strokeWidth={2} />
-                            HTML
-                          </span>
-                        ) : null}
-                      </span>
-                    </button>
-                  ) : (
-                    <span className="min-w-0 flex-1">
-                      <span className="flex min-w-0 items-center gap-2">
-                        <span className="ds-turn-change-summary__path block break-all text-[14px] font-medium text-ds-ink">
-                          {primary}
+                      )}
+                      {canOpenFile && isHtmlFile ? (
+                        <span className="inline-flex shrink-0 items-center gap-1 rounded-md bg-amber-500/10 px-1.5 py-0.5 text-[10.5px] font-medium text-amber-700 dark:text-amber-300">
+                          <Globe2 className="h-3 w-3" strokeWidth={2} />
+                          HTML
                         </span>
-                      </span>
+                      ) : null}
                     </span>
-                  )}
+                  </span>
                   <button
                     type="button"
                     onClick={() => setActiveId(open ? null : change.id)}
@@ -3398,7 +3388,7 @@ function UserMessageBubble({
               focus ? (
                 <UserFocusChip key="focus" kind={focus.kind} name={focus.name} />
               ) : null,
-              displayBody || null
+              displayBody ? <UserMessageRichText key="body" text={displayBody} /> : null
             ]}
           </div>
         ) : null}

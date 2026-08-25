@@ -1,17 +1,9 @@
 import type { MouseEvent as ReactMouseEvent, ReactElement } from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import {
-  ChevronRight,
-  File,
-  FileCode2,
-  FileJson,
-  FileText,
-  Folder,
-  FolderOpen,
-  Image as ImageIcon
-} from 'lucide-react'
+import { ChevronRight } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import type { WorkspaceTreeEntry } from '@shared/workspace-file'
+import { FileKindIcon } from '../chat/FileKindIcon'
 import { formatFilePathForDisplay } from '../../lib/diff-stats'
 import { directoryHasChanges, pathHasChanges } from '../../lib/workspace-change-patches'
 import { setWorkspacePathDragData } from '../../lib/composer-insert'
@@ -47,17 +39,6 @@ function treeKey(path: string): string {
 
 function emptyNode(loading: boolean): TreeNodeState {
   return { entries: [], loading, loaded: false, error: null }
-}
-
-function fileIconForName(name: string): typeof FileCode2 {
-  const lower = name.toLowerCase()
-  if (/\.(png|jpe?g|gif|webp|svg|ico|bmp)$/.test(lower)) return ImageIcon
-  if (/\.(json|jsonc|json5)$/.test(lower)) return FileJson
-  if (/\.(md|txt|rst|log)$/.test(lower)) return FileText
-  if (/\.(tsx?|jsx?|mjs|cjs|py|go|rs|java|kt|swift|rb|php|css|scss|less|html?|vue|svelte|toml|ya?ml|sh|bash|zsh|c|cc|cpp|h|hpp)$/.test(lower)) {
-    return FileCode2
-  }
-  return File
 }
 
 async function fetchDirectory(
@@ -328,7 +309,6 @@ export function WorkspaceFileTree({
       const dirHasChanges = isDir && patchMap ? directoryHasChanges(patchMap, entry.path) : false
 
       if (isDir) {
-        const FolderIcon = isExpanded ? FolderOpen : Folder
         return [
           <button
             key={entryKey}
@@ -349,11 +329,11 @@ export function WorkspaceFileTree({
               strokeWidth={1.85}
               aria-hidden
             />
-            <FolderIcon
-              className={`pointer-events-none h-3.5 w-3.5 shrink-0 ${
-                dirHasChanges ? 'text-ds-diff-added' : 'text-ds-faint'
-              }`}
-              strokeWidth={1.85}
+            <FileKindIcon
+              path={entry.path}
+              directory
+              expanded={isExpanded}
+              className="ds-file-kind-icon--chrome"
             />
             <span className={`min-w-0 truncate ${dirHasChanges ? 'font-medium text-ds-diff-added' : ''}`}>
               {entry.name}
@@ -364,7 +344,6 @@ export function WorkspaceFileTree({
       }
 
       const isActive = activeKeys.has(entryKey)
-      const FileIcon = fileIconForName(entry.name)
 
       return [
         <button
@@ -398,12 +377,7 @@ export function WorkspaceFileTree({
           style={{ paddingLeft: `${indentPx(depth) + 14}px` }}
           title={formatFilePathForDisplay(entry.path, trimmedRoot) ?? entry.path}
         >
-          <FileIcon
-            className={`pointer-events-none h-3.5 w-3.5 shrink-0 opacity-80 ${
-              isActive ? 'text-current' : isChanged ? 'text-ds-diff-added' : 'text-ds-faint'
-            }`}
-            strokeWidth={isActive ? 2.05 : 1.85}
-          />
+          <FileKindIcon path={entry.path} className="ds-file-kind-icon--chrome" />
           <span className="min-w-0 truncate">{entry.name}</span>
           {isDirty ? <span className="ml-auto text-[10px] text-accent">●</span> : null}
         </button>
@@ -416,7 +390,7 @@ export function WorkspaceFileTree({
       <div className="ds-workspace-file-tree__header flex h-10 shrink-0 items-center gap-2 border-b border-[color-mix(in_srgb,var(--ds-text)_10%,transparent)]">
         {trimmedRoot ? (
           <>
-            <Folder className="pointer-events-none h-3.5 w-3.5 shrink-0 text-ds-faint" strokeWidth={1.85} />
+            <FileKindIcon path={workspaceLabel} directory className="ds-file-kind-icon--chrome" />
             <div className="min-w-0 truncate text-[12px] font-semibold text-ds-ink" title={trimmedRoot}>
               {workspaceLabel}
             </div>

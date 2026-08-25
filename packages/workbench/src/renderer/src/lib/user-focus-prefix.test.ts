@@ -35,6 +35,11 @@ describe('parseUserFocusPrefix', () => {
   it('returns null for plain text', () => {
     expect(parseUserFocusPrefix('just a question')).toBeNull()
   })
+
+  it('does not treat leading @file paths as connectors', () => {
+    expect(parseUserFocusPrefix('@src/foo.ts please look')).toBeNull()
+    expect(parseUserFocusPrefix('@src/foo.ts:12-18')).toBeNull()
+  })
 })
 
 describe('composeUserFocusMessage', () => {

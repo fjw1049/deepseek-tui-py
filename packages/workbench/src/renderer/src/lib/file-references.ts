@@ -1,3 +1,5 @@
+import { isMaterialRecognizedFile } from './file-icon'
+
 export type FileReferenceTarget = {
   path: string
   line?: number
@@ -22,59 +24,15 @@ type HastNode = {
 const FILE_REFERENCE_SCHEME = 'deepseek-file:'
 const PATH_PREFIX_BOUNDARY = String.raw`(?<![\w@.~\/\\-])`
 
-const EXTENSIONS = [
-  'astro',
-  'bash',
-  'c',
-  'cc',
-  'cjs',
-  'cpp',
-  'cs',
-  'css',
-  'dart',
-  'env',
-  'fish',
-  'gif',
-  'go',
-  'h',
-  'hpp',
-  'html?',
-  'ini',
-  'java',
-  'jpe?g',
-  'jsx?',
-  'json',
-  'kt',
-  'less',
-  'lock',
-  'mdx?',
-  'mjs',
-  'php',
-  'png',
-  'py',
-  'rb',
-  'rs',
-  'sass',
-  'scss',
-  'sh',
-  'sql',
-  'svg',
-  'svelte',
-  'swift',
-  'toml',
-  'tsx?',
-  'txt',
-  'vue',
-  'webp',
-  'ya?ml',
-  'xml',
-  'zsh'
-].join('|')
-
 const PATH_CHARS = String.raw`[\w@.()+=[\]{} $,;!%#~\/\\-]`
 const PATH_END = String.raw`(?=$|[\s(),.;:!?\]\u3001\u3002\uff0c\uff1b\uff08\uff09]|#L)`
+const FILE_SUFFIX = String.raw`[A-Za-z0-9][A-Za-z0-9+_-]{0,19}`
 const PATH_WITH_SEPARATOR = new RegExp(
-  String.raw`${PATH_PREFIX_BOUNDARY}(?:~|\/|\.{1,2}\/|[A-Za-z]:[\\/]|[\w@.-]+[\\/])${PATH_CHARS}*?\.(?:${EXTENSIONS})${PATH_END}`,
+  String.raw`${PATH_PREFIX_BOUNDARY}(?:~|\/|\.{1,2}\/|[A-Za-z]:[\\/]|[\w@.-]+[\\/])${PATH_CHARS}*?\.${FILE_SUFFIX}${PATH_END}`,
+  'giu'
+)
+const PATH_BARE_FILE = new RegExp(
+  String.raw`${PATH_PREFIX_BOUNDARY}[\w@.-]+\.${FILE_SUFFIX}${PATH_END}`,
   'giu'
 )
 const LINE_SUFFIX = /(?::(\d+)(?::(\d+))?|#L(\d+)(?:-L\d+)?|\s*[（(](?:line|lines)\s+(\d+)[）)]|\s*[（(]第\s*(\d+)\s*行[）)]|\s+line\s+(\d+)|\s+第\s*(\d+)\s*行)/iy
@@ -158,7 +116,10 @@ function mergeMatches(matches: FileReferenceMatch[]): FileReferenceMatch[] {
 
 export function findFileReferences(text: string): FileReferenceMatch[] {
   if (!text.trim()) return []
-  return mergeMatches(collectMatches(text, PATH_WITH_SEPARATOR, false))
+  return mergeMatches([
+    ...collectMatches(text, PATH_WITH_SEPARATOR, false),
+    ...collectMatches(text, PATH_BARE_FILE, false)
+  ]).filter((match) => isMaterialRecognizedFile(match.target.path))
 }
 
 export function createFileReferenceHref(target: FileReferenceTarget): string {

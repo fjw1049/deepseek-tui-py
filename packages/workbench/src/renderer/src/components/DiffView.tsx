@@ -2,6 +2,7 @@ import { useLayoutEffect, useMemo, useRef, useState, type ReactElement } from 'r
 import { Check, Columns2, Copy, MessageSquarePlus, Rows3 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { countDiffStats, extractDiffFilePath } from '../lib/diff-stats'
+import { FileChip } from './chat/FileChip'
 
 export type DiffRenderStyle = 'unified' | 'split'
 
@@ -308,6 +309,7 @@ export function DiffView({
     <DiffHeader
       badge={badge}
       name={displayName}
+      filePath={fileLabel}
       added={looksLikePatch ? parsed.added : null}
       removed={looksLikePatch ? parsed.removed : null}
       onCopy={onCopy}
@@ -417,6 +419,7 @@ export function DiffView({
 function DiffHeader({
   badge,
   name,
+  filePath,
   added,
   removed,
   onCopy,
@@ -429,6 +432,7 @@ function DiffHeader({
 }: {
   badge: { label: string; tone: string }
   name: string | null
+  filePath?: string | null
   added: number | null
   removed: number | null
   onCopy: () => void
@@ -453,9 +457,19 @@ function DiffHeader({
       >
         {badge.label}
       </span>
-      <span className="min-w-0 flex-1 truncate text-[12.5px] font-medium text-ds-ink" title={name ?? ''}>
-        {name ?? 'patch'}
-      </span>
+      {filePath ? (
+        <FileChip
+          path={filePath}
+          label={name ?? undefined}
+          variant="list"
+          skipValidation
+          className="min-w-0 flex-1 text-[12.5px] font-medium"
+        />
+      ) : (
+        <span className="min-w-0 flex-1 truncate text-[12.5px] font-medium text-ds-ink" title={name ?? ''}>
+          {name ?? 'patch'}
+        </span>
+      )}
       {added != null || removed != null ? (
         <span className="shrink-0 text-[12px] tabular-nums">
           {(added ?? 0) > 0 ? <span className="text-ds-diff-added">+{added}</span> : null}

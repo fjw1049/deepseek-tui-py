@@ -8,14 +8,13 @@ import {
   type ReactNode
 } from 'react'
 import { StreamdownContext } from 'streamdown'
+import { parseCodeFenceInfo } from '../../lib/file-chip'
 import {
   findFileReferences,
   type FileReferenceTarget
 } from '../../lib/file-references'
-import { useValidatedFileReference } from '../../lib/file-reference-validation'
-import { openWorkspacePathInEditor } from '../../lib/open-workspace-path'
-import { useThreadFilesystemRoot } from '../../lib/use-thread-filesystem-root'
-import { previewWorkspaceFile } from '../../lib/workspace-file-preview'
+import { FileChip } from './FileChip'
+import { languageFromPath } from './code-language'
 import { SharedCodeBlock } from './SharedCodeBlock'
 import { StructureBlock } from './StructureBlock'
 import { StreamdownMermaidBlock } from './StreamdownMermaidBlock'
@@ -83,68 +82,26 @@ function inlineFileReference(text: string): { text: string; target: FileReferenc
 }
 
 function InlineFileReferenceCode({
-  text,
-  target,
-  className
+  target
 }: {
   text: string
   target: FileReferenceTarget
-  className?: string
 }): ReactNode {
-  const workspaceRoot = useThreadFilesystemRoot()
-  const validation = useValidatedFileReference(target, workspaceRoot || undefined)
-
-  if (validation.status !== 'valid') {
-    return (
-      <code
-        className={className ? `ds-code-inline ${className}` : 'ds-code-inline'}
-        data-streamdown="inline-code"
-      >
-        {text}
-      </code>
-    )
-  }
-
-  const resolvedTarget = { ...target, path: validation.path }
-
-  const handlePreview = (): void => {
-    previewWorkspaceFile({
-      ...resolvedTarget,
-      workspaceRoot: workspaceRoot || undefined
-    })
-  }
-
-  const handleOpenEditor = (): void => {
-    void openWorkspacePathInEditor(resolvedTarget, workspaceRoot || undefined).then((result) => {
-      if (!result.ok) {
-        void window.dsGui?.logError?.('editor-open', 'Failed to open inline file reference', {
-          message: result.message,
-          target: resolvedTarget
-        })
-      }
-    })
-  }
-
-  return (
-    <button
-      type="button"
-      className={`ds-code-inline ds-file-reference-code ${className ?? ''}`.trim()}
-      data-streamdown="inline-code"
-      title={target.line ? `${target.path}:${target.line}` : target.path}
-      onClick={handlePreview}
-      onDoubleClick={handleOpenEditor}
-    >
-      {text}
-    </button>
-  )
+  return <FileChip path={target.path} line={target.line} />
 }
 
 function CodeBlock({
   code,
-  language
+  language,
+  filePath,
+  lineStart,
+  lineEnd
 }: {
   code: string
   language: string
+  filePath?: string
+  lineStart?: number
+  lineEnd?: number
 }): ReactNode {
   const { isAnimating } = useContext(StreamdownContext)
   if (looksLikeStructureTree(code, language)) {
@@ -154,6 +111,9 @@ function CodeBlock({
     <SharedCodeBlock
       code={code}
       language={language}
+      filePath={filePath}
+      lineStart={lineStart}
+      lineEnd={lineEnd}
       deferHighlightWhileBusy
       actionsDisabled={isAnimating}
     />
@@ -174,7 +134,6 @@ function InlineCodeComponent({
       <InlineFileReferenceCode
         text={fileReference.text}
         target={fileReference.target}
-        className={className}
       />
     )
   }
@@ -200,14 +159,25 @@ function FencedCodeComponent({ node: _node, className, children, ...props }: Cod
   }
 
   const match = className?.match(LANGUAGE_REGEX)
-  const language = match?.[1] ?? ''
+  const fence = parseCodeFenceInfo(match?.[1] ?? '')
+  const language = fence.filePath
+    ? languageFromPath(fence.filePath) || fence.language
+    : fence.language
   const code = extractText(children)
 
   if (language.trim().toLowerCase() === 'mermaid') {
     return <StreamdownMermaidBlock chart={code} />
   }
 
-  return <CodeBlock code={code} language={language} />
+  return (
+    <CodeBlock
+      code={code}
+      language={language}
+      filePath={fence.filePath}
+      lineStart={fence.lineStart}
+      lineEnd={fence.lineEnd}
+    />
+  )
 }
 
 const MemoFencedCode = memo(FencedCodeComponent, (prev, next) => {

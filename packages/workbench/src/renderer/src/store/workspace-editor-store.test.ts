@@ -75,6 +75,20 @@ describe('openFile line targeting', () => {
       'src/b.ts'
     ])
   })
+
+  it('returns false when the workspace file cannot be read', async () => {
+    vi.stubGlobal('window', {
+      dsGui: {
+        readWorkspaceFile: vi.fn(async () => ({
+          ok: false,
+          message: 'not found'
+        }))
+      }
+    })
+    const opened = await useWorkspaceEditorStore.getState().openFile('src/missing.ts', '/workspace')
+    expect(opened).toBe(false)
+    expect(useWorkspaceEditorStore.getState().tabs[0]?.error).toBe('not found')
+  })
 })
 
 describe('truncated files and revert', () => {

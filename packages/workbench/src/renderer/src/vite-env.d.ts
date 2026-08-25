@@ -1,5 +1,9 @@
 /// <reference types="vite/client" />
 
+declare module 'virtual:material-icons' {
+  export const materialIconSvgByName: Record<string, string>
+}
+
 declare module '*.webp' {
   const src: string
   export default src

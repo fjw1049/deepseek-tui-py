@@ -19,6 +19,7 @@ import { useChatStore } from '../../store/chat-store'
 import type { ChatBlock, NormalizedThread } from '../../agent/types'
 import type { ComposerActionCommandId } from '../../lib/composer-slash-commands'
 import { countDiffStats, extractDiffFilePath, looksLikeUnifiedDiff } from '../../lib/diff-stats'
+import { FileChip } from './FileChip'
 import { listMcpServers, setMcpServerEnabled } from '../../lib/mcp-json-merge'
 import {
   contextBucketTokens,
@@ -345,7 +346,16 @@ function DiffPanel({ blocks, onOpenDiff }: { blocks: ChatBlock[]; onOpenDiff: ()
     <div className="space-y-3">
       {changes.map((change) => (
         <div key={change.id} className="flex items-center justify-between rounded-xl bg-ds-main/60 px-3 py-2.5">
-          <span className="flex min-w-0 items-center gap-2 truncate text-[12px] text-ds-ink"><FileEdit className="h-4 w-4 shrink-0" />{change.path ?? 'Changed file'}</span>
+          <span className="flex min-w-0 items-center gap-2 truncate text-[12px] text-ds-ink">
+            {change.path ? (
+              <FileChip path={change.path} variant="list" skipValidation />
+            ) : (
+              <>
+                <FileEdit className="h-4 w-4 shrink-0" />
+                Changed file
+              </>
+            )}
+          </span>
           {change.stats ? <span className="shrink-0 text-[10px] tabular-nums"><span className="text-ds-diff-added">+{change.stats.added}</span> <span className="text-ds-diff-removed">-{change.stats.removed}</span></span> : null}
         </div>
       ))}

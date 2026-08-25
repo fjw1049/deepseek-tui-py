@@ -37,6 +37,7 @@ export const ReadRenderer = {
             code={output}
             language={language}
             title={title}
+            filePath={path}
             downloadName={downloadName}
           />
         </div>

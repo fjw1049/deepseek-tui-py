@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactElement } from 'react'
 import { createPortal } from 'react-dom'
-import { CornerDownLeft, File, Search, X } from 'lucide-react'
+import { CornerDownLeft, Search, X } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { formatShortcutLabel, shortcutChordTokens } from '@shared/shortcuts'
 import type { WorkspaceTreeEntry } from '@shared/workspace-file'
 import { splitFileNameAndParent } from '../../lib/editor-breadcrumb'
+import { FileKindIcon } from '../chat/FileKindIcon'
 import { EditorListSkeleton } from '../workspace-editor/EditorListSkeleton'
 
 type Props = {
@@ -220,7 +221,7 @@ export function IdeQuickOpenPalette({
                       onClick={() => onSelectFile(entry.path)}
                     >
                       <span className="ds-search-modal__row-icon-wrap" aria-hidden>
-                        <File strokeWidth={1.7} />
+                        <FileKindIcon path={entry.path} className="ds-file-kind-icon--chrome" />
                       </span>
                       <span className="ds-search-modal__row-main ds-search-modal__row-main--file">
                         <span className="ds-search-modal__row-title">{name}</span>

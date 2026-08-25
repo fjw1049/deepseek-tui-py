@@ -51,6 +51,7 @@ export const FileEditRenderer = {
             code={output}
             language={language}
             title={title}
+            filePath={path}
             downloadName={downloadName}
           />
         </div>

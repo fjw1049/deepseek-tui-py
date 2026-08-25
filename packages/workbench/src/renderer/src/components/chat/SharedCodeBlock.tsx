@@ -18,7 +18,9 @@ import {
 } from 'react'
 import type { ThemeRegistration } from 'shiki'
 import { useChatStore } from '../../store/chat-store'
+import { basenameOfPath, formatFileLineRange } from '../../lib/file-chip'
 import { normalizeLanguage } from './code-language'
+import { FileChip } from './FileChip'
 import { ResizableFullscreenDialog } from './ResizableFullscreenDialog'
 
 const TRAILING_NEWLINES_REGEX = /\n+$/
@@ -272,6 +274,10 @@ export type SharedCodeBlockProps = {
   language?: string
   /** Header label; defaults to language (or "text"). */
   title?: string
+  /** When set, the header becomes a clickable file chip. */
+  filePath?: string
+  lineStart?: number
+  lineEnd?: number
   /** Download filename hint (e.g. basename of a file path). */
   downloadName?: string
   /** When true, skip Shiki while the chat turn is busy (streaming). */
@@ -285,6 +291,9 @@ export function SharedCodeBlock({
   code,
   language = '',
   title,
+  filePath,
+  lineStart,
+  lineEnd,
   downloadName,
   deferHighlightWhileBusy = false,
   actionsDisabled = false,
@@ -301,7 +310,9 @@ export function SharedCodeBlock({
   const copyResetRef = useRef<number | null>(null)
   /** Content key that currently has successful Shiki HTML (not plain fallback). */
   const highlightedForRef = useRef<string | null>(null)
-  const headerLabel = title?.trim() || language || 'text'
+  const headerLabel = filePath
+    ? `${basenameOfPath(filePath)}${formatFileLineRange(lineStart, lineEnd)}`
+    : title?.trim() || language || 'text'
   const contentKey = `${normalizeLanguage(language) || 'plain'}\u0000${trimmedCode}`
 
   useEffect(() => {
@@ -361,6 +372,8 @@ export function SharedCodeBlock({
     []
   )
 
+  const resolvedDownloadName = downloadName?.trim() || (filePath ? basenameOfPath(filePath) : undefined)
+
   const closeFullscreen = useCallback(() => setFullscreen(false), [])
 
   const handleCopy = async (): Promise<void> => {
@@ -378,7 +391,7 @@ export function SharedCodeBlock({
         className="ds-code-block-action"
         title="Download code"
         aria-label="Download code"
-        onClick={() => downloadCode(trimmedCode, language, downloadName)}
+        onClick={() => downloadCode(trimmedCode, language, resolvedDownloadName)}
         disabled={actionsDisabled}
       >
         <Download className="h-3.5 w-3.5" strokeWidth={1.9} />
@@ -458,9 +471,20 @@ export function SharedCodeBlock({
         }}
       >
         <div className="ds-code-block-header" data-streamdown="code-block-header">
-          <span className="ds-code-block-language" title={headerLabel}>
-            {headerLabel}
-          </span>
+          {filePath ? (
+            <FileChip
+              path={filePath}
+              line={lineStart}
+              endLine={lineEnd}
+              skipValidation
+              variant="list"
+              className="ds-code-block-language"
+            />
+          ) : (
+            <span className="ds-code-block-language" title={headerLabel}>
+              {headerLabel}
+            </span>
+          )}
           {actions}
         </div>
         {codeBody({
@@ -478,16 +502,27 @@ export function SharedCodeBlock({
         dataAttr="code-fullscreen"
         header={
           <>
-            <span className="ds-code-block-language" title={headerLabel}>
-              {headerLabel}
-            </span>
+            {filePath ? (
+              <FileChip
+                path={filePath}
+                line={lineStart}
+                endLine={lineEnd}
+                skipValidation
+                variant="list"
+                className="ds-code-block-language"
+              />
+            ) : (
+              <span className="ds-code-block-language" title={headerLabel}>
+                {headerLabel}
+              </span>
+            )}
             <div className="ds-code-block-actions">
               <button
                 type="button"
                 className="ds-code-block-action"
                 title="Download code"
                 aria-label="Download code"
-                onClick={() => downloadCode(trimmedCode, language, downloadName)}
+                onClick={() => downloadCode(trimmedCode, language, resolvedDownloadName)}
               >
                 <Download className="h-3.5 w-3.5" strokeWidth={1.9} />
               </button>

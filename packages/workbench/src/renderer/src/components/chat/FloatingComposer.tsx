@@ -45,6 +45,7 @@ import {
 } from '../../lib/extract-tasks-from-blocks'
 import { ReasoningEffortSelector } from './ReasoningEffortSelector'
 import { ApprovalBubble } from './ApprovalBubble'
+import { FileChip } from './FileChip'
 import { ComposerLiveChangesHeader } from './ComposerLiveChangesHeader'
 import { UserInputBubble } from './UserInputBubble'
 import { ComposerApprovalPolicySelector } from './ComposerApprovalPolicySelector'
@@ -1648,9 +1649,13 @@ export function FloatingComposer({
                         {badge.label}
                       </span>
                       <div className="min-w-0 flex-1">
-                        <div className="truncate text-[12px] font-medium text-ds-ink" title={item.path}>
-                          {item.name}
-                        </div>
+                        <FileChip
+                          path={item.path}
+                          label={item.name}
+                          skipValidation
+                          variant="list"
+                          className="max-w-full text-[12px] font-medium"
+                        />
                         <div className="mt-0.5 flex items-center gap-1 text-[11px] text-ds-faint">
                           {uploading ? (
                             <span className="truncate">

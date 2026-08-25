@@ -25,6 +25,7 @@ import {
   WORKSPACE_FILE_PREVIEW_EVENT,
   type WorkspaceFilePreviewDetail
 } from '../lib/workspace-file-preview'
+import { openWorkspaceFilePreferInApp, uniqueWorkspaceRoots } from '../lib/open-workspace-file'
 import {
   OPEN_PREVIEW_URL_EVENT,
   type OpenPreviewUrlDetail
@@ -543,25 +544,38 @@ export function Workbench(): ReactElement {
     setRightSidebarTab(tab)
   }, [])
 
+  const openInAppEditorSurface = useCallback(
+    async (
+      path: string,
+      workspaceRoot: string,
+      line?: number,
+      column?: number
+    ): Promise<boolean> => {
+      if (layoutMode === 'ide') {
+        setRequestedIdeCenterTab('files')
+      } else {
+        openRightSidebar('editor')
+      }
+      return openEditorFile(path, workspaceRoot, line, column)
+    },
+    [layoutMode, openEditorFile, openRightSidebar]
+  )
+
   const openFileInEditor = useCallback(
     (path: string, line?: number, options?: { review?: boolean }): void => {
       if (options?.review) {
         window.dispatchEvent(
           new CustomEvent('deepseekgui:open-changes-panel', { detail: { path } })
         )
-        if (layoutMode === 'ide') {
-          void openEditorFile(path, activeWorkspaceRoot, line)
-        }
-        return
+        if (layoutMode !== 'ide') return
       }
-      if (layoutMode === 'ide') {
-        setRequestedIdeCenterTab('files')
-      } else {
-        openRightSidebar('editor')
-      }
-      void openEditorFile(path, activeWorkspaceRoot, line)
+      void openWorkspaceFilePreferInApp(
+        { path, ...(line && line > 0 ? { line } : {}) },
+        uniqueWorkspaceRoots(activeWorkspaceRoot, threadFilesystemRoot),
+        openInAppEditorSurface
+      )
     },
-    [activeWorkspaceRoot, layoutMode, openEditorFile, openRightSidebar]
+    [activeWorkspaceRoot, layoutMode, openInAppEditorSurface, threadFilesystemRoot]
   )
 
   const enterIdeMode = useCallback((): void => {
@@ -727,20 +741,23 @@ export function Workbench(): ReactElement {
   }, [leftSidebarHidden, leftSidebarWidth, rightSidebarCollapsed, rightSidebarOpen])
 
   useEffect(() => {
-    const openEditorTarget = (path: string, root: string, line?: number, column?: number): void => {
-      if (layoutMode === 'ide') {
-        setRequestedIdeCenterTab('files')
-        void openEditorFile(path, root, line, column)
-        return
-      }
-      openRightSidebar('editor')
-      void openEditorFile(path, root, line, column)
+    const openEditorTarget = (path: string, roots: string[], line?: number, column?: number): void => {
+      void openWorkspaceFilePreferInApp(
+        { path, ...(line && line > 0 ? { line } : {}), ...(column && column > 0 ? { column } : {}) },
+        roots,
+        openInAppEditorSurface
+      )
     }
 
     const onPreview = (event: Event): void => {
       const detail = (event as CustomEvent<WorkspaceFilePreviewDetail>).detail
       if (!detail?.path) return
-      const root = (threadFilesystemRoot || detail.workspaceRoot || activeWorkspaceRoot).trim()
+      const roots = uniqueWorkspaceRoots(
+        activeWorkspaceRoot,
+        threadFilesystemRoot,
+        detail.workspaceRoot
+      )
+      const root = roots[0] ?? ''
       if (isHtmlPreviewPath(detail.path) && root) {
         if (layoutMode === 'ide') {
           setRequestedIdeCenterTab('files')
@@ -763,7 +780,7 @@ export function Workbench(): ReactElement {
             })
             if (!result.ok) {
               console.error('[html-preview]', result.message)
-              openEditorTarget(detail.path, root, detail.line, detail.column)
+              openEditorTarget(detail.path, roots, detail.line, detail.column)
               return
             }
             setBrowsePreviewUrl(null)
@@ -771,12 +788,12 @@ export function Workbench(): ReactElement {
             setWorkspacePreviewPath(detail.path)
           } catch (error) {
             console.error('[html-preview] failed to resolve preview URL', error)
-            openEditorTarget(detail.path, root, detail.line, detail.column)
+            openEditorTarget(detail.path, roots, detail.line, detail.column)
           }
         })()
         return
       }
-      openEditorTarget(detail.path, root || activeWorkspaceRoot, detail.line, detail.column)
+      openEditorTarget(detail.path, roots, detail.line, detail.column)
     }
 
     window.addEventListener(WORKSPACE_FILE_PREVIEW_EVENT, onPreview)
@@ -785,6 +802,7 @@ export function Workbench(): ReactElement {
     activeWorkspaceRoot,
     layoutMode,
     openEditorFile,
+    openInAppEditorSurface,
     openRightSidebar,
     threadFilesystemRoot
   ])

@@ -43,6 +43,7 @@ import {
   type EditorPaneId,
   type EditorTab
 } from '../../store/workspace-editor-store'
+import { FileKindIcon } from '../chat/FileKindIcon'
 import { EditorListSkeleton } from './EditorListSkeleton'
 import { ImageDocumentPreview } from './ImageDocumentPreview'
 import { HtmlDocumentPreview } from './HtmlDocumentPreview'
@@ -163,21 +164,27 @@ function EditorBreadcrumb({
   return (
     <div className="ds-workspace-editor-breadcrumb flex h-7 shrink-0 items-center gap-1 overflow-hidden border-b border-[color-mix(in_srgb,var(--ds-text)_10%,transparent)] px-2.5 text-[11px] text-ds-faint">
       {collapseBreadcrumbSegments(breadcrumbSegments(path, workspaceRoot)).map(
-        (segment, index, all) => (
-          <span key={`${segment}-${index}`} className="flex min-w-0 items-center gap-1">
-            {index > 0 ? <span className="shrink-0 text-ds-faint/70">›</span> : null}
-            <span
-              className={
-                index === all.length - 1
-                  ? 'min-w-0 truncate font-medium text-ds-ink'
-                  : 'shrink-0'
-              }
-              title={segment}
-            >
-              {segment}
+        (segment, index, all) => {
+          const isLast = index === all.length - 1
+          return (
+            <span key={`${segment}-${index}`} className="flex min-w-0 items-center gap-1">
+              {index > 0 ? <span className="shrink-0 text-ds-faint/70">›</span> : null}
+              {segment !== '…' ? (
+                <FileKindIcon
+                  path={isLast ? path : segment}
+                  directory={!isLast}
+                  className="ds-file-kind-icon--chrome"
+                />
+              ) : null}
+              <span
+                className={isLast ? 'min-w-0 truncate font-medium text-ds-ink' : 'shrink-0'}
+                title={segment}
+              >
+                {segment}
+              </span>
             </span>
-          </span>
-        )
+          )
+        }
       )}
     </div>
   )
@@ -237,9 +244,10 @@ function EditorTabStrip({
                 <button
                   type="button"
                   onClick={() => onSelect(tab.id)}
-                  className="inline-flex min-w-0 items-center truncate px-2 py-1 text-[12px]"
+                  className="inline-flex min-w-0 items-center gap-1 truncate px-2 py-1 text-[12px]"
                   title={formatFilePathForDisplay(tab.path, workspaceRoot) ?? tab.path}
                 >
+                  <FileKindIcon path={tab.path} className="ds-file-kind-icon--chrome" />
                   <span className="truncate">{fileNameFromPath(tab.path)}</span>
                   <EditorTabMark
                     editing={editing}

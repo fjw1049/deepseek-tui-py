@@ -44,7 +44,7 @@ type WorkspaceEditorStore = {
     line?: number,
     column?: number,
     options?: OpenFileOptions
-  ) => Promise<void>
+  ) => Promise<boolean>
   closeTab: (tabId: string, pane?: EditorPaneId) => void
   setActiveTab: (tabId: string, pane?: EditorPaneId) => void
   setFocusedPane: (pane: EditorPaneId) => void
@@ -219,10 +219,10 @@ export const useWorkspaceEditorStore = create<WorkspaceEditorStore>((set, get) =
   },
   openFile: async (path, workspaceRoot, line, column, options) => {
     const root = normalizeWorkspaceKey(workspaceRoot)
-    if (!root) return
+    if (!root) return false
 
     const normalizedPath = normalizeEditorPathForTab(path)
-    if (!normalizedPath) return
+    if (!normalizedPath) return false
 
     const id = normalizedPath
     get().resetForWorkspace(root)
@@ -231,7 +231,7 @@ export const useWorkspaceEditorStore = create<WorkspaceEditorStore>((set, get) =
     const targetPane = resolveTargetPane(get(), options)
 
     const existing = get().tabs.find((tab) => tab.id === id)
-    if (existing) {
+    if (existing && !existing.error) {
       set((state) => ({
         tabs:
           line !== undefined || column !== undefined
@@ -244,7 +244,7 @@ export const useWorkspaceEditorStore = create<WorkspaceEditorStore>((set, get) =
             : state.tabs,
         ...assignTabToPane(state, id, targetPane, toSide)
       }))
-      return
+      return true
     }
 
     const kind: EditorTabKind = isImagePreviewPath(normalizedPath) ? 'image' : 'text'
@@ -272,7 +272,7 @@ export const useWorkspaceEditorStore = create<WorkspaceEditorStore>((set, get) =
           loading: false
         })
       }))
-      return
+      return true
     }
 
     if (typeof window.dsGui?.readWorkspaceFile !== 'function') {
@@ -283,7 +283,7 @@ export const useWorkspaceEditorStore = create<WorkspaceEditorStore>((set, get) =
           error: 'File bridge is unavailable.'
         })
       }))
-      return
+      return false
     }
 
     try {
@@ -295,7 +295,7 @@ export const useWorkspaceEditorStore = create<WorkspaceEditorStore>((set, get) =
       })
 
       const currentKey = normalizeWorkspaceKey(get().workspaceKey)
-      if (currentKey !== root && currentKey !== '') return
+      if (currentKey !== root && currentKey !== '') return false
 
       const nextTab: EditorTab =
         !result.ok
@@ -321,9 +321,10 @@ export const useWorkspaceEditorStore = create<WorkspaceEditorStore>((set, get) =
       set((state) => ({
         tabs: upsertTab(state.tabs, nextTab)
       }))
+      return result.ok
     } catch (error) {
       const currentKey = normalizeWorkspaceKey(get().workspaceKey)
-      if (currentKey !== root && currentKey !== '') return
+      if (currentKey !== root && currentKey !== '') return false
       set((state) => ({
         tabs: upsertTab(state.tabs, {
           ...placeholder,
@@ -331,6 +332,7 @@ export const useWorkspaceEditorStore = create<WorkspaceEditorStore>((set, get) =
           error: error instanceof Error ? error.message : String(error)
         })
       }))
+      return false
     }
   },
   closeTab: (tabId, pane) =>

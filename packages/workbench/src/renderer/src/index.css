@@ -4442,7 +4442,9 @@ samp {
   color: var(--ds-text-muted);
 }
 
-.ds-search-modal__row-icon-wrap svg {
+.ds-search-modal__row-icon-wrap svg,
+.ds-search-modal__row-icon-wrap img,
+.ds-search-modal__row-icon-wrap .ds-file-kind-icon {
   width: 16px;
   height: 16px;
 }
@@ -4682,7 +4684,9 @@ samp {
   color: var(--ds-text);
 }
 
-.ds-search-modal--palette .ds-search-modal__row-icon-wrap svg {
+.ds-search-modal--palette .ds-search-modal__row-icon-wrap svg,
+.ds-search-modal--palette .ds-search-modal__row-icon-wrap img,
+.ds-search-modal--palette .ds-search-modal__row-icon-wrap .ds-file-kind-icon {
   width: 15px;
   height: 15px;
 }
@@ -4904,6 +4908,102 @@ samp {
 .ds-file-reference-code:hover {
   border-color: color-mix(in srgb, var(--ds-accent) 42%, var(--ds-border) 58%);
   background: var(--ds-accent-soft);
+}
+
+.ds-file-chip {
+  display: inline;
+  max-width: 100%;
+  margin: 0 0.06em;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--ds-accent);
+  font: inherit;
+  font-weight: 500;
+  line-height: inherit;
+  vertical-align: baseline;
+  cursor: pointer;
+  text-align: inherit;
+  box-shadow: none;
+}
+
+.ds-file-chip:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.ds-file-chip:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--ds-accent) 55%, transparent);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+
+.ds-file-chip--list {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.32em;
+  color: inherit;
+  font-weight: 550;
+  text-decoration: none;
+  vertical-align: baseline;
+}
+
+.ds-file-chip--list:hover {
+  color: var(--ds-accent);
+  text-decoration: none;
+}
+
+.ds-file-kind-icon {
+  display: inline-block;
+  width: 1.15em;
+  height: 1.15em;
+  margin-right: 0.32em;
+  vertical-align: -0.2em;
+}
+
+.ds-file-chip--list .ds-file-kind-icon {
+  margin-right: 0;
+  flex-shrink: 0;
+}
+
+.ds-file-kind-icon--chrome {
+  width: 14px;
+  height: 14px;
+  margin-right: 0;
+  flex-shrink: 0;
+  vertical-align: unset;
+  pointer-events: none;
+}
+
+.ds-file-kind-icon img,
+.ds-file-kind-icon svg,
+.ds-file-kind-icon__fallback {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.ds-file-chip__name {
+  min-width: 0;
+}
+
+.ds-file-chip--list .ds-file-chip__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ds-file-chip__line {
+  color: color-mix(in srgb, currentColor 62%, var(--ds-text-faint));
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+}
+
+.ds-code-block-header .ds-file-chip,
+.ds-expand-header .ds-file-chip {
+  min-width: 0;
+  font-weight: 600;
 }
 
 .ds-markdown .ds-code-block {
@@ -10260,6 +10360,10 @@ select:focus-visible,
 .ds-ide-chat-rail .ds-file-reference-code {
   font-size: var(--ds-ide-font-code);
   border-radius: 4px;
+}
+
+.ds-ide-chat-rail .ds-file-chip {
+  font-size: inherit;
 }
 
 /* ── Timeline chrome (Chat absolute px → IDE ladder) ─────────────────── */
