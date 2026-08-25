@@ -3,7 +3,8 @@ import {
   basenameOfPath,
   classifyWorkspacePath,
   formatFileLineRange,
-  parseComposerPathMentions
+  parseComposerPathMentions,
+  resolveWorkspaceRevealPath
 } from '../../lib/file-chip'
 import { useValidatedFileReference } from '../../lib/file-reference-validation'
 import { revealWorkspacePathInFolder } from '../../lib/open-workspace-path'
@@ -47,10 +48,10 @@ export function FileChip({
     [line, path, skipValidation]
   )
   const validation = useValidatedFileReference(target, workspaceRoot || undefined)
-  const kind = classifyWorkspacePath(
-    path,
-    validation.status === 'valid' ? validation.kind : undefined
-  )
+  const kind =
+    validation.status === 'valid' && validation.kind
+      ? validation.kind
+      : classifyWorkspacePath(path)
   const directory = kind === 'directory'
   const name = label ?? basenameOfPath(path)
   const lineLabel = formatFileLineRange(line, endLine)
@@ -75,7 +76,13 @@ export function FileChip({
     event.preventDefault()
     event.stopPropagation()
     if (kind === 'directory') {
-      void revealWorkspacePathInFolder(path)
+      void revealWorkspacePathInFolder(
+        resolveWorkspaceRevealPath(
+          path,
+          validation.status === 'valid' ? validation.path : undefined,
+          workspaceRoot || undefined
+        )
+      )
       return
     }
     const openPath =

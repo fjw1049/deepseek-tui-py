@@ -32,6 +32,29 @@ export function looksLikeFilePath(value: string): boolean {
 }
 
 const FILE_EXTENSION_RE = /\.[A-Za-z0-9][A-Za-z0-9+_-]{0,19}$/
+const WINDOWS_ABS_RE = /^[A-Za-z]:[\\/]/
+const HIDDEN_DIRECTORY_NAMES = new Set([
+  '.git',
+  '.hg',
+  '.svn',
+  '.bzr',
+  '.deepseek',
+  '.deepseekgui',
+  '.vscode',
+  '.idea'
+])
+
+function isHiddenDirectoryName(base: string): boolean {
+  return base.startsWith('.') && !base.slice(1).includes('.')
+}
+
+function isKnownFileName(path: string, base: string): boolean {
+  return isMaterialRecognizedFile(path) || isMaterialRecognizedFile(base)
+}
+
+function isAbsoluteOrHomePath(value: string): boolean {
+  return value.startsWith('~') || value.startsWith('/') || WINDOWS_ABS_RE.test(value)
+}
 
 export function classifyWorkspacePath(
   value: string,
@@ -41,13 +64,30 @@ export function classifyWorkspacePath(
   if (!path) return 'file'
   if (path.endsWith('/') || path.endsWith('\\')) return 'directory'
   const base = basenameOfPath(path)
-  const looksLikeFile =
-    isMaterialRecognizedFile(path) ||
-    isMaterialRecognizedFile(base) ||
-    FILE_EXTENSION_RE.test(base)
-  if (looksLikeFile) return 'file'
+  if (isHiddenDirectoryName(base)) {
+    if (HIDDEN_DIRECTORY_NAMES.has(base.toLowerCase())) return 'directory'
+    if (isKnownFileName(path, base)) return 'file'
+    return 'directory'
+  }
+  if (isKnownFileName(path, base)) return 'file'
+  if (base.includes('.') || FILE_EXTENSION_RE.test(base)) return 'file'
   if (statKind === 'file' || statKind === 'directory') return statKind
   return 'directory'
+}
+
+/** Prefer a resolved absolute path so Finder does not open Electron's cwd. */
+export function resolveWorkspaceRevealPath(
+  path: string,
+  resolvedPath?: string,
+  workspaceRoot?: string
+): string {
+  const resolved = resolvedPath?.trim()
+  if (resolved) return resolved
+  const trimmed = path.trim()
+  if (!trimmed || isAbsoluteOrHomePath(trimmed)) return trimmed
+  const root = workspaceRoot?.trim().replace(/[\\/]+$/, '')
+  if (!root) return trimmed
+  return `${root.replace(/\\/g, '/')}/${trimmed.replace(/^[\\/]+/, '')}`
 }
 
 export function looksLikeDirectoryPath(value: string, statKind?: 'file' | 'directory'): boolean {

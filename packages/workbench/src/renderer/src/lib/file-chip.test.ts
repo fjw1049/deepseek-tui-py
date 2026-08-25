@@ -6,7 +6,8 @@ import {
   looksLikeDirectoryPath,
   looksLikeFilePath,
   parseCodeFenceInfo,
-  parseComposerPathMentions
+  parseComposerPathMentions,
+  resolveWorkspaceRevealPath
 } from './file-chip'
 
 describe('file-chip helpers', () => {
@@ -60,5 +61,24 @@ describe('file-chip helpers', () => {
     expect(classifyWorkspacePath('~/.deepseek/agents/registries')).toBe('directory')
     expect(classifyWorkspacePath('src/app.ts', 'directory')).toBe('file')
     expect(classifyWorkspacePath('~/.deepseek/agents/registries', 'file')).toBe('file')
+    expect(classifyWorkspacePath('~/.deepseek')).toBe('directory')
+    expect(classifyWorkspacePath('.git')).toBe('directory')
+    expect(classifyWorkspacePath('.vscode')).toBe('directory')
+    expect(classifyWorkspacePath('.gitignore')).toBe('file')
+    expect(classifyWorkspacePath('.env')).toBe('file')
+    expect(classifyWorkspacePath('.env.local')).toBe('file')
+  })
+
+  it('reveals folders from a resolved or workspace-absolute path', () => {
+    expect(
+      resolveWorkspaceRevealPath('src', '/Users/demo/proj/src', '/Users/demo/proj')
+    ).toBe('/Users/demo/proj/src')
+    expect(resolveWorkspaceRevealPath('src', undefined, '/Users/demo/proj')).toBe(
+      '/Users/demo/proj/src'
+    )
+    expect(resolveWorkspaceRevealPath('~/.deepseek', undefined, '/Users/demo/proj')).toBe(
+      '~/.deepseek'
+    )
+    expect(resolveWorkspaceRevealPath('/tmp/out', undefined, '/Users/demo/proj')).toBe('/tmp/out')
   })
 })
