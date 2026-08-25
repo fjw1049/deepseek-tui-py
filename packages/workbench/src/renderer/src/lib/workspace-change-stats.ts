@@ -60,6 +60,14 @@ export function collectWorkspaceChangeEntries(opts: {
   gitFiles?: GitWorkingChangeFile[] | null
 }): WorkspaceChangeEntry[] {
   const byPath = new Map<string, WorkspaceChangeEntry>()
+  // Paths git no longer reports dirty were committed (or reverted) since
+  // the session blocks / turn snapshots were recorded. They are history,
+  // not pending changes - keep them out of the inspector and its totals,
+  // otherwise the panel keeps listing "changes" after every commit.
+  // Only meaningful once the first git snapshot has loaded (null/undefined =
+  // still loading / not a repo: fall back to showing session-sourced entries).
+  const gitDirtyPaths =
+    opts.gitFiles == null ? null : new Set(opts.gitFiles.map((file) => normalizeChangePath(file.path)))
 
   for (const block of opts.blocks) {
     if (!(block.kind === 'tool' && block.toolKind === 'file_change')) continue
@@ -67,6 +75,16 @@ export function collectWorkspaceChangeEntries(opts: {
     const hasDiff = looksLikeUnifiedDiff(detailText)
     const filePath = extractDiffFilePath(detailText, block.filePath)
     if (!hasDiff && !filePath) continue
+    // A settled (non-running) session edit whose path git no longer reports
+    // dirty was committed/reverted since - drop it. Running edits always
+    // show: git has not seen the write yet.
+    if (
+      block.status !== 'running' &&
+      gitDirtyPaths !== null &&
+      !gitDirtyPaths.has(normalizeChangePath(filePath))
+    ) {
+      continue
+    }
     const mutation =
       block.meta?.mutation &&
       typeof block.meta.mutation === 'object' &&
@@ -90,6 +108,13 @@ export function collectWorkspaceChangeEntries(opts: {
       const hasDiff = looksLikeUnifiedDiff(detail)
       const filePath = file.path?.trim() ?? ''
       if (!hasDiff && !filePath) continue
+      if (
+        gitDirtyPaths !== null &&
+        filePath &&
+        !gitDirtyPaths.has(normalizeChangePath(filePath))
+      ) {
+        continue
+      }
       const key = normalizeChangePath(filePath) || `turn-ledger:${snap.turn_id}:${file.path}`
       const prev = byPath.get(key)
       if (prev?.status === 'running') continue

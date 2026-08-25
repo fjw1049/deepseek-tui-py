@@ -26,6 +26,11 @@ vi.mock('../../hooks/use-git-working-changes', () => ({
   })
 }))
 
+vi.mock('../../store/chat-store', () => ({
+  useChatStore: (selector: (state: { workspaceDirtyTick: number }) => unknown) =>
+    selector({ workspaceDirtyTick: 0 })
+}))
+
 vi.mock('../../store/workspace-editor-store', () => ({
   useWorkspaceEditorStore: (
     selector: (state: {

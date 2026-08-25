@@ -293,6 +293,7 @@ export function GitCommitPopover({
       }
       setOpen(false)
       setMessage('')
+      useChatStore.setState((s) => ({ workspaceDirtyTick: s.workspaceDirtyTick + 1 }))
       onCommitted?.()
     } catch (commitError) {
       setError(commitError instanceof Error ? commitError.message : String(commitError))

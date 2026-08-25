@@ -52,7 +52,10 @@ describe('collectWorkspaceChangeEntries', () => {
   it('header +/- equals the sum of per-file stats', () => {
     const entries = collectWorkspaceChangeEntries({
       blocks: [fileChange('t1', 'a.ts', PATCH_A)],
-      gitFiles: [{ path: 'b.ts', status: 'added', stage: 'unstaged', patch: PATCH_B }]
+      gitFiles: [
+        { path: 'a.ts', status: 'modified', stage: 'unstaged', patch: PATCH_A },
+        { path: 'b.ts', status: 'added', stage: 'unstaged', patch: PATCH_B }
+      ]
     })
     expect(entries).toHaveLength(2)
     const perFile = entries.map((entry) => workspaceChangeEntryStats(entry))
@@ -115,5 +118,72 @@ describe('collectWorkspaceChangeEntries', () => {
     const summary = turnSummaryFromWorkspaceEntries(entries)
     expect(summary.totals).toEqual({ files: 1, additions: 3, deletions: 1 })
     expect(summary.files[0]?.unified_diff).toBe(vsHead)
+  })
+
+  it('drops session/ledger entries whose path is no longer git-dirty (committed)', () => {
+    const entries = collectWorkspaceChangeEntries({
+      blocks: [fileChange('t1', 'a.ts', PATCH_A)],
+      turnDiffByTurnId: {
+        turn_1: {
+          turn_id: 'turn_1',
+          files: [{ path: 'b.ts', additions: 1, deletions: 0, unified_diff: PATCH_B }],
+          totals: { files: 1, additions: 1, deletions: 0 },
+          revision: 1,
+          complete: true
+        }
+      },
+      // Loaded and clean: both session paths were committed.
+      gitFiles: []
+    })
+    expect(entries).toHaveLength(0)
+  })
+
+  it('keeps session entries when the git snapshot has not loaded yet', () => {
+    const entries = collectWorkspaceChangeEntries({
+      blocks: [fileChange('t1', 'a.ts', PATCH_A)],
+      gitFiles: null
+    })
+    expect(entries).toHaveLength(1)
+    expect(entries[0]?.filePath).toBe('a.ts')
+  })
+
+  it('treats a missing gitFiles argument like still-loading, not a clean tree', () => {
+    const entries = collectWorkspaceChangeEntries({
+      blocks: [fileChange('t1', 'a.ts', PATCH_A)]
+    })
+    expect(entries).toHaveLength(1)
+    expect(entries[0]?.filePath).toBe('a.ts')
+  })
+
+  it('keeps still-dirty paths when only some session files were committed', () => {
+    const entries = collectWorkspaceChangeEntries({
+      blocks: [fileChange('t1', 'a.ts', PATCH_A)],
+      turnDiffByTurnId: {
+        turn_1: {
+          turn_id: 'turn_1',
+          files: [{ path: 'b.ts', additions: 1, deletions: 0, unified_diff: PATCH_B }],
+          totals: { files: 1, additions: 1, deletions: 0 },
+          revision: 1,
+          complete: true
+        }
+      },
+      gitFiles: [{ path: 'a.ts', status: 'modified', stage: 'unstaged', patch: PATCH_A }]
+    })
+    expect(entries).toHaveLength(1)
+    expect(entries[0]?.filePath).toBe('a.ts')
+  })
+
+  it('still shows running edits while git is clean (edit racing the commit)', () => {
+    const running = {
+      ...fileChange('t1', 'a.ts', PATCH_A),
+      status: 'running' as const
+    }
+    const entries = collectWorkspaceChangeEntries({
+      blocks: [running],
+      gitFiles: []
+    })
+    // A mid-flight edit must not vanish from the panel just because git
+    // has not seen the write yet.
+    expect(entries).toHaveLength(1)
   })
 })

@@ -37,7 +37,9 @@ import { workspaceLabelFromPath } from '../../lib/workspace-label'
 import { IDE_QUICK_OPEN_EVENT } from '../../lib/workspace-editor-events'
 import { useWorkspaceEditorStore } from '../../store/workspace-editor-store'
 import { useGitWorkingChanges } from '../../hooks/use-git-working-changes'
+import { useWorkspaceDirtyGitRefresh } from '../../hooks/use-workspace-dirty-git-refresh'
 import { collectWorkspaceChangeEntries } from '../../lib/workspace-change-stats'
+import { useChatStore } from '../../store/chat-store'
 import { IdeProjectPicker, type IdeProjectOption } from './IdeProjectPicker'
 import { IdeQuickOpenPalette } from './IdeQuickOpenPalette'
 
@@ -176,7 +178,9 @@ export function IdeWorkspaceLayout({
     startWidth: number
     pendingWidth: number
   } | null>(null)
-  const { result: gitChanges } = useGitWorkingChanges(workspaceRoot)
+  const workspaceDirtyTick = useChatStore((s) => s.workspaceDirtyTick)
+  const { result: gitChanges, reload: reloadGitChanges } = useGitWorkingChanges(workspaceRoot)
+  useWorkspaceDirtyGitRefresh(workspaceDirtyTick, reloadGitChanges)
   const changeBadge = collectWorkspaceChangeEntries({
     blocks,
     gitFiles: gitChanges?.ok ? gitChanges.files : null
