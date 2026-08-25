@@ -20,7 +20,10 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
+import shutil
 from abc import ABC, abstractmethod
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -29,6 +32,55 @@ from httpx_sse import aconnect_sse
 from deepseek_tui.policy.env_filter import build_child_env
 
 logger = logging.getLogger(__name__)
+
+# GUI-launched runtimes often inherit a stripped PATH (no Homebrew / nvm).
+# MCP stdio commands like ``npx`` / ``uvx`` then fail in <1s with ENOENT.
+_MCP_USER_BIN_DIRS = (
+    "/opt/homebrew/bin",
+    "/usr/local/bin",
+    str(Path.home() / ".local" / "bin"),
+    str(Path.home() / ".cargo" / "bin"),
+)
+_MCP_STDERR_TAIL = 12
+_MCP_STDERR_LINE_MAX = 300
+# Host Electron / npm / Cursor leak these into the Python runtime; npx then
+# either crashes or writes to a sandbox cache and exits before handshake.
+_MCP_STRIP_ENV_EXACT = frozenset({"NODE_OPTIONS", "NODE_PATH"})
+_MCP_STRIP_ENV_PREFIXES = ("ELECTRON_", "npm_", "NPM_")
+
+
+def augment_mcp_path(env: dict[str, str]) -> dict[str, str]:
+    """Prepend common user bin dirs that a Dock/Electron PATH is missing."""
+    parts = [p for p in env.get("PATH", "").split(os.pathsep) if p]
+    extras: list[str] = []
+    known = set(parts)
+    for extra in _MCP_USER_BIN_DIRS:
+        if extra in known:
+            continue
+        if Path(extra).is_dir():
+            extras.append(extra)
+            known.add(extra)
+    out = dict(env)
+    out["PATH"] = os.pathsep.join(extras + parts)
+    return out
+
+
+def sanitize_mcp_spawn_env(env: dict[str, str]) -> dict[str, str]:
+    """Drop Electron/npm host vars that make ``npx`` child processes die."""
+    return {
+        key: value
+        for key, value in env.items()
+        if key not in _MCP_STRIP_ENV_EXACT
+        and not key.startswith(_MCP_STRIP_ENV_PREFIXES)
+    }
+
+
+def resolve_mcp_command(command: str, env: dict[str, str]) -> str:
+    """Resolve a bare command against ``env['PATH']`` (absolute paths pass)."""
+    if os.path.isabs(command) or os.sep in command:
+        return command
+    found = shutil.which(command, path=env.get("PATH"))
+    return found or command
 
 
 class McpTransportError(Exception):
@@ -77,26 +129,48 @@ class StdioTransport(McpTransport):
         self.env = dict(env or {})
         self._process: asyncio.subprocess.Process | None = None
         self._stderr_task: asyncio.Task[None] | None = None
+        self._stderr_tail: list[str] = []
 
     async def start(self) -> None:
         if self._process is not None:
             return
-        # Scrub secret-like vars from the inherited env; mcp.json's explicit
-        # ``env`` entries (self.env) pass through untouched.
-        merged_env = build_child_env(self.env)
-        self._process = await asyncio.create_subprocess_exec(
-            self.command,
-            *self.args,
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            env=merged_env,
-        )
+        # Scrub secret-like vars from the inherited env, then drop Electron/npm
+        # host poison. mcp.json ``env`` is re-applied so explicit overrides win.
+        merged_env = sanitize_mcp_spawn_env(build_child_env(self.env))
+        if self.env:
+            merged_env.update(self.env)
+        merged_env = augment_mcp_path(merged_env)
+        command = resolve_mcp_command(self.command, merged_env)
+        try:
+            self._process = await asyncio.create_subprocess_exec(
+                command,
+                *self.args,
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                env=merged_env,
+            )
+        except FileNotFoundError as exc:
+            raise McpTransportError(
+                f"MCP command {self.command!r} not found on PATH="
+                f"{merged_env.get('PATH', '')}"
+            ) from exc
         # Drain stderr continuously — without a reader the child blocks once
         # the OS pipe buffer fills, deadlocking the whole transport.
+        self._stderr_tail = []
         self._stderr_task = asyncio.create_task(
             self._drain_stderr(), name=f"mcp-stderr-{self.command}"
         )
+
+    def _note_stderr_line(self, text: str) -> None:
+        line = text.rstrip()
+        if not line:
+            return
+        if len(line) > _MCP_STDERR_LINE_MAX:
+            line = line[:_MCP_STDERR_LINE_MAX] + "…"
+        self._stderr_tail.append(line)
+        if len(self._stderr_tail) > _MCP_STDERR_TAIL:
+            self._stderr_tail = self._stderr_tail[-_MCP_STDERR_TAIL:]
 
     async def _drain_stderr(self) -> None:
         process = self._process
@@ -107,13 +181,33 @@ class StdioTransport(McpTransport):
                 raw = await process.stderr.readline()
                 if not raw:
                     break
+                text = raw.decode("utf-8", errors="replace")
+                self._note_stderr_line(text)
                 logger.debug(
                     "mcp_stderr command=%s line=%s",
                     self.command,
-                    raw.decode("utf-8", errors="replace").rstrip(),
+                    text.rstrip(),
                 )
         except (asyncio.CancelledError, Exception):  # noqa: BLE001
             pass
+
+    async def _await_stderr_drain(self) -> None:
+        task = self._stderr_task
+        if task is None:
+            return
+        try:
+            await asyncio.wait_for(asyncio.shield(task), timeout=0.2)
+        except (asyncio.TimeoutError, asyncio.CancelledError, Exception):  # noqa: BLE001
+            pass
+
+    def _closed_peer_error(self) -> McpTransportError:
+        rc = self._process.returncode if self._process is not None else None
+        tail = " | ".join(self._stderr_tail[-6:])
+        if tail:
+            return McpTransportError(
+                f"stdio transport closed by peer (exit={rc}): {tail}"
+            )
+        return McpTransportError(f"stdio transport closed by peer (exit={rc})")
 
     async def stop(self) -> None:
         if self._stderr_task is not None:
@@ -146,7 +240,13 @@ class StdioTransport(McpTransport):
         while True:
             raw = await self._process.stdout.readline()
             if not raw:
-                raise McpTransportError("stdio transport closed by peer")
+                if self._process.returncode is None:
+                    try:
+                        await asyncio.wait_for(self._process.wait(), timeout=0.2)
+                    except asyncio.TimeoutError:
+                        pass
+                await self._await_stderr_drain()
+                raise self._closed_peer_error()
             line = raw.decode("utf-8").strip()
             if not line:
                 continue

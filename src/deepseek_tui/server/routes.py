@@ -672,8 +672,9 @@ async def mcp_preload_status(request: Request) -> dict[str, Any]:
 async def mcp_servers(request: Request) -> dict[str, Any]:
     """List configured MCP connectors with live connection state.
 
-    Each server carries ``connected`` (its client subprocess is running),
-    which the composer's connector panel uses to show a green/red dot.
+    Each server carries ``status`` (connected / connecting / failed /
+    disabled) plus ``connected`` for back-compat. The composer maps
+    those onto green / yellow / red and greys out failed rows.
     """
     runtime = runtime_from_request(request)
     return await runtime.list_mcp_servers()

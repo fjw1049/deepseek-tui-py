@@ -923,12 +923,23 @@ class AppRuntime:
             cfg = manager.server_config(name) if hasattr(manager, "server_config") else manager._configs.get(name)  # noqa: SLF001
             load_policy = getattr(cfg, "load_policy", "progressive") if cfg else "progressive"
             catalog = getattr(cfg, "catalog", None) if cfg else None
+            runtime = (
+                manager.server_runtime_status(name)
+                if hasattr(manager, "server_runtime_status")
+                else {
+                    "status": "connected" if manager.is_server_running(name) else "connecting",
+                    "connected": manager.is_server_running(name),
+                    "error": None,
+                }
+            )
             out.append(
                 {
                     "name": name,
                     "enabled": bool(getattr(cfg, "enabled", False)),
                     "transport": _transport_label(cfg),
-                    "connected": manager.is_server_running(name),
+                    "connected": bool(runtime.get("connected")),
+                    "status": runtime.get("status") or "connecting",
+                    "error": runtime.get("error"),
                     "load_policy": load_policy,
                     "catalog": catalog,
                 }

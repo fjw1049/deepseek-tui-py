@@ -45,6 +45,10 @@ StartupUpdateCallback = Callable[
 logger = logging.getLogger(__name__)
 
 DEFAULT_PRELOAD_TIMEOUT_S = 30.0
+# uvx / npx cold start (download interpreter + pin) exceeds the 10s connect
+# default. Load-time warmup uses this floor so the composer can settle on
+# green/red instead of hanging on yellow.
+FOCUS_WARM_TIMEOUT_S = 60.0
 
 
 # --- Required-server startup policy -----------------------------------------
@@ -218,7 +222,10 @@ class McpManager:
         self._discover_lock = asyncio.Lock()
         self._preload = McpPreloadTracker()
         self._discover_errors: dict[str, str] = {}
-        # on_focus servers: discovered only under @connector.
+        # Names currently inside start_all / focus warmup (composer yellow).
+        self._warming_servers: set[str] = set()
+        # on_focus servers: warmed at load, merged into the model catalog
+        # only while ``@connector`` focus is active.
         self._focus_api_tools: dict[str, list[dict[str, Any]]] = {}
         self._focus_tool_map: dict[str, tuple[str, str]] = {}
         if self._config_path is not None:
@@ -270,6 +277,45 @@ class McpManager:
         """Whether ``name``'s client subprocess/connection is live right now."""
         client = self._clients.get(name)
         return client is not None and client.is_running
+
+    def _warmable_server_names(self) -> list[str]:
+        return [
+            name
+            for name, cfg in self._configs.items()
+            if cfg.enabled and not cfg.lazy
+        ]
+
+    def _connect_in_flight(self) -> bool:
+        task = self._connect_task
+        return task is not None and not task.done()
+
+    def server_runtime_status(self, name: str) -> dict[str, Any]:
+        """Composer dot: connected / connecting / failed / disabled.
+
+        Green only after a live client (and, for on_focus, discovered tools).
+        Yellow is in-flight warmup — never a synonym for on_focus idle.
+        Red is a finished failure; the UI must not offer that connector.
+        """
+        cfg = self._configs.get(name)
+        if cfg is None or not cfg.enabled:
+            return {"status": "disabled", "connected": False, "error": None}
+        error = self._discover_errors.get(name)
+        running = self.is_server_running(name)
+        focus_ready = (not cfg.is_on_focus) or name in self._focus_api_tools
+        if running and focus_ready:
+            return {"status": "connected", "connected": True, "error": None}
+        warming = (
+            name in self._warming_servers
+            or self._preload.phase == "warming"
+            or self._connect_in_flight()
+        )
+        if warming:
+            return {"status": "connecting", "connected": False, "error": None}
+        if error:
+            return {"status": "failed", "connected": False, "error": error}
+        if self._preload.phase in ("idle",) and not self._connect_in_flight():
+            return {"status": "connecting", "connected": False, "error": None}
+        return {"status": "failed", "connected": False, "error": error}
 
     def _match_configured_server(self, qualified: str) -> str | None:
         """Longest ``mcp_<sanitized_server>_`` prefix match among configs.
@@ -367,8 +413,9 @@ class McpManager:
         force: bool = False,
     ) -> None:
         """Background MCP connect + tool discovery after runtime serve starts."""
-        enabled = self._progressive_enabled_server_names()
-        if not enabled:
+        progressive = self._progressive_enabled_server_names()
+        warmable = self._warmable_server_names()
+        if not warmable:
             self._preload.phase = "disabled"
             return
         task = self._preload._task
@@ -380,12 +427,17 @@ class McpManager:
             self._preload.from_disk_cache = False
             self._preload.completed_at_ms = None
             self._preload.error = None
-        if self._discovered_tools_cache is not None and not force:
+        if progressive and self._discovered_tools_cache is not None and not force:
             self._preload.phase = "ready"
+            self._schedule_background_connect()
             return
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
+            return
+        if not progressive:
+            self._preload.phase = "ready"
+            self._schedule_background_connect()
             return
         self._preload._task = loop.create_task(
             self._run_startup_preload(timeout_s),
@@ -436,9 +488,10 @@ class McpManager:
         else:
             self._preload.phase = "failed"
             logger.warning(
-                "mcp_preload_failed_no_tools connected=%d/%d",
+                "mcp_preload_failed_no_tools connected=%d/%d errors=%s",
                 connected,
                 len(enabled),
+                self._discover_errors,
             )
         # Tool discovery only connects transiently to read schemas; it does not
         # keep clients alive. Establish + hold real connections in the
@@ -466,7 +519,7 @@ class McpManager:
         reused), non-blocking, and skipped when no event loop is running or a
         connect task is already in flight.
         """
-        if not self._progressive_enabled_server_names():
+        if not self._warmable_server_names():
             return
         if self._connect_task is not None and not self._connect_task.done():
             return
@@ -512,24 +565,28 @@ class McpManager:
                 await _emit_async(name, McpStartupStatus.cancelled())
                 return name, "cancelled"
             await _emit_async(name, McpStartupStatus.starting())
+            self._warming_servers.add(name)
             try:
                 await self._ensure_client(name)
+                if cfg.is_on_focus:
+                    await self._populate_focus_tools(name)
+                self._discover_errors.pop(name, None)
             except Exception as exc:  # noqa: BLE001 — surface per-server failure
                 err = str(exc)
+                self._discover_errors[name] = err
                 await _emit_async(name, McpStartupStatus.failed(err))
                 return name, err
+            finally:
+                self._warming_servers.discard(name)
             await _emit_async(name, McpStartupStatus.ready())
             return name, None
 
-        # Lazy + on_focus servers are excluded from eager startup.
-        # on_focus only connects under ``@connector`` focus.
-        start_names = [
-            name
-            for name, cfg in self._configs.items()
-            if cfg.enabled and not cfg.lazy and not cfg.is_on_focus
-        ]
+        # Lazy servers stay deferred. on_focus is warmed here so the
+        # composer can settle green/red at load; its tools still stay out
+        # of the progressive catalog until ``@connector``.
+        start_names = self._warmable_server_names()
         for name, cfg in self._configs.items():
-            if not cfg.enabled or cfg.is_on_focus:
+            if not cfg.enabled or cfg.lazy:
                 await _emit_async(name, McpStartupStatus.cancelled())
                 cancelled.append(name)
 
@@ -687,26 +744,14 @@ class McpManager:
             _ingest(tools)
         return grouped
 
-    async def ensure_focus_server_discovered(self, name: str) -> list[dict[str, Any]]:
-        """Connect + list tools for an ``on_focus`` server under ``@connector``.
+    def _focus_warm_timeout(self, cfg: McpServerConfig) -> float:
+        base = cfg.connect_timeout or DEFAULT_TIMEOUTS["connect_timeout"]
+        return max(base, FOCUS_WARM_TIMEOUT_S)
 
-        Progressive servers fall through to normal discovery. Raises
-        ``McpError`` when the server is missing or disabled.
-        """
-        cfg = self._configs.get(name)
-        if cfg is None:
-            raise McpError(f"Unknown MCP server: {name}")
-        if not cfg.enabled:
-            raise McpError(
-                f"MCP server '{name}' is disabled. Enable it in Connectors first."
-            )
-        if not cfg.is_on_focus:
-            return await self.discover_tools()
-
-        if name in self._focus_api_tools:
-            return list(self._focus_api_tools[name])
-
-        timeout = cfg.connect_timeout or DEFAULT_TIMEOUTS["connect_timeout"]
+    async def _populate_focus_tools(self, name: str) -> list[dict[str, Any]]:
+        """Connect + list_tools for an on_focus server; keep the client alive."""
+        cfg = self._configs[name]
+        timeout = self._focus_warm_timeout(cfg)
         try:
             client = await asyncio.wait_for(self._ensure_client(name), timeout=timeout)
             descriptors = await asyncio.wait_for(client.list_tools(), timeout=timeout)
@@ -724,6 +769,26 @@ class McpManager:
         self._focus_api_tools[name] = api_tools
         self._discover_errors.pop(name, None)
         return list(api_tools)
+
+    async def ensure_focus_server_discovered(self, name: str) -> list[dict[str, Any]]:
+        """Return on_focus tools, using the load-time warmup when it succeeded.
+
+        Progressive servers fall through to normal discovery. Raises
+        ``McpError`` when the server is missing, disabled, or failed warmup.
+        """
+        cfg = self._configs.get(name)
+        if cfg is None:
+            raise McpError(f"Unknown MCP server: {name}")
+        if not cfg.enabled:
+            raise McpError(
+                f"MCP server '{name}' is disabled. Enable it in Connectors first."
+            )
+        if not cfg.is_on_focus:
+            return await self.discover_tools()
+
+        if name in self._focus_api_tools and self.is_server_running(name):
+            return list(self._focus_api_tools[name])
+        return await self._populate_focus_tools(name)
 
     async def release_focus_server(self, name: str) -> None:
         """Drop on_focus discovery state and disconnect after the focus turn."""
@@ -833,13 +898,18 @@ class McpManager:
 
     async def _discover_tools_fresh(self) -> list[dict[str, Any]]:
         timed_out_servers: list[tuple[str, McpServerConfig]] = []
-        self._discover_errors = {}
+        for name, cfg in self._configs.items():
+            if cfg.enabled and not cfg.is_on_focus:
+                self._discover_errors.pop(name, None)
 
         async def _discover_one(
             server_name: str, cfg: McpServerConfig
         ) -> list[tuple[str, str, str, dict[str, Any]]]:
             """Returns [(qualified, server_name, raw_name, api_dict), ...]."""
-            timeout = cfg.connect_timeout or DEFAULT_TIMEOUTS["connect_timeout"]
+            timeout = max(
+                cfg.connect_timeout or DEFAULT_TIMEOUTS["connect_timeout"],
+                FOCUS_WARM_TIMEOUT_S,
+            )
             try:
                 client = await asyncio.wait_for(
                     self._ensure_client(server_name), timeout=timeout
@@ -850,12 +920,19 @@ class McpManager:
             except asyncio.TimeoutError:
                 timed_out_servers.append((server_name, cfg))
                 self._discover_errors[server_name] = f"timed out after {timeout}s"
+                logger.warning(
+                    "mcp_discover_failed server=%s error=timed out after %ss",
+                    server_name,
+                    timeout,
+                )
                 return []
             except McpError as exc:
                 self._discover_errors[server_name] = str(exc)
+                logger.warning("mcp_discover_failed server=%s error=%s", server_name, exc)
                 return []
             except Exception as exc:  # noqa: BLE001
                 self._discover_errors[server_name] = str(exc)
+                logger.warning("mcp_discover_failed server=%s error=%s", server_name, exc)
                 return []
             return _tools_from_descriptors(server_name, cfg, descriptors)
 

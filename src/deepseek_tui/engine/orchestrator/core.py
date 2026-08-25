@@ -2390,26 +2390,14 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                 with suppress(asyncio.CancelledError):
                     await goal_deadline_task
             self.handle.clear_response_id()
-            # Disconnect on_focus media connectors after the turn so they never
-            # linger in preload / progressive catalog.
-            focused_servers = self._focus_allowed_servers
+            # Keep warmed on_focus clients alive so the next @pick is
+            # already green/red. Tools stay out of the progressive catalog
+            # unless this turn set a focus whitelist.
             # 复位聚焦模式白名单，确保不跨 turn 保留。
             self._focus_tool_whitelist = None
             self._focus_allowed_servers = None
             # 同理复位只读放行根：仅在挂载插件的 turn 内有效，取消/异常也不泄漏。
             self.tool_context.extra_read_roots = ()
-            mcp_mgr = self.mcp_manager
-            if focused_servers and mcp_mgr is not None:
-                release = getattr(mcp_mgr, "release_focus_server", None)
-                if callable(release):
-                    for server in focused_servers:
-                        try:
-                            await release(server)
-                        except Exception:  # noqa: BLE001
-                            logger.exception(
-                                "mcp_focus_release_failed server=%s", server
-                            )
-                self._mcp_tools_cache = None
 
     def _completion_agent_is_background(self, agent_id: str) -> bool:
         """True when *agent_id* is a ``run_in_background`` child still known."""

@@ -174,7 +174,7 @@ def test_startup_deletes_legacy_tools_cache(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_start_all_skips_on_focus() -> None:
+async def test_start_all_warms_on_focus() -> None:
     progressive = McpServerConfig(name="fetch", command="echo")
     media = McpServerConfig(
         name="tikhub-wechat",
@@ -188,10 +188,25 @@ async def test_start_all_skips_on_focus() -> None:
         started.append(name)
         client = MagicMock()
         client.is_running = True
+
+        async def list_tools() -> list[McpToolDescriptor]:
+            return [
+                McpToolDescriptor(
+                    name="search",
+                    description="search",
+                    input_schema={"type": "object", "properties": {}},
+                )
+            ]
+
+        client.list_tools = list_tools
+        mgr._clients[name] = client
         return client
 
     mgr._ensure_client = fake_ensure  # type: ignore[method-assign]
     summary = await mgr.start_all()
     assert "fetch" in summary.ready
-    assert "tikhub-wechat" in summary.cancelled
-    assert "tikhub-wechat" not in started
+    assert "tikhub-wechat" in summary.ready
+    assert "tikhub-wechat" not in summary.cancelled
+    assert "tikhub-wechat" in started
+    assert mgr.focus_api_tools("tikhub-wechat")
+    assert mgr.server_runtime_status("tikhub-wechat")["status"] == "connected"

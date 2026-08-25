@@ -4,6 +4,10 @@ import { useTranslation } from 'react-i18next'
 import { FolderOpen, Plus, Search } from 'lucide-react'
 import { ensurePresetConnectors, presetConnectorTitle, withInstallLoadPolicy } from '../../lib/connector-groups'
 import {
+  parseMcpRuntimeServers,
+  resolveConnectorRuntimeStatus
+} from '../../lib/composer-connectors'
+import {
   listMcpServers,
   mergeMcpServerIntoConfig,
   mcpConfigHasServer,
@@ -39,6 +43,9 @@ export function ConnectorsView(): ReactElement {
   const [importOpen, setImportOpen] = useState(false)
   const [mcpConfigText, setMcpConfigText] = useState('')
   const [mcpLoaded, setMcpLoaded] = useState(false)
+  const [runtimeServers, setRuntimeServers] = useState<
+    ReturnType<typeof parseMcpRuntimeServers>
+  >([])
   // Bumped by the panel-header reload hint to force-refresh the ModelScope
   // market catalog in parallel with the local mcp.json reload (one click
   // updates 默认 / 激活 / 媒体 / 市场四个 tab).
@@ -77,6 +84,26 @@ export function ConnectorsView(): ReactElement {
     if (mcpLoaded) return
     void readMcpConfig().catch((e) => setNotice({ tone: 'error', message: e instanceof Error ? e.message : String(e) }))
   }, [mcpLoaded, readMcpConfig])
+
+  useEffect(() => {
+    let cancelled = false
+    const loadRuntime = async (): Promise<void> => {
+      if (typeof window.dsGui?.runtimeRequest !== 'function') return
+      try {
+        const result = await window.dsGui.runtimeRequest('/v1/mcp/servers', 'GET')
+        if (!result.ok || cancelled) return
+        setRuntimeServers(parseMcpRuntimeServers(result.body))
+      } catch {
+        if (!cancelled) setRuntimeServers([])
+      }
+    }
+    void loadRuntime()
+    const timer = window.setInterval(() => void loadRuntime(), 2000)
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+    }
+  }, [mcpLoaded, mcpConfigText])
 
   useEffect(() => {
     if (!mcpLoaded || typeof window.dsGui?.setMcpConfigFile !== 'function') return
@@ -128,14 +155,24 @@ export function ConnectorsView(): ReactElement {
   // Connectors come solely from mcp.json servers.
   const connectors = useMemo<ConnectorItem[]>(() => {
     const titleById = new Map(MEDIA_CATALOG.map((item) => [item.id, item.title]))
-    const userConnectors = listMcpServers(mcpConfigText).map((server) => ({
-      id: server.id,
-      name: titleById.get(server.id) ?? presetConnectorTitle(server.id) ?? server.id,
-      summary: server.summary,
-      enabled: server.enabled,
-      loadPolicy: server.loadPolicy,
-      catalog: server.catalog
-    }))
+    const runtimeByName = new Map(runtimeServers.map((server) => [server.name, server]))
+    const userConnectors = listMcpServers(mcpConfigText).map((server) => {
+      const runtime = runtimeByName.get(server.id)
+      return {
+        id: server.id,
+        name: titleById.get(server.id) ?? presetConnectorTitle(server.id) ?? server.id,
+        summary: server.summary,
+        enabled: server.enabled,
+        loadPolicy: server.loadPolicy,
+        catalog: server.catalog,
+        status: server.enabled
+          ? runtime
+            ? resolveConnectorRuntimeStatus(runtime)
+            : undefined
+          : 'disabled',
+        error: runtime?.error ?? null
+      }
+    })
     const normalizedQuery = query.trim().toLowerCase()
     if (!normalizedQuery) return userConnectors
     return userConnectors.filter(
@@ -144,7 +181,7 @@ export function ConnectorsView(): ReactElement {
         c.id.toLowerCase().includes(normalizedQuery) ||
         c.summary.toLowerCase().includes(normalizedQuery)
     )
-  }, [mcpConfigText, query])
+  }, [mcpConfigText, query, runtimeServers])
 
   const appendMcpServer = useCallback(
     async (id: string, entry: McpServerEntry): Promise<void> => {

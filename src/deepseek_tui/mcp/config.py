@@ -14,7 +14,8 @@ DEFAULT_TIMEOUTS: dict[str, float] = {
 }
 
 # progressive — startup preload + catalog + tool_search (默认)
-# on_focus — never preload or progressive-search; only after ``@connector`` (激活)
+# on_focus — warmed at load like others, but tools stay out of the
+# progressive catalog until ``@connector`` (激活)
 LOAD_POLICY_PROGRESSIVE = "progressive"
 LOAD_POLICY_ON_FOCUS = "on_focus"
 VALID_LOAD_POLICIES = frozenset({LOAD_POLICY_PROGRESSIVE, LOAD_POLICY_ON_FOCUS})

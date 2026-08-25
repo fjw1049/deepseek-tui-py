@@ -55,6 +55,12 @@ class CompositeMcpManager(McpManager):
         manager = self._manager_for_server(name)
         return manager.is_server_running(name) if manager else False
 
+    def server_runtime_status(self, name: str) -> dict[str, Any]:
+        manager = self._manager_for_server(name)
+        if manager is None:
+            return {"status": "disabled", "connected": False, "error": None}
+        return manager.server_runtime_status(name)
+
     def cached_tools(self) -> list[dict[str, Any]] | None:
         caches = [manager.cached_tools() for manager in self._managers]
         if any(cache is None for cache in caches):

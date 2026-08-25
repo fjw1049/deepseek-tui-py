@@ -4,6 +4,11 @@ import { useTranslation } from 'react-i18next'
 import { Loader2, Trash2 } from 'lucide-react'
 import { GlassSegmentedControl } from '../settings/GlassSegmentedControl'
 import { partitionConnectorsByGroup } from '../../lib/connector-groups'
+import {
+  composerConnectorDotClass,
+  composerConnectorDotTone,
+  type ConnectorRuntimeStatus
+} from '../../lib/composer-connectors'
 import type { McpLoadPolicy } from '../../lib/mcp-json-merge'
 
 export type ConnectorItem = {
@@ -13,6 +18,8 @@ export type ConnectorItem = {
   enabled: boolean
   loadPolicy?: McpLoadPolicy
   catalog?: string
+  status?: ConnectorRuntimeStatus
+  error?: string | null
 }
 
 type ConnectorTab = 'default' | 'activated' | 'media' | 'marketplace'
@@ -126,10 +133,31 @@ function ConnectorRow({
     onDelete()
   }
   const onFocus = connector.loadPolicy === 'on_focus'
+  const status = connector.status
+  const tone =
+    status && status !== 'disabled' ? composerConnectorDotTone({ status }) : null
+  const errorSuffix = connector.error ? `：${connector.error}` : ''
+  const statusLabel =
+    status === 'connected'
+      ? t('connectorStatusConnected')
+      : status === 'connecting'
+        ? t('composerConnectorConnectingHint')
+        : status === 'failed'
+          ? t('connectorStatusFailed', { error: errorSuffix })
+          : status === 'disabled'
+            ? t('connectorStatusDisabled')
+            : null
   return (
     <li className="group flex items-center gap-4 px-5 py-4 transition hover:bg-ds-subtle/50 active:bg-ds-subtle/70">
       <div className="min-w-0 flex-1">
         <div className="flex min-w-0 items-center gap-2">
+          {tone ? (
+            <span
+              className={`h-2 w-2 shrink-0 rounded-full ${composerConnectorDotClass(tone)}`}
+              title={statusLabel ?? undefined}
+              aria-hidden
+            />
+          ) : null}
           <div className="truncate text-[15px] font-semibold text-ds-ink">{connector.name}</div>
           <span className="shrink-0 rounded-full bg-ds-subtle px-1.5 py-0.5 text-[10px] font-medium text-ds-muted">
             {onFocus ? t('connectorLoadOnFocus') : t('connectorLoadProgressive')}
@@ -138,6 +166,22 @@ function ConnectorRow({
         <p className="mt-0.5 line-clamp-1 font-mono text-[12px] leading-5 text-ds-muted" title={connector.summary}>
           {connector.summary}
         </p>
+        {statusLabel ? (
+          <p
+            className={`mt-0.5 line-clamp-1 text-[12px] leading-5 ${
+              status === 'failed'
+                ? 'text-red-500/80'
+                : status === 'connecting'
+                  ? 'text-amber-600 dark:text-amber-400'
+                  : status === 'connected'
+                    ? 'text-emerald-600 dark:text-emerald-400'
+                    : 'text-ds-faint'
+            }`}
+            title={statusLabel}
+          >
+            {statusLabel}
+          </p>
+        ) : null}
       </div>
       <div className="flex shrink-0 items-center gap-2 opacity-40 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
         <button

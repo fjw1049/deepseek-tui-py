@@ -80,9 +80,13 @@ import {
 } from '../../lib/load-composer-asr-config'
 import {
   buildComposerConnectorRows,
+  composerConnectorDotClass,
+  composerConnectorDotTone,
   diskServersFromMcpConfig,
   filterComposerConnectorRows,
+  isComposerConnectorSelectable,
   mediaConnectorTitle,
+  parseMcpRuntimeServers,
   type ComposerConnectorRow
 } from '../../lib/composer-connectors'
 import type { PreviewElementPick } from '../../lib/preview-element-picker'
@@ -897,17 +901,7 @@ export function FloatingComposer({
         try {
           const result = await window.dsGui.runtimeRequest('/v1/mcp/servers', 'GET')
           if (!result.ok) return []
-          const parsed = JSON.parse(result.body) as {
-            servers?: Array<{
-              name: string
-              transport?: string
-              connected?: boolean
-              enabled?: boolean
-              load_policy?: string
-              catalog?: string | null
-            }>
-          }
-          return parsed.servers ?? []
+          return parseMcpRuntimeServers(result.body)
         } catch {
           return []
         }
@@ -927,7 +921,25 @@ export function FloatingComposer({
     [runtimeReady, connectorsLoaded, connectorsLoading]
   )
 
+  useEffect(() => {
+    if (plusSubmenu !== 'connectors') return
+    const pending = composerConnectors.some((connector) => connector.status === 'connecting')
+    if (!pending) return
+    const timer = window.setInterval(() => loadComposerConnectors({ force: true }), 1500)
+    return () => window.clearInterval(timer)
+  }, [plusSubmenu, composerConnectors, loadComposerConnectors])
+
+  useEffect(() => {
+    if (!focusConnector || !connectorsLoaded) return
+    const row = composerConnectors.find((connector) => connector.id === focusConnector)
+    if (row && !isComposerConnectorSelectable(row)) {
+      setFocusConnector(null)
+    }
+  }, [focusConnector, composerConnectors, connectorsLoaded])
+
   const handlePickConnector = (id: string): void => {
+    const row = composerConnectors.find((connector) => connector.id === id)
+    if (row && !isComposerConnectorSelectable(row)) return
     // Mirror handlePickSkill: hold the connector as an inline chip; `@id ` is
     // prepended only at send time. Focus skill/connector are mutually exclusive.
     setFocusConnector(id)
@@ -2163,7 +2175,7 @@ export function FloatingComposer({
                             }
                             plusNav.onKeyDown(event, (index) => {
                               const connector = filteredConnectors[index]
-                              if (!connector?.enabled) return
+                              if (!connector || !isComposerConnectorSelectable(connector)) return
                               handlePickConnector(connector.id)
                               setPlusMenuOpen(false)
                             })
@@ -2185,7 +2197,17 @@ export function FloatingComposer({
                           </div>
                         ) : (
                           filteredConnectors.map((connector, index) => {
-                              const selectable = connector.enabled
+                              const selectable = isComposerConnectorSelectable(connector)
+                              const tone = composerConnectorDotTone(connector)
+                              const connecting = connector.status === 'connecting'
+                              const failed =
+                                connector.status === 'failed' || connector.status === 'disabled'
+                              const errorSuffix = connector.error ? `：${connector.error}` : ''
+                              const statusHint = connecting
+                                ? t('composerConnectorConnectingHint')
+                                : failed
+                                  ? t('composerConnectorFailedHint', { error: errorSuffix })
+                                  : connector.summary || connector.id
                               return (
                               <button
                                 key={connector.id}
@@ -2193,13 +2215,14 @@ export function FloatingComposer({
                                 disabled={!selectable}
                                 data-plus-highlight={index === plusNav.highlighted ? 'true' : undefined}
                                 title={
-                                  selectable
-                                    ? connector.connected
-                                      ? undefined
-                                      : connector.loadPolicy === 'on_focus'
-                                        ? t('composerConnectorOnFocusHint')
-                                        : t('composerConnectorConnectingHint')
-                                    : t('composerConnectorDisconnected', { name: connector.title })
+                                  connecting
+                                    ? t('composerConnectorConnectingPickHint')
+                                    : failed
+                                      ? t('composerConnectorFailed', {
+                                          name: connector.title,
+                                          error: errorSuffix
+                                        })
+                                      : undefined
                                 }
                                 onMouseDown={(event) => event.preventDefault()}
                                 onMouseEnter={() => plusNav.setHighlighted(index)}
@@ -2213,19 +2236,14 @@ export function FloatingComposer({
                                     ? index === plusNav.highlighted
                                       ? 'ds-combobox-row--highlight'
                                       : 'hover:bg-ds-hover'
-                                    : 'cursor-not-allowed opacity-40'
+                                    : connecting
+                                      ? 'cursor-wait opacity-70'
+                                      : 'cursor-not-allowed opacity-40'
                                 }`}
                               >
                                 <div className="flex items-start gap-2 text-[13px] font-medium text-ds-ink">
                                   <span
-                                    className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${
-                                      connector.connected
-                                        ? 'bg-emerald-500'
-                                        : connector.section === 'default' ||
-                                            connector.loadPolicy === 'on_focus'
-                                          ? 'bg-amber-400'
-                                          : 'bg-red-500'
-                                    }`}
+                                    className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${composerConnectorDotClass(tone)}`}
                                     aria-hidden
                                   />
                                   <Plug className="mt-0.5 h-4 w-4 shrink-0" strokeWidth={1.8} />
@@ -2236,8 +2254,16 @@ export function FloatingComposer({
                                       : t('connectorTabActivated')}
                                   </span>
                                 </div>
-                                <div className="mt-0.5 line-clamp-2 pl-[26px] text-[11px] leading-4 text-ds-faint">
-                                  {connector.summary || connector.id}
+                                <div
+                                  className={`mt-0.5 line-clamp-2 pl-[26px] text-[11px] leading-4 ${
+                                    failed
+                                      ? 'text-red-500/80'
+                                      : connecting
+                                        ? 'text-amber-600 dark:text-amber-400'
+                                        : 'text-ds-faint'
+                                  }`}
+                                >
+                                  {statusHint}
                                 </div>
                               </button>
                               )

@@ -180,7 +180,10 @@ class McpClient:
         self._server_capabilities = None
         self._pending.clear()
         transport = build_transport(self.config)
-        await transport.start()
+        try:
+            await transport.start()
+        except McpTransportError as exc:
+            raise McpError(str(exc)) from exc
         self._transport = transport
         self._reader_task = asyncio.create_task(self._reader_loop())
         try:

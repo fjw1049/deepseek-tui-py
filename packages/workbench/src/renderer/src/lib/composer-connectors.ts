@@ -8,12 +8,16 @@ import {
 
 export type ComposerConnectorSection = ConnectorGroup
 
+export type ConnectorRuntimeStatus = 'connected' | 'connecting' | 'failed' | 'disabled'
+
 export type ComposerConnectorRow = {
   id: string
   /** Human title for UI (e.g. 微信公众号); falls back to id. */
   title: string
   summary: string
   connected: boolean
+  status: ConnectorRuntimeStatus
+  error?: string | null
   enabled: boolean
   loadPolicy: 'progressive' | 'on_focus'
   section: ComposerConnectorSection
@@ -25,9 +29,53 @@ type RuntimeServer = {
   name: string
   transport?: string
   connected?: boolean
+  status?: string
+  error?: string | null
   enabled?: boolean
   load_policy?: string
   catalog?: string | null
+}
+
+export function resolveConnectorRuntimeStatus(
+  runtime?: Pick<RuntimeServer, 'connected' | 'status' | 'enabled'>
+): ConnectorRuntimeStatus {
+  if (runtime?.enabled === false) return 'disabled'
+  const raw = runtime?.status
+  if (raw === 'connected' || raw === 'connecting' || raw === 'failed' || raw === 'disabled') {
+    return raw
+  }
+  if (runtime?.connected === true) return 'connected'
+  // Missing / stale runtime: still warming, never treat as failed.
+  return 'connecting'
+}
+
+export function isComposerConnectorSelectable(
+  row: Pick<ComposerConnectorRow, 'enabled' | 'status'>
+): boolean {
+  return row.enabled && row.status === 'connected'
+}
+
+export function composerConnectorDotTone(
+  row: Pick<ComposerConnectorRow, 'status'>
+): 'green' | 'yellow' | 'red' {
+  if (row.status === 'connected') return 'green'
+  if (row.status === 'connecting') return 'yellow'
+  return 'red'
+}
+
+export function composerConnectorDotClass(tone: 'green' | 'yellow' | 'red'): string {
+  if (tone === 'green') return 'bg-emerald-500'
+  if (tone === 'yellow') return 'bg-amber-400 animate-pulse'
+  return 'bg-red-500'
+}
+
+export function parseMcpRuntimeServers(body: string): RuntimeServer[] {
+  try {
+    const parsed = JSON.parse(body) as { servers?: RuntimeServer[] }
+    return Array.isArray(parsed.servers) ? parsed.servers : []
+  } catch {
+    return []
+  }
 }
 
 export type BuildComposerConnectorRowsInput = {
@@ -66,12 +114,15 @@ export function buildComposerConnectorRows(
     const loadPolicy = normalizeMcpLoadPolicy(disk.loadPolicy)
     const media = MEDIA_BY_ID.get(disk.id)
     const section = classifyConnector(disk.id, loadPolicy)
+    const status = resolveConnectorRuntimeStatus(runtime)
 
     byId.set(disk.id, {
       id: disk.id,
       title: media?.title ?? presetConnectorTitle(disk.id) ?? disk.id,
       summary: media?.description ?? disk.summary,
-      connected: runtime?.connected === true,
+      connected: status === 'connected',
+      status,
+      error: runtime?.error ?? null,
       enabled: true,
       loadPolicy,
       section,
@@ -85,11 +136,14 @@ export function buildComposerConnectorRows(
     if (s.enabled === false) continue
     const media = MEDIA_BY_ID.get(s.name)
     const loadPolicy = s.load_policy === 'on_focus' ? 'on_focus' : 'progressive'
+    const status = resolveConnectorRuntimeStatus(s)
     byId.set(s.name, {
       id: s.name,
       title: media?.title ?? presetConnectorTitle(s.name) ?? s.name,
       summary: media?.description ?? s.transport ?? '',
-      connected: s.connected === true,
+      connected: status === 'connected',
+      status,
+      error: s.error ?? null,
       enabled: true,
       loadPolicy,
       section: classifyConnector(s.name, loadPolicy),

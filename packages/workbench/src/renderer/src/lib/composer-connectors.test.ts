@@ -6,9 +6,13 @@ import {
 } from './connector-groups'
 import {
   buildComposerConnectorRows,
+  composerConnectorDotTone,
   diskServersFromMcpConfig,
   filterComposerConnectorRows,
-  mediaConnectorTitle
+  isComposerConnectorSelectable,
+  mediaConnectorTitle,
+  parseMcpRuntimeServers,
+  resolveConnectorRuntimeStatus
 } from './composer-connectors'
 
 describe('connector-groups', () => {
@@ -134,7 +138,96 @@ describe('composer-connectors', () => {
       ]
     })
     expect(rows.find((r) => r.id === 'bing-search')?.connected).toBe(true)
+    expect(rows.find((r) => r.id === 'bing-search')?.status).toBe('connected')
     expect(rows.find((r) => r.id === 'bing-search')?.section).toBe('default')
+  })
+
+  it('maps runtime status onto dots and blocks failed rows', () => {
+    expect(resolveConnectorRuntimeStatus({ status: 'connected' })).toBe('connected')
+    expect(resolveConnectorRuntimeStatus({ status: 'connecting' })).toBe('connecting')
+    expect(resolveConnectorRuntimeStatus({ status: 'failed' })).toBe('failed')
+    expect(resolveConnectorRuntimeStatus({ enabled: false })).toBe('disabled')
+    expect(resolveConnectorRuntimeStatus({ connected: true })).toBe('connected')
+    expect(resolveConnectorRuntimeStatus(undefined)).toBe('connecting')
+    expect(composerConnectorDotTone({ status: 'connected' })).toBe('green')
+    expect(composerConnectorDotTone({ status: 'connecting' })).toBe('yellow')
+    expect(composerConnectorDotTone({ status: 'failed' })).toBe('red')
+    expect(
+      isComposerConnectorSelectable({ enabled: true, status: 'connected' })
+    ).toBe(true)
+    expect(
+      isComposerConnectorSelectable({ enabled: true, status: 'connecting' })
+    ).toBe(false)
+    expect(isComposerConnectorSelectable({ enabled: true, status: 'failed' })).toBe(false)
+    expect(isComposerConnectorSelectable({ enabled: true, status: 'disabled' })).toBe(false)
+    expect(parseMcpRuntimeServers('{"servers":[{"name":"bing","status":"connected"}]}')).toEqual([
+      { name: 'bing', status: 'connected' }
+    ])
+    expect(parseMcpRuntimeServers('not-json')).toEqual([])
+  })
+
+  it('does not treat a disconnected on_focus server as failed', () => {
+    const diskServers = diskServersFromMcpConfig(
+      JSON.stringify({
+        mcpServers: {
+          'yahoo-finance': {
+            command: 'uvx',
+            args: ['mcp-yahoo-finance'],
+            enabled: true,
+            load_policy: 'on_focus'
+          }
+        }
+      })
+    )
+    const rows = buildComposerConnectorRows({
+      diskServers,
+      runtimeServers: [
+        {
+          name: 'yahoo-finance',
+          enabled: true,
+          connected: false,
+          status: 'connecting',
+          load_policy: 'on_focus'
+        }
+      ]
+    })
+    const yahoo = rows.find((r) => r.id === 'yahoo-finance')
+    expect(yahoo?.status).toBe('connecting')
+    expect(yahoo?.connected).toBe(false)
+    expect(isComposerConnectorSelectable(yahoo!)).toBe(false)
+    expect(composerConnectorDotTone(yahoo!)).toBe('yellow')
+  })
+
+  it('greys out a failed connector even when it is enabled on disk', () => {
+    const diskServers = diskServersFromMcpConfig(
+      JSON.stringify({
+        mcpServers: {
+          'yahoo-finance': {
+            command: 'uvx',
+            args: ['mcp-yahoo-finance'],
+            enabled: true,
+            load_policy: 'on_focus'
+          }
+        }
+      })
+    )
+    const rows = buildComposerConnectorRows({
+      diskServers,
+      runtimeServers: [
+        {
+          name: 'yahoo-finance',
+          enabled: true,
+          connected: false,
+          status: 'failed',
+          error: "Failed to load connector 'yahoo-finance'",
+          load_policy: 'on_focus'
+        }
+      ]
+    })
+    const yahoo = rows.find((r) => r.id === 'yahoo-finance')
+    expect(yahoo?.status).toBe('failed')
+    expect(isComposerConnectorSelectable(yahoo!)).toBe(false)
+    expect(composerConnectorDotTone(yahoo!)).toBe('red')
   })
 
   it('does not list unconfigured media catalog stubs', () => {
