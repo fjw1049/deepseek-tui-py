@@ -5717,26 +5717,20 @@ html[data-theme='dark'] .ds-code-fullscreen .shiki span {
   font-weight: 600;
 }
 
-/* ── Document reading mode (sidebar MD preview) ─────────────────────────
-   Chat keeps the dense `.ds-markdown` defaults. Workspace file preview uses
-   a VS Code / Typora–inspired reading surface: roomier type, clearer heading
-   hierarchy, and a paper-like page on the panel chrome. */
+/* ── Document reading mode (workspace MD preview) ───────────────────────
+   Chat keeps the dense `.ds-markdown` defaults. The editor (sidebar and
+   IDE) shares one full-bleed reading surface so opening the same .md file
+   does not change column width, padding, or page chrome. */
 .ds-markdown-doc-shell {
-  background: var(--ds-bg-sidebar);
+  background: transparent;
 }
 
 .ds-markdown-doc-page {
   box-sizing: border-box;
-  margin: 0 auto;
-  max-width: 46rem;
+  margin: 0;
+  max-width: none;
   min-height: 100%;
-  padding: 1.75rem 1.5rem 3.5rem;
-}
-
-@media (min-width: 640px) {
-  .ds-markdown-doc-page {
-    padding: 2.25rem 2rem 4rem;
-  }
+  padding: 1.15rem 1.35rem 2.25rem;
 }
 
 .ds-markdown.ds-markdown--document {
@@ -5745,6 +5739,26 @@ html[data-theme='dark'] .ds-code-fullscreen .shiki span {
   letter-spacing: -0.003em;
   color: color-mix(in srgb, var(--ds-text) 96%, var(--ds-text-muted));
   -webkit-font-smoothing: antialiased;
+}
+
+.ds-markdown.ds-markdown--document p,
+.ds-markdown.ds-markdown--document li {
+  text-align: justify;
+  text-justify: inter-ideograph;
+  -webkit-hyphens: auto;
+  hyphens: auto;
+}
+
+.ds-markdown.ds-markdown--document h1,
+.ds-markdown.ds-markdown--document h2,
+.ds-markdown.ds-markdown--document h3,
+.ds-markdown.ds-markdown--document h4,
+.ds-markdown.ds-markdown--document pre,
+.ds-markdown.ds-markdown--document table,
+.ds-markdown.ds-markdown--document th,
+.ds-markdown.ds-markdown--document td {
+  text-align: start;
+  text-justify: auto;
 }
 
 .ds-markdown.ds-markdown--document > :first-child {
@@ -5896,7 +5910,7 @@ html[data-theme='dark'] .ds-code-fullscreen .shiki span {
 
 @media (prefers-reduced-transparency: reduce) {
   .ds-markdown-doc-shell {
-    background: var(--ds-bg-sidebar);
+    background: transparent;
   }
 }
 
@@ -10033,15 +10047,6 @@ select:focus-visible,
 .ds-ide-workspace .bg-ds-sidebar,
 .ds-ide-workspace .bg-ds-main {
   background-color: var(--ds-bg-canvas) !important;
-}
-
-.ds-ide-workspace .ds-markdown-doc-shell {
-  background: var(--ds-bg-canvas);
-}
-
-.ds-ide-workspace .ds-markdown-doc-page {
-  max-width: none;
-  padding: 1.15rem 1.35rem 2.25rem;
 }
 
 .ds-ide-workspace .ds-workspace-editor-pane .monaco-editor,
