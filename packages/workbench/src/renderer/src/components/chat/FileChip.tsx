@@ -1,6 +1,12 @@
 import type { MouseEvent, ReactElement, ReactNode } from 'react'
-import { basenameOfPath, formatFileLineRange, parseComposerPathMentions } from '../../lib/file-chip'
+import {
+  basenameOfPath,
+  formatFileLineRange,
+  looksLikeDirectoryPath,
+  parseComposerPathMentions
+} from '../../lib/file-chip'
 import { useValidatedFileReference } from '../../lib/file-reference-validation'
+import { revealWorkspacePathInFolder } from '../../lib/open-workspace-path'
 import { useThreadFilesystemRoot } from '../../lib/use-thread-filesystem-root'
 import { previewWorkspaceFile } from '../../lib/workspace-file-preview'
 import { FileKindIcon } from './FileKindIcon'
@@ -12,7 +18,7 @@ export function FileTypeIcon({
   path: string
   className?: string
 }): ReactElement {
-  return <FileKindIcon path={path} className={className} />
+  return <FileKindIcon path={path} directory={looksLikeDirectoryPath(path)} className={className} />
 }
 
 export type FileChipProps = {
@@ -39,6 +45,7 @@ export function FileChip({
   const target = { path, ...(line && line > 0 ? { line } : {}) }
   const validation = useValidatedFileReference(skipValidation ? null : target, workspaceRoot || undefined)
   const resolvedPath = validation.status === 'valid' ? validation.path : path
+  const directory = looksLikeDirectoryPath(path)
   const name = label ?? basenameOfPath(path)
   const lineLabel = formatFileLineRange(line, endLine)
   const title = `${path}${formatFileLineRange(line, endLine)}`
@@ -52,7 +59,7 @@ export function FileChip({
 
   const inner = (
     <>
-      <FileTypeIcon path={path} />
+      <FileKindIcon path={path} directory={directory} />
       <span className="ds-file-chip__name">{name}</span>
       {lineLabel ? <span className="ds-file-chip__line">{lineLabel}</span> : null}
     </>
@@ -61,6 +68,10 @@ export function FileChip({
   const activate = (event: MouseEvent<HTMLButtonElement>): void => {
     event.preventDefault()
     event.stopPropagation()
+    if (directory) {
+      void revealWorkspacePathInFolder(path)
+      return
+    }
     const resolved = { path: resolvedPath, ...(line && line > 0 ? { line } : {}) }
     previewWorkspaceFile({
       ...resolved,

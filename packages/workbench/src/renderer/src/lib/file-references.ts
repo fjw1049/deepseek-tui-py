@@ -1,3 +1,4 @@
+import { looksLikeDirectoryPath } from './file-chip'
 import { isMaterialRecognizedFile } from './file-icon'
 
 export type FileReferenceTarget = {
@@ -33,6 +34,11 @@ const PATH_WITH_SEPARATOR = new RegExp(
 )
 const PATH_BARE_FILE = new RegExp(
   String.raw`${PATH_PREFIX_BOUNDARY}[\w@.-]+\.${FILE_SUFFIX}${PATH_END}`,
+  'giu'
+)
+const DIR_CHARS = String.raw`[\w@.()+=[\]{}~\/\\-]`
+const PATH_DIRECTORY = new RegExp(
+  String.raw`${PATH_PREFIX_BOUNDARY}(?:~\/|\/|\.{1,2}\/)(?:${DIR_CHARS})+${PATH_END}`,
   'giu'
 )
 const LINE_SUFFIX = /(?::(\d+)(?::(\d+))?|#L(\d+)(?:-L\d+)?|\s*[（(](?:line|lines)\s+(\d+)[）)]|\s*[（(]第\s*(\d+)\s*行[）)]|\s+line\s+(\d+)|\s+第\s*(\d+)\s*行)/iy
@@ -118,8 +124,12 @@ export function findFileReferences(text: string): FileReferenceMatch[] {
   if (!text.trim()) return []
   return mergeMatches([
     ...collectMatches(text, PATH_WITH_SEPARATOR, false),
-    ...collectMatches(text, PATH_BARE_FILE, false)
-  ]).filter((match) => isMaterialRecognizedFile(match.target.path))
+    ...collectMatches(text, PATH_BARE_FILE, false),
+    ...collectMatches(text, PATH_DIRECTORY, false)
+  ]).filter(
+    (match) =>
+      looksLikeDirectoryPath(match.target.path) || isMaterialRecognizedFile(match.target.path)
+  )
 }
 
 export function createFileReferenceHref(target: FileReferenceTarget): string {

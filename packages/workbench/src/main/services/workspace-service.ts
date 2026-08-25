@@ -270,6 +270,50 @@ export function expandHomePath(raw: string): string {
   return value
 }
 
+export function normalizeFinderTargetPath(raw: string): string {
+  const expanded = expandHomePath(raw)
+  const stripped = expanded.replace(/[\\/]+$/, '')
+  return resolve(stripped || expanded)
+}
+
+export async function openPathInFinder(raw: string): Promise<EditorOpenResult> {
+  const target = normalizeFinderTargetPath(raw)
+  let resolved = target
+  try {
+    resolved = await realpath(target)
+  } catch {
+    /* keep the normalized path when the target does not exist yet */
+  }
+
+  try {
+    if ((await stat(resolved)).isDirectory()) {
+      if (process.platform === 'darwin') {
+        await execFileAsync('open', [resolved], { timeout: 10_000, windowsHide: true })
+        return { ok: true, path: resolved, editorId: 'finder' }
+      }
+      const opened = await shell.openPath(resolved)
+      if (opened) throw new Error(opened)
+      return { ok: true, path: resolved, editorId: 'finder' }
+    }
+  } catch (error) {
+    if (process.platform === 'darwin') {
+      try {
+        await execFileAsync('open', ['-R', resolved], { timeout: 10_000, windowsHide: true })
+        return { ok: true, path: resolved, editorId: 'finder' }
+      } catch {
+        /* fall through to Electron reveal */
+      }
+    }
+    if (error instanceof Error && !error.message.includes('ENOENT')) {
+      shell.showItemInFolder(resolved)
+      return { ok: false, message: error.message }
+    }
+  }
+
+  shell.showItemInFolder(resolved)
+  return { ok: true, path: resolved, editorId: 'finder' }
+}
+
 export function normalizeSkillFolderName(raw: string): string {
   const value = raw.trim()
   if (!value) {
@@ -642,6 +686,33 @@ async function resolveOpenTargetPath(
   throw new Error(`File not found: ${rawPath}`)
 }
 
+export async function resolveExternalEditorPath(
+  rawPath: string,
+  candidateRoots: string[] = []
+): Promise<string> {
+  const value = normalizeUserPath(rawPath)
+  if (!value) throw new Error('File path is required.')
+  const expanded = expandHomePath(value)
+  const candidates: string[] = []
+  const addCandidate = (next: string): void => {
+    const resolved = resolve(next)
+    if (!candidates.includes(resolved)) candidates.push(resolved)
+  }
+
+  if (isAbsolute(expanded)) addCandidate(expanded)
+  for (const root of candidateRoots) {
+    const trimmed = root.trim()
+    if (!trimmed) continue
+    addCandidate(isAbsolute(expanded) ? expanded : join(expandHomePath(trimmed), expanded))
+  }
+  if (candidates.length === 0) addCandidate(expanded)
+
+  for (const candidate of candidates) {
+    if (await pathExists(candidate)) return candidate
+  }
+  return candidates[0] ?? resolve(expanded)
+}
+
 function formatPathForEditor(targetPath: string, line?: number, column?: number): string {
   const safeLine = typeof line === 'number' && line > 0 ? Math.floor(line) : undefined
   const safeColumn = typeof column === 'number' && column > 0 ? Math.floor(column) : undefined
@@ -724,7 +795,12 @@ export async function openEditorPath(payload: OpenEditorPathOptions): Promise<Ed
       editors.find((item) => item.id === DEFAULT_EDITOR_ID)
     if (!editor) throw new Error('No editor or system opener is available.')
 
-    const targetPath = await resolveOpenTargetPath(payload.path, payload.workspaceRoot)
+    const targetPath = payload.allowOutsideWorkspace
+      ? await resolveExternalEditorPath(
+          payload.path,
+          compactPaths([payload.workspaceRoot, ...(payload.searchRoots ?? [])])
+        )
+      : await resolveOpenTargetPath(payload.path, payload.workspaceRoot)
     await openWithResolvedEditor(editor, targetPath, payload.line, payload.column)
     return { ok: true, path: targetPath, editorId: editor.id }
   } catch (error) {
@@ -935,9 +1011,7 @@ export async function resolveWorkspaceFile(
       }
     }
 
-    const targetPath = await resolveOpenTargetPath(payload.path, payload.workspaceRoot, {
-      allowBasenameFallback: false
-    })
+    const targetPath = await resolveOpenTargetPath(payload.path, payload.workspaceRoot)
     return { ok: true, path: targetPath }
   } catch (error) {
     return {

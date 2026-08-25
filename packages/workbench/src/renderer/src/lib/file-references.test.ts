@@ -29,6 +29,15 @@ describe('findFileReferences', () => {
     ])
   })
 
+  it('linkifies home and absolute directory paths', () => {
+    expect(
+      findFileReferences('check ~/.deepseek/agents/registries/ then continue').map((m) => m.target.path)
+    ).toEqual(['~/.deepseek/agents/registries/'])
+    expect(
+      findFileReferences('also ~/.deepseek/agents/registries without slash').map((m) => m.target.path)
+    ).toEqual(['~/.deepseek/agents/registries'])
+  })
+
   it('recognizes common image extensions', () => {
     for (const ext of ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'JPG']) {
       const path = `/tmp/preview/chart.${ext}`

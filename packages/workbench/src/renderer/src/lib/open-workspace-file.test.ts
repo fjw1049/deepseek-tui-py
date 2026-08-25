@@ -7,11 +7,14 @@ describe('open workspace file prefer in-app', () => {
     vi.restoreAllMocks()
   })
 
-  it('tries the in-app editor before VS Code', async () => {
+  it('opens in-app only when the file exists in the current project', async () => {
     const openInApp = vi.fn(async () => true)
     const openEditorPath = vi.fn(async () => ({ ok: true, path: 'src/app.ts' }))
     vi.stubGlobal('window', {
-      dsGui: { openEditorPath }
+      dsGui: {
+        resolveWorkspaceFile: vi.fn(async () => ({ ok: true, path: '/proj/src/app.ts' })),
+        openEditorPath
+      }
     })
 
     await expect(
@@ -21,36 +24,72 @@ describe('open workspace file prefer in-app', () => {
     expect(openEditorPath).not.toHaveBeenCalled()
   })
 
-  it('tries the project root first, then the thread root', async () => {
-    const openInApp = vi.fn(async (_path: string, root: string) => root === '/proj')
-    const openEditorPath = vi.fn(async () => ({ ok: true, path: 'src/app.ts' }))
-    vi.stubGlobal('window', {
-      dsGui: { openEditorPath }
-    })
-
-    await expect(
-      openWorkspaceFilePreferInApp({ path: 'src/app.ts' }, ['/tmp/session', '/proj'], openInApp)
-    ).resolves.toBe('in-app')
-    expect(openInApp).toHaveBeenNthCalledWith(1, 'src/app.ts', '/tmp/session', undefined, undefined)
-    expect(openInApp).toHaveBeenNthCalledWith(2, 'src/app.ts', '/proj', undefined, undefined)
-    expect(openEditorPath).not.toHaveBeenCalled()
-  })
-
-  it('opens VS Code only after every in-app attempt fails', async () => {
-    const openInApp = vi.fn(async () => false)
+  it('opens VS Code without touching the in-app editor when the file is outside the project', async () => {
+    const openInApp = vi.fn(async () => true)
     const openEditorPath = vi.fn(async () => ({ ok: true, path: '/other/a.ts' }))
     vi.stubGlobal('window', {
-      dsGui: { openEditorPath }
+      dsGui: {
+        resolveWorkspaceFile: vi.fn(async () => ({
+          ok: false,
+          message: 'Path must stay within the selected workspace'
+        })),
+        openEditorPath
+      }
     })
 
     await expect(
       openWorkspaceFilePreferInApp({ path: '/other/a.ts' }, '/proj', openInApp)
     ).resolves.toBe('external')
-    expect(openInApp).toHaveBeenCalledWith('/other/a.ts', '/proj', undefined, undefined)
+    expect(openInApp).not.toHaveBeenCalled()
     expect(openEditorPath).toHaveBeenCalledWith(
       expect.objectContaining({
         path: '/other/a.ts',
-        workspaceRoot: '/proj'
+        workspaceRoot: '/proj',
+        allowOutsideWorkspace: true,
+        searchRoots: ['/proj']
+      })
+    )
+  })
+
+  it('opens VS Code when the file is not in the current project', async () => {
+    const openInApp = vi.fn(async () => true)
+    const openEditorPath = vi.fn(async () => ({ ok: true, path: 'missing.ts' }))
+    vi.stubGlobal('window', {
+      dsGui: {
+        resolveWorkspaceFile: vi.fn(async () => ({
+          ok: false,
+          message: 'File not found: missing.ts'
+        })),
+        openEditorPath
+      }
+    })
+
+    await expect(
+      openWorkspaceFilePreferInApp({ path: 'missing.ts' }, '/proj', openInApp)
+    ).resolves.toBe('external')
+    expect(openInApp).not.toHaveBeenCalled()
+    expect(openEditorPath).toHaveBeenCalled()
+  })
+
+  it('passes extra roots so VS Code can open a file outside the current project', async () => {
+    const openInApp = vi.fn(async () => true)
+    const openEditorPath = vi.fn(async () => ({ ok: true, path: '/tmp/session/a.ts' }))
+    vi.stubGlobal('window', {
+      dsGui: {
+        resolveWorkspaceFile: vi.fn(async () => ({ ok: false, message: 'File not found' })),
+        openEditorPath
+      }
+    })
+
+    await expect(
+      openWorkspaceFilePreferInApp({ path: 'a.ts' }, '/proj', openInApp, ['/tmp/session'])
+    ).resolves.toBe('external')
+    expect(openInApp).not.toHaveBeenCalled()
+    expect(openEditorPath).toHaveBeenCalledWith(
+      expect.objectContaining({
+        path: 'a.ts',
+        allowOutsideWorkspace: true,
+        searchRoots: ['/tmp/session', '/proj']
       })
     )
   })

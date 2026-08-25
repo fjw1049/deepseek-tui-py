@@ -162,6 +162,8 @@ export const openEditorPathPayloadSchema = z
   .object({
     path: trimmedString(MAX_PATH_LENGTH),
     workspaceRoot: optionalTrimmedString(MAX_PATH_LENGTH),
+    searchRoots: z.array(trimmedString(MAX_PATH_LENGTH)).max(8).optional(),
+    allowOutsideWorkspace: z.boolean().optional(),
     editorId: optionalTrimmedString(MAX_EDITOR_ID_LENGTH),
     line: z.number().int().positive().max(1_000_000).optional(),
     column: z.number().int().positive().max(1_000_000).optional()

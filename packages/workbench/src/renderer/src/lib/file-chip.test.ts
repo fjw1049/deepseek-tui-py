@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   basenameOfPath,
   formatFileLineRange,
+  looksLikeDirectoryPath,
   looksLikeFilePath,
   parseCodeFenceInfo,
   parseComposerPathMentions
@@ -44,5 +45,8 @@ describe('file-chip helpers', () => {
     expect(looksLikeFilePath('src/foo.ts')).toBe(true)
     expect(looksLikeFilePath('main.dart')).toBe(true)
     expect(looksLikeFilePath('github')).toBe(false)
+    expect(looksLikeDirectoryPath('~/.deepseek/agents/registries/')).toBe(true)
+    expect(looksLikeDirectoryPath('~/.deepseek/agents/registries')).toBe(true)
+    expect(looksLikeDirectoryPath('src/foo.ts')).toBe(false)
   })
 })

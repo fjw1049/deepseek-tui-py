@@ -7,9 +7,15 @@ export type WorkspacePathTarget = {
   column?: number
 }
 
+export type OpenWorkspacePathOptions = {
+  allowOutsideWorkspace?: boolean
+  searchRoots?: string[]
+}
+
 export async function openWorkspacePathInEditor(
   target: WorkspacePathTarget,
-  workspaceRoot?: string
+  workspaceRoot?: string,
+  options?: OpenWorkspacePathOptions
 ): Promise<EditorOpenResult> {
   if (typeof window.dsGui?.openEditorPath !== 'function') {
     return { ok: false, message: 'Editor bridge is unavailable.' }
@@ -20,6 +26,8 @@ export async function openWorkspacePathInEditor(
     line: target.line,
     column: target.column,
     workspaceRoot,
+    searchRoots: options?.searchRoots,
+    allowOutsideWorkspace: options?.allowOutsideWorkspace,
     editorId: readPreferredEditorId()
   })
 }

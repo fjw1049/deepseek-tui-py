@@ -18,6 +18,9 @@ export type EditorListResult = {
 export type OpenEditorPathOptions = {
   path: string
   workspaceRoot?: string
+  searchRoots?: string[]
+  /** Open a real path even when it is outside the current project. */
+  allowOutsideWorkspace?: boolean
   editorId?: string
   line?: number
   column?: number

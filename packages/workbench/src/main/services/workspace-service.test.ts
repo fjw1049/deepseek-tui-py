@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { mkdir, mkdtemp, realpath, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { homedir, tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
 
 vi.mock('electron', () => ({
   app: {
@@ -15,6 +15,8 @@ vi.mock('electron', () => ({
 
 import {
   readWorkspaceFile,
+  normalizeFinderTargetPath,
+  resolveExternalEditorPath,
   resolveWorkspaceFile,
   listWorkspaceDirectory,
   searchWorkspaceEntries,
@@ -69,6 +71,41 @@ describe('workspace-service boundary checks', () => {
     if (!result.ok) {
       expect(result.message).toContain('within the selected workspace')
     }
+  })
+
+  it('resolves a unique basename inside the workspace', async () => {
+    await mkdir(join(workspaceRoot, 'src'), { recursive: true })
+    await writeFile(join(workspaceRoot, 'src', 'nested.ts'), 'ok', 'utf8')
+    const result = await resolveWorkspaceFile({
+      path: 'nested.ts',
+      workspaceRoot
+    })
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      expect(result.path).toBe(await realpath(join(workspaceRoot, 'src', 'nested.ts')))
+    }
+  })
+
+  it('does not resolve a file that is not in the workspace', async () => {
+    const result = await resolveWorkspaceFile({
+      path: 'missing.ts',
+      workspaceRoot
+    })
+    expect(result.ok).toBe(false)
+  })
+
+  it('normalizes Finder targets so trailing slashes and ~ do not break open', () => {
+    expect(normalizeFinderTargetPath('~/.deepseek/agents/registries/')).toBe(
+      resolve(homedir(), '.deepseek/agents/registries')
+    )
+    expect(normalizeFinderTargetPath('/Users/demo/.deepseek/agents/registries/')).toBe(
+      '/Users/demo/.deepseek/agents/registries'
+    )
+  })
+
+  it('resolves an outside file for the external editor without workspace bounds', async () => {
+    const result = await resolveExternalEditorPath(outsideFile, [workspaceRoot])
+    expect(result).toBe(resolve(outsideFile))
   })
 
   it('lists the workspace root directory', async () => {

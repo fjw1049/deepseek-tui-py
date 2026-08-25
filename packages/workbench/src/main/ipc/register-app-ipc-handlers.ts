@@ -116,6 +116,7 @@ import { restartDeepseekChildIfRunning } from '../deepseek-process'
 import {
   canonicalPath,
   expandHomePath,
+  openPathInFinder,
   listEditorsResult,
   listWorkspaceDirectory,
   normalizeSkillFolderName,
@@ -1363,7 +1364,8 @@ export function registerAppIpcHandlers(options: RegisterAppIpcHandlersOptions): 
   })
   ipcMain.handle('shell:show-item-in-folder', async (_, path: unknown) => {
     const target = parseIpcPayload('shell:show-item-in-folder', shellOpenTerminalPathSchema, path)
-    shell.showItemInFolder(target)
+    const result = await openPathInFinder(target)
+    if (!result.ok) throw new Error(result.message)
   })
   ipcMain.handle('notification:turn-complete', async (_, payload: unknown) =>
     showTurnCompleteNotification(

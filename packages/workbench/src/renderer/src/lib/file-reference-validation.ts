@@ -4,7 +4,7 @@ import type { FileReferenceTarget } from './file-references'
 type ValidationState =
   | { status: 'idle' }
   | { status: 'pending' }
-  | { status: 'valid'; path: string }
+  | { status: 'valid'; path: string; kind?: 'file' | 'directory' }
   | { status: 'invalid' }
 
 type SettledValidation = Extract<ValidationState, { status: 'valid' | 'invalid' }>
@@ -36,7 +36,9 @@ async function validateFileReference(
       workspaceRoot
     })
 
-    return result.ok ? { status: 'valid', path: result.path } : { status: 'invalid' }
+    return result.ok
+      ? { status: 'valid', path: result.path, kind: result.kind }
+      : { status: 'invalid' }
   })()
 
   validationCache.set(key, task)

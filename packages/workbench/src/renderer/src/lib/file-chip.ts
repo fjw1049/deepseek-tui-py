@@ -31,6 +31,15 @@ export function looksLikeFilePath(value: string): boolean {
   return isMaterialRecognizedFile(path)
 }
 
+export function looksLikeDirectoryPath(value: string): boolean {
+  const path = value.trim()
+  if (!looksLikeFilePath(path)) return false
+  if (path.endsWith('/') || path.endsWith('\\')) return true
+  const base = basenameOfPath(path)
+  if (isMaterialRecognizedFile(base) || isMaterialRecognizedFile(path)) return false
+  return path.startsWith('~/') || path.startsWith('/') || path.startsWith('./') || path.startsWith('../')
+}
+
 export function formatFileLineRange(line?: number, endLine?: number): string {
   if (!line || line < 1) return ''
   if (endLine && endLine >= 1 && endLine !== line) return `:${line}–${endLine}`

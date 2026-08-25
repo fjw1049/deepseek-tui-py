@@ -21,6 +21,7 @@ export type WorkspaceFileResolveResult =
   | {
       ok: true
       path: string
+      kind: 'file' | 'directory'
     }
   | { ok: false; message: string }
 
