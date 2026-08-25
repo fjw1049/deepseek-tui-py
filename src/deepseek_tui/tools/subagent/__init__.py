@@ -41,7 +41,7 @@ from deepseek_tui.tools.subagent.tools import (
     READ_AGENT_ACTIONS,
     AgentTool,
 )
-from deepseek_tui.tools.subagent.types import (  # noqa: F401 — _MAX_CARD_RESULT_CHARS used by tests
+from deepseek_tui.tools.subagent.types import (
     DEFAULT_MAX_AGENTS,
     DEFAULT_MAX_SPAWN_DEPTH,
     DEFAULT_MAX_STEPS,
@@ -53,7 +53,6 @@ from deepseek_tui.tools.subagent.types import (  # noqa: F401 — _MAX_CARD_RESU
     SUBAGENT_RESTART_REASON,
     SUBAGENT_STATE_FILE,
     SUBAGENT_STATE_SCHEMA_VERSION,
-    _MAX_CARD_RESULT_CHARS,
     SpawnRequest,
     SubAgentAssignment,
     SubAgentResult,

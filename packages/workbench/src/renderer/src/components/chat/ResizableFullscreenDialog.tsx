@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useId,
   useRef,
   useState,
@@ -69,6 +70,7 @@ export function ResizableFullscreenDialog({
   dataAttr
 }: Props): ReactElement | null {
   const dialogId = useId()
+  const bodyRef = useRef<HTMLDivElement>(null)
   const [size, setSize] = useState<Size>(() => defaultSize())
   const [stackDepth, setStackDepth] = useState(0)
   const armedRef = useRef(false)
@@ -79,6 +81,12 @@ export function ResizableFullscreenDialog({
     startW: number
     startH: number
   } | null>(null)
+
+  useLayoutEffect(() => {
+    if (!open) return
+    const el = bodyRef.current
+    if (el) el.scrollTop = 0
+  }, [open])
 
   useEffect(() => {
     if (!open) return
@@ -212,7 +220,7 @@ export function ResizableFullscreenDialog({
         onMouseDown={(event) => event.stopPropagation()}
       >
         <div className="ds-expand-header">{header}</div>
-        <div className={`${bodyClassName} ds-expand-body`}>{children}</div>
+        <div ref={bodyRef} className={`${bodyClassName} ds-expand-body`}>{children}</div>
         {EDGES.map((edge) => (
           <span
             key={edge}

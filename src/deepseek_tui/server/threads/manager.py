@@ -2715,7 +2715,6 @@ class RuntimeThreadManager:
         if engine is None or not agent_ids:
             return
         from deepseek_tui.tools.subagent import (
-            _MAX_CARD_RESULT_CHARS,
             MailboxMessage,
             SubAgentStatusKind,
         )
@@ -2732,7 +2731,7 @@ class RuntimeThreadManager:
             if kind is SubAgentStatusKind.RUNNING:
                 continue
             if kind is SubAgentStatusKind.COMPLETED:
-                summary = (snap.result or "").strip()[:_MAX_CARD_RESULT_CHARS]
+                summary = (snap.result or "").strip()
                 message = MailboxMessage.completed(agent_id, summary)
             elif kind is SubAgentStatusKind.CANCELLED:
                 message = MailboxMessage.cancelled(agent_id)

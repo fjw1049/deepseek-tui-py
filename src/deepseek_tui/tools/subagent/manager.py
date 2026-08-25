@@ -32,7 +32,6 @@ from deepseek_tui.tools.subagent.types import (
     DEFAULT_MAX_STEPS,
     SUBAGENT_RESTART_REASON,
     SUBAGENT_STATE_SCHEMA_VERSION,
-    _MAX_CARD_RESULT_CHARS,
     _MAX_TERMINAL_AGENTS_IN_MEMORY,
     SpawnRequest,
     SubAgentAssignment,
@@ -458,7 +457,7 @@ class SubAgentManager:
             if agent.status.kind is SubAgentStatusKind.CANCELLED:
                 self._mailbox.send(MailboxMessage.cancelled(agent.id))
             else:
-                summary = (agent.result or "")[:_MAX_CARD_RESULT_CHARS] if agent.result else ""
+                summary = agent.result or ""
                 self._mailbox.send(MailboxMessage.completed(agent.id, summary))
 
         self._notify_parent_completion(agent)

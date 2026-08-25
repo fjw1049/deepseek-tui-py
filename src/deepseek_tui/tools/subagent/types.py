@@ -26,11 +26,6 @@ DEFAULT_MAX_SPAWN_DEPTH = 3
 SUBAGENT_MAX_TOKENS_READ = 16_384
 SUBAGENT_MAX_TOKENS_WRITE = 32_768
 _MAX_TERMINAL_AGENTS_IN_MEMORY = 30
-# Upper bound for the final result we surface on the Workbench sub-agent card.
-# The previous 500-char cap chopped real reports mid-sentence; the card detail
-# dialog is the user's only window onto a sub-agent's deliverable, so keep it
-# generous while still bounding pathological outputs.
-_MAX_CARD_RESULT_CHARS = 16_000
 DEFAULT_RESULT_TIMEOUT_MS = 180_000
 MIN_WAIT_TIMEOUT_MS = 30_000
 MAX_RESULT_TIMEOUT_MS = 3_600_000

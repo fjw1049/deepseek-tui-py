@@ -131,7 +131,7 @@ def subagent_done_sentinel(snap: SubAgentResult) -> str:
     return f"<deepseek:subagent.done>{payload}</deepseek:subagent.done>"
 
 
-_MAX_PAYLOAD_CHARS = 8_000
+_MAX_PAYLOAD_CHARS = 32_768
 # Room for the one-line summary, the sentinel JSON, and the re-read pointer that
 # replaces an elided tail. Measured against the sentinel's own budget rather
 # than guessed: the reminder spec caps this payload at _MAX_PAYLOAD_CHARS.

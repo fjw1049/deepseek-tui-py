@@ -100,6 +100,10 @@ export function useTailAnchorScroll(input: {
         return
       }
 
+      // Hold already released (expand click, prior user scroll): do not
+      // treat a later height change as "hand off to the document tail".
+      if (!holdRef.current) return
+
       if (shouldReleaseTailAnchor({ spacerPx: nextSpacer, userScrolled: false })) {
         holdRef.current = false
         stickToBottomRef.current = true
@@ -107,7 +111,6 @@ export function useTailAnchorScroll(input: {
         return
       }
 
-      if (!holdRef.current) return
       container.scrollTop = computeTailAnchorScrollTop({ userOffsetTop: userBox.top })
     }
 

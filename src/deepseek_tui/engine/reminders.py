@@ -158,8 +158,9 @@ SUBAGENT_DONE = ReminderSpec(
     placement=Placement.TAIL,
     origin=MessageOrigin.SYSTEM_REMINDER,
     priority=40,
-    # A child's report is the one tail item that can be arbitrarily large.
-    max_chars=8_000,
+    # Keep in lockstep with ``completion._MAX_PAYLOAD_CHARS`` so the
+    # reminder's own head+tail elision never splits the sentinel.
+    max_chars=32_768,
 )
 
 PROCESS_DONE = ReminderSpec(

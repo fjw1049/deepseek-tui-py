@@ -1,4 +1,4 @@
-import type { ReactElement, RefObject } from 'react'
+import type { PointerEvent as ReactPointerEvent, ReactElement, RefObject } from 'react'
 import type { LucideIcon } from 'lucide-react'
 import {
   lazy,
@@ -401,6 +401,21 @@ export function MessageTimeline({
     if (el) el.scrollTop = el.scrollHeight
   }, [tailAnchorHoldRef])
 
+  // Expanding a collapsed row grows `.ds-timeline-stack`. The resize observer
+  // would then pin-to-bottom and yank the row the user just opened off-screen
+  // — same bug on the summary header and each child card.
+  const releaseStickOnExpandClick = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>): void => {
+      const target = event.target
+      if (!(target instanceof Element)) return
+      if (!target.closest('button, [aria-expanded], summary')) return
+      stickToBottomRef.current = false
+      tailAnchorHoldRef.current = false
+      userScrolledAtRef.current = performance.now()
+    },
+    [tailAnchorHoldRef]
+  )
+
   // Pin on content resize in the same frame the height changes — waiting for
   // a React effect + rAF left one painted frame at the old scrollTop, which
   // reads as the dialogue "bouncing upward" during streaming / composer growth.
@@ -647,6 +662,7 @@ export function MessageTimeline({
   const timeline = (
     <div
       ref={containerRef}
+      onPointerDown={releaseStickOnExpandClick}
       className={`ds-no-drag flex min-w-0 flex-col overflow-x-hidden ${
         stageCentered && showEmptyHeroOnly
           ? 'shrink-0 overflow-visible'

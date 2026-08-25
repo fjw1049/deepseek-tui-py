@@ -108,8 +108,13 @@ def test_report_is_not_duplicated_when_it_is_only_the_summary_line() -> None:
 # --- bounds ---------------------------------------------------------------
 
 
+def test_payload_cap_matches_the_reminder_budget() -> None:
+    """Drift here splits the sentinel when the reminder elides the middle."""
+    assert reminders.SUBAGENT_DONE.max_chars == _MAX_PAYLOAD_CHARS
+
+
 def test_oversized_report_is_trimmed_head_first_with_a_recovery_pointer() -> None:
-    big = "### SUMMARY\n" + ("详细结论。" * 3000)
+    big = "### SUMMARY\n" + ("详细结论。" * 10_000)
     payload = build_completion_payload(_snap(big))
 
     assert len(payload) <= _MAX_PAYLOAD_CHARS
@@ -123,7 +128,7 @@ def test_oversized_report_is_trimmed_head_first_with_a_recovery_pointer() -> Non
 def test_payload_stays_inside_the_reminder_budget() -> None:
     """Otherwise the reminder's head+tail elision fires and can split the
     sentinel across the omission marker, leaving it unparseable."""
-    big = "### SUMMARY\n" + ("详细结论。" * 3000)
+    big = "### SUMMARY\n" + ("详细结论。" * 10_000)
     payload = build_completion_payload(_snap(big))
     rendered = reminders.render(reminders.SUBAGENT_DONE, payload)
 
