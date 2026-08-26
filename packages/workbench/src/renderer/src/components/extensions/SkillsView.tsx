@@ -17,7 +17,7 @@ import { NoticeView } from './marketplace-ui'
 import { MarketplaceBrowser, type InstallOutcome } from './MarketplaceBrowser'
 import { ExtensionsToolbar } from './ExtensionsToolbar'
 import { ReloadHint } from './ReloadHint'
-import { skillDiscoveryRoots, skillRootFromMdPath } from '@shared/skill-source'
+import { dedupeSkillsById, skillDiscoveryRoots, skillRootFromMdPath } from '@shared/skill-source'
 import type { MarketplaceItem } from '../../../../shared/ds-gui-api'
 
 export function SkillsView(): ReactElement {
@@ -69,7 +69,10 @@ export function SkillsView(): ReactElement {
           byPath.set(skill.path, skill)
         }
       }
-      setInstalledSkills([...byPath.values()].sort((a, b) => a.name.localeCompare(b.name)))
+      const merged = dedupeSkillsById([...byPath.values()]).sort((a, b) =>
+        a.name.localeCompare(b.name)
+      )
+      setInstalledSkills(merged)
     } finally {
       setSkillsListLoading(false)
     }
@@ -140,13 +143,28 @@ export function SkillsView(): ReactElement {
 
   const deleteSkill = async (skill: InstalledSkill): Promise<void> => {
     if (skill.builtin || typeof window.dsGui?.deleteSkill !== 'function') return
-    if (!window.confirm(t('skillDeleteConfirm', { name: skill.name }))) return
+    const copies = skill.copies && skill.copies.length > 0 ? skill.copies : [skill]
+    const removable = copies.filter((copy) => !copy.builtin)
+    if (removable.length === 0) return
+    const confirmed =
+      removable.length > 1
+        ? window.confirm(t('skillDeleteConfirmCopies', { name: skill.name, count: removable.length }))
+        : window.confirm(t('skillDeleteConfirm', { name: skill.name }))
+    if (!confirmed) return
     setBusyId(skill.path)
     setNotice(null)
     try {
-      const result = await window.dsGui.deleteSkill(skillRootFromMdPath(skill.path), skill.id)
-      if (!result.ok) {
-        setNotice({ tone: 'error', message: result.message ?? t('pluginActionFailed') })
+      let failed: string | null = null
+      for (const copy of removable) {
+        const result = await window.dsGui.deleteSkill(skillRootFromMdPath(copy.path), copy.id)
+        if (!result.ok) {
+          failed = result.message ?? t('pluginActionFailed')
+          break
+        }
+      }
+      if (failed) {
+        setNotice({ tone: 'error', message: failed })
+        await refreshSkillsList()
         return
       }
       setInstalled((prev) => {

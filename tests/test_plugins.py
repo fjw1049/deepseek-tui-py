@@ -1352,7 +1352,8 @@ def test_discover_plugins_includes_claude_scope(
     _make_claude_layout(claude_dir)
     monkeypatch.setenv("CLAUDE_PLUGINS_DIR", str(claude_dir))
     monkeypatch.setenv("DEEPSEEK_HOME", str(tmp_path / "home"))
-    plugins = discover_plugins(workspace=tmp_path / "ws")
+    assert not any(p.name == "warp" for p in discover_plugins(workspace=tmp_path / "ws"))
+    plugins = discover_plugins(workspace=tmp_path / "ws", include_claude=True)
     warp = [p for p in plugins if p.name == "warp"]
     assert warp and warp[0].scope == "claude"
     assert warp[0].enabled and not warp[0].trusted
@@ -1368,7 +1369,9 @@ def test_claude_plugin_trust_state_in_user_lockfile(
     # Trust/disable stores state in our user lockfile, never in ~/.claude.
     assert "Trusted" in set_plugin_trusted("warp", True)
     assert "Disabled" in set_plugin_enabled("warp", False)
-    plugins = discover_plugins(workspace=tmp_path / "ws", include_disabled=True)
+    plugins = discover_plugins(
+        workspace=tmp_path / "ws", include_disabled=True, include_claude=True
+    )
     warp = [p for p in plugins if p.name == "warp"][0]
     assert warp.trusted and not warp.enabled
     assert not (claude_dir / "installed_plugins.json").read_text().count("trusted")
@@ -1456,6 +1459,12 @@ async def test_engine_create_loads_plugin_components(tmp_path, monkeypatch) -> N
         assert engine.hook_executor.has_hooks_for_event("session_start")
         hook_names = [h.name for h in engine.hook_executor.config.hooks]
         assert "demo:session_start" in hook_names
+        default_skills = engine._render_skills_context() or ""
+        assert "demo-skill" not in default_skills
+        assert "demo:demo-skill" not in default_skills
+        engine.set_active_plugin("demo")
+        mounted = engine._render_skills_context(only=engine._active_plugin_skills()) or ""
+        assert "demo-skill" in mounted or "demo:demo-skill" in mounted
     finally:
         await engine.shutdown_session()
 

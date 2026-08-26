@@ -66,6 +66,15 @@ def test_workspace_skill_overrides_bundled(tmp_path: Path) -> None:
     assert "local body" in skill.body
 
 
+def test_install_system_skills_does_not_copy_into_user_dir(tmp_path: Path) -> None:
+    from deepseek_tui.integrations.skills import install_system_skills
+
+    dest = tmp_path / "skills"
+    dest.mkdir()
+    install_system_skills(dest)
+    assert list(dest.iterdir()) == []
+
+
 def test_base_prompt_routes_product_questions() -> None:
     from deepseek_tui.engine.prompts import build_system_prompt
 

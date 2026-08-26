@@ -44,3 +44,23 @@ export function SkillSourceIcon({ path, size = 40 }: Props): ReactElement {
     />
   )
 }
+
+export function skillSourceTileSize(count: number): number {
+  if (count <= 1) return 40
+  if (count === 2) return 28
+  if (count <= 4) return 26
+  return 20
+}
+
+export function SkillSourceStack({ paths }: { paths: readonly string[] }): ReactElement {
+  const shown = paths.slice(0, 6)
+  return (
+    <span className="ds-skill-source-stack" data-count={shown.length}>
+      {shown.map((filePath, index) => (
+        <span key={`${filePath}:${index}`} className="ds-skill-source-stack__tile">
+          <SkillSourceIcon path={filePath} size={skillSourceTileSize(shown.length)} />
+        </span>
+      ))}
+    </span>
+  )
+}

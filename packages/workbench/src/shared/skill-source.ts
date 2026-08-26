@@ -109,3 +109,53 @@ export function skillDiscoveryRoots(ownSkillsDir: string, workspace?: string | n
   add(ownSkillsDir)
   return roots
 }
+
+/** Folder id used to collapse the same skill installed by several agents. */
+export function skillIdentityKey(skill: { id: string; name?: string }): string {
+  return (skill.id || skill.name || '').trim().toLowerCase()
+}
+
+export type DedupedSkill<T extends { id: string; path: string }> = T & {
+  copies: T[]
+}
+
+/**
+ * Keep the first copy of each skill id (caller supplies discovery order).
+ * Extra copies stay on ``copies`` so the UI can show every agent source
+ * and delete them together.
+ */
+export function dedupeSkillsById<T extends { id: string; name?: string; path: string }>(
+  skills: T[]
+): DedupedSkill<T>[] {
+  const groups = new Map<string, T[]>()
+  const order: string[] = []
+  for (const skill of skills) {
+    const key = skillIdentityKey(skill)
+    if (!key) continue
+    const existing = groups.get(key)
+    if (!existing) {
+      groups.set(key, [skill])
+      order.push(key)
+    } else {
+      existing.push(skill)
+    }
+  }
+  return order.map((key) => {
+    const copies = groups.get(key) ?? []
+    const winner = copies[0]
+    return { ...winner, copies }
+  })
+}
+
+/** First path for each brand, in copy order. */
+export function uniqueSkillSourcePaths(paths: readonly string[]): string[] {
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const filePath of paths) {
+    const source = skillSourceFromPath(filePath)
+    if (seen.has(source)) continue
+    seen.add(source)
+    out.push(filePath)
+  }
+  return out
+}

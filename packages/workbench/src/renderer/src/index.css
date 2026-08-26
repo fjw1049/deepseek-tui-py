@@ -8982,6 +8982,119 @@ select:focus-visible,
   height: 100%;
 }
 
+.ds-skill-source-stack {
+  position: relative;
+  display: block;
+  width: 40px;
+  height: 40px;
+  flex-shrink: 0;
+}
+
+.ds-skill-source-stack__tile {
+  position: absolute;
+}
+
+.ds-skill-source-stack[data-count='1'] .ds-skill-source-stack__tile {
+  inset: 0;
+}
+
+/* 2: half-overlap row, same silhouette as before. */
+.ds-skill-source-stack[data-count='2'] .ds-skill-source-stack__tile:nth-child(1) {
+  top: 6px;
+  left: 0;
+  z-index: 2;
+}
+
+.ds-skill-source-stack[data-count='2'] .ds-skill-source-stack__tile:nth-child(2) {
+  top: 6px;
+  left: 14px;
+  z-index: 1;
+}
+
+/* 3–4: 2×2 square, each tile covers half of its neighbor. */
+.ds-skill-source-stack[data-count='3'] .ds-skill-source-stack__tile:nth-child(1),
+.ds-skill-source-stack[data-count='4'] .ds-skill-source-stack__tile:nth-child(1) {
+  top: 0;
+  left: 0;
+  z-index: 4;
+}
+
+.ds-skill-source-stack[data-count='3'] .ds-skill-source-stack__tile:nth-child(2),
+.ds-skill-source-stack[data-count='4'] .ds-skill-source-stack__tile:nth-child(2) {
+  top: 0;
+  left: 13px;
+  z-index: 3;
+}
+
+.ds-skill-source-stack[data-count='3'] .ds-skill-source-stack__tile:nth-child(3),
+.ds-skill-source-stack[data-count='4'] .ds-skill-source-stack__tile:nth-child(3) {
+  top: 13px;
+  left: 0;
+  z-index: 2;
+}
+
+.ds-skill-source-stack[data-count='4'] .ds-skill-source-stack__tile:nth-child(4) {
+  top: 13px;
+  left: 13px;
+  z-index: 1;
+}
+
+/* 5–6: 3×2 square, same half-overlap step. */
+.ds-skill-source-stack[data-count='5'] .ds-skill-source-stack__tile:nth-child(1),
+.ds-skill-source-stack[data-count='6'] .ds-skill-source-stack__tile:nth-child(1) {
+  top: 5px;
+  left: 0;
+  z-index: 6;
+}
+
+.ds-skill-source-stack[data-count='5'] .ds-skill-source-stack__tile:nth-child(2),
+.ds-skill-source-stack[data-count='6'] .ds-skill-source-stack__tile:nth-child(2) {
+  top: 5px;
+  left: 10px;
+  z-index: 5;
+}
+
+.ds-skill-source-stack[data-count='5'] .ds-skill-source-stack__tile:nth-child(3),
+.ds-skill-source-stack[data-count='6'] .ds-skill-source-stack__tile:nth-child(3) {
+  top: 5px;
+  left: 20px;
+  z-index: 4;
+}
+
+.ds-skill-source-stack[data-count='5'] .ds-skill-source-stack__tile:nth-child(4),
+.ds-skill-source-stack[data-count='6'] .ds-skill-source-stack__tile:nth-child(4) {
+  top: 15px;
+  left: 0;
+  z-index: 3;
+}
+
+.ds-skill-source-stack[data-count='5'] .ds-skill-source-stack__tile:nth-child(5),
+.ds-skill-source-stack[data-count='6'] .ds-skill-source-stack__tile:nth-child(5) {
+  top: 15px;
+  left: 10px;
+  z-index: 2;
+}
+
+.ds-skill-source-stack[data-count='6'] .ds-skill-source-stack__tile:nth-child(6) {
+  top: 15px;
+  left: 20px;
+  z-index: 1;
+}
+
+.ds-skill-source-stack[data-count='2'] .ds-skill-brand {
+  border-radius: 8px;
+}
+
+.ds-skill-source-stack[data-count='3'] .ds-skill-brand,
+.ds-skill-source-stack[data-count='4'] .ds-skill-brand {
+  border-radius: 7px;
+}
+
+.ds-skill-source-stack[data-count='5'] .ds-skill-brand,
+.ds-skill-source-stack[data-count='6'] .ds-skill-brand {
+  border-radius: 6px;
+}
+
 .ds-skill-brand {
   display: inline-flex;
   flex-shrink: 0;

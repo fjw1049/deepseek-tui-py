@@ -165,6 +165,7 @@
   "skillOpen": "Open folder",
   "skillDelete": "Delete",
   "skillDeleteConfirm": "Delete skill \"{{name}}\"? This removes its folder on disk.",
+  "skillDeleteConfirmCopies": "Delete skill \"{{name}}\"? This removes {{count}} copies across agent directories.",
   "skillDeleted": "Deleted skill \"{{name}}\"",
   "skillPreviewHint": "Click to view SKILL.md",
   "skillPreviewError": "Could not read this skill's SKILL.md.",

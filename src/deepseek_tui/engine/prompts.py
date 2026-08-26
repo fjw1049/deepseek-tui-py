@@ -253,9 +253,11 @@ def render_installed_plugins_catalog(entries: list[Any] | None) -> str:
     lines = [
         "## Installed Plugins (contributing)",
         "",
-        "Enabled plugins contribute skills, slash commands, and agent "
-        "personas. Only the catalog below is loaded into this prompt; full "
-        "bodies activate on use.",
+        "Enabled plugins contribute slash commands, agent personas, and "
+        "plugin-local playbooks. Those playbooks are not listed under "
+        "## Skills — mount with `@plugin:<name>` to use them. Only the "
+        "catalog below is loaded into this prompt; full bodies activate "
+        "on use.",
         "",
     ]
     for e in entries:
@@ -288,9 +290,8 @@ def render_installed_plugins_catalog(entries: list[Any] | None) -> str:
         "Invoke slash commands with `/<plugin>:<command> [args]`; spawn a "
         'plugin persona with the `agent` tool (action="spawn") using '
         '`agent_type="<plugin>:<persona>"` '
-        "(bare persona name works when unique); "
-        "load skill bodies with `load_skill`. Enter a scenario (full rules) "
-        "with `@plugin:<name>`."
+        "(bare persona name works when unique). Enter a scenario (full "
+        "rules and that plugin's skills) with `@plugin:<name>`."
     )
     return "\n".join(lines).rstrip()
 

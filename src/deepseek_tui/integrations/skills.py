@@ -427,6 +427,7 @@ def render_available_skills_context(
     directory name can differ from the frontmatter ``name`` for community
     installs, in which case ``<dir>/<name>/SKILL.md`` would not exist and
     the model would fail to open it.
+
     """
     if registry.is_empty:
         return ""
@@ -477,113 +478,26 @@ def render_available_skills_context(
 # From system.py
 # ======================================================================
 
-"""Bundled system skills.
+"""Startup hook kept for call sites.
 
-Installs the bundled ``skill-creator`` skill at startup if not already
-present.
+The only packaged skill is ``deepseek-tui-docs`` under
+``deepseek_tui/skills``, discovered via :func:`bundled_skills_dir`.
+Older builds copied ``skill-creator`` / ``execution-router`` into
+``~/.deepseek/skills`` and locked them with ``.system-installed-version``.
+That copy step is gone so leftover folders can be deleted like any
+user skill.
 """
-
-
 
 __all__ = ["install_system_skills", "uninstall_system_skills"]
 
-_LOG = logging.getLogger(__name__)
-
-SYSTEM_SKILL_VERSION = "0.2.5"
-
-SKILL_CREATOR_BODY = """\
----
-name: skill-creator
-description: Help create new SKILL.md definitions for custom skills.
----
-
-# Skill Creator
-
-You are a skill-creation assistant. Help the user write a new SKILL.md
-file that follows the standard format:
-
-1. **Frontmatter** (YAML between `---` delimiters):
-   - `name`: short kebab-case identifier
-   - `description`: one-line summary of what the skill does
-
-2. **Body**: Markdown instructions that will be injected into the
-   system prompt when the skill is activated.
-
-## Guidelines
-
-- Keep instructions concise and actionable.
-- Use bullet points for step-by-step procedures.
-- Include examples where helpful.
-- Avoid duplicating capabilities already in the base system prompt.
-"""
-
-EXECUTION_ROUTER_BODY = """\
----
-name: execution-router
-description: Decide whether a task should use a single agent or a targeted subagent. Use before large reviews or when the user asks if multi-agent is appropriate.
----
-
-# Execution Router
-
-Start with the simplest architecture that meets the quality bar. Escalate only when structure, evidence needs, context pressure, or verification justify coordination cost.
-
-## When to use
-
-- "Single agent vs multi-agent?"
-- Before large repo reviews or research tasks
-
-Skip for trivial one-step edits when the user already chose a mode.
-
-## Scope first
-
-Identify: target (repo/diff/files), final artifact, success metric, side effects, exclusions, constraints.
-
-## Routing
-
-Prefer in order:
-
-1. **single-agent** — small scope, one domain, low evidence breadth
-2. **targeted subagent** — one focused verifier alongside the main agent
-
-## Output
-
-Return: Recommendation, Concrete action, Confidence, Scope assumptions, Why, Minimum viable approach.
-"""
 
 def install_system_skills(skills_dir: Path | None = None) -> None:
-    """Install bundled system skills if not already present.
-
-    Called at TUI startup.
-    """
-    target = skills_dir or default_skills_dir()
-    target.mkdir(parents=True, exist_ok=True)
-
-    _install_skill_creator(target)
-    _install_bundled_skill(target, "execution-router", EXECUTION_ROUTER_BODY)
-
-
-def _install_skill_creator(skills_dir: Path) -> None:
-    """Install the skill-creator skill."""
-    _install_bundled_skill(skills_dir, "skill-creator", SKILL_CREATOR_BODY)
-
-
-def _install_bundled_skill(skills_dir: Path, name: str, body: str) -> None:
-    dest = skills_dir / name
-    version_marker = dest / SYSTEM_VERSION_MARKER
-
-    if version_marker.is_file():
-        existing_version = version_marker.read_text(encoding="utf-8").strip()
-        if existing_version == SYSTEM_SKILL_VERSION:
-            return
-
-    dest.mkdir(parents=True, exist_ok=True)
-    (dest / SKILL_FILENAME).write_text(body, encoding="utf-8")
-    version_marker.write_text(SYSTEM_SKILL_VERSION, encoding="utf-8")
-    _LOG.info("Installed system skill: %s v%s", name, SYSTEM_SKILL_VERSION)
+    """No-op. Packaged skills stay in the package; they are not copied out."""
+    del skills_dir
 
 
 def uninstall_system_skills(skills_dir: Path | None = None) -> None:
-    """Remove bundled system skills.
+    """Remove leftover copies from older auto-installs.
 
     Used by tests and ``deepseek setup --clean``.
     """
@@ -594,7 +508,7 @@ def uninstall_system_skills(skills_dir: Path | None = None) -> None:
         dest = target / name
         if dest.is_dir():
             shutil.rmtree(dest)
-            _LOG.info("Uninstalled system skill: %s", name)
+            _LOG.info("Removed leftover auto-installed skill: %s", name)
 
 
 # ======================================================================

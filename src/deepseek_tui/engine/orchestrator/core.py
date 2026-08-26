@@ -405,9 +405,9 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         # ``Engine.create``; keys are plugin names, values are the index dict.
         self.plugin_index: dict[str, dict[str, Any]] = {}
         # Discovered LoadedPlugins, retained for on-demand heavy assembly
-        # (commands/agents/rules). Skills are eager-merged into the registry;
-        # these are kept so ``ensure_plugin_activated`` can find a plugin by
-        # name without re-discovering.
+        # (commands/agents/rules) and to keep plugin-packaged skills out of
+        # the default ``## Skills`` catalog. Skills stay in the registry for
+        # ``load_skill`` / mount; they are not listed as general playbooks.
         self._loaded_plugins: list[Any] = []
         # Lowercased plugin names present at Engine.create. Used to tip the
         # user when a mid-session install is mounted before hooks/MCP reload.
@@ -441,11 +441,9 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
 
         self.goal_service = GoalService(on_update=self._emit_goal_updated)
         self.tool_context.metadata[GOAL_SERVICE_KEY] = self.goal_service
-        # Expose the merged skill registry (workspace + plugin skills) so the
-        # ``load_skill`` tool can resolve plugin skills by name. Without this,
-        # load_skill re-discovers via discover_in_workspace which does not
-        # merge plugin contributions, so plugin skills would be unreachable
-        # by name even though they are listed in the system prompt.
+        # Registry still holds plugin-packaged skills so ``load_skill`` and
+        # ``@plugin:`` mount can resolve them. They are not listed in the
+        # default ``## Skills`` catalog — those playbooks are plugin-local.
         if skill_registry is not None:
             self.tool_context.metadata["skill_registry"] = skill_registry
         # Cycle manager — instantiated but disabled by default. The full
@@ -1472,13 +1470,41 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
 
 
 
+    def _is_plugin_packaged_skill(self, skill: object) -> bool:
+        """True when the skill file lives inside an installed plugin.
+
+        Plugin skills are adapter playbooks for that plugin (how to use its
+        tools / MCP / workflow). They are not general Skills catalog entries.
+        Qualified names (``plugin:skill``) and bare skills whose SKILL.md
+        sits under a loaded plugin directory both count.
+        """
+        name = str(getattr(skill, "name", "") or "")
+        if ":" in name:
+            prefix = name.split(":", 1)[0].lower()
+            if prefix in self._session_plugin_names:
+                return True
+        path = getattr(skill, "path", None)
+        if path is None:
+            return False
+        try:
+            resolved = Path(path).expanduser()
+        except (TypeError, ValueError):
+            return False
+        for plugin in self._loaded_plugins:
+            plugin_root = getattr(plugin, "path", None)
+            if plugin_root is not None and _path_under(resolved, plugin_root):
+                return True
+        return False
+
     def _render_skills_context(self, only: object | None = None) -> str | None:
         """Render skills context for system prompt injection.
 
         ``only`` 为聚焦目标：可传单个 Skill（skill 聚焦）或一组 Skill 列表
         （插件挂载时其自带的多个 skill）。传入时只把这些 skill 列进
-        ``## Skills`` 段（用临时 registry，不改 ``self.skill_registry``）；
-        为 ``None`` 时渲染全量（默认）。空列表视同 ``None``。
+        ``## Skills`` 段（用临时 registry，不改 ``self.skill_registry``）。
+
+        默认（``only is None``）只渲染工作区 / 用户技能目录里的通用
+        skill，不把插件自带的 skill 混进目录。空列表视同 ``None``。
         """
         if self.skill_registry is None:
             return None
@@ -1493,6 +1519,17 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             if not skills:
                 return None
             registry = SkillRegistry(skills=skills)
+        else:
+            workspace_skills = [
+                skill
+                for skill in registry.skills
+                if not self._is_plugin_packaged_skill(skill)
+            ]
+            if len(workspace_skills) != len(registry.skills):
+                registry = SkillRegistry(
+                    skills=workspace_skills,
+                    warnings=list(registry.warnings),
+                )
         return render_available_skills_context(registry) or None
 
     def _accrue_child_token_cost_from_metadata(

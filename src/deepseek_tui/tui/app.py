@@ -189,15 +189,14 @@ class DeepSeekTUI(App[None]):
             self._resume_session_id,
             self._fork_session_id,
         )
-        # Ensure bundled system skills exist before any skill discovery
-        # runs (Engine.create reads ``default_skills_dir()`` via
-        # ``discover_in_workspace``).
+        # Historical hook: used to copy skill-creator / execution-router
+        # into ~/.deepseek/skills. Packaged skills now stay in
+        # ``deepseek_tui/skills`` (deepseek-tui-docs only).
         try:
             from deepseek_tui.integrations.skills import install_system_skills
 
             install_system_skills()
-        except Exception:  # noqa: BLE001 — bundled-skill failure must
-            # never block the TUI from launching.
+        except Exception:  # noqa: BLE001 — must never block TUI launch.
             logger.exception("install_system_skills failed at startup")
         self.query_one(Composer).focus()
         # Seed StatusBar + ComposerHint with mode/model *before* the

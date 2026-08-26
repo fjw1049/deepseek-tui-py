@@ -165,6 +165,7 @@
   "skillOpen": "打开目录",
   "skillDelete": "删除",
   "skillDeleteConfirm": "确定删除技能「{{name}}」吗？此操作会移除磁盘上的技能目录。",
+  "skillDeleteConfirmCopies": "确定删除技能「{{name}}」吗？将同时移除 {{count}} 个 agent 目录中的副本。",
   "skillDeleted": "已删除技能「{{name}}」",
   "skillPreviewHint": "点击查看 SKILL.md",
   "skillPreviewError": "无法读取该技能的 SKILL.md。",

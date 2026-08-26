@@ -720,9 +720,13 @@ def discover_plugins(
     workspace: Path | None = None,
     *,
     include_disabled: bool = False,
-    include_claude: bool = True,
+    include_claude: bool = False,
 ) -> list[LoadedPlugin]:
     """Discover plugins across scope directories.
+
+    Default is DeepSeek scopes only (project + ``~/.deepseek/plugins``).
+    Claude Code installs such as Warp stay in ``~/.claude/plugins`` and
+    are not imported unless ``include_claude`` is set.
 
     First scope wins on name conflicts (project overrides user, both
     override Claude Code installs). Disabled plugins are skipped unless
@@ -788,9 +792,8 @@ def discover_plugins(
                 scope_dir,
             )
 
-    # Claude Code interop: plugins installed via Claude Code are surfaced
-    # read-only. Their enable/trust state lives in *our* user lockfile so
-    # we never write into ~/.claude.
+    # Opt-in Claude Code interop only. Warp and other Claude marketplace
+    # installs are not DeepSeek plugins; surfacing them mixed the catalogs.
     if include_claude and plugins_dir is None:
         user_dir = user_plugins_dir()
         user_lock = read_lockfile(user_dir)
@@ -2104,7 +2107,7 @@ def reindex_contribution_indexes(
     plugins_dir: Path | None = None,
     workspace: Path | None = None,
     *,
-    include_claude: bool = True,
+    include_claude: bool = False,
 ) -> int:
     """Force-rebuild ``contribution_index`` for every discoverable plugin.
 

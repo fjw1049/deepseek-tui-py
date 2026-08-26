@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import {
+  dedupeSkillsById,
   skillDiscoveryRoots,
+  skillIdentityKey,
   skillRootFromMdPath,
   skillSourceFromPath,
   skillSourceIconKey,
-  skillSourceTagFromPath
+  skillSourceTagFromPath,
+  uniqueSkillSourcePaths
 } from './skill-source'
 
 describe('skillSourceFromPath', () => {
@@ -86,5 +89,49 @@ describe('skillDiscoveryRoots', () => {
     expect(roots).toContain('~/.gemini/skills')
     expect(roots).toContain('~/.codebuddy/skills')
     expect(roots).toContain('~/.deepseek/skills')
+  })
+})
+
+describe('dedupeSkillsById', () => {
+  it('keeps the first copy and records the rest', () => {
+    const skills = [
+      { id: 'open-knowledge-discovery', name: 'open-knowledge-discovery', path: '/Users/me/.agents/skills/open-knowledge-discovery/SKILL.md' },
+      { id: 'open-knowledge-discovery', name: 'open-knowledge-discovery', path: '/Users/me/.claude/skills/open-knowledge-discovery/SKILL.md' },
+      { id: 'open-knowledge-discovery', name: 'open-knowledge-discovery', path: '/Users/me/.cursor/skills/open-knowledge-discovery/SKILL.md' },
+      { id: 'xlsx', name: 'xlsx', path: '/Users/me/.claude/skills/xlsx/SKILL.md' },
+      { id: 'xlsx', name: 'xlsx', path: '/Users/me/.deepseek/skills/xlsx/SKILL.md' }
+    ]
+    const deduped = dedupeSkillsById(skills)
+    expect(deduped.map((skill) => skill.path)).toEqual([
+      '/Users/me/.agents/skills/open-knowledge-discovery/SKILL.md',
+      '/Users/me/.claude/skills/xlsx/SKILL.md'
+    ])
+    expect(deduped[0]?.copies).toHaveLength(3)
+    expect(deduped[1]?.copies).toHaveLength(2)
+    expect(skillIdentityKey(deduped[0]!)).toBe('open-knowledge-discovery')
+  })
+
+  it('treats folder ids case-insensitively', () => {
+    const deduped = dedupeSkillsById([
+      { id: 'PDF', path: '/tmp/a/PDF/SKILL.md' },
+      { id: 'pdf', path: '/tmp/b/pdf/SKILL.md' }
+    ])
+    expect(deduped).toHaveLength(1)
+    expect(deduped[0]?.copies).toHaveLength(2)
+  })
+})
+
+describe('uniqueSkillSourcePaths', () => {
+  it('keeps one path per agent brand', () => {
+    expect(
+      uniqueSkillSourcePaths([
+        '/Users/me/.claude/skills/xlsx/SKILL.md',
+        '/Users/me/.claude/skills/xlsx-copy/SKILL.md',
+        '/Users/me/.deepseek/skills/xlsx/SKILL.md'
+      ])
+    ).toEqual([
+      '/Users/me/.claude/skills/xlsx/SKILL.md',
+      '/Users/me/.deepseek/skills/xlsx/SKILL.md'
+    ])
   })
 })
