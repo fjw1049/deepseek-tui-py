@@ -91,6 +91,9 @@ class TurnCheckpoint:
     # for checkpoints written before these fields existed.
     thread_id: str = ""
     created_at: float = 0.0
+    # Absolute execution root at capture time. Restore writes only here.
+    # After a successful publish this is retargeted to the project root.
+    execution_root: str = ""
     # True when the on-disk JSON carried a ``post_contents`` field (or this
     # checkpoint was created after post-images landed). False only for
     # legacy checkpoints; drives the unconditional-write restore fallback.
@@ -107,6 +110,7 @@ class TurnCheckpoint:
             "uncertain": self.uncertain,
             "thread_id": self.thread_id,
             "created_at": self.created_at,
+            "execution_root": self.execution_root,
         }
 
     @classmethod
@@ -121,6 +125,7 @@ class TurnCheckpoint:
             uncertain=[str(p) for p in raw.get("uncertain") or []],
             thread_id=str(raw.get("thread_id") or ""),
             created_at=float(raw.get("created_at") or 0.0),
+            execution_root=str(raw.get("execution_root") or ""),
             # Generational marker: presence of the key, not whether any
             # path was captured. An empty ``post_contents`` still means
             # post-image-aware (capture ran / format supports it).
@@ -141,6 +146,9 @@ class RestoreReport:
     skipped: list[str] = field(default_factory=list)
     # Turn ids with no checkpoint on disk (nothing recorded for them).
     turns_without_checkpoint: list[str] = field(default_factory=list)
+    # Recorded execution roots that are no longer on disk. Those
+    # checkpoints are not rewritten onto the current workspace.
+    missing_roots: list[str] = field(default_factory=list)
 
 
 # Per-path outcome labels shared by restore() and preview().
@@ -196,6 +204,7 @@ class TurnCheckpointStore:
         head: str | None,
         is_git: bool,
         thread_id: str = "",
+        execution_root: str = "",
     ) -> TurnCheckpoint:
         """Create the checkpoint for a turn, seeded with the snapshot bytes."""
         checkpoint = TurnCheckpoint(
@@ -205,6 +214,7 @@ class TurnCheckpointStore:
             pre_contents=dict(snapshot.contents) if snapshot is not None else {},
             thread_id=thread_id,
             created_at=time.time(),
+            execution_root=execution_root,
         )
         with self._lock:
             self._save(checkpoint)
@@ -258,6 +268,30 @@ class TurnCheckpointStore:
                 checkpoint.post_contents[path] = value
             self._save(checkpoint)
 
+    def retarget_to_project(
+        self,
+        turn_id: str,
+        project_root: Path,
+        images: dict[str, tuple[str | None, str | None]],
+    ) -> None:
+        """Bind this checkpoint to the project after a successful publish.
+
+        ``images`` maps path -> (project content before publish, after).
+        Rewind afterwards restores the project, not the isolate copy.
+        """
+        root = str(Path(project_root).expanduser().resolve())
+        with self._lock:
+            checkpoint = self.load(turn_id)
+            if checkpoint is None:
+                return
+            checkpoint.execution_root = root
+            checkpoint.has_post_images = True
+            for path, (pre, post) in images.items():
+                norm = path.replace("\\", "/")
+                checkpoint.pre_contents[norm] = pre
+                checkpoint.post_contents[norm] = post
+            self._save(checkpoint)
+
     async def restore(
         self,
         turn_ids_newest_first: list[str],
@@ -279,7 +313,11 @@ class TurnCheckpointStore:
         merged: set[str] = set()
         conflicted: set[str] = set()
         skipped: set[str] = set()
-        for path, state in states.items():
+        for (root_key, path), state in states.items():
+            target = Path(root_key)
+            if not target.is_dir():
+                skipped.add(path)
+                continue
             if state.status is None or state.status == STATUS_SKIPPED:
                 skipped.add(path)
                 continue
@@ -291,11 +329,12 @@ class TurnCheckpointStore:
                 continue
             if state.current != state.on_disk:
                 try:
-                    _write_pre_image(root, path, state.current)
+                    _write_pre_image(target, path, state.current)
                 except OSError:
                     logger.debug(
-                        "turn_checkpoint_restore_failed path=%s",
+                        "turn_checkpoint_restore_failed path=%s root=%s",
                         path,
+                        root_key,
                         exc_info=True,
                     )
                     skipped.add(path)
@@ -314,13 +353,23 @@ class TurnCheckpointStore:
         self, turn_ids_newest_first: list[str], workspace: Path
     ) -> dict[str, str]:
         """Dry-run of :meth:`restore`: per-path outcome, disk untouched."""
-        _, _, states = await self._plan(
+        statuses, _report = await self.preview_report(
+            turn_ids_newest_first, workspace
+        )
+        return statuses
+
+    async def preview_report(
+        self, turn_ids_newest_first: list[str], workspace: Path
+    ) -> tuple[dict[str, str], RestoreReport]:
+        """Dry-run plus the full report (missing roots, skipped turns)."""
+        _fallback, report, states = await self._plan(
             turn_ids_newest_first, workspace, force=False
         )
-        return {
+        statuses = {
             path: (state.status or STATUS_SKIPPED)
-            for path, state in states.items()
+            for (_root, path), state in states.items()
         }
+        return statuses, report
 
     async def _plan(
         self,
@@ -328,21 +377,37 @@ class TurnCheckpointStore:
         workspace: Path,
         *,
         force: bool,
-    ) -> tuple[Path, RestoreReport, dict[str, _PathState]]:
-        root = _resolved_root(workspace)
+    ) -> tuple[Path, RestoreReport, dict[tuple[str, str], _PathState]]:
+        fallback = _resolved_root(workspace)
         report = RestoreReport()
-        states: dict[str, _PathState] = {}
+        states: dict[tuple[str, str], _PathState] = {}
+        missing_roots: set[str] = set()
         for turn_id in turn_ids_newest_first:
             checkpoint = self.load(turn_id)
             if checkpoint is None:
                 report.turns_without_checkpoint.append(turn_id)
                 continue
+            root = _root_for_checkpoint(checkpoint, fallback)
+            if root is None:
+                recorded = (checkpoint.execution_root or "").strip()
+                missing_roots.add(recorded)
+                for path in checkpoint.mutated:
+                    key = (recorded, path)
+                    state = states.get(key)
+                    if state is None:
+                        state = _PathState(on_disk=_Unreadable(), current=_Unreadable())
+                        states[key] = state
+                    state.status = STATUS_SKIPPED
+                    state.done = True
+                continue
+            root_key = str(root)
             for path in checkpoint.mutated:
-                state = states.get(path)
+                key = (root_key, path)
+                state = states.get(key)
                 if state is None:
                     on_disk = await asyncio.to_thread(_read_disk, root, path)
                     state = _PathState(on_disk=on_disk, current=on_disk)
-                    states[path] = state
+                    states[key] = state
                 if state.done:
                     continue
                 pre = await self._resolve_pre_image(root, checkpoint, path)
@@ -398,7 +463,8 @@ class TurnCheckpointStore:
                 state.current = state.on_disk
                 state.status = STATUS_CONFLICTED
                 state.done = True
-        return root, report, states
+        report.missing_roots = sorted(missing_roots)
+        return fallback, report, states
 
     async def _resolve_pre_image(
         self, root: Path, checkpoint: TurnCheckpoint, path: str
@@ -465,6 +531,21 @@ class _Unreadable:
 
 def _resolved_root(workspace: Path) -> Path:
     return workspace.expanduser().resolve()
+
+
+def _root_for_checkpoint(checkpoint: TurnCheckpoint, fallback: Path) -> Path | None:
+    """Pinned capture root, or ``fallback`` for legacy checkpoints.
+
+    Returns None when a recorded root is no longer on disk — restore must
+    not retarget those files onto the current workspace.
+    """
+    raw = (checkpoint.execution_root or "").strip()
+    if not raw:
+        return fallback
+    path = Path(raw).expanduser()
+    if not path.is_dir():
+        return None
+    return path.resolve()
 
 
 def _read_disk(root: Path, rel: str) -> str | None | _Unreadable:

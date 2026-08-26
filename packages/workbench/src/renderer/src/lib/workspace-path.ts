@@ -69,7 +69,7 @@ export function resolveActiveThreadWorkspace(
  * does NOT blank out internal temp dirs; file preview / read / write need
  * the real path the runtime used when creating the thread.
  *
- * In worktree mode this is the managed checkout, not the project root.
+ * Always the project checkout. Hidden isolate copies are not shown in the UI.
  */
 export function resolveThreadFilesystemRoot(
   activeThreadId: string | null | undefined,
@@ -79,8 +79,6 @@ export function resolveThreadFilesystemRoot(
   const thread = activeThreadId
     ? threads.find((item) => item.id === activeThreadId)
     : undefined
-  const worktree = thread?.worktreePath?.trim() ?? ''
-  if (thread?.envMode === 'worktree' && worktree) return worktree
   const fromThread = thread?.workspace?.trim() ?? ''
   if (fromThread) return fromThread
   return fallbackWorkspaceRoot?.trim() ?? ''

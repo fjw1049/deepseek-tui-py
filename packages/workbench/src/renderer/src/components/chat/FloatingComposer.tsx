@@ -67,6 +67,7 @@ import { ContextUsageMeter } from './ContextUsageMeter'
 import { ComposerCommandPanel } from './ComposerCommandPanel'
 import { ComposerVoiceBar, type ComposerVoicePhase } from './ComposerVoiceBar'
 import { WorkspaceContextBar } from './WorkspaceContextBar'
+import { PublishConflictBanner } from './PublishConflictBanner'
 import {
   joinSpeechText,
   useAudioRecorder,
@@ -2571,15 +2572,21 @@ export function FloatingComposer({
             </div>
           </div>
           {compactChrome ? (
-            <WorkspaceContextBar
-              workspaceRoot={effectiveWorkspaceRoot}
-              variant="embedded"
-            />
+            <>
+              <WorkspaceContextBar
+                workspaceRoot={effectiveWorkspaceRoot}
+                variant="embedded"
+              />
+              <PublishConflictBanner />
+            </>
           ) : null}
         </div>
       </div>
       {!compactChrome ? (
-        <WorkspaceContextBar workspaceRoot={effectiveWorkspaceRoot} />
+        <>
+          <WorkspaceContextBar workspaceRoot={effectiveWorkspaceRoot} />
+          <PublishConflictBanner />
+        </>
       ) : null}
       {!compactChrome && !runtimeReady ? (
         <p className="px-3 pb-1 text-right text-[11.5px] text-amber-700 dark:text-amber-200 sm:px-4">

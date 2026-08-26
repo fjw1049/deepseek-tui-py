@@ -5,13 +5,11 @@ import type {
   ApprovalRequestPayload,
   ElevationRequestPayload,
   EvolutionProposalPayload,
-  ApplyWorktreeResult,
   ChatBlock,
   NormalizedThread,
   ProcessIntentMeta,
   RestoreCodeResult,
   RewindPreview,
-  ThreadEnvMode,
   ThreadDeltaEvent,
   SubagentMailboxPayload,
   ThreadEventSink,
@@ -150,7 +148,10 @@ type ThreadRecordJson = {
   workspace: string
   env_mode?: string
   worktree_path?: string | null
+  associated_worktree_path?: string | null
   worktree_branch?: string | null
+  publish_blocked?: boolean
+  publish_conflicts?: string[]
   mode: string
   status?: string
   archived?: boolean
@@ -214,10 +215,6 @@ function titleFromThread(t: ThreadRecordJson): string {
   return t.id.slice(0, 8)
 }
 
-function envModeFromThread(t: ThreadRecordJson): ThreadEnvMode {
-  return t.env_mode === 'worktree' ? 'worktree' : 'local'
-}
-
 function threadFromJson(t: ThreadRecordJson, title?: string): NormalizedThread {
   return {
     id: t.id,
@@ -227,24 +224,13 @@ function threadFromJson(t: ThreadRecordJson, title?: string): NormalizedThread {
     model: t.model,
     mode: t.mode,
     workspace: t.workspace,
-    envMode: envModeFromThread(t),
-    worktreePath: t.worktree_path ?? null,
-    worktreeBranch: t.worktree_branch ?? null,
+    publishBlocked: t.publish_blocked === true,
+    publishConflicts: Array.isArray(t.publish_conflicts)
+      ? t.publish_conflicts.filter((item): item is string => typeof item === 'string')
+      : [],
     status: t.status,
     archived: t.archived === true,
     goal: t.goal ?? null
-  }
-}
-
-function applyResultFromJson(body: Record<string, unknown>): ApplyWorktreeResult {
-  const list = (key: string): string[] =>
-    Array.isArray(body[key]) ? body[key].filter((item): item is string => typeof item === 'string') : []
-  return {
-    applied: list('applied'),
-    merged: list('merged'),
-    conflicted: list('conflicted'),
-    skipped: list('skipped'),
-    mode: typeof body.mode === 'string' ? body.mode : 'merge'
   }
 }
 
@@ -1426,64 +1412,23 @@ export class DeepseekRuntimeProvider implements AgentProvider {
       skipped: stringListFromJson(parsed, 'skipped'),
       conflicts: stringListFromJson(parsed, 'conflicts'),
       isGit: parsed.is_git !== false,
-      turns: typeof parsed.turns === 'number' ? parsed.turns : 0
+      turns: typeof parsed.turns === 'number' ? parsed.turns : 0,
+      missingRoots: stringListFromJson(parsed, 'missing_roots')
     }
   }
 
-  async setThreadEnvironment(
+  async resolvePublishConflicts(
     threadId: string,
-    envMode: ThreadEnvMode,
-    options?: { copyDirty?: boolean; forceConflicts?: boolean }
+    action: 'use_agent' | 'keep_project',
+    paths?: string[]
   ): Promise<NormalizedThread> {
     const r = await window.dsGui.runtimeRequest(
-      `/v1/threads/${encodeURIComponent(threadId)}/environment`,
+      `/v1/threads/${encodeURIComponent(threadId)}/worktree/resolve`,
       'POST',
-      JSON.stringify({
-        env_mode: envMode,
-        copy_dirty: options?.copyDirty !== false,
-        force_conflicts: options?.forceConflicts === true
-      })
+      JSON.stringify({ action, paths })
     )
-    if (!r.ok) throw toRuntimeError(readRuntimeError(r.body, 'set environment failed'))
+    if (!r.ok) throw toRuntimeError(readRuntimeError(r.body, 'resolve publish failed'))
     return threadFromJson(JSON.parse(r.body) as ThreadRecordJson)
-  }
-
-  async previewWorktreeApply(threadId: string): Promise<ApplyWorktreeResult> {
-    const r = await window.dsGui.runtimeRequest(
-      `/v1/threads/${encodeURIComponent(threadId)}/worktree/apply-preview`,
-      'GET'
-    )
-    if (!r.ok) throw toRuntimeError(readRuntimeError(r.body, 'worktree apply preview failed'))
-    return applyResultFromJson(JSON.parse(r.body) as Record<string, unknown>)
-  }
-
-  async applyWorktree(
-    threadId: string,
-    options?: { mode?: 'merge' | 'overwrite'; forceConflicts?: boolean }
-  ): Promise<ApplyWorktreeResult> {
-    const r = await window.dsGui.runtimeRequest(
-      `/v1/threads/${encodeURIComponent(threadId)}/worktree/apply`,
-      'POST',
-      JSON.stringify({
-        mode: options?.mode ?? 'merge',
-        force_conflicts: options?.forceConflicts === true
-      })
-    )
-    if (!r.ok) throw toRuntimeError(readRuntimeError(r.body, 'worktree apply failed'))
-    return applyResultFromJson(JSON.parse(r.body) as Record<string, unknown>)
-  }
-
-  async promoteWorktree(threadId: string, branch: string): Promise<{ branch: string }> {
-    const r = await window.dsGui.runtimeRequest(
-      `/v1/threads/${encodeURIComponent(threadId)}/worktree/promote`,
-      'POST',
-      JSON.stringify({ branch })
-    )
-    if (!r.ok) throw toRuntimeError(readRuntimeError(r.body, 'worktree promote failed'))
-    const parsed = JSON.parse(r.body) as { branch?: string }
-    const name = typeof parsed.branch === 'string' ? parsed.branch.trim() : ''
-    if (!name) throw toRuntimeError('worktree promote failed')
-    return { branch: name }
   }
 
   async resumeThread(threadId: string): Promise<void> {
@@ -1926,7 +1871,30 @@ export class DeepseekRuntimeProvider implements AgentProvider {
                         : undefined
                   const archived = typeof thread?.archived === 'boolean' ? thread.archived : undefined
                   const mode = typeof thread?.mode === 'string' ? thread.mode : undefined
-                  sink.onThreadUpdated({ threadId, title, archived, mode, changes })
+                  const publishBlocked =
+                    typeof thread?.publish_blocked === 'boolean'
+                      ? thread.publish_blocked
+                      : typeof changes.publish_blocked === 'boolean'
+                        ? changes.publish_blocked
+                        : undefined
+                  const publishConflicts = Array.isArray(thread?.publish_conflicts)
+                    ? thread.publish_conflicts.filter(
+                        (item): item is string => typeof item === 'string'
+                      )
+                    : Array.isArray(changes.publish_conflicts)
+                      ? changes.publish_conflicts.filter(
+                          (item): item is string => typeof item === 'string'
+                        )
+                      : undefined
+                  sink.onThreadUpdated({
+                    threadId,
+                    title,
+                    archived,
+                    mode,
+                    publishBlocked,
+                    publishConflicts,
+                    changes
+                  })
                 }
                 return
               }

@@ -503,3 +503,85 @@ async def test_new_checkpoint_missing_post_image_conflicts_not_blind_write(
     assert report.restored == []
     assert report.conflicted == ["f.py"]
     assert (ws / "f.py").read_text(encoding="utf-8") == "someone else\n"
+
+
+def test_begin_turn_records_execution_root(store: TurnCheckpointStore) -> None:
+    cp = store.begin_turn(
+        "turn_1",
+        None,
+        head=None,
+        is_git=False,
+        execution_root="/tmp/isolate",
+    )
+    assert cp.execution_root == "/tmp/isolate"
+    loaded = store.load("turn_1")
+    assert loaded is not None
+    assert loaded.execution_root == "/tmp/isolate"
+
+
+@pytest.mark.asyncio
+async def test_restore_writes_recorded_root_not_fallback(
+    store: TurnCheckpointStore, tmp_path: Path
+) -> None:
+    isolate = tmp_path / "isolate"
+    project = tmp_path / "project"
+    isolate.mkdir()
+    project.mkdir()
+    (isolate / "f.py").write_text("isolate-new\n", encoding="utf-8")
+    (project / "f.py").write_text("project-now\n", encoding="utf-8")
+    store.begin_turn(
+        "turn_1", None, head=None, is_git=False, execution_root=str(isolate)
+    )
+    store.record_pre_write("turn_1", "f.py", "isolate-old\n")
+    store.record_post_images("turn_1", isolate)
+
+    report = await store.restore(["turn_1"], project)
+
+    assert report.restored == ["f.py"]
+    assert (isolate / "f.py").read_text(encoding="utf-8") == "isolate-old\n"
+    assert (project / "f.py").read_text(encoding="utf-8") == "project-now\n"
+
+
+@pytest.mark.asyncio
+async def test_retarget_to_project_makes_restore_write_project(
+    store: TurnCheckpointStore, tmp_path: Path
+) -> None:
+    isolate = tmp_path / "isolate"
+    project = tmp_path / "project"
+    isolate.mkdir()
+    project.mkdir()
+    (isolate / "f.py").write_text("agent-post\n", encoding="utf-8")
+    (project / "f.py").write_text("agent-post\n", encoding="utf-8")
+    store.begin_turn(
+        "turn_1", None, head=None, is_git=False, execution_root=str(isolate)
+    )
+    store.record_pre_write("turn_1", "f.py", "pre\n")
+    store.record_post_images("turn_1", isolate)
+    store.retarget_to_project("turn_1", project, {"f.py": ("pre\n", "agent-post\n")})
+    (isolate / "f.py").write_text("isolate-later\n", encoding="utf-8")
+
+    report = await store.restore(["turn_1"], isolate)
+
+    assert report.restored == ["f.py"]
+    assert (project / "f.py").read_text(encoding="utf-8") == "pre\n"
+    assert (isolate / "f.py").read_text(encoding="utf-8") == "isolate-later\n"
+
+
+@pytest.mark.asyncio
+async def test_restore_skips_missing_recorded_root(
+    store: TurnCheckpointStore, tmp_path: Path
+) -> None:
+    gone = tmp_path / "gone-isolate"
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "f.py").write_text("project\n", encoding="utf-8")
+    store.begin_turn(
+        "turn_1", None, head=None, is_git=False, execution_root=str(gone)
+    )
+    store.record_pre_write("turn_1", "f.py", "old\n")
+
+    report = await store.restore(["turn_1"], project)
+
+    assert report.restored == []
+    assert report.missing_roots == [str(gone)]
+    assert (project / "f.py").read_text(encoding="utf-8") == "project\n"

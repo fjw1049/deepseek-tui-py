@@ -3072,10 +3072,14 @@ function UserMessageBubble({
     files: string[]
     conflicts: string[]
     previewFailed: boolean
+    missingRoots: string[]
   } | null>(null)
   const [forceConflicts, setForceConflicts] = useState(false)
   // File restore only works for messages persisted on the runtime (`item_…`).
+  // Restore writes the recorded execution root. After a successful publish that
+  // root is the project; a vanished copy skips file restore.
   const canRestoreFiles = activeThreadId != null && block.id.startsWith('item_')
+  const isolateGone = (confirm?.missingRoots.length ?? 0) > 0
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
   useEffect(() => {
@@ -3134,8 +3138,8 @@ function UserMessageBubble({
     setEditing(false)
     try {
       await rewindAndResend(block.id, wireText, {
-        restoreFiles: restoreFiles && canRestoreFiles,
-        forceConflicts: restoreFiles && canRestoreFiles && force
+        restoreFiles: restoreFiles && canRestoreFiles && !isolateGone,
+        forceConflicts: restoreFiles && canRestoreFiles && !isolateGone && force
       })
     } finally {
       setSubmitting(false)
@@ -3168,11 +3172,12 @@ function UserMessageBubble({
       setConfirm({
         files: preview.files,
         conflicts: preview.conflicts ?? [],
-        previewFailed: false
+        previewFailed: false,
+        missingRoots: preview.missingRoots ?? []
       })
     } catch {
       setForceConflicts(false)
-      setConfirm({ files: [], conflicts: [], previewFailed: true })
+      setConfirm({ files: [], conflicts: [], previewFailed: true, missingRoots: [] })
     } finally {
       setPreviewing(false)
     }
@@ -3293,7 +3298,7 @@ function UserMessageBubble({
                         ? t('rewindResendConfirmPreviewFailed')
                         : t('rewindResendConfirmBody')}
                     </p>
-                    {!confirm.previewFailed && visibleFiles.length > 0 ? (
+                    {!isolateGone && !confirm.previewFailed && visibleFiles.length > 0 ? (
                       <ul className="max-h-40 overflow-y-auto rounded-xl border border-ds-border-muted/70 bg-ds-main/30 px-3 py-2 font-mono text-[12px] leading-5 text-ds-ink">
                         {visibleFiles.map((file) => (
                           <li
@@ -3316,7 +3321,7 @@ function UserMessageBubble({
                         ) : null}
                       </ul>
                     ) : null}
-                    {hasConflicts ? (
+                    {!isolateGone && hasConflicts ? (
                       <div className="space-y-2">
                         <p className="text-[12px] leading-5 text-amber-500">
                           {t('rewindResendConfirmConflictNote', {
@@ -3347,18 +3352,24 @@ function UserMessageBubble({
                       type="button"
                       onClick={() => void commitResend(false)}
                       disabled={submitting}
-                      className="rounded-md px-3 py-1.5 text-[13px] font-medium text-ds-ink transition hover:bg-ds-hover disabled:cursor-not-allowed disabled:opacity-50"
+                      className={
+                        isolateGone
+                          ? 'rounded-md bg-accent px-3 py-1.5 text-[13px] font-medium text-white shadow-sm transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50'
+                          : 'rounded-md px-3 py-1.5 text-[13px] font-medium text-ds-ink transition hover:bg-ds-hover disabled:cursor-not-allowed disabled:opacity-50'
+                      }
                     >
                       {t('rewindResendConfirmKeep')}
                     </button>
-                    <button
-                      type="button"
-                      onClick={() => void commitResend(true, forceConflicts)}
-                      disabled={submitting}
-                      className="rounded-md bg-accent px-3 py-1.5 text-[13px] font-medium text-white shadow-sm transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      {t('rewindResendConfirmRestore')}
-                    </button>
+                    {isolateGone ? null : (
+                      <button
+                        type="button"
+                        onClick={() => void commitResend(true, forceConflicts)}
+                        disabled={submitting}
+                        className="rounded-md bg-accent px-3 py-1.5 text-[13px] font-medium text-white shadow-sm transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {t('rewindResendConfirmRestore')}
+                      </button>
+                    )}
                   </div>
                 </div>
               </div>,

@@ -38,8 +38,6 @@ export type GoalSnapshotJson = {
   }
 }
 
-export type ThreadEnvMode = 'local' | 'worktree'
-
 export type NormalizedThread = {
   id: string
   title: string
@@ -49,20 +47,11 @@ export type NormalizedThread = {
   model: string
   mode: string
   workspace?: string
-  envMode?: ThreadEnvMode
-  worktreePath?: string | null
-  worktreeBranch?: string | null
+  publishBlocked?: boolean
+  publishConflicts?: string[]
   status?: string
   archived?: boolean
   goal?: GoalSnapshotJson | null
-}
-
-export type ApplyWorktreeResult = {
-  applied: string[]
-  merged: string[]
-  conflicted: string[]
-  skipped: string[]
-  mode: string
 }
 
 export type RuntimeConnectionStatus = 'idle' | 'checking' | 'ready' | 'offline'
@@ -81,6 +70,8 @@ export type RewindPreview = {
   conflicts: string[]
   isGit: boolean
   turns: number
+  /** Checkpoint roots that are gone; file restore is skipped for those turns. */
+  missingRoots?: string[]
 }
 
 export type ToolBlock = {
@@ -346,6 +337,8 @@ export type ThreadUpdatedPayload = {
   archived?: boolean
   /** Interaction mode after enter/exit plan (or other mode switches). */
   mode?: string
+  publishBlocked?: boolean
+  publishConflicts?: string[]
   /** Subset of fields that actually changed in this update. */
   changes: Record<string, unknown>
 }
@@ -465,17 +458,11 @@ export interface AgentProvider {
    * `beforeItemId` would touch (GET /v1/threads/{id}/rewind-preview).
    */
   rewindPreview?(threadId: string, beforeItemId: string): Promise<RewindPreview>
-  setThreadEnvironment?(
+  resolvePublishConflicts?(
     threadId: string,
-    envMode: ThreadEnvMode,
-    options?: { copyDirty?: boolean; forceConflicts?: boolean }
+    action: 'use_agent' | 'keep_project',
+    paths?: string[]
   ): Promise<NormalizedThread>
-  previewWorktreeApply?(threadId: string): Promise<ApplyWorktreeResult>
-  applyWorktree?(
-    threadId: string,
-    options?: { mode?: 'merge' | 'overwrite'; forceConflicts?: boolean }
-  ): Promise<ApplyWorktreeResult>
-  promoteWorktree?(threadId: string, branch: string): Promise<{ branch: string }>
   resumeThread?(threadId: string): Promise<void>
   /** Runtime HTTP: POST /v1/tasks/{id}/resume */
   resumeTask?(taskId: string): Promise<void>

@@ -1090,10 +1090,14 @@ function buildThreadEventSink(
               : composerModes.has(rawMode)
                 ? (rawMode as typeof s.composerMode)
                 : null
+        const nextPublishBlocked = ev.publishBlocked ?? current.publishBlocked
+        const nextPublishConflicts = ev.publishConflicts ?? current.publishConflicts
         const threadChanged =
           nextTitle !== current.title ||
           nextArchived !== current.archived ||
-          nextThreadMode !== current.mode
+          nextThreadMode !== current.mode ||
+          nextPublishBlocked !== current.publishBlocked ||
+          (nextPublishConflicts ?? []).join('\0') !== (current.publishConflicts ?? []).join('\0')
         const syncComposer =
           nextComposerMode != null &&
           ev.threadId === s.activeThreadId &&
@@ -1108,7 +1112,9 @@ function buildThreadEventSink(
                 ...current,
                 title: nextTitle,
                 archived: nextArchived,
-                mode: nextThreadMode
+                mode: nextThreadMode,
+                publishBlocked: nextPublishBlocked,
+                publishConflicts: nextPublishConflicts
               }
               return next
             })()
@@ -3094,73 +3100,25 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
   },
 
-  setThreadEnvironment: async (envMode, options) => {
+  resolvePublishConflicts: async (action, paths) => {
     const state = get()
     if (!state.activeThreadId) return false
     const p = getProvider(state.providerId)
-    if (typeof p.setThreadEnvironment !== 'function') {
-      set({ error: i18n.t('common:worktreeUnsupported') })
+    if (typeof p.resolvePublishConflicts !== 'function') {
+      set({ error: i18n.t('common:publishConflictUnsupported') })
       return false
     }
     try {
-      const updated = await p.setThreadEnvironment(state.activeThreadId, envMode, {
-        forceConflicts: options?.forceConflicts
-      })
+      const updated = await p.resolvePublishConflicts(state.activeThreadId, action, paths)
       set((s) => ({
         error: null,
-        threads: s.threads.map((thread) => (thread.id === updated.id ? { ...thread, ...updated } : thread)),
-        workspaceDirtyTick: s.workspaceDirtyTick + 1
+        workspaceDirtyTick: s.workspaceDirtyTick + 1,
+        threads: s.threads.map((thread) => (thread.id === updated.id ? { ...thread, ...updated } : thread))
       }))
       return true
     } catch (e) {
       set({ error: formatRuntimeError(e) })
       return false
-    }
-  },
-
-  promoteWorktree: async (branch) => {
-    const state = get()
-    if (!state.activeThreadId) return null
-    const p = getProvider(state.providerId)
-    if (typeof p.promoteWorktree !== 'function') {
-      set({ error: i18n.t('common:worktreeUnsupported') })
-      return null
-    }
-    try {
-      const result = await p.promoteWorktree(state.activeThreadId, branch)
-      set((s) => ({
-        error: null,
-        threads: s.threads.map((thread) =>
-          thread.id === state.activeThreadId
-            ? { ...thread, worktreeBranch: result.branch }
-            : thread
-        ),
-        workspaceDirtyTick: s.workspaceDirtyTick + 1
-      }))
-      return result.branch
-    } catch (e) {
-      set({ error: formatRuntimeError(e) })
-      return null
-    }
-  },
-
-  applyWorktree: async (options) => {
-    const state = get()
-    if (!state.activeThreadId) return null
-    const p = getProvider(state.providerId)
-    if (typeof p.applyWorktree !== 'function') {
-      set({ error: i18n.t('common:worktreeUnsupported') })
-      return null
-    }
-    try {
-      const result = await p.applyWorktree(state.activeThreadId, {
-        forceConflicts: options?.forceConflicts
-      })
-      set((s) => ({ error: null, workspaceDirtyTick: s.workspaceDirtyTick + 1 }))
-      return result
-    } catch (e) {
-      set({ error: formatRuntimeError(e) })
-      return null
     }
   },
 

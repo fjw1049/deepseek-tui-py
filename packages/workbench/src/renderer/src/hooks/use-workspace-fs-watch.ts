@@ -11,8 +11,7 @@ import { useChatStore } from '../store/chat-store'
  *
  * Root matches the git panels (`resolveThreadFilesystemRoot`), not the
  * global settings `workspaceRoot` — a thread can sit in a different project
- * than the last-selected workspace setting, and worktree threads watch the
- * managed checkout.
+ * than the last-selected workspace setting.
  */
 export function useWorkspaceFsWatch(): void {
   const { activeThreadId, threads, workspaceRoot } = useChatStore(

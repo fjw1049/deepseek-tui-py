@@ -2,10 +2,8 @@ import type {
   AgentProviderId,
   ActivePluginMeta,
   ChatBlock,
-  ApplyWorktreeResult,
   NormalizedThread,
   RestoreCodeResult,
-  ThreadEnvMode,
   RuntimeConnectionStatus,
   TurnCompletePayload,
   UserInputAnswer
@@ -200,12 +198,10 @@ export type ChatState = {
   rewindToMessage: (userBlockId: string, opts: { restoreFiles: boolean }) => Promise<void>
   /** Restore workspace files to the state before a user message's turn; conversation untouched. */
   restoreCodeAt: (userBlockId: string) => Promise<RestoreCodeResult | null>
-  setThreadEnvironment: (
-    envMode: ThreadEnvMode,
-    options?: { forceConflicts?: boolean }
+  resolvePublishConflicts: (
+    action: 'use_agent' | 'keep_project',
+    paths?: string[]
   ) => Promise<boolean>
-  applyWorktree: (options?: { forceConflicts?: boolean }) => Promise<ApplyWorktreeResult | null>
-  promoteWorktree: (branch: string) => Promise<string | null>
   interrupt: () => Promise<void>
   renameActiveThread: (title: string) => Promise<void>
   renameThread: (threadId: string, title: string) => Promise<void>

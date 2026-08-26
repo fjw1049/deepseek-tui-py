@@ -113,6 +113,7 @@ from deepseek_tui.workspace.execution import (
     ENV_WORKTREE,
     WorktreePendingError,
     execution_root,
+    is_scratch_workspace,
     normalize_env_mode,
     project_root,
 )
@@ -255,6 +256,8 @@ class RuntimeThreadManager:
         self._active: dict[str, _ActiveThreadState] = {}
         self._lru: OrderedDict[str, None] = OrderedDict()
         self._active_lock = asyncio.Lock()
+        self._project_locks: dict[str, asyncio.Lock] = {}
+        self._project_lock_guard = asyncio.Lock()
         self._engine_load_tasks: dict[
             str, asyncio.Task[tuple[EngineHandle, asyncio.Task[None]]]
         ] = {}
@@ -384,7 +387,6 @@ class RuntimeThreadManager:
             self.config, override=(req.model or "").strip() or None
         )
         workspace = (req.workspace or "").strip() or str(self.workspace)
-        env_mode = normalize_env_mode(req.env_mode)
         mode = (req.mode or "").strip() or "agent"
         allow_shell = req.allow_shell if req.allow_shell is not None else self.config.allow_shell
         trust_mode = req.trust_mode if req.trust_mode is not None else False
@@ -406,8 +408,6 @@ class RuntimeThreadManager:
             system_prompt=req.system_prompt,
             task_id=req.task_id,
         )
-        if env_mode == ENV_WORKTREE:
-            thread = await self._materialize_worktree(thread, copy_dirty=True)
         self.store.save_thread(thread)
         await self._emit_event(
             thread.id, None, None, "thread.started", {"thread": thread.model_dump(mode="json")}
@@ -589,123 +589,9 @@ class RuntimeThreadManager:
             )
         return thread
 
-    async def set_environment(
-        self,
-        thread_id: str,
-        *,
-        env_mode: str,
-        copy_dirty: bool = True,
-        force_conflicts: bool = False,
-    ) -> ThreadRecord:
-        """Switch ``env_mode``. Entering a fresh worktree may copy project dirty files."""
-        mode = normalize_env_mode(env_mode)
-        thread = self.store.load_thread(thread_id)
-        async with self._active_lock:
-            state = self._active.get(thread_id)
-            if state is not None and state.active_turn is not None:
-                raise ValueError("cannot change environment while a turn is active")
-        current = normalize_env_mode(thread.env_mode)
-        if mode == current:
-            return thread
-        if mode == ENV_WORKTREE:
-            thread = await self._enter_worktree(
-                thread, copy_dirty=copy_dirty, force=force_conflicts
-            )
-        else:
-            thread = await self._leave_worktree(
-                thread, copy_dirty=copy_dirty, force=force_conflicts
-            )
-        await self._evict_active_thread(thread_id)
-        await self._emit_event(
-            thread.id,
-            None,
-            None,
-            "thread.updated",
-            {
-                "thread": thread.model_dump(mode="json"),
-                "changes": {"env_mode": thread.env_mode},
-            },
-        )
-        return thread
-
-    async def apply_thread_worktree(
-        self,
-        thread_id: str,
-        *,
-        mode: str = "merge",
-        force_conflicts: bool = False,
-        preview: bool = False,
-    ) -> dict[str, Any]:
-        from deepseek_tui.workspace.managed_worktree import apply_worktree
-
-        thread = self.store.load_thread(thread_id)
-        if normalize_env_mode(thread.env_mode) != ENV_WORKTREE:
-            raise ValueError("thread is not in worktree mode")
-        cwd = execution_root(thread)
-        base = (thread.worktree_base or "").strip()
-        if not base:
-            raise ValueError("worktree has no recorded base commit")
-        async with self._active_lock:
-            state = self._active.get(thread_id)
-            if state is not None and state.active_turn is not None and not preview:
-                raise ValueError("cannot apply worktree while a turn is active")
-        report = await apply_worktree(
-            project_root(thread),
-            cwd,
-            base,
-            mode=mode,
-            force=force_conflicts,
-            preview=preview,
-        )
-        payload = report.to_dict()
-        payload["thread_id"] = thread_id
-        payload["mode"] = mode
-        if not preview:
-            await self._emit_event(
-                thread_id,
-                None,
-                None,
-                "thread.worktree.applied",
-                payload,
-            )
-        return payload
-
-    async def promote_thread_worktree(self, thread_id: str, *, branch: str) -> dict[str, Any]:
-        from deepseek_tui.workspace.managed_worktree import promote_worktree_branch
-
-        thread = self.store.load_thread(thread_id)
-        if normalize_env_mode(thread.env_mode) != ENV_WORKTREE:
-            raise ValueError("thread is not in worktree mode")
-        async with self._active_lock:
-            state = self._active.get(thread_id)
-            if state is not None and state.active_turn is not None:
-                raise ValueError("cannot promote worktree while a turn is active")
-        name = await promote_worktree_branch(execution_root(thread), branch)
-        thread.worktree_branch = name
-        thread.updated_at = datetime.now(timezone.utc)
-        self.store.save_thread(thread)
-        payload = {"thread_id": thread_id, "branch": name}
-        await self._emit_event(
-            thread_id,
-            None,
-            None,
-            "thread.worktree.promoted",
-            payload,
-        )
-        return payload
-
     def environment_view(self, thread_id: str) -> dict[str, Any]:
         thread = self.store.load_thread(thread_id)
         root = project_root(thread)
-        siblings = 0
-        for other in self.store.list_threads():
-            if other.id == thread.id or other.archived:
-                continue
-            try:
-                if project_root(other) == root:
-                    siblings += 1
-            except Exception:
-                continue
         try:
             cwd = str(execution_root(thread))
             pending = False
@@ -722,96 +608,294 @@ class RuntimeThreadManager:
             "associated_worktree_path": thread.associated_worktree_path,
             "worktree_branch": thread.worktree_branch,
             "worktree_pending": pending,
-            "sibling_thread_count": siblings,
-            "suggest_worktree": (
-                siblings > 0
-                and normalize_env_mode(thread.env_mode) == ENV_LOCAL
-            ),
+            "publish_blocked": bool(thread.publish_blocked),
+            "publish_conflicts": list(thread.publish_conflicts or []),
         }
 
-    async def ensure_worktree_materialized(self, thread: ThreadRecord) -> ThreadRecord:
-        try:
-            execution_root(thread)
-            return thread
-        except WorktreePendingError:
-            return await self._materialize_worktree(thread, copy_dirty=True)
+    async def _project_lock(self, root: Path) -> asyncio.Lock:
+        key = str(root.expanduser().resolve())
+        async with self._project_lock_guard:
+            lock = self._project_locks.get(key)
+            if lock is None:
+                lock = asyncio.Lock()
+                self._project_locks[key] = lock
+            return lock
 
-    async def _enter_worktree(
-        self, thread: ThreadRecord, *, copy_dirty: bool, force: bool
-    ) -> ThreadRecord:
+    def _other_active_on_project(self, root: Path, *, except_thread: str) -> bool:
+        wanted = root.expanduser().resolve()
+        for tid, state in self._active.items():
+            if tid == except_thread or state.active_turn is None:
+                continue
+            try:
+                other = self.store.load_thread(tid)
+            except FileNotFoundError:
+                continue
+            try:
+                if project_root(other) == wanted:
+                    return True
+            except Exception:
+                continue
+        return False
+
+    def _unpublished_checkpoints(self, thread: ThreadRecord) -> list[Any]:
+        from deepseek_tui.workspace.turn_checkpoints import TurnCheckpoint
+
+        project = project_root(thread).resolve()
+        out: list[TurnCheckpoint] = []
+        for turn in self.store.list_turns_for_thread(thread.id):
+            checkpoint = self.checkpoints.load(turn.id)
+            if checkpoint is None or not checkpoint.mutated:
+                continue
+            raw = (checkpoint.execution_root or "").strip()
+            if raw:
+                try:
+                    if Path(raw).expanduser().resolve() == project:
+                        continue
+                except Exception:
+                    pass
+            out.append(checkpoint)
+        out.sort(key=lambda item: item.created_at)
+        return out
+
+    async def _prepare_isolated_workspace(self, thread: ThreadRecord) -> ThreadRecord:
+        """Put a git thread on its hidden copy and sync the current project in.
+
+        Non-git, Claw sandboxes, and nested worktrees stay on the project.
+        ``publish_blocked`` threads skip the inbound sync so unpublished labor
+        is not overwritten by later project edits.
+        """
         from deepseek_tui.workspace.managed_worktree import (
             create_managed_worktree,
-            handoff_changes,
-            remove_managed_worktree,
+            current_worktree_branch,
+            is_git_repo,
+            sync_isolate_from_project,
         )
 
-        created_fresh = False
-        associated = (thread.associated_worktree_path or "").strip()
+        root = project_root(thread)
+        if is_scratch_workspace(root) or not await is_git_repo(root):
+            return thread
+
+        unpublished = bool(thread.publish_blocked) or bool(
+            self._unpublished_checkpoints(thread)
+        )
+        if unpublished and not thread.publish_blocked:
+            await self._publish_isolated_thread(thread)
+            thread = self.store.load_thread(thread.id)
+            unpublished = bool(thread.publish_blocked) or bool(
+                self._unpublished_checkpoints(thread)
+            )
+
+        associated = (thread.associated_worktree_path or thread.worktree_path or "").strip()
         dest: Path | None = None
         if associated and Path(associated).expanduser().is_dir():
             dest = Path(associated).expanduser().resolve()
+            thread.env_mode = ENV_WORKTREE
             thread.worktree_path = str(dest)
             thread.worktree_owned = True
+            if not (thread.worktree_branch or "").strip():
+                thread.worktree_branch = await current_worktree_branch(dest) or None
         else:
-            created = await create_managed_worktree(
-                project_root(thread), thread.id, copy_tracked_dirty=False
-            )
-            created_fresh = True
+            try:
+                created = await create_managed_worktree(
+                    root, thread.id, copy_tracked_dirty=False
+                )
+            except Exception:
+                logger.debug(
+                    "auto_isolate_failed thread=%s; writing in place",
+                    thread.id,
+                    exc_info=True,
+                )
+                return thread
             dest = created.path
+            thread.env_mode = ENV_WORKTREE
             thread.worktree_path = str(created.path)
             thread.worktree_base = created.base
             thread.worktree_owned = created.owned
             thread.associated_worktree_path = str(created.path)
-        if copy_dirty and created_fresh and dest is not None:
-            report = await handoff_changes(
-                project_root(thread), dest, move=False, force=force
-            )
-            if report.conflicted and not force:
-                await remove_managed_worktree(project_root(thread), dest)
-                thread.worktree_path = None
-                thread.worktree_base = None
-                thread.worktree_owned = False
-                thread.associated_worktree_path = None
-                raise ValueError("handoff conflicts: " + ", ".join(report.conflicted))
-        thread.env_mode = ENV_WORKTREE
+            thread.worktree_branch = created.branch or None
+
+        if dest is not None and not unpublished:
+            try:
+                await sync_isolate_from_project(root, dest)
+            except Exception:
+                logger.debug(
+                    "worktree_sync_in_failed thread=%s", thread.id, exc_info=True
+                )
+
         thread.updated_at = datetime.now(timezone.utc)
         self.store.save_thread(thread)
         return thread
 
-    async def _leave_worktree(
-        self, thread: ThreadRecord, *, copy_dirty: bool = False, force: bool = False
+    async def _publish_isolated_thread(
+        self,
+        thread: ThreadRecord,
+        *,
+        force: bool = False,
+        keep_project: list[str] | None = None,
     ) -> ThreadRecord:
-        _ = (copy_dirty, force)
-        if thread.worktree_path:
-            thread.associated_worktree_path = thread.worktree_path
-        thread.env_mode = ENV_LOCAL
-        thread.updated_at = datetime.now(timezone.utc)
-        self.store.save_thread(thread)
-        return thread
+        """Merge unpublished isolate checkpoints onto the project.
 
-    async def _materialize_worktree(
-        self, thread: ThreadRecord, *, copy_dirty: bool
-    ) -> ThreadRecord:
-        from deepseek_tui.workspace.managed_worktree import create_managed_worktree
+        Skips while another thread still has an active turn on this project.
+        """
+        from deepseek_tui.workspace.managed_worktree import (
+            PathImage,
+            apply_path_images,
+            overlay_working_paths,
+            read_working_text,
+        )
+        from deepseek_tui.workspace.project_lease import hold_project_lease
 
-        associated = (thread.associated_worktree_path or "").strip()
-        if associated and Path(associated).expanduser().is_dir():
-            thread.env_mode = ENV_WORKTREE
-            thread.worktree_path = str(Path(associated).expanduser().resolve())
-            thread.worktree_owned = True
+        if normalize_env_mode(thread.env_mode) != ENV_WORKTREE:
+            return thread
+        root = project_root(thread)
+        try:
+            tree = execution_root(thread)
+        except WorktreePendingError:
+            return thread
+
+        keep = {p.replace("\\", "/") for p in (keep_project or [])}
+        if keep:
+            overlay_working_paths(root, tree, sorted(keep))
+
+        unpublished = self._unpublished_checkpoints(thread)
+        if not unpublished:
+            thread.publish_blocked = False
+            thread.publish_conflicts = []
             thread.updated_at = datetime.now(timezone.utc)
             self.store.save_thread(thread)
             return thread
-        created = await create_managed_worktree(
-            project_root(thread), thread.id, copy_tracked_dirty=copy_dirty
-        )
-        thread.env_mode = ENV_WORKTREE
-        thread.worktree_path = str(created.path)
-        thread.worktree_base = created.base
-        thread.worktree_owned = created.owned
-        thread.associated_worktree_path = str(created.path)
+
+        async with self._active_lock:
+            busy = self._other_active_on_project(root, except_thread=thread.id)
+        if busy:
+            return thread
+
+        lock = await self._project_lock(root)
+        async with lock:
+            async with hold_project_lease(root):
+                async with self._active_lock:
+                    if self._other_active_on_project(root, except_thread=thread.id):
+                        return thread
+                conflicted: list[str] = []
+                for checkpoint in unpublished:
+                    images: list[PathImage] = []
+                    for path in checkpoint.mutated:
+                        if path in checkpoint.uncertain:
+                            continue
+                        if path not in checkpoint.post_contents:
+                            continue
+                        base = (
+                            checkpoint.pre_contents[path]
+                            if path in checkpoint.pre_contents
+                            else None
+                        )
+                        theirs = checkpoint.post_contents[path]
+                        if path in keep:
+                            ours = read_working_text(root, path)
+                            keep_text = ours if isinstance(ours, str) or ours is None else theirs
+                            base = keep_text
+                            theirs = keep_text
+                        images.append(
+                            PathImage(
+                                path=path,
+                                base=base,
+                                theirs=theirs,
+                            )
+                        )
+                    if not images:
+                        self.checkpoints.retarget_to_project(checkpoint.turn_id, root, {})
+                        continue
+                    report = await apply_path_images(
+                        root, images, force=force, preview=False
+                    )
+                    if report.conflicted:
+                        conflicted.extend(report.conflicted)
+                        break
+                    published = dict(report.images)
+                    for path in checkpoint.mutated:
+                        if path in published:
+                            continue
+                        ours = read_working_text(root, path)
+                        ours_text = ours if isinstance(ours, str) or ours is None else None
+                        published[path] = (ours_text, ours_text)
+                    self.checkpoints.retarget_to_project(
+                        checkpoint.turn_id, root, published
+                    )
+
+        thread = self.store.load_thread(thread.id)
+        if conflicted:
+            thread.publish_blocked = True
+            thread.publish_conflicts = sorted(set(conflicted))
+        else:
+            thread.publish_blocked = False
+            thread.publish_conflicts = []
         thread.updated_at = datetime.now(timezone.utc)
         self.store.save_thread(thread)
+        await self._emit_event(
+            thread.id,
+            None,
+            None,
+            "thread.updated",
+            {
+                "thread": thread.model_dump(mode="json"),
+                "changes": {
+                    "publish_blocked": thread.publish_blocked,
+                    "publish_conflicts": list(thread.publish_conflicts),
+                },
+            },
+        )
+        return thread
+
+    async def _after_turn_released(self, thread_id: str) -> None:
+        try:
+            thread = self.store.load_thread(thread_id)
+        except FileNotFoundError:
+            return
+        try:
+            await self._publish_isolated_thread(thread)
+        except Exception:
+            logger.debug("auto_publish_failed thread=%s", thread_id, exc_info=True)
+            return
+        try:
+            root = project_root(thread)
+        except Exception:
+            return
+        for other in self.store.list_threads():
+            if other.id == thread_id or other.archived:
+                continue
+            try:
+                if project_root(other) != root:
+                    continue
+            except Exception:
+                continue
+            if normalize_env_mode(other.env_mode) != ENV_WORKTREE:
+                continue
+            try:
+                await self._publish_isolated_thread(other)
+            except Exception:
+                logger.debug(
+                    "auto_publish_sibling_failed thread=%s", other.id, exc_info=True
+                )
+
+    async def resolve_publish_conflicts(
+        self,
+        thread_id: str,
+        *,
+        action: str,
+        paths: list[str] | None = None,
+    ) -> ThreadRecord:
+        thread = self.store.load_thread(thread_id)
+        kind = (action or "").strip().lower()
+        if kind not in {"use_agent", "keep_project"}:
+            raise ValueError("action must be use_agent or keep_project")
+        targets = [p.replace("\\", "/").strip() for p in (paths or thread.publish_conflicts)]
+        targets = [p for p in targets if p]
+        if kind == "keep_project":
+            thread = await self._publish_isolated_thread(
+                thread, keep_project=targets or None
+            )
+        else:
+            thread = await self._publish_isolated_thread(thread, force=True)
         return thread
 
     def _referenced_worktree_paths(self) -> list[str]:
@@ -828,13 +912,15 @@ class RuntimeThreadManager:
         return prune_orphaned_worktrees(self._referenced_worktree_paths())
 
     async def _reclaim_owned_worktree(self, thread: ThreadRecord) -> None:
-        from deepseek_tui.workspace.managed_worktree import remove_managed_worktree
+        from deepseek_tui.workspace.managed_worktree import reclaim_managed_worktree
 
         path = (thread.worktree_path or thread.associated_worktree_path or "").strip()
-        if not path or not thread.worktree_owned:
+        if not path:
             return
         try:
-            await remove_managed_worktree(project_root(thread), Path(path))
+            await reclaim_managed_worktree(
+                project_root(thread), Path(path), owned=bool(thread.worktree_owned)
+            )
         except Exception:
             logger.debug(
                 "reclaim_worktree_failed thread=%s path=%s",
@@ -1116,8 +1202,8 @@ class RuntimeThreadManager:
         event onto the event timeline.
         """
         thread = self.store.load_thread(thread_id)
-        if normalize_env_mode(thread.env_mode) == ENV_WORKTREE:
-            thread = await self.ensure_worktree_materialized(thread)
+        thread = await self._prepare_isolated_workspace(thread)
+        await self._reload_engine_if_cwd_mismatch(thread)
         await self._ensure_engine_loaded(thread)
         await self._emit_event(
             thread.id,
@@ -1209,27 +1295,23 @@ class RuntimeThreadManager:
         return payload
 
     async def clean_storage_older_than(self, older_than_days: int) -> dict[str, Any]:
-        from deepseek_tui.server.data_inventory import clean_threads_older_than
-
-        # Drop active engines for threads we are about to delete.
-        threads = self.store.list_threads()
-        cutoff_ids: list[str] = []
         from datetime import timedelta
 
+        from deepseek_tui.server.data_inventory import CleanReport
+
+        if older_than_days < 1:
+            raise ValueError("older_than_days must be >= 1")
         cutoff = datetime.now(timezone.utc) - timedelta(days=older_than_days)
-        for thread in threads:
+        report = CleanReport()
+        for thread in list(self.store.list_threads()):
             updated = thread.updated_at
             if updated.tzinfo is None:
                 updated = updated.replace(tzinfo=timezone.utc)
-            if updated < cutoff:
-                cutoff_ids.append(thread.id)
-        for thread_id in cutoff_ids:
-            await self._evict_active_thread(thread_id)
-        report = clean_threads_older_than(
-            self.store,
-            self.checkpoints,
-            older_than_days=older_than_days,
-        )
+            if updated >= cutoff:
+                continue
+            await self.delete_thread(thread.id)
+            report.threads_deleted += 1
+            report.thread_ids.append(thread.id)
         return report.to_dict()
 
     async def clear_conversation_history(self) -> dict[str, Any]:
@@ -1239,7 +1321,10 @@ class RuntimeThreadManager:
             active_ids = list(self._active.keys())
         for thread_id in active_ids:
             await self._evict_active_thread(thread_id)
+        for thread in list(self.store.list_threads()):
+            await self._reclaim_owned_worktree(thread)
         report = clear_conversation_history(self.store, self.checkpoints)
+        self._prune_orphaned_worktrees()
         return report.to_dict()
 
     async def export_data_bundle(self, path: str, *, scope: str = "conversations") -> dict[str, Any]:
@@ -1328,6 +1413,8 @@ class RuntimeThreadManager:
                 "worktree_owned": False,
                 "associated_worktree_path": None,
                 "worktree_branch": None,
+                "publish_blocked": False,
+                "publish_conflicts": [],
             }
         )
         self.store.save_thread(forked)
@@ -1669,6 +1756,7 @@ class RuntimeThreadManager:
                 t.id for t in turns[cutoff_turn_index:] if t.id not in candidate_ids
             ],
             "turns": len(turns) - cutoff_turn_index,
+            "missing_roots": report.missing_roots,
         }
 
     async def rewind_preview(
@@ -1690,12 +1778,13 @@ class RuntimeThreadManager:
         turns, cutoff_turn_index = self._turns_from_item(thread_id, before_item_id)
         ranged = turns[cutoff_turn_index:]
         candidates = self._checkpoint_candidates(thread_id, turns, cutoff_turn_index)
-        statuses = await self.checkpoints.preview(
+        statuses, report = await self.checkpoints.preview_report(
             [cp.turn_id for cp in candidates],
             execution_root(thread),
         )
         is_git = any(cp.is_git for cp in candidates)
         candidate_ids = {cp.turn_id for cp in candidates}
+        missing_roots = list(report.missing_roots)
         return {
             "files": sorted(statuses),
             "statuses": {p: statuses[p] for p in sorted(statuses)},
@@ -1706,6 +1795,7 @@ class RuntimeThreadManager:
             "is_git": is_git,
             "turns": len(ranged),
             "no_checkpoint": sum(1 for t in ranged if t.id not in candidate_ids),
+            "missing_roots": missing_roots,
         }
 
     # --- turn lifecycle ------------------------------------------------------
@@ -1716,9 +1806,8 @@ class RuntimeThreadManager:
             raise ValueError("prompt is required")
 
         thread = self.store.load_thread(thread_id)
-        if normalize_env_mode(thread.env_mode) == ENV_WORKTREE:
-            thread = await self.ensure_worktree_materialized(thread)
-            await self._reload_engine_if_cwd_mismatch(thread)
+        thread = await self._prepare_isolated_workspace(thread)
+        await self._reload_engine_if_cwd_mismatch(thread)
         provider = (req.provider or thread.provider or self.config.provider).strip()
         model = (req.model or thread.model).strip()
         effective_mode = (req.mode or thread.mode or "agent").strip() or "agent"
@@ -2348,6 +2437,7 @@ class RuntimeThreadManager:
             if state is not None and state.active_turn is not None:
                 if state.active_turn.turn_id == turn_id:
                     state.active_turn = None
+        await self._after_turn_released(thread_id)
         return turn
 
     async def warmup_thread(self, thread_id: str) -> dict[str, Any]:
@@ -2360,8 +2450,8 @@ class RuntimeThreadManager:
         """
         started = now_ms()
         thread = self.store.load_thread(thread_id)
-        if normalize_env_mode(thread.env_mode) == ENV_WORKTREE:
-            thread = await self.ensure_worktree_materialized(thread)
+        thread = await self._prepare_isolated_workspace(thread)
+        await self._reload_engine_if_cwd_mismatch(thread)
         try:
             await self._ensure_engine_loaded(thread)
         except ValueError as exc:
@@ -2871,6 +2961,7 @@ class RuntimeThreadManager:
             ):
                 state.active_turn = None
             self._touch_lru(thread_id)
+        await self._after_turn_released(thread_id)
 
     async def _emit_item_delta(
         self,
@@ -3215,6 +3306,7 @@ class RuntimeThreadManager:
                     head=git_baseline.head if git_baseline is not None else None,
                     is_git=bool(git_baseline is not None and git_baseline.is_git),
                     thread_id=thread_id,
+                    execution_root=str(turn_workspace) if turn_workspace is not None else "",
                 )
             except Exception:
                 logger.debug("turn_checkpoint_begin_failed", exc_info=True)
@@ -4480,6 +4572,7 @@ class RuntimeThreadManager:
             ):
                 state.active_turn = None
             self._touch_lru(thread_id)
+        await self._after_turn_released(thread_id)
         await self._maybe_continue_goal(thread_id)
 
     # --- helpers -------------------------------------------------------------

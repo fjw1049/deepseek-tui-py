@@ -56,3 +56,18 @@ def workspace_state(thread: Any) -> str:
     except WorktreePendingError:
         return "worktree-pending"
     return ENV_WORKTREE
+
+
+def is_scratch_workspace(root: Path) -> bool:
+    """True when ``root`` is already a Claw sandbox or managed worktree."""
+    from deepseek_tui.config.paths import user_deepseek_dir, user_worktrees_dir
+
+    resolved = root.expanduser().resolve()
+    bases = (user_deepseek_dir() / "claw", user_worktrees_dir())
+    for base in bases:
+        try:
+            resolved.relative_to(base.expanduser().resolve())
+            return True
+        except ValueError:
+            continue
+    return False

@@ -78,6 +78,8 @@ class ThreadRecord(BaseModel):
     worktree_owned: bool = False
     associated_worktree_path: str | None = None
     worktree_branch: str | None = None
+    publish_blocked: bool = False
+    publish_conflicts: list[str] = Field(default_factory=list)
     mode: str = "agent"
     allow_shell: bool = False
     trust_mode: bool = False
@@ -210,26 +212,13 @@ class RestoreCodeRequest(BaseModel):
     force_conflicts: bool = False
 
 
-class SetEnvironmentRequest(BaseModel):
-    """Switch a thread between local checkout and a managed worktree."""
+class ResolvePublishRequest(BaseModel):
+    """Resolve files that could not auto-publish into the project."""
 
-    env_mode: str
-    # When entering a fresh worktree, copy (do not move) project dirty files.
-    copy_dirty: bool = True
-    force_conflicts: bool = False
-
-
-class ApplyWorktreeRequest(BaseModel):
-    """Copy the thread's worktree onto the project root."""
-
-    mode: str = "merge"
-    force_conflicts: bool = False
-
-
-class PromoteWorktreeRequest(BaseModel):
-    """Attach a detached worktree to a new local branch."""
-
-    branch: str
+    # ``use_agent`` overwrites the project with this thread's copies.
+    # ``keep_project`` keeps the project bytes and drops those isolate edits.
+    action: str
+    paths: list[str] | None = None
 
 
 class StartTurnRequest(BaseModel):
