@@ -6037,6 +6037,121 @@ html[data-theme='dark'] .ds-code-fullscreen .shiki span {
   padding: 0.65rem 0.85rem;
 }
 
+/* ── Marketplace drawer reading surface ─────────────────────────────────
+   Document voice, left-aligned. Justify is avoided here: short English
+   lines in a narrow panel stretch into uneven word gaps. */
+.ds-marketplace-doc {
+  box-sizing: border-box;
+  width: 100%;
+}
+
+.ds-markdown.ds-markdown--drawer {
+  font-size: 15px;
+  line-height: 1.7;
+  letter-spacing: 0;
+}
+
+.ds-markdown.ds-markdown--drawer p,
+.ds-markdown.ds-markdown--drawer li {
+  text-align: start;
+  text-justify: auto;
+  text-wrap: pretty;
+  overflow-wrap: break-word;
+  word-break: break-word;
+}
+
+.ds-markdown.ds-markdown--drawer h1 {
+  margin: 0 0 0.7em;
+  font-size: 1.42rem;
+  line-height: 1.28;
+  letter-spacing: -0.018em;
+}
+
+.ds-markdown.ds-markdown--drawer h2 {
+  margin: 1.55em 0 0.62em;
+  padding-bottom: 0.32em;
+  font-size: 1.16rem;
+  line-height: 1.32;
+}
+
+.ds-markdown.ds-markdown--drawer h3 {
+  margin: 1.25em 0 0.48em;
+  font-size: 1.04rem;
+  line-height: 1.38;
+}
+
+.ds-markdown.ds-markdown--drawer h4 {
+  margin: 1.05em 0 0.4em;
+  font-size: 0.96rem;
+}
+
+.ds-markdown.ds-markdown--drawer p,
+.ds-markdown.ds-markdown--drawer ul,
+.ds-markdown.ds-markdown--drawer ol,
+.ds-markdown.ds-markdown--drawer blockquote,
+.ds-markdown.ds-markdown--drawer hr {
+  margin-bottom: 1.15em;
+}
+
+.ds-markdown.ds-markdown--drawer ul,
+.ds-markdown.ds-markdown--drawer ol {
+  padding-left: 1.35rem;
+}
+
+.ds-markdown.ds-markdown--drawer li + li {
+  margin-top: 0.38em;
+}
+
+.ds-markdown.ds-markdown--drawer ::marker {
+  color: color-mix(in srgb, var(--ds-text-muted) 78%, transparent);
+}
+
+.ds-markdown.ds-markdown--drawer blockquote {
+  padding: 0.2em 0 0.2em 0.95em;
+  font-style: italic;
+}
+
+.ds-markdown.ds-markdown--drawer hr {
+  margin: 1.85em 0;
+}
+
+.ds-markdown.ds-markdown--drawer img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 1.15em auto;
+  border-radius: 10px;
+}
+
+.ds-markdown.ds-markdown--drawer li.task-list-item {
+  list-style: none;
+}
+
+.ds-markdown.ds-markdown--drawer li.task-list-item input[type='checkbox'] {
+  margin: 0 0.5em 0 -1.2rem;
+  vertical-align: middle;
+  accent-color: var(--ds-accent);
+}
+
+.ds-marketplace-doc-table-wrap {
+  overflow-x: auto;
+  margin: 0 0 1.25em;
+  -webkit-overflow-scrolling: touch;
+}
+
+.ds-marketplace-doc-table-wrap table {
+  margin-bottom: 0;
+}
+
+.ds-marketplace-doc-file {
+  margin: 0 0 0.85rem;
+  font-family: var(--ds-chat-code-font, ui-monospace, monospace);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.03em;
+  color: var(--ds-text-faint, var(--ds-text-muted));
+}
+
 @media (prefers-reduced-transparency: reduce) {
   .ds-markdown-doc-shell {
     background: transparent;

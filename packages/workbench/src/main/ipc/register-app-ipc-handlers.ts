@@ -44,6 +44,7 @@ import {
   skillSaveFilePayloadSchema,
   skillDeletePayloadSchema,
   skillReadPayloadSchema,
+  pluginReadRulesPayloadSchema,
   skillInstallZipPayloadSchema,
   terminalCreateOptionsSchema,
   terminalInputPayloadSchema,
@@ -699,6 +700,87 @@ export function registerAppIpcHandlers(options: RegisterAppIpcHandlersOptions): 
       return {
         ok: false as const,
         message: error instanceof Error ? error.message : String(error)
+      }
+    }
+  })
+
+  ipcMain.handle('skill:read-doc', async (_, payload: unknown) => {
+    const request = parseIpcPayload('skill:read-doc', skillReadPayloadSchema, payload)
+    try {
+      const rootPath = expandHomePath(request.rootPath)
+      if (!rootPath) {
+        return { ok: false as const, message: 'Skill directory is required.' }
+      }
+      const skillName = normalizeSkillFolderName(request.skillName)
+      const skillDir = join(rootPath, skillName)
+      if (!isPathWithinRoot(skillDir, rootPath)) {
+        return { ok: false as const, message: 'Skill path escapes the skill root.' }
+      }
+      const candidates = ['README.md', 'README', 'readme.md', 'Readme.md', 'SKILL.md'].map((name) =>
+        join(skillDir, name)
+      )
+      for (const filePath of candidates) {
+        if (!isPathWithinRoot(filePath, skillDir)) continue
+        try {
+          const fileStat = await stat(filePath)
+          if (!fileStat.isFile() || fileStat.size > SKILL_READ_MAX_BYTES) continue
+          const content = await readFile(filePath, 'utf8')
+          return { ok: true as const, content, path: filePath }
+        } catch {
+          /* try the next candidate */
+        }
+      }
+      return { ok: false as const, message: 'No README or SKILL.md found for this skill.' }
+    } catch (error) {
+      return {
+        ok: false as const,
+        message: error instanceof Error ? error.message : String(error)
+      }
+    }
+  })
+
+  ipcMain.handle('plugin:read-rules', async (_, payload: unknown) => {
+    const request = parseIpcPayload('plugin:read-rules', pluginReadRulesPayloadSchema, payload)
+    try {
+      const pluginPath = expandHomePath(request.pluginPath)
+      if (!pluginPath) {
+        return { ok: false as const, message: 'Plugin directory is required.', files: [] as const }
+      }
+      const pluginStat = await stat(pluginPath).catch(() => null)
+      if (!pluginStat?.isDirectory()) {
+        return { ok: false as const, message: 'Plugin directory was not found.', files: [] as const }
+      }
+      const rulesDir = join(pluginPath, 'rules')
+      if (!isPathWithinRoot(rulesDir, pluginPath)) {
+        return { ok: false as const, message: 'Rules path escapes the plugin root.', files: [] as const }
+      }
+      const entries = await readdir(rulesDir, { withFileTypes: true }).catch((error) => {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []
+        throw error
+      })
+      const names = entries
+        .filter(
+          (entry) =>
+            entry.isFile() &&
+            !entry.name.startsWith('.') &&
+            entry.name.toLowerCase().endsWith('.md')
+        )
+        .map((entry) => entry.name)
+        .sort((a, b) => a.localeCompare(b))
+      const files: Array<{ name: string; content: string }> = []
+      for (const name of names.slice(0, 20)) {
+        const filePath = join(rulesDir, name)
+        if (!isPathWithinRoot(filePath, rulesDir)) continue
+        const fileStat = await stat(filePath)
+        if (!fileStat.isFile() || fileStat.size > SKILL_READ_MAX_BYTES) continue
+        files.push({ name, content: await readFile(filePath, 'utf8') })
+      }
+      return { ok: true as const, files }
+    } catch (error) {
+      return {
+        ok: false as const,
+        message: error instanceof Error ? error.message : String(error),
+        files: [] as const
       }
     }
   })

@@ -41,6 +41,10 @@ const api = {
     ipcRenderer.invoke('skill:delete', { rootPath, skillName }),
   readSkill: (rootPath, skillName) =>
     ipcRenderer.invoke('skill:read', { rootPath, skillName }),
+  readSkillDoc: (rootPath, skillName) =>
+    ipcRenderer.invoke('skill:read-doc', { rootPath, skillName }),
+  readPluginRules: (pluginPath) =>
+    ipcRenderer.invoke('plugin:read-rules', { pluginPath }),
   getDeepseekConfigFile: () =>
     ipcRenderer.invoke('deepseek:config:read'),
   setDeepseekConfigFile: (content) =>

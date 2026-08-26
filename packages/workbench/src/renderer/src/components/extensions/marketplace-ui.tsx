@@ -1,5 +1,7 @@
 import { useLayoutEffect, useRef, useState, type ReactElement, type ReactNode } from 'react'
 import { Plus, Search } from 'lucide-react'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import { useTranslation } from 'react-i18next'
 import type { MarketplaceKind } from '../../store/chat-store'
 import type { Notice } from './marketplace-shared'
@@ -156,6 +158,32 @@ export function MarketplaceSearchCreate({
         </button>
       </div>
     </div>
+  )
+}
+
+export function stripDocFrontmatter(content: string): string {
+  return content.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, '').trimStart()
+}
+
+const drawerMarkdownComponents = {
+  table: ({ children }: { children?: ReactNode }) => (
+    <div className="ds-marketplace-doc-table-wrap">
+      <table>{children}</table>
+    </div>
+  )
+}
+
+export function MarketplaceDocMarkdown({ content }: { content: string }): ReactElement | null {
+  const body = stripDocFrontmatter(content)
+  if (!body.trim()) return null
+  return (
+    <article className="ds-marketplace-doc">
+      <div className="ds-markdown ds-markdown--document ds-markdown--drawer">
+        <ReactMarkdown remarkPlugins={[remarkGfm]} components={drawerMarkdownComponents}>
+          {body}
+        </ReactMarkdown>
+      </div>
+    </article>
   )
 }
 

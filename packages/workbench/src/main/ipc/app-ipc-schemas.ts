@@ -66,6 +66,12 @@ export const skillReadPayloadSchema = z
   })
   .strict()
 
+export const pluginReadRulesPayloadSchema = z
+  .object({
+    pluginPath: trimmedString(MAX_PATH_LENGTH)
+  })
+  .strict()
+
 const MAX_SKILL_ZIP_BYTES = 20_000_000
 
 export const skillInstallZipPayloadSchema = z

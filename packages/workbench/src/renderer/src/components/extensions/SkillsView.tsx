@@ -214,6 +214,7 @@ export function SkillsView({
 
       <SkillPreviewDialog
         skillName={previewSkill?.id ?? null}
+        title={previewSkill?.name}
         skillsDir={previewSkill ? skillRootFromMdPath(previewSkill.path) : skillsDir}
         onClose={() => setPreviewSkill(null)}
       />

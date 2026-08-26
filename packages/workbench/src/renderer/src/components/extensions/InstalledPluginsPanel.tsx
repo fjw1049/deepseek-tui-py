@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
 import {
+  AlertCircle,
   Check,
   Download,
   Loader2,
@@ -15,7 +16,8 @@ import {
   Trash2,
   X
 } from 'lucide-react'
-import { MarketplaceContentTabs } from './marketplace-ui'
+import { MarketplaceContentTabs, MarketplaceDocMarkdown } from './marketplace-ui'
+import { ResizableRightDrawer } from './ResizableRightDrawer'
 import {
   pluginDisplayDetail,
   pluginDisplaySummary,
@@ -418,6 +420,45 @@ function PluginDetailDrawer({
   onInstall?: () => void
 }): ReactElement {
   const { t, i18n } = useTranslation('common')
+  const [rules, setRules] = useState<Array<{ name: string; content: string }>>([])
+  const [rulesLoading, setRulesLoading] = useState(false)
+  const [rulesError, setRulesError] = useState<string | null>(null)
+  const installedPath = detail.kind === 'installed' ? detail.plugin.path : ''
+
+  useEffect(() => {
+    if (!installedPath || typeof window.dsGui?.readPluginRules !== 'function') {
+      setRules([])
+      setRulesError(null)
+      setRulesLoading(false)
+      return
+    }
+    let cancelled = false
+    setRulesLoading(true)
+    setRulesError(null)
+    setRules([])
+    void window.dsGui
+      .readPluginRules(installedPath)
+      .then((result) => {
+        if (cancelled) return
+        if (result.ok) {
+          setRules(result.files)
+        } else {
+          setRulesError(result.message ?? t('pluginRulesError'))
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setRulesError(error instanceof Error ? error.message : String(error))
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setRulesLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [installedPath, t])
+
   const name =
     detail.kind === 'installed'
       ? detail.plugin.name
@@ -464,15 +505,8 @@ function PluginDetailDrawer({
     (detail.plugin.scope === 'claude' || detail.plugin.scope === 'override')
 
   return (
-    <>
-      <button
-        type="button"
-        aria-label={t('pluginCloseDetail')}
-        className="fixed inset-0 z-[80] bg-black/20 dark:bg-black/40"
-        onClick={onClose}
-      />
-      <div className="ds-automation-drawer fixed inset-y-0 right-0 z-[90] flex w-full max-w-[440px] flex-col">
-        <div className="flex items-start justify-between gap-3 border-b border-ds-border-muted px-5 py-4">
+    <ResizableRightDrawer onClose={onClose}>
+        <div className="flex items-start justify-between gap-3 border-b border-ds-border-muted px-5 py-3.5">
           <div className="flex min-w-0 items-start gap-3">
             <div
               className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-[12px] shadow-sm ${visual.tile}`}
@@ -513,7 +547,7 @@ function PluginDetailDrawer({
           </button>
         </div>
 
-        <div className="min-h-0 flex-1 overflow-auto p-5">
+        <div className="min-h-0 flex-1 overflow-auto px-5 py-5">
           {detail.kind === 'installed' ? (
             <div className="mb-5 flex flex-wrap items-center gap-2">
               {hasExecutable ? (
@@ -593,6 +627,38 @@ function PluginDetailDrawer({
                 {packageDetail}
               </p>
             </>
+          ) : null}
+
+          {detail.kind === 'installed' ? (
+            <div className="mt-5">
+              <h3 className="text-[12px] font-semibold tracking-[0.02em] text-ds-faint">
+                {t('pluginRulesTitle')}
+              </h3>
+              {rulesLoading ? (
+                <div className="mt-3 flex items-center gap-2 text-[13px] text-ds-muted">
+                  <Loader2 className="h-4 w-4 animate-spin" strokeWidth={2} />
+                  {t('skillsLoading')}
+                </div>
+              ) : rulesError ? (
+                <div className="mt-3 flex items-start gap-2 rounded-xl border border-red-300/70 bg-red-50 px-4 py-3 text-[13px] leading-6 text-red-800 dark:border-red-800/60 dark:bg-red-950/25 dark:text-red-200">
+                  <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" strokeWidth={1.9} />
+                  <span className="min-w-0 break-words">{rulesError}</span>
+                </div>
+              ) : rules.length === 0 ? (
+                <p className="mt-2 text-[13px] text-ds-faint">{t('pluginRulesEmpty')}</p>
+              ) : (
+                <div className="mt-4 space-y-10">
+                  {rules.map((file) => (
+                    <div key={file.name}>
+                      {rules.length > 1 ? (
+                        <p className="ds-marketplace-doc-file">{file.name}</p>
+                      ) : null}
+                      <MarketplaceDocMarkdown content={file.content} />
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           ) : null}
 
           {hasExecutable && detail.kind === 'installed' && !detail.plugin.trusted ? (
@@ -716,8 +782,7 @@ function PluginDetailDrawer({
             </div>
           )}
         </div>
-      </div>
-    </>
+    </ResizableRightDrawer>
   )
 }
 

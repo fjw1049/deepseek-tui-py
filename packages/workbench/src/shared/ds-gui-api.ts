@@ -327,6 +327,16 @@ export type DsGuiApi = {
     rootPath: string,
     skillName: string
   ) => Promise<{ ok: true; content: string; path: string } | { ok: false; message?: string }>
+  readSkillDoc: (
+    rootPath: string,
+    skillName: string
+  ) => Promise<{ ok: true; content: string; path: string } | { ok: false; message?: string }>
+  readPluginRules: (
+    pluginPath: string
+  ) => Promise<
+    | { ok: true; files: Array<{ name: string; content: string }> }
+    | { ok: false; message?: string; files: [] }
+  >
   getDeepseekConfigFile: () => Promise<DeepseekConfigFileResult>
   setDeepseekConfigFile: (content: string) => Promise<DeepseekConfigSaveResult>
   openDeepseekConfigDir: () => Promise<PathOpenResult>
