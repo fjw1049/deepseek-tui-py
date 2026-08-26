@@ -45,6 +45,10 @@ paths:
                   type: string
                 workspace:
                   type: string
+                env_mode:
+                  type: string
+                  enum: [local, worktree]
+                  default: local
                 mode:
                   type: string
                 allow_shell:
@@ -128,6 +132,115 @@ paths:
       responses:
         "204":
           description: Deleted
+        "404":
+          description: Thread not found
+  /v1/threads/{thread_id}/environment:
+    get:
+      summary: Thread project root, execution root, and worktree suggestion
+      parameters:
+        - $ref: "#/components/parameters/threadId"
+      responses:
+        "200":
+          description: Environment view
+        "404":
+          description: Thread not found
+    post:
+      summary: Switch thread between local checkout and a managed worktree
+      parameters:
+        - $ref: "#/components/parameters/threadId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [env_mode]
+              properties:
+                env_mode:
+                  type: string
+                  enum: [local, worktree]
+                copy_dirty:
+                  type: boolean
+                  default: true
+                  description: When entering a fresh worktree, copy (do not move) dirty files
+                force_conflicts:
+                  type: boolean
+                  default: false
+      responses:
+        "200":
+          description: Updated thread
+        "400":
+          description: Not a git repo / invalid env_mode
+        "409":
+          description: Turn active or handoff conflicts
+        "404":
+          description: Thread not found
+  /v1/threads/{thread_id}/worktree/apply-preview:
+    get:
+      summary: Dry-run apply of the thread worktree onto the project root
+      parameters:
+        - $ref: "#/components/parameters/threadId"
+      responses:
+        "200":
+          description: Apply report
+        "400":
+          description: Thread is not in worktree mode
+        "404":
+          description: Thread not found
+  /v1/threads/{thread_id}/worktree/apply:
+    post:
+      summary: Apply the thread worktree onto the project root
+      description: >
+        Three-way merge by default (base = worktree_base, ours = project,
+        theirs = worktree). overwrite / force_conflicts take the worktree
+        version. Never auto-syncs.
+      parameters:
+        - $ref: "#/components/parameters/threadId"
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                mode:
+                  type: string
+                  enum: [merge, overwrite]
+                  default: merge
+                force_conflicts:
+                  type: boolean
+                  default: false
+      responses:
+        "200":
+          description: Apply report
+        "409":
+          description: Turn active
+        "404":
+          description: Thread not found
+  /v1/threads/{thread_id}/worktree/promote:
+    post:
+      summary: Attach the detached worktree to a new local branch
+      description: >
+        Creates a local branch at the worktree HEAD. Does not push or open a PR.
+        Fails if the branch already exists.
+      parameters:
+        - $ref: "#/components/parameters/threadId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [branch]
+              properties:
+                branch:
+                  type: string
+      responses:
+        "200":
+          description: Promoted branch name
+        "400":
+          description: Invalid branch or not in worktree mode
+        "409":
+          description: Turn active or branch already exists
         "404":
           description: Thread not found
   /v1/threads/{thread_id}/fork:

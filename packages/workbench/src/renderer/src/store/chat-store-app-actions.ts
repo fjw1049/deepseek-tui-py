@@ -11,7 +11,7 @@ import {
   workspaceKey
 } from '../lib/git-commit-selection'
 import { applyShortcutsSettings } from '../lib/shortcuts-runtime'
-import { resolveActiveThreadWorkspace } from '../lib/workspace-path'
+import { resolveThreadFilesystemRoot } from '../lib/workspace-path'
 import { saveMarketplaceKind } from '../components/extensions/marketplace-shared'
 import type {
   ChatState,
@@ -227,7 +227,7 @@ export function createAppActions(options: CreateAppActionsOptions): Pick<
 
     syncGitCommitSelection: (allPaths) => {
       const state = get()
-      const root = resolveActiveThreadWorkspace(
+      const root = resolveThreadFilesystemRoot(
         state.activeThreadId,
         state.threads,
         state.workspaceRoot
@@ -243,7 +243,7 @@ export function createAppActions(options: CreateAppActionsOptions): Pick<
 
     toggleGitCommitPath: (path, allPaths) => {
       const state = get()
-      const root = resolveActiveThreadWorkspace(
+      const root = resolveThreadFilesystemRoot(
         state.activeThreadId,
         state.threads,
         state.workspaceRoot
@@ -261,7 +261,7 @@ export function createAppActions(options: CreateAppActionsOptions): Pick<
 
     setGitCommitSelectedPaths: (paths) => {
       const state = get()
-      const root = resolveActiveThreadWorkspace(
+      const root = resolveThreadFilesystemRoot(
         state.activeThreadId,
         state.threads,
         state.workspaceRoot

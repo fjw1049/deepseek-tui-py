@@ -151,6 +151,16 @@ def classify_turn_value_error(exc: ValueError) -> Exception:
         return api_error(400, msg, error="missing_api_key")
     if "already has an active turn" in lowered:
         return api_error(409, msg, error="turn_conflict")
+    if "worktree has not been created" in lowered:
+        return api_error(409, msg, error="worktree_pending")
+    if lowered.startswith("handoff conflicts"):
+        return api_error(409, msg, error="handoff_conflict")
+    if "branch already exists" in lowered:
+        return api_error(409, msg, error="branch_exists")
+    if "cannot change environment" in lowered or "cannot apply worktree" in lowered:
+        return api_error(409, msg, error="turn_conflict")
+    if "cannot promote worktree" in lowered:
+        return api_error(409, msg, error="turn_conflict")
     if "is not active" in lowered or "is not loaded" in lowered:
         return api_error(409, msg, error="turn_not_active")
     return api_error(400, msg, error="invalid_request")
@@ -1140,10 +1150,13 @@ async def resume_task(request: Request, task_id: str) -> dict[str, Any]:
 
 
 from deepseek_tui.server.threads import (
+    ApplyWorktreeRequest,
     CreateThreadRequest,
+    PromoteWorktreeRequest,
     ForkThreadRequest,
     RestoreCodeRequest,
     RewindThreadRequest,
+    SetEnvironmentRequest,
     UpdateThreadRequest,
 )
 from deepseek_tui.server.sessions import ImportTuiSessionRequest
@@ -1203,7 +1216,10 @@ async def create_thread(request: Request) -> JSONResponse:
     mgr = manager(request)
     payload = await body(request)
     req = CreateThreadRequest.model_validate(payload)
-    thread = await mgr.create_thread(req)
+    try:
+        thread = await mgr.create_thread(req)
+    except ValueError as exc:
+        raise api_error(400, str(exc), error="invalid_request") from exc
     return JSONResponse(status_code=201, content=thread.model_dump(mode="json"))
 
 
@@ -1310,6 +1326,74 @@ async def fork_thread(request: Request, thread_id: str) -> JSONResponse:
     except ValueError as exc:
         raise api_error(400, str(exc), error="invalid_request") from exc
     return JSONResponse(status_code=201, content=forked.model_dump(mode="json"))
+
+
+@router_threads.get("/threads/{thread_id}/environment")
+async def get_thread_environment(request: Request, thread_id: str) -> dict[str, Any]:
+    mgr = manager(request)
+    try:
+        return mgr.environment_view(thread_id)
+    except FileNotFoundError as exc:
+        raise api_error(404, str(exc), error="thread_not_found") from exc
+
+
+@router_threads.post("/threads/{thread_id}/environment")
+async def set_thread_environment(request: Request, thread_id: str) -> dict[str, Any]:
+    mgr = manager(request)
+    req = SetEnvironmentRequest.model_validate(await body(request))
+    try:
+        thread = await mgr.set_environment(
+            thread_id,
+            env_mode=req.env_mode,
+            copy_dirty=req.copy_dirty,
+            force_conflicts=req.force_conflicts,
+        )
+    except FileNotFoundError as exc:
+        raise api_error(404, str(exc), error="thread_not_found") from exc
+    except ValueError as exc:
+        raise classify_turn_value_error(exc)
+    return thread.model_dump(mode="json")
+
+
+@router_threads.get("/threads/{thread_id}/worktree/apply-preview")
+async def preview_worktree_apply(request: Request, thread_id: str) -> dict[str, Any]:
+    mgr = manager(request)
+    try:
+        return await mgr.apply_thread_worktree(thread_id, preview=True)
+    except FileNotFoundError as exc:
+        raise api_error(404, str(exc), error="thread_not_found") from exc
+    except ValueError as exc:
+        raise classify_turn_value_error(exc)
+
+
+@router_threads.post("/threads/{thread_id}/worktree/promote")
+async def promote_thread_worktree(request: Request, thread_id: str) -> dict[str, Any]:
+    mgr = manager(request)
+    req = PromoteWorktreeRequest.model_validate(await body(request))
+    try:
+        return await mgr.promote_thread_worktree(thread_id, branch=req.branch)
+    except FileNotFoundError as exc:
+        raise api_error(404, str(exc), error="thread_not_found") from exc
+    except ValueError as exc:
+        raise classify_turn_value_error(exc)
+
+
+@router_threads.post("/threads/{thread_id}/worktree/apply")
+async def apply_thread_worktree(request: Request, thread_id: str) -> dict[str, Any]:
+    mgr = manager(request)
+    payload = await body(request)
+    req = ApplyWorktreeRequest.model_validate(payload)
+    try:
+        return await mgr.apply_thread_worktree(
+            thread_id,
+            mode=req.mode,
+            force_conflicts=req.force_conflicts,
+            preview=False,
+        )
+    except FileNotFoundError as exc:
+        raise api_error(404, str(exc), error="thread_not_found") from exc
+    except ValueError as exc:
+        raise classify_turn_value_error(exc)
 
 
 @router_threads.post("/threads/{thread_id}/rewind")

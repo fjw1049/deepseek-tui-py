@@ -3094,6 +3094,76 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
   },
 
+  setThreadEnvironment: async (envMode, options) => {
+    const state = get()
+    if (!state.activeThreadId) return false
+    const p = getProvider(state.providerId)
+    if (typeof p.setThreadEnvironment !== 'function') {
+      set({ error: i18n.t('common:worktreeUnsupported') })
+      return false
+    }
+    try {
+      const updated = await p.setThreadEnvironment(state.activeThreadId, envMode, {
+        forceConflicts: options?.forceConflicts
+      })
+      set((s) => ({
+        error: null,
+        threads: s.threads.map((thread) => (thread.id === updated.id ? { ...thread, ...updated } : thread)),
+        workspaceDirtyTick: s.workspaceDirtyTick + 1
+      }))
+      return true
+    } catch (e) {
+      set({ error: formatRuntimeError(e) })
+      return false
+    }
+  },
+
+  promoteWorktree: async (branch) => {
+    const state = get()
+    if (!state.activeThreadId) return null
+    const p = getProvider(state.providerId)
+    if (typeof p.promoteWorktree !== 'function') {
+      set({ error: i18n.t('common:worktreeUnsupported') })
+      return null
+    }
+    try {
+      const result = await p.promoteWorktree(state.activeThreadId, branch)
+      set((s) => ({
+        error: null,
+        threads: s.threads.map((thread) =>
+          thread.id === state.activeThreadId
+            ? { ...thread, worktreeBranch: result.branch }
+            : thread
+        ),
+        workspaceDirtyTick: s.workspaceDirtyTick + 1
+      }))
+      return result.branch
+    } catch (e) {
+      set({ error: formatRuntimeError(e) })
+      return null
+    }
+  },
+
+  applyWorktree: async (options) => {
+    const state = get()
+    if (!state.activeThreadId) return null
+    const p = getProvider(state.providerId)
+    if (typeof p.applyWorktree !== 'function') {
+      set({ error: i18n.t('common:worktreeUnsupported') })
+      return null
+    }
+    try {
+      const result = await p.applyWorktree(state.activeThreadId, {
+        forceConflicts: options?.forceConflicts
+      })
+      set((s) => ({ error: null, workspaceDirtyTick: s.workspaceDirtyTick + 1 }))
+      return result
+    } catch (e) {
+      set({ error: formatRuntimeError(e) })
+      return null
+    }
+  },
+
   resolveApproval: async (blockId, decision, remember = false) => {
     // Guard before any await so double-clicks cannot submit twice.
     if (approvalSubmitInFlight.has(blockId)) return false

@@ -66,7 +66,7 @@ import {
 } from '../../lib/workspace-change-stats'
 import { useGitWorkingChanges } from '../../hooks/use-git-working-changes'
 import { useWorkspaceDirtyGitRefresh } from '../../hooks/use-workspace-dirty-git-refresh'
-import { resolveActiveThreadWorkspace } from '../../lib/workspace-path'
+import { resolveThreadFilesystemRoot } from '../../lib/workspace-path'
 import { useDeferredRender } from '../../hooks/use-deferred-render'
 import { resumeThreadAgent } from '../../hooks/use-thread-tasks'
 import {
@@ -291,7 +291,7 @@ export function MessageTimeline({
   const turnDiffByTurnId = useChatStore((s) => s.turnDiffByTurnId)
   const threads = useChatStore((s) => s.threads)
   const workspaceDirtyTick = useChatStore((s) => s.workspaceDirtyTick)
-  const gitRoot = resolveActiveThreadWorkspace(activeThreadId, threads, workspaceRoot)
+  const gitRoot = resolveThreadFilesystemRoot(activeThreadId, threads, workspaceRoot)
   const { result: gitChanges, reload: reloadGitChanges } = useGitWorkingChanges(gitRoot)
   useWorkspaceDirtyGitRefresh(workspaceDirtyTick, reloadGitChanges)
   const workspaceChangeEntries = useMemo(

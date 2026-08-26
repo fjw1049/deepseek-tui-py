@@ -58,7 +58,7 @@ import {
   isExplicitGitCommitSelectionNone,
   resolveGitCommitPaths
 } from '../../lib/git-commit-selection'
-import { resolveActiveThreadWorkspace } from '../../lib/workspace-path'
+import { resolveThreadFilesystemRoot } from '../../lib/workspace-path'
 import { workspaceLabelFromPath } from '../../lib/workspace-label'
 import { useChatStore } from '../../store/chat-store'
 import { GitBranchPicker } from './GitBranchPicker'
@@ -401,7 +401,7 @@ export function OperationContextDock({
       turnDiffByTurnId: s.turnDiffByTurnId
     }))
   )
-  const root = resolveActiveThreadWorkspace(activeThreadId, threads, workspaceRoot)
+  const root = resolveThreadFilesystemRoot(activeThreadId, threads, workspaceRoot)
   const { result: gitResult, loading: gitLoading, reload: reloadGitBranches } = useGitBranches(root)
   const { result: gitChanges, loading: gitChangesLoading, reload: reloadGitChanges } = useGitWorkingChanges(root)
   const { result: githubResult, reload: reloadGithubRepository } = useGitHubRepository(root)

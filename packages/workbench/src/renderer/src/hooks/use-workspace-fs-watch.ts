@@ -1,6 +1,6 @@
 import { useEffect, useMemo } from 'react'
 import { useShallow } from 'zustand/react/shallow'
-import { resolveActiveThreadWorkspace } from '../lib/workspace-path'
+import { resolveThreadFilesystemRoot } from '../lib/workspace-path'
 import { useChatStore } from '../store/chat-store'
 
 /**
@@ -9,9 +9,10 @@ import { useChatStore } from '../store/chat-store'
  * edits made outside the agent: external editors (Cursor, VS Code…), manual
  * saves, and shell commands still mid-run.
  *
- * Root matches the git panels (`resolveActiveThreadWorkspace`), not the
+ * Root matches the git panels (`resolveThreadFilesystemRoot`), not the
  * global settings `workspaceRoot` — a thread can sit in a different project
- * than the last-selected workspace setting.
+ * than the last-selected workspace setting, and worktree threads watch the
+ * managed checkout.
  */
 export function useWorkspaceFsWatch(): void {
   const { activeThreadId, threads, workspaceRoot } = useChatStore(
@@ -22,7 +23,7 @@ export function useWorkspaceFsWatch(): void {
     }))
   )
   const root = useMemo(
-    () => resolveActiveThreadWorkspace(activeThreadId, threads, workspaceRoot),
+    () => resolveThreadFilesystemRoot(activeThreadId, threads, workspaceRoot),
     [activeThreadId, threads, workspaceRoot]
   )
 

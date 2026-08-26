@@ -38,6 +38,8 @@ export type GoalSnapshotJson = {
   }
 }
 
+export type ThreadEnvMode = 'local' | 'worktree'
+
 export type NormalizedThread = {
   id: string
   title: string
@@ -47,9 +49,20 @@ export type NormalizedThread = {
   model: string
   mode: string
   workspace?: string
+  envMode?: ThreadEnvMode
+  worktreePath?: string | null
+  worktreeBranch?: string | null
   status?: string
   archived?: boolean
   goal?: GoalSnapshotJson | null
+}
+
+export type ApplyWorktreeResult = {
+  applied: string[]
+  merged: string[]
+  conflicted: string[]
+  skipped: string[]
+  mode: string
 }
 
 export type RuntimeConnectionStatus = 'idle' | 'checking' | 'ready' | 'offline'
@@ -452,6 +465,17 @@ export interface AgentProvider {
    * `beforeItemId` would touch (GET /v1/threads/{id}/rewind-preview).
    */
   rewindPreview?(threadId: string, beforeItemId: string): Promise<RewindPreview>
+  setThreadEnvironment?(
+    threadId: string,
+    envMode: ThreadEnvMode,
+    options?: { copyDirty?: boolean; forceConflicts?: boolean }
+  ): Promise<NormalizedThread>
+  previewWorktreeApply?(threadId: string): Promise<ApplyWorktreeResult>
+  applyWorktree?(
+    threadId: string,
+    options?: { mode?: 'merge' | 'overwrite'; forceConflicts?: boolean }
+  ): Promise<ApplyWorktreeResult>
+  promoteWorktree?(threadId: string, branch: string): Promise<{ branch: string }>
   resumeThread?(threadId: string): Promise<void>
   /** Runtime HTTP: POST /v1/tasks/{id}/resume */
   resumeTask?(taskId: string): Promise<void>

@@ -45,9 +45,16 @@ export function normalizeWorkspaceRoot(path?: string): string {
   return trimmed
 }
 
+export type ThreadPathFields = {
+  id: string
+  workspace?: string
+  envMode?: 'local' | 'worktree'
+  worktreePath?: string | null
+}
+
 export function resolveActiveThreadWorkspace(
   activeThreadId: string | null | undefined,
-  threads: ReadonlyArray<{ id: string; workspace?: string }>,
+  threads: ReadonlyArray<ThreadPathFields>,
   fallbackWorkspaceRoot?: string | null
 ): string {
   const activeThreadWorkspace = activeThreadId
@@ -61,16 +68,20 @@ export function resolveActiveThreadWorkspace(
  * workspaces under /tmp. Unlike {@link resolveActiveThreadWorkspace}, this
  * does NOT blank out internal temp dirs; file preview / read / write need
  * the real path the runtime used when creating the thread.
+ *
+ * In worktree mode this is the managed checkout, not the project root.
  */
 export function resolveThreadFilesystemRoot(
   activeThreadId: string | null | undefined,
-  threads: ReadonlyArray<{ id: string; workspace?: string }>,
+  threads: ReadonlyArray<ThreadPathFields>,
   fallbackWorkspaceRoot?: string | null
 ): string {
-  const activeThreadWorkspace = activeThreadId
-    ? threads.find((thread) => thread.id === activeThreadId)?.workspace
+  const thread = activeThreadId
+    ? threads.find((item) => item.id === activeThreadId)
     : undefined
-  const fromThread = activeThreadWorkspace?.trim() ?? ''
+  const worktree = thread?.worktreePath?.trim() ?? ''
+  if (thread?.envMode === 'worktree' && worktree) return worktree
+  const fromThread = thread?.workspace?.trim() ?? ''
   if (fromThread) return fromThread
   return fallbackWorkspaceRoot?.trim() ?? ''
 }

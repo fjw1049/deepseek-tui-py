@@ -1627,7 +1627,7 @@ export function FloatingComposer({
                 ? 'ds-composer-shell--compact gap-0.5 px-2 py-1'
                 : stageCentered
                   ? 'ds-composer-empty ds-frosted relative z-10 gap-1.5 px-4 py-2.5 sm:px-5'
-                  : 'gap-1.5 px-2 py-2.5'
+                  : 'relative z-10 gap-1.5 px-2 py-2.5'
             } ${focused ? 'ds-chat-composer-focus' : ''}`}
         >
           {attachments.length > 0 ? (
@@ -2573,6 +2573,12 @@ export function FloatingComposer({
               ) : null}
             </div>
           </div>
+          {!stageCentered ? (
+            <WorkspaceContextBar
+              workspaceRoot={effectiveWorkspaceRoot}
+              variant="embedded"
+            />
+          ) : null}
         </div>
       </div>
       {stageCentered ? (

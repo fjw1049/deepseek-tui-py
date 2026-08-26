@@ -27,7 +27,7 @@ import {
 import { formatComposerPathMention, insertComposerSnippet } from '../lib/composer-insert'
 import { splitFileNameAndParent } from '../lib/editor-breadcrumb'
 import { resolveGitCommitPaths } from '../lib/git-commit-selection'
-import { resolveActiveThreadWorkspace } from '../lib/workspace-path'
+import { resolveThreadFilesystemRoot } from '../lib/workspace-path'
 import { useChatStore } from '../store/chat-store'
 
 function normalizeChangePath(path: string | undefined): string {
@@ -184,7 +184,7 @@ export function ChangeInspector({
         turnDiffByTurnId: s.turnDiffByTurnId
       }))
     )
-  const root = resolveActiveThreadWorkspace(activeThreadId, threads, workspaceRoot)
+  const root = resolveThreadFilesystemRoot(activeThreadId, threads, workspaceRoot)
   const { result: gitChanges, loading: gitLoading, reload: reloadGitChanges } = useGitWorkingChanges(root)
   useWorkspaceDirtyGitRefresh(workspaceDirtyTick, reloadGitChanges)
   const gitFilePaths = useMemo(

@@ -72,6 +72,12 @@ class ThreadRecord(BaseModel):
     model: str
     provider: str = "deepseek"
     workspace: str
+    env_mode: str = "local"
+    worktree_path: str | None = None
+    worktree_base: str | None = None
+    worktree_owned: bool = False
+    associated_worktree_path: str | None = None
+    worktree_branch: str | None = None
     mode: str = "agent"
     allow_shell: bool = False
     trust_mode: bool = False
@@ -157,6 +163,7 @@ class CreateThreadRequest(BaseModel):
     provider: str | None = None
     model: str | None = None
     workspace: str | None = None
+    env_mode: str | None = None
     mode: str | None = None
     allow_shell: bool | None = None
     trust_mode: bool | None = None
@@ -201,6 +208,28 @@ class RestoreCodeRequest(BaseModel):
     before_item_id: str
     # Same semantics as RewindThreadRequest.force_conflicts.
     force_conflicts: bool = False
+
+
+class SetEnvironmentRequest(BaseModel):
+    """Switch a thread between local checkout and a managed worktree."""
+
+    env_mode: str
+    # When entering a fresh worktree, copy (do not move) project dirty files.
+    copy_dirty: bool = True
+    force_conflicts: bool = False
+
+
+class ApplyWorktreeRequest(BaseModel):
+    """Copy the thread's worktree onto the project root."""
+
+    mode: str = "merge"
+    force_conflicts: bool = False
+
+
+class PromoteWorktreeRequest(BaseModel):
+    """Attach a detached worktree to a new local branch."""
+
+    branch: str
 
 
 class StartTurnRequest(BaseModel):

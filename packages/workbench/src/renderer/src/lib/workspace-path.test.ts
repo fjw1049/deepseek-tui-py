@@ -18,4 +18,19 @@ describe('resolveThreadFilesystemRoot', () => {
       '/Users/me/proj'
     )
   })
+
+  it('uses the managed worktree path as the filesystem root', () => {
+    const threads = [
+      {
+        id: 't1',
+        workspace: '/Users/me/proj',
+        envMode: 'worktree' as const,
+        worktreePath: '/Users/me/.deepseek/worktrees/proj-abc/thr_1'
+      }
+    ]
+    expect(resolveActiveThreadWorkspace('t1', threads, '/Users/me/proj')).toBe('/Users/me/proj')
+    expect(resolveThreadFilesystemRoot('t1', threads, '/Users/me/proj')).toBe(
+      '/Users/me/.deepseek/worktrees/proj-abc/thr_1'
+    )
+  })
 })

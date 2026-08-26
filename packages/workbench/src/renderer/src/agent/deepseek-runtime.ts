@@ -5,11 +5,13 @@ import type {
   ApprovalRequestPayload,
   ElevationRequestPayload,
   EvolutionProposalPayload,
+  ApplyWorktreeResult,
   ChatBlock,
   NormalizedThread,
   ProcessIntentMeta,
   RestoreCodeResult,
   RewindPreview,
+  ThreadEnvMode,
   ThreadDeltaEvent,
   SubagentMailboxPayload,
   ThreadEventSink,
@@ -146,6 +148,9 @@ type ThreadRecordJson = {
   updated_at: string
   model: string
   workspace: string
+  env_mode?: string
+  worktree_path?: string | null
+  worktree_branch?: string | null
   mode: string
   status?: string
   archived?: boolean
@@ -207,6 +212,40 @@ function titleFromThread(t: ThreadRecordJson): string {
   const raw = t.title?.trim()
   if (raw) return raw
   return t.id.slice(0, 8)
+}
+
+function envModeFromThread(t: ThreadRecordJson): ThreadEnvMode {
+  return t.env_mode === 'worktree' ? 'worktree' : 'local'
+}
+
+function threadFromJson(t: ThreadRecordJson, title?: string): NormalizedThread {
+  return {
+    id: t.id,
+    title: title || titleFromThread(t),
+    updatedAt: t.updated_at,
+    createdAt: t.created_at,
+    model: t.model,
+    mode: t.mode,
+    workspace: t.workspace,
+    envMode: envModeFromThread(t),
+    worktreePath: t.worktree_path ?? null,
+    worktreeBranch: t.worktree_branch ?? null,
+    status: t.status,
+    archived: t.archived === true,
+    goal: t.goal ?? null
+  }
+}
+
+function applyResultFromJson(body: Record<string, unknown>): ApplyWorktreeResult {
+  const list = (key: string): string[] =>
+    Array.isArray(body[key]) ? body[key].filter((item): item is string => typeof item === 'string') : []
+  return {
+    applied: list('applied'),
+    merged: list('merged'),
+    conflicted: list('conflicted'),
+    skipped: list('skipped'),
+    mode: typeof body.mode === 'string' ? body.mode : 'merge'
+  }
 }
 
 function toToolKind(kind: string): ToolItemKind | undefined {
@@ -907,18 +946,7 @@ export class DeepseekRuntimeProvider implements AgentProvider {
     const rows = JSON.parse(r.body) as ThreadRecordJson[]
     return rows
       .filter((t) => (includeArchived ? t.archived === true : t.archived !== true))
-      .map((t) => ({
-        id: t.id,
-        title: titleFromThread(t),
-        updatedAt: t.updated_at,
-        createdAt: t.created_at,
-        model: t.model,
-        mode: t.mode,
-        workspace: t.workspace,
-        status: t.status,
-        archived: t.archived === true,
-        goal: t.goal ?? null
-      }))
+      .map((t) => threadFromJson(t))
   }
 
   async createThread(input: {
@@ -947,17 +975,7 @@ export class DeepseekRuntimeProvider implements AgentProvider {
         JSON.stringify({ title: input.title })
       )
     }
-    return {
-      id: t.id,
-      title: input.title || titleFromThread(t),
-      updatedAt: t.updated_at,
-      createdAt: t.created_at,
-      model: t.model,
-      mode: t.mode,
-      workspace: t.workspace,
-      status: t.status,
-      goal: t.goal ?? null
-    }
+    return threadFromJson(t, input.title || titleFromThread(t))
   }
 
   async applyGoalCommand(
@@ -1354,16 +1372,7 @@ export class DeepseekRuntimeProvider implements AgentProvider {
     )
     if (!r.ok) throw toRuntimeError(readRuntimeError(r.body, 'fork thread failed'))
     const t = JSON.parse(r.body) as ThreadRecordJson
-    return {
-      id: t.id,
-      title: titleFromThread(t),
-      updatedAt: t.updated_at,
-      createdAt: t.created_at,
-      model: t.model,
-      mode: t.mode,
-      workspace: t.workspace,
-      status: t.status
-    }
+    return threadFromJson(t)
   }
 
   async rewindThread(
@@ -1419,6 +1428,62 @@ export class DeepseekRuntimeProvider implements AgentProvider {
       isGit: parsed.is_git !== false,
       turns: typeof parsed.turns === 'number' ? parsed.turns : 0
     }
+  }
+
+  async setThreadEnvironment(
+    threadId: string,
+    envMode: ThreadEnvMode,
+    options?: { copyDirty?: boolean; forceConflicts?: boolean }
+  ): Promise<NormalizedThread> {
+    const r = await window.dsGui.runtimeRequest(
+      `/v1/threads/${encodeURIComponent(threadId)}/environment`,
+      'POST',
+      JSON.stringify({
+        env_mode: envMode,
+        copy_dirty: options?.copyDirty !== false,
+        force_conflicts: options?.forceConflicts === true
+      })
+    )
+    if (!r.ok) throw toRuntimeError(readRuntimeError(r.body, 'set environment failed'))
+    return threadFromJson(JSON.parse(r.body) as ThreadRecordJson)
+  }
+
+  async previewWorktreeApply(threadId: string): Promise<ApplyWorktreeResult> {
+    const r = await window.dsGui.runtimeRequest(
+      `/v1/threads/${encodeURIComponent(threadId)}/worktree/apply-preview`,
+      'GET'
+    )
+    if (!r.ok) throw toRuntimeError(readRuntimeError(r.body, 'worktree apply preview failed'))
+    return applyResultFromJson(JSON.parse(r.body) as Record<string, unknown>)
+  }
+
+  async applyWorktree(
+    threadId: string,
+    options?: { mode?: 'merge' | 'overwrite'; forceConflicts?: boolean }
+  ): Promise<ApplyWorktreeResult> {
+    const r = await window.dsGui.runtimeRequest(
+      `/v1/threads/${encodeURIComponent(threadId)}/worktree/apply`,
+      'POST',
+      JSON.stringify({
+        mode: options?.mode ?? 'merge',
+        force_conflicts: options?.forceConflicts === true
+      })
+    )
+    if (!r.ok) throw toRuntimeError(readRuntimeError(r.body, 'worktree apply failed'))
+    return applyResultFromJson(JSON.parse(r.body) as Record<string, unknown>)
+  }
+
+  async promoteWorktree(threadId: string, branch: string): Promise<{ branch: string }> {
+    const r = await window.dsGui.runtimeRequest(
+      `/v1/threads/${encodeURIComponent(threadId)}/worktree/promote`,
+      'POST',
+      JSON.stringify({ branch })
+    )
+    if (!r.ok) throw toRuntimeError(readRuntimeError(r.body, 'worktree promote failed'))
+    const parsed = JSON.parse(r.body) as { branch?: string }
+    const name = typeof parsed.branch === 'string' ? parsed.branch.trim() : ''
+    if (!name) throw toRuntimeError('worktree promote failed')
+    return { branch: name }
   }
 
   async resumeThread(threadId: string): Promise<void> {
