@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactElement, type MouseEvent } from 'react'
+import { useEffect, useRef, useState, type CSSProperties, type ReactElement, type MouseEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   DndContext,
@@ -18,6 +18,11 @@ import {
 } from '../../hooks/use-light-dismiss'
 import { KanbanCardView } from './KanbanCardView'
 import { KanbanColumn } from './KanbanColumn'
+import {
+  adjustKanbanOverlayForUiScale,
+  layoutPxFromVisual,
+  readKanbanUiScale
+} from './kanban-drag-coords'
 import {
   cardsForColumn,
   findBoardCard,
@@ -43,6 +48,16 @@ const collisionDetection: CollisionDetection = (args) => {
   return closestCorners(args)
 }
 
+function overlayBoxFromRect(rect: { top: number; left: number; width: number; height: number }): CSSProperties {
+  const scale = readKanbanUiScale()
+  return {
+    top: layoutPxFromVisual(rect.top, scale),
+    left: layoutPxFromVisual(rect.left, scale),
+    width: layoutPxFromVisual(rect.width, scale),
+    height: layoutPxFromVisual(rect.height, scale)
+  }
+}
+
 export function KanbanProjectBoardView({
   board,
   onOpenCard,
@@ -63,6 +78,7 @@ export function KanbanProjectBoardView({
   const [notice, setNotice] = useState<string | null>(null)
   const suppressClickRef = useRef(false)
   const shellUnlockedRef = useRef(false)
+  const overlayBoxRef = useRef<CSSProperties>({})
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -98,6 +114,8 @@ export function KanbanProjectBoardView({
 
   const handleDragStart = (event: DragStartEvent): void => {
     const card = findBoardCard(board, String(event.active.id))
+    const rect = event.active.rect.current.initial ?? event.active.rect.current.translated
+    overlayBoxRef.current = rect ? overlayBoxFromRect(rect) : {}
     setActiveCard(card)
     suppressClickRef.current = true
     unlockShell()
@@ -105,6 +123,7 @@ export function KanbanProjectBoardView({
 
   const handleDragCancel = (): void => {
     setActiveCard(null)
+    overlayBoxRef.current = {}
     releaseClickSuppression()
     relockShell()
   }
@@ -122,6 +141,7 @@ export function KanbanProjectBoardView({
 
   const handleDragEnd = (event: DragEndEvent): void => {
     setActiveCard(null)
+    overlayBoxRef.current = {}
     releaseClickSuppression()
     relockShell()
     const { active, over } = event
@@ -199,7 +219,12 @@ export function KanbanProjectBoardView({
           activeCard={activeCard}
         />
       </div>
-      <DragOverlay dropAnimation={null} className="ds-no-drag">
+      <DragOverlay
+        dropAnimation={null}
+        className="ds-no-drag"
+        modifiers={[adjustKanbanOverlayForUiScale]}
+        style={activeCard ? overlayBoxRef.current : undefined}
+      >
         {activeCard ? (
           <KanbanCardView card={activeCard} showColumnLabel={false} isOverlay />
         ) : null}

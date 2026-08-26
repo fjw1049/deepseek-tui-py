@@ -46,8 +46,8 @@ function SortableKanbanCard({
         dragBind={{
           setNodeRef,
           style: {
-            transform: CSS.Translate.toString(transform),
-            transition
+            transform: isDragging ? undefined : CSS.Translate.toString(transform),
+            transition: isDragging ? undefined : transition
           },
           attributes: attributes as HTMLAttributes<HTMLElement>,
           listeners: listeners as HTMLAttributes<HTMLElement> | undefined,
