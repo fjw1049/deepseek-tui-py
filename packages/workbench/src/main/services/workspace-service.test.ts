@@ -62,15 +62,28 @@ describe('workspace-service boundary checks', () => {
     }
   })
 
-  it('rejects absolute paths outside the selected workspace', async () => {
+  it('opens an existing absolute path outside the selected workspace', async () => {
     const result = await resolveWorkspaceFile({
       path: outsideFile,
       workspaceRoot
     })
 
-    expect(result.ok).toBe(false)
-    if (!result.ok) {
-      expect(result.message).toContain('within the selected workspace')
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      expect(result.path).toBe(await realpath(outsideFile))
+      expect(result.kind).toBe('file')
+    }
+  })
+
+  it('reads an existing absolute path outside the selected workspace', async () => {
+    const result = await readWorkspaceFile({
+      path: outsideFile,
+      workspaceRoot
+    })
+
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      expect(result.content).toBe('outside')
     }
   })
 

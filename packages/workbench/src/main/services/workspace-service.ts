@@ -673,6 +673,9 @@ async function resolveOpenTargetPath(
       : resolve(expanded)
 
   if (await pathExists(direct)) {
+    // User-opened absolute paths (plans under ~/.deepseek, other project files)
+    // are allowed. Relative escapes like ../secret stay blocked.
+    if (isAbsolute(expanded)) return canonicalPath(direct)
     return enforceWorkspaceBoundary(direct, workspaceRoot)
   }
 
