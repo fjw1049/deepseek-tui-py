@@ -1,16 +1,13 @@
-/** Live files-changed strip above the composer while a turn is mutating files. */
+/** Live files-changed strip above the composer while this turn is mutating files. */
 
 import { memo, useMemo } from 'react'
 import { FileEdit } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { useShallow } from 'zustand/react/shallow'
-import { useGitWorkingChanges } from '../../hooks/use-git-working-changes'
-import { useWorkspaceDirtyGitRefresh } from '../../hooks/use-workspace-dirty-git-refresh'
 import {
-  collectWorkspaceChangeEntries,
+  collectLiveTurnChangeEntries,
   sumWorkspaceChangeStats
 } from '../../lib/workspace-change-stats'
-import { resolveActiveThreadWorkspace } from '../../lib/workspace-path'
 import { useChatStore } from '../../store/chat-store'
 
 export const ComposerLiveChangesHeader = memo(function ComposerLiveChangesHeader({
@@ -19,37 +16,23 @@ export const ComposerLiveChangesHeader = memo(function ComposerLiveChangesHeader
   onReview?: () => void
 }): React.JSX.Element | null {
   const { t } = useTranslation('common')
-  const {
-    busy,
-    blocks,
-    turnDiffByTurnId,
-    workspaceRoot,
-    activeThreadId,
-    threads,
-    workspaceDirtyTick
-  } = useChatStore(
+  const { busy, blocks, currentTurnId, turnDiffByTurnId } = useChatStore(
     useShallow((s) => ({
       busy: s.busy,
       blocks: s.blocks,
-      turnDiffByTurnId: s.turnDiffByTurnId,
-      workspaceRoot: s.workspaceRoot,
-      activeThreadId: s.activeThreadId,
-      threads: s.threads,
-      workspaceDirtyTick: s.workspaceDirtyTick
+      currentTurnId: s.currentTurnId,
+      turnDiffByTurnId: s.turnDiffByTurnId
     }))
   )
-  const root = resolveActiveThreadWorkspace(activeThreadId, threads, workspaceRoot)
-  const { result: gitChanges, reload: reloadGitChanges } = useGitWorkingChanges(root)
-  useWorkspaceDirtyGitRefresh(workspaceDirtyTick, reloadGitChanges)
 
   const entries = useMemo(
     () =>
-      collectWorkspaceChangeEntries({
+      collectLiveTurnChangeEntries({
+        currentTurnId,
         blocks,
-        turnDiffByTurnId,
-        gitFiles: gitChanges?.ok ? gitChanges.files : null
+        turnDiffByTurnId
       }),
-    [blocks, gitChanges, turnDiffByTurnId]
+    [blocks, currentTurnId, turnDiffByTurnId]
   )
   const stats = useMemo(() => sumWorkspaceChangeStats(entries), [entries])
 

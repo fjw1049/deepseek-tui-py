@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { ChatBlock } from '../agent/types'
 import { countDiffStats } from './diff-stats'
 import {
+  collectLiveTurnChangeEntries,
   collectWorkspaceChangeEntries,
   sumWorkspaceChangeStats,
   turnSummaryFromWorkspaceEntries,
@@ -185,5 +186,59 @@ describe('collectWorkspaceChangeEntries', () => {
     // A mid-flight edit must not vanish from the panel just because git
     // has not seen the write yet.
     expect(entries).toHaveLength(1)
+  })
+})
+
+describe('collectLiveTurnChangeEntries', () => {
+  it('is empty at send time even when the tree is already dirty', () => {
+    const entries = collectLiveTurnChangeEntries({
+      currentTurnId: 'turn_now',
+      blocks: [fileChange('old', 'a.ts', PATCH_A)],
+      turnDiffByTurnId: {
+        turn_old: {
+          turn_id: 'turn_old',
+          files: [{ path: 'a.ts', additions: 2, deletions: 1, unified_diff: PATCH_A }],
+          totals: { files: 1, additions: 2, deletions: 1 },
+          revision: 1,
+          complete: true
+        }
+      }
+    })
+    expect(entries).toHaveLength(0)
+  })
+
+  it('shows only the current turn snapshot once this run writes', () => {
+    const entries = collectLiveTurnChangeEntries({
+      currentTurnId: 'turn_now',
+      blocks: [fileChange('old', 'a.ts', PATCH_A)],
+      turnDiffByTurnId: {
+        turn_old: {
+          turn_id: 'turn_old',
+          files: [{ path: 'a.ts', additions: 2, deletions: 1, unified_diff: PATCH_A }],
+          totals: { files: 1, additions: 2, deletions: 1 },
+          revision: 1,
+          complete: true
+        },
+        turn_now: {
+          turn_id: 'turn_now',
+          files: [{ path: 'b.ts', additions: 1, deletions: 0, unified_diff: PATCH_B }],
+          totals: { files: 1, additions: 1, deletions: 0 },
+          revision: 1,
+          complete: false
+        }
+      }
+    })
+    expect(entries).toHaveLength(1)
+    expect(entries[0]?.filePath).toBe('b.ts')
+  })
+
+  it('includes a file_change that is still running on this turn', () => {
+    const running = { ...fileChange('live', 'c.ts', PATCH_B), status: 'running' as const }
+    const entries = collectLiveTurnChangeEntries({
+      currentTurnId: 'turn_now',
+      blocks: [running]
+    })
+    expect(entries).toHaveLength(1)
+    expect(entries[0]?.filePath).toBe('c.ts')
   })
 })

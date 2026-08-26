@@ -165,6 +165,32 @@ export function workspaceChangeEntryStats(entry: WorkspaceChangeEntry): DiffStat
   })
 }
 
+/**
+ * Composer live strip: only this running turn's writes.
+ * Do not fold in leftover git dirt or earlier turns — those belong in the
+ * Changes panel, not "I just hit send and files already changed".
+ */
+export function collectLiveTurnChangeEntries(opts: {
+  currentTurnId: string | null | undefined
+  blocks: ChatBlock[]
+  turnDiffByTurnId?: Record<string, TurnDiffSnapshot>
+}): WorkspaceChangeEntry[] {
+  const turnId = opts.currentTurnId?.trim()
+  if (!turnId) return []
+  const snap = opts.turnDiffByTurnId?.[turnId]
+  const runningThisTurn = opts.blocks.filter(
+    (block) =>
+      block.kind === 'tool' &&
+      block.toolKind === 'file_change' &&
+      block.status === 'running'
+  )
+  return collectWorkspaceChangeEntries({
+    blocks: runningThisTurn,
+    turnDiffByTurnId: snap ? { [turnId]: snap } : {},
+    gitFiles: null
+  })
+}
+
 /** Header +/- must be the sum of the same per-file stats the list shows. */
 export function sumWorkspaceChangeStats(entries: WorkspaceChangeEntry[]): DiffStats | null {
   return sumDiffStatsList(entries.map((entry) => workspaceChangeEntryStats(entry)))
