@@ -153,7 +153,6 @@ function ConnectorRow({
     event.stopPropagation()
     onDelete()
   }
-  const onFocus = connector.loadPolicy === 'on_focus'
   const status = connector.status
   const tone =
     status && status !== 'disabled' ? composerConnectorDotTone({ status }) : null
@@ -180,9 +179,6 @@ function ConnectorRow({
             />
           ) : null}
           <div className="truncate text-[15px] font-semibold text-ds-ink">{connector.name}</div>
-          <span className="shrink-0 rounded-full bg-ds-subtle px-1.5 py-0.5 text-[10px] font-medium text-ds-muted">
-            {onFocus ? t('connectorLoadOnFocus') : t('connectorLoadProgressive')}
-          </span>
         </div>
         <p className="mt-0.5 line-clamp-1 font-mono text-[12px] leading-5 text-ds-muted" title={connector.summary}>
           {connector.summary}

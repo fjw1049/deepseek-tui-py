@@ -151,7 +151,7 @@ export function MarketplaceSearchCreate({
           type="button"
           onClick={onCreateToggle}
           aria-expanded={createOpen}
-          className="ds-ext-primary-action inline-flex items-center justify-center gap-2 rounded-xl bg-accent px-3 py-2 text-[13px] font-semibold leading-none text-white shadow-sm transition hover:brightness-110"
+          className="inline-flex h-11 items-center justify-center gap-1.5 rounded-2xl border border-ds-border bg-transparent px-3.5 text-[13px] font-medium leading-none text-ds-muted transition hover:bg-ds-hover hover:text-ds-ink"
         >
           <Plus className="h-4 w-4" strokeWidth={1.9} />
           {createLabel}
