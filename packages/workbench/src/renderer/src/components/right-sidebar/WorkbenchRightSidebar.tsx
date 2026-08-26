@@ -200,6 +200,7 @@ export function WorkbenchRightSidebar({
           className="h-full max-h-full w-full flex-col"
           requestedPath={changesFocusPath}
           onRequestedPathConsumed={onChangesFocusPathConsumed}
+          onRevealInEditor={onOpenFileInEditor}
         />
       </Suspense>
     )

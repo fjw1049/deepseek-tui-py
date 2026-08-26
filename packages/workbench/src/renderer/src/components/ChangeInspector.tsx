@@ -384,7 +384,7 @@ export function ChangeInspector({
                     else selectRow()
                   }}
                   title={
-                    isList && item.filePath
+                    onRevealInEditor && item.filePath
                       ? t('inspectorOpenSourceHint')
                       : (displayPath ?? item.filePath)
                   }
