@@ -52,63 +52,66 @@ export function ToolHeaderRow({
 }: ToolHeaderRowProps): React.JSX.Element {
   const { t } = useTranslation('common')
   return (
-    <div className={cn('ds-tool-header-row flex w-full items-center gap-2', className)}>
-      {Icon ? (
-        <Icon className="h-3.5 w-3.5 shrink-0 text-ds-faint" strokeWidth={1.8} aria-hidden />
-      ) : null}
-      <span
-        className={cn(
-          'ds-tool-header-row__label shrink-0 font-mono text-[0.6875rem] font-medium text-ds-muted',
-          labelClassName
+    <div className={cn('ds-tool-header-row flex w-full min-w-0 items-center', className)}>
+      <span className="ds-tool-header-row__lead min-w-0 flex-1">
+        {Icon ? (
+          <Icon className="ds-tool-header-row__icon shrink-0 text-ds-faint" strokeWidth={1.8} aria-hidden />
+        ) : (
+          <span className="ds-tool-header-row__icon shrink-0" aria-hidden />
         )}
-      >
-        {label}
-      </span>
-      {filePath ? (
-        <span className="min-w-0 flex-1 truncate">
-          <FileChip path={filePath} line={fileLine} skipValidation variant="list" />
-        </span>
-      ) : title ? (
         <span
           className={cn(
-            'ds-tool-header-row__title min-w-0 flex-1 truncate text-[13px] tabular-nums text-ds-faint',
-            titleClassName
+            'ds-tool-header-row__label shrink-0 font-mono font-medium text-ds-muted',
+            labelClassName
           )}
-          title={subtitle ?? title}
         >
-          {title}
+          {label}
         </span>
-      ) : (
-        <span className="flex-1" />
-      )}
-      {diffStats ? (
-        <ChangeDiffStatsLabel stats={diffStats} size="sm" hideZero className="shrink-0" />
-      ) : null}
-      {onOpenInEditor ? (
-        <button
-          type="button"
-          onClick={(event) => {
-            event.stopPropagation()
-            onOpenInEditor()
-          }}
-          title={t('inspectorOpenInEditor')}
-          aria-label={t('inspectorOpenInEditor')}
-          className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-md text-ds-faint opacity-0 transition hover:bg-ds-hover hover:text-ds-ink focus-visible:opacity-100 group-hover:opacity-100"
-        >
-          <FileCode className="h-3.5 w-3.5" strokeWidth={1.85} />
-        </button>
-      ) : null}
-      <ToolStatusIndicator state={state} />
-      {canExpand ? (
-        expanded ? (
-          <ChevronDown className="h-3 w-3 shrink-0 opacity-45" strokeWidth={1.8} />
-        ) : (
-          <ChevronRight
-            className="h-3 w-3 shrink-0 opacity-0 transition group-hover:opacity-45"
-            strokeWidth={1.8}
-          />
-        )
-      ) : null}
+        {filePath ? (
+          <span className="ds-tool-header-row__main min-w-0">
+            <FileChip path={filePath} line={fileLine} skipValidation variant="list" />
+          </span>
+        ) : title ? (
+          <span
+            className={cn(
+              'ds-tool-header-row__title ds-tool-header-row__main min-w-0 truncate tabular-nums text-ds-faint',
+              titleClassName
+            )}
+            title={subtitle ?? title}
+          >
+            {title}
+          </span>
+        ) : null}
+      </span>
+      <span className="ds-tool-header-row__meta">
+        {diffStats ? (
+          <ChangeDiffStatsLabel stats={diffStats} size="sm" hideZero className="shrink-0" />
+        ) : null}
+        {onOpenInEditor ? (
+          <button
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation()
+              onOpenInEditor()
+            }}
+            title={t('inspectorOpenInEditor')}
+            aria-label={t('inspectorOpenInEditor')}
+            className="ds-tool-header-row__action inline-flex shrink-0 items-center justify-center rounded-md text-ds-faint opacity-0 transition hover:bg-ds-hover hover:text-ds-ink focus-visible:opacity-100 group-hover:opacity-100"
+          >
+            <FileCode strokeWidth={1.85} />
+          </button>
+        ) : null}
+        <ToolStatusIndicator state={state} className="ds-tool-header-row__status" />
+        <span className="ds-tool-header-row__chevron" aria-hidden>
+          {canExpand ? (
+            expanded ? (
+              <ChevronDown strokeWidth={1.8} />
+            ) : (
+              <ChevronRight className="opacity-0 transition group-hover:opacity-45" strokeWidth={1.8} />
+            )
+          ) : null}
+        </span>
+      </span>
     </div>
   )
 }

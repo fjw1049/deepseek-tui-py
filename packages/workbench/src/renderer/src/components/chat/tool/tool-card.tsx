@@ -215,7 +215,7 @@ export const ToolCard = memo(function ToolCard({
       <div id={`block-${block.id}`} className="group" onMouseEnter={handlePrefetch}>
         <div
           className={cn(
-            'flex items-center rounded-md px-1.5 py-1 -mx-1',
+            'ds-tool-row flex items-center rounded-md',
             canExpand ? 'cursor-pointer hover:bg-ds-hover/40' : ''
           )}
           {...interactionProps}

@@ -5006,6 +5006,127 @@ samp {
   font-weight: 600;
 }
 
+/* Tool process rows: one horizontal grid for batch headers and every tool
+   line so icons, labels, files, and trailing status share the same columns. */
+.ds-tool-batch,
+.ds-tool-row,
+.ds-tool-header-row {
+  --ds-tool-pad-x: 0.625rem;
+  --ds-tool-icon: 14px;
+  --ds-tool-gap: 0.4rem;
+  --ds-tool-meta-gap: 0.25rem;
+  --ds-tool-font: 13px;
+}
+
+.ds-tool-batch__header,
+.ds-tool-row {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-tool-gap);
+  width: 100%;
+  min-width: 0;
+  padding: 0.375rem var(--ds-tool-pad-x);
+}
+
+.ds-tool-batch__icon,
+.ds-tool-header-row__icon {
+  width: var(--ds-tool-icon);
+  height: var(--ds-tool-icon);
+}
+
+.ds-tool-batch__title,
+.ds-tool-header-row__label,
+.ds-tool-header-row__title,
+.ds-tool-header-row__main {
+  font-size: var(--ds-tool-font);
+  line-height: 1.45;
+}
+
+.ds-tool-batch__preview {
+  font-size: var(--ds-tool-font);
+  line-height: 1.45;
+  opacity: 0.72;
+}
+
+.ds-tool-batch__chevron,
+.ds-tool-header-row__chevron,
+.ds-tool-header-row__action,
+.ds-tool-header-row__status {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+}
+
+.ds-tool-batch__chevron,
+.ds-tool-header-row__chevron {
+  width: var(--ds-tool-icon);
+  height: var(--ds-tool-icon);
+}
+
+.ds-tool-batch__chevron svg,
+.ds-tool-header-row__icon,
+.ds-tool-header-row__chevron svg,
+.ds-tool-header-row__action svg,
+.ds-tool-header-row__status svg {
+  width: var(--ds-tool-icon);
+  height: var(--ds-tool-icon);
+}
+
+.ds-tool-batch__body {
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid color-mix(in srgb, var(--ds-border-muted) 40%, transparent);
+  padding: 0.125rem 0 0.25rem;
+}
+
+.ds-tool-batch__body .ds-tool-row {
+  margin: 0;
+}
+
+.ds-tool-header-row {
+  gap: var(--ds-tool-gap);
+}
+
+.ds-tool-header-row__lead {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: var(--ds-tool-gap);
+}
+
+.ds-tool-header-row__main {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+}
+
+.ds-tool-header-row__main .ds-file-chip {
+  margin: 0;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.ds-tool-header-row__main .ds-file-kind-icon {
+  width: var(--ds-tool-icon);
+  height: var(--ds-tool-icon);
+  margin: 0;
+  vertical-align: unset;
+}
+
+.ds-tool-header-row__meta {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: var(--ds-tool-meta-gap);
+}
+
+.ds-tool-header-row__action {
+  width: var(--ds-tool-icon);
+  height: var(--ds-tool-icon);
+}
+
 .ds-markdown .ds-code-block {
   margin: 0 0 0.48rem;
   width: 100%;
@@ -10412,9 +10533,13 @@ select:focus-visible,
   border-radius: 10px;
 }
 
-.ds-ide-chat-rail .ds-tool-batch__title {
-  font-size: var(--ds-ide-font-base);
-  line-height: 1.45;
+.ds-ide-chat-rail .ds-tool-batch,
+.ds-ide-chat-rail .ds-tool-row,
+.ds-ide-chat-rail .ds-tool-header-row {
+  --ds-tool-pad-x: 0.55rem;
+  --ds-tool-icon: 12px;
+  --ds-tool-gap: 0.4rem;
+  --ds-tool-font: var(--ds-ide-font-base);
 }
 
 .ds-ide-chat-rail .ds-subagent-bubble {
@@ -10455,20 +10580,9 @@ select:focus-visible,
 }
 
 .ds-ide-chat-rail .ds-tool-header-row {
-  gap: 0.4rem;
-}
-
-.ds-ide-chat-rail .ds-tool-header-row__label {
-  font-size: 0.625rem; /* 10px — still secondary to title */
-}
-
-.ds-ide-chat-rail .ds-tool-header-row__title {
-  font-size: var(--ds-ide-font-base);
-}
-
-.ds-ide-chat-rail .ds-tool-header-row svg {
-  width: 12px;
-  height: 12px;
+  --ds-tool-icon: 12px;
+  --ds-tool-gap: 0.4rem;
+  --ds-tool-font: var(--ds-ide-font-base);
 }
 
 /* Turn change summary: flatten Chat "hero" card for narrow rail. */
