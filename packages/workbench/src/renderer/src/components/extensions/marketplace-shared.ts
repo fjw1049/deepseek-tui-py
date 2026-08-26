@@ -1,7 +1,6 @@
 /**
- * Shared local-install helpers for the extension views (Skills / Connectors),
- * so both full-screen pages reuse the exact same disk-write logic instead of
- * duplicating it.
+ * Shared local-install helpers for the marketplace panels (Skills / Connectors),
+ * so both reuse the exact same disk-write logic instead of duplicating it.
  */
 
 import { useEffect } from 'react'
@@ -35,6 +34,34 @@ export function useNoticeAutoDismiss(
 
 /** Which on-disk artifact an extension item writes to. */
 export type ExtensionKind = 'mcp' | 'skill'
+
+const MARKETPLACE_KIND_KEY = 'deepseekgui.marketplace.kind'
+
+export function loadMarketplaceKind(): 'mcp' | 'skills' | 'plugins' {
+  try {
+    if (typeof window === 'undefined') return 'mcp'
+    const raw = window.localStorage.getItem(MARKETPLACE_KIND_KEY)
+    if (raw === 'mcp' || raw === 'skills' || raw === 'plugins') return raw
+  } catch {
+    /* localStorage may be unavailable */
+  }
+  return 'mcp'
+}
+
+export type MarketplacePanelProps = {
+  query: string
+  createOpen: boolean
+  onCreateClose: () => void
+  createHost: HTMLElement | null
+}
+
+export function saveMarketplaceKind(kind: 'mcp' | 'skills' | 'plugins'): void {
+  try {
+    window.localStorage.setItem(MARKETPLACE_KIND_KEY, kind)
+  } catch {
+    /* localStorage may be unavailable */
+  }
+}
 
 const INSTALLED_STORAGE_KEY = 'deepseekgui.installedPlugins'
 

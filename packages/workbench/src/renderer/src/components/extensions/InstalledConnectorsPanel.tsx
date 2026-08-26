@@ -2,7 +2,7 @@ import type { MouseEvent as ReactMouseEvent, ReactElement } from 'react'
 import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Loader2, Trash2 } from 'lucide-react'
-import { GlassSegmentedControl } from '../settings/GlassSegmentedControl'
+import { MarketplaceContentTabs } from './marketplace-ui'
 import { partitionConnectorsByGroup } from '../../lib/connector-groups'
 import {
   composerConnectorDotClass,
@@ -22,7 +22,7 @@ export type ConnectorItem = {
   error?: string | null
 }
 
-type ConnectorTab = 'default' | 'activated' | 'media' | 'marketplace'
+type ConnectorTab = 'installed' | 'marketplace'
 
 type Props = {
   connectors: ConnectorItem[]
@@ -32,15 +32,13 @@ type Props = {
   onDelete: (connector: ConnectorItem) => void
   /** Content rendered when the ModelScope 市场 tab is active. */
   marketplaceSlot?: ReactElement
-  /** Content for the 媒体 catalog tab. */
-  mediaSlot?: ReactElement
   /** Optional content pinned to the right of the tab row (e.g. a hint). */
   headerRight?: ReactElement
 }
 
 /**
- * Connector list with 默认 / 激活 / 媒体 / 市场 tabs.
- * 默认 = always loaded (progressive). 激活 = plug-and-play (@ / on_focus).
+ * Connector list with 已安装 / 市场 tabs. 已安装 groups 默认 (progressive)
+ * and 激活 (@ / on_focus).
  */
 export function InstalledConnectorsPanel({
   connectors,
@@ -49,61 +47,61 @@ export function InstalledConnectorsPanel({
   onToggle,
   onDelete,
   marketplaceSlot,
-  mediaSlot,
   headerRight
 }: Props): ReactElement {
   const { t } = useTranslation('common')
-  const [tab, setTab] = useState<ConnectorTab>('default')
+  const [tab, setTab] = useState<ConnectorTab>('installed')
 
   const { default: defaultConnectors, activated } = useMemo(
     () => partitionConnectorsByGroup(connectors),
     [connectors]
   )
-  const tabConnectors = tab === 'default' ? defaultConnectors : activated
-  const tabEmpty =
-    tab === 'default' ? t('connectorSectionDefaultEmpty') : t('connectorSectionActivatedEmpty')
 
   const tabItems = [
-    { value: 'default' as const, label: t('connectorTabDefault') },
-    { value: 'activated' as const, label: t('connectorTabActivated') },
-    { value: 'media' as const, label: t('mediaCatalogTab') },
+    { value: 'installed' as const, label: t('skillTabInstalled') },
     { value: 'marketplace' as const, label: t('marketplaceTitle') }
   ]
 
   return (
     <div className="ds-content-card overflow-hidden rounded-2xl">
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-ds-border-muted px-5 py-3.5">
-        <GlassSegmentedControl
-          value={tab}
-          onChange={setTab}
-          items={tabItems}
-          className="min-w-0"
-          segmentClassName="px-2.5 py-1.5"
-        />
-        {headerRight ? <div className="min-w-0">{headerRight}</div> : null}
-      </div>
+      <MarketplaceContentTabs value={tab} onChange={setTab} items={tabItems} trailing={headerRight} />
 
-      {tab === 'media' ? (
-        mediaSlot ?? null
-      ) : tab === 'marketplace' ? null : loading ? (
+      {tab === 'marketplace' ? null : loading ? (
         <div className="flex items-center gap-2 px-5 py-8 text-[13px] text-ds-muted">
           <Loader2 className="h-4 w-4 animate-spin" strokeWidth={2} />
           {t('skillsLoading')}
         </div>
-      ) : tabConnectors.length === 0 ? (
-        <div className="px-5 py-10 text-center text-[13px] text-ds-faint">{tabEmpty}</div>
       ) : (
-        <ul className="divide-y divide-ds-border-muted/70">
-          {tabConnectors.map((connector) => (
-            <ConnectorRow
-              key={connector.id}
-              connector={connector}
-              busy={busyId === connector.id}
-              onToggle={(enabled) => onToggle(connector, enabled)}
-              onDelete={() => onDelete(connector)}
-            />
-          ))}
-        </ul>
+        <div>
+          <ConnectorGroup
+            title={t('connectorTabDefault')}
+            empty={t('connectorSectionDefaultEmpty')}
+          >
+            {defaultConnectors.map((connector) => (
+              <ConnectorRow
+                key={connector.id}
+                connector={connector}
+                busy={busyId === connector.id}
+                onToggle={(enabled) => onToggle(connector, enabled)}
+                onDelete={() => onDelete(connector)}
+              />
+            ))}
+          </ConnectorGroup>
+          <ConnectorGroup
+            title={t('connectorTabActivated')}
+            empty={t('connectorSectionActivatedEmpty')}
+          >
+            {activated.map((connector) => (
+              <ConnectorRow
+                key={connector.id}
+                connector={connector}
+                busy={busyId === connector.id}
+                onToggle={(enabled) => onToggle(connector, enabled)}
+                onDelete={() => onDelete(connector)}
+              />
+            ))}
+          </ConnectorGroup>
+        </div>
       )}
       {/* MarketplaceBrowser stays mounted across tabs so the parent's top
           "重新加载" refresh signal reaches it even while the market tab is
@@ -113,6 +111,29 @@ export function InstalledConnectorsPanel({
         {marketplaceSlot ?? null}
       </div>
     </div>
+  )
+}
+
+function ConnectorGroup({
+  title,
+  empty,
+  children
+}: {
+  title: string
+  empty: string
+  children: ReactElement[]
+}): ReactElement {
+  return (
+    <section className="border-t border-ds-border-muted/70 first:border-t-0">
+      <h3 className="px-5 pt-4 pb-1 text-[11px] font-semibold tracking-[0.08em] text-ds-faint">
+        {title}
+      </h3>
+      {children.length === 0 ? (
+        <div className="px-5 pb-4 text-[13px] text-ds-faint">{empty}</div>
+      ) : (
+        <ul className="divide-y divide-ds-border-muted/70">{children}</ul>
+      )}
+    </section>
   )
 }
 

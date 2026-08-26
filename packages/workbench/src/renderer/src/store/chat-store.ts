@@ -51,6 +51,7 @@ import {
   isGoalComposerSlashCommand,
   shouldCreateGoalFromComposer
 } from '../lib/composer-slash-commands'
+import { loadMarketplaceKind } from '../components/extensions/marketplace-shared'
 import { createAppActions } from './chat-store-app-actions'
 import {
   hydrateBlockModelLabels,
@@ -99,7 +100,7 @@ import {
   syncTurnCompletionPoll as syncTurnCompletionPollImpl
 } from './chat-store-schedulers'
 
-export type { AppRoute, SettingsRouteSection } from './chat-store-types'
+export type { AppRoute, MarketplaceKind, SettingsRouteSection } from './chat-store-types'
 
 // Default-workspace path for Chats (temporary) threads. Main expands the
 // leading "~"; this keeps a brand-new chat from inheriting the active project
@@ -1371,6 +1372,7 @@ function buildThreadEventSink(
 
 export const useChatStore = create<ChatState>((set, get) => ({
   route: 'chat',
+  marketplaceKind: loadMarketplaceKind(),
   pluginHostRoute: 'chat',
   settingsSection: 'general',
   initialSetupOpen: false,

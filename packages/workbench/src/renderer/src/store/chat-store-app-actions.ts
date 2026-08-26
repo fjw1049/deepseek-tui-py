@@ -12,7 +12,16 @@ import {
 } from '../lib/git-commit-selection'
 import { applyShortcutsSettings } from '../lib/shortcuts-runtime'
 import { resolveActiveThreadWorkspace } from '../lib/workspace-path'
-import type { ChatState, ChatStoreGet, ChatStoreSet, LegacySettingsRouteSection, PluginHostRoute, SettingsRouteSection } from './chat-store-types'
+import { saveMarketplaceKind } from '../components/extensions/marketplace-shared'
+import type {
+  ChatState,
+  ChatStoreGet,
+  ChatStoreSet,
+  LegacySettingsRouteSection,
+  MarketplaceKind,
+  PluginHostRoute,
+  SettingsRouteSection
+} from './chat-store-types'
 
 type CreateAppActionsOptions = {
   set: ChatStoreSet
@@ -40,7 +49,9 @@ export function createAppActions(options: CreateAppActionsOptions): Pick<
   | 'setComposerReasoningEffort'
   | 'loadComposerModels'
   | 'setRoute'
+  | 'setMarketplaceKind'
   | 'openSettings'
+  | 'openMarketplace'
   | 'openPlugins'
   | 'openSkills'
   | 'openConnectors'
@@ -147,17 +158,24 @@ export function createAppActions(options: CreateAppActionsOptions): Pick<
 
     setRoute: (route) => set({ route }),
 
+    setMarketplaceKind: (kind: MarketplaceKind) => {
+      saveMarketplaceKind(kind)
+      set({ marketplaceKind: kind })
+    },
+
     openSettings: (section: SettingsRouteSection | LegacySettingsRouteSection = 'general') => {
       // Legacy deep links: ``mcp`` and ``skill`` previously opened settings
-      // tabs that have since migrated to the 应用拓展 pages. Redirect to the
-      // new routes instead of dropping the user on 通用 — old bookmarks and
-      // external callers (e.g. error banners) still pass these section ids.
+      // tabs that have since migrated to the 应用市场. Redirect instead of
+      // dropping the user on 通用 — old bookmarks and external callers
+      // (e.g. error banners) still pass these section ids.
       if (section === 'mcp') {
-        set({ route: 'connectors' })
+        saveMarketplaceKind('mcp')
+        set({ route: 'marketplace', marketplaceKind: 'mcp' })
         return
       }
       if (section === 'skill') {
-        set({ route: 'skills' })
+        saveMarketplaceKind('skills')
+        set({ route: 'marketplace', marketplaceKind: 'skills' })
         return
       }
       const normalized: SettingsRouteSection =
@@ -172,19 +190,31 @@ export function createAppActions(options: CreateAppActionsOptions): Pick<
       })
     },
 
-    openPlugins: (host?: PluginHostRoute) => {
+    openMarketplace: (kind?: MarketplaceKind) => {
+      if (kind) saveMarketplaceKind(kind)
       set({
-        route: 'plugins',
+        route: 'marketplace',
+        ...(kind ? { marketplaceKind: kind } : {})
+      })
+    },
+
+    openPlugins: (host?: PluginHostRoute) => {
+      saveMarketplaceKind('plugins')
+      set({
+        route: 'marketplace',
+        marketplaceKind: 'plugins',
         pluginHostRoute: host ?? 'chat'
       })
     },
 
     openSkills: () => {
-      set({ route: 'skills' })
+      saveMarketplaceKind('skills')
+      set({ route: 'marketplace', marketplaceKind: 'skills' })
     },
 
     openConnectors: () => {
-      set({ route: 'connectors' })
+      saveMarketplaceKind('mcp')
+      set({ route: 'marketplace', marketplaceKind: 'mcp' })
     },
 
     closeInitialSetup: () =>

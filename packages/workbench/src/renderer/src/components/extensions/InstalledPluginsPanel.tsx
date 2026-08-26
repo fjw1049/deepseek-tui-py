@@ -15,7 +15,7 @@ import {
   Trash2,
   X
 } from 'lucide-react'
-import { GlassSegmentedControl } from '../settings/GlassSegmentedControl'
+import { MarketplaceContentTabs } from './marketplace-ui'
 import {
   pluginDisplayDetail,
   pluginDisplaySummary,
@@ -239,7 +239,7 @@ export function InstalledPluginsPanel({
   const tabItems: Array<{ value: PluginTab; label: string }> = [
     { value: 'installed', label: t('skillTabInstalled') },
     ...(marketplaceEnabled
-      ? [{ value: 'marketplace' as const, label: t('pluginSysMarketplace') }]
+      ? [{ value: 'marketplace' as const, label: t('marketplaceTitle') }]
       : [])
   ]
 
@@ -260,19 +260,14 @@ export function InstalledPluginsPanel({
 
   return (
     <div className="ds-content-card overflow-hidden rounded-2xl">
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-ds-border-muted px-5 py-3.5">
-        {tabItems.length > 1 ? (
-          <GlassSegmentedControl
-            value={tab}
-            onChange={setTab}
-            items={tabItems}
-            segmentClassName="px-3 py-1.5"
-          />
-        ) : (
-          <div className="text-[15px] font-semibold text-ds-ink">{t('skillTabInstalled')}</div>
-        )}
-        {headerRight ? <div className="min-w-0">{headerRight}</div> : null}
-      </div>
+      {tabItems.length > 1 ? (
+        <MarketplaceContentTabs value={tab} onChange={setTab} items={tabItems} trailing={headerRight} />
+      ) : (
+        <div className="flex items-center justify-between gap-3 border-b border-ds-border-muted px-5 py-3">
+          <div className="text-[13px] font-medium text-ds-ink">{t('skillTabInstalled')}</div>
+          {headerRight ? <div className="min-w-0">{headerRight}</div> : null}
+        </div>
+      )}
 
       {tab === 'installed' ? (
         loading && plugins.length === 0 ? (

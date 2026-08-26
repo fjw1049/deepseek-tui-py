@@ -1,13 +1,12 @@
 import type { ReactElement } from 'react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
-import { Loader2, Plus, Search } from 'lucide-react'
+import { Loader2 } from 'lucide-react'
 import { WORKBENCH_FEATURES } from '@shared/workbench-features'
-import { useLightDismiss } from '../../hooks/use-light-dismiss'
 import { useChatStore } from '../../store/chat-store'
-import { useNoticeAutoDismiss, type Notice } from './marketplace-shared'
+import { useNoticeAutoDismiss, type MarketplacePanelProps, type Notice } from './marketplace-shared'
 import { NoticeView } from './marketplace-ui'
-import { ExtensionsToolbar } from './ExtensionsToolbar'
 import { ReloadHint } from './ReloadHint'
 import {
   InstalledPluginsPanel,
@@ -20,17 +19,19 @@ import {
  * Python runtime (`/v1/plugins`). Mounting via “Use plugin” injects `rules/`
  * as scenario guidance; skills load on demand; hooks and MCP stay inactive
  * until the plugin is trusted. Mutations apply on the next session. */
-export function PluginsView(): ReactElement {
+export function PluginsView({
+  query,
+  createOpen,
+  onCreateClose,
+  createHost
+}: MarketplacePanelProps): ReactElement {
   const { t } = useTranslation('common')
   const workspaceRoot = useChatStore((s) => s.workspaceRoot)
-  const [query, setQuery] = useState('')
   const [plugins, setPlugins] = useState<PluginRow[]>([])
   const [loading, setLoading] = useState(false)
   const [busyName, setBusyName] = useState<string | null>(null)
   const [notice, setNotice] = useState<Notice | null>(null)
   useNoticeAutoDismiss(notice, setNotice)
-  const [installOpen, setInstallOpen] = useState(false)
-  const installMenuRef = useRef<HTMLDivElement>(null)
   const [registry, setRegistry] = useState<RegistryEntry[] | null>(null)
   const [registryLoading, setRegistryLoading] = useState(false)
   const [registryError, setRegistryError] = useState(false)
@@ -38,12 +39,6 @@ export function PluginsView(): ReactElement {
   const [marketplaces, setMarketplaces] = useState<MarketplaceInfo[]>([])
   const [marketplacesLoading, setMarketplacesLoading] = useState(false)
   const [busyMarketplace, setBusyMarketplace] = useState<string | null>(null)
-
-  useLightDismiss({
-    open: installOpen,
-    onDismiss: () => setInstallOpen(false),
-    refs: [installMenuRef]
-  })
 
   const refresh = useCallback(
     async (): Promise<boolean> => {
@@ -331,75 +326,50 @@ export function PluginsView(): ReactElement {
   }, [registry, query])
 
   return (
-    <div className="ds-feature-page ds-plugin-page ds-page-scroll ds-no-drag min-h-0 flex-1 overflow-y-auto px-8 py-8">
-      <div className="mx-auto max-w-6xl">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <h1 className="ds-ext-page-title text-[24px] font-semibold tracking-[-0.02em] text-ds-ink">{t('extPlugins')}</h1>
-          <ExtensionsToolbar>
-            <div className="relative" ref={installMenuRef}>
-              <button
-                type="button"
-                onClick={() => setInstallOpen((open) => !open)}
-                className="ds-ext-primary-action inline-flex items-center justify-center gap-2 rounded-xl bg-accent px-3 py-2 text-[13px] font-semibold leading-none text-white shadow-sm transition hover:brightness-110"
-              >
-                <Plus className="h-4 w-4" strokeWidth={1.9} />
-                {t('pluginSysInstall')}
-              </button>
-              {installOpen ? (
-                <InstallPluginPopover
-                  onInstall={async (spec, trust) => {
-                    const ok = await handleInstall(spec, trust)
-                    if (ok) setInstallOpen(false)
-                    return ok
-                  }}
-                />
-              ) : null}
-            </div>
-          </ExtensionsToolbar>
-        </div>
-        <p className="mt-2 whitespace-nowrap text-[14px] leading-6 text-ds-muted">{t('pluginSysSubtitle')}</p>
+    <>
+      {createOpen && createHost
+        ? createPortal(
+            <InstallPluginPopover
+              onInstall={async (spec, trust) => {
+                const ok = await handleInstall(spec, trust)
+                if (ok) onCreateClose()
+                return ok
+              }}
+            />,
+            createHost
+          )
+        : null}
 
-        <label className="relative mt-6 block">
-          <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-ds-faint" />
-          <input
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder={t('pluginSysSearch')}
-            className="ds-ext-search h-11 w-full rounded-2xl border border-ds-border bg-ds-card pl-11 pr-4 text-[15px] text-ds-ink shadow-sm outline-none transition focus:border-accent/40 focus:ring-1 focus:ring-accent/30"
-          />
-        </label>
+      {notice ? <NoticeView notice={notice} /> : null}
 
-        {notice ? <NoticeView notice={notice} /> : null}
-
-        <div className="mt-6">
-          <InstalledPluginsPanel
-            plugins={filtered}
-            loading={loading}
-            busyName={busyName}
-            marketplaceEnabled={WORKBENCH_FEATURES.pluginMarketplace}
-            registry={registry}
-            registryLoading={registryLoading}
-            registryError={registryError}
-            filteredRegistry={filteredRegistry}
-            installedNames={installedNames}
-            installingSource={installingSource}
-            marketplaces={marketplaces}
-            marketplacesLoading={marketplacesLoading}
-            busyMarketplace={busyMarketplace}
-            query={query}
-            onTrust={handleTrust}
-            onUpdate={handleUpdate}
-            onRemove={handleRemove}
-            onMarketplaceInstall={(entry) => void handleMarketplaceInstall(entry)}
-            onMarketplaceAdd={handleMarketplaceAdd}
-            onMarketplaceUpdate={handleMarketplaceUpdate}
-            onMarketplaceRemove={handleMarketplaceRemove}
-            onMarketplacePluginInstall={(spec) => void handleMarketplacePluginInstall(spec)}
-            headerRight={<ReloadHint onReload={refresh} />}
-          />
-        </div>
+      <div className="mt-6">
+        <InstalledPluginsPanel
+          plugins={filtered}
+          loading={loading}
+          busyName={busyName}
+          marketplaceEnabled={WORKBENCH_FEATURES.pluginMarketplace}
+          registry={registry}
+          registryLoading={registryLoading}
+          registryError={registryError}
+          filteredRegistry={filteredRegistry}
+          installedNames={installedNames}
+          installingSource={installingSource}
+          marketplaces={marketplaces}
+          marketplacesLoading={marketplacesLoading}
+          busyMarketplace={busyMarketplace}
+          query={query}
+          onTrust={handleTrust}
+          onUpdate={handleUpdate}
+          onRemove={handleRemove}
+          onMarketplaceInstall={(entry) => void handleMarketplaceInstall(entry)}
+          onMarketplaceAdd={handleMarketplaceAdd}
+          onMarketplaceUpdate={handleMarketplaceUpdate}
+          onMarketplaceRemove={handleMarketplaceRemove}
+          onMarketplacePluginInstall={(spec) => void handleMarketplacePluginInstall(spec)}
+          headerRight={<ReloadHint onReload={refresh} />}
+        />
       </div>
-    </div>
+    </>
   )
 }
 

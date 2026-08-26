@@ -1,19 +1,15 @@
 import { useEffect, useState, type ReactElement } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
-  Blocks,
-  Cable,
   CalendarClock,
-  ChevronRight,
   Columns3,
   Command,
   MessageCircle,
   PanelLeftClose,
   Plus,
-  Puzzle,
   Search,
   Settings,
-  Sparkles
+  Store
 } from 'lucide-react'
 import type { NormalizedThread } from '../../agent/types'
 import { OPEN_SIDEBAR_SEARCH_EVENT } from '../../lib/shortcuts-runtime'
@@ -24,8 +20,6 @@ import { SidebarPinnedSection } from './SidebarPinnedSection'
 import { SidebarChatsSection } from './SidebarChatsSection'
 import { SettingsSidebarNav } from '../settings/SettingsSidebarNav'
 import { EmptyHomeLayoutToggle } from './EmptyHomeLayoutToggle'
-
-const EXTENSIONS_OPEN_KEY = 'deepseekgui.sidebar.extensionsOpen'
 
 type Props = {
   threads: NormalizedThread[]
@@ -41,14 +35,6 @@ type Props = {
   onNewChatInWorkspace: (workspaceRoot: string) => void
   onOpenSettings: (section?: SettingsRouteSection) => void
   onCollapseSidebar: () => void
-}
-
-function persistExtensionsOpen(open: boolean): void {
-  try {
-    window.localStorage.setItem(EXTENSIONS_OPEN_KEY, open ? '1' : '0')
-  } catch {
-    /* localStorage may be unavailable */
-  }
 }
 
 export function Sidebar({
@@ -68,9 +54,7 @@ export function Sidebar({
   const { t, i18n } = useTranslation('common')
   const route = useChatStore((s) => s.route)
   const setRoute = useChatStore((s) => s.setRoute)
-  const openPlugins = useChatStore((s) => s.openPlugins)
-  const openSkills = useChatStore((s) => s.openSkills)
-  const openConnectors = useChatStore((s) => s.openConnectors)
+  const openMarketplace = useChatStore((s) => s.openMarketplace)
   const workspaceRoot = useChatStore((s) => s.workspaceRoot)
   const chooseWorkspace = useChatStore((s) => s.chooseWorkspace)
   const hideWorkspace = useChatStore((s) => s.hideWorkspace)
@@ -85,21 +69,7 @@ export function Sidebar({
   const kanbanActive = route === 'kanban'
   const automationActive = route === 'automation'
   const channelsActive = route === 'channels'
-  const pluginsActive = route === 'plugins'
-  const skillsActive = route === 'skills'
-  const connectorsActive = route === 'connectors'
-  const extensionsActive = pluginsActive || skillsActive || connectorsActive
-  const [extensionsOpen, setExtensionsOpen] = useState<boolean>(() => {
-    if (typeof window === 'undefined') return false
-    if (window.localStorage.getItem(EXTENSIONS_OPEN_KEY) === '1') return true
-    return false
-  })
-
-  useEffect(() => {
-    if (!extensionsActive) return
-    setExtensionsOpen(true)
-    persistExtensionsOpen(true)
-  }, [extensionsActive])
+  const marketplaceActive = route === 'marketplace'
 
   useEffect(() => {
     const onOpenSearch = (): void => {
@@ -108,14 +78,6 @@ export function Sidebar({
     window.addEventListener(OPEN_SIDEBAR_SEARCH_EVENT, onOpenSearch)
     return () => window.removeEventListener(OPEN_SIDEBAR_SEARCH_EVENT, onOpenSearch)
   }, [])
-
-  const toggleExtensions = (): void => {
-    setExtensionsOpen((prev) => {
-      const next = !prev
-      persistExtensionsOpen(next)
-      return next
-    })
-  }
 
   return (
     <aside className="ds-drag ds-sidebar-shell ds-frosted relative flex h-full w-full shrink-0 flex-col px-3 pb-3">
@@ -162,47 +124,12 @@ export function Sidebar({
             />
 
             <SidebarLink
-              icon={<Blocks className="h-4 w-4" strokeWidth={1.9} />}
+              icon={<Store className="h-4 w-4" strokeWidth={1.9} />}
               label={t('extensions')}
-              onClick={toggleExtensions}
+              onClick={() => openMarketplace()}
               variant="flat"
-              trailing={
-                <ChevronRight
-                  className={`ds-sidebar-chevron h-3.5 w-3.5 shrink-0 text-ds-faint ${
-                    extensionsOpen ? 'ds-sidebar-chevron--open' : ''
-                  }`}
-                  strokeWidth={1.9}
-                />
-              }
+              active={marketplaceActive}
             />
-            {extensionsOpen ? (
-              <div className="ds-sidebar-subgroup flex flex-col gap-px">
-                <SidebarLink
-                  icon={<Puzzle className="h-4 w-4" strokeWidth={1.9} />}
-                  label={t('extPlugins')}
-                  onClick={() => openPlugins()}
-                  variant="flat"
-                  indent
-                  active={pluginsActive}
-                />
-                <SidebarLink
-                  icon={<Sparkles className="h-4 w-4" strokeWidth={1.9} />}
-                  label={t('extSkills')}
-                  onClick={() => openSkills()}
-                  variant="flat"
-                  indent
-                  active={skillsActive}
-                />
-                <SidebarLink
-                  icon={<Cable className="h-4 w-4" strokeWidth={1.9} />}
-                  label={t('extConnectors')}
-                  onClick={() => openConnectors()}
-                  variant="flat"
-                  indent
-                  active={connectorsActive}
-                />
-              </div>
-            ) : null}
 
             <SidebarLink
               icon={<CalendarClock className="h-4 w-4" strokeWidth={1.9} />}

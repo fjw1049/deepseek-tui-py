@@ -7,7 +7,7 @@ import {
   uniqueSkillSourcePaths,
   type SkillSourceTag
 } from '@shared/skill-source'
-import { GlassSegmentedControl } from '../settings/GlassSegmentedControl'
+import { MarketplaceContentTabs } from './marketplace-ui'
 import { SkillSourceStack } from './SkillSourceIcon'
 
 export type InstalledSkill = {
@@ -77,10 +77,7 @@ export function InstalledSkillsPanel({
 
   return (
     <div className="ds-content-card overflow-hidden rounded-2xl">
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-ds-border-muted px-5 py-3.5">
-        <GlassSegmentedControl value={tab} onChange={setTab} items={tabItems} segmentClassName="px-3 py-1.5" />
-        {headerRight ? <div className="min-w-0">{headerRight}</div> : null}
-      </div>
+      <MarketplaceContentTabs value={tab} onChange={setTab} items={tabItems} trailing={headerRight} />
 
       {tab === 'marketplace' ? null : loading ? (
         <div className="flex items-center gap-2 px-5 py-8 text-[13px] text-ds-muted">

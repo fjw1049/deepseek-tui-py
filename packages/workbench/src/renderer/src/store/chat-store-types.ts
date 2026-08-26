@@ -54,7 +54,7 @@ export type SettingsRouteSection =
   | 'archive'
 
 /** @deprecated Use `models` or `general`; kept for deep-link normalization.
- * `mcp`/`skill` moved to the 应用拓展 连接器/技能 pages; old deep-links fall back to `general`. */
+ * `mcp`/`skill` moved to the 应用市场 pages; old deep-links fall back to `general`. */
 export type LegacySettingsRouteSection =
   | SettingsRouteSection
   | 'agents'
@@ -62,12 +62,11 @@ export type LegacySettingsRouteSection =
   | 'claw'
   | 'mcp'
   | 'skill'
+export type MarketplaceKind = 'mcp' | 'skills' | 'plugins'
 export type AppRoute =
   | 'chat'
   | 'settings'
-  | 'plugins'
-  | 'skills'
-  | 'connectors'
+  | 'marketplace'
   | 'kanban'
   | 'automation'
   | 'channels'
@@ -80,6 +79,7 @@ export type ThreadWarmupState = {
 
 export type ChatState = {
   route: AppRoute
+  marketplaceKind: MarketplaceKind
   pluginHostRoute: PluginHostRoute
   settingsSection: SettingsRouteSection
   initialSetupOpen: boolean
@@ -149,9 +149,11 @@ export type ChatState = {
   setComposerReasoningEffort: (effort: string) => void
   loadComposerModels: () => Promise<void>
   setRoute: (r: AppRoute) => void
+  setMarketplaceKind: (kind: MarketplaceKind) => void
   setActivePlugin: (plugin: ActivePluginMeta | null) => void
   openCode: () => Promise<void>
   openSettings: (section?: SettingsRouteSection) => void
+  openMarketplace: (kind?: MarketplaceKind) => void
   openPlugins: (host?: PluginHostRoute) => void
   openSkills: () => void
   openConnectors: () => void

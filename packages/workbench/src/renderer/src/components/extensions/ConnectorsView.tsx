@@ -1,7 +1,7 @@
 import type { ReactElement } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
-import { FolderOpen, Plus, Search } from 'lucide-react'
 import { ensurePresetConnectors, presetConnectorTitle, withInstallLoadPolicy } from '../../lib/connector-groups'
 import {
   parseMcpRuntimeServers,
@@ -15,30 +15,37 @@ import {
   setMcpServerEnabled,
   type McpServerEntry
 } from '../../lib/mcp-json-merge'
-import { useLightDismiss } from '../../hooks/use-light-dismiss'
 import { reloadMcpWithRuntime } from '../../lib/settings-reload'
-import { loadInstalledPlugins, saveInstalledPlugins, storageKey, useNoticeAutoDismiss, type Notice } from './marketplace-shared'
+import {
+  loadInstalledPlugins,
+  saveInstalledPlugins,
+  storageKey,
+  useNoticeAutoDismiss,
+  type MarketplacePanelProps,
+  type Notice
+} from './marketplace-shared'
 import { NoticeView } from './marketplace-ui'
 import { InstalledConnectorsPanel, type ConnectorItem } from './InstalledConnectorsPanel'
-import { MediaCatalogPanel } from './MediaCatalogPanel'
 import { MEDIA_CATALOG } from './media-catalog'
 import { MarketplaceBrowser, type InstallOutcome } from './MarketplaceBrowser'
 import { AddMcpServerDialog } from './AddMcpServerDialog'
 import { ImportMcpJsonDialog } from './ImportMcpJsonDialog'
 import { resolveMcpInstall } from './modelscope-install'
-import { ExtensionsToolbar } from './ExtensionsToolbar'
 import { ReloadHint } from './ReloadHint'
 import type { MarketplaceItem } from '../../../../shared/ds-gui-api'
 
-export function ConnectorsView(): ReactElement {
+export function ConnectorsView({
+  query,
+  createOpen,
+  onCreateClose,
+  createHost
+}: MarketplacePanelProps): ReactElement {
   const { t } = useTranslation('common')
   const { t: tSettings } = useTranslation('settings')
-  const [query, setQuery] = useState('')
   const [installed, setInstalled] = useState<string[]>(() => loadInstalledPlugins())
   const [busyId, setBusyId] = useState<string | null>(null)
   const [notice, setNotice] = useState<Notice | null>(null)
   useNoticeAutoDismiss(notice, setNotice)
-  const [menuOpen, setMenuOpen] = useState(false)
   const [addOpen, setAddOpen] = useState(false)
   const [importOpen, setImportOpen] = useState(false)
   const [mcpConfigText, setMcpConfigText] = useState('')
@@ -48,20 +55,13 @@ export function ConnectorsView(): ReactElement {
   >([])
   // Bumped by the panel-header reload hint to force-refresh the ModelScope
   // market catalog in parallel with the local mcp.json reload (one click
-  // updates 默认 / 激活 / 媒体 / 市场四个 tab).
+  // updates 已安装 / 市场).
   const [marketRefreshSignal, setMarketRefreshSignal] = useState(0)
   // Serialize mcp.json read-modify-write operations. Without this, concurrent
   // installs from the marketplace (different items, each calling appendMcpServer)
   // race: both read the same baseline, the second write overwrites the first,
   // and the first server silently disappears from config.
   const mcpWriteLockRef = useRef<Promise<unknown>>(Promise.resolve())
-  const menuRef = useRef<HTMLDivElement>(null)
-
-  useLightDismiss({
-    open: menuOpen,
-    onDismiss: () => setMenuOpen(false),
-    refs: [menuRef]
-  })
 
   const withMcpWriteLock = useCallback(<T,>(task: () => Promise<T>): Promise<T> => {
     const run = mcpWriteLockRef.current.then(task, task)
@@ -121,7 +121,7 @@ export function ConnectorsView(): ReactElement {
 
   const reloadMcp = async (): Promise<boolean> => {
     // Bump the market catalog refresh signal alongside the local reload so one
-    // click updates all four tabs (默认 / 激活 / 媒体 / 市场).
+    // click updates 已安装 / 市场.
     setMarketRefreshSignal((n) => n + 1)
     try {
       const result = await reloadMcpWithRuntime(readMcpConfig)
@@ -136,12 +136,6 @@ export function ConnectorsView(): ReactElement {
       setNotice({ tone: 'error', message: e instanceof Error ? e.message : String(e) })
       return false
     }
-  }
-
-  const openConfigDir = async (): Promise<void> => {
-    if (typeof window.dsGui?.openMcpConfigDir !== 'function') return
-    const result = await window.dsGui.openMcpConfigDir()
-    if (!result.ok) setNotice({ tone: 'error', message: result.message ?? t('pluginActionFailed') })
   }
 
   const markInstalled = (key: string): void => {
@@ -204,35 +198,6 @@ export function ConnectorsView(): ReactElement {
         // live immediately, without forcing the user to click 重新加载.
         void reloadMcpWithRuntime(readMcpConfig).catch(() => undefined)
       })
-    },
-    [mcpLoaded, mcpConfigText, readMcpConfig, t, withMcpWriteLock]
-  )
-
-  /** Upsert for media catalog (allows updating API key / re-enabling). */
-  const upsertMcpServer = useCallback(
-    async (id: string, entry: McpServerEntry): Promise<void> => {
-      if (typeof window.dsGui?.setMcpConfigFile !== 'function') return
-      setBusyId(id)
-      setNotice(null)
-      try {
-        await withMcpWriteLock(async () => {
-          const content = mcpLoaded ? mcpConfigText : await readMcpConfig()
-          const next = mergeMcpServerIntoConfig(content, id, entry)
-          const result = await window.dsGui.setMcpConfigFile(next)
-          setMcpConfigText(next)
-          setMcpLoaded(true)
-          markInstalled(storageKey('mcp', id))
-          setNotice({
-            tone: 'success',
-            message: t('mediaCatalogSaved', { name: id, path: result.path })
-          })
-          void reloadMcpWithRuntime(readMcpConfig).catch(() => undefined)
-        })
-      } catch (e) {
-        setNotice({ tone: 'error', message: e instanceof Error ? e.message : String(e) })
-      } finally {
-        setBusyId(null)
-      }
     },
     [mcpLoaded, mcpConfigText, readMcpConfig, t, withMcpWriteLock]
   )
@@ -306,109 +271,55 @@ export function ConnectorsView(): ReactElement {
   )
 
   return (
-    <div className="ds-feature-page ds-plugin-page ds-page-scroll ds-no-drag min-h-0 flex-1 overflow-y-auto px-8 py-8">
-      <div className="mx-auto max-w-6xl">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <h1 className="ds-ext-page-title text-[24px] font-semibold tracking-[-0.02em] text-ds-ink">{t('extConnectors')}</h1>
-          <ExtensionsToolbar
-            menuItems={[
-              {
-                label: t('pluginManage'),
-                icon: <FolderOpen className="h-4 w-4" strokeWidth={1.9} />,
-                onClick: () => void openConfigDir()
-              }
-            ]}
-          >
-            <div className="relative" ref={menuRef}>
+    <>
+      {createOpen && createHost
+        ? createPortal(
+            <div className="ds-popover-surface absolute right-0 top-full z-20 mt-1.5 w-52 overflow-hidden rounded-xl py-1 shadow-lg">
               <button
                 type="button"
-                onClick={() => setMenuOpen((value) => !value)}
-                className="ds-ext-primary-action inline-flex items-center justify-center gap-2 rounded-xl bg-accent px-3 py-2 text-center text-[13px] font-semibold leading-none text-white shadow-sm transition hover:brightness-110"
+                onClick={() => {
+                  onCreateClose()
+                  setAddOpen(true)
+                }}
+                className="ds-ext-menu-item flex w-full items-center px-3.5 py-2 text-left text-[13px] text-ds-ink transition hover:bg-ds-subtle/60"
               >
-                <Plus className="h-4 w-4" strokeWidth={1.9} />
-                {t('pluginCreate')}
+                {t('connectorAddMcp')}
               </button>
-              {menuOpen ? (
-                <div className="ds-popover-surface absolute right-0 top-full z-20 mt-1.5 w-52 overflow-hidden rounded-xl py-1 shadow-lg">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setMenuOpen(false)
-                      setAddOpen(true)
-                    }}
-                    className="ds-ext-menu-item flex w-full items-center px-3.5 py-2 text-left text-[13px] text-ds-ink transition hover:bg-ds-subtle/60"
-                  >
-                    {t('connectorAddMcp')}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setMenuOpen(false)
-                      setImportOpen(true)
-                    }}
-                    className="ds-ext-menu-item flex w-full items-center px-3.5 py-2 text-left text-[13px] text-ds-ink transition hover:bg-ds-subtle/60"
-                  >
-                    {t('connectorImportJson')}
-                  </button>
-                </div>
-              ) : null}
-            </div>
-          </ExtensionsToolbar>
-        </div>
+              <button
+                type="button"
+                onClick={() => {
+                  onCreateClose()
+                  setImportOpen(true)
+                }}
+                className="ds-ext-menu-item flex w-full items-center px-3.5 py-2 text-left text-[13px] text-ds-ink transition hover:bg-ds-subtle/60"
+              >
+                {t('connectorImportJson')}
+              </button>
+            </div>,
+            createHost
+          )
+        : null}
 
-        <p className="mt-2 max-w-2xl text-[14px] leading-6 text-ds-muted">{t('connectorsIntro')}</p>
+      {notice ? <NoticeView notice={notice} /> : null}
 
-        <label className="relative mt-6 block">
-          <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-ds-faint" />
-          <input
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            className="ds-ext-search h-11 w-full rounded-2xl border border-ds-border bg-ds-card pl-11 pr-4 text-[15px] text-ds-ink shadow-sm outline-none transition focus:border-accent/40 focus:ring-1 focus:ring-accent/30"
-            placeholder={t('connectorsSearch')}
-          />
-        </label>
-
-        {notice ? <NoticeView notice={notice} /> : null}
-
-        <div className="mt-6">
-          <InstalledConnectorsPanel
-            connectors={connectors}
-            loading={!mcpLoaded}
-            busyId={busyId}
-            onToggle={(connector, enabled) => void toggleConnector(connector, enabled)}
-            onDelete={(connector) => void deleteConnector(connector)}
-            headerRight={<ReloadHint onReload={reloadMcp} />}
-            mediaSlot={
-              <MediaCatalogPanel
-                mcpConfigText={mcpConfigText}
-                busyId={busyId}
-                onConfigure={(id, entry) => upsertMcpServer(id, entry)}
-                onToggle={(id, enabled) =>
-                  void toggleConnector(
-                    {
-                      id,
-                      name: id,
-                      summary: '',
-                      enabled: !enabled,
-                      loadPolicy: 'on_focus',
-                      catalog: 'media'
-                    },
-                    enabled
-                  )
-                }
-              />
-            }
-            marketplaceSlot={
-              <MarketplaceBrowser
-                kind="mcp"
-                query={query}
-                isInstalled={isMarketplaceInstalled}
-                onInstall={installFromMarketplace}
-                refreshSignal={marketRefreshSignal}
-              />
-            }
-          />
-        </div>
+      <div className="mt-6">
+        <InstalledConnectorsPanel
+          connectors={connectors}
+          loading={!mcpLoaded}
+          busyId={busyId}
+          onToggle={(connector, enabled) => void toggleConnector(connector, enabled)}
+          onDelete={(connector) => void deleteConnector(connector)}
+          headerRight={<ReloadHint onReload={reloadMcp} />}
+          marketplaceSlot={
+            <MarketplaceBrowser
+              kind="mcp"
+              query={query}
+              isInstalled={isMarketplaceInstalled}
+              onInstall={installFromMarketplace}
+              refreshSignal={marketRefreshSignal}
+            />
+          }
+        />
       </div>
 
       <AddMcpServerDialog
@@ -423,6 +334,6 @@ export function ConnectorsView(): ReactElement {
         isDuplicate={isDuplicate}
         onSubmit={appendMcpServer}
       />
-    </div>
+    </>
   )
 }

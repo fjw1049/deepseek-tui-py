@@ -88,14 +88,8 @@ import {
 } from './right-sidebar/WorkbenchRightSidebar'
 import { IdeWorkspaceLayout } from './ide/IdeWorkspaceLayout'
 
-const SkillsView = lazy(() =>
-  import('./extensions/SkillsView').then((module) => ({ default: module.SkillsView }))
-)
-const ConnectorsView = lazy(() =>
-  import('./extensions/ConnectorsView').then((module) => ({ default: module.ConnectorsView }))
-)
-const PluginsView = lazy(() =>
-  import('./extensions/PluginsView').then((module) => ({ default: module.PluginsView }))
+const MarketplaceView = lazy(() =>
+  import('./extensions/MarketplaceView').then((module) => ({ default: module.MarketplaceView }))
 )
 const AutomationCenter = lazy(() =>
   import('./automation/AutomationCenter').then((module) => ({ default: module.AutomationCenter }))
@@ -1435,22 +1429,16 @@ export function Workbench(): ReactElement {
 
       <main
         className={`ds-workbench-main ds-drag ds-stage-surface relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden ${
-          route === 'plugins' || route === 'skills' || route === 'connectors' ? 'px-0' : ''
+          route === 'marketplace' ? 'px-0' : ''
         }`}
       >
         {route === 'settings' ? (
           <Suspense fallback={<div className="h-full bg-transparent" />}>
             <SettingsView />
           </Suspense>
-        ) : route === 'plugins' || route === 'skills' || route === 'connectors' ? (
+        ) : route === 'marketplace' ? (
           <Suspense fallback={<div className="h-full bg-transparent" />}>
-            {route === 'skills' ? (
-              <SkillsView />
-            ) : route === 'connectors' ? (
-              <ConnectorsView />
-            ) : (
-              <PluginsView />
-            )}
+            <MarketplaceView />
           </Suspense>
         ) : route === 'kanban' ? (
           <Suspense fallback={<div className="h-full bg-transparent" />}>
