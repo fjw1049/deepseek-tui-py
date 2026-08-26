@@ -261,7 +261,6 @@ export function FloatingComposer({
   onCompact,
   onFork,
   onOpenDiff,
-  stageCentered = false,
   useChatStageWidth = true,
   compactChrome = false,
   petSlashCommands = [],
@@ -1408,7 +1407,7 @@ export function FloatingComposer({
     <div
       className={`pointer-events-auto w-full ${
         useChatStageWidth ? 'ds-chat-stage px-3 sm:px-4' : 'max-w-none px-0'
-      } ${stageCentered ? 'shrink-0 pb-1 pt-0' : compactChrome ? 'pb-0 pt-0' : 'pb-0 pt-1'}`}
+      } ${compactChrome ? 'pb-0 pt-0' : 'shrink-0 pb-1 pt-0'}`}
       onDragOver={(event) => {
         if (!event.dataTransfer.types.includes(WORKSPACE_PATH_DRAG_MIME)) return
         event.preventDefault()
@@ -1625,9 +1624,7 @@ export function FloatingComposer({
             className={`ds-composer-shell ds-chat-composer flex w-full flex-col transition ${
               compactChrome
                 ? 'ds-composer-shell--compact gap-0.5 px-2 py-1'
-                : stageCentered
-                  ? 'ds-composer-empty ds-frosted relative z-10 gap-1.5 px-4 py-2.5 sm:px-5'
-                  : 'relative z-10 gap-1.5 px-2 py-2.5'
+                : 'ds-composer-empty ds-frosted relative z-10 gap-1.5 px-4 py-2.5 sm:px-5'
             } ${focused ? 'ds-chat-composer-focus' : ''}`}
         >
           {attachments.length > 0 ? (
@@ -1792,10 +1789,10 @@ export function FloatingComposer({
 
           <textarea
             ref={textareaRef}
-            rows={stageCentered ? 1 : 1}
+            rows={1}
             className={`ds-composer-input ds-no-drag block min-w-0 w-full resize-none break-words bg-transparent text-ds-ink placeholder:text-ds-faint focus:outline-none [overflow-wrap:anywhere] ${
-              stageCentered ? 'px-2' : 'px-1'
-            } ${compactChrome ? 'py-0.5' : 'py-1.5'} ${canCompose ? '' : 'opacity-80'}`}
+              compactChrome ? 'px-1 py-0.5' : 'px-2 py-1.5'
+            } ${canCompose ? '' : 'opacity-80'}`}
             placeholder={
               previewPicks.length > 0 ? t('composerPreviewPickPlaceholder') : placeholder
             }
@@ -1880,7 +1877,7 @@ export function FloatingComposer({
             data-composer-footer
             data-composer-footer-tier={footerTier}
             className={`flex flex-nowrap items-center ${
-              compactChrome ? 'gap-1 px-1' : stageCentered ? 'gap-1.5 px-2' : 'gap-1.5 px-1'
+              compactChrome ? 'gap-1 px-1' : 'gap-1.5 px-2'
             }`}
           >
             {/* Left chrome: progressive hide via footerPlan (plus last-but-one). */}
@@ -2573,7 +2570,7 @@ export function FloatingComposer({
               ) : null}
             </div>
           </div>
-          {!stageCentered ? (
+          {compactChrome ? (
             <WorkspaceContextBar
               workspaceRoot={effectiveWorkspaceRoot}
               variant="embedded"
@@ -2581,7 +2578,7 @@ export function FloatingComposer({
           ) : null}
         </div>
       </div>
-      {stageCentered ? (
+      {!compactChrome ? (
         <WorkspaceContextBar workspaceRoot={effectiveWorkspaceRoot} />
       ) : null}
       {!compactChrome && !runtimeReady ? (

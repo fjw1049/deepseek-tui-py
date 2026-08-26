@@ -13,7 +13,7 @@ import { ProjectContextPicker } from './ProjectContextPicker'
 
 type Props = {
   workspaceRoot: string
-  /** `tray` tucks under the empty-stage card. `embedded` sits inside the conversation shell. */
+  /** `tray` tucks under the composer card (home + conversation). `embedded` is IDE compact only. */
   variant?: 'tray' | 'embedded'
 }
 

@@ -1106,7 +1106,7 @@ samp {
     0 0 0 1px color-mix(in srgb, var(--ds-accent) 18%, transparent);
 }
 
-/* Empty-stage composer: compact card under the hero. */
+/* Shared composer card (home + conversation). Compact IDE rail opts out. */
 .ds-composer-empty.ds-chat-composer {
   border-radius: 1.2rem;
   min-height: 96px;
@@ -1116,8 +1116,7 @@ samp {
 }
 
 /* Context tray tucked under the composer (project | Local | branch).
-   Material reads as a secondary layer under the solid composer — translucent,
-   light-catching top edge, soft depth (Apple materials / hierarchy). */
+   Home and conversation share this layer so the silhouette stays one card + tray. */
 .ds-workspace-context-bar {
   /* Cursor-style tray: a *gray* tone (not white) so it visibly reads as a
      secondary layer tucked behind the white composer card. */
