@@ -1,11 +1,9 @@
 import {
-  useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
   useState,
-  type CSSProperties,
   type ReactElement
 } from 'react'
 import { createPortal } from 'react-dom'
@@ -95,7 +93,7 @@ export function ContextUsageMeter({
   const [open, setOpen] = useState(false)
   const [breakdown, setBreakdown] = useState<ContextBreakdownJson | null>(null)
   const [liveBreakdown, setLiveBreakdown] = useState(false)
-  const [panelStyle, setPanelStyle] = useState<CSSProperties>({})
+  const [portalHost, setPortalHost] = useState<Element | null>(null)
   const wrapRef = useRef<HTMLDivElement | null>(null)
   const buttonRef = useRef<HTMLButtonElement | null>(null)
   const panelRef = useRef<HTMLDivElement | null>(null)
@@ -143,28 +141,14 @@ export function ContextUsageMeter({
     return null
   }, [effectiveBreakdown])
 
-  const updatePanelPosition = useCallback((): void => {
-    const button = buttonRef.current
-    if (!button) return
-    const rect = button.getBoundingClientRect()
-    setPanelStyle({
-      position: 'fixed',
-      right: Math.max(12, window.innerWidth - rect.right),
-      bottom: Math.max(12, window.innerHeight - rect.top + 8),
-      zIndex: 120
-    })
-  }, [])
-
   useLayoutEffect(() => {
-    if (!open) return
-    updatePanelPosition()
-    window.addEventListener('resize', updatePanelPosition)
-    window.addEventListener('scroll', updatePanelPosition, true)
-    return () => {
-      window.removeEventListener('resize', updatePanelPosition)
-      window.removeEventListener('scroll', updatePanelPosition, true)
+    if (!open) {
+      setPortalHost(null)
+      return
     }
-  }, [open, updatePanelPosition])
+    const shell = buttonRef.current?.closest('.ds-composer-shell')
+    setPortalHost(shell?.parentElement ?? shell ?? document.body)
+  }, [open])
 
   useLightDismiss({
     open,
@@ -220,15 +204,19 @@ export function ContextUsageMeter({
   const barUsedPct =
     windowTokens > 0 ? Math.min(100, (barUsedTokens / windowTokens) * 100) : 0
 
+  const anchoredToComposer = portalHost != null && portalHost !== document.body
   const panel =
-    open && typeof document !== 'undefined'
+    open && portalHost
       ? createPortal(
           <div
             ref={panelRef}
             role="dialog"
             aria-label={t('contextBreakdownTitle')}
-            style={panelStyle}
-            className="w-[min(520px,calc(100vw-24px))] overflow-hidden rounded-[12px] border border-ds-border bg-ds-elevated px-5 py-4 text-[12px] leading-[1.5] text-ds-muted shadow-[0_24px_70px_rgba(44,55,78,0.18)] backdrop-blur-xl dark:shadow-[0_30px_80px_rgba(0,0,0,0.42)]"
+            className={`overflow-hidden rounded-[12px] border border-ds-border bg-ds-elevated px-5 py-4 text-[12px] leading-[1.5] text-ds-muted shadow-[0_24px_70px_rgba(44,55,78,0.18)] backdrop-blur-xl dark:shadow-[0_30px_80px_rgba(0,0,0,0.42)] ${
+              anchoredToComposer
+                ? 'absolute inset-x-0 bottom-full z-[120] mb-1.5 w-full'
+                : 'fixed bottom-12 left-3 z-[120] w-[min(520px,calc(100vw-24px))]'
+            }`}
             onMouseDown={(event) => event.stopPropagation()}
           >
             <div className="flex items-start justify-between gap-4">
@@ -308,7 +296,7 @@ export function ContextUsageMeter({
               </p>
             ) : null}
           </div>,
-          document.body
+          portalHost
         )
       : null
 
