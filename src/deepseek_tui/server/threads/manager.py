@@ -3153,6 +3153,7 @@ class RuntimeThreadManager:
             reconcile_to_ledger,
         )
         from deepseek_tui.workspace.mutation_ledger import (
+            MutationSource,
             TurnMutationLedger,
             mutation_from_metadata,
         )
@@ -3179,29 +3180,52 @@ class RuntimeThreadManager:
         pending_turn_diffs: list[dict[str, Any]] = []
         mutation_ledger = TurnMutationLedger(turn_id, throttle_ms=150)
         mutation_lock = threading.Lock()
+        final_turn_diff: dict[str, Any] | None = None
 
         def _mutation_sink(mut: dict[str, Any]) -> None:
             # Subagent tasks may call this concurrently; guard ledger + queue.
             agent_id = mut.get("agent_id") if isinstance(mut.get("agent_id"), str) else None
+            before = mut.get("_before_content")
+            after = mut.get("_after_content")
+            has_contents = (
+                "_before_content" in mut
+                and "_after_content" in mut
+                and (before is None or isinstance(before, str))
+                and (after is None or isinstance(after, str))
+            )
+            public_mut = {
+                key: value for key, value in mut.items() if not key.startswith("_")
+            }
+            source_raw = public_mut.get("source")
+            source_fallback: MutationSource = (
+                source_raw
+                if source_raw
+                in (
+                    "edit_file",
+                    "write_file",
+                    "shell_allowlist",
+                    "shell_detected",
+                    "git_reconcile",
+                )
+                else "write_file"
+            )
             with mutation_lock:
                 for m in mutation_from_metadata(
-                    {"mutation": mut, "path": mut.get("path")},
+                    {"mutation": public_mut, "path": public_mut.get("path")},
                     turn_id=turn_id,
                     agent_id=agent_id,
-                    source_fallback=(
-                        mut.get("source")
-                        if mut.get("source")
-                        in (
-                            "edit_file",
-                            "write_file",
-                            "shell_allowlist",
-                            "shell_detected",
-                            "git_reconcile",
-                        )
-                        else "write_file"
-                    ),
+                    source_fallback=source_fallback,
                 ):
-                    snap = mutation_ledger.commit(m, emit=False)
+                    snap = (
+                        mutation_ledger.commit(
+                            m,
+                            emit=False,
+                            before_content=before,
+                            after_content=after,
+                        )
+                        if has_contents
+                        else mutation_ledger.commit(m, emit=False)
+                    )
                     pending_turn_diffs.append(snap.to_dict())
 
         async def flush_turn_diffs() -> None:
@@ -3233,8 +3257,13 @@ class RuntimeThreadManager:
                     for entry in listed:
                         if isinstance(entry, dict) and isinstance(entry.get("path"), str):
                             skip.add(entry["path"])
-            for mut in await detect_shell_mutations(snapshot, skip_paths=skip):
-                self.checkpoints.record_out_of_band(turn_id, mut["path"])
+            for mut in await detect_shell_mutations(
+                snapshot, skip_paths=skip, include_contents=True
+            ):
+                public_mut = {
+                    key: value for key, value in mut.items() if not key.startswith("_")
+                }
+                self.checkpoints.record_out_of_band(turn_id, public_mut["path"])
                 now = datetime.now(timezone.utc)
                 sub_item_id = f"item_{uuid.uuid4().hex[:8]}"
                 sub_item = TurnItemRecord(
@@ -3243,13 +3272,13 @@ class RuntimeThreadManager:
                     kind=TurnItemKind.FILE_CHANGE,
                     status=TurnItemLifecycleStatus.COMPLETED,
                     summary=summarize_text(
-                        f"{tool_name}: {mut['op']} {mut['path']}", SUMMARY_LIMIT
+                        f"{tool_name}: {public_mut['op']} {public_mut['path']}", SUMMARY_LIMIT
                     ),
-                    detail=mut["unified_diff"],
+                    detail=public_mut["unified_diff"],
                     metadata={
                         "tool_name": tool_name,
-                        "path": mut["path"],
-                        "mutation": mut,
+                        "path": public_mut["path"],
+                        "mutation": public_mut,
                     },
                     started_at=now,
                     ended_at=now,
@@ -3261,14 +3290,12 @@ class RuntimeThreadManager:
                     thread_id, turn_id, sub_item_id, "item.started",
                     {"item": sub_item.model_dump(mode="json"), "tool": tool_ref},
                 )
+                _mutation_sink(mut)
+                await flush_turn_diffs()
                 await self._emit_event(
                     thread_id, turn_id, sub_item_id, "item.completed",
                     {"item": sub_item.model_dump(mode="json")},
                 )
-                # Committing to the ledger also covers the path for turn-end
-                # reconcile_to_ledger (covered_paths), so the same disk delta
-                # is not counted a second time there.
-                _mutation_sink(mut)
 
         async with self._active_lock:
             _state = self._active.get(thread_id)
@@ -3979,6 +4006,10 @@ class RuntimeThreadManager:
                         keep = narration_cfg.include_recent_tool_results * 3
                         if len(recent_tool_summaries) > keep:
                             del recent_tool_summaries[:-keep]
+                    # File tools report their mutation while executing. Publish
+                    # that snapshot before item.completed so the live strip can
+                    # switch sources without disappearing for one event frame.
+                    await flush_turn_diffs()
                     event_name = (
                         "item.completed" if item.status == TurnItemLifecycleStatus.COMPLETED
                         else "item.failed"
@@ -4004,9 +4035,6 @@ class RuntimeThreadManager:
                             )
                         except Exception:
                             logger.debug("shell_watch_detect_failed", exc_info=True)
-                    # Main-agent write tools also report via on_file_mutation;
-                    # flush any turn.diff.updated snapshots queued by the sink.
-                    await flush_turn_diffs()
 
             elif isinstance(event, ApprovalRequiredEvent):
                 from deepseek_tui.tools.approval import (
@@ -4413,8 +4441,9 @@ class RuntimeThreadManager:
                             turn_id, fm.path, uncertain=True
                         )
                 final_snap = mutation_ledger.mark_complete(emit=False)
+                final_turn_diff = final_snap.to_dict()
                 if final_snap.totals.get("files", 0) > 0 or mutation_ledger.revision > 0:
-                    pending_turn_diffs.append(final_snap.to_dict())
+                    pending_turn_diffs.append(final_turn_diff)
                 await flush_turn_diffs()
             except Exception:
                 logger.debug(
@@ -4524,6 +4553,7 @@ class RuntimeThreadManager:
             turn.duration_ms = duration_ms(turn.started_at, ended_at)
         turn.usage = turn_usage
         turn.error = turn_error
+        turn.diff_snapshot = final_turn_diff
         if turn_usage is not None:
             thread_for_usage = self.store.load_thread(thread_id)
             self._record_turn_model_usage(

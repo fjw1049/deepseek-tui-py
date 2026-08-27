@@ -118,6 +118,9 @@ class TurnRecord(BaseModel):
     error: str | None = None
     item_ids: list[str] = Field(default_factory=list)
     steer_count: int = 0
+    # Authoritative per-turn file delta. Persisted so historical receipts do
+    # not fall back to lossy per-tool reconstruction after reload.
+    diff_snapshot: dict[str, Any] | None = None
 
 
 class TurnItemRecord(BaseModel):

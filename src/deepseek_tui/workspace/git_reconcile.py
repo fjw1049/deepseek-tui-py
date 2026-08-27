@@ -51,14 +51,14 @@ async def reconcile_to_ledger(
     *,
     exclude_paths: Collection[str] = (),
 ) -> list[FileMutation]:
-    """Record disk deltas *introduced this turn*, and refresh covered files.
+    """Record otherwise-unattributed disk deltas introduced this turn.
 
     New dirty paths (not already in the ledger, not dirty at turn start)
     are appended as ``git_reconcile`` mutations.
 
-    Paths already in the ledger keep their attribution, but the folded
-    snapshot is replaced with net ``git diff HEAD`` so last-hunk tool
-    stats do not under-count the working tree.
+    Paths already in the ledger keep their turn-start-to-current net diff.
+    Replacing those with ``git diff HEAD`` would mix pre-turn workspace dirt
+    into a turn receipt.
 
     ``exclude_paths`` fences off paths known to belong to someone else
     (e.g. other active turns in the same workspace) so they are never
@@ -79,6 +79,8 @@ async def reconcile_to_ledger(
         norm = path.replace("\\", "/")
         if norm in pre_dirty or norm in excluded:
             continue
+        if norm in covered:
+            continue
         stats = count_diff_stats(unified)
         op = "create" if "--- /dev/null" in unified else "update"
         if "\n+++ /dev/null" in unified or unified.rstrip().endswith("+++ /dev/null"):
@@ -94,18 +96,15 @@ async def reconcile_to_ledger(
             source="git_reconcile",
             status="applied",
         )
-        already = norm in covered
         ledger.commit(mut, emit=False)
-        if already:
-            # Tool edits store last-hunk +/-; replace with net vs HEAD so the
-            # turn fold-up matches git/inspector.
-            continue
         added.append(mut)
         covered.add(norm)
 
     for path in untracked:
         norm = path.replace("\\", "/")
         if norm in pre_dirty or norm in excluded:
+            continue
+        if norm in covered:
             continue
         try:
             content = (root / norm).read_text(encoding="utf-8")
@@ -123,10 +122,7 @@ async def reconcile_to_ledger(
             source="git_reconcile",
             status="applied",
         )
-        already = norm in covered
         ledger.commit(mut, emit=False)
-        if already:
-            continue
         added.append(mut)
         covered.add(norm)
 

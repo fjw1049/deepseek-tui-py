@@ -129,6 +129,16 @@ async def test_pre_dirty_file_reports_only_later_change(git_repo: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_optional_contents_support_turn_net_diff(git_repo: Path) -> None:
+    snapshot = await capture_shell_snapshot(git_repo)
+    (git_repo / "tracked.py").write_text("v2\n", encoding="utf-8")
+
+    mutations = await detect_shell_mutations(snapshot, include_contents=True)
+    assert mutations[0]["_before_content"] == "v1\n"
+    assert mutations[0]["_after_content"] == "v2\n"
+
+
+@pytest.mark.asyncio
 async def test_no_change_yields_nothing(git_repo: Path) -> None:
     (git_repo / "tracked.py").write_text("dirty\n", encoding="utf-8")
     snapshot = await capture_shell_snapshot(git_repo)

@@ -124,7 +124,14 @@ export type ActivePluginMeta = {
 }
 
 export type ChatBlock =
-  | { kind: 'user'; id: string; createdAt?: string; text: string; modelLabel?: string }
+  | {
+      kind: 'user'
+      id: string
+      createdAt?: string
+      text: string
+      modelLabel?: string
+      turnId?: string
+    }
   | {
       kind: 'assistant'
       id: string
@@ -404,6 +411,7 @@ export interface AgentProvider {
     threadStatus?: string
     latestTurnId?: string
     latestUserMessageId?: string
+    turnDiffByTurnId?: Record<string, import('../lib/turn-mutation-view').TurnDiffSnapshot>
     /** Latest mounted-plugin state derived from persisted items. */
     activePlugin?: ActivePluginMeta | null
     goal?: GoalSnapshotJson | null

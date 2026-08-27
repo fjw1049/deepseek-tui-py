@@ -212,7 +212,8 @@ export function upsertUserBlock(blocks: ChatBlock[], ev: UserMessageEventPayload
     id: ev.itemId,
     createdAt: ev.createdAt,
     text: ev.text,
-    ...(ev.modelLabel ? { modelLabel: ev.modelLabel } : {})
+    ...(ev.modelLabel ? { modelLabel: ev.modelLabel } : {}),
+    ...(ev.turnId ? { turnId: ev.turnId } : {})
   }
   const existingIndex = blocks.findIndex((block) => block.kind === 'user' && block.id === ev.itemId)
   if (existingIndex < 0) return [...blocks, nextBlock]
@@ -232,7 +233,8 @@ export function reconcileOptimisticUserBlock(
   optimisticId: string,
   runtimeId: string,
   fallbackText?: string,
-  modelLabel?: string
+  modelLabel?: string,
+  turnId?: string
 ): ChatBlock[] {
   return blocks.map((block) => {
     if (block.kind !== 'user' || block.id !== optimisticId) return block
@@ -240,7 +242,8 @@ export function reconcileOptimisticUserBlock(
       ...block,
       id: runtimeId,
       ...(fallbackText && !block.text.trim() ? { text: fallbackText } : {}),
-      ...(modelLabel && !block.modelLabel ? { modelLabel } : {})
+      ...(modelLabel && !block.modelLabel ? { modelLabel } : {}),
+      ...(turnId ? { turnId } : {})
     }
   })
 }

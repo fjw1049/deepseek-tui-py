@@ -54,7 +54,7 @@ import {
   type DiffStats
 } from '../../lib/diff-stats'
 import {
-  resolveLatestTurnDiffId,
+  resolveTurnDiffId,
   toolBlocksFromTurnSummary,
   turnSummaryFromSources,
   type TurnDiffSnapshot
@@ -282,7 +282,6 @@ export function MessageTimeline({
   const lastCompletedTurnId = useChatStore((s) => s.lastCompletedTurnId)
   const turnDiffByTurnId = useChatStore((s) => s.turnDiffByTurnId)
   const currentTurnUserId = useChatStore((s) => s.currentTurnUserId)
-  const latestTurnDiffId = resolveLatestTurnDiffId(currentTurnId, lastCompletedTurnId)
   const turnStartedAtByUserId = useChatStore((s) => s.turnStartedAtByUserId)
   const turnDurationByUserId = useChatStore((s) => s.turnDurationByUserId)
   const turnReasoningFirstAtByUserId = useChatStore((s) => s.turnReasoningFirstAtByUserId)
@@ -713,6 +712,12 @@ export function MessageTimeline({
               : undefined
           const turnPending = turnHasPendingRuntimeWork(turn)
           const isLatestTurn = index === visibleTurns.length - 1
+          const turnDiffId = resolveTurnDiffId(
+            turn.user?.turnId,
+            isLatestTurn,
+            currentTurnId,
+            lastCompletedTurnId
+          )
           const hasLiveStream = isLatestTurn && !!(liveReasoning.trim() || live.trim())
           const processing = (busy && isLatestTurn) || turnPending || hasLiveStream
           return (
@@ -729,14 +734,14 @@ export function MessageTimeline({
               onOpenWorkspaceFile={onOpenWorkspaceFile}
               viewportRef={containerRef}
               turnDiffSnapshot={
-                isLatestTurn && latestTurnDiffId
-                  ? turnDiffByTurnId[latestTurnDiffId]
+                turnDiffId
+                  ? turnDiffByTurnId[turnDiffId]
                   : undefined
               }
-              turnDiffTurnId={isLatestTurn ? latestTurnDiffId : null}
+              turnDiffTurnId={turnDiffId}
               turnDiffRevision={
-                isLatestTurn && latestTurnDiffId
-                  ? (turnDiffByTurnId[latestTurnDiffId]?.revision ?? 0)
+                turnDiffId
+                  ? (turnDiffByTurnId[turnDiffId]?.revision ?? 0)
                   : 0
               }
             />

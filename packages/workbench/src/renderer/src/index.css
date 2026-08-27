@@ -6717,7 +6717,7 @@ html.ds-light-dismiss-active .ds-drag {
 
 .pet-mascot-shell {
   align-self: flex-end;
-  margin-bottom: -3px;
+  margin-bottom: 0;
   margin-right: clamp(12px, 4vw, 48px);
   width: min(30%, 280px);
   min-width: 168px;

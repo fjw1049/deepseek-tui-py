@@ -7,7 +7,11 @@ import uuid
 from dataclasses import asdict, dataclass, field
 from typing import Any, Callable, Literal
 
-from deepseek_tui.workspace.diff_synth import count_diff_stats, truncate_unified_diff
+from deepseek_tui.workspace.diff_synth import (
+    count_diff_stats,
+    synthesize_unified_diff,
+    truncate_unified_diff,
+)
 
 MutationSource = Literal[
     "edit_file",
@@ -78,6 +82,15 @@ class TurnDiffSnapshot:
             "merged_unified_diff": self.merged_unified_diff,
             "complete": self.complete,
         }
+
+
+@dataclass(slots=True)
+class _NetFileState:
+    before_content: str | None
+    after_content: str | None
+
+
+_CONTENT_UNKNOWN = object()
 
 
 def mutation_to_dict(mutation: FileMutation) -> dict[str, Any]:
@@ -217,6 +230,7 @@ class TurnMutationLedger:
         self._on_snapshot = on_snapshot
         self._throttle_ms = max(0, throttle_ms)
         self._history: list[FileMutation] = []
+        self._net_by_path: dict[str, _NetFileState] = {}
         self._revision = 0
         self._complete = False
         self._last_emit_ms = 0
@@ -241,7 +255,14 @@ class TurnMutationLedger:
             if m.status == "applied"
         }
 
-    def commit(self, mutation: FileMutation, *, emit: bool = True) -> TurnDiffSnapshot:
+    def commit(
+        self,
+        mutation: FileMutation,
+        *,
+        emit: bool = True,
+        before_content: str | None | object = _CONTENT_UNKNOWN,
+        after_content: str | None | object = _CONTENT_UNKNOWN,
+    ) -> TurnDiffSnapshot:
         if mutation.turn_id != self.turn_id:
             mutation.turn_id = self.turn_id
         # Preserve authentic +/− even when the stored patch body is truncated.
@@ -256,6 +277,22 @@ class TurnMutationLedger:
             mutation.unified_diff = diff
             mutation.detail_truncated = True
         self._history.append(mutation)
+        if (
+            before_content is not _CONTENT_UNKNOWN
+            and after_content is not _CONTENT_UNKNOWN
+            and (before_content is None or isinstance(before_content, str))
+            and (after_content is None or isinstance(after_content, str))
+        ):
+            key = mutation.path.replace("\\", "/")
+            previous = self._net_by_path.get(key)
+            self._net_by_path[key] = _NetFileState(
+                before_content=(
+                    previous.before_content
+                    if previous is not None
+                    else before_content
+                ),
+                after_content=after_content,
+            )
         self._revision += 1
         snap = self.snapshot()
         if emit:
@@ -308,6 +345,37 @@ class TurnMutationLedger:
         folds: list[TurnFileFold] = []
         for path in sorted(latest):
             m = latest[path]
+            net = self._net_by_path.get(path)
+            if net is not None:
+                if net.before_content == net.after_content:
+                    continue
+                if net.before_content is None:
+                    op: MutationOp = "create"
+                elif net.after_content is None:
+                    op = "delete"
+                else:
+                    op = "update"
+                unified, stats, _ = synthesize_unified_diff(
+                    path,
+                    net.before_content or "",
+                    net.after_content or "",
+                    op=op,
+                )
+                detail, truncated = truncate_unified_diff(unified, self._diff_max_chars)
+                folds.append(
+                    TurnFileFold(
+                        path=path,
+                        op=op,
+                        additions=stats.additions,
+                        deletions=stats.deletions,
+                        unified_diff=detail,
+                        detail_truncated=truncated,
+                        line_start=(
+                            1 if op == "create" else None if op == "delete" else m.line_start
+                        ),
+                    )
+                )
+                continue
             folds.append(
                 TurnFileFold(
                     path=path,

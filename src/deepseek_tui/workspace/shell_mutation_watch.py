@@ -66,7 +66,10 @@ async def capture_shell_snapshot(workspace: Path) -> ShellMutationSnapshot:
 
 
 async def detect_shell_mutations(
-    snapshot: ShellMutationSnapshot, *, skip_paths: Collection[str] = ()
+    snapshot: ShellMutationSnapshot,
+    *,
+    skip_paths: Collection[str] = (),
+    include_contents: bool = False,
 ) -> list[dict[str, Any]]:
     """Diff the workspace against ``snapshot``; one mutation dict per file."""
     if not snapshot.is_git:
@@ -108,6 +111,9 @@ async def detect_shell_mutations(
         line_start = _line_start_for(op, unified)
         if line_start is not None:
             mutation["line_start"] = line_start
+        if include_contents:
+            mutation["_before_content"] = before
+            mutation["_after_content"] = after
         mutations.append(mutation)
     return mutations
 

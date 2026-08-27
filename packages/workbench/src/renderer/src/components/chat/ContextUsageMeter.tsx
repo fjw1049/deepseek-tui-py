@@ -104,6 +104,8 @@ export function ContextUsageMeter({
       setLiveBreakdown(false)
       return
     }
+    setBreakdown(null)
+    setLiveBreakdown(false)
     let cancelled = false
     const fetchBreakdown = async (): Promise<void> => {
       try {
@@ -132,13 +134,11 @@ export function ContextUsageMeter({
 
   const effectiveBreakdown = useMemo(() => {
     if (breakdown) return breakdown
-    if (hasActiveThread) return fallbackContextBreakdown(blocks, model)
-    return null
-  }, [breakdown, blocks, model, hasActiveThread])
+    return fallbackContextBreakdown(blocks, model)
+  }, [breakdown, blocks, model])
 
   const usage = useMemo(() => {
-    if (effectiveBreakdown) return snapshotFromContextBreakdown(effectiveBreakdown)
-    return null
+    return snapshotFromContextBreakdown(effectiveBreakdown)
   }, [effectiveBreakdown])
 
   useLayoutEffect(() => {
@@ -159,22 +159,6 @@ export function ContextUsageMeter({
   useEffect(() => {
     setOpen(false)
   }, [threadId])
-
-  if (!hasActiveThread || !usage || !effectiveBreakdown) {
-    return (
-      <div ref={wrapRef} className="relative shrink-0">
-        <button
-          type="button"
-          disabled
-          className="ds-no-drag flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-ds-faint opacity-55"
-          aria-label={t('contextUsageIdle')}
-          title={t('contextUsageIdle')}
-        >
-          <UsageRing percent={0} tone="idle" />
-        </button>
-      </div>
-    )
-  }
 
   const tone =
     usage.level === 'critical'
@@ -338,7 +322,7 @@ function UsageRing({
   tone
 }: {
   percent: number
-  tone: 'idle' | 'ok' | 'high' | 'critical'
+  tone: 'ok' | 'high' | 'critical'
 }): ReactElement {
   // Keep a visible arc even at very low usage so the meter never looks empty.
   const clamped = Math.max(0, Math.min(100, percent))

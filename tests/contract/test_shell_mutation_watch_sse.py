@@ -155,6 +155,8 @@ async def test_shell_edit_emits_file_change_item(
     }
     assert set(started) == set(completed)
     assert len(completed) == 1
+    first_diff_seq = min(e.seq for e in events if e.event == "turn.diff.updated")
+    assert first_diff_seq < next(iter(completed.values())).seq
 
     item = next(iter(completed.values())).payload["item"]
     mutation = item["metadata"]["mutation"]
@@ -181,3 +183,5 @@ async def test_shell_edit_emits_file_change_item(
     assert len(final_diffs) == 1
     assert [f["path"] for f in final_diffs[0]["files"]] == ["tracked.py"]
     assert final_diffs[0]["totals"]["files"] == 1
+    persisted = manager.store.load_turn(turn_id).diff_snapshot
+    assert persisted == final_diffs[0]

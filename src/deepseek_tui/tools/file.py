@@ -211,7 +211,13 @@ class WriteFileTool(ToolSpec):
             source="write_file",
             line_start=1,  # whole file replaced/created
         )
-        context.report_file_mutation(meta["mutation"])
+        context.report_file_mutation(
+            {
+                **meta["mutation"],
+                "_before_content": old_text if existed else None,
+                "_after_content": content,
+            }
+        )
         return ToolResult(success=True, content="ok", metadata=meta)
 
 
@@ -338,7 +344,13 @@ class EditFileTool(ToolSpec):
             line_start=line_start,
         )
         meta["occurrences"] = count
-        context.report_file_mutation(meta["mutation"])
+        context.report_file_mutation(
+            {
+                **meta["mutation"],
+                "_before_content": content,
+                "_after_content": updated,
+            }
+        )
         return ToolResult(
             success=True,
             content=summary,

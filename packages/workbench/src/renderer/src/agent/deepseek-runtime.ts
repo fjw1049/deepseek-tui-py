@@ -24,6 +24,10 @@ import type { AppSettingsV1 } from '@shared/app-settings'
 import { unwrapClawRuntimePromptForDisplay, unwrapClawUserPromptForDisplay } from '@shared/app-settings'
 import { extractDiffFilePath } from '../lib/diff-stats'
 import {
+  indexTurnDiffSnapshots,
+  type TurnDiffSnapshot
+} from '../lib/turn-mutation-view'
+import {
   applyMailboxMessageTouched,
   subagentBlockFromCard,
   type MailboxMessageJson,
@@ -180,6 +184,7 @@ type TurnRecordJson = {
   created_at?: string | null
   started_at?: string | null
   ended_at?: string | null
+  diff_snapshot?: unknown
 }
 
 type ThreadDetailJson = {
@@ -1013,6 +1018,7 @@ export class DeepseekRuntimeProvider implements AgentProvider {
     threadStatus?: string
     latestTurnId?: string
     latestUserMessageId?: string
+    turnDiffByTurnId?: Record<string, TurnDiffSnapshot>
     goal?: import('./types').GoalSnapshotJson | null
   }> {
     const r = await window.dsGui.runtimeRequest(`/v1/threads/${encodeURIComponent(threadId)}`, 'GET')
@@ -1023,6 +1029,9 @@ export class DeepseekRuntimeProvider implements AgentProvider {
     const latestTurn = Array.isArray(detail.turns) ? detail.turns.at(-1) : undefined
     let latestTurnId: string | undefined = latestTurn?.id
     const latestTurnStatus = latestTurn?.status
+    const turnDiffByTurnId = indexTurnDiffSnapshots(
+      (detail.turns ?? []).map((turn) => turn.diff_snapshot)
+    )
     let latestUserMessageId: string | undefined
     const narrationByReasoningId = new Map<string, string>()
     for (const it of detail.items) {
@@ -1060,12 +1069,14 @@ export class DeepseekRuntimeProvider implements AgentProvider {
             : undefined
         const modelLabel = displayModelFromUserMessageMeta(meta)
         const rawText = it.detail ?? it.summary
+        const turnId = deriveTurnId(it)
         blocks.push({
           kind: 'user',
           id: it.id,
           createdAt: itemCreatedAt(it),
           text: unwrapClawUserPromptForDisplay(rawText),
-          ...(modelLabel ? { modelLabel } : {})
+          ...(modelLabel ? { modelLabel } : {}),
+          ...(turnId ? { turnId } : {})
         })
       } else if (it.kind === 'agent_message') {
         // Route purely on persisted metadata: the runtime tags every
@@ -1163,6 +1174,7 @@ export class DeepseekRuntimeProvider implements AgentProvider {
       threadStatus: detail.thread.status ?? latestTurnStatus,
       latestTurnId,
       latestUserMessageId,
+      turnDiffByTurnId,
       goal: detail.thread.goal ?? null,
       ...(activePlugin !== undefined ? { activePlugin } : {})
     }

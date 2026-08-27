@@ -66,6 +66,84 @@ def test_ledger_folds_by_path() -> None:
     assert "+y" in snap.files[0].unified_diff
 
 
+def test_ledger_reports_net_turn_delta_for_repeated_file_edits() -> None:
+    ledger = TurnMutationLedger("turn_net", throttle_ms=0)
+    ledger.commit(
+        FileMutation(
+            mutation_id="m1",
+            turn_id="turn_net",
+            path="a.py",
+            op="update",
+            unified_diff="",
+            additions=2,
+            deletions=1,
+            source="edit_file",
+        ),
+        before_content="old\n",
+        after_content="one\ntwo\n",
+        emit=False,
+    )
+    ledger.commit(
+        FileMutation(
+            mutation_id="m2",
+            turn_id="turn_net",
+            path="a.py",
+            op="update",
+            unified_diff="",
+            additions=1,
+            deletions=1,
+            source="edit_file",
+        ),
+        before_content="one\ntwo\n",
+        after_content="one\nthree\n",
+        emit=False,
+    )
+
+    snap = ledger.snapshot()
+    assert snap.totals == {"files": 1, "additions": 2, "deletions": 1}
+    assert "+one" in snap.files[0].unified_diff
+    assert "+three" in snap.files[0].unified_diff
+
+
+def test_ledger_omits_file_reverted_to_turn_start_content() -> None:
+    ledger = TurnMutationLedger("turn_revert", throttle_ms=0)
+    mutation = FileMutation(
+        mutation_id="m1",
+        turn_id="turn_revert",
+        path="a.py",
+        op="update",
+        unified_diff="",
+        additions=1,
+        deletions=1,
+        source="edit_file",
+    )
+    ledger.commit(
+        mutation,
+        before_content="old\n",
+        after_content="new\n",
+        emit=False,
+    )
+    ledger.commit(
+        FileMutation(
+            mutation_id="m2",
+            turn_id="turn_revert",
+            path="a.py",
+            op="update",
+            unified_diff="",
+            additions=1,
+            deletions=1,
+            source="edit_file",
+        ),
+        before_content="new\n",
+        after_content="old\n",
+        emit=False,
+    )
+
+    snap = ledger.mark_complete(emit=False)
+    assert snap.files == ()
+    assert snap.totals == {"files": 0, "additions": 0, "deletions": 0}
+
+
 def test_mutation_from_metadata() -> None:
     meta = {
         "path": "src/a.py",

@@ -380,7 +380,13 @@ async function reloadActiveThreadBlocks(
   if (!threadId || state.runtimeConnection !== 'ready') return
   try {
     const provider = getProvider(state.providerId)
-    const { blocks: rawBlocks, latestSeq, threadStatus, goal } = await provider.getThreadDetail(threadId)
+    const {
+      blocks: rawBlocks,
+      latestSeq,
+      threadStatus,
+      goal,
+      turnDiffByTurnId: loadedTurnDiffByTurnId
+    } = await provider.getThreadDetail(threadId)
     const hydrated = hydrateBlockModelLabels(threadId, rawBlocks)
     const blocks = threadStatusLooksActive(threadStatus)
       ? hydrated
@@ -394,12 +400,16 @@ async function reloadActiveThreadBlocks(
       get().busy
     )
     if (get().activeThreadId !== threadId) return
-    set({
+    set((s) => ({
       blocks: synced.blocks,
       lastSeq: latestSeq,
       currentGoal: goal ?? null,
+      turnDiffByTurnId: {
+        ...s.turnDiffByTurnId,
+        ...(loadedTurnDiffByTurnId ?? {})
+      },
       ...(synced.scrollToBlockId ? { scrollToBlockId: synced.scrollToBlockId } : {})
-    })
+    }))
   } catch {
     /* keep in-memory blocks if reload fails */
   }
@@ -709,7 +719,8 @@ function buildThreadEventSink(
                 optimisticCurrentUserId,
                 ev.itemId,
                 ev.text,
-                ev.modelLabel
+                ev.modelLabel,
+                ev.turnId
               )
             : baseBlocks
         const nextBlocks = upsertUserBlock(reconciledBlocks, ev)
@@ -2006,6 +2017,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         threadStatus,
         latestTurnId,
         latestUserMessageId,
+        turnDiffByTurnId: loadedTurnDiffByTurnId,
         activePlugin: loadedPlugin,
         goal: loadedGoal
       } = await p.getThreadDetail(activeThreadId)
@@ -2035,6 +2047,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
         currentGoal: loadedGoal ?? null,
         composerMode: composerModeForLoadedGoal(loadedGoal, get().composerMode),
         currentTurnId,
+        turnDiffByTurnId: {
+          ...s.turnDiffByTurnId,
+          ...(loadedTurnDiffByTurnId ?? {})
+        },
         currentTurnUserId,
         queuedMessages: s.queuedMessages,
         scrollToBlockId: synced.scrollToBlockId ?? s.scrollToBlockId
@@ -2134,6 +2150,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         threadStatus,
         latestTurnId,
         latestUserMessageId,
+        turnDiffByTurnId: loadedTurnDiffByTurnId,
         activePlugin: loadedPlugin,
         goal: loadedGoal
       } = await p.getThreadDetail(id)
@@ -2165,7 +2182,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         composerMode: composerModeForLoadedGoal(loadedGoal, get().composerMode),
         currentTurnId: busy ? latestTurnId ?? null : null,
         lastCompletedTurnId: null,
-        turnDiffByTurnId: {},
+        turnDiffByTurnId: loadedTurnDiffByTurnId ?? {},
         currentTurnUserId,
         turnStartedAtByUserId: {},
         turnDurationByUserId: {},
@@ -2488,7 +2505,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
             userBlockId,
             userMessageItemId,
             displayText,
-            userModelChip
+            userModelChip,
+            turnId
           ),
           currentTurnUserId: s.currentTurnUserId === userBlockId ? userMessageItemId : s.currentTurnUserId,
           turnStartedAtByUserId: (() => {

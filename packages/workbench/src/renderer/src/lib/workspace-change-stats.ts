@@ -117,7 +117,17 @@ export function collectWorkspaceChangeEntries(opts: {
       }
       const key = normalizeChangePath(filePath) || `turn-ledger:${snap.turn_id}:${file.path}`
       const prev = byPath.get(key)
-      if (prev?.status === 'running') continue
+      if (prev?.status === 'running') {
+        upsert(byPath, {
+          ...prev,
+          filePath: filePath || prev.filePath || extractDiffFilePath(detail),
+          detail: hasDiff ? detail : prev.detail,
+          editLine: firstChangedEditorLineFromPatch(detail) ?? prev.editLine,
+          additions: file.additions,
+          deletions: file.deletions
+        })
+        continue
+      }
       upsert(byPath, {
         id: `turn-ledger:${snap.turn_id}:${file.path}`,
         filePath: filePath || extractDiffFilePath(detail),
