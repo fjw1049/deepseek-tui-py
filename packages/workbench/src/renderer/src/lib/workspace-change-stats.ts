@@ -196,7 +196,7 @@ export function sumWorkspaceChangeStats(entries: WorkspaceChangeEntry[]): DiffSt
   return sumDiffStatsList(entries.map((entry) => workspaceChangeEntryStats(entry)))
 }
 
-/** Latest-turn fold-up uses the same files + +/- as the inspector. */
+/** Inspector / sidebar: every pending workspace path. Not a turn receipt. */
 export function turnSummaryFromWorkspaceEntries(entries: WorkspaceChangeEntry[]): {
   files: TurnDiffFile[]
   totals: { files: number; additions: number; deletions: number }
