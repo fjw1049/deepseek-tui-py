@@ -1420,6 +1420,7 @@
   "taskRunSheetTitle": "Background task",
   "collapse": "Collapse",
   "expand": "Expand",
+  "toolAwaitingApproval": "Awaiting",
   "approvalTitle": "Approval required",
   "approvalAskTitle": "Allow this tool to run?",
   "approvalViewDetails": "View details",

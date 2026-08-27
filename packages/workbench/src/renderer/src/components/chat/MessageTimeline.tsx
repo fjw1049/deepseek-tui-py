@@ -904,6 +904,7 @@ function groupTurns(blocks: ChatBlock[]): Turn[] {
 function blockHasPendingRuntimeWork(block: ChatBlock): boolean {
   if (block.kind === 'tool') return block.status === 'running'
   if (block.kind === 'approval') return block.status === 'pending'
+  if (block.kind === 'elevation') return block.status === 'pending'
   if (block.kind === 'evolution') return block.status === 'pending'
   if (block.kind === 'user_input') return block.status === 'pending'
   if (block.kind === 'subagent') {
@@ -916,6 +917,7 @@ function blockNeedsAttention(block: ChatBlock): boolean {
   if (blockHasPendingRuntimeWork(block)) return true
   if (block.kind === 'tool') return block.status === 'error'
   if (block.kind === 'approval') return block.status === 'error'
+  if (block.kind === 'elevation') return block.status === 'error'
   if (block.kind === 'user_input') return block.status === 'error'
   if (block.kind === 'subagent') return block.status === 'failed' || block.status === 'cancelled'
   return false
@@ -926,6 +928,7 @@ function isProcessBlock(block: ChatBlock): boolean {
     block.kind === 'reasoning' ||
     block.kind === 'tool' ||
     block.kind === 'approval' ||
+    block.kind === 'elevation' ||
     block.kind === 'user_input' ||
     block.kind === 'subagent' ||
     block.kind === 'system'
@@ -2560,9 +2563,10 @@ function MidTurnPrefaceLine({
  *  - reasoning       → narration line if present (model's own承上启下),
  *                      else collapsed raw reasoning
  *  - assistant       → mid-turn preface shown inline as narration
- *  - approval         → null (pending cards live in the composer dock)
+ *  - approval         → null (pending cards live on the tool + composer dock)
  *  - user_input       → pending null (composer dock); submitted = quiet Q→A summary
- *  - elev/evol/etc    → existing Bubble/Block components, never hidden
+ *  - elevation        → pending null (tool + composer dock); resolved stays inline
+ *  - evol/etc         → existing Bubble/Block components, never hidden
  *
  * The 4 `shouldHide*` patches are gone: todo/subagent were never wrong-blocked
  * because we no longer group reasoning+tools into phases that misplace them.
@@ -2792,9 +2796,13 @@ function ProcessStreamEntry({
       </div>
     )
   }
-  // Approvals + pending user_input render in the composer dock above the input.
+  // Approvals + pending elevation/user_input render on the tool card and in
+  // the composer dock. Resolved elevation stays here as an audit row.
   if (block.kind === 'approval') return null
-  if (block.kind === 'elevation') return <ElevationBubble block={block} />
+  if (block.kind === 'elevation') {
+    if (block.status === 'pending') return null
+    return <ElevationBubble block={block} />
+  }
   if (block.kind === 'evolution') return <EvolutionBubble block={block} />
   if (block.kind === 'user_input') {
     if (block.status === 'pending') return null
@@ -3644,6 +3652,7 @@ function MessageBubble({ block }: { block: ChatBlock }): ReactElement | null {
     return <EvolutionBubble block={block} />
   }
   if (block.kind === 'elevation') {
+    if (block.status === 'pending') return null
     return <ElevationBubble block={block} />
   }
   return (

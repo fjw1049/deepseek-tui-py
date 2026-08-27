@@ -1416,6 +1416,7 @@
   "taskRunSheetTitle": "后台任务",
   "collapse": "收起",
   "expand": "展开",
+  "toolAwaitingApproval": "待批",
   "approvalTitle": "需要审批",
   "approvalAskTitle": "允许运行此工具？",
   "approvalViewDetails": "查看详情",

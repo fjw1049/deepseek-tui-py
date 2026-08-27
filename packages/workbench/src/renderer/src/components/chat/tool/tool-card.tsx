@@ -4,9 +4,11 @@ import { FileCode2, Search, Terminal, Wrench } from 'lucide-react'
 import { cn } from './cn'
 import { buildToolRenderContext, isPendingState } from './render-context'
 import { resolveToolRenderer } from './registry'
+import { ToolGateBar } from './tool-gate-bar'
 import { useDisclosure } from '../model/use-disclosure'
 import { ToolBody, ToolCopyButton, ToolErrorState, ToolHeaderRow } from './primitives'
 import type { ToolBlock } from '../../../agent/types'
+import { findPendingToolGate, hasPendingToolGate } from '../../../lib/tool-gate'
 import { useChatStore } from '../../../store/chat-store'
 import { prefetchWorkspaceFile } from '../../../lib/workspace-editor-events'
 
@@ -62,7 +64,13 @@ export const ToolCard = memo(function ToolCard({
   className,
   onOpenWorkspaceFile
 }: ToolCardProps): React.JSX.Element | null {
-  const ctx = useMemo(() => buildToolRenderContext(block), [block])
+  const blocks = useChatStore((s) => s.blocks)
+  const gate = useMemo(() => findPendingToolGate(blocks, block), [block, blocks])
+  const awaitingGate = hasPendingToolGate(gate)
+  const ctx = useMemo(() => {
+    const built = buildToolRenderContext(block)
+    return awaitingGate ? { ...built, state: 'awaiting_approval' as const } : built
+  }, [awaitingGate, block])
   const filePath = ctx.input.path
   const headerLabel = filePath
     ? ctx.label || ctx.shortName
@@ -96,7 +104,8 @@ export const ToolCard = memo(function ToolCard({
   const FooterComp = renderer?.Footer ?? null
 
   const hasOutput = ctx.output !== undefined && ctx.output.trim().length > 0
-  const canExpand = hasOutput || Boolean(renderer?.Output) || ctx.state === 'running'
+  const canExpand =
+    hasOutput || Boolean(renderer?.Output) || ctx.state === 'running' || awaitingGate
   const renderOutput =
     ctx.errorText !== undefined ||
     hasOutput ||
@@ -240,6 +249,7 @@ export const ToolCard = memo(function ToolCard({
       id={`block-${block.id}`}
       className={cn(
         'ds-tool-card group overflow-hidden rounded-[14px] border border-ds-border bg-ds-card/60',
+        awaitingGate ? 'border-amber-500/40' : '',
         className
       )}
       onMouseEnter={handlePrefetch}
@@ -253,6 +263,9 @@ export const ToolCard = memo(function ToolCard({
       >
         {headerElement}
       </div>
+      {awaitingGate ? (
+        <ToolGateBar approval={gate.approval} elevation={gate.elevation} />
+      ) : null}
       {open ? (
         <div
           className="relative border-t border-ds-border-muted/50"

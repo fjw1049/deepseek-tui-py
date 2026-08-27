@@ -7,12 +7,11 @@ import {
 import { firstChangedEditorLineFromPatch } from '../../../lib/parse-unified-diff-for-editor'
 
 /**
- * The lifecycle state of a tool call, as the renderer sees it. Mapped from
- * `ToolBlock.status` — deepseek's runtime never surfaces an approval state
- * on a tool block (approvals are their own `ChatBlock` kind), so this is a
- * trimmed-down set compared to a full agent UI.
+ * The lifecycle state of a tool call, as the renderer sees it.
+ * `awaiting_approval` is overlaid by the card when a pending approval or
+ * elevation is bound to this tool — the runtime still reports `running`.
  */
-export type ToolUIState = 'running' | 'success' | 'error'
+export type ToolUIState = 'running' | 'awaiting_approval' | 'success' | 'error'
 
 export interface ToolRenderContext {
   /** Raw tool name extracted from the summary, e.g. "read_file". */
@@ -96,7 +95,7 @@ export function buildToolRenderContext(block: ToolBlock): ToolRenderContext {
 }
 
 export function isPendingState(state: ToolUIState): boolean {
-  return state === 'running'
+  return state === 'running' || state === 'awaiting_approval'
 }
 
 export function isResolvedState(state: ToolUIState): boolean {

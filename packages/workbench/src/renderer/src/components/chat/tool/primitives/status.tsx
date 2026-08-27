@@ -1,5 +1,6 @@
 import { memo } from 'react'
 import { CheckCircle2 } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 import { cn } from '../cn'
 import { ShimmerText } from './shimmer'
 import type { ToolUIState } from '../render-context'
@@ -21,15 +22,30 @@ export const ToolStatusIndicator = memo(function ToolStatusIndicator({
   showLabel = false,
   label
 }: ToolStatusIndicatorProps): React.JSX.Element {
-  const isLive = state === 'running'
+  const { t } = useTranslation('common')
+  const isLive = state === 'running' || state === 'awaiting_approval'
+  const awaiting = state === 'awaiting_approval'
+  const awaitingLabel = showLabel && label ? label : t('toolAwaitingApproval')
 
   return (
     <span
       className={cn('inline-flex items-center gap-1 text-ds-muted', className)}
       role={isLive ? 'status' : 'img'}
-      aria-label={state === 'error' ? 'error' : state === 'success' ? 'success' : 'running'}
+      aria-label={
+        state === 'error'
+          ? 'error'
+          : state === 'success'
+            ? 'success'
+            : awaiting
+              ? awaitingLabel
+              : 'running'
+      }
     >
-      {state === 'running' ? (
+      {awaiting ? (
+        <span className="text-[0.5625rem] font-medium tracking-[0.02em] text-amber-700 dark:text-amber-400">
+          {awaitingLabel}
+        </span>
+      ) : state === 'running' ? (
         <ShimmerText
           text={showLabel && label ? label : '…'}
           className="text-[0.5625rem] tracking-[0.05em] leading-none"

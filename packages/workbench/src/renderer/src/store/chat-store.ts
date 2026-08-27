@@ -1001,7 +1001,6 @@ function buildThreadEventSink(
               status: 'pending' as const
             }
           ],
-          scrollToBlockId: `elevation-${req.elevationId}`,
           error: s.error === i18n.t('common:runtimeStreamRecovering') ? null : s.error
         }
       })
