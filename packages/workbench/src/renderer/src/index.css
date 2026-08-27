@@ -1169,8 +1169,7 @@ samp {
   background: color-mix(in srgb, #ffffff 10%, transparent);
 }
 
-/* Chip labels: small UI type — slight positive tracking for 11px legibility.
-   Fainter than composer input so hierarchy is obvious. */
+/* Chip labels. Dock / IDE stay dense; composer tray uses --tray. */
 .ds-workspace-context-chip {
   font-family: var(--font-ui);
   font-size: 12.5px;
@@ -1184,6 +1183,14 @@ samp {
     background-color 120ms ease,
     transform 100ms ease-out;
   will-change: transform;
+}
+
+/* Same size as the composer input so the tucked tray doesn't read as caption. */
+.ds-workspace-context-chip--tray {
+  font-size: 15px;
+  font-weight: 500;
+  letter-spacing: -0.011em;
+  line-height: 1.2;
 }
 
 .ds-workspace-context-chip:hover:not(:disabled) {

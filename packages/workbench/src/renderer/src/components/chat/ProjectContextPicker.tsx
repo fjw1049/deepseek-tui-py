@@ -29,6 +29,8 @@ type Props = {
   menuPlacement?: 'above' | 'below'
   /** Compact tray: drop the chevron before the project chip itself. */
   hideChevron?: boolean
+  /** Composer tray: 15px. Embedded IDE rail stays dense. */
+  size?: 'dense' | 'tray'
 }
 
 const MENU_WIDTH = 340
@@ -62,7 +64,8 @@ export function ProjectContextPicker({
   workspaceRoot,
   usePortal = false,
   menuPlacement = 'above',
-  hideChevron = false
+  hideChevron = false,
+  size = 'dense'
 }: Props): ReactElement {
   const { t } = useTranslation('common')
   const threads = useChatStore((s) => s.threads)
@@ -414,19 +417,28 @@ export function ProjectContextPicker({
       <button
         ref={triggerRef}
         type="button"
-        className="ds-workspace-context-chip flex h-7 max-w-[180px] items-center gap-1.5 rounded-md px-2 py-1 text-left sm:max-w-[220px]"
+        className={
+          size === 'tray'
+            ? 'ds-workspace-context-chip ds-workspace-context-chip--tray flex h-8 max-w-[240px] items-center gap-2 rounded-md px-2.5 py-1 text-left text-[15px] font-medium sm:max-w-[280px]'
+            : 'ds-workspace-context-chip flex h-7 max-w-[180px] items-center gap-1.5 rounded-md px-2 py-1 text-left sm:max-w-[220px]'
+        }
         onClick={() => setOpen((v) => !v)}
         title={isTemporary ? t('contextBarWorkInProject') : activePath}
         aria-expanded={open}
       >
         {isTemporary ? (
-          <Import className="h-3.5 w-3.5 shrink-0" strokeWidth={1.7} />
+          <Import className={size === 'tray' ? 'h-4 w-4 shrink-0' : 'h-3.5 w-3.5 shrink-0'} strokeWidth={1.7} />
         ) : (
-          <Folder className="h-3.5 w-3.5 shrink-0" strokeWidth={1.7} />
+          <Folder className={size === 'tray' ? 'h-4 w-4 shrink-0' : 'h-3.5 w-3.5 shrink-0'} strokeWidth={1.7} />
         )}
-        <span className="min-w-0 flex-1 truncate">{triggerLabel}</span>
+        <span className={`min-w-0 flex-1 truncate ${size === 'tray' ? 'text-[15px] leading-none' : ''}`}>
+          {triggerLabel}
+        </span>
         {!hideChevron ? (
-          <ChevronDown className="ds-workspace-context-chip__chevron" strokeWidth={2.2} />
+          <ChevronDown
+            className={`ds-workspace-context-chip__chevron ${size === 'tray' ? 'h-3.5 w-3.5' : ''}`}
+            strokeWidth={2.2}
+          />
         ) : null}
       </button>
       {usePortal && typeof document !== 'undefined' ? createPortal(menu, document.body) : menu}
