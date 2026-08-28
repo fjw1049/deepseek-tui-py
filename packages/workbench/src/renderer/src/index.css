@@ -4954,6 +4954,33 @@ samp {
   text-underline-offset: 3px;
 }
 
+.ds-file-chip--pending,
+.ds-file-chip--invalid {
+  color: var(--ds-text-faint);
+  cursor: default;
+  text-decoration: none;
+}
+
+.ds-file-chip--pending {
+  opacity: 0.72;
+}
+
+.ds-file-chip--invalid {
+  text-decoration: underline dotted;
+  text-decoration-color: color-mix(in srgb, currentColor 45%, transparent);
+  text-underline-offset: 3px;
+}
+
+.ds-file-chip--ambiguous {
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+}
+
+.ds-file-chip--pending:hover,
+.ds-file-chip--invalid:hover {
+  text-decoration: inherit;
+}
+
 .ds-file-chip:focus-visible {
   outline: 2px solid color-mix(in srgb, var(--ds-accent) 55%, transparent);
   outline-offset: 2px;

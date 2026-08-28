@@ -1,6 +1,7 @@
 import { useEffect, useMemo } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import { resolveThreadFilesystemRoot } from '../lib/workspace-path'
+import { invalidateFileReferenceValidationCache } from '../lib/file-reference-validation'
 import { useChatStore } from '../store/chat-store'
 
 /**
@@ -39,6 +40,7 @@ export function useWorkspaceFsWatch(): void {
     void gui.watchWorkspaceFs(watchRoot)
     const off = gui.onWorkspaceFsChanged((payload) => {
       if (!payload || payload.root !== watchRoot) return
+      invalidateFileReferenceValidationCache()
       useChatStore.setState((s) => ({ workspaceDirtyTick: s.workspaceDirtyTick + 1 }))
     })
     return () => {

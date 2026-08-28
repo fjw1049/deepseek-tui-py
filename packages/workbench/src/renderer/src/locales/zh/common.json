@@ -1,6 +1,10 @@
 {
   "appName": "DeepSeek GUI",
   "code": "Code",
+  "fileReferenceResolving": "正在解析文件",
+  "fileReferenceMultiple": "存在多个同名文件",
+  "fileReferenceChoose": "选择要打开的文件",
+  "fileReferenceOpenFailed": "无法打开文件",
   "newChat": "新建会话",
   "newAgent": "新建会话",
   "conversationSearchNav": "搜索",

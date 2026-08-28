@@ -1,6 +1,10 @@
 {
   "appName": "DeepSeek GUI",
   "code": "Code",
+  "fileReferenceResolving": "Resolving file",
+  "fileReferenceMultiple": "Multiple files match this name",
+  "fileReferenceChoose": "Choose a file",
+  "fileReferenceOpenFailed": "Could not open file",
   "newChat": "New chat",
   "newAgent": "New Session",
   "conversationSearchNav": "Search",

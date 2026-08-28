@@ -567,9 +567,11 @@ export function Workbench(): ReactElement {
         { path, ...(line && line > 0 ? { line } : {}) },
         uniqueWorkspaceRoots(activeWorkspaceRoot, threadFilesystemRoot),
         openInAppEditorSurface
-      )
+      ).then((result) => {
+        if (result === 'none') setError(`${t('fileReferenceOpenFailed')}: ${path}`)
+      })
     },
-    [activeWorkspaceRoot, layoutMode, openInAppEditorSurface, threadFilesystemRoot]
+    [activeWorkspaceRoot, layoutMode, openInAppEditorSurface, setError, t, threadFilesystemRoot]
   )
 
   const enterIdeMode = useCallback((): void => {
@@ -745,7 +747,9 @@ export function Workbench(): ReactElement {
         { path, ...(line && line > 0 ? { line } : {}), ...(column && column > 0 ? { column } : {}) },
         projectRoots,
         openInAppEditorSurface
-      )
+      ).then((result) => {
+        if (result === 'none') setError(`${t('fileReferenceOpenFailed')}: ${path}`)
+      })
     }
 
     const onPreview = (event: Event): void => {
@@ -802,6 +806,8 @@ export function Workbench(): ReactElement {
     openEditorFile,
     openInAppEditorSurface,
     openRightSidebar,
+    setError,
+    t,
     threadFilesystemRoot
   ])
 

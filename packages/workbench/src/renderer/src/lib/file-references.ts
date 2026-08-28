@@ -41,6 +41,10 @@ const PATH_DIRECTORY = new RegExp(
   String.raw`${PATH_PREFIX_BOUNDARY}(?:~\/|\/|\.{1,2}\/)(?:${DIR_CHARS})+${PATH_END}`,
   'giu'
 )
+const PATH_RELATIVE_DIRECTORY = new RegExp(
+  String.raw`${PATH_PREFIX_BOUNDARY}(?:[\w@.-]+[\\/])+${PATH_END}`,
+  'giu'
+)
 const LINE_SUFFIX = /(?::(\d+)(?::(\d+))?|#L(\d+)(?:-L\d+)?|\s*[（(](?:line|lines)\s+(\d+)[）)]|\s*[（(]第\s*(\d+)\s*行[）)]|\s+line\s+(\d+)|\s+第\s*(\d+)\s*行)/iy
 const TRAILING_PUNCTUATION = /[.,;!?]+$/
 const BLOCKED_PARENTS = new Set(['a', 'code', 'pre', 'script', 'style', 'textarea'])
@@ -125,7 +129,8 @@ export function findFileReferences(text: string): FileReferenceMatch[] {
   return mergeMatches([
     ...collectMatches(text, PATH_WITH_SEPARATOR, false),
     ...collectMatches(text, PATH_BARE_FILE, false),
-    ...collectMatches(text, PATH_DIRECTORY, false)
+    ...collectMatches(text, PATH_DIRECTORY, false),
+    ...collectMatches(text, PATH_RELATIVE_DIRECTORY, false)
   ]).filter((match) => {
     if (isMaterialRecognizedFile(match.target.path)) return true
     return classifyWorkspacePath(match.target.path) === 'directory'
@@ -155,6 +160,27 @@ export function parseFileReferenceHref(href: string | undefined): FileReferenceT
   } catch {
     return null
   }
+}
+
+const URI_SCHEME = /^[A-Za-z][A-Za-z0-9+.-]*:/
+
+/** Parse an explicit Markdown destination without granting custom schemes file access. */
+export function parseMarkdownFileReferenceHref(
+  href: string | undefined
+): FileReferenceTarget | null {
+  const value = href?.trim()
+  if (!value || value.startsWith('#') || URI_SCHEME.test(value)) return null
+
+  let decoded = value
+  try {
+    decoded = decodeURIComponent(value)
+  } catch {
+    return null
+  }
+  const matches = findFileReferences(decoded)
+  const match = matches.length === 1 ? matches[0] : null
+  if (!match || match.start !== 0 || match.end !== decoded.length) return null
+  return match.target
 }
 
 function linkifyTextNode(node: HastNode): HastNode[] {

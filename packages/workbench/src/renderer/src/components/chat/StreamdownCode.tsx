@@ -87,7 +87,7 @@ function InlineFileReferenceCode({
   text: string
   target: FileReferenceTarget
 }): ReactNode {
-  return <FileChip path={target.path} line={target.line} />
+  return <FileChip path={target.path} line={target.line} column={target.column} />
 }
 
 function CodeBlock({

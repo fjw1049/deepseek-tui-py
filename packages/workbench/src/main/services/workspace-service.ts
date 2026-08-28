@@ -58,6 +58,21 @@ type ResolveTargetOptions = {
   allowBasenameFallback?: boolean
 }
 
+type WorkspacePathCandidate = {
+  path: string
+  kind: 'file' | 'directory'
+}
+
+class AmbiguousWorkspacePathError extends Error {
+  readonly candidates: WorkspacePathCandidate[]
+
+  constructor(rawPath: string, candidates: WorkspacePathCandidate[]) {
+    super(`Multiple workspace files match: ${rawPath}`)
+    this.name = 'AmbiguousWorkspacePathError'
+    this.candidates = candidates
+  }
+}
+
 const DEFAULT_EDITOR_ID = 'vscode'
 const MAX_FILE_PREVIEW_BYTES = 1_500_000
 const MAX_FILE_WRITE_BYTES = 2_000_000
@@ -598,8 +613,11 @@ function namesEqual(a: string, b: string): boolean {
   return process.platform === 'linux' ? a === b : a.toLowerCase() === b.toLowerCase()
 }
 
-async function findUniqueFileByBasename(root: string, fileName: string): Promise<string | null> {
-  const matches: string[] = []
+async function findEntriesByBasename(
+  root: string,
+  entryName: string
+): Promise<WorkspacePathCandidate[]> {
+  const matches: WorkspacePathCandidate[] = []
   const stack = [root]
   let scanned = 0
 
@@ -615,19 +633,21 @@ async function findUniqueFileByBasename(root: string, fileName: string): Promise
     for (const entry of entries) {
       scanned += 1
       if (entry.isDirectory()) {
+        if (namesEqual(entry.name, entryName)) {
+          matches.push({ path: join(current, entry.name), kind: 'directory' })
+        }
         if (!SKIP_SEARCH_DIRS.has(entry.name)) {
           stack.push(join(current, entry.name))
         }
         continue
       }
-      if (entry.isFile() && namesEqual(entry.name, fileName)) {
-        matches.push(join(current, entry.name))
-        if (matches.length > 1) return null
+      if (entry.isFile() && namesEqual(entry.name, entryName)) {
+        matches.push({ path: join(current, entry.name), kind: 'file' })
       }
     }
   }
 
-  return matches[0] ?? null
+  return matches.sort((left, right) => left.path.localeCompare(right.path))
 }
 
 export async function canonicalPath(targetPath: string): Promise<string> {
@@ -679,10 +699,14 @@ async function resolveOpenTargetPath(
     return enforceWorkspaceBoundary(direct, workspaceRoot)
   }
 
-  if (allowBasenameFallback && workspace && !hasPathSeparator(expanded)) {
-    const match = await findUniqueFileByBasename(resolve(workspace), expanded)
-    if (match) {
-      return enforceWorkspaceBoundary(match, workspaceRoot)
+  const fallbackName = expanded.replace(/[\\/]+$/, '')
+  if (allowBasenameFallback && workspace && fallbackName && !hasPathSeparator(fallbackName)) {
+    const matches = await findEntriesByBasename(resolve(workspace), fallbackName)
+    if (matches.length === 1 && matches[0]) {
+      return enforceWorkspaceBoundary(matches[0].path, workspaceRoot)
+    }
+    if (matches.length > 1) {
+      throw new AmbiguousWorkspacePathError(rawPath, matches)
     }
   }
 
@@ -1022,9 +1046,25 @@ export async function resolveWorkspaceFile(
     const kind = (await stat(targetPath)).isDirectory() ? 'directory' : 'file'
     return { ok: true, path: targetPath, kind }
   } catch (error) {
+    if (error instanceof AmbiguousWorkspacePathError) {
+      const candidates = await Promise.all(
+        error.candidates.map(async (candidate) => ({
+          path: await canonicalPath(candidate.path),
+          kind: candidate.kind
+        }))
+      )
+      return {
+        ok: false,
+        code: 'ambiguous',
+        message: error.message,
+        candidates
+      }
+    }
+    const message = error instanceof Error ? error.message : String(error)
     return {
       ok: false,
-      message: error instanceof Error ? error.message : String(error)
+      code: message.startsWith('File not found:') ? 'not_found' : 'invalid',
+      message
     }
   }
 }

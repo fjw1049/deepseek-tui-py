@@ -3,7 +3,11 @@ import { Streamdown, type AnimateOptions, type StreamdownProps } from 'streamdow
 import remarkGfm from 'remark-gfm'
 import { harden } from 'rehype-harden'
 import 'streamdown/styles.css'
-import { parseFileReferenceHref, rehypeFileReferences } from '../../lib/file-references'
+import {
+  parseFileReferenceHref,
+  parseMarkdownFileReferenceHref,
+  rehypeFileReferences
+} from '../../lib/file-references'
 import { StreamdownCode, StreamdownInlineCode } from './StreamdownCode'
 import { FileChip } from './FileChip'
 
@@ -94,7 +98,10 @@ function StreamdownLink({
   className,
   title
 }: StreamdownLinkProps): ReactElement {
-  const fileTarget = parseFileReferenceHref(href)
+  const generatedFileReference = className?.split(/\s+/).includes('ds-file-reference-link') === true
+  const fileTarget = generatedFileReference
+    ? parseFileReferenceHref(href)
+    : parseMarkdownFileReferenceHref(href)
   const cleanClassName = className?.replace(/\bds-file-reference-link\b/g, '').trim()
   const isExternal = href ? /^(https?:|mailto:)/i.test(href) : false
 
@@ -103,13 +110,19 @@ function StreamdownLink({
       <FileChip
         path={fileTarget.path}
         line={fileTarget.line}
+        column={fileTarget.column}
+        label={generatedFileReference ? undefined : children}
         className={cleanClassName}
       />
     )
   }
 
+  if (!isExternal) {
+    return <span className={cleanClassName}>{children}</span>
+  }
+
   const handleClick = (event: MouseEvent<HTMLAnchorElement>): void => {
-    if (isExternal && href && typeof window.dsGui?.openExternal === 'function') {
+    if (href && typeof window.dsGui?.openExternal === 'function') {
       event.preventDefault()
       void window.dsGui.openExternal(href)
     }
