@@ -135,6 +135,7 @@ from deepseek_tui.server.threads.usage import (
 logger = logging.getLogger(__name__)
 
 UNPUBLISHED_WORKTREE_LABOR = "<unpublished-worktree-labor>"
+PUBLISH_FAILED = "<publish-failed>"
 
 # Upper bound on narration-service calls that word silent tool rounds within a
 # single turn; the neutral structured frame is always shown regardless.
@@ -859,7 +860,8 @@ class RuntimeThreadManager:
 
     async def _prepare_isolated_workspace(self, thread: ThreadRecord) -> ThreadRecord:
         async with self._hold_thread_operation(thread.id):
-            return await self._prepare_isolated_workspace_claimed(thread)
+            prepared = await self._prepare_isolated_workspace_claimed(thread)
+        return await self._auto_publish_isolated_thread(prepared)
 
     async def _prepare_isolated_workspace_claimed(
         self, thread: ThreadRecord
@@ -891,9 +893,9 @@ class RuntimeThreadManager:
         unpublished = bool(thread.publish_blocked) or has_unpublished_checkpoints
         publish_pending_changed = False
         if has_unpublished_checkpoints and not thread.publish_pending:
-            # A worktree is a session draft.  Merely reopening or warming a
-            # thread must never publish it into the project; publishing is an
-            # explicit user action.
+            # Keep recovered work visible until the wrapper can safely replay
+            # its checkpoints into the project.  Uncheckpointed labor is
+            # marked blocked below and still requires a user decision.
             thread.publish_pending = True
             publish_pending_changed = True
 
@@ -1169,6 +1171,37 @@ class RuntimeThreadManager:
             },
         )
 
+    async def _mark_publish_failed(self, thread_id: str) -> ThreadRecord:
+        """Expose an unexpected auto-publish failure without losing the draft."""
+        thread = self.store.load_thread(thread_id)
+        thread.publish_pending = True
+        thread.publish_request_action = None
+        thread.publish_request_paths = []
+        thread.publish_waiting_on = None
+        thread.publish_blocked = True
+        if PUBLISH_FAILED not in thread.publish_conflicts:
+            thread.publish_conflicts.append(PUBLISH_FAILED)
+        thread.updated_at = datetime.now(timezone.utc)
+        self.store.save_thread(thread)
+        await self._emit_publish_state(thread)
+        return thread
+
+    async def _auto_publish_isolated_thread(self, thread: ThreadRecord) -> ThreadRecord:
+        """Quietly sync safe checkpointed work; surface only conflicts/failures."""
+        if (
+            thread.archived
+            or normalize_env_mode(thread.env_mode) != ENV_WORKTREE
+            or thread.publish_blocked
+            or not self._unpublished_checkpoints(thread)
+        ):
+            return thread
+        try:
+            result = await self.request_publish_action(thread.id, action="apply")
+            return result["thread"]
+        except Exception:
+            logger.exception("auto_publish_failed thread=%s", thread.id)
+            return await self._mark_publish_failed(thread.id)
+
     async def request_publish_action(
         self,
         thread_id: str,
@@ -1250,6 +1283,7 @@ class RuntimeThreadManager:
             thread = self.store.load_thread(thread_id)
         except FileNotFoundError:
             return
+        thread = await self._auto_publish_isolated_thread(thread)
         has_unpublished = bool(self._unpublished_checkpoints(thread))
         next_pending = bool(thread.publish_blocked) or has_unpublished
         if thread.publish_pending != next_pending:
@@ -1265,10 +1299,15 @@ class RuntimeThreadManager:
             root = project_root(thread)
         except Exception:
             return
-        # A user-requested apply may have been waiting for this turn.  Retry
-        # only durable requests; ordinary completed turns remain isolated.
+        # A queued automatic publish or user conflict resolution may have been
+        # waiting for this turn. Retry its durable intent now that the project
+        # is free.
         for other in self.store.list_threads():
-            if other.archived or not other.publish_request_action:
+            if (
+                other.id == thread_id
+                or other.archived
+                or not other.publish_request_action
+            ):
                 continue
             try:
                 if project_root(other) != root:

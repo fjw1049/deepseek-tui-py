@@ -430,6 +430,40 @@ async def test_prepare_syncs_current_project_into_isolate(
 
 
 @pytest.mark.asyncio
+async def test_prepare_auto_reconciles_checkpointed_labor(
+    runtime_app, tmp_path: Path
+) -> None:
+    manager = runtime_app.state.thread_manager
+    repo = _repo(tmp_path)
+    thread = await manager.create_thread(
+        CreateThreadRequest(workspace=str(repo), model="deepseek-chat")
+    )
+    prepared = await manager._prepare_isolated_workspace(thread)
+    tree = execution_root(prepared)
+    (tree / "app.py").write_text("recovered\n", encoding="utf-8")
+    turn_id = "turn_recovered_checkpoint"
+    _seed_turn(manager, prepared.id, turn_id)
+    manager.checkpoints._save(
+        TurnCheckpoint(
+            turn_id=turn_id,
+            is_git=True,
+            thread_id=prepared.id,
+            created_at=1.0,
+            execution_root=str(tree),
+            mutated=["app.py"],
+            pre_contents={"app.py": "one\n"},
+            post_contents={"app.py": "recovered\n"},
+        )
+    )
+
+    reconciled = await manager._prepare_isolated_workspace(prepared)
+
+    assert reconciled.publish_pending is False
+    assert reconciled.publish_blocked is False
+    assert (repo / "app.py").read_text(encoding="utf-8") == "recovered\n"
+
+
+@pytest.mark.asyncio
 async def test_prepare_preserves_uncheckpointed_isolate_labor(
     runtime_app, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -543,7 +577,7 @@ async def test_publish_waits_while_sibling_turn_is_active(
 
 
 @pytest.mark.asyncio
-async def test_completed_isolated_labor_stays_pending_until_user_applies(
+async def test_completed_isolated_labor_auto_publishes(
     runtime_app, tmp_path: Path
 ) -> None:
     manager = runtime_app.state.thread_manager
@@ -554,7 +588,7 @@ async def test_completed_isolated_labor_stays_pending_until_user_applies(
     prepared = await manager._prepare_isolated_workspace(thread)
     tree = execution_root(prepared)
     (tree / "app.py").write_text("draft\n", encoding="utf-8")
-    turn_id = "turn_explicit_apply"
+    turn_id = "turn_auto_publish"
     _seed_turn(manager, prepared.id, turn_id)
     manager.checkpoints._save(
         TurnCheckpoint(
@@ -572,9 +606,111 @@ async def test_completed_isolated_labor_stays_pending_until_user_applies(
     await manager._after_turn_released(prepared.id)
 
     persisted = manager.store.load_thread(prepared.id)
-    assert persisted.publish_pending is True
+    assert persisted.publish_pending is False
     assert persisted.publish_blocked is False
+    assert persisted.publish_request_action is None
+    assert (repo / "app.py").read_text(encoding="utf-8") == "draft\n"
+
+
+@pytest.mark.asyncio
+async def test_auto_publish_queues_behind_active_sibling_and_retries(
+    runtime_app, tmp_path: Path
+) -> None:
+    manager = runtime_app.state.thread_manager
+    repo = _repo(tmp_path)
+    draft_thread = await manager.create_thread(
+        CreateThreadRequest(workspace=str(repo), model="deepseek-chat")
+    )
+    active_thread = await manager.create_thread(
+        CreateThreadRequest(workspace=str(repo), model="deepseek-chat")
+    )
+    prepared = await manager._prepare_isolated_workspace(draft_thread)
+    tree = execution_root(prepared)
+    (tree / "app.py").write_text("queued-auto\n", encoding="utf-8")
+    turn_id = "turn_queued_auto"
+    _seed_turn(manager, prepared.id, turn_id)
+    manager.checkpoints._save(
+        TurnCheckpoint(
+            turn_id=turn_id,
+            is_git=True,
+            thread_id=prepared.id,
+            created_at=1.0,
+            execution_root=str(tree),
+            mutated=["app.py"],
+            pre_contents={"app.py": "one\n"},
+            post_contents={"app.py": "queued-auto\n"},
+        )
+    )
+    async with manager._active_lock:
+        manager._active[active_thread.id] = SimpleNamespace(
+            active_turn=SimpleNamespace(turn_id="turn_other")
+        )
+
+    await manager._after_turn_released(prepared.id)
+
+    queued = manager.store.load_thread(prepared.id)
+    assert queued.publish_request_action == "apply"
+    assert queued.publish_waiting_on == active_thread.id
     assert (repo / "app.py").read_text(encoding="utf-8") == "one\n"
+
+    async with manager._active_lock:
+        manager._active.pop(active_thread.id, None)
+    await manager._after_turn_released(active_thread.id)
+
+    applied = manager.store.load_thread(prepared.id)
+    assert applied.publish_pending is False
+    assert applied.publish_request_action is None
+    assert applied.publish_waiting_on is None
+    assert (repo / "app.py").read_text(encoding="utf-8") == "queued-auto\n"
+
+
+@pytest.mark.asyncio
+async def test_auto_publish_failure_keeps_draft_and_can_retry(
+    runtime_app, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manager = runtime_app.state.thread_manager
+    repo = _repo(tmp_path)
+    thread = await manager.create_thread(
+        CreateThreadRequest(workspace=str(repo), model="deepseek-chat")
+    )
+    prepared = await manager._prepare_isolated_workspace(thread)
+    tree = execution_root(prepared)
+    (tree / "app.py").write_text("safe-draft\n", encoding="utf-8")
+    turn_id = "turn_publish_failure"
+    _seed_turn(manager, prepared.id, turn_id)
+    manager.checkpoints._save(
+        TurnCheckpoint(
+            turn_id=turn_id,
+            is_git=True,
+            thread_id=prepared.id,
+            created_at=1.0,
+            execution_root=str(tree),
+            mutated=["app.py"],
+            pre_contents={"app.py": "one\n"},
+            post_contents={"app.py": "safe-draft\n"},
+        )
+    )
+    request_publish_action = manager.request_publish_action
+
+    async def fail_publish(*args, **kwargs):
+        del args, kwargs
+        raise OSError("temporary publish failure")
+
+    monkeypatch.setattr(manager, "request_publish_action", fail_publish)
+    await manager._after_turn_released(prepared.id)
+
+    failed = manager.store.load_thread(prepared.id)
+    assert failed.publish_pending is True
+    assert failed.publish_blocked is True
+    assert failed.publish_conflicts == ["<publish-failed>"]
+    assert (tree / "app.py").read_text(encoding="utf-8") == "safe-draft\n"
+    assert (repo / "app.py").read_text(encoding="utf-8") == "one\n"
+
+    monkeypatch.setattr(manager, "request_publish_action", request_publish_action)
+    result = await manager.request_publish_action(prepared.id, action="apply")
+
+    assert result["status"] == "applied"
+    assert (repo / "app.py").read_text(encoding="utf-8") == "safe-draft\n"
 
 
 @pytest.mark.asyncio

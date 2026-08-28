@@ -3361,14 +3361,16 @@ function UserMessageBubble({
                     >
                       {t('rewindCancel')}
                     </button>
-                    <button
-                      type="button"
-                      onClick={() => void commitResend(false)}
-                      disabled={submitting}
-                      className="rounded-md px-3 py-1.5 text-[13px] font-medium text-ds-ink transition hover:bg-ds-hover disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      {t('rewindResendConfirmKeep')}
-                    </button>
+                    {confirm.previewFailed ? (
+                      <button
+                        type="button"
+                        onClick={() => void commitResend(false)}
+                        disabled={submitting}
+                        className="rounded-md px-3 py-1.5 text-[13px] font-medium text-ds-ink transition hover:bg-ds-hover disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {t('rewindResendConfirmConversationOnly')}
+                      </button>
+                    ) : null}
                     <button
                       type="button"
                       autoFocus

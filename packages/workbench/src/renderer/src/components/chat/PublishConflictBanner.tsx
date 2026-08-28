@@ -1,17 +1,16 @@
 import { useEffect, useState, type ReactElement } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useChatStore } from '../../store/chat-store'
-
-const UNPUBLISHED_WORKTREE_LABOR = '<unpublished-worktree-labor>'
+import { publishAttentionState } from './publish-conflict-state'
 
 type Feedback = 'applied' | 'failed' | null
 
 /**
  * User-facing delivery state for an isolated session draft.
  *
- * Worktree/checkpoint mechanics stay internal: ordinary drafts get one quiet
- * apply row, waiting requests explain themselves, and only real file conflicts
- * expand into a decision card.
+ * Worktree/checkpoint mechanics stay internal: ordinary drafts publish without
+ * chrome, while recovery ambiguity, failures, and real file conflicts ask for
+ * the smallest decision needed to continue.
  */
 export function PublishConflictBanner(): ReactElement | null {
   const { t } = useTranslation('common')
@@ -36,16 +35,13 @@ export function PublishConflictBanner(): ReactElement | null {
   }, [feedback])
 
   const rawConflicts = thread?.publishConflicts ?? []
-  const hasRecoveredDraft = rawConflicts.includes(UNPUBLISHED_WORKTREE_LABOR)
-  const conflicts = rawConflicts.filter((item) => item !== UNPUBLISHED_WORKTREE_LABOR)
+  const attention = publishAttentionState(rawConflicts, Boolean(thread?.publishBlocked))
+  const conflicts = attention.conflicts
   const waiting = Boolean(thread?.publishWaitingOn || thread?.publishRequestAction)
-  const hasRealConflict = Boolean(thread?.publishBlocked && conflicts.length > 0)
-  const hasPendingDraft = Boolean(
-    thread?.publishPending || hasRecoveredDraft || hasRealConflict || waiting
-  )
+  const needsAttention = attention.kind !== 'hidden'
 
   if (!activeThreadId || thread?.envMode !== 'worktree') return null
-  if (!hasPendingDraft && feedback === null) return null
+  if (!needsAttention && feedback === null) return null
 
   const run = async (
     action: 'apply' | 'use_agent' | 'keep_project'
@@ -65,7 +61,7 @@ export function PublishConflictBanner(): ReactElement | null {
     }
   }
 
-  if (feedback === 'applied' && !hasPendingDraft) {
+  if (feedback === 'applied' && !needsAttention) {
     return (
       <div className="ds-no-drag mx-2 mb-2 flex items-center justify-between rounded-lg border border-emerald-500/20 bg-emerald-500/5 px-3 py-2 text-[12px] text-emerald-700 dark:text-emerald-300 sm:mx-3">
         <span>{t('publishDraftApplied')}</span>
@@ -73,25 +69,64 @@ export function PublishConflictBanner(): ReactElement | null {
     )
   }
 
-  if (!hasRealConflict) {
+  if (attention.kind === 'recovery') {
     return (
       <div
-        className="ds-no-drag mx-2 mb-2 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-ds-border-muted bg-ds-main/35 px-3 py-2 sm:mx-3"
-        data-publish-draft-status="true"
+        className="ds-publish-conflict-banner mx-2 mb-2 rounded-xl border border-amber-500/25 bg-amber-500/5 px-3 py-2.5 sm:mx-3"
+        data-publish-recovery-banner="true"
       >
-        <div className="min-w-0 text-[12px] leading-5 text-ds-muted">
-          {waiting ? (
-            <span className="inline-flex items-center gap-2">
-              <span className="h-3 w-3 animate-spin rounded-full border border-ds-faint border-t-ds-ink" />
-              {t('publishDraftWaiting')}
-            </span>
-          ) : submitting ? (
-            t('publishDraftApplying')
-          ) : feedback === 'failed' ? (
-            <span className="text-red-600 dark:text-red-300">{t('publishDraftFailed')}</span>
-          ) : (
-            t('publishDraftPending')
-          )}
+        <p className="text-[13px] font-medium leading-5 text-ds-ink">
+          {t('publishRecoveryTitle')}
+        </p>
+        <p className="mt-0.5 text-[12px] leading-5 text-ds-muted">
+          {t('publishRecoveryBody')}
+        </p>
+        {waiting ? (
+          <p className="mt-2 inline-flex items-center gap-2 text-[12px] text-ds-muted">
+            <span className="h-3 w-3 animate-spin rounded-full border border-ds-faint border-t-ds-ink" />
+            {t('publishDraftWaiting')}
+          </p>
+        ) : null}
+        {feedback === 'failed' ? (
+          <p className="mt-2 text-[12px] text-red-600 dark:text-red-300">
+            {t('publishDraftFailed')}
+          </p>
+        ) : null}
+        <div className="mt-2 flex flex-wrap justify-end gap-2">
+          <button
+            type="button"
+            disabled={submitting || busy || waiting}
+            onClick={() => void run('keep_project')}
+            className="rounded-md px-2.5 py-1 text-[12px] font-medium text-ds-muted transition hover:bg-ds-hover hover:text-ds-ink active:scale-[0.98] disabled:opacity-50"
+          >
+            {t('publishRecoveryKeepProject')}
+          </button>
+          <button
+            type="button"
+            disabled={submitting || busy || waiting}
+            onClick={() => void run('use_agent')}
+            className="rounded-md bg-accent px-2.5 py-1 text-[12px] font-medium text-white transition hover:brightness-110 active:scale-[0.98] disabled:opacity-50"
+          >
+            {submitting ? t('publishDraftApplying') : t('publishRecoveryUseAgent')}
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  if (attention.kind === 'failure') {
+    return (
+      <div
+        className="ds-no-drag mx-2 mb-2 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-red-500/20 bg-red-500/5 px-3 py-2 sm:mx-3"
+        data-publish-failure="true"
+      >
+        <div className="min-w-0">
+          <p className="text-[12px] font-medium leading-5 text-ds-ink">
+            {t('publishSyncFailedTitle')}
+          </p>
+          <p className="text-[12px] leading-5 text-ds-muted">
+            {waiting ? t('publishDraftWaiting') : t('publishSyncFailedBody')}
+          </p>
         </div>
         {!waiting ? (
           <button
@@ -100,12 +135,14 @@ export function PublishConflictBanner(): ReactElement | null {
             onClick={() => void run('apply')}
             className="rounded-md bg-accent px-2.5 py-1 text-[12px] font-medium text-white transition hover:brightness-110 active:scale-[0.98] disabled:opacity-50"
           >
-            {busy ? t('publishDraftApplyAfterTurn') : t('publishDraftApply')}
+            {submitting ? t('publishDraftApplying') : t('publishSyncRetry')}
           </button>
         ) : null}
       </div>
     )
   }
+
+  if (attention.kind !== 'conflict') return null
 
   return (
     <div
@@ -128,6 +165,12 @@ export function PublishConflictBanner(): ReactElement | null {
       {feedback === 'failed' ? (
         <p className="mt-2 text-[12px] text-red-600 dark:text-red-300">
           {t('publishDraftFailed')}
+        </p>
+      ) : null}
+      {waiting ? (
+        <p className="mt-2 inline-flex items-center gap-2 text-[12px] text-ds-muted">
+          <span className="h-3 w-3 animate-spin rounded-full border border-ds-faint border-t-ds-ink" />
+          {t('publishDraftWaiting')}
         </p>
       ) : null}
       <div className="mt-2 flex flex-wrap justify-end gap-2">
