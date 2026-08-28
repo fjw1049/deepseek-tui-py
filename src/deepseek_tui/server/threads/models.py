@@ -78,6 +78,14 @@ class ThreadRecord(BaseModel):
     worktree_owned: bool = False
     associated_worktree_path: str | None = None
     worktree_branch: str | None = None
+    # User-facing delivery state for isolated session edits.  Worktree and
+    # checkpoint details stay internal; the UI only needs to know whether this
+    # session still has code to apply, whether an apply was queued behind
+    # another active session, or whether real file conflicts need a choice.
+    publish_pending: bool = False
+    publish_request_action: str | None = None
+    publish_request_paths: list[str] = Field(default_factory=list)
+    publish_waiting_on: str | None = None
     publish_blocked: bool = False
     publish_conflicts: list[str] = Field(default_factory=list)
     mode: str = "agent"
@@ -168,6 +176,7 @@ class CreateThreadRequest(BaseModel):
     provider: str | None = None
     model: str | None = None
     workspace: str | None = None
+    title: str | None = None
     env_mode: str | None = None
     mode: str | None = None
     allow_shell: bool | None = None
@@ -216,8 +225,9 @@ class RestoreCodeRequest(BaseModel):
 
 
 class ResolvePublishRequest(BaseModel):
-    """Resolve files that could not auto-publish into the project."""
+    """Apply isolated edits or resolve files that could not be merged."""
 
+    # ``apply`` performs the normal safe merge requested by the user.
     # ``use_agent`` overwrites the project with this thread's copies.
     # ``keep_project`` keeps the project bytes and drops those isolate edits.
     action: str

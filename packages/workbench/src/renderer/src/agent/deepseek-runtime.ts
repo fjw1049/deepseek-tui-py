@@ -7,9 +7,11 @@ import type {
   EvolutionProposalPayload,
   ChatBlock,
   NormalizedThread,
+  PublishActionResult,
   ProcessIntentMeta,
   RestoreCodeResult,
   RewindPreview,
+  RewindResult,
   ThreadDeltaEvent,
   SubagentMailboxPayload,
   ThreadEventSink,
@@ -154,6 +156,9 @@ type ThreadRecordJson = {
   worktree_path?: string | null
   associated_worktree_path?: string | null
   worktree_branch?: string | null
+  publish_pending?: boolean
+  publish_request_action?: string | null
+  publish_waiting_on?: string | null
   publish_blocked?: boolean
   publish_conflicts?: string[]
   mode: string
@@ -229,6 +234,19 @@ function threadFromJson(t: ThreadRecordJson, title?: string): NormalizedThread {
     model: t.model,
     mode: t.mode,
     workspace: t.workspace,
+    envMode: t.env_mode === 'worktree' ? 'worktree' : 'local',
+    worktreePath: t.worktree_path ?? t.associated_worktree_path ?? null,
+    publishPending: t.publish_pending === true,
+    publishRequestAction:
+      t.publish_request_action === 'apply' ||
+      t.publish_request_action === 'use_agent' ||
+      t.publish_request_action === 'keep_project'
+        ? t.publish_request_action
+        : null,
+    publishWaitingOn:
+      typeof t.publish_waiting_on === 'string' && t.publish_waiting_on.trim()
+        ? t.publish_waiting_on
+        : null,
     publishBlocked: t.publish_blocked === true,
     publishConflicts: Array.isArray(t.publish_conflicts)
       ? t.publish_conflicts.filter((item): item is string => typeof item === 'string')
@@ -951,6 +969,7 @@ export class DeepseekRuntimeProvider implements AgentProvider {
     const flags = runtimeExecutionFlags(settings)
     const body = JSON.stringify({
       workspace: input.workspace,
+      title: input.title,
       mode: input.mode ?? 'agent',
       provider: input.provider,
       model: input.model,
@@ -959,12 +978,16 @@ export class DeepseekRuntimeProvider implements AgentProvider {
     const r = await window.dsGui.runtimeRequest('/v1/threads', 'POST', body)
     if (!r.ok) throw toRuntimeError(readRuntimeError(r.body, 'failed to create thread'))
     const t = JSON.parse(r.body) as ThreadRecordJson
-    if (input.title) {
-      await window.dsGui.runtimeRequest(
+    // Compatibility fallback for older runtimes that ignored title on POST.
+    if (input.title && t.title?.trim() !== input.title) {
+      const renamed = await window.dsGui.runtimeRequest(
         `/v1/threads/${encodeURIComponent(t.id)}`,
         'PATCH',
         JSON.stringify({ title: input.title })
       )
+      if (!renamed.ok) {
+        throw toRuntimeError(readRuntimeError(renamed.body, 'failed to title thread'))
+      }
     }
     return threadFromJson(t, input.title || titleFromThread(t))
   }
@@ -1331,14 +1354,23 @@ export class DeepseekRuntimeProvider implements AgentProvider {
     }
   }
 
-  async deleteThread(threadId: string): Promise<void> {
+  async deleteThread(
+    threadId: string,
+    options?: { discardUnpublished?: boolean }
+  ): Promise<void> {
     // Hard delete. Soft-archive is archiveThread / setThreadArchived.
-    await this.purgeThread(threadId)
+    await this.purgeThread(threadId, options)
   }
 
-  async purgeThread(threadId: string): Promise<void> {
+  async purgeThread(
+    threadId: string,
+    options?: { discardUnpublished?: boolean }
+  ): Promise<void> {
+    const query = options?.discardUnpublished
+      ? '?discard_unpublished=true'
+      : ''
     const r = await window.dsGui.runtimeRequest(
-      `/v1/threads/${encodeURIComponent(threadId)}`,
+      `/v1/threads/${encodeURIComponent(threadId)}${query}`,
       'DELETE'
     )
     if (!r.ok) {
@@ -1378,7 +1410,7 @@ export class DeepseekRuntimeProvider implements AgentProvider {
     beforeItemId: string,
     restoreFiles?: boolean,
     forceConflicts?: boolean
-  ): Promise<void> {
+  ): Promise<RewindResult | null> {
     const r = await window.dsGui.runtimeRequest(
       `/v1/threads/${encodeURIComponent(threadId)}/rewind`,
       'POST',
@@ -1389,6 +1421,21 @@ export class DeepseekRuntimeProvider implements AgentProvider {
       })
     )
     if (!r.ok) throw toRuntimeError(readRuntimeError(r.body, 'rewind thread failed'))
+    const parsed = JSON.parse(r.body) as Record<string, unknown>
+    const rawResult = parsed.rewind_result
+    if (!rawResult || typeof rawResult !== 'object' || Array.isArray(rawResult)) {
+      // Older runtimes return only the top-level ThreadRecord.
+      return null
+    }
+    const result = rawResult as Record<string, unknown>
+    return {
+      restoreFiles: result.restore_files === true,
+      restoredFiles: stringListFromJson(result, 'restored_files'),
+      mergedFiles: stringListFromJson(result, 'merged_files'),
+      conflictedFiles: stringListFromJson(result, 'conflicted_files'),
+      skippedFiles: stringListFromJson(result, 'skipped_files'),
+      missingRoots: stringListFromJson(result, 'missing_roots')
+    }
   }
 
   async restoreCode(
@@ -1431,16 +1478,33 @@ export class DeepseekRuntimeProvider implements AgentProvider {
 
   async resolvePublishConflicts(
     threadId: string,
-    action: 'use_agent' | 'keep_project',
+    action: 'apply' | 'use_agent' | 'keep_project',
     paths?: string[]
-  ): Promise<NormalizedThread> {
+  ): Promise<PublishActionResult> {
     const r = await window.dsGui.runtimeRequest(
       `/v1/threads/${encodeURIComponent(threadId)}/worktree/resolve`,
       'POST',
       JSON.stringify({ action, paths })
     )
     if (!r.ok) throw toRuntimeError(readRuntimeError(r.body, 'resolve publish failed'))
-    return threadFromJson(JSON.parse(r.body) as ThreadRecordJson)
+    const parsed = JSON.parse(r.body) as {
+      status?: unknown
+      thread?: ThreadRecordJson
+      blocking_thread_id?: unknown
+    }
+    if (!parsed.thread) throw new Error('resolve publish returned no thread')
+    const status =
+      parsed.status === 'queued' ||
+      parsed.status === 'conflict' ||
+      parsed.status === 'pending'
+        ? parsed.status
+        : 'applied'
+    return {
+      status,
+      thread: threadFromJson(parsed.thread),
+      blockingThreadId:
+        typeof parsed.blocking_thread_id === 'string' ? parsed.blocking_thread_id : null
+    }
   }
 
   async resumeThread(threadId: string): Promise<void> {
@@ -1883,6 +1947,47 @@ export class DeepseekRuntimeProvider implements AgentProvider {
                         : undefined
                   const archived = typeof thread?.archived === 'boolean' ? thread.archived : undefined
                   const mode = typeof thread?.mode === 'string' ? thread.mode : undefined
+                  const envMode =
+                    thread?.env_mode === 'worktree'
+                      ? 'worktree'
+                      : thread?.env_mode === 'local'
+                        ? 'local'
+                        : undefined
+                  const worktreeRaw = thread?.worktree_path ?? thread?.associated_worktree_path
+                  const worktreePath =
+                    typeof worktreeRaw === 'string'
+                      ? worktreeRaw
+                      : worktreeRaw === null
+                        ? null
+                        : undefined
+                  const publishPending =
+                    typeof thread?.publish_pending === 'boolean'
+                      ? thread.publish_pending
+                      : typeof changes.publish_pending === 'boolean'
+                        ? changes.publish_pending
+                        : undefined
+                  const publishRequestRaw =
+                    typeof thread?.publish_request_action === 'string'
+                      ? thread.publish_request_action
+                      : typeof changes.publish_request_action === 'string'
+                        ? changes.publish_request_action
+                        : null
+                  const publishRequestAction =
+                    publishRequestRaw === 'apply' ||
+                    publishRequestRaw === 'use_agent' ||
+                    publishRequestRaw === 'keep_project'
+                      ? publishRequestRaw
+                      : publishRequestRaw === null
+                        ? null
+                        : undefined
+                  const publishWaitingRaw =
+                    thread?.publish_waiting_on ?? changes.publish_waiting_on
+                  const publishWaitingOn =
+                    typeof publishWaitingRaw === 'string'
+                      ? publishWaitingRaw
+                      : publishWaitingRaw === null
+                        ? null
+                        : undefined
                   const publishBlocked =
                     typeof thread?.publish_blocked === 'boolean'
                       ? thread.publish_blocked
@@ -1903,6 +2008,11 @@ export class DeepseekRuntimeProvider implements AgentProvider {
                     title,
                     archived,
                     mode,
+                    envMode,
+                    worktreePath,
+                    publishPending,
+                    publishRequestAction,
+                    publishWaitingOn,
                     publishBlocked,
                     publishConflicts,
                     changes

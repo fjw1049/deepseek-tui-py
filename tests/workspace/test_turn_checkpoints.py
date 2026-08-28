@@ -8,8 +8,9 @@ from pathlib import Path
 
 import pytest
 
+import deepseek_tui.workspace.turn_checkpoints as checkpoint_module
 from deepseek_tui.workspace.shell_mutation_watch import ShellMutationSnapshot
-from deepseek_tui.workspace.turn_checkpoints import TurnCheckpointStore
+from deepseek_tui.workspace.turn_checkpoints import TurnCheckpoint, TurnCheckpointStore
 
 
 def _git(cwd: Path, *args: str) -> str:
@@ -585,3 +586,52 @@ async def test_restore_skips_missing_recorded_root(
     assert report.restored == []
     assert report.missing_roots == [str(gone)]
     assert (project / "f.py").read_text(encoding="utf-8") == "project\n"
+
+
+@pytest.mark.asyncio
+async def test_restore_rolls_back_whole_batch_when_one_write_fails(
+    store: TurnCheckpointStore,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    (ws / "a.py").write_text("new-a\n", encoding="utf-8")
+    (ws / "b.py").write_text("new-b\n", encoding="utf-8")
+    store.begin_turn("turn_1", None, head=None, is_git=False)
+    store.record_pre_write("turn_1", "a.py", "old-a\n")
+    store.record_pre_write("turn_1", "b.py", "old-b\n")
+    store.record_post_images("turn_1", ws)
+    original = checkpoint_module._write_pre_image
+
+    def flaky_write(root: Path, rel: str, content: str | None) -> None:
+        if rel == "b.py" and content == "old-b\n":
+            raise OSError("simulated second write failure")
+        original(root, rel, content)
+
+    monkeypatch.setattr(checkpoint_module, "_write_pre_image", flaky_write)
+
+    report = await store.restore(["turn_1"], ws)
+
+    assert report.restored == []
+    assert report.skipped == ["a.py", "b.py"]
+    assert (ws / "a.py").read_text(encoding="utf-8") == "new-a\n"
+    assert (ws / "b.py").read_text(encoding="utf-8") == "new-b\n"
+
+
+def test_prune_preserves_protected_live_checkpoint(store: TurnCheckpointStore) -> None:
+    store._save(
+        TurnCheckpoint(
+            turn_id="turn_live",
+            is_git=False,
+            thread_id="thr_live",
+            created_at=1.0,
+        )
+    )
+
+    assert store.prune_older_than(
+        1, protected_turn_ids={"turn_live"}
+    ) == 0
+    assert store.load("turn_live") is not None
+    assert store.prune_older_than(1) == 1
+    assert store.load("turn_live") is None

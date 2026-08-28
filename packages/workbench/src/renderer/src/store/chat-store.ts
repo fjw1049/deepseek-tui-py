@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import type {
   NormalizedThread,
   ProcessIntentMeta,
+  RewindResult,
   SubagentMailboxPayload,
   ThreadDeltaEvent,
   ThreadEventSink,
@@ -505,6 +506,35 @@ function shouldOpenSettingsForError(error: unknown): boolean {
 function settingsSectionForRuntimeError(error: unknown): SettingsRouteSection | null {
   if (!shouldOpenSettingsForError(error)) return null
   return getRuntimeErrorCode(error) === 'missing_api_key' ? 'models' : 'general'
+}
+
+type ThreadDeleteConfirmation = { discardUnpublished: boolean }
+
+async function deleteThreadWithConfirmation(
+  provider: AgentProvider,
+  threadId: string,
+  confirmation: ThreadDeleteConfirmation
+): Promise<boolean> {
+  try {
+    await provider.deleteThread(threadId, {
+      discardUnpublished: confirmation.discardUnpublished
+    })
+    return true
+  } catch (error) {
+    if (
+      confirmation.discardUnpublished ||
+      getRuntimeErrorCode(error) !== 'unpublished_worktree_code'
+    ) {
+      throw error
+    }
+    const confirmed = window.confirm(
+      i18n.t('common:sidebarDeleteUnpublishedConfirm')
+    )
+    if (!confirmed) return false
+    confirmation.discardUnpublished = true
+    await provider.deleteThread(threadId, { discardUnpublished: true })
+    return true
+  }
 }
 
 async function syncRuntimePendingApprovals(
@@ -1102,10 +1132,25 @@ function buildThreadEventSink(
                 : null
         const nextPublishBlocked = ev.publishBlocked ?? current.publishBlocked
         const nextPublishConflicts = ev.publishConflicts ?? current.publishConflicts
+        const nextEnvMode = ev.envMode ?? current.envMode
+        const nextWorktreePath =
+          ev.worktreePath === undefined ? current.worktreePath : ev.worktreePath
+        const nextPublishPending = ev.publishPending ?? current.publishPending
+        const nextPublishRequestAction =
+          ev.publishRequestAction === undefined
+            ? current.publishRequestAction
+            : ev.publishRequestAction
+        const nextPublishWaitingOn =
+          ev.publishWaitingOn === undefined ? current.publishWaitingOn : ev.publishWaitingOn
         const threadChanged =
           nextTitle !== current.title ||
           nextArchived !== current.archived ||
           nextThreadMode !== current.mode ||
+          nextEnvMode !== current.envMode ||
+          nextWorktreePath !== current.worktreePath ||
+          nextPublishPending !== current.publishPending ||
+          nextPublishRequestAction !== current.publishRequestAction ||
+          nextPublishWaitingOn !== current.publishWaitingOn ||
           nextPublishBlocked !== current.publishBlocked ||
           (nextPublishConflicts ?? []).join('\0') !== (current.publishConflicts ?? []).join('\0')
         const syncComposer =
@@ -1123,6 +1168,11 @@ function buildThreadEventSink(
                 title: nextTitle,
                 archived: nextArchived,
                 mode: nextThreadMode,
+                envMode: nextEnvMode,
+                worktreePath: nextWorktreePath,
+                publishPending: nextPublishPending,
+                publishRequestAction: nextPublishRequestAction,
+                publishWaitingOn: nextPublishWaitingOn,
                 publishBlocked: nextPublishBlocked,
                 publishConflicts: nextPublishConflicts
               }
@@ -1816,14 +1866,22 @@ export const useChatStore = create<ChatState>((set, get) => ({
       threadBelongsToWorkspace(thread, normalizedPath)
     )
     const deletingActive = workspaceThreads.some((th) => th.id === activeThreadId)
-    if (deletingActive) {
-      sseAbort?.abort()
-      sseAbort = null
-      clearBusyWatchdog()
-    }
     try {
-      for (const th of workspaceThreads) {
-        await p.deleteThread(th.id)
+      const confirmation: ThreadDeleteConfirmation = { discardUnpublished: false }
+      const orderedThreads = [...workspaceThreads].sort(
+        (a, b) => Number(b.publishBlocked === true) - Number(a.publishBlocked === true)
+      )
+      for (const th of orderedThreads) {
+        const deleted = await deleteThreadWithConfirmation(p, th.id, confirmation)
+        if (!deleted) {
+          await get().refreshThreads()
+          return
+        }
+      }
+      if (deletingActive) {
+        sseAbort?.abort()
+        sseAbort = null
+        clearBusyWatchdog()
       }
       const removeIds = new Set(workspaceThreads.map((th) => th.id))
       const nextHidden = get().hiddenWorkspacePaths.filter(
@@ -2881,7 +2939,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const p = getProvider(providerId)
     const deletingActive = activeThreadId === targetId
     try {
-      await p.deleteThread(targetId)
+      const deleted = await deleteThreadWithConfirmation(
+        p,
+        targetId,
+        { discardUnpublished: false }
+      )
+      if (!deleted) return
       if (deletingActive) {
         sseAbort?.abort()
         sseAbort = null
@@ -3010,13 +3073,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   rewindAndResend: async (userBlockId, newText, opts) => {
     const trimmed = newText.trim()
-    if (!trimmed) return
+    if (!trimmed) return false
     const state = get()
     if (state.busy) {
       set({ error: i18n.t('common:rewindBusyError') })
-      return
+      return false
     }
-    if (!state.blocks.some((b) => b.id === userBlockId && b.kind === 'user')) return
+    if (!state.blocks.some((b) => b.id === userBlockId && b.kind === 'user')) return false
 
     // Truncate on the runtime first so the dropped turns are deleted from
     // disk (they would otherwise resurface on the next thread reload) and
@@ -3024,15 +3087,18 @@ export const useChatStore = create<ChatState>((set, get) => ({
     // optimistic ids (`u-…`/`q-…`) were never persisted, so only blocks
     // carrying a runtime item id (`item_…`) need the backend call.
     let restoredOnBackend = false
+    let rewindResult: RewindResult | null = null
     const p = getProvider(state.providerId)
-    if (
-      state.activeThreadId &&
-      userBlockId.startsWith('item_') &&
-      typeof p.rewindThread === 'function'
-    ) {
+    const runtimeThreadId = state.activeThreadId
+    const needsRuntimeRewind = runtimeThreadId != null && userBlockId.startsWith('item_')
+    if (needsRuntimeRewind && typeof p.rewindThread !== 'function') {
+      set({ error: i18n.t('common:rewindRestoreUnsupported') })
+      return false
+    }
+    if (needsRuntimeRewind && typeof p.rewindThread === 'function') {
       try {
-        await p.rewindThread(
-          state.activeThreadId,
+        rewindResult = await p.rewindThread(
+          runtimeThreadId,
           userBlockId,
           opts?.restoreFiles,
           opts?.forceConflicts
@@ -3040,13 +3106,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
         restoredOnBackend = opts?.restoreFiles === true
       } catch (e) {
         set({ error: formatRuntimeError(e) })
-        return
+        return false
       }
     }
 
     // Drop the target user block and everything after it from the UI.
     const patch = truncateStateAtUserBlock(state, userBlockId)
-    if (!patch) return
+    if (!patch) return false
     set(patch)
     if (restoredOnBackend) {
       // Files changed on disk — refresh the git panels/docks watching this tick.
@@ -3055,7 +3121,23 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     // Use current composer mode (same as model/effort). Do not drop to
     // the sendMessage default — UI may still show plan/ask.
-    await get().sendMessage(trimmed, get().composerMode)
+    const sent = await get().sendMessage(trimmed, get().composerMode)
+    if (!sent) return false
+    if (rewindResult) {
+      const unresolved = new Set([
+        ...rewindResult.conflictedFiles,
+        ...rewindResult.skippedFiles
+      ])
+      const unresolvedCount = Math.max(unresolved.size, rewindResult.missingRoots.length)
+      if (unresolvedCount > 0) {
+        set({
+          error: i18n.t('common:rewindResendCompletedWithUnresolved', {
+            count: unresolvedCount
+          })
+        })
+      }
+    }
+    return true
   },
 
   rewindToMessage: async (userBlockId, opts) => {
@@ -3119,23 +3201,24 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   resolvePublishConflicts: async (action, paths) => {
     const state = get()
-    if (!state.activeThreadId) return false
+    if (!state.activeThreadId) return null
     const p = getProvider(state.providerId)
     if (typeof p.resolvePublishConflicts !== 'function') {
       set({ error: i18n.t('common:publishConflictUnsupported') })
-      return false
+      return null
     }
     try {
-      const updated = await p.resolvePublishConflicts(state.activeThreadId, action, paths)
+      const result = await p.resolvePublishConflicts(state.activeThreadId, action, paths)
+      const updated = result.thread
       set((s) => ({
         error: null,
         workspaceDirtyTick: s.workspaceDirtyTick + 1,
         threads: s.threads.map((thread) => (thread.id === updated.id ? { ...thread, ...updated } : thread))
       }))
-      return true
+      return result
     } catch (e) {
       set({ error: formatRuntimeError(e) })
-      return false
+      return null
     }
   },
 

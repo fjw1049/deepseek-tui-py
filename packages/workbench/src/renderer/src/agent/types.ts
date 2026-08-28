@@ -47,6 +47,11 @@ export type NormalizedThread = {
   model: string
   mode: string
   workspace?: string
+  envMode?: 'local' | 'worktree'
+  worktreePath?: string | null
+  publishPending?: boolean
+  publishRequestAction?: 'apply' | 'use_agent' | 'keep_project' | null
+  publishWaitingOn?: string | null
   publishBlocked?: boolean
   publishConflicts?: string[]
   status?: string
@@ -60,6 +65,16 @@ export type RuntimeConnectionStatus = 'idle' | 'checking' | 'ready' | 'offline'
 export type RestoreCodeResult = {
   restoredFiles: string[]
   skippedFiles: string[]
+}
+
+/** Actual file outcome returned by POST /v1/threads/{id}/rewind. */
+export type RewindResult = {
+  restoreFiles: boolean
+  restoredFiles: string[]
+  mergedFiles: string[]
+  conflictedFiles: string[]
+  skippedFiles: string[]
+  missingRoots: string[]
 }
 
 /** Result of GET /v1/threads/{id}/rewind-preview — files a rewind-with-restore would touch. */
@@ -344,10 +359,21 @@ export type ThreadUpdatedPayload = {
   archived?: boolean
   /** Interaction mode after enter/exit plan (or other mode switches). */
   mode?: string
+  envMode?: 'local' | 'worktree'
+  worktreePath?: string | null
+  publishPending?: boolean
+  publishRequestAction?: 'apply' | 'use_agent' | 'keep_project' | null
+  publishWaitingOn?: string | null
   publishBlocked?: boolean
   publishConflicts?: string[]
   /** Subset of fields that actually changed in this update. */
   changes: Record<string, unknown>
+}
+
+export type PublishActionResult = {
+  status: 'applied' | 'queued' | 'conflict' | 'pending'
+  thread: NormalizedThread
+  blockingThreadId?: string | null
 }
 
 export type ThreadEventSink = {
@@ -440,8 +466,14 @@ export interface AgentProvider {
   archiveThread?(threadId: string): Promise<void>
   setThreadArchived?(threadId: string, archived: boolean): Promise<void>
   /** Permanently delete a thread (DELETE). */
-  deleteThread(threadId: string): Promise<void>
-  purgeThread?(threadId: string): Promise<void>
+  deleteThread(
+    threadId: string,
+    options?: { discardUnpublished?: boolean }
+  ): Promise<void>
+  purgeThread?(
+    threadId: string,
+    options?: { discardUnpublished?: boolean }
+  ): Promise<void>
   /** Permanently delete every soft-archived thread. */
   purgeArchivedThreads?(): Promise<{ deleted: number; requested: number }>
   forkThread?(threadId: string, throughItemId?: string): Promise<NormalizedThread>
@@ -451,7 +483,7 @@ export interface AgentProvider {
     beforeItemId: string,
     restoreFiles?: boolean,
     forceConflicts?: boolean
-  ): Promise<void>
+  ): Promise<RewindResult | null>
   /**
    * Restore workspace files to the state before `beforeItemId`'s turn WITHOUT
    * truncating the conversation (POST /v1/threads/{id}/restore-code).
@@ -468,9 +500,9 @@ export interface AgentProvider {
   rewindPreview?(threadId: string, beforeItemId: string): Promise<RewindPreview>
   resolvePublishConflicts?(
     threadId: string,
-    action: 'use_agent' | 'keep_project',
+    action: 'apply' | 'use_agent' | 'keep_project',
     paths?: string[]
-  ): Promise<NormalizedThread>
+  ): Promise<PublishActionResult>
   resumeThread?(threadId: string): Promise<void>
   /** Runtime HTTP: POST /v1/tasks/{id}/resume */
   resumeTask?(taskId: string): Promise<void>

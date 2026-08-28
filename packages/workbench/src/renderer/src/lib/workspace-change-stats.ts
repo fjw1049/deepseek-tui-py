@@ -58,6 +58,8 @@ export function collectWorkspaceChangeEntries(opts: {
   blocks: ChatBlock[]
   turnDiffByTurnId?: Record<string, TurnDiffSnapshot>
   gitFiles?: GitWorkingChangeFile[] | null
+  /** Keep this thread's ledger even when the project checkout is clean. */
+  retainSessionEntriesWhenGitClean?: boolean
 }): WorkspaceChangeEntry[] {
   const byPath = new Map<string, WorkspaceChangeEntry>()
   // Paths git no longer reports dirty were committed (or reverted) since
@@ -67,7 +69,9 @@ export function collectWorkspaceChangeEntries(opts: {
   // Only meaningful once the first git snapshot has loaded (null/undefined =
   // still loading / not a repo: fall back to showing session-sourced entries).
   const gitDirtyPaths =
-    opts.gitFiles == null ? null : new Set(opts.gitFiles.map((file) => normalizeChangePath(file.path)))
+    opts.gitFiles == null || opts.retainSessionEntriesWhenGitClean
+      ? null
+      : new Set(opts.gitFiles.map((file) => normalizeChangePath(file.path)))
 
   for (const block of opts.blocks) {
     if (!(block.kind === 'tool' && block.toolKind === 'file_change')) continue

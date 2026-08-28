@@ -1,5 +1,5 @@
 import type { ReactElement } from 'react'
-import { useCallback } from 'react'
+import { useCallback, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useGitBranches } from '../../hooks/use-git-branches'
 import { useGitWorkingChanges } from '../../hooks/use-git-working-changes'
@@ -22,18 +22,49 @@ export function RightSidebarCollapsedStrip({ workspaceRoot, onExpand }: Props): 
   const workspaceDirtyTick = useChatStore((s) => s.workspaceDirtyTick)
   const blocks = useChatStore((s) => s.blocks)
   const turnDiffByTurnId = useChatStore((s) => s.turnDiffByTurnId)
+  const activeThread = useChatStore((s) =>
+    s.activeThreadId
+      ? s.threads.find((item) => item.id === s.activeThreadId)
+      : undefined
+  )
+  const isSessionDraft = activeThread?.envMode === 'worktree'
+  const changeRoot =
+    isSessionDraft && activeThread?.worktreePath?.trim()
+      ? activeThread.worktreePath.trim()
+      : root
   const { result: gitResult, reload: reloadGitBranches } = useGitBranches(root)
-  const { result: gitChanges, reload: reloadGitChanges } = useGitWorkingChanges(root)
+  const { result: gitChanges, reload: reloadGitChanges } = useGitWorkingChanges(changeRoot)
   const refreshGit = useCallback((): void => {
     void reloadGitBranches()
     void reloadGitChanges()
   }, [reloadGitBranches, reloadGitChanges])
   useWorkspaceDirtyGitRefresh(workspaceDirtyTick, refreshGit)
+  const sessionEntries = useMemo(
+    () => collectWorkspaceChangeEntries({ blocks, turnDiffByTurnId, gitFiles: null }),
+    [blocks, turnDiffByTurnId]
+  )
+  const sessionPaths = useMemo(
+    () =>
+      new Set(
+        sessionEntries
+          .map((entry) => entry.filePath?.replace(/\\/g, '/').trim())
+          .filter((path): path is string => Boolean(path))
+      ),
+    [sessionEntries]
+  )
+  const scopedGitFiles =
+    gitChanges?.ok && isSessionDraft
+      ? gitChanges.files.filter((file) =>
+          sessionPaths.has(file.path.replace(/\\/g, '/').trim())
+        )
+      : gitChanges?.ok
+        ? gitChanges.files
+        : null
   const changeStats = sumWorkspaceChangeStats(
     collectWorkspaceChangeEntries({
       blocks,
       turnDiffByTurnId,
-      gitFiles: gitChanges?.ok ? gitChanges.files : null
+      gitFiles: scopedGitFiles
     })
   )
 

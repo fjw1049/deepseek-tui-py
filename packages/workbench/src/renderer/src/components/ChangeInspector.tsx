@@ -183,13 +183,51 @@ export function ChangeInspector({
         workspaceDirtyTick: s.workspaceDirtyTick,
         turnDiffByTurnId: s.turnDiffByTurnId
       }))
-    )
+  )
+  const activeThread = activeThreadId
+    ? threads.find((thread) => thread.id === activeThreadId)
+    : undefined
+  const isSessionDraft = activeThread?.envMode === 'worktree'
   const root = resolveThreadFilesystemRoot(activeThreadId, threads, workspaceRoot)
-  const { result: gitChanges, loading: gitLoading, reload: reloadGitChanges } = useGitWorkingChanges(root)
+  const changeRoot =
+    isSessionDraft && activeThread?.worktreePath?.trim()
+      ? activeThread.worktreePath.trim()
+      : root
+  const { result: gitChanges, loading: gitLoading, reload: reloadGitChanges } =
+    useGitWorkingChanges(changeRoot)
   useWorkspaceDirtyGitRefresh(workspaceDirtyTick, reloadGitChanges)
+  const sessionLedgerEntries = useMemo(
+    () =>
+      collectWorkspaceChangeEntries({
+        blocks,
+        turnDiffByTurnId,
+        gitFiles: null
+      }),
+    [blocks, turnDiffByTurnId]
+  )
+  const sessionPaths = useMemo(
+    () =>
+      new Set(
+        sessionLedgerEntries
+          .map((entry) => entry.filePath?.replace(/\\/g, '/').trim())
+          .filter((path): path is string => Boolean(path))
+      ),
+    [sessionLedgerEntries]
+  )
+  const scopedGitFiles = useMemo(
+    () =>
+      gitChanges?.ok
+        ? isSessionDraft
+          ? gitChanges.files.filter((file) =>
+              sessionPaths.has(file.path.replace(/\\/g, '/').trim())
+            )
+          : gitChanges.files
+        : null,
+    [gitChanges, isSessionDraft, sessionPaths]
+  )
   const gitFilePaths = useMemo(
-    () => (gitChanges?.ok ? gitChanges.files.map((file) => file.path) : []),
-    [gitChanges]
+    () => (isSessionDraft ? [] : (scopedGitFiles ?? []).map((file) => file.path)),
+    [isSessionDraft, scopedGitFiles]
   )
 
   const isReview = variant === 'review'
@@ -241,9 +279,12 @@ export function ChangeInspector({
       collectWorkspaceChangeEntries({
         blocks,
         turnDiffByTurnId,
-        gitFiles: gitChanges?.ok ? gitChanges.files : null
-      }),
-    [blocks, gitChanges, turnDiffByTurnId]
+        // Read cumulative patches from the active session's worktree, filtered
+        // to paths this thread actually touched. Project dirt from sibling
+        // sessions never enters this inspector.
+        gitFiles: scopedGitFiles
+      }).map((entry) => (isSessionDraft ? { ...entry, committable: false } : entry)),
+    [blocks, isSessionDraft, scopedGitFiles, turnDiffByTurnId]
   )
 
   const changeStats = useMemo(() => sumWorkspaceChangeStats(fileChanges), [fileChanges])

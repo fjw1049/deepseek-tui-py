@@ -1451,6 +1451,7 @@ export function FloatingComposer({
           window.dispatchEvent(new CustomEvent('deepseekgui:open-changes-panel'))
         }}
       />
+      <PublishConflictBanner />
       {(() => {
         const visibleQueued = queuedMessages.filter((message) => !message.hidden)
         if (visibleQueued.length === 0) return null
@@ -2586,21 +2587,15 @@ export function FloatingComposer({
             </div>
           </div>
           {compactChrome ? (
-            <>
-              <WorkspaceContextBar
-                workspaceRoot={effectiveWorkspaceRoot}
-                variant="embedded"
-              />
-              <PublishConflictBanner />
-            </>
+            <WorkspaceContextBar
+              workspaceRoot={effectiveWorkspaceRoot}
+              variant="embedded"
+            />
           ) : null}
         </div>
       </div>
       {!compactChrome ? (
-        <>
-          <WorkspaceContextBar workspaceRoot={effectiveWorkspaceRoot} />
-          <PublishConflictBanner />
-        </>
+        <WorkspaceContextBar workspaceRoot={effectiveWorkspaceRoot} />
       ) : null}
       {!compactChrome && !runtimeReady ? (
         <p className="px-3 pb-1 text-right text-[11.5px] text-amber-700 dark:text-amber-200 sm:px-4">

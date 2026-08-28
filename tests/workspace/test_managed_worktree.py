@@ -7,16 +7,18 @@ import pytest
 
 from deepseek_tui.workspace.managed_worktree import (
     PathImage,
+    UnpublishedWorktreeError,
+    WorktreeError,
     apply_path_images,
     apply_worktree,
     create_managed_worktree,
     handoff_changes,
+    planned_worktree_path,
     promote_worktree_branch,
     prune_orphaned_worktrees,
     reclaim_managed_worktree,
     remove_managed_worktree,
     sync_isolate_from_project,
-    WorktreeError,
 )
 
 
@@ -29,6 +31,16 @@ def _git(cwd: Path, *args: str) -> str:
         text=True,
     )
     return proc.stdout.strip()
+
+
+def _git_succeeds(cwd: Path, *args: str) -> bool:
+    return subprocess.run(
+        ["git", *args],
+        cwd=str(cwd),
+        check=False,
+        capture_output=True,
+        text=True,
+    ).returncode == 0
 
 
 @pytest.fixture
@@ -179,11 +191,31 @@ async def test_promote_creates_branch(
 ) -> None:
     monkeypatch.setenv("DEEPSEEK_HOME", str(tmp_path / "home"))
     created = await create_managed_worktree(git_repo, "thr_prom", copy_tracked_dirty=False)
-    assert created.branch.startswith("ds/")
-    assert _git(created.path, "branch", "--show-current") == created.branch
+    assert created.branch == ""
+    assert _git(created.path, "branch", "--show-current") == ""
     name = await promote_worktree_branch(created.path, "feature/ship")
     assert name == "feature/ship"
     assert _git(created.path, "branch", "--show-current") == "feature/ship"
+
+
+@pytest.mark.asyncio
+async def test_create_copies_only_selected_ignored_setup_files(
+    git_repo: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("DEEPSEEK_HOME", str(tmp_path / "home"))
+    (git_repo / ".gitignore").write_text(".env\nsecret.txt\n", encoding="utf-8")
+    (git_repo / ".worktreeinclude").write_text(".env\n", encoding="utf-8")
+    (git_repo / ".env").write_text("TOKEN=local\n", encoding="utf-8")
+    (git_repo / "secret.txt").write_text("do-not-copy\n", encoding="utf-8")
+    _git(git_repo, "add", ".gitignore", ".worktreeinclude")
+    _git(git_repo, "commit", "-m", "worktree setup policy")
+
+    created = await create_managed_worktree(
+        git_repo, "thr_setup", copy_tracked_dirty=False
+    )
+
+    assert (created.path / ".env").read_text(encoding="utf-8") == "TOKEN=local\n"
+    assert not (created.path / "secret.txt").exists()
     assert await promote_worktree_branch(created.path, "feature/ship") == "feature/ship"
     _git(git_repo, "branch", "feature/taken")
     with pytest.raises(WorktreeError, match="already exists"):
@@ -244,7 +276,76 @@ async def test_reclaim_keeps_dirty_owned_worktree(
 
 
 @pytest.mark.asyncio
-async def test_sync_isolate_matches_project_despite_isolate_dirt(
+async def test_reclaim_keeps_detached_unique_commit(
+    git_repo: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("DEEPSEEK_HOME", str(tmp_path / "home"))
+    created = await create_managed_worktree(git_repo, "thr_commit", copy_tracked_dirty=False)
+    (created.path / "tracked.py").write_text("committed\n", encoding="utf-8")
+    _git(created.path, "add", "tracked.py")
+    _git(created.path, "commit", "-m", "agent commit")
+
+    status = await reclaim_managed_worktree(git_repo, created.path, owned=True)
+
+    assert status == "kept"
+    assert created.path.is_dir()
+
+
+@pytest.mark.asyncio
+async def test_remove_deletes_only_merged_legacy_internal_branch(
+    git_repo: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("DEEPSEEK_HOME", str(tmp_path / "home"))
+    dest = planned_worktree_path(git_repo, "thr_legacy")
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    _git(git_repo, "worktree", "add", "-b", "ds/thr_legacy", str(dest), "HEAD")
+
+    await remove_managed_worktree(git_repo, dest)
+
+    assert not dest.exists()
+    assert not _git_succeeds(
+        git_repo, "show-ref", "--verify", "--quiet", "refs/heads/ds/thr_legacy"
+    )
+
+
+@pytest.mark.asyncio
+async def test_remove_preserves_legacy_branch_with_unique_commit(
+    git_repo: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("DEEPSEEK_HOME", str(tmp_path / "home"))
+    dest = planned_worktree_path(git_repo, "thr_legacy_unique")
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    branch = "ds/thr_legacy_unique"
+    _git(git_repo, "worktree", "add", "-b", branch, str(dest), "HEAD")
+    (dest / "tracked.py").write_text("committed\n", encoding="utf-8")
+    _git(dest, "add", "tracked.py")
+    _git(dest, "commit", "-m", "agent commit")
+    commit = _git(dest, "rev-parse", "HEAD")
+
+    await remove_managed_worktree(git_repo, dest)
+
+    assert not dest.exists()
+    assert _git(git_repo, "rev-parse", branch) == commit
+
+
+@pytest.mark.asyncio
+async def test_remove_does_not_bypass_git_worktree_lock(
+    git_repo: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("DEEPSEEK_HOME", str(tmp_path / "home"))
+    created = await create_managed_worktree(
+        git_repo, "thr_locked", copy_tracked_dirty=False
+    )
+    _git(git_repo, "worktree", "lock", str(created.path))
+
+    with pytest.raises(WorktreeError):
+        await remove_managed_worktree(git_repo, created.path)
+
+    assert created.path.is_dir()
+
+
+@pytest.mark.asyncio
+async def test_sync_isolate_preserves_uncheckpointed_isolate_labor(
     git_repo: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     monkeypatch.setenv("DEEPSEEK_HOME", str(tmp_path / "home"))
@@ -252,7 +353,28 @@ async def test_sync_isolate_matches_project_despite_isolate_dirt(
     (created.path / "tracked.py").write_text("from-isolate\n", encoding="utf-8")
     (git_repo / "tracked.py").write_text("from-claude\n", encoding="utf-8")
     (git_repo / "extra.py").write_text("new\n", encoding="utf-8")
-    await sync_isolate_from_project(git_repo, created.path)
-    assert (created.path / "tracked.py").read_text(encoding="utf-8") == "from-claude\n"
-    assert (created.path / "extra.py").read_text(encoding="utf-8") == "new\n"
+    with pytest.raises(UnpublishedWorktreeError):
+        await sync_isolate_from_project(git_repo, created.path)
+
+    assert (created.path / "tracked.py").read_text(encoding="utf-8") == "from-isolate\n"
+    assert not (created.path / "extra.py").exists()
     assert (git_repo / "tracked.py").read_text(encoding="utf-8") == "from-claude\n"
+
+
+@pytest.mark.asyncio
+async def test_sync_advances_detached_baseline_without_fake_dirt(
+    git_repo: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("DEEPSEEK_HOME", str(tmp_path / "home"))
+    created = await create_managed_worktree(git_repo, "thr_advance", copy_tracked_dirty=False)
+    (git_repo / "tracked.py").write_text("v2\n", encoding="utf-8")
+    _git(git_repo, "add", "tracked.py")
+    _git(git_repo, "commit", "-m", "advance project")
+
+    synced_head = await sync_isolate_from_project(git_repo, created.path)
+
+    assert synced_head == _git(git_repo, "rev-parse", "HEAD")
+    assert _git(created.path, "rev-parse", "HEAD") == synced_head
+    assert _git(created.path, "branch", "--show-current") == ""
+    assert _git(created.path, "status", "--porcelain") == ""
+    assert (created.path / "tracked.py").read_text(encoding="utf-8") == "v2\n"

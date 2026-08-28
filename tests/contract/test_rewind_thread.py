@@ -142,6 +142,19 @@ async def test_rewind_at_user_message_deletes_turn_and_after(runtime_app) -> Non
 
 
 @pytest.mark.asyncio
+async def test_rewind_result_uses_stable_list_fields(runtime_app) -> None:
+    manager = runtime_app.state.thread_manager
+    thread_id = await _seed(manager)
+
+    _thread, result = await manager.rewind_thread_with_result(
+        thread_id, before_item_id="item_u2"
+    )
+
+    assert result["missing_roots"] == []
+    assert isinstance(result["missing_roots"], list)
+
+
+@pytest.mark.asyncio
 async def test_rewind_mid_turn_keeps_earlier_items(runtime_app) -> None:
     manager = runtime_app.state.thread_manager
     thread_id = await _seed(manager)
@@ -483,6 +496,15 @@ async def test_rewind_http_restore_files(
         json={"before_item_id": "item_u2", "restore_files": True},
     )
     assert r.status_code == 200
+    result = r.json()["rewind_result"]
+    assert result == {
+        "restore_files": True,
+        "restored_files": ["note.txt"],
+        "merged_files": [],
+        "conflicted_files": [],
+        "skipped_files": [],
+        "missing_roots": [],
+    }
     assert target.read_text(encoding="utf-8") == "old\n"
 
 

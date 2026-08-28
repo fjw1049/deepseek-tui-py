@@ -41,6 +41,8 @@ paths:
             schema:
               type: object
               properties:
+                title:
+                  type: string
                 model:
                   type: string
                 workspace:
@@ -127,11 +129,23 @@ paths:
       description: >
         Hard-deletes the thread and its turns/items/events/checkpoints.
         Soft archive/unarchive continues to use PATCH archived=true/false.
+        By default deletion is refused when an owned worktree contains
+        unpublished code; callers must obtain explicit user confirmation
+        before setting discard_unpublished=true.
       parameters:
         - $ref: "#/components/parameters/threadId"
+        - name: discard_unpublished
+          in: query
+          required: false
+          description: Explicitly discard unpublished code in an owned managed worktree.
+          schema:
+            type: boolean
+            default: false
       responses:
         "204":
           description: Deleted
+        "409":
+          description: Unpublished worktree code requires confirmation, or deletion is blocked
         "404":
           description: Thread not found
   /v1/threads/{thread_id}/environment:
@@ -146,10 +160,12 @@ paths:
           description: Thread not found
   /v1/threads/{thread_id}/worktree/resolve:
     post:
-      summary: Resolve files that could not auto-publish into the project
+      summary: Apply an isolated session draft or resolve merge conflicts
       description: >
+        apply safely merges this session's draft into the project.
         keep_project keeps the project's current bytes for the listed paths.
-        use_agent overwrites the project with this thread's copies.
+        use_agent overwrites the project with this session's copies. If another
+        session is active, the request is queued and returns 202.
       parameters:
         - $ref: "#/components/parameters/threadId"
       requestBody:
@@ -162,14 +178,16 @@ paths:
               properties:
                 action:
                   type: string
-                  enum: [keep_project, use_agent]
+                  enum: [apply, keep_project, use_agent]
                 paths:
                   type: array
                   items:
                     type: string
       responses:
         "200":
-          description: Updated thread
+          description: Apply outcome and updated thread
+        "202":
+          description: Apply request queued behind another active session
         "400":
           description: Invalid action
         "404":
@@ -215,7 +233,39 @@ paths:
                   default: false
       responses:
         "200":
-          description: Rewound thread
+          description: >
+            Rewound thread. The response remains a top-level ThreadRecord for
+            older clients and adds rewind_result with the actual file outcome.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  rewind_result:
+                    type: object
+                    properties:
+                      restore_files:
+                        type: boolean
+                      restored_files:
+                        type: array
+                        items:
+                          type: string
+                      merged_files:
+                        type: array
+                        items:
+                          type: string
+                      conflicted_files:
+                        type: array
+                        items:
+                          type: string
+                      skipped_files:
+                        type: array
+                        items:
+                          type: string
+                      missing_roots:
+                        type: array
+                        items:
+                          type: string
         "400":
           description: Item not found in thread / turn active
         "404":

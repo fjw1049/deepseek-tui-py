@@ -3047,6 +3047,7 @@ function UserMessageBubble({
   const [confirm, setConfirm] = useState<{
     files: string[]
     conflicts: string[]
+    skipped: string[]
     previewFailed: boolean
     missingRoots: string[]
   } | null>(null)
@@ -3055,11 +3056,11 @@ function UserMessageBubble({
   // Restore writes the recorded execution root. After a successful publish that
   // root is the project; a vanished copy skips file restore.
   const canRestoreFiles = activeThreadId != null && block.id.startsWith('item_')
-  const isolateGone = (confirm?.missingRoots.length ?? 0) > 0
+  const hasMissingRoots = (confirm?.missingRoots.length ?? 0) > 0
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
   useEffect(() => {
-    if (!editing) return
+    if (!editing || confirm) return
     const el = textareaRef.current
     if (!el) return
     el.focus()
@@ -3067,7 +3068,7 @@ function UserMessageBubble({
     el.setSelectionRange(len, len)
     el.style.height = 'auto'
     el.style.height = `${Math.min(el.scrollHeight, 360)}px`
-  }, [editing])
+  }, [editing, confirm])
 
   useEffect(() => {
     if (!confirm) return
@@ -3111,12 +3112,12 @@ function UserMessageBubble({
           : trimmed
     setConfirm(null)
     setSubmitting(true)
-    setEditing(false)
     try {
-      await rewindAndResend(block.id, wireText, {
-        restoreFiles: restoreFiles && canRestoreFiles && !isolateGone,
-        forceConflicts: restoreFiles && canRestoreFiles && !isolateGone && force
+      const succeeded = await rewindAndResend(block.id, wireText, {
+        restoreFiles: restoreFiles && canRestoreFiles,
+        forceConflicts: restoreFiles && canRestoreFiles && force
       })
+      if (succeeded) setEditing(false)
     } finally {
       setSubmitting(false)
     }
@@ -3124,7 +3125,7 @@ function UserMessageBubble({
 
   const requestResend = async (): Promise<void> => {
     const trimmed = draft.trim()
-    if (!trimmed || busy || submitting || previewing) return
+    if (!trimmed || busy || submitting || previewing || confirm) return
 
     if (!canRestoreFiles || !activeThreadId) {
       await commitResend(false)
@@ -3133,7 +3134,17 @@ function UserMessageBubble({
 
     const provider = getProvider(useChatStore.getState().providerId)
     if (typeof provider.rewindPreview !== 'function') {
-      await commitResend(false)
+      // Older runtimes can still support rewind-with-restore even when the
+      // preview endpoint is absent. Preserve the new default via a generic
+      // warning instead of silently falling back to conversation-only rewind.
+      setForceConflicts(false)
+      setConfirm({
+        files: [],
+        conflicts: [],
+        skipped: [],
+        previewFailed: true,
+        missingRoots: []
+      })
       return
     }
 
@@ -3148,27 +3159,38 @@ function UserMessageBubble({
       setConfirm({
         files: preview.files,
         conflicts: preview.conflicts ?? [],
+        skipped: preview.skipped ?? [],
         previewFailed: false,
         missingRoots: preview.missingRoots ?? []
       })
     } catch {
       setForceConflicts(false)
-      setConfirm({ files: [], conflicts: [], previewFailed: true, missingRoots: [] })
+      setConfirm({
+        files: [],
+        conflicts: [],
+        skipped: [],
+        previewFailed: true,
+        missingRoots: []
+      })
     } finally {
       setPreviewing(false)
     }
   }
 
   if (editing) {
-    const actionsDisabled = !draft.trim() || busy || submitting || previewing
+    const actionsDisabled = !draft.trim() || busy || submitting || previewing || confirm !== null
     const conflictSet = new Set(confirm?.conflicts ?? [])
-    // Conflicted paths first so they stay visible when the list is cut.
+    const skippedSet = new Set(confirm?.skipped ?? [])
+    // Unresolved paths first so they stay visible when the list is cut.
     const confirmFiles = [...(confirm?.files ?? [])].sort(
-      (a, b) => Number(conflictSet.has(b)) - Number(conflictSet.has(a))
+      (a, b) =>
+        Number(conflictSet.has(b) || skippedSet.has(b)) -
+        Number(conflictSet.has(a) || skippedSet.has(a))
     )
     const visibleFiles = confirmFiles.slice(0, REWIND_CONFIRM_FILE_LIMIT)
     const moreFiles = confirmFiles.length - visibleFiles.length
     const hasConflicts = conflictSet.size > 0
+    const hasSkipped = skippedSet.size > 0
 
     return (
       <div id={`block-${block.id}`} className="ds-user-message">
@@ -3204,7 +3226,11 @@ function UserMessageBubble({
                 e.preventDefault()
                 if (confirm) setConfirm(null)
                 else cancelEdit()
-              } else if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+              } else if (
+                !confirm &&
+                e.key === 'Enter' &&
+                (e.metaKey || e.ctrlKey)
+              ) {
                 e.preventDefault()
                 void requestResend()
               }
@@ -3274,7 +3300,7 @@ function UserMessageBubble({
                         ? t('rewindResendConfirmPreviewFailed')
                         : t('rewindResendConfirmBody')}
                     </p>
-                    {!isolateGone && !confirm.previewFailed && visibleFiles.length > 0 ? (
+                    {!confirm.previewFailed && visibleFiles.length > 0 ? (
                       <ul className="max-h-40 overflow-y-auto rounded-xl border border-ds-border-muted/70 bg-ds-main/30 px-3 py-2 font-mono text-[12px] leading-5 text-ds-ink">
                         {visibleFiles.map((file) => (
                           <li
@@ -3287,6 +3313,10 @@ function UserMessageBubble({
                               <span className="shrink-0 rounded bg-amber-500/15 px-1.5 text-[10px] font-sans font-medium leading-4 text-amber-500">
                                 {t('rewindResendConfirmConflictTag')}
                               </span>
+                            ) : skippedSet.has(file) ? (
+                              <span className="shrink-0 rounded bg-ds-hover px-1.5 text-[10px] font-sans font-medium leading-4 text-ds-muted">
+                                {t('rewindResendConfirmSkippedTag')}
+                              </span>
                             ) : null}
                           </li>
                         ))}
@@ -3297,7 +3327,7 @@ function UserMessageBubble({
                         ) : null}
                       </ul>
                     ) : null}
-                    {!isolateGone && hasConflicts ? (
+                    {hasConflicts ? (
                       <div className="space-y-2">
                         <p className="text-[12px] leading-5 text-amber-500">
                           {t('rewindResendConfirmConflictNote', {
@@ -3315,6 +3345,13 @@ function UserMessageBubble({
                         </label>
                       </div>
                     ) : null}
+                    {hasSkipped || hasMissingRoots ? (
+                      <p className="text-[12px] leading-5 text-ds-muted">
+                        {t('rewindResendConfirmUnavailableNote', {
+                          count: Math.max(skippedSet.size, confirm.missingRoots.length)
+                        })}
+                      </p>
+                    ) : null}
                   </div>
                   <div className="flex flex-wrap items-center justify-end gap-2 border-t border-ds-border-muted px-5 py-3">
                     <button
@@ -3328,24 +3365,21 @@ function UserMessageBubble({
                       type="button"
                       onClick={() => void commitResend(false)}
                       disabled={submitting}
-                      className={
-                        isolateGone
-                          ? 'rounded-md bg-accent px-3 py-1.5 text-[13px] font-medium text-white shadow-sm transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50'
-                          : 'rounded-md px-3 py-1.5 text-[13px] font-medium text-ds-ink transition hover:bg-ds-hover disabled:cursor-not-allowed disabled:opacity-50'
-                      }
+                      className="rounded-md px-3 py-1.5 text-[13px] font-medium text-ds-ink transition hover:bg-ds-hover disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       {t('rewindResendConfirmKeep')}
                     </button>
-                    {isolateGone ? null : (
-                      <button
-                        type="button"
-                        onClick={() => void commitResend(true, forceConflicts)}
-                        disabled={submitting}
-                        className="rounded-md bg-accent px-3 py-1.5 text-[13px] font-medium text-white shadow-sm transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        {t('rewindResendConfirmRestore')}
-                      </button>
-                    )}
+                    <button
+                      type="button"
+                      autoFocus
+                      onClick={() => void commitResend(true, forceConflicts)}
+                      disabled={submitting}
+                      className="rounded-md bg-accent px-3 py-1.5 text-[13px] font-medium text-white shadow-sm transition hover:brightness-110 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {hasSkipped || hasMissingRoots
+                        ? t('rewindResendConfirmRestoreAvailable')
+                        : t('rewindResendConfirmRestore')}
+                    </button>
                   </div>
                 </div>
               </div>,

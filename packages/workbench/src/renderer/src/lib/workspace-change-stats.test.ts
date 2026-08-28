@@ -143,6 +143,26 @@ describe('collectWorkspaceChangeEntries', () => {
     expect(entries).toHaveLength(0)
   })
 
+  it('keeps the active session ledger when its isolated draft is not in project git', () => {
+    const entries = collectWorkspaceChangeEntries({
+      blocks: [],
+      turnDiffByTurnId: {
+        turn_1: {
+          turn_id: 'turn_1',
+          files: [{ path: 'b.ts', additions: 1, deletions: 0, unified_diff: PATCH_B }],
+          totals: { files: 1, additions: 1, deletions: 0 },
+          revision: 1,
+          complete: true
+        }
+      },
+      gitFiles: [],
+      retainSessionEntriesWhenGitClean: true
+    })
+    expect(entries).toHaveLength(1)
+    expect(entries[0]?.filePath).toBe('b.ts')
+    expect(entries[0]?.committable).not.toBe(true)
+  })
+
   it('keeps session entries when the git snapshot has not loaded yet', () => {
     const entries = collectWorkspaceChangeEntries({
       blocks: [fileChange('t1', 'a.ts', PATCH_A)],

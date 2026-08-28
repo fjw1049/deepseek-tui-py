@@ -313,6 +313,7 @@ class TurnCheckpointStore:
         merged: set[str] = set()
         conflicted: set[str] = set()
         skipped: set[str] = set()
+        changes: list[tuple[Path, str, _PathState]] = []
         for (root_key, path), state in states.items():
             target = Path(root_key)
             if not target.is_dir():
@@ -328,21 +329,46 @@ class TurnCheckpointStore:
                 skipped.add(path)
                 continue
             if state.current != state.on_disk:
+                changes.append((target, path, state))
+            else:
+                if state.status == STATUS_MERGED:
+                    merged.add(path)
+                else:
+                    restored.add(path)
+
+        written: list[tuple[Path, str, _PathState]] = []
+        failed = False
+        for target, path, state in changes:
+            try:
+                _write_pre_image(target, path, state.current)
+                written.append((target, path, state))
+            except OSError:
+                logger.debug(
+                    "turn_checkpoint_restore_failed path=%s root=%s",
+                    path,
+                    target,
+                    exc_info=True,
+                )
+                failed = True
+                break
+        if failed:
+            for target, path, state in reversed(written):
                 try:
-                    _write_pre_image(target, path, state.current)
+                    _write_pre_image(target, path, state.on_disk)
                 except OSError:
-                    logger.debug(
-                        "turn_checkpoint_restore_failed path=%s root=%s",
+                    logger.error(
+                        "turn_checkpoint_restore_rollback_failed path=%s root=%s",
                         path,
-                        root_key,
+                        target,
                         exc_info=True,
                     )
-                    skipped.add(path)
-                    continue
-            if state.status == STATUS_MERGED:
-                merged.add(path)
-            else:
-                restored.add(path)
+            skipped.update(path for _target, path, _state in changes)
+        else:
+            for _target, path, state in changes:
+                if state.status == STATUS_MERGED:
+                    merged.add(path)
+                else:
+                    restored.add(path)
         report.restored = sorted(restored)
         report.merged = sorted(merged)
         report.conflicted = sorted(conflicted)
@@ -496,13 +522,25 @@ class TurnCheckpointStore:
     def delete(self, turn_id: str) -> None:
         self._path(turn_id).unlink(missing_ok=True)
 
-    def prune_older_than(self, max_age_days: int) -> int:
-        """Delete checkpoints older than ``max_age_days``. Returns count removed."""
+    def prune_older_than(
+        self,
+        max_age_days: int,
+        *,
+        protected_turn_ids: set[str] | None = None,
+    ) -> int:
+        """Delete old unreachable checkpoints and return the removal count.
+
+        A live thread's checkpoints are part of its rollback/publication
+        journal and must never disappear solely because wall-clock time passed.
+        """
         if max_age_days < 1:
             return 0
+        protected = protected_turn_ids or set()
         cutoff = time.time() - (max_age_days * 86400)
         removed = 0
         for path in list(self._root.glob("*.json")):
+            if path.stem in protected:
+                continue
             checkpoint = self.load(path.stem)
             if checkpoint is None:
                 # Unreadable / corrupt — reclaim the file.

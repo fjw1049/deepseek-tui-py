@@ -9,7 +9,9 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+import os
 import subprocess
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -24,6 +26,10 @@ _BINARY_SNIFF_BYTES = 8192
 
 class WorktreeError(ValueError):
     """User-facing git / worktree failure."""
+
+
+class UnpublishedWorktreeError(WorktreeError):
+    """An isolate has labor not represented by a publish checkpoint."""
 
 
 @dataclass(slots=True)
@@ -107,29 +113,24 @@ async def create_managed_worktree(
         await remove_managed_worktree(root, dest)
     await _git(root, ["worktree", "prune"], check=False)
     dest.parent.mkdir(parents=True, exist_ok=True)
-    branch = _isolate_branch_name(thread_id, head)
     try:
-        await _git(root, ["worktree", "add", "-b", branch, str(dest), head])
+        await _git(root, ["worktree", "add", "--detach", str(dest), head])
     except WorktreeError:
-        unique = f"{branch}-{head[:6]}"
-        try:
-            await _git(root, ["worktree", "add", "-b", unique, str(dest), head])
-            branch = unique
-        except WorktreeError:
-            if dest.exists() and not await worktree_has_labor(dest):
-                await remove_managed_worktree(root, dest)
-            raise
+        if dest.exists() and not await worktree_has_labor(dest):
+            await remove_managed_worktree(root, dest)
+        raise
     dirty_copied = False
     if copy_tracked_dirty:
         tracked = await _copy_tracked_dirty(root, dest)
         untracked = await _copy_untracked(root, dest)
         dirty_copied = tracked or untracked
+    await _copy_worktree_includes(root, dest)
     return ManagedWorktree(
         path=dest.resolve(),
         base=head,
         owned=True,
         dirty_copied=dirty_copied,
-        branch=branch,
+        branch="",
     )
 
 
@@ -138,13 +139,19 @@ async def remove_managed_worktree(project_root: Path, worktree_path: Path) -> No
     dest = worktree_path.expanduser().resolve()
     if not is_managed_path(dest):
         raise WorktreeError("refusing to remove a worktree outside ~/.deepseek/worktrees")
+    branch = await current_worktree_branch(dest) if dest.is_dir() else ""
     if await is_git_repo(root):
-        await _git(
-            root, ["worktree", "remove", "--force", str(dest)], check=False
-        )
-        await _git(root, ["worktree", "prune"], check=False)
-    if dest.exists():
+        try:
+            await _git(root, ["worktree", "remove", "--force", str(dest)])
+        except WorktreeError:
+            await _git(root, ["worktree", "prune"], check=False)
+            if dest.exists():
+                raise
+    elif dest.exists():
         await asyncio.to_thread(_rmtree, dest)
+    if await is_git_repo(root):
+        await _git(root, ["worktree", "prune"], check=False)
+        await _delete_merged_internal_branch(root, dest, branch)
 
 
 async def handoff_changes(
@@ -247,7 +254,9 @@ def overlay_working_paths(source: Path, dest: Path, paths: list[str]) -> None:
             logger.debug("overlay_working_path_failed path=%s", norm, exc_info=True)
 
 
-async def sync_isolate_from_project(project_root: Path, isolate: Path) -> None:
+async def sync_isolate_from_project(
+    project_root: Path, isolate: Path
+) -> str | None:
     """Make the isolate working tree match the current project.
 
     Turn start copies the project as it is now — including someone else's
@@ -258,11 +267,29 @@ async def sync_isolate_from_project(project_root: Path, isolate: Path) -> None:
     src = project_root.expanduser().resolve()
     dst = isolate.expanduser().resolve()
     if src == dst:
-        return
+        head = ((await _git(src, ["rev-parse", "HEAD"], check=False)) or "").strip()
+        return head or None
+    if await worktree_has_labor(dst) and not await _working_trees_match(src, dst):
+        raise UnpublishedWorktreeError(
+            f"managed worktree contains unpublished labor: {dst}"
+        )
     paths: set[str] = set(await _changed_paths(src, "HEAD"))
     paths.update(await _changed_paths(dst, "HEAD"))
     iso_head = ((await _git(dst, ["rev-parse", "HEAD"], check=False)) or "").strip()
     proj_head = ((await _git(src, ["rev-parse", "HEAD"], check=False)) or "").strip()
+    branch = await current_worktree_branch(dst)
+    if branch and not _is_legacy_internal_branch(branch, dst):
+        # A user-named branch is a durability boundary. Do not silently move it.
+        return iso_head or None
+    if iso_head and proj_head and iso_head != proj_head:
+        reachable = await _git(
+            src,
+            ["merge-base", "--is-ancestor", iso_head, proj_head],
+            check=False,
+        )
+        if reachable is None:
+            # Preserve commits that have not reached the project branch.
+            return iso_head
     if iso_head and proj_head and iso_head != proj_head:
         diff = await _git(
             src, ["diff", "--name-only", "-z", iso_head, proj_head], check=False
@@ -271,7 +298,32 @@ async def sync_isolate_from_project(project_root: Path, isolate: Path) -> None:
             path = raw.replace("\\", "/").strip()
             if path:
                 paths.add(path)
+    if proj_head and (iso_head != proj_head or branch):
+        await _git(dst, ["checkout", "--detach", "--force", proj_head])
+        if branch:
+            await _delete_merged_internal_branch(src, dst, branch)
     overlay_working_paths(src, dst, sorted(paths))
+    return proj_head or iso_head or None
+
+
+async def _working_trees_match(project_root: Path, isolate: Path) -> bool:
+    """Compare all paths that differ from either checkout's HEAD."""
+    src = project_root.expanduser().resolve()
+    dst = isolate.expanduser().resolve()
+    paths: set[str] = set(await _changed_paths(src, "HEAD"))
+    paths.update(await _changed_paths(dst, "HEAD"))
+    src_head = ((await _git(src, ["rev-parse", "HEAD"], check=False)) or "").strip()
+    dst_head = ((await _git(dst, ["rev-parse", "HEAD"], check=False)) or "").strip()
+    if src_head and dst_head and src_head != dst_head:
+        diff = await _git(
+            src, ["diff", "--name-only", "-z", dst_head, src_head], check=False
+        )
+        paths.update(
+            path
+            for raw in (diff or "").split("\0")
+            if (path := raw.replace("\\", "/").strip())
+        )
+    return all(_raw_same(src, dst, rel) for rel in paths)
 
 
 async def current_worktree_branch(worktree_path: Path) -> str:
@@ -309,8 +361,8 @@ def prune_orphaned_worktrees(owned_paths: list[str]) -> int:
     """Reclaim unreferenced *owned* worktrees that have no uncommitted labor.
 
     Never rmtree a path outside ``~/.deepseek/worktrees``, a folder that is
-    not a git worktree, or a checkout with uncommitted work. Dirty orphans
-    get a parked local ref and stay on disk.
+    not a git worktree, or a checkout with uncommitted work or unreachable
+    detached commits. Such orphans stay on disk.
     """
     root = user_worktrees_dir()
     if not root.is_dir():
@@ -335,7 +387,6 @@ def prune_orphaned_worktrees(owned_paths: list[str]) -> int:
             if not _is_git_worktree_sync(resolved):
                 continue
             if _has_labor_sync(resolved):
-                _park_ref_sync(resolved)
                 continue
             if _remove_clean_worktree_sync(resolved):
                 removed += 1
@@ -346,6 +397,30 @@ def prune_orphaned_worktrees(owned_paths: list[str]) -> int:
         except OSError:
             pass
     return removed
+
+
+def cleanup_legacy_internal_branch(
+    project_root: Path, worktree_path: Path, branch: str
+) -> bool:
+    """Delete a recorded legacy isolate branch after its worktree disappeared.
+
+    The exact generated name must match the recorded managed path, and Git
+    must prove that the branch is already contained by the project's HEAD.
+    """
+    root = project_root.expanduser().resolve()
+    dest = worktree_path.expanduser().resolve()
+    if dest.exists() or not is_managed_path(dest):
+        return False
+    if not _is_legacy_internal_branch(branch, dest):
+        return False
+    before = _branch_exists_sync(root, branch)
+    if not before:
+        return False
+    try:
+        _delete_merged_internal_branch_sync(root, dest, branch)
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return not _branch_exists_sync(root, branch)
 
 
 async def apply_worktree(
@@ -487,7 +562,7 @@ async def apply_path_images(
             continue
         planned.append((rel, next_text, status, ours_text))
         report.images[rel] = (ours_text, next_text)
-    if report.conflicted and not force:
+    if (report.conflicted or report.skipped) and not force:
         report.applied.clear()
         report.merged.clear()
         report.images.clear()
@@ -538,11 +613,113 @@ async def apply_path_images(
     return report
 
 
+async def apply_raw_paths(
+    source_root: Path, project_root: Path, paths: list[str]
+) -> ApplyReport:
+    """Atomically take selected opaque paths from an isolate.
+
+    Used only after an explicit ``use_agent`` conflict decision for files
+    that cannot participate in text three-way merge (binary, oversized, or
+    conservatively attributed paths). Destination pre-images are backed up
+    first so a failed copy restores the whole batch.
+    """
+    return await asyncio.to_thread(
+        _apply_raw_paths_sync,
+        source_root.expanduser().resolve(),
+        project_root.expanduser().resolve(),
+        paths,
+    )
+
+
+def _apply_raw_paths_sync(source: Path, dest: Path, paths: list[str]) -> ApplyReport:
+    report = ApplyReport()
+    normalized: list[str] = []
+    for raw in paths:
+        rel = raw.replace("\\", "/").strip()
+        candidate = Path(rel)
+        if (
+            not rel
+            or candidate.is_absolute()
+            or ".." in candidate.parts
+            or rel in normalized
+        ):
+            if rel:
+                report.skipped.append(rel)
+            continue
+        src = source / rel
+        if src.exists() and src.is_dir():
+            report.skipped.append(rel)
+            continue
+        normalized.append(rel)
+    if report.skipped:
+        report.skipped.sort()
+        return report
+
+    with tempfile.TemporaryDirectory(prefix="dstui-raw-apply-") as raw_tmp:
+        backup = Path(raw_tmp)
+        try:
+            for rel in normalized:
+                target = dest / rel
+                if target.exists():
+                    _copy_raw(dest, backup, rel)
+            for rel in normalized:
+                _copy_raw(source, dest, rel)
+        except OSError:
+            logger.debug("worktree_raw_apply_failed", exc_info=True)
+            for rel in reversed(normalized):
+                try:
+                    # Missing from the backup means it was absent before.
+                    _copy_raw(backup, dest, rel)
+                except OSError:
+                    logger.debug(
+                        "worktree_raw_apply_rollback_failed path=%s", rel, exc_info=True
+                    )
+            report.skipped = sorted(normalized)
+            return report
+    report.applied = sorted(normalized)
+    return report
+
+
 async def worktree_has_labor(path: Path) -> bool:
     dest = path.expanduser()
     if not dest.is_dir():
         return False
     return await asyncio.to_thread(_has_labor_sync, dest.resolve())
+
+
+async def resolve_unpublished_worktree_labor(
+    project_root: Path,
+    worktree_path: Path,
+    *,
+    use_worktree: bool,
+) -> ApplyReport:
+    """Resolve dirty isolate files that have no turn checkpoint.
+
+    This is an explicit recovery path. Choosing the worktree copies its dirty
+    files to the project first; choosing the project discards those isolate
+    files. In both cases the isolate is then re-synced to the canonical project.
+    """
+    project = project_root.expanduser().resolve()
+    tree = worktree_path.expanduser().resolve()
+    labor_paths = await _changed_paths(tree, "HEAD")
+    if not labor_paths:
+        raise UnpublishedWorktreeError(
+            f"managed worktree labor could not be enumerated: {tree}"
+        )
+
+    report = ApplyReport()
+    if use_worktree:
+        report = await handoff_changes(tree, project, move=False, force=True)
+        if report.conflicted or report.skipped:
+            return report
+    else:
+        report.applied = sorted(labor_paths)
+
+    # The selected version is durable in the project (or was already there),
+    # so the stale isolate copy can now be cleared without losing user work.
+    await _restore_to_head(tree, labor_paths)
+    await sync_isolate_from_project(project, tree)
+    return report
 
 
 async def reclaim_managed_worktree(
@@ -560,15 +737,18 @@ async def reclaim_managed_worktree(
     if not dest.exists():
         return "gone"
     if await worktree_has_labor(dest):
-        await park_worktree_ref(dest)
-        return "kept"
+        if await asyncio.to_thread(_detached_head_is_unreachable_sync, dest):
+            return "kept"
+        if not await _working_trees_match(project_root, dest):
+            return "kept"
+        # A legacy isolate can look dirty only because its HEAD predates the
+        # project. Move the baseline before reclaiming; identical project dirt
+        # remains safe because the canonical copy is already in the project.
+        await sync_isolate_from_project(project_root, dest)
+        if not await _working_trees_match(project_root, dest):
+            return "kept"
     await remove_managed_worktree(project_root, dest)
     return "removed"
-
-
-async def park_worktree_ref(worktree_path: Path) -> str:
-    """Hang a local ref so uncommitted labor is not anonymous."""
-    return await asyncio.to_thread(_park_ref_sync, worktree_path.expanduser().resolve())
 
 
 async def _plan_path(
@@ -640,6 +820,46 @@ async def _copy_untracked(source: Path, dest: Path) -> bool:
     return copied
 
 
+async def _copy_worktree_includes(source: Path, dest: Path) -> bool:
+    """Copy explicitly selected ignored setup files into a new worktree."""
+    include_file = source / ".worktreeinclude"
+    if not include_file.is_file():
+        return False
+    listed = await _git(
+        source,
+        [
+            "ls-files",
+            "--others",
+            "--ignored",
+            "--exclude-from=.worktreeinclude",
+            "-z",
+        ],
+        check=False,
+    )
+    copied = False
+    for raw in (listed or "").split("\0"):
+        rel = raw.replace("\\", "/").strip()
+        if not rel:
+            continue
+        src = source / rel
+        target = dest / rel
+        # Setup copies never follow symlinks and never replace checkout files.
+        if src.is_symlink() or target.exists():
+            continue
+        ignored = await _git(
+            source, ["check-ignore", "--quiet", "--", rel], check=False
+        )
+        if ignored is None:
+            continue
+        try:
+            _copy_raw(source, dest, rel)
+        except OSError:
+            logger.debug("worktree_include_copy_failed path=%s", rel, exc_info=True)
+            continue
+        copied = True
+    return copied
+
+
 def _raw_same(source: Path, dest: Path, rel: str) -> bool:
     src = source / rel
     dst = dest / rel
@@ -669,7 +889,14 @@ def _copy_raw(source: Path, dest: Path, rel: str) -> None:
         dst.mkdir(parents=True, exist_ok=True)
         return
     dst.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(src, dst)
+    fd, tmp_name = tempfile.mkstemp(prefix=f".{dst.name}.", dir=str(dst.parent))
+    os.close(fd)
+    tmp = Path(tmp_name)
+    try:
+        shutil.copy2(src, tmp)
+        os.replace(tmp, dst)
+    finally:
+        tmp.unlink(missing_ok=True)
 
 
 async def _restore_to_head(root: Path, paths: list[str]) -> None:
@@ -698,14 +925,6 @@ async def _restore_to_head(root: Path, paths: list[str]) -> None:
                 (root / rel).unlink(missing_ok=True)
             except OSError:
                 logger.debug("worktree_handoff_unlink_failed path=%s", rel, exc_info=True)
-
-
-def _isolate_branch_name(thread_id: str, head: str) -> str:
-    seg = _safe_segment(thread_id) or "thread"
-    name = _branch_name(f"ds/{seg}")
-    if name:
-        return name
-    return _branch_name(f"ds/thread-{head[:8]}") or f"ds/thread-{head[:8]}"
 
 
 def _is_git_worktree_sync(path: Path) -> bool:
@@ -737,10 +956,13 @@ def _has_labor_sync(path: Path) -> bool:
         )
     except (OSError, subprocess.TimeoutExpired):
         return True
-    return bool(proc.stdout.strip())
+    if proc.returncode != 0 or proc.stdout.strip():
+        return True
+    return _detached_head_is_unreachable_sync(path)
 
 
-def _park_ref_sync(path: Path) -> str:
+def _detached_head_is_unreachable_sync(path: Path) -> bool:
+    """Return true only for a detached HEAD not protected by a durable ref."""
     try:
         current = subprocess.run(
             ["git", "branch", "--show-current"],
@@ -752,27 +974,27 @@ def _park_ref_sync(path: Path) -> str:
         )
         name = (current.stdout or "").strip()
         if name:
-            return name
-        sha = subprocess.run(
-            ["git", "rev-parse", "--short", "HEAD"],
+            return False
+        refs = subprocess.run(
+            [
+                "git",
+                "for-each-ref",
+                "--contains",
+                "HEAD",
+                "--format=%(refname)",
+                "refs/heads",
+                "refs/remotes",
+                "refs/tags",
+            ],
             cwd=str(path),
             capture_output=True,
             text=True,
             timeout=15,
             check=False,
         )
-        parked = f"ds/parked/{(sha.stdout or 'head').strip()}"
-        subprocess.run(
-            ["git", "branch", parked],
-            cwd=str(path),
-            capture_output=True,
-            text=True,
-            timeout=15,
-            check=False,
-        )
-        return parked
+        return refs.returncode != 0 or not (refs.stdout or "").strip()
     except (OSError, subprocess.TimeoutExpired):
-        return ""
+        return True
 
 
 def _remove_clean_worktree_sync(path: Path) -> bool:
@@ -780,8 +1002,9 @@ def _remove_clean_worktree_sync(path: Path) -> bool:
         return False
     project = _project_from_worktree_sync(path)
     if project is not None:
+        branch = _current_branch_sync(path)
         try:
-            subprocess.run(
+            removed = subprocess.run(
                 ["git", "worktree", "remove", str(path)],
                 cwd=str(project),
                 capture_output=True,
@@ -789,6 +1012,8 @@ def _remove_clean_worktree_sync(path: Path) -> bool:
                 timeout=30,
                 check=False,
             )
+            if removed.returncode != 0:
+                return False
             subprocess.run(
                 ["git", "worktree", "prune"],
                 cwd=str(project),
@@ -797,11 +1022,97 @@ def _remove_clean_worktree_sync(path: Path) -> bool:
                 timeout=15,
                 check=False,
             )
+            _delete_merged_internal_branch_sync(project, path, branch)
         except (OSError, subprocess.TimeoutExpired):
             return False
     if path.exists():
         return False
     return True
+
+
+def _current_branch_sync(path: Path) -> str:
+    try:
+        proc = subprocess.run(
+            ["git", "branch", "--show-current"],
+            cwd=str(path),
+            capture_output=True,
+            text=True,
+            timeout=15,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    return (proc.stdout or "").strip() if proc.returncode == 0 else ""
+
+
+def _is_legacy_internal_branch(branch: str, path: Path) -> bool:
+    prefix = "ds/"
+    if not branch.startswith(prefix):
+        return False
+    tail = branch[len(prefix) :]
+    expected = path.name
+    if tail == expected:
+        return True
+    suffix = (
+        tail.removeprefix(f"{expected}-")
+        if tail.startswith(f"{expected}-")
+        else ""
+    )
+    return len(suffix) == 6 and all(ch in "0123456789abcdef" for ch in suffix.lower())
+
+
+def _branch_exists_sync(project: Path, branch: str) -> bool:
+    try:
+        probe = subprocess.run(
+            ["git", "show-ref", "--verify", "--quiet", f"refs/heads/{branch}"],
+            cwd=str(project),
+            capture_output=True,
+            text=True,
+            timeout=15,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return probe.returncode == 0
+
+
+async def _delete_merged_internal_branch(
+    project: Path, worktree: Path, branch: str
+) -> None:
+    if not _is_legacy_internal_branch(branch, worktree):
+        return
+    merged = await _git(
+        project,
+        ["merge-base", "--is-ancestor", f"refs/heads/{branch}", "HEAD"],
+        check=False,
+    )
+    if merged is not None:
+        await _git(project, ["branch", "-d", branch], check=False)
+
+
+def _delete_merged_internal_branch_sync(
+    project: Path, worktree: Path, branch: str
+) -> None:
+    if not _is_legacy_internal_branch(branch, worktree):
+        return
+    merged = subprocess.run(
+        ["git", "merge-base", "--is-ancestor", f"refs/heads/{branch}", "HEAD"],
+        cwd=str(project),
+        capture_output=True,
+        text=True,
+        timeout=15,
+        check=False,
+    )
+    if merged.returncode != 0:
+        return
+    subprocess.run(
+        ["git", "branch", "-d", branch],
+        cwd=str(project),
+        capture_output=True,
+        text=True,
+        timeout=15,
+        check=False,
+    )
 
 
 def _project_from_worktree_sync(path: Path) -> Path | None:

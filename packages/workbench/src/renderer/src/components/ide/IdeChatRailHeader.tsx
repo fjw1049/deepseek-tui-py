@@ -82,7 +82,7 @@ export function IdeChatRailHeader({
     return threads
       .filter((thread) => normalizeWorkspaceRoot(thread.workspace).toLowerCase() === target)
       .slice()
-      .sort((a, b) => b.updatedAt - a.updatedAt)
+      .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
       .slice(0, HISTORY_LIMIT)
   }, [threads, workspaceRoot])
 

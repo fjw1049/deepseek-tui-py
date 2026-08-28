@@ -401,6 +401,10 @@ export function OperationContextDock({
       turnDiffByTurnId: s.turnDiffByTurnId
     }))
   )
+  const activeThread = activeThreadId
+    ? threads.find((thread) => thread.id === activeThreadId)
+    : undefined
+  const isSessionDraft = activeThread?.envMode === 'worktree'
   const root = resolveThreadFilesystemRoot(activeThreadId, threads, workspaceRoot)
   const { result: gitResult, loading: gitLoading, reload: reloadGitBranches } = useGitBranches(root)
   const { result: gitChanges, loading: gitChangesLoading, reload: reloadGitChanges } = useGitWorkingChanges(root)
@@ -450,10 +454,11 @@ export function OperationContextDock({
         collectWorkspaceChangeEntries({
           blocks,
           turnDiffByTurnId,
-          gitFiles: gitChanges?.ok ? gitChanges.files : null
+          gitFiles: isSessionDraft ? [] : gitChanges?.ok ? gitChanges.files : null,
+          retainSessionEntriesWhenGitClean: isSessionDraft
         })
       ),
-    [blocks, gitChanges, turnDiffByTurnId]
+    [blocks, gitChanges, isSessionDraft, turnDiffByTurnId]
   )
   const gitDirtyCount = gitResult?.ok ? gitResult.dirtyCount : 0
   const gitReady = gitResult?.ok ?? false

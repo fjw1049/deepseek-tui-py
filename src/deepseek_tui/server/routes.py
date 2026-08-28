@@ -1297,10 +1297,24 @@ async def update_thread(request: Request, thread_id: str) -> dict[str, Any]:
 async def delete_thread(request: Request, thread_id: str) -> Response:
     """Permanently delete a thread (used by Settings → Archive)."""
     mgr = manager(request)
+    discard_unpublished = (
+        request.query_params.get("discard_unpublished", "").strip().lower()
+        in {"1", "true", "yes"}
+    )
     try:
-        await mgr.delete_thread(thread_id)
+        await mgr.delete_thread(
+            thread_id, discard_unpublished=discard_unpublished
+        )
     except FileNotFoundError as exc:
         raise api_error(404, str(exc), error="thread_not_found") from exc
+    except ValueError as exc:
+        message = str(exc)
+        error = (
+            "unpublished_worktree_code"
+            if "worktree contains unpublished code" in message.lower()
+            else "thread_delete_conflict"
+        )
+        raise api_error(409, message, error=error) from exc
     return Response(status_code=204)
 
 
@@ -1328,11 +1342,11 @@ async def get_thread_environment(request: Request, thread_id: str) -> dict[str, 
 
 
 @router_threads.post("/threads/{thread_id}/worktree/resolve")
-async def resolve_thread_publish(request: Request, thread_id: str) -> dict[str, Any]:
+async def resolve_thread_publish(request: Request, thread_id: str) -> JSONResponse:
     mgr = manager(request)
     req = ResolvePublishRequest.model_validate(await body(request))
     try:
-        thread = await mgr.resolve_publish_conflicts(
+        result = await mgr.request_publish_action(
             thread_id,
             action=req.action,
             paths=req.paths,
@@ -1340,8 +1354,17 @@ async def resolve_thread_publish(request: Request, thread_id: str) -> dict[str, 
     except FileNotFoundError as exc:
         raise api_error(404, str(exc), error="thread_not_found") from exc
     except ValueError as exc:
-        raise classify_turn_value_error(exc)
-    return thread.model_dump(mode="json")
+        raise classify_turn_value_error(exc) from exc
+    thread = result["thread"]
+    payload = {
+        "status": result["status"],
+        "thread": thread.model_dump(mode="json"),
+        "blocking_thread_id": result.get("blocking_thread_id"),
+    }
+    return JSONResponse(
+        status_code=202 if result["status"] == "queued" else 200,
+        content=payload,
+    )
 
 
 @router_threads.post("/threads/{thread_id}/rewind")
@@ -1350,7 +1373,7 @@ async def rewind_thread(request: Request, thread_id: str) -> dict[str, Any]:
     payload = await body(request)
     req = RewindThreadRequest.model_validate(payload)
     try:
-        thread = await mgr.rewind_thread(
+        thread, rewind_result = await mgr.rewind_thread_with_result(
             thread_id,
             before_item_id=req.before_item_id,
             restore_files=req.restore_files,
@@ -1360,7 +1383,11 @@ async def rewind_thread(request: Request, thread_id: str) -> dict[str, Any]:
         raise api_error(404, str(exc), error="thread_not_found") from exc
     except ValueError as exc:
         raise api_error(400, str(exc), error="invalid_request") from exc
-    return thread.model_dump(mode="json")
+    return {
+        **thread.model_dump(mode="json"),
+        # Additive field: older clients keep reading the top-level ThreadRecord.
+        "rewind_result": rewind_result,
+    }
 
 
 @router_threads.post("/threads/{thread_id}/restore-code")

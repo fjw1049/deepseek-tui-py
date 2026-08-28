@@ -1,4 +1,4 @@
-import type { MouseEvent as ReactMouseEvent, ReactElement } from 'react'
+import type { CSSProperties, MouseEvent as ReactMouseEvent, ReactElement } from 'react'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
@@ -1267,6 +1267,150 @@ type ThreadRowProps = {
   onTogglePin: () => void
 }
 
+type ThreadQueryMarqueeProps = {
+  active: boolean
+  className: string
+  style?: CSSProperties
+  text: string
+  title: string
+}
+
+const MARQUEE_DWELL_MS = 320
+const MARQUEE_PIXELS_PER_SECOND = 42
+
+function threadMarqueeDurationMs(distance: number): number {
+  return Math.min(11_000, Math.max(1_600, (distance / MARQUEE_PIXELS_PER_SECOND) * 1_000))
+}
+
+function ThreadQueryMarquee({
+  active,
+  className,
+  style,
+  text,
+  title
+}: ThreadQueryMarqueeProps): ReactElement {
+  const viewportRef = useRef<HTMLSpanElement>(null)
+  const textRef = useRef<HTMLSpanElement>(null)
+  const animationRef = useRef<Animation | null>(null)
+  const dwellTimerRef = useRef<number | null>(null)
+  const frameRef = useRef<number | null>(null)
+  const previousTextRef = useRef(text)
+  const [expanded, setExpanded] = useState(false)
+  const expandedRef = useRef(false)
+
+  const updateExpanded = (next: boolean): void => {
+    expandedRef.current = next
+    setExpanded(next)
+  }
+
+  const clearSchedule = (): void => {
+    if (dwellTimerRef.current != null) {
+      window.clearTimeout(dwellTimerRef.current)
+      dwellTimerRef.current = null
+    }
+    if (frameRef.current != null) {
+      window.cancelAnimationFrame(frameRef.current)
+      frameRef.current = null
+    }
+  }
+
+  useEffect(() => {
+    const inner = textRef.current
+    const viewport = viewportRef.current
+    if (!inner || !viewport) return
+
+    clearSchedule()
+    const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true
+    if (previousTextRef.current !== text) {
+      previousTextRef.current = text
+      animationRef.current?.cancel()
+      animationRef.current = null
+      updateExpanded(false)
+    }
+
+    if (!active || reduceMotion) {
+      const currentTransform = window.getComputedStyle(inner).transform
+      animationRef.current?.cancel()
+      animationRef.current = null
+      if (!expandedRef.current || reduceMotion || currentTransform === 'none') {
+        updateExpanded(false)
+        return
+      }
+      const reset = inner.animate(
+        [
+          { transform: currentTransform },
+          { transform: 'translateX(0)' }
+        ],
+        { duration: 180, easing: 'ease-out' }
+      )
+      animationRef.current = reset
+      reset.onfinish = () => {
+        if (animationRef.current !== reset) return
+        reset.cancel()
+        animationRef.current = null
+        updateExpanded(false)
+      }
+      return
+    }
+
+    dwellTimerRef.current = window.setTimeout(() => {
+      updateExpanded(true)
+      frameRef.current = window.requestAnimationFrame(() => {
+        frameRef.current = null
+        const overflow = Math.ceil(inner.scrollWidth - viewport.clientWidth)
+        if (overflow <= 1) {
+          updateExpanded(false)
+          return
+        }
+        const currentTransform = window.getComputedStyle(inner).transform
+        const previousAnimation = animationRef.current
+        if (previousAnimation) previousAnimation.onfinish = null
+        previousAnimation?.cancel()
+        const marquee = inner.animate(
+          [
+            { transform: currentTransform === 'none' ? 'translateX(0)' : currentTransform },
+            { transform: `translateX(-${overflow}px)` }
+          ],
+          {
+            duration: threadMarqueeDurationMs(overflow),
+            easing: 'linear',
+            fill: 'forwards'
+          }
+        )
+        animationRef.current = marquee
+      })
+    }, MARQUEE_DWELL_MS)
+  }, [active, text])
+
+  useEffect(
+    () => () => {
+      clearSchedule()
+      animationRef.current?.cancel()
+    },
+    []
+  )
+
+  return (
+    <span
+      ref={viewportRef}
+      className={`${className} overflow-hidden whitespace-nowrap`}
+      style={style}
+      title={title}
+    >
+      <span
+        ref={textRef}
+        className={
+          expanded
+            ? 'inline-block w-max max-w-none whitespace-nowrap will-change-transform'
+            : 'block max-w-full truncate'
+        }
+      >
+        {text}
+      </span>
+    </span>
+  )
+}
+
 export function ThreadRow({
   thread,
   variant,
@@ -1297,6 +1441,7 @@ export function ThreadRow({
   // into an editable input (mirrors the title editor in SessionHeader).
   const [renaming, setRenaming] = useState(false)
   const [draftTitle, setDraftTitle] = useState(thread.title)
+  const [rowHovered, setRowHovered] = useState(false)
   const [hoverAnchor, setHoverAnchor] = useState<DOMRect | null>(null)
   const hoverTimerRef = useRef<number | null>(null)
   // The hover card is auxiliary info: once shown it self-dismisses after a few
@@ -1347,6 +1492,7 @@ export function ThreadRow({
   )
 
   const handleRowMouseEnter = (event: ReactMouseEvent<HTMLDivElement>): void => {
+    setRowHovered(true)
     const rect = event.currentTarget.getBoundingClientRect()
     clearHoverTimer()
     hoverTimerRef.current = window.setTimeout(() => {
@@ -1361,6 +1507,7 @@ export function ThreadRow({
   }
 
   const handleRowMouseLeave = (): void => {
+    setRowHovered(false)
     clearHoverTimer()
     clearAutoHideTimer()
     setHoverAnchor(null)
@@ -1438,6 +1585,14 @@ export function ThreadRow({
       onMouseEnter={selectionMode ? undefined : handleRowMouseEnter}
       onMouseMove={selectionMode ? undefined : handleRowMouseMove}
       onMouseLeave={selectionMode ? undefined : handleRowMouseLeave}
+      onFocusCapture={selectionMode ? undefined : () => setRowHovered(true)}
+      onBlurCapture={
+        selectionMode
+          ? undefined
+          : (event) => {
+              if (!event.currentTarget.contains(event.relatedTarget)) setRowHovered(false)
+            }
+      }
       className={`ds-sidebar-thread-row group relative flex min-w-0 items-center overflow-hidden ${
         renaming
           ? ''
@@ -1515,19 +1670,19 @@ export function ThreadRow({
             className="ds-sidebar-thread min-w-0 flex-1 truncate border-0 bg-transparent p-0 text-ds-ink caret-accent outline-none"
           />
         ) : (
-          <span
+          <ThreadQueryMarquee
+            active={rowHovered}
             className={[
               'ds-sidebar-thread min-w-0 flex-1 truncate',
               showUnreadDot ? 'ds-sidebar-thread--emphasis' : ''
             ].join(' ')}
             style={labelSwatch ? { color: labelSwatch } : undefined}
             title={thread.title}
-          >
-            {(() => {
+            text={(() => {
               const focus = parseUserFocusPrefix(thread.title)
               return focus ? focus.body || focus.name : thread.title
             })()}
-          </span>
+          />
         )}
         {selectionMode ? null : (
           <span

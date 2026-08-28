@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 import os
 from collections.abc import AsyncIterator
 from pathlib import Path
@@ -24,12 +25,11 @@ except ImportError:  # pragma: no cover — Windows
     fcntl = None  # type: ignore[assignment]
 
 
-class ProjectLease:
-    """Exclusive file lock for one git project root."""
+class FileLease:
+    """Exclusive process lease backed by one advisory-lock file."""
 
-    def __init__(self, project_root: Path) -> None:
-        slug = repo_slug(project_root)
-        self.path = user_locks_dir() / f"{slug}.lock"
+    def __init__(self, path: Path) -> None:
+        self.path = path
         self._fh: object | None = None
 
     def acquire_blocking(self, *, nonblocking: bool = False) -> bool:
@@ -74,7 +74,7 @@ class ProjectLease:
     async def acquire(self, *, nonblocking: bool = False) -> bool:
         return await asyncio.to_thread(self.acquire_blocking, nonblocking=nonblocking)
 
-    async def __aenter__(self) -> ProjectLease:
+    async def __aenter__(self) -> FileLease:
         ok = await self.acquire()
         if not ok:
             raise RuntimeError(f"could not acquire project lease: {self.path}")
@@ -89,10 +89,30 @@ class ProjectLease:
         self.release()
 
 
+class ProjectLease(FileLease):
+    """Exclusive file lock for one git project root."""
+
+    def __init__(self, project_root: Path) -> None:
+        slug = repo_slug(project_root)
+        super().__init__(user_locks_dir() / f"{slug}.lock")
+
+
+class ThreadLease(FileLease):
+    """Cross-process ownership of one thread and its managed worktree."""
+
+    def __init__(self, thread_id: str) -> None:
+        raw = (thread_id or "thread").strip()
+        safe = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "-" for ch in raw)
+        safe = safe.strip("-")[:64] or "thread"
+        digest = hashlib.sha256(raw.encode("utf-8")).hexdigest()[:8]
+        super().__init__(user_locks_dir() / "threads" / f"{safe}-{digest}.lock")
+
+
 @contextlib.asynccontextmanager
 async def hold_project_lease(project_root: Path) -> AsyncIterator[ProjectLease]:
     lease = ProjectLease(project_root)
-    await lease.acquire()
+    if not await lease.acquire():
+        raise RuntimeError(f"could not acquire project lease: {lease.path}")
     try:
         yield lease
     finally:
