@@ -5889,7 +5889,7 @@ html[data-theme='dark'] .ds-code-fullscreen .shiki span {
 
 /* ── Document reading mode (workspace MD preview) ───────────────────────
    Chat keeps the dense `.ds-markdown` defaults. The editor (sidebar and
-   IDE) shares one full-bleed reading surface so opening the same .md file
+   IDE) shares one centered reading surface so opening the same .md file
    does not change column width, padding, or page chrome. */
 .ds-markdown-doc-shell {
   background: transparent;
@@ -5897,8 +5897,9 @@ html[data-theme='dark'] .ds-code-fullscreen .shiki span {
 
 .ds-markdown-doc-page {
   box-sizing: border-box;
-  margin: 0;
-  max-width: none;
+  width: 100%;
+  max-width: 1120px;
+  margin: 0 auto;
   min-height: 100%;
   padding: 1.15rem 1.35rem 2.25rem;
 }
