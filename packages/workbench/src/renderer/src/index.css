@@ -114,6 +114,12 @@
   --glass-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
   --glass-card: rgba(255, 255, 255, 0.6);
   --glass-card-hover: rgba(255, 255, 255, 0.9);
+  --app-window-background: var(--bg-app);
+  --app-shell-background: var(--bg-app);
+  --app-sidebar-surface: var(--bg-sidebar);
+  --app-sidebar-backdrop-filter: none;
+  --app-chrome-fill: var(--bg-sidebar);
+  --app-corner-surface: var(--bg-sidebar);
   --app-wallpaper: #fcfcfc;
 }
 
@@ -1777,6 +1783,19 @@ samp {
 /* Settings row controls sit on the right — grow straight down from the trigger. */
 .ds-settings-select-menu {
   --ds-morph-origin: 50% calc(100% + 8px);
+  font-family: var(--font-ui);
+  border-color: var(--ds-border);
+  border-radius: 12px;
+  background: var(--ds-material-card);
+  box-shadow: var(--ds-card-shadow);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+[data-theme='dark'] .ds-settings-select-menu {
+  border-color: var(--ds-border);
+  background: var(--ds-material-card);
+  box-shadow: var(--ds-card-shadow);
 }
 
 .ds-settings-select-menu--below {
@@ -2458,6 +2477,17 @@ samp {
 .ds-glass-segment-thumb ~ button:active:not(:disabled) {
   transform: scale(0.98);
   transition: transform 80ms ease-out, color 0ms;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ds-glass-segment-thumb {
+    transition: none;
+  }
+
+  .ds-glass-segment-thumb ~ button:active:not(:disabled) {
+    transform: none;
+    transition: none;
+  }
 }
 
 [data-theme='dark'] .ds-glass-segment-thumb {
@@ -6922,6 +6952,29 @@ select:focus-visible,
   background: var(--bg-sidebar);
 }
 
+/* Electron exposes macOS's under-window material behind the renderer. The
+   shell is the single tinted material plane in translucent mode; sidebar and
+   corner cutouts reveal that same plane instead of applying a second tint. */
+:root[data-platform='darwin'] body,
+:root[data-platform='darwin'] body::before {
+  background: var(--app-window-background);
+}
+
+:root[data-platform='darwin'] .ds-workbench-shell {
+  background: var(--app-shell-background);
+}
+
+:root[data-platform='darwin'] .ds-workbench-shell::before {
+  content: '';
+  position: absolute;
+  inset-block: 0;
+  right: 0;
+  left: var(--ds-sidebar-width, 0px);
+  pointer-events: none;
+  background: var(--app-chrome-fill);
+  transition: left 300ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+
 .ds-workbench-shell:has(> .ds-workbench-sidebar-wrap[data-collapsed]) {
   padding-left: var(--ds-window-inset);
 }
@@ -6938,6 +6991,16 @@ select:focus-visible,
   box-shadow: var(--ds-sidebar-shadow);
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
+}
+
+:root[data-platform='darwin'] .ds-sidebar-shell {
+  background: var(--app-sidebar-surface);
+  backdrop-filter: var(--app-sidebar-backdrop-filter);
+  -webkit-backdrop-filter: var(--app-sidebar-backdrop-filter);
+}
+
+:root[data-platform='darwin'] .ds-workbench-sidebar-wrap::after {
+  background: var(--app-corner-surface);
 }
 
 .ds-workbench-main {
@@ -6987,7 +7050,13 @@ select:focus-visible,
   transition: none;
 }
 
+:root[data-platform='darwin']
+  .ds-workbench-shell:has(> .ds-workbench-sidebar-wrap.is-resizing)::before {
+  transition: none;
+}
+
 @media (prefers-reduced-motion: reduce) {
+  .ds-workbench-shell::before,
   .ds-workbench-sidebar-wrap,
   .ds-workbench-sidebar-slide,
   .ds-workbench-sidebar-wrap::after,
@@ -6997,7 +7066,8 @@ select:focus-visible,
   }
 }
 
-/* Wedge = same solid --bg-sidebar as the rail (fills card radius cutouts only). */
+/* Wedge fills the card-radius cutouts. macOS translucent mode overrides it to
+   transparent so the shell's single material plane remains continuous. */
 .ds-workbench-sidebar-wrap::after {
   content: '';
   position: absolute;
@@ -8024,6 +8094,12 @@ select:focus-visible,
 }
 
 @media (prefers-reduced-transparency: reduce) {
+  :root[data-platform='darwin'] body,
+  :root[data-platform='darwin'] body::before,
+  :root[data-platform='darwin'] .ds-workbench-shell {
+    background: var(--bg-sidebar);
+  }
+
   .ds-glass,
   .ds-chat-composer,
   .ds-topbar-surface,
@@ -8035,6 +8111,11 @@ select:focus-visible,
     background: var(--ds-surface-elevated);
     backdrop-filter: none;
     -webkit-backdrop-filter: none;
+  }
+
+  :root[data-platform='darwin'] .ds-sidebar-shell,
+  :root[data-platform='darwin'] .ds-workbench-sidebar-wrap::after {
+    background: var(--bg-sidebar);
   }
 }
 
@@ -8138,7 +8219,8 @@ select:focus-visible,
 }
 
 /* ── Appearance: font smoothing toggle (default keeps `antialiased`) ─────── */
-:root[data-font-smoothing='off'] body {
+:root[data-font-smoothing='off'] body,
+:root[data-font-smoothing='off'] body * {
   -webkit-font-smoothing: auto;
   -moz-osx-font-smoothing: auto;
 }

@@ -681,6 +681,15 @@ function createWindow(): void {
     icon: appIcon.isEmpty() ? undefined : appIcon,
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     trafficLightPosition: process.platform === 'darwin' ? { x: 16, y: 14 } : undefined,
+    // The renderer decides whether to reveal this material per theme. Keeping
+    // it behind an opaque surface when disabled avoids recreating the window.
+    ...(process.platform === 'darwin'
+      ? {
+          vibrancy: 'under-window',
+          visualEffectState: 'followWindow',
+          backgroundColor: '#00000000'
+        }
+      : {}),
     // macOS: first click on an inactive window also hits the control (no
     // separate "activate only" click). No-op / default on other platforms.
     acceptFirstMouse: true,

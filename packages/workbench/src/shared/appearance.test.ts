@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   DEFAULT_CHROME_THEMES,
+  applyThemePreset,
   createThemeShareString,
   defaultAppearanceSettings,
   getThemePresetSeed,
@@ -9,6 +10,7 @@ import {
   mergeAppearanceSettings,
   normalizeAppearanceSettings,
   normalizeHexColor,
+  pickReadableTextColor,
   parseThemeShareString
 } from './appearance'
 import { buildAppearanceOverrideCss, buildChromeThemeCssVars } from './appearance-derive'
@@ -63,6 +65,12 @@ describe('normalizeHexColor', () => {
     expect(normalizeHexColor('#abc', '')).toBe('#aabbcc')
     expect(normalizeHexColor('blue', '#111111')).toBe('#111111')
   })
+
+  it('chooses the higher-contrast pill text color', () => {
+    expect(pickReadableTextColor('#3183d8')).toBe('#111111')
+    expect(pickReadableTextColor('#000000')).toBe('#ffffff')
+    expect(pickReadableTextColor('#ffffff')).toBe('#111111')
+  })
 })
 
 describe('theme presets', () => {
@@ -108,6 +116,38 @@ describe('theme presets', () => {
       ink: '#ececec'
     })
   })
+
+  it('merges a preset like Synara instead of resetting unrelated theme choices', () => {
+    const current = {
+      ...getThemePresetSeed('codex', 'dark')!,
+      contrast: 12,
+      translucent: true,
+      uiFont: 'Current UI',
+      codeFont: '"Current Mono"'
+    }
+
+    const linear = applyThemePreset(current, 'linear', 'dark')
+
+    expect(linear).toMatchObject({
+      presetId: 'linear',
+      accent: '#606acc',
+      surface: '#0f0f11',
+      ink: '#e3e4e6',
+      contrast: 12,
+      translucent: false,
+      uiFont: 'Inter',
+      codeFont: '"Current Mono"'
+    })
+
+    const github = applyThemePreset(linear!, 'github', 'dark')
+    expect(github).toMatchObject({
+      presetId: 'github',
+      contrast: 12,
+      translucent: false,
+      uiFont: 'Inter',
+      codeFont: '"Current Mono"'
+    })
+  })
 })
 
 describe('theme share strings', () => {
@@ -147,6 +187,34 @@ describe('theme share strings', () => {
       expect(parsed.theme.translucent).toBe(false)
       expect(parsed.theme.uiFont).toBe('Geist, Inter')
       expect(parsed.theme.presetId).toBe('vercel')
+    }
+  })
+
+  it('rejects font values that can escape the generated theme stylesheet', () => {
+    const raw =
+      'codex-theme-v1:' +
+      JSON.stringify({
+        codeThemeId: 'custom',
+        variant: 'dark',
+        theme: {
+          accent: '#006efe',
+          surface: '#000000',
+          ink: '#ededed',
+          contrast: 50,
+          opaqueWindows: true,
+          fonts: {
+            ui: 'Inter; } body { display: none; /*',
+            code: '"Safe Mono"'
+          },
+          semanticColors: { diffAdded: '#00ad3a', diffRemoved: '#f13342', skill: '#9540d5' }
+        }
+      })
+    const parsed = parseThemeShareString(raw, 'dark')
+
+    expect(parsed.ok).toBe(true)
+    if (parsed.ok) {
+      expect(parsed.theme.uiFont).toBe('')
+      expect(buildChromeThemeCssVars(parsed.theme, 'dark')['--font-ui']).toBeUndefined()
     }
   })
 })

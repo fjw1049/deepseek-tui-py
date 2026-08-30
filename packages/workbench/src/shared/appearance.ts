@@ -22,7 +22,7 @@ export type ThemeSemanticColorsV1 = {
 }
 
 export type ChromeThemeV1 = {
-  /** Preset id from APPEARANCE_THEME_PRESETS, or 'custom' after manual edits. */
+  /** Base preset id; manual edits keep their source id, while unknown imports use `custom`. */
   presetId: string
   accent: string
   /** Background. */
@@ -485,6 +485,51 @@ export function getThemePresetSeed(presetId: string, variant: ThemeVariant): Chr
   return { presetId, ...presetSeed }
 }
 
+type ThemePresetApplyMetadata = {
+  contrast?: true
+  translucent?: true
+  uiFont?: true
+  codeFont?: true
+}
+
+/**
+ * Synara treats the catalog picker as a code-theme seed, not a full reset.
+ * Core colors always follow the selected seed; optional user choices only
+ * change for presets that explicitly carry an opinion about them.
+ */
+const THEME_PRESET_APPLY_METADATA: Partial<Record<string, ThemePresetApplyMetadata>> = {
+  linear: { uiFont: true, translucent: true },
+  matrix: { uiFont: true, codeFont: true, translucent: true },
+  notion: { uiFont: true, codeFont: true, translucent: true },
+  raycast: { uiFont: true, codeFont: true, translucent: true },
+  vercel: { contrast: true, uiFont: true, codeFont: true, translucent: true }
+}
+
+export function applyThemePreset(
+  current: ChromeThemeV1,
+  presetId: string,
+  variant: ThemeVariant
+): ChromeThemeV1 | null {
+  const preset = getThemePresetSeed(presetId, variant)
+  if (!preset) return null
+  const metadata = THEME_PRESET_APPLY_METADATA[presetId]
+  return normalizeChromeTheme(
+    {
+      ...current,
+      presetId,
+      accent: preset.accent,
+      surface: preset.surface,
+      ink: preset.ink,
+      semanticColors: { ...preset.semanticColors },
+      ...(metadata?.contrast ? { contrast: preset.contrast } : {}),
+      ...(metadata?.translucent ? { translucent: preset.translucent } : {}),
+      ...(metadata?.uiFont ? { uiFont: preset.uiFont } : {}),
+      ...(metadata?.codeFont ? { codeFont: preset.codeFont } : {})
+    },
+    variant
+  )
+}
+
 export function listThemePresetsForVariant(variant: ThemeVariant): AppearanceThemePreset[] {
   return APPEARANCE_THEME_PRESETS.filter((preset) => preset.seeds[variant] != null)
 }
@@ -515,6 +560,20 @@ export function normalizeHexColor(value: unknown, fallback: string): string {
   return fallback
 }
 
+/** Pick the higher-contrast text color using the WCAG relative-luminance formula. */
+export function pickReadableTextColor(hexColor: string): '#111111' | '#ffffff' {
+  const normalized = normalizeHexColor(hexColor, '#000000')
+  const toLinear = (channel: number): number =>
+    channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4
+  const channelAt = (index: number): number =>
+    toLinear(Number.parseInt(normalized.slice(index, index + 2), 16) / 255)
+  const luminance = 0.2126 * channelAt(1) + 0.7152 * channelAt(3) + 0.0722 * channelAt(5)
+  const darkLuminance = toLinear(17 / 255)
+  const darkContrast = (luminance + 0.05) / (darkLuminance + 0.05)
+  const lightContrast = 1.05 / (luminance + 0.05)
+  return lightContrast >= darkContrast ? '#ffffff' : '#111111'
+}
+
 function normalizeContrast(value: unknown, fallback: number): number {
   const parsed = typeof value === 'number' ? value : Number(value)
   if (!Number.isFinite(parsed)) return fallback
@@ -522,7 +581,17 @@ function normalizeContrast(value: unknown, fallback: number): number {
 }
 
 function normalizeFont(value: unknown): string {
-  return typeof value === 'string' ? value.trim() : ''
+  if (typeof value !== 'string') return ''
+  const trimmed = value.trim()
+  // Theme fonts are serialized into a generated <style> block. Declaration
+  // delimiters and comments are never valid font-family input here and would
+  // otherwise let an imported share string escape the custom property value.
+  for (const character of trimmed) {
+    const codePoint = character.codePointAt(0) ?? 0
+    if (codePoint <= 31 || codePoint === 127) return ''
+  }
+  if (/[;{}]/.test(trimmed) || /\/\*|\*\//.test(trimmed)) return ''
+  return trimmed.slice(0, 256)
 }
 
 function normalizeBoolean(value: unknown, fallback: boolean): boolean {
@@ -636,6 +705,7 @@ export function mergeAppearanceSettings(
 
 export function chromeThemeEquals(a: ChromeThemeV1, b: ChromeThemeV1): boolean {
   return (
+    a.presetId === b.presetId &&
     a.accent === b.accent &&
     a.surface === b.surface &&
     a.ink === b.ink &&

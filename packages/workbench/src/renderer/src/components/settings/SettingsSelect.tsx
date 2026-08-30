@@ -3,6 +3,7 @@ import {
   isValidElement,
   useCallback,
   useEffect,
+  useId,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -91,11 +92,14 @@ export function SettingsSelect({
   name,
   id,
   title,
-  'aria-label': ariaLabel
+  'aria-label': ariaLabel,
+  allowReselect = false
 }: SelectHTMLAttributes<HTMLSelectElement> & {
   wrapperClassName?: string
   /** Extra classes on the outer shell (e.g. bg-ds-main). */
   selectClassName?: string
+  /** Emit onChange for the active option too (used to reapply a modified base theme). */
+  allowReselect?: boolean
 }): ReactElement {
   const options = useMemo(() => collectOptions(children), [children])
   const selectedValue = value == null || value === '' ? '' : String(value)
@@ -108,6 +112,7 @@ export function SettingsSelect({
   const wrapRef = useRef<HTMLDivElement | null>(null)
   const triggerRef = useRef<HTMLButtonElement | null>(null)
   const menuRef = useRef<HTMLDivElement | null>(null)
+  const menuId = useId()
   const optionsRef = useRef(options)
   const selectedRef = useRef(selectedValue)
   optionsRef.current = options
@@ -182,16 +187,29 @@ export function SettingsSelect({
 
   const commit = useCallback(
     (next: string): void => {
+      triggerRef.current?.focus()
       setOpen(false)
-      if (next === selectedValue) return
+      if (!allowReselect && next === selectedValue) return
       emitChange(onChange, next, name)
     },
-    [name, onChange, selectedValue]
+    [allowReselect, name, onChange, selectedValue]
   )
 
   useEffect(() => {
     if (!open || disabled) return
     const onKey = (event: KeyboardEvent): void => {
+      if (event.key === 'Tab') {
+        setOpen(false)
+        return
+      }
+      const target = event.target
+      if (
+        target instanceof Node &&
+        !triggerRef.current?.contains(target) &&
+        !menuRef.current?.contains(target)
+      ) {
+        return
+      }
       onKeyDown(event, (index) => {
         const option = options[index]
         if (!option || option.disabled) return
@@ -207,6 +225,7 @@ export function SettingsSelect({
       ? createPortal(
           <div
             ref={menuRef}
+            id={menuId}
             style={menuStyle}
             role="listbox"
             aria-label={ariaLabel || title}
@@ -221,8 +240,10 @@ export function SettingsSelect({
                 return (
                   <button
                     key={`${option.value}:${index}`}
+                    id={`${menuId}-option-${index}`}
                     type="button"
                     role="option"
+                    tabIndex={-1}
                     aria-selected={selected}
                     disabled={option.disabled}
                     data-settings-select-highlight={active ? 'true' : undefined}
@@ -262,9 +283,12 @@ export function SettingsSelect({
         type="button"
         disabled={disabled}
         title={title}
+        role="combobox"
         aria-label={ariaLabel}
         aria-haspopup="listbox"
         aria-expanded={open}
+        aria-controls={open ? menuId : undefined}
+        aria-activedescendant={open ? `${menuId}-option-${highlighted}` : undefined}
         className="relative flex h-full w-full cursor-pointer items-center justify-center px-2.5 pr-7 text-center disabled:cursor-not-allowed"
         onClick={() => {
           if (disabled) return

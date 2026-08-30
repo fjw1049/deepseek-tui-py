@@ -10,12 +10,16 @@ import {
   MAX_TERMINAL_FONT_SIZE_PX,
   MIN_CHAT_FONT_SIZE_PX,
   MIN_TERMINAL_FONT_SIZE_PX,
+  applyThemePreset,
+  chromeThemeEquals,
   createThemeShareString,
   defaultAppearanceSettings,
   getThemePresetSeed,
+  isDefaultChromeTheme,
   listThemePresetsForVariant,
   normalizeHexColor,
   parseThemeShareString,
+  pickReadableTextColor,
   type ChromeThemeV1,
   type EmptyHomeLayout,
   type ThemeVariant,
@@ -69,10 +73,32 @@ function useResolvedVariant(theme: AppSettingsV1['theme']): ThemeVariant {
 export function AppearanceSettingsPanel({ form, onPatch }: Props): ReactElement {
   const { t } = useTranslation('settings')
   const appearance = form.appearance
+  const defaults = useMemo(() => defaultAppearanceSettings(), [])
   const resolvedVariant = useResolvedVariant(form.theme)
   const variantOrder: readonly ThemeVariant[] =
     resolvedVariant === 'dark' ? (['dark', 'light'] as const) : (['light', 'dark'] as const)
   const onAppearancePatch = (patch: AppearancePatchV1): void => onPatch({ appearance: patch })
+  const [restoreArmed, setRestoreArmed] = useState(false)
+  const restoreTimer = useRef<number | null>(null)
+  const isAtDefaults =
+    form.theme === 'dark' &&
+    form.uiFontScale === 'medium' &&
+    form.uiFontFamily === 'system-native' &&
+    isDefaultChromeTheme(appearance.themes.light, 'light') &&
+    isDefaultChromeTheme(appearance.themes.dark, 'dark') &&
+    appearance.uiDensity === defaults.uiDensity &&
+    appearance.emptyHomeLayout === defaults.emptyHomeLayout &&
+    appearance.chatFontSizePx === defaults.chatFontSizePx &&
+    appearance.terminalFontSizePx === defaults.terminalFontSizePx &&
+    appearance.terminalFontFamily === defaults.terminalFontFamily &&
+    appearance.fontSmoothing === defaults.fontSmoothing &&
+    appearance.timestampFormat === defaults.timestampFormat
+
+  useEffect(() => {
+    return () => {
+      if (restoreTimer.current) window.clearTimeout(restoreTimer.current)
+    }
+  }, [])
 
   const restoreDefaults = (): void => {
     onPatch({
@@ -81,6 +107,22 @@ export function AppearanceSettingsPanel({ form, onPatch }: Props): ReactElement 
       uiFontFamily: 'system-native',
       appearance: defaultAppearanceSettings()
     })
+    setRestoreArmed(false)
+  }
+
+  const requestRestoreDefaults = (): void => {
+    if (restoreArmed) {
+      if (restoreTimer.current) window.clearTimeout(restoreTimer.current)
+      restoreTimer.current = null
+      restoreDefaults()
+      return
+    }
+    setRestoreArmed(true)
+    if (restoreTimer.current) window.clearTimeout(restoreTimer.current)
+    restoreTimer.current = window.setTimeout(() => {
+      setRestoreArmed(false)
+      restoreTimer.current = null
+    }, 4000)
   }
 
   return (
@@ -89,11 +131,18 @@ export function AppearanceSettingsPanel({ form, onPatch }: Props): ReactElement 
         <SectionLabel>{t('appearanceSectionTheme')}</SectionLabel>
         <button
           type="button"
-          onClick={restoreDefaults}
-          className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-[12.5px] font-medium text-ds-faint transition hover:bg-ds-hover hover:text-ds-ink"
+          onClick={requestRestoreDefaults}
+          disabled={isAtDefaults}
+          className={`inline-flex items-center gap-1 rounded-lg px-2 py-1 text-[12.5px] font-medium transition disabled:cursor-default disabled:opacity-40 ${
+            restoreArmed
+              ? 'bg-red-500/10 text-red-700 hover:bg-red-500/15 dark:text-red-300'
+              : 'text-ds-faint hover:bg-ds-hover hover:text-ds-ink'
+          }`}
         >
           <RotateCcw className="h-3 w-3" strokeWidth={1.75} />
-          {t('appearanceRestoreDefaults')}
+          <span aria-live="polite">
+            {restoreArmed ? t('appearanceRestoreConfirm') : t('appearanceRestoreDefaults')}
+          </span>
         </button>
       </div>
 
@@ -104,11 +153,12 @@ export function AppearanceSettingsPanel({ form, onPatch }: Props): ReactElement 
           control={
             <GlassSegmentedControl
               className="w-full"
+              ariaLabel={t('theme')}
               value={form.theme}
               items={[
+                { value: 'system', label: t('themeSystem') },
                 { value: 'light', label: t('themeLight') },
-                { value: 'dark', label: t('themeDark') },
-                { value: 'system', label: t('themeSystem') }
+                { value: 'dark', label: t('themeDark') }
               ]}
               onChange={(value) => onPatch({ theme: value })}
             />
@@ -119,6 +169,8 @@ export function AppearanceSettingsPanel({ form, onPatch }: Props): ReactElement 
           description={t('fontScaleDesc')}
           control={
             <SettingsSelect
+              aria-label={t('fontScale')}
+              wrapperClassName="h-10 rounded-xl"
               value={form.uiFontScale}
               onChange={(e) =>
                 onPatch({ uiFontScale: e.target.value as AppSettingsV1['uiFontScale'] })
@@ -151,6 +203,7 @@ export function AppearanceSettingsPanel({ form, onPatch }: Props): ReactElement 
           control={
             <GlassSegmentedControl<UiDensity>
               className="w-full"
+              ariaLabel={t('uiDensity')}
               value={appearance.uiDensity}
               items={[
                 { value: 'compact', label: t('uiDensityCompact') },
@@ -167,6 +220,7 @@ export function AppearanceSettingsPanel({ form, onPatch }: Props): ReactElement 
           control={
             <GlassSegmentedControl<EmptyHomeLayout>
               className="w-full"
+              ariaLabel={t('emptyHomeLayout')}
               value={appearance.emptyHomeLayout ?? 'normal'}
               items={[
                 { value: 'normal', label: t('emptyHomeLayoutNormal') },
@@ -184,6 +238,7 @@ export function AppearanceSettingsPanel({ form, onPatch }: Props): ReactElement 
               value={appearance.chatFontSizePx}
               min={MIN_CHAT_FONT_SIZE_PX}
               max={MAX_CHAT_FONT_SIZE_PX}
+              ariaLabel={t('chatFontSize')}
               onCommit={(value) => onAppearancePatch({ chatFontSizePx: value })}
             />
           }
@@ -196,6 +251,7 @@ export function AppearanceSettingsPanel({ form, onPatch }: Props): ReactElement 
               value={appearance.terminalFontSizePx}
               min={MIN_TERMINAL_FONT_SIZE_PX}
               max={MAX_TERMINAL_FONT_SIZE_PX}
+              ariaLabel={t('terminalFontSize')}
               onCommit={(value) => onAppearancePatch({ terminalFontSizePx: value })}
             />
           }
@@ -205,12 +261,13 @@ export function AppearanceSettingsPanel({ form, onPatch }: Props): ReactElement 
           description={t('terminalFontDesc')}
           control={
             <div className="w-full min-w-0">
-              <input
+              <FontInput
                 list="ds-terminal-font-suggestions"
                 value={appearance.terminalFontFamily}
-                onChange={(e) => onAppearancePatch({ terminalFontFamily: e.target.value })}
+                onChange={(value) => onAppearancePatch({ terminalFontFamily: value })}
                 placeholder={t('terminalFontPlaceholder')}
-                className={`${CONTROL_FIELD_CLASS} text-center`}
+                ariaLabel={t('terminalFont')}
+                className="text-center"
               />
               <datalist id="ds-terminal-font-suggestions">
                 {TERMINAL_FONT_SUGGESTIONS.map((family) => (
@@ -227,6 +284,7 @@ export function AppearanceSettingsPanel({ form, onPatch }: Props): ReactElement 
             control={
               <Toggle
                 checked={appearance.fontSmoothing}
+                ariaLabel={t('fontSmoothing')}
                 onChange={(value) => onAppearancePatch({ fontSmoothing: value })}
               />
             }
@@ -242,6 +300,8 @@ export function AppearanceSettingsPanel({ form, onPatch }: Props): ReactElement 
           description={t('timeFormatDesc')}
           control={
             <SettingsSelect
+              aria-label={t('timeFormat')}
+              wrapperClassName="h-10 rounded-xl"
               value={appearance.timestampFormat}
               onChange={(e) =>
                 onAppearancePatch({
@@ -278,7 +338,15 @@ function ThemePackCard({
   const { t } = useTranslation('settings')
   const presets = useMemo(() => listThemePresetsForVariant(variant), [variant])
   const presetKnown = presets.some((preset) => preset.id === theme.presetId)
-  const [copied, setCopied] = useState(false)
+  const isPristine = isDefaultChromeTheme(theme, variant)
+  const presetSeed = getThemePresetSeed(theme.presetId, variant)
+  const isCustomized = !isPristine && (!presetSeed || !chromeThemeEquals(theme, presetSeed))
+  const preset = presets.find((entry) => entry.id === theme.presetId)
+  const presetLabel =
+    preset?.id === 'default' ? t('themePresetDefault') : (preset?.label ?? t('themePresetCustom'))
+  const titleLabel = variant === 'light' ? t('themePackLightTitle') : t('themePackDarkTitle')
+  const controlLabel = (label: string): string => `${titleLabel} · ${label}`
+  const [copyStatus, setCopyStatus] = useState<'idle' | 'copied' | 'failed'>('idle')
   const [importOpen, setImportOpen] = useState(false)
   const [importText, setImportText] = useState('')
   const [importError, setImportError] = useState<string | null>(null)
@@ -291,18 +359,20 @@ function ThemePackCard({
   }, [])
 
   const selectPreset = (presetId: string): void => {
-    const seed = getThemePresetSeed(presetId, variant)
-    if (seed) onThemeReplace(seed)
+    const next = applyThemePreset(theme, presetId, variant)
+    if (next) onThemeReplace(next)
   }
 
   const copyShareString = async (): Promise<void> => {
     try {
       await navigator.clipboard.writeText(createThemeShareString(variant, theme))
-      setCopied(true)
+      setCopyStatus('copied')
       if (copyTimer.current) window.clearTimeout(copyTimer.current)
-      copyTimer.current = window.setTimeout(() => setCopied(false), 1500)
+      copyTimer.current = window.setTimeout(() => setCopyStatus('idle'), 1500)
     } catch {
-      /* clipboard unavailable; ignore */
+      setCopyStatus('failed')
+      if (copyTimer.current) window.clearTimeout(copyTimer.current)
+      copyTimer.current = window.setTimeout(() => setCopyStatus('idle'), 2500)
     }
   }
 
@@ -332,22 +402,23 @@ function ThemePackCard({
     <section className="ds-content-card rounded-2xl">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-ds-border-muted px-5 py-3">
         <div className="flex items-center gap-2">
-          <h2 className="text-[16px] font-semibold text-ds-ink">
-            {variant === 'light' ? t('themePackLightTitle') : t('themePackDarkTitle')}
-          </h2>
-          <button
-            type="button"
-            title={t('themePackReset')}
-            aria-label={t('themePackReset')}
-            onClick={() => onThemeReplace({ ...DEFAULT_CHROME_THEMES[variant] })}
-            className="inline-flex h-6 w-6 items-center justify-center rounded-md text-ds-faint transition hover:bg-ds-hover hover:text-ds-ink"
-          >
-            <RotateCcw className="h-3.5 w-3.5" strokeWidth={1.75} />
-          </button>
+          <h2 className="text-[16px] font-semibold text-ds-ink">{titleLabel}</h2>
+          {!isPristine ? (
+            <button
+              type="button"
+              title={t('themePackReset')}
+              aria-label={controlLabel(t('themePackReset'))}
+              onClick={() => onThemeReplace({ ...DEFAULT_CHROME_THEMES[variant] })}
+              className="inline-flex h-6 w-6 items-center justify-center rounded-md text-ds-faint transition hover:bg-ds-hover hover:text-ds-ink"
+            >
+              <RotateCcw className="h-3.5 w-3.5" strokeWidth={1.75} />
+            </button>
+          ) : null}
         </div>
         <div className="flex items-center gap-1.5">
           <button
             type="button"
+            aria-expanded={importOpen}
             onClick={() => {
               setImportOpen((open) => !open)
               setImportError(null)
@@ -360,17 +431,28 @@ function ThemePackCard({
           <button
             type="button"
             onClick={() => void copyShareString()}
-            className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[13px] font-medium text-ds-muted transition hover:bg-ds-hover hover:text-ds-ink"
+            className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[13px] font-medium transition hover:bg-ds-hover ${
+              copyStatus === 'failed' ? 'text-red-700 dark:text-red-300' : 'text-ds-muted hover:text-ds-ink'
+            }`}
           >
-            {copied ? (
+            {copyStatus === 'copied' ? (
               <Check className="h-3.5 w-3.5 text-emerald-500" strokeWidth={2} />
             ) : (
               <Copy className="h-3.5 w-3.5" strokeWidth={1.75} />
             )}
-            {copied ? t('themePackCopied') : t('themePackCopy')}
+            <span aria-live="polite">
+              {copyStatus === 'copied'
+                ? t('themePackCopied')
+                : copyStatus === 'failed'
+                  ? t('themePackCopyFailed')
+                  : t('themePackCopy')}
+            </span>
           </button>
           <div className="w-40">
             <SettingsSelect
+              aria-label={controlLabel(t('themePackPreset'))}
+              allowReselect
+              wrapperClassName="h-10 rounded-xl"
               value={presetKnown ? theme.presetId : CUSTOM_THEME_PRESET_ID}
               onChange={(e) => selectPreset(e.target.value)}
             >
@@ -389,19 +471,29 @@ function ThemePackCard({
         </div>
       </div>
 
-      <div className="px-5 pt-2 text-[12.5px] text-ds-faint">{statusText}</div>
+      <div className="px-5 pt-2 text-[12.5px] text-ds-faint">
+        {statusText}
+        {isCustomized ? ` ${t('themePackCustomized', { preset: presetLabel })}` : null}
+      </div>
 
       {importOpen ? (
         <div className="mx-5 mt-2 rounded-xl border border-ds-border-muted bg-ds-main/45 p-3">
           <textarea
             value={importText}
-            onChange={(e) => setImportText(e.target.value)}
+            onChange={(e) => {
+              setImportText(e.target.value)
+              setImportError(null)
+            }}
             placeholder="codex-theme-v1:{…}"
             rows={3}
+            aria-label={controlLabel(t('themePackShareString'))}
             className="w-full rounded-lg border border-ds-border bg-ds-card px-2.5 py-1.5 font-mono text-[12px] text-ds-ink placeholder:text-ds-faint focus:border-accent/40 focus:outline-none"
           />
           <div className="mt-2 flex items-center justify-between gap-3">
-            <span className="min-w-0 truncate text-[12px] text-red-700 dark:text-red-300">
+            <span
+              role={importError ? 'alert' : undefined}
+              className="min-w-0 truncate text-[12px] text-red-700 dark:text-red-300"
+            >
               {importError}
             </span>
             <button
@@ -420,47 +512,65 @@ function ThemePackCard({
         <Row
           title={t('themeAccent')}
           control={
-            <ColorPill value={theme.accent} onCommit={(value) => onThemePatch({ accent: value })} />
+            <ColorPill
+              value={theme.accent}
+              ariaLabel={controlLabel(t('themeAccent'))}
+              onCommit={(value) => onThemePatch({ accent: value })}
+            />
           }
         />
         <Row
           title={t('themeBackground')}
           control={
-            <ColorPill value={theme.surface} onCommit={(value) => onThemePatch({ surface: value })} />
+            <ColorPill
+              value={theme.surface}
+              ariaLabel={controlLabel(t('themeBackground'))}
+              onCommit={(value) => onThemePatch({ surface: value })}
+            />
           }
         />
         <Row
           title={t('themeForeground')}
-          control={<ColorPill value={theme.ink} onCommit={(value) => onThemePatch({ ink: value })} />}
+          control={
+            <ColorPill
+              value={theme.ink}
+              ariaLabel={controlLabel(t('themeForeground'))}
+              onCommit={(value) => onThemePatch({ ink: value })}
+            />
+          }
         />
         <Row
           title={t('themeUiFont')}
           control={
-            <input
+            <FontInput
               value={theme.uiFont}
-              onChange={(e) => onThemePatch({ uiFont: e.target.value })}
+              onChange={(value) => onThemePatch({ uiFont: value })}
               placeholder={t('themeUiFontPlaceholder')}
-              className={CONTROL_FIELD_CLASS}
+              ariaLabel={controlLabel(t('themeUiFont'))}
             />
           }
         />
         <Row
           title={t('themeCodeFont')}
           control={
-            <input
+            <FontInput
               value={theme.codeFont}
-              onChange={(e) => onThemePatch({ codeFont: e.target.value })}
+              onChange={(value) => onThemePatch({ codeFont: value })}
               placeholder={t('themeCodeFontPlaceholder')}
-              className={CONTROL_FIELD_CLASS}
+              ariaLabel={controlLabel(t('themeCodeFont'))}
+              mono
             />
           }
         />
         <Row
           title={t('themeTranslucent')}
+          description={t(IS_MAC ? 'themeTranslucentDesc' : 'themeTranslucentUnsupported')}
           control={
             <Toggle
               checked={theme.translucent}
+              ariaLabel={controlLabel(t('themeTranslucent'))}
               onChange={(value) => onThemePatch({ translucent: value })}
+              disabled={!IS_MAC}
             />
           }
         />
@@ -474,6 +584,7 @@ function ThemePackCard({
                 max={100}
                 value={theme.contrast}
                 onChange={(e) => onThemePatch({ contrast: Number(e.target.value) })}
+                aria-label={controlLabel(t('themeContrast'))}
                 className="ds-no-drag h-1.5 w-full cursor-pointer appearance-none rounded-full bg-ds-border accent-[var(--ds-accent)]"
               />
               <span className="w-8 shrink-0 text-center font-mono text-[13px] leading-none text-ds-muted">
@@ -489,9 +600,11 @@ function ThemePackCard({
 
 function ColorPill({
   value,
+  ariaLabel,
   onCommit
 }: {
   value: string
+  ariaLabel: string
   onCommit: (hex: string) => void
 }): ReactElement {
   const [draft, setDraft] = useState(value.toUpperCase())
@@ -510,7 +623,7 @@ function ColorPill({
 
   return (
     <div
-      className="relative flex h-10 w-full items-center overflow-hidden rounded-full border px-2 shadow-sm"
+      className="relative flex h-10 w-full items-center overflow-hidden rounded-full border px-2 shadow-sm focus-within:ring-2 focus-within:ring-accent/45"
       style={{
         backgroundColor: value,
         borderColor: 'var(--ds-border)',
@@ -528,17 +641,19 @@ function ColorPill({
           value={normalizeHexColor(value, '#000000')}
           onChange={(e) => onCommit(e.target.value)}
           className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
-          aria-label={value}
+          aria-label={ariaLabel}
         />
       </span>
       <input
         value={draft}
+        maxLength={7}
         onChange={(e) => setDraft(e.target.value)}
         onBlur={commitDraft}
         onKeyDown={(e) => {
           if (e.key === 'Enter') commitDraft()
         }}
         spellCheck={false}
+        aria-label={`${ariaLabel} · HEX`}
         className="h-full w-full min-w-0 bg-transparent px-9 text-center font-mono text-[13px] font-medium uppercase leading-10 focus:outline-none"
         // Override the global .ds-settings-page input glass material (bg + blur +
         // inset shadow) so the hex text stays on the solid color pill behind it.
@@ -554,29 +669,61 @@ function ColorPill({
   )
 }
 
-function pickReadableTextColor(hexColor: string): string {
-  const normalized = normalizeHexColor(hexColor, '#000000')
-  const r = Number.parseInt(normalized.slice(1, 3), 16)
-  const g = Number.parseInt(normalized.slice(3, 5), 16)
-  const b = Number.parseInt(normalized.slice(5, 7), 16)
-  const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255
-  return luminance > 0.6 ? '#1a1a1a' : '#ffffff'
-}
-
 const CONTROL_FIELD_CLASS =
   'box-border h-10 w-full min-w-0 rounded-xl border border-ds-border bg-ds-card px-3 text-center text-[14px] leading-10 text-ds-ink shadow-sm placeholder:text-ds-faint focus:border-accent/40 focus:outline-none focus:ring-1 focus:ring-accent/30'
+
+function FontInput({
+  value,
+  placeholder,
+  ariaLabel,
+  onChange,
+  list,
+  mono = false,
+  className = ''
+}: {
+  value: string
+  placeholder: string
+  ariaLabel: string
+  onChange: (value: string) => void
+  list?: string
+  mono?: boolean
+  className?: string
+}): ReactElement {
+  const [draft, setDraft] = useState<string | null>(null)
+  return (
+    <input
+      list={list}
+      value={draft ?? value}
+      onChange={(event) => {
+        const next = event.target.value
+        setDraft(next)
+        onChange(next)
+      }}
+      onBlur={() => setDraft(null)}
+      placeholder={placeholder}
+      aria-label={ariaLabel}
+      spellCheck={false}
+      autoComplete="off"
+      maxLength={256}
+      className={`${CONTROL_FIELD_CLASS} ${mono ? 'font-mono' : ''} ${className}`.trim()}
+    />
+  )
+}
 
 function PxInput({
   value,
   min,
   max,
+  ariaLabel,
   onCommit
 }: {
   value: number
   min: number
   max: number
+  ariaLabel: string
   onCommit: (value: number) => void
 }): ReactElement {
+  const [draft, setDraft] = useState<string | null>(null)
   return (
     <div className="flex h-10 w-full items-center gap-2">
       <input
@@ -584,13 +731,19 @@ function PxInput({
         min={min}
         max={max}
         step={1}
-        value={value}
+        value={draft ?? String(value)}
+        aria-label={ariaLabel}
         onChange={(e) => {
-          const parsed = Number(e.target.value)
+          const raw = e.target.value
+          setDraft(raw)
+          const normalized = raw.trim()
+          if (!normalized) return
+          const parsed = Number(normalized)
           if (Number.isFinite(parsed)) {
             onCommit(Math.min(max, Math.max(min, Math.round(parsed))))
           }
         }}
+        onBlur={() => setDraft(null)}
         className={`${CONTROL_FIELD_CLASS} text-center tabular-nums`}
       />
       <span className="shrink-0 text-[13px] leading-none text-ds-faint">px</span>
@@ -600,9 +753,9 @@ function PxInput({
 
 function SectionLabel({ children }: { children: ReactNode }): ReactElement {
   return (
-    <div className="px-1 text-[12.5px] font-medium uppercase tracking-wide text-ds-faint">
+    <h2 className="px-1 text-[12.5px] font-medium uppercase tracking-wide text-ds-faint">
       {children}
-    </div>
+    </h2>
   )
 }
 
@@ -644,18 +797,24 @@ function Row({
 
 function Toggle({
   checked,
-  onChange
+  ariaLabel,
+  onChange,
+  disabled = false
 }: {
   checked: boolean
+  ariaLabel: string
   onChange: (v: boolean) => void
+  disabled?: boolean
 }): ReactElement {
   return (
     <button
       type="button"
       role="switch"
       aria-checked={checked}
+      aria-label={ariaLabel}
+      disabled={disabled}
       onClick={() => onChange(!checked)}
-      className={`relative h-7 w-12 shrink-0 self-center rounded-full transition ${
+      className={`relative h-7 w-12 shrink-0 self-center rounded-full transition disabled:cursor-not-allowed disabled:opacity-45 ${
         checked ? 'bg-accent' : 'bg-ds-faint'
       }`}
     >

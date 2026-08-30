@@ -1,4 +1,9 @@
-import type { PointerEvent as ReactPointerEvent, ReactElement, RefObject } from 'react'
+import type {
+  CSSProperties,
+  PointerEvent as ReactPointerEvent,
+  ReactElement,
+  RefObject
+} from 'react'
 import {
   lazy,
   Suspense,
@@ -1376,6 +1381,11 @@ export function Workbench(): ReactElement {
       ref={shellRef}
       className="ds-workbench-shell ds-drag relative flex h-full min-h-0 w-full min-w-0"
       data-ide-mode={ideModeActive ? '' : undefined}
+      style={
+        {
+          '--ds-sidebar-width': `${leftSidebarHidden ? 0 : sidebarWrapWidth}px`
+        } as CSSProperties
+      }
     >
       {resizeShieldCursor !== null ? (
         <div

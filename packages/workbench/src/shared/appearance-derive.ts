@@ -143,10 +143,11 @@ export function buildChromeThemeCssVars(
   // Synara-flat frosted sidebar: translucency only affects the sidebar veil;
   // everything else derives as solid flat surfaces.
   const glass = theme.translucent
-  const glassBg = glass ? rgba(sidebarBg, light ? 0.64 : 0.72) : hex(sidebarBg)
+  const glassBg = glass ? rgba(sidebarBg, light ? 0.68 : 0.56) : hex(sidebarBg)
   const glassBgStrong = glass ? rgba(sidebarBg, light ? 0.8 : 0.84) : hex(elevated1)
   const glassBorder = rgba(ink, light ? 0.07 : 0.05)
   const glassHighlight = 'transparent'
+  const unifiedDarkMaterial = glass && !light
 
   const vars: Record<string, string> = {
     '--bg-app': hex(surfaceUnder),
@@ -218,6 +219,26 @@ export function buildChromeThemeCssVars(
     '--glass-card': glass ? rgba(light ? panel : WHITE, light ? 0.6 : 0.05) : hex(elevated1),
     '--glass-card-hover': glass ? rgba(light ? panel : WHITE, light ? 0.9 : 0.08) : hex(elevated2),
     '--glass-blur': glass ? '8px' : '0px',
+
+    // The native window material is macOS-only; CSS keeps Windows/Linux on
+    // their opaque base rules. Dark translucent themes use one continuous
+    // tinted shell over that material; the sidebar and corners stay transparent
+    // so they cannot be composited into a second, mismatched tone. Light glass
+    // already reads correctly and keeps its prior sidebar-only composition.
+    '--app-window-background': glass ? 'transparent' : hex(surfaceUnder),
+    '--app-shell-background': unifiedDarkMaterial
+      ? glassBg
+      : glass
+        ? 'transparent'
+        : hex(surfaceUnder),
+    '--app-sidebar-surface': unifiedDarkMaterial
+      ? 'transparent'
+      : glassBg,
+    '--app-sidebar-backdrop-filter': glass && !unifiedDarkMaterial
+      ? 'blur(8px) saturate(135%)'
+      : 'none',
+    '--app-chrome-fill': unifiedDarkMaterial ? 'transparent' : hex(sidebarBg),
+    '--app-corner-surface': unifiedDarkMaterial ? 'transparent' : hex(sidebarBg),
 
     '--ds-material-page': hex(canvasBg),
     '--ds-material-panel': hex(canvasBg),
