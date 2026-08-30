@@ -10659,11 +10659,11 @@ select:focus-visible,
 [data-composer-footer] reasoning-effort-selector {
   display: inline-block;
   min-width: 0;
-  max-width: 220px;
+  max-width: 100%;
   vertical-align: middle;
 }
 [data-composer-footer] reasoning-effort-selector[compact] {
-  max-width: 8.5rem;
+  max-width: min(100%, 8.5rem);
 }
 
 .ds-ide-chat-rail .mb-8 {

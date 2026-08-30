@@ -171,7 +171,7 @@ class ChatGPTModelSelector extends HTMLElement {
       .pill {
         /* Grow with short names; cap long ones so the composer stays calm. */
         width: auto;
-        max-width: 220px;
+        max-width: 100%;
         height: 36px;
         border-radius: 999px;
         background: transparent;

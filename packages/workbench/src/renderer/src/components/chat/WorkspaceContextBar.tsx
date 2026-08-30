@@ -1,4 +1,4 @@
-import { useLayoutEffect, useMemo, useRef, useState, type ReactElement } from 'react'
+import { useCallback, useLayoutEffect, useMemo, useRef, useState, type ReactElement } from 'react'
 import { GitBranchPicker } from './GitBranchPicker'
 import { ProjectContextPicker } from './ProjectContextPicker'
 import { isChatsWorkspace, normalizeWorkspaceRoot } from '../../lib/workspace-path'
@@ -17,12 +17,32 @@ type Props = {
 export function WorkspaceContextBar({ workspaceRoot, variant = 'tray' }: Props): ReactElement {
   const barRef = useRef<HTMLDivElement>(null)
   const [barWidth, setBarWidth] = useState<number | null>(null)
+  const [branchState, setBranchState] = useState<{
+    workspaceRoot: string
+    currentBranch: string | null
+  } | null>(null)
   const plan = useMemo(() => workspaceContextBarPlanForWidth(barWidth), [barWidth])
   const tier = workspaceContextBarTierForWidth(barWidth)
   const normalizedRoot = normalizeWorkspaceRoot(workspaceRoot)
   const isTemporary = isChatsWorkspace(workspaceRoot) || !normalizedRoot
-  const showBranch = Boolean(normalizedRoot) && !isTemporary && plan.showBranch
+  const renderBranch = Boolean(normalizedRoot) && !isTemporary && plan.showBranch
+  const branchVisible =
+    branchState?.workspaceRoot === normalizedRoot && Boolean(branchState.currentBranch)
   const embedded = variant === 'embedded'
+  const handleCurrentBranchChange = useCallback(
+    (currentBranch: string | null): void => {
+      setBranchState((previous) => {
+        if (
+          previous?.workspaceRoot === normalizedRoot &&
+          previous.currentBranch === currentBranch
+        ) {
+          return previous
+        }
+        return { workspaceRoot: normalizedRoot, currentBranch }
+      })
+    },
+    [normalizedRoot]
+  )
 
   useLayoutEffect(() => {
     const el = barRef.current
@@ -67,10 +87,19 @@ export function WorkspaceContextBar({ workspaceRoot, variant = 'tray' }: Props):
           size={embedded ? 'dense' : 'tray'}
         />
       </div>
-      {showBranch ? (
+      {renderBranch ? (
         <>
-          <span className="ds-workspace-context-sep" aria-hidden />
-          <div className="ds-workspace-context-branch min-w-0 shrink">
+          <span
+            className="ds-workspace-context-sep"
+            aria-hidden
+            hidden={!branchVisible}
+            style={branchVisible ? undefined : { display: 'none' }}
+          />
+          <div
+            className="ds-workspace-context-branch min-w-0 shrink"
+            hidden={!branchVisible}
+            style={branchVisible ? undefined : { display: 'none' }}
+          >
             <GitBranchPicker
               key={normalizedRoot}
               workspaceRoot={normalizedRoot}
@@ -80,6 +109,7 @@ export function WorkspaceContextBar({ workspaceRoot, variant = 'tray' }: Props):
               menuPlacement="above"
               hideLabel={!plan.showBranchLabel}
               hideChevron={!plan.showBranchChevron}
+              onCurrentBranchChange={handleCurrentBranchChange}
             />
           </div>
         </>

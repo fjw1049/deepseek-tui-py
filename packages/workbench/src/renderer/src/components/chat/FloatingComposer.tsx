@@ -304,15 +304,6 @@ export function FloatingComposer({
   const connectorSearchRef = useRef<HTMLInputElement | null>(null)
   const pluginSearchRef = useRef<HTMLInputElement | null>(null)
   const [footerWidth, setFooterWidth] = useState<number | null>(null)
-  const footerLayoutOpts = useMemo(() => ({ dense: compactChrome }), [compactChrome])
-  const footerTier = useMemo(
-    () => composerFooterTierForWidth(footerWidth, footerLayoutOpts),
-    [footerWidth, footerLayoutOpts]
-  )
-  const footerPlan = useMemo(
-    () => composerFooterPlanForWidth(footerWidth, footerLayoutOpts),
-    [footerWidth, footerLayoutOpts]
-  )
   const composingRef = useRef(false)
   const speechBaseRef = useRef('')
   const [voicePhase, setVoicePhase] = useState<ComposerVoicePhase>('idle')
@@ -348,6 +339,22 @@ export function FloatingComposer({
   // `@plugin:<name> ` on send. After send the chip is cleared and the
   // persistent scenario state arrives from the backend via `activePlugin`.
   const [focusPlugin, setFocusPlugin] = useState<string | null>(null)
+  const footerLayoutOpts = useMemo(
+    () => ({
+      dense: compactChrome,
+      hasMode: mode !== 'agent',
+      hasPlugin: Boolean(activePlugin || focusPlugin)
+    }),
+    [activePlugin, compactChrome, focusPlugin, mode]
+  )
+  const footerTier = useMemo(
+    () => composerFooterTierForWidth(footerWidth, footerLayoutOpts),
+    [footerWidth, footerLayoutOpts]
+  )
+  const footerPlan = useMemo(
+    () => composerFooterPlanForWidth(footerWidth, footerLayoutOpts),
+    [footerWidth, footerLayoutOpts]
+  )
   // Plugins list for the `+` > Enter scenario picker (mirrors skills/connectors).
   const [composerPlugins, setComposerPlugins] = useState<
     Array<{ name: string; description?: string; trusted: boolean; enabled: boolean }>

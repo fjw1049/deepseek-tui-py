@@ -23,6 +23,26 @@ describe('composerFooterPlanForWidth', () => {
     expect(plan.showApprovalLabel).toBe(true)
   })
 
+  it('folds active mode and plugin labels before core controls collide', () => {
+    const pressured = composerFooterPlanForWidth(640, {
+      hasMode: true,
+      hasPlugin: true
+    })
+    expect(pressured.showModeLabel).toBe(false)
+    expect(pressured.showPluginLabel).toBe(false)
+    expect(pressured.showContextMeter).toBe(true)
+    expect(pressured.showApprovalLabel).toBe(true)
+    expect(pressured.showModelLabel).toBe(true)
+    expect(pressured.showSend).toBe(true)
+
+    const wide = composerFooterPlanForWidth(800, {
+      hasMode: true,
+      hasPlugin: true
+    })
+    expect(wide.showModeLabel).toBe(true)
+    expect(wide.showPluginLabel).toBe(true)
+  })
+
   it('keeps the approval hand until near collision in chat', () => {
     // Still roomy enough — hand stays (was wrongly gone at 350 before).
     expect(composerFooterPlanForWidth(330).showApproval).toBe(true)

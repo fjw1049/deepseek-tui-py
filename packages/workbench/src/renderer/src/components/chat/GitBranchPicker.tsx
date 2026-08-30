@@ -28,6 +28,8 @@ type Props = {
   hideChevron?: boolean
   /** Composer tray: match the 15px input. Dock stays dense. */
   size?: 'dense' | 'tray'
+  /** Reports the resolved branch so parent chrome can hide an empty control. */
+  onCurrentBranchChange?: (branch: string | null) => void
 }
 
 const MENU_WIDTH = 420
@@ -39,7 +41,8 @@ export function GitBranchPicker({
   menuPlacement = 'above',
   hideLabel = false,
   hideChevron = false,
-  size = 'dense'
+  size = 'dense',
+  onCurrentBranchChange
 }: Props): ReactElement | null {
   const { t } = useTranslation('common')
   const root = workspaceRoot.trim()
@@ -149,6 +152,10 @@ export function GitBranchPicker({
   }, [branches, query])
 
   const currentBranch = result?.ok ? result.currentBranch : null
+  useEffect(() => {
+    if (!result) return
+    onCurrentBranchChange?.(currentBranch)
+  }, [currentBranch, onCurrentBranchChange, result])
   const label =
     currentBranch ||
     (loading && !result ? t('gitBranchLoading') : t('gitNoBranch'))
