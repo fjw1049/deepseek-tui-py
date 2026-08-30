@@ -431,7 +431,7 @@ export function ProjectContextPicker({
         ) : (
           <Folder className={size === 'tray' ? 'h-4 w-4 shrink-0' : 'h-3.5 w-3.5 shrink-0'} strokeWidth={1.7} />
         )}
-        <span className={`min-w-0 flex-1 truncate ${size === 'tray' ? 'text-[15px] leading-none' : ''}`}>
+        <span className={`min-w-0 flex-1 truncate ${size === 'tray' ? 'text-[15px]' : ''}`}>
           {triggerLabel}
         </span>
         {!hideChevron ? (
