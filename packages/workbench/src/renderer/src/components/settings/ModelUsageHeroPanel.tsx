@@ -1,4 +1,4 @@
-import { useMemo, type ReactElement } from 'react'
+import { useEffect, useMemo, useRef, type ReactElement } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { UsageDailyPoint, UsageRange, ModelUsageSummary } from '@shared/usage-ledger'
 import {
@@ -6,6 +6,7 @@ import {
   formatUsageModelName
 } from '../../lib/composer-model-label'
 import type { ComposerModelMeta } from '../../lib/composer-model-label'
+import { threadMarqueeDurationMs } from '../../lib/thread-marquee'
 import { formatCompactNumber } from '../../hooks/use-model-usage'
 import { UsageActivityHeatmap } from './UsageActivityHeatmap'
 import { GlassSegmentedControl } from './GlassSegmentedControl'
@@ -97,7 +98,7 @@ export function ModelUsageHeroPanel({
             <StatTile
               label={t('usageHeroStatTopModel')}
               value={topModelName}
-              scrollValue
+              marqueeValue
               title={topModel ? formatComposerModelLabel(topModel.model, composerModelMeta) : undefined}
             />
           </div>
@@ -113,27 +114,118 @@ export function ModelUsageHeroPanel({
 function StatTile({
   label,
   value,
-  scrollValue = false,
+  marqueeValue = false,
   title
 }: {
   label: string
   value: string
-  scrollValue?: boolean
+  marqueeValue?: boolean
   title?: string
 }): ReactElement {
   return (
     <div className="min-w-0 rounded-2xl border border-ds-border/60 bg-ds-card/40 px-3 py-2">
       <p className="text-[10px] font-medium uppercase tracking-[0.06em] text-ds-faint">{label}</p>
-      {scrollValue ? (
-        <div
-          className="mt-1 overflow-x-auto whitespace-nowrap [scrollbar-width:thin]"
-          title={title ?? value}
-        >
-          <p className="text-[14px] font-semibold tabular-nums text-ds-ink">{value}</p>
-        </div>
+      {marqueeValue ? (
+        <HoverMarqueeValue value={value} title={title ?? value} />
       ) : (
         <p className="mt-0.5 text-[14px] font-semibold tabular-nums text-ds-ink">{value}</p>
       )}
+    </div>
+  )
+}
+
+const MARQUEE_DWELL_MS = 320
+
+function HoverMarqueeValue({ value, title }: { value: string; title: string }): ReactElement {
+  const viewportRef = useRef<HTMLDivElement>(null)
+  const valueRef = useRef<HTMLParagraphElement>(null)
+  const animationRef = useRef<Animation | null>(null)
+  const dwellTimerRef = useRef<number | null>(null)
+
+  const clearDwellTimer = (): void => {
+    if (dwellTimerRef.current == null) return
+    window.clearTimeout(dwellTimerRef.current)
+    dwellTimerRef.current = null
+  }
+
+  const startMarquee = (): void => {
+    clearDwellTimer()
+    dwellTimerRef.current = window.setTimeout(() => {
+      dwellTimerRef.current = null
+      const viewport = viewportRef.current
+      const inner = valueRef.current
+      if (!viewport || !inner) return
+      if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true) return
+
+      const overflow = Math.ceil(inner.scrollWidth - viewport.clientWidth)
+      if (overflow <= 1) return
+
+      const currentTransform = window.getComputedStyle(inner).transform
+      const previousAnimation = animationRef.current
+      if (previousAnimation) previousAnimation.onfinish = null
+      previousAnimation?.cancel()
+      animationRef.current = inner.animate(
+        [
+          { transform: currentTransform === 'none' ? 'translateX(0)' : currentTransform },
+          { transform: `translateX(-${overflow}px)` }
+        ],
+        {
+          duration: threadMarqueeDurationMs(overflow),
+          easing: 'linear',
+          fill: 'forwards'
+        }
+      )
+    }, MARQUEE_DWELL_MS)
+  }
+
+  const resetMarquee = (): void => {
+    clearDwellTimer()
+    const inner = valueRef.current
+    if (!inner) return
+
+    const currentTransform = window.getComputedStyle(inner).transform
+    const previousAnimation = animationRef.current
+    if (previousAnimation) previousAnimation.onfinish = null
+    previousAnimation?.cancel()
+    if (currentTransform === 'none') {
+      animationRef.current = null
+      return
+    }
+
+    const reset = inner.animate(
+      [{ transform: currentTransform }, { transform: 'translateX(0)' }],
+      { duration: 180, easing: 'ease-out' }
+    )
+    animationRef.current = reset
+    reset.onfinish = () => {
+      if (animationRef.current !== reset) return
+      reset.cancel()
+      animationRef.current = null
+    }
+  }
+
+  useEffect(
+    () => () => {
+      clearDwellTimer()
+      animationRef.current?.cancel()
+    },
+    [value]
+  )
+
+  return (
+    <div
+      ref={viewportRef}
+      className="mt-0.5 overflow-hidden whitespace-nowrap"
+      title={title}
+      onMouseEnter={startMarquee}
+      onMouseLeave={resetMarquee}
+    >
+      <p
+        ref={valueRef}
+        className="inline-block min-w-full w-max text-[14px] font-semibold tabular-nums text-ds-ink"
+      >
+        {value}
+      </p>
     </div>
   )
 }

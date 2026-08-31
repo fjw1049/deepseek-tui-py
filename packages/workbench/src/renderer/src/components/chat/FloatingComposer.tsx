@@ -52,7 +52,8 @@ import { UserInputBubble } from './UserInputBubble'
 import { ComposerApprovalPolicySelector } from './ComposerApprovalPolicySelector'
 import {
   filterComposerModelOptions,
-  formatComposerModelLabel
+  formatComposerModelLabel,
+  formatUsageModelName
 } from '../../lib/composer-model-label'
 import { decodeModelRef } from '@shared/model-ref'
 import { resolveActiveThreadWorkspace } from '../../lib/workspace-path'
@@ -472,6 +473,7 @@ export function FloatingComposer({
       modelOptions.map((id) => ({
         id,
         label: formatComposerModelLabel(id, composerModelMeta),
+        compactLabel: formatUsageModelName(id, composerModelMeta),
         providerId: decodeModelRef(id).providerId
       })),
     [modelOptions, composerModelMeta]
@@ -2541,7 +2543,7 @@ export function FloatingComposer({
                 />
               ) : null}
               {footerPlan.showModel ? (
-                <div className="min-w-0 max-w-[min(100%,220px)]">
+                <div className="min-w-0 max-w-[min(100%,250px)]">
                   <ReasoningEffortSelector
                     models={selectorModels}
                     model={activeModelId}

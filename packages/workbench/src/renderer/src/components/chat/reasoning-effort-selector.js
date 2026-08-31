@@ -88,7 +88,7 @@ class ChatGPTModelSelector extends HTMLElement {
         display: inline-block;
         position: relative;
         width: max-content;
-        max-width: 220px;
+        max-width: 250px;
         vertical-align: middle;
         z-index: 1;
         min-width: 0;
@@ -1033,12 +1033,13 @@ class ChatGPTModelSelector extends HTMLElement {
 
   #updatePillModel() {
     const m = this.#models.find((x) => x.id === this.#modelId);
-    const name = m ? (m.label || m.id) : 'Model';
-    if (this.$modelName) this.$modelName.textContent = name;
+    const fullName = m ? (m.label || m.id) : 'Model';
+    const compactName = m ? (m.compactLabel || fullName) : fullName;
+    if (this.$modelName) this.$modelName.textContent = compactName;
     this.#syncCompact();
     if (this.$pill) {
       const tier = this.#tiers[this.#index]?.key ?? '';
-      this.$pill.title = tier ? `${name} · ${tier}` : name;
+      this.$pill.title = tier ? `${fullName} · ${tier}` : fullName;
     }
     if (this.$pillIcon) {
       const icon = resolveProviderIcon({
@@ -1334,7 +1335,8 @@ class ChatGPTModelSelector extends HTMLElement {
     }
     this.$tier.classList.toggle('is-ultra', isUltra);
     if (this.$pill) {
-      const name = this.$modelName?.textContent || 'Model';
+      const m = this.#models.find((model) => model.id === this.#modelId);
+      const name = m ? (m.label || m.id) : (this.$modelName?.textContent || 'Model');
       this.$pill.title = `${name} · ${t.key}`;
     }
 
