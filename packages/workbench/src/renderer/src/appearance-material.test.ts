@@ -84,3 +84,16 @@ describe('macOS translucent sidebar material', () => {
     expect(mainProcessSource).toContain("backgroundColor: '#00000000'")
   })
 })
+
+describe('settings select material', () => {
+  it('keeps the options menu opaque over settings controls', () => {
+    const menuRule = stylesheet.match(/\.ds-settings-select-menu \{(?<body>[^}]*)\}/)?.groups?.body
+    expect(menuRule).toContain('background: var(--ds-surface-elevated, #fff);')
+    expect(menuRule).toContain('backdrop-filter: none;')
+
+    const darkMenuRule = stylesheet.match(
+      /\[data-theme='dark'\] \.ds-settings-select-menu \{(?<body>[^}]*)\}/
+    )?.groups?.body
+    expect(darkMenuRule).toContain('background: var(--ds-surface-elevated, #1c1c1e);')
+  })
+})

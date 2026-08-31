@@ -1802,7 +1802,7 @@ samp {
   font-family: var(--font-ui);
   border-color: var(--ds-border);
   border-radius: 12px;
-  background: var(--ds-material-card);
+  background: var(--ds-surface-elevated, #fff);
   box-shadow: var(--ds-card-shadow);
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
@@ -1810,7 +1810,7 @@ samp {
 
 [data-theme='dark'] .ds-settings-select-menu {
   border-color: var(--ds-border);
-  background: var(--ds-material-card);
+  background: var(--ds-surface-elevated, #1c1c1e);
   box-shadow: var(--ds-card-shadow);
 }
 
@@ -9897,6 +9897,30 @@ select:focus-visible,
 
 .ds-llm-inset__input::placeholder {
   color: var(--ds-text-faint, var(--ds-text-muted));
+}
+
+.ds-llm-inset__select {
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.ds-llm-inset__select:focus-within {
+  border-color: transparent;
+  box-shadow: none;
+}
+
+.ds-llm-inset__select > button {
+  justify-content: flex-end;
+  padding-left: 0;
+}
+
+.ds-llm-inset__select > button > span {
+  text-align: right;
+  font-size: 14px;
+  font-weight: 400;
+  letter-spacing: -0.01em;
 }
 
 .ds-llm-inset__eye {

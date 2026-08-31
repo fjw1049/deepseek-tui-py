@@ -42,6 +42,7 @@ import {
 } from '@shared/app-settings'
 import { buildSilentWavProbeBytes } from '@shared/asr-probe-wav'
 import { resolveProviderIcon, uniquifySvgIds } from '../chat/provider-icons.js'
+import { SettingsSelect } from './SettingsSelect'
 
 type Props = {
   form: AppSettingsV1
@@ -549,14 +550,15 @@ function AddLlmProviderSheet({
         </div>
         <div className="ds-llm-inset__row">
           <div className="ds-llm-inset__key">{t('endpointProtocolLabel')}</div>
-          <select
-            className="ds-llm-inset__input"
+          <SettingsSelect
+            aria-label={t('endpointProtocolLabel')}
+            wrapperClassName="ds-llm-inset__select"
             value={protocol}
             onChange={(e) => setProtocol(e.target.value as EndpointProtocol)}
           >
             <option value="openai">OpenAI</option>
             <option value="anthropic">Anthropic</option>
-          </select>
+          </SettingsSelect>
         </div>
         <div className="ds-llm-inset__row">
           <div className="ds-llm-inset__key">{t('llmModelIdLabel')}</div>
@@ -1082,7 +1084,7 @@ function BuiltinProviderDetailSheet({
         })}
       </ul>
 
-      <div className="ds-llm-sheet__add-model">
+      <div className="ds-llm-sheet__add-model ds-llm-sheet__add-model--inset">
         <input
           type="text"
           autoComplete="off"
@@ -1277,14 +1279,15 @@ function CustomProviderDetailSheet({
         </div>
         <div className="ds-llm-inset__row">
           <div className="ds-llm-inset__key">{t('endpointProtocolLabel')}</div>
-          <select
-            className="ds-llm-inset__input"
+          <SettingsSelect
+            aria-label={t('endpointProtocolLabel')}
+            wrapperClassName="ds-llm-inset__select"
             value={protocol}
             onChange={(e) => setProtocol(e.target.value as EndpointProtocol)}
           >
             <option value="openai">OpenAI</option>
             <option value="anthropic">Anthropic</option>
-          </select>
+          </SettingsSelect>
         </div>
       </div>
 
@@ -1636,7 +1639,7 @@ function AsrProviderDetailSheet({
         })}
       </ul>
 
-      <div className="ds-llm-sheet__add-model">
+      <div className="ds-llm-sheet__add-model ds-llm-sheet__add-model--inset">
         <input
           type="text"
           className="ds-llm-sheet__add-model-input"
