@@ -223,6 +223,20 @@ def test_write_text_atomic_failure_preserves_original(tmp_path, monkeypatch) -> 
     assert not list(tmp_path.glob(".*.tmp"))
 
 
+def test_write_text_atomic_without_fchmod(tmp_path, monkeypatch) -> None:
+    from deepseek_tui.utils import write_text_atomic
+
+    target = tmp_path / "existing.txt"
+    target.write_text("old", encoding="utf-8")
+    target.chmod(0o640)
+    monkeypatch.delattr(os, "fchmod", raising=False)
+
+    write_text_atomic(target, "new")
+
+    assert target.read_text(encoding="utf-8") == "new"
+    assert target.stat().st_mode & 0o777 == 0o640
+
+
 def test_resolve_path_allows_extra_read_root_and_subdirs(tmp_path) -> None:
     """Read-only callers may reach files under a declared extra_read_root
     (and its nested subdirs) even though it lies outside the workspace."""

@@ -38,7 +38,7 @@ def execution_root(thread: Any) -> Path:
     """Directory tools and restore must use. Raises if worktree is pending."""
     if normalize_env_mode(getattr(thread, "env_mode", None)) != ENV_WORKTREE:
         return project_root(thread)
-    raw = (getattr(thread, "worktree_path", None) or "").strip()
+    raw = getattr(thread, "worktree_path", None) or ""
     if not raw:
         raise WorktreePendingError()
     path = Path(raw).expanduser()

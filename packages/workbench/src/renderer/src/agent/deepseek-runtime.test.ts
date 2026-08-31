@@ -170,6 +170,46 @@ describe('rewind result compatibility', () => {
   })
 })
 
+describe('rewind preview', () => {
+  it('maps turns without checkpoints into the UI preview', async () => {
+    const runtimeRequest = vi.fn().mockResolvedValue({
+      ok: true,
+      body: JSON.stringify({
+        files: [],
+        skipped: [],
+        conflicts: [],
+        missing_roots: [],
+        no_checkpoint: 2,
+        turns: 3,
+        is_git: true
+      })
+    })
+    Object.defineProperty(window, 'dsGui', {
+      configurable: true,
+      value: { runtimeRequest }
+    })
+
+    await expect(
+      new DeepseekRuntimeProvider().rewindPreview('thr_1', 'item_1')
+    ).resolves.toMatchObject({ noCheckpoint: 2 })
+  })
+
+  it('defaults noCheckpoint for older runtimes', async () => {
+    const runtimeRequest = vi.fn().mockResolvedValue({
+      ok: true,
+      body: JSON.stringify({ files: [], skipped: [], conflicts: [] })
+    })
+    Object.defineProperty(window, 'dsGui', {
+      configurable: true,
+      value: { runtimeRequest }
+    })
+
+    await expect(
+      new DeepseekRuntimeProvider().rewindPreview('thr_legacy', 'item_1')
+    ).resolves.toMatchObject({ noCheckpoint: 0 })
+  })
+})
+
 describe('thread deletion safety', () => {
   it('only opts into discarding unpublished worktree code explicitly', async () => {
     const runtimeRequest = vi.fn().mockResolvedValue({ ok: true, body: '' })
@@ -215,7 +255,8 @@ describe('isolated draft apply result', () => {
           publish_request_action: 'apply',
           publish_waiting_on: 'thr_busy',
           publish_blocked: false,
-          publish_conflicts: []
+          publish_conflicts: ['<publish-failed>'],
+          publish_issue: 'recovery'
         }
       })
     })
@@ -224,10 +265,8 @@ describe('isolated draft apply result', () => {
       value: { runtimeRequest }
     })
 
-    const result = await new DeepseekRuntimeProvider().resolvePublishConflicts(
-      'thr_draft',
-      'apply'
-    )
+    const provider = new DeepseekRuntimeProvider()
+    const result = await provider.resolvePublishConflicts('thr_draft', 'apply')
 
     expect(result.status).toBe('queued')
     expect(result.blockingThreadId).toBe('thr_busy')
@@ -235,7 +274,24 @@ describe('isolated draft apply result', () => {
       envMode: 'worktree',
       publishPending: true,
       publishRequestAction: 'apply',
-      publishWaitingOn: 'thr_busy'
+      publishWaitingOn: 'thr_busy',
+      publishConflicts: ['<publish-failed>'],
+      publishIssue: 'recovery'
     })
+
+    await provider.resolvePublishConflicts(
+      'thr_draft',
+      'use_agent',
+      undefined,
+      '2026-08-28T00:01:00Z'
+    )
+    expect(runtimeRequest).toHaveBeenLastCalledWith(
+      '/v1/threads/thr_draft/worktree/resolve',
+      'POST',
+      JSON.stringify({
+        action: 'use_agent',
+        recovery_token: '2026-08-28T00:01:00Z'
+      })
+    )
   })
 })

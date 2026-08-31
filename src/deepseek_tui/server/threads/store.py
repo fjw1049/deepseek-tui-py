@@ -44,6 +44,7 @@ class RuntimeThreadStore:
         self._turns_dir = root / "turns"
         self._items_dir = root / "items"
         self._events_dir = root / "events"
+        self._worktree_baselines_dir = root / "worktree_baselines"
         self._state_path = root / "state.json"
 
         for d in (
@@ -51,6 +52,7 @@ class RuntimeThreadStore:
             self._turns_dir,
             self._items_dir,
             self._events_dir,
+            self._worktree_baselines_dir,
         ):
             d.mkdir(parents=True, exist_ok=True)
 
@@ -91,6 +93,9 @@ class RuntimeThreadStore:
     def _events_path(self, thread_id: str) -> Path:
         return self._events_dir / f"{thread_id}.jsonl"
 
+    def _worktree_baseline_path(self, thread_id: str) -> Path:
+        return self._worktree_baselines_dir / f"{thread_id}.json"
+
     # --- CRUD ----------------------------------------------------------------
 
     def save_thread(self, thread: ThreadRecord) -> None:
@@ -110,9 +115,27 @@ class RuntimeThreadStore:
 
     def delete_thread(self, thread_id: str) -> None:
         self._thread_path(thread_id).unlink(missing_ok=True)
+        self.delete_worktree_baseline(thread_id)
 
     def delete_events(self, thread_id: str) -> None:
         self._events_path(thread_id).unlink(missing_ok=True)
+
+    def save_worktree_baseline(self, thread_id: str, baseline: dict[str, Any]) -> None:
+        write_json_atomic(self._worktree_baseline_path(thread_id), baseline)
+
+    def load_worktree_baseline(self, thread_id: str) -> dict[str, Any] | None:
+        path = self._worktree_baseline_path(thread_id)
+        if not path.is_file():
+            return None
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            logger.warning("invalid_worktree_baseline thread=%s", thread_id)
+            return None
+        return raw if isinstance(raw, dict) else None
+
+    def delete_worktree_baseline(self, thread_id: str) -> None:
+        self._worktree_baseline_path(thread_id).unlink(missing_ok=True)
 
     def iter_turns(self) -> list[TurnRecord]:
         out: list[TurnRecord] = []

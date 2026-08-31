@@ -27,6 +27,8 @@ export type QueuedUserMessage = {
 
 export type SendMessageOverrides = {
   queued?: QueuedUserMessage
+  /** Internal guard for async resend flows that must stay bound to one task. */
+  expectedThreadId?: string
   /** Shown in the timeline; `text` is still sent to the runtime. */
   displayText?: string
   /**
@@ -193,7 +195,7 @@ export type ChatState = {
   rewindAndResend: (
     userBlockId: string,
     newText: string,
-    opts?: { restoreFiles?: boolean; forceConflicts?: boolean }
+    opts?: { restoreFiles?: boolean; forceConflicts?: boolean; retryDraft?: string }
   ) => Promise<boolean>
   /** Rewind the conversation to just before a user message (optionally also restoring files). */
   rewindToMessage: (userBlockId: string, opts: { restoreFiles: boolean }) => Promise<void>
@@ -201,7 +203,8 @@ export type ChatState = {
   restoreCodeAt: (userBlockId: string) => Promise<RestoreCodeResult | null>
   resolvePublishConflicts: (
     action: 'apply' | 'use_agent' | 'keep_project',
-    paths?: string[]
+    paths?: string[],
+    recoveryToken?: string
   ) => Promise<PublishActionResult | null>
   interrupt: () => Promise<void>
   renameActiveThread: (title: string) => Promise<void>

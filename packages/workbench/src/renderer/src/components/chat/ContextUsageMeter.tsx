@@ -187,6 +187,9 @@ export function ContextUsageMeter({
   const barUsedTokens = barSegments.reduce((sum, row) => sum + row.tokens, 0)
   const barUsedPct =
     windowTokens > 0 ? Math.min(100, (barUsedTokens / windowTokens) * 100) : 0
+  const minimumVisibleBarWidth =
+    barSegments.length * USAGE_SEGMENT_MIN_WIDTH +
+    Math.max(0, barSegments.length - 1) * USAGE_SEGMENT_GAP
 
   const anchoredToComposer = portalHost != null && portalHost !== document.body
   const panel =
@@ -220,15 +223,20 @@ export function ContextUsageMeter({
               </div>
             </div>
 
-            {/* Cursor-style: solid free-track grey; gaps show it; only outer ends round. */}
+            {/* Preserve real proportions; the small visual floor only prevents bucket clipping. */}
             <div
-              className="relative mt-3.5 h-[5px] w-full overflow-hidden rounded-full"
+              aria-hidden="true"
+              className="ds-context-usage-bar relative mt-3.5 h-[5px] w-full overflow-hidden rounded-full"
               style={{ backgroundColor: USAGE_TRACK_GREY }}
             >
               {barSegments.length > 0 && barUsedPct > 0 ? (
                 <div
-                  className="absolute inset-y-0 left-0 flex"
-                  style={{ width: `${barUsedPct}%`, gap: '1px' }}
+                  className="ds-context-usage-bar__segments absolute inset-y-0 left-0 flex"
+                  style={{
+                    width: `${barUsedPct}%`,
+                    minWidth: `${minimumVisibleBarWidth}px`,
+                    gap: `${USAGE_SEGMENT_GAP}px`
+                  }}
                 >
                   {barSegments.map((row, index) => {
                     const isFirst = index === 0
@@ -244,8 +252,9 @@ export function ContextUsageMeter({
                     return (
                       <span
                         key={row.key}
-                        className={`min-w-[2px] ${radius}`}
+                        className={`ds-context-usage-bar__segment ${radius}`}
                         style={{
+                          minWidth: `${USAGE_SEGMENT_MIN_WIDTH}px`,
                           flexGrow: row.tokens,
                           flexBasis: 0,
                           backgroundColor: row.color
@@ -313,6 +322,8 @@ const RING_SIZE = 16
 const RING_STROKE = 2
 const RING_RADIUS = (RING_SIZE - RING_STROKE) / 2
 const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS
+const USAGE_SEGMENT_MIN_WIDTH = 2
+const USAGE_SEGMENT_GAP = 1
 // Solid free-track grey (Cursor-style). Inline color-mix — Tailwind cannot apply
 // `/opacity` to `ds-*` CSS-variable colors, so `bg-ds-hover/70` renders as nothing.
 const USAGE_TRACK_GREY = 'color-mix(in srgb, var(--ds-text-faint) 42%, transparent)'

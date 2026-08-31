@@ -579,7 +579,7 @@ def build_fastapi_app(
 
     app.state.thread_manager = RuntimeThreadManager(
         config=runtime.config,
-        workspace=Path.cwd(),
+        workspace=runtime.working_directory,
         manager_cfg=_mgr_cfg,
         approval_bridge=approval_bridge,
         elevation_bridge=elevation_bridge,

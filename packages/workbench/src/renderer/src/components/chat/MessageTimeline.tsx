@@ -127,6 +127,10 @@ import {
   type RenderRow,
   type ToolProcessBlock
 } from './message-timeline-logic'
+import {
+  rewindPreviewNeedsConfirmation,
+  rewindResendConfirmModel
+} from './rewind-resend-confirm'
 import { useTailAnchorScroll } from './use-tail-anchor-scroll'
 
 const LazyStreamdownAssistant = lazy(() =>
@@ -3050,6 +3054,7 @@ function UserMessageBubble({
     skipped: string[]
     previewFailed: boolean
     missingRoots: string[]
+    noCheckpoint: number
   } | null>(null)
   const [forceConflicts, setForceConflicts] = useState(false)
   // File restore only works for messages persisted on the runtime (`item_…`).
@@ -3057,6 +3062,7 @@ function UserMessageBubble({
   // root is the project; a vanished copy skips file restore.
   const canRestoreFiles = activeThreadId != null && block.id.startsWith('item_')
   const hasMissingRoots = (confirm?.missingRoots.length ?? 0) > 0
+  const hasNoCheckpoint = (confirm?.noCheckpoint ?? 0) > 0
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
   useEffect(() => {
@@ -3115,7 +3121,8 @@ function UserMessageBubble({
     try {
       const succeeded = await rewindAndResend(block.id, wireText, {
         restoreFiles: restoreFiles && canRestoreFiles,
-        forceConflicts: restoreFiles && canRestoreFiles && force
+        forceConflicts: restoreFiles && canRestoreFiles && force,
+        retryDraft: trimmed
       })
       if (succeeded) setEditing(false)
     } finally {
@@ -3143,7 +3150,8 @@ function UserMessageBubble({
         conflicts: [],
         skipped: [],
         previewFailed: true,
-        missingRoots: []
+        missingRoots: [],
+        noCheckpoint: 0
       })
       return
     }
@@ -3151,7 +3159,13 @@ function UserMessageBubble({
     setPreviewing(true)
     try {
       const preview = await provider.rewindPreview(activeThreadId, block.id)
-      if (preview.files.length === 0) {
+      if (
+        !rewindPreviewNeedsConfirmation(
+          preview.files,
+          preview.missingRoots ?? [],
+          preview.noCheckpoint
+        )
+      ) {
         await commitResend(false)
         return
       }
@@ -3161,7 +3175,8 @@ function UserMessageBubble({
         conflicts: preview.conflicts ?? [],
         skipped: preview.skipped ?? [],
         previewFailed: false,
-        missingRoots: preview.missingRoots ?? []
+        missingRoots: preview.missingRoots ?? [],
+        noCheckpoint: preview.noCheckpoint
       })
     } catch {
       setForceConflicts(false)
@@ -3170,7 +3185,8 @@ function UserMessageBubble({
         conflicts: [],
         skipped: [],
         previewFailed: true,
-        missingRoots: []
+        missingRoots: [],
+        noCheckpoint: 0
       })
     } finally {
       setPreviewing(false)
@@ -3191,6 +3207,7 @@ function UserMessageBubble({
     const moreFiles = confirmFiles.length - visibleFiles.length
     const hasConflicts = conflictSet.size > 0
     const hasSkipped = skippedSet.size > 0
+    const confirmModel = confirm ? rewindResendConfirmModel(confirm.previewFailed) : null
 
     return (
       <div id={`block-${block.id}`} className="ds-user-message">
@@ -3296,7 +3313,7 @@ function UserMessageBubble({
                   </div>
                   <div className="space-y-3 px-5 py-4">
                     <p className="text-[13px] leading-5 text-ds-muted">
-                      {confirm.previewFailed
+                      {confirmModel?.body === 'preview_failed'
                         ? t('rewindResendConfirmPreviewFailed')
                         : t('rewindResendConfirmBody')}
                     </p>
@@ -3352,6 +3369,13 @@ function UserMessageBubble({
                         })}
                       </p>
                     ) : null}
+                    {hasNoCheckpoint ? (
+                      <p className="text-[12px] leading-5 text-amber-500">
+                        {t('rewindResendConfirmNoCheckpoint', {
+                          count: confirm.noCheckpoint
+                        })}
+                      </p>
+                    ) : null}
                   </div>
                   <div className="flex flex-wrap items-center justify-end gap-2 border-t border-ds-border-muted px-5 py-3">
                     <button
@@ -3361,7 +3385,7 @@ function UserMessageBubble({
                     >
                       {t('rewindCancel')}
                     </button>
-                    {confirm.previewFailed ? (
+                    {confirmModel?.actions.includes('conversation_only') ? (
                       <button
                         type="button"
                         onClick={() => void commitResend(false)}
@@ -3371,17 +3395,19 @@ function UserMessageBubble({
                         {t('rewindResendConfirmConversationOnly')}
                       </button>
                     ) : null}
-                    <button
-                      type="button"
-                      autoFocus
-                      onClick={() => void commitResend(true, forceConflicts)}
-                      disabled={submitting}
-                      className="rounded-md bg-accent px-3 py-1.5 text-[13px] font-medium text-white shadow-sm transition hover:brightness-110 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      {hasSkipped || hasMissingRoots
-                        ? t('rewindResendConfirmRestoreAvailable')
-                        : t('rewindResendConfirmRestore')}
-                    </button>
+                    {confirmModel?.actions.includes('restore_code') ? (
+                      <button
+                        type="button"
+                        autoFocus
+                        onClick={() => void commitResend(true, forceConflicts)}
+                        disabled={submitting}
+                        className="rounded-md bg-accent px-3 py-1.5 text-[13px] font-medium text-white shadow-sm transition hover:brightness-110 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {hasSkipped || hasMissingRoots || hasNoCheckpoint
+                          ? t('rewindResendConfirmRestoreAvailable')
+                          : t('rewindResendConfirmRestore')}
+                      </button>
+                    ) : null}
                   </div>
                 </div>
               </div>,

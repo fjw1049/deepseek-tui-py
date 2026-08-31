@@ -1199,6 +1199,22 @@ samp {
   line-height: 1.2;
 }
 
+/* The empty-state prompt is guidance, not a selected project value. */
+.ds-workspace-context-chip--prompt {
+  font-size: 14px;
+  font-weight: 400;
+  letter-spacing: 0;
+  line-height: 20px;
+}
+
+.ds-workspace-context-chip--prompt .ds-workspace-context-chip__prompt-icon {
+  opacity: 0.65;
+}
+
+.ds-workspace-context-chip--prompt .ds-workspace-context-chip__chevron {
+  opacity: 0.45;
+}
+
 .ds-workspace-context-chip:hover:not(:disabled) {
   color: var(--ds-text-muted);
   background: color-mix(in srgb, var(--ds-text) 5%, transparent);
@@ -7244,28 +7260,30 @@ select:focus-visible,
   }
 }
 
-/* Nested chrome: clear pocket vs white body, still soft enough to stay quiet. */
+/* One quiet surface; structure comes from the controls inside, not nested cards. */
 .ds-operation-dock.ds-hero-panel.ds-glass {
-  background: color-mix(in srgb, var(--text-primary) 7%, var(--ds-card-strong));
-  border-color: rgba(0, 0, 0, 0.12);
+  background: var(--ds-card-strong);
+  border-color: rgba(0, 0, 0, 0.1);
   box-shadow:
     0 1px 2px rgba(0, 0, 0, 0.04),
-    0 4px 14px rgba(0, 0, 0, 0.06);
+    0 8px 24px rgba(0, 0, 0, 0.07);
 }
 
 [data-theme='dark'] .ds-operation-dock.ds-hero-panel.ds-glass {
-  background: color-mix(in srgb, #fff 9%, var(--ds-card-strong));
-  border-color: rgba(255, 255, 255, 0.14);
+  background: color-mix(in srgb, #fff 3%, var(--ds-card-strong));
+  border-color: rgba(255, 255, 255, 0.12);
   box-shadow:
     0 1px 2px rgba(0, 0, 0, 0.28),
-    0 6px 18px rgba(0, 0, 0, 0.32);
+    0 10px 28px rgba(0, 0, 0, 0.34);
 }
 
 .ds-operation-dock-topbar {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  padding: 0.4rem 0.55rem 0.35rem 0.85rem;
+  min-height: 2.85rem;
+  padding: 0.55rem 0.65rem 0.5rem 0.85rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--text-primary) 7%, transparent);
 }
 
 .ds-operation-dock-topbar__title {
@@ -7307,33 +7325,194 @@ select:focus-visible,
   transform: scale(0.94);
 }
 
-/* ChevronsLeftRight is 180°-symmetric — continuous spin still reads cleanly. */
-.ds-operation-dock-topbar__toggle:hover svg,
-.ds-operation-dock-rail__btn--toggle:hover:not(:disabled) svg {
-  animation: ds-operation-dock-toggle-spin 0.85s linear infinite;
-}
-
-@keyframes ds-operation-dock-toggle-spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .ds-operation-dock-topbar__toggle:hover svg,
-  .ds-operation-dock-rail__btn--toggle:hover:not(:disabled) svg {
-    animation: none;
-  }
-}
-
 .ds-operation-dock-body {
-  background: var(--ds-card-strong);
-  border-radius: 12px 12px 0 0;
-  box-shadow: 0 -1px 0 rgba(0, 0, 0, 0.04);
+  padding: 0.7rem;
+  background: transparent;
 }
 
-[data-theme='dark'] .ds-operation-dock-body {
-  box-shadow: 0 -1px 0 rgba(255, 255, 255, 0.06);
+.ds-operation-dock-launchers {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.45rem;
+}
+
+.ds-operation-dock-launchers[data-count='2'] {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.ds-operation-dock-launcher {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  min-height: 4.25rem;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  padding: 0.55rem 0.35rem 0.5rem;
+  border: 1px solid color-mix(in srgb, var(--text-primary) 7%, transparent);
+  border-radius: 0.75rem;
+  background: color-mix(in srgb, var(--text-primary) 2.75%, transparent);
+  color: var(--text-primary);
+  cursor: pointer;
+  transition:
+    background-color 140ms ease,
+    border-color 140ms ease,
+    box-shadow 140ms ease,
+    transform 120ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.ds-operation-dock-launcher > span:first-child {
+  width: 1.85rem;
+  height: 1.85rem;
+  border-radius: 0.625rem;
+}
+
+.ds-operation-dock-launcher > span:first-child svg {
+  width: 0.95rem;
+  height: 0.95rem;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .ds-operation-dock-launcher:hover:not(:disabled) {
+    border-color: color-mix(in srgb, var(--text-primary) 12%, transparent);
+    background: color-mix(in srgb, var(--text-primary) 5%, transparent);
+    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.045);
+    transform: translateY(-1px);
+  }
+}
+
+.ds-operation-dock-launcher:active:not(:disabled) {
+  box-shadow: none;
+  transform: scale(0.97);
+}
+
+.ds-operation-dock-launcher:disabled {
+  cursor: default;
+  opacity: 0.42;
+}
+
+.ds-operation-dock-launcher[aria-pressed='true'] {
+  border-color: color-mix(in srgb, var(--ds-accent, #007aff) 28%, transparent);
+  background: color-mix(in srgb, var(--ds-accent, #007aff) 8%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ds-accent, #007aff) 7%, transparent);
+}
+
+.ds-operation-dock-launcher[aria-pressed='true']::after {
+  content: '';
+  position: absolute;
+  top: 0.55rem;
+  right: 0.55rem;
+  width: 0.35rem;
+  height: 0.35rem;
+  border-radius: 999px;
+  background: var(--ds-accent, #007aff);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--ds-accent, #007aff) 12%, transparent);
+}
+
+.ds-operation-dock-launcher__label {
+  max-width: 100%;
+  overflow: hidden;
+  font-size: 0.75rem;
+  font-weight: 600;
+  line-height: 1rem;
+  letter-spacing: -0.01em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ds-operation-dock-repository {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  align-items: center;
+  gap: 0.625rem;
+  padding: 0.65rem 0.7rem 0.6rem;
+  border: 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--text-primary) 7%, transparent);
+  background: color-mix(in srgb, var(--text-primary) 2.5%, transparent);
+  color: var(--text-primary);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background-color 140ms ease,
+    transform 120ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .ds-operation-dock-repository:hover {
+    background: color-mix(in srgb, var(--text-primary) 4.5%, transparent);
+  }
+}
+
+.ds-operation-dock-repository:active {
+  transform: scale(0.985);
+}
+
+.ds-operation-dock-repository__icon {
+  display: inline-flex;
+  width: 2rem;
+  height: 2rem;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.625rem;
+  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
+  color: var(--text-secondary);
+}
+
+.ds-operation-dock-repository__eyebrow,
+.ds-operation-dock-repository__name {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ds-operation-dock-repository__eyebrow {
+  margin-bottom: 0.05rem;
+  font-size: 0.625rem;
+  font-weight: 500;
+  line-height: 0.875rem;
+  letter-spacing: 0.02em;
+  color: var(--text-tertiary);
+}
+
+.ds-operation-dock-repository__name {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  line-height: 1.125rem;
+  letter-spacing: -0.01em;
+}
+
+.ds-operation-dock-status {
+  margin-top: 0.65rem;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--text-primary) 7%, transparent);
+  border-radius: 0.8rem;
+  background: color-mix(in srgb, var(--text-primary) 2%, transparent);
+}
+
+.ds-operation-dock-status__section {
+  padding: 0.25rem;
+}
+
+.ds-operation-dock-status__section + .ds-operation-dock-status__section {
+  border-top: 1px solid color-mix(in srgb, var(--text-primary) 7%, transparent);
+}
+
+.ds-operation-dock-status__section > button:first-child {
+  min-height: 2.25rem;
+  padding: 0.35rem 0.45rem;
+}
+
+.ds-operation-dock-status__content,
+.ds-operation-dock-status__section > ul,
+.ds-operation-dock-status__section > div:not(.ds-operation-dock-status__content),
+.ds-operation-dock-status__section > p {
+  margin-left: 0.45rem;
+  margin-right: 0.45rem;
+  margin-bottom: 0.4rem;
 }
 
 .ds-operation-dock-section-label {
@@ -7596,6 +7775,23 @@ select:focus-visible,
     transition: none;
   }
 
+  .ds-operation-dock-launcher {
+    transition: none;
+  }
+
+  .ds-operation-dock-repository {
+    transition: none;
+  }
+
+  .ds-operation-dock-repository:active {
+    transform: none;
+  }
+
+  .ds-operation-dock-launcher:hover:not(:disabled),
+  .ds-operation-dock-launcher:active:not(:disabled) {
+    transform: none;
+  }
+
   .ds-operation-dock[data-phase='collapsing'],
   .ds-operation-dock[data-phase='expanding'],
   .ds-operation-dock[data-phase='collapsing'] .ds-operation-dock-topbar__title,
@@ -7614,9 +7810,6 @@ select:focus-visible,
     transform: none;
   }
 
-  .ds-operation-dock-rail__btn--toggle:hover:not(:disabled) svg {
-    animation: none;
-  }
 }
 
 .ds-chat-main-track {

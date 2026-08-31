@@ -10,7 +10,16 @@ import {
   type ReactElement
 } from 'react'
 import { createPortal } from 'react-dom'
-import { Check, ChevronDown, Folder, Import, LayoutGrid, Loader2, Plus, Search } from 'lucide-react'
+import {
+  Check,
+  ChevronDown,
+  Folder,
+  FolderOpen,
+  LayoutGrid,
+  Loader2,
+  Plus,
+  Search
+} from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { useComboboxNav } from '../../hooks/use-combobox-nav'
 import { useLightDismiss } from '../../hooks/use-light-dismiss'
@@ -419,7 +428,11 @@ export function ProjectContextPicker({
         type="button"
         className={
           size === 'tray'
-            ? 'ds-workspace-context-chip ds-workspace-context-chip--tray flex h-8 max-w-[240px] items-center gap-2 rounded-md px-2.5 py-1 text-left text-[15px] font-medium sm:max-w-[280px]'
+            ? `ds-workspace-context-chip ds-workspace-context-chip--tray flex max-w-[240px] items-center rounded-md py-1 text-left sm:max-w-[280px] ${
+                isTemporary
+                  ? 'ds-workspace-context-chip--prompt h-[30px] gap-[7px] px-2'
+                  : 'h-8 gap-2 px-2.5'
+              }`
             : 'ds-workspace-context-chip flex h-7 max-w-[180px] items-center gap-1.5 rounded-md px-2 py-1 text-left sm:max-w-[220px]'
         }
         onClick={() => setOpen((v) => !v)}
@@ -427,17 +440,30 @@ export function ProjectContextPicker({
         aria-expanded={open}
       >
         {isTemporary ? (
-          <Import className={size === 'tray' ? 'h-4 w-4 shrink-0' : 'h-3.5 w-3.5 shrink-0'} strokeWidth={1.7} />
+          <FolderOpen
+            className={
+              size === 'tray'
+                ? 'ds-workspace-context-chip__prompt-icon h-[15px] w-[15px] shrink-0'
+                : 'h-3.5 w-3.5 shrink-0'
+            }
+            strokeWidth={size === 'tray' ? 1.6 : 1.7}
+          />
         ) : (
           <Folder className={size === 'tray' ? 'h-4 w-4 shrink-0' : 'h-3.5 w-3.5 shrink-0'} strokeWidth={1.7} />
         )}
-        <span className={`min-w-0 flex-1 truncate ${size === 'tray' ? 'text-[15px]' : ''}`}>
+        <span
+          className={`min-w-0 flex-1 truncate ${
+            size === 'tray' ? (isTemporary ? 'leading-5' : 'text-[15px]') : ''
+          }`}
+        >
           {triggerLabel}
         </span>
         {!hideChevron ? (
           <ChevronDown
-            className={`ds-workspace-context-chip__chevron ${size === 'tray' ? 'h-3.5 w-3.5' : ''}`}
-            strokeWidth={2.2}
+            className={`ds-workspace-context-chip__chevron ${
+              size === 'tray' ? (isTemporary ? 'h-3 w-3' : 'h-3.5 w-3.5') : ''
+            }`}
+            strokeWidth={isTemporary && size === 'tray' ? 2 : 2.2}
           />
         ) : null}
       </button>

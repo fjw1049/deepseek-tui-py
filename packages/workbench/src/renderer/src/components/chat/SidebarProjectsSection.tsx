@@ -68,6 +68,7 @@ import {
 import { ProjectContextMenu, type ProjectContextMenuAction } from './ProjectContextMenu'
 import { ThreadContextMenu, type ThreadContextMenuAction } from './ThreadContextMenu'
 import { HoverInfoCard } from './ThreadHoverCard'
+import { threadMarqueeDurationMs } from '../../lib/thread-marquee'
 
 type SidebarProjectsSectionProps = {
   threads: NormalizedThread[]
@@ -1276,11 +1277,6 @@ type ThreadQueryMarqueeProps = {
 }
 
 const MARQUEE_DWELL_MS = 320
-const MARQUEE_PIXELS_PER_SECOND = 42
-
-function threadMarqueeDurationMs(distance: number): number {
-  return Math.min(11_000, Math.max(1_600, (distance / MARQUEE_PIXELS_PER_SECOND) * 1_000))
-}
 
 function ThreadQueryMarquee({
   active,

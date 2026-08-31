@@ -15,9 +15,11 @@ command's post-run detection observes it first.
 from __future__ import annotations
 
 import asyncio
+import os
 import re
+import stat
 from collections.abc import Collection
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -49,6 +51,8 @@ class ShellMutationSnapshot:
     is_git: bool
     # path (posix, repo-relative) -> file text at snapshot time; None = absent then.
     contents: dict[str, str | None]
+    # Regular-file permission bits; None means the path was absent.
+    modes: dict[str, int | None] = field(default_factory=dict)
 
 
 async def capture_shell_snapshot(workspace: Path) -> ShellMutationSnapshot:
@@ -57,12 +61,18 @@ async def capture_shell_snapshot(workspace: Path) -> ShellMutationSnapshot:
     if not await _is_git_repo(root):
         return ShellMutationSnapshot(workspace=root, is_git=False, contents={})
     contents: dict[str, str | None] = {}
+    modes: dict[str, int | None] = {}
     for path in sorted(await _candidate_paths(root)):
+        mode = await asyncio.to_thread(_read_regular_mode, root, path)
+        if mode is not _MODE_UNKNOWN:
+            modes[path] = mode
         value = await asyncio.to_thread(_read_file, root, path)
         if isinstance(value, _Unreadable):
             continue  # binary/undecodable/oversized — cannot diff safely
         contents[path] = value
-    return ShellMutationSnapshot(workspace=root, is_git=True, contents=contents)
+    return ShellMutationSnapshot(
+        workspace=root, is_git=True, contents=contents, modes=modes
+    )
 
 
 async def detect_shell_mutations(
@@ -75,30 +85,50 @@ async def detect_shell_mutations(
     if not snapshot.is_git:
         return []
     root = snapshot.workspace
-    skip = {p.replace("\\", "/") for p in skip_paths}
+    skip = {_normalize_relative_path(p) for p in skip_paths}
     candidates = (set(snapshot.contents) | await _candidate_paths(root)) - skip
     mutations: list[dict[str, Any]] = []
     for path in sorted(candidates):
         if path in snapshot.contents:
             before = snapshot.contents[path]
+            before_mode = snapshot.modes.get(path, _MODE_UNKNOWN)
+        elif path in snapshot.modes:
+            before = _UNREADABLE
+            before_mode = snapshot.modes[path]
         else:
             # Clean tracked file at snapshot time — HEAD holds the before text.
             before = await _head_content(root, path)
+            before_mode = await _head_mode(root, path)
         after = await asyncio.to_thread(_read_file, root, path)
-        if isinstance(after, _Unreadable) or before == after:
+        after_mode = await asyncio.to_thread(_read_regular_mode, root, path)
+        content_comparable = not isinstance(before, _Unreadable) and not isinstance(
+            after, _Unreadable
+        )
+        content_changed = content_comparable and before != after
+        mode_changed = (
+            before_mode is not _MODE_UNKNOWN
+            and after_mode is not _MODE_UNKNOWN
+            and before_mode != after_mode
+        )
+        if not content_changed and not mode_changed:
             continue
         # None marks absence, so the op comes from presence, not from the diff
         # text — synthesize_unified_diff would mislabel the deletion of an
         # empty file as a create (old == new == "").
-        if before is None:
+        if content_comparable and before is None:
             op = "create"
-        elif after is None:
+        elif content_comparable and after is None:
             op = "delete"
         else:
             op = "update"
-        unified, stats, _ = synthesize_unified_diff(
-            path, before or "", after or "", op=op
-        )
+        if content_comparable:
+            unified, stats, _ = synthesize_unified_diff(
+                path, before or "", after or "", op=op
+            )
+        else:
+            unified, stats, _ = synthesize_unified_diff(
+                path, "", "", op="update"
+            )
         mutation: dict[str, Any] = {
             "path": path,
             "op": op,
@@ -111,7 +141,10 @@ async def detect_shell_mutations(
         line_start = _line_start_for(op, unified)
         if line_start is not None:
             mutation["line_start"] = line_start
-        if include_contents:
+        if mode_changed:
+            mutation["mode_before"] = before_mode
+            mutation["mode_after"] = after_mode
+        if include_contents and content_comparable:
             mutation["_before_content"] = before
             mutation["_after_content"] = after
         mutations.append(mutation)
@@ -121,7 +154,11 @@ async def detect_shell_mutations(
 async def _candidate_paths(root: Path) -> set[str]:
     """Tracked files differing from HEAD (staged+unstaged) plus untracked."""
     out = await _run_git(root, ["diff", "--name-only", "-z", "HEAD"])
-    paths = {p.replace("\\", "/") for p in (out or "").split("\0") if p.strip()}
+    paths = {
+        _normalize_relative_path(p)
+        for p in (out or "").split("\0")
+        if p != ""
+    }
     paths.update(await _list_untracked(root))
     return paths
 
@@ -134,11 +171,27 @@ async def _head_content(root: Path, rel: str) -> str | None:
         return None
 
 
+async def _head_mode(root: Path, rel: str) -> int | None | object:
+    raw = await _run_git(
+        root,
+        ["ls-files", "--stage", "-z", "--", f":(literal){rel}"],
+    )
+    if raw is None:
+        return _MODE_UNKNOWN
+    if raw == "":
+        return None
+    try:
+        return stat.S_IMODE(int(raw.split(" ", 1)[0], 8))
+    except (ValueError, IndexError):
+        return _MODE_UNKNOWN
+
+
 def _read_file(root: Path, rel: str) -> str | None | _Unreadable:
     """File text; None when absent; _UNREADABLE when not safely diffable."""
     path = root / rel
     try:
-        if path.stat().st_size > _MAX_FILE_BYTES:
+        info = path.lstat()
+        if not stat.S_ISREG(info.st_mode) or info.st_size > _MAX_FILE_BYTES:
             return _UNREADABLE
         data = path.read_bytes()
     except OSError:
@@ -149,6 +202,25 @@ def _read_file(root: Path, rel: str) -> str | None | _Unreadable:
         return data.decode("utf-8")
     except UnicodeDecodeError:
         return _UNREADABLE
+
+
+_MODE_UNKNOWN = object()
+
+
+def _read_regular_mode(root: Path, rel: str) -> int | None | object:
+    try:
+        info = (root / rel).lstat()
+    except FileNotFoundError:
+        return None
+    except OSError:
+        return _MODE_UNKNOWN
+    if not stat.S_ISREG(info.st_mode):
+        return _MODE_UNKNOWN
+    return stat.S_IMODE(info.st_mode)
+
+
+def _normalize_relative_path(path: str) -> str:
+    return path.replace("\\", "/") if os.name == "nt" else path
 
 
 def _line_start_for(op: str, unified: str) -> int | None:

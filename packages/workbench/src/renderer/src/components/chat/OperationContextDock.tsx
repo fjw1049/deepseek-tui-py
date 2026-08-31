@@ -77,11 +77,11 @@ type Props = {
 }
 
 const DOCK_ROW_CLASS =
-  'group flex w-full items-center gap-2.5 rounded-[10px] px-1.5 py-1.5 text-left text-[13px] font-semibold leading-5 transition'
+  'group flex w-full items-center gap-2.5 rounded-[10px] px-1.5 py-1.5 text-left text-[13px] font-semibold leading-5 transition-colors'
 
 /** Same horizontal inset / gap as dock rows so icon and label columns line up. */
 const DOCK_SECTION_HEADER_CLASS =
-  'flex w-full items-center gap-2.5 rounded-[10px] px-1.5 py-1.5 text-left text-ds-muted transition hover:text-ds-ink'
+  'group flex w-full items-center gap-2.5 rounded-[10px] px-1.5 py-1.5 text-left text-ds-muted transition-colors hover:text-ds-ink'
 
 const DOCK_COMPACT_STORAGE_KEY = 'deepseekgui.operationDock.compact'
 /** Keep in sync with `.ds-operation-rail` width transition (220ms). */
@@ -687,92 +687,84 @@ export function OperationContextDock({
           <ChevronsLeftRight className="h-4 w-4" strokeWidth={2.1} />
         </button>
       </div>
-      <div className="ds-operation-dock-body px-4 py-3.5">
-      {onEnterIdeMode ? (
-        <>
+      <div className="ds-operation-dock-body">
+      <div
+        className="ds-operation-dock-launchers"
+        data-count={onEnterIdeMode ? '3' : '2'}
+      >
+        {onEnterIdeMode ? (
           <button
             type="button"
             onClick={onEnterIdeMode}
-            className={`${DOCK_ROW_CLASS} cursor-pointer text-ds-ink hover:bg-ds-hover/60`}
+            className="ds-operation-dock-launcher group"
             title={t('rightSidebarTabEditor')}
             aria-label={t('rightSidebarTabEditor')}
           >
             <RowIcon icon={PanelsTopLeft} tint="violet" />
-            <span className="min-w-0 flex-1 truncate">{t('rightSidebarTabEditor')}</span>
+            <span className="ds-operation-dock-launcher__label">
+              {t('rightSidebarTabEditor')}
+            </span>
           </button>
-          <div className="my-2 border-t border-ds-border-muted/40" />
-        </>
-      ) : null}
-
-      <button
-        type="button"
-        onClick={onTogglePreview}
-        disabled={!previewEnabled}
-        className={`${DOCK_ROW_CLASS} ${
-          previewEnabled
-            ? previewActive
-              ? 'bg-accent/[0.09] text-ds-ink'
-              : 'cursor-pointer text-ds-ink hover:bg-ds-hover/60'
-            : 'cursor-default text-ds-faint opacity-55'
-        }`}
-        aria-pressed={previewActive}
-        title={previewEnabled ? t('rightPanelBrowser') : t('terminalWorkspaceRequired')}
-      >
-        <RowIcon icon={Globe2} tint="sky" />
-        <span className="min-w-0 flex-1 truncate">{t('rightPanelBrowser')}</span>
-        {previewActive ? (
-          <span className="ml-auto shrink-0 text-[12px] font-medium text-accent">
-            {t('operationDockToolOpen')}
-          </span>
         ) : null}
-      </button>
 
-      <div className="my-2 border-t border-ds-border-muted/40" />
-
-      <button
-        type="button"
-        onClick={onToggleTerminalPanel}
-        disabled={!terminalPanelEnabled}
-        className={`${DOCK_ROW_CLASS} ${
-          terminalPanelEnabled
-            ? terminalPanelOpen
-              ? 'bg-accent/[0.09] text-ds-ink'
-              : 'cursor-pointer text-ds-ink hover:bg-ds-hover/60'
-            : 'cursor-default text-ds-faint opacity-55'
-        }`}
-        aria-pressed={terminalPanelOpen}
-        title={terminalPanelEnabled ? t('terminalToggle') : t('terminalWorkspaceRequired')}
-      >
-        <RowIcon icon={Terminal} tint="amber" />
-        <span className="min-w-0 flex-1 truncate">{t('terminalPanelTitle')}</span>
-        {terminalPanelOpen ? (
-          <span className="ml-auto shrink-0 text-[12px] font-medium text-accent">
-            {t('operationDockToolOpen')}
+        <button
+          type="button"
+          onClick={onTogglePreview}
+          disabled={!previewEnabled}
+          className="ds-operation-dock-launcher group"
+          aria-pressed={previewActive}
+          title={previewEnabled ? t('rightPanelBrowser') : t('terminalWorkspaceRequired')}
+        >
+          <RowIcon icon={Globe2} tint="sky" />
+          <span className="ds-operation-dock-launcher__label">
+            {t('rightPanelBrowser')}
           </span>
-        ) : null}
-      </button>
+        </button>
 
-      <div className="my-2 border-t border-ds-border-muted/40" />
+        <button
+          type="button"
+          onClick={onToggleTerminalPanel}
+          disabled={!terminalPanelEnabled}
+          className="ds-operation-dock-launcher group"
+          aria-pressed={terminalPanelOpen}
+          title={terminalPanelEnabled ? t('terminalToggle') : t('terminalWorkspaceRequired')}
+        >
+          <RowIcon icon={Terminal} tint="amber" />
+          <span className="ds-operation-dock-launcher__label">
+            {t('terminalPanelTitle')}
+          </span>
+        </button>
+      </div>
 
+      <div className="ds-operation-dock-status">
       {githubRepo ? (
-        <>
-          <p className="px-1.5 pb-1 text-[11px] font-medium tracking-[0.01em] text-ds-faint">
-            {t('operationDockRepository')}
-          </p>
-          <button
-            type="button"
-            onClick={openGithubRepository}
-            title={t('operationDockOpenRepository', { repo: githubRepo.nameWithOwner })}
-            className={`${DOCK_ROW_CLASS} cursor-pointer text-ds-ink hover:bg-ds-hover/60`}
-          >
-            <RemoteProviderIcon provider={githubRepo.provider} className="h-4 w-4 shrink-0" />
-            <span className="min-w-0 flex-1 truncate">{githubRepo.nameWithOwner}</span>
-            <ArrowUpRight className="h-3.5 w-3.5 shrink-0 text-ds-faint" strokeWidth={1.85} />
-          </button>
-          <div className="my-2 border-t border-ds-border-muted/40" />
-        </>
+        <button
+          type="button"
+          onClick={openGithubRepository}
+          title={t('operationDockOpenRepository', { repo: githubRepo.nameWithOwner })}
+          className="ds-operation-dock-repository group"
+        >
+          <span className="ds-operation-dock-repository__icon" aria-hidden>
+            <RemoteProviderIcon
+              provider={githubRepo.provider}
+              className="h-[17px] w-[17px]"
+            />
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="ds-operation-dock-repository__eyebrow">
+              {t('operationDockRepository')}
+            </span>
+            <span className="ds-operation-dock-repository__name">
+              {githubRepo.nameWithOwner}
+            </span>
+          </span>
+          <ArrowUpRight
+            className="h-3.5 w-3.5 shrink-0 text-ds-faint"
+            strokeWidth={1.85}
+          />
+        </button>
       ) : null}
-
+      <div className="ds-operation-dock-status__section">
       <SectionHeader
         label={t('operationDockGitTitle')}
         icon={GitBranch}
@@ -792,7 +784,7 @@ export function OperationContextDock({
       />
 
       {!collapsed.git ? (
-        <div className="mt-1.5 flex flex-col gap-1">
+        <div className="ds-operation-dock-status__content mt-1.5 flex flex-col gap-1">
         <button
           type="button"
           onClick={openChangesPanel}
@@ -853,9 +845,9 @@ export function OperationContextDock({
         )}
       </div>
       ) : null}
+      </div>
 
-      <div className="my-2 border-t border-ds-border-muted/40" />
-
+      <div className="ds-operation-dock-status__section">
       <button
         type="button"
         onClick={() => toggle('process')}
@@ -976,9 +968,9 @@ export function OperationContextDock({
           <p className="mt-1 text-[13px] leading-5 text-ds-faint">{t('contextRailEmptyProcess')}</p>
         )
       ) : null}
+      </div>
 
-      <div className="my-2 border-t border-ds-border-muted/40" />
-
+      <div className="ds-operation-dock-status__section">
       <SectionHeader
         label={t('contextRailTasks')}
         icon={ListChecks}
@@ -1027,6 +1019,8 @@ export function OperationContextDock({
           <p className="mt-1 text-[13px] leading-5 text-ds-faint">{t('contextRailEmptyTasks')}</p>
         )
       ) : null}
+      </div>
+      </div>
       </div>
     </div>
   )

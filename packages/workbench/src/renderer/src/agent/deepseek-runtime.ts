@@ -8,6 +8,7 @@ import type {
   ChatBlock,
   NormalizedThread,
   PublishActionResult,
+  PublishIssue,
   ProcessIntentMeta,
   RestoreCodeResult,
   RewindPreview,
@@ -161,6 +162,7 @@ type ThreadRecordJson = {
   publish_waiting_on?: string | null
   publish_blocked?: boolean
   publish_conflicts?: string[]
+  publish_issue?: string | null
   mode: string
   status?: string
   archived?: boolean
@@ -225,6 +227,12 @@ function titleFromThread(t: ThreadRecordJson): string {
   return t.id.slice(0, 8)
 }
 
+function publishIssueFromJson(value: unknown): PublishIssue | undefined {
+  if (value === 'recovery' || value === 'failure' || value === 'missing') return value
+  if (value === null) return null
+  return undefined
+}
+
 function threadFromJson(t: ThreadRecordJson, title?: string): NormalizedThread {
   return {
     id: t.id,
@@ -251,6 +259,7 @@ function threadFromJson(t: ThreadRecordJson, title?: string): NormalizedThread {
     publishConflicts: Array.isArray(t.publish_conflicts)
       ? t.publish_conflicts.filter((item): item is string => typeof item === 'string')
       : [],
+    publishIssue: publishIssueFromJson(t.publish_issue),
     status: t.status,
     archived: t.archived === true,
     goal: t.goal ?? null
@@ -1472,19 +1481,22 @@ export class DeepseekRuntimeProvider implements AgentProvider {
       conflicts: stringListFromJson(parsed, 'conflicts'),
       isGit: parsed.is_git !== false,
       turns: typeof parsed.turns === 'number' ? parsed.turns : 0,
-      missingRoots: stringListFromJson(parsed, 'missing_roots')
+      missingRoots: stringListFromJson(parsed, 'missing_roots'),
+      noCheckpoint:
+        typeof parsed.no_checkpoint === 'number' ? parsed.no_checkpoint : 0
     }
   }
 
   async resolvePublishConflicts(
     threadId: string,
     action: 'apply' | 'use_agent' | 'keep_project',
-    paths?: string[]
+    paths?: string[],
+    recoveryToken?: string
   ): Promise<PublishActionResult> {
     const r = await window.dsGui.runtimeRequest(
       `/v1/threads/${encodeURIComponent(threadId)}/worktree/resolve`,
       'POST',
-      JSON.stringify({ action, paths })
+      JSON.stringify({ action, paths, recovery_token: recoveryToken })
     )
     if (!r.ok) throw toRuntimeError(readRuntimeError(r.body, 'resolve publish failed'))
     const parsed = JSON.parse(r.body) as {
@@ -1938,6 +1950,8 @@ export class DeepseekRuntimeProvider implements AgentProvider {
                 const changes = (payload.changes as Record<string, unknown> | undefined) ?? {}
                 const threadId = typeof thread?.id === 'string' ? thread.id : undefined
                 if (threadId) {
+                  const updatedAt =
+                    typeof thread?.updated_at === 'string' ? thread.updated_at : undefined
                   const titleRaw = thread?.title
                   const title =
                     typeof titleRaw === 'string'
@@ -2003,8 +2017,16 @@ export class DeepseekRuntimeProvider implements AgentProvider {
                           (item): item is string => typeof item === 'string'
                         )
                       : undefined
+                  const publishIssueRaw = Object.prototype.hasOwnProperty.call(
+                    thread ?? {},
+                    'publish_issue'
+                  )
+                    ? thread?.publish_issue
+                    : changes.publish_issue
+                  const publishIssue = publishIssueFromJson(publishIssueRaw)
                   sink.onThreadUpdated({
                     threadId,
+                    updatedAt,
                     title,
                     archived,
                     mode,
@@ -2015,6 +2037,7 @@ export class DeepseekRuntimeProvider implements AgentProvider {
                     publishWaitingOn,
                     publishBlocked,
                     publishConflicts,
+                    publishIssue,
                     changes
                   })
                 }

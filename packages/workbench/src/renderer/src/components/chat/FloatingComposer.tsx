@@ -105,7 +105,9 @@ import {
 import {
   appendComposerSnippet,
   COMPOSER_INSERT_EVENT,
+  COMPOSER_RETRY_DRAFT_EVENT,
   formatComposerPathMention,
+  takeComposerRetryDraft,
   type ComposerInsertDetail,
   WORKSPACE_PATH_DRAG_MIME,
   workspacePathFromDrag
@@ -403,6 +405,14 @@ export function FloatingComposer({
     args: string
   } | null>(null)
   const effectiveWorkspaceRoot = resolveActiveThreadWorkspace(activeThreadId, threads, workspaceRoot)
+  const activePublishThread = activeThreadId
+    ? threads.find((thread) => thread.id === activeThreadId)
+    : undefined
+  const activeThreadPublishUnresolved = Boolean(
+    activePublishThread?.publishBlocked ||
+      activePublishThread?.publishPending ||
+      activePublishThread?.publishRequestAction
+  )
 
   const pendingApprovals = useMemo(
     () =>
@@ -441,6 +451,7 @@ export function FloatingComposer({
   // with no typed request yet.
   const canSend =
     canCompose &&
+    !activeThreadPublishUnresolved &&
     (outboundPreview.length > 0 ||
       focusSkill != null ||
       focusConnector != null ||
@@ -854,6 +865,14 @@ export function FloatingComposer({
     window.requestAnimationFrame(() => textareaRef.current?.focus())
   }
 
+  const restoreRetryDraft = useCallback((): void => {
+    if (!activeThreadId || inputRef.current.trim()) return
+    const draft = takeComposerRetryDraft(activeThreadId)
+    if (!draft) return
+    setInput(draft)
+    window.requestAnimationFrame(() => textareaRef.current?.focus())
+  }, [activeThreadId, setInput])
+
   useEffect(() => {
     if (!focusRequestId) return
     focusComposer()
@@ -869,6 +888,12 @@ export function FloatingComposer({
     window.addEventListener(COMPOSER_INSERT_EVENT, onInsert)
     return () => window.removeEventListener(COMPOSER_INSERT_EVENT, onInsert)
   }, [setInput])
+
+  useEffect(() => {
+    restoreRetryDraft()
+    window.addEventListener(COMPOSER_RETRY_DRAFT_EVENT, restoreRetryDraft)
+    return () => window.removeEventListener(COMPOSER_RETRY_DRAFT_EVENT, restoreRetryDraft)
+  }, [input, restoreRetryDraft])
 
   const applySlashCommand = (command: SlashCommand): void => {
     if (command.kind === 'insert') {

@@ -57,6 +57,55 @@ describe('ContextUsageMeter', () => {
     await act(async () => root.unmount())
   })
 
+  it('keeps every non-zero category visible at very low usage', async () => {
+    ;(window as unknown as { dsGui: unknown }).dsGui = {
+      runtimeRequest: vi.fn().mockResolvedValue({
+        ok: true,
+        body: JSON.stringify({
+          system_prompt: 600,
+          tool_definitions: 7800,
+          tools: 7801,
+          mcp: 1,
+          skills: 1,
+          rules: 1,
+          conversation: 1,
+          total: 8404,
+          window: 1_000_000,
+          free: 991_596
+        })
+      })
+    }
+
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+
+    await act(async () => {
+      renderMeter(root, { hasActiveThread: true, threadId: 'thread-a' })
+    })
+    await vi.waitFor(() => {
+      expect(container.querySelector('button')?.getAttribute('aria-label')).toBe(
+        'context 8.4k / 1.0M (1%)'
+      )
+    })
+
+    await act(async () => {
+      container.querySelector('button')?.click()
+    })
+
+    const segmentGroup = document.body.querySelector<HTMLElement>(
+      '.ds-context-usage-bar__segments'
+    )
+    const segments = document.body.querySelectorAll<HTMLElement>(
+      '.ds-context-usage-bar__segment'
+    )
+    expect(segmentGroup?.style.minWidth).toBe('17px')
+    expect(segments).toHaveLength(6)
+    expect(Array.from(segments).every((segment) => segment.style.minWidth === '2px')).toBe(true)
+
+    await act(async () => root.unmount())
+  })
+
   it('does not retain another thread breakdown when the next request fails', async () => {
     const runtimeRequest = vi
       .fn()

@@ -3,14 +3,20 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from pathlib import Path
 
 import pytest
 
+import deepseek_tui.workspace.managed_worktree as managed_worktree
 import deepseek_tui.workspace.turn_checkpoints as checkpoint_module
 from deepseek_tui.workspace.shell_mutation_watch import ShellMutationSnapshot
-from deepseek_tui.workspace.turn_checkpoints import TurnCheckpoint, TurnCheckpointStore
+from deepseek_tui.workspace.turn_checkpoints import (
+    RawCheckpointError,
+    TurnCheckpoint,
+    TurnCheckpointStore,
+)
 
 
 def _git(cwd: Path, *args: str) -> str:
@@ -64,6 +70,46 @@ def test_record_pre_write_first_touch_wins(store: TurnCheckpointStore) -> None:
     assert cp is not None
     assert cp.pre_contents["a.py"] == "original"
     assert cp.mutated == ["a.py"]
+
+
+def test_write_pre_image_without_fchmod(tmp_path: Path, monkeypatch) -> None:
+    root = tmp_path / "workspace"
+    root.mkdir()
+    monkeypatch.delattr(os, "fchmod", raising=False)
+
+    checkpoint_module._write_pre_image(root, "script.py", "restored\n", 0o750)
+
+    target = root / "script.py"
+    assert target.read_text(encoding="utf-8") == "restored\n"
+    assert target.stat().st_mode & 0o777 == 0o750
+
+
+@pytest.mark.skipif(os.name == "nt", reason="backslash is a POSIX filename character")
+@pytest.mark.asyncio
+async def test_checkpoint_preserves_odd_posix_filename(
+    store: TurnCheckpointStore, tmp_path: Path
+) -> None:
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    rel = " odd\\name.py "
+    target = ws / rel
+    target.write_text("old\n", encoding="utf-8")
+    store.begin_turn(
+        "turn_odd", None, head=None, is_git=False, execution_root=str(ws)
+    )
+    store.record_pre_write("turn_odd", rel, "old\n")
+    target.write_text("new\n", encoding="utf-8")
+    store.record_post_images("turn_odd", ws)
+
+    report = await store.restore(["turn_odd"], ws)
+
+    checkpoint = store.load("turn_odd")
+    assert checkpoint is not None
+    assert checkpoint.mutated == [rel]
+    assert checkpoint.post_signatures_captured is True
+    assert list(checkpoint.post_signatures) == [rel]
+    assert report.restored == [rel]
+    assert target.read_text(encoding="utf-8") == "old\n"
 
 
 def test_record_out_of_band_appends_mutated_only(store: TurnCheckpointStore) -> None:
@@ -138,7 +184,7 @@ async def test_restore_git_show_fallback_for_clean_tracked_file(
 
 
 @pytest.mark.asyncio
-async def test_restore_git_show_failure_means_file_did_not_exist(
+async def test_restore_git_tree_proves_file_did_not_exist(
     store: TurnCheckpointStore, git_repo: Path
 ) -> None:
     head = _git(git_repo, "rev-parse", "HEAD")
@@ -151,6 +197,31 @@ async def test_restore_git_show_failure_means_file_did_not_exist(
 
     assert not (git_repo / "created_by_shell.py").exists()
     assert report.restored == ["created_by_shell.py"]
+
+
+@pytest.mark.asyncio
+async def test_restore_git_failure_never_means_file_absent(
+    store: TurnCheckpointStore,
+    git_repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    head = _git(git_repo, "rev-parse", "HEAD")
+    store.begin_turn("turn_1", None, head=head, is_git=True)
+    store.record_out_of_band("turn_1", "tracked.py")
+    (git_repo / "tracked.py").write_text("changed\n", encoding="utf-8")
+    store.record_post_images("turn_1", git_repo)
+
+    def fail_git(*args, **kwargs):
+        del args, kwargs
+        return subprocess.CompletedProcess(["git"], 128, b"", b"temporary failure")
+
+    monkeypatch.setattr(checkpoint_module.subprocess, "run", fail_git)
+
+    report = await store.restore(["turn_1"], git_repo)
+
+    assert report.restored == []
+    assert report.skipped == ["tracked.py"]
+    assert (git_repo / "tracked.py").read_text(encoding="utf-8") == "changed\n"
 
 
 @pytest.mark.asyncio
@@ -285,6 +356,81 @@ async def test_restore_already_at_pre_state_is_noop(
     assert (ws / "f.py").read_text(encoding="utf-8") == "old\n"
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX permission bits")
+@pytest.mark.asyncio
+async def test_restore_reverts_chmod_only_change(
+    store: TurnCheckpointStore, tmp_path: Path
+) -> None:
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    target = ws / "run.sh"
+    target.write_text("echo ok\n", encoding="utf-8")
+    target.chmod(0o644)
+    store.begin_turn(
+        "turn_1", None, head=None, is_git=False, execution_root=str(ws)
+    )
+    store.record_pre_write("turn_1", "run.sh", "echo ok\n")
+    target.chmod(0o755)
+    store.record_post_images("turn_1", ws)
+
+    report = await store.restore(["turn_1"], ws)
+
+    assert report.restored == ["run.sh"]
+    assert report.conflicted == []
+    assert target.stat().st_mode & 0o777 == 0o644
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX permission bits")
+@pytest.mark.asyncio
+async def test_restore_does_not_overwrite_third_party_mode_change(
+    store: TurnCheckpointStore, tmp_path: Path
+) -> None:
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    target = ws / "run.sh"
+    target.write_text("echo ok\n", encoding="utf-8")
+    target.chmod(0o644)
+    store.begin_turn(
+        "turn_1", None, head=None, is_git=False, execution_root=str(ws)
+    )
+    store.record_pre_write("turn_1", "run.sh", "echo ok\n")
+    target.chmod(0o755)
+    store.record_post_images("turn_1", ws)
+    target.chmod(0o700)
+
+    report = await store.restore(["turn_1"], ws)
+
+    assert report.restored == []
+    assert report.conflicted == ["run.sh"]
+    assert target.stat().st_mode & 0o777 == 0o700
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX permission bits")
+@pytest.mark.asyncio
+async def test_restore_keeps_unowned_mode_while_reverting_content(
+    store: TurnCheckpointStore, tmp_path: Path
+) -> None:
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    target = ws / "run.sh"
+    target.write_text("before\n", encoding="utf-8")
+    target.chmod(0o644)
+    store.begin_turn(
+        "turn_1", None, head=None, is_git=False, execution_root=str(ws)
+    )
+    store.record_pre_write("turn_1", "run.sh", "before\n")
+    target.write_text("after\n", encoding="utf-8")
+    store.record_post_images("turn_1", ws)
+    target.chmod(0o700)
+
+    report = await store.restore(["turn_1"], ws)
+
+    assert report.restored == ["run.sh"]
+    assert report.conflicted == []
+    assert target.read_text(encoding="utf-8") == "before\n"
+    assert target.stat().st_mode & 0o777 == 0o700
+
+
 @pytest.mark.asyncio
 async def test_preview_reports_statuses_without_touching_disk(
     store: TurnCheckpointStore, tmp_path: Path
@@ -365,8 +511,12 @@ async def test_restore_path_skipped_in_newer_turn_resolved_by_older(
 
 def test_delete_removes_checkpoint(store: TurnCheckpointStore) -> None:
     store.begin_turn("turn_1", None, head=None, is_git=False)
+    sidecars = store._raw_sidecar_dir("turn_1")
+    sidecars.mkdir()
+    (sidecars / "payload.pre").write_bytes(b"durable")
     store.delete("turn_1")
     assert store.load("turn_1") is None
+    assert not sidecars.exists()
     # Idempotent.
     store.delete("turn_1")
 
@@ -449,6 +599,8 @@ def test_load_tolerates_legacy_format(store: TurnCheckpointStore, tmp_path: Path
     assert legacy.created_at == 0.0
     assert legacy.mutated == ["x.py"]
     assert legacy.has_post_images is False
+    assert legacy.post_signatures == {}
+    assert legacy.post_signatures_captured is False
 
 
 def test_begin_turn_is_post_image_aware(store: TurnCheckpointStore) -> None:
@@ -457,6 +609,7 @@ def test_begin_turn_is_post_image_aware(store: TurnCheckpointStore) -> None:
     loaded = store.load("turn_1")
     assert loaded is not None
     assert loaded.has_post_images is True
+    assert loaded.post_signatures_captured is False
 
 
 @pytest.mark.asyncio
@@ -544,7 +697,7 @@ async def test_restore_writes_recorded_root_not_fallback(
 
 
 @pytest.mark.asyncio
-async def test_retarget_to_project_makes_restore_write_project(
+async def test_staged_project_provenance_survives_retry_and_restore(
     store: TurnCheckpointStore, tmp_path: Path
 ) -> None:
     isolate = tmp_path / "isolate"
@@ -559,6 +712,18 @@ async def test_retarget_to_project_makes_restore_write_project(
     store.record_pre_write("turn_1", "f.py", "pre\n")
     store.record_post_images("turn_1", isolate)
     store.retarget_to_project("turn_1", project, {"f.py": ("pre\n", "agent-post\n")})
+    store.mark_publish_applied("turn_1")
+    # A retry sees the already-written project bytes. They must not replace
+    # the original pre-publish image saved by the first staging pass.
+    store.retarget_to_project(
+        "turn_1", project, {"f.py": ("agent-post\n", "agent-post\n")}
+    )
+    staged = store.load("turn_1")
+    assert staged is not None
+    assert staged.publish_pending_sync is True
+    assert staged.publish_apply_complete is True
+    assert staged.pre_contents["f.py"] == "pre\n"
+    store.mark_publish_synced("turn_1")
     (isolate / "f.py").write_text("isolate-later\n", encoding="utf-8")
 
     report = await store.restore(["turn_1"], isolate)
@@ -566,6 +731,46 @@ async def test_retarget_to_project_makes_restore_write_project(
     assert report.restored == ["f.py"]
     assert (project / "f.py").read_text(encoding="utf-8") == "pre\n"
     assert (isolate / "f.py").read_text(encoding="utf-8") == "isolate-later\n"
+    completed = store.load("turn_1")
+    assert completed is not None
+    assert completed.publish_pending_sync is False
+    assert completed.publish_apply_complete is False
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX permission bits")
+@pytest.mark.asyncio
+async def test_published_chmod_checkpoint_restores_project_mode(
+    store: TurnCheckpointStore, tmp_path: Path
+) -> None:
+    isolate = tmp_path / "isolate"
+    project = tmp_path / "project"
+    isolate.mkdir()
+    project.mkdir()
+    for root in (isolate, project):
+        (root / "run.sh").write_text("echo ok\n", encoding="utf-8")
+        (root / "run.sh").chmod(0o644)
+    store.begin_turn(
+        "turn_mode",
+        None,
+        head=None,
+        is_git=False,
+        execution_root=str(isolate),
+    )
+    store.record_pre_write("turn_mode", "run.sh", "echo ok\n")
+    (isolate / "run.sh").chmod(0o755)
+    store.record_post_images("turn_mode", isolate)
+
+    store.retarget_to_project(
+        "turn_mode", project, {"run.sh": ("echo ok\n", "echo ok\n")}
+    )
+    (project / "run.sh").chmod(0o755)
+    store.mark_publish_applied("turn_mode")
+    store.mark_publish_synced("turn_mode")
+
+    report = await store.restore(["turn_mode"], isolate)
+
+    assert report.restored == ["run.sh"]
+    assert (project / "run.sh").stat().st_mode & 0o777 == 0o644
 
 
 @pytest.mark.asyncio
@@ -604,10 +809,12 @@ async def test_restore_rolls_back_whole_batch_when_one_write_fails(
     store.record_post_images("turn_1", ws)
     original = checkpoint_module._write_pre_image
 
-    def flaky_write(root: Path, rel: str, content: str | None) -> None:
+    def flaky_write(
+        root: Path, rel: str, content: str | None, mode=checkpoint_module._MISSING
+    ) -> None:
         if rel == "b.py" and content == "old-b\n":
             raise OSError("simulated second write failure")
-        original(root, rel, content)
+        original(root, rel, content, mode)
 
     monkeypatch.setattr(checkpoint_module, "_write_pre_image", flaky_write)
 
@@ -619,6 +826,103 @@ async def test_restore_rolls_back_whole_batch_when_one_write_fails(
     assert (ws / "b.py").read_text(encoding="utf-8") == "new-b\n"
 
 
+@pytest.mark.asyncio
+async def test_restore_rechecks_disk_after_planning_before_any_write(
+    store: TurnCheckpointStore,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    target = ws / "f.py"
+    target.write_text("turn\n", encoding="utf-8")
+    store.begin_turn("turn_1", None, head=None, is_git=False)
+    store.record_pre_write("turn_1", "f.py", "old\n")
+    store.record_post_images("turn_1", ws)
+    real_plan = store._plan
+
+    async def plan_then_external_edit(*args, **kwargs):
+        planned = await real_plan(*args, **kwargs)
+        target.write_text("third-party\n", encoding="utf-8")
+        return planned
+
+    monkeypatch.setattr(store, "_plan", plan_then_external_edit)
+
+    report = await store.restore(["turn_1"], ws)
+
+    assert report.restored == []
+    assert report.conflicted == ["f.py"]
+    assert target.read_text(encoding="utf-8") == "third-party\n"
+
+
+@pytest.mark.asyncio
+async def test_restore_preserves_edit_that_lands_during_batch_write(
+    store: TurnCheckpointStore,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    first = ws / "a.py"
+    second = ws / "b.py"
+    first.write_text("new-a\n", encoding="utf-8")
+    second.write_text("new-b\n", encoding="utf-8")
+    store.begin_turn("turn_1", None, head=None, is_git=False)
+    store.record_pre_write("turn_1", "a.py", "old-a\n")
+    store.record_pre_write("turn_1", "b.py", "old-b\n")
+    store.record_post_images("turn_1", ws)
+    original = checkpoint_module._write_pre_image
+
+    def edit_after_second_write(
+        root: Path, rel: str, content: str | None, mode=checkpoint_module._MISSING
+    ) -> None:
+        original(root, rel, content, mode)
+        if rel == "b.py" and content == "old-b\n":
+            first.write_text("third-party\n", encoding="utf-8")
+
+    monkeypatch.setattr(
+        checkpoint_module, "_write_pre_image", edit_after_second_write
+    )
+
+    report = await store.restore(["turn_1"], ws)
+
+    assert report.restored == []
+    assert report.conflicted == ["a.py", "b.py"]
+    assert first.read_text(encoding="utf-8") == "third-party\n"
+    assert second.read_text(encoding="utf-8") == "new-b\n"
+
+
+@pytest.mark.skipif(os.name == "nt", reason="symlink creation needs privileges on Windows")
+@pytest.mark.asyncio
+async def test_restore_never_follows_a_symlink_and_deletes_its_target(
+    store: TurnCheckpointStore, tmp_path: Path
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    valuable = workspace / "valuable.txt"
+    valuable.write_text("keep me\n", encoding="utf-8")
+    os.symlink("valuable.txt", workspace / "link")
+    store._save(
+        TurnCheckpoint(
+            turn_id="turn_symlink",
+            is_git=False,
+            thread_id="thread_one",
+            created_at=1.0,
+            execution_root=str(workspace),
+            mutated=["link"],
+            uncertain=["link"],
+            pre_contents={"link": None},
+            post_contents={"link": "keep me\n"},
+        )
+    )
+
+    report = await store.restore(["turn_symlink"], workspace)
+
+    assert report.conflicted == ["link"]
+    assert (workspace / "link").is_symlink()
+    assert valuable.read_text(encoding="utf-8") == "keep me\n"
+
+
 def test_prune_preserves_protected_live_checkpoint(store: TurnCheckpointStore) -> None:
     store._save(
         TurnCheckpoint(
@@ -628,6 +932,9 @@ def test_prune_preserves_protected_live_checkpoint(store: TurnCheckpointStore) -
             created_at=1.0,
         )
     )
+    sidecars = store._raw_sidecar_dir("turn_live")
+    sidecars.mkdir()
+    (sidecars / "payload.post").write_bytes(b"durable")
 
     assert store.prune_older_than(
         1, protected_turn_ids={"turn_live"}
@@ -635,3 +942,181 @@ def test_prune_preserves_protected_live_checkpoint(store: TurnCheckpointStore) -
     assert store.load("turn_live") is not None
     assert store.prune_older_than(1) == 1
     assert store.load("turn_live") is None
+    assert not sidecars.exists()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="symlink creation needs privileges")
+@pytest.mark.asyncio
+async def test_raw_sidecars_publish_and_restore_exact_path_images(
+    store: TurnCheckpointStore, tmp_path: Path
+) -> None:
+    project = tmp_path / "project"
+    isolate = tmp_path / "isolate"
+    project.mkdir()
+    isolate.mkdir()
+    (project / "blob.bin").write_bytes(b"\0project")
+    (isolate / "blob.bin").write_bytes(b"\0task")
+    os.symlink("project-target", project / "link")
+    os.symlink("task-target", isolate / "link")
+    (isolate / "created.bin").write_bytes(b"\0created")
+    (project / "deleted.bin").write_bytes(b"\0deleted")
+    paths = ["blob.bin", "link", "created.bin", "deleted.bin"]
+    store._save(
+        TurnCheckpoint(
+            turn_id="turn_raw",
+            is_git=False,
+            thread_id="thread_one",
+            created_at=1.0,
+            execution_root=str(isolate),
+            mutated=paths,
+        )
+    )
+    store.record_post_images("turn_raw", isolate)
+    checkpoint = store.load("turn_raw")
+    assert checkpoint is not None
+
+    store.retarget_to_project(
+        "turn_raw",
+        project,
+        {},
+        raw_source_root=isolate,
+        raw_paths=paths,
+        expected_raw_post_signatures=checkpoint.post_signatures,
+    )
+
+    staged = store.load("turn_raw")
+    assert staged is not None
+    assert staged.publish_pending_sync is True
+    assert set(staged.raw_pre_images) == set(paths)
+    assert set(staged.raw_post_images) == set(paths)
+    pre_images, post_images = store.raw_publish_images("turn_raw", paths)
+    assert all(
+        image.payload_path is None or image.payload_path.is_file()
+        for image in [*pre_images, *post_images]
+    )
+
+    published = await managed_worktree.apply_raw_path_images(
+        project, pre_images, post_images, target="post"
+    )
+    assert published.applied == sorted(paths)
+    assert (project / "blob.bin").read_bytes() == b"\0task"
+    assert os.readlink(project / "link") == "task-target"
+    assert (project / "created.bin").read_bytes() == b"\0created"
+    assert not (project / "deleted.bin").exists()
+    store.mark_publish_applied("turn_raw")
+    store.mark_publish_synced("turn_raw")
+
+    restored = await store.restore(["turn_raw"], isolate)
+
+    assert restored.restored == sorted(paths)
+    assert restored.conflicted == []
+    assert (project / "blob.bin").read_bytes() == b"\0project"
+    assert os.readlink(project / "link") == "project-target"
+    assert not (project / "created.bin").exists()
+    assert (project / "deleted.bin").read_bytes() == b"\0deleted"
+
+
+def test_raw_sidecar_staging_rejects_directories_before_project_write(
+    store: TurnCheckpointStore, tmp_path: Path
+) -> None:
+    project = tmp_path / "project"
+    isolate = tmp_path / "isolate"
+    project.mkdir()
+    isolate.mkdir()
+    (isolate / "node").mkdir()
+    store._save(
+        TurnCheckpoint(
+            turn_id="turn_dir",
+            is_git=False,
+            thread_id="thread_one",
+            created_at=1.0,
+            execution_root=str(isolate),
+            mutated=["node"],
+        )
+    )
+    store.record_post_images("turn_dir", isolate)
+    checkpoint = store.load("turn_dir")
+    assert checkpoint is not None
+
+    with pytest.raises(RawCheckpointError, match="directories and special"):
+        store.retarget_to_project(
+            "turn_dir",
+            project,
+            {},
+            raw_source_root=isolate,
+            raw_paths=["node"],
+            expected_raw_post_signatures=checkpoint.post_signatures,
+        )
+
+    unstaged = store.load("turn_dir")
+    assert unstaged is not None
+    assert unstaged.publish_pending_sync is False
+    assert unstaged.execution_root == str(isolate)
+    assert not store._raw_sidecar_dir("turn_dir").exists()
+    assert not (project / "node").exists()
+
+
+@pytest.mark.asyncio
+async def test_keep_project_retires_only_rejected_checkpoint_paths(
+    store: TurnCheckpointStore, tmp_path: Path
+) -> None:
+    project = tmp_path / "project"
+    isolate = tmp_path / "isolate"
+    project.mkdir()
+    isolate.mkdir()
+    (project / "published.py").write_text("before\n", encoding="utf-8")
+    (project / "rejected.py").write_text("keep\n", encoding="utf-8")
+    (project / "rejected.bin").write_bytes(b"\0keep")
+    (isolate / "published.py").write_text("published\n", encoding="utf-8")
+    (isolate / "rejected.py").write_text("task\n", encoding="utf-8")
+    (isolate / "rejected.bin").write_bytes(b"\0task")
+    paths = ["published.py", "rejected.py", "rejected.bin"]
+    store._save(
+        TurnCheckpoint(
+            turn_id="turn_keep",
+            is_git=False,
+            thread_id="thread_one",
+            created_at=1.0,
+            execution_root=str(isolate),
+            mutated=paths,
+        )
+    )
+    store.record_post_images("turn_keep", isolate)
+    checkpoint = store.load("turn_keep")
+    assert checkpoint is not None
+    store.retarget_to_project(
+        "turn_keep",
+        project,
+        {
+            "published.py": ("before\n", "published\n"),
+            "rejected.py": ("keep\n", "task\n"),
+        },
+        raw_source_root=isolate,
+        raw_paths=["rejected.bin"],
+        expected_raw_post_signatures=checkpoint.post_signatures,
+    )
+    (project / "published.py").write_text("published\n", encoding="utf-8")
+
+    store.mark_recovery_resolved(
+        "turn_keep",
+        project,
+        abandon_paths=["rejected.py", "rejected.bin"],
+    )
+
+    retired = store.load("turn_keep")
+    assert retired is not None
+    assert retired.mutated == ["published.py"]
+    assert retired.raw_pre_images == {}
+    assert retired.raw_post_images == {}
+    assert not store._raw_sidecar_dir("turn_keep").exists()
+    # Later unrelated edits happen to equal the old task images. They must not
+    # resurrect the explicitly rejected task change during rewind.
+    (project / "rejected.py").write_text("task\n", encoding="utf-8")
+    (project / "rejected.bin").write_bytes(b"\0task")
+
+    report = await store.restore(["turn_keep"], isolate)
+
+    assert report.restored == ["published.py"]
+    assert (project / "published.py").read_text(encoding="utf-8") == "before\n"
+    assert (project / "rejected.py").read_text(encoding="utf-8") == "task\n"
+    assert (project / "rejected.bin").read_bytes() == b"\0task"

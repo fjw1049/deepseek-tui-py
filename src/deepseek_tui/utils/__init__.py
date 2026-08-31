@@ -13,6 +13,7 @@ import json
 import logging
 import logging.handlers
 import os
+import stat
 import tempfile
 import uuid
 from collections.abc import Iterator
@@ -56,14 +57,26 @@ def write_text_atomic(path: Path, content: str) -> None:
     ``os.replace`` stays on one filesystem.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
+    existing_mode: int | None = None
+    try:
+        info = path.lstat()
+        if stat.S_ISREG(info.st_mode):
+            existing_mode = stat.S_IMODE(info.st_mode)
+    except OSError:
+        pass
     fd, tmp_path = tempfile.mkstemp(
         dir=path.parent, prefix=f".{path.name}.", suffix=".tmp"
     )
     try:
+        fchmod = getattr(os, "fchmod", None)
+        if existing_mode is not None and fchmod is not None:
+            fchmod(fd, existing_mode)
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(content)
             f.flush()
             os.fsync(f.fileno())
+        if existing_mode is not None and fchmod is None:
+            os.chmod(tmp_path, existing_mode)
         os.replace(tmp_path, path)
     except BaseException:
         try:

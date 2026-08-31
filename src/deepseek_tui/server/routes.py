@@ -1350,6 +1350,7 @@ async def resolve_thread_publish(request: Request, thread_id: str) -> JSONRespon
             thread_id,
             action=req.action,
             paths=req.paths,
+            recovery_token=req.recovery_token,
         )
     except FileNotFoundError as exc:
         raise api_error(404, str(exc), error="thread_not_found") from exc

@@ -87,6 +87,9 @@ class ThreadRecord(BaseModel):
     publish_request_paths: list[str] = Field(default_factory=list)
     publish_waiting_on: str | None = None
     publish_blocked: bool = False
+    # Structured reason for a non-file delivery problem. Keeping this out of
+    # publish_conflicts lets every valid repository filename remain valid.
+    publish_issue: str | None = None
     publish_conflicts: list[str] = Field(default_factory=list)
     mode: str = "agent"
     allow_shell: bool = False
@@ -232,6 +235,9 @@ class ResolvePublishRequest(BaseModel):
     # ``keep_project`` keeps the project bytes and drops those isolate edits.
     action: str
     paths: list[str] | None = None
+    # Snapshot token shown with a recovery choice. The manager rejects stale
+    # destructive choices instead of applying a newer unseen recovery state.
+    recovery_token: str | None = None
 
 
 class StartTurnRequest(BaseModel):

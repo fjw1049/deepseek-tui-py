@@ -32,6 +32,7 @@ import {
   shouldAutoTitleThread
 } from '../lib/thread-title'
 import { isPluginControlOnlyMessage } from '../lib/user-focus-prefix'
+import { insertComposerSnippet, queueComposerRetryDraft } from '../lib/composer-insert'
 import { workspaceLabelFromPath } from '../lib/workspace-label'
 import { isClawWorkspacePath, isInternalTemporaryWorkspace, normalizeWorkspaceRoot } from '../lib/workspace-path'
 import { emitPetEvent } from '../lib/pet/pet-events'
@@ -1103,6 +1104,7 @@ function buildThreadEventSink(
         const idx = s.threads.findIndex((thread) => thread.id === ev.threadId)
         if (idx < 0) return {}
         const current = s.threads[idx]
+        const nextUpdatedAt = ev.updatedAt ?? current.updatedAt
         const nextTitle =
           ev.title === undefined
             ? current.title
@@ -1132,6 +1134,8 @@ function buildThreadEventSink(
                 : null
         const nextPublishBlocked = ev.publishBlocked ?? current.publishBlocked
         const nextPublishConflicts = ev.publishConflicts ?? current.publishConflicts
+        const nextPublishIssue =
+          ev.publishIssue === undefined ? current.publishIssue : ev.publishIssue
         const nextEnvMode = ev.envMode ?? current.envMode
         const nextWorktreePath =
           ev.worktreePath === undefined ? current.worktreePath : ev.worktreePath
@@ -1143,6 +1147,7 @@ function buildThreadEventSink(
         const nextPublishWaitingOn =
           ev.publishWaitingOn === undefined ? current.publishWaitingOn : ev.publishWaitingOn
         const threadChanged =
+          nextUpdatedAt !== current.updatedAt ||
           nextTitle !== current.title ||
           nextArchived !== current.archived ||
           nextThreadMode !== current.mode ||
@@ -1152,6 +1157,7 @@ function buildThreadEventSink(
           nextPublishRequestAction !== current.publishRequestAction ||
           nextPublishWaitingOn !== current.publishWaitingOn ||
           nextPublishBlocked !== current.publishBlocked ||
+          nextPublishIssue !== current.publishIssue ||
           (nextPublishConflicts ?? []).join('\0') !== (current.publishConflicts ?? []).join('\0')
         const syncComposer =
           nextComposerMode != null &&
@@ -1165,6 +1171,7 @@ function buildThreadEventSink(
               const next = [...s.threads]
               next[idx] = {
                 ...current,
+                updatedAt: nextUpdatedAt,
                 title: nextTitle,
                 archived: nextArchived,
                 mode: nextThreadMode,
@@ -1174,7 +1181,8 @@ function buildThreadEventSink(
                 publishRequestAction: nextPublishRequestAction,
                 publishWaitingOn: nextPublishWaitingOn,
                 publishBlocked: nextPublishBlocked,
-                publishConflicts: nextPublishConflicts
+                publishConflicts: nextPublishConflicts,
+                publishIssue: nextPublishIssue
               }
               return next
             })()
@@ -2317,6 +2325,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const { providerId } = get()
     const trimmedText = text.trim()
     if (!trimmedText) return false
+    const expectedThreadId = overrides?.expectedThreadId?.trim() || null
+    if (expectedThreadId && get().activeThreadId !== expectedThreadId) return false
     if (isGoalComposerSlashCommand(trimmedText)) {
       return get().applyGoalCommand(goalComposerSlashArgs(trimmedText))
     }
@@ -2388,6 +2398,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const queued = overrides?.queued
     const userBlockId = queued?.id ?? `u-${now}`
     let activeThreadId = get().activeThreadId
+    if (expectedThreadId && activeThreadId !== expectedThreadId) return false
     const generatedTitle = deriveThreadTitleFromPrompt(displayText)
     const activeThread = activeThreadId
       ? get().threads.find((thread) => thread.id === activeThreadId) ?? null
@@ -2549,6 +2560,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
         ...(overrides?.autoApprove !== undefined ? { autoApprove: overrides.autoApprove } : {}),
         ...(overrides?.trustMode !== undefined ? { trustMode: overrides.trustMode } : {})
       })
+      if (get().activeThreadId !== activeThreadId) {
+        // The runtime accepted the message for the original task while the user
+        // navigated elsewhere. Leave the newly active task's blocks/SSE alone.
+        await get().refreshThreads()
+        return true
+      }
       set({ activeThreadWarmup: { threadId: activeThreadId, status: 'ready' } })
       // Mirror the composer model selection against the runtime's stable
       // user_message item id so the badge survives page refresh / thread
@@ -2625,6 +2642,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
         message: e instanceof Error ? e.message : String(e),
         threadId: activeThreadId
       })
+      if (activeThreadId && get().activeThreadId !== activeThreadId) {
+        // A late failure belongs to the task that initiated the send. Do not
+        // overwrite the task the user is looking at with its error/UI rollback.
+        await get().refreshThreads()
+        return false
+      }
       if (looksLikeActiveTurnError(e)) {
         set({
           blocks: previousBlocks,
@@ -3075,6 +3098,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const trimmed = newText.trim()
     if (!trimmed) return false
     const state = get()
+    const originThreadId = state.activeThreadId
     if (state.busy) {
       set({ error: i18n.t('common:rewindBusyError') })
       return false
@@ -3089,7 +3113,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     let restoredOnBackend = false
     let rewindResult: RewindResult | null = null
     const p = getProvider(state.providerId)
-    const runtimeThreadId = state.activeThreadId
+    const runtimeThreadId = originThreadId
     const needsRuntimeRewind = runtimeThreadId != null && userBlockId.startsWith('item_')
     if (needsRuntimeRewind && typeof p.rewindThread !== 'function') {
       set({ error: i18n.t('common:rewindRestoreUnsupported') })
@@ -3105,9 +3129,18 @@ export const useChatStore = create<ChatState>((set, get) => ({
         )
         restoredOnBackend = opts?.restoreFiles === true
       } catch (e) {
-        set({ error: formatRuntimeError(e) })
+        if (!originThreadId || get().activeThreadId === originThreadId) {
+          set({ error: formatRuntimeError(e) })
+        } else {
+          queueComposerRetryDraft(originThreadId, opts?.retryDraft ?? trimmed)
+        }
         return false
       }
+    }
+
+    if (originThreadId && get().activeThreadId !== originThreadId) {
+      queueComposerRetryDraft(originThreadId, opts?.retryDraft ?? trimmed)
+      return false
     }
 
     // Drop the target user block and everything after it from the UI.
@@ -3121,8 +3154,38 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     // Use current composer mode (same as model/effort). Do not drop to
     // the sendMessage default — UI may still show plan/ask.
-    const sent = await get().sendMessage(trimmed, get().composerMode)
-    if (!sent) return false
+    const sent = await get().sendMessage(trimmed, get().composerMode, {
+      expectedThreadId: originThreadId ?? undefined
+    })
+    if (!sent) {
+      // The runtime rewind is already durable and the edited bubble has been
+      // removed. Put the unsent human text back in the composer so a transient
+      // send failure cannot discard the user's draft.
+      if (originThreadId && get().activeThreadId === originThreadId) {
+        set((current) => ({
+          blocks: patch.blocks ?? current.blocks,
+          liveReasoning: patch.liveReasoning ?? current.liveReasoning,
+          liveAssistant: patch.liveAssistant ?? current.liveAssistant,
+          currentTurnId: patch.currentTurnId ?? null,
+          currentTurnUserId: patch.currentTurnUserId ?? null,
+          turnStartedAtByUserId:
+            patch.turnStartedAtByUserId ?? current.turnStartedAtByUserId,
+          turnDurationByUserId:
+            patch.turnDurationByUserId ?? current.turnDurationByUserId,
+          turnReasoningFirstAtByUserId:
+            patch.turnReasoningFirstAtByUserId ?? current.turnReasoningFirstAtByUserId,
+          turnReasoningLastAtByUserId:
+            patch.turnReasoningLastAtByUserId ?? current.turnReasoningLastAtByUserId
+        }))
+      }
+      if (originThreadId) {
+        queueComposerRetryDraft(originThreadId, opts?.retryDraft ?? trimmed)
+      } else {
+        insertComposerSnippet(opts?.retryDraft ?? trimmed)
+      }
+      return false
+    }
+    if (originThreadId && get().activeThreadId !== originThreadId) return true
     if (rewindResult) {
       const unresolved = new Set([
         ...rewindResult.conflictedFiles,
@@ -3142,6 +3205,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   rewindToMessage: async (userBlockId, opts) => {
     const state = get()
+    const originThreadId = state.activeThreadId
     if (state.busy) {
       set({ error: i18n.t('common:rewindBusyError') })
       return
@@ -3153,17 +3217,26 @@ export const useChatStore = create<ChatState>((set, get) => ({
     let restoredOnBackend = false
     const p = getProvider(state.providerId)
     if (
-      state.activeThreadId &&
+      originThreadId &&
       userBlockId.startsWith('item_') &&
       typeof p.rewindThread === 'function'
     ) {
       try {
-        await p.rewindThread(state.activeThreadId, userBlockId, opts.restoreFiles)
+        await p.rewindThread(originThreadId, userBlockId, opts.restoreFiles)
         restoredOnBackend = opts.restoreFiles
       } catch (e) {
-        set({ error: formatRuntimeError(e) })
+        if (get().activeThreadId === originThreadId) {
+          set({ error: formatRuntimeError(e) })
+        }
         return
       }
+    }
+
+    if (originThreadId && get().activeThreadId !== originThreadId) {
+      // The backend rewind is already durable for the originating task. Leave
+      // the newly active task untouched; selecting the origin rehydrates it
+      // from the authoritative runtime state.
+      return
     }
 
     const patch = truncateStateAtUserBlock(state, userBlockId)
@@ -3176,48 +3249,62 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   restoreCodeAt: async (userBlockId) => {
     const state = get()
+    const originThreadId = state.activeThreadId
     if (state.busy) {
       set({ error: i18n.t('common:rewindBusyError') })
       return null
     }
     // Local-only blocks were never persisted, so there is no runtime state to
     // restore against; the conversation is left untouched either way.
-    if (!state.activeThreadId || !userBlockId.startsWith('item_')) return null
+    if (!originThreadId || !userBlockId.startsWith('item_')) return null
     const p = getProvider(state.providerId)
     if (typeof p.restoreCode !== 'function') {
       set({ error: i18n.t('common:rewindRestoreUnsupported') })
       return null
     }
     try {
-      const result = await p.restoreCode(state.activeThreadId, userBlockId)
+      const result = await p.restoreCode(originThreadId, userBlockId)
+      if (get().activeThreadId !== originThreadId) return result
       // Files changed on disk — refresh the git panels/docks watching this tick.
       set((s) => ({ error: null, workspaceDirtyTick: s.workspaceDirtyTick + 1 }))
       return result
     } catch (e) {
-      set({ error: formatRuntimeError(e) })
+      if (get().activeThreadId === originThreadId) {
+        set({ error: formatRuntimeError(e) })
+      }
       return null
     }
   },
 
-  resolvePublishConflicts: async (action, paths) => {
+  resolvePublishConflicts: async (action, paths, recoveryToken) => {
     const state = get()
-    if (!state.activeThreadId) return null
+    const originThreadId = state.activeThreadId
+    if (!originThreadId) return null
     const p = getProvider(state.providerId)
     if (typeof p.resolvePublishConflicts !== 'function') {
       set({ error: i18n.t('common:publishConflictUnsupported') })
       return null
     }
     try {
-      const result = await p.resolvePublishConflicts(state.activeThreadId, action, paths)
+      const result = await p.resolvePublishConflicts(
+        originThreadId,
+        action,
+        paths,
+        recoveryToken
+      )
       const updated = result.thread
+      const stillActive = get().activeThreadId === originThreadId
       set((s) => ({
-        error: null,
-        workspaceDirtyTick: s.workspaceDirtyTick + 1,
+        ...(stillActive
+          ? { error: null, workspaceDirtyTick: s.workspaceDirtyTick + 1 }
+          : {}),
         threads: s.threads.map((thread) => (thread.id === updated.id ? { ...thread, ...updated } : thread))
       }))
       return result
     } catch (e) {
-      set({ error: formatRuntimeError(e) })
+      if (get().activeThreadId === originThreadId) {
+        set({ error: formatRuntimeError(e) })
+      }
       return null
     }
   },

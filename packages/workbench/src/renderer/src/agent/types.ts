@@ -38,6 +38,8 @@ export type GoalSnapshotJson = {
   }
 }
 
+export type PublishIssue = 'recovery' | 'failure' | 'missing' | null
+
 export type NormalizedThread = {
   id: string
   title: string
@@ -54,6 +56,8 @@ export type NormalizedThread = {
   publishWaitingOn?: string | null
   publishBlocked?: boolean
   publishConflicts?: string[]
+  /** Structured publish failure reason. Undefined means a legacy runtime. */
+  publishIssue?: PublishIssue
   status?: string
   archived?: boolean
   goal?: GoalSnapshotJson | null
@@ -87,6 +91,8 @@ export type RewindPreview = {
   turns: number
   /** Checkpoint roots that are gone; file restore is skipped for those turns. */
   missingRoots?: string[]
+  /** Turns in the rewind range that have no code checkpoint to restore. */
+  noCheckpoint: number
 }
 
 export type ToolBlock = {
@@ -355,6 +361,7 @@ export type TurnDiffUpdatedPayload = {
 
 export type ThreadUpdatedPayload = {
   threadId: string
+  updatedAt?: string
   title?: string | null
   archived?: boolean
   /** Interaction mode after enter/exit plan (or other mode switches). */
@@ -366,6 +373,8 @@ export type ThreadUpdatedPayload = {
   publishWaitingOn?: string | null
   publishBlocked?: boolean
   publishConflicts?: string[]
+  /** Structured publish failure reason. Undefined means the event omitted it. */
+  publishIssue?: PublishIssue
   /** Subset of fields that actually changed in this update. */
   changes: Record<string, unknown>
 }
@@ -501,7 +510,8 @@ export interface AgentProvider {
   resolvePublishConflicts?(
     threadId: string,
     action: 'apply' | 'use_agent' | 'keep_project',
-    paths?: string[]
+    paths?: string[],
+    recoveryToken?: string
   ): Promise<PublishActionResult>
   resumeThread?(threadId: string): Promise<void>
   /** Runtime HTTP: POST /v1/tasks/{id}/resume */
