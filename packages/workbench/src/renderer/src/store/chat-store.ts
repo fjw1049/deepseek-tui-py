@@ -189,18 +189,28 @@ function notifyTurnComplete(threadId: string | null, state: ChatState, dedupeKey
  * Compute the patch that finalizes timing for the current in-progress turn.
  * No-op if there is no current turn or its start time was not recorded.
  */
-function finalizeTurnTiming(state: ChatState): Partial<ChatState> {
+function finalizeTurnTiming(
+  state: ChatState,
+  authoritativeDurationMs?: number | null
+): Partial<ChatState> {
   const userId = state.currentTurnUserId
   if (!userId) return {}
   const startedAt = state.turnStartedAtByUserId[userId]
-  if (typeof startedAt !== 'number') {
+  const normalizedAuthoritativeDuration =
+    typeof authoritativeDurationMs === 'number' && Number.isFinite(authoritativeDurationMs)
+      ? Math.max(0, authoritativeDurationMs)
+      : undefined
+  if (typeof startedAt !== 'number' && normalizedAuthoritativeDuration === undefined) {
     return { currentTurnUserId: null }
   }
+  const durationMs =
+    normalizedAuthoritativeDuration ??
+    (typeof startedAt === 'number' ? Math.max(0, Date.now() - startedAt) : 0)
   return {
     currentTurnUserId: null,
     turnDurationByUserId: {
       ...state.turnDurationByUserId,
-      [userId]: Math.max(0, Date.now() - startedAt)
+      [userId]: durationMs
     }
   }
 }
@@ -319,7 +329,14 @@ function clearTurnCompletionProbe(): void {
 
 function scheduleTurnCompletionProbe(
   get: () => ChatState,
-  sink: { onTurnComplete(payload?: { threadId?: string | null; usage?: Record<string, unknown> | null }): void }
+  sink: {
+    onTurnComplete(payload?: {
+      threadId?: string | null
+      turnId?: string | null
+      durationMs?: number | null
+      usage?: Record<string, unknown> | null
+    }): void
+  }
 ): void {
   clearTurnCompletionProbe()
   const scheduledState = get()
@@ -387,6 +404,8 @@ async function reloadActiveThreadBlocks(
       latestSeq,
       threadStatus,
       goal,
+      turnStartedAtByUserId: loadedTurnStartedAtByUserId,
+      turnDurationByUserId: loadedTurnDurationByUserId,
       turnDiffByTurnId: loadedTurnDiffByTurnId
     } = await provider.getThreadDetail(threadId)
     const hydrated = hydrateBlockModelLabels(threadId, rawBlocks)
@@ -406,6 +425,14 @@ async function reloadActiveThreadBlocks(
       blocks: synced.blocks,
       lastSeq: latestSeq,
       currentGoal: goal ?? null,
+      turnStartedAtByUserId: {
+        ...s.turnStartedAtByUserId,
+        ...(loadedTurnStartedAtByUserId ?? {})
+      },
+      turnDurationByUserId: {
+        ...s.turnDurationByUserId,
+        ...(loadedTurnDurationByUserId ?? {})
+      },
       turnDiffByTurnId: {
         ...s.turnDiffByTurnId,
         ...(loadedTurnDiffByTurnId ?? {})
@@ -1384,7 +1411,7 @@ function buildThreadEventSink(
         : `active:${completedThreadId ?? 'unknown'}:${completedState.lastSeq}`
       set((s) => {
         const base = flushLiveBlocks(s, {
-          ...finalizeTurnTiming(s),
+          ...finalizeTurnTiming(s, payload?.durationMs),
           error: null,
           currentTurnId: null,
           // Keep ledger lookup key so TurnChangeSummary survives after busy clears.
@@ -1423,7 +1450,6 @@ function buildThreadEventSink(
       set((s) => {
         const wasBusy = s.busy
         const out = flushLiveBlocks(s, {
-          ...finalizeTurnTiming(s),
           error: formatRuntimeError(err)
         })
         // Keep the busy flag if the turn was active — the interrupt button
@@ -1431,6 +1457,7 @@ function buildThreadEventSink(
         // watchdog (re-armed below) will eventually time out if the turn
         // never recovers.
         if (!wasBusy) {
+          Object.assign(out, finalizeTurnTiming(s))
           out.busy = false
           out.currentTurnId = null
         }
@@ -2083,6 +2110,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
         threadStatus,
         latestTurnId,
         latestUserMessageId,
+        turnStartedAtByUserId: loadedTurnStartedAtByUserId,
+        turnDurationByUserId: loadedTurnDurationByUserId,
         turnDiffByTurnId: loadedTurnDiffByTurnId,
         activePlugin: loadedPlugin,
         goal: loadedGoal
@@ -2113,6 +2142,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
         currentGoal: loadedGoal ?? null,
         composerMode: composerModeForLoadedGoal(loadedGoal, get().composerMode),
         currentTurnId,
+        turnStartedAtByUserId: {
+          ...(loadedTurnStartedAtByUserId ?? {}),
+          ...s.turnStartedAtByUserId
+        },
+        turnDurationByUserId: {
+          ...s.turnDurationByUserId,
+          ...(loadedTurnDurationByUserId ?? {})
+        },
         turnDiffByTurnId: {
           ...s.turnDiffByTurnId,
           ...(loadedTurnDiffByTurnId ?? {})
@@ -2216,6 +2253,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
         threadStatus,
         latestTurnId,
         latestUserMessageId,
+        turnStartedAtByUserId: loadedTurnStartedAtByUserId,
+        turnDurationByUserId: loadedTurnDurationByUserId,
         turnDiffByTurnId: loadedTurnDiffByTurnId,
         activePlugin: loadedPlugin,
         goal: loadedGoal
@@ -2250,8 +2289,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
         lastCompletedTurnId: null,
         turnDiffByTurnId: loadedTurnDiffByTurnId ?? {},
         currentTurnUserId,
-        turnStartedAtByUserId: {},
-        turnDurationByUserId: {},
+        turnStartedAtByUserId: loadedTurnStartedAtByUserId ?? {},
+        turnDurationByUserId: loadedTurnDurationByUserId ?? {},
         turnReasoningFirstAtByUserId: {},
         turnReasoningLastAtByUserId: {},
         inspectorSelectedId: null,

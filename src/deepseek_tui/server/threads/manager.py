@@ -3934,6 +3934,7 @@ class RuntimeThreadManager:
         turn.ended_at = ended_at
         if turn.started_at:
             turn.duration_ms = duration_ms(turn.started_at, ended_at)
+        latency_payload = self._finalize_turn_timing(turn)
         ledger_totals = engine.turn_usage_ledger.totals()
         if engine.turn_usage_ledger.items:
             turn.usage = ledger_totals
@@ -3966,7 +3967,10 @@ class RuntimeThreadManager:
         )
         await self._emit_event(
             thread_id, turn_id, None, "turn.completed",
-            {"turn": turn.model_dump(mode="json")},
+            {
+                "turn": turn.model_dump(mode="json"),
+                **({"latency_trace": latency_payload} if latency_payload else {}),
+            },
         )
         async with self._active_lock:
             state = self._active.get(thread_id)
@@ -4430,6 +4434,7 @@ class RuntimeThreadManager:
         turn.ended_at = ended_at
         if turn.started_at:
             turn.duration_ms = duration_ms(turn.started_at, ended_at)
+        latency_payload = self._finalize_turn_timing(turn)
         turn.error = f"Turn initialization failed: {exc}"
         self.store.save_turn(turn)
         thread = self.store.load_thread(thread_id)
@@ -4440,7 +4445,10 @@ class RuntimeThreadManager:
             turn_id,
             None,
             "turn.completed",
-            {"turn": turn.model_dump(mode="json")},
+            {
+                "turn": turn.model_dump(mode="json"),
+                **({"latency_trace": latency_payload} if latency_payload else {}),
+            },
             force_checkpoint=True,
         )
 
@@ -4496,6 +4504,7 @@ class RuntimeThreadManager:
         turn.ended_at = ended_at
         if turn.started_at:
             turn.duration_ms = duration_ms(turn.started_at, ended_at)
+        latency_payload = self._finalize_turn_timing(turn)
         turn.usage = turn_usage
         turn.error = turn_error
         if turn_usage is not None:
@@ -4521,11 +4530,7 @@ class RuntimeThreadManager:
             "turn.completed",
             {
                 "turn": turn.model_dump(mode="json"),
-                **(
-                    {"latency_trace": latency_payload}
-                    if (latency_payload := self._finalize_turn_latency(turn_id))
-                    else {}
-                ),
+                **({"latency_trace": latency_payload} if latency_payload else {}),
             },
             force_checkpoint=True,
         )
@@ -6145,6 +6150,7 @@ class RuntimeThreadManager:
         turn.usage = turn_usage
         turn.error = turn_error
         turn.diff_snapshot = final_turn_diff
+        latency_payload = self._finalize_turn_timing(turn)
         if turn_usage is not None:
             thread_for_usage = self.store.load_thread(thread_id)
             self._record_turn_model_usage(
@@ -6166,11 +6172,7 @@ class RuntimeThreadManager:
             thread_id, turn_id, None, "turn.completed",
             {
                 "turn": turn.model_dump(mode="json"),
-                **(
-                    {"latency_trace": latency_payload}
-                    if (latency_payload := self._finalize_turn_latency(turn_id))
-                    else {}
-                ),
+                **({"latency_trace": latency_payload} if latency_payload else {}),
             },
             force_checkpoint=True,
         )
@@ -6481,6 +6483,17 @@ class RuntimeThreadManager:
         trace.log_summary()
         return trace.to_payload()
 
+    def _finalize_turn_timing(self, turn: TurnRecord) -> dict[str, Any] | None:
+        """Freeze the user-visible total time on the durable turn record."""
+        payload = self._finalize_turn_latency(turn.id)
+        segments = payload.get("segments_ms") if payload else None
+        end_to_end_ms = segments.get("end_to_end_ms") if isinstance(segments, dict) else None
+        if isinstance(end_to_end_ms, (int, float)) and not isinstance(end_to_end_ms, bool):
+            turn.end_to_end_ms = max(0, int(end_to_end_ms))
+        elif turn.duration_ms is not None:
+            turn.end_to_end_ms = max(0, turn.duration_ms)
+        return payload
+
     def _schedule_mcp_warmup(self) -> None:
         """Fire-and-forget background MCP tool discovery so first turn is fast."""
         if self._shared_tool_runtime is None:
@@ -6551,6 +6564,7 @@ class RuntimeThreadManager:
                     turn.ended_at = now
                     if turn.started_at:
                         turn.duration_ms = duration_ms(turn.started_at, now)
+                    turn.end_to_end_ms = turn.duration_ms
                     self.store.save_turn(turn)
 
                     for item_id in turn.item_ids:

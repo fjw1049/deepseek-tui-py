@@ -339,6 +339,8 @@ export type ThreadDeltaEvent = {
 
 export type TurnCompletePayload = {
   threadId?: string | null
+  turnId?: string | null
+  durationMs?: number | null
   usage?: Record<string, unknown> | null
 }
 
@@ -446,6 +448,8 @@ export interface AgentProvider {
     threadStatus?: string
     latestTurnId?: string
     latestUserMessageId?: string
+    turnStartedAtByUserId?: Record<string, number>
+    turnDurationByUserId?: Record<string, number>
     turnDiffByTurnId?: Record<string, import('../lib/turn-mutation-view').TurnDiffSnapshot>
     /** Latest mounted-plugin state derived from persisted items. */
     activePlugin?: ActivePluginMeta | null

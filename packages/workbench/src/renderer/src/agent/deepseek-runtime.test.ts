@@ -116,6 +116,67 @@ describe('thread creation title', () => {
   })
 })
 
+describe('thread timing hydration', () => {
+  it('restores persisted end-to-end time and falls back to runtime duration', async () => {
+    const runtimeRequest = vi.fn().mockResolvedValue({
+      ok: true,
+      body: JSON.stringify({
+        thread: { status: 'completed' },
+        latest_seq: 4,
+        turns: [
+          {
+            id: 'turn_1',
+            status: 'completed',
+            started_at: '2026-08-31T07:00:00.000Z',
+            ended_at: '2026-08-31T07:00:03.000Z',
+            duration_ms: 3_000,
+            end_to_end_ms: 4_250
+          },
+          {
+            id: 'turn_2',
+            status: 'completed',
+            started_at: '2026-08-31T07:01:00.000Z',
+            ended_at: '2026-08-31T07:01:02.000Z',
+            duration_ms: 2_000
+          }
+        ],
+        items: [
+          {
+            id: 'user_1',
+            turn_id: 'turn_1',
+            kind: 'user_message',
+            status: 'completed',
+            summary: 'first',
+            detail: 'first',
+            started_at: '2026-08-31T07:00:00.000Z'
+          },
+          {
+            id: 'user_2',
+            turn_id: 'turn_2',
+            kind: 'user_message',
+            status: 'completed',
+            summary: 'second',
+            detail: 'second',
+            started_at: '2026-08-31T07:01:00.000Z'
+          }
+        ]
+      })
+    })
+    Object.defineProperty(window, 'dsGui', {
+      configurable: true,
+      value: { runtimeRequest }
+    })
+
+    const detail = await new DeepseekRuntimeProvider().getThreadDetail('thread_1')
+
+    expect(detail.turnStartedAtByUserId).toEqual({
+      user_1: Date.parse('2026-08-31T07:00:00.000Z'),
+      user_2: Date.parse('2026-08-31T07:01:00.000Z')
+    })
+    expect(detail.turnDurationByUserId).toEqual({ user_1: 4_250, user_2: 2_000 })
+  })
+})
+
 describe('rewind result compatibility', () => {
   it('reads the additive rewind_result while preserving the old thread envelope', async () => {
     const runtimeRequest = vi.fn().mockResolvedValue({

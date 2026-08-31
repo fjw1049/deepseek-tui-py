@@ -191,6 +191,8 @@ type TurnRecordJson = {
   created_at?: string | null
   started_at?: string | null
   ended_at?: string | null
+  duration_ms?: number | null
+  end_to_end_ms?: number | null
   diff_snapshot?: unknown
 }
 
@@ -1050,6 +1052,8 @@ export class DeepseekRuntimeProvider implements AgentProvider {
     threadStatus?: string
     latestTurnId?: string
     latestUserMessageId?: string
+    turnStartedAtByUserId?: Record<string, number>
+    turnDurationByUserId?: Record<string, number>
     turnDiffByTurnId?: Record<string, TurnDiffSnapshot>
     goal?: import('./types').GoalSnapshotJson | null
   }> {
@@ -1064,6 +1068,9 @@ export class DeepseekRuntimeProvider implements AgentProvider {
     const turnDiffByTurnId = indexTurnDiffSnapshots(
       (detail.turns ?? []).map((turn) => turn.diff_snapshot)
     )
+    const turnsById = new Map((detail.turns ?? []).map((turn) => [turn.id, turn]))
+    const turnStartedAtByUserId: Record<string, number> = {}
+    const turnDurationByUserId: Record<string, number> = {}
     let latestUserMessageId: string | undefined
     const narrationByReasoningId = new Map<string, string>()
     for (const it of detail.items) {
@@ -1102,6 +1109,20 @@ export class DeepseekRuntimeProvider implements AgentProvider {
         const modelLabel = displayModelFromUserMessageMeta(meta)
         const rawText = it.detail ?? it.summary
         const turnId = deriveTurnId(it)
+        const timing = turnId ? turnsById.get(turnId) : undefined
+        const startedAt = timing?.started_at ? Date.parse(timing.started_at) : Number.NaN
+        if (Number.isFinite(startedAt)) {
+          turnStartedAtByUserId[it.id] = startedAt
+        }
+        const durationMs =
+          typeof timing?.end_to_end_ms === 'number' && Number.isFinite(timing.end_to_end_ms)
+            ? timing.end_to_end_ms
+            : typeof timing?.duration_ms === 'number' && Number.isFinite(timing.duration_ms)
+              ? timing.duration_ms
+              : undefined
+        if (typeof durationMs === 'number') {
+          turnDurationByUserId[it.id] = Math.max(0, durationMs)
+        }
         blocks.push({
           kind: 'user',
           id: it.id,
@@ -1206,6 +1227,8 @@ export class DeepseekRuntimeProvider implements AgentProvider {
       threadStatus: detail.thread.status ?? latestTurnStatus,
       latestTurnId,
       latestUserMessageId,
+      turnStartedAtByUserId,
+      turnDurationByUserId,
       turnDiffByTurnId,
       goal: detail.thread.goal ?? null,
       ...(activePlugin !== undefined ? { activePlugin } : {})
@@ -1910,6 +1933,22 @@ export class DeepseekRuntimeProvider implements AgentProvider {
 
               if (ev === 'turn.completed') {
                 const turn = payload.turn as Record<string, unknown> | undefined
+                const latencyTrace =
+                  payload.latency_trace && typeof payload.latency_trace === 'object'
+                    ? (payload.latency_trace as Record<string, unknown>)
+                    : undefined
+                const segments =
+                  latencyTrace?.segments_ms && typeof latencyTrace.segments_ms === 'object'
+                    ? (latencyTrace.segments_ms as Record<string, unknown>)
+                    : undefined
+                const rawDuration =
+                  typeof turn?.end_to_end_ms === 'number'
+                    ? turn.end_to_end_ms
+                    : typeof segments?.end_to_end_ms === 'number'
+                      ? segments.end_to_end_ms
+                      : typeof turn?.duration_ms === 'number'
+                        ? turn.duration_ms
+                        : undefined
                 const turnError =
                   typeof turn?.error === 'string' && turn.error.trim() ? turn.error.trim() : ''
                 if (turnError) {
@@ -1928,6 +1967,11 @@ export class DeepseekRuntimeProvider implements AgentProvider {
                       : typeof payload.thread_id === 'string'
                         ? payload.thread_id
                         : undefined,
+                  turnId: typeof turn?.id === 'string' ? turn.id : undefined,
+                  durationMs:
+                    typeof rawDuration === 'number' && Number.isFinite(rawDuration)
+                      ? Math.max(0, rawDuration)
+                      : undefined,
                   usage:
                     turn?.usage && typeof turn.usage === 'object'
                       ? (turn.usage as Record<string, unknown>)

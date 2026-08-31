@@ -1194,6 +1194,10 @@ function MessageTurn({
           ) : null}
         </>
       )}
+
+      {!isProcessing && turn.user && typeof durationMs === 'number' ? (
+        <TurnDurationMeta durationMs={durationMs} />
+      ) : null}
     </div>
   )
 }
@@ -1571,6 +1575,15 @@ function activeRunningActionLabel(blocks: ChatBlock[]): string | undefined {
   return label.length > 56 ? `${label.slice(0, 55).trimEnd()}…` : label
 }
 
+function TurnDurationMeta({ durationMs }: { durationMs: number }): ReactElement {
+  const { t } = useTranslation('common')
+  return (
+    <div className="-mt-2 text-[11.5px] tabular-nums text-ds-faint">
+      {t('turnTotalDuration', { duration: formatDuration(durationMs) })}
+    </div>
+  )
+}
+
 /** Turn-level work-process summary. It auto-collapses when the turn finishes. */
 function WorkMetaRow({
   processing,
@@ -1615,9 +1628,7 @@ function WorkMetaRow({
       : durationText
         ? t('workingFor', { duration: durationText })
         : t('working')
-    : durationText
-      ? t('workedFor', { duration: durationText })
-      : t('processSteps', { count: stepCount })
+    : t('processSteps', { count: stepCount })
 
   const showThoughtSuffix =
     !processing &&
