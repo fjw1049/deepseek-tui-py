@@ -39,6 +39,7 @@ import { useWorkspaceEditorStore } from '../../store/workspace-editor-store'
 import { useGitWorkingChanges } from '../../hooks/use-git-working-changes'
 import { useWorkspaceDirtyGitRefresh } from '../../hooks/use-workspace-dirty-git-refresh'
 import { collectWorkspaceChangeEntries } from '../../lib/workspace-change-stats'
+import type { ChangeReviewScope } from '../../lib/change-review'
 import { useChatStore } from '../../store/chat-store'
 import { IdeProjectPicker, type IdeProjectOption } from './IdeProjectPicker'
 import { IdeQuickOpenPalette } from './IdeQuickOpenPalette'
@@ -63,6 +64,9 @@ type Props = {
   chatRail: ReactNode
   onExitIdeMode: () => void
   onOpenFileInEditor: (path: string, line?: number) => void
+  changesScope?: ChangeReviewScope
+  changesTurnId?: string | null
+  onChangesScopeChange?: (scope: ChangeReviewScope) => void
   /** Imperative center-tab request from parent (e.g. open diff from composer). */
   requestedCenterTab?: IdeCenterTab | null
   onRequestedCenterTabConsumed?: () => void
@@ -149,6 +153,9 @@ export function IdeWorkspaceLayout({
   chatRail,
   onExitIdeMode,
   onOpenFileInEditor,
+  changesScope = 'thread',
+  changesTurnId = null,
+  onChangesScopeChange,
   requestedCenterTab = null,
   onRequestedCenterTabConsumed,
   terminalMaximized = false
@@ -419,6 +426,9 @@ export function IdeWorkspaceLayout({
                   <ChangeInspector
                     variant="list"
                     blocks={blocks}
+                    scope={changesScope}
+                    turnId={changesTurnId}
+                    onScopeChange={onChangesScopeChange}
                     className="h-full min-h-0"
                     onRevealInEditor={handleRevealChangeFile}
                     requestedPath={changesFocusPath}
@@ -462,6 +472,8 @@ export function IdeWorkspaceLayout({
                     <ChangeInspector
                       variant="diff"
                       blocks={blocks}
+                      scope={changesScope}
+                      turnId={changesTurnId}
                       className="h-full min-h-0"
                       requestedPath={changesFocusPath}
                       onRequestedPathConsumed={() => setChangesFocusPath(null)}

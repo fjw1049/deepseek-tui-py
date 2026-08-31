@@ -28,9 +28,11 @@ import {
   GitFork,
   Globe2,
   Loader2,
+  MoreHorizontal,
   PencilLine,
   Plug,
   Puzzle,
+  RotateCcw,
   Search,
   Sparkles,
   Terminal,
@@ -38,7 +40,6 @@ import {
   Wrench,
   X
 } from 'lucide-react'
-import { isHtmlPreviewPath } from '@shared/html-preview'
 import {
   formatHtmlPreviewPathLabel,
   type OpenableTurnResult,
@@ -59,7 +60,6 @@ import {
   turnSummaryFromSources,
   type TurnDiffSnapshot
 } from '../../lib/turn-mutation-view'
-import { useDeferredRender } from '../../hooks/use-deferred-render'
 import { resumeThreadAgent } from '../../hooks/use-thread-tasks'
 import {
   getEmptyHomeLayout,
@@ -67,8 +67,8 @@ import {
   subscribeAppearance
 } from '../../lib/apply-appearance'
 import { getProvider } from '../../agent/registry'
+import { openChangesPanel } from '../../lib/change-review'
 import { useChatStore } from '../../store/chat-store'
-import { DiffView } from '../DiffView'
 import { EvolutionBubble } from './EvolutionBubble'
 import { ElevationBubble } from './ElevationBubble'
 import { InlineTodoBlock } from './InlineTodoBlock'
@@ -1184,6 +1184,8 @@ function MessageTurn({
             <TurnChangeSummary
               changes={turnFileChanges}
               viewportRef={viewportRef}
+              turnId={turnDiffTurnId}
+              userBlockId={turn.user?.id}
               htmlPreview={htmlPreviewAction ?? null}
               onOpenWorkspaceFile={onOpenWorkspaceFile}
             />
@@ -1246,30 +1248,25 @@ function pathsReferToSameFile(a: string, b: string): boolean {
 function TurnChangeSummary({
   changes,
   viewportRef,
+  turnId,
+  userBlockId,
   htmlPreview,
   onOpenWorkspaceFile
 }: {
   changes: ToolBlock[]
   viewportRef: RefObject<HTMLDivElement | null>
+  turnId?: string | null
+  userBlockId?: string
   htmlPreview?: { path: string; onOpen: () => void } | null
   onOpenWorkspaceFile?: (path: string, line?: number) => void
 }): ReactElement {
   const { t } = useTranslation('common')
   const [expanded, setExpanded] = useState(false)
-  const [activeId, setActiveId] = useState<string | null>(
-    () => changes.find((change) => change.detail?.trim())?.id ?? changes[0]?.id ?? null
-  )
-
-  useEffect(() => {
-    if (changes.length === 0) {
-      setActiveId(null)
-      return
-    }
-    setActiveId((current) => {
-      if (current && changes.some((change) => change.id === current)) return current
-      return changes.find((change) => change.detail?.trim())?.id ?? changes[0]?.id ?? null
-    })
-  }, [changes])
+  const [confirmUndo, setConfirmUndo] = useState(false)
+  const [undoing, setUndoing] = useState(false)
+  const [undoFeedback, setUndoFeedback] = useState<string | null>(null)
+  const restoreCodeAt = useChatStore((s) => s.restoreCodeAt)
+  void viewportRef
 
   const fileStats = useMemo(
     () => changes.map((change) => turnChangeBlockStats(change)),
@@ -1283,12 +1280,7 @@ function TurnChangeSummary({
         : t('turnChangeFilesMany', { count: changes.length }),
     [changes.length, t]
   )
-  const { ref: deferredBodyRef, shouldRender: shouldRenderBody } = useDeferredRender<HTMLDivElement>({
-    enabled: expanded,
-    root: viewportRef
-  })
   const openableResults = useMemo(() => selectOpenableTurnResults(changes), [changes])
-  const compactOpenable = openableResults.length > 1
   const previewPath = htmlPreview?.path?.trim() ?? ''
 
   const openTurnResult = (result: OpenableTurnResult): void => {
@@ -1304,126 +1296,141 @@ function TurnChangeSummary({
     onOpenWorkspaceFile?.(result.path)
   }
 
+  const undoCode = async (): Promise<void> => {
+    if (!userBlockId || undoing) return
+    setUndoing(true)
+    setUndoFeedback(null)
+    try {
+      const result = await restoreCodeAt(userBlockId)
+      if (!result) return
+      setConfirmUndo(false)
+      setUndoFeedback(
+        t('turnChangeUndoSuccess', {
+          count: result.restoredFiles.length,
+          skipped: result.skippedFiles.length
+        })
+      )
+    } finally {
+      setUndoing(false)
+    }
+  }
+
   return (
-    <section className="ds-turn-change-summary ds-card-strong overflow-hidden rounded-[14px] border border-ds-border shadow-[0_16px_40px_rgba(86,103,136,0.08)]">
-      <button
-        type="button"
-        onClick={() => {
-          setExpanded((value) => !value)
-        }}
-        aria-expanded={expanded}
-        className="ds-turn-change-summary__header flex w-full items-center gap-4 px-5 py-4 text-left transition hover:bg-ds-hover/40"
-      >
-        <span className="ds-turn-change-summary__icon flex h-12 w-12 shrink-0 items-center justify-center rounded-[16px] bg-ds-card-muted text-ds-muted">
-          <FileEdit className="h-5 w-5" strokeWidth={1.85} />
+    <section className="ds-turn-change-summary overflow-hidden rounded-xl border border-ds-border-muted/80 bg-ds-card/60">
+      <div className="flex min-w-0 items-center gap-2.5 px-3 py-2.5">
+        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-ds-hover/70 text-ds-muted">
+          <FileEdit className="h-4 w-4" strokeWidth={1.85} />
         </span>
         <span className="min-w-0 flex-1">
-          <span className="ds-turn-change-summary__title block text-[18px] font-semibold tracking-[-0.02em] text-ds-ink">
+          <span className="block truncate text-[13px] font-semibold text-ds-ink">
             {title}
           </span>
           {totals ? (
-            <span className="mt-1 block text-[12px] tabular-nums">
+            <span className="mt-0.5 block text-[11px] tabular-nums">
               <span className="text-ds-diff-added">+{totals.added}</span>
               <span className="mx-1.5 text-ds-faint">·</span>
               <span className="text-ds-diff-removed">-{totals.removed}</span>
             </span>
           ) : null}
         </span>
-        {expanded ? (
-          <ChevronDown className="h-4 w-4 shrink-0 text-ds-faint" strokeWidth={1.8} />
-        ) : (
-          <ChevronRight className="h-4 w-4 shrink-0 text-ds-faint" strokeWidth={1.8} />
-        )}
-      </button>
+        <button
+          type="button"
+          onClick={() => openChangesPanel({ scope: 'turn', turnId: turnId ?? undefined })}
+          className="shrink-0 rounded-md bg-ds-hover px-2.5 py-1 text-[11.5px] font-medium text-ds-ink transition hover:bg-ds-hover/80 active:scale-[0.98]"
+        >
+          {t('turnChangeReview')}
+        </button>
+        <button
+          type="button"
+          onClick={() => setExpanded((value) => !value)}
+          aria-expanded={expanded}
+          aria-label={expanded ? t('collapse') : t('expand')}
+          className="rounded-md p-1 text-ds-faint transition hover:bg-ds-hover hover:text-ds-ink"
+        >
+          {expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+        </button>
+      </div>
 
       {expanded ? (
-        <div
-          ref={deferredBodyRef}
-          className="border-t border-ds-border-muted/70"
-          style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 280px' }}
-        >
-          {shouldRenderBody
-            ? changes.map((change, index) => {
+        <div className="border-t border-ds-border-muted/70 bg-ds-card-muted/25">
+          {changes.map((change, index) => {
             const stats = fileStats[index]
-            const open = activeId === change.id
             const filePath = change.filePath?.trim() ?? ''
-            const primary = filePath || t('toolActionFile')
-            const canOpenFile = Boolean(onOpenWorkspaceFile && filePath)
-            const isHtmlFile = Boolean(filePath && isHtmlPreviewPath(filePath))
 
             return (
-              <div key={change.id} className="border-b border-ds-border-muted/60 last:border-b-0">
-                <div
-                  className={`flex w-full items-start gap-3 px-5 py-3 ${
-                    open ? 'bg-ds-hover/45' : 'hover:bg-ds-hover/35'
-                  }`}
-                >
-                  <span className="min-w-0 flex-1">
-                    <span className="flex min-w-0 items-center gap-2">
-                      {filePath ? (
-                        <FileChip path={filePath} variant="list" skipValidation />
-                      ) : (
-                        <span className="ds-turn-change-summary__path block break-all text-[14px] font-medium text-ds-ink">
-                          {primary}
-                        </span>
-                      )}
-                      {canOpenFile && isHtmlFile ? (
-                        <span className="inline-flex shrink-0 items-center gap-1 rounded-md bg-amber-500/10 px-1.5 py-0.5 text-[10.5px] font-medium text-amber-700 dark:text-amber-300">
-                          <Globe2 className="h-3 w-3" strokeWidth={2} />
-                          HTML
-                        </span>
-                      ) : null}
-                    </span>
+              <button
+                key={change.id}
+                type="button"
+                disabled={!filePath || !onOpenWorkspaceFile}
+                onClick={() => filePath && onOpenWorkspaceFile?.(filePath)}
+                className="flex h-8 w-full min-w-0 items-center gap-2 border-b border-ds-border-muted/50 px-3 text-left last:border-b-0 hover:bg-ds-hover/40 disabled:cursor-default"
+              >
+                <span className="min-w-0 flex-1 truncate text-[12px] text-ds-ink">
+                  {filePath ? <FileChip path={filePath} variant="list" skipValidation /> : t('toolActionFile')}
+                </span>
+                {stats ? (
+                  <span className="shrink-0 text-[10.5px] tabular-nums">
+                    <span className="text-ds-diff-added">+{stats.added}</span>
+                    <span className="ml-1.5 text-ds-diff-removed">-{stats.removed}</span>
                   </span>
-                  <button
-                    type="button"
-                    onClick={() => setActiveId(open ? null : change.id)}
-                    aria-expanded={open}
-                    className="flex shrink-0 items-start gap-3 text-left"
-                  >
-                    {stats ? (
-                      <span className="shrink-0 text-[12px] tabular-nums">
-                        <span className="text-ds-diff-added">+{stats.added}</span>
-                        <span className="ml-1.5 text-ds-diff-removed">-{stats.removed}</span>
-                      </span>
-                    ) : null}
-                    {open ? (
-                      <ChevronDown className="mt-0.5 h-4 w-4 shrink-0 text-ds-faint" strokeWidth={1.8} />
-                    ) : (
-                      <ChevronRight className="mt-0.5 h-4 w-4 shrink-0 text-ds-faint" strokeWidth={1.8} />
-                    )}
-                  </button>
-                </div>
-
-                {open && change.detail ? (
-                  <div className="bg-ds-card-muted/45 px-4 pb-4 pt-1">
-                    <DiffView
-                      patch={change.detail}
-                      filePath={change.filePath}
-                      maxHeight={440}
-                      className="border border-ds-border-muted/70"
-                    />
-                  </div>
                 ) : null}
-              </div>
+              </button>
             )
-          })
-            : null}
+          })}
+          {openableResults.length > 0 ? (
+            <div className="border-t border-ds-border-muted/70 px-2 py-1.5">
+              {openableResults.map((result) => (
+                <TurnOpenableResultRow
+                  key={result.path}
+                  result={result}
+                  compact={openableResults.length > 1}
+                  onOpen={() => openTurnResult(result)}
+                />
+              ))}
+            </div>
+          ) : null}
         </div>
       ) : null}
 
-      {openableResults.length > 0 ? (
-        <div className="border-t border-ds-border-muted/70 bg-gradient-to-b from-ds-card-muted/25 to-transparent px-4 py-3">
-          <div className={compactOpenable ? 'flex flex-col gap-1' : undefined}>
-            {openableResults.map((result) => (
-              <TurnOpenableResultRow
-                key={result.path}
-                result={result}
-                compact={compactOpenable}
-                onOpen={() => openTurnResult(result)}
-              />
-            ))}
-          </div>
+      {userBlockId?.startsWith('item_') ? (
+        <div className="flex min-w-0 items-center gap-2 border-t border-ds-border-muted/60 px-3 py-2">
+          {confirmUndo ? (
+            <>
+              <p className="min-w-0 flex-1 text-[11.5px] leading-4 text-amber-700 dark:text-amber-300">
+                {t('turnChangeUndoConfirm')}
+              </p>
+              <button
+                type="button"
+                disabled={undoing}
+                onClick={() => setConfirmUndo(false)}
+                className="rounded-md px-2 py-1 text-[11.5px] text-ds-muted transition hover:bg-ds-hover"
+              >
+                {t('rewindCancel')}
+              </button>
+              <button
+                type="button"
+                disabled={undoing}
+                onClick={() => void undoCode()}
+                className="rounded-md bg-amber-500/15 px-2 py-1 text-[11.5px] font-medium text-amber-800 transition hover:bg-amber-500/20 dark:text-amber-200 disabled:opacity-50"
+              >
+                {undoing ? t('turnChangeUndoing') : t('turnChangeUndoConfirmAction')}
+              </button>
+            </>
+          ) : (
+            <>
+              <span className="min-w-0 flex-1 truncate text-[11px] text-ds-faint">
+                {undoFeedback ?? t('turnChangeSyncedHint')}
+              </span>
+              <button
+                type="button"
+                onClick={() => setConfirmUndo(true)}
+                className="inline-flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-[11.5px] font-medium text-ds-muted transition hover:bg-ds-hover hover:text-ds-ink"
+              >
+                <RotateCcw className="h-3.5 w-3.5" strokeWidth={1.9} />
+                {t('turnChangeUndo')}
+              </button>
+            </>
+          )}
         </div>
       ) : null}
     </section>
@@ -3040,6 +3047,8 @@ function UserMessageBubble({
   const { t } = useTranslation('common')
   const busy = useChatStore((s) => s.busy)
   const rewindAndResend = useChatStore((s) => s.rewindAndResend)
+  const rewindToMessage = useChatStore((s) => s.rewindToMessage)
+  const restoreCodeAt = useChatStore((s) => s.restoreCodeAt)
   const activeThreadId = useChatStore((s) => s.activeThreadId)
   const previewPick = useMemo(() => parsePreviewPickWireMessage(block.text), [block.text])
   const focus = useMemo(
@@ -3066,6 +3075,8 @@ function UserMessageBubble({
     noCheckpoint: number
   } | null>(null)
   const [forceConflicts, setForceConflicts] = useState(false)
+  const [rewindMenuOpen, setRewindMenuOpen] = useState(false)
+  const [directRewind, setDirectRewind] = useState<'code' | 'conversation' | null>(null)
   // File restore only works for messages persisted on the runtime (`item_…`).
   // Restore writes the recorded execution root. After a successful publish that
   // root is the project; a vanished copy skips file restore.
@@ -3073,6 +3084,7 @@ function UserMessageBubble({
   const hasMissingRoots = (confirm?.missingRoots.length ?? 0) > 0
   const hasNoCheckpoint = (confirm?.noCheckpoint ?? 0) > 0
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const rewindMenuRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     if (!editing || confirm) return
@@ -3086,16 +3098,50 @@ function UserMessageBubble({
   }, [editing, confirm])
 
   useEffect(() => {
-    if (!confirm) return
+    if (!confirm && !directRewind) return
     const handleKey = (event: KeyboardEvent): void => {
       if (event.key === 'Escape') {
         event.preventDefault()
-        setConfirm(null)
+        if (confirm) setConfirm(null)
+        else setDirectRewind(null)
       }
     }
     window.addEventListener('keydown', handleKey)
     return () => window.removeEventListener('keydown', handleKey)
-  }, [confirm])
+  }, [confirm, directRewind])
+
+  useEffect(() => {
+    if (!rewindMenuOpen) return
+    const dismiss = (event: PointerEvent): void => {
+      if (!rewindMenuRef.current?.contains(event.target as Node)) setRewindMenuOpen(false)
+    }
+    const dismissWithKey = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') setRewindMenuOpen(false)
+    }
+    document.addEventListener('pointerdown', dismiss, true)
+    window.addEventListener('keydown', dismissWithKey)
+    return () => {
+      document.removeEventListener('pointerdown', dismiss, true)
+      window.removeEventListener('keydown', dismissWithKey)
+    }
+  }, [rewindMenuOpen])
+
+  const runDirectRewind = async (restoreFiles: boolean): Promise<void> => {
+    if (!directRewind || submitting || busy) return
+    setSubmitting(true)
+    try {
+      if (directRewind === 'code') {
+        await restoreCodeAt(block.id)
+      } else {
+        await rewindToMessage(block.id, {
+          restoreFiles: restoreFiles && canRestoreFiles
+        })
+      }
+      setDirectRewind(null)
+    } finally {
+      setSubmitting(false)
+    }
+  }
 
   const startEdit = (): void => {
     if (busy) return
@@ -3464,8 +3510,119 @@ function UserMessageBubble({
           >
             <PencilLine className="h-4 w-4" strokeWidth={1.8} />
           </button>
+          <div ref={rewindMenuRef} className="relative">
+            <button
+              type="button"
+              onClick={() => setRewindMenuOpen((open) => !open)}
+              disabled={busy}
+              title={t('rewindMoreActions')}
+              aria-label={t('rewindMoreActions')}
+              aria-expanded={rewindMenuOpen}
+              className="rounded-md p-1 hover:bg-ds-hover hover:text-ds-muted disabled:cursor-not-allowed"
+            >
+              <MoreHorizontal className="h-4 w-4" strokeWidth={1.8} />
+            </button>
+            {rewindMenuOpen ? (
+              <div
+                role="menu"
+                className="absolute bottom-8 right-0 z-30 w-52 overflow-hidden rounded-xl border border-ds-border bg-ds-elevated p-1 shadow-xl"
+              >
+                {canRestoreFiles ? (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setRewindMenuOpen(false)
+                      setDirectRewind('code')
+                    }}
+                    className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[12.5px] text-ds-ink transition hover:bg-ds-hover"
+                  >
+                    <RotateCcw className="h-3.5 w-3.5 text-ds-muted" strokeWidth={1.9} />
+                    {t('rewindCodeOnly')}
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setRewindMenuOpen(false)
+                    setDirectRewind('conversation')
+                  }}
+                  className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[12.5px] text-ds-ink transition hover:bg-ds-hover"
+                >
+                  <RotateCcw className="h-3.5 w-3.5 text-ds-muted" strokeWidth={1.9} />
+                  {t('rewindConversationToHere')}
+                </button>
+              </div>
+            ) : null}
+          </div>
         </div>
       </div>
+      {directRewind && typeof document !== 'undefined'
+        ? createPortal(
+            <div
+              className="ds-no-drag fixed inset-0 z-[80] flex items-center justify-center bg-[var(--ds-material-overlay)] p-4"
+              onClick={(event) => {
+                if (event.target === event.currentTarget) setDirectRewind(null)
+              }}
+            >
+              <div
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby={`direct-rewind-${block.id}`}
+                className="ds-modal-surface ds-modal-surface--solid w-full max-w-md overflow-hidden rounded-2xl"
+              >
+                <div className="border-b border-ds-border-muted px-5 py-4">
+                  <h2 id={`direct-rewind-${block.id}`} className="text-[16px] font-semibold text-ds-ink">
+                    {directRewind === 'code'
+                      ? t('rewindCodeOnlyTitle')
+                      : t('rewindConversationTitle')}
+                  </h2>
+                  <p className="mt-1.5 text-[13px] leading-5 text-ds-muted">
+                    {directRewind === 'code'
+                      ? t('rewindCodeOnlyBody')
+                      : t('rewindConversationBody')}
+                  </p>
+                </div>
+                <div className="flex flex-wrap items-center justify-end gap-2 px-5 py-3">
+                  <button
+                    type="button"
+                    disabled={submitting}
+                    onClick={() => setDirectRewind(null)}
+                    className="rounded-md px-3 py-1.5 text-[13px] font-medium text-ds-muted transition hover:bg-ds-hover disabled:opacity-50"
+                  >
+                    {t('rewindCancel')}
+                  </button>
+                  {directRewind === 'conversation' ? (
+                    <button
+                      type="button"
+                      disabled={submitting}
+                      onClick={() => void runDirectRewind(false)}
+                      className="rounded-md px-3 py-1.5 text-[13px] font-medium text-ds-ink transition hover:bg-ds-hover disabled:opacity-50"
+                    >
+                      {t('rewindConversationOnly')}
+                    </button>
+                  ) : null}
+                  <button
+                    type="button"
+                    disabled={submitting}
+                    onClick={() => void runDirectRewind(true)}
+                    className="rounded-md bg-amber-500/15 px-3 py-1.5 text-[13px] font-medium text-amber-800 transition hover:bg-amber-500/20 dark:text-amber-200 disabled:opacity-50"
+                  >
+                    {submitting
+                      ? t('turnChangeUndoing')
+                      : directRewind === 'code'
+                        ? t('rewindRestoreCode')
+                        : canRestoreFiles
+                          ? t('rewindConversationAndCode')
+                          : t('rewindConversationOnly')}
+                  </button>
+                </div>
+              </div>
+            </div>,
+            document.body
+          )
+        : null}
     </div>
   )
 }

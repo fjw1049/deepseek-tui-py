@@ -117,6 +117,11 @@ const api = {
     ipcRenderer.invoke('git:commit', { workspaceRoot, message, paths }),
   suggestGitCommitMessage: (workspaceRoot, paths) =>
     ipcRenderer.invoke('git:suggest-commit-message', { workspaceRoot, paths }),
+  stageGitChanges: (workspaceRoot, paths) =>
+    ipcRenderer.invoke('git:stage', { workspaceRoot, paths }),
+  unstageGitChanges: (workspaceRoot, paths) =>
+    ipcRenderer.invoke('git:unstage', { workspaceRoot, paths }),
+  pushGitBranch: (workspaceRoot) => ipcRenderer.invoke('git:push', workspaceRoot),
   listEditors: () => ipcRenderer.invoke('editor:list'),
   openEditorPath: (options) =>
     ipcRenderer.invoke('editor:open-path', options),

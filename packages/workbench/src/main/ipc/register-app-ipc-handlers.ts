@@ -78,7 +78,20 @@ import {
   formatAlternateRuntimeHint,
   resolveEffectiveRuntimeToken
 } from '../deepseek-process'
-import { commitGitChanges, createAndSwitchGitBranch, getGitBranches, getGitHubRepository, getGitLog, getGitWorkingChanges, stashAndSwitchGitBranch, suggestGitCommitMessage, switchGitBranch } from '../services/git-service'
+import {
+  commitGitChanges,
+  createAndSwitchGitBranch,
+  getGitBranches,
+  getGitHubRepository,
+  getGitLog,
+  getGitWorkingChanges,
+  pushGitBranch,
+  stageGitChanges,
+  stashAndSwitchGitBranch,
+  suggestGitCommitMessage,
+  switchGitBranch,
+  unstageGitChanges
+} from '../services/git-service'
 import { unwatchWorkspaceFs, watchWorkspaceFs } from '../services/workspace-fs-watch-service'
 import { getTrendingRepos } from '../services/trending-repos'
 import {
@@ -1335,6 +1348,17 @@ export function registerAppIpcHandlers(options: RegisterAppIpcHandlersOptions): 
     const request = parseIpcPayload('git:suggest-commit-message', gitCommitPathsPayloadSchema, payload)
     return suggestGitCommitMessage(request.workspaceRoot, request.paths)
   })
+  ipcMain.handle('git:stage', async (_, payload: unknown) => {
+    const request = parseIpcPayload('git:stage', gitCommitPathsPayloadSchema, payload)
+    return stageGitChanges(request.workspaceRoot, request.paths ?? [])
+  })
+  ipcMain.handle('git:unstage', async (_, payload: unknown) => {
+    const request = parseIpcPayload('git:unstage', gitCommitPathsPayloadSchema, payload)
+    return unstageGitChanges(request.workspaceRoot, request.paths ?? [])
+  })
+  ipcMain.handle('git:push', async (_, workspaceRoot: unknown) =>
+    pushGitBranch(parseIpcPayload('git:push', workspaceRootSchema, workspaceRoot))
+  )
 
   ipcMain.handle('trending:repos', async (_, period: unknown) =>
     getTrendingRepos(parseIpcPayload('trending:repos', trendingPeriodSchema, period))

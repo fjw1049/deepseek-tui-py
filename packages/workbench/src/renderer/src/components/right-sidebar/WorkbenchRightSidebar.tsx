@@ -21,6 +21,7 @@ import {
 import { useTranslation } from 'react-i18next'
 import type { ChatBlock } from '../../agent/types'
 import type { PreviewElementPick } from '../../lib/preview-element-picker'
+import type { ChangeReviewScope } from '../../lib/change-review'
 import type { RightSidebarTab } from '../../lib/right-sidebar-state'
 import {
   rightSidebarTabBarPlanForWidth,
@@ -50,6 +51,9 @@ type Props = {
   blocks: ChatBlock[]
   /** Select this path in Changes when the panel opens from a file_change jump. */
   changesFocusPath?: string | null
+  changesScope: ChangeReviewScope
+  changesTurnId?: string | null
+  onChangesScopeChange: (scope: ChangeReviewScope) => void
   onChangesFocusPathConsumed?: () => void
   devPreviewBlocks: ChatBlock[]
   latestDevPreviewUrl: string | null
@@ -122,6 +126,9 @@ export function WorkbenchRightSidebar({
   workspaceRoot,
   blocks,
   changesFocusPath = null,
+  changesScope,
+  changesTurnId = null,
+  onChangesScopeChange,
   onChangesFocusPathConsumed,
   devPreviewBlocks,
   latestDevPreviewUrl,
@@ -198,6 +205,9 @@ export function WorkbenchRightSidebar({
         <ChangeInspector
           blocks={blocks}
           className="h-full max-h-full w-full flex-col"
+          scope={changesScope}
+          turnId={changesTurnId}
+          onScopeChange={onChangesScopeChange}
           requestedPath={changesFocusPath}
           onRequestedPathConsumed={onChangesFocusPathConsumed}
           onRevealInEditor={onOpenFileInEditor}

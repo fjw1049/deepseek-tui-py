@@ -10,6 +10,10 @@ export type GitBranchesResult =
       currentBranch: string | null
       branches: GitBranchRow[]
       dirtyCount: number
+      upstream: string | null
+      ahead: number
+      behind: number
+      hasRemote: boolean
     }
   | {
       ok: false

@@ -25,6 +25,7 @@ import {
   Plus,
   Square,
   Trash2,
+  TriangleAlert,
   X
 } from 'lucide-react'
 import type { NormalizedThread } from '../../agent/types'
@@ -32,6 +33,9 @@ import { useLightDismiss } from '../../hooks/use-light-dismiss'
 import { useThreadsWithActiveTasks } from '../../hooks/use-thread-tasks'
 import { extractTasksFromBlocks } from '../../lib/extract-tasks-from-blocks'
 import { useChatStore } from '../../store/chat-store'
+import { useGitBranches } from '../../hooks/use-git-branches'
+import { useWorkspaceDirtyGitRefresh } from '../../hooks/use-workspace-dirty-git-refresh'
+import { openChangesPanel } from '../../lib/change-review'
 import { formatRelativeTimeLargestUnit } from '../../lib/format-relative-time'
 import { workspaceLabelFromPath } from '../../lib/workspace-label'
 import {
@@ -129,6 +133,37 @@ type WorkspaceGroup = [string, NormalizedThread[]]
 function workspaceHasActiveThread(list: NormalizedThread[], activeThreadId: string | null): boolean {
   if (!activeThreadId) return false
   return list.some((thread) => thread.id === activeThreadId)
+}
+
+function ProjectDirtyBadge({
+  workspacePath,
+  active,
+  t
+}: {
+  workspacePath: string
+  active: boolean
+  t: (key: string, options?: Record<string, unknown>) => string
+}): ReactElement | null {
+  const workspaceDirtyTick = useChatStore((s) => s.workspaceDirtyTick)
+  const { result, reload } = useGitBranches(active ? workspacePath : '')
+  useWorkspaceDirtyGitRefresh(workspaceDirtyTick, reload)
+
+  if (!active || !result?.ok || result.dirtyCount === 0) return null
+  return (
+    <button
+      type="button"
+      onClick={(event) => {
+        event.stopPropagation()
+        openChangesPanel({ scope: 'workspace' })
+      }}
+      className="inline-flex h-5 shrink-0 items-center gap-1 rounded-full bg-amber-500/12 px-1.5 text-[10.5px] font-semibold tabular-nums text-amber-700 transition hover:bg-amber-500/20 dark:text-amber-300"
+      title={t('sidebarProjectDirtyReview', { count: result.dirtyCount })}
+      aria-label={t('sidebarProjectDirtyReview', { count: result.dirtyCount })}
+    >
+      <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
+      {result.dirtyCount}
+    </button>
+  )
 }
 
 const PROJECT_SORT_LABEL_KEYS: Record<ProjectSortMode, string> = {
@@ -1030,6 +1065,10 @@ function SidebarProjectsSection({
       .map((id) => byId.get(id))
       .filter((thread): thread is NormalizedThread => Boolean(thread))
     const folderHasActive = workspaceHasActiveThread(list, activeThreadId)
+    const isActiveWorkspace =
+      activeThreadId !== null
+        ? folderHasActive
+        : normalizeWorkspaceRoot(workspaceRoot) === normalizeWorkspaceRoot(workspacePath)
     const folderIconClass = folderHasActive ? 'text-accent' : 'text-ds-muted'
     const labelColor = (sidebarLabelColors[workspaceLabelKey(workspacePath)] ??
       null) as SidebarLabelColor
@@ -1116,14 +1155,15 @@ function SidebarProjectsSection({
                 </span>
               </button>
               {selectionMode ? null : (
-                <div className="flex shrink-0 items-center gap-0.5 pr-1 opacity-40 transition-opacity duration-200 group-hover:opacity-100 group-focus-within:opacity-100 focus-within:opacity-100">
+                <div className="flex shrink-0 items-center gap-1 pr-1">
+                  <ProjectDirtyBadge workspacePath={workspacePath} active={isActiveWorkspace} t={t} />
                   <button
                     type="button"
                     onClick={(event) => {
                       event.stopPropagation()
                       onCreateThreadInWorkspace(workspacePath)
                     }}
-                    className="rounded-md p-1 text-ds-faint transition-colors duration-200 hover:bg-ds-hover/80 hover:text-ds-ink"
+                    className="rounded-md p-1 text-ds-faint opacity-40 transition duration-200 hover:bg-ds-hover/80 hover:text-ds-ink hover:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100"
                     title={t('sidebarWorkspaceNewThread')}
                     aria-label={t('sidebarWorkspaceNewThread')}
                   >
@@ -1446,11 +1486,13 @@ export function ThreadRow({
   // A detached background task counts as activity even when the chat turn is
   // idle; only fall back to the blue unread dot when nothing is in flight.
   const showTaskDot = hasBackgroundTask && !showRunning
-  const showUnreadDot = showUnread && !showRunning && !showTaskDot
+  const showConflict =
+    !showRunning && (Boolean(thread.publishBlocked) || (thread.publishConflicts?.length ?? 0) > 0)
+  const showUnreadDot = showUnread && !showRunning && !showTaskDot && !showConflict
 
   // All rows surface thread completion: green check for completed/idle.
   const status = thread.status?.trim().toLowerCase()
-  const showCompleted = !showRunning && (status === 'completed' || status === 'idle')
+  const showCompleted = !showRunning && !showConflict && (status === 'completed' || status === 'idle')
 
   const threadPath = normalizeWorkspaceRoot(thread.workspace)
   const hasPath = threadPath.length > 0 && !isInternalTemporaryWorkspace(thread.workspace)
@@ -1616,6 +1658,8 @@ export function ThreadRow({
             ? thread.title
             : showRunning
               ? `${thread.title} — ${t('sidebarThreadRunning')}`
+              : showConflict
+                ? `${thread.title} — ${t('sidebarThreadConflict')}`
               : showTaskDot
                 ? `${thread.title} — ${t('sidebarThreadTaskRunning')}`
                 : showUnreadDot
@@ -1632,6 +1676,12 @@ export function ThreadRow({
             )
           ) : showRunning ? (
             <Loader2 className="h-3.5 w-3.5 animate-spin text-accent" strokeWidth={2.1} />
+          ) : showConflict ? (
+            <TriangleAlert
+              className="h-3.5 w-3.5 text-amber-500 dark:text-amber-400"
+              strokeWidth={2}
+              aria-label={t('sidebarThreadConflict')}
+            />
           ) : showTaskDot ? (
             <span
               className="block h-1.5 w-1.5 animate-pulse rounded-full bg-amber-500 dark:bg-amber-400"
@@ -1684,12 +1734,20 @@ export function ThreadRow({
           <span
             className="ds-sidebar-thread-meta group-hover:hidden group-focus-within:hidden"
             title={
-              showCompleted
+              showConflict
+                ? t('sidebarThreadConflict')
+                : showCompleted
                 ? t('sidebarThreadCompleted')
                 : (sourceLabel ?? formatRelativeTimeLargestUnit(thread.updatedAt))
             }
           >
-            {showCompleted ? (
+            {showConflict ? (
+              <TriangleAlert
+                className="h-3.5 w-3.5 text-amber-500 dark:text-amber-400"
+                strokeWidth={2}
+                aria-hidden
+              />
+            ) : showCompleted ? (
               <Check
                 className="h-3.5 w-3.5 text-emerald-500 dark:text-emerald-400"
                 strokeWidth={2.25}

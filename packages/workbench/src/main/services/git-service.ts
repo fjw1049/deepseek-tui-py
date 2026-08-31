@@ -5,6 +5,7 @@ import { promisify } from 'node:util'
 import type { GitCommitMessageSuggestionResult, GitCommitResult } from '../../shared/git-commit'
 import type { GitLogCommit, GitLogResult, GitLogUpstream } from '../../shared/git-log'
 import type { GitBranchesResult } from '../../shared/git-branches'
+import type { GitPathActionResult, GitPushResult } from '../../shared/git-actions'
 import type {
   GitWorkingChangeFile,
   GitWorkingChangeStage,
@@ -28,7 +29,8 @@ async function runGit(
   const { stdout, stderr } = await execFileAsync('git', args, {
     cwd,
     timeout,
-    maxBuffer
+    maxBuffer,
+    env: { ...process.env, GIT_TERMINAL_PROMPT: '0' }
   })
   return { stdout: String(stdout), stderr: String(stderr) }
 }
@@ -157,7 +159,45 @@ export async function getGitBranches(workspaceRoot: string): Promise<GitBranches
     const dirtyCount = (await runGit(cwd, ['status', '--porcelain=v1'])).stdout
       .split('\n')
       .filter((line) => line.trim().length > 0).length
-    return { ok: true, repositoryRoot, currentBranch, branches, dirtyCount }
+    const remotes = (await runGit(cwd, ['remote'])).stdout
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean)
+    let upstream: string | null = null
+    let ahead = 0
+    let behind = 0
+    if (currentBranch) {
+      try {
+        upstream = (
+          await runGit(cwd, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}'])
+        ).stdout.trim() || null
+      } catch {
+        upstream = null
+      }
+      if (upstream) {
+        try {
+          const counts = (await runGit(cwd, ['rev-list', '--left-right', '--count', `HEAD...${upstream}`]))
+            .stdout.trim()
+            .split(/\s+/)
+          ahead = Number.parseInt(counts[0] ?? '0', 10) || 0
+          behind = Number.parseInt(counts[1] ?? '0', 10) || 0
+        } catch {
+          ahead = 0
+          behind = 0
+        }
+      }
+    }
+    return {
+      ok: true,
+      repositoryRoot,
+      currentBranch,
+      branches,
+      dirtyCount,
+      upstream,
+      ahead,
+      behind,
+      hasRemote: remotes.length > 0
+    }
   } catch (error) {
     return gitFailure(error)
   }
@@ -433,6 +473,160 @@ async function stageGitPaths(cwd: string, paths: string[]): Promise<void> {
   }
 }
 
+function gitPathActionFailure(error: unknown): GitPathActionResult {
+  const message = error instanceof Error ? error.message : String(error)
+  if (/not a git repository/i.test(message)) {
+    return { ok: false, reason: 'not_git_repo', message: 'The working directory is not a Git repository.' }
+  }
+  if (/ENOENT/i.test(message) || /spawn git/i.test(message)) {
+    return { ok: false, reason: 'git_unavailable', message: 'Git executable was not found.' }
+  }
+  return { ok: false, reason: 'error', message }
+}
+
+function safeUniqueGitPaths(paths: string[]): string[] {
+  return [...new Set(paths.map((path) => path.trim()).filter(isSafeGitPath))]
+}
+
+export async function stageGitChanges(
+  workspaceRoot: string,
+  paths: string[]
+): Promise<GitPathActionResult> {
+  const cwd = workspaceRoot.trim()
+  if (!cwd) {
+    return { ok: false, reason: 'no_workspace', message: 'No working directory selected.' }
+  }
+  const safePaths = safeUniqueGitPaths(paths)
+  if (safePaths.length === 0) {
+    return { ok: false, reason: 'invalid_paths', message: 'Select at least one safe file path.' }
+  }
+  try {
+    const repositoryRoot = (await runGit(cwd, ['rev-parse', '--show-toplevel'])).stdout.trim()
+    await stageGitPaths(cwd, safePaths)
+    workingChangesCache.delete(cwd)
+    return { ok: true, repositoryRoot, fileCount: safePaths.length }
+  } catch (error) {
+    return gitPathActionFailure(error)
+  }
+}
+
+export async function unstageGitChanges(
+  workspaceRoot: string,
+  paths: string[]
+): Promise<GitPathActionResult> {
+  const cwd = workspaceRoot.trim()
+  if (!cwd) {
+    return { ok: false, reason: 'no_workspace', message: 'No working directory selected.' }
+  }
+  const safePaths = safeUniqueGitPaths(paths)
+  if (safePaths.length === 0) {
+    return { ok: false, reason: 'invalid_paths', message: 'Select at least one safe file path.' }
+  }
+  try {
+    const repositoryRoot = (await runGit(cwd, ['rev-parse', '--show-toplevel'])).stdout.trim()
+    let hasHead = true
+    try {
+      await runGit(cwd, ['rev-parse', '--verify', 'HEAD'])
+    } catch {
+      hasHead = false
+    }
+    if (hasHead) {
+      try {
+        await runGit(cwd, ['restore', '--staged', '--', ...safePaths], 60_000)
+      } catch {
+        await runGit(cwd, ['reset', 'HEAD', '--', ...safePaths], 60_000)
+      }
+    } else {
+      await runGit(cwd, ['rm', '--cached', '--ignore-unmatch', '--', ...safePaths], 60_000)
+    }
+    workingChangesCache.delete(cwd)
+    return { ok: true, repositoryRoot, fileCount: safePaths.length }
+  } catch (error) {
+    return gitPathActionFailure(error)
+  }
+}
+
+function gitPushFailure(error: unknown): GitPushResult {
+  const message = error instanceof Error ? error.message : String(error)
+  if (/not a git repository/i.test(message)) {
+    return { ok: false, reason: 'not_git_repo', message: 'The working directory is not a Git repository.' }
+  }
+  if (/ENOENT/i.test(message) || /spawn git/i.test(message)) {
+    return { ok: false, reason: 'git_unavailable', message: 'Git executable was not found.' }
+  }
+  if (/non-fast-forward|fetch first|rejected/i.test(message)) {
+    return {
+      ok: false,
+      reason: 'rejected',
+      message: 'The remote branch has newer commits. Update your branch before pushing.'
+    }
+  }
+  return { ok: false, reason: 'error', message }
+}
+
+export async function pushGitBranch(workspaceRoot: string): Promise<GitPushResult> {
+  const cwd = workspaceRoot.trim()
+  if (!cwd) {
+    return { ok: false, reason: 'no_workspace', message: 'No working directory selected.' }
+  }
+  try {
+    const repositoryRoot = (await runGit(cwd, ['rev-parse', '--show-toplevel'])).stdout.trim()
+    const branch = (await runGit(cwd, ['branch', '--show-current'])).stdout.trim()
+    if (!branch) {
+      return { ok: false, reason: 'detached_head', message: 'Create or switch to a branch before pushing.' }
+    }
+
+    const remotes = (await runGit(cwd, ['remote'])).stdout
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean)
+    if (remotes.length === 0) {
+      return { ok: false, reason: 'no_remote', message: 'No Git remote is configured.' }
+    }
+
+    let upstream = ''
+    try {
+      upstream = (
+        await runGit(cwd, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}'])
+      ).stdout.trim()
+    } catch {
+      upstream = ''
+    }
+
+    if (upstream) {
+      const counts = (await runGit(cwd, ['rev-list', '--left-right', '--count', `HEAD...${upstream}`]))
+        .stdout.trim()
+        .split(/\s+/)
+      const ahead = Number.parseInt(counts[0] ?? '0', 10) || 0
+      const behind = Number.parseInt(counts[1] ?? '0', 10) || 0
+      if (behind > 0) {
+        return {
+          ok: false,
+          reason: 'behind_remote',
+          message: 'The remote branch has newer commits. Update your branch before pushing.'
+        }
+      }
+      if (ahead > 0) await runGit(cwd, ['push'], 120_000, DIFF_MAX_BUFFER)
+      const commitHash = (await runGit(cwd, ['rev-parse', '--short', 'HEAD'])).stdout.trim()
+      return { ok: true, repositoryRoot, branch, upstream, commitHash, pushed: ahead > 0 }
+    }
+
+    const remote = remotes.includes('origin') ? 'origin' : remotes[0]!
+    await runGit(cwd, ['push', '--set-upstream', remote, branch], 120_000, DIFF_MAX_BUFFER)
+    const commitHash = (await runGit(cwd, ['rev-parse', '--short', 'HEAD'])).stdout.trim()
+    return {
+      ok: true,
+      repositoryRoot,
+      branch,
+      upstream: `${remote}/${branch}`,
+      commitHash,
+      pushed: true
+    }
+  } catch (error) {
+    return gitPushFailure(error)
+  }
+}
+
 export async function commitGitChanges(
   workspaceRoot: string,
   message: string,
@@ -470,7 +664,9 @@ export async function commitGitChanges(
       return { ok: false, reason: 'nothing_to_commit', message: 'No changes staged for commit.' }
     }
 
-    await runGit(cwd, ['commit', '-m', commitMessage], 60_000)
+    // `--only` keeps previously staged but unselected files out of this commit.
+    // The selected paths were staged above so this also handles new files.
+    await runGit(cwd, ['commit', '--only', '-m', commitMessage, '--', ...safePaths], 60_000)
     const commitHash = (await runGit(cwd, ['rev-parse', '--short', 'HEAD'])).stdout.trim()
     const summary = (await runGit(cwd, ['show', '-s', '--format=%s', 'HEAD'])).stdout.trim()
 

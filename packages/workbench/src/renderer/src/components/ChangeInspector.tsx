@@ -9,7 +9,7 @@ import {
 } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useShallow } from 'zustand/react/shallow'
-import { FileEdit } from 'lucide-react'
+import { CheckCircle2, FileEdit, GitBranch, Loader2, Sparkles, Upload } from 'lucide-react'
 import { FileTypeIcon } from './chat/FileChip'
 import type { GitWorkingChangeStage } from '@shared/git-working-changes'
 import type { ChatBlock } from '../agent/types'
@@ -17,6 +17,7 @@ import { ChangeDiffStatsLabel } from './ChangeDiffStatsLabel'
 import { DiffView, type DiffRenderStyle } from './DiffView'
 import { EditorListSkeleton } from './workspace-editor/EditorListSkeleton'
 import { useGitWorkingChanges } from '../hooks/use-git-working-changes'
+import { useGitBranches } from '../hooks/use-git-branches'
 import { useWorkspaceDirtyGitRefresh } from '../hooks/use-workspace-dirty-git-refresh'
 import { formatFilePathForDisplay } from '../lib/diff-stats'
 import {
@@ -28,6 +29,8 @@ import { formatComposerPathMention, insertComposerSnippet } from '../lib/compose
 import { splitFileNameAndParent } from '../lib/editor-breadcrumb'
 import { resolveGitCommitPaths } from '../lib/git-commit-selection'
 import { resolveThreadFilesystemRoot } from '../lib/workspace-path'
+import type { ChangeReviewScope } from '../lib/change-review'
+import { toolBlocksFromTurnSummary, turnSummaryFromSources } from '../lib/turn-mutation-view'
 import { useChatStore } from '../store/chat-store'
 
 function normalizeChangePath(path: string | undefined): string {
@@ -52,21 +55,31 @@ export function findChangeItemId(
 }
 
 
-function InspectorCommitBar({
+function InspectorGitBar({
   root,
+  files,
   gitFilePaths,
-  onCommitted
+  branch,
+  upstream,
+  ahead,
+  hasRemote,
+  onChanged
 }: {
   root: string
+  files: Array<{ path: string; stage: GitWorkingChangeStage }>
   gitFilePaths: string[]
-  onCommitted: () => void
-}): ReactElement | null {
+  branch: string | null
+  upstream: string | null
+  ahead: number
+  hasRemote: boolean
+  onChanged: () => Promise<void>
+}): ReactElement {
   const { t } = useTranslation('common')
   const gitCommitSelectedPaths = useChatStore((s) => s.gitCommitSelectedPaths)
   const gitCommitSelectionKey = useChatStore((s) => s.gitCommitSelectionKey)
   const [message, setMessage] = useState('')
-  const [error, setError] = useState<string | null>(null)
-  const [busy, setBusy] = useState(false)
+  const [feedback, setFeedback] = useState<{ kind: 'error' | 'success'; text: string } | null>(null)
+  const [busyAction, setBusyAction] = useState<'stage' | 'unstage' | 'suggest' | 'commit' | 'push' | null>(null)
 
   const selectedPaths = useMemo(
     () =>
@@ -74,62 +87,221 @@ function InspectorCommitBar({
     [gitCommitSelectedPaths, gitFilePaths, gitCommitSelectionKey, root]
   )
 
-  if (gitFilePaths.length === 0) return null
+  const selectedSet = useMemo(() => new Set(selectedPaths), [selectedPaths])
+  const hasSelectedStaged = files.some(
+    (file) => selectedSet.has(file.path) && file.stage !== 'unstaged'
+  )
+  const hasSelectedUnstaged = files.some(
+    (file) => selectedSet.has(file.path) && file.stage !== 'staged'
+  )
 
-  const submit = async (): Promise<void> => {
+  const refresh = async (): Promise<void> => {
+    useChatStore.setState((s) => ({ workspaceDirtyTick: s.workspaceDirtyTick + 1 }))
+    await onChanged()
+  }
+
+  const runPathAction = async (action: 'stage' | 'unstage'): Promise<void> => {
+    if (selectedPaths.length === 0) {
+      setFeedback({ kind: 'error', text: t('operationDockCommitSelectFiles') })
+      return
+    }
+    const method = action === 'stage' ? window.dsGui?.stageGitChanges : window.dsGui?.unstageGitChanges
+    if (typeof method !== 'function') {
+      setFeedback({ kind: 'error', text: t('gitActionUnavailable') })
+      return
+    }
+    setBusyAction(action)
+    setFeedback(null)
+    try {
+      const result = await method(root, selectedPaths)
+      if (!result.ok) {
+        setFeedback({ kind: 'error', text: result.message })
+        return
+      }
+      setFeedback({
+        kind: 'success',
+        text: action === 'stage' ? t('gitStageSuccess') : t('gitUnstageSuccess')
+      })
+      await refresh()
+    } catch (error) {
+      setFeedback({ kind: 'error', text: error instanceof Error ? error.message : String(error) })
+    } finally {
+      setBusyAction(null)
+    }
+  }
+
+  const suggest = async (): Promise<void> => {
+    if (selectedPaths.length === 0 || typeof window.dsGui?.suggestGitCommitMessage !== 'function') return
+    setBusyAction('suggest')
+    setFeedback(null)
+    try {
+      const result = await window.dsGui.suggestGitCommitMessage(root, selectedPaths)
+      if (result.ok) setMessage(result.message)
+      else setFeedback({ kind: 'error', text: result.message })
+    } catch (error) {
+      setFeedback({ kind: 'error', text: error instanceof Error ? error.message : String(error) })
+    } finally {
+      setBusyAction(null)
+    }
+  }
+
+  const push = async (): Promise<boolean> => {
+    if (typeof window.dsGui?.pushGitBranch !== 'function') {
+      setFeedback({ kind: 'error', text: t('gitActionUnavailable') })
+      return false
+    }
+    setBusyAction('push')
+    try {
+      const result = await window.dsGui.pushGitBranch(root)
+      if (!result.ok) {
+        setFeedback({ kind: 'error', text: result.message })
+        return false
+      }
+      setFeedback({
+        kind: 'success',
+        text: result.pushed ? t('gitPushSuccess', { branch: result.branch }) : t('gitPushUpToDate')
+      })
+      await refresh()
+      return true
+    } catch (error) {
+      setFeedback({ kind: 'error', text: error instanceof Error ? error.message : String(error) })
+      return false
+    } finally {
+      setBusyAction(null)
+    }
+  }
+
+  const submit = async (pushAfterCommit: boolean): Promise<void> => {
     const trimmed = message.trim()
     if (!trimmed) {
-      setError(t('operationDockCommitEmptyMessage'))
+      setFeedback({ kind: 'error', text: t('operationDockCommitEmptyMessage') })
       return
     }
     if (selectedPaths.length === 0) {
-      setError(t('operationDockCommitSelectFiles'))
+      setFeedback({ kind: 'error', text: t('operationDockCommitSelectFiles') })
       return
     }
     if (typeof window.dsGui?.commitGitChanges !== 'function') {
-      setError(t('operationDockCommitUnavailable'))
+      setFeedback({ kind: 'error', text: t('operationDockCommitUnavailable') })
       return
     }
-    setBusy(true)
-    setError(null)
+    setBusyAction('commit')
+    setFeedback(null)
     try {
       const result = await window.dsGui.commitGitChanges(root, trimmed, selectedPaths)
       if (!result.ok) {
-        setError(result.message)
+        setFeedback({ kind: 'error', text: result.message })
         return
       }
       setMessage('')
-      useChatStore.setState((s) => ({ workspaceDirtyTick: s.workspaceDirtyTick + 1 }))
-      onCommitted()
+      setFeedback({
+        kind: 'success',
+        text: t('gitCommitLocalSuccess', { hash: result.commitHash })
+      })
+      await refresh()
+      if (pushAfterCommit) await push()
     } catch (commitError) {
-      setError(commitError instanceof Error ? commitError.message : String(commitError))
+      setFeedback({ kind: 'error', text: commitError instanceof Error ? commitError.message : String(commitError) })
     } finally {
-      setBusy(false)
+      setBusyAction(null)
     }
   }
 
   return (
-    <div className="shrink-0 border-t border-[color-mix(in_srgb,var(--ds-text)_10%,transparent)] px-2 py-2">
+    <div className="shrink-0 space-y-2 border-t border-[color-mix(in_srgb,var(--ds-text)_10%,transparent)] bg-ds-card/45 px-2 py-2">
+      <div className="flex items-center gap-1.5 text-[11px] text-ds-muted">
+        <GitBranch className="h-3.5 w-3.5 shrink-0" strokeWidth={1.8} />
+        <span className="min-w-0 flex-1 truncate">{branch ?? t('gitNoBranch')}</span>
+        <span className="shrink-0 text-ds-faint">
+          {upstream
+            ? ahead > 0
+              ? t('gitAheadCount', { count: ahead })
+              : t('gitSynced')
+            : hasRemote
+              ? t('gitNoUpstream')
+              : t('gitNoRemote')}
+        </span>
+      </div>
+      {gitFilePaths.length > 0 ? (
+        <div className="grid grid-cols-2 gap-1.5">
+          <button
+            type="button"
+            disabled={busyAction !== null || selectedPaths.length === 0 || !hasSelectedUnstaged}
+            onClick={() => void runPathAction('stage')}
+            className="h-7 rounded-md bg-ds-hover text-[11.5px] font-medium text-ds-ink transition hover:bg-ds-hover/80 disabled:opacity-40"
+          >
+            {busyAction === 'stage' ? t('gitStaging') : t('gitStageSelected')}
+          </button>
+          <button
+            type="button"
+            disabled={busyAction !== null || selectedPaths.length === 0 || !hasSelectedStaged}
+            onClick={() => void runPathAction('unstage')}
+            className="h-7 rounded-md bg-ds-hover text-[11.5px] font-medium text-ds-ink transition hover:bg-ds-hover/80 disabled:opacity-40"
+          >
+            {busyAction === 'unstage' ? t('gitUnstaging') : t('gitUnstageSelected')}
+          </button>
+        </div>
+      ) : null}
+      {gitFilePaths.length > 0 ? (
+        <div className="relative">
       <textarea
         value={message}
         onChange={(event) => setMessage(event.target.value)}
         placeholder={t('operationDockCommitMessagePlaceholder')}
         rows={2}
-        className="w-full resize-none rounded-md border border-ds-border bg-ds-elevated px-2 py-1.5 text-[12px] text-ds-ink outline-none placeholder:text-ds-faint"
+        className="w-full resize-none rounded-md border border-ds-border bg-ds-elevated px-2 py-1.5 pr-8 text-[12px] text-ds-ink outline-none placeholder:text-ds-faint focus:border-ds-border-strong"
       />
-      {error ? (
-        <p className="mt-1 text-[11px] text-amber-700 dark:text-amber-200">{error}</p>
+          <button
+            type="button"
+            disabled={busyAction !== null || selectedPaths.length === 0}
+            onClick={() => void suggest()}
+            title={t('operationDockCommitGenerate')}
+            aria-label={t('operationDockCommitGenerate')}
+            className="absolute right-1.5 top-1.5 rounded p-1 text-ds-faint transition hover:bg-ds-hover hover:text-ds-ink disabled:opacity-40"
+          >
+            {busyAction === 'suggest' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
+          </button>
+        </div>
       ) : null}
+      {feedback ? (
+        <p className={`flex items-start gap-1.5 text-[11px] leading-4 ${feedback.kind === 'success' ? 'text-emerald-600 dark:text-emerald-300' : 'text-amber-700 dark:text-amber-200'}`}>
+          {feedback.kind === 'success' ? <CheckCircle2 className="mt-0.5 h-3 w-3 shrink-0" /> : null}
+          <span>{feedback.text}</span>
+        </p>
+      ) : null}
+      {gitFilePaths.length > 0 ? (
+        <div className="grid grid-cols-2 gap-1.5">
       <button
         type="button"
-        disabled={busy || selectedPaths.length === 0}
-        onClick={() => void submit()}
-        className="mt-1.5 inline-flex h-7 w-full items-center justify-center rounded-md bg-ds-hover text-[12px] font-medium text-ds-ink transition hover:bg-ds-hover/80 disabled:opacity-45"
+            disabled={busyAction !== null || selectedPaths.length === 0}
+            onClick={() => void submit(false)}
+            className="inline-flex h-8 items-center justify-center rounded-md bg-ds-hover text-[11.5px] font-medium text-ds-ink transition hover:bg-ds-hover/80 active:scale-[0.98] disabled:opacity-45"
       >
-        {busy
+            {busyAction === 'commit'
           ? t('operationDockCommitSubmitting')
-          : `${t('operationDockCommitSubmit')} (${selectedPaths.length})`}
+              : t('gitCommitLocal')}
       </button>
+          <button
+            type="button"
+            disabled={busyAction !== null || selectedPaths.length === 0 || !hasRemote}
+            onClick={() => void submit(true)}
+            className="inline-flex h-8 items-center justify-center gap-1 rounded-md bg-accent px-2 text-[11.5px] font-medium text-white transition hover:brightness-110 active:scale-[0.98] disabled:opacity-45"
+          >
+            <Upload className="h-3.5 w-3.5" strokeWidth={1.9} />
+            {t('gitCommitAndPush')}
+          </button>
+        </div>
+      ) : ahead > 0 ? (
+        <button
+          type="button"
+          disabled={busyAction !== null || !hasRemote}
+          onClick={() => void push()}
+          className="inline-flex h-8 w-full items-center justify-center gap-1.5 rounded-md bg-accent px-2 text-[12px] font-medium text-white transition hover:brightness-110 active:scale-[0.98] disabled:opacity-45"
+        >
+          <Upload className="h-3.5 w-3.5" strokeWidth={1.9} />
+          {busyAction === 'push' ? t('gitPushing') : t('gitPushCommits', { count: ahead })}
+        </button>
+      ) : null}
     </div>
   )
 }
@@ -154,6 +326,9 @@ export function ChangeInspector({
   variant = 'stack',
   onOpenFile,
   onRevealInEditor,
+  scope = 'thread',
+  turnId = null,
+  onScopeChange,
   requestedPath = null,
   onRequestedPathConsumed
 }: {
@@ -164,6 +339,9 @@ export function ChangeInspector({
   onOpenFile?: (path: string, line?: number) => void
   /** IDE list: double-click / Enter jumps to source in the Files editor. */
   onRevealInEditor?: (path: string, line?: number) => void
+  scope?: ChangeReviewScope
+  turnId?: string | null
+  onScopeChange?: (scope: ChangeReviewScope) => void
   /** Select this path when the list contains it (from a file_change jump). */
   requestedPath?: string | null
   onRequestedPathConsumed?: () => void
@@ -174,36 +352,72 @@ export function ChangeInspector({
   const gitCommitSelectedPaths = useChatStore((s) => s.gitCommitSelectedPaths)
   const syncGitCommitSelection = useChatStore((s) => s.syncGitCommitSelection)
   const toggleGitCommitPath = useChatStore((s) => s.toggleGitCommitPath)
-  const { workspaceRoot, activeThreadId, threads, workspaceDirtyTick, turnDiffByTurnId } =
+  const {
+    workspaceRoot,
+    activeThreadId,
+    threads,
+    workspaceDirtyTick,
+    turnDiffByTurnId,
+    currentTurnId,
+    lastCompletedTurnId
+  } =
     useChatStore(
       useShallow((s) => ({
         workspaceRoot: s.workspaceRoot,
         activeThreadId: s.activeThreadId,
         threads: s.threads,
         workspaceDirtyTick: s.workspaceDirtyTick,
-        turnDiffByTurnId: s.turnDiffByTurnId
+        turnDiffByTurnId: s.turnDiffByTurnId,
+        currentTurnId: s.currentTurnId,
+        lastCompletedTurnId: s.lastCompletedTurnId
       }))
   )
   const activeThread = activeThreadId
     ? threads.find((thread) => thread.id === activeThreadId)
     : undefined
   const isSessionDraft = activeThread?.envMode === 'worktree'
-  const root = resolveThreadFilesystemRoot(activeThreadId, threads, workspaceRoot)
-  const changeRoot =
+  const root = resolveThreadFilesystemRoot(activeThreadId, threads, workspaceRoot).trim()
+  const projectRoot = root || workspaceRoot.trim()
+  const sessionRoot =
     isSessionDraft && activeThread?.worktreePath?.trim()
       ? activeThread.worktreePath.trim()
-      : root
+      : projectRoot
+  const changeRoot = scope === 'workspace' ? projectRoot : sessionRoot
   const { result: gitChanges, loading: gitLoading, reload: reloadGitChanges } =
     useGitWorkingChanges(changeRoot)
-  useWorkspaceDirtyGitRefresh(workspaceDirtyTick, reloadGitChanges)
+  const { result: gitBranches, reload: reloadGitBranches } = useGitBranches(projectRoot)
+  const refreshGit = useCallback(async (): Promise<void> => {
+    await Promise.all([reloadGitChanges(), reloadGitBranches()])
+  }, [reloadGitBranches, reloadGitChanges])
+  useWorkspaceDirtyGitRefresh(workspaceDirtyTick, refreshGit)
+
+  const reviewTurnId = turnId || currentTurnId || lastCompletedTurnId
+  const turnBlocks = useMemo(() => {
+    if (scope !== 'turn' || !reviewTurnId) return []
+    const summary = turnSummaryFromSources(turnDiffByTurnId[reviewTurnId], [])
+    return toolBlocksFromTurnSummary(reviewTurnId, summary)
+  }, [reviewTurnId, scope, turnDiffByTurnId])
+  const sourceBlocks = useMemo(
+    () => (scope === 'turn' ? turnBlocks : scope === 'thread' ? blocks : []),
+    [blocks, scope, turnBlocks]
+  )
+  const sourceTurnDiffs = useMemo(
+    () =>
+      scope === 'thread'
+        ? turnDiffByTurnId
+        : scope === 'turn' && reviewTurnId && turnDiffByTurnId[reviewTurnId]
+          ? { [reviewTurnId]: turnDiffByTurnId[reviewTurnId] }
+          : {},
+    [reviewTurnId, scope, turnDiffByTurnId]
+  )
   const sessionLedgerEntries = useMemo(
     () =>
       collectWorkspaceChangeEntries({
-        blocks,
-        turnDiffByTurnId,
+        blocks: sourceBlocks,
+        turnDiffByTurnId: sourceTurnDiffs,
         gitFiles: null
       }),
-    [blocks, turnDiffByTurnId]
+    [sourceBlocks, sourceTurnDiffs]
   )
   const sessionPaths = useMemo(
     () =>
@@ -215,19 +429,24 @@ export function ChangeInspector({
     [sessionLedgerEntries]
   )
   const scopedGitFiles = useMemo(
-    () =>
-      gitChanges?.ok
-        ? isSessionDraft
-          ? gitChanges.files.filter((file) =>
-              sessionPaths.has(file.path.replace(/\\/g, '/').trim())
-            )
-          : gitChanges.files
-        : null,
-    [gitChanges, isSessionDraft, sessionPaths]
+    () => {
+      if (!gitChanges?.ok) return null
+      if (scope === 'workspace') return gitChanges.files
+      if (scope === 'conflicts') {
+        const conflictPaths = new Set(
+          (activeThread?.publishConflicts ?? []).map((path) => normalizeChangePath(path))
+        )
+        return gitChanges.files.filter((file) => conflictPaths.has(normalizeChangePath(file.path)))
+      }
+      return gitChanges.files.filter((file) =>
+        sessionPaths.has(file.path.replace(/\\/g, '/').trim())
+      )
+    },
+    [activeThread?.publishConflicts, gitChanges, scope, sessionPaths]
   )
   const gitFilePaths = useMemo(
-    () => (isSessionDraft ? [] : (scopedGitFiles ?? []).map((file) => file.path)),
-    [isSessionDraft, scopedGitFiles]
+    () => (scope === 'workspace' ? (scopedGitFiles ?? []).map((file) => file.path) : []),
+    [scope, scopedGitFiles]
   )
 
   const isReview = variant === 'review'
@@ -277,14 +496,12 @@ export function ChangeInspector({
   const fileChanges = useMemo(
     () =>
       collectWorkspaceChangeEntries({
-        blocks,
-        turnDiffByTurnId,
-        // Read cumulative patches from the active session's worktree, filtered
-        // to paths this thread actually touched. Project dirt from sibling
-        // sessions never enters this inspector.
-        gitFiles: scopedGitFiles
-      }).map((entry) => (isSessionDraft ? { ...entry, committable: false } : entry)),
-    [blocks, isSessionDraft, scopedGitFiles, turnDiffByTurnId]
+        blocks: sourceBlocks,
+        turnDiffByTurnId: sourceTurnDiffs,
+        gitFiles: scopedGitFiles,
+        retainSessionEntriesWhenGitClean: scope === 'turn'
+      }).map((entry) => ({ ...entry, committable: scope === 'workspace' && entry.committable })),
+    [scope, scopedGitFiles, sourceBlocks, sourceTurnDiffs]
   )
 
   const changeStats = useMemo(() => sumWorkspaceChangeStats(fileChanges), [fileChanges])
@@ -494,13 +711,6 @@ export function ChangeInspector({
           )
         })}
       </ul>
-      {isList ? (
-        <InspectorCommitBar
-          root={root}
-          gitFilePaths={gitFilePaths}
-          onCommitted={() => void reloadGitChanges()}
-        />
-      ) : null}
     </div>
   )
 
@@ -545,6 +755,50 @@ export function ChangeInspector({
     <aside
       className={`ds-change-inspector ds-change-inspector--${variant} ds-tool-panel ds-no-drag flex h-full min-h-0 flex-col ${className ?? ''}`}
     >
+      {onScopeChange ? (
+        <div className="shrink-0 border-b border-ds-border-muted/70 px-2 py-2">
+          <div className="grid grid-cols-3 gap-1 rounded-lg bg-ds-hover/55 p-0.5">
+            {([
+              ['turn', t('changeScopeTurn')],
+              ['thread', t('changeScopeThread')],
+              ['workspace', t('changeScopeWorkspace')]
+            ] as Array<[ChangeReviewScope, string]>).map(([itemScope, label]) => (
+              <button
+                key={itemScope}
+                type="button"
+                disabled={itemScope === 'turn' && !reviewTurnId}
+                onClick={() => onScopeChange(itemScope)}
+                aria-pressed={scope === itemScope}
+                className={`h-7 min-w-0 truncate rounded-md px-1.5 text-[11.5px] font-medium transition disabled:opacity-35 ${
+                  scope === itemScope
+                    ? 'bg-ds-card text-ds-ink shadow-sm'
+                    : 'text-ds-muted hover:text-ds-ink'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          {scope === 'conflicts' ? (
+            <button
+              type="button"
+              onClick={() => onScopeChange('conflicts')}
+              className="mt-1.5 inline-flex h-6 items-center rounded-full bg-amber-500/12 px-2 text-[11px] font-medium text-amber-700 dark:text-amber-300"
+            >
+              {t('changeScopeConflicts', { count: activeThread?.publishConflicts?.length ?? 0 })}
+            </button>
+          ) : null}
+          <p className="mt-1.5 truncate px-0.5 text-[10.5px] text-ds-faint">
+            {scope === 'workspace'
+              ? t('changeScopeWorkspaceHint')
+              : scope === 'turn'
+                ? t('changeScopeTurnHint')
+                : scope === 'conflicts'
+                  ? t('changeScopeConflictsHint')
+                  : t('changeScopeThreadHint')}
+          </p>
+        </div>
+      ) : null}
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
         {gitLoading && fileChanges.length === 0 ? (
           isList || isDiff || isReview ? (
@@ -561,7 +815,15 @@ export function ChangeInspector({
               <div className="mt-3 text-[13px] font-medium text-ds-muted">
                 {t('inspectorEmptyTitle')}
               </div>
-              <div className="mt-1 text-[12px] leading-6 text-ds-faint">{t('inspectorEmpty')}</div>
+              <div className="mt-1 text-[12px] leading-6 text-ds-faint">
+                {scope === 'workspace'
+                  ? t('inspectorEmptyWorkspace')
+                  : scope === 'turn'
+                    ? t('inspectorEmptyTurn')
+                    : scope === 'conflicts'
+                      ? t('inspectorEmptyConflicts')
+                      : t('inspectorEmpty')}
+              </div>
             </div>
           </div>
         ) : isList ? (
@@ -604,6 +866,18 @@ export function ChangeInspector({
           </div>
         )}
       </div>
+      {scope === 'workspace' && !isDiff && gitBranches?.ok ? (
+        <InspectorGitBar
+          root={projectRoot}
+          files={gitChanges?.ok ? gitChanges.files : []}
+          gitFilePaths={gitFilePaths}
+          branch={gitBranches.currentBranch}
+          upstream={gitBranches.upstream}
+          ahead={gitBranches.ahead}
+          hasRemote={gitBranches.hasRemote}
+          onChanged={refreshGit}
+        />
+      ) : null}
     </aside>
   )
 }

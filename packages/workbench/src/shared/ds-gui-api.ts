@@ -1,6 +1,7 @@
 import type { AppSettingsPatch, AppSettingsV1, EndpointProtocol } from './app-settings'
 import type { EditorListResult, EditorOpenResult, OpenEditorPathOptions } from './editor'
 import type { GitBranchesResult } from './git-branches'
+import type { GitPathActionResult, GitPushResult } from './git-actions'
 import type { GitCommitMessageSuggestionResult, GitCommitResult } from './git-commit'
 import type { GitHubRepositoryResult } from './github-repository'
 import type { GitLogResult } from './git-log'
@@ -404,6 +405,9 @@ export type DsGuiApi = {
     workspaceRoot: string,
     paths?: string[]
   ) => Promise<GitCommitMessageSuggestionResult>
+  stageGitChanges: (workspaceRoot: string, paths: string[]) => Promise<GitPathActionResult>
+  unstageGitChanges: (workspaceRoot: string, paths: string[]) => Promise<GitPathActionResult>
+  pushGitBranch: (workspaceRoot: string) => Promise<GitPushResult>
   listEditors: () => Promise<EditorListResult>
   openEditorPath: (options: OpenEditorPathOptions) => Promise<EditorOpenResult>
   createTerminalSession: (options: TerminalCreateOptions) => Promise<TerminalCreateResult>

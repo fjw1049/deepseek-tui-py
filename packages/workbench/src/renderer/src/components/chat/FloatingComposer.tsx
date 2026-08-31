@@ -48,6 +48,7 @@ import { ApprovalBubble } from './ApprovalBubble'
 import { ElevationBubble } from './ElevationBubble'
 import { FileChip } from './FileChip'
 import { ComposerLiveChangesHeader } from './ComposerLiveChangesHeader'
+import { openChangesPanel } from '../../lib/change-review'
 import { UserInputBubble } from './UserInputBubble'
 import { ComposerApprovalPolicySelector } from './ComposerApprovalPolicySelector'
 import {
@@ -1482,7 +1483,10 @@ export function FloatingComposer({
       ) : null}
       <ComposerLiveChangesHeader
         onReview={() => {
-          window.dispatchEvent(new CustomEvent('deepseekgui:open-changes-panel'))
+          openChangesPanel({
+            scope: 'turn',
+            turnId: useChatStore.getState().currentTurnId ?? undefined
+          })
         }}
       />
       <PublishConflictBanner />
