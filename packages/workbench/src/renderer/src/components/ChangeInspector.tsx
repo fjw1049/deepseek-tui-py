@@ -10,17 +10,17 @@ import {
 import { useTranslation } from 'react-i18next'
 import { useShallow } from 'zustand/react/shallow'
 import {
+  ArrowRight,
   CheckCircle2,
-  ChevronDown,
   FileEdit,
   GitBranch,
   Loader2,
   Sparkles,
+  TriangleAlert,
   Upload
 } from 'lucide-react'
 import { FileTypeIcon } from './chat/FileChip'
 import type { GitWorkingChangeStage } from '@shared/git-working-changes'
-import type { ChatBlock } from '../agent/types'
 import { ChangeDiffStatsLabel } from './ChangeDiffStatsLabel'
 import { DiffView, type DiffRenderStyle } from './DiffView'
 import { EditorListSkeleton } from './workspace-editor/EditorListSkeleton'
@@ -37,7 +37,7 @@ import { formatComposerPathMention, insertComposerSnippet } from '../lib/compose
 import { splitFileNameAndParent } from '../lib/editor-breadcrumb'
 import { resolveGitCommitPaths } from '../lib/git-commit-selection'
 import { resolveThreadFilesystemRoot } from '../lib/workspace-path'
-import type { ChangeReviewScope } from '../lib/change-review'
+import type { ChangeReviewContext } from '../lib/change-review'
 import { toolBlocksFromTurnSummary, turnSummaryFromSources } from '../lib/turn-mutation-view'
 import { useChatStore } from '../store/chat-store'
 
@@ -329,27 +329,27 @@ const STACK_LIST_MAX = 420
  * - `diff`: compare only — IDE center stage.
  */
 export function ChangeInspector({
-  blocks,
   className,
   variant = 'stack',
   onOpenFile,
   onRevealInEditor,
-  scope = 'thread',
+  context = 'working-tree',
   turnId = null,
-  onScopeChange,
+  projectRootOverride = null,
+  onContextChange,
   requestedPath = null,
   onRequestedPathConsumed
 }: {
-  blocks: ChatBlock[]
   className?: string
   variant?: 'review' | 'stack' | 'list' | 'diff'
   /** Chat / review: open the file (IDE keep-alive editor). */
   onOpenFile?: (path: string, line?: number) => void
   /** IDE list: double-click / Enter jumps to source in the Files editor. */
   onRevealInEditor?: (path: string, line?: number) => void
-  scope?: ChangeReviewScope
+  context?: ChangeReviewContext
   turnId?: string | null
-  onScopeChange?: (scope: ChangeReviewScope) => void
+  projectRootOverride?: string | null
+  onContextChange?: (context: ChangeReviewContext) => void
   /** Select this path when the list contains it (from a file_change jump). */
   requestedPath?: string | null
   onRequestedPathConsumed?: () => void
@@ -385,15 +385,17 @@ export function ChangeInspector({
     : undefined
   const isSessionDraft = activeThread?.envMode === 'worktree'
   const root = resolveThreadFilesystemRoot(activeThreadId, threads, workspaceRoot).trim()
-  const projectRoot = root || workspaceRoot.trim()
+  const threadProjectRoot = root || workspaceRoot.trim()
+  const projectRoot = projectRootOverride?.trim() || threadProjectRoot
   const sessionRoot =
     isSessionDraft && activeThread?.worktreePath?.trim()
       ? activeThread.worktreePath.trim()
-      : projectRoot
-  const changeRoot = scope === 'workspace' ? projectRoot : sessionRoot
+      : threadProjectRoot
+  const changeRoot = context === 'project' ? projectRoot : sessionRoot
+  const isGitContext = context === 'working-tree' || context === 'project'
   const { result: gitChanges, loading: gitLoading, reload: reloadGitChanges } =
     useGitWorkingChanges(changeRoot)
-  const { result: gitBranches, reload: reloadGitBranches } = useGitBranches(projectRoot)
+  const { result: gitBranches, reload: reloadGitBranches } = useGitBranches(changeRoot)
   const refreshGit = useCallback(async (): Promise<void> => {
     await Promise.all([reloadGitChanges(), reloadGitBranches()])
   }, [reloadGitBranches, reloadGitChanges])
@@ -401,22 +403,20 @@ export function ChangeInspector({
 
   const reviewTurnId = turnId || currentTurnId || lastCompletedTurnId
   const turnBlocks = useMemo(() => {
-    if (scope !== 'turn' || !reviewTurnId) return []
+    if (context !== 'last-turn' || !reviewTurnId) return []
     const summary = turnSummaryFromSources(turnDiffByTurnId[reviewTurnId], [])
     return toolBlocksFromTurnSummary(reviewTurnId, summary)
-  }, [reviewTurnId, scope, turnDiffByTurnId])
+  }, [context, reviewTurnId, turnDiffByTurnId])
   const sourceBlocks = useMemo(
-    () => (scope === 'turn' ? turnBlocks : scope === 'thread' ? blocks : []),
-    [blocks, scope, turnBlocks]
+    () => (context === 'last-turn' ? turnBlocks : []),
+    [context, turnBlocks]
   )
   const sourceTurnDiffs = useMemo(
     () =>
-      scope === 'thread'
-        ? turnDiffByTurnId
-        : scope === 'turn' && reviewTurnId && turnDiffByTurnId[reviewTurnId]
+      context === 'last-turn' && reviewTurnId && turnDiffByTurnId[reviewTurnId]
           ? { [reviewTurnId]: turnDiffByTurnId[reviewTurnId] }
           : {},
-    [reviewTurnId, scope, turnDiffByTurnId]
+    [context, reviewTurnId, turnDiffByTurnId]
   )
   const sessionLedgerEntries = useMemo(
     () =>
@@ -439,8 +439,8 @@ export function ChangeInspector({
   const scopedGitFiles = useMemo(
     () => {
       if (!gitChanges?.ok) return null
-      if (scope === 'workspace') return gitChanges.files
-      if (scope === 'conflicts') {
+      if (isGitContext) return gitChanges.files
+      if (context === 'conflicts') {
         const conflictPaths = new Set(
           (activeThread?.publishConflicts ?? []).map((path) => normalizeChangePath(path))
         )
@@ -450,11 +450,11 @@ export function ChangeInspector({
         sessionPaths.has(file.path.replace(/\\/g, '/').trim())
       )
     },
-    [activeThread?.publishConflicts, gitChanges, scope, sessionPaths]
+    [activeThread?.publishConflicts, context, gitChanges, isGitContext, sessionPaths]
   )
   const gitFilePaths = useMemo(
-    () => (scope === 'workspace' ? (scopedGitFiles ?? []).map((file) => file.path) : []),
-    [scope, scopedGitFiles]
+    () => (isGitContext ? (scopedGitFiles ?? []).map((file) => file.path) : []),
+    [isGitContext, scopedGitFiles]
   )
 
   const isReview = variant === 'review'
@@ -507,9 +507,9 @@ export function ChangeInspector({
         blocks: sourceBlocks,
         turnDiffByTurnId: sourceTurnDiffs,
         gitFiles: scopedGitFiles,
-        retainSessionEntriesWhenGitClean: scope === 'turn'
-      }).map((entry) => ({ ...entry, committable: scope === 'workspace' && entry.committable })),
-    [scope, scopedGitFiles, sourceBlocks, sourceTurnDiffs]
+        retainSessionEntriesWhenGitClean: context === 'last-turn'
+      }).map((entry) => ({ ...entry, committable: isGitContext && entry.committable })),
+    [context, isGitContext, scopedGitFiles, sourceBlocks, sourceTurnDiffs]
   )
 
   const changeStats = useMemo(() => sumWorkspaceChangeStats(fileChanges), [fileChanges])
@@ -563,6 +563,30 @@ export function ChangeInspector({
     if (stage === 'partial') return t('gitStagePartial')
     return t('gitStageUnstaged')
   }
+
+  const conflictCount = activeThread?.publishConflicts?.length ?? 0
+  const contextTitle =
+    context === 'last-turn'
+      ? t('changeContextLastTurn')
+      : context === 'project'
+        ? t('changeContextProject')
+        : context === 'conflicts'
+          ? t('changeContextConflicts', { count: conflictCount })
+          : isSessionDraft
+            ? t('changeContextWorktree')
+            : t('changeContextWorkingTree')
+  const contextHint =
+    context === 'last-turn'
+      ? t('changeContextLastTurnHint')
+      : context === 'project'
+        ? t('changeContextProjectHint', { path: projectRoot })
+        : context === 'conflicts'
+          ? t('changeContextConflictsHint')
+          : isSessionDraft
+            ? t('changeContextWorktreeHint')
+            : t('changeContextWorkingTreeHint')
+  const ContextIcon =
+    context === 'last-turn' ? Sparkles : context === 'conflicts' ? TriangleAlert : GitBranch
 
   const fileList = (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
@@ -763,47 +787,35 @@ export function ChangeInspector({
     <aside
       className={`ds-change-inspector ds-change-inspector--${variant} ds-tool-panel ds-no-drag flex h-full min-h-0 flex-col ${className ?? ''}`}
     >
-      {onScopeChange ? (
-        <div className="flex h-9 shrink-0 items-center border-b border-ds-border-muted/70 px-2">
-          <div className="relative min-w-0 max-w-full">
-            <select
-              value={scope}
-              onChange={(event) => onScopeChange(event.target.value as ChangeReviewScope)}
-              aria-label={t('changeScopeLabel')}
-              title={
-                scope === 'workspace'
-                  ? t('changeScopeWorkspaceHint')
-                  : scope === 'turn'
-                    ? t('changeScopeTurnHint')
-                    : scope === 'conflicts'
-                      ? t('changeScopeConflictsHint')
-                      : t('changeScopeThreadHint')
-              }
-              className={`h-7 max-w-full appearance-none truncate rounded-md border bg-transparent py-0 pl-2 pr-7 text-[11.5px] font-medium outline-none transition-[background-color,border-color] duration-150 hover:bg-ds-hover focus-visible:ring-2 focus-visible:ring-ds-accent/35 ${
-                scope === 'conflicts'
-                  ? 'border-amber-500/35 text-amber-700 dark:text-amber-300'
-                  : 'border-ds-border-muted text-ds-muted'
-              }`}
-            >
-              <option value="thread">{t('changeScopeThread')}</option>
-              <option value="turn" disabled={!reviewTurnId}>
-                {t('changeScopeTurn')}
-              </option>
-              <option value="workspace">{t('changeScopeWorkspace')}</option>
-              {(activeThread?.publishConflicts?.length ?? 0) > 0 || scope === 'conflicts' ? (
-                <option value="conflicts">
-                  {t('changeScopeConflicts', {
-                    count: activeThread?.publishConflicts?.length ?? 0
-                  })}
-                </option>
-              ) : null}
-            </select>
-            <ChevronDown
-              aria-hidden
-              className="pointer-events-none absolute right-2 top-1/2 h-3 w-3 -translate-y-1/2 text-ds-faint"
-              strokeWidth={1.9}
-            />
+      {onContextChange ? (
+        <div className="flex min-h-12 shrink-0 items-center gap-2.5 border-b border-ds-border-muted/70 px-2.5 py-1.5">
+          <span
+            className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ${
+              context === 'conflicts'
+                ? 'bg-amber-500/12 text-amber-700 dark:text-amber-300'
+                : 'bg-ds-hover/75 text-ds-muted'
+            }`}
+          >
+            <ContextIcon className="h-3.5 w-3.5" strokeWidth={1.85} />
+          </span>
+          <div className="min-w-0 flex-1">
+            <div className="truncate text-[12px] font-semibold leading-4 text-ds-ink">
+              {contextTitle}
+            </div>
+            <div className="truncate text-[10.5px] leading-4 text-ds-faint" title={contextHint}>
+              {contextHint}
+            </div>
           </div>
+          {context !== 'working-tree' ? (
+            <button
+              type="button"
+              onClick={() => onContextChange('working-tree')}
+              className="inline-flex h-7 shrink-0 items-center gap-1 rounded-md px-1.5 text-[11px] font-medium text-ds-muted transition-[background-color,color,transform] duration-150 hover:bg-ds-hover hover:text-ds-ink active:scale-[0.97]"
+            >
+              {t('changeContextShowWorkingTree')}
+              <ArrowRight className="h-3 w-3" strokeWidth={1.9} />
+            </button>
+          ) : null}
         </div>
       ) : null}
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
@@ -823,11 +835,11 @@ export function ChangeInspector({
                 {t('inspectorEmptyTitle')}
               </div>
               <div className="mt-1 text-[12px] leading-6 text-ds-faint">
-                {scope === 'workspace'
+                {context === 'project'
                   ? t('inspectorEmptyWorkspace')
-                  : scope === 'turn'
+                  : context === 'last-turn'
                     ? t('inspectorEmptyTurn')
-                    : scope === 'conflicts'
+                    : context === 'conflicts'
                       ? t('inspectorEmptyConflicts')
                       : t('inspectorEmpty')}
               </div>
@@ -873,9 +885,9 @@ export function ChangeInspector({
           </div>
         )}
       </div>
-      {scope === 'workspace' && !isDiff && gitBranches?.ok ? (
+      {isGitContext && !isDiff && gitBranches?.ok ? (
         <InspectorGitBar
-          root={projectRoot}
+          root={changeRoot}
           files={gitChanges?.ok ? gitChanges.files : []}
           gitFilePaths={gitFilePaths}
           branch={gitBranches.currentBranch}

@@ -39,7 +39,7 @@ import { useWorkspaceEditorStore } from '../../store/workspace-editor-store'
 import { useGitWorkingChanges } from '../../hooks/use-git-working-changes'
 import { useWorkspaceDirtyGitRefresh } from '../../hooks/use-workspace-dirty-git-refresh'
 import { collectWorkspaceChangeEntries } from '../../lib/workspace-change-stats'
-import type { ChangeReviewScope } from '../../lib/change-review'
+import type { ChangeReviewContext } from '../../lib/change-review'
 import { useChatStore } from '../../store/chat-store'
 import { IdeProjectPicker, type IdeProjectOption } from './IdeProjectPicker'
 import { IdeQuickOpenPalette } from './IdeQuickOpenPalette'
@@ -64,9 +64,10 @@ type Props = {
   chatRail: ReactNode
   onExitIdeMode: () => void
   onOpenFileInEditor: (path: string, line?: number) => void
-  changesScope?: ChangeReviewScope
+  changesContext?: ChangeReviewContext
   changesTurnId?: string | null
-  onChangesScopeChange?: (scope: ChangeReviewScope) => void
+  changesProjectRoot?: string | null
+  onChangesContextChange?: (context: ChangeReviewContext) => void
   /** Imperative center-tab request from parent (e.g. open diff from composer). */
   requestedCenterTab?: IdeCenterTab | null
   onRequestedCenterTabConsumed?: () => void
@@ -153,9 +154,10 @@ export function IdeWorkspaceLayout({
   chatRail,
   onExitIdeMode,
   onOpenFileInEditor,
-  changesScope = 'thread',
+  changesContext = 'working-tree',
   changesTurnId = null,
-  onChangesScopeChange,
+  changesProjectRoot = null,
+  onChangesContextChange,
   requestedCenterTab = null,
   onRequestedCenterTabConsumed,
   terminalMaximized = false
@@ -228,12 +230,15 @@ export function IdeWorkspaceLayout({
   }, [])
 
   const selectActivity = useCallback(
-    (item: ActivityItem) => {
+    (item: IdeCenterTab) => {
+      if (item === 'changes' && centerTab !== 'changes') {
+        onChangesContextChange?.('working-tree')
+      }
       const next = nextIdeActivitySelection(centerTab, activitySidebarVisible, item)
       setCenterTab(next.tab)
       setActivitySidebarVisible(next.sidebarVisible)
     },
-    [activitySidebarVisible, centerTab]
+    [activitySidebarVisible, centerTab, onChangesContextChange]
   )
 
   const handleQuickOpenFile = useCallback(
@@ -425,10 +430,10 @@ export function IdeWorkspaceLayout({
                 <Suspense fallback={<PanelFallback />}>
                   <ChangeInspector
                     variant="list"
-                    blocks={blocks}
-                    scope={changesScope}
+                    context={changesContext}
                     turnId={changesTurnId}
-                    onScopeChange={onChangesScopeChange}
+                    projectRootOverride={changesProjectRoot}
+                    onContextChange={onChangesContextChange}
                     className="h-full min-h-0"
                     onRevealInEditor={handleRevealChangeFile}
                     requestedPath={changesFocusPath}
@@ -471,9 +476,9 @@ export function IdeWorkspaceLayout({
                   <Suspense fallback={<PanelFallback />}>
                     <ChangeInspector
                       variant="diff"
-                      blocks={blocks}
-                      scope={changesScope}
+                      context={changesContext}
                       turnId={changesTurnId}
+                      projectRootOverride={changesProjectRoot}
                       className="h-full min-h-0"
                       requestedPath={changesFocusPath}
                       onRequestedPathConsumed={() => setChangesFocusPath(null)}

@@ -2,17 +2,28 @@ import { describe, expect, it } from 'vitest'
 import { normalizeChangeReviewRequest } from './change-review'
 
 describe('normalizeChangeReviewRequest', () => {
-  it('defaults to the current task scope', () => {
+  it('defaults to the current working tree', () => {
     expect(normalizeChangeReviewRequest(undefined)).toEqual({
-      scope: 'thread',
+      context: 'working-tree',
       turnId: undefined,
-      path: undefined
+      path: undefined,
+      workspaceRoot: undefined
     })
   })
 
-  it('keeps a valid scope and trims navigation context', () => {
+  it('keeps a valid context and trims navigation context', () => {
     expect(
-      normalizeChangeReviewRequest({ scope: 'turn', turnId: ' turn-1 ', path: ' src/a.ts ' })
-    ).toEqual({ scope: 'turn', turnId: 'turn-1', path: 'src/a.ts' })
+      normalizeChangeReviewRequest({
+        context: 'last-turn',
+        turnId: ' turn-1 ',
+        path: ' src/a.ts ',
+        workspaceRoot: ' /repo '
+      })
+    ).toEqual({
+      context: 'last-turn',
+      turnId: 'turn-1',
+      path: 'src/a.ts',
+      workspaceRoot: '/repo'
+    })
   })
 })

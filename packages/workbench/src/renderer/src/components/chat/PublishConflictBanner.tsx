@@ -368,7 +368,7 @@ export function PublishConflictBanner(): ReactElement | null {
       <div className="mt-2 flex flex-wrap justify-end gap-2">
         <button
           type="button"
-          onClick={() => openChangesPanel({ scope: 'conflicts' })}
+          onClick={() => openChangesPanel({ context: 'conflicts' })}
           className="mr-auto rounded-md px-2.5 py-1 text-[12px] font-medium text-ds-muted transition hover:bg-ds-hover hover:text-ds-ink active:scale-[0.98]"
         >
           {t('publishConflictReview')}

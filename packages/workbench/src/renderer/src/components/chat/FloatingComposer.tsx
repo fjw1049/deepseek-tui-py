@@ -1484,7 +1484,7 @@ export function FloatingComposer({
       <ComposerLiveChangesHeader
         onReview={() => {
           openChangesPanel({
-            scope: 'turn',
+            context: 'last-turn',
             turnId: useChatStore.getState().currentTurnId ?? undefined
           })
         }}

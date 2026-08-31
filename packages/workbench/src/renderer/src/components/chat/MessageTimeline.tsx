@@ -1344,7 +1344,9 @@ function TurnChangeSummary({
           </span>
           <button
             type="button"
-            onClick={() => openChangesPanel({ scope: 'turn', turnId: turnId ?? undefined })}
+            onClick={() =>
+              openChangesPanel({ context: 'last-turn', turnId: turnId ?? undefined })
+            }
             className="ds-turn-change-summary__view mt-0.5 inline-flex items-center gap-1 text-[13px] leading-5 text-ds-muted transition-colors duration-150 hover:text-ds-ink"
           >
             {t('turnChangeViewChanges')}
@@ -1364,7 +1366,9 @@ function TurnChangeSummary({
         ) : null}
         <button
           type="button"
-          onClick={() => openChangesPanel({ scope: 'turn', turnId: turnId ?? undefined })}
+          onClick={() =>
+            openChangesPanel({ context: 'last-turn', turnId: turnId ?? undefined })
+          }
           className="ds-turn-change-summary__review shrink-0 rounded-lg px-3 py-1.5 text-[14px] font-medium text-ds-ink transition-[background-color,border-color,transform] duration-150 hover:bg-ds-hover active:scale-[0.97]"
         >
           {t('turnChangeReview')}

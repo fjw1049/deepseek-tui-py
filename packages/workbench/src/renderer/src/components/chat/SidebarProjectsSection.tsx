@@ -154,7 +154,7 @@ function ProjectDirtyBadge({
       type="button"
       onClick={(event) => {
         event.stopPropagation()
-        openChangesPanel({ scope: 'workspace' })
+        openChangesPanel({ context: 'project', workspaceRoot: workspacePath })
       }}
       className="inline-flex h-5 shrink-0 items-center gap-1 rounded-full bg-amber-500/12 px-1.5 text-[10.5px] font-semibold tabular-nums text-amber-700 transition hover:bg-amber-500/20 dark:text-amber-300"
       title={t('sidebarProjectDirtyReview', { count: result.dirtyCount })}
