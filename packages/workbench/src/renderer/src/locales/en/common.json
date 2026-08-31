@@ -1717,7 +1717,6 @@
   "processed": "Processed",
   "processStepCount": "{{count}} steps",
   "workedFor": "Worked for {{duration}}",
-  "turnTotalDuration": "Total time {{duration}}",
   "workingFor": "Working for {{duration}}",
   "working": "Working…",
   "processSteps": "Work process ({{count}} steps)",

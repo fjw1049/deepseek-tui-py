@@ -1103,6 +1103,8 @@ function MessageTurn({
     assistantContentBlocks.length === 0
 
   const hasProcess = !isSystemOnlyTurn && (isProcessing || processBlocks.length > 0)
+  const showWorkMeta =
+    hasProcess || (!isSystemOnlyTurn && !isProcessing && typeof durationMs === 'number')
 
   return (
     <div className="ds-message-turn flex min-w-0 flex-col gap-4">
@@ -1121,7 +1123,7 @@ function MessageTurn({
         </div>
       ) : (
         <>
-          {hasProcess ? (
+          {showWorkMeta ? (
             <div className="flex flex-col gap-1 pb-2">
               <WorkMetaRow
                 processing={isProcessing}
@@ -1129,11 +1131,12 @@ function MessageTurn({
                 liveStartedAt={liveStartedAt}
                 durationMs={durationMs}
                 reasoningDurationMs={reasoningDurationMs}
+                collapsible={hasProcess}
                 expanded={workExpanded}
                 onToggle={() => setWorkExpanded((value) => !value)}
                 activeActionLabel={activeRunningActionLabel(processBlocks)}
               />
-              {workExpanded ? (
+              {hasProcess && workExpanded ? (
                 <ProcessStream
                   blocks={processBlocks}
                   processing={isProcessing}
@@ -1195,9 +1198,6 @@ function MessageTurn({
         </>
       )}
 
-      {!isProcessing && turn.user && typeof durationMs === 'number' ? (
-        <TurnDurationMeta durationMs={durationMs} />
-      ) : null}
     </div>
   )
 }
@@ -1575,15 +1575,6 @@ function activeRunningActionLabel(blocks: ChatBlock[]): string | undefined {
   return label.length > 56 ? `${label.slice(0, 55).trimEnd()}…` : label
 }
 
-function TurnDurationMeta({ durationMs }: { durationMs: number }): ReactElement {
-  const { t } = useTranslation('common')
-  return (
-    <div className="-mt-2 text-[11.5px] tabular-nums text-ds-faint">
-      {t('turnTotalDuration', { duration: formatDuration(durationMs) })}
-    </div>
-  )
-}
-
 /** Turn-level work-process summary. It auto-collapses when the turn finishes. */
 function WorkMetaRow({
   processing,
@@ -1591,6 +1582,7 @@ function WorkMetaRow({
   liveStartedAt,
   durationMs,
   reasoningDurationMs,
+  collapsible,
   expanded,
   onToggle,
   activeActionLabel
@@ -1600,6 +1592,7 @@ function WorkMetaRow({
   liveStartedAt?: number
   durationMs?: number
   reasoningDurationMs?: number
+  collapsible: boolean
   expanded: boolean
   onToggle: () => void
   activeActionLabel?: string
@@ -1628,7 +1621,9 @@ function WorkMetaRow({
       : durationText
         ? t('workingFor', { duration: durationText })
         : t('working')
-    : t('processSteps', { count: stepCount })
+    : durationText
+      ? t('workedFor', { duration: durationText })
+      : t('processSteps', { count: stepCount })
 
   const showThoughtSuffix =
     !processing &&
@@ -1639,9 +1634,10 @@ function WorkMetaRow({
     <div className="ds-work-meta w-full">
       <button
         type="button"
-        onClick={onToggle}
-        aria-expanded={expanded}
-        className="ds-work-meta-row group flex w-fit max-w-full items-center gap-1.5 rounded-md py-1 text-left text-[15px] font-medium text-ds-muted transition hover:opacity-85"
+        onClick={collapsible ? onToggle : undefined}
+        aria-expanded={collapsible ? expanded : undefined}
+        disabled={!collapsible}
+        className={`ds-work-meta-row group flex w-fit max-w-full items-center gap-1.5 rounded-md py-1 text-left text-[15px] font-medium text-ds-muted transition ${collapsible ? 'hover:opacity-85' : ''}`}
       >
         {processing ? (
           <span className="mr-0.5 flex h-5 w-5 shrink-0 items-center justify-center">
@@ -1659,14 +1655,16 @@ function WorkMetaRow({
             · {t('thoughtFor', { duration: formatDuration(reasoningDurationMs!) })}
           </span>
         ) : null}
-        {expanded ? (
-          <ChevronDown className="h-3.5 w-3.5 shrink-0 opacity-45" strokeWidth={1.8} />
-        ) : (
-          <ChevronRight
-            className="h-3.5 w-3.5 shrink-0 opacity-40 transition group-hover:opacity-65"
-            strokeWidth={1.8}
-          />
-        )}
+        {collapsible ? (
+          expanded ? (
+            <ChevronDown className="h-3.5 w-3.5 shrink-0 opacity-45" strokeWidth={1.8} />
+          ) : (
+            <ChevronRight
+              className="h-3.5 w-3.5 shrink-0 opacity-40 transition group-hover:opacity-65"
+              strokeWidth={1.8}
+            />
+          )
+        ) : null}
       </button>
       <div aria-hidden className="h-px w-full bg-ds-border-muted/70" />
     </div>
