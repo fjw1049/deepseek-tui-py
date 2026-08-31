@@ -17,18 +17,19 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { useTranslation } from 'react-i18next'
 import {
+  ArrowUpRight,
   Bot,
   Check,
   ChevronDown,
   ChevronRight,
+  ChevronUp,
   Copy,
-  FileEdit,
+  FilePlus2,
   FileText,
   FolderOpen,
   GitFork,
   Globe2,
   Loader2,
-  MoreHorizontal,
   PencilLine,
   Plug,
   Puzzle,
@@ -51,9 +52,9 @@ import type { ChatBlock, RuntimeConnectionStatus, ToolBlock } from '../../agent/
 import {
   formatFilePathForDisplay,
   resolvePatchStats,
-  sumDiffStatsList,
   type DiffStats
 } from '../../lib/diff-stats'
+import { splitFileNameAndParent } from '../../lib/editor-breadcrumb'
 import {
   resolveTurnDiffId,
   toolBlocksFromTurnSummary,
@@ -1105,6 +1106,17 @@ function MessageTurn({
   const hasProcess = !isSystemOnlyTurn && (isProcessing || processBlocks.length > 0)
   const showWorkMeta =
     hasProcess || (!isSystemOnlyTurn && !isProcessing && typeof durationMs === 'number')
+  const turnChangeSummary = !isProcessing && turnFileChanges.length > 0 ? (
+    <TurnChangeSummary
+      changes={turnFileChanges}
+      viewportRef={viewportRef}
+      turnId={turnDiffTurnId}
+      userBlockId={turn.user?.id}
+      htmlPreview={htmlPreviewAction ?? null}
+      onOpenWorkspaceFile={onOpenWorkspaceFile}
+    />
+  ) : null
+  const hasAssistantAnswer = assistantContentBlocks.length > 0 || showLiveAssistant
 
   return (
     <div className="ds-message-turn flex min-w-0 flex-col gap-4">
@@ -1170,26 +1182,28 @@ function MessageTurn({
             />
           ) : null}
 
-          {assistantContentBlocks.map((block) => (
-            <MessageBubble key={block.id} block={block} />
+          {assistantContentBlocks.map((block, index) => (
+            <MessageBubble
+              key={block.id}
+              block={block}
+              afterContent={
+                !showLiveAssistant && index === assistantContentBlocks.length - 1
+                  ? turnChangeSummary
+                  : null
+              }
+            />
           ))}
 
           {showLiveAssistant ? (
-            <MessageBubble block={{ kind: 'assistant', id: 'live-assistant', text: liveContent }} />
-          ) : null}
-
-          {/* Turn fold-up: only after the turn finishes. Mid-turn edits stay
-              in the process rail as per-tool file_change cards. */}
-          {!isProcessing && turnFileChanges.length > 0 ? (
-            <TurnChangeSummary
-              changes={turnFileChanges}
-              viewportRef={viewportRef}
-              turnId={turnDiffTurnId}
-              userBlockId={turn.user?.id}
-              htmlPreview={htmlPreviewAction ?? null}
-              onOpenWorkspaceFile={onOpenWorkspaceFile}
+            <MessageBubble
+              block={{ kind: 'assistant', id: 'live-assistant', text: liveContent }}
+              afterContent={turnChangeSummary}
             />
           ) : null}
+
+          {/* Turns without an assistant answer still need to expose their
+              completed write receipt. */}
+          {!hasAssistantAnswer ? turnChangeSummary : null}
 
           {!isProcessing && turnFileChanges.length === 0 && htmlPreviewAction ? (
             <HtmlPreviewStandaloneCard
@@ -1260,6 +1274,7 @@ function TurnChangeSummary({
   htmlPreview?: { path: string; onOpen: () => void } | null
   onOpenWorkspaceFile?: (path: string, line?: number) => void
 }): ReactElement {
+  const previewLimit = 3
   const { t } = useTranslation('common')
   const [expanded, setExpanded] = useState(false)
   const [confirmUndo, setConfirmUndo] = useState(false)
@@ -1272,7 +1287,6 @@ function TurnChangeSummary({
     () => changes.map((change) => turnChangeBlockStats(change)),
     [changes]
   )
-  const totals = useMemo(() => sumDiffStatsList(fileStats), [fileStats])
   const title = useMemo(
     () =>
       changes.length === 1
@@ -1282,6 +1296,9 @@ function TurnChangeSummary({
   )
   const openableResults = useMemo(() => selectOpenableTurnResults(changes), [changes])
   const previewPath = htmlPreview?.path?.trim() ?? ''
+  const visibleChanges = expanded ? changes : changes.slice(0, previewLimit)
+  const remainingCount = Math.max(changes.length - previewLimit, 0)
+  const canUndo = Boolean(userBlockId?.startsWith('item_'))
 
   const openTurnResult = (result: OpenableTurnResult): void => {
     if (
@@ -1316,84 +1333,115 @@ function TurnChangeSummary({
   }
 
   return (
-    <section className="ds-turn-change-summary overflow-hidden rounded-xl border border-ds-border-muted/80 bg-ds-card/60">
-      <div className="flex min-w-0 items-center gap-2.5 px-3 py-2.5">
-        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-ds-hover/70 text-ds-muted">
-          <FileEdit className="h-4 w-4" strokeWidth={1.85} />
+    <section className="ds-turn-change-summary overflow-hidden rounded-2xl">
+      <div className="ds-turn-change-summary__header flex min-w-0 items-center gap-3 px-4 py-3.5">
+        <span className="ds-turn-change-summary__icon flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-ds-muted">
+          <FilePlus2 className="h-[18px] w-[18px]" strokeWidth={1.8} />
         </span>
         <span className="min-w-0 flex-1">
-          <span className="block truncate text-[13px] font-semibold text-ds-ink">
+          <span className="ds-turn-change-summary__title block truncate text-[15px] font-semibold leading-5 tracking-[-0.01em] text-ds-ink">
             {title}
           </span>
-          {totals ? (
-            <span className="mt-0.5 block text-[11px] tabular-nums">
-              <span className="text-ds-diff-added">+{totals.added}</span>
-              <span className="mx-1.5 text-ds-faint">·</span>
-              <span className="text-ds-diff-removed">-{totals.removed}</span>
-            </span>
-          ) : null}
+          <button
+            type="button"
+            onClick={() => openChangesPanel({ scope: 'turn', turnId: turnId ?? undefined })}
+            className="ds-turn-change-summary__view mt-0.5 inline-flex items-center gap-1 text-[13px] leading-5 text-ds-muted transition-colors duration-150 hover:text-ds-ink"
+          >
+            {t('turnChangeViewChanges')}
+            <ArrowUpRight className="h-3.5 w-3.5" strokeWidth={1.8} />
+          </button>
         </span>
+        {canUndo ? (
+          <button
+            type="button"
+            disabled={undoing}
+            onClick={() => setConfirmUndo(true)}
+            className="inline-flex shrink-0 items-center gap-1.5 rounded-lg px-2 py-1.5 text-[14px] font-medium text-ds-ink transition-[background-color,color,transform] duration-150 hover:bg-ds-hover active:scale-[0.97] disabled:opacity-50"
+          >
+            {t('turnChangeUndo')}
+            <RotateCcw className="h-4 w-4" strokeWidth={1.8} />
+          </button>
+        ) : null}
         <button
           type="button"
           onClick={() => openChangesPanel({ scope: 'turn', turnId: turnId ?? undefined })}
-          className="shrink-0 rounded-md bg-ds-hover px-2.5 py-1 text-[11.5px] font-medium text-ds-ink transition hover:bg-ds-hover/80 active:scale-[0.98]"
+          className="ds-turn-change-summary__review shrink-0 rounded-lg px-3 py-1.5 text-[14px] font-medium text-ds-ink transition-[background-color,border-color,transform] duration-150 hover:bg-ds-hover active:scale-[0.97]"
         >
           {t('turnChangeReview')}
         </button>
+      </div>
+
+      <div className="ds-turn-change-summary__body">
+        {visibleChanges.map((change, index) => {
+          const stats = fileStats[index]
+          const filePath = change.filePath?.trim() ?? ''
+          const pathParts = splitFileNameAndParent(filePath)
+
+          return (
+            <button
+              key={change.id}
+              type="button"
+              disabled={!filePath || !onOpenWorkspaceFile}
+              onClick={() => filePath && onOpenWorkspaceFile?.(filePath)}
+              className="ds-turn-change-summary__row flex h-10 w-full min-w-0 items-center gap-3 px-4 text-left transition-colors duration-150 hover:bg-ds-hover disabled:cursor-default"
+            >
+              <span className="ds-turn-change-summary__path min-w-0 flex-1 truncate text-[14px] font-normal text-ds-ink">
+                {filePath ? (
+                  <>
+                    {pathParts.parent ? (
+                      <span className="text-ds-muted">{pathParts.parent}/</span>
+                    ) : null}
+                    <span>{pathParts.name}</span>
+                  </>
+                ) : (
+                  t('toolActionFile')
+                )}
+              </span>
+              {stats ? (
+                <span className="shrink-0 text-[14px] tabular-nums">
+                  <span className="text-ds-diff-added">+{stats.added}</span>
+                  <span className="ml-2 text-ds-diff-removed">-{stats.removed}</span>
+                </span>
+              ) : null}
+            </button>
+          )
+        })}
+        {openableResults.length > 0 ? (
+          <div className="border-t border-ds-border-muted/70 px-2 py-1.5">
+            {openableResults.map((result) => (
+              <TurnOpenableResultRow
+                key={result.path}
+                result={result}
+                compact={openableResults.length > 1}
+                onOpen={() => openTurnResult(result)}
+              />
+            ))}
+          </div>
+        ) : null}
+      </div>
+
+      {remainingCount > 0 ? (
         <button
           type="button"
           onClick={() => setExpanded((value) => !value)}
           aria-expanded={expanded}
-          aria-label={expanded ? t('collapse') : t('expand')}
-          className="rounded-md p-1 text-ds-faint transition hover:bg-ds-hover hover:text-ds-ink"
+          className="ds-turn-change-summary__footer flex w-full items-center gap-2 px-4 py-2.5 text-left text-[14px] font-medium text-ds-ink transition-[background-color,color,transform] duration-150 hover:bg-ds-hover active:scale-[0.995]"
         >
-          {expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+          <span>
+            {expanded
+              ? t('turnChangeShowFewerFiles')
+              : t('turnChangeShowMoreFiles', { count: remainingCount })}
+          </span>
+          {expanded ? (
+            <ChevronUp className="h-4 w-4" strokeWidth={1.9} />
+          ) : (
+            <ChevronDown className="h-4 w-4" strokeWidth={1.9} />
+          )}
         </button>
-      </div>
-
-      {expanded ? (
-        <div className="border-t border-ds-border-muted/70 bg-ds-card-muted/25">
-          {changes.map((change, index) => {
-            const stats = fileStats[index]
-            const filePath = change.filePath?.trim() ?? ''
-
-            return (
-              <button
-                key={change.id}
-                type="button"
-                disabled={!filePath || !onOpenWorkspaceFile}
-                onClick={() => filePath && onOpenWorkspaceFile?.(filePath)}
-                className="flex h-8 w-full min-w-0 items-center gap-2 border-b border-ds-border-muted/50 px-3 text-left last:border-b-0 hover:bg-ds-hover/40 disabled:cursor-default"
-              >
-                <span className="min-w-0 flex-1 truncate text-[12px] text-ds-ink">
-                  {filePath ? <FileChip path={filePath} variant="list" skipValidation /> : t('toolActionFile')}
-                </span>
-                {stats ? (
-                  <span className="shrink-0 text-[10.5px] tabular-nums">
-                    <span className="text-ds-diff-added">+{stats.added}</span>
-                    <span className="ml-1.5 text-ds-diff-removed">-{stats.removed}</span>
-                  </span>
-                ) : null}
-              </button>
-            )
-          })}
-          {openableResults.length > 0 ? (
-            <div className="border-t border-ds-border-muted/70 px-2 py-1.5">
-              {openableResults.map((result) => (
-                <TurnOpenableResultRow
-                  key={result.path}
-                  result={result}
-                  compact={openableResults.length > 1}
-                  onOpen={() => openTurnResult(result)}
-                />
-              ))}
-            </div>
-          ) : null}
-        </div>
       ) : null}
 
-      {userBlockId?.startsWith('item_') ? (
-        <div className="flex min-w-0 items-center gap-2 border-t border-ds-border-muted/60 px-3 py-2">
+      {canUndo && (confirmUndo || undoFeedback) ? (
+        <div className="ds-turn-change-summary__footer flex min-w-0 items-center gap-2 px-4 py-2.5">
           {confirmUndo ? (
             <>
               <p className="min-w-0 flex-1 text-[11.5px] leading-4 text-amber-700 dark:text-amber-300">
@@ -1403,7 +1451,7 @@ function TurnChangeSummary({
                 type="button"
                 disabled={undoing}
                 onClick={() => setConfirmUndo(false)}
-                className="rounded-md px-2 py-1 text-[11.5px] text-ds-muted transition hover:bg-ds-hover"
+                className="rounded-md px-2 py-1 text-[11.5px] text-ds-muted transition-colors duration-150 hover:bg-ds-hover"
               >
                 {t('rewindCancel')}
               </button>
@@ -1411,25 +1459,15 @@ function TurnChangeSummary({
                 type="button"
                 disabled={undoing}
                 onClick={() => void undoCode()}
-                className="rounded-md bg-amber-500/15 px-2 py-1 text-[11.5px] font-medium text-amber-800 transition hover:bg-amber-500/20 dark:text-amber-200 disabled:opacity-50"
+                className="rounded-md bg-amber-500/15 px-2 py-1 text-[11.5px] font-medium text-amber-800 transition-[background-color,transform] duration-150 hover:bg-amber-500/20 active:scale-[0.97] dark:text-amber-200 disabled:opacity-50"
               >
                 {undoing ? t('turnChangeUndoing') : t('turnChangeUndoConfirmAction')}
               </button>
             </>
           ) : (
-            <>
-              <span className="min-w-0 flex-1 truncate text-[11px] text-ds-faint">
-                {undoFeedback ?? t('turnChangeSyncedHint')}
-              </span>
-              <button
-                type="button"
-                onClick={() => setConfirmUndo(true)}
-                className="inline-flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-[11.5px] font-medium text-ds-muted transition hover:bg-ds-hover hover:text-ds-ink"
-              >
-                <RotateCcw className="h-3.5 w-3.5" strokeWidth={1.9} />
-                {t('turnChangeUndo')}
-              </button>
-            </>
+            <span className="min-w-0 flex-1 truncate text-[11.5px] text-ds-faint">
+              {undoFeedback}
+            </span>
           )}
         </div>
       ) : null}
@@ -3047,8 +3085,6 @@ function UserMessageBubble({
   const { t } = useTranslation('common')
   const busy = useChatStore((s) => s.busy)
   const rewindAndResend = useChatStore((s) => s.rewindAndResend)
-  const rewindToMessage = useChatStore((s) => s.rewindToMessage)
-  const restoreCodeAt = useChatStore((s) => s.restoreCodeAt)
   const activeThreadId = useChatStore((s) => s.activeThreadId)
   const previewPick = useMemo(() => parsePreviewPickWireMessage(block.text), [block.text])
   const focus = useMemo(
@@ -3075,8 +3111,6 @@ function UserMessageBubble({
     noCheckpoint: number
   } | null>(null)
   const [forceConflicts, setForceConflicts] = useState(false)
-  const [rewindMenuOpen, setRewindMenuOpen] = useState(false)
-  const [directRewind, setDirectRewind] = useState<'code' | 'conversation' | null>(null)
   // File restore only works for messages persisted on the runtime (`item_…`).
   // Restore writes the recorded execution root. After a successful publish that
   // root is the project; a vanished copy skips file restore.
@@ -3084,7 +3118,6 @@ function UserMessageBubble({
   const hasMissingRoots = (confirm?.missingRoots.length ?? 0) > 0
   const hasNoCheckpoint = (confirm?.noCheckpoint ?? 0) > 0
   const textareaRef = useRef<HTMLTextAreaElement>(null)
-  const rewindMenuRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     if (!editing || confirm) return
@@ -3098,50 +3131,16 @@ function UserMessageBubble({
   }, [editing, confirm])
 
   useEffect(() => {
-    if (!confirm && !directRewind) return
+    if (!confirm) return
     const handleKey = (event: KeyboardEvent): void => {
       if (event.key === 'Escape') {
         event.preventDefault()
-        if (confirm) setConfirm(null)
-        else setDirectRewind(null)
+        setConfirm(null)
       }
     }
     window.addEventListener('keydown', handleKey)
     return () => window.removeEventListener('keydown', handleKey)
-  }, [confirm, directRewind])
-
-  useEffect(() => {
-    if (!rewindMenuOpen) return
-    const dismiss = (event: PointerEvent): void => {
-      if (!rewindMenuRef.current?.contains(event.target as Node)) setRewindMenuOpen(false)
-    }
-    const dismissWithKey = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') setRewindMenuOpen(false)
-    }
-    document.addEventListener('pointerdown', dismiss, true)
-    window.addEventListener('keydown', dismissWithKey)
-    return () => {
-      document.removeEventListener('pointerdown', dismiss, true)
-      window.removeEventListener('keydown', dismissWithKey)
-    }
-  }, [rewindMenuOpen])
-
-  const runDirectRewind = async (restoreFiles: boolean): Promise<void> => {
-    if (!directRewind || submitting || busy) return
-    setSubmitting(true)
-    try {
-      if (directRewind === 'code') {
-        await restoreCodeAt(block.id)
-      } else {
-        await rewindToMessage(block.id, {
-          restoreFiles: restoreFiles && canRestoreFiles
-        })
-      }
-      setDirectRewind(null)
-    } finally {
-      setSubmitting(false)
-    }
-  }
+  }, [confirm])
 
   const startEdit = (): void => {
     if (busy) return
@@ -3510,119 +3509,8 @@ function UserMessageBubble({
           >
             <PencilLine className="h-4 w-4" strokeWidth={1.8} />
           </button>
-          <div ref={rewindMenuRef} className="relative">
-            <button
-              type="button"
-              onClick={() => setRewindMenuOpen((open) => !open)}
-              disabled={busy}
-              title={t('rewindMoreActions')}
-              aria-label={t('rewindMoreActions')}
-              aria-expanded={rewindMenuOpen}
-              className="rounded-md p-1 hover:bg-ds-hover hover:text-ds-muted disabled:cursor-not-allowed"
-            >
-              <MoreHorizontal className="h-4 w-4" strokeWidth={1.8} />
-            </button>
-            {rewindMenuOpen ? (
-              <div
-                role="menu"
-                className="absolute bottom-8 right-0 z-30 w-52 overflow-hidden rounded-xl border border-ds-border bg-ds-elevated p-1 shadow-xl"
-              >
-                {canRestoreFiles ? (
-                  <button
-                    type="button"
-                    role="menuitem"
-                    onClick={() => {
-                      setRewindMenuOpen(false)
-                      setDirectRewind('code')
-                    }}
-                    className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[12.5px] text-ds-ink transition hover:bg-ds-hover"
-                  >
-                    <RotateCcw className="h-3.5 w-3.5 text-ds-muted" strokeWidth={1.9} />
-                    {t('rewindCodeOnly')}
-                  </button>
-                ) : null}
-                <button
-                  type="button"
-                  role="menuitem"
-                  onClick={() => {
-                    setRewindMenuOpen(false)
-                    setDirectRewind('conversation')
-                  }}
-                  className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[12.5px] text-ds-ink transition hover:bg-ds-hover"
-                >
-                  <RotateCcw className="h-3.5 w-3.5 text-ds-muted" strokeWidth={1.9} />
-                  {t('rewindConversationToHere')}
-                </button>
-              </div>
-            ) : null}
-          </div>
         </div>
       </div>
-      {directRewind && typeof document !== 'undefined'
-        ? createPortal(
-            <div
-              className="ds-no-drag fixed inset-0 z-[80] flex items-center justify-center bg-[var(--ds-material-overlay)] p-4"
-              onClick={(event) => {
-                if (event.target === event.currentTarget) setDirectRewind(null)
-              }}
-            >
-              <div
-                role="dialog"
-                aria-modal="true"
-                aria-labelledby={`direct-rewind-${block.id}`}
-                className="ds-modal-surface ds-modal-surface--solid w-full max-w-md overflow-hidden rounded-2xl"
-              >
-                <div className="border-b border-ds-border-muted px-5 py-4">
-                  <h2 id={`direct-rewind-${block.id}`} className="text-[16px] font-semibold text-ds-ink">
-                    {directRewind === 'code'
-                      ? t('rewindCodeOnlyTitle')
-                      : t('rewindConversationTitle')}
-                  </h2>
-                  <p className="mt-1.5 text-[13px] leading-5 text-ds-muted">
-                    {directRewind === 'code'
-                      ? t('rewindCodeOnlyBody')
-                      : t('rewindConversationBody')}
-                  </p>
-                </div>
-                <div className="flex flex-wrap items-center justify-end gap-2 px-5 py-3">
-                  <button
-                    type="button"
-                    disabled={submitting}
-                    onClick={() => setDirectRewind(null)}
-                    className="rounded-md px-3 py-1.5 text-[13px] font-medium text-ds-muted transition hover:bg-ds-hover disabled:opacity-50"
-                  >
-                    {t('rewindCancel')}
-                  </button>
-                  {directRewind === 'conversation' ? (
-                    <button
-                      type="button"
-                      disabled={submitting}
-                      onClick={() => void runDirectRewind(false)}
-                      className="rounded-md px-3 py-1.5 text-[13px] font-medium text-ds-ink transition hover:bg-ds-hover disabled:opacity-50"
-                    >
-                      {t('rewindConversationOnly')}
-                    </button>
-                  ) : null}
-                  <button
-                    type="button"
-                    disabled={submitting}
-                    onClick={() => void runDirectRewind(true)}
-                    className="rounded-md bg-amber-500/15 px-3 py-1.5 text-[13px] font-medium text-amber-800 transition hover:bg-amber-500/20 dark:text-amber-200 disabled:opacity-50"
-                  >
-                    {submitting
-                      ? t('turnChangeUndoing')
-                      : directRewind === 'code'
-                        ? t('rewindRestoreCode')
-                        : canRestoreFiles
-                          ? t('rewindConversationAndCode')
-                          : t('rewindConversationOnly')}
-                  </button>
-                </div>
-              </div>
-            </div>,
-            document.body
-          )
-        : null}
     </div>
   )
 }
@@ -3831,7 +3719,13 @@ function formatMessageDateTime(
   }).format(date)
 }
 
-function MessageBubble({ block }: { block: ChatBlock }): ReactElement | null {
+function MessageBubble({
+  block,
+  afterContent = null
+}: {
+  block: ChatBlock
+  afterContent?: ReactElement | null
+}): ReactElement | null {
   const { t, i18n } = useTranslation('common')
   const timestampFormat = useSyncExternalStore(subscribeAppearance, getTimestampFormat)
   if (block.kind === 'user') {
@@ -3847,6 +3741,9 @@ function MessageBubble({ block }: { block: ChatBlock }): ReactElement | null {
         <div className="ds-markdown ds-markdown--answer ds-chat-answer min-w-0 max-w-full text-ds-ink">
           <AssistantMarkdown text={block.text} streaming={streaming} />
         </div>
+        {afterContent ? (
+          <div className="ds-assistant-message-receipt mt-4">{afterContent}</div>
+        ) : null}
         {!streaming ? (
           <div className="ds-assistant-message-meta mt-1 flex min-h-5 min-w-0 items-center justify-between gap-3 text-[11.5px] text-ds-faint opacity-0 transition duration-150 group-hover/message:opacity-100">
             <span className="min-w-0 truncate">{createdAtLabel ?? ''}</span>

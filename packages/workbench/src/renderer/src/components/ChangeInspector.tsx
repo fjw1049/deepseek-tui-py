@@ -9,7 +9,15 @@ import {
 } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useShallow } from 'zustand/react/shallow'
-import { CheckCircle2, FileEdit, GitBranch, Loader2, Sparkles, Upload } from 'lucide-react'
+import {
+  CheckCircle2,
+  ChevronDown,
+  FileEdit,
+  GitBranch,
+  Loader2,
+  Sparkles,
+  Upload
+} from 'lucide-react'
 import { FileTypeIcon } from './chat/FileChip'
 import type { GitWorkingChangeStage } from '@shared/git-working-changes'
 import type { ChatBlock } from '../agent/types'
@@ -756,47 +764,46 @@ export function ChangeInspector({
       className={`ds-change-inspector ds-change-inspector--${variant} ds-tool-panel ds-no-drag flex h-full min-h-0 flex-col ${className ?? ''}`}
     >
       {onScopeChange ? (
-        <div className="shrink-0 border-b border-ds-border-muted/70 px-2 py-2">
-          <div className="grid grid-cols-3 gap-1 rounded-lg bg-ds-hover/55 p-0.5">
-            {([
-              ['turn', t('changeScopeTurn')],
-              ['thread', t('changeScopeThread')],
-              ['workspace', t('changeScopeWorkspace')]
-            ] as Array<[ChangeReviewScope, string]>).map(([itemScope, label]) => (
-              <button
-                key={itemScope}
-                type="button"
-                disabled={itemScope === 'turn' && !reviewTurnId}
-                onClick={() => onScopeChange(itemScope)}
-                aria-pressed={scope === itemScope}
-                className={`h-7 min-w-0 truncate rounded-md px-1.5 text-[11.5px] font-medium transition disabled:opacity-35 ${
-                  scope === itemScope
-                    ? 'bg-ds-card text-ds-ink shadow-sm'
-                    : 'text-ds-muted hover:text-ds-ink'
-                }`}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-          {scope === 'conflicts' ? (
-            <button
-              type="button"
-              onClick={() => onScopeChange('conflicts')}
-              className="mt-1.5 inline-flex h-6 items-center rounded-full bg-amber-500/12 px-2 text-[11px] font-medium text-amber-700 dark:text-amber-300"
+        <div className="flex h-9 shrink-0 items-center border-b border-ds-border-muted/70 px-2">
+          <div className="relative min-w-0 max-w-full">
+            <select
+              value={scope}
+              onChange={(event) => onScopeChange(event.target.value as ChangeReviewScope)}
+              aria-label={t('changeScopeLabel')}
+              title={
+                scope === 'workspace'
+                  ? t('changeScopeWorkspaceHint')
+                  : scope === 'turn'
+                    ? t('changeScopeTurnHint')
+                    : scope === 'conflicts'
+                      ? t('changeScopeConflictsHint')
+                      : t('changeScopeThreadHint')
+              }
+              className={`h-7 max-w-full appearance-none truncate rounded-md border bg-transparent py-0 pl-2 pr-7 text-[11.5px] font-medium outline-none transition-[background-color,border-color] duration-150 hover:bg-ds-hover focus-visible:ring-2 focus-visible:ring-ds-accent/35 ${
+                scope === 'conflicts'
+                  ? 'border-amber-500/35 text-amber-700 dark:text-amber-300'
+                  : 'border-ds-border-muted text-ds-muted'
+              }`}
             >
-              {t('changeScopeConflicts', { count: activeThread?.publishConflicts?.length ?? 0 })}
-            </button>
-          ) : null}
-          <p className="mt-1.5 truncate px-0.5 text-[10.5px] text-ds-faint">
-            {scope === 'workspace'
-              ? t('changeScopeWorkspaceHint')
-              : scope === 'turn'
-                ? t('changeScopeTurnHint')
-                : scope === 'conflicts'
-                  ? t('changeScopeConflictsHint')
-                  : t('changeScopeThreadHint')}
-          </p>
+              <option value="thread">{t('changeScopeThread')}</option>
+              <option value="turn" disabled={!reviewTurnId}>
+                {t('changeScopeTurn')}
+              </option>
+              <option value="workspace">{t('changeScopeWorkspace')}</option>
+              {(activeThread?.publishConflicts?.length ?? 0) > 0 || scope === 'conflicts' ? (
+                <option value="conflicts">
+                  {t('changeScopeConflicts', {
+                    count: activeThread?.publishConflicts?.length ?? 0
+                  })}
+                </option>
+              ) : null}
+            </select>
+            <ChevronDown
+              aria-hidden
+              className="pointer-events-none absolute right-2 top-1/2 h-3 w-3 -translate-y-1/2 text-ds-faint"
+              strokeWidth={1.9}
+            />
+          </div>
         </div>
       ) : null}
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">

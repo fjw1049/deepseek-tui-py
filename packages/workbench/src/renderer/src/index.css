@@ -11153,35 +11153,70 @@ select:focus-visible,
   --ds-tool-font: var(--ds-ide-font-base);
 }
 
-/* Turn change summary: flatten Chat "hero" card for narrow rail. */
+/* Turn change summary: Codex-style three-surface hierarchy. Keep this explicit
+   instead of alpha Tailwind utilities: theme colors are CSS variables, so
+   Tailwind cannot generate `/NN` opacity variants for them. */
+.ds-turn-change-summary {
+  margin-bottom: 0.75rem;
+  border: 1px solid var(--ds-border-strong);
+  background: var(--ds-card-soft);
+  box-shadow: none;
+}
+
+.ds-turn-change-summary__header,
+.ds-turn-change-summary__footer {
+  background: color-mix(in srgb, var(--ds-text) 5%, var(--ds-card-strong));
+}
+
+.ds-turn-change-summary__icon {
+  border: 1px solid var(--ds-border-muted);
+  background: var(--ds-bg-canvas);
+}
+
+.ds-turn-change-summary__body,
+.ds-turn-change-summary__footer {
+  border-top: 1px solid var(--ds-border-strong);
+}
+
+.ds-turn-change-summary__body {
+  background: var(--ds-card-soft);
+}
+
+.ds-turn-change-summary__review {
+  border: 1px solid var(--ds-border-strong);
+  background: var(--ds-surface-hover);
+}
+
+/* Keep the same card proportions in the IDE rail instead of flattening the
+   visual hierarchy into generic compact controls. */
 .ds-ide-chat-rail .ds-turn-change-summary {
-  border-radius: 10px;
-  box-shadow: 0 6px 18px rgba(86, 103, 136, 0.06);
+  border-radius: 14px;
+  box-shadow: none;
 }
 
 .ds-ide-chat-rail .ds-turn-change-summary__header {
   gap: 0.65rem;
-  padding: 0.55rem 0.75rem;
+  padding: 0.75rem;
 }
 
 .ds-ide-chat-rail .ds-turn-change-summary__icon {
-  width: 2rem;
-  height: 2rem;
-  border-radius: 0.55rem;
+  width: 2.5rem;
+  height: 2.5rem;
+  border-radius: 0.75rem;
 }
 
 .ds-ide-chat-rail .ds-turn-change-summary__icon svg {
-  width: var(--ds-ide-icon);
-  height: var(--ds-ide-icon);
+  width: 18px;
+  height: 18px;
 }
 
 .ds-ide-chat-rail .ds-turn-change-summary__title {
-  font-size: var(--ds-ide-font-title);
+  font-size: 15px;
   letter-spacing: -0.01em;
 }
 
 .ds-ide-chat-rail .ds-turn-change-summary__path {
-  font-size: var(--ds-ide-font-base);
+  font-size: 14px;
 }
 
 .ds-ide-chat-rail .ds-html-preview-card {
