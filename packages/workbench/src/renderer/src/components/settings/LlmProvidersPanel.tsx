@@ -218,7 +218,7 @@ export function LlmProvidersPanel({ form, onUpdate }: Props): ReactElement {
             <Plus className="h-3.5 w-3.5" strokeWidth={2.2} />
           </button>
         </div>
-        <div className="ds-llm-panel__grid">
+        <div className="ds-llm-panel__stack">
           {BUILTIN_LLM_PROVIDER_IDS.map((id) => {
             const configured = Boolean(providers[id]?.apiKey?.trim())
             const modelCount = enabledLlmModelIds(providers[id] ?? { apiKey: '', models: [] }).length

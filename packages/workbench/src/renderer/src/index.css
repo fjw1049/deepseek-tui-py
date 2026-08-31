@@ -9345,18 +9345,6 @@ select:focus-visible,
   transform: scale(0.97);
 }
 
-.ds-llm-panel__grid {
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: 0.55rem;
-}
-
-@media (min-width: 640px) {
-  .ds-llm-panel__grid {
-    grid-template-columns: 1fr 1fr;
-  }
-}
-
 .ds-llm-panel__stack {
   display: grid;
   grid-template-columns: 1fr;
