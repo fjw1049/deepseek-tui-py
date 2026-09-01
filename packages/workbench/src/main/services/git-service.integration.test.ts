@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest'
 import {
   getGitBranches,
   getGitHubRepository,
+  getGitLog,
   getGitWorkingChanges,
   commitGitChanges,
   createAndSwitchGitBranch,
@@ -438,6 +439,27 @@ describe('git-service integration', () => {
 
       const refreshed = await getGitBranches(repo, true)
       expect(refreshed).toMatchObject({ ok: true, ahead: 0, behind: 1 })
+
+      writeFileSync(join(peer, 'graph.txt'), 'new remote graph commit\n')
+      run(peer, 'add', 'graph.txt')
+      run(peer, 'commit', '-m', 'peer graph update')
+      run(peer, 'push')
+
+      const staleLog = await getGitLog(repo)
+      expect(staleLog).toMatchObject({ ok: true, upstream: { ahead: 0, behind: 1 } })
+      if (!staleLog.ok) return
+      expect(staleLog.commits.some((commit) => commit.subject === 'peer graph update')).toBe(false)
+
+      const refreshedLog = await getGitLog(repo, true)
+      expect(refreshedLog).toMatchObject({
+        ok: true,
+        hasRemote: true,
+        remoteRefreshError: null,
+        upstream: { ahead: 0, behind: 2 }
+      })
+      if (!refreshedLog.ok) return
+      expect(refreshedLog.remoteRefreshedAt).toEqual(expect.any(String))
+      expect(refreshedLog.commits.some((commit) => commit.subject === 'peer graph update')).toBe(true)
     } finally {
       rmSync(parent, { recursive: true, force: true })
     }
@@ -465,6 +487,15 @@ describe('git-service integration', () => {
       })
       if (!result.ok) return
       expect(result.remoteRefreshError).toMatch(/repository|remote|exist/i)
+
+      const log = await getGitLog(repo, true)
+      expect(log).toMatchObject({
+        ok: true,
+        hasRemote: true,
+        remoteRefreshedAt: null
+      })
+      if (!log.ok) return
+      expect(log.remoteRefreshError).toMatch(/repository|remote|exist/i)
     } finally {
       rmSync(repo, { recursive: true, force: true })
     }

@@ -278,6 +278,33 @@ async function resolveRecentAncestorBranch(
   return recent === defaultLocalName ? defaultBranch : (recent ?? null)
 }
 
+async function readGitRemoteState(
+  cwd: string,
+  refreshRemote: boolean
+): Promise<{
+  hasRemote: boolean
+  refreshError: string | null
+  refreshedAt: string | null
+}> {
+  const remotes = (await runGit(cwd, ['remote'])).stdout
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+  if (!refreshRemote || remotes.length === 0) {
+    return { hasRemote: remotes.length > 0, refreshError: null, refreshedAt: null }
+  }
+  try {
+    await runGit(cwd, ['fetch', '--prune'], 120_000, DIFF_MAX_BUFFER)
+    return { hasRemote: true, refreshError: null, refreshedAt: new Date().toISOString() }
+  } catch (error) {
+    return {
+      hasRemote: true,
+      refreshError: error instanceof Error ? error.message : String(error),
+      refreshedAt: null
+    }
+  }
+}
+
 export async function getGitBranches(
   workspaceRoot: string,
   refreshRemote = false
@@ -288,18 +315,7 @@ export async function getGitBranches(
   }
   try {
     const repositoryRoot = (await runGit(cwd, ['rev-parse', '--show-toplevel'])).stdout.trim()
-    const remotes = (await runGit(cwd, ['remote'])).stdout
-      .split('\n')
-      .map((line) => line.trim())
-      .filter(Boolean)
-    let remoteRefreshError: string | null = null
-    if (refreshRemote && remotes.length > 0) {
-      try {
-        await runGit(cwd, ['fetch', '--prune'], 120_000, DIFF_MAX_BUFFER)
-      } catch (error) {
-        remoteRefreshError = error instanceof Error ? error.message : String(error)
-      }
-    }
+    const remote = await readGitRemoteState(cwd, refreshRemote)
     const attachedBranch = (await runGit(cwd, ['branch', '--show-current'])).stdout.trim()
     const currentBranch = attachedBranch || null
     const inferredBranch = currentBranch ? null : await resolveCurrentBranch(cwd)
@@ -349,8 +365,8 @@ export async function getGitBranches(
       upstream,
       ahead,
       behind,
-      hasRemote: remotes.length > 0,
-      remoteRefreshError
+      hasRemote: remote.hasRemote,
+      remoteRefreshError: remote.refreshError
     }
   } catch (error) {
     return gitFailure(error)
@@ -1300,7 +1316,10 @@ export async function getGitHubRepository(workspaceRoot: string): Promise<GitHub
   }
 }
 
-export async function getGitLog(workspaceRoot: string): Promise<GitLogResult> {
+export async function getGitLog(
+  workspaceRoot: string,
+  refreshRemote = false
+): Promise<GitLogResult> {
   const cwd = workspaceRoot.trim()
   if (!cwd) {
     return { ok: false, reason: 'no_workspace', message: 'No working directory selected.' }
@@ -1308,6 +1327,7 @@ export async function getGitLog(workspaceRoot: string): Promise<GitLogResult> {
 
   try {
     const repositoryRoot = (await runGit(cwd, ['rev-parse', '--show-toplevel'])).stdout.trim()
+    const remote = await readGitRemoteState(cwd, refreshRemote)
     const currentBranch = (await runGit(cwd, ['branch', '--show-current'])).stdout.trim() || null
     const headHash = (await runGit(cwd, ['rev-parse', 'HEAD'])).stdout.trim()
     const upstream = await readGitUpstream(cwd)
@@ -1316,8 +1336,9 @@ export async function getGitLog(workspaceRoot: string): Promise<GitLogResult> {
       'log',
       `--topo-order`,
       `-n${GIT_LOG_LIMIT}`,
+      '--format=%H%x00%P%x00%s%x00%an%x00%at',
       logRef,
-      '--format=%H%x00%P%x00%s%x00%an%x00%at'
+      ...(upstream ? [upstream.ref] : [])
     ])
     const commits = raw
       .split('\n')
@@ -1330,6 +1351,9 @@ export async function getGitLog(workspaceRoot: string): Promise<GitLogResult> {
       branch: currentBranch,
       headHash,
       upstream,
+      hasRemote: remote.hasRemote,
+      remoteRefreshError: remote.refreshError,
+      remoteRefreshedAt: remote.refreshedAt,
       commits
     }
   } catch (error) {

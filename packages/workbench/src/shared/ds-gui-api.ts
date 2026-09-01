@@ -390,7 +390,7 @@ export type DsGuiApi = {
   unwatchWorkspaceFs: () => Promise<boolean>
   onWorkspaceFsChanged: (handler: (payload: { root: string }) => void) => () => void
   getGitBranches: (workspaceRoot: string, refreshRemote?: boolean) => Promise<GitBranchesResult>
-  getGitLog: (workspaceRoot: string) => Promise<GitLogResult>
+  getGitLog: (workspaceRoot: string, refreshRemote?: boolean) => Promise<GitLogResult>
   getGitHubRepository: (workspaceRoot: string) => Promise<GitHubRepositoryResult>
   getGitWorkingChanges: (
     workspaceRoot: string,

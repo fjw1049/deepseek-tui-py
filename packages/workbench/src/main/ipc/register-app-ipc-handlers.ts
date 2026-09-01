@@ -34,6 +34,7 @@ import {
   gitBranchesPayloadSchema,
   gitCommitPayloadSchema,
   gitCommitPathsPayloadSchema,
+  gitLogPayloadSchema,
   gitWorkingChangesPayloadSchema,
   logErrorPayloadSchema,
   notificationPayloadSchema,
@@ -1288,9 +1289,10 @@ export function registerAppIpcHandlers(options: RegisterAppIpcHandlersOptions): 
     const request = parseIpcPayload('git:branches', gitBranchesPayloadSchema, input)
     return getGitBranches(request.workspaceRoot, request.refreshRemote)
   })
-  ipcMain.handle('git:log', async (_, workspaceRoot: unknown) =>
-    getGitLog(parseIpcPayload('git:log', workspaceRootSchema, workspaceRoot))
-  )
+  ipcMain.handle('git:log', async (_, input: unknown) => {
+    const request = parseIpcPayload('git:log', gitLogPayloadSchema, input)
+    return getGitLog(request.workspaceRoot, request.refreshRemote)
+  })
   ipcMain.handle('git:github-repository', async (_, workspaceRoot: unknown) =>
     getGitHubRepository(
       parseIpcPayload('git:github-repository', workspaceRootSchema, workspaceRoot)

@@ -102,7 +102,8 @@ const api = {
   },
   getGitBranches: (workspaceRoot, refreshRemote) =>
     ipcRenderer.invoke('git:branches', { workspaceRoot, refreshRemote }),
-  getGitLog: (workspaceRoot) => ipcRenderer.invoke('git:log', workspaceRoot),
+  getGitLog: (workspaceRoot, refreshRemote) =>
+    ipcRenderer.invoke('git:log', { workspaceRoot, refreshRemote }),
   getGitHubRepository: (workspaceRoot) =>
     ipcRenderer.invoke('git:github-repository', workspaceRoot),
   getGitWorkingChanges: (workspaceRoot, scope, baseRef) =>
