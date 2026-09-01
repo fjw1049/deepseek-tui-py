@@ -1073,7 +1073,7 @@
   "ideWorkspaceSearchTitle": "Quick Open",
   "ideWorkspaceSearchPlaceholder": "Filter by file name or path…",
   "ideWorkspaceSearchHint": "Type a file name or path fragment. This is not a full-text search.",
-  "ideWorkspaceSearchIdleTitle": "Find a file by name",
+  "ideWorkspaceSearchIdleTitle": "No files",
   "ideWorkspaceSearchSearching": "Searching…",
   "ideWorkspaceSearchEmpty": "No matching files.",
   "ideWorkspaceSearchTruncated": "Showing top matches — refine the query for more.",

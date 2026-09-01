@@ -11,11 +11,11 @@ import {
 } from 'react'
 import {
   FileEdit,
+  FileSearch,
   Folders,
   MessageSquare,
   PanelRight,
-  PanelRightClose,
-  Search
+  PanelRightClose
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import type { ChatBlock } from '../../agent/types'
@@ -442,7 +442,7 @@ export function IdeWorkspaceLayout({
             label={t('ideActivitySearch')}
             onClick={() => setQuickOpenOpen((open) => !open)}
           >
-            <Search className="h-4 w-4" strokeWidth={1.85} />
+            <FileSearch className="h-4 w-4" strokeWidth={1.85} />
           </ActivityButton>
         </nav>
 

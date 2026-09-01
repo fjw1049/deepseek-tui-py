@@ -28,11 +28,21 @@ type Props = {
   hideChevron?: boolean
   /** Composer tray: match the 15px input. Dock stays dense. */
   size?: 'dense' | 'tray'
+  /** Keep a dock popover directly aligned with its full-width trigger row. */
+  matchTriggerWidth?: boolean
   /** Reports the resolved branch so parent chrome can hide an empty control. */
   onCurrentBranchChange?: (branch: string | null) => void
 }
 
 const MENU_WIDTH = 420
+
+/** Body zooms with the UI scale, while trigger rectangles use viewport pixels. */
+function readUiScale(): number {
+  const scale = parseFloat(
+    getComputedStyle(document.documentElement).getPropertyValue('--ds-ui-scale')
+  )
+  return Number.isFinite(scale) && scale > 0 ? scale : 1
+}
 
 export function GitBranchPicker({
   workspaceRoot,
@@ -42,6 +52,7 @@ export function GitBranchPicker({
   hideLabel = false,
   hideChevron = false,
   size = 'dense',
+  matchTriggerWidth = false,
   onCurrentBranchChange
 }: Props): ReactElement | null {
   const { t } = useTranslation('common')
@@ -93,15 +104,20 @@ export function GitBranchPicker({
     const trigger = triggerRef.current
     if (!trigger) return
     const rect = trigger.getBoundingClientRect()
-    const width = Math.min(MENU_WIDTH, window.innerWidth - 24)
-    const left = Math.max(12, Math.min(rect.left, window.innerWidth - width - 12))
+    const scale = usePortal ? readUiScale() : 1
+    const viewportWidth = window.innerWidth / scale
+    const viewportHeight = window.innerHeight / scale
+    const triggerLeft = rect.left / scale
+    const triggerWidth = rect.width / scale
+    const width = Math.min(matchTriggerWidth ? triggerWidth : MENU_WIDTH, viewportWidth - 24)
+    const left = Math.max(12, Math.min(triggerLeft, viewportWidth - width - 12))
 
     if (usePortal) {
       if (menuPlacement === 'below') {
         setMenuStyle({
           position: 'fixed',
           left,
-          top: rect.bottom + 8,
+          top: rect.bottom / scale + 8,
           width,
           zIndex: 120
         })
@@ -110,7 +126,7 @@ export function GitBranchPicker({
       setMenuStyle({
         position: 'fixed',
         left,
-        bottom: window.innerHeight - rect.top + 8,
+        bottom: viewportHeight - rect.top / scale + 8,
         width,
         zIndex: 120
       })
@@ -120,12 +136,12 @@ export function GitBranchPicker({
     setMenuStyle({
       position: 'absolute',
       left: 0,
-      width: `min(${MENU_WIDTH}px, calc(100vw - 48px))`,
+      width: matchTriggerWidth ? '100%' : `min(${MENU_WIDTH}px, calc(100vw - 48px))`,
       ...(menuPlacement === 'below'
         ? { top: 'calc(100% + 8px)' }
         : { bottom: 'calc(100% + 8px)' })
     })
-  }, [menuPlacement, usePortal])
+  }, [matchTriggerWidth, menuPlacement, usePortal])
 
   useLayoutEffect(() => {
     if (!open) return
@@ -239,7 +255,9 @@ export function GitBranchPicker({
     <div
       ref={menuRef}
       style={menuStyle}
-      className="z-50 overflow-hidden rounded-xl border border-ds-border bg-ds-elevated shadow-[0_24px_70px_rgba(44,55,78,0.18)] backdrop-blur-xl dark:shadow-[0_30px_80px_rgba(0,0,0,0.42)]"
+      className={`ds-project-context-menu ds-morph-pop z-50 overflow-hidden ${
+        menuPlacement === 'below' ? 'ds-morph-pop--below' : ''
+      }`}
       onMouseDown={(event) => event.stopPropagation()}
     >
       <div className="ds-project-context-menu__header">
@@ -261,11 +279,11 @@ export function GitBranchPicker({
         </label>
       </div>
 
-      <div className="max-h-[320px] overflow-y-auto px-3 py-3">
-        <div className="mb-2 px-1 text-[13px] font-medium text-ds-faint">{t('gitBranches')}</div>
+      <div className="ds-project-context-menu__list max-h-[320px]">
+        <div className="ds-project-context-menu__group-label">{t('gitBranches')}</div>
 
         {loading && !result ? (
-          <div className="flex items-center gap-2 px-1 py-3 text-[13px] text-ds-muted">
+          <div className="ds-project-context-menu__empty flex items-center gap-2">
             <Loader2 className="h-4 w-4 animate-spin" strokeWidth={2} />
             {t('gitBranchLoading')}
           </div>
@@ -275,41 +293,47 @@ export function GitBranchPicker({
           <button
             key={branch.name}
             type="button"
-            className="flex w-full items-start gap-3 rounded-lg px-1 py-2.5 text-left text-ds-ink transition hover:bg-ds-hover"
+            className={`ds-project-context-menu__row ${
+              branch.current ? 'ds-project-context-menu__row--active' : ''
+            }`}
             onClick={() => void switchBranch(branch.name)}
             disabled={actingBranch != null}
           >
-            <GitBranch className="mt-0.5 h-4 w-4 shrink-0 text-ds-faint" strokeWidth={1.8} />
+            <span className="ds-project-context-menu__icon" aria-hidden>
+              <GitBranch className="h-3.5 w-3.5" strokeWidth={1.85} />
+            </span>
             <span className="min-w-0 flex-1">
-              <span className="block truncate text-[15px] font-medium">{branch.name}</span>
+              <span className="ds-project-context-menu__row-title">{branch.name}</span>
               {branch.current && result?.ok && result.dirtyCount > 0 ? (
-                <span className="mt-0.5 block text-[12px] text-ds-faint">
+                <span className="ds-project-context-menu__row-path">
                   {t('gitDirtyFiles', { count: result.dirtyCount })}
                 </span>
               ) : null}
             </span>
             {actingBranch === branch.name ? (
-              <Loader2 className="mt-1 h-4 w-4 shrink-0 animate-spin text-ds-muted" strokeWidth={2} />
+              <Loader2 className="h-4 w-4 shrink-0 animate-spin text-ds-muted" strokeWidth={2} />
             ) : branch.current ? (
-              <Check className="mt-0.5 h-5 w-5 shrink-0 text-ds-muted" strokeWidth={2} />
+              <Check className="h-4 w-4 shrink-0 text-accent" strokeWidth={2.2} />
             ) : null}
           </button>
         ))}
 
         {!loading && result?.ok && filteredBranches.length === 0 ? (
-          <div className="px-1 py-3 text-[13px] text-ds-faint">{t('gitNoBranches')}</div>
+          <div className="ds-project-context-menu__empty">{t('gitNoBranches')}</div>
         ) : null}
       </div>
 
-      <div className="border-t border-ds-border-muted px-3 py-3">
+      <div className="ds-project-context-menu__footer">
         <button
           type="button"
           disabled={actingBranch != null || !result?.ok}
-          className="flex w-full items-center gap-3 rounded-lg px-1 py-2 text-left text-[14px] font-medium text-ds-ink transition hover:bg-ds-hover disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:bg-transparent"
+          className="ds-project-context-menu__row"
           onClick={openCommitLog}
         >
-          <History className="h-4 w-4 shrink-0 text-ds-muted" strokeWidth={1.9} />
-          <span className="min-w-0 truncate">{t('gitLogOpen')}</span>
+          <span className="ds-project-context-menu__icon" aria-hidden>
+            <History className="h-3.5 w-3.5" strokeWidth={1.9} />
+          </span>
+          <span className="ds-project-context-menu__row-title">{t('gitLogOpen')}</span>
         </button>
       </div>
     </div>
@@ -334,6 +358,7 @@ export function GitBranchPicker({
         onClick={() => setOpen((v) => !v)}
         title={label || t('gitBranch')}
         aria-label={label || t('gitBranch')}
+        aria-expanded={open}
       >
         <GitBranch className={size === 'tray' ? 'h-4 w-4 shrink-0' : 'h-3.5 w-3.5 shrink-0'} strokeWidth={1.7} />
         {!hideLabel ? (

@@ -790,15 +790,16 @@ export function OperationContextDock({
         </button>
 
         {gitReady ? (
-          <>
+          <div className="ds-operation-dock-branch-picker">
             <GitBranchPicker
               key={visibleRoot}
               workspaceRoot={visibleRoot}
               compact
               usePortal
               menuPlacement="below"
+              matchTriggerWidth
             />
-          </>
+          </div>
         ) : gitLoading && !gitResult ? (
           <p className="text-[13px] leading-5 text-ds-faint">{t('gitBranchLoading')}</p>
         ) : (

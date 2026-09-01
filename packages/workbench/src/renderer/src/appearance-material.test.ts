@@ -28,16 +28,19 @@ describe('macOS translucent sidebar material', () => {
     expect(opaque['--app-corner-surface']).toBe(opaque['--bg-sidebar'])
   })
 
-  it('leaves the already-correct light translucent composition unchanged', () => {
+  it('uses one continuous material plane for high-contrast light glass', () => {
     const seed = getThemePresetSeed('notion', 'light')!
-    const translucent = buildChromeThemeCssVars({ ...seed, translucent: true }, 'light')
+    const translucent = buildChromeThemeCssVars(
+      { ...seed, contrast: 100, translucent: true },
+      'light'
+    )
 
     expect(translucent['--app-window-background']).toBe('transparent')
-    expect(translucent['--app-shell-background']).toBe('transparent')
-    expect(translucent['--app-sidebar-surface']).toBe(translucent['--glass-bg'])
-    expect(translucent['--app-sidebar-backdrop-filter']).toBe('blur(8px) saturate(135%)')
-    expect(translucent['--app-chrome-fill']).toBe(translucent['--bg-sidebar'])
-    expect(translucent['--app-corner-surface']).toBe(translucent['--bg-sidebar'])
+    expect(translucent['--app-shell-background']).toBe(translucent['--glass-bg'])
+    expect(translucent['--app-sidebar-surface']).toBe('transparent')
+    expect(translucent['--app-sidebar-backdrop-filter']).toBe('none')
+    expect(translucent['--app-chrome-fill']).toBe('transparent')
+    expect(translucent['--app-corner-surface']).toBe('transparent')
   })
 
   it('connects those tokens to the macOS shell while keeping other platforms opaque', () => {

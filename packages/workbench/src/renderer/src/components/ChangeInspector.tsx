@@ -1451,12 +1451,18 @@ export function ChangeInspector({
                 onChange={onContextChange}
               />
             </div>
-            {visibleFileCount > 0 ? (
-              <span className="inline-flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full bg-ds-hover px-1.5 text-[10.5px] font-medium tabular-nums text-ds-muted">
-                {visibleFileCount}
-              </span>
+            {visibleFileCount > 0 || changeStats ? (
+              <div className="ds-change-inspector__summary flex shrink-0 items-center gap-2">
+                {visibleFileCount > 0 ? (
+                  <span className="inline-flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full bg-ds-hover px-1.5 text-[10.5px] font-medium tabular-nums text-ds-muted">
+                    {visibleFileCount}
+                  </span>
+                ) : null}
+                {changeStats ? (
+                  <ChangeDiffStatsLabel stats={changeStats} size="sm" className="shrink-0" />
+                ) : null}
+              </div>
             ) : null}
-            {changeStats ? <ChangeDiffStatsLabel stats={changeStats} size="sm" className="shrink-0" /> : null}
             {isGitContext && !isDiff && gitBranches?.ok && workingTreeChanges?.ok ? (
               <InspectorGitActions
                 root={changeRoot}

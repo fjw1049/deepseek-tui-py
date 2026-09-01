@@ -1069,7 +1069,7 @@
   "ideWorkspaceSearchTitle": "快速打开",
   "ideWorkspaceSearchPlaceholder": "按文件名或路径筛选…",
   "ideWorkspaceSearchHint": "输入文件名或路径片段。这不是全文搜索。",
-  "ideWorkspaceSearchIdleTitle": "按名称查找文件",
+  "ideWorkspaceSearchIdleTitle": "没有文件",
   "ideWorkspaceSearchSearching": "搜索中…",
   "ideWorkspaceSearchEmpty": "没有匹配的文件。",
   "ideWorkspaceSearchTruncated": "仅显示靠前匹配 — 可缩小关键词以精炼结果。",

@@ -1075,7 +1075,7 @@ const WORKSPACE_SEARCH_DEFAULT_LIMIT = 80
 function scoreWorkspaceSearchPath(relativePath: string, query: string): number | null {
   const normalizedPath = relativePath.replace(/\\/g, '/').toLowerCase()
   const normalizedQuery = query.trim().toLowerCase()
-  if (!normalizedQuery) return null
+  if (!normalizedQuery) return 0
   const basename = normalizedPath.split('/').pop() ?? normalizedPath
   if (basename === normalizedQuery) return 300
   if (basename.startsWith(normalizedQuery)) return 220
@@ -1102,9 +1102,6 @@ export async function searchWorkspaceEntries(
       return { ok: false, message: 'Workspace root is required.' }
     }
     const normalizedQuery = query.trim()
-    if (!normalizedQuery) {
-      return { ok: true, entries: [], truncated: false }
-    }
 
     const rootPath = await enforceWorkspaceBoundary(resolve(expandHomePath(root)), root)
     const cappedLimit = Math.max(1, Math.min(200, Math.floor(limit)))
@@ -1153,6 +1150,10 @@ export async function searchWorkspaceEntries(
 
     ranked.sort((left, right) => {
       if (right.score !== left.score) return right.score - left.score
+      if (!normalizedQuery) {
+        const nameOrder = left.entry.name.localeCompare(right.entry.name)
+        if (nameOrder !== 0) return nameOrder
+      }
       return left.entry.path.localeCompare(right.entry.path)
     })
     if (ranked.length > cappedLimit) truncated = true

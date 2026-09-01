@@ -212,6 +212,18 @@ describe('workspace-service boundary checks', () => {
     }
   })
 
+  it('lists workspace files when the search query is empty', async () => {
+    await mkdir(join(workspaceRoot, 'src'), { recursive: true })
+    await writeFile(join(workspaceRoot, 'src', 'app.py'), 'pass', 'utf8')
+
+    const result = await searchWorkspaceEntries(workspaceRoot, '', 20)
+
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      expect(result.entries.map((entry) => entry.path)).toEqual(['src/app.py', 'inside.txt'])
+    }
+  })
+
   it('writes a large paste as a workspace txt under .deepseek/pastes', async () => {
     const result = await writePasteTextFile({
       workspaceRoot,

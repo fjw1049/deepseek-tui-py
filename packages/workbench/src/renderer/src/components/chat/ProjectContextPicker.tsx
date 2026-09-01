@@ -44,6 +44,8 @@ type Props = {
 
 const MENU_WIDTH = 340
 const RECENT_LIMIT = 4
+const MENU_GAP = 8
+const VIEWPORT_GUTTER = 12
 
 type ProjectGroup = {
   id: string
@@ -67,6 +69,14 @@ function projectPathHint(path: string): string {
     return `…${withSlash.slice(-40)}`
   }
   return withSlash
+}
+
+/** Body zooms with the UI scale, while trigger rectangles use viewport pixels. */
+function readUiScale(): number {
+  const scale = parseFloat(
+    getComputedStyle(document.documentElement).getPropertyValue('--ds-ui-scale')
+  )
+  return Number.isFinite(scale) && scale > 0 ? scale : 1
 }
 
 export function ProjectContextPicker({
@@ -202,16 +212,29 @@ export function ProjectContextPicker({
     const trigger = triggerRef.current
     if (!trigger) return
     const rect = trigger.getBoundingClientRect()
-    const width = Math.min(MENU_WIDTH, window.innerWidth - 24)
-    const left = Math.max(12, Math.min(rect.left, window.innerWidth - width - 12))
+    const scale = usePortal ? readUiScale() : 1
+    const viewportWidth = window.innerWidth / scale
+    const viewportHeight = window.innerHeight / scale
+    const triggerLeft = rect.left / scale
+    const triggerTop = rect.top / scale
+    const triggerBottom = rect.bottom / scale
+    const width = Math.min(MENU_WIDTH, viewportWidth - VIEWPORT_GUTTER * 2)
+    const left = Math.max(
+      VIEWPORT_GUTTER,
+      Math.min(triggerLeft, viewportWidth - width - VIEWPORT_GUTTER)
+    )
 
     if (usePortal) {
       if (menuPlacement === 'below') {
         setMenuStyle({
           position: 'fixed',
           left,
-          top: rect.bottom + 8,
+          top: triggerBottom + MENU_GAP,
           width,
+          maxHeight: Math.max(
+            0,
+            viewportHeight - triggerBottom - MENU_GAP - VIEWPORT_GUTTER
+          ),
           zIndex: 120
         })
         return
@@ -219,8 +242,9 @@ export function ProjectContextPicker({
       setMenuStyle({
         position: 'fixed',
         left,
-        bottom: window.innerHeight - rect.top + 8,
+        bottom: viewportHeight - triggerTop + MENU_GAP,
         width,
+        maxHeight: Math.max(0, triggerTop - MENU_GAP - VIEWPORT_GUTTER),
         zIndex: 120
       })
       return
@@ -300,12 +324,12 @@ export function ProjectContextPicker({
     <div
       ref={menuRef}
       style={menuStyle}
-      className={`ds-project-context-menu ds-morph-pop z-50 overflow-hidden ${
+      className={`ds-project-context-menu ds-morph-pop z-50 flex flex-col overflow-hidden ${
         menuPlacement === 'below' ? 'ds-morph-pop--below' : ''
       }`}
       onMouseDown={(event) => event.stopPropagation()}
     >
-      <div className="ds-project-context-menu__header">
+      <div className="ds-project-context-menu__header shrink-0">
         <label className="ds-project-context-menu__search">
           <Search className="h-3.5 w-3.5 shrink-0 opacity-45" strokeWidth={1.85} aria-hidden />
           <input
@@ -333,7 +357,7 @@ export function ProjectContextPicker({
         </label>
       </div>
 
-      <div id={listId} role="listbox" className="ds-project-context-menu__list">
+      <div id={listId} role="listbox" className="ds-project-context-menu__list min-h-0">
         {flatProjects.length === 0 ? (
           <div className="ds-project-context-menu__empty">{t('contextBarNoMatchingProjects')}</div>
         ) : (
@@ -383,7 +407,7 @@ export function ProjectContextPicker({
         )}
       </div>
 
-      <div className="ds-project-context-menu__footer">
+      <div className="ds-project-context-menu__footer shrink-0">
         <button
           type="button"
           disabled={acting || !runtimeReady}
