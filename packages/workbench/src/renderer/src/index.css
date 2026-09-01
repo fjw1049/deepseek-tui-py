@@ -7550,6 +7550,12 @@ select:focus-visible,
   background: var(--ds-bg-sidebar);
 }
 
+.ds-change-source__group + .ds-change-source__group {
+  margin-top: 0.25rem;
+  padding-top: 0.25rem;
+  border-top: 1px solid color-mix(in srgb, var(--ds-text) 10%, transparent);
+}
+
 .ds-diff-view--flush .ds-diff-view__header {
   background: var(--ds-bg-sidebar);
 }

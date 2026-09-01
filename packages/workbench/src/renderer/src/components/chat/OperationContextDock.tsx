@@ -33,7 +33,10 @@ import { useGitHubRepository } from '../../hooks/use-github-repository'
 import { openPreviewUrl } from '../../lib/open-preview-url'
 import { useDockSubagents, type DockSubagentView } from '../../hooks/use-dock-subagents'
 import { fetchTaskDetail, useLiveTasks } from '../../hooks/use-thread-tasks'
-import { useGitWorkingChanges } from '../../hooks/use-git-working-changes'
+import {
+  useGitBranchCompareBase,
+  useGitWorkingChanges
+} from '../../hooks/use-git-working-changes'
 import { useWorkspaceDirtyGitRefresh } from '../../hooks/use-workspace-dirty-git-refresh'
 import {
   collectWorkspaceChangeEntries,
@@ -54,17 +57,14 @@ import { TaskRunDialog } from './TaskRunDialog'
 import { StepFlow } from './StepFlow'
 import { taskStatusLabelKey } from './task-status'
 import { extractTodosFromBlocks } from '../../lib/extract-todos-from-blocks'
-import {
-  isExplicitGitCommitSelectionNone,
-  resolveGitCommitPaths
-} from '../../lib/git-commit-selection'
-import { resolveThreadFilesystemRoot } from '../../lib/workspace-path'
+import { resolveThreadFilesystemRoot, resolveThreadGitRoot } from '../../lib/workspace-path'
 import { workspaceLabelFromPath } from '../../lib/workspace-label'
 import { useChatStore } from '../../store/chat-store'
 import { GitBranchPicker } from './GitBranchPicker'
-import { GitCommitPopover } from './GitCommitPopover'
 
 type Props = {
+  /** Project currently rendered by the owning Workbench. */
+  workspaceRoot: string
   onOpenChanges?: () => void
   /** Enter IDE/editor layout — top entry, labeled as Editor. */
   onEnterIdeMode?: () => void
@@ -368,6 +368,7 @@ function TaskRow({
 }
 
 export function OperationContextDock({
+  workspaceRoot,
   onOpenChanges,
   onEnterIdeMode,
   previewActive,
@@ -379,42 +380,37 @@ export function OperationContextDock({
 }: Props): ReactElement | null {
   const { t } = useTranslation('common')
   const {
-    workspaceRoot,
     blocks,
     activeThreadId,
     threads,
-    gitCommitSelectionKey,
-    gitCommitSelectedPaths,
-    syncGitCommitSelection,
-    workspaceDirtyTick,
-    turnDiffByTurnId
+    workspaceDirtyTick
   } = useChatStore(
     useShallow((s) => ({
-      workspaceRoot: s.workspaceRoot,
       blocks: s.blocks,
       activeThreadId: s.activeThreadId,
       threads: s.threads,
-      gitCommitSelectionKey: s.gitCommitSelectionKey,
-      gitCommitSelectedPaths: s.gitCommitSelectedPaths,
-      syncGitCommitSelection: s.syncGitCommitSelection,
-      workspaceDirtyTick: s.workspaceDirtyTick,
-      turnDiffByTurnId: s.turnDiffByTurnId
+      workspaceDirtyTick: s.workspaceDirtyTick
     }))
   )
-  const activeThread = activeThreadId
-    ? threads.find((thread) => thread.id === activeThreadId)
-    : undefined
-  const isSessionDraft = activeThread?.envMode === 'worktree'
-  const root = resolveThreadFilesystemRoot(activeThreadId, threads, workspaceRoot)
-  const { result: gitResult, loading: gitLoading, reload: reloadGitBranches } = useGitBranches(root)
-  const { result: gitChanges, loading: gitChangesLoading, reload: reloadGitChanges } = useGitWorkingChanges(root)
-  const { result: githubResult, reload: reloadGithubRepository } = useGitHubRepository(root)
+  const visibleRoot = resolveThreadFilesystemRoot(activeThreadId, threads, workspaceRoot)
+  const gitRoot = resolveThreadGitRoot(activeThreadId, threads, workspaceRoot)
+  const { result: gitResult, loading: gitLoading, reload: reloadGitBranches } = useGitBranches(visibleRoot)
+  const [branchBase] = useGitBranchCompareBase(
+    gitRoot,
+    gitResult?.ok ? gitResult.currentBranch : null
+  )
+  const { result: branchChanges, reload: reloadBranchChanges } = useGitWorkingChanges(
+    gitRoot,
+    'branch',
+    branchBase
+  )
+  const { result: githubResult, reload: reloadGithubRepository } = useGitHubRepository(visibleRoot)
   const githubRepo = githubResult?.ok ? githubResult : null
   const refreshGitState = useCallback((): void => {
     void reloadGitBranches()
-    void reloadGitChanges()
+    void reloadBranchChanges()
     void reloadGithubRepository()
-  }, [reloadGitBranches, reloadGitChanges, reloadGithubRepository])
+  }, [reloadBranchChanges, reloadGitBranches, reloadGithubRepository])
   useWorkspaceDirtyGitRefresh(workspaceDirtyTick, refreshGitState)
   const todoSnapshot = useMemo(() => extractTodosFromBlocks(blocks), [blocks])
   const todos = todoSnapshot?.items ?? []
@@ -452,36 +448,18 @@ export function OperationContextDock({
     () =>
       sumWorkspaceChangeStats(
         collectWorkspaceChangeEntries({
-          blocks,
-          turnDiffByTurnId,
-          gitFiles: isSessionDraft ? [] : gitChanges?.ok ? gitChanges.files : null,
-          retainSessionEntriesWhenGitClean: isSessionDraft
+          blocks: [],
+          gitFiles: branchChanges?.ok ? branchChanges.files : null
         })
       ),
-    [blocks, gitChanges, isSessionDraft, turnDiffByTurnId]
+    [branchChanges]
   )
   const gitDirtyCount = gitResult?.ok ? gitResult.dirtyCount : 0
   const gitReady = gitResult?.ok ?? false
   const gitFilePaths = useMemo(
-    () => (gitChanges?.ok ? gitChanges.files.map((file) => file.path) : []),
-    [gitChanges]
+    () => (branchChanges?.ok ? branchChanges.files.map((file) => file.path) : []),
+    [branchChanges]
   )
-  useEffect(() => {
-    if (gitChanges == null || !gitChanges.ok) return
-    syncGitCommitSelection(gitFilePaths)
-  }, [gitChanges, gitFilePaths, syncGitCommitSelection])
-  const commitFilePaths = useMemo(
-    () =>
-      resolveGitCommitPaths(gitCommitSelectedPaths, gitFilePaths, gitCommitSelectionKey, root),
-    [gitCommitSelectedPaths, gitFilePaths, gitCommitSelectionKey, root]
-  )
-  const explicitSelectNone = isExplicitGitCommitSelectionNone(
-    gitCommitSelectionKey,
-    gitCommitSelectedPaths,
-    gitFilePaths,
-    root
-  )
-  const canCommit = gitReady && gitDirtyCount > 0 && !explicitSelectNone
   const hasGitChanges = gitDirtyCount > 0 || gitFilePaths.length > 0
   const hasChanges = changeStats !== null || hasGitChanges
 
@@ -580,9 +558,9 @@ export function OperationContextDock({
     setCollapsed((prev) => (prev.git === !hasChanges ? prev : { ...prev, git: !hasChanges }))
   }, [hasChanges])
 
-  if (!root) return null
+  if (!visibleRoot) return null
 
-  const workspaceLabel = workspaceLabelFromPath(root)
+  const workspaceLabel = workspaceLabelFromPath(visibleRoot)
 
   // Keep the expanded card mounted while collapsing (fade/squeeze) and while
   // expanding (fade in from the narrow rail). Only idle-compact uses the strip.
@@ -814,29 +792,12 @@ export function OperationContextDock({
         {gitReady ? (
           <>
             <GitBranchPicker
-              key={root}
-              workspaceRoot={root}
+              key={visibleRoot}
+              workspaceRoot={visibleRoot}
               compact
               usePortal
               menuPlacement="below"
             />
-            <GitCommitPopover
-              workspaceRoot={root}
-              currentBranch={gitResult?.ok ? gitResult.currentBranch : null}
-              gitFiles={gitChanges?.ok ? gitChanges.files : []}
-              gitFilesLoading={gitChangesLoading}
-              gitDirtyCount={gitDirtyCount}
-              enabled={canCommit}
-              rowClassName={DOCK_ROW_CLASS}
-              onOpenChanges={hasChanges ? openChangesPanel : undefined}
-              onRefreshGit={refreshGitState}
-              onCommitted={refreshGitState}
-            />
-            {hasChanges && !hasGitChanges ? (
-              <p className="px-1 text-[12px] leading-5 text-ds-faint">
-                {t('operationDockCommitSessionOnly')}
-              </p>
-            ) : null}
           </>
         ) : gitLoading && !gitResult ? (
           <p className="text-[13px] leading-5 text-ds-faint">{t('gitBranchLoading')}</p>

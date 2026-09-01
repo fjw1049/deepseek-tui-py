@@ -38,7 +38,7 @@ export function isClawWorkspacePath(path?: string): boolean {
   )
 }
 
-export function normalizeWorkspaceRoot(path?: string): string {
+export function normalizeWorkspaceRoot(path?: string | null): string {
   const trimmed = path?.trim() ?? ''
   if (!trimmed) return ''
   if (isInternalTemporaryWorkspace(trimmed)) return ''
@@ -82,4 +82,26 @@ export function resolveThreadFilesystemRoot(
   const fromThread = thread?.workspace?.trim() ?? ''
   if (fromThread) return fromThread
   return fallbackWorkspaceRoot?.trim() ?? ''
+}
+
+/**
+ * Git root for the branch the active task is actually changing.
+ *
+ * Managed worktrees stay invisible in product language, but their branch is
+ * still the authoritative source for Branch diff, staging, commit and push.
+ * Falling back to the project checkout keeps local-mode tasks conventional.
+ */
+export function resolveThreadGitRoot(
+  activeThreadId: string | null | undefined,
+  threads: ReadonlyArray<ThreadPathFields>,
+  fallbackWorkspaceRoot?: string | null
+): string {
+  const thread = activeThreadId
+    ? threads.find((item) => item.id === activeThreadId)
+    : undefined
+  const managedBranchRoot = thread?.envMode === 'worktree'
+    ? thread.worktreePath?.trim() ?? ''
+    : ''
+  if (managedBranchRoot) return managedBranchRoot
+  return resolveThreadFilesystemRoot(activeThreadId, threads, fallbackWorkspaceRoot)
 }

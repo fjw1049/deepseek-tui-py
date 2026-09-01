@@ -33,6 +33,7 @@ import {
   gitBranchPayloadSchema,
   gitCommitPayloadSchema,
   gitCommitPathsPayloadSchema,
+  gitWorkingChangesPayloadSchema,
   logErrorPayloadSchema,
   notificationPayloadSchema,
   openEditorPathPayloadSchema,
@@ -85,6 +86,7 @@ import {
   getGitHubRepository,
   getGitLog,
   getGitWorkingChanges,
+  pullGitBranch,
   pushGitBranch,
   stageGitChanges,
   stashAndSwitchGitBranch,
@@ -1292,9 +1294,14 @@ export function registerAppIpcHandlers(options: RegisterAppIpcHandlersOptions): 
       parseIpcPayload('git:github-repository', workspaceRootSchema, workspaceRoot)
     )
   )
-  ipcMain.handle('git:working-changes', async (_, workspaceRoot: unknown) => {
-    const root = parseIpcPayload('git:working-changes', workspaceRootSchema, workspaceRoot)
-    const payload = await getGitWorkingChanges(root)
+  ipcMain.handle('git:working-changes', async (_, input: unknown) => {
+    const request = parseIpcPayload(
+      'git:working-changes',
+      gitWorkingChangesPayloadSchema,
+      input
+    )
+    const root = request.workspaceRoot
+    const payload = await getGitWorkingChanges(root, request.scope, request.baseRef)
     // `not_git_repo` / `no_workspace` are expected, benign states (the folder
     // simply isn't a Git repo), not failures — logging them spams the log on
     // every poll. Only surface genuine Git failures.
@@ -1356,6 +1363,9 @@ export function registerAppIpcHandlers(options: RegisterAppIpcHandlersOptions): 
     const request = parseIpcPayload('git:unstage', gitCommitPathsPayloadSchema, payload)
     return unstageGitChanges(request.workspaceRoot, request.paths ?? [])
   })
+  ipcMain.handle('git:pull', async (_, workspaceRoot: unknown) =>
+    pullGitBranch(parseIpcPayload('git:pull', workspaceRootSchema, workspaceRoot))
+  )
   ipcMain.handle('git:push', async (_, workspaceRoot: unknown) =>
     pushGitBranch(parseIpcPayload('git:push', workspaceRootSchema, workspaceRoot))
   )

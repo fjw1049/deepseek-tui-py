@@ -358,7 +358,7 @@ export function Workbench(): ReactElement {
   const [requestedIdeCenterTab, setRequestedIdeCenterTab] = useState<IdeCenterTab | null>(null)
   const [changesFocusPath, setChangesFocusPath] = useState<string | null>(null)
   const [changesContext, setChangesContext] =
-    useState<ChangeReviewContext>('working-tree')
+    useState<ChangeReviewContext>('branch')
   const [changesTurnId, setChangesTurnId] = useState<string | null>(null)
   const [changesProjectRoot, setChangesProjectRoot] = useState<string | null>(null)
   // Transparent pointer shield shown during panel drags: without it, pointer
@@ -550,8 +550,8 @@ export function Workbench(): ReactElement {
     setRightSidebarTab('changes')
   }
 
-  const handleWorkingTreeOpenDiff = (): void => {
-    setChangesContext('working-tree')
+  const handleBranchOpenDiff = (): void => {
+    setChangesContext('branch')
     setChangesTurnId(null)
     setChangesProjectRoot(null)
     if (layoutMode === 'ide') {
@@ -849,7 +849,7 @@ export function Workbench(): ReactElement {
       )
       setChangesContext(request.context)
       setChangesTurnId(request.turnId ?? null)
-      setChangesProjectRoot(request.context === 'project' ? (request.workspaceRoot ?? null) : null)
+      setChangesProjectRoot(request.workspaceRoot ?? null)
       if (request.path) setChangesFocusPath(request.path)
       if (layoutMode === 'ide') {
         setRequestedIdeCenterTab('changes')
@@ -924,7 +924,7 @@ export function Workbench(): ReactElement {
   }, [activeThreadId])
 
   useEffect(() => {
-    setChangesContext('working-tree')
+    setChangesContext('branch')
     setChangesTurnId(null)
     setChangesProjectRoot(null)
   }, [activeThreadId, activeWorkspaceRoot])
@@ -1567,8 +1567,13 @@ export function Workbench(): ReactElement {
               changesProjectRoot={changesProjectRoot}
               onChangesContextChange={(context) => {
                 setChangesContext(context)
-                if (context !== 'last-turn') setChangesTurnId(null)
-                if (context !== 'project') setChangesProjectRoot(null)
+                // Selecting a source from the menu means "latest"; explicit
+                // historical turn navigation arrives through openChangesPanel.
+                setChangesTurnId(null)
+                // A project badge may temporarily open another project's dirty
+                // tree. Choosing a source again must rebind Changes to the
+                // active task instead of retaining that previous project root.
+                setChangesProjectRoot(null)
               }}
               requestedCenterTab={requestedIdeCenterTab}
               onRequestedCenterTabConsumed={() => setRequestedIdeCenterTab(null)}
@@ -1817,7 +1822,8 @@ export function Workbench(): ReactElement {
                     {showOperationColumn ? (
                       <div className="ds-dialogue-gutter shrink-0 pb-2 md:hidden">
                         <OperationContextDock
-                          onOpenChanges={handleWorkingTreeOpenDiff}
+                          workspaceRoot={activeWorkspaceRoot}
+                          onOpenChanges={handleBranchOpenDiff}
                           onEnterIdeMode={enterIdeMode}
                           previewActive={rightSidebarOpen && rightSidebarTab === 'preview'}
                           terminalPanelOpen={bottomTerminalOpen}
@@ -1864,7 +1870,8 @@ export function Workbench(): ReactElement {
                   <aside className="ds-operation-rail ds-no-drag hidden h-full min-h-0 shrink-0 md:flex">
                     <div className="ds-operation-rail__scroll min-h-0 flex-1 overflow-y-auto pb-4 pl-0 pr-0 pt-[var(--ds-operation-stack-offset)]">
                       <OperationContextDock
-                        onOpenChanges={handleWorkingTreeOpenDiff}
+                        workspaceRoot={activeWorkspaceRoot}
+                        onOpenChanges={handleBranchOpenDiff}
                         onEnterIdeMode={enterIdeMode}
                         previewActive={rightSidebarOpen && rightSidebarTab === 'preview'}
                         terminalPanelOpen={bottomTerminalOpen}
@@ -1973,8 +1980,8 @@ export function Workbench(): ReactElement {
             changesProjectRoot={changesProjectRoot}
             onChangesContextChange={(context) => {
               setChangesContext(context)
-              if (context !== 'last-turn') setChangesTurnId(null)
-              if (context !== 'project') setChangesProjectRoot(null)
+              setChangesTurnId(null)
+              setChangesProjectRoot(null)
             }}
             onChangesFocusPathConsumed={() => setChangesFocusPath(null)}
             devPreviewBlocks={devPreviewBlocks}
@@ -1986,7 +1993,7 @@ export function Workbench(): ReactElement {
             onPreviewPick={handlePreviewPick}
             onTabChange={(tab) => {
               if (tab === 'changes' && rightSidebarTab !== 'changes') {
-                setChangesContext('working-tree')
+                setChangesContext('branch')
                 setChangesTurnId(null)
                 setChangesProjectRoot(null)
               }

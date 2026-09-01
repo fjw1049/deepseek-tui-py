@@ -37,3 +37,25 @@ export type GitPushResult =
         | 'error'
       message: string
     }
+
+export type GitPullResult =
+  | {
+      ok: true
+      repositoryRoot: string
+      branch: string
+      upstream: string
+      updated: boolean
+    }
+  | {
+      ok: false
+      reason:
+        | 'no_workspace'
+        | 'not_git_repo'
+        | 'git_unavailable'
+        | 'detached_head'
+        | 'no_upstream'
+        | 'dirty_worktree'
+        | 'diverged'
+        | 'error'
+      message: string
+    }

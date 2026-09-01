@@ -1,7 +1,59 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
-import type { GitWorkingChangesResult } from '@shared/git-working-changes'
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import type { GitChangeScope, GitWorkingChangesResult } from '@shared/git-working-changes'
 
-export function useGitWorkingChanges(workspaceRoot: string): {
+const BRANCH_COMPARE_BASE_KEY = 'deepseek.gitCompareBase'
+const BRANCH_COMPARE_BASE_EVENT = 'deepseekgui:branch-compare-base'
+
+function branchCompareStorageKey(workspaceRoot: string, currentBranch: string | null): string {
+  const root = workspaceRoot.trim()
+  return root && currentBranch ? `${BRANCH_COMPARE_BASE_KEY}:${root}\u0000${currentBranch}` : ''
+}
+
+export function useGitBranchCompareBase(
+  workspaceRoot: string,
+  currentBranch: string | null
+): [string | undefined, (baseRef?: string) => void] {
+  const key = branchCompareStorageKey(workspaceRoot, currentBranch)
+  const subscribe = useCallback(
+    (onStoreChange: () => void): (() => void) => {
+      if (!key) return () => undefined
+      const onChange = (event: Event): void => {
+        if ((event as CustomEvent<{ key?: string }>).detail?.key === key) onStoreChange()
+      }
+      const onStorage = (event: StorageEvent): void => {
+        if (event.key === key) onStoreChange()
+      }
+      window.addEventListener(BRANCH_COMPARE_BASE_EVENT, onChange)
+      window.addEventListener('storage', onStorage)
+      return () => {
+        window.removeEventListener(BRANCH_COMPARE_BASE_EVENT, onChange)
+        window.removeEventListener('storage', onStorage)
+      }
+    },
+    [key]
+  )
+  const getSnapshot = useCallback(
+    () => (key ? window.localStorage.getItem(key) : null),
+    [key]
+  )
+  const baseRef = useSyncExternalStore(subscribe, getSnapshot, () => null)
+  const setBaseRef = useCallback(
+    (next?: string): void => {
+      if (!key) return
+      if (next?.trim()) window.localStorage.setItem(key, next.trim())
+      else window.localStorage.removeItem(key)
+      window.dispatchEvent(new CustomEvent(BRANCH_COMPARE_BASE_EVENT, { detail: { key } }))
+    },
+    [key]
+  )
+  return [baseRef ?? undefined, setBaseRef]
+}
+
+export function useGitWorkingChanges(
+  workspaceRoot: string,
+  scope: GitChangeScope = 'working-tree',
+  baseRef?: string
+): {
   result: GitWorkingChangesResult | null
   loading: boolean
   reload: () => Promise<void>
@@ -9,8 +61,10 @@ export function useGitWorkingChanges(workspaceRoot: string): {
   const root = workspaceRoot.trim()
   const [result, setResult] = useState<GitWorkingChangesResult | null>(null)
   const [loading, setLoading] = useState(false)
-  const rootRef = useRef(root)
-  rootRef.current = root
+  const requestedBase = scope === 'branch' ? baseRef?.trim() : undefined
+  const requestKey = `${root}\u0000${scope}\u0000${requestedBase ?? ''}`
+  const requestKeyRef = useRef(requestKey)
+  requestKeyRef.current = requestKey
 
   const reload = useCallback(async (): Promise<void> => {
     if (!root || typeof window.dsGui?.getGitWorkingChanges !== 'function') {
@@ -20,10 +74,16 @@ export function useGitWorkingChanges(workspaceRoot: string): {
     }
 
     const requestRoot = root
+    const requestedScope = scope
+    const requestedKey = requestKey
     setLoading(true)
     try {
-      const next = await window.dsGui.getGitWorkingChanges(requestRoot)
-      if (rootRef.current !== requestRoot) return
+      const next = await window.dsGui.getGitWorkingChanges(
+        requestRoot,
+        requestedScope,
+        requestedBase
+      )
+      if (requestKeyRef.current !== requestedKey) return
       setResult(next)
       // `not_git_repo` / `no_workspace` are expected, benign states — skip them
       // so polling doesn't flood the log. The main process applies the same
@@ -40,7 +100,7 @@ export function useGitWorkingChanges(workspaceRoot: string): {
         })
       }
     } catch (error) {
-      if (rootRef.current !== requestRoot) return
+      if (requestKeyRef.current !== requestedKey) return
       setResult(null)
       if (typeof window.dsGui?.logError === 'function') {
         void window.dsGui.logError(
@@ -50,11 +110,11 @@ export function useGitWorkingChanges(workspaceRoot: string): {
         )
       }
     } finally {
-      if (rootRef.current === requestRoot) {
+      if (requestKeyRef.current === requestedKey) {
         setLoading(false)
       }
     }
-  }, [root])
+  }, [requestKey, requestedBase, root, scope])
 
   useEffect(() => {
     setResult(null)

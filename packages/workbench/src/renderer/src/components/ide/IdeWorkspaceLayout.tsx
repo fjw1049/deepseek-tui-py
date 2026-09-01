@@ -36,10 +36,15 @@ import {
 import { workspaceLabelFromPath } from '../../lib/workspace-label'
 import { IDE_QUICK_OPEN_EVENT } from '../../lib/workspace-editor-events'
 import { useWorkspaceEditorStore } from '../../store/workspace-editor-store'
-import { useGitWorkingChanges } from '../../hooks/use-git-working-changes'
+import {
+  useGitBranchCompareBase,
+  useGitWorkingChanges
+} from '../../hooks/use-git-working-changes'
+import { useGitBranches } from '../../hooks/use-git-branches'
 import { useWorkspaceDirtyGitRefresh } from '../../hooks/use-workspace-dirty-git-refresh'
 import { collectWorkspaceChangeEntries } from '../../lib/workspace-change-stats'
 import type { ChangeReviewContext } from '../../lib/change-review'
+import { resolveThreadGitRoot } from '../../lib/workspace-path'
 import { useChatStore } from '../../store/chat-store'
 import { IdeProjectPicker, type IdeProjectOption } from './IdeProjectPicker'
 import { IdeQuickOpenPalette } from './IdeQuickOpenPalette'
@@ -154,7 +159,7 @@ export function IdeWorkspaceLayout({
   chatRail,
   onExitIdeMode,
   onOpenFileInEditor,
-  changesContext = 'working-tree',
+  changesContext = 'branch',
   changesTurnId = null,
   changesProjectRoot = null,
   onChangesContextChange,
@@ -175,6 +180,7 @@ export function IdeWorkspaceLayout({
   const [chatRailWidth, setChatRailWidth] = useState(readStoredIdeChatRailWidth)
   const [changesListWidth, setChangesListWidth] = useState(readStoredChangesListWidth)
   const [changesFocusPath, setChangesFocusPath] = useState<string | null>(null)
+  const [changesDiffVisible, setChangesDiffVisible] = useState(true)
   const resizeStateRef = useRef<{
     pointerId: number
     startX: number
@@ -188,8 +194,24 @@ export function IdeWorkspaceLayout({
     pendingWidth: number
   } | null>(null)
   const workspaceDirtyTick = useChatStore((s) => s.workspaceDirtyTick)
-  const { result: gitChanges, reload: reloadGitChanges } = useGitWorkingChanges(workspaceRoot)
-  useWorkspaceDirtyGitRefresh(workspaceDirtyTick, reloadGitChanges)
+  const activeThreadId = useChatStore((s) => s.activeThreadId)
+  const threads = useChatStore((s) => s.threads)
+  const gitRoot = resolveThreadGitRoot(activeThreadId, threads, workspaceRoot)
+  const { result: gitBranches, reload: reloadGitBranches } = useGitBranches(gitRoot)
+  const [branchBase] = useGitBranchCompareBase(
+    gitRoot,
+    gitBranches?.ok ? gitBranches.currentBranch : null
+  )
+  const { result: gitChanges, reload: reloadGitChanges } = useGitWorkingChanges(
+    gitRoot,
+    'branch',
+    branchBase
+  )
+  const refreshGitChanges = useCallback((): void => {
+    void reloadGitBranches()
+    void reloadGitChanges()
+  }, [reloadGitBranches, reloadGitChanges])
+  useWorkspaceDirtyGitRefresh(workspaceDirtyTick, refreshGitChanges)
   const changeBadge = collectWorkspaceChangeEntries({
     blocks,
     gitFiles: gitChanges?.ok ? gitChanges.files : null
@@ -212,6 +234,7 @@ export function IdeWorkspaceLayout({
     }
     setCenterTab(requestedCenterTab)
     setActivitySidebarVisible(true)
+    if (requestedCenterTab === 'changes') setChangesDiffVisible(true)
     onRequestedCenterTabConsumed?.()
   }, [onRequestedCenterTabConsumed, requestedCenterTab])
 
@@ -219,6 +242,7 @@ export function IdeWorkspaceLayout({
     const onOpenChanges = (event: Event): void => {
       const path = (event as CustomEvent<{ path?: string }>).detail?.path
       if (typeof path === 'string' && path.trim()) setChangesFocusPath(path.trim())
+      setChangesDiffVisible(true)
     }
     const onQuickOpen = (): void => setQuickOpenOpen((open) => !open)
     window.addEventListener('deepseekgui:open-changes-panel', onOpenChanges)
@@ -232,7 +256,8 @@ export function IdeWorkspaceLayout({
   const selectActivity = useCallback(
     (item: IdeCenterTab) => {
       if (item === 'changes' && centerTab !== 'changes') {
-        onChangesContextChange?.('working-tree')
+        onChangesContextChange?.('branch')
+        setChangesDiffVisible(true)
       }
       const next = nextIdeActivitySelection(centerTab, activitySidebarVisible, item)
       setCenterTab(next.tab)
@@ -329,7 +354,7 @@ export function IdeWorkspaceLayout({
   }
 
   const showChangesList = centerTab === 'changes' && activitySidebarVisible
-  const showChangesDiff = centerTab === 'changes'
+  const showChangesDiff = centerTab === 'changes' && changesDiffVisible
   const editorHideTree = !activitySidebarVisible || centerTab === 'changes'
 
   const projectName =
@@ -436,6 +461,7 @@ export function IdeWorkspaceLayout({
                     onContextChange={onChangesContextChange}
                     className="h-full min-h-0"
                     onRevealInEditor={handleRevealChangeFile}
+                    onSelectFile={() => setChangesDiffVisible(true)}
                     requestedPath={changesFocusPath}
                     onRequestedPathConsumed={() => setChangesFocusPath(null)}
                   />
@@ -480,6 +506,10 @@ export function IdeWorkspaceLayout({
                       turnId={changesTurnId}
                       projectRootOverride={changesProjectRoot}
                       className="h-full min-h-0"
+                      onCollapse={() => {
+                        setChangesDiffVisible(false)
+                        setActivitySidebarVisible(true)
+                      }}
                       requestedPath={changesFocusPath}
                       onRequestedPathConsumed={() => setChangesFocusPath(null)}
                     />

@@ -33,9 +33,6 @@ import { useLightDismiss } from '../../hooks/use-light-dismiss'
 import { useThreadsWithActiveTasks } from '../../hooks/use-thread-tasks'
 import { extractTasksFromBlocks } from '../../lib/extract-tasks-from-blocks'
 import { useChatStore } from '../../store/chat-store'
-import { useGitBranches } from '../../hooks/use-git-branches'
-import { useWorkspaceDirtyGitRefresh } from '../../hooks/use-workspace-dirty-git-refresh'
-import { openChangesPanel } from '../../lib/change-review'
 import { formatRelativeTimeLargestUnit } from '../../lib/format-relative-time'
 import { workspaceLabelFromPath } from '../../lib/workspace-label'
 import {
@@ -133,37 +130,6 @@ type WorkspaceGroup = [string, NormalizedThread[]]
 function workspaceHasActiveThread(list: NormalizedThread[], activeThreadId: string | null): boolean {
   if (!activeThreadId) return false
   return list.some((thread) => thread.id === activeThreadId)
-}
-
-function ProjectDirtyBadge({
-  workspacePath,
-  active,
-  t
-}: {
-  workspacePath: string
-  active: boolean
-  t: (key: string, options?: Record<string, unknown>) => string
-}): ReactElement | null {
-  const workspaceDirtyTick = useChatStore((s) => s.workspaceDirtyTick)
-  const { result, reload } = useGitBranches(active ? workspacePath : '')
-  useWorkspaceDirtyGitRefresh(workspaceDirtyTick, reload)
-
-  if (!active || !result?.ok || result.dirtyCount === 0) return null
-  return (
-    <button
-      type="button"
-      onClick={(event) => {
-        event.stopPropagation()
-        openChangesPanel({ context: 'project', workspaceRoot: workspacePath })
-      }}
-      className="inline-flex h-5 shrink-0 items-center gap-1 rounded-full bg-amber-500/12 px-1.5 text-[10.5px] font-semibold tabular-nums text-amber-700 transition hover:bg-amber-500/20 dark:text-amber-300"
-      title={t('sidebarProjectDirtyReview', { count: result.dirtyCount })}
-      aria-label={t('sidebarProjectDirtyReview', { count: result.dirtyCount })}
-    >
-      <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
-      {result.dirtyCount}
-    </button>
-  )
 }
 
 const PROJECT_SORT_LABEL_KEYS: Record<ProjectSortMode, string> = {
@@ -1065,10 +1031,6 @@ function SidebarProjectsSection({
       .map((id) => byId.get(id))
       .filter((thread): thread is NormalizedThread => Boolean(thread))
     const folderHasActive = workspaceHasActiveThread(list, activeThreadId)
-    const isActiveWorkspace =
-      activeThreadId !== null
-        ? folderHasActive
-        : normalizeWorkspaceRoot(workspaceRoot) === normalizeWorkspaceRoot(workspacePath)
     const folderIconClass = folderHasActive ? 'text-accent' : 'text-ds-muted'
     const labelColor = (sidebarLabelColors[workspaceLabelKey(workspacePath)] ??
       null) as SidebarLabelColor
@@ -1156,7 +1118,6 @@ function SidebarProjectsSection({
               </button>
               {selectionMode ? null : (
                 <div className="flex shrink-0 items-center gap-1 pr-1">
-                  <ProjectDirtyBadge workspacePath={workspacePath} active={isActiveWorkspace} t={t} />
                   <button
                     type="button"
                     onClick={(event) => {

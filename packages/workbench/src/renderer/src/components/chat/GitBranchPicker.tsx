@@ -9,7 +9,7 @@ import {
   type ReactElement
 } from 'react'
 import { createPortal } from 'react-dom'
-import { AlertCircle, Check, ChevronDown, GitBranch, History, Loader2, Search } from 'lucide-react'
+import { AlertCircle, Check, ChevronDown, GitBranch, History, Loader2, Search, X } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { useGitBranches } from '../../hooks/use-git-branches'
 import { useLightDismiss } from '../../hooks/use-light-dismiss'
@@ -172,6 +172,7 @@ export function GitBranchPicker({
     try {
       const next = await window.dsGui.switchGitBranch(root, branch)
       if (!next.ok && next.reason === 'dirty_worktree') {
+        setOpen(false)
         setDirtyConflictBranch(branch)
         setNotice(t('gitDirtySwitchBlocked', { branch }))
         return
@@ -194,23 +195,28 @@ export function GitBranchPicker({
     if (!root || !branch) return
     setActingBranch(branch)
     setError(null)
-    setNotice(null)
-    setDirtyConflictBranch(null)
     try {
       const next = await window.dsGui.stashAndSwitchGitBranch(root, branch)
       if (!next.ok && next.reason === 'stash_pop_conflict') {
         setNotice(t('gitStashPopConflict'))
+        setDirtyConflictBranch(null)
         void reload()
         return
       }
       setResult(next)
       if (!next.ok) {
+        setNotice(null)
+        setDirtyConflictBranch(null)
         setError(next.message)
         return
       }
       setOpen(false)
       setQuery('')
+      setNotice(null)
+      setDirtyConflictBranch(null)
     } catch (e) {
+      setNotice(null)
+      setDirtyConflictBranch(null)
       setError(e instanceof Error ? e.message : String(e))
     } finally {
       setActingBranch(null)
@@ -262,28 +268,6 @@ export function GitBranchPicker({
           <div className="flex items-center gap-2 px-1 py-3 text-[13px] text-ds-muted">
             <Loader2 className="h-4 w-4 animate-spin" strokeWidth={2} />
             {t('gitBranchLoading')}
-          </div>
-        ) : null}
-
-        {error || notice ? (
-          <div className="mb-2 rounded-lg border border-amber-300/70 bg-amber-50 px-3 py-2 text-[12px] leading-5 text-amber-900 dark:border-amber-700/50 dark:bg-amber-950/35 dark:text-amber-100">
-            <div className="flex gap-2">
-              <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" strokeWidth={2} />
-              <span className="min-w-0 break-words">{error ?? notice}</span>
-            </div>
-            {dirtyConflictBranch ? (
-              <button
-                type="button"
-                disabled={actingBranch != null}
-                onClick={() => void stashAndSwitch(dirtyConflictBranch)}
-                className="mt-2 inline-flex items-center gap-1.5 rounded-md border border-amber-400/70 bg-amber-100 px-2.5 py-1 text-[12px] font-medium text-amber-900 transition hover:bg-amber-200 disabled:opacity-45 dark:border-amber-600/60 dark:bg-amber-900/40 dark:text-amber-100 dark:hover:bg-amber-900/70"
-              >
-                {actingBranch === dirtyConflictBranch ? (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={2} />
-                ) : null}
-                {t('gitStashAndSwitch', { branch: dirtyConflictBranch })}
-              </button>
-            ) : null}
           </div>
         ) : null}
 
@@ -370,6 +354,54 @@ export function GitBranchPicker({
       {usePortal && typeof document !== 'undefined'
         ? createPortal(menu, document.body)
         : menu}
+      {typeof document !== 'undefined' && (error || notice)
+        ? createPortal(
+            <div className="pointer-events-none fixed left-1/2 top-1/2 z-[200] w-[min(480px,calc(100vw-24px))] -translate-x-1/2 -translate-y-1/2">
+              <div
+                role="alert"
+                aria-live="assertive"
+                className={`pointer-events-auto rounded-xl border bg-ds-elevated p-3 shadow-[0_18px_55px_rgba(0,0,0,0.24)] backdrop-blur-xl ${
+                  error
+                    ? 'border-red-400/55 text-red-700 dark:border-red-500/45 dark:text-red-200'
+                    : 'border-amber-400/55 text-amber-800 dark:border-amber-500/45 dark:text-amber-100'
+                }`}
+              >
+                <div className="flex items-start gap-2.5">
+                  <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" strokeWidth={2} />
+                  <span className="min-w-0 flex-1 break-words text-[13px] leading-5">
+                    {error ?? notice}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setError(null)
+                      setNotice(null)
+                      setDirtyConflictBranch(null)
+                    }}
+                    aria-label={t('close')}
+                    className="-mr-1 -mt-1 rounded-md p-1 text-current opacity-65 transition hover:bg-current/10 hover:opacity-100 active:scale-[0.96]"
+                  >
+                    <X className="h-4 w-4" strokeWidth={1.9} />
+                  </button>
+                </div>
+                {dirtyConflictBranch ? (
+                  <button
+                    type="button"
+                    disabled={actingBranch != null}
+                    onClick={() => void stashAndSwitch(dirtyConflictBranch)}
+                    className="mx-auto mt-2.5 flex min-h-8 w-fit items-center gap-1.5 rounded-lg border border-ds-border bg-transparent px-3 py-1.5 text-[12.5px] font-semibold text-ds-ink transition hover:bg-ds-hover active:scale-[0.98] disabled:opacity-45"
+                  >
+                    {actingBranch === dirtyConflictBranch ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={2} />
+                    ) : null}
+                    {t('gitStashAndSwitch', { branch: dirtyConflictBranch })}
+                  </button>
+                ) : null}
+              </div>
+            </div>,
+            document.body
+          )
+        : null}
       <GitLogDialog
         workspaceRoot={root}
         currentBranch={currentBranch}

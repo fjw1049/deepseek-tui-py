@@ -105,8 +105,8 @@ const api = {
   getGitLog: (workspaceRoot) => ipcRenderer.invoke('git:log', workspaceRoot),
   getGitHubRepository: (workspaceRoot) =>
     ipcRenderer.invoke('git:github-repository', workspaceRoot),
-  getGitWorkingChanges: (workspaceRoot) =>
-    ipcRenderer.invoke('git:working-changes', workspaceRoot),
+  getGitWorkingChanges: (workspaceRoot, scope, baseRef) =>
+    ipcRenderer.invoke('git:working-changes', { workspaceRoot, scope, baseRef }),
   switchGitBranch: (workspaceRoot, branch) =>
     ipcRenderer.invoke('git:switch-branch', { workspaceRoot, branch }),
   stashAndSwitchGitBranch: (workspaceRoot, branch) =>
@@ -121,6 +121,7 @@ const api = {
     ipcRenderer.invoke('git:stage', { workspaceRoot, paths }),
   unstageGitChanges: (workspaceRoot, paths) =>
     ipcRenderer.invoke('git:unstage', { workspaceRoot, paths }),
+  pullGitBranch: (workspaceRoot) => ipcRenderer.invoke('git:pull', workspaceRoot),
   pushGitBranch: (workspaceRoot) => ipcRenderer.invoke('git:push', workspaceRoot),
   listEditors: () => ipcRenderer.invoke('editor:list'),
   openEditorPath: (options) =>

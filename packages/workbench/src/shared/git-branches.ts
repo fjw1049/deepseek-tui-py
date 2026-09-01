@@ -8,7 +8,12 @@ export type GitBranchesResult =
       ok: true
       repositoryRoot: string
       currentBranch: string | null
+      /** Local branches ordered by most recent commit first. */
       branches: GitBranchRow[]
+      /** Repository default branch ref, preferring its remote-tracking ref. */
+      defaultBranch: string | null
+      /** Closest recently active ancestor branch, otherwise the default branch. */
+      recommendedBase: string | null
       dirtyCount: number
       upstream: string | null
       ahead: number
