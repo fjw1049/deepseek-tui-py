@@ -1,11 +1,9 @@
 import {
-  useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
   useState,
-  type CSSProperties,
   type ReactElement
 } from 'react'
 import { createPortal } from 'react-dom'
@@ -95,7 +93,7 @@ export function ContextUsageMeter({
   const [open, setOpen] = useState(false)
   const [breakdown, setBreakdown] = useState<ContextBreakdownJson | null>(null)
   const [liveBreakdown, setLiveBreakdown] = useState(false)
-  const [panelStyle, setPanelStyle] = useState<CSSProperties>({})
+  const [portalHost, setPortalHost] = useState<Element | null>(null)
   const wrapRef = useRef<HTMLDivElement | null>(null)
   const buttonRef = useRef<HTMLButtonElement | null>(null)
   const panelRef = useRef<HTMLDivElement | null>(null)
@@ -106,6 +104,8 @@ export function ContextUsageMeter({
       setLiveBreakdown(false)
       return
     }
+    setBreakdown(null)
+    setLiveBreakdown(false)
     let cancelled = false
     const fetchBreakdown = async (): Promise<void> => {
       try {
@@ -134,37 +134,21 @@ export function ContextUsageMeter({
 
   const effectiveBreakdown = useMemo(() => {
     if (breakdown) return breakdown
-    if (hasActiveThread) return fallbackContextBreakdown(blocks, model)
-    return null
-  }, [breakdown, blocks, model, hasActiveThread])
+    return fallbackContextBreakdown(blocks, model)
+  }, [breakdown, blocks, model])
 
   const usage = useMemo(() => {
-    if (effectiveBreakdown) return snapshotFromContextBreakdown(effectiveBreakdown)
-    return null
+    return snapshotFromContextBreakdown(effectiveBreakdown)
   }, [effectiveBreakdown])
 
-  const updatePanelPosition = useCallback((): void => {
-    const button = buttonRef.current
-    if (!button) return
-    const rect = button.getBoundingClientRect()
-    setPanelStyle({
-      position: 'fixed',
-      right: Math.max(12, window.innerWidth - rect.right),
-      bottom: Math.max(12, window.innerHeight - rect.top + 8),
-      zIndex: 120
-    })
-  }, [])
-
   useLayoutEffect(() => {
-    if (!open) return
-    updatePanelPosition()
-    window.addEventListener('resize', updatePanelPosition)
-    window.addEventListener('scroll', updatePanelPosition, true)
-    return () => {
-      window.removeEventListener('resize', updatePanelPosition)
-      window.removeEventListener('scroll', updatePanelPosition, true)
+    if (!open) {
+      setPortalHost(null)
+      return
     }
-  }, [open, updatePanelPosition])
+    const shell = buttonRef.current?.closest('.ds-composer-shell')
+    setPortalHost(shell?.parentElement ?? shell ?? document.body)
+  }, [open])
 
   useLightDismiss({
     open,
@@ -175,22 +159,6 @@ export function ContextUsageMeter({
   useEffect(() => {
     setOpen(false)
   }, [threadId])
-
-  if (!hasActiveThread || !usage || !effectiveBreakdown) {
-    return (
-      <div ref={wrapRef} className="relative shrink-0">
-        <button
-          type="button"
-          disabled
-          className="ds-no-drag flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-ds-faint opacity-55"
-          aria-label={t('contextUsageIdle')}
-          title={t('contextUsageIdle')}
-        >
-          <UsageRing percent={0} tone="idle" />
-        </button>
-      </div>
-    )
-  }
 
   const tone =
     usage.level === 'critical'
@@ -219,16 +187,23 @@ export function ContextUsageMeter({
   const barUsedTokens = barSegments.reduce((sum, row) => sum + row.tokens, 0)
   const barUsedPct =
     windowTokens > 0 ? Math.min(100, (barUsedTokens / windowTokens) * 100) : 0
+  const minimumVisibleBarWidth =
+    barSegments.length * USAGE_SEGMENT_MIN_WIDTH +
+    Math.max(0, barSegments.length - 1) * USAGE_SEGMENT_GAP
 
+  const anchoredToComposer = portalHost != null && portalHost !== document.body
   const panel =
-    open && typeof document !== 'undefined'
+    open && portalHost
       ? createPortal(
           <div
             ref={panelRef}
             role="dialog"
             aria-label={t('contextBreakdownTitle')}
-            style={panelStyle}
-            className="w-[min(520px,calc(100vw-24px))] overflow-hidden rounded-[12px] border border-ds-border bg-ds-elevated px-5 py-4 text-[12px] leading-[1.5] text-ds-muted shadow-[0_24px_70px_rgba(44,55,78,0.18)] backdrop-blur-xl dark:shadow-[0_30px_80px_rgba(0,0,0,0.42)]"
+            className={`overflow-hidden rounded-[12px] border border-ds-border bg-ds-elevated px-5 py-4 text-[12px] leading-[1.5] text-ds-muted shadow-[0_24px_70px_rgba(44,55,78,0.18)] backdrop-blur-xl dark:shadow-[0_30px_80px_rgba(0,0,0,0.42)] ${
+              anchoredToComposer
+                ? 'absolute inset-x-0 bottom-full z-[120] mb-1.5 w-full'
+                : 'fixed bottom-12 left-3 z-[120] w-[min(520px,calc(100vw-24px))]'
+            }`}
             onMouseDown={(event) => event.stopPropagation()}
           >
             <div className="flex items-start justify-between gap-4">
@@ -248,15 +223,20 @@ export function ContextUsageMeter({
               </div>
             </div>
 
-            {/* Cursor-style: solid free-track grey; gaps show it; only outer ends round. */}
+            {/* Preserve real proportions; the small visual floor only prevents bucket clipping. */}
             <div
-              className="relative mt-3.5 h-[5px] w-full overflow-hidden rounded-full"
+              aria-hidden="true"
+              className="ds-context-usage-bar relative mt-3.5 h-[5px] w-full overflow-hidden rounded-full"
               style={{ backgroundColor: USAGE_TRACK_GREY }}
             >
               {barSegments.length > 0 && barUsedPct > 0 ? (
                 <div
-                  className="absolute inset-y-0 left-0 flex"
-                  style={{ width: `${barUsedPct}%`, gap: '1px' }}
+                  className="ds-context-usage-bar__segments absolute inset-y-0 left-0 flex"
+                  style={{
+                    width: `${barUsedPct}%`,
+                    minWidth: `${minimumVisibleBarWidth}px`,
+                    gap: `${USAGE_SEGMENT_GAP}px`
+                  }}
                 >
                   {barSegments.map((row, index) => {
                     const isFirst = index === 0
@@ -272,8 +252,9 @@ export function ContextUsageMeter({
                     return (
                       <span
                         key={row.key}
-                        className={`min-w-[2px] ${radius}`}
+                        className={`ds-context-usage-bar__segment ${radius}`}
                         style={{
+                          minWidth: `${USAGE_SEGMENT_MIN_WIDTH}px`,
                           flexGrow: row.tokens,
                           flexBasis: 0,
                           backgroundColor: row.color
@@ -308,7 +289,7 @@ export function ContextUsageMeter({
               </p>
             ) : null}
           </div>,
-          document.body
+          portalHost
         )
       : null
 
@@ -341,6 +322,8 @@ const RING_SIZE = 16
 const RING_STROKE = 2
 const RING_RADIUS = (RING_SIZE - RING_STROKE) / 2
 const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS
+const USAGE_SEGMENT_MIN_WIDTH = 2
+const USAGE_SEGMENT_GAP = 1
 // Solid free-track grey (Cursor-style). Inline color-mix — Tailwind cannot apply
 // `/opacity` to `ds-*` CSS-variable colors, so `bg-ds-hover/70` renders as nothing.
 const USAGE_TRACK_GREY = 'color-mix(in srgb, var(--ds-text-faint) 42%, transparent)'
@@ -350,7 +333,7 @@ function UsageRing({
   tone
 }: {
   percent: number
-  tone: 'idle' | 'ok' | 'high' | 'critical'
+  tone: 'ok' | 'high' | 'critical'
 }): ReactElement {
   // Keep a visible arc even at very low usage so the meter never looks empty.
   const clamped = Math.max(0, Math.min(100, percent))

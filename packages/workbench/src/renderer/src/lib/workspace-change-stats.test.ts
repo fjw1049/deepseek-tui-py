@@ -27,7 +27,11 @@ const PATCH_B = [
   '+only'
 ].join('\n')
 
-function fileChange(id: string, path: string, detail: string): ChatBlock {
+function fileChange(
+  id: string,
+  path: string,
+  detail: string
+): Extract<ChatBlock, { kind: 'tool' }> {
   return {
     kind: 'tool',
     id,
@@ -139,6 +143,26 @@ describe('collectWorkspaceChangeEntries', () => {
     expect(entries).toHaveLength(0)
   })
 
+  it('keeps the active session ledger when its isolated draft is not in project git', () => {
+    const entries = collectWorkspaceChangeEntries({
+      blocks: [],
+      turnDiffByTurnId: {
+        turn_1: {
+          turn_id: 'turn_1',
+          files: [{ path: 'b.ts', additions: 1, deletions: 0, unified_diff: PATCH_B }],
+          totals: { files: 1, additions: 1, deletions: 0 },
+          revision: 1,
+          complete: true
+        }
+      },
+      gitFiles: [],
+      retainSessionEntriesWhenGitClean: true
+    })
+    expect(entries).toHaveLength(1)
+    expect(entries[0]?.filePath).toBe('b.ts')
+    expect(entries[0]?.committable).not.toBe(true)
+  })
+
   it('keeps session entries when the git snapshot has not loaded yet', () => {
     const entries = collectWorkspaceChangeEntries({
       blocks: [fileChange('t1', 'a.ts', PATCH_A)],
@@ -240,5 +264,24 @@ describe('collectLiveTurnChangeEntries', () => {
     })
     expect(entries).toHaveLength(1)
     expect(entries[0]?.filePath).toBe('c.ts')
+  })
+
+  it('keeps authoritative stats while the matching file tool is still running', () => {
+    const running = { ...fileChange('live', 'b.ts', ''), status: 'running' as const }
+    const entries = collectLiveTurnChangeEntries({
+      currentTurnId: 'turn_now',
+      blocks: [running],
+      turnDiffByTurnId: {
+        turn_now: {
+          turn_id: 'turn_now',
+          files: [{ path: 'b.ts', additions: 1, deletions: 0, unified_diff: PATCH_B }],
+          totals: { files: 1, additions: 1, deletions: 0 },
+          revision: 1,
+          complete: false
+        }
+      }
+    })
+    expect(entries).toHaveLength(1)
+    expect(sumWorkspaceChangeStats(entries)).toEqual({ added: 1, removed: 0 })
   })
 })

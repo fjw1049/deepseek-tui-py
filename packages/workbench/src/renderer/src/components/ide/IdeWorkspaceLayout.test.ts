@@ -19,6 +19,7 @@ vi.mock('../../lib/workspace-label', () => ({
 }))
 
 vi.mock('../../hooks/use-git-working-changes', () => ({
+  useGitBranchCompareBase: () => [undefined, vi.fn()],
   useGitWorkingChanges: () => ({
     result: null,
     loading: false,
@@ -27,8 +28,13 @@ vi.mock('../../hooks/use-git-working-changes', () => ({
 }))
 
 vi.mock('../../store/chat-store', () => ({
-  useChatStore: (selector: (state: { workspaceDirtyTick: number }) => unknown) =>
-    selector({ workspaceDirtyTick: 0 })
+  useChatStore: (
+    selector: (state: {
+      workspaceDirtyTick: number
+      activeThreadId: null
+      threads: []
+    }) => unknown
+  ) => selector({ workspaceDirtyTick: 0, activeThreadId: null, threads: [] })
 }))
 
 vi.mock('../../store/workspace-editor-store', () => ({

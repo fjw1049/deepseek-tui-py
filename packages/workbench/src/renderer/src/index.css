@@ -114,6 +114,12 @@
   --glass-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
   --glass-card: rgba(255, 255, 255, 0.6);
   --glass-card-hover: rgba(255, 255, 255, 0.9);
+  --app-window-background: var(--bg-app);
+  --app-shell-background: var(--bg-app);
+  --app-sidebar-surface: var(--bg-sidebar);
+  --app-sidebar-backdrop-filter: none;
+  --app-chrome-fill: var(--bg-sidebar);
+  --app-corner-surface: var(--bg-sidebar);
   --app-wallpaper: #fcfcfc;
 }
 
@@ -1106,7 +1112,7 @@ samp {
     0 0 0 1px color-mix(in srgb, var(--ds-accent) 18%, transparent);
 }
 
-/* Empty-stage composer: compact card under the hero. */
+/* Shared composer card (home + conversation). Compact IDE rail opts out. */
 .ds-composer-empty.ds-chat-composer {
   border-radius: 1.2rem;
   min-height: 96px;
@@ -1115,9 +1121,8 @@ samp {
   padding-bottom: 0.625rem;
 }
 
-/* Context tray tucked under the empty composer (project | Local | branch).
-   Material reads as a secondary layer under the solid composer — translucent,
-   light-catching top edge, soft depth (Apple materials / hierarchy). */
+/* Context tray tucked under the composer (project | branch).
+   Home and conversation share this layer so the silhouette stays one card + tray. */
 .ds-workspace-context-bar {
   /* Cursor-style tray: a *gray* tone (not white) so it visibly reads as a
      secondary layer tucked behind the white composer card. */
@@ -1129,6 +1134,20 @@ samp {
     0 1px 2px rgba(0, 0, 0, 0.04);
   font-family: var(--font-ui);
   -webkit-font-smoothing: antialiased;
+}
+
+.ds-workspace-context-bar--embedded {
+  background: transparent;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  box-shadow: none;
+  border-radius: 0;
+  border-top: 1px solid color-mix(in srgb, var(--ds-text) 8%, transparent);
+  margin-top: 0.15rem;
+}
+
+.ds-workspace-context-bar--embedded::before {
+  display: none;
 }
 
 .ds-workspace-context-bar::before {
@@ -1147,25 +1166,53 @@ samp {
     0 0 0 1px rgba(255, 255, 255, 0.04);
 }
 
+[data-theme='dark'] .ds-workspace-context-bar--embedded {
+  background: transparent;
+  box-shadow: none;
+}
+
 [data-theme='dark'] .ds-workspace-context-bar::before {
   background: color-mix(in srgb, #ffffff 10%, transparent);
 }
 
-/* Chip labels: small UI type — slight positive tracking for 11px legibility.
-   Fainter than composer input so hierarchy is obvious. */
+/* Chip labels. Dock / IDE stay dense; composer tray uses --tray. */
 .ds-workspace-context-chip {
   font-family: var(--font-ui);
   font-size: 12.5px;
   font-weight: 600;
   line-height: 1.25;
   letter-spacing: 0.01em;
-  color: color-mix(in srgb, var(--ds-text-faint) 92%, var(--ds-text-muted));
+  color: var(--ds-text-muted);
   -webkit-font-smoothing: antialiased;
   transition:
     color 120ms ease,
     background-color 120ms ease,
     transform 100ms ease-out;
   will-change: transform;
+}
+
+/* Same size as the composer input so the tucked tray doesn't read as caption. */
+.ds-workspace-context-chip--tray {
+  font-size: 15px;
+  font-weight: 500;
+  letter-spacing: -0.011em;
+  line-height: 1.2;
+}
+
+/* The empty-state prompt is guidance, not a selected project value. */
+.ds-workspace-context-chip--prompt {
+  font-size: 14px;
+  font-weight: 400;
+  letter-spacing: 0;
+  line-height: 20px;
+}
+
+.ds-workspace-context-chip--prompt .ds-workspace-context-chip__prompt-icon {
+  opacity: 0.65;
+}
+
+.ds-workspace-context-chip--prompt .ds-workspace-context-chip__chevron {
+  opacity: 0.45;
 }
 
 .ds-workspace-context-chip:hover:not(:disabled) {
@@ -1185,27 +1232,16 @@ samp {
   background: color-mix(in srgb, var(--ds-text) 6%, transparent);
 }
 
+.ds-workspace-context-chip:disabled {
+  color: color-mix(in srgb, var(--ds-text-faint) 62%, transparent);
+  cursor: default;
+  opacity: 0.6;
+  background: transparent;
+}
+
 .ds-workspace-context-chip svg {
   color: inherit;
   opacity: 0.8;
-}
-
-/* Non-interactive local-runtime hint — metadata, not a control. */
-.ds-workspace-context-status {
-  font-family: var(--font-ui);
-  font-size: 11.5px;
-  font-weight: 500;
-  line-height: 1.25;
-  letter-spacing: 0.01em;
-  color: color-mix(in srgb, var(--ds-text-faint) 62%, transparent);
-  cursor: default;
-  user-select: none;
-  -webkit-font-smoothing: antialiased;
-}
-
-.ds-workspace-context-status svg {
-  color: inherit;
-  opacity: 0.85;
 }
 
 .ds-workspace-context-chip__chevron {
@@ -1516,6 +1552,16 @@ samp {
     0 1px 0 rgba(255, 255, 255, 0.06) inset;
 }
 
+.ds-project-context-menu {
+  background: var(--ds-card-strong);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+[data-theme='dark'] .ds-project-context-menu {
+  background: color-mix(in srgb, #fff 3%, var(--ds-card-strong));
+}
+
 .ds-project-context-menu__header,
 .ds-editor-picker-menu__header {
   border-bottom: 1px solid rgba(0, 0, 0, 0.06);
@@ -1750,6 +1796,7 @@ samp {
 
 .ds-morph-pop--below {
   --ds-morph-origin: 18px -8px;
+  animation-name: ds-morph-pop-below-in;
 }
 
 .ds-morph-pop--from-end {
@@ -1763,6 +1810,19 @@ samp {
 /* Settings row controls sit on the right — grow straight down from the trigger. */
 .ds-settings-select-menu {
   --ds-morph-origin: 50% calc(100% + 8px);
+  font-family: var(--font-ui);
+  border-color: var(--ds-border);
+  border-radius: 12px;
+  background: var(--ds-surface-elevated, #fff);
+  box-shadow: var(--ds-card-shadow);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+[data-theme='dark'] .ds-settings-select-menu {
+  border-color: var(--ds-border);
+  background: var(--ds-surface-elevated, #1c1c1e);
+  box-shadow: var(--ds-card-shadow);
 }
 
 .ds-settings-select-menu--below {
@@ -1785,6 +1845,17 @@ samp {
   from {
     opacity: 0;
     transform: scale(0.92) translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+@keyframes ds-morph-pop-below-in {
+  from {
+    opacity: 0;
+    transform: scale(0.92) translateY(-8px);
   }
   to {
     opacity: 1;
@@ -2444,6 +2515,17 @@ samp {
 .ds-glass-segment-thumb ~ button:active:not(:disabled) {
   transform: scale(0.98);
   transition: transform 80ms ease-out, color 0ms;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ds-glass-segment-thumb {
+    transition: none;
+  }
+
+  .ds-glass-segment-thumb ~ button:active:not(:disabled) {
+    transform: none;
+    transition: none;
+  }
 }
 
 [data-theme='dark'] .ds-glass-segment-thumb {
@@ -4601,6 +4683,56 @@ samp {
   opacity: 0.9;
 }
 
+/* IDE Quick Open — compact filename + path rows, matching native command palettes. */
+.ds-search-modal--quick-open {
+  width: min(720px, 100%);
+  border-radius: 24px;
+}
+
+.ds-search-modal--quick-open .ds-search-modal__header {
+  padding: 15px 14px 13px 18px;
+}
+
+.ds-search-modal--quick-open .ds-search-modal__body {
+  max-height: calc(8 * 46px + 14px);
+  padding: 7px 8px 10px;
+}
+
+.ds-search-modal--quick-open .ds-search-modal__body--empty {
+  min-height: 160px;
+}
+
+.ds-search-modal--quick-open .ds-search-modal__row {
+  min-height: 46px;
+  gap: 0;
+  padding: 0 14px;
+  border-radius: 13px;
+}
+
+.ds-search-modal--quick-open .ds-search-modal__row--active,
+.ds-search-modal--quick-open .ds-search-modal__row--active:hover {
+  background: var(--ds-surface-hover);
+}
+
+.ds-search-modal--quick-open .ds-search-modal__row-main {
+  gap: 14px;
+  overflow: hidden;
+}
+
+.ds-search-modal--quick-open .ds-search-modal__row-title {
+  max-width: 48%;
+  flex: 0 0 auto;
+  font-size: 15px;
+  font-weight: 500;
+  letter-spacing: -0.018em;
+}
+
+.ds-search-modal--quick-open .ds-search-modal__row-path {
+  flex: 1;
+  font-size: 14px;
+  letter-spacing: -0.012em;
+}
+
 /* Conversation ⌘K palette — scoped so IDE Quick Open keeps the shared sheet. */
 .ds-search-modal--palette {
   width: min(760px, 100%);
@@ -4938,6 +5070,33 @@ samp {
 .ds-file-chip:hover {
   text-decoration: underline;
   text-underline-offset: 3px;
+}
+
+.ds-file-chip--pending,
+.ds-file-chip--invalid {
+  color: var(--ds-text-faint);
+  cursor: default;
+  text-decoration: none;
+}
+
+.ds-file-chip--pending {
+  opacity: 0.72;
+}
+
+.ds-file-chip--invalid {
+  text-decoration: underline dotted;
+  text-decoration-color: color-mix(in srgb, currentColor 45%, transparent);
+  text-underline-offset: 3px;
+}
+
+.ds-file-chip--ambiguous {
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+}
+
+.ds-file-chip--pending:hover,
+.ds-file-chip--invalid:hover {
+  text-decoration: inherit;
 }
 
 .ds-file-chip:focus-visible {
@@ -5848,7 +6007,7 @@ html[data-theme='dark'] .ds-code-fullscreen .shiki span {
 
 /* ── Document reading mode (workspace MD preview) ───────────────────────
    Chat keeps the dense `.ds-markdown` defaults. The editor (sidebar and
-   IDE) shares one full-bleed reading surface so opening the same .md file
+   IDE) shares one centered reading surface so opening the same .md file
    does not change column width, padding, or page chrome. */
 .ds-markdown-doc-shell {
   background: transparent;
@@ -5856,8 +6015,9 @@ html[data-theme='dark'] .ds-code-fullscreen .shiki span {
 
 .ds-markdown-doc-page {
   box-sizing: border-box;
-  margin: 0;
-  max-width: none;
+  width: 100%;
+  max-width: 1120px;
+  margin: 0 auto;
   min-height: 100%;
   padding: 1.15rem 1.35rem 2.25rem;
 }
@@ -6259,7 +6419,10 @@ html[data-theme='dark'] .ds-code-fullscreen .shiki span {
 .ds-timeline-composer-clearance-spacer {
   /* Prefer live composer height (approvals); fall back to the
      historical clamp so empty-stage layout still clears the pet dock. */
-  height: max(clamp(7.5rem, 18vh, 11rem), var(--ds-composer-clearance, 0px));
+  height: max(
+    clamp(7.5rem, 18vh, 11rem),
+    calc(var(--ds-composer-clearance, 0px) + 1.5rem)
+  );
 }
 
 /* ── Final-answer reading mode ───────────────────────────────────────────
@@ -6700,7 +6863,7 @@ html.ds-light-dismiss-active .ds-drag {
 
 .pet-mascot-shell {
   align-self: flex-end;
-  margin-bottom: -3px;
+  margin-bottom: 0;
   margin-right: clamp(12px, 4vw, 48px);
   width: min(30%, 280px);
   min-width: 168px;
@@ -6877,6 +7040,29 @@ select:focus-visible,
   background: var(--bg-sidebar);
 }
 
+/* Electron exposes macOS's under-window material behind the renderer. The
+   shell is the single tinted material plane in translucent mode; sidebar and
+   corner cutouts reveal that same plane instead of applying a second tint. */
+:root[data-platform='darwin'] body,
+:root[data-platform='darwin'] body::before {
+  background: var(--app-window-background);
+}
+
+:root[data-platform='darwin'] .ds-workbench-shell {
+  background: var(--app-shell-background);
+}
+
+:root[data-platform='darwin'] .ds-workbench-shell::before {
+  content: '';
+  position: absolute;
+  inset-block: 0;
+  right: 0;
+  left: var(--ds-sidebar-width, 0px);
+  pointer-events: none;
+  background: var(--app-chrome-fill);
+  transition: left 300ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+
 .ds-workbench-shell:has(> .ds-workbench-sidebar-wrap[data-collapsed]) {
   padding-left: var(--ds-window-inset);
 }
@@ -6893,6 +7079,16 @@ select:focus-visible,
   box-shadow: var(--ds-sidebar-shadow);
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
+}
+
+:root[data-platform='darwin'] .ds-sidebar-shell {
+  background: var(--app-sidebar-surface);
+  backdrop-filter: var(--app-sidebar-backdrop-filter);
+  -webkit-backdrop-filter: var(--app-sidebar-backdrop-filter);
+}
+
+:root[data-platform='darwin'] .ds-workbench-sidebar-wrap::after {
+  background: var(--app-corner-surface);
 }
 
 .ds-workbench-main {
@@ -6942,7 +7138,13 @@ select:focus-visible,
   transition: none;
 }
 
+:root[data-platform='darwin']
+  .ds-workbench-shell:has(> .ds-workbench-sidebar-wrap.is-resizing)::before {
+  transition: none;
+}
+
 @media (prefers-reduced-motion: reduce) {
+  .ds-workbench-shell::before,
   .ds-workbench-sidebar-wrap,
   .ds-workbench-sidebar-slide,
   .ds-workbench-sidebar-wrap::after,
@@ -6952,7 +7154,8 @@ select:focus-visible,
   }
 }
 
-/* Wedge = same solid --bg-sidebar as the rail (fills card radius cutouts only). */
+/* Wedge fills the card-radius cutouts. macOS translucent mode overrides it to
+   transparent so the shell's single material plane remains continuous. */
 .ds-workbench-sidebar-wrap::after {
   content: '';
   position: absolute;
@@ -7129,28 +7332,30 @@ select:focus-visible,
   }
 }
 
-/* Nested chrome: clear pocket vs white body, still soft enough to stay quiet. */
+/* One quiet surface; structure comes from the controls inside, not nested cards. */
 .ds-operation-dock.ds-hero-panel.ds-glass {
-  background: color-mix(in srgb, var(--text-primary) 7%, var(--ds-card-strong));
-  border-color: rgba(0, 0, 0, 0.12);
+  background: var(--ds-card-strong);
+  border-color: rgba(0, 0, 0, 0.1);
   box-shadow:
     0 1px 2px rgba(0, 0, 0, 0.04),
-    0 4px 14px rgba(0, 0, 0, 0.06);
+    0 8px 24px rgba(0, 0, 0, 0.07);
 }
 
 [data-theme='dark'] .ds-operation-dock.ds-hero-panel.ds-glass {
-  background: color-mix(in srgb, #fff 9%, var(--ds-card-strong));
-  border-color: rgba(255, 255, 255, 0.14);
+  background: color-mix(in srgb, #fff 3%, var(--ds-card-strong));
+  border-color: rgba(255, 255, 255, 0.12);
   box-shadow:
     0 1px 2px rgba(0, 0, 0, 0.28),
-    0 6px 18px rgba(0, 0, 0, 0.32);
+    0 10px 28px rgba(0, 0, 0, 0.34);
 }
 
 .ds-operation-dock-topbar {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  padding: 0.4rem 0.55rem 0.35rem 0.85rem;
+  min-height: 2.85rem;
+  padding: 0.55rem 0.65rem 0.5rem 0.85rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--text-primary) 7%, transparent);
 }
 
 .ds-operation-dock-topbar__title {
@@ -7192,33 +7397,194 @@ select:focus-visible,
   transform: scale(0.94);
 }
 
-/* ChevronsLeftRight is 180°-symmetric — continuous spin still reads cleanly. */
-.ds-operation-dock-topbar__toggle:hover svg,
-.ds-operation-dock-rail__btn--toggle:hover:not(:disabled) svg {
-  animation: ds-operation-dock-toggle-spin 0.85s linear infinite;
-}
-
-@keyframes ds-operation-dock-toggle-spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .ds-operation-dock-topbar__toggle:hover svg,
-  .ds-operation-dock-rail__btn--toggle:hover:not(:disabled) svg {
-    animation: none;
-  }
-}
-
 .ds-operation-dock-body {
-  background: var(--ds-card-strong);
-  border-radius: 12px 12px 0 0;
-  box-shadow: 0 -1px 0 rgba(0, 0, 0, 0.04);
+  padding: 0.7rem;
+  background: transparent;
 }
 
-[data-theme='dark'] .ds-operation-dock-body {
-  box-shadow: 0 -1px 0 rgba(255, 255, 255, 0.06);
+.ds-operation-dock-launchers {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.45rem;
+}
+
+.ds-operation-dock-launchers[data-count='2'] {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.ds-operation-dock-launcher {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  min-height: 4.25rem;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  padding: 0.55rem 0.35rem 0.5rem;
+  border: 1px solid color-mix(in srgb, var(--text-primary) 7%, transparent);
+  border-radius: 0.75rem;
+  background: color-mix(in srgb, var(--text-primary) 2.75%, transparent);
+  color: var(--text-primary);
+  cursor: pointer;
+  transition:
+    background-color 140ms ease,
+    border-color 140ms ease,
+    box-shadow 140ms ease,
+    transform 120ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.ds-operation-dock-launcher > span:first-child {
+  width: 1.85rem;
+  height: 1.85rem;
+  border-radius: 0.625rem;
+}
+
+.ds-operation-dock-launcher > span:first-child svg {
+  width: 0.95rem;
+  height: 0.95rem;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .ds-operation-dock-launcher:hover:not(:disabled) {
+    border-color: color-mix(in srgb, var(--text-primary) 12%, transparent);
+    background: color-mix(in srgb, var(--text-primary) 5%, transparent);
+    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.045);
+    transform: translateY(-1px);
+  }
+}
+
+.ds-operation-dock-launcher:active:not(:disabled) {
+  box-shadow: none;
+  transform: scale(0.97);
+}
+
+.ds-operation-dock-launcher:disabled {
+  cursor: default;
+  opacity: 0.42;
+}
+
+.ds-operation-dock-launcher[aria-pressed='true'] {
+  border-color: color-mix(in srgb, var(--ds-accent, #007aff) 28%, transparent);
+  background: color-mix(in srgb, var(--ds-accent, #007aff) 8%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ds-accent, #007aff) 7%, transparent);
+}
+
+.ds-operation-dock-launcher[aria-pressed='true']::after {
+  content: '';
+  position: absolute;
+  top: 0.55rem;
+  right: 0.55rem;
+  width: 0.35rem;
+  height: 0.35rem;
+  border-radius: 999px;
+  background: var(--ds-accent, #007aff);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--ds-accent, #007aff) 12%, transparent);
+}
+
+.ds-operation-dock-launcher__label {
+  max-width: 100%;
+  overflow: hidden;
+  font-size: 0.75rem;
+  font-weight: 600;
+  line-height: 1rem;
+  letter-spacing: -0.01em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ds-operation-dock-repository {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  align-items: center;
+  gap: 0.625rem;
+  padding: 0.65rem 0.7rem 0.6rem;
+  border: 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--text-primary) 7%, transparent);
+  background: color-mix(in srgb, var(--text-primary) 2.5%, transparent);
+  color: var(--text-primary);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background-color 140ms ease,
+    transform 120ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .ds-operation-dock-repository:hover {
+    background: color-mix(in srgb, var(--text-primary) 4.5%, transparent);
+  }
+}
+
+.ds-operation-dock-repository:active {
+  transform: scale(0.985);
+}
+
+.ds-operation-dock-repository__icon {
+  display: inline-flex;
+  width: 2rem;
+  height: 2rem;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.625rem;
+  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
+  color: var(--text-secondary);
+}
+
+.ds-operation-dock-repository__eyebrow,
+.ds-operation-dock-repository__name {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ds-operation-dock-repository__eyebrow {
+  margin-bottom: 0.05rem;
+  font-size: 0.625rem;
+  font-weight: 500;
+  line-height: 0.875rem;
+  letter-spacing: 0.02em;
+  color: var(--text-tertiary);
+}
+
+.ds-operation-dock-repository__name {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  line-height: 1.125rem;
+  letter-spacing: -0.01em;
+}
+
+.ds-operation-dock-status {
+  margin-top: 0.65rem;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--text-primary) 7%, transparent);
+  border-radius: 0.8rem;
+  background: color-mix(in srgb, var(--text-primary) 2%, transparent);
+}
+
+.ds-operation-dock-status__section {
+  padding: 0.25rem;
+}
+
+.ds-operation-dock-status__section + .ds-operation-dock-status__section {
+  border-top: 1px solid color-mix(in srgb, var(--text-primary) 7%, transparent);
+}
+
+.ds-operation-dock-status__section > button:first-child {
+  min-height: 2.25rem;
+  padding: 0.35rem 0.45rem;
+}
+
+.ds-operation-dock-status__content,
+.ds-operation-dock-status__section > ul,
+.ds-operation-dock-status__section > div:not(.ds-operation-dock-status__content),
+.ds-operation-dock-status__section > p {
+  margin-left: 0.45rem;
+  margin-right: 0.45rem;
+  margin-bottom: 0.4rem;
 }
 
 .ds-operation-dock-section-label {
@@ -7231,11 +7597,79 @@ select:focus-visible,
   font-synthesis: none;
 }
 
+.ds-operation-dock-branch-picker,
+.ds-operation-dock-branch-picker > .ds-no-drag {
+  width: 100%;
+}
+
+.ds-operation-dock-branch-picker .ds-workspace-context-chip {
+  width: 100%;
+  max-width: none;
+  min-height: 2rem;
+  height: auto;
+  gap: 0.625rem;
+  border-radius: 0.625rem;
+  padding: 0.375rem;
+  color: var(--text-primary);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  line-height: 1.25rem;
+}
+
+.ds-operation-dock-branch-picker .ds-workspace-context-chip:hover:not(:disabled),
+.ds-operation-dock-branch-picker .ds-workspace-context-chip[aria-expanded='true'] {
+  color: var(--text-primary);
+}
+
+.ds-operation-dock-branch-picker .ds-workspace-context-chip svg {
+  color: var(--text-secondary);
+  opacity: 1;
+}
+
+.ds-operation-dock-branch-picker .ds-workspace-context-chip__chevron {
+  margin-left: auto;
+  color: var(--text-tertiary);
+}
+
 .ds-change-inspector {
   font-family: var(--font-ui);
   -webkit-font-smoothing: antialiased;
   font-synthesis: none;
   background: var(--ds-bg-sidebar);
+}
+
+.ds-change-inspector--list {
+  container-type: inline-size;
+  container-name: change-inspector-list;
+}
+
+.ds-change-inspector__summary {
+  max-width: 11rem;
+  overflow: hidden;
+  opacity: 1;
+  transform: translateX(0);
+  transition:
+    max-width 220ms cubic-bezier(0.32, 0.72, 0, 1),
+    margin-left 220ms cubic-bezier(0.32, 0.72, 0, 1),
+    opacity 160ms ease-out,
+    transform 220ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+@container change-inspector-list (max-width: 320px) {
+  .ds-change-inspector__summary {
+    max-width: 0;
+    margin-left: -0.5rem;
+    opacity: 0;
+    transform: translateX(0.25rem);
+    pointer-events: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ds-change-inspector__summary {
+    transform: none;
+    transition: none;
+  }
 }
 
 /* Edge-to-edge diff: same plane as the file list, no nested card / grey frame. */
@@ -7254,6 +7688,12 @@ select:focus-visible,
   padding-right: 8px;
   border-bottom: 1px solid color-mix(in srgb, var(--ds-text) 10%, transparent);
   background: var(--ds-bg-sidebar);
+}
+
+.ds-change-source__group + .ds-change-source__group {
+  margin-top: 0.25rem;
+  padding-top: 0.25rem;
+  border-top: 1px solid color-mix(in srgb, var(--ds-text) 10%, transparent);
 }
 
 .ds-diff-view--flush .ds-diff-view__header {
@@ -7481,6 +7921,23 @@ select:focus-visible,
     transition: none;
   }
 
+  .ds-operation-dock-launcher {
+    transition: none;
+  }
+
+  .ds-operation-dock-repository {
+    transition: none;
+  }
+
+  .ds-operation-dock-repository:active {
+    transform: none;
+  }
+
+  .ds-operation-dock-launcher:hover:not(:disabled),
+  .ds-operation-dock-launcher:active:not(:disabled) {
+    transform: none;
+  }
+
   .ds-operation-dock[data-phase='collapsing'],
   .ds-operation-dock[data-phase='expanding'],
   .ds-operation-dock[data-phase='collapsing'] .ds-operation-dock-topbar__title,
@@ -7499,9 +7956,6 @@ select:focus-visible,
     transform: none;
   }
 
-  .ds-operation-dock-rail__btn--toggle:hover:not(:disabled) svg {
-    animation: none;
-  }
 }
 
 .ds-chat-main-track {
@@ -7979,6 +8433,12 @@ select:focus-visible,
 }
 
 @media (prefers-reduced-transparency: reduce) {
+  :root[data-platform='darwin'] body,
+  :root[data-platform='darwin'] body::before,
+  :root[data-platform='darwin'] .ds-workbench-shell {
+    background: var(--bg-sidebar);
+  }
+
   .ds-glass,
   .ds-chat-composer,
   .ds-topbar-surface,
@@ -7990,6 +8450,11 @@ select:focus-visible,
     background: var(--ds-surface-elevated);
     backdrop-filter: none;
     -webkit-backdrop-filter: none;
+  }
+
+  :root[data-platform='darwin'] .ds-sidebar-shell,
+  :root[data-platform='darwin'] .ds-workbench-sidebar-wrap::after {
+    background: var(--bg-sidebar);
   }
 }
 
@@ -8093,7 +8558,8 @@ select:focus-visible,
 }
 
 /* ── Appearance: font smoothing toggle (default keeps `antialiased`) ─────── */
-:root[data-font-smoothing='off'] body {
+:root[data-font-smoothing='off'] body,
+:root[data-font-smoothing='off'] body * {
   -webkit-font-smoothing: auto;
   -moz-osx-font-smoothing: auto;
 }
@@ -9025,18 +9491,6 @@ select:focus-visible,
   transform: scale(0.97);
 }
 
-.ds-llm-panel__grid {
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: 0.55rem;
-}
-
-@media (min-width: 640px) {
-  .ds-llm-panel__grid {
-    grid-template-columns: 1fr 1fr;
-  }
-}
-
 .ds-llm-panel__stack {
   display: grid;
   grid-template-columns: 1fr;
@@ -9591,6 +10045,30 @@ select:focus-visible,
   color: var(--ds-text-faint, var(--ds-text-muted));
 }
 
+.ds-llm-inset__select {
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.ds-llm-inset__select:focus-within {
+  border-color: transparent;
+  box-shadow: none;
+}
+
+.ds-llm-inset__select > button {
+  justify-content: flex-end;
+  padding-left: 0;
+}
+
+.ds-llm-inset__select > button > span {
+  text-align: right;
+  font-size: 14px;
+  font-weight: 400;
+  letter-spacing: -0.01em;
+}
+
 .ds-llm-inset__eye {
   display: inline-flex;
   width: 2rem;
@@ -9876,10 +10354,19 @@ select:focus-visible,
   border: none;
   border-radius: 999px;
   color: color-mix(in srgb, var(--ds-text) 35%, transparent);
+  opacity: 0;
+  pointer-events: none;
   transition:
     transform 100ms ease-out,
     color 140ms ease,
-    background 140ms ease;
+    background 140ms ease,
+    opacity 120ms ease;
+}
+
+.ds-llm-model-row:hover .ds-llm-model-row__remove,
+.ds-llm-model-row__remove:focus-visible {
+  opacity: 1;
+  pointer-events: auto;
 }
 
 .ds-llm-model-row__remove:hover {
@@ -9960,6 +10447,31 @@ select:focus-visible,
   padding: 0.7rem 1rem;
   text-align: left;
   transition: background 120ms ease;
+}
+
+.ds-llm-inset__pick-row {
+  display: flex;
+  align-items: center;
+  border-bottom: 0.5px solid color-mix(in srgb, var(--ds-text) 10%, transparent);
+}
+
+.ds-llm-inset__pick-row.is-last {
+  border-bottom: none;
+}
+
+.ds-llm-inset__pick--with-actions {
+  width: auto;
+  flex: 1;
+  border-bottom: none;
+}
+
+.ds-llm-inset__pick-remove {
+  margin-right: 0.65rem;
+}
+
+.ds-llm-inset__pick-row:hover .ds-llm-inset__pick-remove {
+  opacity: 1;
+  pointer-events: auto;
 }
 
 .ds-llm-inset__pick.is-last {
@@ -10532,11 +11044,11 @@ select:focus-visible,
 [data-composer-footer] reasoning-effort-selector {
   display: inline-block;
   min-width: 0;
-  max-width: 220px;
+  max-width: 100%;
   vertical-align: middle;
 }
 [data-composer-footer] reasoning-effort-selector[compact] {
-  max-width: 8.5rem;
+  max-width: min(100%, 8.5rem);
 }
 
 .ds-ide-chat-rail .mb-8 {
@@ -10821,35 +11333,70 @@ select:focus-visible,
   --ds-tool-font: var(--ds-ide-font-base);
 }
 
-/* Turn change summary: flatten Chat "hero" card for narrow rail. */
+/* Turn change summary: Codex-style three-surface hierarchy. Keep this explicit
+   instead of alpha Tailwind utilities: theme colors are CSS variables, so
+   Tailwind cannot generate `/NN` opacity variants for them. */
+.ds-turn-change-summary {
+  margin-bottom: 0.75rem;
+  border: 1px solid var(--ds-border-strong);
+  background: var(--ds-card-soft);
+  box-shadow: none;
+}
+
+.ds-turn-change-summary__header,
+.ds-turn-change-summary__footer {
+  background: color-mix(in srgb, var(--ds-text) 5%, var(--ds-card-strong));
+}
+
+.ds-turn-change-summary__icon {
+  border: 1px solid var(--ds-border-muted);
+  background: var(--ds-bg-canvas);
+}
+
+.ds-turn-change-summary__body,
+.ds-turn-change-summary__footer {
+  border-top: 1px solid var(--ds-border-strong);
+}
+
+.ds-turn-change-summary__body {
+  background: var(--ds-card-soft);
+}
+
+.ds-turn-change-summary__review {
+  border: 1px solid var(--ds-border-strong);
+  background: var(--ds-surface-hover);
+}
+
+/* Keep the same card proportions in the IDE rail instead of flattening the
+   visual hierarchy into generic compact controls. */
 .ds-ide-chat-rail .ds-turn-change-summary {
-  border-radius: 10px;
-  box-shadow: 0 6px 18px rgba(86, 103, 136, 0.06);
+  border-radius: 14px;
+  box-shadow: none;
 }
 
 .ds-ide-chat-rail .ds-turn-change-summary__header {
   gap: 0.65rem;
-  padding: 0.55rem 0.75rem;
+  padding: 0.75rem;
 }
 
 .ds-ide-chat-rail .ds-turn-change-summary__icon {
-  width: 2rem;
-  height: 2rem;
-  border-radius: 0.55rem;
+  width: 2.5rem;
+  height: 2.5rem;
+  border-radius: 0.75rem;
 }
 
 .ds-ide-chat-rail .ds-turn-change-summary__icon svg {
-  width: var(--ds-ide-icon);
-  height: var(--ds-ide-icon);
+  width: 18px;
+  height: 18px;
 }
 
 .ds-ide-chat-rail .ds-turn-change-summary__title {
-  font-size: var(--ds-ide-font-title);
+  font-size: 15px;
   letter-spacing: -0.01em;
 }
 
 .ds-ide-chat-rail .ds-turn-change-summary__path {
-  font-size: var(--ds-ide-font-base);
+  font-size: 14px;
 }
 
 .ds-ide-chat-rail .ds-html-preview-card {

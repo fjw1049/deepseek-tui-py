@@ -1,5 +1,5 @@
 import { useLayoutEffect, useMemo, useRef, useState, type ReactElement } from 'react'
-import { Check, Columns2, Copy, MessageSquarePlus, Rows3 } from 'lucide-react'
+import { Check, ChevronDown, Columns2, Copy, MessageSquarePlus, Rows3 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { countDiffStats, extractDiffFilePath } from '../lib/diff-stats'
 import { FileChip } from './chat/FileChip'
@@ -23,6 +23,8 @@ type Props = {
    */
   chrome?: 'card' | 'flush'
   onAddToChat?: () => void
+  /** Change inspector: replace copy with a control that collapses the diff pane. */
+  onCollapse?: () => void
   /** Hide the file/stats header when a parent card already shows it. */
   showHeader?: boolean
   /** Keep the viewport pinned to the latest row (live file writes). */
@@ -249,6 +251,7 @@ export function DiffView({
   onDiffStyleChange,
   chrome = 'card',
   onAddToChat,
+  onCollapse,
   showHeader = true,
   follow = false
 }: Props): ReactElement {
@@ -319,6 +322,7 @@ export function DiffView({
       onDiffStyleChange={setStyle}
       flush={flush}
       onAddToChat={onAddToChat}
+      onCollapse={onCollapse}
     />
   ) : null
 
@@ -428,7 +432,8 @@ function DiffHeader({
   diffStyle,
   onDiffStyleChange,
   flush = false,
-  onAddToChat
+  onAddToChat,
+  onCollapse
 }: {
   badge: { label: string; tone: string }
   name: string | null
@@ -442,6 +447,7 @@ function DiffHeader({
   onDiffStyleChange: (style: DiffRenderStyle) => void
   flush?: boolean
   onAddToChat?: () => void
+  onCollapse?: () => void
 }): ReactElement {
   const { t } = useTranslation('common')
   return (
@@ -516,19 +522,31 @@ function DiffHeader({
           <MessageSquarePlus className="h-3.5 w-3.5" strokeWidth={1.85} />
         </button>
       ) : null}
-      <button
-        type="button"
-        onClick={onCopy}
-        className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded text-ds-faint transition hover:bg-ds-hover hover:text-ds-ink"
-        aria-label="Copy diff"
-        title="Copy diff"
-      >
-        {copied ? (
-          <Check className="h-3.5 w-3.5 text-ds-diff-added" strokeWidth={2} />
-        ) : (
-          <Copy className="h-3.5 w-3.5" strokeWidth={1.8} />
-        )}
-      </button>
+      {onCollapse ? (
+        <button
+          type="button"
+          onClick={onCollapse}
+          className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded text-ds-faint transition hover:bg-ds-hover hover:text-ds-ink active:scale-[0.96]"
+          aria-label={t('inspectorCollapseDiff')}
+          title={t('inspectorCollapseDiff')}
+        >
+          <ChevronDown className="h-3.5 w-3.5" strokeWidth={1.9} />
+        </button>
+      ) : (
+        <button
+          type="button"
+          onClick={onCopy}
+          className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded text-ds-faint transition hover:bg-ds-hover hover:text-ds-ink"
+          aria-label="Copy diff"
+          title="Copy diff"
+        >
+          {copied ? (
+            <Check className="h-3.5 w-3.5 text-ds-diff-added" strokeWidth={2} />
+          ) : (
+            <Copy className="h-3.5 w-3.5" strokeWidth={1.8} />
+          )}
+        </button>
+      )}
     </div>
   )
 }

@@ -32,6 +32,7 @@ from deepseek_tui.server.threads import (
 )
 from deepseek_tui.tools.file import WriteFileTool
 from deepseek_tui.tools.registry import ToolContext
+from deepseek_tui.workspace.execution import execution_root
 from deepseek_tui.workspace.git_reconcile import capture_baseline
 from deepseek_tui.workspace.shell_mutation_watch import capture_shell_snapshot
 from deepseek_tui.workspace.turn_checkpoints import TurnCheckpoint
@@ -139,6 +140,19 @@ async def test_rewind_at_user_message_deletes_turn_and_after(runtime_app) -> Non
         manager.store.load_item("item_a2")
     with pytest.raises(FileNotFoundError):
         manager.store.load_turn("turn_b")
+
+
+@pytest.mark.asyncio
+async def test_rewind_result_uses_stable_list_fields(runtime_app) -> None:
+    manager = runtime_app.state.thread_manager
+    thread_id = await _seed(manager)
+
+    _thread, result = await manager.rewind_thread_with_result(
+        thread_id, before_item_id="item_u2"
+    )
+
+    assert result["missing_roots"] == []
+    assert isinstance(result["missing_roots"], list)
 
 
 @pytest.mark.asyncio
@@ -434,6 +448,136 @@ async def test_restore_code_keeps_conversation_and_consumes_checkpoints(
     assert again["turns_without_checkpoint"] == ["turn_b"]
 
 
+@pytest.mark.parametrize("rollback_action", ["restore_code", "rewind"])
+@pytest.mark.asyncio
+async def test_published_rollback_resyncs_isolate_before_warmup(
+    runtime_app,
+    runtime_data_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    rollback_action: str,
+) -> None:
+    manager = runtime_app.state.thread_manager
+    repo = _ws(runtime_data_dir)
+    _git(repo, "init")
+    _git(repo, "config", "user.email", "test@example.com")
+    _git(repo, "config", "user.name", "Test")
+    (repo / "app.py").write_text("one\n", encoding="utf-8")
+    _git(repo, "add", "app.py")
+    _git(repo, "commit", "-m", "init")
+    thread_id = await _seed(manager, workspace=str(repo))
+    prepared = await manager._prepare_isolated_workspace(
+        manager.store.load_thread(thread_id)
+    )
+    tree = execution_root(prepared)
+    (tree / "app.py").write_text("two\n", encoding="utf-8")
+    manager.checkpoints._save(
+        TurnCheckpoint(
+            turn_id="turn_b",
+            is_git=True,
+            thread_id=thread_id,
+            created_at=1.0,
+            execution_root=str(tree),
+            mutated=["app.py"],
+            pre_contents={"app.py": "one\n"},
+            post_contents={"app.py": "two\n"},
+        )
+    )
+    manager.checkpoints.record_post_images("turn_b", tree)
+
+    published = await manager._publish_isolated_thread(prepared)
+
+    assert published.publish_blocked is False
+    assert (repo / "app.py").read_text(encoding="utf-8") == "two\n"
+    checkpoint = manager.checkpoints.load("turn_b")
+    assert checkpoint is not None
+    assert Path(checkpoint.execution_root).resolve() == repo.resolve()
+
+    if rollback_action == "restore_code":
+        result = await manager.restore_code(thread_id, before_item_id="item_u2")
+        assert result["restored_files"] == ["app.py"]
+    else:
+        await manager.rewind_thread(
+            thread_id, before_item_id="item_u2", restore_files=True
+        )
+
+    assert manager.checkpoints.load("turn_b") is None
+    assert (repo / "app.py").read_text(encoding="utf-8") == "one\n"
+    assert (tree / "app.py").read_text(encoding="utf-8") == "one\n"
+
+    async def fake_ensure_engine_loaded(_thread):
+        return None
+
+    monkeypatch.setattr(manager, "_ensure_engine_loaded", fake_ensure_engine_loaded)
+    warmup = await manager.warmup_thread(thread_id)
+    refreshed = manager.store.load_thread(thread_id)
+
+    assert warmup["status"] == "ready"
+    assert (repo / "app.py").read_text(encoding="utf-8") == "one\n"
+    assert refreshed.publish_pending is False
+    assert refreshed.publish_blocked is False
+    assert "<unpublished-worktree-labor>" not in refreshed.publish_conflicts
+    assert (tree / "app.py").read_text(encoding="utf-8") == "one\n"
+
+
+@pytest.mark.asyncio
+async def test_restore_crash_before_resync_keeps_recovery_checkpoint(
+    runtime_app,
+    runtime_data_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manager = runtime_app.state.thread_manager
+    repo = _ws(runtime_data_dir)
+    _git(repo, "init")
+    _git(repo, "config", "user.email", "test@example.com")
+    _git(repo, "config", "user.name", "Test")
+    (repo / "app.py").write_text("one\n", encoding="utf-8")
+    _git(repo, "add", "app.py")
+    _git(repo, "commit", "-m", "init")
+    thread_id = await _seed(manager, workspace=str(repo))
+    prepared = await manager._prepare_isolated_workspace(
+        manager.store.load_thread(thread_id)
+    )
+    tree = execution_root(prepared)
+    (tree / "app.py").write_text("two\n", encoding="utf-8")
+    manager.checkpoints._save(
+        TurnCheckpoint(
+            turn_id="turn_b",
+            is_git=True,
+            thread_id=thread_id,
+            created_at=1.0,
+            execution_root=str(tree),
+            mutated=["app.py"],
+            pre_contents={"app.py": "one\n"},
+            post_contents={"app.py": "two\n"},
+        )
+    )
+    manager.checkpoints.record_post_images("turn_b", tree)
+    await manager._publish_isolated_thread(prepared)
+    real_resync = manager._resync_isolate_after_project_restore
+
+    async def crash_before_resync(_thread):
+        raise RuntimeError("simulated process exit")
+
+    monkeypatch.setattr(
+        manager, "_resync_isolate_after_project_restore", crash_before_resync
+    )
+    with pytest.raises(RuntimeError, match="simulated process exit"):
+        await manager.restore_code(thread_id, before_item_id="item_u2")
+
+    assert (repo / "app.py").read_text(encoding="utf-8") == "one\n"
+    assert (tree / "app.py").read_text(encoding="utf-8") == "two\n"
+    assert manager.checkpoints.load("turn_b") is not None
+
+    monkeypatch.setattr(
+        manager, "_resync_isolate_after_project_restore", real_resync
+    )
+    refreshed = await manager._prepare_isolated_workspace(
+        manager.store.load_thread(thread_id)
+    )
+    assert refreshed.publish_blocked is False
+    assert (tree / "app.py").read_text(encoding="utf-8") == "one\n"
+
+
 @pytest.mark.asyncio
 async def test_rewind_restore_files_multi_turn_returns_oldest_state(
     runtime_app, runtime_data_dir: Path
@@ -483,6 +627,15 @@ async def test_rewind_http_restore_files(
         json={"before_item_id": "item_u2", "restore_files": True},
     )
     assert r.status_code == 200
+    result = r.json()["rewind_result"]
+    assert result == {
+        "restore_files": True,
+        "restored_files": ["note.txt"],
+        "merged_files": [],
+        "conflicted_files": [],
+        "skipped_files": [],
+        "missing_roots": [],
+    }
     assert target.read_text(encoding="utf-8") == "old\n"
 
 

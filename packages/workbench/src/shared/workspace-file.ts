@@ -23,7 +23,15 @@ export type WorkspaceFileResolveResult =
       path: string
       kind: 'file' | 'directory'
     }
-  | { ok: false; message: string }
+  | {
+      ok: false
+      message: string
+      code?: 'ambiguous' | 'not_found' | 'invalid'
+      candidates?: Array<{
+        path: string
+        kind: 'file' | 'directory'
+      }>
+    }
 
 export type WorkspaceTreeEntry = {
   name: string

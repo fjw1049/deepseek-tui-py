@@ -17,12 +17,14 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { useTranslation } from 'react-i18next'
 import {
+  ArrowUpRight,
   Bot,
   Check,
   ChevronDown,
   ChevronRight,
+  ChevronUp,
   Copy,
-  FileEdit,
+  FilePlus2,
   FileText,
   FolderOpen,
   GitFork,
@@ -31,6 +33,7 @@ import {
   PencilLine,
   Plug,
   Puzzle,
+  RotateCcw,
   Search,
   Sparkles,
   Terminal,
@@ -38,7 +41,6 @@ import {
   Wrench,
   X
 } from 'lucide-react'
-import { isHtmlPreviewPath } from '@shared/html-preview'
 import {
   formatHtmlPreviewPathLabel,
   type OpenableTurnResult,
@@ -50,24 +52,15 @@ import type { ChatBlock, RuntimeConnectionStatus, ToolBlock } from '../../agent/
 import {
   formatFilePathForDisplay,
   resolvePatchStats,
-  sumDiffStatsList,
   type DiffStats
 } from '../../lib/diff-stats'
+import { splitFileNameAndParent } from '../../lib/editor-breadcrumb'
 import {
-  resolveLatestTurnDiffId,
+  resolveTurnDiffId,
   toolBlocksFromTurnSummary,
   turnSummaryFromSources,
   type TurnDiffSnapshot
 } from '../../lib/turn-mutation-view'
-import {
-  collectWorkspaceChangeEntries,
-  turnSummaryFromWorkspaceEntries,
-  type WorkspaceChangeEntry
-} from '../../lib/workspace-change-stats'
-import { useGitWorkingChanges } from '../../hooks/use-git-working-changes'
-import { useWorkspaceDirtyGitRefresh } from '../../hooks/use-workspace-dirty-git-refresh'
-import { resolveActiveThreadWorkspace } from '../../lib/workspace-path'
-import { useDeferredRender } from '../../hooks/use-deferred-render'
 import { resumeThreadAgent } from '../../hooks/use-thread-tasks'
 import {
   getEmptyHomeLayout,
@@ -75,8 +68,8 @@ import {
   subscribeAppearance
 } from '../../lib/apply-appearance'
 import { getProvider } from '../../agent/registry'
+import { openChangesPanel } from '../../lib/change-review'
 import { useChatStore } from '../../store/chat-store'
-import { DiffView } from '../DiffView'
 import { EvolutionBubble } from './EvolutionBubble'
 import { ElevationBubble } from './ElevationBubble'
 import { InlineTodoBlock } from './InlineTodoBlock'
@@ -135,6 +128,10 @@ import {
   type RenderRow,
   type ToolProcessBlock
 } from './message-timeline-logic'
+import {
+  rewindPreviewNeedsConfirmation,
+  rewindResendConfirmModel
+} from './rewind-resend-confirm'
 import { useTailAnchorScroll } from './use-tail-anchor-scroll'
 
 const LazyStreamdownAssistant = lazy(() =>
@@ -289,22 +286,7 @@ export function MessageTimeline({
   const currentTurnId = useChatStore((s) => s.currentTurnId)
   const lastCompletedTurnId = useChatStore((s) => s.lastCompletedTurnId)
   const turnDiffByTurnId = useChatStore((s) => s.turnDiffByTurnId)
-  const threads = useChatStore((s) => s.threads)
-  const workspaceDirtyTick = useChatStore((s) => s.workspaceDirtyTick)
-  const gitRoot = resolveActiveThreadWorkspace(activeThreadId, threads, workspaceRoot)
-  const { result: gitChanges, reload: reloadGitChanges } = useGitWorkingChanges(gitRoot)
-  useWorkspaceDirtyGitRefresh(workspaceDirtyTick, reloadGitChanges)
-  const workspaceChangeEntries = useMemo(
-    () =>
-      collectWorkspaceChangeEntries({
-        blocks,
-        turnDiffByTurnId,
-        gitFiles: gitChanges?.ok ? gitChanges.files : null
-      }),
-    [blocks, gitChanges, turnDiffByTurnId]
-  )
   const currentTurnUserId = useChatStore((s) => s.currentTurnUserId)
-  const latestTurnDiffId = resolveLatestTurnDiffId(currentTurnId, lastCompletedTurnId)
   const turnStartedAtByUserId = useChatStore((s) => s.turnStartedAtByUserId)
   const turnDurationByUserId = useChatStore((s) => s.turnDurationByUserId)
   const turnReasoningFirstAtByUserId = useChatStore((s) => s.turnReasoningFirstAtByUserId)
@@ -735,6 +717,12 @@ export function MessageTimeline({
               : undefined
           const turnPending = turnHasPendingRuntimeWork(turn)
           const isLatestTurn = index === visibleTurns.length - 1
+          const turnDiffId = resolveTurnDiffId(
+            turn.user?.turnId,
+            isLatestTurn,
+            currentTurnId,
+            lastCompletedTurnId
+          )
           const hasLiveStream = isLatestTurn && !!(liveReasoning.trim() || live.trim())
           const processing = (busy && isLatestTurn) || turnPending || hasLiveStream
           return (
@@ -751,17 +739,16 @@ export function MessageTimeline({
               onOpenWorkspaceFile={onOpenWorkspaceFile}
               viewportRef={containerRef}
               turnDiffSnapshot={
-                isLatestTurn && latestTurnDiffId
-                  ? turnDiffByTurnId[latestTurnDiffId]
+                turnDiffId
+                  ? turnDiffByTurnId[turnDiffId]
                   : undefined
               }
-              turnDiffTurnId={isLatestTurn ? latestTurnDiffId : null}
+              turnDiffTurnId={turnDiffId}
               turnDiffRevision={
-                isLatestTurn && latestTurnDiffId
-                  ? (turnDiffByTurnId[latestTurnDiffId]?.revision ?? 0)
+                turnDiffId
+                  ? (turnDiffByTurnId[turnDiffId]?.revision ?? 0)
                   : 0
               }
-              workspaceChangeEntries={isLatestTurn ? workspaceChangeEntries : null}
             />
           )
         })}
@@ -927,6 +914,7 @@ function groupTurns(blocks: ChatBlock[]): Turn[] {
 function blockHasPendingRuntimeWork(block: ChatBlock): boolean {
   if (block.kind === 'tool') return block.status === 'running'
   if (block.kind === 'approval') return block.status === 'pending'
+  if (block.kind === 'elevation') return block.status === 'pending'
   if (block.kind === 'evolution') return block.status === 'pending'
   if (block.kind === 'user_input') return block.status === 'pending'
   if (block.kind === 'subagent') {
@@ -939,6 +927,7 @@ function blockNeedsAttention(block: ChatBlock): boolean {
   if (blockHasPendingRuntimeWork(block)) return true
   if (block.kind === 'tool') return block.status === 'error'
   if (block.kind === 'approval') return block.status === 'error'
+  if (block.kind === 'elevation') return block.status === 'error'
   if (block.kind === 'user_input') return block.status === 'error'
   if (block.kind === 'subagent') return block.status === 'failed' || block.status === 'cancelled'
   return false
@@ -949,6 +938,7 @@ function isProcessBlock(block: ChatBlock): boolean {
     block.kind === 'reasoning' ||
     block.kind === 'tool' ||
     block.kind === 'approval' ||
+    block.kind === 'elevation' ||
     block.kind === 'user_input' ||
     block.kind === 'subagent' ||
     block.kind === 'system'
@@ -1001,8 +991,7 @@ function MessageTurn({
   viewportRef,
   turnDiffSnapshot,
   turnDiffTurnId = null,
-  turnDiffRevision = 0,
-  workspaceChangeEntries = null
+  turnDiffRevision = 0
 }: {
   turn: Turn
   isProcessing: boolean
@@ -1018,8 +1007,6 @@ function MessageTurn({
   turnDiffSnapshot?: TurnDiffSnapshot
   turnDiffTurnId?: string | null
   turnDiffRevision?: number
-  /** Same workspace list the inspector uses — latest turn only. */
-  workspaceChangeEntries?: WorkspaceChangeEntry[] | null
 }): ReactElement {
   const workspaceRoot = useChatStore((s) => s.workspaceRoot)
   void turnDiffRevision
@@ -1082,16 +1069,8 @@ function MessageTurn({
     // When a mid-turn preface settles, the store clears `liveAssistant` and
     // persists a small `mid_turn_preface` row; finals land via `onFinalAnswer`.
 
-    // Prefer the inspector's workspace list (git vs HEAD) so the fold-up
-    // +/- matches the changes panel. Only when this turn actually edited
-    // files — don't attach unrelated pre-existing dirt to a chat-only turn.
-    const ledgerSummary = turnSummaryFromSources(turnDiffSnapshot, turn.blocks)
-    const summary =
-      ledgerSummary.files.length > 0 &&
-      workspaceChangeEntries &&
-      workspaceChangeEntries.length > 0
-        ? turnSummaryFromWorkspaceEntries(workspaceChangeEntries)
-        : ledgerSummary
+    // Receipt for this turn's writes only. Workspace dirt stays in Changes.
+    const summary = turnSummaryFromSources(turnDiffSnapshot, turn.blocks)
     const nextTurnFileChanges: ToolBlock[] =
       summary.files.length > 0
         ? toolBlocksFromTurnSummary(turnDiffTurnId || 'legacy', summary).map((block) => ({
@@ -1111,8 +1090,7 @@ function MessageTurn({
     liveProcessText,
     workspaceRoot,
     turnDiffSnapshot,
-    turnDiffTurnId,
-    workspaceChangeEntries
+    turnDiffTurnId
   ])
 
   // Stream into the main answer bubble while the turn is live (and keep a
@@ -1126,6 +1104,19 @@ function MessageTurn({
     assistantContentBlocks.length === 0
 
   const hasProcess = !isSystemOnlyTurn && (isProcessing || processBlocks.length > 0)
+  const showWorkMeta =
+    hasProcess || (!isSystemOnlyTurn && !isProcessing && typeof durationMs === 'number')
+  const turnChangeSummary = !isProcessing && turnFileChanges.length > 0 ? (
+    <TurnChangeSummary
+      changes={turnFileChanges}
+      viewportRef={viewportRef}
+      turnId={turnDiffTurnId}
+      userBlockId={turn.user?.id}
+      htmlPreview={htmlPreviewAction ?? null}
+      onOpenWorkspaceFile={onOpenWorkspaceFile}
+    />
+  ) : null
+  const hasAssistantAnswer = assistantContentBlocks.length > 0 || showLiveAssistant
 
   return (
     <div className="ds-message-turn flex min-w-0 flex-col gap-4">
@@ -1144,7 +1135,7 @@ function MessageTurn({
         </div>
       ) : (
         <>
-          {hasProcess ? (
+          {showWorkMeta ? (
             <div className="flex flex-col gap-1 pb-2">
               <WorkMetaRow
                 processing={isProcessing}
@@ -1152,11 +1143,12 @@ function MessageTurn({
                 liveStartedAt={liveStartedAt}
                 durationMs={durationMs}
                 reasoningDurationMs={reasoningDurationMs}
+                collapsible={hasProcess}
                 expanded={workExpanded}
                 onToggle={() => setWorkExpanded((value) => !value)}
                 activeActionLabel={activeRunningActionLabel(processBlocks)}
               />
-              {workExpanded ? (
+              {hasProcess && workExpanded ? (
                 <ProcessStream
                   blocks={processBlocks}
                   processing={isProcessing}
@@ -1190,24 +1182,28 @@ function MessageTurn({
             />
           ) : null}
 
-          {assistantContentBlocks.map((block) => (
-            <MessageBubble key={block.id} block={block} />
+          {assistantContentBlocks.map((block, index) => (
+            <MessageBubble
+              key={block.id}
+              block={block}
+              afterContent={
+                !showLiveAssistant && index === assistantContentBlocks.length - 1
+                  ? turnChangeSummary
+                  : null
+              }
+            />
           ))}
 
           {showLiveAssistant ? (
-            <MessageBubble block={{ kind: 'assistant', id: 'live-assistant', text: liveContent }} />
-          ) : null}
-
-          {/* Turn fold-up: only after the turn finishes. Mid-turn edits stay
-              in the process rail as per-tool file_change cards. */}
-          {!isProcessing && turnFileChanges.length > 0 ? (
-            <TurnChangeSummary
-              changes={turnFileChanges}
-              viewportRef={viewportRef}
-              htmlPreview={htmlPreviewAction ?? null}
-              onOpenWorkspaceFile={onOpenWorkspaceFile}
+            <MessageBubble
+              block={{ kind: 'assistant', id: 'live-assistant', text: liveContent }}
+              afterContent={turnChangeSummary}
             />
           ) : null}
+
+          {/* Turns without an assistant answer still need to expose their
+              completed write receipt. */}
+          {!hasAssistantAnswer ? turnChangeSummary : null}
 
           {!isProcessing && turnFileChanges.length === 0 && htmlPreviewAction ? (
             <HtmlPreviewStandaloneCard
@@ -1217,6 +1213,7 @@ function MessageTurn({
           ) : null}
         </>
       )}
+
     </div>
   )
 }
@@ -1234,8 +1231,7 @@ const MemoMessageTurn = memo(MessageTurn, (prev, next) => (
   prev.viewportRef === next.viewportRef &&
   prev.turnDiffSnapshot === next.turnDiffSnapshot &&
   prev.turnDiffTurnId === next.turnDiffTurnId &&
-  prev.turnDiffRevision === next.turnDiffRevision &&
-  prev.workspaceChangeEntries === next.workspaceChangeEntries
+  prev.turnDiffRevision === next.turnDiffRevision
 ))
 
 function turnChangeBlockStats(block: ToolBlock): DiffStats | null {
@@ -1266,36 +1262,31 @@ function pathsReferToSameFile(a: string, b: string): boolean {
 function TurnChangeSummary({
   changes,
   viewportRef,
+  turnId,
+  userBlockId,
   htmlPreview,
   onOpenWorkspaceFile
 }: {
   changes: ToolBlock[]
   viewportRef: RefObject<HTMLDivElement | null>
+  turnId?: string | null
+  userBlockId?: string
   htmlPreview?: { path: string; onOpen: () => void } | null
   onOpenWorkspaceFile?: (path: string, line?: number) => void
 }): ReactElement {
+  const previewLimit = 3
   const { t } = useTranslation('common')
   const [expanded, setExpanded] = useState(false)
-  const [activeId, setActiveId] = useState<string | null>(
-    () => changes.find((change) => change.detail?.trim())?.id ?? changes[0]?.id ?? null
-  )
-
-  useEffect(() => {
-    if (changes.length === 0) {
-      setActiveId(null)
-      return
-    }
-    setActiveId((current) => {
-      if (current && changes.some((change) => change.id === current)) return current
-      return changes.find((change) => change.detail?.trim())?.id ?? changes[0]?.id ?? null
-    })
-  }, [changes])
+  const [confirmUndo, setConfirmUndo] = useState(false)
+  const [undoing, setUndoing] = useState(false)
+  const [undoFeedback, setUndoFeedback] = useState<string | null>(null)
+  const restoreCodeAt = useChatStore((s) => s.restoreCodeAt)
+  void viewportRef
 
   const fileStats = useMemo(
     () => changes.map((change) => turnChangeBlockStats(change)),
     [changes]
   )
-  const totals = useMemo(() => sumDiffStatsList(fileStats), [fileStats])
   const title = useMemo(
     () =>
       changes.length === 1
@@ -1303,13 +1294,11 @@ function TurnChangeSummary({
         : t('turnChangeFilesMany', { count: changes.length }),
     [changes.length, t]
   )
-  const { ref: deferredBodyRef, shouldRender: shouldRenderBody } = useDeferredRender<HTMLDivElement>({
-    enabled: expanded,
-    root: viewportRef
-  })
   const openableResults = useMemo(() => selectOpenableTurnResults(changes), [changes])
-  const compactOpenable = openableResults.length > 1
   const previewPath = htmlPreview?.path?.trim() ?? ''
+  const visibleChanges = expanded ? changes : changes.slice(0, previewLimit)
+  const remainingCount = Math.max(changes.length - previewLimit, 0)
+  const canUndo = Boolean(userBlockId?.startsWith('item_'))
 
   const openTurnResult = (result: OpenableTurnResult): void => {
     if (
@@ -1324,127 +1313,166 @@ function TurnChangeSummary({
     onOpenWorkspaceFile?.(result.path)
   }
 
+  const undoCode = async (): Promise<void> => {
+    if (!userBlockId || undoing) return
+    setUndoing(true)
+    setUndoFeedback(null)
+    try {
+      const result = await restoreCodeAt(userBlockId)
+      if (!result) return
+      setConfirmUndo(false)
+      setUndoFeedback(
+        t('turnChangeUndoSuccess', {
+          count: result.restoredFiles.length,
+          skipped: result.skippedFiles.length
+        })
+      )
+    } finally {
+      setUndoing(false)
+    }
+  }
+
   return (
-    <section className="ds-turn-change-summary ds-card-strong overflow-hidden rounded-[14px] border border-ds-border shadow-[0_16px_40px_rgba(86,103,136,0.08)]">
-      <button
-        type="button"
-        onClick={() => {
-          setExpanded((value) => !value)
-          window.dispatchEvent(new CustomEvent('deepseekgui:open-changes-panel'))
-        }}
-        aria-expanded={expanded}
-        className="ds-turn-change-summary__header flex w-full items-center gap-4 px-5 py-4 text-left transition hover:bg-ds-hover/40"
-      >
-        <span className="ds-turn-change-summary__icon flex h-12 w-12 shrink-0 items-center justify-center rounded-[16px] bg-ds-card-muted text-ds-muted">
-          <FileEdit className="h-5 w-5" strokeWidth={1.85} />
+    <section className="ds-turn-change-summary overflow-hidden rounded-2xl">
+      <div className="ds-turn-change-summary__header flex min-w-0 items-center gap-3 px-4 py-3.5">
+        <span className="ds-turn-change-summary__icon flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-ds-muted">
+          <FilePlus2 className="h-[18px] w-[18px]" strokeWidth={1.8} />
         </span>
         <span className="min-w-0 flex-1">
-          <span className="ds-turn-change-summary__title block text-[18px] font-semibold tracking-[-0.02em] text-ds-ink">
+          <span className="ds-turn-change-summary__title block truncate text-[15px] font-semibold leading-5 tracking-[-0.01em] text-ds-ink">
             {title}
           </span>
-          {totals ? (
-            <span className="mt-1 block text-[12px] tabular-nums">
-              <span className="text-ds-diff-added">+{totals.added}</span>
-              <span className="mx-1.5 text-ds-faint">·</span>
-              <span className="text-ds-diff-removed">-{totals.removed}</span>
-            </span>
-          ) : null}
+          <button
+            type="button"
+            onClick={() =>
+              openChangesPanel({ context: 'last-turn', turnId: turnId ?? undefined })
+            }
+            className="ds-turn-change-summary__view mt-0.5 inline-flex items-center gap-1 text-[13px] leading-5 text-ds-muted transition-colors duration-150 hover:text-ds-ink"
+          >
+            {t('turnChangeViewChanges')}
+            <ArrowUpRight className="h-3.5 w-3.5" strokeWidth={1.8} />
+          </button>
         </span>
-        {expanded ? (
-          <ChevronDown className="h-4 w-4 shrink-0 text-ds-faint" strokeWidth={1.8} />
-        ) : (
-          <ChevronRight className="h-4 w-4 shrink-0 text-ds-faint" strokeWidth={1.8} />
-        )}
-      </button>
-
-      {expanded ? (
-        <div
-          ref={deferredBodyRef}
-          className="border-t border-ds-border-muted/70"
-          style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 280px' }}
+        {canUndo ? (
+          <button
+            type="button"
+            disabled={undoing}
+            onClick={() => setConfirmUndo(true)}
+            className="inline-flex shrink-0 items-center gap-1.5 rounded-lg px-2 py-1.5 text-[14px] font-medium text-ds-ink transition-[background-color,color,transform] duration-150 hover:bg-ds-hover active:scale-[0.97] disabled:opacity-50"
+          >
+            {t('turnChangeUndo')}
+            <RotateCcw className="h-4 w-4" strokeWidth={1.8} />
+          </button>
+        ) : null}
+        <button
+          type="button"
+          onClick={() =>
+            openChangesPanel({ context: 'last-turn', turnId: turnId ?? undefined })
+          }
+          className="ds-turn-change-summary__review shrink-0 rounded-lg px-3 py-1.5 text-[14px] font-medium text-ds-ink transition-[background-color,border-color,transform] duration-150 hover:bg-ds-hover active:scale-[0.97]"
         >
-          {shouldRenderBody
-            ? changes.map((change, index) => {
-            const stats = fileStats[index]
-            const open = activeId === change.id
-            const filePath = change.filePath?.trim() ?? ''
-            const primary = filePath || t('toolActionFile')
-            const canOpenFile = Boolean(onOpenWorkspaceFile && filePath)
-            const isHtmlFile = Boolean(filePath && isHtmlPreviewPath(filePath))
+          {t('turnChangeReview')}
+        </button>
+      </div>
 
-            return (
-              <div key={change.id} className="border-b border-ds-border-muted/60 last:border-b-0">
-                <div
-                  className={`flex w-full items-start gap-3 px-5 py-3 ${
-                    open ? 'bg-ds-hover/45' : 'hover:bg-ds-hover/35'
-                  }`}
-                >
-                  <span className="min-w-0 flex-1">
-                    <span className="flex min-w-0 items-center gap-2">
-                      {filePath ? (
-                        <FileChip path={filePath} variant="list" skipValidation />
-                      ) : (
-                        <span className="ds-turn-change-summary__path block break-all text-[14px] font-medium text-ds-ink">
-                          {primary}
-                        </span>
-                      )}
-                      {canOpenFile && isHtmlFile ? (
-                        <span className="inline-flex shrink-0 items-center gap-1 rounded-md bg-amber-500/10 px-1.5 py-0.5 text-[10.5px] font-medium text-amber-700 dark:text-amber-300">
-                          <Globe2 className="h-3 w-3" strokeWidth={2} />
-                          HTML
-                        </span>
-                      ) : null}
-                    </span>
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => setActiveId(open ? null : change.id)}
-                    aria-expanded={open}
-                    className="flex shrink-0 items-start gap-3 text-left"
-                  >
-                    {stats ? (
-                      <span className="shrink-0 text-[12px] tabular-nums">
-                        <span className="text-ds-diff-added">+{stats.added}</span>
-                        <span className="ml-1.5 text-ds-diff-removed">-{stats.removed}</span>
-                      </span>
+      <div className="ds-turn-change-summary__body">
+        {visibleChanges.map((change, index) => {
+          const stats = fileStats[index]
+          const filePath = change.filePath?.trim() ?? ''
+          const pathParts = splitFileNameAndParent(filePath)
+
+          return (
+            <button
+              key={change.id}
+              type="button"
+              disabled={!filePath || !onOpenWorkspaceFile}
+              onClick={() => filePath && onOpenWorkspaceFile?.(filePath)}
+              className="ds-turn-change-summary__row flex h-10 w-full min-w-0 items-center gap-3 px-4 text-left transition-colors duration-150 hover:bg-ds-hover disabled:cursor-default"
+            >
+              <span className="ds-turn-change-summary__path min-w-0 flex-1 truncate text-[14px] font-normal text-ds-ink">
+                {filePath ? (
+                  <>
+                    {pathParts.parent ? (
+                      <span className="text-ds-muted">{pathParts.parent}/</span>
                     ) : null}
-                    {open ? (
-                      <ChevronDown className="mt-0.5 h-4 w-4 shrink-0 text-ds-faint" strokeWidth={1.8} />
-                    ) : (
-                      <ChevronRight className="mt-0.5 h-4 w-4 shrink-0 text-ds-faint" strokeWidth={1.8} />
-                    )}
-                  </button>
-                </div>
-
-                {open && change.detail ? (
-                  <div className="bg-ds-card-muted/45 px-4 pb-4 pt-1">
-                    <DiffView
-                      patch={change.detail}
-                      filePath={change.filePath}
-                      maxHeight={440}
-                      className="border border-ds-border-muted/70"
-                    />
-                  </div>
-                ) : null}
-              </div>
-            )
-          })
-            : null}
-        </div>
-      ) : null}
-
-      {openableResults.length > 0 ? (
-        <div className="border-t border-ds-border-muted/70 bg-gradient-to-b from-ds-card-muted/25 to-transparent px-4 py-3">
-          <div className={compactOpenable ? 'flex flex-col gap-1' : undefined}>
+                    <span>{pathParts.name}</span>
+                  </>
+                ) : (
+                  t('toolActionFile')
+                )}
+              </span>
+              {stats ? (
+                <span className="shrink-0 text-[14px] tabular-nums">
+                  <span className="text-ds-diff-added">+{stats.added}</span>
+                  <span className="ml-2 text-ds-diff-removed">-{stats.removed}</span>
+                </span>
+              ) : null}
+            </button>
+          )
+        })}
+        {openableResults.length > 0 ? (
+          <div className="border-t border-ds-border-muted/70 px-2 py-1.5">
             {openableResults.map((result) => (
               <TurnOpenableResultRow
                 key={result.path}
                 result={result}
-                compact={compactOpenable}
+                compact={openableResults.length > 1}
                 onOpen={() => openTurnResult(result)}
               />
             ))}
           </div>
+        ) : null}
+      </div>
+
+      {remainingCount > 0 ? (
+        <button
+          type="button"
+          onClick={() => setExpanded((value) => !value)}
+          aria-expanded={expanded}
+          className="ds-turn-change-summary__footer flex w-full items-center gap-2 px-4 py-2.5 text-left text-[14px] font-medium text-ds-ink transition-[background-color,color,transform] duration-150 hover:bg-ds-hover active:scale-[0.995]"
+        >
+          <span>
+            {expanded
+              ? t('turnChangeShowFewerFiles')
+              : t('turnChangeShowMoreFiles', { count: remainingCount })}
+          </span>
+          {expanded ? (
+            <ChevronUp className="h-4 w-4" strokeWidth={1.9} />
+          ) : (
+            <ChevronDown className="h-4 w-4" strokeWidth={1.9} />
+          )}
+        </button>
+      ) : null}
+
+      {canUndo && (confirmUndo || undoFeedback) ? (
+        <div className="ds-turn-change-summary__footer flex min-w-0 items-center gap-2 px-4 py-2.5">
+          {confirmUndo ? (
+            <>
+              <p className="min-w-0 flex-1 text-[11.5px] leading-4 text-amber-700 dark:text-amber-300">
+                {t('turnChangeUndoConfirm')}
+              </p>
+              <button
+                type="button"
+                disabled={undoing}
+                onClick={() => setConfirmUndo(false)}
+                className="rounded-md px-2 py-1 text-[11.5px] text-ds-muted transition-colors duration-150 hover:bg-ds-hover"
+              >
+                {t('rewindCancel')}
+              </button>
+              <button
+                type="button"
+                disabled={undoing}
+                onClick={() => void undoCode()}
+                className="rounded-md bg-amber-500/15 px-2 py-1 text-[11.5px] font-medium text-amber-800 transition-[background-color,transform] duration-150 hover:bg-amber-500/20 active:scale-[0.97] dark:text-amber-200 disabled:opacity-50"
+              >
+                {undoing ? t('turnChangeUndoing') : t('turnChangeUndoConfirmAction')}
+              </button>
+            </>
+          ) : (
+            <span className="min-w-0 flex-1 truncate text-[11.5px] text-ds-faint">
+              {undoFeedback}
+            </span>
+          )}
         </div>
       ) : null}
     </section>
@@ -1603,6 +1631,7 @@ function WorkMetaRow({
   liveStartedAt,
   durationMs,
   reasoningDurationMs,
+  collapsible,
   expanded,
   onToggle,
   activeActionLabel
@@ -1612,6 +1641,7 @@ function WorkMetaRow({
   liveStartedAt?: number
   durationMs?: number
   reasoningDurationMs?: number
+  collapsible: boolean
   expanded: boolean
   onToggle: () => void
   activeActionLabel?: string
@@ -1653,9 +1683,10 @@ function WorkMetaRow({
     <div className="ds-work-meta w-full">
       <button
         type="button"
-        onClick={onToggle}
-        aria-expanded={expanded}
-        className="ds-work-meta-row group flex w-fit max-w-full items-center gap-1.5 rounded-md py-1 text-left text-[15px] font-medium text-ds-muted transition hover:opacity-85"
+        onClick={collapsible ? onToggle : undefined}
+        aria-expanded={collapsible ? expanded : undefined}
+        disabled={!collapsible}
+        className={`ds-work-meta-row group flex w-fit max-w-full items-center gap-1.5 rounded-md py-1 text-left text-[15px] font-medium text-ds-muted transition ${collapsible ? 'hover:opacity-85' : ''}`}
       >
         {processing ? (
           <span className="mr-0.5 flex h-5 w-5 shrink-0 items-center justify-center">
@@ -1673,14 +1704,16 @@ function WorkMetaRow({
             · {t('thoughtFor', { duration: formatDuration(reasoningDurationMs!) })}
           </span>
         ) : null}
-        {expanded ? (
-          <ChevronDown className="h-3.5 w-3.5 shrink-0 opacity-45" strokeWidth={1.8} />
-        ) : (
-          <ChevronRight
-            className="h-3.5 w-3.5 shrink-0 opacity-40 transition group-hover:opacity-65"
-            strokeWidth={1.8}
-          />
-        )}
+        {collapsible ? (
+          expanded ? (
+            <ChevronDown className="h-3.5 w-3.5 shrink-0 opacity-45" strokeWidth={1.8} />
+          ) : (
+            <ChevronRight
+              className="h-3.5 w-3.5 shrink-0 opacity-40 transition group-hover:opacity-65"
+              strokeWidth={1.8}
+            />
+          )
+        ) : null}
       </button>
       <div aria-hidden className="h-px w-full bg-ds-border-muted/70" />
     </div>
@@ -2597,9 +2630,10 @@ function MidTurnPrefaceLine({
  *  - reasoning       → narration line if present (model's own承上启下),
  *                      else collapsed raw reasoning
  *  - assistant       → mid-turn preface shown inline as narration
- *  - approval         → null (pending cards live in the composer dock)
+ *  - approval         → null (pending cards live on the tool + composer dock)
  *  - user_input       → pending null (composer dock); submitted = quiet Q→A summary
- *  - elev/evol/etc    → existing Bubble/Block components, never hidden
+ *  - elevation        → pending null (tool + composer dock); resolved stays inline
+ *  - evol/etc         → existing Bubble/Block components, never hidden
  *
  * The 4 `shouldHide*` patches are gone: todo/subagent were never wrong-blocked
  * because we no longer group reasoning+tools into phases that misplace them.
@@ -2829,9 +2863,13 @@ function ProcessStreamEntry({
       </div>
     )
   }
-  // Approvals + pending user_input render in the composer dock above the input.
+  // Approvals + pending elevation/user_input render on the tool card and in
+  // the composer dock. Resolved elevation stays here as an audit row.
   if (block.kind === 'approval') return null
-  if (block.kind === 'elevation') return <ElevationBubble block={block} />
+  if (block.kind === 'elevation') {
+    if (block.status === 'pending') return null
+    return <ElevationBubble block={block} />
+  }
   if (block.kind === 'evolution') return <EvolutionBubble block={block} />
   if (block.kind === 'user_input') {
     if (block.status === 'pending') return null
@@ -3071,15 +3109,22 @@ function UserMessageBubble({
   const [confirm, setConfirm] = useState<{
     files: string[]
     conflicts: string[]
+    skipped: string[]
     previewFailed: boolean
+    missingRoots: string[]
+    noCheckpoint: number
   } | null>(null)
   const [forceConflicts, setForceConflicts] = useState(false)
   // File restore only works for messages persisted on the runtime (`item_…`).
+  // Restore writes the recorded execution root. After a successful publish that
+  // root is the project; a vanished copy skips file restore.
   const canRestoreFiles = activeThreadId != null && block.id.startsWith('item_')
+  const hasMissingRoots = (confirm?.missingRoots.length ?? 0) > 0
+  const hasNoCheckpoint = (confirm?.noCheckpoint ?? 0) > 0
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
   useEffect(() => {
-    if (!editing) return
+    if (!editing || confirm) return
     const el = textareaRef.current
     if (!el) return
     el.focus()
@@ -3087,7 +3132,7 @@ function UserMessageBubble({
     el.setSelectionRange(len, len)
     el.style.height = 'auto'
     el.style.height = `${Math.min(el.scrollHeight, 360)}px`
-  }, [editing])
+  }, [editing, confirm])
 
   useEffect(() => {
     if (!confirm) return
@@ -3131,12 +3176,13 @@ function UserMessageBubble({
           : trimmed
     setConfirm(null)
     setSubmitting(true)
-    setEditing(false)
     try {
-      await rewindAndResend(block.id, wireText, {
+      const succeeded = await rewindAndResend(block.id, wireText, {
         restoreFiles: restoreFiles && canRestoreFiles,
-        forceConflicts: restoreFiles && canRestoreFiles && force
+        forceConflicts: restoreFiles && canRestoreFiles && force,
+        retryDraft: trimmed
       })
+      if (succeeded) setEditing(false)
     } finally {
       setSubmitting(false)
     }
@@ -3144,7 +3190,7 @@ function UserMessageBubble({
 
   const requestResend = async (): Promise<void> => {
     const trimmed = draft.trim()
-    if (!trimmed || busy || submitting || previewing) return
+    if (!trimmed || busy || submitting || previewing || confirm) return
 
     if (!canRestoreFiles || !activeThreadId) {
       await commitResend(false)
@@ -3153,14 +3199,31 @@ function UserMessageBubble({
 
     const provider = getProvider(useChatStore.getState().providerId)
     if (typeof provider.rewindPreview !== 'function') {
-      await commitResend(false)
+      // Older runtimes can still support rewind-with-restore even when the
+      // preview endpoint is absent. Preserve the new default via a generic
+      // warning instead of silently falling back to conversation-only rewind.
+      setForceConflicts(false)
+      setConfirm({
+        files: [],
+        conflicts: [],
+        skipped: [],
+        previewFailed: true,
+        missingRoots: [],
+        noCheckpoint: 0
+      })
       return
     }
 
     setPreviewing(true)
     try {
       const preview = await provider.rewindPreview(activeThreadId, block.id)
-      if (preview.files.length === 0) {
+      if (
+        !rewindPreviewNeedsConfirmation(
+          preview.files,
+          preview.missingRoots ?? [],
+          preview.noCheckpoint
+        )
+      ) {
         await commitResend(false)
         return
       }
@@ -3168,26 +3231,41 @@ function UserMessageBubble({
       setConfirm({
         files: preview.files,
         conflicts: preview.conflicts ?? [],
-        previewFailed: false
+        skipped: preview.skipped ?? [],
+        previewFailed: false,
+        missingRoots: preview.missingRoots ?? [],
+        noCheckpoint: preview.noCheckpoint
       })
     } catch {
       setForceConflicts(false)
-      setConfirm({ files: [], conflicts: [], previewFailed: true })
+      setConfirm({
+        files: [],
+        conflicts: [],
+        skipped: [],
+        previewFailed: true,
+        missingRoots: [],
+        noCheckpoint: 0
+      })
     } finally {
       setPreviewing(false)
     }
   }
 
   if (editing) {
-    const actionsDisabled = !draft.trim() || busy || submitting || previewing
+    const actionsDisabled = !draft.trim() || busy || submitting || previewing || confirm !== null
     const conflictSet = new Set(confirm?.conflicts ?? [])
-    // Conflicted paths first so they stay visible when the list is cut.
+    const skippedSet = new Set(confirm?.skipped ?? [])
+    // Unresolved paths first so they stay visible when the list is cut.
     const confirmFiles = [...(confirm?.files ?? [])].sort(
-      (a, b) => Number(conflictSet.has(b)) - Number(conflictSet.has(a))
+      (a, b) =>
+        Number(conflictSet.has(b) || skippedSet.has(b)) -
+        Number(conflictSet.has(a) || skippedSet.has(a))
     )
     const visibleFiles = confirmFiles.slice(0, REWIND_CONFIRM_FILE_LIMIT)
     const moreFiles = confirmFiles.length - visibleFiles.length
     const hasConflicts = conflictSet.size > 0
+    const hasSkipped = skippedSet.size > 0
+    const confirmModel = confirm ? rewindResendConfirmModel(confirm.previewFailed) : null
 
     return (
       <div id={`block-${block.id}`} className="ds-user-message">
@@ -3223,7 +3301,11 @@ function UserMessageBubble({
                 e.preventDefault()
                 if (confirm) setConfirm(null)
                 else cancelEdit()
-              } else if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+              } else if (
+                !confirm &&
+                e.key === 'Enter' &&
+                (e.metaKey || e.ctrlKey)
+              ) {
                 e.preventDefault()
                 void requestResend()
               }
@@ -3289,7 +3371,7 @@ function UserMessageBubble({
                   </div>
                   <div className="space-y-3 px-5 py-4">
                     <p className="text-[13px] leading-5 text-ds-muted">
-                      {confirm.previewFailed
+                      {confirmModel?.body === 'preview_failed'
                         ? t('rewindResendConfirmPreviewFailed')
                         : t('rewindResendConfirmBody')}
                     </p>
@@ -3305,6 +3387,10 @@ function UserMessageBubble({
                             {conflictSet.has(file) ? (
                               <span className="shrink-0 rounded bg-amber-500/15 px-1.5 text-[10px] font-sans font-medium leading-4 text-amber-500">
                                 {t('rewindResendConfirmConflictTag')}
+                              </span>
+                            ) : skippedSet.has(file) ? (
+                              <span className="shrink-0 rounded bg-ds-hover px-1.5 text-[10px] font-sans font-medium leading-4 text-ds-muted">
+                                {t('rewindResendConfirmSkippedTag')}
                               </span>
                             ) : null}
                           </li>
@@ -3334,6 +3420,20 @@ function UserMessageBubble({
                         </label>
                       </div>
                     ) : null}
+                    {hasSkipped || hasMissingRoots ? (
+                      <p className="text-[12px] leading-5 text-ds-muted">
+                        {t('rewindResendConfirmUnavailableNote', {
+                          count: Math.max(skippedSet.size, confirm.missingRoots.length)
+                        })}
+                      </p>
+                    ) : null}
+                    {hasNoCheckpoint ? (
+                      <p className="text-[12px] leading-5 text-amber-500">
+                        {t('rewindResendConfirmNoCheckpoint', {
+                          count: confirm.noCheckpoint
+                        })}
+                      </p>
+                    ) : null}
                   </div>
                   <div className="flex flex-wrap items-center justify-end gap-2 border-t border-ds-border-muted px-5 py-3">
                     <button
@@ -3343,22 +3443,29 @@ function UserMessageBubble({
                     >
                       {t('rewindCancel')}
                     </button>
-                    <button
-                      type="button"
-                      onClick={() => void commitResend(false)}
-                      disabled={submitting}
-                      className="rounded-md px-3 py-1.5 text-[13px] font-medium text-ds-ink transition hover:bg-ds-hover disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      {t('rewindResendConfirmKeep')}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => void commitResend(true, forceConflicts)}
-                      disabled={submitting}
-                      className="rounded-md bg-accent px-3 py-1.5 text-[13px] font-medium text-white shadow-sm transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      {t('rewindResendConfirmRestore')}
-                    </button>
+                    {confirmModel?.actions.includes('conversation_only') ? (
+                      <button
+                        type="button"
+                        onClick={() => void commitResend(false)}
+                        disabled={submitting}
+                        className="rounded-md px-3 py-1.5 text-[13px] font-medium text-ds-ink transition hover:bg-ds-hover disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {t('rewindResendConfirmConversationOnly')}
+                      </button>
+                    ) : null}
+                    {confirmModel?.actions.includes('restore_code') ? (
+                      <button
+                        type="button"
+                        autoFocus
+                        onClick={() => void commitResend(true, forceConflicts)}
+                        disabled={submitting}
+                        className="rounded-md bg-accent px-3 py-1.5 text-[13px] font-medium text-white shadow-sm transition hover:brightness-110 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {hasSkipped || hasMissingRoots || hasNoCheckpoint
+                          ? t('rewindResendConfirmRestoreAvailable')
+                          : t('rewindResendConfirmRestore')}
+                      </button>
+                    ) : null}
                   </div>
                 </div>
               </div>,
@@ -3616,7 +3723,13 @@ function formatMessageDateTime(
   }).format(date)
 }
 
-function MessageBubble({ block }: { block: ChatBlock }): ReactElement | null {
+function MessageBubble({
+  block,
+  afterContent = null
+}: {
+  block: ChatBlock
+  afterContent?: ReactElement | null
+}): ReactElement | null {
   const { t, i18n } = useTranslation('common')
   const timestampFormat = useSyncExternalStore(subscribeAppearance, getTimestampFormat)
   if (block.kind === 'user') {
@@ -3632,6 +3745,9 @@ function MessageBubble({ block }: { block: ChatBlock }): ReactElement | null {
         <div className="ds-markdown ds-markdown--answer ds-chat-answer min-w-0 max-w-full text-ds-ink">
           <AssistantMarkdown text={block.text} streaming={streaming} />
         </div>
+        {afterContent ? (
+          <div className="ds-assistant-message-receipt mt-4">{afterContent}</div>
+        ) : null}
         {!streaming ? (
           <div className="ds-assistant-message-meta mt-1 flex min-h-5 min-w-0 items-center justify-between gap-3 text-[11.5px] text-ds-faint opacity-0 transition duration-150 group-hover/message:opacity-100">
             <span className="min-w-0 truncate">{createdAtLabel ?? ''}</span>
@@ -3670,6 +3786,7 @@ function MessageBubble({ block }: { block: ChatBlock }): ReactElement | null {
     return <EvolutionBubble block={block} />
   }
   if (block.kind === 'elevation') {
+    if (block.status === 'pending') return null
     return <ElevationBubble block={block} />
   }
   return (

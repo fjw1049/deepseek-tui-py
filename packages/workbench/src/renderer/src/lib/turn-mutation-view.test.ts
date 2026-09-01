@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest'
 import type { ChatBlock } from '../agent/types'
 import {
   editedRowsFromToolBlocks,
+  indexTurnDiffSnapshots,
   resolveLatestTurnDiffId,
+  resolveTurnDiffId,
   toolBlocksFromTurnSummary,
   turnSummaryFromSources,
   type TurnDiffSnapshot
@@ -94,6 +96,50 @@ describe('turn-mutation-view', () => {
     expect(resolveLatestTurnDiffId('turn_live', 'turn_old')).toBe('turn_live')
     expect(resolveLatestTurnDiffId(null, 'turn_old')).toBe('turn_old')
     expect(resolveLatestTurnDiffId(null, null)).toBeNull()
+  })
+
+  it('keeps an older timeline turn bound to its own durable snapshot', () => {
+    expect(resolveTurnDiffId('turn_old', false, 'turn_live', 'turn_done')).toBe('turn_old')
+    expect(resolveTurnDiffId(undefined, false, 'turn_live', 'turn_done')).toBeNull()
+  })
+
+  it('treats an empty snapshot as authoritative after a full revert', () => {
+    const summary = turnSummaryFromSources(
+      {
+        turn_id: 'turn_reverted',
+        files: [],
+        totals: { files: 0, additions: 0, deletions: 0 },
+        revision: 3,
+        complete: true
+      },
+      [
+        {
+          kind: 'tool',
+          id: 'edit-before-revert',
+          summary: 'edit_file: path="a.ts"',
+          status: 'success',
+          toolKind: 'file_change',
+          filePath: 'a.ts',
+          detail: 'diff --git a/a.ts b/a.ts\n--- a/a.ts\n+++ b/a.ts\n@@\n-old\n+new\n'
+        }
+      ]
+    )
+    expect(summary.files).toHaveLength(0)
+    expect(summary.totals).toEqual({ files: 0, additions: 0, deletions: 0 })
+  })
+
+  it('indexes persisted snapshots when a thread is reopened', () => {
+    const indexed = indexTurnDiffSnapshots([
+      {
+        turn_id: 'turn_saved',
+        files: [],
+        totals: { files: 0, additions: 0, deletions: 0 },
+        revision: 2,
+        complete: true
+      }
+    ])
+    expect(indexed.turn_saved?.complete).toBe(true)
+    expect(indexed.turn_saved?.files).toEqual([])
   })
 
   it('reconciles totals from unique files so header matches the list', () => {

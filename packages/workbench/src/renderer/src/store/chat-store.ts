@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import type {
   NormalizedThread,
   ProcessIntentMeta,
+  RewindResult,
   SubagentMailboxPayload,
   ThreadDeltaEvent,
   ThreadEventSink,
@@ -31,6 +32,7 @@ import {
   shouldAutoTitleThread
 } from '../lib/thread-title'
 import { isPluginControlOnlyMessage } from '../lib/user-focus-prefix'
+import { insertComposerSnippet, queueComposerRetryDraft } from '../lib/composer-insert'
 import { workspaceLabelFromPath } from '../lib/workspace-label'
 import { isClawWorkspacePath, isInternalTemporaryWorkspace, normalizeWorkspaceRoot } from '../lib/workspace-path'
 import { emitPetEvent } from '../lib/pet/pet-events'
@@ -187,18 +189,28 @@ function notifyTurnComplete(threadId: string | null, state: ChatState, dedupeKey
  * Compute the patch that finalizes timing for the current in-progress turn.
  * No-op if there is no current turn or its start time was not recorded.
  */
-function finalizeTurnTiming(state: ChatState): Partial<ChatState> {
+function finalizeTurnTiming(
+  state: ChatState,
+  authoritativeDurationMs?: number | null
+): Partial<ChatState> {
   const userId = state.currentTurnUserId
   if (!userId) return {}
   const startedAt = state.turnStartedAtByUserId[userId]
-  if (typeof startedAt !== 'number') {
+  const normalizedAuthoritativeDuration =
+    typeof authoritativeDurationMs === 'number' && Number.isFinite(authoritativeDurationMs)
+      ? Math.max(0, authoritativeDurationMs)
+      : undefined
+  if (typeof startedAt !== 'number' && normalizedAuthoritativeDuration === undefined) {
     return { currentTurnUserId: null }
   }
+  const durationMs =
+    normalizedAuthoritativeDuration ??
+    (typeof startedAt === 'number' ? Math.max(0, Date.now() - startedAt) : 0)
   return {
     currentTurnUserId: null,
     turnDurationByUserId: {
       ...state.turnDurationByUserId,
-      [userId]: Math.max(0, Date.now() - startedAt)
+      [userId]: durationMs
     }
   }
 }
@@ -317,7 +329,14 @@ function clearTurnCompletionProbe(): void {
 
 function scheduleTurnCompletionProbe(
   get: () => ChatState,
-  sink: { onTurnComplete(payload?: { threadId?: string | null; usage?: Record<string, unknown> | null }): void }
+  sink: {
+    onTurnComplete(payload?: {
+      threadId?: string | null
+      turnId?: string | null
+      durationMs?: number | null
+      usage?: Record<string, unknown> | null
+    }): void
+  }
 ): void {
   clearTurnCompletionProbe()
   const scheduledState = get()
@@ -380,7 +399,15 @@ async function reloadActiveThreadBlocks(
   if (!threadId || state.runtimeConnection !== 'ready') return
   try {
     const provider = getProvider(state.providerId)
-    const { blocks: rawBlocks, latestSeq, threadStatus, goal } = await provider.getThreadDetail(threadId)
+    const {
+      blocks: rawBlocks,
+      latestSeq,
+      threadStatus,
+      goal,
+      turnStartedAtByUserId: loadedTurnStartedAtByUserId,
+      turnDurationByUserId: loadedTurnDurationByUserId,
+      turnDiffByTurnId: loadedTurnDiffByTurnId
+    } = await provider.getThreadDetail(threadId)
     const hydrated = hydrateBlockModelLabels(threadId, rawBlocks)
     const blocks = threadStatusLooksActive(threadStatus)
       ? hydrated
@@ -394,12 +421,24 @@ async function reloadActiveThreadBlocks(
       get().busy
     )
     if (get().activeThreadId !== threadId) return
-    set({
+    set((s) => ({
       blocks: synced.blocks,
       lastSeq: latestSeq,
       currentGoal: goal ?? null,
+      turnStartedAtByUserId: {
+        ...s.turnStartedAtByUserId,
+        ...(loadedTurnStartedAtByUserId ?? {})
+      },
+      turnDurationByUserId: {
+        ...s.turnDurationByUserId,
+        ...(loadedTurnDurationByUserId ?? {})
+      },
+      turnDiffByTurnId: {
+        ...s.turnDiffByTurnId,
+        ...(loadedTurnDiffByTurnId ?? {})
+      },
       ...(synced.scrollToBlockId ? { scrollToBlockId: synced.scrollToBlockId } : {})
-    })
+    }))
   } catch {
     /* keep in-memory blocks if reload fails */
   }
@@ -495,6 +534,35 @@ function shouldOpenSettingsForError(error: unknown): boolean {
 function settingsSectionForRuntimeError(error: unknown): SettingsRouteSection | null {
   if (!shouldOpenSettingsForError(error)) return null
   return getRuntimeErrorCode(error) === 'missing_api_key' ? 'models' : 'general'
+}
+
+type ThreadDeleteConfirmation = { discardUnpublished: boolean }
+
+async function deleteThreadWithConfirmation(
+  provider: AgentProvider,
+  threadId: string,
+  confirmation: ThreadDeleteConfirmation
+): Promise<boolean> {
+  try {
+    await provider.deleteThread(threadId, {
+      discardUnpublished: confirmation.discardUnpublished
+    })
+    return true
+  } catch (error) {
+    if (
+      confirmation.discardUnpublished ||
+      getRuntimeErrorCode(error) !== 'unpublished_worktree_code'
+    ) {
+      throw error
+    }
+    const confirmed = window.confirm(
+      i18n.t('common:sidebarDeleteUnpublishedConfirm')
+    )
+    if (!confirmed) return false
+    confirmation.discardUnpublished = true
+    await provider.deleteThread(threadId, { discardUnpublished: true })
+    return true
+  }
 }
 
 async function syncRuntimePendingApprovals(
@@ -709,7 +777,8 @@ function buildThreadEventSink(
                 optimisticCurrentUserId,
                 ev.itemId,
                 ev.text,
-                ev.modelLabel
+                ev.modelLabel,
+                ev.turnId
               )
             : baseBlocks
         const nextBlocks = upsertUserBlock(reconciledBlocks, ev)
@@ -1001,7 +1070,6 @@ function buildThreadEventSink(
               status: 'pending' as const
             }
           ],
-          scrollToBlockId: `elevation-${req.elevationId}`,
           error: s.error === i18n.t('common:runtimeStreamRecovering') ? null : s.error
         }
       })
@@ -1063,6 +1131,7 @@ function buildThreadEventSink(
         const idx = s.threads.findIndex((thread) => thread.id === ev.threadId)
         if (idx < 0) return {}
         const current = s.threads[idx]
+        const nextUpdatedAt = ev.updatedAt ?? current.updatedAt
         const nextTitle =
           ev.title === undefined
             ? current.title
@@ -1090,10 +1159,33 @@ function buildThreadEventSink(
               : composerModes.has(rawMode)
                 ? (rawMode as typeof s.composerMode)
                 : null
+        const nextPublishBlocked = ev.publishBlocked ?? current.publishBlocked
+        const nextPublishConflicts = ev.publishConflicts ?? current.publishConflicts
+        const nextPublishIssue =
+          ev.publishIssue === undefined ? current.publishIssue : ev.publishIssue
+        const nextEnvMode = ev.envMode ?? current.envMode
+        const nextWorktreePath =
+          ev.worktreePath === undefined ? current.worktreePath : ev.worktreePath
+        const nextPublishPending = ev.publishPending ?? current.publishPending
+        const nextPublishRequestAction =
+          ev.publishRequestAction === undefined
+            ? current.publishRequestAction
+            : ev.publishRequestAction
+        const nextPublishWaitingOn =
+          ev.publishWaitingOn === undefined ? current.publishWaitingOn : ev.publishWaitingOn
         const threadChanged =
+          nextUpdatedAt !== current.updatedAt ||
           nextTitle !== current.title ||
           nextArchived !== current.archived ||
-          nextThreadMode !== current.mode
+          nextThreadMode !== current.mode ||
+          nextEnvMode !== current.envMode ||
+          nextWorktreePath !== current.worktreePath ||
+          nextPublishPending !== current.publishPending ||
+          nextPublishRequestAction !== current.publishRequestAction ||
+          nextPublishWaitingOn !== current.publishWaitingOn ||
+          nextPublishBlocked !== current.publishBlocked ||
+          nextPublishIssue !== current.publishIssue ||
+          (nextPublishConflicts ?? []).join('\0') !== (current.publishConflicts ?? []).join('\0')
         const syncComposer =
           nextComposerMode != null &&
           ev.threadId === s.activeThreadId &&
@@ -1106,9 +1198,18 @@ function buildThreadEventSink(
               const next = [...s.threads]
               next[idx] = {
                 ...current,
+                updatedAt: nextUpdatedAt,
                 title: nextTitle,
                 archived: nextArchived,
-                mode: nextThreadMode
+                mode: nextThreadMode,
+                envMode: nextEnvMode,
+                worktreePath: nextWorktreePath,
+                publishPending: nextPublishPending,
+                publishRequestAction: nextPublishRequestAction,
+                publishWaitingOn: nextPublishWaitingOn,
+                publishBlocked: nextPublishBlocked,
+                publishConflicts: nextPublishConflicts,
+                publishIssue: nextPublishIssue
               }
               return next
             })()
@@ -1310,7 +1411,7 @@ function buildThreadEventSink(
         : `active:${completedThreadId ?? 'unknown'}:${completedState.lastSeq}`
       set((s) => {
         const base = flushLiveBlocks(s, {
-          ...finalizeTurnTiming(s),
+          ...finalizeTurnTiming(s, payload?.durationMs),
           error: null,
           currentTurnId: null,
           // Keep ledger lookup key so TurnChangeSummary survives after busy clears.
@@ -1349,7 +1450,6 @@ function buildThreadEventSink(
       set((s) => {
         const wasBusy = s.busy
         const out = flushLiveBlocks(s, {
-          ...finalizeTurnTiming(s),
           error: formatRuntimeError(err)
         })
         // Keep the busy flag if the turn was active — the interrupt button
@@ -1357,6 +1457,7 @@ function buildThreadEventSink(
         // watchdog (re-armed below) will eventually time out if the turn
         // never recovers.
         if (!wasBusy) {
+          Object.assign(out, finalizeTurnTiming(s))
           out.busy = false
           out.currentTurnId = null
         }
@@ -1800,14 +1901,22 @@ export const useChatStore = create<ChatState>((set, get) => ({
       threadBelongsToWorkspace(thread, normalizedPath)
     )
     const deletingActive = workspaceThreads.some((th) => th.id === activeThreadId)
-    if (deletingActive) {
-      sseAbort?.abort()
-      sseAbort = null
-      clearBusyWatchdog()
-    }
     try {
-      for (const th of workspaceThreads) {
-        await p.deleteThread(th.id)
+      const confirmation: ThreadDeleteConfirmation = { discardUnpublished: false }
+      const orderedThreads = [...workspaceThreads].sort(
+        (a, b) => Number(b.publishBlocked === true) - Number(a.publishBlocked === true)
+      )
+      for (const th of orderedThreads) {
+        const deleted = await deleteThreadWithConfirmation(p, th.id, confirmation)
+        if (!deleted) {
+          await get().refreshThreads()
+          return
+        }
+      }
+      if (deletingActive) {
+        sseAbort?.abort()
+        sseAbort = null
+        clearBusyWatchdog()
       }
       const removeIds = new Set(workspaceThreads.map((th) => th.id))
       const nextHidden = get().hiddenWorkspacePaths.filter(
@@ -2001,6 +2110,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
         threadStatus,
         latestTurnId,
         latestUserMessageId,
+        turnStartedAtByUserId: loadedTurnStartedAtByUserId,
+        turnDurationByUserId: loadedTurnDurationByUserId,
+        turnDiffByTurnId: loadedTurnDiffByTurnId,
         activePlugin: loadedPlugin,
         goal: loadedGoal
       } = await p.getThreadDetail(activeThreadId)
@@ -2030,6 +2142,18 @@ export const useChatStore = create<ChatState>((set, get) => ({
         currentGoal: loadedGoal ?? null,
         composerMode: composerModeForLoadedGoal(loadedGoal, get().composerMode),
         currentTurnId,
+        turnStartedAtByUserId: {
+          ...(loadedTurnStartedAtByUserId ?? {}),
+          ...s.turnStartedAtByUserId
+        },
+        turnDurationByUserId: {
+          ...s.turnDurationByUserId,
+          ...(loadedTurnDurationByUserId ?? {})
+        },
+        turnDiffByTurnId: {
+          ...s.turnDiffByTurnId,
+          ...(loadedTurnDiffByTurnId ?? {})
+        },
         currentTurnUserId,
         queuedMessages: s.queuedMessages,
         scrollToBlockId: synced.scrollToBlockId ?? s.scrollToBlockId
@@ -2129,6 +2253,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
         threadStatus,
         latestTurnId,
         latestUserMessageId,
+        turnStartedAtByUserId: loadedTurnStartedAtByUserId,
+        turnDurationByUserId: loadedTurnDurationByUserId,
+        turnDiffByTurnId: loadedTurnDiffByTurnId,
         activePlugin: loadedPlugin,
         goal: loadedGoal
       } = await p.getThreadDetail(id)
@@ -2160,10 +2287,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
         composerMode: composerModeForLoadedGoal(loadedGoal, get().composerMode),
         currentTurnId: busy ? latestTurnId ?? null : null,
         lastCompletedTurnId: null,
-        turnDiffByTurnId: {},
+        turnDiffByTurnId: loadedTurnDiffByTurnId ?? {},
         currentTurnUserId,
-        turnStartedAtByUserId: {},
-        turnDurationByUserId: {},
+        turnStartedAtByUserId: loadedTurnStartedAtByUserId ?? {},
+        turnDurationByUserId: loadedTurnDurationByUserId ?? {},
         turnReasoningFirstAtByUserId: {},
         turnReasoningLastAtByUserId: {},
         inspectorSelectedId: null,
@@ -2237,6 +2364,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const { providerId } = get()
     const trimmedText = text.trim()
     if (!trimmedText) return false
+    const expectedThreadId = overrides?.expectedThreadId?.trim() || null
+    if (expectedThreadId && get().activeThreadId !== expectedThreadId) return false
     if (isGoalComposerSlashCommand(trimmedText)) {
       return get().applyGoalCommand(goalComposerSlashArgs(trimmedText))
     }
@@ -2308,6 +2437,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const queued = overrides?.queued
     const userBlockId = queued?.id ?? `u-${now}`
     let activeThreadId = get().activeThreadId
+    if (expectedThreadId && activeThreadId !== expectedThreadId) return false
     const generatedTitle = deriveThreadTitleFromPrompt(displayText)
     const activeThread = activeThreadId
       ? get().threads.find((thread) => thread.id === activeThreadId) ?? null
@@ -2469,6 +2599,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
         ...(overrides?.autoApprove !== undefined ? { autoApprove: overrides.autoApprove } : {}),
         ...(overrides?.trustMode !== undefined ? { trustMode: overrides.trustMode } : {})
       })
+      if (get().activeThreadId !== activeThreadId) {
+        // The runtime accepted the message for the original task while the user
+        // navigated elsewhere. Leave the newly active task's blocks/SSE alone.
+        await get().refreshThreads()
+        return true
+      }
       set({ activeThreadWarmup: { threadId: activeThreadId, status: 'ready' } })
       // Mirror the composer model selection against the runtime's stable
       // user_message item id so the badge survives page refresh / thread
@@ -2483,7 +2619,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
             userBlockId,
             userMessageItemId,
             displayText,
-            userModelChip
+            userModelChip,
+            turnId
           ),
           currentTurnUserId: s.currentTurnUserId === userBlockId ? userMessageItemId : s.currentTurnUserId,
           turnStartedAtByUserId: (() => {
@@ -2544,6 +2681,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
         message: e instanceof Error ? e.message : String(e),
         threadId: activeThreadId
       })
+      if (activeThreadId && get().activeThreadId !== activeThreadId) {
+        // A late failure belongs to the task that initiated the send. Do not
+        // overwrite the task the user is looking at with its error/UI rollback.
+        await get().refreshThreads()
+        return false
+      }
       if (looksLikeActiveTurnError(e)) {
         set({
           blocks: previousBlocks,
@@ -2858,7 +3001,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const p = getProvider(providerId)
     const deletingActive = activeThreadId === targetId
     try {
-      await p.deleteThread(targetId)
+      const deleted = await deleteThreadWithConfirmation(
+        p,
+        targetId,
+        { discardUnpublished: false }
+      )
+      if (!deleted) return
       if (deletingActive) {
         sseAbort?.abort()
         sseAbort = null
@@ -2987,13 +3135,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   rewindAndResend: async (userBlockId, newText, opts) => {
     const trimmed = newText.trim()
-    if (!trimmed) return
+    if (!trimmed) return false
     const state = get()
+    const originThreadId = state.activeThreadId
     if (state.busy) {
       set({ error: i18n.t('common:rewindBusyError') })
-      return
+      return false
     }
-    if (!state.blocks.some((b) => b.id === userBlockId && b.kind === 'user')) return
+    if (!state.blocks.some((b) => b.id === userBlockId && b.kind === 'user')) return false
 
     // Truncate on the runtime first so the dropped turns are deleted from
     // disk (they would otherwise resurface on the next thread reload) and
@@ -3001,29 +3150,41 @@ export const useChatStore = create<ChatState>((set, get) => ({
     // optimistic ids (`u-…`/`q-…`) were never persisted, so only blocks
     // carrying a runtime item id (`item_…`) need the backend call.
     let restoredOnBackend = false
+    let rewindResult: RewindResult | null = null
     const p = getProvider(state.providerId)
-    if (
-      state.activeThreadId &&
-      userBlockId.startsWith('item_') &&
-      typeof p.rewindThread === 'function'
-    ) {
+    const runtimeThreadId = originThreadId
+    const needsRuntimeRewind = runtimeThreadId != null && userBlockId.startsWith('item_')
+    if (needsRuntimeRewind && typeof p.rewindThread !== 'function') {
+      set({ error: i18n.t('common:rewindRestoreUnsupported') })
+      return false
+    }
+    if (needsRuntimeRewind && typeof p.rewindThread === 'function') {
       try {
-        await p.rewindThread(
-          state.activeThreadId,
+        rewindResult = await p.rewindThread(
+          runtimeThreadId,
           userBlockId,
           opts?.restoreFiles,
           opts?.forceConflicts
         )
         restoredOnBackend = opts?.restoreFiles === true
       } catch (e) {
-        set({ error: formatRuntimeError(e) })
-        return
+        if (!originThreadId || get().activeThreadId === originThreadId) {
+          set({ error: formatRuntimeError(e) })
+        } else {
+          queueComposerRetryDraft(originThreadId, opts?.retryDraft ?? trimmed)
+        }
+        return false
       }
+    }
+
+    if (originThreadId && get().activeThreadId !== originThreadId) {
+      queueComposerRetryDraft(originThreadId, opts?.retryDraft ?? trimmed)
+      return false
     }
 
     // Drop the target user block and everything after it from the UI.
     const patch = truncateStateAtUserBlock(state, userBlockId)
-    if (!patch) return
+    if (!patch) return false
     set(patch)
     if (restoredOnBackend) {
       // Files changed on disk — refresh the git panels/docks watching this tick.
@@ -3032,11 +3193,58 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     // Use current composer mode (same as model/effort). Do not drop to
     // the sendMessage default — UI may still show plan/ask.
-    await get().sendMessage(trimmed, get().composerMode)
+    const sent = await get().sendMessage(trimmed, get().composerMode, {
+      expectedThreadId: originThreadId ?? undefined
+    })
+    if (!sent) {
+      // The runtime rewind is already durable and the edited bubble has been
+      // removed. Put the unsent human text back in the composer so a transient
+      // send failure cannot discard the user's draft.
+      if (originThreadId && get().activeThreadId === originThreadId) {
+        set((current) => ({
+          blocks: patch.blocks ?? current.blocks,
+          liveReasoning: patch.liveReasoning ?? current.liveReasoning,
+          liveAssistant: patch.liveAssistant ?? current.liveAssistant,
+          currentTurnId: patch.currentTurnId ?? null,
+          currentTurnUserId: patch.currentTurnUserId ?? null,
+          turnStartedAtByUserId:
+            patch.turnStartedAtByUserId ?? current.turnStartedAtByUserId,
+          turnDurationByUserId:
+            patch.turnDurationByUserId ?? current.turnDurationByUserId,
+          turnReasoningFirstAtByUserId:
+            patch.turnReasoningFirstAtByUserId ?? current.turnReasoningFirstAtByUserId,
+          turnReasoningLastAtByUserId:
+            patch.turnReasoningLastAtByUserId ?? current.turnReasoningLastAtByUserId
+        }))
+      }
+      if (originThreadId) {
+        queueComposerRetryDraft(originThreadId, opts?.retryDraft ?? trimmed)
+      } else {
+        insertComposerSnippet(opts?.retryDraft ?? trimmed)
+      }
+      return false
+    }
+    if (originThreadId && get().activeThreadId !== originThreadId) return true
+    if (rewindResult) {
+      const unresolved = new Set([
+        ...rewindResult.conflictedFiles,
+        ...rewindResult.skippedFiles
+      ])
+      const unresolvedCount = Math.max(unresolved.size, rewindResult.missingRoots.length)
+      if (unresolvedCount > 0) {
+        set({
+          error: i18n.t('common:rewindResendCompletedWithUnresolved', {
+            count: unresolvedCount
+          })
+        })
+      }
+    }
+    return true
   },
 
   rewindToMessage: async (userBlockId, opts) => {
     const state = get()
+    const originThreadId = state.activeThreadId
     if (state.busy) {
       set({ error: i18n.t('common:rewindBusyError') })
       return
@@ -3048,17 +3256,26 @@ export const useChatStore = create<ChatState>((set, get) => ({
     let restoredOnBackend = false
     const p = getProvider(state.providerId)
     if (
-      state.activeThreadId &&
+      originThreadId &&
       userBlockId.startsWith('item_') &&
       typeof p.rewindThread === 'function'
     ) {
       try {
-        await p.rewindThread(state.activeThreadId, userBlockId, opts.restoreFiles)
+        await p.rewindThread(originThreadId, userBlockId, opts.restoreFiles)
         restoredOnBackend = opts.restoreFiles
       } catch (e) {
-        set({ error: formatRuntimeError(e) })
+        if (get().activeThreadId === originThreadId) {
+          set({ error: formatRuntimeError(e) })
+        }
         return
       }
+    }
+
+    if (originThreadId && get().activeThreadId !== originThreadId) {
+      // The backend rewind is already durable for the originating task. Leave
+      // the newly active task untouched; selecting the origin rehydrates it
+      // from the authoritative runtime state.
+      return
     }
 
     const patch = truncateStateAtUserBlock(state, userBlockId)
@@ -3071,25 +3288,62 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   restoreCodeAt: async (userBlockId) => {
     const state = get()
+    const originThreadId = state.activeThreadId
     if (state.busy) {
       set({ error: i18n.t('common:rewindBusyError') })
       return null
     }
     // Local-only blocks were never persisted, so there is no runtime state to
     // restore against; the conversation is left untouched either way.
-    if (!state.activeThreadId || !userBlockId.startsWith('item_')) return null
+    if (!originThreadId || !userBlockId.startsWith('item_')) return null
     const p = getProvider(state.providerId)
     if (typeof p.restoreCode !== 'function') {
       set({ error: i18n.t('common:rewindRestoreUnsupported') })
       return null
     }
     try {
-      const result = await p.restoreCode(state.activeThreadId, userBlockId)
+      const result = await p.restoreCode(originThreadId, userBlockId)
+      if (get().activeThreadId !== originThreadId) return result
       // Files changed on disk — refresh the git panels/docks watching this tick.
       set((s) => ({ error: null, workspaceDirtyTick: s.workspaceDirtyTick + 1 }))
       return result
     } catch (e) {
-      set({ error: formatRuntimeError(e) })
+      if (get().activeThreadId === originThreadId) {
+        set({ error: formatRuntimeError(e) })
+      }
+      return null
+    }
+  },
+
+  resolvePublishConflicts: async (action, paths, recoveryToken) => {
+    const state = get()
+    const originThreadId = state.activeThreadId
+    if (!originThreadId) return null
+    const p = getProvider(state.providerId)
+    if (typeof p.resolvePublishConflicts !== 'function') {
+      set({ error: i18n.t('common:publishConflictUnsupported') })
+      return null
+    }
+    try {
+      const result = await p.resolvePublishConflicts(
+        originThreadId,
+        action,
+        paths,
+        recoveryToken
+      )
+      const updated = result.thread
+      const stillActive = get().activeThreadId === originThreadId
+      set((s) => ({
+        ...(stillActive
+          ? { error: null, workspaceDirtyTick: s.workspaceDirtyTick + 1 }
+          : {}),
+        threads: s.threads.map((thread) => (thread.id === updated.id ? { ...thread, ...updated } : thread))
+      }))
+      return result
+    } catch (e) {
+      if (get().activeThreadId === originThreadId) {
+        set({ error: formatRuntimeError(e) })
+      }
       return null
     }
   },

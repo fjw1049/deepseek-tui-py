@@ -179,21 +179,18 @@ export function ModelUsageTrendChart({
                       minHeight: point.totalTokens > 0 ? '3px' : '2px'
                     }}
                   >
-                    {visibleSegments.map((segment, index) => {
-                      const isTop = index === visibleSegments.length - 1
-                      return (
-                        <span
-                          key={`${point.day}-${segment.model}`}
-                          className={['block w-full shrink-0', isTop ? 'rounded-t-[3px]' : ''].join(' ')}
-                          style={{
-                            flexGrow: segment.tokens,
-                            flexBasis: 0,
-                            minHeight: 1,
-                            backgroundColor: BAR_COLORS[index % BAR_COLORS.length]
-                          }}
-                        />
-                      )
-                    })}
+                    {visibleSegments.map((segment, index) => (
+                      <span
+                        key={`${point.day}-${segment.model}`}
+                        className="block w-full shrink-0"
+                        style={{
+                          flexGrow: segment.tokens,
+                          flexBasis: 0,
+                          minHeight: 1,
+                          backgroundColor: BAR_COLORS[index % BAR_COLORS.length]
+                        }}
+                      />
+                    ))}
                   </div>
                 </div>
               )

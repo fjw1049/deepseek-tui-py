@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
 
@@ -128,6 +129,52 @@ async def test_pre_dirty_file_reports_only_later_change(git_repo: Path) -> None:
     assert "v1" not in mut["unified_diff"]
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX permission bits")
+@pytest.mark.asyncio
+async def test_chmod_only_change_is_detected(git_repo: Path) -> None:
+    _git(git_repo, "config", "core.filemode", "true")
+    target = git_repo / "tracked.py"
+    target.chmod(0o644)
+    snapshot = await capture_shell_snapshot(git_repo)
+
+    target.chmod(0o755)
+    mutations = await detect_shell_mutations(snapshot)
+
+    assert len(mutations) == 1
+    assert mutations[0]["path"] == "tracked.py"
+    assert mutations[0]["mode_before"] == 0o644
+    assert mutations[0]["mode_after"] == 0o755
+    assert mutations[0]["additions"] == 0
+    assert mutations[0]["deletions"] == 0
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX permission bits")
+@pytest.mark.asyncio
+async def test_chmod_on_pre_dirty_file_uses_snapshot_mode(git_repo: Path) -> None:
+    target = git_repo / "tracked.py"
+    target.write_text("dirty\n", encoding="utf-8")
+    target.chmod(0o644)
+    snapshot = await capture_shell_snapshot(git_repo)
+    assert snapshot.modes["tracked.py"] == 0o644
+
+    target.chmod(0o700)
+    mutations = await detect_shell_mutations(snapshot)
+
+    assert len(mutations) == 1
+    assert mutations[0]["mode_before"] == 0o644
+    assert mutations[0]["mode_after"] == 0o700
+
+
+@pytest.mark.asyncio
+async def test_optional_contents_support_turn_net_diff(git_repo: Path) -> None:
+    snapshot = await capture_shell_snapshot(git_repo)
+    (git_repo / "tracked.py").write_text("v2\n", encoding="utf-8")
+
+    mutations = await detect_shell_mutations(snapshot, include_contents=True)
+    assert mutations[0]["_before_content"] == "v1\n"
+    assert mutations[0]["_after_content"] == "v2\n"
+
+
 @pytest.mark.asyncio
 async def test_no_change_yields_nothing(git_repo: Path) -> None:
     (git_repo / "tracked.py").write_text("dirty\n", encoding="utf-8")
@@ -171,6 +218,24 @@ async def test_skip_paths_honored(git_repo: Path) -> None:
 
     mutations = await detect_shell_mutations(snapshot, skip_paths={"tracked.py"})
     assert [m["path"] for m in mutations] == ["new.py"]
+
+
+@pytest.mark.skipif(os.name == "nt", reason="backslash is a POSIX filename character")
+@pytest.mark.asyncio
+async def test_skip_paths_preserves_posix_backslash(git_repo: Path) -> None:
+    rel = "literal\\name.py"
+    (git_repo / rel).write_text("old\n", encoding="utf-8")
+    _git(git_repo, "add", rel)
+    _git(git_repo, "commit", "-m", "add odd path")
+    snapshot = await capture_shell_snapshot(git_repo)
+    (git_repo / rel).write_text("changed\n", encoding="utf-8")
+
+    unskipped = await detect_shell_mutations(snapshot)
+    assert [mutation["path"] for mutation in unskipped] == [rel]
+
+    mutations = await detect_shell_mutations(snapshot, skip_paths={rel})
+
+    assert mutations == []
 
 
 @pytest.mark.asyncio

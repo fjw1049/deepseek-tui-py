@@ -72,6 +72,25 @@ class ThreadRecord(BaseModel):
     model: str
     provider: str = "deepseek"
     workspace: str
+    env_mode: str = "local"
+    worktree_path: str | None = None
+    worktree_base: str | None = None
+    worktree_owned: bool = False
+    associated_worktree_path: str | None = None
+    worktree_branch: str | None = None
+    # User-facing delivery state for isolated session edits.  Worktree and
+    # checkpoint details stay internal; the UI only needs to know whether this
+    # session still has code to apply, whether an apply was queued behind
+    # another active session, or whether real file conflicts need a choice.
+    publish_pending: bool = False
+    publish_request_action: str | None = None
+    publish_request_paths: list[str] = Field(default_factory=list)
+    publish_waiting_on: str | None = None
+    publish_blocked: bool = False
+    # Structured reason for a non-file delivery problem. Keeping this out of
+    # publish_conflicts lets every valid repository filename remain valid.
+    publish_issue: str | None = None
+    publish_conflicts: list[str] = Field(default_factory=list)
     mode: str = "agent"
     allow_shell: bool = False
     trust_mode: bool = False
@@ -106,10 +125,16 @@ class TurnRecord(BaseModel):
     started_at: datetime | None = None
     ended_at: datetime | None = None
     duration_ms: int | None = None
+    # User-perceived wall clock from UI submit to the terminal turn event.
+    # Falls back to duration_ms when the submit timestamp is unavailable.
+    end_to_end_ms: int | None = None
     usage: dict[str, Any] | None = None
     error: str | None = None
     item_ids: list[str] = Field(default_factory=list)
     steer_count: int = 0
+    # Authoritative per-turn file delta. Persisted so historical receipts do
+    # not fall back to lossy per-tool reconstruction after reload.
+    diff_snapshot: dict[str, Any] | None = None
 
 
 class TurnItemRecord(BaseModel):
@@ -157,6 +182,8 @@ class CreateThreadRequest(BaseModel):
     provider: str | None = None
     model: str | None = None
     workspace: str | None = None
+    title: str | None = None
+    env_mode: str | None = None
     mode: str | None = None
     allow_shell: bool | None = None
     trust_mode: bool | None = None
@@ -201,6 +228,19 @@ class RestoreCodeRequest(BaseModel):
     before_item_id: str
     # Same semantics as RewindThreadRequest.force_conflicts.
     force_conflicts: bool = False
+
+
+class ResolvePublishRequest(BaseModel):
+    """Apply isolated edits or resolve files that could not be merged."""
+
+    # ``apply`` performs the normal safe merge requested by the user.
+    # ``use_agent`` overwrites the project with this thread's copies.
+    # ``keep_project`` keeps the project bytes and drops those isolate edits.
+    action: str
+    paths: list[str] | None = None
+    # Snapshot token shown with a recovery choice. The manager rejects stale
+    # destructive choices instead of applying a newer unseen recovery state.
+    recovery_token: str | None = None
 
 
 class StartTurnRequest(BaseModel):

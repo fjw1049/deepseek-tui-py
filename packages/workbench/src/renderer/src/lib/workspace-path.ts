@@ -38,16 +38,23 @@ export function isClawWorkspacePath(path?: string): boolean {
   )
 }
 
-export function normalizeWorkspaceRoot(path?: string): string {
+export function normalizeWorkspaceRoot(path?: string | null): string {
   const trimmed = path?.trim() ?? ''
   if (!trimmed) return ''
   if (isInternalTemporaryWorkspace(trimmed)) return ''
   return trimmed
 }
 
+export type ThreadPathFields = {
+  id: string
+  workspace?: string
+  envMode?: 'local' | 'worktree'
+  worktreePath?: string | null
+}
+
 export function resolveActiveThreadWorkspace(
   activeThreadId: string | null | undefined,
-  threads: ReadonlyArray<{ id: string; workspace?: string }>,
+  threads: ReadonlyArray<ThreadPathFields>,
   fallbackWorkspaceRoot?: string | null
 ): string {
   const activeThreadWorkspace = activeThreadId
@@ -61,16 +68,46 @@ export function resolveActiveThreadWorkspace(
  * workspaces under /tmp. Unlike {@link resolveActiveThreadWorkspace}, this
  * does NOT blank out internal temp dirs; file preview / read / write need
  * the real path the runtime used when creating the thread.
+ *
+ * Always the project checkout. Hidden isolate copies are not shown in the UI.
  */
 export function resolveThreadFilesystemRoot(
   activeThreadId: string | null | undefined,
-  threads: ReadonlyArray<{ id: string; workspace?: string }>,
+  threads: ReadonlyArray<ThreadPathFields>,
   fallbackWorkspaceRoot?: string | null
 ): string {
-  const activeThreadWorkspace = activeThreadId
-    ? threads.find((thread) => thread.id === activeThreadId)?.workspace
+  const thread = activeThreadId
+    ? threads.find((item) => item.id === activeThreadId)
     : undefined
-  const fromThread = activeThreadWorkspace?.trim() ?? ''
+  const fromThread = thread?.workspace?.trim() ?? ''
   if (fromThread) return fromThread
   return fallbackWorkspaceRoot?.trim() ?? ''
+}
+
+/** Canonical checkout for user-driven Git mutations and branch state. */
+export function resolveThreadGitActionRoot(
+  activeThreadId: string | null | undefined,
+  threads: ReadonlyArray<ThreadPathFields>,
+  fallbackWorkspaceRoot?: string | null
+): string {
+  return resolveThreadFilesystemRoot(activeThreadId, threads, fallbackWorkspaceRoot)
+}
+
+/**
+ * Read-only Git root used to inspect the active task's isolated file changes.
+ * Mutating Git actions must use {@link resolveThreadGitActionRoot} instead.
+ */
+export function resolveThreadTaskReviewRoot(
+  activeThreadId: string | null | undefined,
+  threads: ReadonlyArray<ThreadPathFields>,
+  fallbackWorkspaceRoot?: string | null
+): string {
+  const thread = activeThreadId
+    ? threads.find((item) => item.id === activeThreadId)
+    : undefined
+  const managedBranchRoot = thread?.envMode === 'worktree'
+    ? thread.worktreePath?.trim() ?? ''
+    : ''
+  if (managedBranchRoot) return managedBranchRoot
+  return resolveThreadFilesystemRoot(activeThreadId, threads, fallbackWorkspaceRoot)
 }

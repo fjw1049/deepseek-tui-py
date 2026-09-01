@@ -309,12 +309,13 @@ describe('normalizeWebSearchSettings', () => {
 })
 
 describe('mergeLlmProviders', () => {
-  it('clears models and lastFetchedModels when a builtin key is emptied', () => {
+  it('clears models, fetched models, and hidden models when a builtin key is emptied', () => {
     const current = defaultLlmProviders()
     current.deepseek = {
       apiKey: 'sk-old',
       models: [{ id: 'deepseek-v4-pro', enabled: true, contextWindow: 500_000 }],
-      lastFetchedModels: ['deepseek-v4-pro', 'deepseek-v4-flash']
+      lastFetchedModels: ['deepseek-v4-pro', 'deepseek-v4-flash'],
+      hiddenModels: ['deepseek-v4-flash']
     }
     const next = mergeLlmProviders(current, { deepseek: { apiKey: '' } })
     expect(next.deepseek).toEqual({ apiKey: '', models: [] })
@@ -325,11 +326,20 @@ describe('mergeLlmProviders', () => {
     current.kimi = {
       apiKey: 'sk-kimi',
       models: [{ id: 'kimi-k3', enabled: true, contextWindow: 500_000 }],
-      lastFetchedModels: ['kimi-k3']
+      lastFetchedModels: ['kimi-k3'],
+      hiddenModels: ['kimi-k2.6']
     }
     const next = mergeLlmProviders(current, { kimi: { apiKey: 'sk-kimi-2' } })
     expect(next.kimi.apiKey).toBe('sk-kimi-2')
     expect(next.kimi.models).toEqual(current.kimi.models)
     expect(next.kimi.lastFetchedModels).toEqual(['kimi-k3'])
+    expect(next.kimi.hiddenModels).toEqual(['kimi-k2.6'])
+  })
+
+  it('normalizes hidden model ids when merging provider settings', () => {
+    const next = mergeLlmProviders(defaultLlmProviders(), {
+      glm: { hiddenModels: [' glm-4.7 ', 'glm-4.7', ''] }
+    })
+    expect(next.glm.hiddenModels).toEqual(['glm-4.7'])
   })
 })

@@ -1,10 +1,11 @@
 import type { AppSettingsPatch, AppSettingsV1, EndpointProtocol } from './app-settings'
 import type { EditorListResult, EditorOpenResult, OpenEditorPathOptions } from './editor'
 import type { GitBranchesResult } from './git-branches'
+import type { GitPathActionResult, GitPullResult, GitPushResult } from './git-actions'
 import type { GitCommitMessageSuggestionResult, GitCommitResult } from './git-commit'
 import type { GitHubRepositoryResult } from './github-repository'
 import type { GitLogResult } from './git-log'
-import type { GitWorkingChangesResult } from './git-working-changes'
+import type { GitChangeScope, GitWorkingChangesResult } from './git-working-changes'
 import type {
   PetManifestFetchResult,
   PetSpritesheetResolveResult
@@ -388,10 +389,14 @@ export type DsGuiApi = {
   watchWorkspaceFs: (workspaceRoot: string) => Promise<boolean>
   unwatchWorkspaceFs: () => Promise<boolean>
   onWorkspaceFsChanged: (handler: (payload: { root: string }) => void) => () => void
-  getGitBranches: (workspaceRoot: string) => Promise<GitBranchesResult>
+  getGitBranches: (workspaceRoot: string, refreshRemote?: boolean) => Promise<GitBranchesResult>
   getGitLog: (workspaceRoot: string) => Promise<GitLogResult>
   getGitHubRepository: (workspaceRoot: string) => Promise<GitHubRepositoryResult>
-  getGitWorkingChanges: (workspaceRoot: string) => Promise<GitWorkingChangesResult>
+  getGitWorkingChanges: (
+    workspaceRoot: string,
+    scope?: GitChangeScope,
+    baseRef?: string
+  ) => Promise<GitWorkingChangesResult>
   switchGitBranch: (workspaceRoot: string, branch: string) => Promise<GitBranchesResult>
   stashAndSwitchGitBranch: (workspaceRoot: string, branch: string) => Promise<GitBranchesResult>
   createAndSwitchGitBranch: (workspaceRoot: string, branch: string) => Promise<GitBranchesResult>
@@ -404,6 +409,10 @@ export type DsGuiApi = {
     workspaceRoot: string,
     paths?: string[]
   ) => Promise<GitCommitMessageSuggestionResult>
+  stageGitChanges: (workspaceRoot: string, paths: string[]) => Promise<GitPathActionResult>
+  unstageGitChanges: (workspaceRoot: string, paths: string[]) => Promise<GitPathActionResult>
+  pullGitBranch: (workspaceRoot: string) => Promise<GitPullResult>
+  pushGitBranch: (workspaceRoot: string) => Promise<GitPushResult>
   listEditors: () => Promise<EditorListResult>
   openEditorPath: (options: OpenEditorPathOptions) => Promise<EditorOpenResult>
   createTerminalSession: (options: TerminalCreateOptions) => Promise<TerminalCreateResult>

@@ -1,12 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import type { ChatBlock } from '../agent/types'
+import type { ChatBlock, NormalizedThread } from '../agent/types'
 import {
+  findReusableEmptyThreadId,
   finalizeOrphanRuntimeBlocks,
   hasPendingRuntimeWork,
   mergePendingUserInputBlocks,
   moveQueuedMessageToFront
 } from './chat-store-runtime-helpers'
-import type { QueuedUserMessage } from './chat-store-types'
+import type { ChatState, QueuedUserMessage } from './chat-store-types'
 
 function tool(
   id: string,
@@ -109,5 +110,122 @@ describe('moveQueuedMessageToFront', () => {
 
   it('returns null when the id is missing', () => {
     expect(moveQueuedMessageToFront(queued, 'missing')).toBeNull()
+  })
+})
+
+function emptyThread(
+  id: string,
+  overrides: Partial<NormalizedThread> = {}
+): NormalizedThread {
+  return {
+    id,
+    title: id,
+    updatedAt: '2026-08-30T00:00:00.000Z',
+    model: 'deepseek-chat',
+    mode: 'agent',
+    workspace: '/repo',
+    ...overrides
+  }
+}
+
+describe('findReusableEmptyThreadId', () => {
+  const unsafePublishStates: Array<[string, Partial<NormalizedThread>]> = [
+    ['pending publish', { publishPending: true }],
+    ['blocked publish', { publishBlocked: true }],
+    ['structured publish issue', { publishIssue: 'failure' }],
+    ['file conflict', { publishConflicts: ['src/app.ts'] }],
+    ['recovery state', { publishConflicts: ['<unpublished-worktree-labor>'] }],
+    ['failed publish', { publishConflicts: ['<publish-failed>'] }]
+  ]
+
+  it.each(unsafePublishStates)(
+    'does not reuse an active empty thread with %s',
+    async (_label, overrides) => {
+      const active = emptyThread('active', overrides)
+      const state = {
+        activeThreadId: active.id,
+        threads: [active],
+        blocks: []
+      } as unknown as ChatState
+
+      const reusable = await findReusableEmptyThreadId(
+        state,
+        { getThreadDetail: async () => ({ blocks: [] }) },
+        '/repo'
+      )
+
+      expect(reusable).toBeNull()
+    }
+  )
+
+  it('skips all unsafe empty candidates and reuses the next clean one', async () => {
+    const unsafe = unsafePublishStates.map(([, overrides], index) =>
+      emptyThread(`unsafe-${index}`, {
+        ...overrides,
+        updatedAt: `2026-08-30T0${index + 2}:00:00.000Z`
+      })
+    )
+    const clean = emptyThread('clean', {
+      updatedAt: '2026-08-30T01:00:00.000Z'
+    })
+    const calls: string[] = []
+    const state = {
+      activeThreadId: null,
+      threads: [...unsafe, clean],
+      blocks: []
+    } as unknown as ChatState
+
+    const reusable = await findReusableEmptyThreadId(
+      state,
+      {
+        getThreadDetail: async (threadId) => {
+          calls.push(threadId)
+          return { blocks: [] }
+        }
+      },
+      '/repo'
+    )
+
+    expect(reusable).toBe('clean')
+    expect(calls).toEqual(['clean'])
+  })
+
+  it('continues to reuse a clean active empty thread', async () => {
+    const active = emptyThread('active')
+    const state = {
+      activeThreadId: active.id,
+      threads: [active],
+      blocks: []
+    } as unknown as ChatState
+
+    const reusable = await findReusableEmptyThreadId(
+      state,
+      { getThreadDetail: async () => ({ blocks: [] }) },
+      '/repo'
+    )
+
+    expect(reusable).toBe('active')
+  })
+
+  it('uses the latest runtime publish state before reusing an active task', async () => {
+    const active = emptyThread('active')
+    const state = {
+      activeThreadId: active.id,
+      threads: [active],
+      blocks: []
+    } as unknown as ChatState
+
+    const reusable = await findReusableEmptyThreadId(
+      state,
+      {
+        getThreadDetail: async () => ({ blocks: [] }),
+        listThreads: async () => [
+          emptyThread('active', { publishIssue: 'recovery', publishBlocked: true })
+        ]
+      },
+      '/repo'
+    )
+
+    expect(reusable).toBeNull()
   })
 })

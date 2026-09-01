@@ -93,6 +93,16 @@ export function resolveLatestTurnDiffId(
   return currentTurnId || lastCompletedTurnId || null
 }
 
+/** Bind a timeline turn to its own durable snapshot; latest-id fallback is legacy only. */
+export function resolveTurnDiffId(
+  turnId: string | null | undefined,
+  isLatestTurn: boolean,
+  currentTurnId: string | null | undefined,
+  lastCompletedTurnId: string | null | undefined
+): string | null {
+  return turnId || (isLatestTurn ? resolveLatestTurnDiffId(currentTurnId, lastCompletedTurnId) : null)
+}
+
 export function statsForTurnFile(file: TurnDiffFile): DiffStats {
   return (
     resolvePatchStats(file.unified_diff, {
@@ -120,7 +130,7 @@ export function turnSummaryFromSources(
   snapshot: TurnDiffSnapshot | null | undefined,
   blocks: ChatBlock[]
 ): { files: TurnDiffFile[]; totals: { files: number; additions: number; deletions: number } } {
-  if (snapshot && snapshot.files.length > 0) {
+  if (snapshot) {
     const files = snapshot.files.map((f) => ({
       path: f.path,
       op: f.op,
@@ -212,4 +222,13 @@ export function parseTurnDiffPayload(payload: unknown): TurnDiffSnapshot | null 
       typeof p.merged_unified_diff === 'string' ? p.merged_unified_diff : undefined,
     complete: Boolean(p.complete)
   }
+}
+
+export function indexTurnDiffSnapshots(payloads: unknown[]): Record<string, TurnDiffSnapshot> {
+  const byTurnId: Record<string, TurnDiffSnapshot> = {}
+  for (const payload of payloads) {
+    const snapshot = parseTurnDiffPayload(payload)
+    if (snapshot) byTurnId[snapshot.turn_id] = snapshot
+  }
+  return byTurnId
 }

@@ -146,6 +146,7 @@ export function countPendingApprovals(blocks: ChatBlock[]): number {
 
 type ThreadDetailProviderLike = {
   getThreadDetail: (threadId: string) => Promise<{ blocks: ChatBlock[] }>
+  listThreads?: () => Promise<ChatState['threads']>
 }
 
 export function hasPendingRuntimeWork(block: ChatBlock): boolean {
@@ -212,7 +213,8 @@ export function upsertUserBlock(blocks: ChatBlock[], ev: UserMessageEventPayload
     id: ev.itemId,
     createdAt: ev.createdAt,
     text: ev.text,
-    ...(ev.modelLabel ? { modelLabel: ev.modelLabel } : {})
+    ...(ev.modelLabel ? { modelLabel: ev.modelLabel } : {}),
+    ...(ev.turnId ? { turnId: ev.turnId } : {})
   }
   const existingIndex = blocks.findIndex((block) => block.kind === 'user' && block.id === ev.itemId)
   if (existingIndex < 0) return [...blocks, nextBlock]
@@ -232,7 +234,8 @@ export function reconcileOptimisticUserBlock(
   optimisticId: string,
   runtimeId: string,
   fallbackText?: string,
-  modelLabel?: string
+  modelLabel?: string,
+  turnId?: string
 ): ChatBlock[] {
   return blocks.map((block) => {
     if (block.kind !== 'user' || block.id !== optimisticId) return block
@@ -240,7 +243,8 @@ export function reconcileOptimisticUserBlock(
       ...block,
       id: runtimeId,
       ...(fallbackText && !block.text.trim() ? { text: fallbackText } : {}),
-      ...(modelLabel && !block.modelLabel ? { modelLabel } : {})
+      ...(modelLabel && !block.modelLabel ? { modelLabel } : {}),
+      ...(turnId ? { turnId } : {})
     }
   })
 }
@@ -350,22 +354,38 @@ export async function findReusableEmptyThreadId(
   const normalizedWorkspace = normalizeWorkspaceRoot(workspaceRoot)
   if (!normalizedWorkspace) return null
 
+  // Another window/runtime may have published or blocked this task since the
+  // local sidebar snapshot was received. Refresh the lightweight summaries
+  // before deciding that an empty task is safe to reuse.
+  let threads = state.threads
+  if (provider.listThreads) {
+    try {
+      const fresh = await provider.listThreads()
+      const freshById = new Map(fresh.map((thread) => [thread.id, thread]))
+      threads = state.threads.map((thread) => freshById.get(thread.id) ?? thread)
+    } catch {
+      /* fall back to the local snapshot; the runtime start guard stays final */
+    }
+  }
+
   const activeThread = state.activeThreadId
-    ? state.threads.find((thread) => thread.id === state.activeThreadId)
+    ? threads.find((thread) => thread.id === state.activeThreadId)
     : null
   if (
     activeThread &&
     normalizeWorkspaceRoot(activeThread.workspace) === normalizedWorkspace &&
+    !threadHasUnresolvedPublishState(activeThread) &&
     !threadHasUserMessage(state.blocks)
   ) {
     return activeThread.id
   }
 
-  const candidates = state.threads
+  const candidates = threads
     .filter(
       (thread) =>
         thread.id !== activeThread?.id &&
-        normalizeWorkspaceRoot(thread.workspace) === normalizedWorkspace
+        normalizeWorkspaceRoot(thread.workspace) === normalizedWorkspace &&
+        !threadHasUnresolvedPublishState(thread)
     )
     .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
 
@@ -379,6 +399,15 @@ export async function findReusableEmptyThreadId(
   }
 
   return null
+}
+
+function threadHasUnresolvedPublishState(thread: ChatState['threads'][number]): boolean {
+  return Boolean(
+    thread.publishPending ||
+    thread.publishBlocked ||
+    thread.publishIssue != null ||
+    (thread.publishConflicts?.length ?? 0) > 0
+  )
 }
 
 function runtimeStatusLooksRunning(status?: string): boolean {

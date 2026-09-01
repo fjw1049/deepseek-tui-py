@@ -38,6 +38,8 @@ export type GoalSnapshotJson = {
   }
 }
 
+export type PublishIssue = 'recovery' | 'failure' | 'missing' | null
+
 export type NormalizedThread = {
   id: string
   title: string
@@ -47,6 +49,15 @@ export type NormalizedThread = {
   model: string
   mode: string
   workspace?: string
+  envMode?: 'local' | 'worktree'
+  worktreePath?: string | null
+  publishPending?: boolean
+  publishRequestAction?: 'apply' | 'use_agent' | 'keep_project' | null
+  publishWaitingOn?: string | null
+  publishBlocked?: boolean
+  publishConflicts?: string[]
+  /** Structured publish failure reason. Undefined means a legacy runtime. */
+  publishIssue?: PublishIssue
   status?: string
   archived?: boolean
   goal?: GoalSnapshotJson | null
@@ -60,6 +71,16 @@ export type RestoreCodeResult = {
   skippedFiles: string[]
 }
 
+/** Actual file outcome returned by POST /v1/threads/{id}/rewind. */
+export type RewindResult = {
+  restoreFiles: boolean
+  restoredFiles: string[]
+  mergedFiles: string[]
+  conflictedFiles: string[]
+  skippedFiles: string[]
+  missingRoots: string[]
+}
+
 /** Result of GET /v1/threads/{id}/rewind-preview — files a rewind-with-restore would touch. */
 export type RewindPreview = {
   files: string[]
@@ -68,6 +89,10 @@ export type RewindPreview = {
   conflicts: string[]
   isGit: boolean
   turns: number
+  /** Checkpoint roots that are gone; file restore is skipped for those turns. */
+  missingRoots?: string[]
+  /** Turns in the rewind range that have no code checkpoint to restore. */
+  noCheckpoint: number
 }
 
 export type ToolBlock = {
@@ -120,7 +145,14 @@ export type ActivePluginMeta = {
 }
 
 export type ChatBlock =
-  | { kind: 'user'; id: string; createdAt?: string; text: string; modelLabel?: string }
+  | {
+      kind: 'user'
+      id: string
+      createdAt?: string
+      text: string
+      modelLabel?: string
+      turnId?: string
+    }
   | {
       kind: 'assistant'
       id: string
@@ -307,6 +339,8 @@ export type ThreadDeltaEvent = {
 
 export type TurnCompletePayload = {
   threadId?: string | null
+  turnId?: string | null
+  durationMs?: number | null
   usage?: Record<string, unknown> | null
 }
 
@@ -329,12 +363,28 @@ export type TurnDiffUpdatedPayload = {
 
 export type ThreadUpdatedPayload = {
   threadId: string
+  updatedAt?: string
   title?: string | null
   archived?: boolean
   /** Interaction mode after enter/exit plan (or other mode switches). */
   mode?: string
+  envMode?: 'local' | 'worktree'
+  worktreePath?: string | null
+  publishPending?: boolean
+  publishRequestAction?: 'apply' | 'use_agent' | 'keep_project' | null
+  publishWaitingOn?: string | null
+  publishBlocked?: boolean
+  publishConflicts?: string[]
+  /** Structured publish failure reason. Undefined means the event omitted it. */
+  publishIssue?: PublishIssue
   /** Subset of fields that actually changed in this update. */
   changes: Record<string, unknown>
+}
+
+export type PublishActionResult = {
+  status: 'applied' | 'queued' | 'conflict' | 'pending'
+  thread: NormalizedThread
+  blockingThreadId?: string | null
 }
 
 export type ThreadEventSink = {
@@ -398,6 +448,9 @@ export interface AgentProvider {
     threadStatus?: string
     latestTurnId?: string
     latestUserMessageId?: string
+    turnStartedAtByUserId?: Record<string, number>
+    turnDurationByUserId?: Record<string, number>
+    turnDiffByTurnId?: Record<string, import('../lib/turn-mutation-view').TurnDiffSnapshot>
     /** Latest mounted-plugin state derived from persisted items. */
     activePlugin?: ActivePluginMeta | null
     goal?: GoalSnapshotJson | null
@@ -426,8 +479,14 @@ export interface AgentProvider {
   archiveThread?(threadId: string): Promise<void>
   setThreadArchived?(threadId: string, archived: boolean): Promise<void>
   /** Permanently delete a thread (DELETE). */
-  deleteThread(threadId: string): Promise<void>
-  purgeThread?(threadId: string): Promise<void>
+  deleteThread(
+    threadId: string,
+    options?: { discardUnpublished?: boolean }
+  ): Promise<void>
+  purgeThread?(
+    threadId: string,
+    options?: { discardUnpublished?: boolean }
+  ): Promise<void>
   /** Permanently delete every soft-archived thread. */
   purgeArchivedThreads?(): Promise<{ deleted: number; requested: number }>
   forkThread?(threadId: string, throughItemId?: string): Promise<NormalizedThread>
@@ -437,7 +496,7 @@ export interface AgentProvider {
     beforeItemId: string,
     restoreFiles?: boolean,
     forceConflicts?: boolean
-  ): Promise<void>
+  ): Promise<RewindResult | null>
   /**
    * Restore workspace files to the state before `beforeItemId`'s turn WITHOUT
    * truncating the conversation (POST /v1/threads/{id}/restore-code).
@@ -452,6 +511,12 @@ export interface AgentProvider {
    * `beforeItemId` would touch (GET /v1/threads/{id}/rewind-preview).
    */
   rewindPreview?(threadId: string, beforeItemId: string): Promise<RewindPreview>
+  resolvePublishConflicts?(
+    threadId: string,
+    action: 'apply' | 'use_agent' | 'keep_project',
+    paths?: string[],
+    recoveryToken?: string
+  ): Promise<PublishActionResult>
   resumeThread?(threadId: string): Promise<void>
   /** Runtime HTTP: POST /v1/tasks/{id}/resume */
   resumeTask?(taskId: string): Promise<void>

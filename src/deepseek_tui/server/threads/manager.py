@@ -7,9 +7,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import threading
 import uuid
 from collections import OrderedDict
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -75,6 +78,7 @@ if TYPE_CHECKING:
     from deepseek_tui.engine.orchestrator import Engine
     from deepseek_tui.engine.handle import ApprovalHandler
     from deepseek_tui.server.sessions import ImportTuiSessionRequest
+    from deepseek_tui.workspace.managed_worktree import WorktreeBaseline
     from deepseek_tui.workspace.turn_checkpoints import TurnCheckpoint
 
 from deepseek_tui.server.threads.broadcast import AsyncBroadcast
@@ -108,7 +112,21 @@ from deepseek_tui.server.threads.models import (
     TurnRecord,
     UpdateThreadRequest,
 )
+from deepseek_tui.workspace.execution import (
+    ENV_LOCAL,
+    ENV_WORKTREE,
+    WorktreePendingError,
+    execution_root,
+    is_scratch_workspace,
+    normalize_env_mode,
+    project_root,
+)
 from deepseek_tui.server.threads.store import RuntimeThreadStore
+from deepseek_tui.server.threads.titles import (
+    derive_thread_title_from_query,
+    first_query_title,
+    should_derive_thread_title,
+)
 from deepseek_tui.server.threads.usage import (
     accumulate_model_usage_from_turn,
     session_model_usage_response,
@@ -118,6 +136,38 @@ from deepseek_tui.server.threads.usage import (
 
 logger = logging.getLogger(__name__)
 
+UNPUBLISHED_WORKTREE_LABOR = "<unpublished-worktree-labor>"
+PUBLISH_FAILED = "<publish-failed>"
+MISSING_WORKTREE = "<missing-worktree>"
+PUBLISH_ISSUE_RECOVERY = "recovery"
+PUBLISH_ISSUE_FAILURE = "failure"
+PUBLISH_ISSUE_MISSING = "missing"
+LEGACY_PUBLISH_ISSUES = {
+    UNPUBLISHED_WORKTREE_LABOR: PUBLISH_ISSUE_RECOVERY,
+    PUBLISH_FAILED: PUBLISH_ISSUE_FAILURE,
+    MISSING_WORKTREE: PUBLISH_ISSUE_MISSING,
+}
+
+
+def _normalize_relative_path(path: str) -> str:
+    # Backslash is a legal POSIX filename character, not a separator.
+    return path.replace("\\", "/") if os.name == "nt" else path
+
+
+def _recovery_token_matches(thread: ThreadRecord, token: str | None) -> bool:
+    if not token:
+        return False
+    try:
+        rendered = token[:-1] + "+00:00" if token.endswith("Z") else token
+        shown_at = datetime.fromisoformat(rendered)
+    except ValueError:
+        return False
+    if shown_at.tzinfo is None:
+        return False
+    return shown_at.astimezone(timezone.utc) == thread.updated_at.astimezone(
+        timezone.utc
+    )
+
 # Upper bound on narration-service calls that word silent tool rounds within a
 # single turn; the neutral structured frame is always shown regardless.
 MAX_INTENT_FILLS_PER_TURN = 6
@@ -125,6 +175,14 @@ MAX_INTENT_FILLS_PER_TURN = 6
 
 def _resolved_workspace_path(raw: str) -> Path:
     return Path(raw).expanduser().resolve()
+
+
+def _thread_cwd(thread: ThreadRecord) -> Path:
+    """Execution root for tools / restore. Pending worktree falls back to project."""
+    try:
+        return execution_root(thread)
+    except WorktreePendingError:
+        return project_root(thread)
 
 
 def _mailbox_message_payload(msg: MailboxMessage) -> dict[str, Any]:
@@ -239,6 +297,12 @@ class RuntimeThreadManager:
         self._active: dict[str, _ActiveThreadState] = {}
         self._lru: OrderedDict[str, None] = OrderedDict()
         self._active_lock = asyncio.Lock()
+        self._project_locks: dict[str, asyncio.Lock] = {}
+        self._project_lock_guard = asyncio.Lock()
+        self._thread_leases: dict[str, Any] = {}
+        self._thread_lease_depth: dict[str, int] = {}
+        self._thread_lease_owners: dict[str, asyncio.Task[Any] | None] = {}
+        self._thread_lease_guard = asyncio.Lock()
         self._engine_load_tasks: dict[
             str, asyncio.Task[tuple[EngineHandle, asyncio.Task[None]]]
         ] = {}
@@ -252,17 +316,151 @@ class RuntimeThreadManager:
         self._mcp_warmup_task: asyncio.Task[None] | None = None
 
         self._recover_interrupted_state()
+        self._reconcile_missing_worktrees_on_boot()
         self._schedule_mcp_warmup()
         self._prune_stale_checkpoints_on_boot()
+
+    def _clear_worktree_state(self, thread: ThreadRecord) -> None:
+        self.store.delete_worktree_baseline(thread.id)
+        thread.env_mode = ENV_LOCAL
+        thread.worktree_path = None
+        thread.worktree_base = None
+        thread.worktree_owned = False
+        thread.associated_worktree_path = None
+        thread.worktree_branch = None
+        thread.publish_pending = False
+        thread.publish_request_action = None
+        thread.publish_request_paths = []
+        thread.publish_waiting_on = None
+        thread.publish_blocked = False
+        thread.publish_issue = None
+        thread.publish_conflicts = []
+
+    def _reconcile_missing_worktrees_on_boot(self) -> None:
+        """Clear stale persisted pointers without touching surviving labor."""
+        try:
+            from deepseek_tui.workspace.managed_worktree import (
+                cleanup_legacy_internal_branch,
+            )
+            from deepseek_tui.workspace.project_lease import ThreadLease
+
+            for thread in self.store.list_threads():
+                lease = ThreadLease(thread.id)
+                if not lease.acquire_blocking(nonblocking=True):
+                    continue
+                try:
+                    legacy_state = (
+                        thread.publish_issue,
+                        tuple(thread.publish_conflicts),
+                    )
+                    self._migrate_legacy_publish_issue(thread)
+                    if legacy_state != (
+                        thread.publish_issue,
+                        tuple(thread.publish_conflicts),
+                    ):
+                        self.store.save_thread(thread)
+                    pending_checkpoints = self._unpublished_checkpoints(thread)
+                    if (
+                        not pending_checkpoints
+                        and not thread.publish_blocked
+                        and not thread.publish_conflicts
+                        and (
+                            thread.publish_pending
+                            or thread.publish_request_action
+                            or thread.publish_request_paths
+                            or thread.publish_waiting_on
+                        )
+                    ):
+                        # The publish journal is authoritative. A crash after
+                        # its final checkpoint was synced can leave only the
+                        # denormalized thread request fields stale.
+                        thread.publish_pending = False
+                        thread.publish_request_action = None
+                        thread.publish_request_paths = []
+                        thread.publish_waiting_on = None
+                        self.store.save_thread(thread)
+                    raw_paths = [
+                        raw
+                        for raw in (
+                            thread.worktree_path,
+                            thread.associated_worktree_path,
+                        )
+                        if raw
+                    ]
+                    if not thread.worktree_owned or not raw_paths:
+                        continue
+                    if any(Path(raw).expanduser().is_dir() for raw in raw_paths):
+                        # A temporarily unavailable mount/copy may have come
+                        # back. Keep the marker until prepare validates the
+                        # actual tree and its baseline under the thread lease.
+                        continue
+                    unresolved_delivery = bool(
+                        pending_checkpoints
+                        or thread.publish_pending
+                        or thread.publish_blocked
+                        or thread.publish_conflicts
+                        or thread.publish_request_action
+                    )
+                    if unresolved_delivery:
+                        thread.publish_pending = True
+                        thread.publish_blocked = True
+                        thread.publish_request_action = None
+                        thread.publish_request_paths = []
+                        thread.publish_waiting_on = None
+                        thread.publish_issue = PUBLISH_ISSUE_MISSING
+                        self.store.save_thread(thread)
+                        continue
+                    cleanup_legacy_internal_branch(
+                        project_root(thread),
+                        Path(raw_paths[0]),
+                        thread.worktree_branch or "",
+                    )
+                    self._clear_worktree_state(thread)
+                    self.store.save_thread(thread)
+                finally:
+                    lease.release()
+        except Exception:  # noqa: BLE001 — boot must not fail on reconciliation
+            logger.debug("worktree_reconcile_failed", exc_info=True)
+
+    @staticmethod
+    def _migrate_legacy_publish_issue(thread: ThreadRecord) -> None:
+        """Lift old reserved-path sentinels into the structured issue field."""
+        if thread.publish_issue or not thread.publish_conflicts:
+            return
+        marker = thread.publish_conflicts[0]
+        issue = LEGACY_PUBLISH_ISSUES.get(marker)
+        if issue is None:
+            return
+        thread.publish_issue = issue
+        # Remove one reason token only. A real file with the same spelling may
+        # legitimately appear later in the path list.
+        thread.publish_conflicts = thread.publish_conflicts[1:]
 
     def _prune_stale_checkpoints_on_boot(self) -> None:
         """Wire SnapshotConfig.max_age_days to turn-checkpoint GC on startup."""
         try:
             max_age = int(getattr(self.config.snapshots, "max_age_days", 7) or 7)
             if getattr(self.config.snapshots, "enabled", True) and max_age >= 1:
-                removed = self.checkpoints.prune_older_than(max_age)
+                live_threads = self.store.list_threads()
+                protected = {
+                    turn.id
+                    for thread in live_threads
+                    for turn in self.store.list_turns_for_thread(thread.id)
+                }
+                protected.update(
+                    cp.turn_id
+                    for thread in live_threads
+                    for cp in self.checkpoints.list_for_thread(thread.id)
+                )
+                removed = self.checkpoints.prune_older_than(
+                    max_age, protected_turn_ids=protected
+                )
                 if removed:
-                    logger.info("turn_checkpoints_pruned count=%d max_age_days=%d", removed, max_age)
+                    logger.info(
+                        "turn_checkpoints_pruned count=%d max_age_days=%d",
+                        removed,
+                        max_age,
+                    )
         except Exception:  # noqa: BLE001 — boot must not fail on GC
             logger.debug("turn_checkpoints_prune_failed", exc_info=True)
 
@@ -380,6 +578,7 @@ class RuntimeThreadManager:
             model=model,
             provider=(req.provider or self.config.provider).strip() or self.config.provider,
             workspace=workspace,
+            env_mode=ENV_LOCAL,
             mode=mode,
             allow_shell=allow_shell,
             trust_mode=trust_mode,
@@ -387,6 +586,7 @@ class RuntimeThreadManager:
             archived=req.archived,
             system_prompt=req.system_prompt,
             task_id=req.task_id,
+            title=(req.title or "").strip() or None,
         )
         self.store.save_thread(thread)
         await self._emit_event(
@@ -461,7 +661,19 @@ class RuntimeThreadManager:
             threads = [t for t in threads if not t.archived]
         if limit is not None:
             threads = threads[:limit]
-        return threads
+        # Recover display titles for legacy rows persisted as placeholders.
+        # Return copies instead of writing during GET so a concurrent turn
+        # cannot have newer thread fields overwritten by a stale list record.
+        display_threads: list[ThreadRecord] = []
+        for thread in threads:
+            if not should_derive_thread_title(thread.title, thread_id=thread.id):
+                display_threads.append(thread)
+                continue
+            title = first_query_title(self.store, thread.id)
+            if title:
+                thread = thread.model_copy(update={"title": title})
+            display_threads.append(thread)
+        return display_threads
 
     async def get_thread(self, thread_id: str) -> ThreadRecord:
         return self.store.load_thread(thread_id)
@@ -538,6 +750,12 @@ class RuntimeThreadManager:
         )
 
     async def update_thread(self, thread_id: str, req: UpdateThreadRequest) -> ThreadRecord:
+        async with self._hold_thread_operation(thread_id):
+            return await self._update_thread_claimed(thread_id, req)
+
+    async def _update_thread_claimed(
+        self, thread_id: str, req: UpdateThreadRequest
+    ) -> ThreadRecord:
         if req.archived is None and req.title is None:
             raise ValueError("At least one thread field is required")
         thread = self.store.load_thread(thread_id)
@@ -557,6 +775,11 @@ class RuntimeThreadManager:
         if changed:
             thread.updated_at = datetime.now(timezone.utc)
             self.store.save_thread(thread)
+            if changes.get("archived") is True:
+                await self._evict_active_thread(thread.id)
+                thread = self.store.load_thread(thread.id)
+                await self._reclaim_owned_worktree(thread)
+                thread = self.store.load_thread(thread.id)
             await self._emit_event(
                 thread.id,
                 None,
@@ -569,14 +792,1512 @@ class RuntimeThreadManager:
             )
         return thread
 
-    async def delete_thread(self, thread_id: str) -> None:
+    def environment_view(self, thread_id: str) -> dict[str, Any]:
+        thread = self.store.load_thread(thread_id)
+        root = project_root(thread)
+        try:
+            cwd = str(execution_root(thread))
+            pending = False
+        except WorktreePendingError:
+            cwd = str(root)
+            pending = normalize_env_mode(thread.env_mode) == ENV_WORKTREE
+        return {
+            "env_mode": normalize_env_mode(thread.env_mode),
+            "workspace": str(root),
+            "execution_root": cwd,
+            "worktree_path": thread.worktree_path,
+            "worktree_base": thread.worktree_base,
+            "worktree_owned": thread.worktree_owned,
+            "associated_worktree_path": thread.associated_worktree_path,
+            "worktree_branch": thread.worktree_branch,
+            "worktree_pending": pending,
+            "publish_pending": bool(thread.publish_pending),
+            "publish_request_action": thread.publish_request_action,
+            "publish_waiting_on": thread.publish_waiting_on,
+            "publish_blocked": bool(thread.publish_blocked),
+            "publish_issue": thread.publish_issue,
+            "publish_conflicts": list(thread.publish_conflicts or []),
+        }
+
+    async def _project_lock(self, root: Path) -> asyncio.Lock:
+        key = str(root.expanduser().resolve())
+        async with self._project_lock_guard:
+            lock = self._project_locks.get(key)
+            if lock is None:
+                lock = asyncio.Lock()
+                self._project_locks[key] = lock
+            return lock
+
+    async def _claim_new_thread_lease(self, thread_id: str) -> Any:
+        """Take exclusive cross-process ownership for a new active turn."""
+        from deepseek_tui.workspace.project_lease import ThreadLease
+
+        async with self._thread_lease_guard:
+            if thread_id in self._thread_leases:
+                raise ValueError("Thread already has an active operation")
+            lease = ThreadLease(thread_id)
+            if not await lease.acquire(nonblocking=True):
+                raise ValueError("Thread is active in another runtime")
+            self._thread_leases[thread_id] = lease
+            self._thread_lease_depth[thread_id] = 1
+            self._thread_lease_owners[thread_id] = asyncio.current_task()
+            return lease
+
+    async def _release_thread_lease(
+        self, thread_id: str, *, expected: Any | None = None
+    ) -> None:
+        async with self._thread_lease_guard:
+            lease = self._thread_leases.get(thread_id)
+            if lease is None or (expected is not None and lease is not expected):
+                return
+            depth = self._thread_lease_depth.get(thread_id, 1) - 1
+            if depth > 0:
+                self._thread_lease_depth[thread_id] = depth
+                return
+            self._thread_leases.pop(thread_id, None)
+            self._thread_lease_depth.pop(thread_id, None)
+            self._thread_lease_owners.pop(thread_id, None)
+        lease.release()
+
+    @asynccontextmanager
+    async def _hold_thread_operation(self, thread_id: str) -> AsyncIterator[None]:
+        """Serialize lifecycle operations for a thread across runtimes.
+
+        Calls made by the runtime that already owns the active-turn lease are
+        re-entrant; other processes fail fast instead of touching its state.
+        """
+        from deepseek_tui.workspace.project_lease import ThreadLease
+
+        lease: Any
+        owner = asyncio.current_task()
+        async with self._thread_lease_guard:
+            current = self._thread_leases.get(thread_id)
+            if current is None:
+                lease = ThreadLease(thread_id)
+                if not await lease.acquire(nonblocking=True):
+                    raise ValueError("Thread is active in another runtime")
+                self._thread_leases[thread_id] = lease
+                self._thread_lease_depth[thread_id] = 1
+                self._thread_lease_owners[thread_id] = owner
+            else:
+                if self._thread_lease_owners.get(thread_id) is not owner:
+                    raise ValueError("Thread already has an active operation")
+                lease = current
+                self._thread_lease_depth[thread_id] = (
+                    self._thread_lease_depth.get(thread_id, 1) + 1
+                )
+        try:
+            yield
+        finally:
+            await self._release_thread_lease(thread_id, expected=lease)
+
+    @asynccontextmanager
+    async def _hold_project_operation(
+        self, root: Path, *, enabled: bool = True
+    ) -> AsyncIterator[None]:
+        """Serialize project writes within and across runtime processes."""
+        if not enabled:
+            yield
+            return
+        from deepseek_tui.workspace.project_lease import hold_project_lease
+
+        lock = await self._project_lock(root)
+        async with lock:
+            async with hold_project_lease(root):
+                yield
+
+    def _blocking_active_on_project(
+        self, root: Path, *, except_thread: str
+    ) -> str | None:
+        wanted = root.expanduser().resolve()
+        for tid, state in self._active.items():
+            if tid == except_thread or state.active_turn is None:
+                continue
+            try:
+                other = self.store.load_thread(tid)
+            except FileNotFoundError:
+                continue
+            try:
+                if project_root(other) == wanted:
+                    return tid
+            except Exception:
+                continue
+        return None
+
+    def _other_active_on_project(self, root: Path, *, except_thread: str) -> bool:
+        return self._blocking_active_on_project(
+            root, except_thread=except_thread
+        ) is not None
+
+    def _unpublished_checkpoints(self, thread: ThreadRecord) -> list[Any]:
+        project = project_root(thread).resolve()
+        out: list[TurnCheckpoint] = []
+        seen: set[str] = set()
+        # Conversation-only rewind deliberately leaves checkpoints orphaned so
+        # code can still be restored later. They remain publication journals
+        # too, even though their original turn row no longer exists.
+        candidates = list(self.checkpoints.list_for_thread(thread.id))
+        candidate_ids = {item.turn_id for item in candidates}
+        # Legacy checkpoints did not carry thread_id; retain the old live-turn
+        # lookup as a migration bridge.
+        for turn in self.store.list_turns_for_thread(thread.id):
+            checkpoint = self.checkpoints.load(turn.id)
+            if checkpoint is not None and checkpoint.turn_id not in candidate_ids:
+                candidates.append(checkpoint)
+                candidate_ids.add(checkpoint.turn_id)
+        for checkpoint in candidates:
+            if checkpoint.turn_id in seen or not checkpoint.mutated:
+                continue
+            seen.add(checkpoint.turn_id)
+            raw = checkpoint.execution_root or ""
+            if raw:
+                try:
+                    if (
+                        Path(raw).expanduser().resolve() == project
+                        and not checkpoint.publish_pending_sync
+                    ):
+                        continue
+                except Exception:
+                    pass
+            out.append(checkpoint)
+        out.sort(key=lambda item: item.created_at)
+        return out
+
+    async def _record_worktree_baseline(
+        self, thread_id: str, worktree: Path
+    ) -> None:
+        from deepseek_tui.workspace.managed_worktree import (
+            capture_worktree_baseline,
+        )
+
+        baseline = await capture_worktree_baseline(worktree)
+        self.store.save_worktree_baseline(thread_id, baseline.to_dict())
+
+    def _load_worktree_baseline(
+        self, thread_id: str
+    ) -> WorktreeBaseline | None:
+        from deepseek_tui.workspace.managed_worktree import WorktreeBaseline
+
+        return WorktreeBaseline.from_dict(
+            self.store.load_worktree_baseline(thread_id)
+        )
+
+    def _load_worktree_recovery_snapshot(
+        self, thread_id: str
+    ) -> dict[str, str] | None:
+        raw = self.store.load_worktree_baseline(thread_id) or {}
+        snapshot = raw.get("recovery_snapshot")
+        if not isinstance(snapshot, dict):
+            return None
+        normalized = {
+            _normalize_relative_path(str(path)): signature
+            for path, signature in snapshot.items()
+            if isinstance(signature, str)
+        }
+        return normalized if len(normalized) == len(snapshot) else None
+
+    def _load_incomplete_sync_journal(
+        self, thread_id: str
+    ) -> dict[str, object] | None:
+        raw = self.store.load_worktree_baseline(thread_id) or {}
+        journal = raw.get("sync_journal")
+        if raw.get("sync_in_progress") is not True or not isinstance(journal, dict):
+            return None
+        return journal
+
+    async def _worktree_recovery_signatures(
+        self,
+        thread_id: str,
+        worktree: Path,
+        baseline: WorktreeBaseline | None = None,
+    ) -> dict[str, str]:
+        from deepseek_tui.workspace.managed_worktree import (
+            worktree_recovery_labor_signatures,
+        )
+
+        baseline = baseline or self._load_worktree_baseline(thread_id)
+        if baseline is None:
+            return {}
+        return await worktree_recovery_labor_signatures(
+            worktree,
+            baseline,
+            project_root=project_root(self.store.load_thread(thread_id)),
+            incomplete_sync_journal=self._load_incomplete_sync_journal(thread_id),
+        )
+
+    async def _record_worktree_recovery_snapshot(
+        self,
+        thread_id: str,
+        worktree: Path,
+        baseline: WorktreeBaseline | None = None,
+    ) -> dict[str, str] | None:
+        baseline = baseline or self._load_worktree_baseline(thread_id)
+        if baseline is None:
+            return None
+        snapshot = await self._worktree_recovery_signatures(
+            thread_id, worktree, baseline
+        )
+        # Preserve an interrupted-sync journal: it proves which non-labor
+        # paths are merely before/target artifacts during the later choice.
+        payload = dict(self.store.load_worktree_baseline(thread_id) or {})
+        payload.update(baseline.to_dict())
+        payload["recovery_snapshot"] = snapshot
+        self.store.save_worktree_baseline(thread_id, payload)
+        return snapshot
+
+    async def _unknown_worktree_paths(
+        self, thread_id: str, worktree: Path
+    ) -> list[str]:
+        baseline = self._load_worktree_baseline(thread_id)
+        if baseline is None:
+            # A legacy isolate may contain project dirt inherited before the
+            # task existed. Without B, no dirty path can safely be called T-B.
+            return []
+        signatures = await self._worktree_recovery_signatures(
+            thread_id, worktree, baseline
+        )
+        return sorted(signatures)
+
+    async def _checkpoint_post_state(
+        self, worktree: Path, checkpoints: list[Any]
+    ) -> tuple[list[str], dict[str, str]]:
+        """Bind publish ownership to the latest checkpoint image per path."""
+        from deepseek_tui.workspace.managed_worktree import (
+            text_path_signature,
+            worktree_path_signatures,
+        )
+
+        latest: dict[str, str | None] = {}
+        for checkpoint in checkpoints:
+            recorded = checkpoint.post_signatures
+            for raw in checkpoint.mutated:
+                path = _normalize_relative_path(raw)
+                if not checkpoint.post_signatures_captured:
+                    content_available = path in checkpoint.post_contents
+                    mode_available = path in checkpoint.post_modes
+                    expected = (
+                        text_path_signature(
+                            checkpoint.post_contents[path],
+                            checkpoint.post_modes[path],
+                        )
+                        if content_available and mode_available
+                        else None
+                    )
+                    # A complete legacy text+mode image can be verified. Opaque
+                    # or incomplete captures cannot prove task ownership.
+                    latest[path] = expected or "uncaptured"
+                else:
+                    latest[path] = recorded.get(path, "uncaptured")
+        current = await asyncio.to_thread(
+            worktree_path_signatures, worktree, list(latest)
+        )
+        drifted = sorted(
+            path
+            for path, expected in latest.items()
+            if expected is not None
+            and (
+                expected == "invalid"
+                or expected.endswith(":unreadable")
+                or current.get(path) != expected
+            )
+        )
+        resolved = {
+            path: expected
+            for path, expected in latest.items()
+            if expected is not None and path in current
+        }
+        return drifted, resolved
+
+    async def _sync_isolate_with_baseline(
+        self,
+        thread: ThreadRecord,
+        project: Path,
+        worktree: Path,
+        *,
+        resolved_labor_paths: list[str] | None = None,
+        resolved_labor_signatures: dict[str, str] | None = None,
+        discard_isolate_labor: bool = False,
+    ) -> str | None:
+        from deepseek_tui.workspace.managed_worktree import sync_isolate_from_project
+
+        raw_baseline = self.store.load_worktree_baseline(thread.id)
+        baseline = self._load_worktree_baseline(thread.id)
+        recovering_sync = bool(
+            raw_baseline and raw_baseline.get("sync_in_progress") is True
+        )
+        raw_sync_journal = (
+            raw_baseline.get("sync_journal") if raw_baseline is not None else None
+        )
+        sync_journal = (
+            raw_sync_journal if isinstance(raw_sync_journal, dict) else None
+        )
+
+        def mark_sync_started(
+            journal_baseline: WorktreeBaseline,
+            journal: dict[str, object],
+        ) -> None:
+            payload = journal_baseline.to_dict()
+            payload["sync_in_progress"] = True
+            payload["sync_journal"] = journal
+            self.store.save_worktree_baseline(thread.id, payload)
+
+        def mark_sync_completed(target: WorktreeBaseline) -> None:
+            self.store.save_worktree_baseline(thread.id, target.to_dict())
+
+        synced_head = await sync_isolate_from_project(
+            project,
+            worktree,
+            baseline=baseline,
+            resolved_labor_paths=resolved_labor_paths,
+            resolved_labor_signatures=resolved_labor_signatures,
+            recover_incomplete_sync=recovering_sync,
+            incomplete_sync_journal=sync_journal,
+            discard_isolate_labor=discard_isolate_labor,
+            before_mutation=mark_sync_started,
+            after_mutation=mark_sync_completed,
+        )
+        return synced_head
+
+    async def _prepare_isolated_workspace(self, thread: ThreadRecord) -> ThreadRecord:
+        async with self._hold_thread_operation(thread.id):
+            prepared = await self._prepare_isolated_workspace_claimed(thread)
+        return await self._auto_publish_isolated_thread(prepared)
+
+    async def _prepare_isolated_workspace_claimed(
+        self, thread: ThreadRecord
+    ) -> ThreadRecord:
+        """Put a git thread on its hidden copy and sync the current project in.
+
+        Non-git, Claw sandboxes, and nested worktrees stay on the project.
+        Blocked threads skip inbound sync, except recovery-only records and a
+        failed inbound sync with no task checkpoints: those are rechecked
+        against their durable baseline so retries can heal safely.
+        """
+        from deepseek_tui.workspace.managed_worktree import (
+            UnpublishedWorktreeError,
+            create_managed_worktree,
+            current_worktree_branch,
+            is_git_repo,
+        )
+
+        previous_environment = (
+            thread.env_mode,
+            thread.worktree_path,
+            thread.associated_worktree_path,
+        )
+        root = project_root(thread)
+        if is_scratch_workspace(root) or not await is_git_repo(root):
+            return thread
+        self._migrate_legacy_publish_issue(thread)
+        associated = thread.associated_worktree_path or thread.worktree_path or ""
+        if associated and not Path(associated).expanduser().is_dir():
+            # A previously-created isolate can contain the only recoverable copy
+            # of task work. If it disappears at runtime, retain its exact path
+            # and wait for it to return instead of replacing the association
+            # with a fresh checkout.
+            thread.env_mode = ENV_WORKTREE
+            thread.worktree_path = associated
+            thread.publish_pending = True
+            thread.publish_request_action = None
+            thread.publish_request_paths = []
+            thread.publish_waiting_on = None
+            thread.publish_blocked = True
+            thread.publish_issue = PUBLISH_ISSUE_MISSING
+            thread.updated_at = datetime.now(timezone.utc)
+            self.store.save_thread(thread)
+            return thread
+        recovered_missing = thread.publish_issue == PUBLISH_ISSUE_MISSING
+        if recovered_missing:
+            thread.publish_issue = None
+
+        has_unpublished_checkpoints = bool(self._unpublished_checkpoints(thread))
+        if recovered_missing:
+            thread.publish_blocked = bool(thread.publish_conflicts)
+            if thread.publish_conflicts and not has_unpublished_checkpoints:
+                thread.publish_issue = PUBLISH_ISSUE_RECOVERY
+        sync_retry_probe = (
+            thread.publish_blocked
+            and not has_unpublished_checkpoints
+            and thread.publish_issue
+            in {PUBLISH_ISSUE_RECOVERY, PUBLISH_ISSUE_FAILURE}
+        )
+        unpublished = (
+            has_unpublished_checkpoints
+            or (bool(thread.publish_blocked) and not sync_retry_probe)
+        )
+        publish_pending_changed = False
+        if (
+            not has_unpublished_checkpoints
+            and not thread.publish_blocked
+            and not thread.publish_conflicts
+            and (
+                thread.publish_pending
+                or thread.publish_request_action
+                or thread.publish_request_paths
+                or thread.publish_waiting_on
+            )
+        ):
+            # Same repair as boot reconciliation, repeated under the async
+            # thread lease for a manager that could not acquire the boot lease.
+            thread.publish_pending = False
+            thread.publish_request_action = None
+            thread.publish_request_paths = []
+            thread.publish_waiting_on = None
+            publish_pending_changed = True
+        if (
+            recovered_missing
+            and not has_unpublished_checkpoints
+            and not thread.publish_conflicts
+            and thread.publish_pending
+        ):
+            thread.publish_pending = False
+            publish_pending_changed = True
+        if has_unpublished_checkpoints and not thread.publish_pending:
+            # Keep recovered work visible until the wrapper can safely replay
+            # its checkpoints into the project.  Uncheckpointed labor is
+            # marked blocked below and still requires a user decision.
+            thread.publish_pending = True
+            publish_pending_changed = True
+
+        dest: Path | None = None
+        reused_existing_worktree = bool(
+            associated and Path(associated).expanduser().is_dir()
+        )
+        if reused_existing_worktree:
+            dest = Path(associated).expanduser().resolve()
+            thread.env_mode = ENV_WORKTREE
+            thread.worktree_path = str(dest)
+            thread.worktree_owned = True
+            if not (thread.worktree_branch or "").strip():
+                thread.worktree_branch = await current_worktree_branch(dest) or None
+        else:
+            try:
+                created = await create_managed_worktree(
+                    root, thread.id, copy_tracked_dirty=False
+                )
+            except Exception:
+                logger.debug(
+                    "auto_isolate_failed thread=%s",
+                    thread.id,
+                    exc_info=True,
+                )
+                # A Git task promised isolation. Silently falling back to the
+                # project checkout would bypass every baseline/publish guard.
+                raise
+            dest = created.path
+            thread.env_mode = ENV_WORKTREE
+            thread.worktree_path = str(created.path)
+            thread.worktree_base = created.base
+            thread.worktree_owned = created.owned
+            thread.associated_worktree_path = str(created.path)
+            thread.worktree_branch = created.branch or None
+
+        if dest is not None and not unpublished:
+            try:
+                async with self._hold_project_operation(root):
+                    synced_head = await self._sync_isolate_with_baseline(
+                        thread, root, dest
+                    )
+                if synced_head:
+                    thread.worktree_base = synced_head
+                thread.worktree_branch = await current_worktree_branch(dest) or None
+                if sync_retry_probe:
+                    thread.publish_pending = False
+                    thread.publish_blocked = False
+                    thread.publish_issue = None
+                    thread.publish_conflicts = []
+                    thread.publish_request_action = None
+                    thread.publish_request_paths = []
+                    thread.publish_waiting_on = None
+                    publish_pending_changed = True
+            except UnpublishedWorktreeError:
+                thread.publish_pending = True
+                thread.publish_blocked = True
+                thread.publish_request_action = None
+                thread.publish_request_paths = []
+                thread.publish_waiting_on = None
+                recovery_paths = await self._unknown_worktree_paths(
+                    thread.id, dest
+                )
+                await self._record_worktree_recovery_snapshot(
+                    thread.id, dest
+                )
+                thread.publish_issue = PUBLISH_ISSUE_RECOVERY
+                thread.publish_conflicts = recovery_paths
+                thread.updated_at = datetime.now(timezone.utc)
+                self.store.save_thread(thread)
+                await self._emit_event(
+                    thread.id,
+                    None,
+                    None,
+                    "thread.updated",
+                    {
+                        "thread": thread.model_dump(mode="json"),
+                        "changes": {
+                            "publish_pending": True,
+                            "publish_blocked": True,
+                            "publish_issue": thread.publish_issue,
+                            "publish_conflicts": list(thread.publish_conflicts),
+                        },
+                    },
+                )
+            except Exception:
+                logger.debug(
+                    "worktree_sync_in_failed thread=%s", thread.id, exc_info=True
+                )
+                # A first sync can fail after the managed copy was created but
+                # before the normal save below. Persist its association so the
+                # sync journal can recover this same copy on the next attempt.
+                # A later sync failure must also be user-retryable: without an
+                # explicit issue, the task can remain blocked with no action
+                # that actually re-runs the inbound sync.
+                if reused_existing_worktree:
+                    thread.publish_pending = True
+                    thread.publish_request_action = None
+                    thread.publish_request_paths = []
+                    thread.publish_waiting_on = None
+                    thread.publish_blocked = True
+                    thread.publish_issue = PUBLISH_ISSUE_FAILURE
+                    thread.publish_conflicts = []
+                thread.updated_at = datetime.now(timezone.utc)
+                self.store.save_thread(thread)
+                if reused_existing_worktree:
+                    await self._emit_publish_state(thread)
+                raise
+
+        thread.updated_at = datetime.now(timezone.utc)
+        self.store.save_thread(thread)
+        environment_changed = previous_environment != (
+            thread.env_mode,
+            thread.worktree_path,
+            thread.associated_worktree_path,
+        )
+        if publish_pending_changed or environment_changed:
+            await self._emit_publish_state(thread)
+        return thread
+
+    async def _publish_isolated_thread(
+        self,
+        thread: ThreadRecord,
+        *,
+        force: bool = False,
+        force_paths: list[str] | None = None,
+        keep_project: list[str] | None = None,
+    ) -> ThreadRecord:
+        async with self._hold_thread_operation(thread.id):
+            return await self._publish_isolated_thread_claimed(
+                thread,
+                force=force,
+                force_paths=force_paths,
+                keep_project=keep_project,
+            )
+
+    async def _publish_isolated_thread_claimed(
+        self,
+        thread: ThreadRecord,
+        *,
+        force: bool = False,
+        force_paths: list[str] | None = None,
+        keep_project: list[str] | None = None,
+    ) -> ThreadRecord:
+        """Merge unpublished isolate checkpoints onto the project.
+
+        Skips while another thread still has an active turn on this project.
+        """
+        from deepseek_tui.workspace.managed_worktree import (
+            PathImage,
+            UnpublishedWorktreeError,
+            apply_path_images,
+            apply_raw_path_images,
+            overlay_working_paths,
+            paths_requiring_raw_resolution,
+            read_working_text,
+            worktree_path_signatures,
+        )
+        from deepseek_tui.workspace.project_lease import hold_project_lease
+        from deepseek_tui.workspace.turn_checkpoints import RawCheckpointError
+
+        if normalize_env_mode(thread.env_mode) != ENV_WORKTREE:
+            return thread
+        root = project_root(thread)
+        try:
+            tree = execution_root(thread)
+        except WorktreePendingError:
+            return thread
+
+        keep = {_normalize_relative_path(p) for p in (keep_project or [])}
+        forced = {_normalize_relative_path(p) for p in (force_paths or [])}
+
+        unpublished = self._unpublished_checkpoints(thread)
+        if not unpublished:
+            thread.publish_pending = False
+            thread.publish_request_action = None
+            thread.publish_request_paths = []
+            thread.publish_waiting_on = None
+            thread.publish_blocked = False
+            thread.publish_issue = None
+            thread.publish_conflicts = []
+            thread.updated_at = datetime.now(timezone.utc)
+            self.store.save_thread(thread)
+            return thread
+
+        async with self._active_lock:
+            blocking_thread = self._blocking_active_on_project(
+                root, except_thread=thread.id
+            )
+        if blocking_thread is not None:
+            thread.publish_pending = True
+            if thread.publish_request_action:
+                thread.publish_waiting_on = blocking_thread
+            thread.updated_at = datetime.now(timezone.utc)
+            self.store.save_thread(thread)
+            return thread
+
+        synced_head: str | None = None
+        lock = await self._project_lock(root)
+        async with lock:
+            async with hold_project_lease(root):
+                async with self._active_lock:
+                    if self._other_active_on_project(root, except_thread=thread.id):
+                        return thread
+                conflicted: list[str] = []
+                publish_issue: str | None = None
+                published_paths: set[str] = set()
+                resolved_labor_signatures: dict[str, str] = {}
+                processed_turn_ids: list[str] = []
+                sync_completed = False
+                drifted, resolved_labor_signatures = (
+                    await self._checkpoint_post_state(tree, unpublished)
+                )
+                if drifted:
+                    recovery_paths = await self._unknown_worktree_paths(
+                        thread.id, tree
+                    )
+                    await self._record_worktree_recovery_snapshot(
+                        thread.id, tree
+                    )
+                    publish_issue = PUBLISH_ISSUE_RECOVERY
+                    conflicted.extend(recovery_paths or drifted)
+                elif keep:
+                    overlay_working_paths(root, tree, sorted(keep))
+                    kept_signatures = await asyncio.to_thread(
+                        worktree_path_signatures, tree, sorted(keep)
+                    )
+                    resolved_labor_signatures.update(kept_signatures)
+                for checkpoint in unpublished if not conflicted else []:
+                    published_paths.update(checkpoint.mutated)
+                    if (
+                        checkpoint.publish_pending_sync
+                        and checkpoint.publish_apply_complete
+                    ):
+                        # Its project writes were durable before a prior
+                        # interruption. Replaying an older checkpoint could
+                        # overwrite a newer one on the same path.
+                        processed_turn_ids.append(checkpoint.turn_id)
+                        continue
+                    images: list[PathImage] = []
+                    opaque = {
+                        path
+                        for path in checkpoint.mutated
+                        if path in checkpoint.uncertain
+                        or path not in checkpoint.post_contents
+                    }
+                    opaque.update(
+                        paths_requiring_raw_resolution(
+                            tree, root, checkpoint.mutated
+                        )
+                    )
+                    if checkpoint.publish_pending_sync:
+                        # A crash replay must keep using the immutable raw
+                        # sidecars even when the partially-applied destination
+                        # now happens to look text-compatible.
+                        opaque.update(checkpoint.raw_pre_images)
+                    # Explicitly keeping the project version resolves opaque
+                    # paths too: they were overlaid into the isolate above.
+                    kept_opaque = opaque.intersection(keep)
+                    opaque.difference_update(keep)
+                    project_raw_signatures = (
+                        worktree_path_signatures(root, sorted(opaque))
+                        if checkpoint.publish_pending_sync
+                        and not checkpoint.publish_apply_complete
+                        and checkpoint.post_signatures_captured
+                        else {}
+                    )
+                    safe_raw_creations = {
+                        path
+                        for path in opaque
+                        if path in checkpoint.pre_contents
+                        and checkpoint.pre_contents[path] is None
+                        and (
+                            (
+                                not (root / path).exists()
+                                and not (root / path).is_symlink()
+                            )
+                            or (
+                                checkpoint.post_signatures.get(path)
+                                not in {None, "invalid"}
+                                and not checkpoint.post_signatures[path].endswith(
+                                    ":unreadable"
+                                )
+                                and project_raw_signatures.get(path)
+                                == checkpoint.post_signatures[path]
+                            )
+                        )
+                    }
+                    # Reaching durable raw staging proves this checkpoint was
+                    # already authorized (or was an intrinsically safe
+                    # creation). A process death must not erase that decision
+                    # and force the user to approve the same bytes again.
+                    staged_raw = (
+                        set(checkpoint.raw_pre_images)
+                        if checkpoint.publish_pending_sync
+                        else set()
+                    )
+                    decision_required = opaque.difference(
+                        safe_raw_creations | staged_raw
+                    )
+                    unresolved_decisions = decision_required.difference(forced)
+                    if unresolved_decisions and not force:
+                        conflicted.extend(sorted(unresolved_decisions))
+                        break
+                    for path in checkpoint.mutated:
+                        if path in opaque or path in kept_opaque:
+                            continue
+                        base = (
+                            checkpoint.pre_contents[path]
+                            if path in checkpoint.pre_contents
+                            else None
+                        )
+                        theirs = checkpoint.post_contents[path]
+                        ours = read_working_text(root, path)
+                        if (force or path in forced) and not (
+                            isinstance(ours, str) or ours is None
+                        ):
+                            # Project currently holds opaque bytes; explicit
+                            # use-agent resolution must replace it as raw data.
+                            opaque.add(path)
+                            continue
+                        if path in keep:
+                            keep_text = ours if isinstance(ours, str) or ours is None else theirs
+                            base = keep_text
+                            theirs = keep_text
+                        images.append(
+                            PathImage(
+                                path=path,
+                                base=base,
+                                theirs=theirs,
+                            )
+                        )
+                    raw_paths = sorted(opaque)
+                    expected_raw = {
+                        path: checkpoint.post_signatures[path]
+                        for path in raw_paths
+                        if path in checkpoint.post_signatures
+                    }
+
+                    def stage_publish(
+                        staged,
+                        turn_id=checkpoint.turn_id,
+                        staged_raw_paths=raw_paths,
+                        staged_raw_signatures=expected_raw,
+                    ):
+                        self.checkpoints.retarget_to_project(
+                            turn_id,
+                            root,
+                            staged,
+                            raw_source_root=tree,
+                            raw_paths=staged_raw_paths,
+                            expected_raw_post_signatures=staged_raw_signatures,
+                        )
+
+                    try:
+                        report = await apply_path_images(
+                            root,
+                            images,
+                            force=force,
+                            force_paths=forced,
+                            preview=False,
+                            before_write=stage_publish,
+                        )
+                    except RawCheckpointError as error:
+                        publish_issue = PUBLISH_ISSUE_RECOVERY
+                        conflicted.extend(error.paths)
+                        await self._record_worktree_recovery_snapshot(
+                            thread.id, tree
+                        )
+                        break
+                    if report.conflicted or report.skipped:
+                        conflicted.extend(report.conflicted)
+                        conflicted.extend(report.skipped)
+                        break
+                    if opaque:
+                        try:
+                            raw_pre, raw_post = self.checkpoints.raw_publish_images(
+                                checkpoint.turn_id, raw_paths
+                            )
+                        except RawCheckpointError as error:
+                            publish_issue = PUBLISH_ISSUE_FAILURE
+                            conflicted.extend(error.paths)
+                            break
+                        raw_report = await apply_raw_path_images(
+                            root, raw_pre, raw_post, target="post"
+                        )
+                        raw_failures = sorted(
+                            set(raw_report.conflicted) | set(raw_report.skipped)
+                        )
+                        if raw_failures:
+                            # Text writes and raw writes form one checkpoint
+                            # transaction. Raw apply already rolled itself back;
+                            # restore any text paths written before it failed.
+                            text_paths = list(report.images)
+                            current_text_signatures = worktree_path_signatures(
+                                root, text_paths
+                            )
+                            rollback_conflicts: set[str] = set()
+                            rollback_images: list[PathImage] = []
+                            for path, (previous, post) in report.images.items():
+                                expected_post = report.post_signatures.get(path)
+                                if (
+                                    expected_post is None
+                                    or current_text_signatures.get(path)
+                                    != expected_post
+                                ):
+                                    rollback_conflicts.add(path)
+                                    continue
+                                rollback_images.append(
+                                    PathImage(
+                                        path=path,
+                                        base=post,
+                                        theirs=previous,
+                                    )
+                                )
+                            if rollback_images:
+                                rollback_report = await apply_path_images(
+                                    root, rollback_images
+                                )
+                                if (
+                                    rollback_report.conflicted
+                                    or rollback_report.skipped
+                                ):
+                                    # The rollback is itself all-or-nothing.
+                                    rollback_conflicts.update(
+                                        item.path for item in rollback_images
+                                    )
+                            conflicted.extend(sorted(rollback_conflicts))
+                            if raw_report.conflicted:
+                                publish_issue = PUBLISH_ISSUE_RECOVERY
+                                await self._record_worktree_recovery_snapshot(
+                                    thread.id, tree
+                                )
+                            conflicted.extend(raw_failures)
+                            break
+                    self.checkpoints.mark_publish_applied(checkpoint.turn_id)
+                    processed_turn_ids.append(checkpoint.turn_id)
+                if not conflicted:
+                    try:
+                        synced_head = await self._sync_isolate_with_baseline(
+                            thread,
+                            root,
+                            tree,
+                            resolved_labor_paths=sorted(published_paths),
+                            resolved_labor_signatures=resolved_labor_signatures,
+                        )
+                        sync_completed = True
+                    except UnpublishedWorktreeError:
+                        recovery_paths = await self._unknown_worktree_paths(
+                            thread.id, tree
+                        )
+                        await self._record_worktree_recovery_snapshot(
+                            thread.id, tree
+                        )
+                        publish_issue = PUBLISH_ISSUE_RECOVERY
+                        conflicted.extend(recovery_paths)
+                if not conflicted and sync_completed:
+                    for turn_id in processed_turn_ids:
+                        if keep:
+                            self.checkpoints.mark_recovery_resolved(
+                                turn_id,
+                                root,
+                                abandon_paths=sorted(keep),
+                            )
+                        else:
+                            self.checkpoints.mark_publish_synced(turn_id)
+
+        thread = self.store.load_thread(thread.id)
+        if synced_head:
+            thread.worktree_base = synced_head
+        thread.publish_pending = bool(conflicted)
+        thread.publish_request_action = None
+        thread.publish_request_paths = []
+        thread.publish_waiting_on = None
+        if conflicted:
+            if forced and not force:
+                # Scoped authorization is intentionally one-shot. If a new
+                # conflict aborts the checkpoint transaction, show the whole
+                # choice again rather than silently remembering old consent.
+                conflicted.extend(forced)
+            thread.publish_blocked = True
+            thread.publish_issue = publish_issue
+            thread.publish_conflicts = sorted(set(conflicted))
+        else:
+            thread.publish_blocked = False
+            thread.publish_issue = None
+            thread.publish_conflicts = []
+        thread.updated_at = datetime.now(timezone.utc)
+        self.store.save_thread(thread)
+        await self._emit_event(
+            thread.id,
+            None,
+            None,
+            "thread.updated",
+            {
+                "thread": thread.model_dump(mode="json"),
+                "changes": {
+                    "publish_pending": thread.publish_pending,
+                    "publish_request_action": thread.publish_request_action,
+                    "publish_waiting_on": thread.publish_waiting_on,
+                    "publish_blocked": thread.publish_blocked,
+                    "publish_issue": thread.publish_issue,
+                    "publish_conflicts": list(thread.publish_conflicts),
+                },
+            },
+        )
+        return thread
+
+    async def _emit_publish_state(self, thread: ThreadRecord) -> None:
+        await self._emit_event(
+            thread.id,
+            None,
+            None,
+            "thread.updated",
+            {
+                "thread": thread.model_dump(mode="json"),
+                "changes": {
+                    "publish_pending": thread.publish_pending,
+                    "publish_request_action": thread.publish_request_action,
+                    "publish_waiting_on": thread.publish_waiting_on,
+                    "publish_blocked": thread.publish_blocked,
+                    "publish_issue": thread.publish_issue,
+                    "publish_conflicts": list(thread.publish_conflicts),
+                },
+            },
+        )
+
+    async def _mark_publish_failed(self, thread_id: str) -> ThreadRecord:
+        """Expose an unexpected auto-publish failure without losing the draft."""
+        thread = self.store.load_thread(thread_id)
+        thread.publish_pending = True
+        thread.publish_request_action = None
+        thread.publish_request_paths = []
+        thread.publish_waiting_on = None
+        thread.publish_blocked = True
+        thread.publish_issue = PUBLISH_ISSUE_FAILURE
+        thread.updated_at = datetime.now(timezone.utc)
+        self.store.save_thread(thread)
+        await self._emit_publish_state(thread)
+        return thread
+
+    async def _auto_publish_isolated_thread(self, thread: ThreadRecord) -> ThreadRecord:
+        """Quietly sync safe checkpointed work; surface only conflicts/failures."""
+        if (
+            thread.archived
+            or normalize_env_mode(thread.env_mode) != ENV_WORKTREE
+            or thread.publish_blocked
+            or not self._unpublished_checkpoints(thread)
+        ):
+            return thread
+        try:
+            result = await self.request_publish_action(thread.id, action="apply")
+            return result["thread"]
+        except Exception:
+            logger.exception("auto_publish_failed thread=%s", thread.id)
+            return await self._mark_publish_failed(thread.id)
+
+    async def request_publish_action(
+        self,
+        thread_id: str,
+        *,
+        action: str,
+        paths: list[str] | None = None,
+        recovery_token: str | None = None,
+    ) -> dict[str, Any]:
+        """Apply a session draft, or queue it behind another active session."""
+        kind = (action or "").strip().lower()
+        if kind not in {"apply", "use_agent", "keep_project"}:
+            raise ValueError("action must be apply, use_agent or keep_project")
+        normalized_paths = sorted(
+            {
+                _normalize_relative_path(path)
+                for path in (paths or [])
+                if path != ""
+            }
+        )
+        thread = self.store.load_thread(thread_id)
+        self._migrate_legacy_publish_issue(thread)
+        recovery_choice = (
+            thread.publish_issue == PUBLISH_ISSUE_RECOVERY
+            and kind in {"use_agent", "keep_project"}
+        )
+        if recovery_choice and not _recovery_token_matches(
+            thread, recovery_token
+        ):
+            return {
+                "status": "conflict",
+                "thread": thread,
+                "blocking_thread_id": thread.publish_waiting_on,
+            }
+        root = project_root(thread)
+        async with self._active_lock:
+            blocking_thread = self._blocking_active_on_project(
+                root, except_thread=thread.id
+            )
+        if blocking_thread is not None:
+            if recovery_choice:
+                # A snapshot-bound destructive choice is never queued: the
+                # isolate may change before a sibling releases the project.
+                return {
+                    "status": "conflict",
+                    "thread": thread,
+                    "blocking_thread_id": blocking_thread,
+                }
+            thread.publish_pending = True
+            thread.publish_request_action = kind
+            thread.publish_request_paths = normalized_paths
+            thread.publish_waiting_on = blocking_thread
+            thread.updated_at = datetime.now(timezone.utc)
+            self.store.save_thread(thread)
+            await self._emit_publish_state(thread)
+            return {
+                "status": "queued",
+                "thread": thread,
+                "blocking_thread_id": blocking_thread,
+            }
+
+        # Persist the intent before entering the project lock.  If another
+        # turn wins the race, _publish_isolated_thread records the blocker and
+        # the request remains durable for _after_turn_released to retry.
+        if not recovery_choice:
+            thread.publish_pending = True
+            thread.publish_request_action = kind
+            thread.publish_request_paths = normalized_paths
+            thread.publish_waiting_on = None
+            thread.updated_at = datetime.now(timezone.utc)
+            self.store.save_thread(thread)
+
+        retry_failed_inbound_sync = (
+            kind == "apply"
+            and thread.publish_issue == PUBLISH_ISSUE_FAILURE
+            and not self._unpublished_checkpoints(thread)
+        )
+        if kind == "apply":
+            if thread.publish_issue == PUBLISH_ISSUE_RECOVERY:
+                if self._unpublished_checkpoints(thread):
+                    updated = await self._publish_isolated_thread(thread)
+                else:
+                    updated = await self._prepare_isolated_workspace(thread)
+            elif retry_failed_inbound_sync:
+                # This failure came from project -> task synchronization, not
+                # from publishing a checkpoint. Prepare recognizes this
+                # retry-only state and re-runs the journaled inbound sync.
+                updated = await self._prepare_isolated_workspace(thread)
+            else:
+                updated = await self._publish_isolated_thread(thread)
+        else:
+            updated = await self.resolve_publish_conflicts(
+                thread.id,
+                action=kind,
+                paths=normalized_paths or None,
+                recovery_token=recovery_token,
+            )
+
+        updated = self.store.load_thread(updated.id)
+        if updated.publish_waiting_on:
+            status = "queued"
+        elif updated.publish_blocked:
+            status = "conflict"
+        elif updated.publish_pending or self._unpublished_checkpoints(updated):
+            status = "pending"
+        else:
+            status = "applied"
+        await self._emit_publish_state(updated)
+        return {
+            "status": status,
+            "thread": updated,
+            "blocking_thread_id": updated.publish_waiting_on,
+        }
+
+    async def _after_turn_released(self, thread_id: str) -> None:
+        try:
+            thread = self.store.load_thread(thread_id)
+        except FileNotFoundError:
+            return
+        thread = await self._auto_publish_isolated_thread(thread)
+        has_unpublished = bool(self._unpublished_checkpoints(thread))
+        next_pending = bool(thread.publish_blocked) or has_unpublished
+        if thread.publish_pending != next_pending:
+            thread.publish_pending = next_pending
+            if not next_pending:
+                thread.publish_request_action = None
+                thread.publish_request_paths = []
+                thread.publish_waiting_on = None
+            thread.updated_at = datetime.now(timezone.utc)
+            self.store.save_thread(thread)
+            await self._emit_publish_state(thread)
+        try:
+            root = project_root(thread)
+        except Exception:
+            return
+        # A queued automatic publish or user conflict resolution may have been
+        # waiting for this turn. Retry its durable intent now that the project
+        # is free.
+        for other in self.store.list_threads():
+            if (
+                other.id == thread_id
+                or other.archived
+                or not other.publish_request_action
+            ):
+                continue
+            try:
+                if project_root(other) != root:
+                    continue
+            except Exception:
+                continue
+            if normalize_env_mode(other.env_mode) != ENV_WORKTREE:
+                continue
+            try:
+                await self.request_publish_action(
+                    other.id,
+                    action=other.publish_request_action,
+                    paths=list(other.publish_request_paths),
+                )
+            except Exception:
+                logger.debug(
+                    "queued_publish_failed thread=%s", other.id, exc_info=True
+                )
+
+    async def resolve_publish_conflicts(
+        self,
+        thread_id: str,
+        *,
+        action: str,
+        paths: list[str] | None = None,
+        recovery_token: str | None = None,
+    ) -> ThreadRecord:
+        thread = self.store.load_thread(thread_id)
+        kind = (action or "").strip().lower()
+        if kind not in {"use_agent", "keep_project"}:
+            raise ValueError("action must be use_agent or keep_project")
+        self._migrate_legacy_publish_issue(thread)
+        if thread.publish_issue == PUBLISH_ISSUE_RECOVERY:
+            from deepseek_tui.workspace.managed_worktree import (
+                UnpublishedWorktreeError,
+                resolve_unpublished_worktree_labor,
+                worktree_path_signatures,
+            )
+
+            root = project_root(thread)
+            async with (
+                self._hold_thread_operation(thread.id),
+                self._hold_project_operation(root),
+            ):
+                thread = self.store.load_thread(thread.id)
+                self._migrate_legacy_publish_issue(thread)
+                if recovery_token is not None and not _recovery_token_matches(
+                    thread, recovery_token
+                ):
+                    return thread
+                baseline = self._load_worktree_baseline(thread.id)
+                if baseline is None:
+                    if kind == "use_agent":
+                        raise UnpublishedWorktreeError(
+                            "worktree change ownership could not be verified"
+                        )
+                    tree = execution_root(thread)
+                    checkpoints = self._unpublished_checkpoints(thread)
+                    paths = sorted(
+                        {
+                            path
+                            for checkpoint in checkpoints
+                            for path in checkpoint.mutated
+                        }
+                    )
+                    task_signatures = await asyncio.to_thread(
+                        worktree_path_signatures, tree, paths
+                    )
+                    project_signatures = await asyncio.to_thread(
+                        worktree_path_signatures, root, paths
+                    )
+
+                    def differs_or_unreadable(path: str) -> bool:
+                        task = task_signatures.get(path, "invalid")
+                        project = project_signatures.get(path, "invalid")
+                        return (
+                            task != project
+                            or task == "invalid"
+                            or project == "invalid"
+                            or task.endswith(":unreadable")
+                            or project.endswith(":unreadable")
+                        )
+
+                    synced_head = await self._sync_isolate_with_baseline(
+                        thread,
+                        root,
+                        tree,
+                        discard_isolate_labor=True,
+                    )
+                    if synced_head:
+                        thread.worktree_base = synced_head
+                    for checkpoint in checkpoints:
+                        self.checkpoints.mark_recovery_resolved(
+                            checkpoint.turn_id,
+                            root,
+                            abandon_paths=[
+                                path
+                                for path in checkpoint.mutated
+                                if differs_or_unreadable(path)
+                            ],
+                        )
+                    thread.publish_pending = False
+                    thread.publish_blocked = False
+                    thread.publish_issue = None
+                    thread.publish_conflicts = []
+                    thread.publish_request_action = None
+                    thread.publish_request_paths = []
+                    thread.publish_waiting_on = None
+                    thread.updated_at = datetime.now(timezone.utc)
+                    self.store.save_thread(thread)
+                    await self._emit_publish_state(thread)
+                    return thread
+                tree = execution_root(thread)
+                current_signatures = await self._worktree_recovery_signatures(
+                    thread.id, tree, baseline
+                )
+                labor_paths = sorted(current_signatures)
+                shown_paths = sorted(set(thread.publish_conflicts))
+                expected_signatures = self._load_worktree_recovery_snapshot(
+                    thread.id
+                )
+                if not labor_paths:
+                    await self._sync_isolate_with_baseline(thread, root, tree)
+                    for checkpoint in self._unpublished_checkpoints(thread):
+                        self.checkpoints.mark_recovery_resolved(
+                            checkpoint.turn_id,
+                            root,
+                        )
+                    thread.publish_pending = False
+                    thread.publish_blocked = False
+                    thread.publish_issue = None
+                    thread.publish_conflicts = []
+                    thread.publish_request_action = None
+                    thread.publish_request_paths = []
+                    thread.publish_waiting_on = None
+                    thread.updated_at = datetime.now(timezone.utc)
+                    self.store.save_thread(thread)
+                elif (
+                    labor_paths != shown_paths
+                    or expected_signatures is None
+                    or current_signatures != expected_signatures
+                ):
+                    # The user's choice names a concrete snapshot. If the
+                    # isolate changes before the click is applied, refresh the
+                    # decision instead of partially writing stale paths.
+                    thread.publish_pending = True
+                    thread.publish_blocked = True
+                    thread.publish_issue = PUBLISH_ISSUE_RECOVERY
+                    thread.publish_conflicts = labor_paths
+                    await self._record_worktree_recovery_snapshot(
+                        thread.id, tree, baseline
+                    )
+                    thread.publish_request_action = None
+                    thread.publish_request_paths = []
+                    thread.publish_waiting_on = None
+                    thread.updated_at = datetime.now(timezone.utc)
+                    self.store.save_thread(thread)
+                else:
+                    report = await resolve_unpublished_worktree_labor(
+                        root,
+                        tree,
+                        use_worktree=kind == "use_agent",
+                        labor_paths=labor_paths,
+                        baseline=baseline,
+                        expected_signatures=expected_signatures,
+                        incomplete_sync_journal=(
+                            self._load_incomplete_sync_journal(thread.id)
+                        ),
+                    )
+                    unresolved = sorted(
+                        set(report.conflicted) | set(report.skipped)
+                    )
+                    if not unresolved:
+                        await self._record_worktree_baseline(thread.id, tree)
+                        for checkpoint in self._unpublished_checkpoints(thread):
+                            self.checkpoints.mark_recovery_resolved(
+                                checkpoint.turn_id,
+                                root,
+                                abandon_paths=(
+                                    labor_paths if kind == "keep_project" else None
+                                ),
+                            )
+                    thread.publish_pending = bool(unresolved)
+                    thread.publish_request_action = None
+                    thread.publish_request_paths = []
+                    thread.publish_waiting_on = None
+                    thread.publish_blocked = bool(unresolved)
+                    thread.publish_issue = (
+                        PUBLISH_ISSUE_RECOVERY if unresolved else None
+                    )
+                    thread.publish_conflicts = unresolved
+                    thread.updated_at = datetime.now(timezone.utc)
+                    self.store.save_thread(thread)
+            await self._emit_event(
+                thread.id,
+                None,
+                None,
+                "thread.updated",
+                {
+                    "thread": thread.model_dump(mode="json"),
+                    "changes": {
+                        "publish_pending": thread.publish_pending,
+                        "publish_request_action": thread.publish_request_action,
+                        "publish_waiting_on": thread.publish_waiting_on,
+                        "publish_blocked": thread.publish_blocked,
+                        "publish_issue": thread.publish_issue,
+                        "publish_conflicts": list(thread.publish_conflicts),
+                    },
+                },
+            )
+            return thread
+        targets = [
+            _normalize_relative_path(p)
+            for p in (paths or thread.publish_conflicts)
+            if p != ""
+        ]
+        shown_targets = {
+            _normalize_relative_path(path) for path in thread.publish_conflicts
+        }
+        if paths is not None and not set(targets).issubset(shown_targets):
+            raise ValueError("resolution paths must match the displayed conflicts")
+        if kind == "keep_project":
+            thread = await self._publish_isolated_thread(
+                thread, keep_project=targets or None
+            )
+        else:
+            thread = await self._publish_isolated_thread(
+                thread, force_paths=targets or None
+            )
+        return thread
+
+    def _referenced_worktree_paths(self) -> list[str]:
+        paths: list[str] = []
+        for other in self.store.list_threads():
+            for raw in (other.worktree_path, other.associated_worktree_path):
+                if raw:
+                    paths.append(raw)
+        return paths
+
+    def _prune_orphaned_worktrees(self) -> int:
+        from deepseek_tui.workspace.managed_worktree import prune_orphaned_worktrees
+
+        return prune_orphaned_worktrees(self._referenced_worktree_paths())
+
+    async def _reclaim_owned_worktree(self, thread: ThreadRecord) -> str:
+        async with self._hold_thread_operation(thread.id):
+            return await self._reclaim_owned_worktree_claimed(thread)
+
+    async def _reclaim_owned_worktree_claimed(self, thread: ThreadRecord) -> str:
+        from deepseek_tui.workspace.managed_worktree import reclaim_managed_worktree
+
+        path = thread.worktree_path or thread.associated_worktree_path or ""
+        if not path:
+            return "gone"
+        worktree = Path(path).expanduser()
+        worktree_exists = await asyncio.to_thread(worktree.is_dir)
+        if worktree_exists and (
+            thread.publish_blocked or self._unpublished_checkpoints(thread)
+        ):
+            return "kept"
+        try:
+            root = project_root(thread)
+            async with self._hold_project_operation(root):
+                status = await reclaim_managed_worktree(
+                    root, Path(path), owned=bool(thread.worktree_owned)
+                )
+        except Exception:
+            logger.debug(
+                "reclaim_worktree_failed thread=%s path=%s",
+                thread.id,
+                path,
+                exc_info=True,
+            )
+            return "kept"
+        if status in {"removed", "gone"}:
+            self._clear_worktree_state(thread)
+            thread.updated_at = datetime.now(timezone.utc)
+            self.store.save_thread(thread)
+        return status
+
+    async def _discard_owned_worktree_claimed(self, thread: ThreadRecord) -> str:
+        """Remove an owned worktree after explicit user authorization."""
+        from deepseek_tui.workspace.managed_worktree import remove_managed_worktree
+
+        path = thread.worktree_path or thread.associated_worktree_path or ""
+        if not path:
+            return "gone"
+        if not thread.worktree_owned:
+            # Never delete a user-managed checkout. Removing the thread record
+            # merely stops the runtime from tracking it; the checkout survives.
+            return "unowned"
+        worktree = Path(path).expanduser()
+        if not await asyncio.to_thread(worktree.is_dir):
+            self._clear_worktree_state(thread)
+            thread.updated_at = datetime.now(timezone.utc)
+            self.store.save_thread(thread)
+            return "gone"
+        root = project_root(thread)
+        async with self._hold_project_operation(root):
+            await remove_managed_worktree(root, worktree)
+        self._clear_worktree_state(thread)
+        thread.updated_at = datetime.now(timezone.utc)
+        self.store.save_thread(thread)
+        return "removed"
+
+    async def _reload_engine_if_cwd_mismatch(self, thread: ThreadRecord) -> None:
+        try:
+            wanted = execution_root(thread)
+        except WorktreePendingError:
+            return
+        async with self._active_lock:
+            state = self._active.get(thread.id)
+            if state is None:
+                return
+            try:
+                current = Path(state.engine.tool_context.working_directory).resolve()
+            except Exception:
+                current = None
+            if current == wanted:
+                return
+        await self._evict_active_thread(thread.id)
+
+    async def delete_thread(
+        self, thread_id: str, *, discard_unpublished: bool = False
+    ) -> None:
         """Permanently delete a thread and its turns/items/events/checkpoints."""
         from deepseek_tui.server.data_inventory import delete_thread_tree
 
-        # Ensure the thread exists before eviction/cleanup.
-        self.store.load_thread(thread_id)
-        await self._evict_active_thread(thread_id)
-        delete_thread_tree(self.store, self.checkpoints, thread_id)
+        async with self._hold_thread_operation(thread_id):
+            # Ensure the thread exists before eviction/cleanup.
+            thread = self.store.load_thread(thread_id)
+            await self._evict_active_thread(thread_id)
+            status = await self._reclaim_owned_worktree(thread)
+            if status == "kept":
+                if not discard_unpublished:
+                    raise ValueError(
+                        "cannot delete thread while its worktree contains unpublished code"
+                    )
+                thread = self.store.load_thread(thread_id)
+                await self._discard_owned_worktree_claimed(thread)
+            delete_thread_tree(self.store, self.checkpoints, thread_id)
+            self._prune_orphaned_worktrees()
 
     async def purge_archived_threads(self) -> dict[str, int]:
         """Permanently delete every soft-archived thread. Returns delete counts."""
@@ -797,7 +2518,7 @@ class RuntimeThreadManager:
             return await active_engine.context_breakdown_live(thread.model)
 
         messages = reconstruct_messages_from_turns(self.store, thread_id)
-        workspace = _resolved_workspace_path(thread.workspace)
+        workspace = _thread_cwd(thread)
         mode = (thread.mode or "agent").strip() or "agent"
         registry = build_default_registry(self.config, mode=mode)
         try:
@@ -823,6 +2544,16 @@ class RuntimeThreadManager:
         event onto the event timeline.
         """
         thread = self.store.load_thread(thread_id)
+        thread = await self._prepare_isolated_workspace(thread)
+        if (
+            thread.publish_blocked
+            or thread.publish_pending
+            or self._unpublished_checkpoints(thread)
+        ):
+            raise ValueError(
+                "resolve the task's pending code state before starting a new turn"
+            )
+        await self._reload_engine_if_cwd_mismatch(thread)
         await self._ensure_engine_loaded(thread)
         await self._emit_event(
             thread.id,
@@ -909,30 +2640,28 @@ class RuntimeThreadManager:
             self.checkpoints,
             max_checkpoint_age_days=max_age,
         )
-        return report.to_dict()
+        payload = report.to_dict()
+        payload["orphan_worktrees_removed"] = self._prune_orphaned_worktrees()
+        return payload
 
     async def clean_storage_older_than(self, older_than_days: int) -> dict[str, Any]:
-        from deepseek_tui.server.data_inventory import clean_threads_older_than
-
-        # Drop active engines for threads we are about to delete.
-        threads = self.store.list_threads()
-        cutoff_ids: list[str] = []
         from datetime import timedelta
 
+        from deepseek_tui.server.data_inventory import CleanReport
+
+        if older_than_days < 1:
+            raise ValueError("older_than_days must be >= 1")
         cutoff = datetime.now(timezone.utc) - timedelta(days=older_than_days)
-        for thread in threads:
+        report = CleanReport()
+        for thread in list(self.store.list_threads()):
             updated = thread.updated_at
             if updated.tzinfo is None:
                 updated = updated.replace(tzinfo=timezone.utc)
-            if updated < cutoff:
-                cutoff_ids.append(thread.id)
-        for thread_id in cutoff_ids:
-            await self._evict_active_thread(thread_id)
-        report = clean_threads_older_than(
-            self.store,
-            self.checkpoints,
-            older_than_days=older_than_days,
-        )
+            if updated >= cutoff:
+                continue
+            await self.delete_thread(thread.id)
+            report.threads_deleted += 1
+            report.thread_ids.append(thread.id)
         return report.to_dict()
 
     async def clear_conversation_history(self) -> dict[str, Any]:
@@ -942,7 +2671,17 @@ class RuntimeThreadManager:
             active_ids = list(self._active.keys())
         for thread_id in active_ids:
             await self._evict_active_thread(thread_id)
+        kept: list[str] = []
+        for thread in list(self.store.list_threads()):
+            if await self._reclaim_owned_worktree(thread) == "kept":
+                kept.append(thread.id)
+        if kept:
+            raise ValueError(
+                "cannot clear conversation history while threads contain "
+                f"unpublished code: {', '.join(sorted(kept))}"
+            )
         report = clear_conversation_history(self.store, self.checkpoints)
+        self._prune_orphaned_worktrees()
         return report.to_dict()
 
     async def export_data_bundle(self, path: str, *, scope: str = "conversations") -> dict[str, Any]:
@@ -1025,6 +2764,19 @@ class RuntimeThreadManager:
                 "goal": None,
                 "goal_queue": [],
                 "goal_fork_notice": bool(source.goal),
+                "env_mode": ENV_LOCAL,
+                "worktree_path": None,
+                "worktree_base": None,
+                "worktree_owned": False,
+                "associated_worktree_path": None,
+                "worktree_branch": None,
+                "publish_pending": False,
+                "publish_request_action": None,
+                "publish_request_paths": [],
+                "publish_waiting_on": None,
+                "publish_blocked": False,
+                "publish_issue": None,
+                "publish_conflicts": [],
             }
         )
         self.store.save_thread(forked)
@@ -1154,6 +2906,46 @@ class RuntimeThreadManager:
         candidates.sort(key=lambda cp: cp.created_at, reverse=True)
         return candidates
 
+    async def _resync_isolate_after_project_restore(
+        self, thread: ThreadRecord
+    ) -> bool:
+        """Refresh a clean isolate after published checkpoints restore project."""
+        if normalize_env_mode(thread.env_mode) != ENV_WORKTREE:
+            return True
+        from deepseek_tui.workspace.managed_worktree import UnpublishedWorktreeError
+
+        root = project_root(thread)
+        try:
+            tree = execution_root(thread)
+            synced_head = await self._sync_isolate_with_baseline(
+                thread, root, tree
+            )
+        except (UnpublishedWorktreeError, WorktreePendingError):
+            thread.publish_pending = True
+            thread.publish_blocked = True
+            thread.publish_issue = PUBLISH_ISSUE_RECOVERY
+            try:
+                thread.publish_conflicts = await self._unknown_worktree_paths(
+                    thread.id, execution_root(thread)
+                )
+                await self._record_worktree_recovery_snapshot(
+                    thread.id, execution_root(thread)
+                )
+            except WorktreePendingError:
+                thread.publish_issue = PUBLISH_ISSUE_MISSING
+        else:
+            if synced_head:
+                thread.worktree_base = synced_head
+            if thread.publish_issue == PUBLISH_ISSUE_RECOVERY:
+                thread.publish_issue = None
+                thread.publish_conflicts = []
+            if not thread.publish_conflicts and not self._unpublished_checkpoints(thread):
+                thread.publish_pending = False
+                thread.publish_blocked = False
+        thread.updated_at = datetime.now(timezone.utc)
+        self.store.save_thread(thread)
+        return not thread.publish_blocked
+
     async def _paths_claimed_by_other_turns(
         self, turn_id: str, workspace: Path
     ) -> set[str]:
@@ -1198,6 +2990,38 @@ class RuntimeThreadManager:
         restore_files: bool = False,
         force_conflicts: bool = False,
     ) -> ThreadRecord:
+        thread, _result = await self._rewind_thread_with_result(
+            thread_id,
+            before_item_id=before_item_id,
+            restore_files=restore_files,
+            force_conflicts=force_conflicts,
+        )
+        return thread
+
+    async def rewind_thread_with_result(
+        self,
+        thread_id: str,
+        *,
+        before_item_id: str,
+        restore_files: bool = False,
+        force_conflicts: bool = False,
+    ) -> tuple[ThreadRecord, dict[str, Any]]:
+        """Rewind and return the actual file outcome for interactive clients."""
+        return await self._rewind_thread_with_result(
+            thread_id,
+            before_item_id=before_item_id,
+            restore_files=restore_files,
+            force_conflicts=force_conflicts,
+        )
+
+    async def _rewind_thread_with_result(
+        self,
+        thread_id: str,
+        *,
+        before_item_id: str,
+        restore_files: bool,
+        force_conflicts: bool,
+    ) -> tuple[ThreadRecord, dict[str, Any]]:
         """Truncate a thread in place at ``before_item_id``.
 
         Deletes the item itself and everything after it (later items in the
@@ -1231,7 +3055,13 @@ class RuntimeThreadManager:
         # no turn can start midway through the truncation. _emit_event stays
         # outside the lock (it only takes store/event-bus locks, and there is
         # no reason to hold _active_lock across the broadcast).
-        async with self._active_lock:
+        async with (
+            self._hold_thread_operation(thread_id),
+            self._hold_project_operation(
+                project_root(thread), enabled=restore_files
+            ),
+            self._active_lock,
+        ):
             state = self._active.get(thread_id)
             if state is not None and state.active_turn is not None:
                 raise ValueError("cannot rewind thread while a turn is active")
@@ -1242,27 +3072,35 @@ class RuntimeThreadManager:
             merged_files: list[str] = []
             conflicted_files: list[str] = []
             skipped_files: list[str] = []
+            missing_roots: list[str] = []
             if restore_files:
                 candidates = self._checkpoint_candidates(
                     thread_id, turns, cutoff_turn_index
                 )
                 report = await self.checkpoints.restore(
                     [cp.turn_id for cp in candidates],
-                    _resolved_workspace_path(thread.workspace),
+                    execution_root(thread),
                     force=force_conflicts,
                 )
                 restored_files = report.restored
                 merged_files = report.merged
                 conflicted_files = report.conflicted
                 skipped_files = report.skipped
-                conflicted = set(report.conflicted)
+                missing_roots = report.missing_roots
+                unresolved = set(report.conflicted) | set(report.skipped)
+                missing_root_set = set(report.missing_roots)
+                consumable: list[TurnCheckpoint] = []
                 for cp in candidates:
-                    # Keep checkpoints holding conflicted paths (as orphans)
-                    # so a later restore-code / forced restore can still
-                    # roll those files back.
-                    if conflicted and any(p in conflicted for p in cp.mutated):
+                    # Keep any checkpoint the restore could not fully consume.
+                    if (
+                        any(p in unresolved for p in cp.mutated)
+                        or cp.execution_root in missing_root_set
+                    ):
                         continue
-                    self.checkpoints.delete(cp.turn_id)
+                    consumable.append(cp)
+                if await self._resync_isolate_after_project_restore(thread):
+                    for cp in consumable:
+                        self.checkpoints.delete(cp.turn_id)
 
             cutoff_turn = turns[cutoff_turn_index]
             kept_item_ids: list[str] = []
@@ -1312,7 +3150,14 @@ class RuntimeThreadManager:
                 "skipped_files": skipped_files,
             },
         )
-        return thread
+        return thread, {
+            "restore_files": restore_files,
+            "restored_files": restored_files,
+            "merged_files": merged_files,
+            "conflicted_files": conflicted_files,
+            "skipped_files": skipped_files,
+            "missing_roots": missing_roots,
+        }
 
     async def restore_code(
         self, thread_id: str, *, before_item_id: str, force_conflicts: bool = False
@@ -1336,7 +3181,11 @@ class RuntimeThreadManager:
         # Same critical section as rewind_thread: start_turn reserves its
         # turn slot under this lock, so the restore cannot interleave with a
         # new turn's file writes.
-        async with self._active_lock:
+        async with (
+            self._hold_thread_operation(thread_id),
+            self._hold_project_operation(project_root(thread)),
+            self._active_lock,
+        ):
             state = self._active.get(thread_id)
             if state is not None and state.active_turn is not None:
                 raise ValueError("cannot restore code while a turn is active")
@@ -1345,14 +3194,22 @@ class RuntimeThreadManager:
             candidates = self._checkpoint_candidates(thread_id, turns, cutoff_turn_index)
             report = await self.checkpoints.restore(
                 [cp.turn_id for cp in candidates],
-                _resolved_workspace_path(thread.workspace),
+                execution_root(thread),
                 force=force_conflicts,
             )
-            conflicted = set(report.conflicted)
+            unresolved = set(report.conflicted) | set(report.skipped)
+            missing_roots = set(report.missing_roots)
+            consumable: list[TurnCheckpoint] = []
             for cp in candidates:
-                if conflicted and any(p in conflicted for p in cp.mutated):
+                if (
+                    any(p in unresolved for p in cp.mutated)
+                    or cp.execution_root in missing_roots
+                ):
                     continue
-                self.checkpoints.delete(cp.turn_id)
+                consumable.append(cp)
+            if await self._resync_isolate_after_project_restore(thread):
+                for cp in consumable:
+                    self.checkpoints.delete(cp.turn_id)
 
         candidate_ids = {cp.turn_id for cp in candidates}
         return {
@@ -1366,6 +3223,7 @@ class RuntimeThreadManager:
                 t.id for t in turns[cutoff_turn_index:] if t.id not in candidate_ids
             ],
             "turns": len(turns) - cutoff_turn_index,
+            "missing_roots": report.missing_roots,
         }
 
     async def rewind_preview(
@@ -1387,12 +3245,13 @@ class RuntimeThreadManager:
         turns, cutoff_turn_index = self._turns_from_item(thread_id, before_item_id)
         ranged = turns[cutoff_turn_index:]
         candidates = self._checkpoint_candidates(thread_id, turns, cutoff_turn_index)
-        statuses = await self.checkpoints.preview(
+        statuses, report = await self.checkpoints.preview_report(
             [cp.turn_id for cp in candidates],
-            _resolved_workspace_path(thread.workspace),
+            execution_root(thread),
         )
         is_git = any(cp.is_git for cp in candidates)
         candidate_ids = {cp.turn_id for cp in candidates}
+        missing_roots = list(report.missing_roots)
         return {
             "files": sorted(statuses),
             "statuses": {p: statuses[p] for p in sorted(statuses)},
@@ -1403,16 +3262,43 @@ class RuntimeThreadManager:
             "is_git": is_git,
             "turns": len(ranged),
             "no_checkpoint": sum(1 for t in ranged if t.id not in candidate_ids),
+            "missing_roots": missing_roots,
         }
 
     # --- turn lifecycle ------------------------------------------------------
 
     async def start_turn(self, thread_id: str, req: StartTurnRequest) -> TurnRecord:
-        prompt = req.prompt.strip()
-        if not prompt:
+        if not req.prompt.strip():
             raise ValueError("prompt is required")
+        lease = await self._claim_new_thread_lease(thread_id)
+        try:
+            return await self._start_turn_claimed(thread_id, req)
+        except BaseException:
+            # The lease was new, so any active slot carrying this thread was
+            # reserved by this failed start attempt.
+            async with self._active_lock:
+                state = self._active.get(thread_id)
+                if state is not None:
+                    state.active_turn = None
+            await self._release_thread_lease(thread_id, expected=lease)
+            raise
+
+    async def _start_turn_claimed(
+        self, thread_id: str, req: StartTurnRequest
+    ) -> TurnRecord:
+        prompt = req.prompt.strip()
 
         thread = self.store.load_thread(thread_id)
+        thread = await self._prepare_isolated_workspace(thread)
+        if (
+            thread.publish_blocked
+            or thread.publish_pending
+            or self._unpublished_checkpoints(thread)
+        ):
+            raise ValueError(
+                "resolve the task's pending code state before starting a new turn"
+            )
+        await self._reload_engine_if_cwd_mismatch(thread)
         provider = (req.provider or thread.provider or self.config.provider).strip()
         model = (req.model or thread.model).strip()
         effective_mode = (req.mode or thread.mode or "agent").strip() or "agent"
@@ -1529,6 +3415,15 @@ class RuntimeThreadManager:
         thread.latest_turn_id = turn_id
         thread.provider = provider
         thread.model = model
+        if not req.hidden and should_derive_thread_title(
+            thread.title,
+            thread_id=thread.id,
+        ):
+            # Existing placeholder threads keep the first query as their
+            # identity even when this is a later turn. New threads use prompt.
+            thread.title = first_query_title(self.store, thread.id) or (
+                derive_thread_title_from_query(prompt)
+            )
         if effective_mode == "plan":
             thread.approved_plan = False
         thread.updated_at = now
@@ -1543,22 +3438,44 @@ class RuntimeThreadManager:
                 {"item": user_item.model_dump(mode="json")},
             )
 
+        checkpoint_ready = asyncio.get_running_loop().create_future()
         monitor_task = asyncio.create_task(
-            self._monitor_turn_safe(thread_id, turn_id, handle, effective_mode),
+            self._monitor_turn_safe(
+                thread_id, turn_id, handle, effective_mode, checkpoint_ready
+            ),
             name=f"monitor-{turn_id}",
         )
+        # The monitor owns the turn from this point through checkpoint
+        # finalization and publication. Transfer re-entrant lease ownership so
+        # no second process can enter between those phases.
+        async with self._thread_lease_guard:
+            if thread_id in self._thread_leases:
+                self._thread_lease_owners[thread_id] = monitor_task
 
         from deepseek_tui.engine.handle import SendMessageOp
 
-        await handle.send_op(
-            SendMessageOp(
-                content=prompt,
-                model=model,
-                hidden=req.hidden,
-                internal_kind=req.internal_kind,
-                reasoning_effort=req.reasoning_effort,
+        # The engine must not see the prompt until baseline capture,
+        # checkpoint creation, and mutation callbacks are installed.
+        try:
+            await checkpoint_ready
+            await handle.send_op(
+                SendMessageOp(
+                    content=prompt,
+                    model=model,
+                    hidden=req.hidden,
+                    internal_kind=req.internal_kind,
+                    reasoning_effort=req.reasoning_effort,
+                )
             )
-        )
+        except BaseException as exc:
+            if not monitor_task.done():
+                monitor_task.cancel()
+            try:
+                await monitor_task
+            except asyncio.CancelledError:
+                pass
+            await self._fail_turn_before_dispatch(thread_id, turn_id, exc)
+            raise
         # Monitor runs concurrently; ensure task is referenced until turn ends.
         del monitor_task
 
@@ -1902,6 +3819,20 @@ class RuntimeThreadManager:
         return turn
 
     async def compact_thread(self, thread_id: str, req: CompactThreadRequest) -> TurnRecord:
+        lease = await self._claim_new_thread_lease(thread_id)
+        try:
+            return await self._compact_thread_claimed(thread_id, req)
+        except BaseException:
+            async with self._active_lock:
+                state = self._active.get(thread_id)
+                if state is not None:
+                    state.active_turn = None
+            await self._release_thread_lease(thread_id, expected=lease)
+            raise
+
+    async def _compact_thread_claimed(
+        self, thread_id: str, req: CompactThreadRequest
+    ) -> TurnRecord:
         thread = self.store.load_thread(thread_id)
         await self._ensure_engine_loaded(thread)
 
@@ -2003,6 +3934,7 @@ class RuntimeThreadManager:
         turn.ended_at = ended_at
         if turn.started_at:
             turn.duration_ms = duration_ms(turn.started_at, ended_at)
+        latency_payload = self._finalize_turn_timing(turn)
         ledger_totals = engine.turn_usage_ledger.totals()
         if engine.turn_usage_ledger.items:
             turn.usage = ledger_totals
@@ -2035,13 +3967,20 @@ class RuntimeThreadManager:
         )
         await self._emit_event(
             thread_id, turn_id, None, "turn.completed",
-            {"turn": turn.model_dump(mode="json")},
+            {
+                "turn": turn.model_dump(mode="json"),
+                **({"latency_trace": latency_payload} if latency_payload else {}),
+            },
         )
         async with self._active_lock:
             state = self._active.get(thread_id)
             if state is not None and state.active_turn is not None:
                 if state.active_turn.turn_id == turn_id:
                     state.active_turn = None
+        try:
+            await self._after_turn_released(thread_id)
+        finally:
+            await self._release_thread_lease(thread_id)
         return turn
 
     async def warmup_thread(self, thread_id: str) -> dict[str, Any]:
@@ -2054,6 +3993,8 @@ class RuntimeThreadManager:
         """
         started = now_ms()
         thread = self.store.load_thread(thread_id)
+        thread = await self._prepare_isolated_workspace(thread)
+        await self._reload_engine_if_cwd_mismatch(thread)
         try:
             await self._ensure_engine_loaded(thread)
         except ValueError as exc:
@@ -2131,7 +4072,7 @@ class RuntimeThreadManager:
         from deepseek_tui.tools.approval import exec_policy_for_config
 
         handle = EngineHandle()
-        workspace = _resolved_workspace_path(thread.workspace)
+        workspace = execution_root(thread)
         approval_handler = self._build_approval_handler(thread.id)
         shared_runtime = self._shared_tool_runtime
         shared_mcp = None
@@ -2446,21 +4387,70 @@ class RuntimeThreadManager:
         turn_id: str,
         handle: EngineHandle,
         mode: str,
+        checkpoint_ready: asyncio.Future[None] | None = None,
     ) -> None:
         try:
-            await self._monitor_turn(thread_id, turn_id, handle, mode)
+            await self._monitor_turn(
+                thread_id, turn_id, handle, mode, checkpoint_ready
+            )
         except Exception as exc:
+            startup_failed = bool(
+                checkpoint_ready is not None and not checkpoint_ready.done()
+            )
+            if startup_failed:
+                checkpoint_ready.set_exception(exc)
             logger.exception("Turn monitor failed for %s: %s", turn_id, exc)
-            try:
-                await self._finalize_turn_after_monitor_crash(
-                    thread_id, turn_id, handle
-                )
-            except Exception:
-                logger.exception(
-                    "Turn monitor recovery failed for %s", turn_id
-                )
+            if not startup_failed:
+                try:
+                    await self._finalize_turn_after_monitor_crash(
+                        thread_id, turn_id, handle
+                    )
+                except Exception:
+                    logger.exception(
+                        "Turn monitor recovery failed for %s", turn_id
+                    )
         finally:
+            if checkpoint_ready is not None and not checkpoint_ready.done():
+                checkpoint_ready.set_exception(
+                    RuntimeError("Turn monitor exited before checkpoint initialization")
+                )
             pop_turn_latency(turn_id)
+
+    async def _fail_turn_before_dispatch(
+        self,
+        thread_id: str,
+        turn_id: str,
+        exc: BaseException,
+    ) -> None:
+        """Persist a pre-dispatch failure without waiting for engine events."""
+        ended_at = datetime.now(timezone.utc)
+        turn = self.store.load_turn(turn_id)
+        if turn.status not in (
+            RuntimeTurnStatus.QUEUED,
+            RuntimeTurnStatus.IN_PROGRESS,
+        ):
+            return
+        turn.status = RuntimeTurnStatus.FAILED
+        turn.ended_at = ended_at
+        if turn.started_at:
+            turn.duration_ms = duration_ms(turn.started_at, ended_at)
+        latency_payload = self._finalize_turn_timing(turn)
+        turn.error = f"Turn initialization failed: {exc}"
+        self.store.save_turn(turn)
+        thread = self.store.load_thread(thread_id)
+        thread.updated_at = ended_at
+        self.store.save_thread(thread)
+        await self._emit_event(
+            thread_id,
+            turn_id,
+            None,
+            "turn.completed",
+            {
+                "turn": turn.model_dump(mode="json"),
+                **({"latency_trace": latency_payload} if latency_payload else {}),
+            },
+            force_checkpoint=True,
+        )
 
     async def _finalize_turn_after_monitor_crash(
         self,
@@ -2514,6 +4504,7 @@ class RuntimeThreadManager:
         turn.ended_at = ended_at
         if turn.started_at:
             turn.duration_ms = duration_ms(turn.started_at, ended_at)
+        latency_payload = self._finalize_turn_timing(turn)
         turn.usage = turn_usage
         turn.error = turn_error
         if turn_usage is not None:
@@ -2539,11 +4530,7 @@ class RuntimeThreadManager:
             "turn.completed",
             {
                 "turn": turn.model_dump(mode="json"),
-                **(
-                    {"latency_trace": latency_payload}
-                    if (latency_payload := self._finalize_turn_latency(turn_id))
-                    else {}
-                ),
+                **({"latency_trace": latency_payload} if latency_payload else {}),
             },
             force_checkpoint=True,
         )
@@ -2563,6 +4550,10 @@ class RuntimeThreadManager:
             ):
                 state.active_turn = None
             self._touch_lru(thread_id)
+        try:
+            await self._after_turn_released(thread_id)
+        finally:
+            await self._release_thread_lease(thread_id)
 
     async def _emit_item_delta(
         self,
@@ -2747,6 +4738,7 @@ class RuntimeThreadManager:
         turn_id: str,
         handle: EngineHandle,
         mode: str,
+        checkpoint_ready: asyncio.Future[None] | None = None,
     ) -> None:
         """Consume engine events and persist turn items + runtime events."""
         from deepseek_tui.workspace.git_reconcile import (
@@ -2754,6 +4746,7 @@ class RuntimeThreadManager:
             reconcile_to_ledger,
         )
         from deepseek_tui.workspace.mutation_ledger import (
+            MutationSource,
             TurnMutationLedger,
             mutation_from_metadata,
         )
@@ -2780,29 +4773,52 @@ class RuntimeThreadManager:
         pending_turn_diffs: list[dict[str, Any]] = []
         mutation_ledger = TurnMutationLedger(turn_id, throttle_ms=150)
         mutation_lock = threading.Lock()
+        final_turn_diff: dict[str, Any] | None = None
 
         def _mutation_sink(mut: dict[str, Any]) -> None:
             # Subagent tasks may call this concurrently; guard ledger + queue.
             agent_id = mut.get("agent_id") if isinstance(mut.get("agent_id"), str) else None
+            before = mut.get("_before_content")
+            after = mut.get("_after_content")
+            has_contents = (
+                "_before_content" in mut
+                and "_after_content" in mut
+                and (before is None or isinstance(before, str))
+                and (after is None or isinstance(after, str))
+            )
+            public_mut = {
+                key: value for key, value in mut.items() if not key.startswith("_")
+            }
+            source_raw = public_mut.get("source")
+            source_fallback: MutationSource = (
+                source_raw
+                if source_raw
+                in (
+                    "edit_file",
+                    "write_file",
+                    "shell_allowlist",
+                    "shell_detected",
+                    "git_reconcile",
+                )
+                else "write_file"
+            )
             with mutation_lock:
                 for m in mutation_from_metadata(
-                    {"mutation": mut, "path": mut.get("path")},
+                    {"mutation": public_mut, "path": public_mut.get("path")},
                     turn_id=turn_id,
                     agent_id=agent_id,
-                    source_fallback=(
-                        mut.get("source")
-                        if mut.get("source")
-                        in (
-                            "edit_file",
-                            "write_file",
-                            "shell_allowlist",
-                            "shell_detected",
-                            "git_reconcile",
-                        )
-                        else "write_file"
-                    ),
+                    source_fallback=source_fallback,
                 ):
-                    snap = mutation_ledger.commit(m, emit=False)
+                    snap = (
+                        mutation_ledger.commit(
+                            m,
+                            emit=False,
+                            before_content=before,
+                            after_content=after,
+                        )
+                        if has_contents
+                        else mutation_ledger.commit(m, emit=False)
+                    )
                     pending_turn_diffs.append(snap.to_dict())
 
         async def flush_turn_diffs() -> None:
@@ -2834,8 +4850,13 @@ class RuntimeThreadManager:
                     for entry in listed:
                         if isinstance(entry, dict) and isinstance(entry.get("path"), str):
                             skip.add(entry["path"])
-            for mut in await detect_shell_mutations(snapshot, skip_paths=skip):
-                self.checkpoints.record_out_of_band(turn_id, mut["path"])
+            for mut in await detect_shell_mutations(
+                snapshot, skip_paths=skip, include_contents=True
+            ):
+                public_mut = {
+                    key: value for key, value in mut.items() if not key.startswith("_")
+                }
+                self.checkpoints.record_out_of_band(turn_id, public_mut["path"])
                 now = datetime.now(timezone.utc)
                 sub_item_id = f"item_{uuid.uuid4().hex[:8]}"
                 sub_item = TurnItemRecord(
@@ -2844,13 +4865,13 @@ class RuntimeThreadManager:
                     kind=TurnItemKind.FILE_CHANGE,
                     status=TurnItemLifecycleStatus.COMPLETED,
                     summary=summarize_text(
-                        f"{tool_name}: {mut['op']} {mut['path']}", SUMMARY_LIMIT
+                        f"{tool_name}: {public_mut['op']} {public_mut['path']}", SUMMARY_LIMIT
                     ),
-                    detail=mut["unified_diff"],
+                    detail=public_mut["unified_diff"],
                     metadata={
                         "tool_name": tool_name,
-                        "path": mut["path"],
-                        "mutation": mut,
+                        "path": public_mut["path"],
+                        "mutation": public_mut,
                     },
                     started_at=now,
                     ended_at=now,
@@ -2862,59 +4883,61 @@ class RuntimeThreadManager:
                     thread_id, turn_id, sub_item_id, "item.started",
                     {"item": sub_item.model_dump(mode="json"), "tool": tool_ref},
                 )
+                _mutation_sink(mut)
+                await flush_turn_diffs()
                 await self._emit_event(
                     thread_id, turn_id, sub_item_id, "item.completed",
                     {"item": sub_item.model_dump(mode="json")},
                 )
-                # Committing to the ledger also covers the path for turn-end
-                # reconcile_to_ledger (covered_paths), so the same disk delta
-                # is not counted a second time there.
-                _mutation_sink(mut)
 
         async with self._active_lock:
             _state = self._active.get(thread_id)
             _engine = _state.engine if _state is not None else None
+        if _engine is None:
+            raise RuntimeError("Thread engine unavailable for checkpoint setup")
         git_baseline = None
         turn_workspace: Path | None = None
-        if _engine is not None:
-            try:
-                turn_workspace = Path(
-                    _engine.tool_context.working_directory
-                ).expanduser().resolve()
-            except Exception:
-                turn_workspace = None
-            _engine.tool_context.on_file_mutation = _mutation_sink
-            mgr = _engine.tool_context.subagent_manager
-            if mgr is not None:
-                mgr.on_file_mutation = _mutation_sink
-            try:
-                git_baseline = await capture_baseline(
-                    _engine.tool_context.working_directory
-                )
-            except Exception:
-                logger.debug("git_baseline_capture_failed", exc_info=True)
-            try:
-                turn_snapshot = await capture_shell_snapshot(
-                    _engine.tool_context.working_directory
-                )
-            except Exception:
-                logger.debug("turn_snapshot_capture_failed", exc_info=True)
-                turn_snapshot = None
-            try:
-                self.checkpoints.begin_turn(
-                    turn_id,
-                    turn_snapshot,
-                    head=git_baseline.head if git_baseline is not None else None,
-                    is_git=bool(git_baseline is not None and git_baseline.is_git),
-                    thread_id=thread_id,
-                )
-            except Exception:
-                logger.debug("turn_checkpoint_begin_failed", exc_info=True)
-            _engine.tool_context.pre_write_capture = (
-                lambda path, old: self.checkpoints.record_pre_write(
-                    turn_id, path, old
-                )
+        try:
+            turn_workspace = Path(
+                _engine.tool_context.working_directory
+            ).expanduser().resolve()
+        except Exception:
+            turn_workspace = None
+        _engine.tool_context.on_file_mutation = _mutation_sink
+        mgr = _engine.tool_context.subagent_manager
+        if mgr is not None:
+            mgr.on_file_mutation = _mutation_sink
+        try:
+            git_baseline = await capture_baseline(
+                _engine.tool_context.working_directory
             )
+        except Exception:
+            logger.debug("git_baseline_capture_failed", exc_info=True)
+        try:
+            turn_snapshot = await capture_shell_snapshot(
+                _engine.tool_context.working_directory
+            )
+        except Exception:
+            logger.debug("turn_snapshot_capture_failed", exc_info=True)
+            turn_snapshot = None
+        try:
+            self.checkpoints.begin_turn(
+                turn_id,
+                turn_snapshot,
+                head=git_baseline.head if git_baseline is not None else None,
+                is_git=bool(git_baseline is not None and git_baseline.is_git),
+                thread_id=thread_id,
+                execution_root=str(turn_workspace) if turn_workspace is not None else "",
+            )
+        except Exception as exc:
+            raise RuntimeError("Turn checkpoint initialization failed") from exc
+        _engine.tool_context.pre_write_capture = (
+            lambda path, old: self.checkpoints.record_pre_write(
+                turn_id, path, old
+            )
+        )
+        if checkpoint_ready is not None and not checkpoint_ready.done():
+            checkpoint_ready.set_result(None)
         turn_status = RuntimeTurnStatus.COMPLETED
         turn_error: str | None = None
         turn_usage: dict[str, Any] | None = None
@@ -3579,6 +5602,10 @@ class RuntimeThreadManager:
                         keep = narration_cfg.include_recent_tool_results * 3
                         if len(recent_tool_summaries) > keep:
                             del recent_tool_summaries[:-keep]
+                    # File tools report their mutation while executing. Publish
+                    # that snapshot before item.completed so the live strip can
+                    # switch sources without disappearing for one event frame.
+                    await flush_turn_diffs()
                     event_name = (
                         "item.completed" if item.status == TurnItemLifecycleStatus.COMPLETED
                         else "item.failed"
@@ -3604,9 +5631,6 @@ class RuntimeThreadManager:
                             )
                         except Exception:
                             logger.debug("shell_watch_detect_failed", exc_info=True)
-                    # Main-agent write tools also report via on_file_mutation;
-                    # flush any turn.diff.updated snapshots queued by the sink.
-                    await flush_turn_diffs()
 
             elif isinstance(event, ApprovalRequiredEvent):
                 from deepseek_tui.tools.approval import (
@@ -4013,8 +6037,9 @@ class RuntimeThreadManager:
                             turn_id, fm.path, uncertain=True
                         )
                 final_snap = mutation_ledger.mark_complete(emit=False)
+                final_turn_diff = final_snap.to_dict()
                 if final_snap.totals.get("files", 0) > 0 or mutation_ledger.revision > 0:
-                    pending_turn_diffs.append(final_snap.to_dict())
+                    pending_turn_diffs.append(final_turn_diff)
                 await flush_turn_diffs()
             except Exception:
                 logger.debug(
@@ -4124,6 +6149,8 @@ class RuntimeThreadManager:
             turn.duration_ms = duration_ms(turn.started_at, ended_at)
         turn.usage = turn_usage
         turn.error = turn_error
+        turn.diff_snapshot = final_turn_diff
+        latency_payload = self._finalize_turn_timing(turn)
         if turn_usage is not None:
             thread_for_usage = self.store.load_thread(thread_id)
             self._record_turn_model_usage(
@@ -4145,11 +6172,7 @@ class RuntimeThreadManager:
             thread_id, turn_id, None, "turn.completed",
             {
                 "turn": turn.model_dump(mode="json"),
-                **(
-                    {"latency_trace": latency_payload}
-                    if (latency_payload := self._finalize_turn_latency(turn_id))
-                    else {}
-                ),
+                **({"latency_trace": latency_payload} if latency_payload else {}),
             },
             force_checkpoint=True,
         )
@@ -4172,6 +6195,10 @@ class RuntimeThreadManager:
             ):
                 state.active_turn = None
             self._touch_lru(thread_id)
+        try:
+            await self._after_turn_released(thread_id)
+        finally:
+            await self._release_thread_lease(thread_id)
         await self._maybe_continue_goal(thread_id)
 
     # --- helpers -------------------------------------------------------------
@@ -4456,6 +6483,17 @@ class RuntimeThreadManager:
         trace.log_summary()
         return trace.to_payload()
 
+    def _finalize_turn_timing(self, turn: TurnRecord) -> dict[str, Any] | None:
+        """Freeze the user-visible total time on the durable turn record."""
+        payload = self._finalize_turn_latency(turn.id)
+        segments = payload.get("segments_ms") if payload else None
+        end_to_end_ms = segments.get("end_to_end_ms") if isinstance(segments, dict) else None
+        if isinstance(end_to_end_ms, (int, float)) and not isinstance(end_to_end_ms, bool):
+            turn.end_to_end_ms = max(0, int(end_to_end_ms))
+        elif turn.duration_ms is not None:
+            turn.end_to_end_ms = max(0, turn.duration_ms)
+        return payload
+
     def _schedule_mcp_warmup(self) -> None:
         """Fire-and-forget background MCP tool discovery so first turn is fast."""
         if self._shared_tool_runtime is None:
@@ -4484,42 +6522,75 @@ class RuntimeThreadManager:
             logger.debug("[mcp-warmup] background discovery failed (non-fatal)")
 
     def _recover_interrupted_state(self) -> None:
-        """On startup, mark any Queued/InProgress turns as Interrupted."""
+        """Mark abandoned turns interrupted without stealing a live runtime."""
+        from deepseek_tui.workspace.project_lease import ThreadLease
+
         now = datetime.now(timezone.utc)
         for thread in self.store.list_threads():
-            thread_changed = False
-            for turn in self.store.list_turns_for_thread(thread.id):
-                if turn.status not in (RuntimeTurnStatus.QUEUED, RuntimeTurnStatus.IN_PROGRESS):
-                    continue
-                turn.status = RuntimeTurnStatus.INTERRUPTED
-                turn.error = RUNTIME_RESTART_REASON
-                turn.ended_at = now
-                if turn.started_at:
-                    turn.duration_ms = duration_ms(turn.started_at, now)
-                self.store.save_turn(turn)
-
-                for item_id in turn.item_ids:
-                    try:
-                        item = self.store.load_item(item_id)
-                    except FileNotFoundError:
-                        continue
-                    except Exception:
-                        logger.warning(
-                            "Skipping unreadable item %s during interrupted-state recovery",
-                            item_id,
-                            exc_info=True,
+            lease = ThreadLease(thread.id)
+            if not lease.acquire_blocking(nonblocking=True):
+                continue
+            try:
+                thread_changed = False
+                waiting_on = (thread.publish_waiting_on or "").strip()
+                if waiting_on:
+                    # A queued publish normally gets retried by the blocking
+                    # turn's closeout. After that runtime exits there is no
+                    # closeout left to wake it, so make the durable request
+                    # actionable again once the blocker's process lease is
+                    # demonstrably gone. Preserve the requested action/paths.
+                    stale_waiter = not thread.publish_request_action
+                    blocker_lease = None
+                    if not stale_waiter and waiting_on == thread.id:
+                        stale_waiter = True
+                    elif not stale_waiter:
+                        blocker_lease = ThreadLease(waiting_on)
+                        stale_waiter = blocker_lease.acquire_blocking(
+                            nonblocking=True
                         )
-                        continue
-                    if item.status in (
-                        TurnItemLifecycleStatus.QUEUED,
-                        TurnItemLifecycleStatus.IN_PROGRESS,
+                    if blocker_lease is not None and stale_waiter:
+                        blocker_lease.release()
+                    if stale_waiter:
+                        thread.publish_waiting_on = None
+                        thread_changed = True
+                for turn in self.store.list_turns_for_thread(thread.id):
+                    if turn.status not in (
+                        RuntimeTurnStatus.QUEUED,
+                        RuntimeTurnStatus.IN_PROGRESS,
                     ):
-                        item.status = TurnItemLifecycleStatus.INTERRUPTED
-                        item.ended_at = now
-                        self.store.save_item(item)
+                        continue
+                    turn.status = RuntimeTurnStatus.INTERRUPTED
+                    turn.error = RUNTIME_RESTART_REASON
+                    turn.ended_at = now
+                    if turn.started_at:
+                        turn.duration_ms = duration_ms(turn.started_at, now)
+                    turn.end_to_end_ms = turn.duration_ms
+                    self.store.save_turn(turn)
 
-                thread_changed = True
+                    for item_id in turn.item_ids:
+                        try:
+                            item = self.store.load_item(item_id)
+                        except FileNotFoundError:
+                            continue
+                        except Exception:
+                            logger.warning(
+                                "Skipping unreadable item %s during interrupted-state recovery",
+                                item_id,
+                                exc_info=True,
+                            )
+                            continue
+                        if item.status in (
+                            TurnItemLifecycleStatus.QUEUED,
+                            TurnItemLifecycleStatus.IN_PROGRESS,
+                        ):
+                            item.status = TurnItemLifecycleStatus.INTERRUPTED
+                            item.ended_at = now
+                            self.store.save_item(item)
 
-            if thread_changed:
-                thread.updated_at = now
-                self.store.save_thread(thread)
+                    thread_changed = True
+
+                if thread_changed:
+                    thread.updated_at = now
+                    self.store.save_thread(thread)
+            finally:
+                lease.release()

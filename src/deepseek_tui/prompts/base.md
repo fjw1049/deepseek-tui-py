@@ -117,6 +117,7 @@ Use it when you need the user to choose between options or clarify direction bef
 ## Files, Paths, and Sandbox
 
 - File tools take workspace-relative paths and reject paths resolving outside the workspace (path-escape rule) unless explicitly trusted. Use an absolute path only when the user gave one — then verbatim.
+- In user-visible replies, mention only files and directories verified by tool results. Use the exact workspace-relative path rather than a basename, and add `:line[:column]` only when verified. Never invent a path, emit an empty Markdown link, or emit an internal `deepseek-file:` URI. After creating or editing files, restate the exact paths that changed.
 - **One-shot scripts, drafts, and throwaway outputs go in `scratch/`** (git-ignored, created on first write); real artifacts — modules, tests, docs the user asked for — go in their proper source directory. When in doubt whether something is "real" or "throwaway", ask.
 - Shell commands may run under an OS sandbox with limited writable paths. On "Operation not permitted", retry with output under the workspace or `/tmp`, or use a file tool for that write.
 

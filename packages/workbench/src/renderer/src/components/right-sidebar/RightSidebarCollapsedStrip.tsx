@@ -2,7 +2,10 @@ import type { ReactElement } from 'react'
 import { useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useGitBranches } from '../../hooks/use-git-branches'
-import { useGitWorkingChanges } from '../../hooks/use-git-working-changes'
+import {
+  useGitBranchCompareBase,
+  useGitWorkingChanges
+} from '../../hooks/use-git-working-changes'
 import { useWorkspaceDirtyGitRefresh } from '../../hooks/use-workspace-dirty-git-refresh'
 import {
   collectWorkspaceChangeEntries,
@@ -10,6 +13,10 @@ import {
 } from '../../lib/workspace-change-stats'
 import { useChatStore } from '../../store/chat-store'
 import { ChangeDiffStatsLabel } from '../ChangeDiffStatsLabel'
+import {
+  resolveThreadFilesystemRoot,
+  resolveThreadGitActionRoot
+} from '../../lib/workspace-path'
 
 type Props = {
   workspaceRoot: string
@@ -18,12 +25,21 @@ type Props = {
 
 export function RightSidebarCollapsedStrip({ workspaceRoot, onExpand }: Props): ReactElement {
   const { t } = useTranslation('common')
-  const root = workspaceRoot.trim()
   const workspaceDirtyTick = useChatStore((s) => s.workspaceDirtyTick)
-  const blocks = useChatStore((s) => s.blocks)
-  const turnDiffByTurnId = useChatStore((s) => s.turnDiffByTurnId)
-  const { result: gitResult, reload: reloadGitBranches } = useGitBranches(root)
-  const { result: gitChanges, reload: reloadGitChanges } = useGitWorkingChanges(root)
+  const activeThreadId = useChatStore((s) => s.activeThreadId)
+  const threads = useChatStore((s) => s.threads)
+  const visibleRoot = resolveThreadFilesystemRoot(activeThreadId, threads, workspaceRoot).trim()
+  const gitRoot = resolveThreadGitActionRoot(activeThreadId, threads, workspaceRoot).trim()
+  const { result: gitResult, reload: reloadGitBranches } = useGitBranches(gitRoot)
+  const [branchBase] = useGitBranchCompareBase(
+    gitRoot,
+    gitResult?.ok ? gitResult.currentBranch : null
+  )
+  const { result: gitChanges, reload: reloadGitChanges } = useGitWorkingChanges(
+    gitRoot,
+    'branch',
+    branchBase
+  )
   const refreshGit = useCallback((): void => {
     void reloadGitBranches()
     void reloadGitChanges()
@@ -31,8 +47,7 @@ export function RightSidebarCollapsedStrip({ workspaceRoot, onExpand }: Props): 
   useWorkspaceDirtyGitRefresh(workspaceDirtyTick, refreshGit)
   const changeStats = sumWorkspaceChangeStats(
     collectWorkspaceChangeEntries({
-      blocks,
-      turnDiffByTurnId,
+      blocks: [],
       gitFiles: gitChanges?.ok ? gitChanges.files : null
     })
   )
@@ -47,7 +62,7 @@ export function RightSidebarCollapsedStrip({ workspaceRoot, onExpand }: Props): 
       <span className="[writing-mode:vertical-rl] rotate-180 text-[11px] font-medium text-ds-muted">
         {t('rightSidebarTitle')}
       </span>
-      {root ? (
+      {visibleRoot ? (
         <>
           <span className="max-w-full truncate px-0.5 text-[10px] text-ds-faint [writing-mode:vertical-rl] rotate-180">
             {gitResult?.ok ? gitResult.currentBranch ?? t('gitNoBranch') : t('gitNoBranch')}

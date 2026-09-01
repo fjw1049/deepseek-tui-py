@@ -279,7 +279,16 @@ def optimize_storage(
             report.orphan_items_removed += 1
 
     # 3) Checkpoint TTL.
-    report.checkpoints_pruned = checkpoints.prune_older_than(max_checkpoint_age_days)
+    protected_checkpoint_ids = set(live_turn_ids)
+    protected_checkpoint_ids.update(
+        cp.turn_id
+        for thread_id in live_thread_ids
+        for cp in checkpoints.list_for_thread(thread_id)
+    )
+    report.checkpoints_pruned = checkpoints.prune_older_than(
+        max_checkpoint_age_days,
+        protected_turn_ids=protected_checkpoint_ids,
+    )
 
     # 4) Session-side redundancy (cycles / stale crash checkpoints).
     report.cycle_archives_pruned = _prune_cycle_archives(

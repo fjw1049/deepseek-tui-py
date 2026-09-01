@@ -70,6 +70,8 @@ export type LlmProviderConfigV1 = {
   models: LlmProviderModelV1[]
   /** Last successful /models listing (informational + UI seed). */
   lastFetchedModels?: string[]
+  /** Model ids explicitly removed in Settings; excluded from automatic refresh results. */
+  hiddenModels?: string[]
 }
 
 export function isBuiltinLlmProviderId(value: unknown): value is BuiltinLlmProviderId {

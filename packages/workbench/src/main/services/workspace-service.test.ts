@@ -101,6 +101,27 @@ describe('workspace-service boundary checks', () => {
     }
   })
 
+  it('returns every candidate when a basename is ambiguous', async () => {
+    await mkdir(join(workspaceRoot, 'src', 'one'), { recursive: true })
+    await mkdir(join(workspaceRoot, 'src', 'two'), { recursive: true })
+    await writeFile(join(workspaceRoot, 'src', 'one', 'approval.py'), 'one', 'utf8')
+    await writeFile(join(workspaceRoot, 'src', 'two', 'approval.py'), 'two', 'utf8')
+
+    const result = await resolveWorkspaceFile({
+      path: 'approval.py',
+      workspaceRoot
+    })
+
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.code).toBe('ambiguous')
+      expect(result.candidates?.map((candidate) => candidate.path)).toEqual([
+        await realpath(join(workspaceRoot, 'src', 'one', 'approval.py')),
+        await realpath(join(workspaceRoot, 'src', 'two', 'approval.py'))
+      ])
+    }
+  })
+
   it('resolves a workspace directory with kind directory', async () => {
     await mkdir(join(workspaceRoot, 'src'), { recursive: true })
     const result = await resolveWorkspaceFile({
@@ -113,12 +134,28 @@ describe('workspace-service boundary checks', () => {
     }
   })
 
+  it('resolves a unique nested directory basename with a trailing slash', async () => {
+    await mkdir(join(workspaceRoot, 'src', 'deepseek_tui', 'workspace'), { recursive: true })
+    const result = await resolveWorkspaceFile({
+      path: 'workspace/',
+      workspaceRoot
+    })
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      expect(result.path).toBe(
+        await realpath(join(workspaceRoot, 'src', 'deepseek_tui', 'workspace'))
+      )
+      expect(result.kind).toBe('directory')
+    }
+  })
+
   it('does not resolve a file that is not in the workspace', async () => {
     const result = await resolveWorkspaceFile({
       path: 'missing.ts',
       workspaceRoot
     })
     expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.code).toBe('not_found')
   })
 
   it('normalizes Finder targets so trailing slashes and ~ do not break open', () => {
@@ -172,6 +209,18 @@ describe('workspace-service boundary checks', () => {
     if (result.ok) {
       expect(result.entries.some((entry) => entry.path === 'packages/core/engine.ts')).toBe(true)
       expect(result.entries.every((entry) => entry.kind === 'file')).toBe(true)
+    }
+  })
+
+  it('lists workspace files when the search query is empty', async () => {
+    await mkdir(join(workspaceRoot, 'src'), { recursive: true })
+    await writeFile(join(workspaceRoot, 'src', 'app.py'), 'pass', 'utf8')
+
+    const result = await searchWorkspaceEntries(workspaceRoot, '', 20)
+
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      expect(result.entries.map((entry) => entry.path)).toEqual(['src/app.py', 'inside.txt'])
     }
   })
 

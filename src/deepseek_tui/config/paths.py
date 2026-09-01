@@ -119,6 +119,16 @@ def user_threads_dir() -> Path:
     return user_deepseek_dir() / "threads"
 
 
+def user_worktrees_dir() -> Path:
+    """``~/.deepseek/worktrees/`` — Codex-style managed git worktrees."""
+    return user_deepseek_dir() / "worktrees"
+
+
+def user_locks_dir() -> Path:
+    """``~/.deepseek/locks/`` — cross-process project publish leases."""
+    return user_deepseek_dir() / "locks"
+
+
 def user_thread_plans_dir() -> Path:
     """``~/.deepseek/threads/plans/`` — Workbench per-thread plan files."""
     return user_threads_dir() / "plans"

@@ -1,4 +1,4 @@
-import type { MouseEvent as ReactMouseEvent, ReactElement } from 'react'
+import type { CSSProperties, MouseEvent as ReactMouseEvent, ReactElement } from 'react'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
@@ -25,6 +25,7 @@ import {
   Plus,
   Square,
   Trash2,
+  TriangleAlert,
   X
 } from 'lucide-react'
 import type { NormalizedThread } from '../../agent/types'
@@ -68,6 +69,7 @@ import {
 import { ProjectContextMenu, type ProjectContextMenuAction } from './ProjectContextMenu'
 import { ThreadContextMenu, type ThreadContextMenuAction } from './ThreadContextMenu'
 import { HoverInfoCard } from './ThreadHoverCard'
+import { threadMarqueeDurationMs } from '../../lib/thread-marquee'
 
 type SidebarProjectsSectionProps = {
   threads: NormalizedThread[]
@@ -1115,14 +1117,14 @@ function SidebarProjectsSection({
                 </span>
               </button>
               {selectionMode ? null : (
-                <div className="flex shrink-0 items-center gap-0.5 pr-1 opacity-40 transition-opacity duration-200 group-hover:opacity-100 group-focus-within:opacity-100 focus-within:opacity-100">
+                <div className="flex shrink-0 items-center gap-1 pr-1">
                   <button
                     type="button"
                     onClick={(event) => {
                       event.stopPropagation()
                       onCreateThreadInWorkspace(workspacePath)
                     }}
-                    className="rounded-md p-1 text-ds-faint transition-colors duration-200 hover:bg-ds-hover/80 hover:text-ds-ink"
+                    className="rounded-md p-1 text-ds-faint opacity-40 transition duration-200 hover:bg-ds-hover/80 hover:text-ds-ink hover:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100"
                     title={t('sidebarWorkspaceNewThread')}
                     aria-label={t('sidebarWorkspaceNewThread')}
                   >
@@ -1267,6 +1269,145 @@ type ThreadRowProps = {
   onTogglePin: () => void
 }
 
+type ThreadQueryMarqueeProps = {
+  active: boolean
+  className: string
+  style?: CSSProperties
+  text: string
+  title: string
+}
+
+const MARQUEE_DWELL_MS = 320
+
+function ThreadQueryMarquee({
+  active,
+  className,
+  style,
+  text,
+  title
+}: ThreadQueryMarqueeProps): ReactElement {
+  const viewportRef = useRef<HTMLSpanElement>(null)
+  const textRef = useRef<HTMLSpanElement>(null)
+  const animationRef = useRef<Animation | null>(null)
+  const dwellTimerRef = useRef<number | null>(null)
+  const frameRef = useRef<number | null>(null)
+  const previousTextRef = useRef(text)
+  const [expanded, setExpanded] = useState(false)
+  const expandedRef = useRef(false)
+
+  const updateExpanded = (next: boolean): void => {
+    expandedRef.current = next
+    setExpanded(next)
+  }
+
+  const clearSchedule = (): void => {
+    if (dwellTimerRef.current != null) {
+      window.clearTimeout(dwellTimerRef.current)
+      dwellTimerRef.current = null
+    }
+    if (frameRef.current != null) {
+      window.cancelAnimationFrame(frameRef.current)
+      frameRef.current = null
+    }
+  }
+
+  useEffect(() => {
+    const inner = textRef.current
+    const viewport = viewportRef.current
+    if (!inner || !viewport) return
+
+    clearSchedule()
+    const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true
+    if (previousTextRef.current !== text) {
+      previousTextRef.current = text
+      animationRef.current?.cancel()
+      animationRef.current = null
+      updateExpanded(false)
+    }
+
+    if (!active || reduceMotion) {
+      const currentTransform = window.getComputedStyle(inner).transform
+      animationRef.current?.cancel()
+      animationRef.current = null
+      if (!expandedRef.current || reduceMotion || currentTransform === 'none') {
+        updateExpanded(false)
+        return
+      }
+      const reset = inner.animate(
+        [
+          { transform: currentTransform },
+          { transform: 'translateX(0)' }
+        ],
+        { duration: 180, easing: 'ease-out' }
+      )
+      animationRef.current = reset
+      reset.onfinish = () => {
+        if (animationRef.current !== reset) return
+        reset.cancel()
+        animationRef.current = null
+        updateExpanded(false)
+      }
+      return
+    }
+
+    dwellTimerRef.current = window.setTimeout(() => {
+      updateExpanded(true)
+      frameRef.current = window.requestAnimationFrame(() => {
+        frameRef.current = null
+        const overflow = Math.ceil(inner.scrollWidth - viewport.clientWidth)
+        if (overflow <= 1) {
+          updateExpanded(false)
+          return
+        }
+        const currentTransform = window.getComputedStyle(inner).transform
+        const previousAnimation = animationRef.current
+        if (previousAnimation) previousAnimation.onfinish = null
+        previousAnimation?.cancel()
+        const marquee = inner.animate(
+          [
+            { transform: currentTransform === 'none' ? 'translateX(0)' : currentTransform },
+            { transform: `translateX(-${overflow}px)` }
+          ],
+          {
+            duration: threadMarqueeDurationMs(overflow),
+            easing: 'linear',
+            fill: 'forwards'
+          }
+        )
+        animationRef.current = marquee
+      })
+    }, MARQUEE_DWELL_MS)
+  }, [active, text])
+
+  useEffect(
+    () => () => {
+      clearSchedule()
+      animationRef.current?.cancel()
+    },
+    []
+  )
+
+  return (
+    <span
+      ref={viewportRef}
+      className={`${className} overflow-hidden whitespace-nowrap`}
+      style={style}
+      title={title}
+    >
+      <span
+        ref={textRef}
+        className={
+          expanded
+            ? 'inline-block w-max max-w-none whitespace-nowrap will-change-transform'
+            : 'block max-w-full truncate'
+        }
+      >
+        {text}
+      </span>
+    </span>
+  )
+}
+
 export function ThreadRow({
   thread,
   variant,
@@ -1297,6 +1438,7 @@ export function ThreadRow({
   // into an editable input (mirrors the title editor in SessionHeader).
   const [renaming, setRenaming] = useState(false)
   const [draftTitle, setDraftTitle] = useState(thread.title)
+  const [rowHovered, setRowHovered] = useState(false)
   const [hoverAnchor, setHoverAnchor] = useState<DOMRect | null>(null)
   const hoverTimerRef = useRef<number | null>(null)
   // The hover card is auxiliary info: once shown it self-dismisses after a few
@@ -1305,11 +1447,13 @@ export function ThreadRow({
   // A detached background task counts as activity even when the chat turn is
   // idle; only fall back to the blue unread dot when nothing is in flight.
   const showTaskDot = hasBackgroundTask && !showRunning
-  const showUnreadDot = showUnread && !showRunning && !showTaskDot
+  const showConflict =
+    !showRunning && (Boolean(thread.publishBlocked) || (thread.publishConflicts?.length ?? 0) > 0)
+  const showUnreadDot = showUnread && !showRunning && !showTaskDot && !showConflict
 
   // All rows surface thread completion: green check for completed/idle.
   const status = thread.status?.trim().toLowerCase()
-  const showCompleted = !showRunning && (status === 'completed' || status === 'idle')
+  const showCompleted = !showRunning && !showConflict && (status === 'completed' || status === 'idle')
 
   const threadPath = normalizeWorkspaceRoot(thread.workspace)
   const hasPath = threadPath.length > 0 && !isInternalTemporaryWorkspace(thread.workspace)
@@ -1347,6 +1491,7 @@ export function ThreadRow({
   )
 
   const handleRowMouseEnter = (event: ReactMouseEvent<HTMLDivElement>): void => {
+    setRowHovered(true)
     const rect = event.currentTarget.getBoundingClientRect()
     clearHoverTimer()
     hoverTimerRef.current = window.setTimeout(() => {
@@ -1361,6 +1506,7 @@ export function ThreadRow({
   }
 
   const handleRowMouseLeave = (): void => {
+    setRowHovered(false)
     clearHoverTimer()
     clearAutoHideTimer()
     setHoverAnchor(null)
@@ -1438,6 +1584,14 @@ export function ThreadRow({
       onMouseEnter={selectionMode ? undefined : handleRowMouseEnter}
       onMouseMove={selectionMode ? undefined : handleRowMouseMove}
       onMouseLeave={selectionMode ? undefined : handleRowMouseLeave}
+      onFocusCapture={selectionMode ? undefined : () => setRowHovered(true)}
+      onBlurCapture={
+        selectionMode
+          ? undefined
+          : (event) => {
+              if (!event.currentTarget.contains(event.relatedTarget)) setRowHovered(false)
+            }
+      }
       className={`ds-sidebar-thread-row group relative flex min-w-0 items-center overflow-hidden ${
         renaming
           ? ''
@@ -1465,6 +1619,8 @@ export function ThreadRow({
             ? thread.title
             : showRunning
               ? `${thread.title} — ${t('sidebarThreadRunning')}`
+              : showConflict
+                ? `${thread.title} — ${t('sidebarThreadConflict')}`
               : showTaskDot
                 ? `${thread.title} — ${t('sidebarThreadTaskRunning')}`
                 : showUnreadDot
@@ -1481,6 +1637,12 @@ export function ThreadRow({
             )
           ) : showRunning ? (
             <Loader2 className="h-3.5 w-3.5 animate-spin text-accent" strokeWidth={2.1} />
+          ) : showConflict ? (
+            <TriangleAlert
+              className="h-3.5 w-3.5 text-amber-500 dark:text-amber-400"
+              strokeWidth={2}
+              aria-label={t('sidebarThreadConflict')}
+            />
           ) : showTaskDot ? (
             <span
               className="block h-1.5 w-1.5 animate-pulse rounded-full bg-amber-500 dark:bg-amber-400"
@@ -1515,30 +1677,38 @@ export function ThreadRow({
             className="ds-sidebar-thread min-w-0 flex-1 truncate border-0 bg-transparent p-0 text-ds-ink caret-accent outline-none"
           />
         ) : (
-          <span
+          <ThreadQueryMarquee
+            active={rowHovered}
             className={[
               'ds-sidebar-thread min-w-0 flex-1 truncate',
               showUnreadDot ? 'ds-sidebar-thread--emphasis' : ''
             ].join(' ')}
             style={labelSwatch ? { color: labelSwatch } : undefined}
             title={thread.title}
-          >
-            {(() => {
+            text={(() => {
               const focus = parseUserFocusPrefix(thread.title)
               return focus ? focus.body || focus.name : thread.title
             })()}
-          </span>
+          />
         )}
         {selectionMode ? null : (
           <span
             className="ds-sidebar-thread-meta group-hover:hidden group-focus-within:hidden"
             title={
-              showCompleted
+              showConflict
+                ? t('sidebarThreadConflict')
+                : showCompleted
                 ? t('sidebarThreadCompleted')
                 : (sourceLabel ?? formatRelativeTimeLargestUnit(thread.updatedAt))
             }
           >
-            {showCompleted ? (
+            {showConflict ? (
+              <TriangleAlert
+                className="h-3.5 w-3.5 text-amber-500 dark:text-amber-400"
+                strokeWidth={2}
+                aria-hidden
+              />
+            ) : showCompleted ? (
               <Check
                 className="h-3.5 w-3.5 text-emerald-500 dark:text-emerald-400"
                 strokeWidth={2.25}

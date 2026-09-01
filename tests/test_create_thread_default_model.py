@@ -65,5 +65,8 @@ async def test_create_thread_explicit_model_wins(tmp_path: Path) -> None:
         manager_cfg=RuntimeThreadManagerConfig.from_task_data_dir(tasks_dir),
         llm_client=object(),
     )
-    thread = await mgr.create_thread(CreateThreadRequest(model="kimi-k2.6"))
+    thread = await mgr.create_thread(
+        CreateThreadRequest(model="kimi-k2.6", title="First query title")
+    )
     assert thread.model == "kimi-k2.6"
+    assert thread.title == "First query title"

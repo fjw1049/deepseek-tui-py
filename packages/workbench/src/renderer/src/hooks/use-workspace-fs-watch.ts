@@ -1,6 +1,7 @@
 import { useEffect, useMemo } from 'react'
 import { useShallow } from 'zustand/react/shallow'
-import { resolveActiveThreadWorkspace } from '../lib/workspace-path'
+import { resolveThreadFilesystemRoot } from '../lib/workspace-path'
+import { invalidateFileReferenceValidationCache } from '../lib/file-reference-validation'
 import { useChatStore } from '../store/chat-store'
 
 /**
@@ -9,7 +10,7 @@ import { useChatStore } from '../store/chat-store'
  * edits made outside the agent: external editors (Cursor, VS Code…), manual
  * saves, and shell commands still mid-run.
  *
- * Root matches the git panels (`resolveActiveThreadWorkspace`), not the
+ * Root matches the git panels (`resolveThreadFilesystemRoot`), not the
  * global settings `workspaceRoot` — a thread can sit in a different project
  * than the last-selected workspace setting.
  */
@@ -22,7 +23,7 @@ export function useWorkspaceFsWatch(): void {
     }))
   )
   const root = useMemo(
-    () => resolveActiveThreadWorkspace(activeThreadId, threads, workspaceRoot),
+    () => resolveThreadFilesystemRoot(activeThreadId, threads, workspaceRoot),
     [activeThreadId, threads, workspaceRoot]
   )
 
@@ -39,6 +40,7 @@ export function useWorkspaceFsWatch(): void {
     void gui.watchWorkspaceFs(watchRoot)
     const off = gui.onWorkspaceFsChanged((payload) => {
       if (!payload || payload.root !== watchRoot) return
+      invalidateFileReferenceValidationCache()
       useChatStore.setState((s) => ({ workspaceDirtyTick: s.workspaceDirtyTick + 1 }))
     })
     return () => {

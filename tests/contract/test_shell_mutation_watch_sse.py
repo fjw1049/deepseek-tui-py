@@ -53,6 +53,80 @@ def git_repo(tmp_path: Path) -> Path:
 
 
 @pytest.mark.asyncio
+async def test_monitor_signals_ready_only_after_checkpoint_exists(
+    runtime_app: object,
+    git_repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manager = runtime_app.state.thread_manager  # type: ignore[attr-defined]
+    monkeypatch.setattr(
+        manager, "_recover_missing_final_answer", AsyncMock(return_value=None)
+    )
+    handle = EngineHandle()
+    thread = await manager.create_thread(CreateThreadRequest())
+    turn_id = f"turn_{uuid.uuid4().hex[:8]}"
+    now = datetime.now(timezone.utc)
+    manager.store.save_turn(
+        TurnRecord(
+            id=turn_id,
+            thread_id=thread.id,
+            status=RuntimeTurnStatus.IN_PROGRESS,
+            input_summary="test",
+            created_at=now,
+            started_at=now,
+        )
+    )
+    stub_engine = SimpleNamespace(
+        tool_context=ToolContext(working_directory=git_repo)
+    )
+    engine_task = asyncio.create_task(asyncio.sleep(3600), name="test-engine-idle")
+    async with manager._active_lock:
+        manager._active[thread.id] = _ActiveThreadState(handle, stub_engine, engine_task)
+
+    capture_started = asyncio.Event()
+    release_capture = asyncio.Event()
+    real_capture = shell_mutation_watch.capture_shell_snapshot
+
+    async def _capture_gate(
+        workspace: Path,
+    ) -> shell_mutation_watch.ShellMutationSnapshot:
+        capture_started.set()
+        await release_capture.wait()
+        return await real_capture(workspace)
+
+    monkeypatch.setattr(
+        shell_mutation_watch, "capture_shell_snapshot", _capture_gate
+    )
+    ready = asyncio.get_running_loop().create_future()
+    monitor = asyncio.create_task(
+        manager._monitor_turn(thread.id, turn_id, handle, "agent", ready)
+    )
+    try:
+        await asyncio.wait_for(capture_started.wait(), timeout=5)
+        assert not ready.done()
+        assert manager.checkpoints.load(turn_id) is None
+
+        release_capture.set()
+        await asyncio.wait_for(asyncio.shield(ready), timeout=5)
+        checkpoint = manager.checkpoints.load(turn_id)
+        assert checkpoint is not None
+        assert checkpoint.thread_id == thread.id
+
+        await handle.emit(TurnCompleteEvent(assistant_message=None))
+        await asyncio.wait_for(monitor, timeout=5)
+    finally:
+        if not monitor.done():
+            monitor.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await monitor
+        engine_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await engine_task
+        async with manager._active_lock:
+            manager._active.pop(thread.id, None)
+
+
+@pytest.mark.asyncio
 async def test_shell_edit_emits_file_change_item(
     runtime_app: object,
     git_repo: Path,
@@ -155,6 +229,8 @@ async def test_shell_edit_emits_file_change_item(
     }
     assert set(started) == set(completed)
     assert len(completed) == 1
+    first_diff_seq = min(e.seq for e in events if e.event == "turn.diff.updated")
+    assert first_diff_seq < next(iter(completed.values())).seq
 
     item = next(iter(completed.values())).payload["item"]
     mutation = item["metadata"]["mutation"]
@@ -181,3 +257,5 @@ async def test_shell_edit_emits_file_change_item(
     assert len(final_diffs) == 1
     assert [f["path"] for f in final_diffs[0]["files"]] == ["tracked.py"]
     assert final_diffs[0]["totals"]["files"] == 1
+    persisted = manager.store.load_turn(turn_id).diff_snapshot
+    assert persisted == final_diffs[0]

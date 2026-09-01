@@ -65,7 +65,7 @@ export const ComposerLiveChangesHeader = memo(function ComposerLiveChangesHeader
           onClick={onReview}
           className="shrink-0 rounded-full bg-ds-hover px-2.5 py-0.5 text-[11.5px] font-semibold text-ds-ink transition hover:bg-ds-hover/80"
         >
-          {t('turnMarkdownResultOpen', { defaultValue: 'Review' })}
+          {t('composerCommandDiffTitle', { defaultValue: 'Review changes' })}
         </button>
       ) : null}
     </div>

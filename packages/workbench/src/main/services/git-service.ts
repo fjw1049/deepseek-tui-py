@@ -5,7 +5,9 @@ import { promisify } from 'node:util'
 import type { GitCommitMessageSuggestionResult, GitCommitResult } from '../../shared/git-commit'
 import type { GitLogCommit, GitLogResult, GitLogUpstream } from '../../shared/git-log'
 import type { GitBranchesResult } from '../../shared/git-branches'
+import type { GitPathActionResult, GitPullResult, GitPushResult } from '../../shared/git-actions'
 import type {
+  GitChangeScope,
   GitWorkingChangeFile,
   GitWorkingChangeStage,
   GitWorkingChangeStatus,
@@ -28,7 +30,8 @@ async function runGit(
   const { stdout, stderr } = await execFileAsync('git', args, {
     cwd,
     timeout,
-    maxBuffer
+    maxBuffer,
+    env: { ...process.env, GIT_TERMINAL_PROMPT: '0' }
   })
   return { stdout: String(stdout), stderr: String(stderr) }
 }
@@ -93,7 +96,13 @@ function resolveGitStage(indexStatus: string, workTreeStatus: string): GitWorkin
 
 function parsePorcelainEntry(
   line: string
-): { path: string; status: GitWorkingChangeStatus; stage: GitWorkingChangeStage } | null {
+): {
+  path: string
+  status: GitWorkingChangeStatus
+  stage: GitWorkingChangeStage
+  indexStatus: string
+  workTreeStatus: string
+} | null {
   if (line.length < 4) return null
 
   const indexStatus = line[0] ?? ' '
@@ -114,7 +123,22 @@ function parsePorcelainEntry(
   else if (indexStatus === 'R' || workTreeStatus === 'R') status = 'renamed'
   else if (indexStatus === 'C' || workTreeStatus === 'C') status = 'copied'
 
-  return { path: pathPart, status, stage: resolveGitStage(indexStatus, workTreeStatus) }
+  return {
+    path: pathPart,
+    status,
+    stage: resolveGitStage(indexStatus, workTreeStatus),
+    indexStatus,
+    workTreeStatus
+  }
+}
+
+function gitStatusFromCode(code: string, fallback: GitWorkingChangeStatus): GitWorkingChangeStatus {
+  if (code === 'A' || code === '?') return code === '?' ? 'untracked' : 'added'
+  if (code === 'D') return 'deleted'
+  if (code === 'R') return 'renamed'
+  if (code === 'C') return 'copied'
+  if (code === 'M' || code === 'T' || code === 'U') return 'modified'
+  return fallback
 }
 
 function splitUnifiedDiff(patch: string): Map<string, string> {
@@ -135,29 +159,168 @@ function splitUnifiedDiff(patch: string): Map<string, string> {
   return byPath
 }
 
-export async function getGitBranches(workspaceRoot: string): Promise<GitBranchesResult> {
+type LocalBranchRef = { name: string; commit: string }
+
+async function listLocalBranches(cwd: string, mergedIntoHead = false): Promise<LocalBranchRef[]> {
+  const args = [
+    'for-each-ref',
+    '--sort=-committerdate',
+    '--format=%(refname:short)\t%(objectname)'
+  ]
+  if (mergedIntoHead) args.push('--merged=HEAD')
+  args.push('refs/heads')
+  return (await runGit(cwd, args)).stdout
+    .split('\n')
+    .map((line) => {
+      const [name = '', commit = ''] = line.trim().split('\t')
+      return { name, commit }
+    })
+    .filter((branch) => branch.name && branch.commit)
+}
+
+async function resolveCurrentBranch(cwd: string): Promise<string | null> {
+  const direct = (await runGit(cwd, ['branch', '--show-current'])).stdout.trim()
+  if (direct) return direct
+
+  // Managed task worktrees use detached HEAD. The nearest recently active
+  // local ancestor is the branch the task was started from.
+  const merged = await listLocalBranches(cwd, true)
+  return merged[0]?.name ?? null
+}
+
+async function resolveRepositoryDefaultBranch(cwd: string): Promise<string | null> {
+  let upstream = ''
+  try {
+    upstream = (
+      await runGit(cwd, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}'])
+    ).stdout.trim()
+  } catch {
+    // A local-only branch may not have an upstream.
+  }
+
+  const upstreamRemote = upstream.includes('/') ? upstream.split('/')[0] : ''
+  const candidates: string[] = []
+  for (const remote of [...new Set([upstreamRemote, 'origin'].filter(Boolean))]) {
+    try {
+      const remoteDefault = (
+        await runGit(cwd, [
+          'symbolic-ref',
+          '--quiet',
+          '--short',
+          `refs/remotes/${remote}/HEAD`
+        ])
+      ).stdout.trim()
+      if (remoteDefault) candidates.push(remoteDefault)
+    } catch {
+      // A remote HEAD symbolic ref is optional.
+    }
+  }
+  candidates.push('origin/main', 'origin/master', 'main', 'master')
+
+  for (const candidate of [...new Set(candidates)]) {
+    try {
+      await runGit(cwd, ['rev-parse', '--verify', '--quiet', `${candidate}^{commit}`])
+      return candidate
+    } catch {
+      // Try the next conventional default ref.
+    }
+  }
+  return null
+}
+
+async function resolveRecentAncestorBranch(
+  cwd: string,
+  currentBranch: string | null,
+  defaultBranch: string | null
+): Promise<string | null> {
+  if (!currentBranch) return null
+  const defaultLocalName = defaultBranch?.includes('/')
+    ? defaultBranch.slice(defaultBranch.indexOf('/') + 1)
+    : defaultBranch
+  if (currentBranch === defaultLocalName) return null
+
+  const headCommit = (await runGit(cwd, ['rev-parse', 'HEAD'])).stdout.trim()
+  const merged = await listLocalBranches(cwd, true)
+  const recent = merged.find(
+    (branch) => branch.name !== currentBranch && branch.commit !== headCommit
+  )?.name
+  return recent === defaultLocalName ? defaultBranch : (recent ?? null)
+}
+
+export async function getGitBranches(
+  workspaceRoot: string,
+  refreshRemote = false
+): Promise<GitBranchesResult> {
   const cwd = workspaceRoot.trim()
   if (!cwd) {
     return { ok: false, reason: 'no_workspace', message: 'No working directory selected.' }
   }
   try {
     const repositoryRoot = (await runGit(cwd, ['rev-parse', '--show-toplevel'])).stdout.trim()
-    const currentRaw = (await runGit(cwd, ['branch', '--show-current'])).stdout.trim()
-    const currentBranch = currentRaw || null
-    const branchLines = (await runGit(cwd, ['branch', '--format=%(refname:short)'])).stdout
+    const remotes = (await runGit(cwd, ['remote'])).stdout
       .split('\n')
       .map((line) => line.trim())
       .filter(Boolean)
-    const branchSet = new Set(branchLines)
-    if (currentBranch && !branchSet.has(currentBranch)) branchSet.add(currentBranch)
-    const branches = [...branchSet].map((name) => ({
-      name,
-      current: currentBranch === name
-    }))
+    let remoteRefreshError: string | null = null
+    if (refreshRemote && remotes.length > 0) {
+      try {
+        await runGit(cwd, ['fetch', '--prune'], 120_000, DIFF_MAX_BUFFER)
+      } catch (error) {
+        remoteRefreshError = error instanceof Error ? error.message : String(error)
+      }
+    }
+    const attachedBranch = (await runGit(cwd, ['branch', '--show-current'])).stdout.trim()
+    const currentBranch = attachedBranch || null
+    const inferredBranch = currentBranch ? null : await resolveCurrentBranch(cwd)
+    const branchForComparison = currentBranch ?? inferredBranch
+    const localBranches = await listLocalBranches(cwd)
+    const branches = localBranches.map(({ name }) => ({ name, current: currentBranch === name }))
+    const defaultBranch = await resolveRepositoryDefaultBranch(cwd)
+    const recommendedBase =
+      (await resolveRecentAncestorBranch(cwd, branchForComparison, defaultBranch)) ?? defaultBranch
     const dirtyCount = (await runGit(cwd, ['status', '--porcelain=v1'])).stdout
       .split('\n')
       .filter((line) => line.trim().length > 0).length
-    return { ok: true, repositoryRoot, currentBranch, branches, dirtyCount }
+    let upstream: string | null = null
+    let ahead = 0
+    let behind = 0
+    if (currentBranch) {
+      try {
+        upstream = (
+          await runGit(cwd, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}'])
+        ).stdout.trim() || null
+      } catch {
+        upstream = null
+      }
+      if (upstream) {
+        try {
+          const counts = (await runGit(cwd, ['rev-list', '--left-right', '--count', `HEAD...${upstream}`]))
+            .stdout.trim()
+            .split(/\s+/)
+          ahead = Number.parseInt(counts[0] ?? '0', 10) || 0
+          behind = Number.parseInt(counts[1] ?? '0', 10) || 0
+        } catch {
+          ahead = 0
+          behind = 0
+        }
+      }
+    }
+    return {
+      ok: true,
+      repositoryRoot,
+      currentBranch,
+      detached: !currentBranch,
+      inferredBranch,
+      branches,
+      defaultBranch,
+      recommendedBase,
+      dirtyCount,
+      upstream,
+      ahead,
+      behind,
+      hasRemote: remotes.length > 0,
+      remoteRefreshError
+    }
   } catch (error) {
     return gitFailure(error)
   }
@@ -252,13 +415,18 @@ export async function stashAndSwitchGitBranch(
   }
 }
 
-// Result cache for getGitWorkingChanges keyed by workspace root. The full
-// `git diff HEAD` (plus one diff per untracked file) is expensive on large
-// repos and the panels re-request it on every dirty tick; a cheap fingerprint
-// (HEAD sha + porcelain output + mtime/size of each changed file) detects
-// when nothing actually changed and lets us return the previous result.
+// Result cache for getGitWorkingChanges keyed by workspace root + review scope.
+// Diff generation can be expensive on large repos; a cheap fingerprint detects
+// when neither HEAD, the index, nor changed files moved.
 const workingChangesCache = new Map<string, { fingerprint: string; result: GitWorkingChangesResult }>()
-const WORKING_CHANGES_CACHE_MAX_ROOTS = 8
+const WORKING_CHANGES_CACHE_MAX_ROOTS = 24
+
+function invalidateWorkingChangesCache(cwd: string): void {
+  const prefix = `${cwd}\u0000`
+  for (const key of workingChangesCache.keys()) {
+    if (key.startsWith(prefix)) workingChangesCache.delete(key)
+  }
+}
 
 async function workingChangesFingerprint(
   cwd: string,
@@ -285,7 +453,210 @@ async function workingChangesFingerprint(
   return [head, porcelainLines.join('\n'), stats.join('\u0001')].join('\u0002')
 }
 
-export async function getGitWorkingChanges(workspaceRoot: string): Promise<GitWorkingChangesResult> {
+type ParsedPorcelainEntry = NonNullable<ReturnType<typeof parsePorcelainEntry>>
+
+async function untrackedPatch(cwd: string, path: string): Promise<string> {
+  return runGitStdout(cwd, ['diff', '--no-index', '--no-color', '/dev/null', path], {
+    timeout: 20_000,
+    maxBuffer: DIFF_MAX_BUFFER,
+    allowNonZero: true
+  })
+}
+
+async function buildLayerFiles(
+  cwd: string,
+  entries: ParsedPorcelainEntry[],
+  layer: 'staged' | 'unstaged'
+): Promise<GitWorkingChangeFile[]> {
+  const selected = entries.filter((entry) =>
+    layer === 'staged'
+      ? entry.indexStatus !== ' ' && entry.indexStatus !== '?'
+      : entry.workTreeStatus !== ' ' || entry.status === 'untracked'
+  )
+  if (selected.length === 0) return []
+
+  const args = layer === 'staged' ? ['diff', '--cached', '--no-color'] : ['diff', '--no-color']
+  const allPatch = await runGitStdout(cwd, args, {
+    timeout: 30_000,
+    maxBuffer: DIFF_MAX_BUFFER,
+    allowNonZero: true
+  })
+  const patchByPath = splitUnifiedDiff(allPatch)
+  const files: GitWorkingChangeFile[] = []
+
+  for (const entry of selected) {
+    let patch = ''
+    try {
+      if (layer === 'unstaged' && entry.status === 'untracked') {
+        patch = await untrackedPatch(cwd, entry.path)
+      } else {
+        patch =
+          patchByPath.get(entry.path) ??
+          (await runGitStdout(cwd, [...args, '--', entry.path], {
+            timeout: 20_000,
+            maxBuffer: DIFF_MAX_BUFFER,
+            allowNonZero: true
+          }))
+      }
+    } catch {
+      patch = ''
+    }
+    const code = layer === 'staged' ? entry.indexStatus : entry.workTreeStatus
+    files.push({
+      path: entry.path,
+      status: gitStatusFromCode(code, entry.status),
+      stage: layer,
+      patch: patch.trimEnd()
+    })
+  }
+  return files.sort((a, b) => a.path.localeCompare(b.path))
+}
+
+async function buildCombinedFiles(
+  cwd: string,
+  entries: ParsedPorcelainEntry[]
+): Promise<GitWorkingChangeFile[]> {
+  if (entries.length === 0) return []
+  const trackedDiff = await runGitStdout(cwd, ['diff', 'HEAD', '--no-color'], {
+    timeout: 30_000,
+    maxBuffer: DIFF_MAX_BUFFER,
+    allowNonZero: true
+  })
+  const patchByPath = splitUnifiedDiff(trackedDiff)
+  const files: GitWorkingChangeFile[] = []
+  for (const entry of entries) {
+    let patch = ''
+    try {
+      patch =
+        entry.status === 'untracked'
+          ? await untrackedPatch(cwd, entry.path)
+          : patchByPath.get(entry.path) ??
+            (await runGitStdout(cwd, ['diff', 'HEAD', '--no-color', '--', entry.path], {
+              timeout: 20_000,
+              maxBuffer: DIFF_MAX_BUFFER,
+              allowNonZero: true
+            }))
+    } catch {
+      patch = ''
+    }
+    files.push({ ...entry, patch: patch.trimEnd() })
+  }
+  return files
+    .map(({ path, status, stage, patch }) => ({ path, status, stage, patch }))
+    .sort((a, b) => a.path.localeCompare(b.path))
+}
+
+async function resolveBranchBase(
+  cwd: string,
+  requestedBase?: string
+): Promise<{ baseRef: string; baseCommit: string }> {
+  const requested = requestedBase?.trim() ?? ''
+  if (requested) {
+    try {
+      await runGit(cwd, ['check-ref-format', '--branch', requested])
+      const baseCommit = (await runGit(cwd, ['merge-base', 'HEAD', requested])).stdout.trim()
+      if (baseCommit) return { baseRef: requested, baseCommit }
+    } catch {
+      // A remembered branch may have been deleted; fall back automatically.
+    }
+  }
+
+  let upstream = ''
+  try {
+    upstream = (
+      await runGit(cwd, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}'])
+    ).stdout.trim()
+  } catch {
+    // Local-only branches can still compare against a local/default base.
+  }
+
+  const currentBranch = await resolveCurrentBranch(cwd)
+  const defaultBranch = await resolveRepositoryDefaultBranch(cwd)
+  const recentAncestor = await resolveRecentAncestorBranch(
+    cwd,
+    currentBranch,
+    defaultBranch
+  )
+  const candidates = [recentAncestor, defaultBranch, 'origin/main', 'origin/master', 'main', 'master']
+  if (upstream) candidates.push(upstream)
+
+  for (const baseRef of [...new Set(candidates.filter((ref): ref is string => Boolean(ref)))]) {
+    try {
+      const baseCommit = (await runGit(cwd, ['merge-base', 'HEAD', baseRef])).stdout.trim()
+      if (baseCommit) return { baseRef, baseCommit }
+    } catch {
+      // Try the next conventional base.
+    }
+  }
+  return { baseRef: 'HEAD', baseCommit: 'HEAD' }
+}
+
+function parseNameStatus(raw: string): Array<{ path: string; status: GitWorkingChangeStatus }> {
+  const out: Array<{ path: string; status: GitWorkingChangeStatus }> = []
+  for (const line of raw.split('\n')) {
+    const parts = line.split('\t').filter(Boolean)
+    const code = parts[0]?.[0] ?? ''
+    const path = parts[parts.length - 1]?.trim() ?? ''
+    if (!path) continue
+    out.push({ path, status: gitStatusFromCode(code, 'modified') })
+  }
+  return out
+}
+
+async function buildBranchFiles(
+  cwd: string,
+  entries: ParsedPorcelainEntry[],
+  baseCommit: string
+): Promise<GitWorkingChangeFile[]> {
+  const [patch, names] = await Promise.all([
+    runGitStdout(cwd, ['diff', baseCommit, '--no-color'], {
+      timeout: 30_000,
+      maxBuffer: DIFF_MAX_BUFFER,
+      allowNonZero: true
+    }),
+    runGitStdout(cwd, ['diff', '--name-status', '--find-renames', baseCommit, '--'], {
+      timeout: 30_000,
+      maxBuffer: DIFF_MAX_BUFFER,
+      allowNonZero: true
+    })
+  ])
+  const patchByPath = splitUnifiedDiff(patch)
+  const files: GitWorkingChangeFile[] = []
+  for (const entry of parseNameStatus(names)) {
+    let filePatch = patchByPath.get(entry.path) ?? ''
+    if (!filePatch) {
+      filePatch = await runGitStdout(cwd, ['diff', baseCommit, '--no-color', '--', entry.path], {
+        timeout: 20_000,
+        maxBuffer: DIFF_MAX_BUFFER,
+        allowNonZero: true
+      })
+    }
+    files.push({ ...entry, stage: 'unstaged', patch: filePatch.trimEnd() })
+  }
+  const known = new Set(files.map((file) => file.path))
+  for (const entry of entries) {
+    if (entry.status !== 'untracked' || known.has(entry.path)) continue
+    let filePatch = ''
+    try {
+      filePatch = await untrackedPatch(cwd, entry.path)
+    } catch {
+      // Keep the file visible even if a binary/no-index patch is unavailable.
+    }
+    files.push({
+      path: entry.path,
+      status: 'untracked',
+      stage: 'unstaged',
+      patch: filePatch.trimEnd()
+    })
+  }
+  return files.sort((a, b) => a.path.localeCompare(b.path))
+}
+
+export async function getGitWorkingChanges(
+  workspaceRoot: string,
+  scope: GitChangeScope = 'working-tree',
+  baseRef?: string
+): Promise<GitWorkingChangesResult> {
   const cwd = workspaceRoot.trim()
   if (!cwd) {
     return { ok: false, reason: 'no_workspace', message: 'No working directory selected.' }
@@ -303,17 +674,10 @@ export async function getGitWorkingChanges(workspaceRoot: string): Promise<GitWo
       .filter(
         (
           entry
-        ): entry is {
-          path: string
-          status: GitWorkingChangeStatus
-          stage: GitWorkingChangeStage
-        } => entry !== null
+        ): entry is ParsedPorcelainEntry => entry !== null
       )
 
-    if (entries.length === 0) {
-      workingChangesCache.delete(cwd)
-      return { ok: true, repositoryRoot, files: [] }
-    }
+    const branchBase = scope === 'branch' ? await resolveBranchBase(cwd, baseRef) : null
 
     const fingerprint = await workingChangesFingerprint(
       cwd,
@@ -321,56 +685,39 @@ export async function getGitWorkingChanges(workspaceRoot: string): Promise<GitWo
       porcelainLines,
       entries.map((entry) => entry.path)
     )
-    const cached = workingChangesCache.get(cwd)
-    if (cached && cached.fingerprint === fingerprint) {
+    const scopedFingerprint = `${fingerprint}\u0002${branchBase?.baseRef ?? ''}\u0002${branchBase?.baseCommit ?? ''}`
+    const cacheKey = `${cwd}\u0000${scope}`
+    const cached = workingChangesCache.get(cacheKey)
+    if (cached && cached.fingerprint === scopedFingerprint) {
       return cached.result
     }
 
-    const trackedDiff = await runGitStdout(cwd, ['diff', 'HEAD', '--no-color'], {
-      timeout: 30_000,
-      maxBuffer: DIFF_MAX_BUFFER,
-      allowNonZero: true
-    })
-    const patchByPath = splitUnifiedDiff(trackedDiff)
-    const files: GitWorkingChangeFile[] = []
-
-    for (const entry of entries) {
-      let patch = ''
-      try {
-        if (entry.status === 'untracked') {
-          patch = await runGitStdout(
-            cwd,
-            ['diff', '--no-index', '--no-color', '/dev/null', entry.path],
-            { timeout: 20_000, maxBuffer: DIFF_MAX_BUFFER, allowNonZero: true }
-          )
-        } else {
-          patch =
-            patchByPath.get(entry.path) ??
-            (await runGitStdout(cwd, ['diff', 'HEAD', '--no-color', '--', entry.path], {
-              timeout: 20_000,
-              maxBuffer: DIFF_MAX_BUFFER,
-              allowNonZero: true
-            }))
-        }
-      } catch {
-        patch = ''
+    let result: GitWorkingChangesResult
+    if (scope === 'branch' && branchBase) {
+      result = {
+        ok: true,
+        repositoryRoot,
+        scope,
+        baseRef: branchBase.baseRef,
+        files: await buildBranchFiles(cwd, entries, branchBase.baseCommit)
       }
-
-      files.push({
-        path: entry.path,
-        status: entry.status,
-        stage: entry.stage,
-        patch: patch.trimEnd()
-      })
+    } else if (scope === 'staged') {
+      result = { ok: true, repositoryRoot, scope, files: await buildLayerFiles(cwd, entries, 'staged') }
+    } else if (scope === 'unstaged') {
+      result = { ok: true, repositoryRoot, scope, files: await buildLayerFiles(cwd, entries, 'unstaged') }
+    } else {
+      const [files, stagedFiles, unstagedFiles] = await Promise.all([
+        buildCombinedFiles(cwd, entries),
+        buildLayerFiles(cwd, entries, 'staged'),
+        buildLayerFiles(cwd, entries, 'unstaged')
+      ])
+      result = { ok: true, repositoryRoot, scope, files, stagedFiles, unstagedFiles }
     }
-
-    files.sort((a, b) => a.path.localeCompare(b.path))
-    const result: GitWorkingChangesResult = { ok: true, repositoryRoot, files }
-    if (workingChangesCache.size >= WORKING_CHANGES_CACHE_MAX_ROOTS && !workingChangesCache.has(cwd)) {
+    if (workingChangesCache.size >= WORKING_CHANGES_CACHE_MAX_ROOTS && !workingChangesCache.has(cacheKey)) {
       const oldest = workingChangesCache.keys().next().value
       if (oldest !== undefined) workingChangesCache.delete(oldest)
     }
-    workingChangesCache.set(cwd, { fingerprint, result })
+    workingChangesCache.set(cacheKey, { fingerprint: scopedFingerprint, result })
     return result
   } catch (error) {
     return gitWorkingChangesFailure(error)
@@ -433,6 +780,215 @@ async function stageGitPaths(cwd: string, paths: string[]): Promise<void> {
   }
 }
 
+function gitPathActionFailure(error: unknown): GitPathActionResult {
+  const message = error instanceof Error ? error.message : String(error)
+  if (/not a git repository/i.test(message)) {
+    return { ok: false, reason: 'not_git_repo', message: 'The working directory is not a Git repository.' }
+  }
+  if (/ENOENT/i.test(message) || /spawn git/i.test(message)) {
+    return { ok: false, reason: 'git_unavailable', message: 'Git executable was not found.' }
+  }
+  return { ok: false, reason: 'error', message }
+}
+
+function safeUniqueGitPaths(paths: string[]): string[] {
+  return [...new Set(paths.map((path) => path.trim()).filter(isSafeGitPath))]
+}
+
+export async function stageGitChanges(
+  workspaceRoot: string,
+  paths: string[]
+): Promise<GitPathActionResult> {
+  const cwd = workspaceRoot.trim()
+  if (!cwd) {
+    return { ok: false, reason: 'no_workspace', message: 'No working directory selected.' }
+  }
+  const safePaths = safeUniqueGitPaths(paths)
+  if (safePaths.length === 0) {
+    return { ok: false, reason: 'invalid_paths', message: 'Select at least one safe file path.' }
+  }
+  try {
+    const repositoryRoot = (await runGit(cwd, ['rev-parse', '--show-toplevel'])).stdout.trim()
+    await stageGitPaths(cwd, safePaths)
+    invalidateWorkingChangesCache(cwd)
+    return { ok: true, repositoryRoot, fileCount: safePaths.length }
+  } catch (error) {
+    return gitPathActionFailure(error)
+  }
+}
+
+export async function unstageGitChanges(
+  workspaceRoot: string,
+  paths: string[]
+): Promise<GitPathActionResult> {
+  const cwd = workspaceRoot.trim()
+  if (!cwd) {
+    return { ok: false, reason: 'no_workspace', message: 'No working directory selected.' }
+  }
+  const safePaths = safeUniqueGitPaths(paths)
+  if (safePaths.length === 0) {
+    return { ok: false, reason: 'invalid_paths', message: 'Select at least one safe file path.' }
+  }
+  try {
+    const repositoryRoot = (await runGit(cwd, ['rev-parse', '--show-toplevel'])).stdout.trim()
+    let hasHead = true
+    try {
+      await runGit(cwd, ['rev-parse', '--verify', 'HEAD'])
+    } catch {
+      hasHead = false
+    }
+    if (hasHead) {
+      try {
+        await runGit(cwd, ['restore', '--staged', '--', ...safePaths], 60_000)
+      } catch {
+        await runGit(cwd, ['reset', 'HEAD', '--', ...safePaths], 60_000)
+      }
+    } else {
+      await runGit(cwd, ['rm', '--cached', '--ignore-unmatch', '--', ...safePaths], 60_000)
+    }
+    invalidateWorkingChangesCache(cwd)
+    return { ok: true, repositoryRoot, fileCount: safePaths.length }
+  } catch (error) {
+    return gitPathActionFailure(error)
+  }
+}
+
+function gitPushFailure(error: unknown): GitPushResult {
+  const message = error instanceof Error ? error.message : String(error)
+  if (/not a git repository/i.test(message)) {
+    return { ok: false, reason: 'not_git_repo', message: 'The working directory is not a Git repository.' }
+  }
+  if (/ENOENT/i.test(message) || /spawn git/i.test(message)) {
+    return { ok: false, reason: 'git_unavailable', message: 'Git executable was not found.' }
+  }
+  if (/non-fast-forward|fetch first|rejected/i.test(message)) {
+    return {
+      ok: false,
+      reason: 'rejected',
+      message: 'The remote branch has newer commits. Update your branch before pushing.'
+    }
+  }
+  return { ok: false, reason: 'error', message }
+}
+
+function gitPullFailure(error: unknown): GitPullResult {
+  const message = error instanceof Error ? error.message : String(error)
+  if (/not a git repository/i.test(message)) {
+    return { ok: false, reason: 'not_git_repo', message: 'The working directory is not a Git repository.' }
+  }
+  if (/ENOENT/i.test(message) || /spawn git/i.test(message)) {
+    return { ok: false, reason: 'git_unavailable', message: 'Git executable was not found.' }
+  }
+  if (/not possible to fast-forward|divergent branches|non-fast-forward/i.test(message)) {
+    return {
+      ok: false,
+      reason: 'diverged',
+      message: 'Local and remote commits have diverged. Choose merge or rebase before pulling.'
+    }
+  }
+  if (/local changes.*overwritten|would be overwritten|unstaged changes/i.test(message)) {
+    return {
+      ok: false,
+      reason: 'dirty_worktree',
+      message: 'Commit or stash local changes before pulling.'
+    }
+  }
+  return { ok: false, reason: 'error', message }
+}
+
+export async function pullGitBranch(workspaceRoot: string): Promise<GitPullResult> {
+  const cwd = workspaceRoot.trim()
+  if (!cwd) {
+    return { ok: false, reason: 'no_workspace', message: 'No working directory selected.' }
+  }
+  try {
+    const repositoryRoot = (await runGit(cwd, ['rev-parse', '--show-toplevel'])).stdout.trim()
+    const branch = (await runGit(cwd, ['branch', '--show-current'])).stdout.trim()
+    if (!branch) {
+      return { ok: false, reason: 'detached_head', message: 'Switch to a branch before pulling.' }
+    }
+    let upstream = ''
+    try {
+      upstream = (
+        await runGit(cwd, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}'])
+      ).stdout.trim()
+    } catch {
+      return { ok: false, reason: 'no_upstream', message: 'Publish this branch before pulling.' }
+    }
+    const before = (await runGit(cwd, ['rev-parse', 'HEAD'])).stdout.trim()
+    // Never introduce an implicit merge commit from a toolbar action.
+    await runGit(cwd, ['pull', '--ff-only'], 120_000, DIFF_MAX_BUFFER)
+    const after = (await runGit(cwd, ['rev-parse', 'HEAD'])).stdout.trim()
+    invalidateWorkingChangesCache(cwd)
+    return { ok: true, repositoryRoot, branch, upstream, updated: before !== after }
+  } catch (error) {
+    return gitPullFailure(error)
+  }
+}
+
+export async function pushGitBranch(workspaceRoot: string): Promise<GitPushResult> {
+  const cwd = workspaceRoot.trim()
+  if (!cwd) {
+    return { ok: false, reason: 'no_workspace', message: 'No working directory selected.' }
+  }
+  try {
+    const repositoryRoot = (await runGit(cwd, ['rev-parse', '--show-toplevel'])).stdout.trim()
+    const branch = (await runGit(cwd, ['branch', '--show-current'])).stdout.trim()
+    if (!branch) {
+      return { ok: false, reason: 'detached_head', message: 'Create or switch to a branch before pushing.' }
+    }
+
+    const remotes = (await runGit(cwd, ['remote'])).stdout
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean)
+    if (remotes.length === 0) {
+      return { ok: false, reason: 'no_remote', message: 'No Git remote is configured.' }
+    }
+
+    let upstream = ''
+    try {
+      upstream = (
+        await runGit(cwd, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}'])
+      ).stdout.trim()
+    } catch {
+      upstream = ''
+    }
+
+    if (upstream) {
+      const counts = (await runGit(cwd, ['rev-list', '--left-right', '--count', `HEAD...${upstream}`]))
+        .stdout.trim()
+        .split(/\s+/)
+      const ahead = Number.parseInt(counts[0] ?? '0', 10) || 0
+      const behind = Number.parseInt(counts[1] ?? '0', 10) || 0
+      if (behind > 0) {
+        return {
+          ok: false,
+          reason: 'behind_remote',
+          message: 'The remote branch has newer commits. Update your branch before pushing.'
+        }
+      }
+      if (ahead > 0) await runGit(cwd, ['push'], 120_000, DIFF_MAX_BUFFER)
+      const commitHash = (await runGit(cwd, ['rev-parse', '--short', 'HEAD'])).stdout.trim()
+      return { ok: true, repositoryRoot, branch, upstream, commitHash, pushed: ahead > 0 }
+    }
+
+    const remote = remotes.includes('origin') ? 'origin' : remotes[0]!
+    await runGit(cwd, ['push', '--set-upstream', remote, branch], 120_000, DIFF_MAX_BUFFER)
+    const commitHash = (await runGit(cwd, ['rev-parse', '--short', 'HEAD'])).stdout.trim()
+    return {
+      ok: true,
+      repositoryRoot,
+      branch,
+      upstream: `${remote}/${branch}`,
+      commitHash,
+      pushed: true
+    }
+  } catch (error) {
+    return gitPushFailure(error)
+  }
+}
+
 export async function commitGitChanges(
   workspaceRoot: string,
   message: string,
@@ -449,37 +1005,44 @@ export async function commitGitChanges(
 
   try {
     const repositoryRoot = (await runGit(cwd, ['rev-parse', '--show-toplevel'])).stdout.trim()
-    let targetPaths = paths?.map((path) => path.trim()).filter(Boolean) ?? []
+    const targetPaths = paths?.map((path) => path.trim()).filter(Boolean)
+    let committedPaths: string[]
 
-    if (targetPaths.length === 0) {
-      const changes = await getGitWorkingChanges(cwd)
-      if (!changes.ok) {
-        return { ok: false, reason: changes.reason, message: changes.message }
+    if (targetPaths === undefined) {
+      // Standard Git flow: the index is the commit selection. Do not silently
+      // stage working-directory changes from a Commit button.
+      committedPaths = (await runGit(cwd, ['diff', '--cached', '--name-only'])).stdout
+        .split('\n')
+        .map((path) => path.trim())
+        .filter(Boolean)
+      if (committedPaths.length === 0 || !(await hasStagedChanges(cwd))) {
+        return { ok: false, reason: 'nothing_to_commit', message: 'No changes staged for commit.' }
       }
-      targetPaths = changes.files.map((file) => file.path)
+      await runGit(cwd, ['commit', '-m', commitMessage], 60_000)
+    } else {
+      // Explicit paths remain available for older/advanced callers.
+      const safePaths = [...new Set(targetPaths.filter(isSafeGitPath))]
+      if (safePaths.length === 0) {
+        return { ok: false, reason: 'nothing_to_commit', message: 'No changes to commit.' }
+      }
+      await stageGitPaths(cwd, safePaths)
+      if (!(await hasStagedChanges(cwd))) {
+        return { ok: false, reason: 'nothing_to_commit', message: 'No changes staged for commit.' }
+      }
+      // `--only` keeps previously staged but unselected files out of this commit.
+      await runGit(cwd, ['commit', '--only', '-m', commitMessage, '--', ...safePaths], 60_000)
+      committedPaths = safePaths
     }
-
-    const safePaths = [...new Set(targetPaths.filter(isSafeGitPath))]
-    if (safePaths.length === 0) {
-      return { ok: false, reason: 'nothing_to_commit', message: 'No changes to commit.' }
-    }
-
-    await stageGitPaths(cwd, safePaths)
-
-    if (!(await hasStagedChanges(cwd))) {
-      return { ok: false, reason: 'nothing_to_commit', message: 'No changes staged for commit.' }
-    }
-
-    await runGit(cwd, ['commit', '-m', commitMessage], 60_000)
     const commitHash = (await runGit(cwd, ['rev-parse', '--short', 'HEAD'])).stdout.trim()
     const summary = (await runGit(cwd, ['show', '-s', '--format=%s', 'HEAD'])).stdout.trim()
+    invalidateWorkingChangesCache(cwd)
 
     return {
       ok: true,
       repositoryRoot,
       commitHash,
       summary,
-      fileCount: safePaths.length
+      fileCount: committedPaths.length
     }
   } catch (error) {
     return gitCommitFailure(error)

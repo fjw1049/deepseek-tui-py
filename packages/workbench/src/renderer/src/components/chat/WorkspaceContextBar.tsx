@@ -1,25 +1,48 @@
-import { useLayoutEffect, useMemo, useRef, useState, type ReactElement } from 'react'
-import { Laptop } from 'lucide-react'
-import { useTranslation } from 'react-i18next'
+import { useCallback, useLayoutEffect, useMemo, useRef, useState, type ReactElement } from 'react'
+import { GitBranchPicker } from './GitBranchPicker'
+import { ProjectContextPicker } from './ProjectContextPicker'
 import { isChatsWorkspace, normalizeWorkspaceRoot } from '../../lib/workspace-path'
 import {
   workspaceContextBarPlanForWidth,
   workspaceContextBarTierForWidth
 } from '../../lib/workspace-context-bar-layout'
-import { GitBranchPicker } from './GitBranchPicker'
-import { ProjectContextPicker } from './ProjectContextPicker'
 
 type Props = {
   workspaceRoot: string
+  /** `tray` tucks under the composer card (home + conversation). `embedded` is IDE compact only. */
+  variant?: 'tray' | 'embedded'
 }
 
-/** Empty-stage tray tucked under the composer shell. */
-export function WorkspaceContextBar({ workspaceRoot }: Props): ReactElement {
-  const { t } = useTranslation('common')
+/** Project / branch row under the composer. Isolation is not a user control. */
+export function WorkspaceContextBar({ workspaceRoot, variant = 'tray' }: Props): ReactElement {
   const barRef = useRef<HTMLDivElement>(null)
   const [barWidth, setBarWidth] = useState<number | null>(null)
+  const [branchState, setBranchState] = useState<{
+    workspaceRoot: string
+    currentBranch: string | null
+  } | null>(null)
   const plan = useMemo(() => workspaceContextBarPlanForWidth(barWidth), [barWidth])
   const tier = workspaceContextBarTierForWidth(barWidth)
+  const normalizedRoot = normalizeWorkspaceRoot(workspaceRoot)
+  const isTemporary = isChatsWorkspace(workspaceRoot) || !normalizedRoot
+  const renderBranch = Boolean(normalizedRoot) && !isTemporary && plan.showBranch
+  const branchVisible =
+    branchState?.workspaceRoot === normalizedRoot && Boolean(branchState.currentBranch)
+  const embedded = variant === 'embedded'
+  const handleCurrentBranchChange = useCallback(
+    (currentBranch: string | null): void => {
+      setBranchState((previous) => {
+        if (
+          previous?.workspaceRoot === normalizedRoot &&
+          previous.currentBranch === currentBranch
+        ) {
+          return previous
+        }
+        return { workspaceRoot: normalizedRoot, currentBranch }
+      })
+    },
+    [normalizedRoot]
+  )
 
   useLayoutEffect(() => {
     const el = barRef.current
@@ -43,15 +66,16 @@ export function WorkspaceContextBar({ workspaceRoot }: Props): ReactElement {
     }
   }, [])
 
-  const normalizedRoot = normalizeWorkspaceRoot(workspaceRoot)
-  const isTemporary = isChatsWorkspace(workspaceRoot) || !normalizedRoot
-  const showBranch = Boolean(normalizedRoot) && !isTemporary && plan.showBranch
-
   return (
     <div
       ref={barRef}
-      className="ds-workspace-context-bar relative z-0 -mt-5 flex min-h-8 min-w-0 flex-nowrap items-center gap-x-0.5 overflow-hidden rounded-b-[1.2rem] rounded-t-none px-2.5 pb-1.5 pt-6 sm:min-h-7 sm:px-3.5"
+      className={
+        embedded
+          ? 'ds-workspace-context-bar ds-workspace-context-bar--embedded relative flex min-h-7 min-w-0 flex-nowrap items-center gap-x-0.5 overflow-hidden px-1 pb-0.5 pt-1'
+          : 'ds-workspace-context-bar relative z-0 -mt-5 flex min-h-8 min-w-0 flex-nowrap items-center gap-x-0.5 overflow-hidden rounded-b-2xl rounded-t-none px-2.5 pb-1.5 pt-6 sm:px-3.5'
+      }
       data-workspace-context-bar="true"
+      data-context-bar-variant={variant}
       data-context-bar-tier={barWidth == null ? 'unknown' : String(tier)}
     >
       <div className="ds-workspace-context-project min-w-0 shrink">
@@ -60,33 +84,32 @@ export function WorkspaceContextBar({ workspaceRoot }: Props): ReactElement {
           usePortal
           menuPlacement="above"
           hideChevron={!plan.showProjectChevron}
+          size={embedded ? 'dense' : 'tray'}
         />
       </div>
-      {plan.showLocal ? (
+      {renderBranch ? (
         <>
-          <span className="ds-workspace-context-sep" aria-hidden />
           <span
-            className="ds-workspace-context-status inline-flex h-7 shrink-0 items-center gap-1 px-1.5"
-            title={t('contextBarLocalHint')}
-            aria-label={t('contextBarLocalHint')}
+            className="ds-workspace-context-sep"
+            aria-hidden
+            hidden={!branchVisible}
+            style={branchVisible ? undefined : { display: 'none' }}
+          />
+          <div
+            className="ds-workspace-context-branch min-w-0 shrink"
+            hidden={!branchVisible}
+            style={branchVisible ? undefined : { display: 'none' }}
           >
-            <Laptop className="h-3 w-3 shrink-0" strokeWidth={1.7} aria-hidden />
-            {plan.showLocalLabel ? <span>{t('contextBarLocal')}</span> : null}
-          </span>
-        </>
-      ) : null}
-      {showBranch ? (
-        <>
-          <span className="ds-workspace-context-sep" aria-hidden />
-          <div className="ds-workspace-context-branch min-w-0 shrink">
             <GitBranchPicker
               key={normalizedRoot}
               workspaceRoot={normalizedRoot}
               compact
+              size={embedded ? 'dense' : 'tray'}
               usePortal
               menuPlacement="above"
               hideLabel={!plan.showBranchLabel}
               hideChevron={!plan.showBranchChevron}
+              onCurrentBranchChange={handleCurrentBranchChange}
             />
           </div>
         </>

@@ -586,11 +586,13 @@ export function SettingsView(): ReactElement {
                     ? t('search')
                     : category === 'shortcuts'
                       ? t('shortcuts')
-                      : category === 'data'
-                        ? t('data')
-                        : category === 'archive'
-                          ? t('archive')
-                          : t('title')}
+                      : category === 'appearance'
+                        ? t('appearance')
+                        : category === 'data'
+                          ? t('data')
+                          : category === 'archive'
+                            ? t('archive')
+                            : t('title')}
               </h1>
               <p className="mt-1 text-[14px] text-ds-muted">
                 {category === 'data'
@@ -599,7 +601,9 @@ export function SettingsView(): ReactElement {
                     ? t('archiveSubtitle')
                     : category === 'search'
                       ? t('searchSubtitle')
-                      : t('subtitle')}
+                      : category === 'appearance'
+                        ? t('appearanceSubtitle')
+                        : t('subtitle')}
               </p>
             </div>
             {category !== 'data' && category !== 'archive' ? (

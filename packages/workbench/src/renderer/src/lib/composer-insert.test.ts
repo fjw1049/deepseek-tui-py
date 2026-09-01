@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { appendComposerSnippet, formatComposerPathMention } from './composer-insert'
+import {
+  appendComposerSnippet,
+  formatComposerPathMention,
+  queueComposerRetryDraft,
+  takeComposerRetryDraft
+} from './composer-insert'
 
 describe('formatComposerPathMention', () => {
   it('uses a bare @path for simple relative files', () => {
@@ -30,5 +35,23 @@ describe('appendComposerSnippet', () => {
 
   it('does not add a second space after trailing whitespace', () => {
     expect(appendComposerSnippet('please review ', '@src/foo.ts')).toBe('please review @src/foo.ts')
+  })
+})
+
+describe('task-scoped retry drafts', () => {
+  it('never gives a failed resend draft to another task', () => {
+    queueComposerRetryDraft('thread-a', 'retry A')
+
+    expect(takeComposerRetryDraft('thread-b')).toBeNull()
+    expect(takeComposerRetryDraft('thread-a')).toBe('retry A')
+  })
+
+  it('preserves multiple drafts without merging their text', () => {
+    queueComposerRetryDraft('thread-a', 'first')
+    queueComposerRetryDraft('thread-a', 'second')
+
+    expect(takeComposerRetryDraft('thread-a')).toBe('first')
+    expect(takeComposerRetryDraft('thread-a')).toBe('second')
+    expect(takeComposerRetryDraft('thread-a')).toBeNull()
   })
 })

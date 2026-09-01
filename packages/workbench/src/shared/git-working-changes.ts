@@ -1,5 +1,7 @@
 export type GitWorkingChangeStage = 'staged' | 'unstaged' | 'partial'
 
+export type GitChangeScope = 'working-tree' | 'staged' | 'unstaged' | 'branch'
+
 export type GitWorkingChangeStatus =
   | 'modified'
   | 'added'
@@ -19,7 +21,13 @@ export type GitWorkingChangesResult =
   | {
       ok: true
       repositoryRoot: string
+      scope: GitChangeScope
+      /** Base ref used by the branch comparison. */
+      baseRef?: string
       files: GitWorkingChangeFile[]
+      /** Exact index and working-directory layers for the grouped default view. */
+      stagedFiles?: GitWorkingChangeFile[]
+      unstagedFiles?: GitWorkingChangeFile[]
     }
   | {
       ok: false

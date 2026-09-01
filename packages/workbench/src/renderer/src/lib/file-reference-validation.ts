@@ -1,16 +1,26 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { FileReferenceTarget } from './file-references'
 
-type ValidationState =
+export type FileReferenceCandidate = {
+  path: string
+  kind: 'file' | 'directory'
+}
+
+export type ValidationState =
   | { status: 'idle' }
   | { status: 'pending' }
   | { status: 'valid'; path: string; kind?: 'file' | 'directory' }
-  | { status: 'invalid' }
+  | { status: 'ambiguous'; candidates: FileReferenceCandidate[]; message: string }
+  | { status: 'invalid'; message: string }
 
-type SettledValidation = Extract<ValidationState, { status: 'valid' | 'invalid' }>
+type SettledValidation = Extract<ValidationState, { status: 'valid' | 'ambiguous' | 'invalid' }>
 type CachedValidation = SettledValidation | Promise<SettledValidation>
 
 const validationCache = new Map<string, CachedValidation>()
+
+export function invalidateFileReferenceValidationCache(): void {
+  validationCache.clear()
+}
 
 function cacheKey(target: FileReferenceTarget | null, workspaceRoot?: string): string {
   return `${workspaceRoot?.trim() ?? ''}\u0000${target?.path ?? ''}`
@@ -26,7 +36,7 @@ async function validateFileReference(
 
   const task = (async (): Promise<SettledValidation> => {
     if (typeof window.dsGui?.resolveWorkspaceFile !== 'function') {
-      return { status: 'invalid' }
+      return { status: 'invalid', message: 'File resolver is unavailable.' }
     }
 
     const result = await window.dsGui.resolveWorkspaceFile({
@@ -36,9 +46,15 @@ async function validateFileReference(
       workspaceRoot
     })
 
-    return result.ok
-      ? { status: 'valid', path: result.path, kind: result.kind }
-      : { status: 'invalid' }
+    if (result.ok) return { status: 'valid', path: result.path, kind: result.kind }
+    if (result.code === 'ambiguous' && result.candidates?.length) {
+      return {
+        status: 'ambiguous',
+        candidates: result.candidates,
+        message: result.message
+      }
+    }
+    return { status: 'invalid', message: result.message }
   })()
 
   validationCache.set(key, task)
@@ -47,7 +63,7 @@ async function validateFileReference(
     validationCache.set(key, resolved)
     return resolved
   } catch {
-    const fallback = { status: 'invalid' } as const
+    const fallback = { status: 'invalid', message: 'File resolution failed.' } as const
     validationCache.set(key, fallback)
     return fallback
   }
@@ -55,8 +71,9 @@ async function validateFileReference(
 
 export function useValidatedFileReference(
   target: FileReferenceTarget | null,
-  workspaceRoot?: string
-): ValidationState {
+  workspaceRoot?: string,
+  revision = 0
+): { validation: ValidationState; retry: () => void } {
   const path = target?.path ?? ''
   const line = target?.line
   const column = target?.column
@@ -70,6 +87,11 @@ export function useValidatedFileReference(
     if (!cached || cached instanceof Promise) return { status: 'pending' }
     return cached
   })
+  const [retryToken, setRetryToken] = useState(0)
+  const retry = useCallback(() => {
+    validationCache.delete(key)
+    setRetryToken((value) => value + 1)
+  }, [key])
 
   useEffect(() => {
     if (!path) {
@@ -99,7 +121,7 @@ export function useValidatedFileReference(
     return () => {
       cancelled = true
     }
-  }, [column, key, line, path, workspaceRoot])
+  }, [column, key, line, path, retryToken, revision, workspaceRoot])
 
-  return state
+  return { validation: state, retry }
 }

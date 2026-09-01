@@ -7,9 +7,12 @@ import type {
   EvolutionProposalPayload,
   ChatBlock,
   NormalizedThread,
+  PublishActionResult,
+  PublishIssue,
   ProcessIntentMeta,
   RestoreCodeResult,
   RewindPreview,
+  RewindResult,
   ThreadDeltaEvent,
   SubagentMailboxPayload,
   ThreadEventSink,
@@ -23,6 +26,10 @@ import type {
 import type { AppSettingsV1 } from '@shared/app-settings'
 import { unwrapClawRuntimePromptForDisplay, unwrapClawUserPromptForDisplay } from '@shared/app-settings'
 import { extractDiffFilePath } from '../lib/diff-stats'
+import {
+  indexTurnDiffSnapshots,
+  type TurnDiffSnapshot
+} from '../lib/turn-mutation-view'
 import {
   applyMailboxMessageTouched,
   subagentBlockFromCard,
@@ -146,6 +153,16 @@ type ThreadRecordJson = {
   updated_at: string
   model: string
   workspace: string
+  env_mode?: string
+  worktree_path?: string | null
+  associated_worktree_path?: string | null
+  worktree_branch?: string | null
+  publish_pending?: boolean
+  publish_request_action?: string | null
+  publish_waiting_on?: string | null
+  publish_blocked?: boolean
+  publish_conflicts?: string[]
+  publish_issue?: string | null
   mode: string
   status?: string
   archived?: boolean
@@ -174,6 +191,9 @@ type TurnRecordJson = {
   created_at?: string | null
   started_at?: string | null
   ended_at?: string | null
+  duration_ms?: number | null
+  end_to_end_ms?: number | null
+  diff_snapshot?: unknown
 }
 
 type ThreadDetailJson = {
@@ -207,6 +227,45 @@ function titleFromThread(t: ThreadRecordJson): string {
   const raw = t.title?.trim()
   if (raw) return raw
   return t.id.slice(0, 8)
+}
+
+function publishIssueFromJson(value: unknown): PublishIssue | undefined {
+  if (value === 'recovery' || value === 'failure' || value === 'missing') return value
+  if (value === null) return null
+  return undefined
+}
+
+function threadFromJson(t: ThreadRecordJson, title?: string): NormalizedThread {
+  return {
+    id: t.id,
+    title: title || titleFromThread(t),
+    updatedAt: t.updated_at,
+    createdAt: t.created_at,
+    model: t.model,
+    mode: t.mode,
+    workspace: t.workspace,
+    envMode: t.env_mode === 'worktree' ? 'worktree' : 'local',
+    worktreePath: t.worktree_path ?? t.associated_worktree_path ?? null,
+    publishPending: t.publish_pending === true,
+    publishRequestAction:
+      t.publish_request_action === 'apply' ||
+      t.publish_request_action === 'use_agent' ||
+      t.publish_request_action === 'keep_project'
+        ? t.publish_request_action
+        : null,
+    publishWaitingOn:
+      typeof t.publish_waiting_on === 'string' && t.publish_waiting_on.trim()
+        ? t.publish_waiting_on
+        : null,
+    publishBlocked: t.publish_blocked === true,
+    publishConflicts: Array.isArray(t.publish_conflicts)
+      ? t.publish_conflicts.filter((item): item is string => typeof item === 'string')
+      : [],
+    publishIssue: publishIssueFromJson(t.publish_issue),
+    status: t.status,
+    archived: t.archived === true,
+    goal: t.goal ?? null
+  }
 }
 
 function toToolKind(kind: string): ToolItemKind | undefined {
@@ -907,18 +966,7 @@ export class DeepseekRuntimeProvider implements AgentProvider {
     const rows = JSON.parse(r.body) as ThreadRecordJson[]
     return rows
       .filter((t) => (includeArchived ? t.archived === true : t.archived !== true))
-      .map((t) => ({
-        id: t.id,
-        title: titleFromThread(t),
-        updatedAt: t.updated_at,
-        createdAt: t.created_at,
-        model: t.model,
-        mode: t.mode,
-        workspace: t.workspace,
-        status: t.status,
-        archived: t.archived === true,
-        goal: t.goal ?? null
-      }))
+      .map((t) => threadFromJson(t))
   }
 
   async createThread(input: {
@@ -932,6 +980,7 @@ export class DeepseekRuntimeProvider implements AgentProvider {
     const flags = runtimeExecutionFlags(settings)
     const body = JSON.stringify({
       workspace: input.workspace,
+      title: input.title,
       mode: input.mode ?? 'agent',
       provider: input.provider,
       model: input.model,
@@ -940,24 +989,18 @@ export class DeepseekRuntimeProvider implements AgentProvider {
     const r = await window.dsGui.runtimeRequest('/v1/threads', 'POST', body)
     if (!r.ok) throw toRuntimeError(readRuntimeError(r.body, 'failed to create thread'))
     const t = JSON.parse(r.body) as ThreadRecordJson
-    if (input.title) {
-      await window.dsGui.runtimeRequest(
+    // Compatibility fallback for older runtimes that ignored title on POST.
+    if (input.title && t.title?.trim() !== input.title) {
+      const renamed = await window.dsGui.runtimeRequest(
         `/v1/threads/${encodeURIComponent(t.id)}`,
         'PATCH',
         JSON.stringify({ title: input.title })
       )
+      if (!renamed.ok) {
+        throw toRuntimeError(readRuntimeError(renamed.body, 'failed to title thread'))
+      }
     }
-    return {
-      id: t.id,
-      title: input.title || titleFromThread(t),
-      updatedAt: t.updated_at,
-      createdAt: t.created_at,
-      model: t.model,
-      mode: t.mode,
-      workspace: t.workspace,
-      status: t.status,
-      goal: t.goal ?? null
-    }
+    return threadFromJson(t, input.title || titleFromThread(t))
   }
 
   async applyGoalCommand(
@@ -1009,6 +1052,9 @@ export class DeepseekRuntimeProvider implements AgentProvider {
     threadStatus?: string
     latestTurnId?: string
     latestUserMessageId?: string
+    turnStartedAtByUserId?: Record<string, number>
+    turnDurationByUserId?: Record<string, number>
+    turnDiffByTurnId?: Record<string, TurnDiffSnapshot>
     goal?: import('./types').GoalSnapshotJson | null
   }> {
     const r = await window.dsGui.runtimeRequest(`/v1/threads/${encodeURIComponent(threadId)}`, 'GET')
@@ -1019,6 +1065,12 @@ export class DeepseekRuntimeProvider implements AgentProvider {
     const latestTurn = Array.isArray(detail.turns) ? detail.turns.at(-1) : undefined
     let latestTurnId: string | undefined = latestTurn?.id
     const latestTurnStatus = latestTurn?.status
+    const turnDiffByTurnId = indexTurnDiffSnapshots(
+      (detail.turns ?? []).map((turn) => turn.diff_snapshot)
+    )
+    const turnsById = new Map((detail.turns ?? []).map((turn) => [turn.id, turn]))
+    const turnStartedAtByUserId: Record<string, number> = {}
+    const turnDurationByUserId: Record<string, number> = {}
     let latestUserMessageId: string | undefined
     const narrationByReasoningId = new Map<string, string>()
     for (const it of detail.items) {
@@ -1056,12 +1108,28 @@ export class DeepseekRuntimeProvider implements AgentProvider {
             : undefined
         const modelLabel = displayModelFromUserMessageMeta(meta)
         const rawText = it.detail ?? it.summary
+        const turnId = deriveTurnId(it)
+        const timing = turnId ? turnsById.get(turnId) : undefined
+        const startedAt = timing?.started_at ? Date.parse(timing.started_at) : Number.NaN
+        if (Number.isFinite(startedAt)) {
+          turnStartedAtByUserId[it.id] = startedAt
+        }
+        const durationMs =
+          typeof timing?.end_to_end_ms === 'number' && Number.isFinite(timing.end_to_end_ms)
+            ? timing.end_to_end_ms
+            : typeof timing?.duration_ms === 'number' && Number.isFinite(timing.duration_ms)
+              ? timing.duration_ms
+              : undefined
+        if (typeof durationMs === 'number') {
+          turnDurationByUserId[it.id] = Math.max(0, durationMs)
+        }
         blocks.push({
           kind: 'user',
           id: it.id,
           createdAt: itemCreatedAt(it),
           text: unwrapClawUserPromptForDisplay(rawText),
-          ...(modelLabel ? { modelLabel } : {})
+          ...(modelLabel ? { modelLabel } : {}),
+          ...(turnId ? { turnId } : {})
         })
       } else if (it.kind === 'agent_message') {
         // Route purely on persisted metadata: the runtime tags every
@@ -1159,6 +1227,9 @@ export class DeepseekRuntimeProvider implements AgentProvider {
       threadStatus: detail.thread.status ?? latestTurnStatus,
       latestTurnId,
       latestUserMessageId,
+      turnStartedAtByUserId,
+      turnDurationByUserId,
+      turnDiffByTurnId,
       goal: detail.thread.goal ?? null,
       ...(activePlugin !== undefined ? { activePlugin } : {})
     }
@@ -1315,14 +1386,23 @@ export class DeepseekRuntimeProvider implements AgentProvider {
     }
   }
 
-  async deleteThread(threadId: string): Promise<void> {
+  async deleteThread(
+    threadId: string,
+    options?: { discardUnpublished?: boolean }
+  ): Promise<void> {
     // Hard delete. Soft-archive is archiveThread / setThreadArchived.
-    await this.purgeThread(threadId)
+    await this.purgeThread(threadId, options)
   }
 
-  async purgeThread(threadId: string): Promise<void> {
+  async purgeThread(
+    threadId: string,
+    options?: { discardUnpublished?: boolean }
+  ): Promise<void> {
+    const query = options?.discardUnpublished
+      ? '?discard_unpublished=true'
+      : ''
     const r = await window.dsGui.runtimeRequest(
-      `/v1/threads/${encodeURIComponent(threadId)}`,
+      `/v1/threads/${encodeURIComponent(threadId)}${query}`,
       'DELETE'
     )
     if (!r.ok) {
@@ -1354,16 +1434,7 @@ export class DeepseekRuntimeProvider implements AgentProvider {
     )
     if (!r.ok) throw toRuntimeError(readRuntimeError(r.body, 'fork thread failed'))
     const t = JSON.parse(r.body) as ThreadRecordJson
-    return {
-      id: t.id,
-      title: titleFromThread(t),
-      updatedAt: t.updated_at,
-      createdAt: t.created_at,
-      model: t.model,
-      mode: t.mode,
-      workspace: t.workspace,
-      status: t.status
-    }
+    return threadFromJson(t)
   }
 
   async rewindThread(
@@ -1371,7 +1442,7 @@ export class DeepseekRuntimeProvider implements AgentProvider {
     beforeItemId: string,
     restoreFiles?: boolean,
     forceConflicts?: boolean
-  ): Promise<void> {
+  ): Promise<RewindResult | null> {
     const r = await window.dsGui.runtimeRequest(
       `/v1/threads/${encodeURIComponent(threadId)}/rewind`,
       'POST',
@@ -1382,6 +1453,21 @@ export class DeepseekRuntimeProvider implements AgentProvider {
       })
     )
     if (!r.ok) throw toRuntimeError(readRuntimeError(r.body, 'rewind thread failed'))
+    const parsed = JSON.parse(r.body) as Record<string, unknown>
+    const rawResult = parsed.rewind_result
+    if (!rawResult || typeof rawResult !== 'object' || Array.isArray(rawResult)) {
+      // Older runtimes return only the top-level ThreadRecord.
+      return null
+    }
+    const result = rawResult as Record<string, unknown>
+    return {
+      restoreFiles: result.restore_files === true,
+      restoredFiles: stringListFromJson(result, 'restored_files'),
+      mergedFiles: stringListFromJson(result, 'merged_files'),
+      conflictedFiles: stringListFromJson(result, 'conflicted_files'),
+      skippedFiles: stringListFromJson(result, 'skipped_files'),
+      missingRoots: stringListFromJson(result, 'missing_roots')
+    }
   }
 
   async restoreCode(
@@ -1417,7 +1503,42 @@ export class DeepseekRuntimeProvider implements AgentProvider {
       skipped: stringListFromJson(parsed, 'skipped'),
       conflicts: stringListFromJson(parsed, 'conflicts'),
       isGit: parsed.is_git !== false,
-      turns: typeof parsed.turns === 'number' ? parsed.turns : 0
+      turns: typeof parsed.turns === 'number' ? parsed.turns : 0,
+      missingRoots: stringListFromJson(parsed, 'missing_roots'),
+      noCheckpoint:
+        typeof parsed.no_checkpoint === 'number' ? parsed.no_checkpoint : 0
+    }
+  }
+
+  async resolvePublishConflicts(
+    threadId: string,
+    action: 'apply' | 'use_agent' | 'keep_project',
+    paths?: string[],
+    recoveryToken?: string
+  ): Promise<PublishActionResult> {
+    const r = await window.dsGui.runtimeRequest(
+      `/v1/threads/${encodeURIComponent(threadId)}/worktree/resolve`,
+      'POST',
+      JSON.stringify({ action, paths, recovery_token: recoveryToken })
+    )
+    if (!r.ok) throw toRuntimeError(readRuntimeError(r.body, 'resolve publish failed'))
+    const parsed = JSON.parse(r.body) as {
+      status?: unknown
+      thread?: ThreadRecordJson
+      blocking_thread_id?: unknown
+    }
+    if (!parsed.thread) throw new Error('resolve publish returned no thread')
+    const status =
+      parsed.status === 'queued' ||
+      parsed.status === 'conflict' ||
+      parsed.status === 'pending'
+        ? parsed.status
+        : 'applied'
+    return {
+      status,
+      thread: threadFromJson(parsed.thread),
+      blockingThreadId:
+        typeof parsed.blocking_thread_id === 'string' ? parsed.blocking_thread_id : null
     }
   }
 
@@ -1812,6 +1933,22 @@ export class DeepseekRuntimeProvider implements AgentProvider {
 
               if (ev === 'turn.completed') {
                 const turn = payload.turn as Record<string, unknown> | undefined
+                const latencyTrace =
+                  payload.latency_trace && typeof payload.latency_trace === 'object'
+                    ? (payload.latency_trace as Record<string, unknown>)
+                    : undefined
+                const segments =
+                  latencyTrace?.segments_ms && typeof latencyTrace.segments_ms === 'object'
+                    ? (latencyTrace.segments_ms as Record<string, unknown>)
+                    : undefined
+                const rawDuration =
+                  typeof turn?.end_to_end_ms === 'number'
+                    ? turn.end_to_end_ms
+                    : typeof segments?.end_to_end_ms === 'number'
+                      ? segments.end_to_end_ms
+                      : typeof turn?.duration_ms === 'number'
+                        ? turn.duration_ms
+                        : undefined
                 const turnError =
                   typeof turn?.error === 'string' && turn.error.trim() ? turn.error.trim() : ''
                 if (turnError) {
@@ -1830,6 +1967,11 @@ export class DeepseekRuntimeProvider implements AgentProvider {
                       : typeof payload.thread_id === 'string'
                         ? payload.thread_id
                         : undefined,
+                  turnId: typeof turn?.id === 'string' ? turn.id : undefined,
+                  durationMs:
+                    typeof rawDuration === 'number' && Number.isFinite(rawDuration)
+                      ? Math.max(0, rawDuration)
+                      : undefined,
                   usage:
                     turn?.usage && typeof turn.usage === 'object'
                       ? (turn.usage as Record<string, unknown>)
@@ -1852,6 +1994,8 @@ export class DeepseekRuntimeProvider implements AgentProvider {
                 const changes = (payload.changes as Record<string, unknown> | undefined) ?? {}
                 const threadId = typeof thread?.id === 'string' ? thread.id : undefined
                 if (threadId) {
+                  const updatedAt =
+                    typeof thread?.updated_at === 'string' ? thread.updated_at : undefined
                   const titleRaw = thread?.title
                   const title =
                     typeof titleRaw === 'string'
@@ -1861,7 +2005,85 @@ export class DeepseekRuntimeProvider implements AgentProvider {
                         : undefined
                   const archived = typeof thread?.archived === 'boolean' ? thread.archived : undefined
                   const mode = typeof thread?.mode === 'string' ? thread.mode : undefined
-                  sink.onThreadUpdated({ threadId, title, archived, mode, changes })
+                  const envMode =
+                    thread?.env_mode === 'worktree'
+                      ? 'worktree'
+                      : thread?.env_mode === 'local'
+                        ? 'local'
+                        : undefined
+                  const worktreeRaw = thread?.worktree_path ?? thread?.associated_worktree_path
+                  const worktreePath =
+                    typeof worktreeRaw === 'string'
+                      ? worktreeRaw
+                      : worktreeRaw === null
+                        ? null
+                        : undefined
+                  const publishPending =
+                    typeof thread?.publish_pending === 'boolean'
+                      ? thread.publish_pending
+                      : typeof changes.publish_pending === 'boolean'
+                        ? changes.publish_pending
+                        : undefined
+                  const publishRequestRaw =
+                    typeof thread?.publish_request_action === 'string'
+                      ? thread.publish_request_action
+                      : typeof changes.publish_request_action === 'string'
+                        ? changes.publish_request_action
+                        : null
+                  const publishRequestAction =
+                    publishRequestRaw === 'apply' ||
+                    publishRequestRaw === 'use_agent' ||
+                    publishRequestRaw === 'keep_project'
+                      ? publishRequestRaw
+                      : publishRequestRaw === null
+                        ? null
+                        : undefined
+                  const publishWaitingRaw =
+                    thread?.publish_waiting_on ?? changes.publish_waiting_on
+                  const publishWaitingOn =
+                    typeof publishWaitingRaw === 'string'
+                      ? publishWaitingRaw
+                      : publishWaitingRaw === null
+                        ? null
+                        : undefined
+                  const publishBlocked =
+                    typeof thread?.publish_blocked === 'boolean'
+                      ? thread.publish_blocked
+                      : typeof changes.publish_blocked === 'boolean'
+                        ? changes.publish_blocked
+                        : undefined
+                  const publishConflicts = Array.isArray(thread?.publish_conflicts)
+                    ? thread.publish_conflicts.filter(
+                        (item): item is string => typeof item === 'string'
+                      )
+                    : Array.isArray(changes.publish_conflicts)
+                      ? changes.publish_conflicts.filter(
+                          (item): item is string => typeof item === 'string'
+                        )
+                      : undefined
+                  const publishIssueRaw = Object.prototype.hasOwnProperty.call(
+                    thread ?? {},
+                    'publish_issue'
+                  )
+                    ? thread?.publish_issue
+                    : changes.publish_issue
+                  const publishIssue = publishIssueFromJson(publishIssueRaw)
+                  sink.onThreadUpdated({
+                    threadId,
+                    updatedAt,
+                    title,
+                    archived,
+                    mode,
+                    envMode,
+                    worktreePath,
+                    publishPending,
+                    publishRequestAction,
+                    publishWaitingOn,
+                    publishBlocked,
+                    publishConflicts,
+                    publishIssue,
+                    changes
+                  })
                 }
                 return
               }

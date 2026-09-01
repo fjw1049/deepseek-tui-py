@@ -1,4 +1,9 @@
-import type { PointerEvent as ReactPointerEvent, ReactElement, RefObject } from 'react'
+import type {
+  CSSProperties,
+  PointerEvent as ReactPointerEvent,
+  ReactElement,
+  RefObject
+} from 'react'
 import {
   lazy,
   Suspense,
@@ -30,6 +35,12 @@ import {
   OPEN_PREVIEW_URL_EVENT,
   type OpenPreviewUrlDetail
 } from '../lib/open-preview-url'
+import {
+  OPEN_CHANGES_PANEL_EVENT,
+  normalizeChangeReviewRequest,
+  type ChangeReviewContext,
+  type ChangeReviewRequest,
+} from '../lib/change-review'
 import { normalizeBrowseUrlInput } from '@shared/dev-preview-url'
 import {
   persistRightSidebarCollapsed,
@@ -346,6 +357,10 @@ export function Workbench(): ReactElement {
   const [layoutMode, setLayoutMode] = useState<WorkbenchLayoutMode>('chat')
   const [requestedIdeCenterTab, setRequestedIdeCenterTab] = useState<IdeCenterTab | null>(null)
   const [changesFocusPath, setChangesFocusPath] = useState<string | null>(null)
+  const [changesContext, setChangesContext] =
+    useState<ChangeReviewContext>('branch')
+  const [changesTurnId, setChangesTurnId] = useState<string | null>(null)
+  const [changesProjectRoot, setChangesProjectRoot] = useState<string | null>(null)
   // Transparent pointer shield shown during panel drags: without it, pointer
   // events over the webview/iframe panels are swallowed by the guest process
   // and the window-level resize listeners starve (drag freezes, then jumps).
@@ -523,6 +538,22 @@ export function Workbench(): ReactElement {
   }
 
   const handleComposerOpenDiff = (): void => {
+    setChangesContext('last-turn')
+    setChangesTurnId(useChatStore.getState().currentTurnId)
+    setChangesProjectRoot(null)
+    if (layoutMode === 'ide') {
+      setRequestedIdeCenterTab('changes')
+      return
+    }
+    setRightSidebarOpen(true)
+    setRightSidebarCollapsed(false)
+    setRightSidebarTab('changes')
+  }
+
+  const handleBranchOpenDiff = (): void => {
+    setChangesContext('branch')
+    setChangesTurnId(null)
+    setChangesProjectRoot(null)
     if (layoutMode === 'ide') {
       setRequestedIdeCenterTab('changes')
       return
@@ -567,9 +598,11 @@ export function Workbench(): ReactElement {
         { path, ...(line && line > 0 ? { line } : {}) },
         uniqueWorkspaceRoots(activeWorkspaceRoot, threadFilesystemRoot),
         openInAppEditorSurface
-      )
+      ).then((result) => {
+        if (result === 'none') setError(`${t('fileReferenceOpenFailed')}: ${path}`)
+      })
     },
-    [activeWorkspaceRoot, layoutMode, openInAppEditorSurface, threadFilesystemRoot]
+    [activeWorkspaceRoot, layoutMode, openInAppEditorSurface, setError, t, threadFilesystemRoot]
   )
 
   const enterIdeMode = useCallback((): void => {
@@ -745,7 +778,9 @@ export function Workbench(): ReactElement {
         { path, ...(line && line > 0 ? { line } : {}), ...(column && column > 0 ? { column } : {}) },
         projectRoots,
         openInAppEditorSurface
-      )
+      ).then((result) => {
+        if (result === 'none') setError(`${t('fileReferenceOpenFailed')}: ${path}`)
+      })
     }
 
     const onPreview = (event: Event): void => {
@@ -802,21 +837,28 @@ export function Workbench(): ReactElement {
     openEditorFile,
     openInAppEditorSurface,
     openRightSidebar,
+    setError,
+    t,
     threadFilesystemRoot
   ])
 
   useEffect(() => {
     const onOpenChanges = (event: Event): void => {
-      const path = (event as CustomEvent<{ path?: string }>).detail?.path
-      if (typeof path === 'string' && path.trim()) setChangesFocusPath(path.trim())
+      const request = normalizeChangeReviewRequest(
+        (event as CustomEvent<ChangeReviewRequest>).detail
+      )
+      setChangesContext(request.context)
+      setChangesTurnId(request.turnId ?? null)
+      setChangesProjectRoot(request.workspaceRoot ?? null)
+      if (request.path) setChangesFocusPath(request.path)
       if (layoutMode === 'ide') {
         setRequestedIdeCenterTab('changes')
         return
       }
       openRightSidebar('changes')
     }
-    window.addEventListener('deepseekgui:open-changes-panel', onOpenChanges)
-    return () => window.removeEventListener('deepseekgui:open-changes-panel', onOpenChanges)
+    window.addEventListener(OPEN_CHANGES_PANEL_EVENT, onOpenChanges)
+    return () => window.removeEventListener(OPEN_CHANGES_PANEL_EVENT, onOpenChanges)
   }, [layoutMode, openRightSidebar])
 
   useEffect(() => {
@@ -880,6 +922,12 @@ export function Workbench(): ReactElement {
       setInput('')
     }
   }, [activeThreadId])
+
+  useEffect(() => {
+    setChangesContext('branch')
+    setChangesTurnId(null)
+    setChangesProjectRoot(null)
+  }, [activeThreadId, activeWorkspaceRoot])
 
   // Periodic background probe — keeps connected state fresh and
   // attempts to recover when the runtime is offline.
@@ -1370,6 +1418,11 @@ export function Workbench(): ReactElement {
       ref={shellRef}
       className="ds-workbench-shell ds-drag relative flex h-full min-h-0 w-full min-w-0"
       data-ide-mode={ideModeActive ? '' : undefined}
+      style={
+        {
+          '--ds-sidebar-width': `${leftSidebarHidden ? 0 : sidebarWrapWidth}px`
+        } as CSSProperties
+      }
     >
       {resizeShieldCursor !== null ? (
         <div
@@ -1509,6 +1562,19 @@ export function Workbench(): ReactElement {
               onBrowseProject={handleBrowseIdeProject}
               onExitIdeMode={exitIdeMode}
               onOpenFileInEditor={openFileInEditor}
+              changesContext={changesContext}
+              changesTurnId={changesTurnId}
+              changesProjectRoot={changesProjectRoot}
+              onChangesContextChange={(context) => {
+                setChangesContext(context)
+                // Selecting a source from the menu means "latest"; explicit
+                // historical turn navigation arrives through openChangesPanel.
+                setChangesTurnId(null)
+                // A project badge may temporarily open another project's dirty
+                // tree. Choosing a source again must rebind Changes to the
+                // active task instead of retaining that previous project root.
+                setChangesProjectRoot(null)
+              }}
               requestedCenterTab={requestedIdeCenterTab}
               onRequestedCenterTabConsumed={() => setRequestedIdeCenterTab(null)}
               terminalMaximized={bottomTerminalOpen && ideTerminalMaximized}
@@ -1756,7 +1822,8 @@ export function Workbench(): ReactElement {
                     {showOperationColumn ? (
                       <div className="ds-dialogue-gutter shrink-0 pb-2 md:hidden">
                         <OperationContextDock
-                          onOpenChanges={handleComposerOpenDiff}
+                          workspaceRoot={activeWorkspaceRoot}
+                          onOpenChanges={handleBranchOpenDiff}
                           onEnterIdeMode={enterIdeMode}
                           previewActive={rightSidebarOpen && rightSidebarTab === 'preview'}
                           terminalPanelOpen={bottomTerminalOpen}
@@ -1803,7 +1870,8 @@ export function Workbench(): ReactElement {
                   <aside className="ds-operation-rail ds-no-drag hidden h-full min-h-0 shrink-0 md:flex">
                     <div className="ds-operation-rail__scroll min-h-0 flex-1 overflow-y-auto pb-4 pl-0 pr-0 pt-[var(--ds-operation-stack-offset)]">
                       <OperationContextDock
-                        onOpenChanges={handleComposerOpenDiff}
+                        workspaceRoot={activeWorkspaceRoot}
+                        onOpenChanges={handleBranchOpenDiff}
                         onEnterIdeMode={enterIdeMode}
                         previewActive={rightSidebarOpen && rightSidebarTab === 'preview'}
                         terminalPanelOpen={bottomTerminalOpen}
@@ -1907,6 +1975,14 @@ export function Workbench(): ReactElement {
             workspaceRoot={activeWorkspaceRoot}
             blocks={blocks}
             changesFocusPath={changesFocusPath}
+            changesContext={changesContext}
+            changesTurnId={changesTurnId}
+            changesProjectRoot={changesProjectRoot}
+            onChangesContextChange={(context) => {
+              setChangesContext(context)
+              setChangesTurnId(null)
+              setChangesProjectRoot(null)
+            }}
             onChangesFocusPathConsumed={() => setChangesFocusPath(null)}
             devPreviewBlocks={devPreviewBlocks}
             latestDevPreviewUrl={preferredPreviewUrl}
@@ -1915,7 +1991,14 @@ export function Workbench(): ReactElement {
             onPreferredUrlConsumed={clearWorkspacePreviewUrl}
             onPreviewErrorConsumed={clearHtmlPreviewError}
             onPreviewPick={handlePreviewPick}
-            onTabChange={setRightSidebarTab}
+            onTabChange={(tab) => {
+              if (tab === 'changes' && rightSidebarTab !== 'changes') {
+                setChangesContext('branch')
+                setChangesTurnId(null)
+                setChangesProjectRoot(null)
+              }
+              setRightSidebarTab(tab)
+            }}
             onToggleCollapsed={() => setRightSidebarCollapsed((current) => !current)}
             onClose={closeRightSidebarPanel}
             onToggleMaximize={toggleRightSidebarMaximize}

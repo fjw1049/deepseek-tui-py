@@ -45,13 +45,16 @@ import {
 } from '../../lib/extract-tasks-from-blocks'
 import { ReasoningEffortSelector } from './ReasoningEffortSelector'
 import { ApprovalBubble } from './ApprovalBubble'
+import { ElevationBubble } from './ElevationBubble'
 import { FileChip } from './FileChip'
 import { ComposerLiveChangesHeader } from './ComposerLiveChangesHeader'
+import { openChangesPanel } from '../../lib/change-review'
 import { UserInputBubble } from './UserInputBubble'
 import { ComposerApprovalPolicySelector } from './ComposerApprovalPolicySelector'
 import {
   filterComposerModelOptions,
-  formatComposerModelLabel
+  formatComposerModelLabel,
+  formatUsageModelName
 } from '../../lib/composer-model-label'
 import { decodeModelRef } from '@shared/model-ref'
 import { resolveActiveThreadWorkspace } from '../../lib/workspace-path'
@@ -67,6 +70,7 @@ import { ContextUsageMeter } from './ContextUsageMeter'
 import { ComposerCommandPanel } from './ComposerCommandPanel'
 import { ComposerVoiceBar, type ComposerVoicePhase } from './ComposerVoiceBar'
 import { WorkspaceContextBar } from './WorkspaceContextBar'
+import { PublishConflictBanner } from './PublishConflictBanner'
 import {
   joinSpeechText,
   useAudioRecorder,
@@ -103,7 +107,9 @@ import {
 import {
   appendComposerSnippet,
   COMPOSER_INSERT_EVENT,
+  COMPOSER_RETRY_DRAFT_EVENT,
   formatComposerPathMention,
+  takeComposerRetryDraft,
   type ComposerInsertDetail,
   WORKSPACE_PATH_DRAG_MIME,
   workspacePathFromDrag
@@ -261,7 +267,6 @@ export function FloatingComposer({
   onCompact,
   onFork,
   onOpenDiff,
-  stageCentered = false,
   useChatStageWidth = true,
   compactChrome = false,
   petSlashCommands = [],
@@ -303,15 +308,6 @@ export function FloatingComposer({
   const connectorSearchRef = useRef<HTMLInputElement | null>(null)
   const pluginSearchRef = useRef<HTMLInputElement | null>(null)
   const [footerWidth, setFooterWidth] = useState<number | null>(null)
-  const footerLayoutOpts = useMemo(() => ({ dense: compactChrome }), [compactChrome])
-  const footerTier = useMemo(
-    () => composerFooterTierForWidth(footerWidth, footerLayoutOpts),
-    [footerWidth, footerLayoutOpts]
-  )
-  const footerPlan = useMemo(
-    () => composerFooterPlanForWidth(footerWidth, footerLayoutOpts),
-    [footerWidth, footerLayoutOpts]
-  )
   const composingRef = useRef(false)
   const speechBaseRef = useRef('')
   const [voicePhase, setVoicePhase] = useState<ComposerVoicePhase>('idle')
@@ -347,6 +343,22 @@ export function FloatingComposer({
   // `@plugin:<name> ` on send. After send the chip is cleared and the
   // persistent scenario state arrives from the backend via `activePlugin`.
   const [focusPlugin, setFocusPlugin] = useState<string | null>(null)
+  const footerLayoutOpts = useMemo(
+    () => ({
+      dense: compactChrome,
+      hasMode: mode !== 'agent',
+      hasPlugin: Boolean(activePlugin || focusPlugin)
+    }),
+    [activePlugin, compactChrome, focusPlugin, mode]
+  )
+  const footerTier = useMemo(
+    () => composerFooterTierForWidth(footerWidth, footerLayoutOpts),
+    [footerWidth, footerLayoutOpts]
+  )
+  const footerPlan = useMemo(
+    () => composerFooterPlanForWidth(footerWidth, footerLayoutOpts),
+    [footerWidth, footerLayoutOpts]
+  )
   // Plugins list for the `+` > Enter scenario picker (mirrors skills/connectors).
   const [composerPlugins, setComposerPlugins] = useState<
     Array<{ name: string; description?: string; trusted: boolean; enabled: boolean }>
@@ -395,12 +407,28 @@ export function FloatingComposer({
     args: string
   } | null>(null)
   const effectiveWorkspaceRoot = resolveActiveThreadWorkspace(activeThreadId, threads, workspaceRoot)
+  const activePublishThread = activeThreadId
+    ? threads.find((thread) => thread.id === activeThreadId)
+    : undefined
+  const activeThreadPublishUnresolved = Boolean(
+    activePublishThread?.publishBlocked ||
+      activePublishThread?.publishPending ||
+      activePublishThread?.publishRequestAction
+  )
 
   const pendingApprovals = useMemo(
     () =>
       blocks.filter(
         (block): block is Extract<(typeof blocks)[number], { kind: 'approval' }> =>
           block.kind === 'approval' && block.status === 'pending'
+      ),
+    [blocks]
+  )
+  const pendingElevations = useMemo(
+    () =>
+      blocks.filter(
+        (block): block is Extract<(typeof blocks)[number], { kind: 'elevation' }> =>
+          block.kind === 'elevation' && block.status === 'pending'
       ),
     [blocks]
   )
@@ -425,6 +453,7 @@ export function FloatingComposer({
   // with no typed request yet.
   const canSend =
     canCompose &&
+    !activeThreadPublishUnresolved &&
     (outboundPreview.length > 0 ||
       focusSkill != null ||
       focusConnector != null ||
@@ -445,6 +474,7 @@ export function FloatingComposer({
       modelOptions.map((id) => ({
         id,
         label: formatComposerModelLabel(id, composerModelMeta),
+        compactLabel: formatUsageModelName(id, composerModelMeta),
         providerId: decodeModelRef(id).providerId
       })),
     [modelOptions, composerModelMeta]
@@ -838,6 +868,14 @@ export function FloatingComposer({
     window.requestAnimationFrame(() => textareaRef.current?.focus())
   }
 
+  const restoreRetryDraft = useCallback((): void => {
+    if (!activeThreadId || inputRef.current.trim()) return
+    const draft = takeComposerRetryDraft(activeThreadId)
+    if (!draft) return
+    setInput(draft)
+    window.requestAnimationFrame(() => textareaRef.current?.focus())
+  }, [activeThreadId, setInput])
+
   useEffect(() => {
     if (!focusRequestId) return
     focusComposer()
@@ -853,6 +891,12 @@ export function FloatingComposer({
     window.addEventListener(COMPOSER_INSERT_EVENT, onInsert)
     return () => window.removeEventListener(COMPOSER_INSERT_EVENT, onInsert)
   }, [setInput])
+
+  useEffect(() => {
+    restoreRetryDraft()
+    window.addEventListener(COMPOSER_RETRY_DRAFT_EVENT, restoreRetryDraft)
+    return () => window.removeEventListener(COMPOSER_RETRY_DRAFT_EVENT, restoreRetryDraft)
+  }, [input, restoreRetryDraft])
 
   const applySlashCommand = (command: SlashCommand): void => {
     if (command.kind === 'insert') {
@@ -1408,7 +1452,7 @@ export function FloatingComposer({
     <div
       className={`pointer-events-auto w-full ${
         useChatStageWidth ? 'ds-chat-stage px-3 sm:px-4' : 'max-w-none px-0'
-      } ${stageCentered ? 'shrink-0 pb-1 pt-0' : compactChrome ? 'pb-0 pt-0' : 'pb-0 pt-1'}`}
+      } ${compactChrome ? 'pb-0 pt-0' : 'shrink-0 pb-1 pt-0'}`}
       onDragOver={(event) => {
         if (!event.dataTransfer.types.includes(WORKSPACE_PATH_DRAG_MIME)) return
         event.preventDefault()
@@ -1422,10 +1466,15 @@ export function FloatingComposer({
         focusComposer()
       }}
     >
-      {pendingApprovals.length > 0 || pendingUserInputs.length > 0 ? (
+      {pendingApprovals.length > 0 ||
+      pendingElevations.length > 0 ||
+      pendingUserInputs.length > 0 ? (
         <div className="ds-no-drag ds-scroll-surface mb-2 max-h-[min(320px,40vh)] space-y-2 overflow-y-auto overscroll-contain">
           {pendingApprovals.map((block) => (
             <ApprovalBubble key={block.id} block={block} />
+          ))}
+          {pendingElevations.map((block) => (
+            <ElevationBubble key={block.id} block={block} />
           ))}
           {pendingUserInputs.map((block) => (
             <UserInputBubble key={block.id} block={block} />
@@ -1434,9 +1483,13 @@ export function FloatingComposer({
       ) : null}
       <ComposerLiveChangesHeader
         onReview={() => {
-          window.dispatchEvent(new CustomEvent('deepseekgui:open-changes-panel'))
+          openChangesPanel({
+            context: 'last-turn',
+            turnId: useChatStore.getState().currentTurnId ?? undefined
+          })
         }}
       />
+      <PublishConflictBanner />
       {(() => {
         const visibleQueued = queuedMessages.filter((message) => !message.hidden)
         if (visibleQueued.length === 0) return null
@@ -1625,9 +1678,7 @@ export function FloatingComposer({
             className={`ds-composer-shell ds-chat-composer flex w-full flex-col transition ${
               compactChrome
                 ? 'ds-composer-shell--compact gap-0.5 px-2 py-1'
-                : stageCentered
-                  ? 'ds-composer-empty ds-frosted relative z-10 gap-1.5 px-4 py-2.5 sm:px-5'
-                  : 'gap-1.5 px-2 py-2.5'
+                : 'ds-composer-empty ds-frosted relative z-10 gap-1.5 px-4 py-2.5 sm:px-5'
             } ${focused ? 'ds-chat-composer-focus' : ''}`}
         >
           {attachments.length > 0 ? (
@@ -1792,10 +1843,10 @@ export function FloatingComposer({
 
           <textarea
             ref={textareaRef}
-            rows={stageCentered ? 1 : 1}
+            rows={1}
             className={`ds-composer-input ds-no-drag block min-w-0 w-full resize-none break-words bg-transparent text-ds-ink placeholder:text-ds-faint focus:outline-none [overflow-wrap:anywhere] ${
-              stageCentered ? 'px-2' : 'px-1'
-            } ${compactChrome ? 'py-0.5' : 'py-1.5'} ${canCompose ? '' : 'opacity-80'}`}
+              compactChrome ? 'px-1 py-0.5' : 'px-2 py-1.5'
+            } ${canCompose ? '' : 'opacity-80'}`}
             placeholder={
               previewPicks.length > 0 ? t('composerPreviewPickPlaceholder') : placeholder
             }
@@ -1880,7 +1931,7 @@ export function FloatingComposer({
             data-composer-footer
             data-composer-footer-tier={footerTier}
             className={`flex flex-nowrap items-center ${
-              compactChrome ? 'gap-1 px-1' : stageCentered ? 'gap-1.5 px-2' : 'gap-1.5 px-1'
+              compactChrome ? 'gap-1 px-1' : 'gap-1.5 px-2'
             }`}
           >
             {/* Left chrome: progressive hide via footerPlan (plus last-but-one). */}
@@ -2496,7 +2547,7 @@ export function FloatingComposer({
                 />
               ) : null}
               {footerPlan.showModel ? (
-                <div className="min-w-0 max-w-[min(100%,220px)]">
+                <div className="min-w-0 max-w-[min(100%,250px)]">
                   <ReasoningEffortSelector
                     models={selectorModels}
                     model={activeModelId}
@@ -2573,9 +2624,15 @@ export function FloatingComposer({
               ) : null}
             </div>
           </div>
+          {compactChrome ? (
+            <WorkspaceContextBar
+              workspaceRoot={effectiveWorkspaceRoot}
+              variant="embedded"
+            />
+          ) : null}
         </div>
       </div>
-      {stageCentered ? (
+      {!compactChrome ? (
         <WorkspaceContextBar workspaceRoot={effectiveWorkspaceRoot} />
       ) : null}
       {!compactChrome && !runtimeReady ? (

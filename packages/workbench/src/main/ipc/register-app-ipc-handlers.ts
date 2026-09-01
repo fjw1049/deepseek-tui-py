@@ -31,8 +31,10 @@ import {
   defaultPathSchema,
   devBrowserScreenshotPayloadSchema,
   gitBranchPayloadSchema,
+  gitBranchesPayloadSchema,
   gitCommitPayloadSchema,
   gitCommitPathsPayloadSchema,
+  gitWorkingChangesPayloadSchema,
   logErrorPayloadSchema,
   notificationPayloadSchema,
   openEditorPathPayloadSchema,
@@ -78,7 +80,21 @@ import {
   formatAlternateRuntimeHint,
   resolveEffectiveRuntimeToken
 } from '../deepseek-process'
-import { commitGitChanges, createAndSwitchGitBranch, getGitBranches, getGitHubRepository, getGitLog, getGitWorkingChanges, stashAndSwitchGitBranch, suggestGitCommitMessage, switchGitBranch } from '../services/git-service'
+import {
+  commitGitChanges,
+  createAndSwitchGitBranch,
+  getGitBranches,
+  getGitHubRepository,
+  getGitLog,
+  getGitWorkingChanges,
+  pullGitBranch,
+  pushGitBranch,
+  stageGitChanges,
+  stashAndSwitchGitBranch,
+  suggestGitCommitMessage,
+  switchGitBranch,
+  unstageGitChanges
+} from '../services/git-service'
 import { unwatchWorkspaceFs, watchWorkspaceFs } from '../services/workspace-fs-watch-service'
 import { getTrendingRepos } from '../services/trending-repos'
 import {
@@ -1268,9 +1284,10 @@ export function registerAppIpcHandlers(options: RegisterAppIpcHandlersOptions): 
     return true
   })
 
-  ipcMain.handle('git:branches', async (_, workspaceRoot: unknown) =>
-    getGitBranches(parseIpcPayload('git:branches', workspaceRootSchema, workspaceRoot))
-  )
+  ipcMain.handle('git:branches', async (_, input: unknown) => {
+    const request = parseIpcPayload('git:branches', gitBranchesPayloadSchema, input)
+    return getGitBranches(request.workspaceRoot, request.refreshRemote)
+  })
   ipcMain.handle('git:log', async (_, workspaceRoot: unknown) =>
     getGitLog(parseIpcPayload('git:log', workspaceRootSchema, workspaceRoot))
   )
@@ -1279,9 +1296,14 @@ export function registerAppIpcHandlers(options: RegisterAppIpcHandlersOptions): 
       parseIpcPayload('git:github-repository', workspaceRootSchema, workspaceRoot)
     )
   )
-  ipcMain.handle('git:working-changes', async (_, workspaceRoot: unknown) => {
-    const root = parseIpcPayload('git:working-changes', workspaceRootSchema, workspaceRoot)
-    const payload = await getGitWorkingChanges(root)
+  ipcMain.handle('git:working-changes', async (_, input: unknown) => {
+    const request = parseIpcPayload(
+      'git:working-changes',
+      gitWorkingChangesPayloadSchema,
+      input
+    )
+    const root = request.workspaceRoot
+    const payload = await getGitWorkingChanges(root, request.scope, request.baseRef)
     // `not_git_repo` / `no_workspace` are expected, benign states (the folder
     // simply isn't a Git repo), not failures — logging them spams the log on
     // every poll. Only surface genuine Git failures.
@@ -1335,6 +1357,20 @@ export function registerAppIpcHandlers(options: RegisterAppIpcHandlersOptions): 
     const request = parseIpcPayload('git:suggest-commit-message', gitCommitPathsPayloadSchema, payload)
     return suggestGitCommitMessage(request.workspaceRoot, request.paths)
   })
+  ipcMain.handle('git:stage', async (_, payload: unknown) => {
+    const request = parseIpcPayload('git:stage', gitCommitPathsPayloadSchema, payload)
+    return stageGitChanges(request.workspaceRoot, request.paths ?? [])
+  })
+  ipcMain.handle('git:unstage', async (_, payload: unknown) => {
+    const request = parseIpcPayload('git:unstage', gitCommitPathsPayloadSchema, payload)
+    return unstageGitChanges(request.workspaceRoot, request.paths ?? [])
+  })
+  ipcMain.handle('git:pull', async (_, workspaceRoot: unknown) =>
+    pullGitBranch(parseIpcPayload('git:pull', workspaceRootSchema, workspaceRoot))
+  )
+  ipcMain.handle('git:push', async (_, workspaceRoot: unknown) =>
+    pushGitBranch(parseIpcPayload('git:push', workspaceRootSchema, workspaceRoot))
+  )
 
   ipcMain.handle('trending:repos', async (_, period: unknown) =>
     getTrendingRepos(parseIpcPayload('trending:repos', trendingPeriodSchema, period))

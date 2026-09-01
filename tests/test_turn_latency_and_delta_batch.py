@@ -3,15 +3,20 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timezone
 
 import pytest
 
-from deepseek_tui.server.metrics import TurnDeltaBatcher
 from deepseek_tui.server.metrics import (
+    TurnDeltaBatcher,
     TurnLatencyTrace,
+    bind_turn_latency,
     first_response_timeout_message,
     first_response_timeout_s,
+    pop_turn_latency,
 )
+from deepseek_tui.server.threads.manager import RuntimeThreadManager
+from deepseek_tui.server.threads.models import RuntimeTurnStatus, TurnRecord
 
 
 def test_first_response_timeout_tiers() -> None:
@@ -100,6 +105,44 @@ def test_round_payload_includes_llm_durations() -> None:
     assert payload["rounds"][0]["llm_ttfb_ms"] == 728
     assert payload["rounds"][0]["llm_stream_ms"] == 4900
     assert payload["rounds"][0]["tool_calls"] == 3
+
+
+def test_turn_end_to_end_time_is_frozen_on_the_durable_record(monkeypatch) -> None:
+    trace = TurnLatencyTrace(turn_id="turn_elapsed", ui_submit_at_ms=1_000)
+    bind_turn_latency(trace)
+    monkeypatch.setattr("deepseek_tui.server.threads.manager.now_ms", lambda: 10_000)
+    turn = TurnRecord(
+        id="turn_elapsed",
+        thread_id="thread_elapsed",
+        status=RuntimeTurnStatus.COMPLETED,
+        input_summary="elapsed",
+        created_at=datetime.now(timezone.utc),
+        duration_ms=7_000,
+    )
+    manager = object.__new__(RuntimeThreadManager)
+    try:
+        payload = manager._finalize_turn_timing(turn)
+    finally:
+        pop_turn_latency(turn.id)
+
+    assert payload is not None
+    assert payload["segments_ms"]["end_to_end_ms"] == 9_000
+    assert turn.end_to_end_ms == 9_000
+
+
+def test_turn_end_to_end_time_falls_back_to_runtime_duration() -> None:
+    turn = TurnRecord(
+        id="turn_elapsed_fallback",
+        thread_id="thread_elapsed",
+        status=RuntimeTurnStatus.COMPLETED,
+        input_summary="elapsed",
+        created_at=datetime.now(timezone.utc),
+        duration_ms=7_000,
+    )
+    manager = object.__new__(RuntimeThreadManager)
+
+    assert manager._finalize_turn_timing(turn) is None
+    assert turn.end_to_end_ms == 7_000
 
 
 @pytest.mark.asyncio

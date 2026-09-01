@@ -100,13 +100,13 @@ const api = {
     ipcRenderer.on('workspace:fs-changed', wrapped)
     return () => ipcRenderer.removeListener('workspace:fs-changed', wrapped)
   },
-  getGitBranches: (workspaceRoot) =>
-    ipcRenderer.invoke('git:branches', workspaceRoot),
+  getGitBranches: (workspaceRoot, refreshRemote) =>
+    ipcRenderer.invoke('git:branches', { workspaceRoot, refreshRemote }),
   getGitLog: (workspaceRoot) => ipcRenderer.invoke('git:log', workspaceRoot),
   getGitHubRepository: (workspaceRoot) =>
     ipcRenderer.invoke('git:github-repository', workspaceRoot),
-  getGitWorkingChanges: (workspaceRoot) =>
-    ipcRenderer.invoke('git:working-changes', workspaceRoot),
+  getGitWorkingChanges: (workspaceRoot, scope, baseRef) =>
+    ipcRenderer.invoke('git:working-changes', { workspaceRoot, scope, baseRef }),
   switchGitBranch: (workspaceRoot, branch) =>
     ipcRenderer.invoke('git:switch-branch', { workspaceRoot, branch }),
   stashAndSwitchGitBranch: (workspaceRoot, branch) =>
@@ -117,6 +117,12 @@ const api = {
     ipcRenderer.invoke('git:commit', { workspaceRoot, message, paths }),
   suggestGitCommitMessage: (workspaceRoot, paths) =>
     ipcRenderer.invoke('git:suggest-commit-message', { workspaceRoot, paths }),
+  stageGitChanges: (workspaceRoot, paths) =>
+    ipcRenderer.invoke('git:stage', { workspaceRoot, paths }),
+  unstageGitChanges: (workspaceRoot, paths) =>
+    ipcRenderer.invoke('git:unstage', { workspaceRoot, paths }),
+  pullGitBranch: (workspaceRoot) => ipcRenderer.invoke('git:pull', workspaceRoot),
+  pushGitBranch: (workspaceRoot) => ipcRenderer.invoke('git:push', workspaceRoot),
   listEditors: () => ipcRenderer.invoke('editor:list'),
   openEditorPath: (options) =>
     ipcRenderer.invoke('editor:open-path', options),

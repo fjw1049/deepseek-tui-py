@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { findFileReferences } from './file-references'
+import { findFileReferences, parseMarkdownFileReferenceHref } from './file-references'
 
 describe('findFileReferences', () => {
   it('linkifies absolute image paths written by agents', () => {
@@ -42,6 +42,28 @@ describe('findFileReferences', () => {
     expect(
       findFileReferences('also ~/.deepseek/agents/registries without slash').map((m) => m.target.path)
     ).toEqual(['~/.deepseek/agents/registries'])
+  })
+
+  it('linkifies explicit relative directories with a trailing slash', () => {
+    expect(findFileReferences('open workspace/ next').map((match) => match.target.path)).toEqual([
+      'workspace/'
+    ])
+    expect(findFileReferences('open src/deepseek_tui/ next').map((match) => match.target.path)).toEqual([
+      'src/deepseek_tui/'
+    ])
+  })
+
+  it('parses relative Markdown file links but rejects empty, web, and custom links', () => {
+    expect(parseMarkdownFileReferenceHref('src/chat/FileChip.tsx#L42')).toEqual({
+      path: 'src/chat/FileChip.tsx',
+      line: 42
+    })
+    expect(parseMarkdownFileReferenceHref('docs/My%20File.md')).toEqual({
+      path: 'docs/My File.md'
+    })
+    expect(parseMarkdownFileReferenceHref('')).toBeNull()
+    expect(parseMarkdownFileReferenceHref('https://example.com/a.ts')).toBeNull()
+    expect(parseMarkdownFileReferenceHref('deepseek-file://open?path=a.ts')).toBeNull()
   })
 
   it('recognizes common image extensions', () => {

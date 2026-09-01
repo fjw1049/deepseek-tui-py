@@ -85,7 +85,7 @@ async def test_reconcile_skips_paths_already_in_ledger(git_repo: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_reconcile_refreshes_covered_path_with_net_git_diff(git_repo: Path) -> None:
+async def test_reconcile_keeps_covered_path_turn_net_diff(git_repo: Path) -> None:
     baseline = await capture_baseline(git_repo)
     (git_repo / "tracked.py").write_text("v1\nline2\nline3\n", encoding="utf-8")
 
@@ -104,6 +104,8 @@ async def test_reconcile_refreshes_covered_path_with_net_git_diff(git_repo: Path
             deletions=0,
             source="edit_file",
         ),
+        before_content="v1\n",
+        after_content="v1\nline2\nline3\n",
         emit=False,
     )
     added = await reconcile_to_ledger(ledger, baseline)

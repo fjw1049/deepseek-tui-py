@@ -1,11 +1,16 @@
-import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactElement } from 'react'
+import {
+  useEffect,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type ReactElement
+} from 'react'
 import { createPortal } from 'react-dom'
-import { CornerDownLeft, Search, X } from 'lucide-react'
+import { FileSearch, Search, X } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { formatShortcutLabel, shortcutChordTokens } from '@shared/shortcuts'
 import type { WorkspaceTreeEntry } from '@shared/workspace-file'
 import { splitFileNameAndParent } from '../../lib/editor-breadcrumb'
-import { FileKindIcon } from '../chat/FileKindIcon'
 import { EditorListSkeleton } from '../workspace-editor/EditorListSkeleton'
 
 type Props = {
@@ -31,6 +36,7 @@ export function IdeQuickOpenPalette({
   const requestIdRef = useRef(0)
   const inputRef = useRef<HTMLInputElement | null>(null)
   const listRef = useRef<HTMLUListElement | null>(null)
+  const trimmedQuery = query.trim()
 
   useEffect(() => {
     const timer = window.setTimeout(() => inputRef.current?.focus(), 0)
@@ -50,7 +56,7 @@ export function IdeQuickOpenPalette({
   useEffect(() => {
     const root = workspaceRoot.trim()
     const trimmedQuery = query.trim()
-    if (!root || !trimmedQuery) {
+    if (!root) {
       setEntries([])
       setResultQuery('')
       setError(null)
@@ -92,7 +98,7 @@ export function IdeQuickOpenPalette({
         .finally(() => {
           if (requestId === requestIdRef.current) setLoading(false)
         })
-    }, 120)
+    }, trimmedQuery ? 120 : 0)
 
     return () => window.clearTimeout(timer)
   }, [query, t, workspaceRoot])
@@ -103,7 +109,7 @@ export function IdeQuickOpenPalette({
   }, [activeIndex, entries])
 
   const openActive = (): void => {
-    if (loading || query.trim() !== resultQuery) return
+    if (loading || trimmedQuery !== resultQuery) return
     const entry = entries[activeIndex] ?? entries[0]
     if (!entry) return
     onSelectFile(entry.path)
@@ -127,7 +133,6 @@ export function IdeQuickOpenPalette({
     openActive()
   }
 
-  const trimmedQuery = query.trim()
   const isEmpty = !loading && !error && entries.length === 0
   const shortcutLabel = formatShortcutLabel(QUICK_OPEN_CHORD)
   const shortcutTokens = shortcutChordTokens(QUICK_OPEN_CHORD)
@@ -141,7 +146,7 @@ export function IdeQuickOpenPalette({
       }}
     >
       <div
-        className="ds-modal-surface ds-endpoint-sheet ds-search-modal"
+        className="ds-modal-surface ds-endpoint-sheet ds-search-modal ds-search-modal--quick-open"
         role="dialog"
         aria-modal="true"
         aria-label={t('ideWorkspaceSearchTitle')}
@@ -194,13 +199,12 @@ export function IdeQuickOpenPalette({
             </div>
           ) : isEmpty ? (
             <div className="ds-search-modal__empty">
-              <Search className="ds-search-modal__empty-icon" strokeWidth={1.5} aria-hidden />
+              <FileSearch className="ds-search-modal__empty-icon" strokeWidth={1.5} aria-hidden />
               <p className="ds-search-modal__empty-title">
                 {trimmedQuery
                   ? t('ideWorkspaceSearchEmpty')
                   : t('ideWorkspaceSearchIdleTitle')}
               </p>
-              <p className="ds-search-modal__empty-hint">{t('ideWorkspaceSearchHint')}</p>
             </div>
           ) : (
             <ul ref={listRef} className="ds-search-modal__list" role="listbox">
@@ -220,22 +224,12 @@ export function IdeQuickOpenPalette({
                       onMouseEnter={() => setActiveIndex(index)}
                       onClick={() => onSelectFile(entry.path)}
                     >
-                      <span className="ds-search-modal__row-icon-wrap" aria-hidden>
-                        <FileKindIcon path={entry.path} className="ds-file-kind-icon--chrome" />
-                      </span>
-                      <span className="ds-search-modal__row-main ds-search-modal__row-main--file">
+                      <span className="ds-search-modal__row-main">
                         <span className="ds-search-modal__row-title">{name}</span>
                         {parent ? (
                           <span className="ds-search-modal__row-path">{parent}</span>
                         ) : null}
                       </span>
-                      {active ? (
-                        <CornerDownLeft
-                          className="ds-search-modal__enter"
-                          strokeWidth={1.75}
-                          aria-hidden
-                        />
-                      ) : null}
                     </button>
                   </li>
                 )
@@ -243,24 +237,6 @@ export function IdeQuickOpenPalette({
             </ul>
           )}
         </div>
-
-        {!isEmpty && !loading && !error ? (
-          <div className="ds-search-modal__footer" aria-hidden>
-            <span>
-              <kbd className="ds-keycap">↑</kbd>
-              <kbd className="ds-keycap">↓</kbd>
-              <span className="ds-search-modal__footer-label">
-                {t('conversationSearchFooterSelect')}
-              </span>
-            </span>
-            <span>
-              <kbd className="ds-keycap">↵</kbd>
-              <span className="ds-search-modal__footer-label">
-                {t('conversationSearchFooterOpen')}
-              </span>
-            </span>
-          </div>
-        ) : null}
       </div>
     </div>,
     document.body

@@ -4,14 +4,15 @@
  * Hide / compact only when controls are about to collide — not eagerly.
  *
  * Order as width shrinks:
- *   1. context meter
- *   2. approval / mode / plugin → icon only
- *   3. model reasoning effort tier
- *   4. approval control entirely (the hand) — before model name
- *   5. entire model picker
- *   6. voice
- *   7. plus menu
- *   8. send (last)
+ *   1. active mode / plugin labels → icon only
+ *   2. context meter
+ *   3. approval label → icon only
+ *   4. model reasoning effort tier
+ *   5. approval control entirely (the hand) — before model name
+ *   6. entire model picker
+ *   7. voice
+ *   8. plus menu
+ *   9. send (last)
  */
 
 export type ComposerFooterTier = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8
@@ -40,6 +41,9 @@ export type ComposerFooterLayoutOptions = {
    * room — shift every breakpoint down and only strip chrome near collision.
    */
   dense?: boolean
+  /** Optional badges currently rendered in the left cluster. */
+  hasMode?: boolean
+  hasPlugin?: boolean
 }
 
 type Breakpoints = {
@@ -80,8 +84,27 @@ const DENSE_BP: Breakpoints = {
   hideSend: 120
 }
 
+const OPTIONAL_LABEL_SPACE = {
+  chat: { mode: 72, plugin: 144 },
+  dense: { mode: 56, plugin: 112 }
+} as const
+
 function breakpointsFor(options?: ComposerFooterLayoutOptions): Breakpoints {
   return options?.dense ? DENSE_BP : CHAT_BP
+}
+
+function hasRoomForOptionalLabels(
+  width: number | null,
+  options?: ComposerFooterLayoutOptions
+): boolean {
+  if (!options?.hasMode && !options?.hasPlugin) return true
+  if (width == null || !Number.isFinite(width)) return false
+
+  const bp = breakpointsFor(options)
+  const space = options?.dense ? OPTIONAL_LABEL_SPACE.dense : OPTIONAL_LABEL_SPACE.chat
+  const reservedLabelWidth =
+    (options?.hasMode ? space.mode : 0) + (options?.hasPlugin ? space.plugin : 0)
+  return width >= bp.hideMeter + reservedLabelWidth
 }
 
 export function composerFooterTierForWidth(
@@ -106,11 +129,12 @@ export function composerFooterPlanForWidth(
   options?: ComposerFooterLayoutOptions
 ): ComposerFooterPlan {
   const tier = composerFooterTierForWidth(width, options)
+  const showOptionalLabels = tier < 2 && hasRoomForOptionalLabels(width, options)
   return {
     showContextMeter: tier < 1,
     showApprovalLabel: tier < 2,
-    showModeLabel: tier < 2,
-    showPluginLabel: tier < 2,
+    showModeLabel: tier < 2 && (!options?.hasMode || showOptionalLabels),
+    showPluginLabel: tier < 2 && (!options?.hasPlugin || showOptionalLabels),
     showEffortTier: tier < 3,
     // Hand goes away before the model name / picker — but only when cramped.
     showApproval: tier < 4,

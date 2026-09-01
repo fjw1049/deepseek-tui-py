@@ -58,6 +58,8 @@ export function collectWorkspaceChangeEntries(opts: {
   blocks: ChatBlock[]
   turnDiffByTurnId?: Record<string, TurnDiffSnapshot>
   gitFiles?: GitWorkingChangeFile[] | null
+  /** Keep this thread's ledger even when the project checkout is clean. */
+  retainSessionEntriesWhenGitClean?: boolean
 }): WorkspaceChangeEntry[] {
   const byPath = new Map<string, WorkspaceChangeEntry>()
   // Paths git no longer reports dirty were committed (or reverted) since
@@ -67,7 +69,9 @@ export function collectWorkspaceChangeEntries(opts: {
   // Only meaningful once the first git snapshot has loaded (null/undefined =
   // still loading / not a repo: fall back to showing session-sourced entries).
   const gitDirtyPaths =
-    opts.gitFiles == null ? null : new Set(opts.gitFiles.map((file) => normalizeChangePath(file.path)))
+    opts.gitFiles == null || opts.retainSessionEntriesWhenGitClean
+      ? null
+      : new Set(opts.gitFiles.map((file) => normalizeChangePath(file.path)))
 
   for (const block of opts.blocks) {
     if (!(block.kind === 'tool' && block.toolKind === 'file_change')) continue
@@ -117,7 +121,17 @@ export function collectWorkspaceChangeEntries(opts: {
       }
       const key = normalizeChangePath(filePath) || `turn-ledger:${snap.turn_id}:${file.path}`
       const prev = byPath.get(key)
-      if (prev?.status === 'running') continue
+      if (prev?.status === 'running') {
+        upsert(byPath, {
+          ...prev,
+          filePath: filePath || prev.filePath || extractDiffFilePath(detail),
+          detail: hasDiff ? detail : prev.detail,
+          editLine: firstChangedEditorLineFromPatch(detail) ?? prev.editLine,
+          additions: file.additions,
+          deletions: file.deletions
+        })
+        continue
+      }
       upsert(byPath, {
         id: `turn-ledger:${snap.turn_id}:${file.path}`,
         filePath: filePath || extractDiffFilePath(detail),
@@ -196,7 +210,7 @@ export function sumWorkspaceChangeStats(entries: WorkspaceChangeEntry[]): DiffSt
   return sumDiffStatsList(entries.map((entry) => workspaceChangeEntryStats(entry)))
 }
 
-/** Latest-turn fold-up uses the same files + +/- as the inspector. */
+/** Inspector / sidebar: every pending workspace path. Not a turn receipt. */
 export function turnSummaryFromWorkspaceEntries(entries: WorkspaceChangeEntry[]): {
   files: TurnDiffFile[]
   totals: { files: number; additions: number; deletions: number }

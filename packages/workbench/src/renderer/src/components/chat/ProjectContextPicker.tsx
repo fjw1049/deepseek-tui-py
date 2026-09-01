@@ -10,7 +10,16 @@ import {
   type ReactElement
 } from 'react'
 import { createPortal } from 'react-dom'
-import { Check, ChevronDown, Folder, Import, LayoutGrid, Loader2, Plus, Search } from 'lucide-react'
+import {
+  Check,
+  ChevronDown,
+  Folder,
+  FolderOpen,
+  LayoutGrid,
+  Loader2,
+  Plus,
+  Search
+} from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { useComboboxNav } from '../../hooks/use-combobox-nav'
 import { useLightDismiss } from '../../hooks/use-light-dismiss'
@@ -29,10 +38,14 @@ type Props = {
   menuPlacement?: 'above' | 'below'
   /** Compact tray: drop the chevron before the project chip itself. */
   hideChevron?: boolean
+  /** Composer tray: 15px. Embedded IDE rail stays dense. */
+  size?: 'dense' | 'tray'
 }
 
 const MENU_WIDTH = 340
 const RECENT_LIMIT = 4
+const MENU_GAP = 8
+const VIEWPORT_GUTTER = 12
 
 type ProjectGroup = {
   id: string
@@ -58,11 +71,20 @@ function projectPathHint(path: string): string {
   return withSlash
 }
 
+/** Body zooms with the UI scale, while trigger rectangles use viewport pixels. */
+function readUiScale(): number {
+  const scale = parseFloat(
+    getComputedStyle(document.documentElement).getPropertyValue('--ds-ui-scale')
+  )
+  return Number.isFinite(scale) && scale > 0 ? scale : 1
+}
+
 export function ProjectContextPicker({
   workspaceRoot,
   usePortal = false,
   menuPlacement = 'above',
-  hideChevron = false
+  hideChevron = false,
+  size = 'dense'
 }: Props): ReactElement {
   const { t } = useTranslation('common')
   const threads = useChatStore((s) => s.threads)
@@ -190,16 +212,29 @@ export function ProjectContextPicker({
     const trigger = triggerRef.current
     if (!trigger) return
     const rect = trigger.getBoundingClientRect()
-    const width = Math.min(MENU_WIDTH, window.innerWidth - 24)
-    const left = Math.max(12, Math.min(rect.left, window.innerWidth - width - 12))
+    const scale = usePortal ? readUiScale() : 1
+    const viewportWidth = window.innerWidth / scale
+    const viewportHeight = window.innerHeight / scale
+    const triggerLeft = rect.left / scale
+    const triggerTop = rect.top / scale
+    const triggerBottom = rect.bottom / scale
+    const width = Math.min(MENU_WIDTH, viewportWidth - VIEWPORT_GUTTER * 2)
+    const left = Math.max(
+      VIEWPORT_GUTTER,
+      Math.min(triggerLeft, viewportWidth - width - VIEWPORT_GUTTER)
+    )
 
     if (usePortal) {
       if (menuPlacement === 'below') {
         setMenuStyle({
           position: 'fixed',
           left,
-          top: rect.bottom + 8,
+          top: triggerBottom + MENU_GAP,
           width,
+          maxHeight: Math.max(
+            0,
+            viewportHeight - triggerBottom - MENU_GAP - VIEWPORT_GUTTER
+          ),
           zIndex: 120
         })
         return
@@ -207,8 +242,9 @@ export function ProjectContextPicker({
       setMenuStyle({
         position: 'fixed',
         left,
-        bottom: window.innerHeight - rect.top + 8,
+        bottom: viewportHeight - triggerTop + MENU_GAP,
         width,
+        maxHeight: Math.max(0, triggerTop - MENU_GAP - VIEWPORT_GUTTER),
         zIndex: 120
       })
       return
@@ -288,12 +324,12 @@ export function ProjectContextPicker({
     <div
       ref={menuRef}
       style={menuStyle}
-      className={`ds-project-context-menu ds-morph-pop z-50 overflow-hidden ${
+      className={`ds-project-context-menu ds-morph-pop z-50 flex flex-col overflow-hidden ${
         menuPlacement === 'below' ? 'ds-morph-pop--below' : ''
       }`}
       onMouseDown={(event) => event.stopPropagation()}
     >
-      <div className="ds-project-context-menu__header">
+      <div className="ds-project-context-menu__header shrink-0">
         <label className="ds-project-context-menu__search">
           <Search className="h-3.5 w-3.5 shrink-0 opacity-45" strokeWidth={1.85} aria-hidden />
           <input
@@ -321,7 +357,7 @@ export function ProjectContextPicker({
         </label>
       </div>
 
-      <div id={listId} role="listbox" className="ds-project-context-menu__list">
+      <div id={listId} role="listbox" className="ds-project-context-menu__list min-h-0">
         {flatProjects.length === 0 ? (
           <div className="ds-project-context-menu__empty">{t('contextBarNoMatchingProjects')}</div>
         ) : (
@@ -371,7 +407,7 @@ export function ProjectContextPicker({
         )}
       </div>
 
-      <div className="ds-project-context-menu__footer">
+      <div className="ds-project-context-menu__footer shrink-0">
         <button
           type="button"
           disabled={acting || !runtimeReady}
@@ -414,19 +450,45 @@ export function ProjectContextPicker({
       <button
         ref={triggerRef}
         type="button"
-        className="ds-workspace-context-chip flex h-7 max-w-[180px] items-center gap-1.5 rounded-md px-2 py-1 text-left sm:max-w-[220px]"
+        className={
+          size === 'tray'
+            ? `ds-workspace-context-chip ds-workspace-context-chip--tray flex max-w-[240px] items-center rounded-md py-1 text-left sm:max-w-[280px] ${
+                isTemporary
+                  ? 'ds-workspace-context-chip--prompt h-[30px] gap-[7px] px-2'
+                  : 'h-8 gap-2 px-2.5'
+              }`
+            : 'ds-workspace-context-chip flex h-7 max-w-[180px] items-center gap-1.5 rounded-md px-2 py-1 text-left sm:max-w-[220px]'
+        }
         onClick={() => setOpen((v) => !v)}
         title={isTemporary ? t('contextBarWorkInProject') : activePath}
         aria-expanded={open}
       >
         {isTemporary ? (
-          <Import className="h-3.5 w-3.5 shrink-0" strokeWidth={1.7} />
+          <FolderOpen
+            className={
+              size === 'tray'
+                ? 'ds-workspace-context-chip__prompt-icon h-[15px] w-[15px] shrink-0'
+                : 'h-3.5 w-3.5 shrink-0'
+            }
+            strokeWidth={size === 'tray' ? 1.6 : 1.7}
+          />
         ) : (
-          <Folder className="h-3.5 w-3.5 shrink-0" strokeWidth={1.7} />
+          <Folder className={size === 'tray' ? 'h-4 w-4 shrink-0' : 'h-3.5 w-3.5 shrink-0'} strokeWidth={1.7} />
         )}
-        <span className="min-w-0 flex-1 truncate">{triggerLabel}</span>
+        <span
+          className={`min-w-0 flex-1 truncate ${
+            size === 'tray' ? (isTemporary ? 'leading-5' : 'text-[15px]') : ''
+          }`}
+        >
+          {triggerLabel}
+        </span>
         {!hideChevron ? (
-          <ChevronDown className="ds-workspace-context-chip__chevron" strokeWidth={2.2} />
+          <ChevronDown
+            className={`ds-workspace-context-chip__chevron ${
+              size === 'tray' ? (isTemporary ? 'h-3 w-3' : 'h-3.5 w-3.5') : ''
+            }`}
+            strokeWidth={isTemporary && size === 'tray' ? 2 : 2.2}
+          />
         ) : null}
       </button>
       {usePortal && typeof document !== 'undefined' ? createPortal(menu, document.body) : menu}

@@ -33,7 +33,10 @@ import { useGitHubRepository } from '../../hooks/use-github-repository'
 import { openPreviewUrl } from '../../lib/open-preview-url'
 import { useDockSubagents, type DockSubagentView } from '../../hooks/use-dock-subagents'
 import { fetchTaskDetail, useLiveTasks } from '../../hooks/use-thread-tasks'
-import { useGitWorkingChanges } from '../../hooks/use-git-working-changes'
+import {
+  useGitBranchCompareBase,
+  useGitWorkingChanges
+} from '../../hooks/use-git-working-changes'
 import { useWorkspaceDirtyGitRefresh } from '../../hooks/use-workspace-dirty-git-refresh'
 import {
   collectWorkspaceChangeEntries,
@@ -55,16 +58,16 @@ import { StepFlow } from './StepFlow'
 import { taskStatusLabelKey } from './task-status'
 import { extractTodosFromBlocks } from '../../lib/extract-todos-from-blocks'
 import {
-  isExplicitGitCommitSelectionNone,
-  resolveGitCommitPaths
-} from '../../lib/git-commit-selection'
-import { resolveActiveThreadWorkspace } from '../../lib/workspace-path'
+  resolveThreadFilesystemRoot,
+  resolveThreadGitActionRoot
+} from '../../lib/workspace-path'
 import { workspaceLabelFromPath } from '../../lib/workspace-label'
 import { useChatStore } from '../../store/chat-store'
 import { GitBranchPicker } from './GitBranchPicker'
-import { GitCommitPopover } from './GitCommitPopover'
 
 type Props = {
+  /** Project currently rendered by the owning Workbench. */
+  workspaceRoot: string
   onOpenChanges?: () => void
   /** Enter IDE/editor layout — top entry, labeled as Editor. */
   onEnterIdeMode?: () => void
@@ -77,11 +80,11 @@ type Props = {
 }
 
 const DOCK_ROW_CLASS =
-  'group flex w-full items-center gap-2.5 rounded-[10px] px-1.5 py-1.5 text-left text-[13px] font-semibold leading-5 transition'
+  'group flex w-full items-center gap-2.5 rounded-[10px] px-1.5 py-1.5 text-left text-[13px] font-semibold leading-5 transition-colors'
 
 /** Same horizontal inset / gap as dock rows so icon and label columns line up. */
 const DOCK_SECTION_HEADER_CLASS =
-  'flex w-full items-center gap-2.5 rounded-[10px] px-1.5 py-1.5 text-left text-ds-muted transition hover:text-ds-ink'
+  'group flex w-full items-center gap-2.5 rounded-[10px] px-1.5 py-1.5 text-left text-ds-muted transition-colors hover:text-ds-ink'
 
 const DOCK_COMPACT_STORAGE_KEY = 'deepseekgui.operationDock.compact'
 /** Keep in sync with `.ds-operation-rail` width transition (220ms). */
@@ -368,6 +371,7 @@ function TaskRow({
 }
 
 export function OperationContextDock({
+  workspaceRoot,
   onOpenChanges,
   onEnterIdeMode,
   previewActive,
@@ -379,38 +383,37 @@ export function OperationContextDock({
 }: Props): ReactElement | null {
   const { t } = useTranslation('common')
   const {
-    workspaceRoot,
     blocks,
     activeThreadId,
     threads,
-    gitCommitSelectionKey,
-    gitCommitSelectedPaths,
-    syncGitCommitSelection,
-    workspaceDirtyTick,
-    turnDiffByTurnId
+    workspaceDirtyTick
   } = useChatStore(
     useShallow((s) => ({
-      workspaceRoot: s.workspaceRoot,
       blocks: s.blocks,
       activeThreadId: s.activeThreadId,
       threads: s.threads,
-      gitCommitSelectionKey: s.gitCommitSelectionKey,
-      gitCommitSelectedPaths: s.gitCommitSelectedPaths,
-      syncGitCommitSelection: s.syncGitCommitSelection,
-      workspaceDirtyTick: s.workspaceDirtyTick,
-      turnDiffByTurnId: s.turnDiffByTurnId
+      workspaceDirtyTick: s.workspaceDirtyTick
     }))
   )
-  const root = resolveActiveThreadWorkspace(activeThreadId, threads, workspaceRoot)
-  const { result: gitResult, loading: gitLoading, reload: reloadGitBranches } = useGitBranches(root)
-  const { result: gitChanges, loading: gitChangesLoading, reload: reloadGitChanges } = useGitWorkingChanges(root)
-  const { result: githubResult, reload: reloadGithubRepository } = useGitHubRepository(root)
+  const visibleRoot = resolveThreadFilesystemRoot(activeThreadId, threads, workspaceRoot)
+  const gitRoot = resolveThreadGitActionRoot(activeThreadId, threads, workspaceRoot)
+  const { result: gitResult, loading: gitLoading, reload: reloadGitBranches } = useGitBranches(gitRoot)
+  const [branchBase] = useGitBranchCompareBase(
+    gitRoot,
+    gitResult?.ok ? gitResult.currentBranch : null
+  )
+  const { result: branchChanges, reload: reloadBranchChanges } = useGitWorkingChanges(
+    gitRoot,
+    'branch',
+    branchBase
+  )
+  const { result: githubResult, reload: reloadGithubRepository } = useGitHubRepository(gitRoot)
   const githubRepo = githubResult?.ok ? githubResult : null
   const refreshGitState = useCallback((): void => {
     void reloadGitBranches()
-    void reloadGitChanges()
+    void reloadBranchChanges()
     void reloadGithubRepository()
-  }, [reloadGitBranches, reloadGitChanges, reloadGithubRepository])
+  }, [reloadBranchChanges, reloadGitBranches, reloadGithubRepository])
   useWorkspaceDirtyGitRefresh(workspaceDirtyTick, refreshGitState)
   const todoSnapshot = useMemo(() => extractTodosFromBlocks(blocks), [blocks])
   const todos = todoSnapshot?.items ?? []
@@ -448,35 +451,18 @@ export function OperationContextDock({
     () =>
       sumWorkspaceChangeStats(
         collectWorkspaceChangeEntries({
-          blocks,
-          turnDiffByTurnId,
-          gitFiles: gitChanges?.ok ? gitChanges.files : null
+          blocks: [],
+          gitFiles: branchChanges?.ok ? branchChanges.files : null
         })
       ),
-    [blocks, gitChanges, turnDiffByTurnId]
+    [branchChanges]
   )
   const gitDirtyCount = gitResult?.ok ? gitResult.dirtyCount : 0
   const gitReady = gitResult?.ok ?? false
   const gitFilePaths = useMemo(
-    () => (gitChanges?.ok ? gitChanges.files.map((file) => file.path) : []),
-    [gitChanges]
+    () => (branchChanges?.ok ? branchChanges.files.map((file) => file.path) : []),
+    [branchChanges]
   )
-  useEffect(() => {
-    if (gitChanges == null || !gitChanges.ok) return
-    syncGitCommitSelection(gitFilePaths)
-  }, [gitChanges, gitFilePaths, syncGitCommitSelection])
-  const commitFilePaths = useMemo(
-    () =>
-      resolveGitCommitPaths(gitCommitSelectedPaths, gitFilePaths, gitCommitSelectionKey, root),
-    [gitCommitSelectedPaths, gitFilePaths, gitCommitSelectionKey, root]
-  )
-  const explicitSelectNone = isExplicitGitCommitSelectionNone(
-    gitCommitSelectionKey,
-    gitCommitSelectedPaths,
-    gitFilePaths,
-    root
-  )
-  const canCommit = gitReady && gitDirtyCount > 0 && !explicitSelectNone
   const hasGitChanges = gitDirtyCount > 0 || gitFilePaths.length > 0
   const hasChanges = changeStats !== null || hasGitChanges
 
@@ -575,9 +561,9 @@ export function OperationContextDock({
     setCollapsed((prev) => (prev.git === !hasChanges ? prev : { ...prev, git: !hasChanges }))
   }, [hasChanges])
 
-  if (!root) return null
+  if (!visibleRoot) return null
 
-  const workspaceLabel = workspaceLabelFromPath(root)
+  const workspaceLabel = workspaceLabelFromPath(visibleRoot)
 
   // Keep the expanded card mounted while collapsing (fade/squeeze) and while
   // expanding (fade in from the narrow rail). Only idle-compact uses the strip.
@@ -682,92 +668,84 @@ export function OperationContextDock({
           <ChevronsLeftRight className="h-4 w-4" strokeWidth={2.1} />
         </button>
       </div>
-      <div className="ds-operation-dock-body px-4 py-3.5">
-      {onEnterIdeMode ? (
-        <>
+      <div className="ds-operation-dock-body">
+      <div
+        className="ds-operation-dock-launchers"
+        data-count={onEnterIdeMode ? '3' : '2'}
+      >
+        {onEnterIdeMode ? (
           <button
             type="button"
             onClick={onEnterIdeMode}
-            className={`${DOCK_ROW_CLASS} cursor-pointer text-ds-ink hover:bg-ds-hover/60`}
+            className="ds-operation-dock-launcher group"
             title={t('rightSidebarTabEditor')}
             aria-label={t('rightSidebarTabEditor')}
           >
             <RowIcon icon={PanelsTopLeft} tint="violet" />
-            <span className="min-w-0 flex-1 truncate">{t('rightSidebarTabEditor')}</span>
+            <span className="ds-operation-dock-launcher__label">
+              {t('rightSidebarTabEditor')}
+            </span>
           </button>
-          <div className="my-2 border-t border-ds-border-muted/40" />
-        </>
-      ) : null}
-
-      <button
-        type="button"
-        onClick={onTogglePreview}
-        disabled={!previewEnabled}
-        className={`${DOCK_ROW_CLASS} ${
-          previewEnabled
-            ? previewActive
-              ? 'bg-accent/[0.09] text-ds-ink'
-              : 'cursor-pointer text-ds-ink hover:bg-ds-hover/60'
-            : 'cursor-default text-ds-faint opacity-55'
-        }`}
-        aria-pressed={previewActive}
-        title={previewEnabled ? t('rightPanelBrowser') : t('terminalWorkspaceRequired')}
-      >
-        <RowIcon icon={Globe2} tint="sky" />
-        <span className="min-w-0 flex-1 truncate">{t('rightPanelBrowser')}</span>
-        {previewActive ? (
-          <span className="ml-auto shrink-0 text-[12px] font-medium text-accent">
-            {t('operationDockToolOpen')}
-          </span>
         ) : null}
-      </button>
 
-      <div className="my-2 border-t border-ds-border-muted/40" />
-
-      <button
-        type="button"
-        onClick={onToggleTerminalPanel}
-        disabled={!terminalPanelEnabled}
-        className={`${DOCK_ROW_CLASS} ${
-          terminalPanelEnabled
-            ? terminalPanelOpen
-              ? 'bg-accent/[0.09] text-ds-ink'
-              : 'cursor-pointer text-ds-ink hover:bg-ds-hover/60'
-            : 'cursor-default text-ds-faint opacity-55'
-        }`}
-        aria-pressed={terminalPanelOpen}
-        title={terminalPanelEnabled ? t('terminalToggle') : t('terminalWorkspaceRequired')}
-      >
-        <RowIcon icon={Terminal} tint="amber" />
-        <span className="min-w-0 flex-1 truncate">{t('terminalPanelTitle')}</span>
-        {terminalPanelOpen ? (
-          <span className="ml-auto shrink-0 text-[12px] font-medium text-accent">
-            {t('operationDockToolOpen')}
+        <button
+          type="button"
+          onClick={onTogglePreview}
+          disabled={!previewEnabled}
+          className="ds-operation-dock-launcher group"
+          aria-pressed={previewActive}
+          title={previewEnabled ? t('rightPanelBrowser') : t('terminalWorkspaceRequired')}
+        >
+          <RowIcon icon={Globe2} tint="sky" />
+          <span className="ds-operation-dock-launcher__label">
+            {t('rightPanelBrowser')}
           </span>
-        ) : null}
-      </button>
+        </button>
 
-      <div className="my-2 border-t border-ds-border-muted/40" />
+        <button
+          type="button"
+          onClick={onToggleTerminalPanel}
+          disabled={!terminalPanelEnabled}
+          className="ds-operation-dock-launcher group"
+          aria-pressed={terminalPanelOpen}
+          title={terminalPanelEnabled ? t('terminalToggle') : t('terminalWorkspaceRequired')}
+        >
+          <RowIcon icon={Terminal} tint="amber" />
+          <span className="ds-operation-dock-launcher__label">
+            {t('terminalPanelTitle')}
+          </span>
+        </button>
+      </div>
 
+      <div className="ds-operation-dock-status">
       {githubRepo ? (
-        <>
-          <p className="px-1.5 pb-1 text-[11px] font-medium tracking-[0.01em] text-ds-faint">
-            {t('operationDockRepository')}
-          </p>
-          <button
-            type="button"
-            onClick={openGithubRepository}
-            title={t('operationDockOpenRepository', { repo: githubRepo.nameWithOwner })}
-            className={`${DOCK_ROW_CLASS} cursor-pointer text-ds-ink hover:bg-ds-hover/60`}
-          >
-            <RemoteProviderIcon provider={githubRepo.provider} className="h-4 w-4 shrink-0" />
-            <span className="min-w-0 flex-1 truncate">{githubRepo.nameWithOwner}</span>
-            <ArrowUpRight className="h-3.5 w-3.5 shrink-0 text-ds-faint" strokeWidth={1.85} />
-          </button>
-          <div className="my-2 border-t border-ds-border-muted/40" />
-        </>
+        <button
+          type="button"
+          onClick={openGithubRepository}
+          title={t('operationDockOpenRepository', { repo: githubRepo.nameWithOwner })}
+          className="ds-operation-dock-repository group"
+        >
+          <span className="ds-operation-dock-repository__icon" aria-hidden>
+            <RemoteProviderIcon
+              provider={githubRepo.provider}
+              className="h-[17px] w-[17px]"
+            />
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="ds-operation-dock-repository__eyebrow">
+              {t('operationDockRepository')}
+            </span>
+            <span className="ds-operation-dock-repository__name">
+              {githubRepo.nameWithOwner}
+            </span>
+          </span>
+          <ArrowUpRight
+            className="h-3.5 w-3.5 shrink-0 text-ds-faint"
+            strokeWidth={1.85}
+          />
+        </button>
       ) : null}
-
+      <div className="ds-operation-dock-status__section">
       <SectionHeader
         label={t('operationDockGitTitle')}
         icon={GitBranch}
@@ -787,7 +765,7 @@ export function OperationContextDock({
       />
 
       {!collapsed.git ? (
-        <div className="mt-1.5 flex flex-col gap-1">
+        <div className="ds-operation-dock-status__content mt-1.5 flex flex-col gap-1">
         <button
           type="button"
           onClick={openChangesPanel}
@@ -815,32 +793,16 @@ export function OperationContextDock({
         </button>
 
         {gitReady ? (
-          <>
+          <div className="ds-operation-dock-branch-picker">
             <GitBranchPicker
-              key={root}
-              workspaceRoot={root}
+              key={gitRoot}
+              workspaceRoot={gitRoot}
               compact
               usePortal
               menuPlacement="below"
+              matchTriggerWidth
             />
-            <GitCommitPopover
-              workspaceRoot={root}
-              currentBranch={gitResult?.ok ? gitResult.currentBranch : null}
-              gitFiles={gitChanges?.ok ? gitChanges.files : []}
-              gitFilesLoading={gitChangesLoading}
-              gitDirtyCount={gitDirtyCount}
-              enabled={canCommit}
-              rowClassName={DOCK_ROW_CLASS}
-              onOpenChanges={hasChanges ? openChangesPanel : undefined}
-              onRefreshGit={refreshGitState}
-              onCommitted={refreshGitState}
-            />
-            {hasChanges && !hasGitChanges ? (
-              <p className="px-1 text-[12px] leading-5 text-ds-faint">
-                {t('operationDockCommitSessionOnly')}
-              </p>
-            ) : null}
-          </>
+          </div>
         ) : gitLoading && !gitResult ? (
           <p className="text-[13px] leading-5 text-ds-faint">{t('gitBranchLoading')}</p>
         ) : (
@@ -848,9 +810,9 @@ export function OperationContextDock({
         )}
       </div>
       ) : null}
+      </div>
 
-      <div className="my-2 border-t border-ds-border-muted/40" />
-
+      <div className="ds-operation-dock-status__section">
       <button
         type="button"
         onClick={() => toggle('process')}
@@ -971,9 +933,9 @@ export function OperationContextDock({
           <p className="mt-1 text-[13px] leading-5 text-ds-faint">{t('contextRailEmptyProcess')}</p>
         )
       ) : null}
+      </div>
 
-      <div className="my-2 border-t border-ds-border-muted/40" />
-
+      <div className="ds-operation-dock-status__section">
       <SectionHeader
         label={t('contextRailTasks')}
         icon={ListChecks}
@@ -1022,6 +984,8 @@ export function OperationContextDock({
           <p className="mt-1 text-[13px] leading-5 text-ds-faint">{t('contextRailEmptyTasks')}</p>
         )
       ) : null}
+      </div>
+      </div>
       </div>
     </div>
   )
