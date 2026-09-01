@@ -8,9 +8,12 @@ import {
   getGitHubRepository,
   getGitWorkingChanges,
   commitGitChanges,
+  createAndSwitchGitBranch,
   pullGitBranch,
   pushGitBranch,
   stageGitChanges,
+  stashAndSwitchGitBranch,
+  switchGitBranch,
   unstageGitChanges
 } from './git-service'
 
@@ -48,6 +51,56 @@ describe('git-service integration', () => {
       reason: 'no_workspace',
       message: 'No working directory selected.'
     })
+  })
+
+  it('protects the checkout that is running the development app from branch mutations', async () => {
+    const repo = mkdtempSync(join(tmpdir(), 'deepseek-git-runtime-checkout-'))
+    const separateCheckoutParent = mkdtempSync(join(tmpdir(), 'deepseek-git-separate-checkout-'))
+    const separateCheckout = join(separateCheckoutParent, 'checkout')
+    const git = (...args: string[]): string =>
+      execFileSync('git', args, { cwd: repo, encoding: 'utf8' }).trim()
+    const separateGit = (...args: string[]): string =>
+      execFileSync('git', args, { cwd: separateCheckout, encoding: 'utf8' }).trim()
+    const previousRendererUrl = process.env.ELECTRON_RENDERER_URL
+    const previousRepoRoot = process.env.DEEPSEEK_REPO_ROOT
+    try {
+      git('init')
+      git('config', 'user.name', 'Workbench Test')
+      git('config', 'user.email', 'workbench@example.test')
+      git('branch', '-M', 'main')
+      writeFileSync(join(repo, 'tracked.txt'), 'before\n')
+      git('add', 'tracked.txt')
+      git('commit', '-m', 'initial')
+      git('branch', 'other')
+      git('branch', 'separate-current')
+      git('branch', 'separate-target')
+      git('worktree', 'add', separateCheckout, 'separate-current')
+      writeFileSync(join(repo, 'tracked.txt'), 'after\n')
+      process.env.ELECTRON_RENDERER_URL = 'http://127.0.0.1:5173'
+      process.env.DEEPSEEK_REPO_ROOT = repo
+
+      const switched = await switchGitBranch(repo, 'other')
+      const stashed = await stashAndSwitchGitBranch(repo, 'other')
+      const created = await createAndSwitchGitBranch(repo, 'new-branch')
+      const separateSwitch = await switchGitBranch(separateCheckout, 'separate-target')
+
+      expect(switched).toMatchObject({ ok: false, reason: 'runtime_checkout' })
+      expect(stashed).toMatchObject({ ok: false, reason: 'runtime_checkout' })
+      expect(created).toMatchObject({ ok: false, reason: 'runtime_checkout' })
+      expect(git('branch', '--show-current')).toBe('main')
+      expect(git('status', '--porcelain')).toBe('M tracked.txt')
+      expect(git('stash', 'list')).toBe('')
+      expect(git('branch', '--list', 'new-branch')).toBe('')
+      expect(separateSwitch.ok).toBe(true)
+      expect(separateGit('branch', '--show-current')).toBe('separate-target')
+    } finally {
+      if (previousRendererUrl === undefined) delete process.env.ELECTRON_RENDERER_URL
+      else process.env.ELECTRON_RENDERER_URL = previousRendererUrl
+      if (previousRepoRoot === undefined) delete process.env.DEEPSEEK_REPO_ROOT
+      else process.env.DEEPSEEK_REPO_ROOT = previousRepoRoot
+      rmSync(repo, { recursive: true, force: true })
+      rmSync(separateCheckoutParent, { recursive: true, force: true })
+    }
   })
 
   it('stages and unstages only the selected paths', async () => {

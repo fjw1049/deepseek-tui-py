@@ -1581,6 +1581,7 @@
   "gitDirtyFiles": "未提交：{{count}} 个文件",
   "gitNoBranches": "没有匹配的分支。",
   "gitDirtySwitchBlocked": "本地有未提交的改动与「{{branch}}」冲突，切换前需要提交或暂存这些改动。",
+  "gitRuntimeCheckoutSwitchBlocked": "当前开发版正从这个代码目录运行。请使用安装版，或从独立 checkout 打开项目后再切换分支。",
   "gitStashAndSwitch": "暂存改动并切换到 {{branch}}",
   "gitStashPopConflict": "已切换分支，但恢复暂存的改动时发生冲突。改动仍保留在 stash 中，可执行 \"git stash pop\" 手动解决。",
   "gitCreateBranch": "创建并检出新分支…",

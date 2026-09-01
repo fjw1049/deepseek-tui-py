@@ -1585,6 +1585,7 @@
   "gitDirtyFiles": "Uncommitted: {{count}} files",
   "gitNoBranches": "No matching branches.",
   "gitDirtySwitchBlocked": "Uncommitted local changes conflict with \"{{branch}}\". Commit or stash them before switching.",
+  "gitRuntimeCheckoutSwitchBlocked": "This development app is running from the selected checkout. Use an installed build or open the project from a separate checkout before switching branches.",
   "gitStashAndSwitch": "Stash changes and switch to {{branch}}",
   "gitStashPopConflict": "Switched branch, but restoring your stashed changes hit conflicts. Your changes are kept in the stash — run \"git stash pop\" to resolve them.",
   "gitCreateBranch": "Create and switch to a new branch…",

@@ -34,6 +34,7 @@ export type GitBranchesResult =
         | 'git_unavailable'
         | 'dirty_worktree'
         | 'stash_pop_conflict'
+        | 'runtime_checkout'
         | 'error'
       message: string
     }

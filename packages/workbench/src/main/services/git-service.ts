@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process'
-import { stat } from 'node:fs/promises'
-import { join } from 'node:path'
+import { realpath, stat } from 'node:fs/promises'
+import { join, resolve } from 'node:path'
 import { promisify } from 'node:util'
 import type { GitCommitMessageSuggestionResult, GitCommitResult } from '../../shared/git-commit'
 import type { GitLogCommit, GitLogResult, GitLogUpstream } from '../../shared/git-log'
@@ -63,6 +63,37 @@ function gitFailure(error: unknown): GitBranchesResult {
     return { ok: false, reason: 'git_unavailable', message: 'Git executable was not found.' }
   }
   return { ok: false, reason: 'error', message }
+}
+
+const RUNTIME_CHECKOUT_MESSAGE =
+  'The development app is running from this checkout. Use an installed build or a separate checkout before switching branches.'
+
+function normalizeCheckoutPath(path: string): string {
+  const normalized = resolve(path)
+  return process.platform === 'win32' ? normalized.toLowerCase() : normalized
+}
+
+async function protectRuntimeCheckout(cwd: string): Promise<GitBranchesResult | null> {
+  const rendererUrl = process.env.ELECTRON_RENDERER_URL?.trim()
+  const runtimeRoot = process.env.DEEPSEEK_REPO_ROOT?.trim()
+  if (!rendererUrl || !runtimeRoot) return null
+
+  try {
+    const [workspaceResult, runtimeResult] = await Promise.all([
+      runGit(cwd, ['rev-parse', '--show-toplevel']),
+      runGit(runtimeRoot, ['rev-parse', '--show-toplevel'])
+    ])
+    const [workspaceRoot, runtimeCheckoutRoot] = await Promise.all([
+      realpath(workspaceResult.stdout.trim()),
+      realpath(runtimeResult.stdout.trim())
+    ])
+    if (normalizeCheckoutPath(workspaceRoot) === normalizeCheckoutPath(runtimeCheckoutRoot)) {
+      return { ok: false, reason: 'runtime_checkout', message: RUNTIME_CHECKOUT_MESSAGE }
+    }
+  } catch {
+    // Let the requested Git operation report invalid paths or unavailable Git.
+  }
+  return null
 }
 
 function gitWorkingChangesFailure(error: unknown): GitWorkingChangesResult {
@@ -342,6 +373,8 @@ export async function switchGitBranch(
   const branch = branchName.trim()
   if (!cwd) return { ok: false, reason: 'no_workspace', message: 'No working directory selected.' }
   if (!branch) return { ok: false, reason: 'error', message: 'Branch name is required.' }
+  const runtimeCheckoutFailure = await protectRuntimeCheckout(cwd)
+  if (runtimeCheckoutFailure) return runtimeCheckoutFailure
   try {
     try {
       await runGit(cwd, ['switch', branch], 20_000)
@@ -370,6 +403,8 @@ export async function stashAndSwitchGitBranch(
   const branch = branchName.trim()
   if (!cwd) return { ok: false, reason: 'no_workspace', message: 'No working directory selected.' }
   if (!branch) return { ok: false, reason: 'error', message: 'Branch name is required.' }
+  const runtimeCheckoutFailure = await protectRuntimeCheckout(cwd)
+  if (runtimeCheckoutFailure) return runtimeCheckoutFailure
   try {
     const stashMessage = `workbench: auto stash before switching to ${branch}`
     const pushResult = await runGit(
@@ -734,6 +769,8 @@ export async function createAndSwitchGitBranch(
   if (!branch) return { ok: false, reason: 'error', message: 'Branch name is required.' }
   try {
     await runGit(cwd, ['check-ref-format', '--branch', branch])
+    const runtimeCheckoutFailure = await protectRuntimeCheckout(cwd)
+    if (runtimeCheckoutFailure) return runtimeCheckoutFailure
     try {
       await runGit(cwd, ['switch', '-c', branch], 20_000)
     } catch {
