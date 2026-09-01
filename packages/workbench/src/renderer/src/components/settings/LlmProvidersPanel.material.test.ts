@@ -22,4 +22,17 @@ describe('LLM provider sheet materials', () => {
     )?.groups?.body
     expect(insetInputRule).toContain('background: transparent;')
   })
+
+  it('reveals model delete controls when their row is hovered or keyboard-focused', () => {
+    const sharedRemoveRule = stylesheet.match(
+      /\.ds-llm-model-row__remove \{(?<body>[^}]*)\}/
+    )?.groups?.body
+    expect(sharedRemoveRule).toContain('opacity: 0;')
+    expect(stylesheet).toMatch(
+      /\.ds-llm-inset__pick-row:hover \.ds-llm-inset__pick-remove \{[\s\S]*?opacity: 1;/
+    )
+    expect(stylesheet).toMatch(
+      /\.ds-llm-model-row:hover \.ds-llm-model-row__remove,[\s\S]*?opacity: 1;/
+    )
+  })
 })

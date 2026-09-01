@@ -1099,11 +1099,20 @@ function normalizeLlmProviderConfig(raw: unknown): LlmProviderConfigV1 {
         .map((id) => id.trim())
         .filter(Boolean)
     : undefined
+  const hiddenModels = Array.isArray(source.hiddenModels)
+    ? source.hiddenModels
+        .filter((id): id is string => typeof id === 'string')
+        .map((id) => id.trim())
+        .filter(Boolean)
+    : undefined
   return {
     apiKey: typeof source.apiKey === 'string' ? source.apiKey.trim() : '',
     models,
     ...(lastFetchedModels && lastFetchedModels.length > 0
       ? { lastFetchedModels: [...new Set(lastFetchedModels)] }
+      : {}),
+    ...(hiddenModels && hiddenModels.length > 0
+      ? { hiddenModels: [...new Set(hiddenModels)] }
       : {})
   }
 }
@@ -1188,7 +1197,8 @@ export function mergeLlmProviders(
       ...part,
       models: part.models ?? (clearing ? [] : current[id].models),
       lastFetchedModels:
-        part.lastFetchedModels ?? (clearing ? [] : current[id].lastFetchedModels)
+        part.lastFetchedModels ?? (clearing ? [] : current[id].lastFetchedModels),
+      hiddenModels: part.hiddenModels ?? (clearing ? [] : current[id].hiddenModels)
     })
   }
   return next

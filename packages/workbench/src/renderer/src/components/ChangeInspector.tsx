@@ -54,8 +54,15 @@ import {
 } from '../lib/workspace-change-stats'
 import { formatComposerPathMention, insertComposerSnippet } from '../lib/composer-insert'
 import { splitFileNameAndParent } from '../lib/editor-breadcrumb'
-import { resolveThreadFilesystemRoot, resolveThreadGitRoot } from '../lib/workspace-path'
-import type { ChangeReviewContext } from '../lib/change-review'
+import {
+  resolveThreadFilesystemRoot,
+  resolveThreadGitActionRoot,
+  resolveThreadTaskReviewRoot
+} from '../lib/workspace-path'
+import {
+  buildBranchComparisonOptions,
+  type ChangeReviewContext
+} from '../lib/change-review'
 import { resolveInspectorSelectionUpdate } from '../lib/change-inspector-selection'
 import { toolBlocksFromTurnSummary, turnSummaryFromSources } from '../lib/turn-mutation-view'
 import { useChatStore } from '../store/chat-store'
@@ -430,9 +437,9 @@ function InspectorGitActions({
             <span>{t('gitCommitAndPush')}</span>
           </button>
           {upstream ? (
-            <button type="button" role="menuitem" disabled={behind === 0 || ahead > 0 || hasLocalChanges} className={menuItemClass} onClick={() => void pull()}>
+            <button type="button" role="menuitem" disabled={ahead > 0 || hasLocalChanges} className={menuItemClass} onClick={() => void pull()}>
               <Download className="h-3.5 w-3.5" />
-              <span>{t('gitPullCommits', { count: behind })}</span>
+              <span>{behind > 0 ? t('gitPullCommits', { count: behind }) : t('gitPullCheck')}</span>
             </button>
           ) : null}
           {hasRemote ? (
@@ -660,6 +667,7 @@ function BranchComparisonPicker({
   currentBranch,
   branches,
   defaultBranch,
+  dirtyCount,
   selectedBase,
   loading,
   onChange
@@ -667,6 +675,7 @@ function BranchComparisonPicker({
   currentBranch: string | null
   branches: Array<{ name: string }>
   defaultBranch: string | null
+  dirtyCount: number
   selectedBase?: string
   loading: boolean
   onChange: (baseRef: string) => void
@@ -694,22 +703,13 @@ function BranchComparisonPicker({
     }
   }, [open])
 
-  const defaultLocalName = defaultBranch?.includes('/')
-    ? defaultBranch.slice(defaultBranch.indexOf('/') + 1)
-    : defaultBranch
-  const recentBranches = branches
-    .filter(
-      (branch) => branch.name !== currentBranch && branch.name !== defaultLocalName
-    )
-    .slice(0, 5)
-  const allBranches = [
-    ...(defaultBranch && defaultBranch !== currentBranch ? [defaultBranch] : []),
-    ...branches
-      .map((branch) => branch.name)
-      .filter((name) => name !== currentBranch && name !== defaultLocalName)
-  ]
+  const options = buildBranchComparisonOptions({
+    currentBranch,
+    defaultBranch,
+    branches: branches.map((branch) => branch.name)
+  })
   const filteredBranches = query.trim()
-    ? allBranches.filter((branch) =>
+    ? options.searchable.filter((branch) =>
         branch.toLowerCase().includes(query.trim().toLowerCase())
       )
     : []
@@ -736,15 +736,12 @@ function BranchComparisonPicker({
 
   const currentLabel = currentBranch ?? 'HEAD'
   const baseLabel = selectedBase ?? (loading ? t('gitBranchLoading') : t('gitNoBranch'))
+  const workspaceTitle = t('changeBranchWorkspaceTitle', {
+    branch: currentLabel,
+    count: dirtyCount
+  })
   return (
     <div ref={menuRef} className="relative flex min-w-0 items-center gap-2 px-2 text-[12.5px]">
-      <span
-        className="min-w-0 max-w-[42%] truncate font-medium text-ds-muted"
-        title={t('changeBranchCurrentTitle', { branch: currentLabel })}
-      >
-        {currentLabel}
-      </span>
-      <ArrowRight className="h-3.5 w-3.5 shrink-0 text-ds-faint" strokeWidth={1.8} />
       <button
         type="button"
         disabled={loading && !selectedBase}
@@ -753,7 +750,7 @@ function BranchComparisonPicker({
         aria-label={t('changeBranchBaseTitle', { branch: baseLabel })}
         title={t('changeBranchBaseTitle', { branch: baseLabel })}
         onClick={() => setOpen((value) => !value)}
-        className="flex h-7 min-w-0 max-w-[50%] items-center gap-1 rounded-md px-1.5 font-medium text-ds-muted transition hover:bg-ds-hover hover:text-ds-ink active:scale-[0.98] disabled:opacity-45"
+        className="flex h-7 min-w-0 max-w-[42%] items-center gap-1 rounded-md px-1.5 font-medium text-ds-muted transition hover:bg-ds-hover hover:text-ds-ink active:scale-[0.98] disabled:opacity-45"
       >
         <span className="truncate">{baseLabel}</span>
         {loading ? (
@@ -765,6 +762,20 @@ function BranchComparisonPicker({
           />
         )}
       </button>
+      <ArrowRight className="h-3.5 w-3.5 shrink-0 text-ds-faint" strokeWidth={1.8} />
+      <span
+        className="flex min-w-0 max-w-[50%] items-center gap-1 font-medium text-ds-muted"
+        title={workspaceTitle}
+      >
+        <span className="truncate">
+          {t('changeBranchWorkspaceLabel')} · {currentLabel}
+        </span>
+        {dirtyCount > 0 ? (
+          <span className="inline-flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full bg-ds-hover px-1 text-[10px] tabular-nums text-ds-faint">
+            {dirtyCount}
+          </span>
+        ) : null}
+      </span>
 
       {open ? (
         <div
@@ -793,23 +804,31 @@ function BranchComparisonPicker({
               )
             ) : (
               <>
-                {defaultBranch && defaultBranch !== currentBranch ? (
+                {options.current ? (
+                  <div>
+                    <div className="px-2 pb-1 pt-1 text-[10.5px] font-medium text-ds-faint">
+                      {t('changeBranchCurrentGroup')}
+                    </div>
+                    {option(options.current)}
+                  </div>
+                ) : null}
+                {options.default ? (
                   <div>
                     <div className="px-2 pb-1 pt-1 text-[10.5px] font-medium text-ds-faint">
                       {t('changeBranchDefaultGroup')}
                     </div>
-                    {option(defaultBranch)}
+                    {option(options.default)}
                   </div>
                 ) : null}
-                {recentBranches.length > 0 ? (
+                {options.recent.length > 0 ? (
                   <div className="mt-1 border-t border-ds-border-muted pt-1">
                     <div className="px-2 pb-1 pt-1 text-[10.5px] font-medium text-ds-faint">
                       {t('changeBranchRecentGroup')}
                     </div>
-                    {recentBranches.map((branch) => option(branch.name))}
+                    {options.recent.map(option)}
                   </div>
                 ) : null}
-                {!defaultBranch && recentBranches.length === 0 ? (
+                {!options.current && !options.default && options.recent.length === 0 ? (
                   <div className="px-2 py-3 text-[12px] text-ds-faint">{t('gitNoBranches')}</div>
                 ) : null}
               </>
@@ -900,11 +919,21 @@ export function ChangeInspector({
   ).trim()
   const threadProjectRoot = resolvedProjectRoot || workspaceRoot.trim()
   const projectRoot = projectRootOverride?.trim() || threadProjectRoot
-  const threadGitRoot = resolveThreadGitRoot(activeThreadId, threads, workspaceRoot).trim()
-  // The UI exposes one familiar Branch concept. For isolated tasks that branch
-  // lives in a managed checkout, but the implementation path stays invisible.
-  const changeRoot = projectRootOverride?.trim() || threadGitRoot || projectRoot
   const isGitContext = isGitReviewContext(context)
+  const gitActionRoot =
+    projectRootOverride?.trim() ||
+    resolveThreadGitActionRoot(activeThreadId, threads, workspaceRoot).trim() ||
+    projectRoot
+  const taskReviewRoot = resolveThreadTaskReviewRoot(
+    activeThreadId,
+    threads,
+    workspaceRoot
+  ).trim()
+  const changeRoot = isGitContext
+    ? gitActionRoot
+    : context === 'conflicts'
+      ? taskReviewRoot || projectRoot
+      : projectRoot
   const isMutableGitContext =
     context === 'working-tree' || context === 'staged' || context === 'unstaged'
   const gitScope = gitScopeForContext(context)
@@ -931,6 +960,7 @@ export function ChangeInspector({
     context === 'branch' ? branchBase : undefined
   )
   const gitChanges = gitScope === 'working-tree' ? workingTreeChanges : scopedChanges
+  const canMutateGit = Boolean(gitBranches?.ok && !gitBranches.detached)
   const gitLoading =
     workingTreeLoading || (isGitContext && gitScope !== 'working-tree' && scopedLoading)
   const { result: remoteRepositoryResult } = useGitHubRepository(
@@ -939,17 +969,9 @@ export function ChangeInspector({
 
   useEffect(() => {
     if (!branchBase || !gitBranches?.ok) return
-    const defaultLocalName = gitBranches.defaultBranch?.includes('/')
-      ? gitBranches.defaultBranch.slice(gitBranches.defaultBranch.indexOf('/') + 1)
-      : gitBranches.defaultBranch
     const valid =
       branchBase === gitBranches.defaultBranch ||
-      gitBranches.branches.some(
-        (branch) =>
-          branch.name === branchBase &&
-          branch.name !== gitBranches.currentBranch &&
-          branch.name !== defaultLocalName
-      )
+      gitBranches.branches.some((branch) => branch.name === branchBase)
     if (!valid) setBranchBase()
   }, [branchBase, gitBranches, setBranchBase])
   const refreshGit = useCallback(async (): Promise<void> => {
@@ -1016,6 +1038,11 @@ export function ChangeInspector({
   const [diffStyle, setDiffStyle] = useState<DiffRenderStyle>('unified')
   const resizeDrag = useRef<{ start: number; startSize: number } | null>(null)
 
+  useEffect(() => {
+    if (!isGitContext || isDiff || !changeRoot) return
+    void reloadGitBranches(true)
+  }, [changeRoot, isDiff, isGitContext, reloadGitBranches])
+
   const onListResizePointerDown = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>) => {
       event.preventDefault()
@@ -1061,7 +1088,7 @@ export function ChangeInspector({
         }).map((entry) => ({
           ...entry,
           id: `git:${context}:${file.stage}:${index}:${file.path}`,
-          committable: isMutableGitContext && entry.committable
+          committable: isMutableGitContext && canMutateGit && entry.committable
         }))
       )
     }
@@ -1072,7 +1099,7 @@ export function ChangeInspector({
         retainSessionEntriesWhenGitClean:
           context === 'last-turn' || context === 'all-turns'
       }).map((entry) => ({ ...entry, committable: false }))
-  }, [context, isMutableGitContext, scopedGitFiles, sourceBlocks, sourceTurnDiffs])
+  }, [canMutateGit, context, isMutableGitContext, scopedGitFiles, sourceBlocks, sourceTurnDiffs])
 
   const changeStats = useMemo(() => {
     if (context === 'working-tree' && workingTreeChanges?.ok) {
@@ -1463,7 +1490,7 @@ export function ChangeInspector({
                 ) : null}
               </div>
             ) : null}
-            {isGitContext && !isDiff && gitBranches?.ok && workingTreeChanges?.ok ? (
+            {isGitContext && !isDiff && canMutateGit && gitBranches?.ok && workingTreeChanges?.ok ? (
               <InspectorGitActions
                 root={changeRoot}
                 stagedFiles={workingTreeChanges.stagedFiles ?? []}
@@ -1483,6 +1510,7 @@ export function ChangeInspector({
               currentBranch={gitBranches?.ok ? gitBranches.currentBranch : null}
               branches={gitBranches?.ok ? gitBranches.branches : []}
               defaultBranch={gitBranches?.ok ? gitBranches.defaultBranch : null}
+              dirtyCount={gitBranches?.ok ? gitBranches.dirtyCount : 0}
               selectedBase={selectedBranchBase}
               loading={!gitBranches?.ok || scopedLoading}
               onChange={setBranchBase}

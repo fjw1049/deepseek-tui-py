@@ -100,8 +100,8 @@ const api = {
     ipcRenderer.on('workspace:fs-changed', wrapped)
     return () => ipcRenderer.removeListener('workspace:fs-changed', wrapped)
   },
-  getGitBranches: (workspaceRoot) =>
-    ipcRenderer.invoke('git:branches', workspaceRoot),
+  getGitBranches: (workspaceRoot, refreshRemote) =>
+    ipcRenderer.invoke('git:branches', { workspaceRoot, refreshRemote }),
   getGitLog: (workspaceRoot) => ipcRenderer.invoke('git:log', workspaceRoot),
   getGitHubRepository: (workspaceRoot) =>
     ipcRenderer.invoke('git:github-repository', workspaceRoot),

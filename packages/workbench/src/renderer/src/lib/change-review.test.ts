@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { normalizeChangeReviewRequest } from './change-review'
+import { buildBranchComparisonOptions, normalizeChangeReviewRequest } from './change-review'
 
 describe('normalizeChangeReviewRequest', () => {
   it('defaults to the full branch review', () => {
@@ -42,6 +42,38 @@ describe('normalizeChangeReviewRequest', () => {
       turnId: undefined,
       path: undefined,
       workspaceRoot: '/repo'
+    })
+  })
+})
+
+describe('buildBranchComparisonOptions', () => {
+  it('keeps the current branch selectable as a comparison base', () => {
+    expect(
+      buildBranchComparisonOptions({
+        currentBranch: 'build_0831',
+        defaultBranch: 'origin/main',
+        branches: ['build_0831', 'build_0830', 'main']
+      })
+    ).toEqual({
+      current: 'build_0831',
+      default: 'origin/main',
+      recent: ['build_0830'],
+      searchable: ['build_0831', 'origin/main', 'build_0830']
+    })
+  })
+
+  it('deduplicates the current and default branches from recent options', () => {
+    expect(
+      buildBranchComparisonOptions({
+        currentBranch: 'main',
+        defaultBranch: 'origin/main',
+        branches: ['main', 'feature', 'feature']
+      })
+    ).toEqual({
+      current: 'main',
+      default: 'origin/main',
+      recent: ['feature'],
+      searchable: ['main', 'origin/main', 'feature']
     })
   })
 })

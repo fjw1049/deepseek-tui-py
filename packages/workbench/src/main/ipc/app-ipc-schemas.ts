@@ -142,6 +142,12 @@ export const emailSecretPayloadSchema = z
   .strict()
 
 export const workspaceRootSchema = trimmedString(MAX_PATH_LENGTH)
+export const gitBranchesPayloadSchema = z
+  .object({
+    workspaceRoot: workspaceRootSchema,
+    refreshRemote: z.boolean().optional()
+  })
+  .strict()
 export const gitWorkingChangesPayloadSchema = z
   .object({
     workspaceRoot: workspaceRootSchema,

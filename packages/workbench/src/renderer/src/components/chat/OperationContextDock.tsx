@@ -57,7 +57,10 @@ import { TaskRunDialog } from './TaskRunDialog'
 import { StepFlow } from './StepFlow'
 import { taskStatusLabelKey } from './task-status'
 import { extractTodosFromBlocks } from '../../lib/extract-todos-from-blocks'
-import { resolveThreadFilesystemRoot, resolveThreadGitRoot } from '../../lib/workspace-path'
+import {
+  resolveThreadFilesystemRoot,
+  resolveThreadGitActionRoot
+} from '../../lib/workspace-path'
 import { workspaceLabelFromPath } from '../../lib/workspace-label'
 import { useChatStore } from '../../store/chat-store'
 import { GitBranchPicker } from './GitBranchPicker'
@@ -393,8 +396,8 @@ export function OperationContextDock({
     }))
   )
   const visibleRoot = resolveThreadFilesystemRoot(activeThreadId, threads, workspaceRoot)
-  const gitRoot = resolveThreadGitRoot(activeThreadId, threads, workspaceRoot)
-  const { result: gitResult, loading: gitLoading, reload: reloadGitBranches } = useGitBranches(visibleRoot)
+  const gitRoot = resolveThreadGitActionRoot(activeThreadId, threads, workspaceRoot)
+  const { result: gitResult, loading: gitLoading, reload: reloadGitBranches } = useGitBranches(gitRoot)
   const [branchBase] = useGitBranchCompareBase(
     gitRoot,
     gitResult?.ok ? gitResult.currentBranch : null
@@ -404,7 +407,7 @@ export function OperationContextDock({
     'branch',
     branchBase
   )
-  const { result: githubResult, reload: reloadGithubRepository } = useGitHubRepository(visibleRoot)
+  const { result: githubResult, reload: reloadGithubRepository } = useGitHubRepository(gitRoot)
   const githubRepo = githubResult?.ok ? githubResult : null
   const refreshGitState = useCallback((): void => {
     void reloadGitBranches()
@@ -792,8 +795,8 @@ export function OperationContextDock({
         {gitReady ? (
           <div className="ds-operation-dock-branch-picker">
             <GitBranchPicker
-              key={visibleRoot}
-              workspaceRoot={visibleRoot}
+              key={gitRoot}
+              workspaceRoot={gitRoot}
               compact
               usePortal
               menuPlacement="below"

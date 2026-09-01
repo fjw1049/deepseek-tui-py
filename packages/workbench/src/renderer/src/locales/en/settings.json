@@ -166,6 +166,7 @@
   "llmAddModelPlaceholder": "Enter a model ID, e.g. deepseek-v4-pro",
   "llmModelIdLabel": "Model ID",
   "llmAddModelBtn": "Add",
+  "llmDeleteModel": "Delete model {{model}}",
   "llmTestSelectedModels": "Test selected",
   "llmSetAsDefault": "Set as default provider",
   "llmIsDefault": "This is the default provider",

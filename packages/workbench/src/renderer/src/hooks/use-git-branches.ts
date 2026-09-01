@@ -4,7 +4,7 @@ import type { GitBranchesResult } from '@shared/git-branches'
 export function useGitBranches(workspaceRoot: string): {
   result: GitBranchesResult | null
   loading: boolean
-  reload: () => Promise<void>
+  reload: (refreshRemote?: boolean) => Promise<void>
   setResult: (result: GitBranchesResult | null) => void
 } {
   const root = workspaceRoot.trim()
@@ -13,7 +13,7 @@ export function useGitBranches(workspaceRoot: string): {
   const rootRef = useRef(root)
   rootRef.current = root
 
-  const reload = useCallback(async (): Promise<void> => {
+  const reload = useCallback(async (refreshRemote = false): Promise<void> => {
     if (!root || typeof window.dsGui?.getGitBranches !== 'function') {
       setResult(null)
       setLoading(false)
@@ -23,7 +23,7 @@ export function useGitBranches(workspaceRoot: string): {
     const requestRoot = root
     setLoading(true)
     try {
-      const next = await window.dsGui.getGitBranches(requestRoot)
+      const next = await window.dsGui.getGitBranches(requestRoot, refreshRemote)
       if (rootRef.current !== requestRoot) return
       setResult(next)
     } catch {

@@ -3,7 +3,8 @@ import {
   normalizeWorkspaceRoot,
   resolveActiveThreadWorkspace,
   resolveThreadFilesystemRoot,
-  resolveThreadGitRoot
+  resolveThreadGitActionRoot,
+  resolveThreadTaskReviewRoot
 } from './workspace-path'
 
 describe('resolveThreadFilesystemRoot', () => {
@@ -34,8 +35,8 @@ describe('resolveThreadFilesystemRoot', () => {
   })
 })
 
-describe('resolveThreadGitRoot', () => {
-  it('uses the managed branch checkout without changing the visible project path', () => {
+describe('Git workspace roles', () => {
+  it('keeps mutations on the project while reviewing the managed task copy', () => {
     const threads = [
       {
         id: 't1',
@@ -45,14 +46,16 @@ describe('resolveThreadGitRoot', () => {
       }
     ]
     expect(resolveThreadFilesystemRoot('t1', threads, '/Users/me/proj')).toBe('/Users/me/proj')
-    expect(resolveThreadGitRoot('t1', threads, '/Users/me/proj')).toBe(
+    expect(resolveThreadGitActionRoot('t1', threads, '/Users/me/proj')).toBe('/Users/me/proj')
+    expect(resolveThreadTaskReviewRoot('t1', threads, '/Users/me/proj')).toBe(
       '/Users/me/.deepseek/worktrees/proj-abc/thr_1'
     )
   })
 
   it('falls back to the project checkout for local-mode tasks', () => {
     const threads = [{ id: 't1', workspace: '/Users/me/proj', envMode: 'local' as const }]
-    expect(resolveThreadGitRoot('t1', threads, '/fallback')).toBe('/Users/me/proj')
+    expect(resolveThreadGitActionRoot('t1', threads, '/fallback')).toBe('/Users/me/proj')
+    expect(resolveThreadTaskReviewRoot('t1', threads, '/fallback')).toBe('/Users/me/proj')
   })
 
   it('switches roots with the active task instead of reusing the previous project', () => {
@@ -71,10 +74,10 @@ describe('resolveThreadGitRoot', () => {
       }
     ]
 
-    expect(resolveThreadGitRoot('robotgo', threads, '/Users/me/robotgo')).toBe(
+    expect(resolveThreadTaskReviewRoot('robotgo', threads, '/Users/me/robotgo')).toBe(
       '/Users/me/.deepseek/worktrees/robotgo/thr_robotgo'
     )
-    expect(resolveThreadGitRoot('myagent', threads, '/Users/me/MyAgent')).toBe(
+    expect(resolveThreadTaskReviewRoot('myagent', threads, '/Users/me/MyAgent')).toBe(
       '/Users/me/.deepseek/worktrees/MyAgent/thr_myagent'
     )
   })

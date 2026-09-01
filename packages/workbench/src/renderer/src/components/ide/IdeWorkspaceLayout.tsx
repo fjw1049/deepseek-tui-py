@@ -44,7 +44,7 @@ import { useGitBranches } from '../../hooks/use-git-branches'
 import { useWorkspaceDirtyGitRefresh } from '../../hooks/use-workspace-dirty-git-refresh'
 import { collectWorkspaceChangeEntries } from '../../lib/workspace-change-stats'
 import type { ChangeReviewContext } from '../../lib/change-review'
-import { resolveThreadGitRoot } from '../../lib/workspace-path'
+import { resolveThreadGitActionRoot } from '../../lib/workspace-path'
 import { useChatStore } from '../../store/chat-store'
 import { IdeProjectPicker, type IdeProjectOption } from './IdeProjectPicker'
 import { IdeQuickOpenPalette } from './IdeQuickOpenPalette'
@@ -196,7 +196,7 @@ export function IdeWorkspaceLayout({
   const workspaceDirtyTick = useChatStore((s) => s.workspaceDirtyTick)
   const activeThreadId = useChatStore((s) => s.activeThreadId)
   const threads = useChatStore((s) => s.threads)
-  const gitRoot = resolveThreadGitRoot(activeThreadId, threads, workspaceRoot)
+  const gitRoot = resolveThreadGitActionRoot(activeThreadId, threads, workspaceRoot)
   const { result: gitBranches, reload: reloadGitBranches } = useGitBranches(gitRoot)
   const [branchBase] = useGitBranchCompareBase(
     gitRoot,

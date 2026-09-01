@@ -13,7 +13,10 @@ import {
 } from '../../lib/workspace-change-stats'
 import { useChatStore } from '../../store/chat-store'
 import { ChangeDiffStatsLabel } from '../ChangeDiffStatsLabel'
-import { resolveThreadFilesystemRoot, resolveThreadGitRoot } from '../../lib/workspace-path'
+import {
+  resolveThreadFilesystemRoot,
+  resolveThreadGitActionRoot
+} from '../../lib/workspace-path'
 
 type Props = {
   workspaceRoot: string
@@ -26,8 +29,8 @@ export function RightSidebarCollapsedStrip({ workspaceRoot, onExpand }: Props): 
   const activeThreadId = useChatStore((s) => s.activeThreadId)
   const threads = useChatStore((s) => s.threads)
   const visibleRoot = resolveThreadFilesystemRoot(activeThreadId, threads, workspaceRoot).trim()
-  const gitRoot = resolveThreadGitRoot(activeThreadId, threads, workspaceRoot).trim()
-  const { result: gitResult, reload: reloadGitBranches } = useGitBranches(visibleRoot)
+  const gitRoot = resolveThreadGitActionRoot(activeThreadId, threads, workspaceRoot).trim()
+  const { result: gitResult, reload: reloadGitBranches } = useGitBranches(gitRoot)
   const [branchBase] = useGitBranchCompareBase(
     gitRoot,
     gitResult?.ok ? gitResult.currentBranch : null

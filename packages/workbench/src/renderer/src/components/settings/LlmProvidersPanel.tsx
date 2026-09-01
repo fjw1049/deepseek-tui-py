@@ -762,17 +762,21 @@ function BuiltinProviderDetailSheet({
   const def = BUILTIN_LLM_PROVIDERS[providerId]
   const [apiKey, setApiKey] = useState(config.apiKey)
   const [showKey, setShowKey] = useState(false)
+  const [hiddenModelIds, setHiddenModelIds] = useState<string[]>(() => [
+    ...(config.hiddenModels ?? [])
+  ])
   const [models, setModels] = useState<LlmProviderModelV1[]>(() =>
     config.models.length
-      ? config.models
+      ? config.models.filter((model) => !config.hiddenModels?.includes(model.id))
       : []
   )
   const [availableIds, setAvailableIds] = useState<string[]>(() => {
+    const hidden = new Set(config.hiddenModels ?? [])
     const base = config.lastFetchedModels?.length
       ? config.lastFetchedModels
       : [...def.fallbackModels]
     const extras = config.models.map((m) => m.id).filter((id) => id && !base.includes(id))
-    return [...base, ...extras]
+    return [...base, ...extras].filter((id) => !hidden.has(id))
   })
   const [modelDraft, setModelDraft] = useState('')
   const [fetchNote, setFetchNote] = useState<string | null>(null)
@@ -821,8 +825,10 @@ function BuiltinProviderDetailSheet({
   const refreshModels = useCallback(
     async (key: string): Promise<void> => {
       const trimmed = key.trim()
+      const withoutHidden = (ids: string[]): string[] =>
+        ids.filter((id) => !hiddenModelIds.includes(id))
       if (!trimmed) {
-        setAvailableIds((prev) => mergeAvailable([...def.fallbackModels], prev))
+        setAvailableIds((prev) => mergeAvailable(withoutHidden([...def.fallbackModels]), prev))
         setFetchNote(t('llmModelsNeedKey'))
         return
       }
@@ -835,13 +841,14 @@ function BuiltinProviderDetailSheet({
         })
         const result = await window.dsGui.fetchProviderModels(providerId)
         if (result.ok) {
+          const visibleFetched = withoutHidden(result.modelIds)
           setLastFetchedModels(result.modelIds)
           setFetchNote(null)
-          setAvailableIds((prev) => mergeAvailable(result.modelIds, prev))
+          setAvailableIds((prev) => mergeAvailable(visibleFetched, prev))
           setModels((prev) => {
             if (prev.length > 0) return prev
-            const preferred = def.fallbackModels.filter((id) => result.modelIds.includes(id))
-            const seed = preferred.length > 0 ? preferred : result.modelIds.slice(0, 2)
+            const preferred = def.fallbackModels.filter((id) => visibleFetched.includes(id))
+            const seed = preferred.length > 0 ? preferred : visibleFetched.slice(0, 2)
             return seed.map((id) => ({
               id,
               enabled: true,
@@ -852,12 +859,13 @@ function BuiltinProviderDetailSheet({
           const fallback = result.fallbackModelIds?.length
             ? result.fallbackModelIds
             : [...def.fallbackModels]
-          setAvailableIds((prev) => mergeAvailable(fallback, prev))
+          const visibleFallback = withoutHidden(fallback)
+          setAvailableIds((prev) => mergeAvailable(visibleFallback, prev))
           setFetchNote(t('llmModelsFetchFailed'))
           setModels((prev) =>
             prev.length > 0
               ? prev
-              : fallback.slice(0, 2).map((id) => ({
+              : visibleFallback.slice(0, 2).map((id) => ({
                   id,
                   enabled: true,
                   contextWindow: CUSTOM_MODEL_CONTEXT_WINDOW_DEFAULT
@@ -865,13 +873,15 @@ function BuiltinProviderDetailSheet({
           )
         }
       } catch (error) {
-        setAvailableIds((prev) => mergeAvailable([...def.fallbackModels], prev))
+        setAvailableIds((prev) =>
+          mergeAvailable(withoutHidden([...def.fallbackModels]), prev)
+        )
         setFetchNote(error instanceof Error ? error.message : t('llmModelsFetchFailed'))
       } finally {
         setFetching(false)
       }
     },
-    [def.fallbackModels, mergeAvailable, providerId, t]
+    [def.fallbackModels, hiddenModelIds, mergeAvailable, providerId, t]
   )
 
   useEffect(() => {
@@ -913,9 +923,22 @@ function BuiltinProviderDetailSheet({
   const addManualModel = (): void => {
     const id = modelDraft.trim()
     if (!id) return
+    setHiddenModelIds((prev) => prev.filter((modelId) => modelId !== id))
     setAvailableIds((prev) => (prev.includes(id) ? prev : [...prev, id]))
     ensureModel(id, true)
     setModelDraft('')
+  }
+
+  const removeModel = (id: string): void => {
+    setHiddenModelIds((prev) => (prev.includes(id) ? prev : [...prev, id]))
+    setAvailableIds((prev) => prev.filter((modelId) => modelId !== id))
+    setModels((prev) => prev.filter((model) => model.id !== id))
+    setTestByModel((prev) => {
+      if (!(id in prev)) return prev
+      const next = { ...prev }
+      delete next[id]
+      return next
+    })
   }
 
   return (
@@ -933,7 +956,8 @@ function BuiltinProviderDetailSheet({
                 onSave({
                   apiKey: '',
                   models: [],
-                  lastFetchedModels: []
+                  lastFetchedModels: [],
+                  hiddenModels: []
                 })
               }
               className="ds-llm-sheet__btn ds-llm-sheet__btn--danger"
@@ -950,7 +974,7 @@ function BuiltinProviderDetailSheet({
             onClick={() => {
               const key = apiKey.trim()
               const nextModels =
-                key && models.length === 0
+                key && models.length === 0 && hiddenModelIds.length === 0
                   ? def.fallbackModels.map((id) => ({
                       id,
                       enabled: true,
@@ -962,7 +986,8 @@ function BuiltinProviderDetailSheet({
               onSave({
                 apiKey: key,
                 models: nextModels,
-                lastFetchedModels: key && lastFetchedModels?.length ? lastFetchedModels : []
+                lastFetchedModels: key && lastFetchedModels?.length ? lastFetchedModels : [],
+                hiddenModels: key ? hiddenModelIds : []
               })
             }}
             className="ds-llm-sheet__btn ds-llm-sheet__btn--primary"
@@ -1042,7 +1067,10 @@ function BuiltinProviderDetailSheet({
           const last = index === availableIds.length - 1
           const test = testByModel[modelId]
           return (
-            <li key={modelId}>
+            <li
+              key={modelId}
+              className={`ds-llm-inset__pick-row ${last ? 'is-last' : ''}`}
+            >
               <button
                 type="button"
                 onClick={() => {
@@ -1057,7 +1085,7 @@ function BuiltinProviderDetailSheet({
                   }
                 }}
                 title={test?.message || undefined}
-                className={`ds-llm-inset__pick ${checked ? 'is-on' : ''} ${last ? 'is-last' : ''}`}
+                className={`ds-llm-inset__pick ds-llm-inset__pick--with-actions ${checked ? 'is-on' : ''}`}
               >
                 <span className="ds-llm-inset__pick-label">{modelId}</span>
                 <span className="ds-llm-inset__pick-trailing">
@@ -1078,6 +1106,15 @@ function BuiltinProviderDetailSheet({
                     <Check className="ds-llm-inset__pick-check h-4 w-4" strokeWidth={2.4} />
                   ) : null}
                 </span>
+              </button>
+              <button
+                type="button"
+                className="ds-llm-model-row__remove ds-llm-inset__pick-remove"
+                onClick={() => removeModel(modelId)}
+                aria-label={t('llmDeleteModel', { model: modelId })}
+                title={t('llmDeleteModel', { model: modelId })}
+              >
+                <Trash2 className="h-3.5 w-3.5" strokeWidth={2} />
               </button>
             </li>
           )

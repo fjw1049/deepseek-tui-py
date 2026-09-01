@@ -31,6 +31,10 @@ Let `P` be the current project and `T` the current task worktree:
   existing three-way merge. Only an unmergeable path is a user-facing conflict.
 - If `T != B` without a checkpoint, preserve both copies and enter recovery.
   Recovery may act only on the paths in `T - B`, never on all dirty paths.
+- User-driven branch switching, staging, commit, pull, and push act only on the
+  canonical project checkout `P`. The hidden task worktree `T` is a read-only
+  review source for these controls; inbound Git updates to `T` must continue to
+  use the journaled project-to-task sync path below.
 - After publish, conflict resolution, or code rollback, resync the task
   worktree and atomically record a new baseline.
 - Before a multi-file inbound sync mutates the task copy, persist a sync

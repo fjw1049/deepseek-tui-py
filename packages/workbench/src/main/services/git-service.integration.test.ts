@@ -209,6 +209,8 @@ describe('git-service integration', () => {
       expect(branches).toMatchObject({
         ok: true,
         currentBranch: 'build_0831',
+        detached: false,
+        inferredBranch: null,
         defaultBranch: 'main',
         recommendedBase: 'build_0830'
       })
@@ -232,11 +234,19 @@ describe('git-service integration', () => {
         'previous.txt'
       ])
 
+      writeFileSync(join(repo, 'draft.txt'), 'uncommitted\n')
+      const againstCurrent = await getGitWorkingChanges(repo, 'branch', 'build_0831')
+      expect(againstCurrent).toMatchObject({ ok: true, baseRef: 'build_0831' })
+      if (!againstCurrent.ok) return
+      expect(againstCurrent.files.map((file) => file.path)).toEqual(['draft.txt'])
+
       git('switch', '--detach')
       const detachedBranches = await getGitBranches(repo)
       expect(detachedBranches).toMatchObject({
         ok: true,
-        currentBranch: 'build_0831',
+        currentBranch: null,
+        detached: true,
+        inferredBranch: 'build_0831',
         recommendedBase: 'build_0830'
       })
       const detachedChanges = await getGitWorkingChanges(repo, 'branch')
@@ -333,13 +343,77 @@ describe('git-service integration', () => {
       run(peer, 'add', 'tracked.txt')
       run(peer, 'commit', '-m', 'peer update')
       run(peer, 'push')
-      run(repo, 'fetch', 'origin')
 
       const result = await pullGitBranch(repo)
       expect(result).toMatchObject({ ok: true, branch: 'main', updated: true })
       expect(run(repo, 'show', '-s', '--format=%s', 'HEAD')).toBe('peer update')
     } finally {
       rmSync(parent, { recursive: true, force: true })
+    }
+  })
+
+  it('refreshes remote refs before reporting ahead and behind state', async () => {
+    const parent = mkdtempSync(join(tmpdir(), 'deepseek-git-refresh-'))
+    const repo = join(parent, 'repo')
+    const peer = join(parent, 'peer')
+    const remote = join(parent, 'remote.git')
+    const run = (cwd: string, ...args: string[]): string =>
+      execFileSync('git', args, { cwd, encoding: 'utf8' }).trim()
+    try {
+      mkdirSync(repo)
+      run(repo, 'init')
+      run(repo, 'config', 'user.name', 'Workbench Test')
+      run(repo, 'config', 'user.email', 'workbench@example.test')
+      run(repo, 'branch', '-M', 'main')
+      writeFileSync(join(repo, 'tracked.txt'), 'first\n')
+      run(repo, 'add', 'tracked.txt')
+      run(repo, 'commit', '-m', 'initial')
+      run(parent, 'init', '--bare', remote)
+      run(repo, 'remote', 'add', 'origin', remote)
+      run(repo, 'push', '-u', 'origin', 'main')
+      run(remote, 'symbolic-ref', 'HEAD', 'refs/heads/main')
+      run(parent, 'clone', remote, peer)
+      run(peer, 'config', 'user.name', 'Peer Test')
+      run(peer, 'config', 'user.email', 'peer@example.test')
+      writeFileSync(join(peer, 'tracked.txt'), 'from peer\n')
+      run(peer, 'add', 'tracked.txt')
+      run(peer, 'commit', '-m', 'peer update')
+      run(peer, 'push')
+
+      const stale = await getGitBranches(repo)
+      expect(stale).toMatchObject({ ok: true, behind: 0 })
+
+      const refreshed = await getGitBranches(repo, true)
+      expect(refreshed).toMatchObject({ ok: true, ahead: 0, behind: 1 })
+    } finally {
+      rmSync(parent, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps local branch state available when a remote refresh fails', async () => {
+    const repo = mkdtempSync(join(tmpdir(), 'deepseek-git-refresh-offline-'))
+    const git = (...args: string[]): string =>
+      execFileSync('git', args, { cwd: repo, encoding: 'utf8' }).trim()
+    try {
+      git('init')
+      git('config', 'user.name', 'Workbench Test')
+      git('config', 'user.email', 'workbench@example.test')
+      git('branch', '-M', 'main')
+      writeFileSync(join(repo, 'tracked.txt'), 'first\n')
+      git('add', 'tracked.txt')
+      git('commit', '-m', 'initial')
+      git('remote', 'add', 'origin', join(repo, 'missing-remote.git'))
+
+      const result = await getGitBranches(repo, true)
+      expect(result).toMatchObject({
+        ok: true,
+        currentBranch: 'main',
+        hasRemote: true
+      })
+      if (!result.ok) return
+      expect(result.remoteRefreshError).toMatch(/repository|remote|exist/i)
+    } finally {
+      rmSync(repo, { recursive: true, force: true })
     }
   })
 })

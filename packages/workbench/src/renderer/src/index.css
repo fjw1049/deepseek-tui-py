@@ -10354,10 +10354,19 @@ select:focus-visible,
   border: none;
   border-radius: 999px;
   color: color-mix(in srgb, var(--ds-text) 35%, transparent);
+  opacity: 0;
+  pointer-events: none;
   transition:
     transform 100ms ease-out,
     color 140ms ease,
-    background 140ms ease;
+    background 140ms ease,
+    opacity 120ms ease;
+}
+
+.ds-llm-model-row:hover .ds-llm-model-row__remove,
+.ds-llm-model-row__remove:focus-visible {
+  opacity: 1;
+  pointer-events: auto;
 }
 
 .ds-llm-model-row__remove:hover {
@@ -10438,6 +10447,31 @@ select:focus-visible,
   padding: 0.7rem 1rem;
   text-align: left;
   transition: background 120ms ease;
+}
+
+.ds-llm-inset__pick-row {
+  display: flex;
+  align-items: center;
+  border-bottom: 0.5px solid color-mix(in srgb, var(--ds-text) 10%, transparent);
+}
+
+.ds-llm-inset__pick-row.is-last {
+  border-bottom: none;
+}
+
+.ds-llm-inset__pick--with-actions {
+  width: auto;
+  flex: 1;
+  border-bottom: none;
+}
+
+.ds-llm-inset__pick-remove {
+  margin-right: 0.65rem;
+}
+
+.ds-llm-inset__pick-row:hover .ds-llm-inset__pick-remove {
+  opacity: 1;
+  pointer-events: auto;
 }
 
 .ds-llm-inset__pick.is-last {

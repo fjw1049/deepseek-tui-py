@@ -21,6 +21,42 @@ export type NormalizedChangeReviewRequest = Omit<ChangeReviewRequest, 'context'>
   context: ChangeReviewContext
 }
 
+export function buildBranchComparisonOptions({
+  currentBranch,
+  defaultBranch,
+  branches
+}: {
+  currentBranch: string | null
+  defaultBranch: string | null
+  branches: string[]
+}): {
+  current: string | null
+  default: string | null
+  recent: string[]
+  searchable: string[]
+} {
+  const current = currentBranch?.trim() || null
+  const defaultRef = defaultBranch?.trim() || null
+  const defaultLocalName = defaultRef?.includes('/')
+    ? defaultRef.slice(defaultRef.indexOf('/') + 1)
+    : defaultRef
+  const uniqueBranches = [...new Set(branches.map((branch) => branch.trim()).filter(Boolean))]
+  const remaining = uniqueBranches.filter(
+    (branch) => branch !== current && branch !== defaultLocalName
+  )
+  const defaultOption = defaultRef === current ? null : defaultRef
+  return {
+    current,
+    default: defaultOption,
+    recent: remaining.slice(0, 5),
+    searchable: [
+      ...new Set(
+        [current, defaultOption, ...remaining].filter((branch): branch is string => Boolean(branch))
+      )
+    ]
+  }
+}
+
 export function normalizeChangeReviewRequest(
   detail: ChangeReviewRequest | null | undefined
 ): NormalizedChangeReviewRequest {

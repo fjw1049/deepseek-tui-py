@@ -84,14 +84,20 @@ export function resolveThreadFilesystemRoot(
   return fallbackWorkspaceRoot?.trim() ?? ''
 }
 
+/** Canonical checkout for user-driven Git mutations and branch state. */
+export function resolveThreadGitActionRoot(
+  activeThreadId: string | null | undefined,
+  threads: ReadonlyArray<ThreadPathFields>,
+  fallbackWorkspaceRoot?: string | null
+): string {
+  return resolveThreadFilesystemRoot(activeThreadId, threads, fallbackWorkspaceRoot)
+}
+
 /**
- * Git root for the branch the active task is actually changing.
- *
- * Managed worktrees stay invisible in product language, but their branch is
- * still the authoritative source for Branch diff, staging, commit and push.
- * Falling back to the project checkout keeps local-mode tasks conventional.
+ * Read-only Git root used to inspect the active task's isolated file changes.
+ * Mutating Git actions must use {@link resolveThreadGitActionRoot} instead.
  */
-export function resolveThreadGitRoot(
+export function resolveThreadTaskReviewRoot(
   activeThreadId: string | null | undefined,
   threads: ReadonlyArray<ThreadPathFields>,
   fallbackWorkspaceRoot?: string | null

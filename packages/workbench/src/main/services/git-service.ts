@@ -247,26 +247,40 @@ async function resolveRecentAncestorBranch(
   return recent === defaultLocalName ? defaultBranch : (recent ?? null)
 }
 
-export async function getGitBranches(workspaceRoot: string): Promise<GitBranchesResult> {
+export async function getGitBranches(
+  workspaceRoot: string,
+  refreshRemote = false
+): Promise<GitBranchesResult> {
   const cwd = workspaceRoot.trim()
   if (!cwd) {
     return { ok: false, reason: 'no_workspace', message: 'No working directory selected.' }
   }
   try {
     const repositoryRoot = (await runGit(cwd, ['rev-parse', '--show-toplevel'])).stdout.trim()
-    const currentBranch = await resolveCurrentBranch(cwd)
-    const localBranches = await listLocalBranches(cwd)
-    const branches = localBranches.map(({ name }) => ({ name, current: currentBranch === name }))
-    const defaultBranch = await resolveRepositoryDefaultBranch(cwd)
-    const recommendedBase =
-      (await resolveRecentAncestorBranch(cwd, currentBranch, defaultBranch)) ?? defaultBranch
-    const dirtyCount = (await runGit(cwd, ['status', '--porcelain=v1'])).stdout
-      .split('\n')
-      .filter((line) => line.trim().length > 0).length
     const remotes = (await runGit(cwd, ['remote'])).stdout
       .split('\n')
       .map((line) => line.trim())
       .filter(Boolean)
+    let remoteRefreshError: string | null = null
+    if (refreshRemote && remotes.length > 0) {
+      try {
+        await runGit(cwd, ['fetch', '--prune'], 120_000, DIFF_MAX_BUFFER)
+      } catch (error) {
+        remoteRefreshError = error instanceof Error ? error.message : String(error)
+      }
+    }
+    const attachedBranch = (await runGit(cwd, ['branch', '--show-current'])).stdout.trim()
+    const currentBranch = attachedBranch || null
+    const inferredBranch = currentBranch ? null : await resolveCurrentBranch(cwd)
+    const branchForComparison = currentBranch ?? inferredBranch
+    const localBranches = await listLocalBranches(cwd)
+    const branches = localBranches.map(({ name }) => ({ name, current: currentBranch === name }))
+    const defaultBranch = await resolveRepositoryDefaultBranch(cwd)
+    const recommendedBase =
+      (await resolveRecentAncestorBranch(cwd, branchForComparison, defaultBranch)) ?? defaultBranch
+    const dirtyCount = (await runGit(cwd, ['status', '--porcelain=v1'])).stdout
+      .split('\n')
+      .filter((line) => line.trim().length > 0).length
     let upstream: string | null = null
     let ahead = 0
     let behind = 0
@@ -295,6 +309,8 @@ export async function getGitBranches(workspaceRoot: string): Promise<GitBranches
       ok: true,
       repositoryRoot,
       currentBranch,
+      detached: !currentBranch,
+      inferredBranch,
       branches,
       defaultBranch,
       recommendedBase,
@@ -302,7 +318,8 @@ export async function getGitBranches(workspaceRoot: string): Promise<GitBranches
       upstream,
       ahead,
       behind,
-      hasRemote: remotes.length > 0
+      hasRemote: remotes.length > 0,
+      remoteRefreshError
     }
   } catch (error) {
     return gitFailure(error)

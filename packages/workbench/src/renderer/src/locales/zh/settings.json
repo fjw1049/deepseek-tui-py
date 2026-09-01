@@ -166,6 +166,7 @@
   "llmAddModelPlaceholder": "手动输入模型 ID，例如 deepseek-v4-pro",
   "llmModelIdLabel": "模型 ID",
   "llmAddModelBtn": "添加",
+  "llmDeleteModel": "删除模型 {{model}}",
   "llmTestSelectedModels": "测试已选",
   "llmSetAsDefault": "设为默认供应商",
   "llmIsDefault": "当前为默认供应商",
