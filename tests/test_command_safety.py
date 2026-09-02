@@ -42,3 +42,15 @@ def test_all_safe_pipeline_stays_safe():
 def test_logical_or_behavior_unchanged():
     # ``||`` must not be torn apart by the pipe splitting.
     assert _level("ls || cat x") == SafetyLevel.REQUIRES_APPROVAL
+
+
+def test_git_branch_and_tag_mutations_require_approval():
+    # Two-token prefixes cannot tell ``git branch`` (listing) from
+    # ``git branch -D main`` — mutating forms must not be auto-allowed.
+    assert _level("git branch -D main") == SafetyLevel.REQUIRES_APPROVAL
+    assert _level("git branch feature") == SafetyLevel.REQUIRES_APPROVAL
+    assert _level("git tag v1.0") == SafetyLevel.REQUIRES_APPROVAL
+    assert _level("git branch") == SafetyLevel.REQUIRES_APPROVAL
+    # Genuinely read-only git forms stay safe.
+    assert _level("git status") == SafetyLevel.SAFE
+    assert _level("git log --oneline") == SafetyLevel.SAFE

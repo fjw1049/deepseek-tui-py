@@ -37,18 +37,6 @@ FOCUS_SKILL_BASE = FOCUS_KERNEL | frozenset({"load_skill", "web_search"})
 # Plugin mount — skill base + agent (scenario feels like a mini workspace).
 FOCUS_PLUGIN_BASE = FOCUS_SKILL_BASE | frozenset({"agent"})
 
-# Deprecated alias for the widest focus base (plugin). Prefer FOCUS_PLUGIN_BASE.
-FOCUS_READ_BASE = FOCUS_PLUGIN_BASE
-
-# Registry-only names across all focus bases (for subset-of-registry tests).
-_FOCUS_REGISTRY_TOOLS = (
-    _FOCUS_KERNEL_REGISTRY
-    | frozenset({"load_skill", "web_search", "agent"})
-)
-
-# Write subset kept for callers that want write tools without a full base.
-FOCUS_WRITE_BASE = frozenset({"write_file", "edit_file"})
-
 def _detect_focus_prefix(text: str, sigil: str) -> str | None:
     """解析整条消息首个 token 为 ``<sigil><name>`` 的情形，返回 ``name``。
 

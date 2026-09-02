@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-import tempfile
 import time
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
@@ -13,13 +12,12 @@ from pathlib import Path
 from typing import Any, Iterator
 
 from deepseek_tui.config.paths import usage_ledger_path
+from deepseek_tui.utils import write_json_atomic
 
 logger = logging.getLogger(__name__)
 
 LEDGER_SCHEMA_VERSION = 1
 RETENTION_DAYS = 365
-BUILTIN_DEEPSEEK_PROVIDER_ID = "deepseek"
-MODEL_REF_SEPARATOR = "::"
 LOCK_TIMEOUT_SECONDS = 30.0
 LOCK_RETRY_SECONDS = 0.05
 
@@ -52,14 +50,6 @@ def _empty_bucket(model: str) -> dict[str, Any]:
         "cost_cny": 0.0,
         "turns": 0,
     }
-
-
-def _decode_model_ref(value: str) -> tuple[str, str]:
-    trimmed = value.strip()
-    separator_index = trimmed.find(MODEL_REF_SEPARATOR)
-    if separator_index <= 0:
-        return BUILTIN_DEEPSEEK_PROVIDER_ID, trimmed
-    return trimmed[:separator_index], trimmed[separator_index + len(MODEL_REF_SEPARATOR) :]
 
 
 def _local_day_key(value: datetime) -> str:
@@ -95,6 +85,13 @@ def _ledger_file_lock(path: Path, *, timeout: float = LOCK_TIMEOUT_SECONDS) -> I
             acquired = True
             break
         except FileExistsError:
+            # A crashed holder leaves the lock file behind; treat a lock
+            # older than the timeout as stale and take it over.
+            try:
+                if time.time() - lock_path.stat().st_mtime > timeout:
+                    lock_path.unlink(missing_ok=True)
+            except OSError:
+                pass
             time.sleep(LOCK_RETRY_SECONDS)
     if not acquired:
         raise TimeoutError(f"timed out acquiring usage ledger lock: {lock_path}")
@@ -140,20 +137,9 @@ def _read_ledger(path: Path) -> tuple[dict[str, Any], bool]:
 
 
 def _write_ledger(path: Path, ledger: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
     payload_ledger = _normalize_ledger(dict(ledger))
     payload_ledger["updatedAt"] = datetime.now(timezone.utc).isoformat()
-    payload = json.dumps(payload_ledger, ensure_ascii=False, indent=2, sort_keys=True)
-    fd, temp_name = tempfile.mkstemp(prefix="ledger-", suffix=".json", dir=path.parent)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            handle.write(payload)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temp_name, path)
-    finally:
-        if os.path.exists(temp_name):
-            os.unlink(temp_name)
+    write_json_atomic(path, payload_ledger, sort_keys=True)
 
 
 def _merge_bucket(target: dict[str, Any], source: dict[str, Any]) -> None:
@@ -284,52 +270,5 @@ def record_turn_usage(
         )
         processed[normalized_turn_id] = day
         _prune_old_days(ledger)
-
-    _mutate_ledger(path, mutate)
-
-
-def prune_usage_provider(provider_id: str) -> None:
-    provider = provider_id.strip()
-    if not provider:
-        return
-    path = usage_ledger_path()
-
-    def should_drop(model_ref: str) -> bool:
-        decoded_provider, _ = _decode_model_ref(model_ref)
-        return decoded_provider == provider
-
-    def mutate(ledger: dict[str, Any]) -> None:
-        for day_bucket in ledger.get("days", {}).values():
-            if not isinstance(day_bucket, dict):
-                continue
-            models = day_bucket.get("models")
-            if isinstance(models, dict):
-                for model_ref in list(models):
-                    if should_drop(model_ref):
-                        models.pop(model_ref, None)
-            _recompute_day_totals(day_bucket)
-
-    _mutate_ledger(path, mutate)
-
-
-def prune_usage_endpoint_model(provider_id: str, model_id: str) -> None:
-    provider = provider_id.strip()
-    model = model_id.strip()
-    if not provider or not model:
-        return
-    if provider == BUILTIN_DEEPSEEK_PROVIDER_ID:
-        target_ref = model
-    else:
-        target_ref = f"{provider}{MODEL_REF_SEPARATOR}{model}"
-    path = usage_ledger_path()
-
-    def mutate(ledger: dict[str, Any]) -> None:
-        for day_bucket in ledger.get("days", {}).values():
-            if not isinstance(day_bucket, dict):
-                continue
-            models = day_bucket.get("models")
-            if isinstance(models, dict):
-                models.pop(target_ref, None)
-            _recompute_day_totals(day_bucket)
 
     _mutate_ledger(path, mutate)

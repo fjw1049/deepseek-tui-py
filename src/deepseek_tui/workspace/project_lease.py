@@ -96,9 +96,13 @@ class FileLease:
                         time.sleep(_LOCK_RETRY_INTERVAL_SECONDS)
             else:  # pragma: no cover — supported platforms provide one backend
                 raise RuntimeError("platform does not provide file locking")
-        except OSError:
+        except OSError as error:
             fh.close()
-            return False
+            if _is_lock_contention(error):
+                return False
+            # A permanent failure (permissions, disk, path) must not be
+            # retried forever by :meth:`acquire`'s wait loop.
+            raise
         except Exception:
             fh.close()
             raise

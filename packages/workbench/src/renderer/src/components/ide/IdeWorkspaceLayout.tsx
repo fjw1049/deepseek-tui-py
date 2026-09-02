@@ -366,7 +366,7 @@ export function IdeWorkspaceLayout({
 
   return (
     <div className="ds-ide-workspace relative flex h-full min-h-0 min-w-0 flex-1 flex-col bg-ds-canvas text-ds-ink">
-      <header className="ds-workbench-topbar ds-surface-divider relative z-10 shrink-0">
+      <header className="ds-workbench-topbar ds-window-drag-region ds-surface-divider relative z-10 shrink-0">
         <div className="ds-ide-topbar__inner">
           <div className="ds-ide-topbar__leading min-w-0">
             {showProjectPicker ? (

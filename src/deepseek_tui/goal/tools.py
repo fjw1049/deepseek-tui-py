@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from deepseek_tui.goal.persist import _opt_int
 from deepseek_tui.goal.injection import blocked_reason_prompt, completion_summary_prompt
 from deepseek_tui.goal.types import (
     CREATE_GOAL_NAME,
@@ -257,11 +258,3 @@ def _opt_str(value: object) -> str | None:
     return text or None
 
 
-def _opt_int(value: object) -> int | None:
-    if value is None:
-        return None
-    try:
-        number = int(value)
-    except (TypeError, ValueError):
-        return None
-    return number if number > 0 else None

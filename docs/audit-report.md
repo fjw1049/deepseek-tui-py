@@ -23,7 +23,7 @@
 | A1 | `tools/shell.py:1143` | shell 子进程 `{**os.environ, **exec_env.env}` 无差别继承全量环境；`printenv` 在免审批白名单里，模型一条命令即可读出 `DEEPSEEK_API_KEY` 等全部密钥，再用 `curl` 外传 | spawn 前过滤 `*_API_KEY`/`*_TOKEN`/`*_SECRET`，或白名单式注入（PATH/HOME/LANG） |
 | A2 | `mcp/transport.py:83` | 第三方 MCP server（不可信二进制）同样继承全量环境 | 同上，只透传配置显式声明的 env |
 | A3 | `policy/command_safety.py:85-91` | `printenv`/`set`/`find`（可 `-exec rm`）在 SAFE 免审批白名单 | 移出白名单或升级为 PROMPT |
-| A4 | `state/secrets.py` 多处 | 四处 fallback 比主路径弱：`security -w <key>` 暴露在 `ps`（148-156）；先写后 chmod 的 TOCTOU（254-259）；keyring 失败 fallback 到 cwd 相对路径明文文件（307-309）；项目级配置可提供明文 api_key 并被合并（373-380） | 逐条加固；项目级配置禁止提供 api_key |
+| A4 | `state/secrets.py` 多处 | 多套旧凭据后端的 fallback 安全性和优先级不一致；项目级配置还可能提供明文 api_key | 删除旧后端，统一为 env → 用户 `config.toml`；项目级配置禁止提供 api_key |
 
 **联动说明**：A1 + A3 + `sandbox.py` 全磁盘可读构成完整外泄链，单修一环不够。
 
@@ -103,8 +103,7 @@
 - `task/manager.py:667-676`：终态任务驱逐只清内存不删磁盘，磁盘无界增长
 
 ### config / secrets / client
-- `secrets.py:148-156`：macOS keychain 写入把 API key 暴露在 `ps`
-- `secrets.py:254-259`：密钥文件先写后 chmod 的 TOCTOU
+- `secrets.py`：旧多后端凭据写入存在进程参数泄露与权限竞态（本轮已删除）
 - `deepseek.py:228-241`：429 重试不解析 `Retry-After`
 - `chat_messages.py:56-63,87-91`：tool_result 出现在非 TOOL 消息时被静默丢弃但配对校验判完整 → API 400（D1 的客户端层出口未守住）
 
@@ -147,7 +146,7 @@
 - **主循环骨架**：多层轮数上限、中断不落盘 partial 历史（从设计上规避孤立 tool_call 落盘）、并行批次限定只读工具。
 - **命令执行**：无 `shell=True` 拼接、killpg 杀整个进程组、后台进程上限清理。
 - **认证骨架**：token 不可预测（256 bit）、默认 loopback、默认拒绝、无 CORS。
-- **secrets 主路径**：keyring 优先、0600 权限、日志只打 key 名不打值。
+- **secrets 主路径**：环境变量优先，其次用户 `config.toml`；日志不输出 key 值。
 
 ---
 

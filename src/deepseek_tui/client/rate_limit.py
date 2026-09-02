@@ -92,16 +92,11 @@ class RateLimitedLLMClient(LLMClient):
         limit: int,
         registry: RateLimitRegistry | None = None,
     ) -> None:
-        super().__init__(retry_config=inner.retry_config)
+        super().__init__(retry_config=inner.retry_config, api_key=api_key)
         self._inner = inner
         self._fingerprint = key_fingerprint(api_key)
         self._limit = limit
         self._registry = registry or default_registry()
-
-    @property
-    def api_key(self) -> str:
-        """Delegates so existing ``client.api_key`` guards keep working."""
-        return getattr(self._inner, "api_key", "")
 
     async def stream_chat_completion(self, request: MessageRequest) -> AsyncIterator[StreamEvent]:
         allowed, retry_after = await self._registry.try_acquire(

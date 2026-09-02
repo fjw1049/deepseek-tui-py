@@ -4,12 +4,20 @@ from __future__ import annotations
 
 
 
+import asyncio
 import os
 from pathlib import Path
 from typing import Any
 
 from deepseek_tui.tools.registry import ToolCapability, ToolError, ToolResult, ToolSpec
 from deepseek_tui.tools.registry import ToolContext
+from deepseek_tui.tools.utils.sensitive import is_sensitive_path
+from deepseek_tui.tools.utils.validation import (
+    optional_string as _optional_string,
+)
+from deepseek_tui.tools.utils.validation import (
+    require_nonempty_string as _require_string,
+)
 
 # ===========================================================================
 # note — quick note tool
@@ -233,10 +241,22 @@ class SkillLoadTool(ToolSpec):
         path_str = _optional_string(input_data, "path")
 
         if path_str:
-            skill_path = Path(path_str).expanduser()  # noqa: ASYNC240
-            if not skill_path.exists():
-                raise ToolError(f"Skill file not found: {skill_path}")
-            content = skill_path.read_text(encoding="utf-8")
+            # Same read-side guardrail as read_file: workspace-confined
+            # (plus read roots) and never a credential file.
+            skill_path = context.resolve_path(path_str, allow_read_roots=True)
+            if is_sensitive_path(skill_path):
+                raise ToolError(
+                    f"refusing to read sensitive file: {skill_path} "
+                    "(matched the credential-file blocklist)"
+                )
+            try:
+                content = await asyncio.to_thread(
+                    skill_path.read_text, encoding="utf-8"
+                )
+            except FileNotFoundError as exc:
+                raise ToolError(f"Skill file not found: {skill_path}") from exc
+            except OSError as exc:
+                raise ToolError(f"Error reading {skill_path}: {exc}") from exc
             return ToolResult(
                 success=True,
                 content=content,
@@ -349,22 +369,6 @@ def _collect_companion_files(skill: Any) -> list[Path]:
 # ===========================================================================
 # Helpers
 # ===========================================================================
-
-
-def _require_string(input_data: dict[str, object], key: str) -> str:
-    value = input_data.get(key)
-    if not isinstance(value, str) or not value.strip():
-        raise ToolError(f"'{key}' must be a non-empty string")
-    return value
-
-
-def _optional_string(input_data: dict[str, object], key: str) -> str | None:
-    value = input_data.get(key)
-    if value is None:
-        return None
-    if not isinstance(value, str):
-        raise ToolError(f"'{key}' must be a string")
-    return value
 
 
 def _notes_path(context: ToolContext) -> Path:

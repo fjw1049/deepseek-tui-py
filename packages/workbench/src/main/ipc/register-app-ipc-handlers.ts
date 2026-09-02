@@ -34,6 +34,7 @@ import {
   gitBranchesPayloadSchema,
   gitCommitPayloadSchema,
   gitCommitPathsPayloadSchema,
+  gitLogPayloadSchema,
   gitWorkingChangesPayloadSchema,
   logErrorPayloadSchema,
   notificationPayloadSchema,
@@ -89,6 +90,7 @@ import {
   getGitWorkingChanges,
   pullGitBranch,
   pushGitBranch,
+  syncGitBranch,
   stageGitChanges,
   stashAndSwitchGitBranch,
   suggestGitCommitMessage,
@@ -1288,9 +1290,10 @@ export function registerAppIpcHandlers(options: RegisterAppIpcHandlersOptions): 
     const request = parseIpcPayload('git:branches', gitBranchesPayloadSchema, input)
     return getGitBranches(request.workspaceRoot, request.refreshRemote)
   })
-  ipcMain.handle('git:log', async (_, workspaceRoot: unknown) =>
-    getGitLog(parseIpcPayload('git:log', workspaceRootSchema, workspaceRoot))
-  )
+  ipcMain.handle('git:log', async (_, input: unknown) => {
+    const request = parseIpcPayload('git:log', gitLogPayloadSchema, input)
+    return getGitLog(request.workspaceRoot, request.refreshRemote)
+  })
   ipcMain.handle('git:github-repository', async (_, workspaceRoot: unknown) =>
     getGitHubRepository(
       parseIpcPayload('git:github-repository', workspaceRootSchema, workspaceRoot)
@@ -1370,6 +1373,9 @@ export function registerAppIpcHandlers(options: RegisterAppIpcHandlersOptions): 
   )
   ipcMain.handle('git:push', async (_, workspaceRoot: unknown) =>
     pushGitBranch(parseIpcPayload('git:push', workspaceRootSchema, workspaceRoot))
+  )
+  ipcMain.handle('git:sync', async (_, workspaceRoot: unknown) =>
+    syncGitBranch(parseIpcPayload('git:sync', workspaceRootSchema, workspaceRoot))
   )
 
   ipcMain.handle('trending:repos', async (_, period: unknown) =>

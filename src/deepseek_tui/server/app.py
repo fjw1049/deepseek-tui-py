@@ -12,6 +12,7 @@ from deepseek_tui.server.approval import ApprovalBridge
 from deepseek_tui.server.approval import ElevationBridge
 from deepseek_tui.server.approval import UserInputBridge
 from deepseek_tui.server.auth import RuntimeAuthMiddleware
+from deepseek_tui.server.routes import body
 from deepseek_tui.server.routes import build_runtime_api_router
 from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
@@ -439,13 +440,7 @@ def _get_thread_manager(request: Request) -> Any:
 
 
 async def _body(request: Request) -> dict[str, Any]:
-    if request.headers.get("content-length", "0") == "0":
-        return {}
-    try:
-        data = await request.json()
-    except ValueError:
-        return {}
-    return data if isinstance(data, dict) else {}
+    return await body(request)
 
 
 # --- legacy stdio dispatchers (used by server.py::run_stdio) ---------------
@@ -660,13 +655,21 @@ async def run_http(
         config=config, working_directory=options.working_directory
     )
     await runtime.warmup_default_connectors()
-    app = build_fastapi_app(
+    # Built in a worker thread: RuntimeThreadManager's __init__ runs a full
+    # on-disk recovery scan that would otherwise block the event loop.
+    app = await asyncio.to_thread(
+        build_fastapi_app,
         runtime,
         http_mode=options.http_mode,
         auth_token=options.auth_token,
         insecure_no_auth=options.insecure_no_auth,
         cors_origins=options.cors_origins,
     )
+    # Manager was built in a worker thread without an event loop; start the
+    # deferred MCP warmup now that we're back on the loop.
+    thread_manager = getattr(app.state, "thread_manager", None)
+    if thread_manager is not None:
+        thread_manager.schedule_mcp_warmup()
     # Both modes resolve the same bearer auth now, so the token-file
     # bookkeeping applies to the legacy app-server too.
     from deepseek_tui.server.auth import (

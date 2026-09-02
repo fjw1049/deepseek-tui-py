@@ -11,6 +11,7 @@ import shutil
 from pathlib import Path
 
 from deepseek_tui.config.paths import user_deepseek_dir
+from deepseek_tui.utils import write_json_atomic, write_text_atomic
 
 logger = logging.getLogger(__name__)
 
@@ -66,8 +67,9 @@ def _migrate_agents(root: Path) -> list[str]:
                 shutil.move(str(child), str(dest))
                 actions.append(f"moved {child.name} → agents/registries/")
             else:
-                child.unlink(missing_ok=True)
-                actions.append(f"dropped duplicate subagents/{child.name}")
+                actions.extend(
+                    _quarantine(root, child, f"subagents-{child.name}")
+                )
         _rm_if_empty(legacy_reg, actions, "subagents/")
 
     legacy_runs = root / "subagent-runs"
@@ -78,11 +80,9 @@ def _migrate_agents(root: Path) -> list[str]:
                 shutil.move(str(child), str(dest))
                 actions.append(f"moved {child.name} → agents/runs/")
             else:
-                if child.is_dir():
-                    shutil.rmtree(child, ignore_errors=True)
-                else:
-                    child.unlink(missing_ok=True)
-                actions.append(f"dropped duplicate subagent-runs/{child.name}")
+                actions.extend(
+                    _quarantine(root, child, f"subagent-runs-{child.name}")
+                )
         _rm_if_empty(legacy_runs, actions, "subagent-runs/")
 
     return actions
@@ -103,10 +103,9 @@ def _migrate_plugin_host(root: Path) -> list[str]:
                     shutil.move(str(child), str(target))
                     actions.append(f"merged plugin-host/{child.name} → plugins/.host/")
                 else:
-                    if child.is_dir():
-                        shutil.rmtree(child, ignore_errors=True)
-                    else:
-                        child.unlink(missing_ok=True)
+                    actions.extend(
+                        _quarantine(root, child, f"plugin-host-{child.name}")
+                    )
             _rm_if_empty(legacy, actions, "plugin-host/")
         return actions
     dest.parent.mkdir(parents=True, exist_ok=True)
@@ -131,8 +130,9 @@ def _migrate_automations_defs(root: Path) -> list[str]:
             shutil.move(str(child), str(dest))
             actions.append(f"moved automations/automations/{child.name} → automations/")
         else:
-            child.unlink(missing_ok=True)
-            actions.append(f"dropped duplicate automations/automations/{child.name}")
+            actions.extend(
+                _quarantine(root, child, f"automations-{child.name}")
+            )
     _rm_if_empty(nested, actions, "automations/automations/")
     return actions
 
@@ -219,15 +219,17 @@ def _move_dir(
 
 
 def _quarantine(legacy_root: Path, src: Path, name: str) -> list[str]:
-    """Move a superseded legacy file/dir into ``workbench/.migrated-dupes/``."""
+    """Move a conflicting legacy file/dir aside instead of deleting it."""
     quarantine = legacy_root / ".migrated-dupes"
     quarantine.mkdir(parents=True, exist_ok=True)
     q_dest = quarantine / name
-    if q_dest.exists():
-        q_dest = quarantine / f"{name}.{_unique_suffix()}"
+    suffix = 2
+    while q_dest.exists():
+        q_dest = quarantine / f"{name}.{suffix}"
+        suffix += 1
     shutil.move(str(src), str(q_dest))
     rel = src.relative_to(legacy_root)
-    return [f"quarantined superseded workbench/{rel} → workbench/.migrated-dupes/"]
+    return [f"quarantined conflicting {rel} → {q_dest.relative_to(legacy_root)}"]
 
 
 
@@ -239,45 +241,37 @@ def _fold_backup_meta(legacy_meta: Path, settings_dest: Path) -> list[str]:
     except (OSError, json.JSONDecodeError):
         return []
     if not isinstance(meta, dict):
-        legacy_meta.unlink(missing_ok=True)
-        return []
+        return _quarantine(legacy_meta.parent, legacy_meta, "backup-meta.json")
 
     settings: dict = {}
     if settings_dest.is_file():
         try:
             loaded = json.loads(settings_dest.read_text(encoding="utf-8"))
-            if isinstance(loaded, dict):
-                settings = loaded
+            if not isinstance(loaded, dict):
+                return _quarantine(
+                    legacy_meta.parent, legacy_meta, "backup-meta.json"
+                )
+            settings = loaded
         except (OSError, json.JSONDecodeError):
-            settings = {}
-    if "backup" not in settings:
-        settings["backup"] = {
-            "directory": meta.get("directory"),
-            "last_backup_at": meta.get("last_backup_at"),
-            "last_backup_path": meta.get("last_backup_path"),
-        }
-        settings_dest.write_text(
-            json.dumps(settings, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
-    legacy_meta.unlink(missing_ok=True)
-    return ["folded workbench/backup-meta.json → settings.json (backup)"]
+            return _quarantine(legacy_meta.parent, legacy_meta, "backup-meta.json")
+    if "backup" in settings:
+        return _quarantine(legacy_meta.parent, legacy_meta, "backup-meta.json")
 
-
-def _unique_suffix() -> str:
-    from datetime import datetime, timezone
-
-    return datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+    settings["backup"] = meta
+    write_json_atomic(settings_dest, settings)
+    legacy_meta.unlink()
+    return [
+        "folded workbench/backup-meta.json → settings.json (backup)"
+    ]
 
 
 def _ensure_manifest(root: Path) -> list[str]:
     path = root / _MANIFEST_MARKER
     if path.is_file():
-        text = path.read_text(encoding="utf-8")
-        if "workbench/" in text:
-            path.write_text(_DEFAULT_MANIFEST, encoding="utf-8")
-            return [f"updated {_MANIFEST_MARKER} (workbench → flat layout)"]
+        # This file is documentation, not runtime state. Never overwrite a
+        # user's customized retention/backup policy during startup migration.
         return []
-    path.write_text(_DEFAULT_MANIFEST, encoding="utf-8")
+    write_text_atomic(path, _DEFAULT_MANIFEST)
     return [f"wrote {_MANIFEST_MARKER}"]
 
 
@@ -308,7 +302,7 @@ _DEFAULT_MANIFEST = """# ~/.deepseek layout — lifecycle layers for backup / ar
 schema_version = 1
 
 [layers.L0_identity]
-paths = ["config.toml", "AGENTS.md", "mcp.json", "secrets/"]
+paths = ["config.toml", "AGENTS.md", "mcp.json"]
 retention = "permanent"
 backup = "required"
 
@@ -323,7 +317,7 @@ paths_legacy = ["sessions/"]
 paths_sandbox = ["claw/"]
 retention = "archive_then_purge"
 backup = "required"
-notes = "threads/ is the source of truth; sessions/ is TUI legacy (current.json); claw/ holds active IM sandbox workspaces (not a cache)."
+notes = "Canonical threads; legacy exports/recovery in sessions; active IM sandboxes in claw."
 
 [layers.L3_jobs]
 paths = [

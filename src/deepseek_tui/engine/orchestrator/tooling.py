@@ -129,315 +129,323 @@ class ToolExecutionMixin:
         self._tool_dedup.begin_batch()
 
         try:
-            return await self._execute_tool_calls_inner(
-                tool_calls, api_tools, effective_model, results
-            )
-        finally:
-            self._tool_dedup.end_batch()
-
-    async def _execute_tool_calls_inner(
-        self,
-        tool_calls: list[ToolCall],
-        api_tools: list[dict[str, Any]],
-        effective_model: str,
-        results: list[Message],
-    ) -> list[Message]:
-        # Build execution plans and check if batch can be parallelized.
-        # Duplicate fingerprints fall back to the sequential path so reuse /
-        # force-stop stay single-threaded and ordered.
-        if len(tool_calls) > 1:
-            from deepseek_tui.engine.dispatch import (
-                ToolExecutionPlan,
-                mcp_tool_is_parallel_safe,
-                mcp_tool_is_read_only,
-            )
-            plans = []
-            for i, tc in enumerate(tool_calls):
-                tool = (
-                    self.tool_registry.get(tc.name)
-                    if self.tool_registry.contains(tc.name) else None
+            # Build execution plans and check if batch can be parallelized.
+            # Duplicate fingerprints fall back to the sequential path so reuse /
+            # force-stop stay single-threaded and ordered.
+            if len(tool_calls) > 1:
+                from deepseek_tui.engine.dispatch import (
+                    ToolExecutionPlan,
+                    mcp_tool_is_parallel_safe,
+                    mcp_tool_is_read_only,
                 )
-                from deepseek_tui.tools.approval import (
-                    plan_requires_approval,
-                    plan_requires_mcp_approval,
-                )
+                plans = []
+                for i, tc in enumerate(tool_calls):
+                    tool = (
+                        self.tool_registry.get(tc.name)
+                        if self.tool_registry.contains(tc.name) else None
+                    )
+                    from deepseek_tui.tools.approval import (
+                        plan_requires_approval,
+                        plan_requires_mcp_approval,
+                    )
 
-                policy = self.exec_policy.approval_policy
-                if tool is not None:
-                    args = tc.arguments if isinstance(tc.arguments, dict) else {}
-                    read_only = tool.is_read_only_for_input(args)
-                    plans.append(ToolExecutionPlan(
-                        index=i,
-                        id=tc.id,
-                        name=tc.name,
-                        input=args,
-                        read_only=read_only,
-                        supports_parallel=read_only
-                        and tool.supports_parallel(),
-                        approval_required=plan_requires_approval(tool, policy, args),
-                    ))
-                elif is_mcp_tool(tc.name):
-                    plans.append(ToolExecutionPlan(
-                        index=i,
-                        id=tc.id,
-                        name=tc.name,
-                        input=tc.arguments if isinstance(tc.arguments, dict) else {},
-                        read_only=mcp_tool_is_read_only(tc.name),
-                        supports_parallel=mcp_tool_is_parallel_safe(tc.name),
-                        approval_required=plan_requires_mcp_approval(
+                    policy = self.exec_policy.approval_policy
+                    if tool is not None:
+                        args = tc.arguments if isinstance(tc.arguments, dict) else {}
+                        read_only = tool.is_read_only_for_input(args)
+                        plans.append(ToolExecutionPlan(
+                            index=i,
+                            id=tc.id,
+                            name=tc.name,
+                            input=args,
+                            read_only=read_only,
+                            supports_parallel=read_only
+                            and tool.supports_parallel(),
+                            approval_required=plan_requires_approval(tool, policy, args),
+                        ))
+                    elif is_mcp_tool(tc.name):
+                        plans.append(ToolExecutionPlan(
+                            index=i,
+                            id=tc.id,
+                            name=tc.name,
+                            input=tc.arguments if isinstance(tc.arguments, dict) else {},
+                            read_only=mcp_tool_is_read_only(tc.name),
+                            supports_parallel=mcp_tool_is_parallel_safe(tc.name),
+                            approval_required=plan_requires_mcp_approval(
+                                tc.name,
+                                policy,
+                            ),
+                        ))
+                    else:
+                        plans.append(ToolExecutionPlan(
+                            index=i,
+                            id=tc.id,
+                            name=tc.name,
+                            input=tc.arguments if isinstance(tc.arguments, dict) else {},
+                            read_only=False,
+                            supports_parallel=False,
+                            approval_required=False,
+                        ))
+                has_dup_keys = self._tool_dedup.batch_has_duplicate_keys(
+                    [
+                        (
                             tc.name,
-                            policy,
-                            self._mcp_declared_capabilities(tc.name),
-                        ),
-                    ))
-                else:
-                    plans.append(ToolExecutionPlan(
-                        index=i,
-                        id=tc.id,
-                        name=tc.name,
-                        input=tc.arguments if isinstance(tc.arguments, dict) else {},
-                        read_only=False,
-                        supports_parallel=False,
-                        approval_required=False,
-                    ))
-            has_dup_keys = self._tool_dedup.batch_has_duplicate_keys(
-                [
-                    (
-                        tc.name,
-                        tc.arguments if isinstance(tc.arguments, dict) else {},
+                            tc.arguments if isinstance(tc.arguments, dict) else {},
+                        )
+                        for tc in tool_calls
+                    ]
+                )
+                if should_parallelize_tool_batch(plans) and not has_dup_keys:
+                    logger.info("parallel_tool_batch size=%d", len(tool_calls))
+                    return await self._execute_tools_parallel(
+                        tool_calls, api_tools, effective_model
                     )
-                    for tc in tool_calls
-                ]
-            )
-            if should_parallelize_tool_batch(plans) and not has_dup_keys:
-                logger.info("parallel_tool_batch size=%d", len(tool_calls))
-                return await self._execute_tools_parallel(
-                    tool_calls, api_tools, effective_model
-                )
 
-        goal_terminal = False
-        for tool_call in tool_calls:
-            if goal_terminal:
-                content = "Goal reached a terminal state; skipped later tool call."
-                await self._emit_tool_failure(tool_call, content)
-                results.append(
-                    Message.tool_result(tool_call.id, content, is_error=True)
-                )
-                continue
-            decision = self._tool_dedup.classify(
-                tool_call.name,
-                tool_call.arguments if isinstance(tool_call.arguments, dict) else {},
-            )
-            if decision.kind == "reuse":
-                content = self._tool_dedup.reuse_content(decision)
-                logger.info(
-                    "tool_call_dedup_reuse name=%s tool_id=%s",
+            goal_terminal = False
+            for tool_call in tool_calls:
+                if goal_terminal:
+                    content = "Goal reached a terminal state; skipped later tool call."
+                    await self._emit_tool_failure(tool_call, content)
+                    results.append(
+                        Message.tool_result(tool_call.id, content, is_error=True)
+                    )
+                    continue
+                decision = self._tool_dedup.classify(
                     tool_call.name,
-                    tool_call.id,
+                    tool_call.arguments if isinstance(tool_call.arguments, dict) else {},
                 )
-                await self.handle.emit(
-                    ToolResultEvent(
-                        tool_call_id=tool_call.id,
-                        tool_name=tool_call.name,
-                        content=content,
-                        success=not decision.reuse_is_error,
-                    )
-                )
-                results.append(
-                    Message.tool_result(
-                        tool_call.id,
-                        content,
-                        is_error=decision.reuse_is_error,
-                    )
-                )
-                continue
-            if decision.kind == "block":
-                content = self._tool_dedup.block_content(decision)
-                logger.warning(
-                    "tool_call_dedup_blocked name=%s streak=%d tool_id=%s",
-                    tool_call.name,
-                    decision.projected_streak,
-                    tool_call.id,
-                )
-                await self._emit_tool_failure(tool_call, content)
-                self._tool_dedup.record(decision.key, content, is_error=True)
-                results.append(
-                    Message.tool_result(tool_call.id, content, is_error=True)
-                )
-                continue
-
-            with bind_tool(tool_call.id):
-                args_preview = repr(tool_call.arguments)[:200]
-                logger.info(
-                    "tool_call_start name=%s args=%s",
-                    tool_call.name,
-                    args_preview,
-                )
-                tool_started = time.monotonic()
-                try:
-                    result = await self._execute_single_tool(
-                        tool_call, api_tools, effective_model
-                    )
-                    duration_ms = int((time.monotonic() - tool_started) * 1000)
-                    if result is None:
-                        logger.warning(
-                            "tool_denied name=%s duration_ms=%d",
-                            tool_call.name,
-                            duration_ms,
-                        )
-                        denied = (
-                            f"Tool {tool_call.name} denied by approval policy"
-                        )
-                        self._tool_dedup.record(
-                            decision.key, denied, is_error=True
-                        )
-                        denied = self._tool_dedup.decorate_execute_content(
-                            decision, denied
-                        )
-                        results.append(
-                            Message.tool_result(
-                                tool_call.id,
-                                denied,
-                                is_error=True,
-                            )
-                        )
-                        continue
-
-                    result = await self._maybe_elevate_and_retry_tool(
-                        tool_call, api_tools, effective_model, result
-                    )
-
+                if decision.kind == "reuse":
+                    content = self._tool_dedup.reuse_content(decision)
                     logger.info(
-                        "tool_call_end name=%s success=%s duration_ms=%d "
-                        "content_bytes=%d",
+                        "tool_call_dedup_reuse name=%s tool_id=%s",
                         tool_call.name,
-                        result.success,
-                        duration_ms,
-                        len(result.content or ""),
-                    )
-                    emit_tool_audit(
-                        {
-                            "event": "tool.result",
-                            "tool_id": tool_call.id,
-                            "tool_name": tool_call.name,
-                            "success": result.success,
-                        }
-                    )
-                    if result.success:
-                        self._mark_subagent_tool_result_consumed(
-                            tool_call.name,
-                            result.metadata,
-                            tool_call.arguments
-                            if isinstance(tool_call.arguments, dict)
-                            else None,
-                        )
-                    self._mark_process_tool_result_consumed(
-                        tool_call.name,
-                        result.metadata if isinstance(result.metadata, dict) else None,
-                        tool_call.arguments
-                        if isinstance(tool_call.arguments, dict)
-                        else None,
-                    )
-                    self.working_set.observe_tool_call(
-                        tool_call.name,
-                        tool_call.arguments
-                        if isinstance(tool_call.arguments, dict)
-                        else None,
-                        result.content,
+                        tool_call.id,
                     )
                     await self.handle.emit(
                         ToolResultEvent(
                             tool_call_id=tool_call.id,
                             tool_name=tool_call.name,
-                            content=result.content,
-                            success=result.success,
-                            metadata=(
-                                dict(result.metadata)
-                                if isinstance(result.metadata, dict)
-                                else None
-                            ),
+                            content=content,
+                            success=not decision.reuse_is_error,
                         )
-                    )
-                    if result.success:
-                        await self._run_post_edit_lsp_hook(
-                            tool_call.name, tool_call.arguments
-                        )
-                    from deepseek_tui.tools.runtime import apply_spillover
-
-                    result = apply_spillover(result, tool_call.id)
-                    output_for_context = compact_tool_result_for_context(
-                        effective_model,
-                        tool_call.name,
-                        result,
-                        pressure_ratio=self._ingress_pressure_ratio(effective_model),
-                    )
-                    self._tool_dedup.record(
-                        decision.key,
-                        output_for_context,
-                        is_error=not result.success,
-                    )
-                    output_for_context = self._tool_dedup.decorate_execute_content(
-                        decision, output_for_context
                     )
                     results.append(
                         Message.tool_result(
                             tool_call.id,
-                            output_for_context,
-                            is_error=not result.success,
+                            content,
+                            is_error=decision.reuse_is_error,
                         )
                     )
-                    goal_terminal = (
-                        result.success
-                        and tool_call.name == "UpdateGoal"
-                        and isinstance(tool_call.arguments, dict)
-                        and tool_call.arguments.get("status")
-                        in {"complete", "blocked"}
-                    )
-                except ToolError as exc:
-                    duration_ms = int((time.monotonic() - tool_started) * 1000)
-                    error_msg = format_tool_error(exc, tool_call.name)
+                    continue
+                if decision.kind == "block":
+                    content = self._tool_dedup.block_content(decision)
                     logger.warning(
-                        "tool_call_error name=%s duration_ms=%d error=%s",
+                        "tool_call_dedup_blocked name=%s streak=%d tool_id=%s",
                         tool_call.name,
-                        duration_ms,
-                        error_msg,
+                        decision.projected_streak,
+                        tool_call.id,
                     )
-                    await self._emit_tool_failure(tool_call, error_msg)
-                    err_content = f"Error: {error_msg}"
-                    self._tool_dedup.record(
-                        decision.key, err_content, is_error=True
-                    )
-                    err_content = self._tool_dedup.decorate_execute_content(
-                        decision, err_content
-                    )
+                    await self._emit_tool_failure(tool_call, content)
+                    self._tool_dedup.record(decision.key, content, is_error=True)
                     results.append(
-                        Message.tool_result(
-                            tool_call.id, err_content, is_error=True
-                        )
+                        Message.tool_result(tool_call.id, content, is_error=True)
                     )
-                except Exception as exc:  # noqa: BLE001
-                    duration_ms = int((time.monotonic() - tool_started) * 1000)
-                    error_msg = f"{tool_call.name}: {type(exc).__name__}: {exc}"
-                    logger.warning(
-                        "tool_call_unexpected_error name=%s duration_ms=%d error=%s",
+                    continue
+
+                with bind_tool(tool_call.id):
+                    args_preview = repr(tool_call.arguments)[:200]
+                    logger.info(
+                        "tool_call_start name=%s args=%s",
                         tool_call.name,
-                        duration_ms,
-                        error_msg,
+                        args_preview,
                     )
-                    await self._emit_tool_failure(tool_call, error_msg)
-                    err_content = f"Error: {error_msg}"
-                    self._tool_dedup.record(
-                        decision.key, err_content, is_error=True
-                    )
-                    err_content = self._tool_dedup.decorate_execute_content(
-                        decision, err_content
-                    )
-                    results.append(
-                        Message.tool_result(
-                            tool_call.id, err_content, is_error=True
+                    tool_started = time.monotonic()
+                    try:
+                        result = await self._execute_single_tool(
+                            tool_call, api_tools, effective_model
                         )
-                    )
-        return results
+                        duration_ms = int((time.monotonic() - tool_started) * 1000)
+                        if result is None:
+                            logger.warning(
+                                "tool_denied name=%s duration_ms=%d",
+                                tool_call.name,
+                                duration_ms,
+                            )
+                            denied = (
+                                f"Tool {tool_call.name} denied by approval policy"
+                            )
+                            self._tool_dedup.record(
+                                decision.key, denied, is_error=True
+                            )
+                            denied = self._tool_dedup.decorate_execute_content(
+                                decision, denied
+                            )
+                            results.append(
+                                Message.tool_result(
+                                    tool_call.id,
+                                    denied,
+                                    is_error=True,
+                                )
+                            )
+                            continue
+
+                        result = await self._maybe_elevate_and_retry_tool(
+                            tool_call, api_tools, effective_model, result
+                        )
+
+                        logger.info(
+                            "tool_call_end name=%s success=%s duration_ms=%d "
+                            "content_bytes=%d",
+                            tool_call.name,
+                            result.success,
+                            duration_ms,
+                            len(result.content or ""),
+                        )
+                        result = await self._finish_tool_result(
+                            tool_call, decision, result, effective_model, results
+                        )
+                        goal_terminal = (
+                            result.success
+                            and tool_call.name == "UpdateGoal"
+                            and isinstance(tool_call.arguments, dict)
+                            and tool_call.arguments.get("status")
+                            in {"complete", "blocked"}
+                        )
+                    except ToolError as exc:
+                        duration_ms = int((time.monotonic() - tool_started) * 1000)
+                        error_msg = format_tool_error(exc, tool_call.name)
+                        logger.warning(
+                            "tool_call_error name=%s duration_ms=%d error=%s",
+                            tool_call.name,
+                            duration_ms,
+                            error_msg,
+                        )
+                        await self._finish_tool_error(
+                            tool_call, decision, error_msg, results
+                        )
+                    except Exception as exc:  # noqa: BLE001
+                        duration_ms = int((time.monotonic() - tool_started) * 1000)
+                        error_msg = f"{tool_call.name}: {type(exc).__name__}: {exc}"
+                        logger.warning(
+                            "tool_call_unexpected_error name=%s duration_ms=%d error=%s",
+                            tool_call.name,
+                            duration_ms,
+                            error_msg,
+                        )
+                        await self._finish_tool_error(
+                            tool_call, decision, error_msg, results
+                        )
+            return results
+
+        finally:
+            self._tool_dedup.end_batch()
+
+
+    async def _finish_tool_result(
+        self,
+        tool_call: ToolCall,
+        decision: Any,
+        result: ToolResult,
+        model: str,
+        results: list[Message],
+    ) -> ToolResult:
+        """Shared success-path post-processing for one executed tool.
+
+        Both the sequential and parallel tool loops run this identical
+        chain: consumption bookkeeping, result event, LSP hook, spillover,
+        ingress compaction, dedup record/decorate, and the tool_result
+        message. Returns the post-spillover result.
+        """
+        emit_tool_audit(
+            {
+                "event": "tool.result",
+                "tool_id": tool_call.id,
+                "tool_name": tool_call.name,
+                "success": result.success,
+            }
+        )
+        if result.success:
+            self._mark_subagent_tool_result_consumed(
+                tool_call.name,
+                result.metadata,
+                tool_call.arguments
+                if isinstance(tool_call.arguments, dict)
+                else None,
+            )
+        self._mark_process_tool_result_consumed(
+            tool_call.name,
+            result.metadata if isinstance(result.metadata, dict) else None,
+            tool_call.arguments
+            if isinstance(tool_call.arguments, dict)
+            else None,
+        )
+        self.working_set.observe_tool_call(
+            tool_call.name,
+            tool_call.arguments
+            if isinstance(tool_call.arguments, dict)
+            else None,
+            result.content,
+        )
+        await self.handle.emit(
+            ToolResultEvent(
+                tool_call_id=tool_call.id,
+                tool_name=tool_call.name,
+                content=result.content,
+                success=result.success,
+                metadata=(
+                    dict(result.metadata)
+                    if isinstance(result.metadata, dict)
+                    else None
+                ),
+            )
+        )
+        if result.success:
+            await self._run_post_edit_lsp_hook(
+                tool_call.name, tool_call.arguments
+            )
+        from deepseek_tui.tools.runtime import apply_spillover
+
+        result = apply_spillover(result, tool_call.id)
+        output_for_context = compact_tool_result_for_context(
+            model,
+            tool_call.name,
+            result,
+            pressure_ratio=self._ingress_pressure_ratio(model),
+        )
+        self._tool_dedup.record(
+            decision.key,
+            output_for_context,
+            is_error=not result.success,
+        )
+        output_for_context = self._tool_dedup.decorate_execute_content(
+            decision, output_for_context
+        )
+        results.append(
+            Message.tool_result(
+                tool_call.id,
+                output_for_context,
+                is_error=not result.success,
+            )
+        )
+        return result
+
+    async def _finish_tool_error(
+        self,
+        tool_call: ToolCall,
+        decision: Any,
+        error_msg: str,
+        results: list[Message],
+    ) -> None:
+        """Shared error-path post-processing: emit, record, append."""
+        await self._emit_tool_failure(tool_call, error_msg)
+        err_content = f"Error: {error_msg}"
+        self._tool_dedup.record(decision.key, err_content, is_error=True)
+        err_content = self._tool_dedup.decorate_execute_content(
+            decision, err_content
+        )
+        results.append(
+            Message.tool_result(tool_call.id, err_content, is_error=True)
+        )
 
     async def _execute_tools_parallel(
         self,
@@ -558,18 +566,8 @@ class ToolExecutionMixin:
 
             _tc, result, error_msg = outcome_by_id[tool_call.id]
             if error_msg is not None:
-                await self._emit_tool_failure(tool_call, error_msg)
-                err_content = f"Error: {error_msg}"
-                self._tool_dedup.record(
-                    decision.key, err_content, is_error=True
-                )
-                err_content = self._tool_dedup.decorate_execute_content(
-                    decision, err_content
-                )
-                results.append(
-                    Message.tool_result(
-                        tool_call.id, err_content, is_error=True
-                    )
+                await self._finish_tool_error(
+                    tool_call, decision, error_msg, results
                 )
             elif result is None:
                 # Denial case (shouldn't happen)
@@ -586,77 +584,8 @@ class ToolExecutionMixin:
                     )
                 )
             else:
-                # Success case
-                emit_tool_audit(
-                    {
-                        "event": "tool.result",
-                        "tool_id": tool_call.id,
-                        "tool_name": tool_call.name,
-                        "success": result.success,
-                    }
-                )
-                if result.success:
-                    self._mark_subagent_tool_result_consumed(
-                        tool_call.name,
-                        result.metadata,
-                        tool_call.arguments
-                        if isinstance(tool_call.arguments, dict)
-                        else None,
-                    )
-                self._mark_process_tool_result_consumed(
-                    tool_call.name,
-                    result.metadata if isinstance(result.metadata, dict) else None,
-                    tool_call.arguments
-                    if isinstance(tool_call.arguments, dict)
-                    else None,
-                )
-                self.working_set.observe_tool_call(
-                    tool_call.name,
-                    tool_call.arguments
-                    if isinstance(tool_call.arguments, dict)
-                    else None,
-                    result.content,
-                )
-                await self.handle.emit(
-                    ToolResultEvent(
-                        tool_call_id=tool_call.id,
-                        tool_name=tool_call.name,
-                        content=result.content,
-                        success=result.success,
-                        metadata=(
-                            dict(result.metadata)
-                            if isinstance(result.metadata, dict)
-                            else None
-                        ),
-                    )
-                )
-                if result.success:
-                    await self._run_post_edit_lsp_hook(
-                        tool_call.name, tool_call.arguments
-                    )
-                from deepseek_tui.tools.runtime import apply_spillover
-
-                result = apply_spillover(result, tool_call.id)
-                output_for_context = compact_tool_result_for_context(
-                    model,
-                    tool_call.name,
-                    result,
-                    pressure_ratio=self._ingress_pressure_ratio(model),
-                )
-                self._tool_dedup.record(
-                    decision.key,
-                    output_for_context,
-                    is_error=not result.success,
-                )
-                output_for_context = self._tool_dedup.decorate_execute_content(
-                    decision, output_for_context
-                )
-                results.append(
-                    Message.tool_result(
-                        tool_call.id,
-                        output_for_context,
-                        is_error=not result.success,
-                    )
+                await self._finish_tool_result(
+                    tool_call, decision, result, model, results
                 )
 
         return results
@@ -988,7 +917,6 @@ class ToolExecutionMixin:
             cache_key,
             approved_for_session=(decision is ApprovalDecision.APPROVED_SESSION),
         )
-        self.exec_policy.record_decision(tool_call.name, decision)
         return False
 
     @staticmethod

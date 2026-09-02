@@ -19,9 +19,9 @@ from __future__ import annotations
 import pytest
 
 from deepseek_tui.tools.subagent.completion import summary_section_text
+from deepseek_tui.tools.subagent.completion import has_summary_section as _has_summary_section
 from deepseek_tui.tools.subagent.loop import (
     _SUBAGENT_SUMMARY_CONTINUATION_NUDGE,
-    _has_summary_section,
 )
 
 

@@ -223,35 +223,10 @@ class TurnLoop:
         Returns:
             TurnResult with outcome and extracted data
         """
-        state = _TurnState()
-        tool_catalog = tools or []
-
-        # Main streaming turn loop
-        result = await self._run_turn_loop(
-            request=request,
-            emit=emit,
-            cancel_event=cancel_event,
-            tool_catalog=tool_catalog,
-            state=state,
-            latency_turn_id=latency_turn_id,
-            round_idx=round_idx,
-        )
-
-        return result
-
-    async def _run_turn_loop(
-        self,
-        request: MessageRequest,
-        emit: Callable[[EngineEvent], Awaitable[None]],
-        cancel_event: asyncio.Event,
-        tool_catalog: list[dict[str, Any]],
-        state: _TurnState,
-        latency_turn_id: str | None = None,
-        round_idx: int = 0,
-    ) -> TurnResult:
-        """Core turn loop logic."""
         from deepseek_tui.server.metrics import get_turn_latency, now_ms
 
+        state = _TurnState()
+        tool_catalog = tools or []
         buffer = AssistantResponseBuffer()
         usage: Usage | None = None
         tool_calls: list[ToolCall] = []

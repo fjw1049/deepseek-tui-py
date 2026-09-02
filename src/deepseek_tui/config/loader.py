@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -32,9 +33,8 @@ ENV_TO_FIELD: dict[str, tuple[str, ...]] = {
     "DEEPSEEK_DEFAULT_TEXT_MODEL": ("default_text_model",),
     "DEEPSEEK_TUI_MODEL": ("model",),
     "DEEPSEEK_TUI_PROFILE": ("profile",),
-    "DEEPSEEK_TUI_DATABASE_PATH": ("state", "database_path"),
     "DEEPSEEK_TUI_SHOW_THINKING": ("ui", "show_thinking"),
-    "DEEPSEEK_LOG_LEVEL": ("log_level",),
+    "DEEPSEEK_LOG_LEVEL": ("logging", "level"),
     "DEEPSEEK_API_KEY": ("providers", "deepseek", "api_key"),
     "DEEPSEEK_BASE_URL": ("providers", "deepseek", "base_url"),
     "DEEPSEEK_SKILLS_DIR": ("skills_dir",),
@@ -46,23 +46,20 @@ ENV_TO_FIELD: dict[str, tuple[str, ...]] = {
     "DEEPSEEK_MANAGED_CONFIG_PATH": ("managed_config_path",),
     "DEEPSEEK_REQUIREMENTS_PATH": ("requirements_path",),
     "DEEPSEEK_MAX_SUBAGENTS": ("max_subagents",),
-    "DEEPSEEK_CAPACITY_ENABLED": ("capacity", "enabled"),
-    "DEEPSEEK_CAPACITY_LOW_RISK_MAX": ("capacity", "low_risk_max"),
-    "DEEPSEEK_CAPACITY_MEDIUM_RISK_MAX": ("capacity", "medium_risk_max"),
 }
 
 
-def read_env_overrides() -> dict[str, Any]:
+def read_env_overrides(environ: Mapping[str, str] | None = None) -> dict[str, Any]:
+    source = os.environ if environ is None else environ
     overrides: dict[str, Any] = {}
     for env_name, path in ENV_TO_FIELD.items():
-        value = os.getenv(env_name)
+        value = source.get(env_name)
         if value is None:
             continue
         typed_value: Any = value
         if path[-1] in {"show_thinking", "allow_shell", "enabled"}:
             typed_value = value.lower() in {"1", "true", "yes", "on"}
         elif path[-1] in {
-            "database_path",
             "skills_dir",
             "mcp_config_path",
             "notes_path",
@@ -81,20 +78,11 @@ def read_env_overrides() -> dict[str, Any]:
     return overrides
 
 
-_UNCONSUMED_TOP_LEVEL: dict[str, str] = {
-    "tools_file": "custom tool manifest path (not loaded)",
-}
-
-_UNCONSUMED_CONTEXT: dict[str, str] = {
-    "enabled": "global context expansion toggle (file_context always partial)",
-}
-
-
 # Security-sensitive keys that project-level config sources (cwd
 # ``deepseek-tui.toml`` / ``.deepseek-tui.toml`` and
 # ``<workspace>/.deepseek/config.toml``) must never set: they come from
 # cloned, potentially untrusted repos, while these keys relax approvals,
-# disable sandboxing, redirect provider endpoints (exfiltrating the keyring
+# disable sandboxing, redirect provider endpoints (exfiltrating credentials
 # API key), or install shell hooks (clone-to-RCE). The path-pointer keys
 # (``managed_config_path`` / ``mcp_config_path`` / ``requirements_path`` /
 # ``skills_dir``) are blocked because they would let a repo redirect the
@@ -205,26 +193,6 @@ def strip_project_security_keys(
     return cleaned
 
 
-def warn_unconsumed_config_fields(config: Config) -> None:
-    """Log once per process for known placeholder settings."""
-    for field, note in _UNCONSUMED_TOP_LEVEL.items():
-        value = getattr(config, field, None)
-        if value is not None and value != "":
-            logger.warning(
-                "config field %s is set (%r) but not consumed: %s",
-                field,
-                value,
-                note,
-            )
-    ctx = config.context
-    if ctx is not None and not ctx.enabled:
-        logger.warning(
-            "config context.enabled=false is stored but global disable is not "
-            "enforced; %s",
-            _UNCONSUMED_CONTEXT["enabled"],
-        )
-
-
 class ConfigLoader:
     def load(
         self,
@@ -235,7 +203,7 @@ class ConfigLoader:
         workspace: Path | None = None,
         no_project_config: bool = False,
     ) -> Config:
-        load_dotenv_file(
+        dotenv_values = load_dotenv_file(
             dotenv_path(workspace), blocked_keys=_PROJECT_SENSITIVE_ENV_KEYS
         )
         config = Config()
@@ -259,7 +227,7 @@ class ConfigLoader:
                 )
                 config = Config.merge_dict(config, project_raw)
 
-        env_overrides = read_env_overrides()
+        env_overrides = read_env_overrides({**dotenv_values, **os.environ})
         if env_overrides:
             config = Config.merge_dict(config, env_overrides)
 
@@ -280,8 +248,6 @@ class ConfigLoader:
         requirements_path = expand_path(requirements_path)
         if requirements_path.exists():
             self._validate_requirements(config, requirements_path)
-
-        warn_unconsumed_config_fields(config)
 
         # Make [providers.X] context_window (and the 500K custom-model
         # default) visible to context_window_for_model() everywhere.

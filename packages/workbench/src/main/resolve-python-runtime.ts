@@ -94,8 +94,6 @@ export function runtimeSpawnEnv(base: NodeJS.ProcessEnv = process.env): NodeJS.P
   }
   env.DEEPSEEK_CONFIG_PATH = resolveDeepseekConfigPath()
   env.DEEPSEEK_MCP_CONFIG = resolveMcpConfigPath()
-  // Workbench-managed runtime: config.toml + DEEPSEEK_API_KEY only; skip macOS Keychain.
-  env.DEEPSEEK_SKIP_KEYRING = '1'
   return env
 }
 

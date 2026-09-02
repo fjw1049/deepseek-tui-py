@@ -5,7 +5,6 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 export DEEPSEEK_REPO_ROOT="$ROOT"
 export PYTHONPATH="$ROOT/src${PYTHONPATH:+:$PYTHONPATH}"
-export DEEPSEEK_SKIP_KEYRING=1
 # User state stays under ~/.deepseek (config, mcp, skills, runtime.token, …).
 # Repo-local .deepseek/config.toml is merged as a project override by ConfigLoader.
 

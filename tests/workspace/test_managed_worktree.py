@@ -804,6 +804,88 @@ async def test_interrupted_checkout_image_is_a_sync_artifact(
     )
 
 
+@pytest.mark.parametrize(
+    ("use_worktree", "expected"),
+    [(True, "task commit\n"), (False, "v1\n")],
+    ids=["use-agent", "keep-project"],
+)
+@pytest.mark.asyncio
+async def test_resolved_detached_commit_is_journaled_across_checkout_crash(
+    git_repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    use_worktree: bool,
+    expected: str,
+) -> None:
+    monkeypatch.setenv("DEEPSEEK_HOME", str(tmp_path / "home"))
+    created = await create_managed_worktree(
+        git_repo, "thr_committed_journal", copy_tracked_dirty=False
+    )
+    baseline = await capture_worktree_baseline(created.path)
+    (created.path / "tracked.py").write_text(
+        "task commit\n", encoding="utf-8"
+    )
+    _git(created.path, "add", "tracked.py")
+    _git(created.path, "commit", "-m", "task commit")
+    selected = ["tracked.py"]
+    source = created.path if use_worktree else git_repo
+    dest = git_repo if use_worktree else created.path
+    resolved_signatures = await asyncio.to_thread(
+        managed_worktree.worktree_path_signatures, source, selected
+    )
+    applied = await managed_worktree.apply_raw_paths(
+        source,
+        dest,
+        selected,
+        expected_source_signatures=resolved_signatures,
+    )
+    assert applied.applied == selected
+
+    journal: dict[str, object] = {}
+    real_overlay = managed_worktree.overlay_working_paths
+
+    def crash_after_checkout(
+        _source: Path, dest_path: Path, paths: list[str], **_kwargs
+    ) -> None:
+        assert paths == selected
+        assert _git(dest_path, "rev-parse", "HEAD") == _git(
+            git_repo, "rev-parse", "HEAD"
+        )
+        raise OSError("simulated committed-labor sync crash")
+
+    monkeypatch.setattr(
+        managed_worktree, "overlay_working_paths", crash_after_checkout
+    )
+    with pytest.raises(OSError, match="committed-labor sync crash"):
+        await sync_isolate_from_project(
+            git_repo,
+            created.path,
+            baseline=baseline,
+            resolved_labor_signatures=resolved_signatures,
+            reset_git_state=True,
+            before_mutation=lambda _baseline, value: journal.update(value),
+        )
+
+    assert set(journal["before"]) == set(selected)
+    assert set(journal["target"]) == set(selected)
+    assert _git(created.path, "branch", "--show-current") == ""
+
+    monkeypatch.setattr(managed_worktree, "overlay_working_paths", real_overlay)
+    await sync_isolate_from_project(
+        git_repo,
+        created.path,
+        baseline=baseline,
+        resolved_labor_signatures=resolved_signatures,
+        recover_incomplete_sync=True,
+        incomplete_sync_journal=journal,
+        reset_git_state=True,
+    )
+
+    assert (git_repo / "tracked.py").read_text(encoding="utf-8") == expected
+    assert (created.path / "tracked.py").read_text(encoding="utf-8") == expected
+    assert _git(created.path, "branch", "--show-current") == ""
+
+
 @pytest.mark.asyncio
 async def test_sync_accepts_baseline_delta_already_identical_to_project(
     git_repo: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path

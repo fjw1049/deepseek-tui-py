@@ -83,7 +83,7 @@ export function Sidebar({
     <aside className="ds-drag ds-sidebar-shell ds-frosted relative flex h-full w-full shrink-0 flex-col px-3 pb-3">
       <div className="ds-sidebar-sticky-nav ds-no-drag shrink-0">
         <div className="shrink-0 px-1 pb-2">
-          <div className="ds-sidebar-titlebar-row">
+          <div className="ds-sidebar-titlebar-row ds-window-drag-region">
             <button
               type="button"
               onClick={onCollapseSidebar}

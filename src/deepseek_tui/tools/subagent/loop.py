@@ -284,9 +284,6 @@ _SUBAGENT_TRUNCATED_NUDGE = (
 )
 
 
-_has_summary_section = has_summary_section
-
-
 async def _compact_subagent_messages(messages: list[Message]) -> list[Message]:
     """Overflow relief for a child, handed to ``TurnLoop`` as ``compact_fn``.
 
@@ -466,7 +463,7 @@ async def run_subagent_loop(
         steps = max(0, int(existing.steps_taken))
     else:
         if agent.fork_messages:
-            messages.extend(_messages_from_fork_dicts(agent.fork_messages))
+            messages.extend(dicts_to_messages(agent.fork_messages))
         messages.append(Message.user(agent.prompt, origin=MessageOrigin.REAL_USER))
 
     # Queued input is real user data — fold it in before any snapshot so a
@@ -525,7 +522,7 @@ async def run_subagent_loop(
         if use_structured_output:
             return False
         if not summary_requirement.should_recover(
-            satisfied=_has_summary_section(final_text),
+            satisfied=has_summary_section(final_text),
             fired=summary_recoveries,
             abort=_subagent_cancelled(cancel, agent),
         ):
@@ -748,7 +745,7 @@ async def run_subagent_loop(
                 # The only stop signal is a ### SUMMARY report. Length and
                 # wording do not graduate the child — no heading means the
                 # assignment is still open, same as an empty thinking round.
-                if round_text and _has_summary_section(round_text):
+                if round_text and has_summary_section(round_text):
                     if _try_summary_recovery():
                         _save_complete_checkpoint("round")
                         continue
@@ -911,20 +908,9 @@ async def run_subagent_loop(
         raise RuntimeError("sub-agent did not return structured_output")
     if not final_text and last_thinking:
         final_text = last_thinking
-    # Keep the checkpoint for resume. Report shape is not a reason to wipe
-    # memory — Kimi leaves context memory in place after distillSummary.
-    # close() is the only wipe.
+    # Keep the checkpoint for resume (the break paths exit without saving).
+    # Report shape is not a reason to wipe memory — Kimi leaves context
+    # memory in place after distillSummary. close() is the only wipe.
     _save_complete_checkpoint("round")
     return AgentRunOutput(text=final_text, structured=structured_value)
 
-
-def _messages_from_fork_dicts(raw_messages: list[dict[str, Any]]) -> list[Message]:
-    from deepseek_tui.engine.context_pressure import messages_from_dicts
-
-    out: list[Message] = []
-    for item in raw_messages:
-        try:
-            out.extend(messages_from_dicts([item]))
-        except Exception:  # noqa: BLE001
-            continue
-    return out

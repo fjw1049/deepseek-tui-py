@@ -16,6 +16,7 @@ import { useLightDismiss } from '../../hooks/use-light-dismiss'
 import { useWorkspaceDirtyGitRefresh } from '../../hooks/use-workspace-dirty-git-refresh'
 import { useChatStore } from '../../store/chat-store'
 import { GitLogDialog } from './GitLogDialog'
+import type { GitBranchesResult } from '@shared/git-branches'
 
 type Props = {
   workspaceRoot: string
@@ -34,7 +35,7 @@ type Props = {
   onCurrentBranchChange?: (branch: string | null) => void
 }
 
-const MENU_WIDTH = 420
+const MENU_WIDTH = 280
 
 /** Body zooms with the UI scale, while trigger rectangles use viewport pixels. */
 function readUiScale(): number {
@@ -76,6 +77,16 @@ export function GitBranchPicker({
   const menuRef = useRef<HTMLDivElement | null>(null)
   const inputRef = useRef<HTMLInputElement | null>(null)
 
+  const gitErrorMessage = useCallback(
+    (next: GitBranchesResult): string =>
+      !next.ok && next.reason === 'runtime_checkout'
+        ? t('gitRuntimeCheckoutSwitchBlocked')
+        : !next.ok
+          ? next.message
+          : '',
+    [t]
+  )
+
   useEffect(() => {
     setOpen(false)
     setLogOpen(false)
@@ -91,8 +102,8 @@ export function GitBranchPicker({
       setError(null)
       return
     }
-    setError(result.ok ? null : result.message)
-  }, [result])
+    setError(result.ok ? null : gitErrorMessage(result))
+  }, [gitErrorMessage, result])
 
   useEffect(() => {
     if (!open) return
@@ -195,7 +206,7 @@ export function GitBranchPicker({
       }
       setResult(next)
       if (!next.ok) {
-        setError(next.message)
+        setError(gitErrorMessage(next))
         return
       }
       setOpen(false)
@@ -223,7 +234,7 @@ export function GitBranchPicker({
       if (!next.ok) {
         setNotice(null)
         setDirtyConflictBranch(null)
-        setError(next.message)
+        setError(gitErrorMessage(next))
         return
       }
       setOpen(false)

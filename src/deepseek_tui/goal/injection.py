@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import html
+
 from deepseek_tui.goal.types import GoalSnapshot, GoalStatus
 
 GOAL_CONTINUATION_PROMPT = (
@@ -45,7 +47,7 @@ GOAL_FORK_CLEARED_REMINDER = (
 
 
 def escape_untrusted(text: str) -> str:
-    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    return html.escape(text, quote=False)
 
 
 def format_elapsed(ms: int) -> str:

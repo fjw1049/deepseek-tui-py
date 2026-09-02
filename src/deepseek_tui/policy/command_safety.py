@@ -273,10 +273,13 @@ def _is_safe_command(command: str) -> bool:
     if len(parts) >= 2:
         prefix = f"{parts[0]} {parts[1]}".lower()
         # Only include operations that are truly read-only (no modifications)
-        # cargo build/test/clippy modify artifacts, so excluded
+        # cargo build/test/clippy modify artifacts, so excluded.
+        # ``git branch`` / ``git tag`` are NOT here: bare forms only list,
+        # but ``git branch -D x`` / ``git tag v1`` mutate and a two-token
+        # prefix cannot tell them apart — they fall through to approval.
         read_only_prefixes = {
             "git status", "git log", "git diff", "git show", "git describe",
-            "git grep", "git ls-files", "git branch", "git tag", "git reflog",
+            "git grep", "git ls-files", "git reflog",
             "git cat-file", "git blame", "git shortlog", "git for-each-ref",
             "npm list", "npm view", "npm search", "npm info",
         }

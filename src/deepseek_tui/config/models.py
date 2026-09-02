@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from deepseek_tui.config.paths import (
     user_logs_dir,
@@ -77,20 +77,13 @@ class ProcessNarrationConfig(BaseModel):
 
 
 class UiConfig(BaseModel):
-    color_scheme: str = "default"
+    model_config = ConfigDict(extra="forbid")
+
     show_thinking: bool = True
-    theme: str = "default"
-    show_tool_details: bool = True
     # Reply + narration language. Workbench settings sync here; default zh.
     locale: str = "zh"
-    default_mode: str = "agent"
-    max_history: int = 1000
-    alternate_screen: str = "auto"
-    mouse_capture: bool = True
-    osc8_links: bool = True
     notify_method: str = "auto"
     notify_threshold_secs: float = 30.0
-    frame_refresh_hz: float = 30.0
     process_narration: ProcessNarrationConfig = Field(default_factory=ProcessNarrationConfig)
 
     @field_validator("locale", mode="before")
@@ -100,19 +93,6 @@ class UiConfig(BaseModel):
             return str(value)
         # Legacy "auto" and anything else → Simplified Chinese default.
         return "zh"
-
-
-class StateConfig(BaseModel):
-    database_path: Path = Path(".deepseek/state.db")
-    autosave: bool = True
-
-
-class RetryConfig(BaseModel):
-    enabled: bool = True
-    max_retries: int = 3
-    initial_delay: float = 1.0
-    max_delay: float = 60.0
-    exponential_base: float = 2.0
 
 
 class FeatureConfig(BaseModel):
@@ -183,23 +163,11 @@ class SnapshotConfig(BaseModel):
 class ContextConfig(BaseModel):
     """Layered context policy — ratios of the live model context window."""
 
-    enabled: bool = False
+    model_config = ConfigDict(extra="forbid")
+
     l0_prune_ratio: float = 0.50
     rewrite_ratio: float = 0.75
     cycle_ratio: float = 0.90
-
-
-class CapacityConfig(BaseModel):
-    enabled: bool = False
-    low_risk_max: float = 0.50
-    medium_risk_max: float = 0.62
-    severe_min_slack: float = -0.25
-    severe_violation_ratio: float = 0.40
-    refresh_cooldown_turns: int = 6
-    replan_cooldown_turns: int = 5
-    max_replay_per_turn: int = 1
-    min_turns_before_guardrail: int = 4
-    profile_window: int = 8
 
 
 class SubagentConfig(BaseModel):
@@ -276,52 +244,13 @@ class NotificationsConfig(BaseModel):
     ``DeepSeekTUI._maybe_notify_turn_done`` (see ``tui/app.py``). When the
     nested ``method`` / ``threshold_secs`` are unset, the loader falls
     back to ``Config.ui.notify_*`` for backwards compatibility.
-    ``include_subagent`` / ``include_task`` are accepted but not yet
-    routed; they're tracked as a Stage 6 follow-up.
     """
+
+    model_config = ConfigDict(extra="forbid")
 
     method: str | None = None
     threshold_secs: float | None = None
     enabled: bool = True
-    include_subagent: bool = False
-    include_task: bool = False
-
-
-class NetworkPolicyConfig(BaseModel):
-    """Network access policy.
-
-    Stage 2.7 deferred OS-level sandboxing; this struct accepts the TOML
-    so existing configs load cleanly. ``rules`` and
-    ``amendments`` are stored as raw dicts (Pydantic doesn't enforce the
-    inner shape yet) — wiring them through to ``ExecPolicyEngine`` is
-    tracked in HANDOVER as a follow-up.
-    """
-
-    enabled: bool = False
-    default_action: str = "ask"
-    rules: list[dict[str, Any]] = Field(default_factory=list)
-    amendments: list[dict[str, Any]] = Field(default_factory=list)
-
-
-class SkillsConfig(BaseModel):
-    """[skills] subsection.
-
-    Top-level ``Config.skills_dir`` already covers the install path. The
-    nested table adds registry URL + max install size; both are accepted
-    so user TOML loads, but we don't yet drive a remote registry fetcher.
-    """
-
-    enabled: bool = True
-    registry_url: str | None = None
-    max_install_size_mb: int = 50
-    auto_update: bool = False
-
-
-class ServerConfig(BaseModel):
-    """[server] subsection for HTTP server settings."""
-
-    host: str = "127.0.0.1"
-    port: int = 8787
 
 
 class LoggingConfig(BaseModel):
@@ -356,25 +285,9 @@ class LspSettings(BaseModel):
     servers: dict[str, list[str]] = Field(default_factory=dict)
 
 
-class AuthConfig(BaseModel):
-    """HTTP API authentication settings.
-
-    ``mode`` controls whether API endpoints require authentication:
-    - ``"none"`` — open to all (default, local-only deployments)
-    - ``"api_key"`` — require a valid API key via header
-
-    ``api_keys`` is a list of accepted plain-text keys. In production,
-    prefer loading these from environment variables or a secrets vault.
-
-    ``header_name`` overrides the default ``X-API-Key`` header.
-    """
-
-    mode: str = "none"
-    api_keys: list[str] = Field(default_factory=lambda: [])
-    header_name: str = "X-API-Key"
-
-
 class ProfileConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     provider: str | None = None
     model: str | None = None
     default_text_model: str | None = None
@@ -389,7 +302,6 @@ class ProfileConfig(BaseModel):
     notes_path: Path | None = None
     providers: dict[str, ProviderConfig] = Field(default_factory=dict)
     ui: UiConfig | None = None
-    state: StateConfig | None = None
     features: FeatureConfig | None = None
 
 
@@ -422,30 +334,39 @@ class Config(BaseModel):
     providers: dict[str, ProviderConfig] = Field(default_factory=dict)
     profiles: dict[str, ProfileConfig] = Field(default_factory=dict)
     ui: UiConfig = Field(default_factory=UiConfig)
-    state: StateConfig = Field(default_factory=StateConfig)
-    retry: RetryConfig = Field(default_factory=RetryConfig)
     features: FeatureConfig = Field(default_factory=FeatureConfig)
     snapshots: SnapshotConfig = Field(default_factory=SnapshotConfig)
     context: ContextConfig = Field(default_factory=ContextConfig)
-    capacity: CapacityConfig = Field(default_factory=CapacityConfig)
     subagents: SubagentConfig = Field(default_factory=SubagentConfig)
     hooks: HooksConfig = Field(default_factory=HooksConfig)
     lsp: LspSettings = Field(default_factory=LspSettings)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
-    auth: AuthConfig = Field(default_factory=AuthConfig)
-    # Top-level subsections. Accept the TOML so existing user configs load
-    # cleanly; Stage 6 wires these fields into runtime behavior.
-    # ``tools_file`` is recorded but never read today.
     notifications: NotificationsConfig = Field(default_factory=NotificationsConfig)
-    network: NetworkPolicyConfig = Field(default_factory=NetworkPolicyConfig)
-    skills: SkillsConfig = Field(default_factory=SkillsConfig)
     automation: AutomationConfig = Field(default_factory=AutomationConfig)
-    tools_file: Path | None = None
     # Cycle archive-and-replan, consumed by ``Engine.create``.
     cycle_enabled: bool = True
 
-    def resolved_database_path(self) -> Path:
-        return self.state.database_path.expanduser()
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_removed_fields(cls, value: object) -> object:
+        """Fail on known placeholders while tolerating unrelated extensions."""
+        if isinstance(value, dict):
+            removed = sorted(
+                set(value)
+                & {
+                    "auth",
+                    "network",
+                    "retry",
+                    "server",
+                    "skills",
+                    "state",
+                    "tools_file",
+                }
+            )
+            if removed:
+                names = ", ".join(removed)
+                raise ValueError(f"unsupported config field(s): {names}")
+        return value
 
     def effective_provider_config(self) -> ProviderConfig:
         from deepseek_tui.config.providers import PROVIDER_DEFAULTS

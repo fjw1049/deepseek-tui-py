@@ -775,8 +775,9 @@ def cmd_save(args: str, app: DeepSeekTUI) -> CommandResult:
 
     try:
         save_path.parent.mkdir(parents=True, exist_ok=True)
-        json_content = json.dumps(session_data, indent=2, ensure_ascii=False)
-        save_path.write_text(json_content, encoding="utf-8")
+        from deepseek_tui.utils import write_json_atomic
+
+        write_json_atomic(save_path, session_data)
         session_id = session_data["metadata"]["id"][:8]
         return CommandResult(output=f"Session saved to {save_path} (ID: {session_id})")
     except OSError as exc:
@@ -787,7 +788,7 @@ def cmd_save(args: str, app: DeepSeekTUI) -> CommandResult:
 
 @_register("/load")
 def cmd_load(args: str, app: DeepSeekTUI) -> CommandResult:
-    """Load session from JSON file."""
+    """Load an explicit legacy JSON export into a new canonical thread."""
     if app._engine is None:
         return CommandResult(error="Engine not started — cannot load session")
 
@@ -798,46 +799,12 @@ def cmd_load(args: str, app: DeepSeekTUI) -> CommandResult:
     if not load_path.exists():
         return CommandResult(error=f"File not found: {load_path}")
 
-    try:
-        content = load_path.read_text(encoding="utf-8")
-        session_data = json.loads(content)
-    except OSError as exc:
-        return CommandResult(error=f"Failed to read session file: {exc}")
-    except json.JSONDecodeError as exc:
-        return CommandResult(error=f"Failed to parse session file: {exc}")
-
-    # Validate structure — metadata is optional (auto-persisted current.json).
-    if "messages" not in session_data:
-        return CommandResult(error="Invalid session file format")
-
-    from deepseek_tui.tui.session_restore import (
-        apply_messages_to_engine,
-        parse_session_messages,
-        session_metadata,
-        session_started_at_iso,
-    )
-
-    try:
-        restored_messages = parse_session_messages(session_data, path=load_path)
-        metadata = session_metadata(session_data, path=load_path)
-        apply_messages_to_engine(app._engine, restored_messages)
-    except Exception as exc:
-        return CommandResult(error=f"Failed to restore messages: {exc}")
-
-    # Update UI
-    transcript = app.query_one(Transcript)
-    transcript.hydrate_from_messages(restored_messages)
-
-    started = session_started_at_iso(metadata, path=load_path)
-    if started:
-        app._session_started_at_iso = started
-
-    session_id = str(metadata.get("id", "unknown"))[:8]
-    message_count = metadata.get("message_count", len(restored_messages))
-
-    return CommandResult(
-        output=f"Session loaded from {load_path} (ID: {session_id}, {message_count} messages)"
-    )
+    result = app._load_session_from_path(load_path)
+    if result is None:
+        return CommandResult(error="Failed to restore session")
+    if result.startswith(("failed", "session file invalid", "engine not started")):
+        return CommandResult(error=result)
+    return CommandResult(output=f"{result} from {load_path}")
 
 
 # ── /context ─────────────────────────────────────────────────────────────
@@ -1055,10 +1022,10 @@ def cmd_yolo(args: str, app: DeepSeekTUI) -> CommandResult:
 
 @_register("/logout")
 def cmd_logout(args: str, app: DeepSeekTUI) -> CommandResult:
-    from deepseek_tui.state.secrets import Secrets
-    secrets = Secrets.auto_detect()
-    for prov in ["deepseek", "nvidia-nim", "openrouter", "novita", "openai"]:
-        secrets.delete(prov)
+    from deepseek_tui.state.secrets import credential_providers, write_api_key
+
+    for prov in credential_providers(app.config):
+        write_api_key(prov, None)
     return CommandResult(output="Logged out. API keys cleared.")
 
 

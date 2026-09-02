@@ -12,6 +12,9 @@ from pathlib import Path
 from deepseek_tui.tools.registry import ToolCapability, ToolContext, ToolError, ToolResult, ToolSpec
 from deepseek_tui.tools.utils.gitignore import GitIgnoreMatcher, matches_path_glob
 from deepseek_tui.tools.utils.sensitive import is_sensitive_path
+from deepseek_tui.tools.utils.validation import (
+    optional_non_negative_int as _optional_non_negative_int,
+)
 from deepseek_tui.tools.utils.validation import require_string as _require_string
 
 logger = logging.getLogger(__name__)
@@ -512,19 +515,6 @@ def _grep_files(
                     line = line[:_MAX_LINE_LEN] + "… (line truncated)"
                 rows.append((path, line_no, line, j not in match_lines))
     return rows, file_counts, total, skipped[0], ignored[0]
-
-
-def _optional_non_negative_int(
-    input_data: dict[str, object], key: str
-) -> int | None:
-    if key not in input_data:
-        return None
-    value = input_data[key]
-    if isinstance(value, bool) or not isinstance(value, int):
-        raise ToolError(f"{key} must be a non-negative integer")
-    if value < 0:
-        raise ToolError(f"{key} must be a non-negative integer")
-    return value
 
 
 def _display_rel(path: Path, root: Path) -> str:

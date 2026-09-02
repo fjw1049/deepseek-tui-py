@@ -13,7 +13,7 @@ from typing import Any
 
 import pytest
 
-from deepseek_tui.tools.git import GitTool
+from deepseek_tui.tools.file import ReadFileTool
 from deepseek_tui.tools.registry import (
     ToolCapability,
     ToolContext,
@@ -22,6 +22,7 @@ from deepseek_tui.tools.registry import (
     ToolResult,
     ToolSpec,
 )
+from deepseek_tui.tools.search import GrepFilesTool
 from deepseek_tui.tools.task import TaskOutputTool
 from deepseek_tui.tools.web import WebSearchTool
 
@@ -38,11 +39,11 @@ def _registry_with(*tools: ToolSpec) -> ToolRegistry:
 
 
 class TestMissingRequired:
-    async def test_git_missing_command(self, context: ToolContext) -> None:
-        registry = _registry_with(GitTool())
+    async def test_read_file_missing_path(self, context: ToolContext) -> None:
+        registry = _registry_with(ReadFileTool())
         with pytest.raises(ToolError) as exc_info:
-            await registry.execute("git", {}, context)
-        assert "command" in str(exc_info.value)
+            await registry.execute("read_file", {}, context)
+        assert "path" in str(exc_info.value)
         assert "invalid arguments" in str(exc_info.value)
 
     async def test_web_search_missing_query(self, context: ToolContext) -> None:
@@ -63,10 +64,12 @@ class TestTypeViolations:
 
 
 class TestEnumViolations:
-    async def test_git_unknown_command(self, context: ToolContext) -> None:
-        registry = _registry_with(GitTool())
+    async def test_unknown_enum_value(self, context: ToolContext) -> None:
+        registry = _registry_with(GrepFilesTool())
         with pytest.raises(ToolError) as exc_info:
-            await registry.execute("git", {"command": "bogus"}, context)
+            await registry.execute(
+                "grep_files", {"pattern": "x", "path": ".", "output_mode": "bogus"}, context
+            )
         assert "bogus" in str(exc_info.value)
 
 
@@ -83,18 +86,18 @@ class TestExtraPropertiesAllowed:
 
 
 class TestValidCallsPassThrough:
-    async def test_git_status_runs(self, context: ToolContext) -> None:
-        registry = _registry_with(GitTool())
-        result = await registry.execute("git", {"command": "status"}, context)
+    async def test_valid_call_runs(self, context: ToolContext) -> None:
+        registry = _registry_with(ReadFileTool())
+        result = await registry.execute("read_file", {"path": "pyproject.toml"}, context)
         assert isinstance(result, ToolResult)
 
     async def test_error_is_raised_before_timeout_wrapper(self, context: ToolContext) -> None:
         """Validation errors surface as-is (not re-wrapped by the timeout /
         ValueError handling) even when a timeout is configured."""
-        registry = _registry_with(GitTool())
+        registry = _registry_with(ReadFileTool())
         ctx = ToolContext(working_directory=Path("."), timeout_ms=60_000)
         with pytest.raises(ToolError, match="invalid arguments"):
-            await registry.execute("git", {}, ctx)
+            await registry.execute("read_file", {}, ctx)
 
 
 class _BrokenSchemaTool(ToolSpec):

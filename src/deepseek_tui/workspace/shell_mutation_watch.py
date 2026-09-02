@@ -194,8 +194,12 @@ def _read_file(root: Path, rel: str) -> str | None | _Unreadable:
         if not stat.S_ISREG(info.st_mode) or info.st_size > _MAX_FILE_BYTES:
             return _UNREADABLE
         data = path.read_bytes()
-    except OSError:
+    except FileNotFoundError:
         return None
+    except OSError:
+        # Permission / IO failure is not absence — a later successful read
+        # must not be reported as a fresh "create".
+        return _UNREADABLE
     if b"\0" in data[:_BINARY_SNIFF_BYTES]:
         return _UNREADABLE
     try:

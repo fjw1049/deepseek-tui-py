@@ -12,6 +12,8 @@ import httpx
 if TYPE_CHECKING:
     from deepseek_tui.engine.usage_ledger import TurnUsageLedger
 
+import logging
+
 from deepseek_tui.protocol.messages import MessageRequest
 from deepseek_tui.protocol.responses import (
     StreamDone,
@@ -22,6 +24,8 @@ from deepseek_tui.protocol.responses import (
     StreamToolCallComplete,
     StreamToolCallDelta,
 )
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -41,16 +45,59 @@ class RetryConfig:
             return delay
         return delay * (1.0 + random.uniform(-self.jitter, self.jitter))
 
-    def transparent_delay(self, attempt: int) -> float:
-        return self._spread(min(self.base_delay * (2**attempt), self.max_delay))
-
-    def error_delay(self, attempt: int) -> float:
+    def delay(self, attempt: int) -> float:
         return self._spread(min(self.base_delay * (2**attempt), self.max_delay))
 
 
 class LLMClient(ABC):
-    def __init__(self, retry_config: RetryConfig | None = None) -> None:
+    def __init__(
+        self,
+        retry_config: RetryConfig | None = None,
+        *,
+        api_key: str = "",
+        base_url: str = "",
+        timeout_seconds: float = 90.0,
+        transport: httpx.AsyncBaseTransport | None = None,
+        extra_headers: dict[str, str] | None = None,
+    ) -> None:
         self.retry_config = retry_config or RetryConfig()
+        self.api_key = api_key
+        self.base_url = base_url.rstrip("/")
+        self.timeout_seconds = timeout_seconds
+        self.transport = transport
+        self.extra_headers = dict(extra_headers or {})
+        self._http_client: httpx.AsyncClient | None = None
+
+    def _get_http_client(self) -> httpx.AsyncClient:
+        """Return a persistent httpx client for connection reuse.
+
+        ``read=None`` lets the per-chunk ``asyncio.wait_for`` in the
+        subclass stream methods be the sole source of truth for SSE idle
+        timeouts. With a finite httpx ``read`` the global timer can fire
+        first and surface as ``httpx.ReadTimeout`` instead of
+        ``asyncio.TimeoutError``, hitting different retry branches in
+        ``TurnLoop.run`` and confusing transparent-retry
+        accounting. Connect/write timeouts stay bounded so DNS or TLS
+        stalls still surface promptly.
+        """
+        if self._http_client is None or self._http_client.is_closed:
+            self._http_client = httpx.AsyncClient(
+                timeout=httpx.Timeout(
+                    connect=self.timeout_seconds,
+                    write=self.timeout_seconds,
+                    read=None,
+                    pool=self.timeout_seconds,
+                ),
+                transport=self.transport,
+            )
+        return self._http_client
+
+    async def close(self) -> None:
+        """Close the persistent HTTP client."""
+        if self._http_client is not None and not self._http_client.is_closed:
+            logger.debug("http_client_close base_url=%s", self.base_url)
+            await self._http_client.aclose()
+            self._http_client = None
 
     @abstractmethod
     def stream_chat_completion(self, request: MessageRequest) -> AsyncIterator[StreamEvent]:
@@ -82,12 +129,12 @@ class LLMClient(ABC):
                     and transparent_retries < self.retry_config.max_transparent_retries
                 ):
                     transparent_retries += 1
-                    await asyncio.sleep(self.retry_config.transparent_delay(transparent_retries))
+                    await asyncio.sleep(self.retry_config.delay(transparent_retries))
                     continue
                 if content_received and error_retries < self.retry_config.max_error_retries:
                     error_retries += 1
                     yield StreamError(message=str(exc), retryable=True)
-                    await asyncio.sleep(self.retry_config.error_delay(error_retries))
+                    await asyncio.sleep(self.retry_config.delay(error_retries))
                     continue
                 raise
 
@@ -103,7 +150,7 @@ class MeteredLLMClient(LLMClient):
     def __init__(
         self,
         inner: LLMClient,
-        ledger: "TurnUsageLedger",
+        ledger: TurnUsageLedger,
     ) -> None:
         super().__init__(retry_config=inner.retry_config)
         self._inner = inner

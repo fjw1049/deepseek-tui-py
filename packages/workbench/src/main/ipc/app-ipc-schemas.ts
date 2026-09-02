@@ -148,6 +148,12 @@ export const gitBranchesPayloadSchema = z
     refreshRemote: z.boolean().optional()
   })
   .strict()
+export const gitLogPayloadSchema = z
+  .object({
+    workspaceRoot: workspaceRootSchema,
+    refreshRemote: z.boolean().optional()
+  })
+  .strict()
 export const gitWorkingChangesPayloadSchema = z
   .object({
     workspaceRoot: workspaceRootSchema,

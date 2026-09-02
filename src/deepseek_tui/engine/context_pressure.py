@@ -16,7 +16,10 @@ from deepseek_tui.config.providers import (
     DEFAULT_CONTEXT_WINDOW_TOKENS,
     context_window_for_model,
 )
-from deepseek_tui.protocol.messages import Message, MessageOrigin, Role, TextBlock
+from deepseek_tui.protocol.messages import Message, MessageOrigin, Role
+from deepseek_tui.state.context import (  # noqa: F401 — compatibility re-export
+    neutralize_fake_system_reminders,
+)
 
 # Ratio ladder (confirmed product policy). Every rung reclaims window:
 # L0 prunes old tool bodies deterministically, rewrite summarises history,
@@ -94,10 +97,6 @@ class ContextPressure:
     ratio: float
     source: PressureSource
 
-    @property
-    def at_or_above(self) -> float:
-        return self.ratio
-
 
 def measure_context_pressure(
     model: str,
@@ -130,43 +129,12 @@ def measure_context_pressure(
     return ContextPressure(tokens=tokens, window=window, ratio=ratio, source=source)
 
 
-def thresholds_for_window(window: int) -> dict[str, int]:
-    """Absolute token thresholds derived from a context window."""
-    w = max(1, int(window))
-    return {
-        "l0_prune": int(w * RATIO_L0_PRUNE),
-        "rewrite": int(w * RATIO_REWRITE),
-        "cycle": int(w * RATIO_CYCLE),
-        "auto_floor": int(w * RATIO_AUTO_FLOOR),
-    }
-
-
 def wrap_system_reminder(body: str) -> str:
     """Wrap injected runtime text in a Claude-Code-style reminder envelope."""
     trimmed = body.strip()
     if trimmed.startswith(SYSTEM_REMINDER_OPEN):
         return trimmed
     return f"{SYSTEM_REMINDER_OPEN}\n{trimmed}\n{SYSTEM_REMINDER_CLOSE}"
-
-
-_FAKE_REMINDER_RE = re.compile(
-    r"(</?)\s*(system-reminder)(?:\s[^<>]*)?\s*(/?>)",
-    re.IGNORECASE,
-)
-
-
-def neutralize_fake_system_reminders(text: str) -> str:
-    """Defuse ``<system-reminder>`` tags found in untrusted turn content.
-
-    Engine-injected reminders travel as their own messages and never pass
-    through user-input processing — so any reminder tag inside raw user
-    text (typed, pasted, or inlined via @file expansion) is either a
-    quote or an injection attempt. Rewriting the tag name keeps the
-    content readable while stripping the authority our prompt grants to
-    real reminders. Found by the golden scenario
-    ``test_fake_system_reminder_does_not_leak_prompt``.
-    """
-    return _FAKE_REMINDER_RE.sub(r"\1user-quoted-reminder\3", text)
 
 
 def format_user_query_message(query: str) -> str:

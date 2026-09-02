@@ -29,10 +29,10 @@ _T = TypeVar("_T")
 
 
 async def _to_thread_complete(
-    func: Callable[..., _T], /, *args: object
+    func: Callable[..., _T], /, *args: object, **kwargs: object
 ) -> _T:
     """Do not release an outer lease while an uncancellable worker still runs."""
-    worker = asyncio.create_task(asyncio.to_thread(func, *args))
+    worker = asyncio.create_task(asyncio.to_thread(func, *args, **kwargs))
     try:
         return await asyncio.shield(worker)
     except asyncio.CancelledError:
@@ -350,6 +350,23 @@ def overlay_working_paths(
         )
 
 
+async def overlay_working_paths_async(
+    source: Path,
+    dest: Path,
+    paths: list[str],
+    *,
+    expected_source_signatures: dict[str, str] | None = None,
+) -> None:
+    """Run :func:`overlay_working_paths` without blocking the event loop."""
+    await _to_thread_complete(
+        overlay_working_paths,
+        source,
+        dest,
+        paths,
+        expected_source_signatures=expected_source_signatures,
+    )
+
+
 def paths_requiring_raw_resolution(
     source: Path, dest: Path, paths: list[str]
 ) -> list[str]:
@@ -554,6 +571,7 @@ async def sync_isolate_from_project(
     recover_incomplete_sync: bool = False,
     incomplete_sync_journal: dict[str, object] | None = None,
     discard_isolate_labor: bool = False,
+    reset_git_state: bool = False,
     before_mutation: Callable[[WorktreeBaseline, dict[str, object]], None]
     | None = None,
     after_mutation: Callable[[WorktreeBaseline], None] | None = None,
@@ -643,6 +661,7 @@ async def sync_isolate_from_project(
     if (
         branch
         and not discard_isolate_labor
+        and not reset_git_state
         and not _is_legacy_internal_branch(branch, dst)
     ):
         # A user-named branch is a durability boundary. Do not silently move it.
@@ -653,7 +672,7 @@ async def sync_isolate_from_project(
             ["merge-base", "--is-ancestor", iso_head, proj_head],
             check=False,
         )
-        if reachable is None and not discard_isolate_labor:
+        if reachable is None and not (discard_isolate_labor or reset_git_state):
             # Preserve commits that have not reached the project branch.
             return iso_head
     if iso_head and proj_head and iso_head != proj_head:
@@ -691,7 +710,7 @@ async def sync_isolate_from_project(
         await _git(dst, ["checkout", "--detach", "--force", proj_head])
         if branch:
             await _delete_merged_internal_branch(src, dst, branch)
-    overlay_working_paths(
+    await overlay_working_paths_async(
         src,
         dst,
         sorted(paths),
@@ -1714,6 +1733,7 @@ async def resolve_unpublished_worktree_labor(
         resolved_labor_signatures=resolved_signatures,
         recover_incomplete_sync=incomplete_sync_journal is not None,
         incomplete_sync_journal=incomplete_sync_journal,
+        reset_git_state=True,
     )
     return report
 
@@ -2475,4 +2495,3 @@ async def _git(root: Path, args: list[str], *, check: bool = True) -> str | None
 _UNREADABLE = object()
 
 read_working_text = _read_text
-write_working_text = _write_text

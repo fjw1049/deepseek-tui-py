@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any
 
 from deepseek_tui.config.models import Config
+from deepseek_tui.utils import write_json_atomic
 from deepseek_tui.tools.subagent.agent import SubAgent, SubAgentExecutor, _stub_executor
 from deepseek_tui.tools.subagent.completion import (
     AgentRunOutput,
@@ -29,7 +30,6 @@ from deepseek_tui.tools.subagent.mailbox import Mailbox, MailboxMessage
 from deepseek_tui.tools.subagent.types import (
     DEFAULT_MAX_AGENTS,
     DEFAULT_MAX_SPAWN_DEPTH,
-    DEFAULT_MAX_STEPS,
     SUBAGENT_RESTART_REASON,
     SUBAGENT_STATE_SCHEMA_VERSION,
     _MAX_TERMINAL_AGENTS_IN_MEMORY,
@@ -44,12 +44,6 @@ from deepseek_tui.tools.subagent.types import (
 )
 
 logger = logging.getLogger(__name__)
-
-
-def _write_json_atomic(path: Path, value: Any) -> None:
-    from deepseek_tui.utils import write_json_atomic
-
-    write_json_atomic(path, value)
 
 
 class SubAgentManager:
@@ -73,7 +67,6 @@ class SubAgentManager:
     ) -> None:
         self.workspace = workspace
         self.max_agents = max_agents
-        self.max_steps = DEFAULT_MAX_STEPS
         self.default_model = default_model
         self.handoff_timeout_secs = handoff_timeout_secs
         self._state_path = state_path
@@ -517,7 +510,7 @@ class SubAgentManager:
             "schema_version": SUBAGENT_STATE_SCHEMA_VERSION,
             "agents": agents_payload,
         }
-        _write_json_atomic(self._state_path, payload)
+        write_json_atomic(self._state_path, payload)
 
     def _load_state(self) -> None:
         if self._state_path is None or not self._state_path.exists():
@@ -592,16 +585,10 @@ class SubAgentRuntime:
     # fires ``subagent_stop`` (Claude Code "SubagentStop") hooks on
     # completion; a blocking decision keeps the sub-agent working.
     hook_executor: Any | None = None
-    # Parent engine's lifecycle HookExecutor. When set, subagent_stop
-    # (Claude "SubagentStop") hooks run when a child finishes responding.
-    hook_executor: Any | None = None
     # Explicit trust only — never derived from ``auto_approve``: an
     # auto-approved (fire-and-forget) child must not silently gain
     # workspace-confinement bypass / danger-full-access sandbox.
     trust_mode: bool = False
-
-    def would_exceed_depth(self) -> bool:
-        return self.spawn_depth + 1 > self.max_spawn_depth
 
     def with_spawn_depth(self, depth: int) -> SubAgentRuntime:
         return SubAgentRuntime(
@@ -617,27 +604,6 @@ class SubAgentRuntime:
             mailbox=self.mailbox,
             hook_executor=self.hook_executor,
             spawn_depth=depth,
-            max_spawn_depth=self.max_spawn_depth,
-            active_task_id=self.active_task_id,
-            approval_handler=self.approval_handler,
-            emit_event=self.emit_event,
-            trust_mode=self.trust_mode,
-        )
-
-    def child(self) -> SubAgentRuntime:
-        return SubAgentRuntime(
-            manager=self.manager,
-            client=self.client,
-            model=self.model,
-            config=self.config,
-            workspace=self.workspace,
-            allow_shell=self.allow_shell,
-            auto_approve=self.auto_approve,
-            task_manager=self.task_manager,
-            cancel_token=self.cancel_token,
-            mailbox=self.mailbox,
-            hook_executor=self.hook_executor,
-            spawn_depth=self.spawn_depth + 1,
             max_spawn_depth=self.max_spawn_depth,
             active_task_id=self.active_task_id,
             approval_handler=self.approval_handler,

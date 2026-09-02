@@ -59,3 +59,35 @@ export type GitPullResult =
         | 'error'
       message: string
     }
+
+export type GitSyncResult =
+  | {
+      ok: true
+      repositoryRoot: string
+      branch: string
+      upstream: string
+      action: 'up_to_date' | 'published' | 'pulled' | 'pushed' | 'merged'
+      commitHash: string
+      updated: boolean
+      pushed: boolean
+    }
+  | {
+      ok: false
+      reason:
+        | 'no_workspace'
+        | 'not_git_repo'
+        | 'git_unavailable'
+        | 'detached_head'
+        | 'no_remote'
+        | 'no_upstream'
+        | 'operation_in_progress'
+        | 'busy'
+        | 'dirty_worktree'
+        | 'conflict'
+        | 'recovery_required'
+        | 'rejected'
+        | 'error'
+      message: string
+      conflictedFiles?: string[]
+      recovered?: boolean
+    }

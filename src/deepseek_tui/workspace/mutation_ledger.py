@@ -93,10 +93,6 @@ class _NetFileState:
 _CONTENT_UNKNOWN = object()
 
 
-def mutation_to_dict(mutation: FileMutation) -> dict[str, Any]:
-    return mutation.to_dict()
-
-
 def mutation_from_metadata(
     meta: dict[str, Any] | None,
     *,

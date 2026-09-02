@@ -118,32 +118,42 @@ def context_window_override(model: str) -> int | None:
 
 
 def register_provider_context_windows(config: object) -> None:
-    """Register context windows for every ``[providers.X]`` model in ``config``.
+    """Replace context windows with those from the current ``config``.
 
     - ``[providers.X.context_windows]`` (model id → tokens, written by the
       Workbench custom-endpoint UI) wins for the models it names.
     - ``context_window`` on the provider table applies to its default model.
     - A custom model the static table doesn't recognize defaults to
       :data:`CUSTOM_MODEL_CONTEXT_WINDOW_TOKENS` (500K).
-    Idempotent; safe to call on every config load / engine creation.
+    Idempotent; safe to call on every config load / engine creation. Replacing
+    the map prevents values from a prior workspace leaking into this one.
     """
+    overrides: dict[str, int] = {}
     providers = getattr(config, "providers", None) or {}
     for entry in providers.values():
         per_model = getattr(entry, "context_windows", None) or {}
         for model_id, window in per_model.items():
-            if isinstance(window, int) and window > 0:
-                set_context_window_override(str(model_id), window)
+            model_key = str(model_id).strip()
+            if (
+                isinstance(window, int)
+                and window > 0
+                and _context_window_for_model_optional(model_key) is None
+            ):
+                overrides[model_key.lower()] = window
         model = (getattr(entry, "model", None) or "").strip()
         if not model or model in per_model:
             continue
         window = getattr(entry, "context_window", None)
-        if isinstance(window, int) and window > 0:
-            set_context_window_override(model, window)
-        elif (
-            context_window_override(model) is None
+        if (
+            isinstance(window, int)
+            and window > 0
             and _context_window_for_model_optional(model) is None
         ):
-            set_context_window_override(model, CUSTOM_MODEL_CONTEXT_WINDOW_TOKENS)
+            overrides[model.lower()] = window
+        elif _context_window_for_model_optional(model) is None:
+            overrides[model.lower()] = CUSTOM_MODEL_CONTEXT_WINDOW_TOKENS
+    _context_window_overrides.clear()
+    _context_window_overrides.update(overrides)
 
 
 def context_window_for_model(model: str) -> int:

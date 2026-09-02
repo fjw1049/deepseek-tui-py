@@ -7,6 +7,7 @@ import re
 from typing import TYPE_CHECKING
 from dataclasses import dataclass
 from typing import Any
+from deepseek_tui.utils import optional_text as _opt_str
 
 if TYPE_CHECKING:
     from deepseek_tui.protocol.messages import Message
@@ -195,10 +196,6 @@ def format_delivery_body(
     )
 
 
-# ======================================================================
-# From types.py
-# ======================================================================
-
 """Optional automation metadata (delivery / digest) — backward compatible."""
 
 
@@ -251,13 +248,6 @@ class DigestConfig:
         if not sources:
             return None
         return cls(sources=sources, account=_opt_str(raw.get("account")))
-
-
-def _opt_str(value: object) -> str | None:
-    if value is None:
-        return None
-    text = str(value).strip()
-    return text or None
 
 
 def cron_prompt_prefix(automation_id: str, name: str) -> str:

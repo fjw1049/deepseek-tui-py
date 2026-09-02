@@ -177,51 +177,34 @@ class SessionMaintenanceMixin:
         )
 
     async def _auto_persist_session(self) -> None:
-        """Best-effort session persistence after each turn.
-
-        Writes session_messages to a JSON file so sessions survive restarts.
-        Silent on failure.
-
-        Workbench / HTTP runtime threads already persist under
-        ``~/.deepseek/threads/`` — skip the TUI ``sessions/current.json``
-        dual-write for those engines to avoid doubling disk use.
-        """
+        """Best-effort standalone-TUI persistence in the canonical thread store."""
         try:
             meta = getattr(getattr(self, "tool_context", None), "metadata", None)
-            if isinstance(meta, dict) and meta.get("runtime_thread_id"):
+            if isinstance(meta, dict) and (
+                meta.get("runtime_thread_id") or meta.get("subagent_id")
+            ):
                 return
 
-            from deepseek_tui.config.paths import user_sessions_dir
+            from deepseek_tui.config.paths import user_threads_dir
+            from deepseek_tui.server.sessions import persist_tui_thread
+            from deepseek_tui.server.threads import RuntimeThreadStore
 
-            sessions_dir = user_sessions_dir()
-            sessions_dir.mkdir(parents=True, exist_ok=True)
-            session_file = sessions_dir / "current.json"
-            import json as _json
-
-            from deepseek_tui.engine.context_pressure import (
-                extract_compaction_bridge_text,
+            config = getattr(self, "_app_config", None)
+            goal = self.goal_service.dump()
+            persist_tui_thread(
+                RuntimeThreadStore(user_threads_dir()),
+                thread_id=self._cycle_session_id,
+                messages=self.session_messages,
+                model=self.default_model,
+                provider=str(getattr(config, "provider", "deepseek") or "deepseek"),
+                workspace=str(self.tool_context.working_directory.resolve()),
+                mode=self.mode,
+                trust_mode=bool(self.tool_context.trust_mode),
+                goal=goal.goal,
+                goal_queue=goal.queue,
             )
-
-            bridge = extract_compaction_bridge_text(self.session_messages)
-            data = {
-                "model": self.default_model,
-                "turn_counter": self.turn_counter,
-                "messages": [m.model_dump() for m in self.session_messages],
-                # Legacy field: bridge now lives inside messages; keep for
-                # older readers / debugging only.
-                "compaction_summary_prompt": bridge
-                or self._compaction_summary_prompt,
-                "metadata": {
-                    "id": self._cycle_session_id,
-                    "goal": self.goal_service.dump().goal,
-                    "goal_queue": self.goal_service.dump().queue,
-                },
-            }
-            tmp = session_file.with_suffix(".tmp")
-            tmp.write_text(_json.dumps(data, ensure_ascii=False), encoding="utf-8")
-            tmp.replace(session_file)
         except Exception:  # noqa: BLE001
-            pass
+            logger.debug("TUI thread persistence failed", exc_info=True)
 
     _COMPACTION_SUMMARY_MAX_CHARS = 20_000
 
@@ -407,7 +390,6 @@ class SessionMaintenanceMixin:
             return
         if not should_advance_cycle(
             active_tokens,
-            reserved_headroom_tokens=8_000,
             model=model,
             config=self.cycle_config,
             in_flight=False,

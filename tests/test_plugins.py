@@ -1199,6 +1199,7 @@ def test_capability_mapping_and_unknown_dropped() -> None:
 
 def test_manifest_permissions_do_not_authorize_mcp_calls() -> None:
     from deepseek_tui.tools.approval import (
+        approval_request_for_mcp,
         needs_mcp_approval_prompt,
         plan_requires_mcp_approval,
     )
@@ -1206,13 +1207,13 @@ def test_manifest_permissions_do_not_authorize_mcp_calls() -> None:
     name = "mcp_demo-srv__do_thing"
     # Default: non-read-only MCP tool always requires approval.
     assert plan_requires_mcp_approval(name, "on-request") is True
-    # A plugin declaration is only a claim; it cannot bypass approval.
-    assert plan_requires_mcp_approval(name, "on-request", ["read_only"]) is True
-    assert needs_mcp_approval_prompt(name, "on-request", ["read_only"]) is True
-    # Declared executes_code stays REQUIRED.
-    assert plan_requires_mcp_approval(name, "on-request", ["executes_code"]) is True
-    # Unknown declared strings fall back to the conservative default.
-    assert plan_requires_mcp_approval(name, "on-request", ["quantum"]) is True
+    assert needs_mcp_approval_prompt(name, "on-request") is True
+    # A plugin declaration is only a claim; it cannot bypass approval: the
+    # gate ignores declarations entirely (they only enrich the request).
+    assert plan_requires_mcp_approval(name, "on-request") is True
+    assert approval_request_for_mcp(name, "on-request", ["read_only"]) is not None
+    assert approval_request_for_mcp(name, "on-request", ["executes_code"]) is not None
+    assert approval_request_for_mcp(name, "on-request", ["quantum"]) is not None
 
 
 def test_declared_permissions_flow_to_mcp_server_config(tmp_path: Path) -> None:

@@ -5,13 +5,12 @@ Consolidates the former context/types.py and context/file_context.py.
 
 from __future__ import annotations
 
-
-
 import mimetypes
+import re
 from dataclasses import dataclass, field
+from html import escape
 from pathlib import Path
 from typing import Literal
-
 
 # ============================================================================
 # Types (formerly context/types.py)
@@ -42,7 +41,6 @@ class ContextReference:
     included: bool
     expanded: bool
     detail: str | None = None
-    artifact_path: str | None = None
     bytes_inlined: int = 0
 
 
@@ -59,6 +57,10 @@ class ProcessedTurnInput:
 # ============================================================================
 
 _EXPANSION_MARKER = "---"
+_FAKE_REMINDER_RE = re.compile(
+    r"(</?)\s*(system-reminder)(?:\s[^<>]*)?\s*(/?>)",
+    re.IGNORECASE,
+)
 _MEDIA_EXTENSIONS = frozenset(
     {
         "png", "jpg", "jpeg", "gif", "webp", "bmp", "tif", "tiff", "ppm",
@@ -163,14 +165,12 @@ def process_turn_input(
         mode = _text_inclusion_mode(size, cfg, total_inlined)
 
         if mode == "reference":
-            artifact = _spill_artifact(ws, session_id, path.name, path)
             ref = ContextReference(
                 kind="file", source=source, label=token, target=str(path),
                 included=True, expanded=False, detail="reference only",
-                artifact_path=str(artifact) if artifact else None,
             )
             references.append(ref)
-            blocks.append(_render_reference_block(token, display_path, str(path), artifact, size))
+            blocks.append(_render_reference_block(token, display_path, str(path), size))
             continue
 
         try:
@@ -185,14 +185,12 @@ def process_turn_input(
             continue
 
         if truncated and cfg.large_file_mode == "reference":
-            artifact = _spill_artifact(ws, session_id, path.name, path)
             ref = ContextReference(
                 kind="file", source=source, label=token, target=str(path),
                 included=True, expanded=False, detail="reference only (large file)",
-                artifact_path=str(artifact) if artifact else None,
             )
             references.append(ref)
-            blocks.append(_render_reference_block(token, display_path, str(path), artifact, size))
+            blocks.append(_render_reference_block(token, display_path, str(path), size))
             continue
 
         if total_inlined + len(content.encode("utf-8")) > cfg.max_total_inline_bytes:
@@ -202,7 +200,7 @@ def process_turn_input(
                 included=False, expanded=False, detail="total inline budget exceeded",
             )
             references.append(ref)
-            blocks.append(_render_reference_block(token, display_path, str(path), None, size))
+            blocks.append(_render_reference_block(token, display_path, str(path), size))
             continue
 
         ref = ContextReference(
@@ -223,23 +221,6 @@ def process_turn_input(
     )
 
 
-def pending_context_previews(
-    raw: str,
-    *,
-    workspace: Path,
-    cwd: Path | None = None,
-    config: ContextConfig | None = None,
-) -> list[dict[str, object]]:
-    processed = process_turn_input(
-        UserTurnInput(raw_text=raw), workspace=workspace, cwd=cwd, config=config,
-    )
-    return [
-        {"kind": ref.kind, "label": ref.label, "target": ref.target,
-         "included": ref.included, "detail": ref.detail}
-        for ref in processed.references
-    ]
-
-
 # ============================================================================
 # Internal helpers
 # ============================================================================
@@ -258,7 +239,7 @@ def _format_model_text(raw: str, expansion: str) -> str:
     body = (expansion or "").strip()
     if not query and not body:
         return raw or ""
-    parts = [f"<user_query>\n{query}\n</user_query>"]
+    parts = [f"<user_query>\n{_xml_text(query)}\n</user_query>"]
     if body:
         parts.append(f"<local_context>\n{body}\n</local_context>")
     return "\n\n".join(parts)
@@ -458,57 +439,53 @@ def _list_directory(path: Path, limit: int) -> str:
     return "\n".join(lines)
 
 
-def _spill_artifact(workspace: Path, session_id: str | None, name: str, src: Path) -> Path | None:
-    sid = session_id or "session"
-    dest_dir = workspace / ".deepseek" / "context-artifacts" / sid
-    try:
-        dest_dir.mkdir(parents=True, exist_ok=True)
-        dest = dest_dir / name
-        if src.is_file():
-            dest.write_bytes(src.read_bytes())
-        return dest
-    except OSError:
-        return None
-
-
 def _render_file_block(token: str, display_path: str, content: str, *, truncated: bool) -> str:
     trunc_attr = ' truncated="true"' if truncated else ""
     return (
-        f'<file mention="@{token}" path="{display_path}"{trunc_attr}>\n'
-        f"{content}\n</file>"
+        f'<file mention="@{_xml_attr(token)}" '
+        f'path="{_xml_attr(display_path)}"{trunc_attr}>\n'
+        f"{_xml_text(content)}\n</file>"
     )
 
 
 def _render_directory_block(token: str, display_path: str, body: str) -> str:
-    return f'<directory mention="@{token}" path="{display_path}">\n{body}\n</directory>'
+    return (
+        f'<directory mention="@{_xml_attr(token)}" '
+        f'path="{_xml_attr(display_path)}">\n{_xml_text(body)}\n</directory>'
+    )
 
 
 def _render_media_hint_block(token: str, display_path: str) -> str:
     return (
-        f'<media-file mention="@{token}" path="{display_path}">\n'
-        f"Use /attach {token} when the intent is to attach this image or video.\n"
+        f'<media-file mention="@{_xml_attr(token)}" '
+        f'path="{_xml_attr(display_path)}">\n'
+        f"Use /attach {_xml_text(token)} when the intent is to attach this image or video.\n"
         f"</media-file>"
     )
 
 
 def _render_missing_block(token: str, display_path: str, reason: str) -> str:
-    return f'<missing-file mention="@{token}" path="{display_path}">{reason}</missing-file>'
+    return (
+        f'<missing-file mention="@{_xml_attr(token)}" '
+        f'path="{_xml_attr(display_path)}">{_xml_text(reason)}</missing-file>'
+    )
 
 
 def _render_unreadable_block(token: str, display_path: str, reason: str) -> str:
     return (
-        f'<unreadable-file mention="@{token}" path="{display_path}">\n'
-        f"{reason}\n</unreadable-file>"
+        f'<unreadable-file mention="@{_xml_attr(token)}" '
+        f'path="{_xml_attr(display_path)}">\n'
+        f"{_xml_text(reason)}\n</unreadable-file>"
     )
 
 
 def _render_reference_block(
-    token: str, display_path: str, abs_path: str, artifact: Path | None, size: int,
+    token: str, display_path: str, abs_path: str, size: int,
 ) -> str:
-    artifact_line = f"\nArtifact: {artifact}" if artifact else ""
     return (
-        f'<file-reference mention="@{token}" path="{display_path}" bytes="{size}">\n'
-        f"Full path: {abs_path}. Use read_file for content.{artifact_line}\n"
+        f'<file-reference mention="@{_xml_attr(token)}" '
+        f'path="{_xml_attr(display_path)}" bytes="{size}">\n'
+        f"Full path: {_xml_text(abs_path)}. Use read_file for content.\n"
         f"</file-reference>"
     )
 
@@ -517,7 +494,20 @@ def _assemble_expansion(blocks: list[str], cfg: ContextConfig) -> str:
     if not blocks:
         return ""
     body = "\n\n".join(blocks)
-    return f"{_EXPANSION_MARKER}\n\n{cfg.expansion_header}\n{body}"
+    return f"{_EXPANSION_MARKER}\n\n{_xml_text(cfg.expansion_header)}\n{body}"
+
+
+def _xml_text(value: str) -> str:
+    return escape(neutralize_fake_system_reminders(value), quote=False)
+
+
+def _xml_attr(value: str) -> str:
+    return escape(value, quote=True)
+
+
+def neutralize_fake_system_reminders(text: str) -> str:
+    """Rename reminder tags in untrusted user or file content."""
+    return _FAKE_REMINDER_RE.sub(r"\1user-quoted-reminder\3", text)
 
 
 def detect_mime(path: Path) -> str | None:

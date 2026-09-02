@@ -1,7 +1,7 @@
 """Local data inventory and maintenance for Workbench Settings.
 
 Inventory reports what lives under ``~/.deepseek`` (``threads/`` is the
-conversation source of truth; ``sessions/`` is TUI legacy; plus state.db).
+conversation source of truth; ``sessions/`` and any ``state.db`` are legacy).
 Maintenance ops reclaim disk without touching Skills, MCP, plugins, or
 config — matching the product safety gradient:
 
@@ -308,31 +308,6 @@ def optimize_storage(
     report.bytes_reclaimed = max(0, report.bytes_before - report.bytes_after)
     if report.bytes_reclaimed == 0 and report.events_stripped:
         report.details.append("events compacted; size change may be small after JSON rewrite")
-    return report
-
-
-def clean_threads_older_than(
-    store: RuntimeThreadStore,
-    checkpoints: TurnCheckpointStore,
-    *,
-    older_than_days: int,
-    now: datetime | None = None,
-) -> CleanReport:
-    """Hard-delete threads whose ``updated_at`` is older than the cutoff."""
-    if older_than_days < 1:
-        raise ValueError("older_than_days must be >= 1")
-    cutoff = (now or datetime.now(timezone.utc)) - timedelta(days=older_than_days)
-    report = CleanReport()
-    for thread in list(store.list_threads()):
-        updated = thread.updated_at
-        if updated.tzinfo is None:
-            updated = updated.replace(tzinfo=timezone.utc)
-        if updated >= cutoff:
-            continue
-        reclaimed = delete_thread_tree(store, checkpoints, thread.id)
-        report.threads_deleted += 1
-        report.bytes_reclaimed += reclaimed
-        report.thread_ids.append(thread.id)
     return report
 
 

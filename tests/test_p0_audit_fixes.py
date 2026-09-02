@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
-from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -225,91 +223,6 @@ def test_approval_key_write_file_includes_path() -> None:
     assert str(a).startswith("file:write_file:")
 
 
-@pytest.mark.asyncio
-async def test_run_tests_timeout_kills_process(tmp_path, monkeypatch) -> None:
-    """Timed-out run_tests must kill the child (no zombie)."""
-    from deepseek_tui.tools.run_tests import RunTestsTool
-
-    killed = {"value": False}
-
-    class _FakeProc:
-        returncode = None
-
-        def kill(self) -> None:
-            killed["value"] = True
-            self.returncode = -9
-
-        async def wait(self) -> int:
-            return -9
-
-        async def communicate(self) -> tuple[bytes, bytes]:
-            await asyncio.sleep(10)
-            return b"", b""
-
-    async def _fake_spawn(*_a: Any, **_k: Any) -> Any:
-        return _FakeProc(), None
-
-    monkeypatch.setattr(
-        "deepseek_tui.tools.shell.spawn_sandboxed_shell", _fake_spawn
-    )
-    # Shrink wait_for timeout via wrapping communicate path: patch wait_for
-    # only for the communicate call by using a short timeout in a local copy
-    # is hard; instead patch wait_for to fail fast when timeout==300.
-    real_wait_for = asyncio.wait_for
-
-    async def _fast_timeout(awaitable: Any, *, timeout: float | None = None) -> Any:
-        if timeout == 300:
-            timeout = 0.01
-        return await real_wait_for(awaitable, timeout=timeout)
-
-    monkeypatch.setattr(asyncio, "wait_for", _fast_timeout)
-
-    with pytest.raises(ToolError, match="timed out"):
-        await RunTestsTool().execute(
-            {"command": "sleep 999"},
-            ToolContext(working_directory=tmp_path),
-        )
-    assert killed["value"] is True
-
-
-@pytest.mark.asyncio
-async def test_run_tests_routes_through_sandboxed_spawn(tmp_path, monkeypatch) -> None:
-    """H7: run_tests must spawn via spawn_sandboxed_shell (workspace sandbox),
-    not a bare create_subprocess_shell that escapes it."""
-    from deepseek_tui.tools.run_tests import RunTestsTool
-
-    called = {"value": False}
-
-    class _FakeProc:
-        returncode = 0
-
-        async def communicate(self) -> tuple[bytes, bytes]:
-            return b"ok", b""
-
-    class _FakeExecEnv:
-        sandbox_type = SimpleNamespace(value="none")
-
-        def is_sandboxed(self) -> bool:
-            return False
-
-    async def _fake_spawn(command, cwd, context, timeout_ms):
-        called["value"] = True
-        assert command == "echo hi"
-        return _FakeProc(), _FakeExecEnv()
-
-    monkeypatch.setattr(
-        "deepseek_tui.tools.shell.spawn_sandboxed_shell", _fake_spawn
-    )
-
-    result = await RunTestsTool().execute(
-        {"command": "echo hi"},
-        ToolContext(working_directory=tmp_path),
-    )
-    assert called["value"] is True
-    payload = json.loads(result.content)
-    assert payload["sandboxed"] is False
-    assert payload["sandbox_type"] == "none"
-
 
 def test_task_create_schema_omits_privilege_flags() -> None:
     from deepseek_tui.tools.task.tools import TaskCreateTool
@@ -402,7 +315,7 @@ def test_subagent_runtime_copies_active_task_id(tmp_path) -> None:
         active_task_id="task_abc",
     )
     assert rt.with_spawn_depth(1).active_task_id == "task_abc"
-    assert rt.child().active_task_id == "task_abc"
+    assert rt.with_spawn_depth(rt.spawn_depth + 1).active_task_id == "task_abc"
     manager.attach_loop_runtime(rt)
     manager.bind_active_task_id("task_xyz")
     assert rt.active_task_id == "task_xyz"
@@ -464,7 +377,7 @@ def test_subagent_runtime_trust_mode_not_derived_from_auto_approve(tmp_path) -> 
         auto_approve=True,
     )
     assert rt.trust_mode is False
-    assert rt.child().trust_mode is False
+    assert rt.with_spawn_depth(rt.spawn_depth + 1).trust_mode is False
 
     trusted = SubAgentRuntime(
         manager=manager,
@@ -476,7 +389,7 @@ def test_subagent_runtime_trust_mode_not_derived_from_auto_approve(tmp_path) -> 
         trust_mode=True,
     )
     assert trusted.with_spawn_depth(1).trust_mode is True
-    assert trusted.child().trust_mode is True
+    assert trusted.with_spawn_depth(trusted.spawn_depth + 1).trust_mode is True
 
 
 @pytest.mark.asyncio

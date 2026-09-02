@@ -213,10 +213,10 @@ Hook 用 `create_subprocess_shell(hook.command)`。项目 `config.toml` 的 `[[h
 | C5 | MCP stdio 继承整份 `os.environ` | 环境变量白名单 + 配置里显式 `env` | 子进程默认看不到 `DEEPSEEK_API_KEY`，除非 mcp.json 显式传 |
 | C6 | `cron_create` 的 `delivery.to` 由模型填 | 只允许配置白名单（默认飞书 chat / `mail_to`） | 模型填陌生 chat_id 失败 |
 | C7 | Seam / cycle 摘要可能编造「用户已同意」 | 提示写明摘要不可靠；敏感工具结果不要进归档原文 | 打开 context 时仍以 verbatim 窗口为准（正确性，非权限） |
-| C8 | `_has_api_key` 不查 Keyring → task/subagent 走 stub | 与主路径一样走 `SecretsManager.resolve_api_key` | 只 `auth set`、无 env 时后台任务仍走真模型 |
+| C8 | `_has_api_key` 与主凭据解析链不一致 → task/subagent 走 stub | 与主路径一样走 `SecretsManager.resolve_api_key` | 只有 config、无 env 时后台任务仍走真模型 |
 | C9 | `untrusted` 比 `on-request` 更松（写文件不问） | 改名 `sensitive-only`，或让 `untrusted` 更严 | 设置页文案与行为一致 |
 | C10 | `command_safety` 按首词放行（`find -exec` 等）；Starlark `PolicyParser` 未接线 | `find` 带 `-exec/-delete` 升档；未接线的 Starlark 标明或删文档 | 不给「写了 prefix_rule 就会生效」的假安全感 |
-| C11 | 文件 Keyring 先写后 chmod；失败回退到 cwd `.deepseek-secrets.json` | `os.open(0o600)`；回退只允许 `~/.deepseek/secrets/` | cwd 不再出现 secrets 文件 |
+| C11 | 旧文件凭据后端先写后 chmod，且可能回退到 cwd | 删除旧后端，统一原子写入 `config.toml` | cwd 不再出现额外凭据文件 |
 | C12 | 每次工具调用把完整 `session_messages` 塞进 `metadata` | 只在 `fork_context` 需要时拷贝，不要挂在共享 metadata | 普通工具读不到整段对话 |
 
 ---

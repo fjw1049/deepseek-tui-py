@@ -21,6 +21,9 @@ export type GitLogResult =
       branch: string | null
       headHash: string
       upstream: GitLogUpstream | null
+      hasRemote: boolean
+      remoteRefreshError: string | null
+      remoteRefreshedAt: string | null
       commits: GitLogCommit[]
     }
   | {

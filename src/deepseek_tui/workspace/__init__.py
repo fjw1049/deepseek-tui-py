@@ -10,7 +10,6 @@ from deepseek_tui.workspace.mutation_ledger import (
     TurnDiffSnapshot,
     TurnMutationLedger,
     mutation_from_metadata,
-    mutation_to_dict,
 )
 
 __all__ = [
@@ -20,6 +19,5 @@ __all__ = [
     "TurnMutationLedger",
     "count_diff_stats",
     "mutation_from_metadata",
-    "mutation_to_dict",
     "synthesize_unified_diff",
 ]

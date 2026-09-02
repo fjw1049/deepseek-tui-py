@@ -32,15 +32,9 @@ _INLINE_TOOLS: dict[str, tuple[str, str]] = {
     "grep_files": ("✱", "grep"),
     "file_search": ("✱", "search"),
     "list_dir": ("☰", "ls"),
-    "project_map": ("☰", "map"),
     # Web
     "web_search": ("◈", "web"),
     "fetch_url": ("⇣", "fetch"),
-    # Git (read-only)
-    "git": ("◈", "git"),
-    # GitHub (read-only)
-    "github_issue_context": ("◈", "issue"),
-    "github_pr_context": ("◈", "pr"),
     # Knowledge
     "note": ("◇", "note"),
     # Plan / checklist
@@ -71,7 +65,6 @@ _INLINE_TOOLS: dict[str, tuple[str, str]] = {
     "read_mcp_resource": ("◇", "mcp"),
     "mcp_get_prompt": ("◇", "mcp"),
     # Validation / misc
-    "run_tests": ("◇", "test"),
     "current_time": ("◇", "time"),
     "request_user_input": ("◇", "input"),
     "load_skill": ("◇", "skill"),
@@ -89,9 +82,6 @@ _BLOCK_TOOLS: dict[str, tuple[str, str]] = {
     # Shell with output
     "exec_shell": ("$", "run"),
     "exec_shell_interact": ("$", "run"),
-    # GitHub writes
-    "github_comment": ("◈", "comment"),
-    "github_close": ("◈", "close"),
     # Structured output
     "structured_output": ("◇", "output"),
     # Automation (write)

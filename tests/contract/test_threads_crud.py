@@ -114,7 +114,6 @@ async def test_thread_warmup_endpoint_loads_engine(
 async def test_thread_warmup_skips_when_provider_has_no_api_key(
     client: AsyncClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setenv("DEEPSEEK_SKIP_KEYRING", "1")
     monkeypatch.delenv("KIMI_API_KEY", raising=False)
     monkeypatch.delenv("MOONSHOT_API_KEY", raising=False)
     monkeypatch.setattr(

@@ -173,30 +173,18 @@ MAILBOX_MAX_ENVELOPES = 512
 
 
 class Mailbox:
-    """Sender side of the mailbox. Cheaply sharable via ``share()``.
+    """Sender side of the mailbox.
 
-    ``share()`` returns the same underlying object so child runtimes
-    observing the same stream stay in sync.
+    The same instance is shared by child runtimes so all producers
+    publish into one stream; consumers poll it via ``drain_available``.
     """
 
-    def __init__(self, cancel_token: asyncio.Event | None = None) -> None:
+    def __init__(self) -> None:
         self._queue: asyncio.Queue[MailboxEnvelope] = asyncio.Queue(
             maxsize=MAILBOX_MAX_ENVELOPES
         )
         self._seq = 0
         self._closed = False
-        self._cancel_token = cancel_token or asyncio.Event()
-
-    @property
-    def cancel_token(self) -> asyncio.Event:
-        return self._cancel_token
-
-    def share(self) -> Mailbox:
-        """Return this mailbox so child producers publish into the same stream."""
-        return self
-
-    def is_closed(self) -> bool:
-        return self._closed
 
     def send(self, message: MailboxMessage) -> bool:
         """Enqueue a message with a fresh monotonic seq.
@@ -219,24 +207,8 @@ class Mailbox:
         return True
 
     def close(self) -> None:
-        """Close the mailbox and cancel the bound token.
-
-        Closing signals cancellation through the shared
-        token so children cooperating on the same token shut down too.
-        """
-        if self._closed:
-            return
+        """Close the mailbox; further sends are dropped."""
         self._closed = True
-        self._cancel_token.set()
-
-    async def recv(self) -> MailboxEnvelope | None:
-        """Receive next envelope. Returns None if closed and queue drained."""
-        if self._closed and self._queue.empty():
-            return None
-        try:
-            return await self._queue.get()
-        except asyncio.CancelledError:
-            return None
 
     def try_recv(self) -> MailboxEnvelope | None:
         try:

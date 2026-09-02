@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from deepseek_tui.utils import utc_now_iso as _utc_now_iso
 from deepseek_tui.utils import write_json_atomic
 
 _LOG = logging.getLogger(__name__)
@@ -79,12 +80,6 @@ def subagent_transcript_path(workspace: Path, agent_id: str) -> Path:
 
 def task_transcript_path(data_dir: Path, task_id: str) -> Path:
     return data_dir / "transcripts" / f"{task_id}.json"
-
-
-def _utc_now_iso() -> str:
-    from datetime import datetime, timezone
-
-    return datetime.now(timezone.utc).isoformat()
 
 
 def save_transcript(path: Path, transcript: DurableTranscript) -> None:

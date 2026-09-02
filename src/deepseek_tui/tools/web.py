@@ -543,19 +543,13 @@ def _check_network_policy(url: str, tool_name: str, context: ToolContext) -> Non
 
     decision = policy.evaluate(url, tool_name)
     if decision == Decision.DENY:
-        raise ToolError(
-            f"Network access denied for {url} by policy. "
-            "Configure allow rules in config.toml [network]."
-        )
+        raise ToolError(f"Network access denied for {url} by the active policy.")
     if decision == Decision.PROMPT:
         # No interactive approval hook exists on this path yet, so an
-        # unlisted host must fail closed rather than silently bypass the
-        # policy. Users opt hosts in via [network] rules or
-        # default_action = "allow".
+        # unlisted host must fail closed rather than silently bypass policy.
         raise ToolError(
-            f"Network access to {url} is not covered by the [network] "
-            "policy (default_action=ask). Add an allow rule for this host "
-            "in config.toml [network] or set default_action = \"allow\"."
+            f"Network access to {url} requires approval, but this tool path "
+            "has no interactive network-approval handler."
         )
 
 
@@ -732,5 +726,4 @@ async def _http_get(
         raise ToolError(f"Too many redirects fetching {url}")
     except (httpx.HTTPError, OSError) as exc:
         raise ToolError(f"Failed to fetch URL {url}: {exc}") from exc
-
 

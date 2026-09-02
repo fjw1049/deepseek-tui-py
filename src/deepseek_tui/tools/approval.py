@@ -12,7 +12,6 @@ import hashlib
 import json
 from dataclasses import dataclass, field
 from enum import Enum
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
@@ -22,7 +21,6 @@ from deepseek_tui.policy.command_safety import SafetyLevel, analyze_command
 # lives in policy.exec_policy; re-exported here for callers that import
 # them from tools.approval (e.g. tools/shell.py).
 from deepseek_tui.policy.exec_policy import (  # noqa: F401
-    AmendError,
     Decision,
     ExecPolicyError,
 )
@@ -69,23 +67,6 @@ class ApprovalDecision(Enum):
     APPROVED = "approved"
     DENIED = "denied"
     APPROVED_SESSION = "approved_session"
-
-
-@dataclass(slots=True)
-class PolicyRule:
-    """A single policy rule matching tool patterns to decisions."""
-
-    pattern: str
-    decision: ApprovalDecision
-    risk_threshold: RiskLevel = RiskLevel.LOW
-    categories: list[ToolCategory] = field(default_factory=list)
-
-    def matches(self, tool_name: str, category: ToolCategory) -> bool:
-        if self.categories and category not in self.categories:
-            return False
-        if self.pattern == "*":
-            return True
-        return tool_name == self.pattern or tool_name.startswith(self.pattern.rstrip("*"))
 
 
 # Per-call approval cache with fingerprint keys.
@@ -364,97 +345,7 @@ def _parse_host(tool_input: Any) -> str:
     return parsed.hostname or url
 
 
-# Advisory file-locked append for policy amendments.
-#
-# The invariant: appending a new ``prefix_rule(...)`` line must
-#
-# 1. create the parent directory if it doesn't exist;
-# 2. take an advisory lock on the policy file (``fcntl.flock`` on Unix);
-# 3. ensure the existing content ends in ``\n`` before appending;
-# 4. release the lock via the standard context manager on exit.
-#
-# macOS / Linux only (the current project scope). Windows support is
-# deferred — the audit noted the sandbox module is the real Windows
-# blocker, so we don't spend effort here on a Win-specific ``msvcrt``
-# lock path.
-
-
-def blocking_append_allow_prefix_rule(
-    policy_path: Path, prefix: list[str]
-) -> None:
-    """Append a ``prefix_rule(pattern=..., decision="allow")`` to the file.
-
-    This blocks on advisory locking, so callers should wrap it in
-    ``asyncio.to_thread`` when invoked from async code.
-    """
-    if not prefix:
-        raise AmendError.empty_prefix()
-
-    tokens_json = [json.dumps(token) for token in prefix]
-    pattern_literal = "[" + ", ".join(tokens_json) + "]"
-    line = f'prefix_rule(pattern={pattern_literal}, decision="allow")'
-
-    parent = policy_path.parent
-    if str(parent) == "":
-        raise AmendError.missing_parent(policy_path)
-    try:
-        parent.mkdir(parents=True, exist_ok=True)
-    except OSError as err:
-        raise AmendError.create_policy_dir(parent, err) from err
-
-    _append_locked_line(policy_path, line)
-
-
-def _append_locked_line(policy_path: Path, line: str) -> None:
-    """Open ``policy_path`` for append, lock, and append ``line``."""
-    import fcntl
-
-    try:
-        handle = open(  # noqa: SIM115 — lifetime is bounded by try/finally
-            policy_path, "a+", encoding="utf-8"
-        )
-    except OSError as err:
-        raise AmendError.open_policy_file(policy_path, err) from err
-
-    try:
-        try:
-            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
-        except OSError as err:
-            raise AmendError.lock_policy_file(policy_path, err) from err
-
-        # Ensure the file ends with a newline before we append. Seek to
-        # the final byte (if any) and check.
-        try:
-            handle.seek(0, 2)  # SEEK_END
-            size = handle.tell()
-        except OSError as err:
-            raise AmendError.read_policy_file(policy_path, err) from err
-
-        needs_newline = False
-        if size > 0:
-            try:
-                handle.seek(size - 1)
-                last = handle.read(1)
-            except OSError as err:
-                raise AmendError.read_policy_file(policy_path, err) from err
-            if last != "\n":
-                needs_newline = True
-
-        try:
-            if needs_newline:
-                handle.write("\n")
-            handle.write(line + "\n")
-            handle.flush()
-        except OSError as err:
-            raise AmendError.write_policy_file(policy_path, err) from err
-    finally:
-        try:
-            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
-        finally:
-            handle.close()
-
-
-# Exec policy engine — rule overrides and session decision cache.
+# Exec policy engine — carries the session's approval policy to the gate.
 
 
 def exec_policy_for_config(config: Config | None) -> ExecPolicyEngine:
@@ -466,58 +357,10 @@ def exec_policy_for_config(config: Config | None) -> ExecPolicyEngine:
 
 
 class ExecPolicyEngine:
-    """Evaluates tool calls against policy rules and session cache."""
+    """Holds the session's ``approval_policy`` for the gate functions below."""
 
-    def __init__(
-        self,
-        rules: list[PolicyRule] | None = None,
-        *,
-        approval_policy: str = "on-request",
-    ) -> None:
-        self._rules: list[PolicyRule] = rules or []
-        self._session_cache: dict[str, ApprovalDecision] = {}
+    def __init__(self, *, approval_policy: str = "on-request") -> None:
         self.approval_policy = approval_policy
-
-    def add_rule(self, rule: PolicyRule) -> None:
-        self._rules.append(rule)
-
-    def clear_cache(self) -> None:
-        self._session_cache.clear()
-
-    def evaluate(
-        self,
-        tool_name: str,
-        capabilities: list[ToolCapability],
-    ) -> ApprovalRequest | None:
-        """Legacy API — uses the gate logic in this module.
-
-        Engine tool execution uses ``approval_request_for_tool`` instead.
-        Kept for ``PolicyRule`` overrides and contract tests.
-        """
-        cached = self._session_cache.get(tool_name)
-        if cached == ApprovalDecision.APPROVED_SESSION:
-            return None
-
-        category = _classify_category(capabilities)
-        for rule in self._rules:
-            if rule.matches(tool_name, category):
-                if rule.decision == ApprovalDecision.APPROVED:
-                    return None
-                if rule.decision == ApprovalDecision.DENIED:
-                    risk = _assess_risk(capabilities)
-                    return ApprovalRequest(
-                        tool_name=tool_name,
-                        risk_level=risk,
-                        category=category,
-                        reason="denied by policy rule",
-                    )
-
-        return approval_request_for_capabilities(
-            tool_name, capabilities, self.approval_policy
-        )
-
-    def record_decision(self, tool_name: str, decision: ApprovalDecision) -> None:
-        self._session_cache[tool_name] = decision
 
 
 def _classify_category(capabilities: list[ToolCapability]) -> ToolCategory:
@@ -547,8 +390,7 @@ def _assess_risk(capabilities: list[ToolCapability]) -> RiskLevel:
 # Tool approval gate.
 #
 # Single source of truth for *whether* to prompt/block. Presentation lives
-# in this module below; ``ExecPolicyEngine.evaluate`` (above) is the legacy
-# entry point into the same gate.
+# in this module below.
 
 _AUTO_POLICIES = frozenset({"auto", "never-ask", "yolo"})
 # Policies that prompt for SUGGEST-tier tools (workspace writes).
@@ -568,19 +410,6 @@ class GateAction(str, Enum):
 
 def normalize_approval_policy(policy: str | None) -> str:
     return (policy or "on-request").strip().lower()
-
-
-def requirement_from_capabilities(
-    capabilities: list[ToolCapability],
-) -> ApprovalRequirement:
-    """``approval_requirement`` default (for legacy evaluate API)."""
-    if ToolCapability.EXECUTES_CODE in capabilities or (
-        ToolCapability.REQUIRES_APPROVAL in capabilities
-    ):
-        return ApprovalRequirement.REQUIRED
-    if ToolCapability.WRITES_FILES in capabilities:
-        return ApprovalRequirement.SUGGEST
-    return ApprovalRequirement.AUTO
 
 
 def _gate_action(requirement: ApprovalRequirement, policy: str | None) -> GateAction:
@@ -633,9 +462,7 @@ def _capabilities_from_declared(declared: list[str] | None) -> list[ToolCapabili
     return out
 
 
-def _mcp_requirement(
-    tool_name: str, declared_capabilities: list[str] | None = None
-) -> ApprovalRequirement:
+def _mcp_requirement(tool_name: str) -> ApprovalRequirement:
     # Lazy import: engine.dispatch pulls in engine.handle, which imports
     # this module — a module-level import here would create a cycle.
     from deepseek_tui.engine.dispatch import is_mcp_tool, mcp_tool_is_read_only
@@ -643,36 +470,24 @@ def _mcp_requirement(
     if not is_mcp_tool(tool_name) or mcp_tool_is_read_only(tool_name):
         return ApprovalRequirement.AUTO
     # External declarations are claims, not authorization. They may improve
-    # the approval description but must never lower the conservative default.
-    # In particular, a plugin cannot self-declare ``read_only`` to bypass the
-    # approval gate for an otherwise mutating/unknown MCP tool.
+    # the approval description (see approval_request_for_mcp) but never
+    # change the gate: a plugin cannot self-declare ``read_only`` to bypass
+    # approval for an otherwise mutating/unknown MCP tool.
     return ApprovalRequirement.REQUIRED
 
 
-def needs_mcp_approval_prompt(
-    tool_name: str,
-    policy: str | None,
-    declared_capabilities: list[str] | None = None,
-) -> bool:
-    req = _mcp_requirement(tool_name, declared_capabilities)
+def needs_mcp_approval_prompt(tool_name: str, policy: str | None) -> bool:
+    req = _mcp_requirement(tool_name)
     return _gate_action(req, policy) is GateAction.PROMPT
 
 
-def should_block_mcp_on_never(
-    tool_name: str,
-    policy: str | None,
-    declared_capabilities: list[str] | None = None,
-) -> bool:
-    req = _mcp_requirement(tool_name, declared_capabilities)
+def should_block_mcp_on_never(tool_name: str, policy: str | None) -> bool:
+    req = _mcp_requirement(tool_name)
     return _gate_action(req, policy) is GateAction.BLOCK_NEVER
 
 
-def plan_requires_mcp_approval(
-    tool_name: str,
-    policy: str | None,
-    declared_capabilities: list[str] | None = None,
-) -> bool:
-    req = _mcp_requirement(tool_name, declared_capabilities)
+def plan_requires_mcp_approval(tool_name: str, policy: str | None) -> bool:
+    req = _mcp_requirement(tool_name)
     return _gate_action(req, policy) is not GateAction.SKIP
 
 
@@ -725,39 +540,16 @@ def approval_request_for_tool(
     return None
 
 
-def approval_request_for_capabilities(
-    tool_name: str,
-    capabilities: list[ToolCapability],
-    policy: str | None,
-    *,
-    reason: str | None = None,
-) -> ApprovalRequest | None:
-    """Legacy/capability-only entry (``ExecPolicyEngine.evaluate`` calls here)."""
-    req = requirement_from_capabilities(capabilities)
-    action = _gate_action(req, policy)
-    if action is GateAction.SKIP:
-        return None
-    if action is GateAction.BLOCK_NEVER:
-        return build_approval_request(
-            tool_name, capabilities, blocked_never=True
-        )
-    return build_approval_request(
-        tool_name,
-        capabilities,
-        reason=reason or f"{tool_name} requires approval",
-    )
-
-
 def approval_request_for_mcp(
     tool_name: str,
     policy: str | None,
     declared_capabilities: list[str] | None = None,
 ) -> ApprovalRequest | None:
     declared = _capabilities_from_declared(declared_capabilities)
-    if should_block_mcp_on_never(tool_name, policy, declared_capabilities):
+    if should_block_mcp_on_never(tool_name, policy):
         caps = declared or [ToolCapability.REQUIRES_APPROVAL, ToolCapability.NETWORK]
         return build_approval_request(tool_name, caps, blocked_never=True)
-    if needs_mcp_approval_prompt(tool_name, policy, declared_capabilities):
+    if needs_mcp_approval_prompt(tool_name, policy):
         from deepseek_tui.engine.dispatch import mcp_tool_approval_description
 
         caps = declared or [ToolCapability.REQUIRES_APPROVAL, ToolCapability.NETWORK]
@@ -887,24 +679,13 @@ def classify_tool_category(tool_name: str) -> str:
 def classify_presentation_risk(
     tool_name: str, category: str, args: dict[str, Any]
 ) -> str:
-    if category in ("safe", "mcp_read"):
+    """Presentation risk: benign for read-like categories, destructive otherwise.
+
+    The dangerous-command detail for shell lives in ``enrich_approval_request``
+    (which appends a Warning impact), not here.
+    """
+    if category in ("safe", "mcp_read", "network"):
         return "benign"
-    if category == "network":
-        return "benign"
-    if category == "shell":
-        cmd = _param_preview(args, ("command", "cmd"), 96)
-        if cmd and analyze_command(cmd).level == SafetyLevel.DANGEROUS:
-            return "destructive"
-        return "destructive"
-    if category in (
-        "file_write",
-        "mcp_action",
-        "subagent",
-        "task",
-        "automation",
-        "unknown",
-    ):
-        return "destructive"
     return "destructive"
 
 

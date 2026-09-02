@@ -41,17 +41,8 @@ from deepseek_tui.integrations.hooks import (
     ResponseStartEvent,
     ToolLifecycleEvent,
 )
-from deepseek_tui.protocol.events import (
-    ResponseDeltaEvent as ResponseDeltaFrame,
-)
-from deepseek_tui.protocol.events import (
-    ResponseEndEvent as ResponseEndFrame,
-)
-from deepseek_tui.protocol.events import (
-    ResponseStartEvent as ResponseStartFrame,
-)
 from deepseek_tui.protocol.messages import Message, MessageOrigin
-from dataclasses import asdict
+from deepseek_tui.tools.utils.validation import pick_str as _pick_str
 
 if TYPE_CHECKING:
     from deepseek_tui.client.base import LLMClient
@@ -126,7 +117,7 @@ class AppRuntime:
         self.working_directory = (working_directory or Path.cwd()).resolve()
         self._tool_runtime: ToolRuntime | None = tool_runtime
         self.threads = ThreadStore()
-        self.hooks = hooks if hooks is not None else _build_hook_dispatcher(self.config)
+        self.hooks = hooks if hooks is not None else build_hook_dispatcher(self.config)
         self._llm_client: LLMClient | None = llm_client
 
     @property
@@ -669,19 +660,24 @@ class AppRuntime:
     #
     # Handlers that overlap with existing CLI thread/task/skill commands. Each
     # handler is a thin delegator to a manager that already exists in the
-    # Python tree (TaskManager / SkillRegistry / McpManager / SessionManager).
+    # Python tree (TaskManager / SkillRegistry / McpManager / thread store).
     # Handlers return ``{"ok": False, "error": ...}`` when the underlying
     # manager isn't wired so the routes never raise.
 
-    async def list_skills(self) -> dict[str, Any]:
+    async def list_skills(self, *, workspace: str | None = None) -> dict[str, Any]:
         """List available skills."""
         from deepseek_tui.integrations.skills import discover_in_workspace
 
         skills_dir = Path(self.config.skills_dir).expanduser()  # noqa: ASYNC240 — pure path expansion, not I/O
+        wd = (
+            Path(workspace).expanduser().resolve()
+            if workspace
+            else self.working_directory
+        )
         try:
             registry = discover_in_workspace(
                 skills_dir=skills_dir,
-                workspace=self.working_directory,
+                workspace=wd,
             )
         except (OSError, ValueError) as exc:
             return {"ok": False, "error": f"skill discovery failed: {exc}"}
@@ -1062,13 +1058,6 @@ class AppRuntime:
 # --- helpers ---------------------------------------------------------------
 
 
-def _pick_str(data: dict[str, Any], key: str) -> str | None:
-    value = data.get(key)
-    if isinstance(value, str) and value.strip():
-        return value
-    return None
-
-
 def _transport_label(cfg: Any) -> str:
     """Describe an MCP server config's transport for the startup summary."""
     if cfg is None:
@@ -1218,17 +1207,14 @@ def _task_record_to_dict(record: Any) -> dict[str, Any]:
 def _build_prompt_event_frames(response_id: str) -> list[dict[str, Any]]:
     """Build the 3-frame response envelope emitted for every prompt."""
     return [
-        ResponseStartFrame(response_id=response_id).model_dump(),
-        ResponseDeltaFrame(
-            response_id=response_id, delta="model-selected"
-        ).model_dump(),
-        ResponseEndFrame(response_id=response_id).model_dump(),
+        {"event": "response_start", "response_id": response_id},
+        {
+            "event": "response_delta",
+            "response_id": response_id,
+            "delta": "model-selected",
+        },
+        {"event": "response_end", "response_id": response_id},
     ]
-
-
-def _build_hook_dispatcher(config: Config) -> HookDispatcher:
-    """Construct a HookDispatcher from ``config.hooks``."""
-    return build_hook_dispatcher(config)
 
 
 # Bridge engine events into SSE envelopes.

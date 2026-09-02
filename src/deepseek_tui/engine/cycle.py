@@ -34,19 +34,6 @@ class CycleConfig:
     enabled: bool = True
     cycle_ratio: float = 0.90
     briefing_max_tokens: int = DEFAULT_BRIEFING_MAX_TOKENS
-    per_model: dict[str, ModelCycleConfig] = field(default_factory=dict)
-
-    def briefing_max_for(self, model: str) -> int:
-        if model in self.per_model:
-            return self.per_model[model].briefing_max_tokens
-        return self.briefing_max_tokens
-
-
-@dataclass(slots=True)
-class ModelCycleConfig:
-    """Per-model cycle tuning."""
-
-    briefing_max_tokens: int = DEFAULT_BRIEFING_MAX_TOKENS
 
 
 @dataclass(slots=True)
@@ -131,7 +118,6 @@ class StructuredState:
 
 def should_advance_cycle(
     active_input_tokens: int,
-    reserved_headroom_tokens: int,
     model: str,
     config: CycleConfig,
     in_flight: bool,
@@ -145,8 +131,6 @@ def should_advance_cycle(
     )
 
     window = max(1, int(context_window_for_model(model) or DEFAULT_CONTEXT_WINDOW_TOKENS))
-    # reserved_headroom_tokens kept for API compat; ratio already leaves room.
-    _ = reserved_headroom_tokens
     ratio = active_input_tokens / window
     return ratio >= float(config.cycle_ratio or 0.90)
 

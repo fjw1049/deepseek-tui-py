@@ -1,11 +1,16 @@
 import { execFile } from 'node:child_process'
-import { stat } from 'node:fs/promises'
-import { join } from 'node:path'
+import { realpath, stat } from 'node:fs/promises'
+import { join, resolve } from 'node:path'
 import { promisify } from 'node:util'
 import type { GitCommitMessageSuggestionResult, GitCommitResult } from '../../shared/git-commit'
 import type { GitLogCommit, GitLogResult, GitLogUpstream } from '../../shared/git-log'
 import type { GitBranchesResult } from '../../shared/git-branches'
-import type { GitPathActionResult, GitPullResult, GitPushResult } from '../../shared/git-actions'
+import type {
+  GitPathActionResult,
+  GitPullResult,
+  GitPushResult,
+  GitSyncResult
+} from '../../shared/git-actions'
 import type {
   GitChangeScope,
   GitWorkingChangeFile,
@@ -20,6 +25,7 @@ import {
 
 const execFileAsync = promisify(execFile)
 const DIFF_MAX_BUFFER = 50 * 1024 * 1024
+const syncingRepositories = new Set<string>()
 
 async function runGit(
   cwd: string,
@@ -63,6 +69,37 @@ function gitFailure(error: unknown): GitBranchesResult {
     return { ok: false, reason: 'git_unavailable', message: 'Git executable was not found.' }
   }
   return { ok: false, reason: 'error', message }
+}
+
+const RUNTIME_CHECKOUT_MESSAGE =
+  'The development app is running from this checkout. Use an installed build or a separate checkout before switching branches.'
+
+function normalizeCheckoutPath(path: string): string {
+  const normalized = resolve(path)
+  return process.platform === 'win32' ? normalized.toLowerCase() : normalized
+}
+
+async function protectRuntimeCheckout(cwd: string): Promise<GitBranchesResult | null> {
+  const rendererUrl = process.env.ELECTRON_RENDERER_URL?.trim()
+  const runtimeRoot = process.env.DEEPSEEK_REPO_ROOT?.trim()
+  if (!rendererUrl || !runtimeRoot) return null
+
+  try {
+    const [workspaceResult, runtimeResult] = await Promise.all([
+      runGit(cwd, ['rev-parse', '--show-toplevel']),
+      runGit(runtimeRoot, ['rev-parse', '--show-toplevel'])
+    ])
+    const [workspaceRoot, runtimeCheckoutRoot] = await Promise.all([
+      realpath(workspaceResult.stdout.trim()),
+      realpath(runtimeResult.stdout.trim())
+    ])
+    if (normalizeCheckoutPath(workspaceRoot) === normalizeCheckoutPath(runtimeCheckoutRoot)) {
+      return { ok: false, reason: 'runtime_checkout', message: RUNTIME_CHECKOUT_MESSAGE }
+    }
+  } catch {
+    // Let the requested Git operation report invalid paths or unavailable Git.
+  }
+  return null
 }
 
 function gitWorkingChangesFailure(error: unknown): GitWorkingChangesResult {
@@ -247,6 +284,33 @@ async function resolveRecentAncestorBranch(
   return recent === defaultLocalName ? defaultBranch : (recent ?? null)
 }
 
+async function readGitRemoteState(
+  cwd: string,
+  refreshRemote: boolean
+): Promise<{
+  hasRemote: boolean
+  refreshError: string | null
+  refreshedAt: string | null
+}> {
+  const remotes = (await runGit(cwd, ['remote'])).stdout
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+  if (!refreshRemote || remotes.length === 0) {
+    return { hasRemote: remotes.length > 0, refreshError: null, refreshedAt: null }
+  }
+  try {
+    await runGit(cwd, ['fetch', '--prune'], 120_000, DIFF_MAX_BUFFER)
+    return { hasRemote: true, refreshError: null, refreshedAt: new Date().toISOString() }
+  } catch (error) {
+    return {
+      hasRemote: true,
+      refreshError: error instanceof Error ? error.message : String(error),
+      refreshedAt: null
+    }
+  }
+}
+
 export async function getGitBranches(
   workspaceRoot: string,
   refreshRemote = false
@@ -257,18 +321,7 @@ export async function getGitBranches(
   }
   try {
     const repositoryRoot = (await runGit(cwd, ['rev-parse', '--show-toplevel'])).stdout.trim()
-    const remotes = (await runGit(cwd, ['remote'])).stdout
-      .split('\n')
-      .map((line) => line.trim())
-      .filter(Boolean)
-    let remoteRefreshError: string | null = null
-    if (refreshRemote && remotes.length > 0) {
-      try {
-        await runGit(cwd, ['fetch', '--prune'], 120_000, DIFF_MAX_BUFFER)
-      } catch (error) {
-        remoteRefreshError = error instanceof Error ? error.message : String(error)
-      }
-    }
+    const remote = await readGitRemoteState(cwd, refreshRemote)
     const attachedBranch = (await runGit(cwd, ['branch', '--show-current'])).stdout.trim()
     const currentBranch = attachedBranch || null
     const inferredBranch = currentBranch ? null : await resolveCurrentBranch(cwd)
@@ -318,8 +371,8 @@ export async function getGitBranches(
       upstream,
       ahead,
       behind,
-      hasRemote: remotes.length > 0,
-      remoteRefreshError
+      hasRemote: remote.hasRemote,
+      remoteRefreshError: remote.refreshError
     }
   } catch (error) {
     return gitFailure(error)
@@ -342,6 +395,8 @@ export async function switchGitBranch(
   const branch = branchName.trim()
   if (!cwd) return { ok: false, reason: 'no_workspace', message: 'No working directory selected.' }
   if (!branch) return { ok: false, reason: 'error', message: 'Branch name is required.' }
+  const runtimeCheckoutFailure = await protectRuntimeCheckout(cwd)
+  if (runtimeCheckoutFailure) return runtimeCheckoutFailure
   try {
     try {
       await runGit(cwd, ['switch', branch], 20_000)
@@ -370,6 +425,8 @@ export async function stashAndSwitchGitBranch(
   const branch = branchName.trim()
   if (!cwd) return { ok: false, reason: 'no_workspace', message: 'No working directory selected.' }
   if (!branch) return { ok: false, reason: 'error', message: 'Branch name is required.' }
+  const runtimeCheckoutFailure = await protectRuntimeCheckout(cwd)
+  if (runtimeCheckoutFailure) return runtimeCheckoutFailure
   try {
     const stashMessage = `workbench: auto stash before switching to ${branch}`
     const pushResult = await runGit(
@@ -734,6 +791,8 @@ export async function createAndSwitchGitBranch(
   if (!branch) return { ok: false, reason: 'error', message: 'Branch name is required.' }
   try {
     await runGit(cwd, ['check-ref-format', '--branch', branch])
+    const runtimeCheckoutFailure = await protectRuntimeCheckout(cwd)
+    if (runtimeCheckoutFailure) return runtimeCheckoutFailure
     try {
       await runGit(cwd, ['switch', '-c', branch], 20_000)
     } catch {
@@ -896,6 +955,80 @@ function gitPullFailure(error: unknown): GitPullResult {
   return { ok: false, reason: 'error', message }
 }
 
+function gitSyncFailure(error: unknown): GitSyncResult {
+  const message = error instanceof Error ? error.message : String(error)
+  if (/not a git repository/i.test(message)) {
+    return { ok: false, reason: 'not_git_repo', message: 'The working directory is not a Git repository.' }
+  }
+  if (/ENOENT/i.test(message) || /spawn git/i.test(message)) {
+    return { ok: false, reason: 'git_unavailable', message: 'Git executable was not found.' }
+  }
+  if (/untracked working tree files.*overwritten|local changes.*overwritten|would be overwritten/i.test(message)) {
+    return {
+      ok: false,
+      reason: 'dirty_worktree',
+      message: 'Some local files would be overwritten by the remote update. Commit or move them, then try again.'
+    }
+  }
+  if (/non-fast-forward|fetch first|rejected/i.test(message)) {
+    return {
+      ok: false,
+      reason: 'rejected',
+      message: 'The remote changed while syncing. Try again to include the latest commits.'
+    }
+  }
+  return { ok: false, reason: 'error', message }
+}
+
+async function gitStatePathExists(cwd: string, name: string): Promise<boolean> {
+  try {
+    const raw = (await runGit(cwd, ['rev-parse', '--git-path', name])).stdout.trim()
+    if (!raw) return false
+    await stat(resolve(cwd, raw))
+    return true
+  } catch {
+    return false
+  }
+}
+
+async function gitRefExists(cwd: string, ref: string): Promise<boolean> {
+  try {
+    await runGit(cwd, ['rev-parse', '--verify', '--quiet', ref])
+    return true
+  } catch {
+    return false
+  }
+}
+
+async function gitOperationInProgress(cwd: string): Promise<boolean> {
+  const checks = await Promise.all([
+    gitRefExists(cwd, 'MERGE_HEAD'),
+    gitRefExists(cwd, 'CHERRY_PICK_HEAD'),
+    gitRefExists(cwd, 'REVERT_HEAD'),
+    gitStatePathExists(cwd, 'rebase-merge'),
+    gitStatePathExists(cwd, 'rebase-apply')
+  ])
+  return checks.some(Boolean)
+}
+
+async function gitConflictPaths(cwd: string): Promise<string[]> {
+  try {
+    const raw = (await runGit(cwd, ['diff', '--name-only', '--diff-filter=U', '-z'])).stdout
+    return [...new Set(raw.split('\0').filter(Boolean))].sort()
+  } catch {
+    return []
+  }
+}
+
+async function abortConflictedMerge(cwd: string): Promise<boolean> {
+  try {
+    await runGit(cwd, ['merge', '--abort'], 120_000, DIFF_MAX_BUFFER)
+  } catch {
+    return false
+  }
+  return (await gitConflictPaths(cwd)).length === 0 && !(await gitRefExists(cwd, 'MERGE_HEAD'))
+}
+
 export async function pullGitBranch(workspaceRoot: string): Promise<GitPullResult> {
   const cwd = workspaceRoot.trim()
   if (!cwd) {
@@ -986,6 +1119,131 @@ export async function pushGitBranch(workspaceRoot: string): Promise<GitPushResul
     }
   } catch (error) {
     return gitPushFailure(error)
+  }
+}
+
+/** Fetch, integrate, and push the current branch without exposing Git strategy choices. */
+export async function syncGitBranch(workspaceRoot: string): Promise<GitSyncResult> {
+  const cwd = workspaceRoot.trim()
+  if (!cwd) {
+    return { ok: false, reason: 'no_workspace', message: 'No working directory selected.' }
+  }
+
+  let repositoryRoot = ''
+  try {
+    repositoryRoot = (await runGit(cwd, ['rev-parse', '--show-toplevel'])).stdout.trim()
+  } catch (error) {
+    return gitSyncFailure(error)
+  }
+  if (syncingRepositories.has(repositoryRoot)) {
+    return { ok: false, reason: 'busy', message: 'This repository is already syncing.' }
+  }
+
+  syncingRepositories.add(repositoryRoot)
+  try {
+    const branch = (await runGit(cwd, ['branch', '--show-current'])).stdout.trim()
+    if (!branch) {
+      return { ok: false, reason: 'detached_head', message: 'Switch to a branch before syncing.' }
+    }
+    if (await gitOperationInProgress(cwd)) {
+      return {
+        ok: false,
+        reason: 'operation_in_progress',
+        message: 'Finish or cancel the current Git operation before syncing.'
+      }
+    }
+
+    let upstream = ''
+    try {
+      upstream = (
+        await runGit(cwd, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}'])
+      ).stdout.trim()
+    } catch {
+      upstream = ''
+    }
+
+    if (!upstream) {
+      const published = await pushGitBranch(cwd)
+      if (!published.ok) {
+        const reason = published.reason === 'behind_remote' ? 'rejected' : published.reason
+        return { ok: false, reason, message: published.message }
+      }
+      return {
+        ok: true,
+        repositoryRoot,
+        branch: published.branch,
+        upstream: published.upstream,
+        action: 'published',
+        commitHash: published.commitHash,
+        updated: false,
+        pushed: published.pushed
+      }
+    }
+
+    await runGit(cwd, ['fetch', '--prune'], 120_000, DIFF_MAX_BUFFER)
+    const counts = (await runGit(cwd, ['rev-list', '--left-right', '--count', `HEAD...${upstream}`]))
+      .stdout.trim()
+      .split(/\s+/)
+    const ahead = Number.parseInt(counts[0] ?? '0', 10) || 0
+    const behind = Number.parseInt(counts[1] ?? '0', 10) || 0
+
+    let action: 'up_to_date' | 'pulled' | 'pushed' | 'merged' = 'up_to_date'
+    if (behind > 0) {
+      const mergeArgs = ahead > 0
+        ? ['merge', '--autostash', '--no-edit', upstream]
+        : ['merge', '--autostash', '--ff-only', upstream]
+      try {
+        await runGit(cwd, mergeArgs, 120_000, DIFF_MAX_BUFFER)
+      } catch (error) {
+        const conflictedFiles = await gitConflictPaths(cwd)
+        if (conflictedFiles.length === 0) return gitSyncFailure(error)
+        const recovered = await abortConflictedMerge(cwd)
+        invalidateWorkingChangesCache(cwd)
+        return {
+          ok: false,
+          reason: recovered ? 'conflict' : 'recovery_required',
+          message: recovered
+            ? 'Automatic sync found conflicting files and restored the repository to its previous state.'
+            : 'Automatic sync found conflicts and could not fully restore the repository. Open the changed files to recover them.',
+          conflictedFiles,
+          recovered
+        }
+      }
+
+      const restoreConflicts = await gitConflictPaths(cwd)
+      if (restoreConflicts.length > 0) {
+        invalidateWorkingChangesCache(cwd)
+        return {
+          ok: false,
+          reason: 'recovery_required',
+          message: 'Remote commits were integrated, but restoring local uncommitted changes caused conflicts.',
+          conflictedFiles: restoreConflicts,
+          recovered: false
+        }
+      }
+      action = ahead > 0 ? 'merged' : 'pulled'
+    } else if (ahead > 0) {
+      action = 'pushed'
+    }
+
+    const shouldPush = action === 'merged' || action === 'pushed'
+    if (shouldPush) await runGit(cwd, ['push'], 120_000, DIFF_MAX_BUFFER)
+    const commitHash = (await runGit(cwd, ['rev-parse', '--short', 'HEAD'])).stdout.trim()
+    invalidateWorkingChangesCache(cwd)
+    return {
+      ok: true,
+      repositoryRoot,
+      branch,
+      upstream,
+      action,
+      commitHash,
+      updated: behind > 0,
+      pushed: shouldPush
+    }
+  } catch (error) {
+    return gitSyncFailure(error)
+  } finally {
+    syncingRepositories.delete(repositoryRoot)
   }
 }
 
@@ -1263,7 +1521,10 @@ export async function getGitHubRepository(workspaceRoot: string): Promise<GitHub
   }
 }
 
-export async function getGitLog(workspaceRoot: string): Promise<GitLogResult> {
+export async function getGitLog(
+  workspaceRoot: string,
+  refreshRemote = false
+): Promise<GitLogResult> {
   const cwd = workspaceRoot.trim()
   if (!cwd) {
     return { ok: false, reason: 'no_workspace', message: 'No working directory selected.' }
@@ -1271,6 +1532,7 @@ export async function getGitLog(workspaceRoot: string): Promise<GitLogResult> {
 
   try {
     const repositoryRoot = (await runGit(cwd, ['rev-parse', '--show-toplevel'])).stdout.trim()
+    const remote = await readGitRemoteState(cwd, refreshRemote)
     const currentBranch = (await runGit(cwd, ['branch', '--show-current'])).stdout.trim() || null
     const headHash = (await runGit(cwd, ['rev-parse', 'HEAD'])).stdout.trim()
     const upstream = await readGitUpstream(cwd)
@@ -1279,8 +1541,9 @@ export async function getGitLog(workspaceRoot: string): Promise<GitLogResult> {
       'log',
       `--topo-order`,
       `-n${GIT_LOG_LIMIT}`,
+      '--format=%H%x00%P%x00%s%x00%an%x00%at',
       logRef,
-      '--format=%H%x00%P%x00%s%x00%an%x00%at'
+      ...(upstream ? [upstream.ref] : [])
     ])
     const commits = raw
       .split('\n')
@@ -1293,6 +1556,9 @@ export async function getGitLog(workspaceRoot: string): Promise<GitLogResult> {
       branch: currentBranch,
       headHash,
       upstream,
+      hasRemote: remote.hasRemote,
+      remoteRefreshError: remote.refreshError,
+      remoteRefreshedAt: remote.refreshedAt,
       commits
     }
   } catch (error) {

@@ -6740,6 +6740,26 @@ html[data-theme='dark'] .ds-code-fullscreen .shiki span {
   -webkit-app-region: drag;
 }
 
+/* A small, unobstructed native drag target that survives every route and
+   sidebar state. Native window movement handles mixed-DPI multi-display
+   coordinates more reliably than renderer pointer math. */
+.ds-window-drag-strip {
+  position: absolute;
+  z-index: 70;
+  top: 0;
+  right: 0;
+  left: 0;
+  height: var(--ds-window-inset, 8px);
+  -webkit-app-region: drag;
+}
+
+/* Deliberate titlebar targets. Keep these active while a light-dismiss menu
+   is open so moving the window never depends on transient popover state. */
+.ds-window-drag-region {
+  user-select: none;
+  -webkit-app-region: drag;
+}
+
 .ds-titlebar-safe-block {
   min-height: var(--ds-window-controls-safe-block);
 }
@@ -6842,6 +6862,11 @@ html.ds-light-dismiss-active body,
 html.ds-light-dismiss-active #root,
 html.ds-light-dismiss-active .ds-drag {
   -webkit-app-region: no-drag !important;
+}
+
+html.ds-light-dismiss-active .ds-window-drag-strip,
+html.ds-light-dismiss-active .ds-window-drag-region {
+  -webkit-app-region: drag !important;
 }
 
 /* Fullscreen overlays must receive pointer events over drag chrome. */
@@ -7982,8 +8007,8 @@ select:focus-visible,
 }
 
 .ds-dialogue-gutter.ds-chat-stage {
-  width: min(940px, 100%);
-  max-width: 940px;
+  width: min(54rem, 100%);
+  max-width: 54rem;
   margin-inline: auto;
 }
 
@@ -8008,8 +8033,8 @@ select:focus-visible,
 
 .ds-chat-operation-band__dialogue .ds-chat-stage {
   /* Keep the shared stage max-width; center so the right side opens toward the rail. */
-  width: min(940px, 100%);
-  max-width: 940px;
+  width: min(54rem, 100%);
+  max-width: 54rem;
   margin-inline: auto;
   padding-inline: 0;
 }
@@ -8019,7 +8044,7 @@ select:focus-visible,
 }
 
 .ds-chat-operation-band__dialogue > .ds-chat-stage.flex.shrink-0 {
-  width: min(940px, 100%);
+  width: min(54rem, 100%);
 }
 
 .ds-chat-operation-band__dialogue > .ds-chat-stage.flex.shrink-0 > .flex.w-full.flex-col {

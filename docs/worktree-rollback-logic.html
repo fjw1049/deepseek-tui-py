@@ -1,0 +1,679 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Workbench 前端 Git Worktree 管理与回滚逻辑详解</title>
+<style>
+  :root {
+    --bg: #f6f7f9;
+    --surface: #ffffff;
+    --ink: #1f2328;
+    --muted: #57606a;
+    --faint: #8b949e;
+    --border: #d8dee4;
+    --accent: #0969da;
+    --accent-soft: #ddf4ff;
+    --amber: #9a6700;
+    --amber-bg: #fff8c5;
+    --amber-border: #d4a72c66;
+    --red: #cf222e;
+    --red-bg: #ffebe9;
+    --green: #1a7f37;
+    --green-bg: #dafbe1;
+    --code-bg: #f6f8fa;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 0 0 80px;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    line-height: 1.75;
+    font-size: 15px;
+  }
+  .page { max-width: 980px; margin: 0 auto; padding: 0 28px; }
+  header.hero {
+    background: linear-gradient(135deg, #0b1f3a 0%, #123a63 60%, #1a5490 100%);
+    color: #fff;
+    padding: 56px 28px 48px;
+    margin-bottom: 40px;
+  }
+  header.hero .inner { max-width: 980px; margin: 0 auto; }
+  header.hero h1 { margin: 0 0 12px; font-size: 30px; line-height: 1.3; letter-spacing: -0.01em; }
+  header.hero p { margin: 0; opacity: .85; font-size: 15px; max-width: 720px; }
+  header.hero .meta { margin-top: 18px; font-size: 13px; opacity: .65; }
+  h2 {
+    font-size: 23px;
+    margin: 56px 0 16px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--border);
+    letter-spacing: -0.01em;
+  }
+  h2 .num { color: var(--accent); font-family: var(--mono); font-size: 18px; margin-right: 10px; }
+  h3 { font-size: 17px; margin: 34px 0 10px; }
+  p { margin: 10px 0; }
+  code {
+    font-family: var(--mono);
+    font-size: 13px;
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 1px 5px;
+    word-break: break-all;
+  }
+  pre {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px 16px;
+    overflow-x: auto;
+    font-size: 12.5px;
+    line-height: 1.6;
+  }
+  pre code { background: none; border: none; padding: 0; font-size: 12.5px; }
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 20px 24px;
+    margin: 16px 0;
+  }
+  .card h3:first-child { margin-top: 0; }
+  .callout {
+    border-radius: 8px;
+    padding: 12px 16px;
+    margin: 14px 0;
+    font-size: 14px;
+  }
+  .callout.key { background: var(--accent-soft); border: 1px solid #54aeff66; }
+  .callout.warn { background: var(--amber-bg); border: 1px solid var(--amber-border); color: var(--amber); }
+  .callout.danger { background: var(--red-bg); border: 1px solid #ff818266; color: var(--red); }
+  .callout.ok { background: var(--green-bg); border: 1px solid #4ac26b66; color: var(--green); }
+  .callout b { font-weight: 650; }
+  table { width: 100%; border-collapse: collapse; margin: 14px 0; font-size: 13.5px; background: var(--surface); }
+  th, td { border: 1px solid var(--border); padding: 8px 12px; text-align: left; vertical-align: top; }
+  th { background: var(--code-bg); font-weight: 600; white-space: nowrap; }
+  td code { white-space: nowrap; }
+  .pill {
+    display: inline-block;
+    font-family: var(--mono);
+    font-size: 11.5px;
+    border-radius: 999px;
+    padding: 1px 9px;
+    margin: 1px 2px;
+    border: 1px solid;
+    white-space: nowrap;
+  }
+  .pill.blue  { color: var(--accent); border-color: #54aeff88; background: var(--accent-soft); }
+  .pill.amber { color: var(--amber); border-color: var(--amber-border); background: var(--amber-bg); }
+  .pill.red   { color: var(--red); border-color: #ff818288; background: var(--red-bg); }
+  .pill.green { color: var(--green); border-color: #4ac26b88; background: var(--green-bg); }
+  .pill.gray  { color: var(--muted); border-color: var(--border); background: var(--code-bg); }
+  .toc {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 18px 24px;
+    margin-bottom: 8px;
+  }
+  .toc ol { margin: 6px 0; padding-left: 22px; }
+  .toc a { color: var(--accent); text-decoration: none; }
+  .toc a:hover { text-decoration: underline; }
+  .file-ref { color: var(--muted); font-size: 12.5px; font-family: var(--mono); }
+  .flow-note { font-size: 12.5px; color: var(--faint); margin-top: -6px; }
+  ul, ol { padding-left: 24px; }
+  li { margin: 4px 0; }
+  .kbd { font-family: var(--mono); font-size: 12px; border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 4px; padding: 0 5px; background: var(--surface); }
+  footer { margin-top: 64px; color: var(--faint); font-size: 12.5px; text-align: center; }
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <div class="inner">
+    <h1>Workbench 前端 Git Worktree 管理与回滚逻辑详解</h1>
+    <p>本文面向开发者，逐层拆解 Workbench（Electron 前端）中"任务隔离 worktree"与"会话回滚 / 代码还原"两条主线的完整实现：从 UI 组件、状态管理、Runtime HTTP API、preload 桥、IPC 通道，到主进程 git-service 的每一步细节。</p>
+    <div class="meta">代码基线：packages/workbench · 相关 ADR：docs/adr/0001-task-worktree-sync-ownership.md</div>
+  </div>
+</header>
+
+<div class="page">
+
+<!-- ================================================================ -->
+<div class="toc">
+  <b>目录</b>
+  <ol>
+    <li><a href="#s1">先建立全局认知：三个"根路径"与两个世界</a></li>
+    <li><a href="#s2">整体架构与数据链路总览</a></li>
+    <li><a href="#s3">Worktree 管理逻辑（含发布冲突状态机）</a></li>
+    <li><a href="#s4">回滚逻辑一：会话回滚 rewind（含代码还原）</a></li>
+    <li><a href="#s5">回滚逻辑二：单轮代码撤销 restoreCode</a></li>
+    <li><a href="#s6">用户驱动的 Git 操作与保护机制（主进程）</a></li>
+    <li><a href="#s7">ADR 0001 设计决策与八条不变量</a></li>
+    <li><a href="#s8">完整交互时序与状态流转图</a></li>
+    <li><a href="#s9">细节清单：容易被忽略的边角</a></li>
+  </ol>
+</div>
+
+<!-- ================================================================ -->
+<h2 id="s1"><span class="num">01</span>先建立全局认知：三个"根路径"与两个世界</h2>
+
+<p>整套逻辑的第一把钥匙，是理解前端如何在<strong>同一个会话里区分三个不同的目录</strong>。这由 <code>packages/workbench/src/renderer/src/lib/workspace-path.ts</code> 统一定义：</p>
+
+<table>
+  <tr><th>函数</th><th>返回什么</th><th>给谁用</th></tr>
+  <tr>
+    <td><code>resolveThreadFilesystemRoot()</code></td>
+    <td>当前线程的<strong>项目检出目录</strong>（用户真正的工程目录）。优先取线程自带的 <code>workspace</code> 字段，否则回退到全局工作区根。临时目录（<code>/tmp</code> 等）不会被抹掉。</td>
+    <td>文件预览、读写等一切需要"真实路径"的地方。</td>
+  </tr>
+  <tr>
+    <td><code>resolveThreadGitActionRoot()</code></td>
+    <td>用户驱动 Git 变更（切分支、暂存、提交、拉取、推送）的<strong>规范检出目录</strong>。目前直接等于 <code>resolveThreadFilesystemRoot()</code>。</td>
+    <td>GitBranchPicker、ChangeInspector、OperationContextDock 等所有会"写 Git 状态"的组件。</td>
+  </tr>
+  <tr>
+    <td><code>resolveThreadTaskReviewRoot()</code></td>
+    <td><strong>只读</strong>的审查根：当线程 <code>envMode === 'worktree'</code> 时返回隐藏的 <code>worktreePath</code>，否则退回项目根。</td>
+    <td>ChangeInspector 在 <code>context === 'conflicts'</code> 时用它查看任务隔离副本里的文件改动。</td>
+  </tr>
+</table>
+
+<div class="callout key">
+  <b>核心设计：</b>任务的代码在隐藏的 Git worktree 里执行（<code>~/.deepseek/worktrees/&lt;项目&gt;/&lt;threadId&gt;</code>），而用户看到的、用户手动 Git 操作的，永远是项目主检出 <code>P</code>。隐藏 worktree <code>T</code> 对 Git 面板来说只是<strong>只读的审查来源</strong>；把 <code>T</code> 的成果"交付"回 <code>P</code> 的动作叫 <b>publish（发布）</b>，由后端按 ADR 0001 的同步/基线机制完成，前端只负责展示状态和收集用户决策。
+</div>
+
+<p>两个世界的分工（来自 ADR 0001 的决策原文）：</p>
+<ul>
+  <li><b>项目世界 <code>P</code></b>：用户驱动的一切 Git 变更（切分支、暂存、提交、pull、push）只作用于这里；</li>
+  <li><b>任务世界 <code>T</code></b>：Agent 的工作副本。任务开始时从项目同步一份（含未提交/未跟踪文件），之后每轮维护基线 <code>B</code>，发布/回滚后再重新同步并原子记录新基线。</li>
+</ul>
+
+<p>线程对象上与 worktree 相关的字段（<code>packages/workbench/src/renderer/src/agent/types.ts:43</code> 的 <code>NormalizedThread</code>）：</p>
+<ul>
+  <li><code>envMode: 'local' | 'worktree'</code> — 该线程是否跑在隔离 worktree 里；</li>
+  <li><code>worktreePath</code> — 隐藏 worktree 的绝对路径（后端字段为 <code>worktree_path</code>，兼容旧字段 <code>associated_worktree_path</code>，见 <code>deepseek-runtime.ts:248</code>）；</li>
+  <li>发布状态四件套：<code>publishPending</code> / <code>publishBlocked</code> / <code>publishConflicts</code> / <code>publishIssue</code>，以及 <code>publishRequestAction</code>、<code>publishWaitingOn</code>。</li>
+</ul>
+
+<h3>这些字段怎么进到前端的？</h3>
+<p>两条路：</p>
+<ol>
+  <li><b>拉取</b> — <code>threadFromJson()</code>（<code>deepseek-runtime.ts:238</code>）在加载线程列表/详情时做归一化：把 <code>env_mode === 'worktree'</code> 映射成 <code>'worktree'</code>（其余一律按 <code>'local'</code> 处理），<code>worktree_path ?? associated_worktree_path</code> 归一成 <code>worktreePath</code>，并把 <code>publish_issue</code> 收敛为 <code>'recovery' | 'failure' | 'missing' | null</code>（<code>publishIssueFromJson()</code>，未知值返回 <code>undefined</code> 表示"旧版运行时没有此字段"）。</li>
+  <li><b>推送（SSE）</b> — 运行中会收到 <code>thread.updated</code> 事件，<code>deepseek-runtime.ts:1992-2086</code> 从 <code>thread</code> 或 <code>changes</code> 载荷里逐字段解析 <code>env_mode / worktree_path / publish_pending / publish_request_action / publish_waiting_on / publish_blocked / publish_conflicts / publish_issue</code>，经 <code>sink.onThreadUpdated</code> 交给 <code>chat-store.ts:1162-1216</code> 做<strong>字段级合并</strong>（注意合并语义：<code>ev.envMode ?? current.envMode</code> 表示事件缺字段就保留旧值，只有显式给出才覆盖；<code>worktreePath</code> 特殊，区分 <code>undefined</code> 与 <code>null</code>——<code>null</code> 是有效的"worktree 已解除关联"）。合并后若 <code>threadChanged</code> 则更新 <code>threads</code> 数组，触发 React 重渲染。</li>
+</ol>
+
+<!-- ================================================================ -->
+<h2 id="s2"><span class="num">02</span>整体架构与数据链路总览</h2>
+
+<p>整个前端到 Git 的调用分两条独立管道，互不混用：</p>
+
+<table>
+  <tr><th></th><th>管道一：Electron IPC（用户驱动 Git 操作）</th><th>管道二：Runtime HTTP（worktree 交付 + 回滚）</th></tr>
+  <tr><td>发起者</td><td>GitBranchPicker / ChangeInspector 等组件</td><td>MessageTimeline（回滚 UI）、PublishConflictBanner（交付 UI）、chat-store</td></tr>
+  <tr><td>前端入口</td><td><code>window.dsGui.xxxGitXXX()</code></td><td><code>window.dsGui.runtimeRequest(path, method, body)</code></td></tr>
+  <tr><td>preload</td><td><code>packages/workbench/src/preload/index.ts:104-126</code> 把方法一一映射到 <code>ipcRenderer.invoke('git:…')</code></td><td><code>preload/index.ts:23</code> 透传给主进程的 runtime 代理</td></tr>
+  <tr><td>主进程</td><td><code>register-app-ipc-handlers.ts:1288-1374</code>：先用 zod schema（<code>app-ipc-schemas.ts</code>）校验载荷，再调用 <code>git-service.ts</code> 导出的纯函数</td><td>Python 侧 runtime 服务（<code>/v1/threads/…</code>），持有 worktree、checkpoint、基线、日志等真实状态</td></tr>
+  <tr><td>典型操作</td><td>读分支 / 切分支 / stash 后切 / 建分支切 / 提交 / 暂存 / 取消暂存 / pull / push / 读工作区改动 / 读提交日志 / 解析 GitHub 远端</td><td><code>rewind-preview</code>、<code>rewind</code>、<code>restore-code</code>、<code>worktree/resolve</code>、<code>warmup</code></td></tr>
+  <tr><td>作用对象</td><td>永远只作用于 <code>resolveThreadGitActionRoot()</code>（项目检出）</td><td>作用于线程关联的 worktree/检查点（后端裁决）</td></tr>
+</table>
+
+<p>主进程 <code>git-service.ts</code> 的公共底座（<code>git-service.ts:24-55</code>）：</p>
+<ul>
+  <li><code>runGit(cwd, args, timeout=10s, maxBuffer=1MB)</code> — 用 <code>execFile</code>（不是 shell 拼接，天然防注入）执行 git，并设置 <code>GIT_TERMINAL_PROMPT=0</code> 禁止交互式凭据提示卡死 UI；</li>
+  <li><code>runGitStdout(..., { allowNonZero })</code> — 变体，允许命令以非零码退出但仍取 stdout（diff 类命令常用，因为 <code>git diff</code> 用退出码 1 表示"有差异"）；</li>
+  <li>大输出场景（diff/fetch/pull/push）显式把 maxBuffer 提到 <code>DIFF_MAX_BUFFER = 50MB</code>，超时提到 30s~120s。</li>
+</ul>
+
+<!-- ================================================================ -->
+<h2 id="s3"><span class="num">03</span>Worktree 管理逻辑（含发布冲突状态机）</h2>
+
+<h3>3.1 任务的隔离与生命周期</h3>
+<p>worktree 的<strong>创建、同步、基线记录、发布</strong>全部由后端 runtime 完成，前端只做三件事：</p>
+<ol>
+  <li><b>展示</b>：通过 <code>envMode/worktreePath</code> 判断当前线程是否在隔离环境，切换 UI（例如 Git 面板用只读审查根）；</li>
+  <li><b>预热</b>：线程被选中且不忙时，<code>chat-store.ts:2308</code> 自动调用 <code>warmActiveThread(id)</code> → <code>deepseek-runtime.ts:826</code> 的 <code>POST /v1/threads/{id}/warmup</code>。后端在这里做"安全的工作区准备"——包括把项目文件同步进任务 worktree。<b>它从不替用户选择文件版本</b>；</li>
+  <li><b>决策</b>：当后端报告发布被阻塞/冲突/失败/缺失时，弹横幅让用户做最小决策，再调用 <code>POST /v1/threads/{id}/worktree/resolve</code> 提交决策。</li>
+</ol>
+
+<h3>3.2 发布冲突状态机（publish-conflict-state.ts）</h3>
+<p><code>packages/workbench/src/renderer/src/components/chat/publish-conflict-state.ts</code> 是一个纯函数状态机，把后端给的两路信号折叠成五种用户可见状态：</p>
+
+<pre><code>publishAttentionState(rawConflicts, publishBlocked, publishIssue?) →
+  { kind: 'hidden'   | 'recovery' | 'failure' | 'missing' | 'conflict',
+    conflicts: string[] }</code></pre>
+
+<table>
+  <tr><th>kind</th><th>含义</th><th>触发条件</th><th>典型文案色</th></tr>
+  <tr>
+    <td><span class="pill gray">hidden</span></td>
+    <td>一切正常，不弹横幅</td>
+    <td>无 issue，且 <code>publishBlocked</code> 为假或 <code>conflicts</code> 为空</td>
+    <td>—</td>
+  </tr>
+  <tr>
+    <td><span class="pill amber">recovery</span></td>
+    <td><b>未发布的工作</b>：worktree 里有改动（相对基线 <code>T − B</code>），但找不到对应轮次的检查点，无法自动三方合并。需要用户决定"以谁为准"。</td>
+    <td><code>publishIssue === 'recovery'</code>，或（兼容旧运行时）conflicts 里混入了标记串 <code>'&lt;unpublished-worktree-labor&gt;'</code></td>
+    <td>琥珀色</td>
+  </tr>
+  <tr>
+    <td><span class="pill amber">failure</span></td>
+    <td>自动同步/发布流程失败，可重试</td>
+    <td><code>publishIssue === 'failure'</code>，或旧标记 <code>'&lt;publish-failed&gt;'</code></td>
+    <td>红色</td>
+  </tr>
+  <tr>
+    <td><span class="pill red">missing</span></td>
+    <td><b>worktree 目录丢失</b>（被外部删除/移动）。这是"工作区丢失"而不是一个假文件，优先级最高。</td>
+    <td><code>publishIssue === 'missing'</code>，或旧标记 <code>'&lt;missing-worktree&gt;'</code></td>
+    <td>红色</td>
+  </tr>
+  <tr>
+    <td><span class="pill amber">conflict</span></td>
+    <td><b>真文件冲突</b>：发布时任务改动与项目当前内容无法合并，列出具体路径</td>
+    <td><code>publishBlocked === true</code> 且 <code>conflicts.length &gt; 0</code></td>
+    <td>琥珀色</td>
+  </tr>
+</table>
+
+<div class="callout key">
+  <b>兼容层细节（为什么代码这么绕）：</b>旧版运行时没有结构化的 <code>publish_issue</code> 字段，而是把"原因"作为数组的一个元素塞进 <code>publish_conflicts</code>（例如 <code>['&lt;missing-worktree&gt;', 'src/app.ts']</code>）。<code>publishAttentionState</code> 在 <code>publishIssue === undefined</code>（即检测到旧运行时）时，按 <code>missing → recovery → failure</code> 的优先级在数组里<strong>只移除第一次出现的那个标记</strong>——注释特别强调：另一个标记形状的字符串可能是合法文件名，不能误删。而结构化字段一旦存在（哪怕为 <code>null</code>），永远优先于标记串。
+</div>
+
+<div class="callout warn">
+  <b>确认绑定的快照机制：</b><code>publishRecoveryDecisionKey()</code> 会把"recovery 状态 + <code>thread.updatedAt</code> + 冲突路径列表"序列化成一个 key。PublishConflictBanner 里用户做出的每一次选择都绑定这个 key（<code>chat-store.ts:62-68</code> 附近的 effect）：如果 runtime 推来一个更新的状态（路径集合或字节变了），旧的选择立即作废（<code>decisionKey !== recoveryDecisionKey</code> 时清空），且后端对过期 token 的处理是"刷新决策但<strong>一个字节都不写</strong>"。这实现的是 ADR 0001 的"把确认绑定到用户看到的精确 <code>T − B</code> 字节签名"。
+</div>
+
+<h3>3.3 PublishConflictBanner：横幅组件逐分支拆解</h3>
+<p><code>PublishConflictBanner.tsx</code> 只在 <code>activeThreadId</code> 存在且 <code>thread.envMode === 'worktree'</code> 时渲染（组件第 70 行直接 return null）。渲染优先级从上到下：</p>
+
+<ol>
+  <li><b>成功反馈</b> — <code>feedback === 'applied'</code> 且无待处理状态：绿色条"草稿已应用"，2.4 秒后自动消失（<code>useEffect</code> + <code>setTimeout</code>）。</li>
+  <li><b>等待中</b> — <code>!needsAttention && waiting</code>：转圈 + "正在等待交付"，<code>waiting = thread.publishWaitingOn || thread.publishRequestAction</code>。表示用户（或另一进程）已经提交过决策，后端正在排队执行。</li>
+  <li><b><span class="pill amber">recovery</span> 分支</b>（最复杂）：
+    <ul>
+      <li>展示"未发布的工作"标题 + 冲突文件列表（最多 8 条，超出显示 <code>+N</code>）；</li>
+      <li>提供两个选择按钮：<b>保留项目版本（keep_project）</b>与<b>采用 Agent 版本（use_agent）</b>；</li>
+      <li>点任一按钮后先进入<strong>二次确认</strong>小面板（<code>recoveryDecision</code> 状态），确认文案按"有没有具体文件列表"分两种（文件数未知时用 <code>publishRecoveryConfirmKeepProjectUnknown</code>）；</li>
+      <li>确认后调用 <code>run(choice, recoveryToken)</code> → <code>resolvePublishConflicts(action, undefined, thread.updatedAt)</code>。这里 <code>thread.updatedAt</code> 就是 recovery token，证明"我确认的就是我看到的那个快照"；</li>
+      <li><b>只有列表为空时</b>（文件数未知），只显示"保留项目版本"一个选项——无法展示具体文件时，偏保守的选择是唯一入口。</li>
+    </ul>
+  </li>
+  <li><b><span class="pill red">missing</span> 分支</b> — 红色条 + 一个"重试"按钮，点击走 <code>retryMissingWorkspace()</code>：调用 <code>warmActiveThread()</code>（即 warmup）让后端重新执行安全的工作区准备，然后 <code>refreshThreads()</code> 重拉线程。如果重试后仍是 missing 态，显示"重试失败"。注释强调：warmup <strong>从不选择文件版本</strong>，若原始 worktree 真没了，状态保持不变（ADR 0001：保留精确关联，等路径回来，而不是伪造一个）。</li>
+  <li><b><span class="pill amber">failure</span> 分支</b> — 红色条 + "重试"按钮，走 <code>run('apply')</code> 重新尝试发布。</li>
+  <li><b><span class="pill amber">conflict</span> 分支</b> — 琥珀条列出冲突文件，三个动作：
+    <ul>
+      <li><b>查看变更</b>（左下）：<code>openChangesPanel({ context: 'conflicts' })</code> 打开 ChangeInspector，此时 ChangeInspector 用 <code>resolveThreadTaskReviewRoot()</code> 拿到<strong>只读的 worktree 根</strong>来审查任务副本（<code>ChangeInspector.tsx:932-936</code>：<code>changeRoot = isGitContext ? gitActionRoot : context === 'conflicts' ? taskReviewRoot || projectRoot : projectRoot</code>）；</li>
+      <li><b>保留项目</b>：<code>run('keep_project')</code>；</li>
+      <li><b>采用 Agent</b>：<code>run('use_agent')</code>（高亮主按钮）。</li>
+    </ul>
+  </li>
+</ol>
+
+<p><code>run()</code> 的公共防护（组件 73-98 行）：</p>
+<ul>
+  <li><code>submitting / busy / waiting</code> 三态任一为真直接忽略点击，防双击与重入；</li>
+  <li>调用后先检查 <code>activeThreadId</code> 是否已切换——用户切走了线程就不再 setState，避免串台；</li>
+  <li>返回 <code>result.status</code> 分三种：<code>'applied'</code>（成功，清确认态、显示绿条）、<code>'queued'</code>（已排队，等待轮询/SSE 更新）、其他（<code>'conflict' | 'pending'</code>）——此时<strong>清掉 recoveryDecision</strong>，因为后端"刷新了决策但没有写入"，要求用户对新的快照重新确认。</li>
+</ul>
+
+<h3>3.4 chat-store 侧的 resolvePublishConflicts</h3>
+<p><code>chat-store.ts:3318-3349</code> 是动作入口：</p>
+<ol>
+  <li>前置校验：无活跃线程返回 null；provider 不支持（旧运行时）则报 <code>publishConflictUnsupported</code>；</li>
+  <li>调用 <code>provider.resolvePublishConflicts(threadId, action, paths, recoveryToken)</code> → <code>POST /v1/threads/{id}/worktree/resolve</code>，body 为 <code>{ action, paths, recovery_token }</code>（<code>deepseek-runtime.ts:1513-1543</code>）；</li>
+  <li>响应解析：<code>status</code> 只接受 <code>'queued' | 'conflict' | 'pending'</code>，其余一律按 <code>'applied'</code> 处理；必须返回 <code>thread</code> 对象，否则抛错；响应里还可能带 <code>blocking_thread_id</code>（后端告诉你"另一个线程挡住了这次发布"）；</li>
+  <li>成功后：<code>workspaceDirtyTick + 1</code>（广播"磁盘变了"，让 Git 面板/dock 自动刷新），并把返回的线程对象合并进 <code>threads</code> 数组。</li>
+</ol>
+
+<div class="callout key">
+  <b>三个动作在后端语义（ADR 0001）：apply / use_agent / keep_project。</b>无论哪个，后端只允许作用于 <code>T − B</code>（相对基线的任务改动），绝不碰项目里用户自己的脏文件。三方合并失败的路径才成为用户可见的 conflict；恢复完成后重新同步 worktree 并原子记录新基线 B。ADR 同时强调：发布 followed by 回滚，<b>不允许再把已发布的版本"还原"回来</b>（不变量 4）。
+</div>
+
+<!-- ================================================================ -->
+<h2 id="s4"><span class="num">04</span>回滚逻辑一：会话回滚 rewind（含代码还原）</h2>
+
+<p>"回滚"在前端有两个独立能力（ADR 0001 明确"Conversation rewind 与 code rollback 是两个独立选择"）：</p>
+<ul>
+  <li><b>rewind（会话回滚）</b>：把对话截断到某条用户消息之前，可选择同时把 worktree 里的代码文件还原到那一轮之前的状态；</li>
+  <li><b>restoreCode（单轮代码撤销）</b>：对话不动，只把某一轮写的代码文件还原。</li>
+</ul>
+
+<h3>4.1 入口：编辑用户气泡 → 预览 → 确认</h3>
+<p>入口在 <code>MessageTimeline.tsx:3077-3518</code> 的 <code>UserMessageBubble</code>：</p>
+
+<ol>
+  <li>每条用户消息悬停出现铅笔按钮（<code>ds-rewind-trigger</code>），点击进入<strong>编辑模式</strong>（<code>editing</code> 状态），文本框内可修改原话；</li>
+  <li>点"重发"先走 <code>requestResend()</code>（3191 行）：
+    <ul>
+      <li><b>不能还原文件的情形直接跳过确认</b>：<code>canRestoreFiles = activeThreadId != null && block.id.startsWith('item_')</code>。只有以 <code>item_</code> 开头的块才是<strong>已在 runtime 持久化的消息</b>；本地乐观 id（<code>u-…</code>/<code>q-…</code>）从未落盘，没有可回滚的 runtime 状态，直接 <code>commitResend(false)</code>（仅回滚会话）；</li>
+      <li>调用 <code>GET /v1/threads/{id}/rewind-preview?before_item_id=…</code>（<code>deepseek-runtime.ts:1494</code>）拿<strong>预览</strong>：<code>files</code>（会被还原的文件）、<code>conflicts</code>（第三方改过的路径，直接还原会覆盖别人的修改）、<code>skipped</code>、<code>isGit</code>、<code>turns</code>、<code>missingRoots</code>（checkpoint 根目录已消失的轮次）、<code>noCheckpoint</code>（范围内没有代码检查点的轮数）；</li>
+      <li><b>预览为空 → 不弹窗直接执行</b>。判定在 <code>rewind-resend-confirm.ts:4</code>：<code>files.length &gt; 0 || missingRoots.length &gt; 0 || noCheckpoint &gt; 0</code> 才需要确认（连"缺检查点"也算需要确认的异常）；</li>
+      <li>预览接口不存在（旧 runtime）或请求失败 → 弹一个 <code>previewFailed: true</code> 的确认框，正文换成"无法预览"版本。<code>rewindResendConfirmModel()</code> 保证<strong>无论预览成败，两个安全选项都在</strong>：<code>['conversation_only', 'restore_code']</code>（测试文件里的原话："Preview availability changes the explanation, never the user's two safe choices"）。</li>
+    </ul>
+  </li>
+</ol>
+
+<h3>4.2 确认对话框的展示细节</h3>
+<p>确认框（portal 到 body 的模态，3442 行起）逐项处理预览数据：</p>
+<ul>
+  <li>文件列表最多显示 8 条（<code>REWIND_CONFIRM_FILE_LIMIT = 8</code>），<strong>冲突/skipped 的文件排到最前</strong>（3256-3263 行的排序 comparator），保证被截断时最重要的信息仍可见；</li>
+  <li>每个文件可能带标签：<span class="pill amber">conflict 标签</span>（琥珀）或 <span class="pill gray">skipped 标签</span>（灰）；</li>
+  <li>有冲突时显示琥珀警告 + 一个"强制覆盖冲突文件"复选框（<code>forceConflicts</code>，默认不勾）；</li>
+  <li>有 skipped 或 <code>missingRoots</code> 时提示"N 个文件不可还原"；有 <code>noCheckpoint</code> 时再提示"N 轮没有代码检查点可还原"；</li>
+  <li>底部按钮：<b>仅回滚对话</b>（<code>commitResend(false)</code>）与 <b>还原代码并回滚</b>（<code>commitResend(true, forceConflicts)</code>）。当存在不可还原项时，还原按钮文案换成"还原可用部分"（<code>rewindResendConfirmRestoreAvailable</code>）。</li>
+</ul>
+
+<h3>4.3 commitResend → rewindAndResend：store 里的完整时序</h3>
+<p><code>commitResend</code>（3168 行）把 <code>restoreFiles && canRestoreFiles</code> 与 <code>force</code> 收敛后调用 store 的 <code>rewindAndResend(blockId, wireText, { restoreFiles, forceConflicts, retryDraft })</code>。<code>chat-store.ts:3140-3243</code> 是这段核心逻辑，按注释分四步：</p>
+
+<ol>
+  <li><b>防重入</b>：<code>state.busy</code> 时直接报 <code>rewindBusyError</code>；校验目标块确实是用户块。</li>
+  <li><b>先在 runtime 截断</b>（注释原文：Truncate on the runtime first so the dropped turns are deleted from disk...）——顺序很关键：必须先让后端落盘删除，否则下次重载线程时被删的轮次会"复活"。只有 <code>item_</code> 开头的块才需要调后端；<code>rewindThread(threadId, userBlockId, restoreFiles, forceConflicts)</code> → <code>POST /v1/threads/{id}/rewind</code>，body <code>{ before_item_id, restore_files, force_conflicts }</code>。provider 不支持时报 <code>rewindRestoreUnsupported</code> 并中止。请求抛错时：仍在原线程就 setError，否则把编辑稿塞进 <code>queueComposerRetryDraft</code> 防丢失。</li>
+  <li><b>本地 UI 截断</b>：<code>truncateStateAtUserBlock(state, userBlockId)</code> 生成 patch——删掉目标用户块及其后所有块、清 live 流式区、清轮次计时。若返回 null（截不了）直接放弃。<code>restoredOnBackend</code> 为真时 <code>workspaceDirtyTick + 1</code>，Git 面板监听这个 tick 自动刷新。</li>
+  <li><b>用编辑后的新文本发起新一轮</b>：<code>sendMessage(trimmed, get().composerMode, { expectedThreadId })</code>。这里刻意沿用<strong>当前 composer 模式</strong>而不落回默认——注释说 UI 可能还停在 plan/ask 模式。</li>
+</ol>
+
+<p>发送失败与部分成功的善后，是这段代码最细腻的部分：</p>
+<ul>
+  <li><b>发送失败</b>：runtime 回滚已持久、被编辑的气泡已删——这是不可逆的既成事实。为避免"一次瞬时发送失败吃掉用户的草稿"，把补丁里的旧状态（blocks/liveReasoning/liveAssistant/轮次计时）原样放回 store，并把新文本放入 <code>queueComposerRetryDraft</code>，返回 false；</li>
+  <li><b>发送成功但文件还原有遗留</b>：解析 <code>RewindResult</code>（见下），把 <code>conflictedFiles ∪ skippedFiles</code> 与 <code>missingRoots.length</code> 取最大值作为未解决计数，>0 时提示"已用 N 个未解决项完成"（<code>rewindResendCompletedWithUnresolved</code>）。</li>
+</ul>
+
+<h3>4.4 RewindResult：后端如实报告文件结局</h3>
+<p><code>agent/types.ts:75</code>：</p>
+<table>
+  <tr><th>字段</th><th>含义</th></tr>
+  <tr><td><code>restoreFiles</code></td><td>本次是否执行了文件还原（回显请求参数）</td></tr>
+  <tr><td><code>restoredFiles</code></td><td>成功还原的文件</td></tr>
+  <tr><td><code>mergedFiles</code></td><td>通过三方合并还原的文件</td></tr>
+  <tr><td><code>conflictedFiles</code></td><td>冲突、未被强改的文件</td></tr>
+  <tr><td><code>skippedFiles</code></td><td>被跳过的文件</td></tr>
+  <tr><td><code>missingRoots</code></td><td>已消失的 checkpoint 根目录（对应轮次的文件还原整体跳过）</td></tr>
+</table>
+<p>解析层（<code>deepseek-runtime.ts:1456-1470</code>）做了<strong>向后兼容</strong>：老 runtime 的 rewind 响应只有顶层 ThreadRecord、没有 <code>rewind_result</code> 对象——此时返回 <code>null</code>，调用方按"无文件结局信息"处理（对应测试 <code>rewind result compatibility</code>）。字符串列表统一走 <code>stringListFromJson</code>，字段名缺失时还有备选名（restoreCode 处的 <code>'restored'/'skipped'</code> 同理）。</p>
+
+<h3>4.5 rewindToMessage：只回滚、不重发</h3>
+<p><code>chat-store.ts:3245-3287</code> 是同族的另一个动作，逻辑与 rewindAndResend 的前三步相同（runtime 先截断 → 本地截断 → 刷新 tick），但<strong>不发新消息</strong>。特有防护：如果用户在 await 期间切换了线程，直接 return——注释说明"后端回滚对源线程已持久，新激活的任务不受影响；重新选中源线程时会从权威 runtime 状态重建"。</p>
+
+<!-- ================================================================ -->
+<h2 id="s5"><span class="num">05</span>回滚逻辑二：单轮代码撤销 restoreCode</h2>
+
+<p>入口是"本轮变更摘要卡"上的<b>撤销</b>按钮（<code>MessageTimeline.tsx:1280-1333</code> 的 TurnChangeSummary 区域）：</p>
+<ul>
+  <li><code>canUndo = Boolean(userBlockId?.startsWith('item_'))</code>——同样只对已持久化的轮次生效；</li>
+  <li>点击先弹 <code>confirmUndo</code> 二次确认，确认后 <code>undoCode()</code> 调 store 的 <code>restoreCodeAt(userBlockId)</code>；</li>
+  <li>store 侧（<code>chat-store.ts:3289-3316</code>）：<code>busy</code> 时拒绝；本地块直接返回 null（注释：本地块从未持久化，没有可对照还原的 runtime 状态，对话保持不变）；provider 不支持则报错；然后 <code>POST /v1/threads/{id}/restore-code</code>，body 只有 <code>{ before_item_id, force_conflicts }</code>；</li>
+  <li>返回 <code>{ restoredFiles, skippedFiles }</code>，成功后同样 <code>workspaceDirtyTick + 1</code> 刷新 Git 面板；UI 用 <code>turnChangeUndoSuccess</code> 文案汇报"还原 N 个文件、跳过 M 个"。</li>
+</ul>
+
+<p>与 rewind 的关键区别：restoreCode <strong>不动对话</strong>。后端做的是"把该轮 checkpoint 记录的前镜像写回 worktree"，且按 ADR 0001 用 compare-and-swap 语义：先验证整个还原计划 → 每个路径写入前再校验一次签名 → 写后校验 → <b>只回滚"仍然是我们的字节"</b>（内容、类型、可执行位都参与判定），避免覆盖用户或第三方在还原窗口期内的新改动。还原后后端重新同步 worktree 并记录新基线；成功回滚会刷新隐藏 worktree，之后 warmup 才能继续跑。</p>
+
+<!-- ================================================================ -->
+<h2 id="s6"><span class="num">06</span>用户驱动的 Git 操作与保护机制（主进程）</h2>
+
+<p>这条线在 <code>git-service.ts</code>（约 1360 行），处理的是 GitBranchPicker / ChangeInspector 面板上的用户操作。它们<strong>只作用于项目检出根</strong>，与隐藏 worktree 无关；但主进程里有两处逻辑与"worktree 世界"直接相关，值得细看。</p>
+
+<h3>6.1 managed worktree 的 detached HEAD 推断</h3>
+<p><code>git-service.ts:212-220</code> 的 <code>resolveCurrentBranch()</code>：</p>
+<pre><code>async function resolveCurrentBranch(cwd) {
+  const direct = (await runGit(cwd, ['branch', '--show-current'])).stdout.trim()
+  if (direct) return direct
+  // Managed task worktrees use detached HEAD. The nearest recently active
+  // local ancestor is the branch the task was started from.
+  const merged = await listLocalBranches(cwd, true)   // --merged=HEAD, 按提交时间倒序
+  return merged[0]?.name ?? null
+}</code></pre>
+<p>任务 worktree 天生是 <strong>detached HEAD</strong>（<code>branch --show-current</code> 返回空）。此时用"包含 HEAD 的、最近活跃的本地分支"当作展示用的推断分支。它只用于展示与推断对比基线（<code>inferredBranch</code>、<code>recommendedBase</code>，见 <code>getGitBranches()</code> 305-311 行），<strong>不改变 detached 事实</strong>——<code>GitBranchesResult.detached</code> 仍为 true，ChangeInspector 据此把 Git 变更面板置为只读（<code>canMutateGit = gitBranches.ok && !detached</code>，<code>ChangeInspector.tsx:963</code>）。<code>resolveRecentAncestorBranch()</code>（262-279 行）进一步产出 <code>recommendedBase</code>：若当前在默认分支则返回 null（没必要比较）；否则在 merged 列表里找第一个"不是当前分支、且 commit 不等于 HEAD"的最近分支——这正是分支对比视图（scope <code>'branch'</code>）里"拿最近祖先当对比基线"的直觉。</p>
+
+<h3>6.2 protectRuntimeCheckout：禁止切走开发中的运行时检出</h3>
+<p><code>git-service.ts:68-97</code>。当应用以开发模式运行（<code>ELECTRON_RENDERER_URL</code> 与 <code>DEEPSEEK_REPO_ROOT</code> 两个环境变量都存在）时，<code>switchGitBranch / stashAndSwitchGitBranch / createAndSwitchGitBranch</code> 都会先调用 <code>protectRuntimeCheckout(cwd)</code>：</p>
+<ol>
+  <li>分别对<strong>目标工作区</strong>与<strong>正在运行本应用的仓库根</strong>执行 <code>git rev-parse --show-toplevel</code>，并经 <code>realpath</code> 解析符号链接；</li>
+  <li><code>normalizeCheckoutPath()</code> 在 Windows 上统一转小写再比较；</li>
+  <li>若两者相同 → 返回 <code>{ ok: false, reason: 'runtime_checkout' }</code>，用户看到 <code>gitRuntimeCheckoutSwitchBlocked</code> 文案。开发中的 app 正跑在这个检出上，切分支会把脚下的地板抽掉。</li>
+</ol>
+<p>集成测试（<code>git-service.integration.test.ts:57-105</code>）专门验证了这一点：用一个真正的 <code>git worktree add</code> 建出的独立检出可以正常切换，而主检出被拒绝且<strong>不留任何副作用</strong>（没有新分支、没有 stash、脏文件原样保留）。注意：这只是普通的 <code>git worktree</code> 独立检出场景，真正的任务 managed worktree 由后端创建与守护，前端从不对其执行写操作。</p>
+
+<h3>6.3 脏工作区切分支的三段式交互</h3>
+<p>GitBranchPicker 上点一个分支 → <code>window.dsGui.switchGitBranch(root, branch)</code> → IPC <code>git:switch-branch</code> → <code>switchGitBranch()</code>（<code>git-service.ts:368-396</code>）：</p>
+<ol>
+  <li>先试 <code>git switch</code>，失败（且不是脏工作区错误）则退回 <code>git checkout</code>（兼容旧版 git）；</li>
+  <li>识别脏工作区错误靠正则：<code>/would be overwritten by (checkout|merge)/</code> 或 <code>/commit your changes or stash them/</code> → 返回 <code>reason: 'dirty_worktree'</code>；</li>
+  <li>前端 <code>GitBranchPicker.tsx:201-206</code> 收到 <code>dirty_worktree</code> 后关菜单、弹出居中警告框，内含一个 <b>「stash 并切换」</b>按钮；</li>
+  <li>用户点它 → <code>stashAndSwitchGitBranch()</code>（<code>git-service.ts:398-451</code>）：
+    <ul>
+      <li><code>git stash push --include-untracked -m "workbench: auto stash before switching to X"</code>（30s 超时）；通过匹配 "No local changes to save" 判断是否真的存了东西（<code>stashed</code>）；</li>
+      <li>切分支失败 → <strong>先 <code>stash pop</code> 把用户改动还回原分支</strong>再抛错（pop 再失败也静默——stash 还在栈里，可用 <code>git stash pop</code> 手工恢复，绝不丢数据）；</li>
+      <li>切换成功后 pop，pop 冲突 → 返回 <code>reason: 'stash_pop_conflict'</code>，前端显示 <code>gitStashPopConflict</code> 警告并刷新分支列表。</li>
+    </ul>
+  </li>
+</ol>
+
+<h3>6.4 其余用户操作一览</h3>
+<table>
+  <tr><th>操作</th><th>主进程函数</th><th>关键细节</th></tr>
+  <tr>
+    <td>读分支状态</td>
+    <td><code>getGitBranches()</code></td>
+    <td><code>refreshRemote=true</code> 时先 <code>git fetch --prune</code>（120s/50MB），fetch 失败不阻塞——错误放进 <code>remoteRefreshError</code>，本地分支状态照常返回。随后收集：当前分支、推断分支、本地分支列表（按最近提交排序）、默认分支（上游 remote HEAD → origin/main → origin/master → main → master 逐个尝试）、<code>recommendedBase</code>、脏文件计数（porcelain 行数）、upstream 与 ahead/behind 计数。</td>
+  </tr>
+  <tr>
+    <td>新建并切换分支</td>
+    <td><code>createAndSwitchGitBranch()</code></td>
+    <td>先 <code>check-ref-format --branch</code> 验证分支名合法性，再 <code>switch -c</code>（失败退 <code>checkout -b</code>）。</td>
+  </tr>
+  <tr>
+    <td>读工作区改动</td>
+    <td><code>getGitWorkingChanges()</code></td>
+    <td>四种 scope：<code>working-tree / staged / unstaged / branch</code>。porcelain v1 逐行解析（<code>parsePorcelainEntry</code>，处理 <code>"&gt;"转义与 <code>a -&gt; b</code> 重命名），diff 按文件切分（<code>splitUnifiedDiff</code>），untracked 文件用 <code>git diff --no-index /dev/null path</code> 造补丁。带指纹缓存：HEAD + porcelain + 每个改动文件的 (mtime,size) 组成 fingerprint，最多缓存 24 个根（LRU 淘汰最旧）；写操作（stage/unstage/commit/pull）后用 <code>invalidateWorkingChangesCache()</code> 按前缀失效。</td>
+  </tr>
+  <tr>
+    <td>暂存 / 取消暂存</td>
+    <td><code>stageGitChanges / unstageGitChanges</code></td>
+    <td>路径安全闸 <code>isSafeGitPath()</code>：拒绝绝对路径、含 <code>..</code> 的段、含 <code>\0</code>；50 个一批执行 <code>git add -- …</code>。unstage：有 HEAD 用 <code>restore --staged</code>（失败退 <code>reset HEAD --</code>），无 HEAD（空仓库）用 <code>rm --cached --ignore-unmatch</code>。</td>
+  </tr>
+  <tr>
+    <td>提交</td>
+    <td><code>commitGitChanges()</code></td>
+    <td>不带 paths 时遵守标准 Git 流：<strong>index 就是提交选择</strong>，注释明确"绝不从 Commit 按钮静默暂存工作区改动"；无暂存内容返回 <code>nothing_to_commit</code>。带 paths 时走 <code>commit --only -- …</code>，注释说明 <code>--only</code> 保证"之前暂存但未被选中的文件"不混入本次提交。</td>
+  </tr>
+  <tr>
+    <td>pull / push</td>
+    <td><code>pullGitBranch / pushGitBranch</code></td>
+    <td>pull 强制 <code>--ff-only</code>（注释：工具栏动作绝不引入隐式 merge commit），分叉返回 <code>diverged</code>；push 前先算 ahead/behind，behind&gt;0 直接拒绝（<code>behind_remote</code>），无 upstream 时自动 <code>push --set-upstream</code>（优先 origin）。两者都先检查 attached branch，detached HEAD 直接拒绝。</td>
+  </tr>
+  <tr>
+    <td>提交日志</td>
+    <td><code>getGitLog()</code></td>
+    <td>topo-order 最近 200 条，NUL 分隔解析（<code>%H%x00%P%x00%s%x00%an%x00%at</code>），同时读 upstream 的 ahead/behind；当前分支 detached 时退回 <code>HEAD</code>。</td>
+  </tr>
+</table>
+
+<div class="callout warn">
+  <b>为什么这些操作在任务 worktree 模式下仍然安全？</b>因为所有写操作都走 <code>resolveThreadGitActionRoot()</code>（项目检出）。即使你在任务会话里点了"切分支"，切的是项目；隐藏 worktree 的入站更新只有一条通道——后端的 journal 化项目→任务同步（ADR 0001）。Read-only 审查根（<code>resolveThreadTaskReviewRoot</code>）只出现在 conflicts 审查这一种 context。
+</div>
+
+<!-- ================================================================ -->
+<h2 id="s7"><span class="num">07</span>ADR 0001 设计决策与八条不变量</h2>
+
+<p><code>docs/adr/0001-task-worktree-sync-ownership.md</code>（2026-08-30，Accepted）是这两条逻辑的"宪法"。背景：任务跑在隐藏 worktree，而项目在任务开始前可能就有 staged/unstaged/untracked 改动——<strong>Git status 本身无法判断"谁改的"</strong>（项目改动被复制进任务副本后，相对任务 HEAD 依然是脏的）。</p>
+
+<h3>核心决策：持久化基线 B</h3>
+<p>每次成功的项目→任务同步后，为该任务 worktree 记录一个基线 <code>B</code>，内容包括：worktree 的 <code>HEAD</code>、每个与 HEAD 有差异的路径、以及每个路径的<strong>内容+类型+mode 签名</strong>。据此把当前任务状态 <code>T</code> 分三种情况处理：</p>
+<table>
+  <tr><th>状态</th><th>判定</th><th>处理</th></tr>
+  <tr><td>干净</td><td><code>T == B</code></td><td>静默从项目刷新（含项目脏文件与 untracked），用户无感</td></tr>
+  <tr><td>有检查点</td><td>某轮 checkpoint 记录了 <code>T − B</code></td><td>走既有三方合并发布；只有无法合并的路径才是用户可见冲突</td></tr>
+  <tr><td>无检查点的偏离</td><td><code>T != B</code> 但无 checkpoint</td><td><b>两份都保留，进入 recovery</b>。恢复只允许作用于 <code>T − B</code> 路径，绝不作用于所有脏路径</td></tr>
+</table>
+
+<h3>其余决策（与前端直接相关的已加粗）</h3>
+<ul>
+  <li><b>用户驱动的 Git 操作只作用于项目检出 P；隐藏 worktree 对这些控件是只读审查来源</b>；</li>
+  <li>发布/冲突解决/代码回滚后：重同步任务 worktree + 原子记录新基线；</li>
+  <li>多文件入站同步前先落盘<strong>同步 journal</strong>（源/目标 commit + 每路径 before/target 签名）。重启后只有当每个路径仍处于两个签名之一才允许续写；出现第三种状态 → 进 recovery，绝不猜测归属；</li>
+  <li><b>recovery 确认绑定到用户看到的 <code>T − B</code> 精确字节签名；路径集或任一字节变了就刷新选项且一字不写</b>（前端由 <code>publishRecoveryDecisionKey</code> + recovery token 实现）；</li>
+  <li>首次项目写入前先落盘<strong>发布 journal</strong>（项目根 + checkpoint 不可变前后镜像）；所有写入成功才算 apply 完成；崩溃重启会重试未完成的 apply、跳过已完成的 apply，且<strong>绝不从"可能已被自己写过的字节"重建前镜像</strong>；</li>
+  <li>每个 checkpoint 绑定它捕获的任务字节签名，发布前与发布中反复校验——防止迟到的后台编辑被悄悄算进更早的一轮；</li>
+  <li>checkpoint 还原用 CAS：全计划验证 → 写前逐路径复验 → 写后校验 → 只回滚"仍是我们的字节"（内容、类型、可执行位都参与）；</li>
+  <li><b>worktree 目录消失：保留精确关联，进入 missing 态等它回来</b>；初始隔离创建失败则让任务准备直接失败，绝不静默写进项目检出；</li>
+  <li>自动清理用 Git 最终的 clean-worktree 检查且<strong>不带 force</strong>：检查与删除之间到达的文件保住任务副本；force 只留给显式授权的用户丢弃；</li>
+  <li><b>持久化的 recovery 标记是"待复核的证据"而非永久真相</b>：基线证明任务无未记录改动时，标记自动清除；</li>
+  <li>ADR 之前的旧 worktree 无基线：只有当每个脏路径与项目逐字节相同、且任务 commit 可从项目到达时才允许自愈；模糊的旧状态一律保护。</li>
+</ul>
+
+<h3>八条不变量（逐条翻译成前端行为）</h3>
+<table>
+  <tr><th>#</th><th>不变量</th><th>对应前端实现</th></tr>
+  <tr><td>1</td><td>没改任何文件的任务绝不弹代码恢复提示</td><td>无 issue 且未 blocked → <code>hidden</code>，横幅不渲染</td></tr>
+  <tr><td>2</td><td>项目的新改动不会因为被复制进隐藏副本而变成任务所有</td><td>recovery 仅针对 <code>T − B</code>；后端基线机制</td></tr>
+  <tr><td>3</td><td>恢复绝不应用/丢弃 <code>T − B</code> 之外的路径</td><td>conflict 横幅只列出冲突路径，决策 API 带 <code>paths</code></td></tr>
+  <tr><td>4</td><td>发布后再回滚，不允许把已发布版本又"还原"回来</td><td>发布成功即清 recoveryDecision；后端基线刷新</td></tr>
+  <tr><td>5</td><td>有 pending/blocked/failed/recovery 状态的空任务不会被复用成新任务</td><td>后端线程生命周期管理</td></tr>
+  <tr><td>6</td><td>项目写入跨进程串行化（POSIX 与 Windows）</td><td>后端发布 journal</td></tr>
+  <tr><td>7</td><td>崩溃/取消不能把部分同步变成"任务劳动"</td><td>同步/发布 journal + 签名复核</td></tr>
+  <tr><td>8</td><td>符号链接与文件 mode 按路径身份处理（或保持未解决），文本发布/回滚代码绝不跟随</td><td>签名包含 mode/type</td></tr>
+</table>
+
+<p>ADR 还有一条对前端 UI 的直接指令（"User-facing states" 一节）：<b>正常同步不可见</b>。UI 只在四种情况打断用户——真文件合并冲突（带具体路径）、自动同步失败（带重试）、经核实的无检查点任务路径（带文件列表与确认）、任务 worktree 丢失（按"工作区丢失 + 安全复查"呈现，而不是伪装成一个文件）。<b>原因与冲突文件路径分开存储</b>，因此任何合法文件名（哪怕长得像标记）都可表示。<code>.worktreeinclude</code> 显式纳入的忽略文件同样参与基线规则；未被策略选中的忽略文件不在托管交付契约内。</p>
+
+<!-- ================================================================ -->
+<h2 id="s8"><span class="num">08</span>完整交互时序与状态流转图</h2>
+
+<h3>8.1 任务 worktree 的发布/恢复闭环</h3>
+
+<pre><code>┌─────────────┐   选中线程(不忙)        ┌──────────────────┐
+│ chat-store  │ ──────────────────────▶ │ warmActiveThread │
+└─────────────┘                          └────────┬─────────┘
+                                                  │ POST /v1/threads/{id}/warmup
+                                                  ▼
+                                        后端: 安全工作区准备
+                                        (项目→worktree 同步, 刷基线, 不选版本)
+                                                  │
+          SSE thread.updated (env_mode/worktree_path/publish_*) 轮询推送
+                                                  │
+                                                  ▼
+┌──────────────────────┐  publishAttentionState  ┌──────────────────────┐
+│ PublishConflictBanner│ ◀──────纯函数折叠 ────── │ thread.publishIssue/ │
+│ (envMode==worktree)  │                         │ publishBlocked/      │
+└──────────┬───────────┘                         │ publishConflicts     │
+           │  kind ∈ {recovery, missing, failure, conflict, hidden}
+           ▼
+   ┌───────────────────────────────────────────────────────────┐
+   │ recovery: 展示 T−B 文件 → keep_project / use_agent         │
+   │           → 二次确认(绑定 decisionKey=快照签名+updatedAt)   │
+   │ missing : 重试 → warmup 重跑安全准备 (不选文件版本)          │
+   │ failure : 重试 → apply                                     │
+   │ conflict: 查看变更(只读 worktree 根) / keep / use_agent     │
+   └───────────────────────┬───────────────────────────────────┘
+                           │ resolvePublishConflicts(action, undefined, token)
+                           ▼
+        POST /v1/threads/{id}/worktree/resolve {action, paths, recovery_token}
+                           │
+             status: applied → 绿条2.4s, 清确认态
+                     queued  → 等待 SSE 后续更新
+                     conflict/pending → 清 recoveryDecision,
+                                        要求对新快照重新确认
+                           │
+                           ▼
+        后端: 三方合并/按决策写项目 → 重同步 worktree → 原子记新基线 B
+                           │
+                           ▼
+        workspaceDirtyTick+1 → Git 面板/dock 全部刷新</code></pre>
+
+<h3>8.2 会话回滚 + 代码还原闭环</h3>
+
+<pre><code>用户消息气泡 [铅笔] → 编辑模式 → [重发]
+        │
+        ├─ canRestoreFiles? (= activeThreadId 存在 且 block.id 以 item_ 开头)
+        │     └─ 否 → commitResend(false)：仅回滚会话
+        │
+        ├─ GET /v1/threads/{id}/rewind-preview?before_item_id=…
+        │     ├─ 接口缺失/失败 → 确认框(previewFailed=true, 两个选项仍在)
+        │     └─ 需要确认? files>0 || missingRoots>0 || noCheckpoint>0
+        │           └─ 否 → 直接 commitResend(false)
+        │
+        ▼
+   确认对话框: 文件列表(冲突/skipped置顶,≤8条) + forceConflicts 复选框
+        │  [仅回滚对话]              [还原代码并回滚]
+        │ commitResend(false)        commitResend(true, force)
+        └────────────┬────────────────────┘
+                     ▼
+     POST /v1/threads/{id}/rewind {before_item_id, restore_files, force_conflicts}
+        （先截断 runtime：被删轮次落盘删除, 引擎会话重同步）
+                     │
+     ├── 失败 → setError / 草稿入 retryDraft 队列, return false
+     └── 成功 →
+          ├─ 本地截断 truncateStateAtUserBlock (删目标块及之后, 清流式区)
+          ├─ restoredOnBackend → workspaceDirtyTick+1
+          ├─ sendMessage(编辑后的新文本, 当前 composer 模式)
+          │     └─ 发送失败 → 恢复补丁状态 + 草稿回队列
+          │        (runtime 回滚已持久, 不能让瞬时失败吃掉草稿)
+          └─ rewind_result 兼容解析 (老 runtime 无此对象 → null)
+                └─ conflicted∪skipped 与 missingRoots 取 max →
+                   >0 则提示 "已完成, 但有 N 个未解决项"</code></pre>
+
+<!-- ================================================================ -->
+<h2 id="s9"><span class="num">09</span>细节清单：容易被忽略的边角</h2>
+
+<div class="card">
+<h3>路径与身份</h3>
+<ul>
+  <li><code>worktree_path</code> 有两个后端来源字段（旧 <code>associated_worktree_path</code>），解析顺序 <code>worktree_path ?? associated_worktree_path</code>；</li>
+  <li><code>env_mode</code> 归一化是"白名单式"：只有字面 <code>'worktree'</code> 才映射为 worktree，其他一切（包括缺失、乱值）都按 <code>local</code>；</li>
+  <li>SSE 合并语义：<code>undefined</code> = 保留旧值；对 <code>worktreePath</code> 来说 <code>null</code> 是有效值（解除关联），不能与"未提供"混淆；</li>
+  <li><code>resolveThreadFilesystemRoot</code> 刻意<strong>不</strong>抹掉 <code>/tmp</code> 类临时目录（文件预览需要真实路径），而 <code>resolveActiveThreadWorkspace</code> 会抹掉——两个函数用途不同，别混用。</li>
+</ul>
+</div>
+
+<div class="card">
+<h3>回滚的边界条件</h3>
+<ul>
+  <li>本地乐观块（<code>u-</code>/<code>q-</code> 前缀）从未持久化：rewind 与 restoreCode 都直接跳过后端调用，且 restoreCode 显式返回 null 不报错（注释：对话保持不变）；</li>
+  <li><code>canRestoreFiles</code> 的注释点明 restore 的写入目标是<strong>记录的执行根</strong>：发布成功后该根就是项目本身；副本消失时该轮文件还原被跳过（<code>missingRoots</code>）；</li>
+  <li>rewind 前必须在 runtime 先截断，否则被删轮次会在下次线程重载时"复活"；</li>
+  <li>rewind 后重发沿用<strong>当前 composer 模式</strong>（plan/ask 等），不落回默认；</li>
+  <li>发送失败的善后是"恢复 UI 到截断前 + 草稿回队列"，因为 runtime 回滚已不可逆，不能再让用户丢字；</li>
+  <li>预览失败不降级为"仅回滚对话"——保持两个选项，只是把解释文案换成 preview_failed 版本（有专门单测锁住这个行为）。</li>
+</ul>
+</div>
+
+<div class="card">
+<h3>发布/恢复的边界条件</h3>
+<ul>
+  <li>旧运行时的原因标记混在路径数组里；解析时<strong>只移除第一次出现的那个标记</strong>，另一个标记形状的字符串可能是合法文件名；</li>
+  <li>结构化 <code>publish_issue</code> 一旦存在（含 <code>null</code>），永远压过标记串推断；未知 issue 值 → <code>undefined</code>（视为旧 runtime，触发标记推断）；</li>
+  <li>recovery 且文件数未知（列表为空）时，只提供"保留项目"一个按钮——无法展示清单时默认保守；</li>
+  <li>recovery token = <code>thread.updatedAt</code>；任何状态更新使 <code>decisionKey</code> 失配即作废选择；后端对过期 token 的策略是"刷新不写入"；</li>
+  <li>resolve 响应 <code>status</code> 白名单外一律按 <code>'applied'</code>；<code>'conflict'/'pending'</code> 会清掉用户的确认态，强制重新确认；</li>
+  <li>missing 重试只会"再跑一次安全准备"：若 worktree 真的没了，状态不会变化（也不会伪造文件），重试后仍 missing 就显示失败反馈；</li>
+  <li>横幅只在 <code>envMode === 'worktree'</code> 的线程出现；local 线程永远不会渲染它。</li>
+</ul>
+</div>
+
+<div class="card">
+<h3>主进程 Git 的防御细节</h3>
+<ul>
+  <li><code>execFile</code> 而非 shell 拼接，参数数组天然免注入；<code>GIT_TERMINAL_PROMPT=0</code> 防交互挂起；</li>
+  <li>三类失败原因在每个入口都归一：<code>not_git_repo / git_unavailable(ENOENT) / error</code>，前端据此展示对应文案；</li>
+  <li>runtime checkout 保护会 <code>realpath</code> 两个根再比较，Windows 上大小写不敏感；保护生效时<strong>零副作用</strong>（无分支、无 stash、工作区原样）；</li>
+  <li>stash-and-switch 的失败回滚链：切失败 → pop 回原分支 → 连 pop 都失败也只静默（stash 仍在，可手工恢复），绝不丢弃用户改动；</li>
+  <li>路径安全闸拒绝绝对路径 / <code>..</code> 段 / NUL 字节；批量操作按 50 个/批切分；</li>
+  <li>提交的哲学：不带 paths 时空暂存区报错而<strong>不自动暂存</strong>；带 paths 时用 <code>--only</code> 防止把别的暂存内容夹带进提交；</li>
+  <li>pull 永远 <code>--ff-only</code>，push 先查 behind——工具栏按钮绝不制造隐式 merge 或被远端拒绝的意外；</li>
+  <li>detached HEAD 的推断分支仅用于展示/比较基线；任何 Git 变更面板在 detached 下自动转只读（<code>canMutateGit</code>）。</li>
+</ul>
+</div>
+
+<footer>
+  依据以下源码整理：workspace-path.ts · publish-conflict-state.ts · PublishConflictBanner.tsx · MessageTimeline.tsx · chat-store.ts · deepseek-runtime.ts · types.ts(agent) · git-service.ts · git-branches.ts / git-working-changes.ts / git-log.ts · app-ipc-schemas.ts · register-app-ipc-handlers.ts · preload/index.ts · ds-gui-api.ts · git-service.integration.test.ts · docs/adr/0001-task-worktree-sync-ownership.md
+</footer>
+
+</div>
+</body>
+</html>

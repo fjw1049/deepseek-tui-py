@@ -149,13 +149,10 @@ def test_cwd_dotenv_strips_security_keys(
     user_cfg = tmp_path / "user.toml"
     user_cfg.write_text("", encoding="utf-8")
 
-    try:
-        with caplog.at_level("WARNING"):
-            config = ConfigLoader().load(
-                config_path=user_cfg, no_project_config=True
-            )
-    finally:
-        os.environ.pop("DEEPSEEK_MODEL", None)
+    with caplog.at_level("WARNING"):
+        config = ConfigLoader().load(
+            config_path=user_cfg, no_project_config=True
+        )
 
     # Sensitive env keys from the project .env never reach os.environ/config.
     assert config.approval_policy == "on-request"
@@ -171,6 +168,7 @@ def test_cwd_dotenv_strips_security_keys(
         assert key not in os.environ
     # Non-sensitive env keys still apply.
     assert config.model == "env-model"
+    assert "DEEPSEEK_MODEL" not in os.environ
     assert any("security-sensitive key" in r.message for r in caplog.records)
 
 
@@ -287,11 +285,8 @@ def test_cwd_dotenv_pointer_keys_blocked(
         encoding="utf-8",
     )
 
-    try:
-        with caplog.at_level("WARNING"):
-            config = ConfigLoader().load(no_project_config=True)
-    finally:
-        os.environ.pop("DEEPSEEK_MODEL", None)
+    with caplog.at_level("WARNING"):
+        config = ConfigLoader().load(no_project_config=True)
 
     for key in (
         "DEEPSEEK_MANAGED_CONFIG_PATH",
@@ -305,7 +300,26 @@ def test_cwd_dotenv_pointer_keys_blocked(
     assert config.managed_config_path is None
     # Non-sensitive env keys still apply.
     assert config.model == "env-model"
+    assert "DEEPSEEK_MODEL" not in os.environ
     assert any("security-sensitive key" in r.message for r in caplog.records)
+
+
+def test_dotenv_values_do_not_leak_between_workspaces(tmp_path: Path) -> None:
+    workspace_a = tmp_path / "workspace-a"
+    workspace_b = tmp_path / "workspace-b"
+    workspace_a.mkdir()
+    workspace_b.mkdir()
+    (workspace_a / ".env").write_text(
+        "DEEPSEEK_MODEL=workspace-a\n", encoding="utf-8"
+    )
+    (workspace_b / ".env").write_text(
+        "DEEPSEEK_MODEL=workspace-b\n", encoding="utf-8"
+    )
+
+    loader = ConfigLoader()
+    assert loader.load(workspace=workspace_a, no_project_config=True).model == "workspace-a"
+    assert loader.load(workspace=workspace_b, no_project_config=True).model == "workspace-b"
+    assert "DEEPSEEK_MODEL" not in os.environ
 
 
 @pytest.mark.parametrize(

@@ -9,6 +9,9 @@ from collections import deque
 from pathlib import Path
 from typing import Any
 
+from deepseek_tui.utils import utc_now_iso as _utc_now_iso
+from deepseek_tui.utils import write_json_atomic
+
 from deepseek_tui.tools.task.models import (
     CRON_PROMPT_MARKER,
     CURRENT_TASK_SCHEMA_VERSION,
@@ -38,8 +41,6 @@ from deepseek_tui.tools.task.store import (
     _resolve_task_id,
     _task_record_from_dict,
     _task_record_to_dict,
-    _utc_now_iso,
-    _write_json_atomic,
 )
 
 
@@ -689,9 +690,9 @@ class TaskManager:
 
     def _persist_queue_locked(self) -> None:
         """原子写入队列顺序到 ``queue.json``（调用方须持有 ``self._lock``）。"""
-        _write_json_atomic(self._queue_path, {"queue": list(self._queue)})
+        write_json_atomic(self._queue_path, {"queue": list(self._queue)})
 
     def _persist_task_locked(self, task: TaskRecord) -> None:
         """原子写入单个任务到 ``tasks/{id}.json``（调用方须持有 ``self._lock``）。"""
         path = self._tasks_dir / f"{task.id}.json"
-        _write_json_atomic(path, _task_record_to_dict(task))
+        write_json_atomic(path, _task_record_to_dict(task))

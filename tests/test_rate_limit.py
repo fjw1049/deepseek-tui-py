@@ -157,9 +157,8 @@ def test_wrapper_exposes_api_key() -> None:
 def test_factory_wraps_client_when_rate_limit_set(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # Hermetic key resolution: skip keyring and env so the provider config
+    # Hermetic key resolution: skip env so the provider config
     # api_key is used, regardless of the developer machine's real secrets.
-    monkeypatch.setenv("DEEPSEEK_SKIP_KEYRING", "1")
     monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
     config = Config(
         provider="deepseek",
@@ -173,7 +172,6 @@ def test_factory_wraps_client_when_rate_limit_set(
 def test_factory_returns_plain_client_without_rate_limit(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("DEEPSEEK_SKIP_KEYRING", "1")
     monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
     config = Config(
         provider="deepseek",

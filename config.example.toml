@@ -46,14 +46,9 @@ timeout = 120
 # "glm-5.2-air" = 500000
 
 [ui]
-color_scheme = "default"
 show_thinking = true
 # Reply + UI language: "zh" (default) or "en". Workbench Settings syncs this.
 locale = "zh"
-
-[state]
-database_path = "~/.deepseek_tui/state.db"
-autosave = true
 
 [features]
 shell_tool = true    # shell/exec tool (default true)
@@ -83,45 +78,6 @@ llm_max_concurrent = 2
 # Seconds the parent turn blocks waiting for direct (non-background)
 # sub-agents before timing out the handoff.
 handoff_timeout_secs = 600
-
-[post_turn]
-enabled = true
-
-[evolution]
-enabled = false
-mode = "suggest"
-review_model = ""
-review_max_steps = 8
-flush_min_user_turns = 6
-flush_timeout_s = 30.0
-notify = true
-
-[evolution.curated]
-enabled = true
-# dir = ""  # default ~/.deepseek/memories
-memory_char_limit = 2200
-user_char_limit = 1375
-
-[evolution.procedural]
-enabled = true
-default_scope = "project"
-
-[evolution.schedulers]
-memory_nudge_every_n = 10
-skill_nudge_tool_rounds = 10
-review_idle_timeout_seconds = 600
-min_tool_calls_signal = 5
-
-[evolution.ledger]
-enabled = true
-retain_days = 90
-memory_curate = "auto"
-skill_patch = "auto"
-skill_create = "propose"
-
-[evolution.sinks]
-trajectory_enabled = false
-# trajectory_path = "~/.deepseek/trajectories"
 
 # Observability sinks + lifecycle hooks (all optional; defaults shown).
 [hooks]

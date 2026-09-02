@@ -11,11 +11,7 @@ from deepseek_tui.engine.orchestrator.helpers import (
     FOCUS_KERNEL,
     FOCUS_MCP_BASE,
     FOCUS_PLUGIN_BASE,
-    FOCUS_READ_BASE,
     FOCUS_SKILL_BASE,
-    FOCUS_WRITE_BASE,
-    _FOCUS_KERNEL_REGISTRY,
-    _FOCUS_REGISTRY_TOOLS,
 )
 from deepseek_tui.tools.registry import build_default_registry
 
@@ -29,13 +25,13 @@ def test_focus_registry_tools_subset_of_default_registry() -> None:
     cfg.features.subagents = True
     cfg.allow_shell = True
 
+    registry_tools = FOCUS_PLUGIN_BASE
     names = set(build_default_registry(cfg).names())
-    missing = sorted(_FOCUS_REGISTRY_TOOLS - names)
+    missing = sorted(registry_tools - names)
     assert missing == [], f"FOCUS ghosts (not in registry): {missing}"
 
 
 def test_focus_base_layering() -> None:
-    assert FOCUS_KERNEL == _FOCUS_KERNEL_REGISTRY
     assert FOCUS_MCP_BASE == FOCUS_KERNEL
     assert FOCUS_KERNEL == frozenset(
         {
@@ -49,9 +45,7 @@ def test_focus_base_layering() -> None:
     )
     assert FOCUS_SKILL_BASE == FOCUS_KERNEL | frozenset({"load_skill", "web_search"})
     assert FOCUS_PLUGIN_BASE == FOCUS_SKILL_BASE | frozenset({"agent"})
-    assert FOCUS_READ_BASE is FOCUS_PLUGIN_BASE or FOCUS_READ_BASE == FOCUS_PLUGIN_BASE
-    assert FOCUS_READ_BASE == _FOCUS_REGISTRY_TOOLS
-    assert FOCUS_WRITE_BASE <= FOCUS_KERNEL
+    assert frozenset({"write_file", "edit_file"}) <= FOCUS_KERNEL
 
     # MCP ⊂ SKILL ⊂ PLUGIN
     assert FOCUS_MCP_BASE < FOCUS_SKILL_BASE < FOCUS_PLUGIN_BASE

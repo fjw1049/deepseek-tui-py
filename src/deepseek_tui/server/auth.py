@@ -13,6 +13,8 @@ from fastapi import Request
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.responses import JSONResponse, Response
 
+from deepseek_tui.utils import write_text_atomic
+
 
 @dataclass(frozen=True, slots=True)
 class ResolvedRuntimeAuth:
@@ -92,14 +94,11 @@ def runtime_token_file() -> Path:
 
 def write_runtime_token_file(token: str) -> Path:
     path = runtime_token_file()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = Path(str(path) + ".tmp")
-    tmp.write_text(token, encoding="utf-8")
+    write_text_atomic(path, token)
     try:
-        os.chmod(tmp, 0o600)
+        os.chmod(path, 0o600)
     except OSError:
         pass  # best-effort on platforms without POSIX perms
-    tmp.replace(path)
     return path
 
 

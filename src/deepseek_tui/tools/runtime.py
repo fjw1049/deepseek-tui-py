@@ -26,39 +26,35 @@ from __future__ import annotations
 # drain managers cleanly.
 #
 import asyncio
-import re
-from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Any
-
-from deepseek_tui.config.models import Config
-from deepseek_tui.policy.exec_policy import Policy
-from deepseek_tui.integrations.lsp import LSP_MANAGER_KEY, LspConfig, LspManager
-from deepseek_tui.mcp.manager import McpManager
-from deepseek_tui.tools.automation import (
-    AutomationManager,
-    default_automations_dir,
-)
-from deepseek_tui.tools.automation import (
-    AutomationSchedulerConfig,
-    run_scheduler_loop,
-)
-from deepseek_tui.tools.automation import AUTOMATION_MANAGER_KEY
-from deepseek_tui.policy.sandbox import resolve_execution_sandbox_policy
-from deepseek_tui.tools.registry import ToolContext
-from deepseek_tui.tools.registry import ToolRegistry
-from typing import TYPE_CHECKING as _TC2
 import logging
 import os
+import re
 import time
-from dataclasses import replace
-if _TC2:
-    from deepseek_tui.tools.subagent import Mailbox, SubAgentManager
+from dataclasses import dataclass, field, replace
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
+
+from deepseek_tui.config.models import Config
+from deepseek_tui.integrations.lsp import LSP_MANAGER_KEY, LspConfig, LspManager
+from deepseek_tui.mcp.manager import McpManager
+from deepseek_tui.policy.exec_policy import TomlBackedPolicy
+from deepseek_tui.policy.sandbox import resolve_execution_sandbox_policy
+from deepseek_tui.tools.automation import (
+    AUTOMATION_MANAGER_KEY,
+    AutomationManager,
+    AutomationSchedulerConfig,
+    default_automations_dir,
+    run_scheduler_loop,
+)
+from deepseek_tui.tools.registry import ToolContext, ToolRegistry, ToolResult
 from deepseek_tui.tools.task import (
     TaskManager,
     TaskManagerConfig,
     default_tasks_dir,
 )
+
+if TYPE_CHECKING:
+    from deepseek_tui.tools.subagent import Mailbox, SubAgentManager
 
 
 @dataclass(slots=True)
@@ -173,7 +169,7 @@ async def create_tool_runtime(
     config: Config | None = None,
     working_directory: Path | None = None,
     mode: str = "agent",
-    policy: Policy | None = None,
+    policy: TomlBackedPolicy | None = None,
     task_data_dir: Path | None = None,
     subagent_state_path: Path | None = None,
     mcp_manager: McpManager | None = None,
@@ -193,8 +189,8 @@ async def create_tool_runtime(
     - ``extra_mcp_servers`` (``McpServerConfig`` list, e.g. from trusted
       plugins) are added to the manager after config load; mcp.json
       entries win on name conflicts.
-    - policy is attached verbatim (caller may build one via
-      ``execpolicy.Policy.default()``)
+    - policy is the user's ``execpolicy.toml`` gate
+      (``exec_policy.load_user_policy()``)
     """
     from deepseek_tui.tools.registry import build_default_registry
 
@@ -282,12 +278,9 @@ async def create_tool_runtime(
         )
         automation_manager = AutomationManager.open(automation_root)
         metadata[AUTOMATION_MANAGER_KEY] = automation_manager
-        # CronCreateTool's run_now branch reaches the TaskManager through
-        # the same context.metadata bag.
         # The ``features.tasks`` guard above guarantees task_manager is
         # not None here.
         assert task_manager is not None
-        metadata["task_manager"] = task_manager
         automation_cancel = asyncio.Event()
         automation_task = asyncio.create_task(
             run_scheduler_loop(
@@ -302,6 +295,8 @@ async def create_tool_runtime(
         )
 
     if task_manager is not None:
+        # CronCreateTool's run_now branch also reaches the TaskManager
+        # through this same context.metadata bag.
         metadata["task_manager"] = task_manager
 
     # Exec policy — user-authored rules from ~/.deepseek/execpolicy.toml
@@ -311,51 +306,6 @@ async def create_tool_runtime(
         from deepseek_tui.policy.exec_policy import load_user_policy
 
         policy = load_user_policy()
-
-    # Network policy — domain-level allow/deny for outbound HTTP, from the
-    # ``[network]`` config table. Rule entries carry ``host`` (or
-    # ``domain``) plus ``action`` ("allow" / "deny"); session amendments
-    # recorded by approval flows use the same shape.
-    network_decider = None
-    net_cfg = getattr(cfg, "network", None)
-    if net_cfg is not None and getattr(net_cfg, "enabled", False):
-        from deepseek_tui.policy.network import (
-            Decision as NetworkDecision,
-            NetworkPolicy,
-            NetworkPolicyDecider,
-        )
-
-        allow_hosts: list[str] = []
-        deny_hosts: list[str] = []
-        raw_rules = [
-            *getattr(net_cfg, "rules", []),
-            *getattr(net_cfg, "amendments", []),
-        ]
-        for rule in raw_rules:
-            if not isinstance(rule, dict):
-                continue
-            host = str(rule.get("host") or rule.get("domain") or "").strip()
-            action = str(rule.get("action") or "").strip().lower()
-            if not host:
-                continue
-            if action == "allow":
-                allow_hosts.append(host)
-            elif action == "deny":
-                deny_hosts.append(host)
-        default_action = str(
-            getattr(net_cfg, "default_action", "ask") or "ask"
-        ).strip().lower()
-        default_decision = {
-            "allow": NetworkDecision.ALLOW,
-            "deny": NetworkDecision.DENY,
-        }.get(default_action, NetworkDecision.PROMPT)
-        network_decider = NetworkPolicyDecider(
-            policy=NetworkPolicy(
-                allow=allow_hosts,
-                deny=deny_hosts,
-                default=default_decision,
-            ),
-        )
 
     trust_mode = bool(getattr(cfg, "trust_mode", False))
     approval_policy = getattr(cfg, "approval_policy", None)
@@ -392,7 +342,7 @@ async def create_tool_runtime(
         policy=policy,
         task_manager=task_manager,
         subagent_manager=subagent_manager,
-        network_policy=network_decider,
+        network_policy=None,
         execution_sandbox_policy=resolve_execution_sandbox_policy(
             mode,
             workspace,
@@ -497,8 +447,6 @@ async def _build_mcp_manager(
 
 # Tool-output spillover writer (#422).
 #
-from deepseek_tui.tools.registry import ToolResult
-
 from deepseek_tui.config.paths import user_tool_outputs_dir
 
 logger = logging.getLogger(__name__)

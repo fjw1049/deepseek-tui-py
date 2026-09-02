@@ -193,6 +193,250 @@ def _deny(path: str | None, reason: str) -> ShellWriteVerdict:
     )
 
 
+# Git inside a managed worktree is inspection-only. Unknown subcommands are
+# denied so aliases and newly-added mutators cannot bypass the sandbox.
+_GIT_READONLY_SUBCOMMANDS = {
+    "blame",
+    "cat-file",
+    "check-attr",
+    "check-ignore",
+    "check-mailmap",
+    "check-ref-format",
+    "count-objects",
+    "describe",
+    "status",
+    "diff",
+    "diff-files",
+    "diff-index",
+    "diff-tree",
+    "for-each-ref",
+    "fsck",
+    "grep",
+    "help",
+    "ls-files",
+    "ls-tree",
+    "log",
+    "merge-base",
+    "name-rev",
+    "rev-list",
+    "rev-parse",
+    "shortlog",
+    "show",
+    "show-ref",
+    "version",
+}
+_GIT_BRANCH_MUTATION_FLAGS = {
+    "-c",
+    "-C",
+    "-d",
+    "-D",
+    "-f",
+    "-m",
+    "-M",
+    "--copy",
+    "--delete",
+    "--edit-description",
+    "--force",
+    "--move",
+    "--set-upstream-to",
+    "--unset-upstream",
+}
+_GIT_BRANCH_READ_FLAGS = {
+    "-l",
+    "--list",
+    "--show-current",
+    "--contains",
+    "--no-contains",
+    "--merged",
+    "--no-merged",
+    "--points-at",
+}
+_GIT_CONFIG_MUTATION_FLAGS = {
+    "--add",
+    "--edit",
+    "-e",
+    "--remove-section",
+    "--rename-section",
+    "--replace-all",
+    "--unset",
+    "--unset-all",
+}
+_GIT_CONFIG_READ_FLAGS = {
+    "--get",
+    "--get-all",
+    "--get-color",
+    "--get-colorbool",
+    "--get-regexp",
+    "--get-urlmatch",
+    "--list",
+    "-l",
+}
+_GIT_GLOBAL_OPTIONS_WITH_VALUE = {
+    "-C",
+    "-c",
+    "--exec-path",
+    "--git-dir",
+    "--namespace",
+    "--super-prefix",
+    "--work-tree",
+}
+_SHELL_SEPARATORS = {";", "&", "&&", "|", "||", "(", ")"}
+_COMMAND_PREFIXES = {"command", "env", "sudo"}
+
+
+def _shell_tokens(command: str) -> list[str]:
+    try:
+        lexer = shlex.shlex(
+            command.replace("\n", ";"),
+            posix=True,
+            punctuation_chars=";&|()",
+        )
+        lexer.whitespace_split = True
+        lexer.commenters = ""
+        return list(lexer)
+    except ValueError:
+        return re.findall(r"[^\s;&|()]+|&&|\|\||[;&|()]", command)
+
+
+def _git_invocation(tokens: list[str], git_index: int) -> tuple[str | None, list[str]]:
+    index = git_index + 1
+    while index < len(tokens):
+        token = tokens[index]
+        if token in _SHELL_SEPARATORS:
+            return None, []
+        option = token.split("=", 1)[0]
+        if option in _GIT_GLOBAL_OPTIONS_WITH_VALUE:
+            index += 1 if "=" in token else 2
+            continue
+        if token.startswith("-"):
+            index += 1
+            continue
+        end = index + 1
+        while end < len(tokens) and tokens[end] not in _SHELL_SEPARATORS:
+            end += 1
+        return token.lower(), tokens[index + 1 : end]
+    return None, []
+
+
+def _git_branch_is_readonly(args: list[str]) -> bool:
+    if any(arg.split("=", 1)[0] in _GIT_BRANCH_MUTATION_FLAGS for arg in args):
+        return False
+    positional = [arg for arg in args if not arg.startswith("-")]
+    return not positional or any(
+        arg.split("=", 1)[0] in _GIT_BRANCH_READ_FLAGS for arg in args
+    )
+
+
+def _git_config_is_readonly(args: list[str]) -> bool:
+    flags = {arg.split("=", 1)[0] for arg in args if arg.startswith("-")}
+    if flags.intersection(_GIT_CONFIG_MUTATION_FLAGS):
+        return False
+    if flags.intersection(_GIT_CONFIG_READ_FLAGS):
+        return True
+    positional = [arg for arg in args if not arg.startswith("-")]
+    if positional and positional[0] in {
+        "get",
+        "get-all",
+        "get-regexp",
+        "get-urlmatch",
+        "list",
+    }:
+        return True
+    return len(positional) <= 1
+
+
+def _git_remote_is_readonly(args: list[str]) -> bool:
+    positional = [arg for arg in args if not arg.startswith("-")]
+    return not positional or positional[0] in {"get-url", "show"}
+
+
+def _git_symbolic_ref_is_readonly(args: list[str]) -> bool:
+    if any(arg in {"-d", "--delete", "-m"} for arg in args):
+        return False
+    return len([arg for arg in args if not arg.startswith("-")]) <= 1
+
+
+def _git_tag_is_readonly(args: list[str]) -> bool:
+    mutation_flags = {
+        "-a",
+        "-d",
+        "-f",
+        "-m",
+        "-s",
+        "-u",
+        "--annotate",
+        "--delete",
+        "--force",
+        "--sign",
+    }
+    if any(arg.split("=", 1)[0] in mutation_flags for arg in args):
+        return False
+    positional = [arg for arg in args if not arg.startswith("-")]
+    listing = any(
+        arg.split("=", 1)[0]
+        in {"-l", "--list", "--contains", "--no-contains", "--merged", "--no-merged", "--points-at"}
+        for arg in args
+    )
+    return not positional or listing
+
+
+def _git_command_is_readonly(subcommand: str, args: list[str]) -> bool:
+    if subcommand in _GIT_READONLY_SUBCOMMANDS:
+        return True
+    if subcommand == "branch":
+        return _git_branch_is_readonly(args)
+    if subcommand == "config":
+        return _git_config_is_readonly(args)
+    if subcommand == "remote":
+        return _git_remote_is_readonly(args)
+    if subcommand == "symbolic-ref":
+        return _git_symbolic_ref_is_readonly(args)
+    if subcommand == "tag":
+        return _git_tag_is_readonly(args)
+    return False
+
+
+def check_managed_worktree_git(command: str, *, _depth: int = 0) -> ShellWriteVerdict:
+    """Allow only read-only Git commands in a managed task workspace."""
+    if _depth > 3:
+        return ShellWriteVerdict(allowed=True)
+    for match in _NESTED_SHELL.finditer(command):
+        verdict = check_managed_worktree_git(match.group(2), _depth=_depth + 1)
+        if not verdict.allowed:
+            return verdict
+    for match in _NESTED_SHELL_UNQUOTED.finditer(command):
+        if match.group(1)[:1] in {"'", '"'}:
+            continue
+        verdict = check_managed_worktree_git(match.group(1), _depth=_depth + 1)
+        if not verdict.allowed:
+            return verdict
+
+    tokens = _shell_tokens(command)
+    segment_start = 0
+    for index, token in enumerate(tokens):
+        if token in _SHELL_SEPARATORS:
+            segment_start = index + 1
+            continue
+        if Path(token).name.lower() != "git":
+            continue
+        prefix = tokens[segment_start:index]
+        if any(
+            part not in _COMMAND_PREFIXES
+            and not part.startswith("-")
+            and not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", part)
+            for part in prefix
+        ):
+            continue
+        subcommand, args = _git_invocation(tokens, index)
+        if subcommand is not None and not _git_command_is_readonly(subcommand, args):
+            return _deny(
+                None,
+                f"Git {subcommand} is disabled in this isolated task workspace. "
+                "Edit and test files here; commit and sync from the project workspace.",
+            )
+    return ShellWriteVerdict(allowed=True)
+
+
 def check_shell_write(
     command: str,
     *,

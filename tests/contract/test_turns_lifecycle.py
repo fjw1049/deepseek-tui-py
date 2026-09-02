@@ -35,7 +35,6 @@ async def test_start_turn_empty_prompt_is_400(client: AsyncClient) -> None:
 
 @pytest.mark.asyncio
 async def test_start_turn_missing_api_key_is_400(client: AsyncClient, monkeypatch):
-    monkeypatch.setenv("DEEPSEEK_SKIP_KEYRING", "1")
     monkeypatch.setattr(
         "deepseek_tui.state.secrets.SecretsManager.resolve_api_key",
         lambda self, config, provider_name=None: None,

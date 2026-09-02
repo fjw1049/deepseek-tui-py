@@ -448,6 +448,57 @@ async def test_restore_code_keeps_conversation_and_consumes_checkpoints(
     assert again["turns_without_checkpoint"] == ["turn_b"]
 
 
+@pytest.mark.asyncio
+async def test_restore_code_consumes_unpublished_checkpoint_and_clears_failure(
+    runtime_app, runtime_data_dir: Path
+) -> None:
+    manager = runtime_app.state.thread_manager
+    repo = _ws(runtime_data_dir)
+    _git(repo, "init")
+    _git(repo, "config", "user.email", "test@example.com")
+    _git(repo, "config", "user.name", "Test")
+    (repo / "app.py").write_text("one\n", encoding="utf-8")
+    _git(repo, "add", "app.py")
+    _git(repo, "commit", "-m", "init")
+    thread_id = await _seed(manager, workspace=str(repo))
+    prepared = await manager._prepare_isolated_workspace(
+        manager.store.load_thread(thread_id)
+    )
+    tree = execution_root(prepared)
+    (tree / "app.py").write_text("two\n", encoding="utf-8")
+    manager.checkpoints._save(
+        TurnCheckpoint(
+            turn_id="turn_b",
+            is_git=True,
+            thread_id=thread_id,
+            created_at=1.0,
+            execution_root=str(tree),
+            mutated=["app.py"],
+            pre_contents={"app.py": "one\n"},
+            post_contents={"app.py": "two\n"},
+        )
+    )
+    manager.checkpoints.record_post_images("turn_b", tree)
+    prepared.publish_pending = True
+    prepared.publish_blocked = True
+    prepared.publish_issue = "failure"
+    prepared.publish_conflicts = []
+    manager.store.save_thread(prepared)
+
+    result = await manager.restore_code(
+        thread_id, before_item_id="item_u2"
+    )
+
+    restored = manager.store.load_thread(thread_id)
+    assert result["restored_files"] == ["app.py"]
+    assert manager.checkpoints.load("turn_b") is None
+    assert restored.publish_pending is False
+    assert restored.publish_blocked is False
+    assert restored.publish_issue is None
+    assert (repo / "app.py").read_text(encoding="utf-8") == "one\n"
+    assert (tree / "app.py").read_text(encoding="utf-8") == "one\n"
+
+
 @pytest.mark.parametrize("rollback_action", ["restore_code", "rewind"])
 @pytest.mark.asyncio
 async def test_published_rollback_resyncs_isolate_before_warmup(
@@ -491,6 +542,11 @@ async def test_published_rollback_resyncs_isolate_before_warmup(
     checkpoint = manager.checkpoints.load("turn_b")
     assert checkpoint is not None
     assert Path(checkpoint.execution_root).resolve() == repo.resolve()
+    published.publish_pending = True
+    published.publish_blocked = True
+    published.publish_issue = "failure"
+    published.publish_conflicts = []
+    manager.store.save_thread(published)
 
     if rollback_action == "restore_code":
         result = await manager.restore_code(thread_id, before_item_id="item_u2")
@@ -503,6 +559,10 @@ async def test_published_rollback_resyncs_isolate_before_warmup(
     assert manager.checkpoints.load("turn_b") is None
     assert (repo / "app.py").read_text(encoding="utf-8") == "one\n"
     assert (tree / "app.py").read_text(encoding="utf-8") == "one\n"
+    restored_thread = manager.store.load_thread(thread_id)
+    assert restored_thread.publish_pending is False
+    assert restored_thread.publish_blocked is False
+    assert restored_thread.publish_issue is None
 
     async def fake_ensure_engine_loaded(_thread):
         return None
