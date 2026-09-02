@@ -90,6 +90,7 @@ import {
   getGitWorkingChanges,
   pullGitBranch,
   pushGitBranch,
+  syncGitBranch,
   stageGitChanges,
   stashAndSwitchGitBranch,
   suggestGitCommitMessage,
@@ -1372,6 +1373,9 @@ export function registerAppIpcHandlers(options: RegisterAppIpcHandlersOptions): 
   )
   ipcMain.handle('git:push', async (_, workspaceRoot: unknown) =>
     pushGitBranch(parseIpcPayload('git:push', workspaceRootSchema, workspaceRoot))
+  )
+  ipcMain.handle('git:sync', async (_, workspaceRoot: unknown) =>
+    syncGitBranch(parseIpcPayload('git:sync', workspaceRootSchema, workspaceRoot))
   )
 
   ipcMain.handle('trending:repos', async (_, period: unknown) =>

@@ -41,17 +41,7 @@ from deepseek_tui.integrations.hooks import (
     ResponseStartEvent,
     ToolLifecycleEvent,
 )
-from deepseek_tui.protocol.events import (
-    ResponseDeltaEvent as ResponseDeltaFrame,
-)
-from deepseek_tui.protocol.events import (
-    ResponseEndEvent as ResponseEndFrame,
-)
-from deepseek_tui.protocol.events import (
-    ResponseStartEvent as ResponseStartFrame,
-)
 from deepseek_tui.protocol.messages import Message, MessageOrigin
-from dataclasses import asdict
 
 if TYPE_CHECKING:
     from deepseek_tui.client.base import LLMClient
@@ -669,7 +659,7 @@ class AppRuntime:
     #
     # Handlers that overlap with existing CLI thread/task/skill commands. Each
     # handler is a thin delegator to a manager that already exists in the
-    # Python tree (TaskManager / SkillRegistry / McpManager / SessionManager).
+    # Python tree (TaskManager / SkillRegistry / McpManager / thread store).
     # Handlers return ``{"ok": False, "error": ...}`` when the underlying
     # manager isn't wired so the routes never raise.
 
@@ -1218,11 +1208,13 @@ def _task_record_to_dict(record: Any) -> dict[str, Any]:
 def _build_prompt_event_frames(response_id: str) -> list[dict[str, Any]]:
     """Build the 3-frame response envelope emitted for every prompt."""
     return [
-        ResponseStartFrame(response_id=response_id).model_dump(),
-        ResponseDeltaFrame(
-            response_id=response_id, delta="model-selected"
-        ).model_dump(),
-        ResponseEndFrame(response_id=response_id).model_dump(),
+        {"event": "response_start", "response_id": response_id},
+        {
+            "event": "response_delta",
+            "response_id": response_id,
+            "delta": "model-selected",
+        },
+        {"event": "response_end", "response_id": response_id},
     ]
 
 

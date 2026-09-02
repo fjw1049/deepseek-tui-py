@@ -1409,7 +1409,9 @@ class RuntimeThreadManager:
             UnpublishedWorktreeError,
             apply_path_images,
             apply_raw_path_images,
-            overlay_working_paths,
+            capture_worktree_baseline,
+            current_worktree_branch,
+            overlay_working_paths_async,
             paths_requiring_raw_resolution,
             read_working_text,
             worktree_path_signatures,
@@ -1466,10 +1468,31 @@ class RuntimeThreadManager:
                 resolved_labor_signatures: dict[str, str] = {}
                 processed_turn_ids: list[str] = []
                 sync_completed = False
-                drifted, resolved_labor_signatures = (
-                    await self._checkpoint_post_state(tree, unpublished)
+                baseline = self._load_worktree_baseline(thread.id)
+                expected_heads = {
+                    head
+                    for head in (
+                        baseline.head if baseline is not None else None,
+                        thread.worktree_base,
+                    )
+                    if head
+                }
+                sync_journal = self._load_incomplete_sync_journal(thread.id)
+                if sync_journal is not None:
+                    expected_heads.update(
+                        str(sync_journal.get(key) or "")
+                        for key in ("target_head", "checkout_target_head")
+                        if sync_journal.get(key)
+                    )
+                current_baseline = await capture_worktree_baseline(tree)
+                current_branch = await current_worktree_branch(tree)
+                git_state_invalid = bool(
+                    current_branch
+                    or not current_baseline.head
+                    or not expected_heads
+                    or current_baseline.head not in expected_heads
                 )
-                if drifted:
+                if git_state_invalid:
                     recovery_paths = await self._unknown_worktree_paths(
                         thread.id, tree
                     )
@@ -1477,13 +1500,37 @@ class RuntimeThreadManager:
                         thread.id, tree
                     )
                     publish_issue = PUBLISH_ISSUE_RECOVERY
-                    conflicted.extend(recovery_paths or drifted)
-                elif keep:
-                    overlay_working_paths(root, tree, sorted(keep))
-                    kept_signatures = await asyncio.to_thread(
-                        worktree_path_signatures, tree, sorted(keep)
+                    conflicted.extend(
+                        recovery_paths
+                        or sorted(
+                            {
+                                path
+                                for checkpoint in unpublished
+                                for path in checkpoint.mutated
+                            }
+                        )
                     )
-                    resolved_labor_signatures.update(kept_signatures)
+                else:
+                    drifted, resolved_labor_signatures = (
+                        await self._checkpoint_post_state(tree, unpublished)
+                    )
+                    if drifted:
+                        recovery_paths = await self._unknown_worktree_paths(
+                            thread.id, tree
+                        )
+                        await self._record_worktree_recovery_snapshot(
+                            thread.id, tree
+                        )
+                        publish_issue = PUBLISH_ISSUE_RECOVERY
+                        conflicted.extend(recovery_paths or drifted)
+                    elif keep:
+                        await overlay_working_paths_async(
+                            root, tree, sorted(keep)
+                        )
+                        kept_signatures = await asyncio.to_thread(
+                            worktree_path_signatures, tree, sorted(keep)
+                        )
+                        resolved_labor_signatures.update(kept_signatures)
                 for checkpoint in unpublished if not conflicted else []:
                     published_paths.update(checkpoint.mutated)
                     if (
@@ -2297,7 +2344,7 @@ class RuntimeThreadManager:
                 thread = self.store.load_thread(thread_id)
                 await self._discard_owned_worktree_claimed(thread)
             delete_thread_tree(self.store, self.checkpoints, thread_id)
-            self._prune_orphaned_worktrees()
+            await asyncio.to_thread(self._prune_orphaned_worktrees)
 
     async def purge_archived_threads(self) -> dict[str, int]:
         """Permanently delete every soft-archived thread. Returns delete counts."""
@@ -2641,7 +2688,9 @@ class RuntimeThreadManager:
             max_checkpoint_age_days=max_age,
         )
         payload = report.to_dict()
-        payload["orphan_worktrees_removed"] = self._prune_orphaned_worktrees()
+        payload["orphan_worktrees_removed"] = await asyncio.to_thread(
+            self._prune_orphaned_worktrees
+        )
         return payload
 
     async def clean_storage_older_than(self, older_than_days: int) -> dict[str, Any]:
@@ -2681,7 +2730,7 @@ class RuntimeThreadManager:
                 f"unpublished code: {', '.join(sorted(kept))}"
             )
         report = clear_conversation_history(self.store, self.checkpoints)
-        self._prune_orphaned_worktrees()
+        await asyncio.to_thread(self._prune_orphaned_worktrees)
         return report.to_dict()
 
     async def export_data_bundle(self, path: str, *, scope: str = "conversations") -> dict[str, Any]:
@@ -2915,6 +2964,7 @@ class RuntimeThreadManager:
         from deepseek_tui.workspace.managed_worktree import UnpublishedWorktreeError
 
         root = project_root(thread)
+        sync_succeeded = False
         try:
             tree = execution_root(thread)
             synced_head = await self._sync_isolate_with_baseline(
@@ -2934,6 +2984,7 @@ class RuntimeThreadManager:
             except WorktreePendingError:
                 thread.publish_issue = PUBLISH_ISSUE_MISSING
         else:
+            sync_succeeded = True
             if synced_head:
                 thread.worktree_base = synced_head
             if thread.publish_issue == PUBLISH_ISSUE_RECOVERY:
@@ -2944,7 +2995,20 @@ class RuntimeThreadManager:
                 thread.publish_blocked = False
         thread.updated_at = datetime.now(timezone.utc)
         self.store.save_thread(thread)
-        return not thread.publish_blocked
+        return sync_succeeded
+
+    def _finish_checkpoint_restore(self, thread: ThreadRecord) -> None:
+        """Clear stale publish failures after restored checkpoints are consumed."""
+        if thread.publish_conflicts or self._unpublished_checkpoints(thread):
+            return
+        thread.publish_pending = False
+        thread.publish_blocked = False
+        thread.publish_issue = None
+        thread.publish_request_action = None
+        thread.publish_request_paths = []
+        thread.publish_waiting_on = None
+        thread.updated_at = datetime.now(timezone.utc)
+        self.store.save_thread(thread)
 
     async def _paths_claimed_by_other_turns(
         self, turn_id: str, workspace: Path
@@ -3101,6 +3165,7 @@ class RuntimeThreadManager:
                 if await self._resync_isolate_after_project_restore(thread):
                     for cp in consumable:
                         self.checkpoints.delete(cp.turn_id)
+                    self._finish_checkpoint_restore(thread)
 
             cutoff_turn = turns[cutoff_turn_index]
             kept_item_ids: list[str] = []
@@ -3210,6 +3275,7 @@ class RuntimeThreadManager:
             if await self._resync_isolate_after_project_restore(thread):
                 for cp in consumable:
                     self.checkpoints.delete(cp.turn_id)
+                self._finish_checkpoint_restore(thread)
 
         candidate_ids = {cp.turn_id for cp in candidates}
         return {

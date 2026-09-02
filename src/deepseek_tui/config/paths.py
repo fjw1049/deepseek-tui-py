@@ -2,7 +2,7 @@
 
 User home ``~/.deepseek/`` is layered by lifecycle (see ``MANIFEST.toml``):
 
-* **L0 identity** — config, AGENTS.md, mcp.json, secrets
+* **L0 identity** — config, AGENTS.md, mcp.json
 * **L1 capabilities** — skills, plugins (+ ``plugins/.host``)
 * **L2 conversations** — ``threads/`` is canonical; ``sessions/`` is TUI legacy
 * **L3 jobs** — tasks, automations, ``agents/{registries,runs}``
@@ -79,10 +79,10 @@ def user_audit_log_path() -> Path:
 
 
 def user_sessions_dir() -> Path:
-    """``~/.deepseek/sessions/`` — TUI legacy session JSON (not Workbench SoT).
+    """``~/.deepseek/sessions/`` — legacy exports and crash recovery only.
 
-    Workbench conversations live in :func:`user_threads_dir`. TUI still
-    persists ``current.json`` / picker dumps here for crash recovery.
+    All live conversations, including standalone TUI threads, use
+    :func:`user_threads_dir` as their source of truth.
     """
     return user_deepseek_dir() / "sessions"
 
@@ -158,7 +158,7 @@ def user_skills_dir() -> Path:
 
 
 def user_state_db_path() -> Path:
-    """``~/.deepseek/state.db`` — CLI/daemon local SQLite state."""
+    """Legacy ``~/.deepseek/state.db`` path, retained for data inventory only."""
     return user_deepseek_dir() / "state.db"
 
 
@@ -261,9 +261,17 @@ def dotenv_path(workspace: Path | None = None) -> Path:
 # ---------------------------------------------------------------------------
 
 
-def load_dotenv_file(path: Path, blocked_keys: Collection[str] | None = None) -> None:
+def load_dotenv_file(
+    path: Path, blocked_keys: Collection[str] | None = None
+) -> dict[str, str]:
+    """Parse a workspace ``.env`` without mutating ``os.environ``.
+
+    Real environment variables still take precedence. Returning a per-load
+    overlay prevents one workspace's values leaking into later config loads.
+    """
     if not path.exists():
-        return
+        return {}
+    values: dict[str, str] = {}
     for raw_line in path.read_text(encoding="utf-8").splitlines():
         line = raw_line.strip()
         if not line or line.startswith("#") or "=" not in line:
@@ -271,13 +279,15 @@ def load_dotenv_file(path: Path, blocked_keys: Collection[str] | None = None) ->
         key, value = line.split("=", 1)
         key = key.strip()
         value = value.strip().strip('"').strip("'")
-        if key and key not in os.environ:
-            if blocked_keys and key in blocked_keys:
-                logger.warning(
-                    "project .env ignored security-sensitive key: %s (%s)", key, path
-                )
-                continue
-            os.environ[key] = value
+        if not key or key in os.environ:
+            continue
+        if blocked_keys and key in blocked_keys:
+            logger.warning(
+                "project .env ignored security-sensitive key: %s (%s)", key, path
+            )
+            continue
+        values[key] = value
+    return values
 
 
 # ---------------------------------------------------------------------------

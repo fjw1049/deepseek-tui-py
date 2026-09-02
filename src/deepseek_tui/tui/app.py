@@ -344,22 +344,83 @@ class DeepSeekTUI(App[None]):
             pass
 
     def _apply_resume_or_fork(self) -> str | None:
-        """Restore session messages from disk if a resume/fork id was given.
+        """Restore a canonical thread or an explicitly named legacy snapshot.
 
         Returns a status-bar message (or ``None`` if nothing to do).
-        TUI sessions are read from ``~/.deepseek/sessions/<id>.json`` (legacy;
-        Workbench SoT is ``threads/``); the
-        special id ``current``/``latest`` maps to the auto-persisted
-        ``current.json`` snapshot.
+        ``current``/``latest`` and absolute JSON paths are legacy recovery
+        inputs; ordinary ids resolve against the canonical thread store first.
         """
         if self._engine is None:
             return None
         target_id = self._resume_session_id or self._fork_session_id
         if not target_id:
             return None
+        if target_id in {"current", "latest"}:
+            recovered = self._apply_crash_checkpoint()
+            if recovered is not None:
+                return recovered
+        from pathlib import Path
+
+        legacy_path = Path(target_id).expanduser()
+        if target_id not in {"current", "latest"} and not legacy_path.is_absolute():
+            try:
+                return self._load_runtime_thread(
+                    target_id,
+                    fork=bool(self._fork_session_id),
+                )
+            except FileNotFoundError:
+                pass
         path = self._resolve_session_path(target_id)
         if path is None or not path.exists():
             return f"resume target not found: {target_id}"
+        message = self._load_session_from_path(path)
+        if message and not message.startswith("failed") and not message.startswith("session"):
+            verb = "resumed" if self._resume_session_id else "forked from"
+            return message.replace("loaded session", verb, 1)
+        return message
+
+    def _load_runtime_thread(self, thread_id: str, *, fork: bool = False) -> str:
+        """Load one canonical thread into the live engine and transcript."""
+        if self._engine is None:
+            return "engine not started — cannot load thread"
+        import uuid
+
+        from deepseek_tui.config.paths import user_threads_dir
+        from deepseek_tui.server.threads import (
+            RuntimeThreadStore,
+            reconstruct_messages_from_turns,
+        )
+
+        store = RuntimeThreadStore(user_threads_dir())
+        thread = store.load_thread(thread_id)
+        restored = reconstruct_messages_from_turns(store, thread_id)
+        metadata = {
+            "id": thread.id,
+            "goal": None if fork else thread.goal,
+            "goal_queue": [] if fork else thread.goal_queue,
+        }
+        apply_messages_to_engine(self._engine, restored, metadata)
+        turns = store.list_turns_for_thread(thread_id)
+        self._engine._cycle_session_id = uuid.uuid4().hex if fork else thread.id
+        self._engine.turn_counter = len(turns)
+        self._engine._user_turn_index = len(turns)
+        self._engine.default_model = thread.model
+        self._interaction_mode = thread.mode
+        self._engine.mode = thread.mode
+        self.query_one(Transcript).hydrate_from_messages(restored)
+        self.query_one(StatusBar).set_model(thread.model)
+        self.query_one(ComposerHint).set_model(thread.model)
+        self._session_started_at_iso = thread.created_at.isoformat()
+        verb = "forked from" if fork else "resumed"
+        return f"{verb} {thread_id[:8]} ({len(restored)} messages)"
+
+    def _load_session_from_path(
+        self,
+        path,
+    ) -> str | None:  # type: ignore[no-untyped-def]
+        """Load an explicit legacy session snapshot for recovery/migration."""
+        if self._engine is None:
+            return "engine not started — cannot load session"
         try:
             import json as _json
 
@@ -372,35 +433,25 @@ class DeepSeekTUI(App[None]):
         except Exception as exc:  # noqa: BLE001 — pydantic validation errors
             return f"session file invalid: {exc}"
         apply_messages_to_engine(self._engine, restored, metadata)
-        transcript = self.query_one(Transcript)
-        transcript.hydrate_from_messages(restored)
-        started = session_started_at_iso(metadata, path=path)
-        if started:
-            self._session_started_at_iso = started
-        verb = "resumed" if self._resume_session_id else "forked from"
-        return f"{verb} {target_id[:8]} ({len(restored)} messages)"
+        import uuid
 
-    def _load_session_from_path(self, path) -> str | None:  # type: ignore[no-untyped-def]
-        """Load a session JSON file into the live engine + transcript."""
-        if self._engine is None:
-            return "engine not started — cannot load session"
-        try:
-            import json as _json
-
-            data = _json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, _json_decode_error()) as exc:
-            return f"failed to read session: {exc}"
-        try:
-            restored = parse_session_messages(data, path=path)
-            metadata = session_metadata(data, path=path)
-        except Exception as exc:  # noqa: BLE001
-            return f"session file invalid: {exc}"
-        apply_messages_to_engine(self._engine, restored, metadata)
+        legacy_id = str(metadata.get("id", path.stem)).strip() or path.stem
+        # A legacy snapshot is an import, never an alternate writable store.
+        # Give it a fresh canonical id so an old export cannot overwrite an
+        # unrelated thread that happens to carry the same metadata id.
+        self._engine._cycle_session_id = uuid.uuid4().hex
+        self._engine.turn_counter = sum(message.role == "user" for message in restored)
+        self._engine._user_turn_index = self._engine.turn_counter
+        model = data.get("model") or metadata.get("model")
+        if isinstance(model, str) and model.strip():
+            self._engine.default_model = model.strip()
+            self.query_one(StatusBar).set_model(model.strip())
+            self.query_one(ComposerHint).set_model(model.strip())
         self.query_one(Transcript).hydrate_from_messages(restored)
         started = session_started_at_iso(metadata, path=path)
         if started:
             self._session_started_at_iso = started
-        session_id = str(metadata.get("id", path.stem))[:8]
+        session_id = legacy_id[:8]
         return f"loaded session {session_id} ({len(restored)} messages)"
 
     def _apply_crash_checkpoint(self) -> str | None:
@@ -419,43 +470,30 @@ class DeepSeekTUI(App[None]):
         return f"recovered crash checkpoint {session_id} ({len(messages)} messages)"
 
     def _refresh_sidebar_sessions(self) -> None:
-        """Populate the left sidebar from ``~/.deepseek/sessions/*.json``."""
-        from datetime import datetime
+        """Populate the left sidebar from canonical runtime threads."""
+        from deepseek_tui.config.paths import user_threads_dir
+        from deepseek_tui.server.threads import RuntimeThreadStore
 
-        from deepseek_tui.server.sessions import scan_tui_session_files
-
-        rows = scan_tui_session_files(limit=50)
+        store = RuntimeThreadStore(user_threads_dir())
         entries: list[SidebarEntry] = []
-        for row in rows:
-            path = row.get("path")
-            if not isinstance(path, str) or not path:
+        for thread in store.list_threads()[:50]:
+            if thread.archived:
                 continue
-            modified = row.get("modified_at")
-            updated_at = 0
-            if isinstance(modified, str) and modified:
-                try:
-                    updated_at = int(
-                        datetime.fromisoformat(modified.replace("Z", "+00:00")).timestamp()
-                    )
-                except ValueError:
-                    updated_at = 0
-            title = row.get("title") if isinstance(row.get("title"), str) else path
-            model = row.get("model") if isinstance(row.get("model"), str) else ""
-            count = row.get("message_count", 0)
+            count = len(store.list_turns_for_thread(thread.id))
             entries.append(
                 SidebarEntry(
-                    id=path,
-                    name=title,
-                    preview=f"{count} messages",
-                    updated_at=updated_at,
-                    model=model,
+                    id=thread.id,
+                    name=thread.title or thread.id[:8],
+                    preview=f"{count} turns",
+                    updated_at=int(thread.updated_at.timestamp()),
+                    model=thread.model,
                 )
             )
         self.query_one(Sidebar).set_entries(entries)
 
     @staticmethod
     def _resolve_session_path(session_id: str):  # type: ignore[no-untyped-def]
-        """Map a session id to a JSON path under ``~/.deepseek/sessions``."""
+        """Resolve an explicit legacy JSON recovery target."""
         from pathlib import Path
 
         from deepseek_tui.config.paths import user_sessions_dir
@@ -975,12 +1013,18 @@ class DeepSeekTUI(App[None]):
         self.push_screen(CommandPalette(), _on_result)
 
     async def action_new_session(self) -> None:
-        if self._engine is not None and self._engine.session_messages:
-            self._engine._user_turn_index = 0
+        import uuid
+
         transcript = self.query_one(Transcript)
         transcript.clear_messages()
         if self._engine is not None:
             self._engine.session_messages.clear()
+            self._engine._user_turn_index = 0
+            self._engine.turn_counter = 0
+            self._engine._cycle_session_id = uuid.uuid4().hex
+        from deepseek_tui.state.session import clear_checkpoint
+
+        clear_checkpoint()
 
     def _cancel_active_turn(self) -> bool:
         """Request cancellation of the in-flight turn. Returns True if one was active."""
@@ -1030,16 +1074,15 @@ class DeepSeekTUI(App[None]):
     def action_open_session_picker(self) -> None:
         """Open the session picker (Ctrl+R).
 
-        Sessions are loaded from ``~/.deepseek/sessions/*.json``; selection
-        triggers the same restore path used by ``--resume``. Empty list
-        falls back to the auto-saved ``current.json`` when present.
+        Threads are loaded from the canonical ``~/.deepseek/threads`` store;
+        selection triggers the same restore path used by ``--resume``.
         """
         from deepseek_tui.tui.dialogs import SessionPicker
 
         sessions = self._discover_session_picks()
         if not sessions:
             self.query_one(StatusBar).set_status(
-                "no saved sessions in ~/.deepseek/sessions/"
+                "no saved threads in ~/.deepseek/threads/"
             )
             return
 
@@ -1142,22 +1185,15 @@ class DeepSeekTUI(App[None]):
 
     @staticmethod
     def _discover_session_picks() -> list[tuple[str, str]]:
-        """Read ``~/.deepseek/sessions/*.json`` into picker tuples."""
-        from deepseek_tui.config.paths import user_sessions_dir
+        """Read canonical, non-archived threads into picker tuples."""
+        from deepseek_tui.config.paths import user_threads_dir
+        from deepseek_tui.server.threads import RuntimeThreadStore
 
-        sessions_dir = user_sessions_dir()
-        if not sessions_dir.exists():
-            return []
-        items: list[tuple[str, str]] = []
-        for path in sorted(sessions_dir.glob("*.json")):
-            stem = path.stem
-            try:
-                size = path.stat().st_size
-            except OSError:
-                size = 0
-            label = f"{stem} ({size:,}B)"
-            items.append((stem, label))
-        return items
+        return [
+            (thread.id, thread.title or thread.id[:8])
+            for thread in RuntimeThreadStore(user_threads_dir()).list_threads()
+            if not thread.archived
+        ]
 
     def action_esc_press(self) -> None:
         """Esc-Esc backtrack chord.
@@ -1189,47 +1225,51 @@ class DeepSeekTUI(App[None]):
             )
 
     def on_sidebar_session_selected(self, event: Sidebar.SessionSelected) -> None:
-        """Handle session selection from sidebar."""
-        from pathlib import Path
-
-        path = Path(event.session_id).expanduser()
-        message = self._load_session_from_path(path)
-        self.query_one(StatusBar).set_status(message or f"loaded {path.name}")
+        """Handle canonical thread selection from sidebar."""
+        try:
+            message = self._load_runtime_thread(event.session_id)
+        except (FileNotFoundError, OSError, ValueError) as exc:
+            message = f"load failed: {exc}"
+        self.query_one(StatusBar).set_status(message)
         self.query_one(Sidebar).hide_sidebar()
 
     def on_sidebar_session_deleted(self, event: Sidebar.SessionDeleted) -> None:
-        from pathlib import Path
+        from deepseek_tui.config.paths import user_threads_dir
+        from deepseek_tui.server.data_inventory import delete_thread_tree
+        from deepseek_tui.server.threads import RuntimeThreadStore
+        from deepseek_tui.workspace.turn_checkpoints import TurnCheckpointStore
 
-        path = Path(event.session_id).expanduser()
         status = self.query_one(StatusBar)
         try:
-            if path.exists():
-                path.unlink()
+            root = user_threads_dir()
+            store = RuntimeThreadStore(root)
+            store.load_thread(event.session_id)
+            delete_thread_tree(
+                store,
+                TurnCheckpointStore(root / "checkpoints"),
+                event.session_id,
+            )
             self._refresh_sidebar_sessions()
-            status.set_status(f"deleted {path.name}")
-        except OSError as exc:
+            status.set_status(f"deleted {event.session_id[:8]}")
+        except (FileNotFoundError, OSError, ValueError) as exc:
             status.set_status(f"delete failed: {exc}")
 
     def on_sidebar_session_archived(self, event: Sidebar.SessionArchived) -> None:
-        from pathlib import Path
+        from datetime import datetime, timezone
 
-        from deepseek_tui.config.paths import user_sessions_dir
+        from deepseek_tui.config.paths import user_threads_dir
+        from deepseek_tui.server.threads import RuntimeThreadStore
 
-        path = Path(event.session_id).expanduser()
         status = self.query_one(StatusBar)
-        if not path.exists():
-            status.set_status(f"session not found: {path.name}")
-            return
-        archive_dir = user_sessions_dir() / "archived"
-        archive_dir.mkdir(parents=True, exist_ok=True)
-        dest = archive_dir / path.name
         try:
-            if dest.exists():
-                dest.unlink()
-            path.rename(dest)
+            store = RuntimeThreadStore(user_threads_dir())
+            thread = store.load_thread(event.session_id)
+            thread.archived = True
+            thread.updated_at = datetime.now(timezone.utc)
+            store.save_thread(thread)
             self._refresh_sidebar_sessions()
-            status.set_status(f"archived {path.name}")
-        except OSError as exc:
+            status.set_status(f"archived {event.session_id[:8]}")
+        except (FileNotFoundError, OSError, ValueError) as exc:
             status.set_status(f"archive failed: {exc}")
 
     # ── info sidebar refresh ──────────────────────────────────────────

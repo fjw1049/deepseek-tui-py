@@ -13,8 +13,7 @@ import asyncio
 import ipaddress
 import json
 import sys
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -355,27 +354,14 @@ def serve(
 auth_app = typer.Typer(help="Manage authentication credentials and provider keys.")
 app.add_typer(auth_app, name="auth")
 
-_PROVIDER_LIST = ["deepseek", "nvidia-nim", "openrouter", "novita", "openai"]
-
-
-def _keyring_slot(provider_name: str) -> str:
-    """Map provider name to keyring slot."""
-    return provider_name
-
-
 def _provider_config_has_key(config: Config, provider_name: str) -> bool:
     """Check if a provider has an API key in the config file."""
     prov_cfg = config.providers.get(provider_name)
     if prov_cfg is not None and prov_cfg.api_key:
         return True
-    if provider_name == "deepseek" and config.api_key:
+    if provider_name == config.provider and config.api_key:
         return True
     return False
-
-
-def _get_secrets() -> Any:
-    from deepseek_tui.state.secrets import Secrets
-    return Secrets.auto_detect()
 
 
 @auth_app.command("status")
@@ -384,18 +370,14 @@ def auth_status(
     profile: str | None = PROFILE_OPTION,
 ) -> None:
     """Show current provider and auth state for all providers."""
-    from deepseek_tui.state.secrets import env_for
+    from deepseek_tui.state.secrets import credential_providers, env_for
 
     loaded = _load_config(config, profile)
-    secrets = _get_secrets()
     typer.echo(f"provider: {loaded.provider}")
-    typer.echo(f"keyring backend: {secrets.backend_name}")
-    for prov in _PROVIDER_LIST:
-        slot = _keyring_slot(prov)
-        keyring_set = bool(secrets.get(slot))
-        env_set = env_for(slot) is not None
+    for prov in credential_providers(loaded):
+        env_set = env_for(prov) is not None
         file_set = _provider_config_has_key(loaded, prov)
-        typer.echo(f"{slot} auth: keyring={keyring_set}, env={env_set}, config={file_set}")
+        typer.echo(f"{prov} auth: env={env_set}, config={file_set}")
 
 
 @auth_app.command("set")
@@ -404,20 +386,20 @@ def auth_set(
     api_key: str | None = typer.Option(None, "--api-key", help="API key value."),
     api_key_stdin: bool = typer.Option(False, "--api-key-stdin", help="Read key from stdin."),
 ) -> None:
-    """Save an API key to the keyring (never written to disk in plaintext)."""
-    secrets = _get_secrets()
-    slot = _keyring_slot(provider)
+    """Save a provider API key to config.toml."""
     if api_key is not None:
         key = api_key
     elif api_key_stdin:
         key = sys.stdin.read().strip()
     else:
-        key = typer.prompt(f"Enter API key for {slot}", hide_input=True)
+        key = typer.prompt(f"Enter API key for {provider}", hide_input=True)
     if not key:
         typer.echo("error: empty API key provided", err=True)
         raise typer.Exit(1)
-    secrets.set(slot, key)
-    typer.echo(f"saved API key for {slot} to {secrets.backend_name}")
+    from deepseek_tui.state.secrets import write_api_key
+
+    path = write_api_key(provider, key)
+    typer.echo(f"saved API key for {provider} to {path}")
 
 
 @auth_app.command("get")
@@ -428,29 +410,27 @@ def auth_get(
 ) -> None:
     """Report whether a provider has a key configured (never prints the value)."""
     loaded = _load_config(config, profile)
-    secrets = _get_secrets()
-    slot = _keyring_slot(provider)
-    in_keyring = bool(secrets.get(slot))
     from deepseek_tui.state.secrets import env_for as _env_for
-    in_env = _env_for(slot) is not None
+
+    in_env = _env_for(provider) is not None
     in_file = _provider_config_has_key(loaded, provider)
-    resolved = in_keyring or in_env or in_file
+    resolved = in_env or in_file
     if resolved:
-        source = "keyring" if in_keyring else ("env" if in_env else "config-file")
-        typer.echo(f"{slot}: set (source: {source})")
+        source = "env" if in_env else "config-file"
+        typer.echo(f"{provider}: set (source: {source})")
     else:
-        typer.echo(f"{slot}: not set")
+        typer.echo(f"{provider}: not set")
 
 
 @auth_app.command("clear")
 def auth_clear(
     provider: str = typer.Option(..., "--provider", help="Provider name."),
 ) -> None:
-    """Delete a provider's key from the keyring."""
-    secrets = _get_secrets()
-    slot = _keyring_slot(provider)
-    secrets.delete(slot)
-    typer.echo(f"cleared API key for {slot}")
+    """Delete a provider's key from config.toml."""
+    from deepseek_tui.state.secrets import write_api_key
+
+    write_api_key(provider, None)
+    typer.echo(f"cleared API key for {provider}")
 
 
 @auth_app.command("list")
@@ -460,50 +440,13 @@ def auth_list(
 ) -> None:
     """List all known providers with their auth state."""
     loaded = _load_config(config, profile)
-    secrets = _get_secrets()
-    from deepseek_tui.state.secrets import env_for as _env_for
+    from deepseek_tui.state.secrets import credential_providers, env_for as _env_for
 
-    typer.echo(f"keyring backend: {secrets.backend_name}")
-    typer.echo("provider     keyring  env  config")
-    for prov in _PROVIDER_LIST:
-        slot = _keyring_slot(prov)
-        kr = "yes" if secrets.get(slot) else "no "
-        env = "yes" if _env_for(slot) is not None else "no "
+    typer.echo("provider     env  config")
+    for prov in credential_providers(loaded):
+        env = "yes" if _env_for(prov) is not None else "no "
         file = "yes" if _provider_config_has_key(loaded, prov) else "no "
-        typer.echo(f"{slot:<12}  {kr}        {env}     {file}")
-
-
-@auth_app.command("migrate")
-def auth_migrate(
-    dry_run: bool = typer.Option(False, "--dry-run", help="Preview only."),
-    config: Path | None = CONFIG_OPTION,
-    profile: str | None = PROFILE_OPTION,
-) -> None:
-    """Migrate plaintext keys from config.toml into the keyring."""
-    loaded = _load_config(config, profile)
-    secrets = _get_secrets()
-    migrated: list[str] = []
-
-    for prov in _PROVIDER_LIST:
-        slot = _keyring_slot(prov)
-        prov_cfg = loaded.providers.get(prov)
-        value = prov_cfg.api_key if prov_cfg is not None else None
-        if prov == "deepseek" and not value:
-            value = loaded.api_key
-        if not value or not value.strip():
-            continue
-        if not dry_run:
-            secrets.set(slot, value)
-        migrated.append(slot)
-
-    typer.echo(f"keyring backend: {secrets.backend_name}")
-    if not migrated:
-        typer.echo("nothing to migrate (config.toml has no plaintext api_key entries)")
-    else:
-        action = "would migrate" if dry_run else "migrated"
-        typer.echo(f"{action} {len(migrated)} provider key(s):")
-        for slot in migrated:
-            typer.echo(f"  - {slot}")
+        typer.echo(f"{prov:<12}  {env}     {file}")
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -515,23 +458,26 @@ def login(
     provider: str = typer.Option("deepseek", "--provider", help="Provider name."),
     api_key: str | None = typer.Option(None, "--api-key", help="API key value."),
 ) -> None:
-    """Save a DeepSeek API key to the shared config."""
+    """Save a provider API key to the shared config."""
     if api_key is None:
         api_key = typer.prompt(f"Enter API key for {provider}", hide_input=True)
     if not api_key or not api_key.strip():
         typer.echo("error: empty API key provided", err=True)
         raise typer.Exit(1)
-    secrets = _get_secrets()
-    secrets.set(_keyring_slot(provider), api_key)
+    from deepseek_tui.state.secrets import write_api_key
+
+    write_api_key(provider, api_key)
     typer.echo(f"logged in using API key mode ({provider})")
 
 
 @app.command()
 def logout() -> None:
     """Remove saved authentication state for all providers."""
-    secrets = _get_secrets()
-    for prov in _PROVIDER_LIST:
-        secrets.delete(_keyring_slot(prov))
+    from deepseek_tui.state.secrets import credential_providers, write_api_key
+
+    loaded = _load_config()
+    for prov in credential_providers(loaded):
+        write_api_key(prov, None)
     typer.echo("logged out")
 
 
@@ -567,7 +513,13 @@ def config_set(
     profile: str | None = PROFILE_OPTION,
 ) -> None:
     """Set a single config value (writes to config.toml)."""
-    _cli_config_write(key, value)
+    if key == "api_key":
+        from deepseek_tui.state.secrets import write_active_api_key
+
+        path = write_active_api_key(value, path=config)
+        typer.echo(f"set api_key in {path}")
+        return
+    _cli_config_write(key, value, path=config)
 
 
 @config_app.command("unset")
@@ -577,7 +529,13 @@ def config_unset(
     profile: str | None = PROFILE_OPTION,
 ) -> None:
     """Remove a config key (writes to config.toml)."""
-    _cli_config_write(key, None)
+    if key == "api_key":
+        from deepseek_tui.state.secrets import write_active_api_key
+
+        path = write_active_api_key(None, path=config)
+        typer.echo(f"unset api_key from {path}")
+        return
+    _cli_config_write(key, None, path=config)
 
 
 @config_app.command("list")
@@ -632,11 +590,11 @@ def _config_get_value(config: Config, key: str) -> str | None:
     return str(obj)
 
 
-def _cli_config_write(key: str, value: str | None) -> None:
+def _cli_config_write(key: str, value: str | None, *, path: Path | None = None) -> None:
     """Set or unset a key in the config TOML file."""
     from deepseek_tui.config.paths import user_config_path
 
-    config_path = user_config_path()
+    config_path = path or user_config_path()
     config_path.parent.mkdir(parents=True, exist_ok=True)
 
     lines: list[str] = []
@@ -740,33 +698,19 @@ thread_app = typer.Typer(help="Manage thread/session metadata.")
 app.add_typer(thread_app, name="thread")
 
 
-def _open_session_manager() -> tuple[Any, Any]:
-    """Open Database + SessionManager. Returns (db, manager) or (None, None)."""
-    from deepseek_tui.config.paths import user_state_db_path
-    from deepseek_tui.state import Database, SessionManager
+def _thread_store() -> Any:
+    from deepseek_tui.config.paths import user_threads_dir
+    from deepseek_tui.server.threads.store import RuntimeThreadStore
 
-    db_path = user_state_db_path()
-    if not db_path.exists():
-        return None, None
-    db = Database(db_path)
-    return db, SessionManager(db)
+    return RuntimeThreadStore(user_threads_dir())
 
 
-@asynccontextmanager
-async def _session_manager() -> AsyncIterator[tuple[Any, Any]]:
-    """Yield an initialized ``(db, manager)`` pair; close the db on exit.
-
-    Yields ``(None, None)`` when no state.db exists.
-    """
-    db, mgr = _open_session_manager()
-    if mgr is None:
-        yield None, None
-        return
+def _load_thread_or_exit(thread_id: str) -> Any:
     try:
-        await db.initialize()
-        yield db, mgr
-    finally:
-        await db.close()
+        return _thread_store().load_thread(thread_id)
+    except FileNotFoundError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
 
 
 @thread_app.command("list")
@@ -775,21 +719,16 @@ def thread_list(
     limit: int | None = typer.Option(20, "--limit", help="Max threads to show."),
 ) -> None:
     """List saved threads."""
-
-    async def _run() -> None:
-        async with _session_manager() as (_db, mgr):
-            if mgr is None:
-                typer.echo("No saved threads (no state.db).")
-                return
-            sessions = await mgr.list_sessions(limit=limit, include_archived=all_threads)
-            if not sessions:
-                typer.echo("No saved threads.")
-                return
-            for s in sessions:
-                tag = " [archived]" if getattr(s, "archived", False) else ""
-                typer.echo(f"{s.id}  {getattr(s, 'preview', '(unnamed)')}{tag}")
-
-    asyncio.run(_run())
+    threads = [t for t in _thread_store().list_threads() if all_threads or not t.archived]
+    if limit is not None:
+        threads = threads[:limit]
+    if not threads:
+        typer.echo("No saved threads.")
+        return
+    for thread in threads:
+        label = thread.title or Path(thread.workspace).name or "(unnamed)"
+        tag = " [archived]" if thread.archived else ""
+        typer.echo(f"{thread.id}  {label}{tag}")
 
 
 @thread_app.command("read")
@@ -797,44 +736,8 @@ def thread_read(
     thread_id: str = typer.Argument(..., help="Thread ID to read."),
 ) -> None:
     """Read a thread's metadata as JSON."""
-
-    async def _run() -> None:
-        async with _session_manager() as (_db, mgr):
-            if mgr is None:
-                typer.echo("No saved threads (no state.db).", err=True)
-                raise typer.Exit(1)
-            meta = await mgr.get_session(thread_id)
-            if meta is None:
-                typer.echo(f"Thread not found: {thread_id}", err=True)
-                raise typer.Exit(1)
-            from dataclasses import asdict, is_dataclass
-
-            if is_dataclass(meta):
-                typer.echo(json.dumps(asdict(meta), indent=2, default=str))
-            else:
-                typer.echo(json.dumps(getattr(meta, "__dict__", {}), indent=2, default=str))
-
-    asyncio.run(_run())
-
-
-@thread_app.command("resume")
-def thread_resume(
-    thread_id: str = typer.Argument(..., help="Thread ID to resume."),
-    config: Path | None = CONFIG_OPTION,
-    profile: str | None = PROFILE_OPTION,
-) -> None:
-    """Resume a saved thread (delegates to top-level `resume`)."""
-    resume(session_id=thread_id, config=config, profile=profile)
-
-
-@thread_app.command("fork")
-def thread_fork(
-    thread_id: str = typer.Argument(..., help="Thread ID to fork."),
-    config: Path | None = CONFIG_OPTION,
-    profile: str | None = PROFILE_OPTION,
-) -> None:
-    """Fork a saved thread (delegates to top-level `fork`)."""
-    fork(session_id=thread_id, config=config, profile=profile)
+    thread = _load_thread_or_exit(thread_id)
+    typer.echo(json.dumps(thread.model_dump(mode="json"), indent=2))
 
 
 @thread_app.command("archive")
@@ -842,16 +745,12 @@ def thread_archive(
     thread_id: str = typer.Argument(..., help="Thread ID to archive."),
 ) -> None:
     """Archive a thread."""
-
-    async def _run() -> None:
-        async with _session_manager() as (_db, mgr):
-            if mgr is None:
-                typer.echo("No state.db found.", err=True)
-                raise typer.Exit(1)
-            await mgr.archive(thread_id)
-            typer.echo(f"Archived {thread_id}")
-
-    asyncio.run(_run())
+    store = _thread_store()
+    thread = _load_thread_or_exit(thread_id)
+    thread.archived = True
+    thread.updated_at = datetime.now(timezone.utc)
+    store.save_thread(thread)
+    typer.echo(f"Archived {thread_id}")
 
 
 @thread_app.command("unarchive")
@@ -859,16 +758,12 @@ def thread_unarchive(
     thread_id: str = typer.Argument(..., help="Thread ID to unarchive."),
 ) -> None:
     """Unarchive a thread."""
-
-    async def _run() -> None:
-        async with _session_manager() as (_db, mgr):
-            if mgr is None:
-                typer.echo("No state.db found.", err=True)
-                raise typer.Exit(1)
-            await mgr.unarchive(thread_id)
-            typer.echo(f"Unarchived {thread_id}")
-
-    asyncio.run(_run())
+    store = _thread_store()
+    thread = _load_thread_or_exit(thread_id)
+    thread.archived = False
+    thread.updated_at = datetime.now(timezone.utc)
+    store.save_thread(thread)
+    typer.echo(f"Unarchived {thread_id}")
 
 
 @thread_app.command("set-name")
@@ -877,16 +772,12 @@ def thread_set_name(
     name: str = typer.Argument(..., help="New thread name."),
 ) -> None:
     """Rename a thread."""
-
-    async def _run() -> None:
-        async with _session_manager() as (_db, mgr):
-            if mgr is None:
-                typer.echo("No state.db found.", err=True)
-                raise typer.Exit(1)
-            await mgr.set_name(thread_id, name)
-            typer.echo(f"Renamed {thread_id} to {name!r}")
-
-    asyncio.run(_run())
+    store = _thread_store()
+    thread = _load_thread_or_exit(thread_id)
+    thread.title = name
+    thread.updated_at = datetime.now(timezone.utc)
+    store.save_thread(thread)
+    typer.echo(f"Renamed {thread_id} to {name!r}")
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1058,43 +949,25 @@ def sessions(
     config: Path | None = CONFIG_OPTION,
     limit: int = typer.Option(20, "--limit", help="Max sessions to show."),
 ) -> None:
-    """List saved TUI sessions."""
-    from deepseek_tui.config.paths import user_state_db_path
-    from deepseek_tui.state import Database, SessionManager
-
-    async def _list() -> None:
-        db_path = user_state_db_path()
-        if not db_path.exists():
-            typer.echo("No saved sessions.")
-            return
-        db = Database(db_path)
-        await db.initialize()
-        try:
-            mgr = SessionManager(db)
-            all_sessions = await mgr.list_sessions(limit=limit)
-            if not all_sessions:
-                typer.echo("No saved sessions.")
-                return
-            for s in all_sessions:
-                name = getattr(s, "preview", None) or "(unnamed)"
-                sid = getattr(s, "id", "?")
-                ts = getattr(s, "updated_at", "")
-                typer.echo(f"{sid}  {name}  {ts}")
-        finally:
-            await db.close()
-
-    asyncio.run(_list())
+    """List canonical Workbench/server threads."""
+    threads = [t for t in _thread_store().list_threads() if not t.archived][:limit]
+    if not threads:
+        typer.echo("No saved sessions.")
+        return
+    for thread in threads:
+        name = thread.title or Path(thread.workspace).name or "(unnamed)"
+        typer.echo(f"{thread.id}  {name}  {thread.updated_at.isoformat()}")
 
 
 @app.command()
 def resume(
-    session_id: str = typer.Argument(..., help="Session ID to resume."),
+    session_id: str = typer.Argument(..., help="Canonical thread ID to resume."),
     config: Path | None = CONFIG_OPTION,
     profile: str | None = PROFILE_OPTION,
     provider: str | None = PROVIDER_OPTION,
     model: str | None = MODEL_OPTION,
 ) -> None:
-    """Resume a saved TUI session."""
+    """Resume a canonical thread in the TUI."""
     loaded = _load_config(config, profile, provider, model)
     try:
         from deepseek_tui.tui.app import DeepSeekTUI
@@ -1107,13 +980,13 @@ def resume(
 
 @app.command()
 def fork(
-    session_id: str = typer.Argument(..., help="Session ID to fork."),
+    session_id: str = typer.Argument(..., help="Canonical thread ID to fork."),
     config: Path | None = CONFIG_OPTION,
     profile: str | None = PROFILE_OPTION,
     provider: str | None = PROVIDER_OPTION,
     model: str | None = MODEL_OPTION,
 ) -> None:
-    """Fork a saved TUI session."""
+    """Fork a canonical thread into a new TUI thread."""
     loaded = _load_config(config, profile, provider, model)
     try:
         from deepseek_tui.tui.app import DeepSeekTUI
@@ -1922,35 +1795,18 @@ def metrics(
     since: str | None = typer.Option(None, "--since", help="Duration filter (e.g. 7d, 24h)."),
     config: Path | None = CONFIG_OPTION,
 ) -> None:
-    """Print a usage rollup from the audit log."""
-    from deepseek_tui.config.paths import user_state_db_path
-    from deepseek_tui.state import Database, SessionManager
-
-    async def _metrics() -> None:
-        db_path = user_state_db_path()
-        if not db_path.exists():
-            total_sessions = 0
-        else:
-            db = Database(db_path)
-            await db.initialize()
-            try:
-                mgr = SessionManager(db)
-                all_sessions = await mgr.list_sessions(include_archived=True)
-                total_sessions = len(all_sessions)
-            finally:
-                await db.close()
-        data = {
-            "total_sessions": total_sessions,
-            "period": since or "all-time",
-        }
-        if json_output:
-            typer.echo(json.dumps(data, indent=2))
-        else:
-            typer.echo("DeepSeek TUI Metrics")
-            typer.echo(f"  Total sessions: {total_sessions}")
-            typer.echo(f"  Period: {since or 'all-time'}")
-
-    asyncio.run(_metrics())
+    """Print a thread-count rollup from the canonical runtime store."""
+    total_sessions = len(_thread_store().list_threads())
+    data = {
+        "total_sessions": total_sessions,
+        "period": since or "all-time",
+    }
+    if json_output:
+        typer.echo(json.dumps(data, indent=2))
+    else:
+        typer.echo("DeepSeek TUI Metrics")
+        typer.echo(f"  Total sessions: {total_sessions}")
+        typer.echo(f"  Period: {since or 'all-time'}")
 
 
 @app.command()

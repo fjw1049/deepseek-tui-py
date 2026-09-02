@@ -704,15 +704,19 @@ class TurnCheckpointStore:
         self,
         turn_ids_newest_first: list[str],
         fallback: Path,
+        *,
+        force: bool = False,
     ) -> tuple[
         list[_RawRestoreBatch],
         set[tuple[str, str]],
         set[str],
         set[str],
         set[str],
+        Any | None,
     ]:
         """Plan every durable raw transition without mutating the workspace."""
         from deepseek_tui.workspace.managed_worktree import (
+            RawPathImage,
             validate_raw_path_images,
         )
 
@@ -721,6 +725,7 @@ class TurnCheckpointStore:
         all_paths: set[str] = set()
         conflicted: set[str] = set()
         skipped: set[str] = set()
+        snapshot_owner: Any | None = None
         for turn_id in turn_ids_newest_first:
             checkpoint = self.load(turn_id)
             if checkpoint is None:
@@ -770,8 +775,43 @@ class TurnCheckpointStore:
                     before.signature,
                     after.signature,
                 }:
-                    conflicted.add(path)
-                    state.done = True
+                    if not force:
+                        conflicted.add(path)
+                        state.done = True
+                        continue
+                    if state.on_disk_image is None:
+                        if snapshot_owner is None:
+                            snapshot_owner = tempfile.TemporaryDirectory(
+                                prefix="deepseek-rewind-"
+                            )
+                        payload = Path(snapshot_owner.name) / hashlib.sha256(
+                            f"{root_key}\0{path}".encode()
+                        ).hexdigest()
+                        try:
+                            captured = await asyncio.to_thread(
+                                _capture_raw_sidecar_image,
+                                target,
+                                path,
+                                payload,
+                            )
+                        except RawCheckpointError:
+                            skipped.add(path)
+                            state.done = True
+                            continue
+                        state.on_disk_signature = str(captured["signature"])
+                        state.on_disk_image = RawPathImage(
+                            path=path,
+                            kind=str(captured["kind"]),
+                            mode=captured["mode"],
+                            signature=state.on_disk_signature,
+                            payload_path=(
+                                None
+                                if captured["kind"] == "missing"
+                                else payload
+                            ),
+                        )
+                    state.current_signature = before.signature
+                    state.current_image = before
                     continue
                 if state.on_disk_image is None:
                     state.on_disk_image = (
@@ -790,9 +830,9 @@ class TurnCheckpointStore:
                     continue
                 if state.on_disk_signature == state.current_signature:
                     continue
-                key = str(state.root)
+                batch_key = str(state.root)
                 batch = batches_by_root.setdefault(
-                    key, _RawRestoreBatch(root=state.root)
+                    batch_key, _RawRestoreBatch(root=state.root)
                 )
                 batch.original.append(state.on_disk_image)
                 batch.target.append(state.current_image)
@@ -804,7 +844,14 @@ class TurnCheckpointStore:
             )
             batch.original = [pair[0] for pair in paired]
             batch.target = [pair[1] for pair in paired]
-        return batches, raw_keys, all_paths, conflicted, skipped
+        return (
+            batches,
+            raw_keys,
+            all_paths,
+            conflicted,
+            skipped,
+            snapshot_owner,
+        )
 
     async def restore(
         self,
@@ -859,7 +906,10 @@ class TurnCheckpointStore:
             raw_paths,
             raw_conflicted,
             raw_skipped,
-        ) = await self._plan_raw_restore(turn_ids_newest_first, root)
+            raw_snapshot_owner,
+        ) = await self._plan_raw_restore(
+            turn_ids_newest_first, root, force=force
+        )
         overlap = set(states).intersection(raw_keys)
         if overlap:
             raw_conflicted.update(path for _root, path in overlap)
@@ -886,6 +936,8 @@ class TurnCheckpointStore:
             report.merged = sorted(merged)
             report.conflicted = sorted(conflicted)
             report.skipped = sorted(skipped)
+            if raw_snapshot_owner is not None:
+                raw_snapshot_owner.cleanup()
             return report
 
         stale_text = any(
@@ -909,6 +961,8 @@ class TurnCheckpointStore:
             report.merged = sorted(merged)
             report.conflicted = sorted(conflicted)
             report.skipped = sorted(skipped)
+            if raw_snapshot_owner is not None:
+                raw_snapshot_owner.cleanup()
             return report
 
         from deepseek_tui.workspace.managed_worktree import apply_raw_path_images
@@ -1045,6 +1099,8 @@ class TurnCheckpointStore:
         report.merged = sorted(merged)
         report.conflicted = sorted(conflicted)
         report.skipped = sorted(skipped)
+        if raw_snapshot_owner is not None:
+            raw_snapshot_owner.cleanup()
         return report
 
     async def preview(

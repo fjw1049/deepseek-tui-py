@@ -160,6 +160,65 @@ async def test_prepare_isolates_git_and_publish_writes_project(
     assert Path(checkpoint.execution_root).resolve() == repo.resolve()
 
 
+@pytest.mark.parametrize("git_mutation", ["attach_branch", "move_detached_head"])
+@pytest.mark.asyncio
+async def test_publish_rejects_changed_worktree_git_state(
+    runtime_app, tmp_path: Path, git_mutation: str
+) -> None:
+    manager = runtime_app.state.thread_manager
+    repo = _repo(tmp_path)
+    thread = await manager.create_thread(
+        CreateThreadRequest(workspace=str(repo), model="deepseek-chat")
+    )
+    prepared = await manager._prepare_isolated_workspace(thread)
+    tree = execution_root(prepared)
+    (tree / "app.py").write_text("task change\n", encoding="utf-8")
+
+    turn_id = f"turn_git_state_{git_mutation}"
+    _seed_turn(manager, prepared.id, turn_id)
+    _save_checkpoint(
+        manager,
+        TurnCheckpoint(
+            turn_id=turn_id,
+            is_git=True,
+            thread_id=prepared.id,
+            created_at=1.0,
+            execution_root=str(tree),
+            mutated=["app.py"],
+            pre_contents={"app.py": "one\n"},
+            post_contents={"app.py": "task change\n"},
+        ),
+    )
+    if git_mutation == "attach_branch":
+        _git(tree, "switch", "-c", "agent/session-branch")
+    else:
+        _git(tree, "add", "app.py")
+        _git(tree, "commit", "-m", "agent commit")
+
+    published = await manager._publish_isolated_thread(prepared)
+
+    assert published.publish_blocked is True
+    assert published.publish_issue == "recovery"
+    assert published.publish_conflicts == ["app.py"]
+    assert (repo / "app.py").read_text(encoding="utf-8") == "one\n"
+    checkpoint = manager.checkpoints.load(turn_id)
+    assert checkpoint is not None
+    assert Path(checkpoint.execution_root).resolve() == tree.resolve()
+
+    action = "use_agent" if git_mutation == "attach_branch" else "keep_project"
+    resolved = await manager.resolve_publish_conflicts(
+        prepared.id, action=action, paths=["app.py"]
+    )
+    expected = "task change\n" if action == "use_agent" else "one\n"
+    assert resolved.publish_blocked is False
+    assert (repo / "app.py").read_text(encoding="utf-8") == expected
+    assert (tree / "app.py").read_text(encoding="utf-8") == expected
+    assert await managed_worktree.current_worktree_branch(tree) == ""
+    project_state = await managed_worktree.capture_worktree_baseline(repo)
+    worktree_state = await managed_worktree.capture_worktree_baseline(tree)
+    assert worktree_state.head == project_state.head
+
+
 @pytest.mark.asyncio
 async def test_publish_conflict_leaves_project(
     runtime_app, tmp_path: Path

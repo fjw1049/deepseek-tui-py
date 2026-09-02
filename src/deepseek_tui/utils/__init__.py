@@ -178,7 +178,6 @@ _NOISY_LOGGERS: tuple[str, ...] = (
     "urllib3",
     "asyncio",
     "textual",
-    "aiosqlite",
     "uvicorn.access",
 )
 

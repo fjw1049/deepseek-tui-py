@@ -1,25 +1,36 @@
-"""Session catalog and import/export.
-"""
+"""Canonical thread persistence plus explicit legacy session import/export."""
 
 from __future__ import annotations
 
-
-
 # Unified TUI session files + Workbench thread catalog.
 import json
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from pydantic import BaseModel
+
+from deepseek_tui.config.paths import user_sessions_dir
+from deepseek_tui.protocol.messages import (
+    Message,
+    Role,
+    TextBlock,
+    ToolResultBlock,
+    ToolUseBlock,
+)
 from deepseek_tui.server.threads import (
     RuntimeThreadStore,
+    RuntimeTurnStatus,
     ThreadRecord,
+    TurnItemKind,
+    TurnItemLifecycleStatus,
+    TurnItemRecord,
+    TurnRecord,
     reconstruct_messages_from_turns,
+    tool_kind_for_name,
 )
-from deepseek_tui.config.paths import user_sessions_dir
-from deepseek_tui.protocol.messages import Message
-import uuid
-from pydantic import BaseModel
+from deepseek_tui.utils import summarize_text, write_json_atomic
 
 
 def _title_from_metadata(metadata: dict[str, Any] | None, fallback: str) -> str:
@@ -183,30 +194,12 @@ def export_thread_to_tui_session(
         "model": thread.model,
         "messages": [message.model_dump(mode="json") for message in messages],
     }
-    tmp = path.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-    tmp.replace(path)
+    write_json_atomic(path, payload)
     return path, sid
 
 
 # Import TUI session JSON snapshots into durable runtime threads.
 
-
-from deepseek_tui.server.threads import (
-    RuntimeTurnStatus,
-    TurnItemKind,
-    TurnItemLifecycleStatus,
-    TurnItemRecord,
-    TurnRecord,
-    tool_kind_for_name,
-)
-from deepseek_tui.protocol.messages import (
-    Role,
-    TextBlock,
-    ToolResultBlock,
-    ToolUseBlock,
-)
-from deepseek_tui.utils import summarize_text
 
 SUMMARY_LIMIT = 280
 
@@ -388,6 +381,79 @@ def import_messages_into_store(
                 )
 
     finalize_turn()
+
+
+def persist_tui_thread(
+    store: RuntimeThreadStore,
+    *,
+    thread_id: str,
+    messages: list[Message],
+    model: str,
+    provider: str,
+    workspace: str,
+    mode: str,
+    trust_mode: bool = False,
+    goal: dict[str, Any] | None = None,
+    goal_queue: list[dict[str, Any]] | None = None,
+) -> ThreadRecord | None:
+    """Append completed standalone-TUI turns to the canonical thread store.
+
+    Existing completed turns are never rewritten. If a previous write stopped
+    part-way through a turn, only that incomplete tail is discarded and retried.
+    """
+    user_positions = [
+        index for index, message in enumerate(messages) if message.role == Role.USER
+    ]
+    if not user_positions:
+        return None
+
+    now = datetime.now(timezone.utc)
+    try:
+        thread = store.load_thread(thread_id)
+    except FileNotFoundError:
+        first_text = _message_text(messages[user_positions[0]])
+        thread = ThreadRecord(
+            id=thread_id,
+            created_at=now,
+            updated_at=now,
+            model=model,
+            provider=provider,
+            workspace=workspace,
+            mode=mode,
+            trust_mode=trust_mode,
+            title=summarize_text(first_text, 80) or f"TUI {thread_id[:8]}",
+        )
+        store.save_thread(thread)
+
+    turns = store.list_turns_for_thread(thread_id)
+    completed = [turn for turn in turns if turn.status == RuntimeTurnStatus.COMPLETED]
+    for turn in turns:
+        if turn.status == RuntimeTurnStatus.COMPLETED:
+            continue
+        for item in store.list_items_for_turn(turn.id):
+            store.delete_item(item.id)
+        store.delete_turn(turn.id)
+
+    if len(completed) < len(user_positions):
+        start = user_positions[len(completed)]
+        import_messages_into_store(
+            store,
+            thread_id=thread_id,
+            messages=messages[start:],
+        )
+
+    turns = store.list_turns_for_thread(thread_id)
+    thread.updated_at = now
+    thread.model = model
+    thread.provider = provider
+    thread.workspace = workspace
+    thread.mode = mode
+    thread.trust_mode = trust_mode
+    thread.latest_turn_id = turns[-1].id if turns else None
+    thread.goal = goal
+    thread.goal_queue = list(goal_queue or [])
+    store.save_thread(thread)
+    return thread
 
 
 def load_tui_session_messages(path: Path) -> tuple[dict[str, Any], list[Message]]:

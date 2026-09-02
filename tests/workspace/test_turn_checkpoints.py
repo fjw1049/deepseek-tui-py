@@ -1016,6 +1016,90 @@ async def test_raw_sidecars_publish_and_restore_exact_path_images(
     assert (project / "deleted.bin").read_bytes() == b"\0deleted"
 
 
+@pytest.mark.asyncio
+async def test_force_raw_restore_snapshots_third_party_bytes_for_rollback(
+    store: TurnCheckpointStore,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project = tmp_path / "project"
+    isolate = tmp_path / "isolate"
+    project.mkdir()
+    isolate.mkdir()
+    (project / "blob.bin").write_bytes(b"\0project")
+    (project / "note.txt").write_text("project\n", encoding="utf-8")
+    (isolate / "blob.bin").write_bytes(b"\0task")
+    (isolate / "note.txt").write_text("task\n", encoding="utf-8")
+    paths = ["blob.bin", "note.txt"]
+    store._save(
+        TurnCheckpoint(
+            turn_id="turn_force_raw",
+            is_git=False,
+            thread_id="thread_one",
+            created_at=1.0,
+            execution_root=str(isolate),
+            mutated=paths,
+        )
+    )
+    store.record_post_images("turn_force_raw", isolate)
+    checkpoint = store.load("turn_force_raw")
+    assert checkpoint is not None
+    store.retarget_to_project(
+        "turn_force_raw",
+        project,
+        {"note.txt": ("project\n", "task\n")},
+        raw_source_root=isolate,
+        raw_paths=["blob.bin"],
+        expected_raw_post_signatures=checkpoint.post_signatures,
+    )
+    pre_images, post_images = store.raw_publish_images(
+        "turn_force_raw", ["blob.bin"]
+    )
+    published = await managed_worktree.apply_raw_path_images(
+        project, pre_images, post_images, target="post"
+    )
+    assert published.applied == ["blob.bin"]
+    (project / "note.txt").write_text("task\n", encoding="utf-8")
+    store.mark_publish_applied("turn_force_raw")
+    store.mark_publish_synced("turn_force_raw")
+    (project / "blob.bin").write_bytes(b"\0third-party")
+
+    original_write = checkpoint_module._write_pre_image
+
+    def fail_text_restore(
+        root: Path,
+        rel: str,
+        content: str | None,
+        mode=checkpoint_module._MISSING,
+    ) -> None:
+        if rel == "note.txt" and content == "project\n":
+            raise OSError("simulated text restore failure")
+        original_write(root, rel, content, mode)
+
+    monkeypatch.setattr(
+        checkpoint_module, "_write_pre_image", fail_text_restore
+    )
+    failed = await store.restore(
+        ["turn_force_raw"], isolate, force=True
+    )
+
+    assert failed.restored == []
+    assert failed.skipped == paths
+    assert (project / "blob.bin").read_bytes() == b"\0third-party"
+    assert (project / "note.txt").read_text(encoding="utf-8") == "task\n"
+
+    monkeypatch.setattr(checkpoint_module, "_write_pre_image", original_write)
+    restored = await store.restore(
+        ["turn_force_raw"], isolate, force=True
+    )
+
+    assert restored.restored == paths
+    assert restored.conflicted == []
+    assert restored.skipped == []
+    assert (project / "blob.bin").read_bytes() == b"\0project"
+    assert (project / "note.txt").read_text(encoding="utf-8") == "project\n"
+
+
 def test_raw_sidecar_staging_rejects_directories_before_project_write(
     store: TurnCheckpointStore, tmp_path: Path
 ) -> None:

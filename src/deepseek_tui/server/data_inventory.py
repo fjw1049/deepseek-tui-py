@@ -1,7 +1,7 @@
 """Local data inventory and maintenance for Workbench Settings.
 
 Inventory reports what lives under ``~/.deepseek`` (``threads/`` is the
-conversation source of truth; ``sessions/`` is TUI legacy; plus state.db).
+conversation source of truth; ``sessions/`` and any ``state.db`` are legacy).
 Maintenance ops reclaim disk without touching Skills, MCP, plugins, or
 config — matching the product safety gradient:
 

@@ -1,80 +1,143 @@
-"""Tests for state persistence hardening.
-
-- SQLite connections must enable WAL + busy_timeout (concurrent reader/writer
-  safety, mirrors memory/native/store.py pragmas).
-- The JSONL session index must survive a single corrupt line.
-- unarchive() must restore the thread status that archive() overwrote.
-"""
+"""Canonical thread persistence and legacy crash-checkpoint coverage."""
 
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 
-import pytest
+from typer.testing import CliRunner
 
-from deepseek_tui.state.session import Database
-from deepseek_tui.state.session import (
-    SessionIndex,
-    SessionIndexEntry,
-    SessionManager,
-    ThreadStatus,
-)
-
-
-@pytest.mark.asyncio
-async def test_database_enables_wal_and_busy_timeout(tmp_path: Path) -> None:
-    db = Database(tmp_path / "state.sqlite3")
-    try:
-        conn = await db.connect()
-        cursor = await conn.execute("PRAGMA journal_mode")
-        row = await cursor.fetchone()
-        assert row[0].lower() == "wal"
-        cursor = await conn.execute("PRAGMA busy_timeout")
-        row = await cursor.fetchone()
-        assert row[0] == 5000
-    finally:
-        await db.close()
+from deepseek_tui.cli.app import app
+from deepseek_tui.protocol.messages import Message
+from deepseek_tui.server.sessions import persist_tui_thread
+from deepseek_tui.server.threads import reconstruct_messages_from_turns
+from deepseek_tui.server.threads.models import ThreadRecord
+from deepseek_tui.server.threads.store import RuntimeThreadStore
+from deepseek_tui.state.session import clear_checkpoint, load_checkpoint, save_checkpoint
+from deepseek_tui.tui.app import DeepSeekTUI
 
 
-def test_session_index_skips_corrupt_lines(tmp_path: Path) -> None:
-    path = tmp_path / "session_index.jsonl"
-    index = SessionIndex(path)
-    index.append(
-        SessionIndexEntry(thread_id="a", thread_name="alpha", updated_at=1)
-    )
-    with path.open("a", encoding="utf-8") as f:
-        f.write("{not valid json\n")
-        f.write(json.dumps({"missing_thread_id": True}) + "\n")
-    index.append(
-        SessionIndexEntry(thread_id="b", thread_name="beta", updated_at=2)
+def _thread(thread_id: str, workspace: Path) -> ThreadRecord:
+    now = datetime.now(timezone.utc)
+    return ThreadRecord(
+        id=thread_id,
+        created_at=now,
+        updated_at=now,
+        model="deepseek-v4-pro",
+        workspace=str(workspace),
+        title="Original title",
     )
 
-    entries = index.load_map()
-    assert set(entries) == {"a", "b"}
-    assert entries["a"].thread_name == "alpha"
-    assert entries["b"].thread_name == "beta"
+
+def test_cli_thread_commands_use_runtime_store(
+    tmp_path: Path, monkeypatch
+) -> None:
+    home = tmp_path / "home"
+    monkeypatch.setenv("DEEPSEEK_HOME", str(home))
+    store = RuntimeThreadStore(home / "threads")
+    store.save_thread(_thread("thread-1", tmp_path))
+    runner = CliRunner()
+
+    listed = runner.invoke(app, ["thread", "list"])
+    assert listed.exit_code == 0
+    assert "thread-1  Original title" in listed.stdout
+
+    renamed = runner.invoke(app, ["thread", "set-name", "thread-1", "New title"])
+    assert renamed.exit_code == 0
+    assert store.load_thread("thread-1").title == "New title"
+
+    archived = runner.invoke(app, ["thread", "archive", "thread-1"])
+    assert archived.exit_code == 0
+    assert store.load_thread("thread-1").archived is True
+    assert "thread-1" not in runner.invoke(app, ["thread", "list"]).stdout
+    assert "thread-1" in runner.invoke(app, ["thread", "list", "--all"]).stdout
+
+    unarchived = runner.invoke(app, ["thread", "unarchive", "thread-1"])
+    assert unarchived.exit_code == 0
+    assert "thread-1" in runner.invoke(app, ["sessions"]).stdout
+
+    metrics = runner.invoke(app, ["metrics", "--json"])
+    assert metrics.exit_code == 0
+    assert json.loads(metrics.stdout)["total_sessions"] == 1
+
+    read = runner.invoke(app, ["thread", "read", "thread-1"])
+    assert read.exit_code == 0
+    assert json.loads(read.stdout)["title"] == "New title"
 
 
-@pytest.mark.asyncio
-async def test_unarchive_restores_idle_status(tmp_path: Path) -> None:
-    db = Database(tmp_path / "state.sqlite3")
-    await db.initialize()
-    try:
-        mgr = SessionManager(db, index_path=tmp_path / "session_index.jsonl")
-        _, meta = await mgr.create_session("deepseek-chat", tmp_path)
+def test_checkpoint_round_trip(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("DEEPSEEK_HOME", str(tmp_path / "home"))
+    save_checkpoint({"session_id": "legacy-crash"})
+    assert load_checkpoint() == {
+        "schema_version": 1,
+        "session_id": "legacy-crash",
+    }
+    clear_checkpoint()
+    assert load_checkpoint() is None
 
-        await mgr.archive(meta.id)
-        archived = await mgr.get_session(meta.id)
-        assert archived is not None
-        assert archived.archived
-        assert archived.status is ThreadStatus.ARCHIVED
 
-        await mgr.unarchive(meta.id)
-        restored = await mgr.get_session(meta.id)
-        assert restored is not None
-        assert not restored.archived
-        assert restored.archived_at is None
-        assert restored.status is ThreadStatus.IDLE
-    finally:
-        await db.close()
+def test_tui_persistence_appends_to_canonical_thread_without_duplicates(
+    tmp_path: Path,
+) -> None:
+    store = RuntimeThreadStore(tmp_path / "threads")
+    first_turn = [Message.user("first"), Message.assistant("one")]
+
+    persist_tui_thread(
+        store,
+        thread_id="tui-thread",
+        messages=first_turn,
+        model="deepseek-chat",
+        provider="deepseek",
+        workspace=str(tmp_path),
+        mode="agent",
+    )
+    first_turn_ids = [turn.id for turn in store.list_turns_for_thread("tui-thread")]
+
+    persist_tui_thread(
+        store,
+        thread_id="tui-thread",
+        messages=first_turn,
+        model="deepseek-chat",
+        provider="deepseek",
+        workspace=str(tmp_path),
+        mode="agent",
+    )
+    assert [turn.id for turn in store.list_turns_for_thread("tui-thread")] == first_turn_ids
+
+    all_messages = [*first_turn, Message.user("second"), Message.assistant("two")]
+    thread = persist_tui_thread(
+        store,
+        thread_id="tui-thread",
+        messages=all_messages,
+        model="deepseek-chat",
+        provider="deepseek",
+        workspace=str(tmp_path),
+        mode="agent",
+    )
+
+    turns = store.list_turns_for_thread("tui-thread")
+    assert thread is not None
+    assert thread.latest_turn_id == turns[-1].id
+    assert len(turns) == 2
+    assert turns[0].id == first_turn_ids[0]
+    assert [message.role for message in reconstruct_messages_from_turns(store, thread.id)] == [
+        "user",
+        "assistant",
+        "user",
+        "assistant",
+    ]
+
+
+def test_tui_picker_uses_threads_not_legacy_json(tmp_path: Path, monkeypatch) -> None:
+    home = tmp_path / "home"
+    monkeypatch.setenv("DEEPSEEK_HOME", str(home))
+    sessions = home / "sessions"
+    sessions.mkdir(parents=True)
+    (sessions / "current.json").write_text("{}", encoding="utf-8")
+    store = RuntimeThreadStore(home / "threads")
+    store.save_thread(_thread("canonical-thread", tmp_path))
+
+    assert DeepSeekTUI._discover_session_picks() == [
+        ("canonical-thread", "Original title")
+    ]

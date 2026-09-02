@@ -1,24 +1,15 @@
-"""LLM message types + request/prompt models.
-
-Consolidates the former messages.py, requests.py, and prompt.py.
-"""
+"""LLM message and request models."""
 
 from __future__ import annotations
 
+from enum import Enum
+from typing import Annotated, Any, Literal
 
-
-from typing import Annotated, Any, Generic, Literal, TypeVar
-
-from pydantic import BaseModel, ConfigDict, Field
-
-from .events import EventFrame
-
+from pydantic import BaseModel, Field
 
 # ============================================================================
 # Content blocks & Message
 # ============================================================================
-
-from enum import Enum
 
 
 class Role(str, Enum):
@@ -135,41 +126,3 @@ class MessageRequest(BaseModel):
     reasoning_effort: str | None = None
     extra_body: dict[str, Any] = Field(default_factory=dict)
     stream: bool = True
-
-
-# ============================================================================
-# PromptRequest / PromptResponse (formerly prompt.py)
-# ============================================================================
-
-
-class PromptRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    thread_id: str | None = None
-    prompt: str
-    model: str | None = None
-
-
-class PromptResponse(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    output: str
-    model: str
-    events: list[EventFrame] = Field(default_factory=list)
-
-
-# ============================================================================
-# IPC Envelope (formerly ipc.py)
-# ============================================================================
-
-T = TypeVar("T")
-
-
-class Envelope(BaseModel, Generic[T]):
-    """Generic IPC envelope: ``{request_id, thread_id?, body}``."""
-
-    model_config = ConfigDict(populate_by_name=True)
-
-    request_id: str
-    thread_id: str | None = None
-    body: T

@@ -22,6 +22,7 @@ import {
   Loader2,
   Minus,
   Plus,
+  RefreshCw,
   Search,
   Sparkles,
   TriangleAlert,
@@ -120,7 +121,7 @@ function InspectorGitActions({
   const [commitPushPreferred, setCommitPushPreferred] = useState(false)
   const popoverRef = useRef<HTMLDivElement | null>(null)
   const [busyAction, setBusyAction] = useState<
-    'stage' | 'unstage' | 'suggest' | 'commit' | 'pull' | 'push' | null
+    'stage' | 'unstage' | 'suggest' | 'commit' | 'sync' | 'push' | null
   >(null)
   const stagedPaths = useMemo(() => [...new Set(stagedFiles.map((file) => file.path))], [stagedFiles])
   const unstagedPaths = useMemo(
@@ -234,27 +235,36 @@ function InspectorGitActions({
     }
   }
 
-  const pull = async (): Promise<void> => {
-    if (typeof window.dsGui?.pullGitBranch !== 'function') {
+  const sync = async (): Promise<boolean> => {
+    if (typeof window.dsGui?.syncGitBranch !== 'function') {
       setFeedback({ kind: 'error', text: t('gitActionUnavailable') })
-      return
+      return false
     }
-    setBusyAction('pull')
+    setBusyAction('sync')
     setMenuOpen(false)
     setFeedback(null)
     try {
-      const result = await window.dsGui.pullGitBranch(root)
+      const result = await window.dsGui.syncGitBranch(root)
       if (!result.ok) {
-        setFeedback({ kind: 'error', text: result.message })
-        return
+        const count = result.conflictedFiles?.length ?? 0
+        const text = result.reason === 'conflict'
+          ? t('gitSyncConflictRecovered', { count })
+          : result.reason === 'recovery_required'
+            ? t('gitSyncConflictNeedsRecovery', { count })
+            : result.message
+        setFeedback({ kind: 'error', text })
+        await refresh()
+        return false
       }
       setFeedback({
         kind: 'success',
-        text: result.updated ? t('gitPullSuccess') : t('gitPullUpToDate')
+        text: result.action === 'up_to_date' ? t('gitPullUpToDate') : t('gitSyncSuccess')
       })
       await refresh()
+      return true
     } catch (error) {
       setFeedback({ kind: 'error', text: error instanceof Error ? error.message : String(error) })
+      return false
     } finally {
       setBusyAction(null)
     }
@@ -289,7 +299,7 @@ function InspectorGitActions({
         text: t('gitCommitLocalSuccess', { hash: result.commitHash })
       })
       await refresh()
-      if (pushAfterCommit) await push()
+      if (pushAfterCommit) await sync()
     } catch (commitError) {
       setFeedback({ kind: 'error', text: commitError instanceof Error ? commitError.message : String(commitError) })
     } finally {
@@ -324,11 +334,14 @@ function InspectorGitActions({
     | 'pull'
     | 'publish'
     | 'push'
+    | 'sync'
     | 'pull-request'
     | 'menu' =
     stagedPaths.length > 0
       ? 'commit'
-      : behind > 0 && ahead === 0
+      : behind > 0 && ahead > 0
+        ? 'sync'
+        : behind > 0
         ? 'pull'
         : !upstream && hasRemote && branch
           ? 'publish'
@@ -339,18 +352,18 @@ function InspectorGitActions({
               : 'menu'
   const primaryDisabled =
     busyAction !== null ||
-    ((primaryAction === 'pull' || primaryAction === 'publish') && hasLocalChanges)
+    (primaryAction === 'publish' && hasLocalChanges)
   const primaryLabel = (() => {
     if (primaryAction === 'commit') return t('gitCommitStagedCount', { count: stagedPaths.length })
     if (primaryAction === 'pull') return t('gitPullCommits', { count: behind })
     if (primaryAction === 'publish') return t('gitPublishBranch')
     if (primaryAction === 'push') return t('gitPushCommits', { count: ahead })
+    if (primaryAction === 'sync') return t('gitSyncChanges')
     if (primaryAction === 'pull-request') {
       return remoteRepository?.provider === 'gitlab'
         ? t('gitCreateMergeRequest')
         : t('gitCreatePullRequest')
     }
-    if (behind > 0 && ahead > 0) return t('gitBranchDiverged')
     return t('gitActionsMenu')
   })()
   const primaryIcon = (() => {
@@ -358,13 +371,13 @@ function InspectorGitActions({
     if (primaryAction === 'commit') return <GitCommitHorizontal className="h-4 w-4" />
     if (primaryAction === 'pull') return <Download className="h-4 w-4" />
     if (primaryAction === 'publish' || primaryAction === 'push') return <Upload className="h-4 w-4" />
+    if (primaryAction === 'sync') return <RefreshCw className="h-4 w-4" />
     if (primaryAction === 'pull-request') return <GitPullRequest className="h-4 w-4" />
-    if (behind > 0 && ahead > 0) return <TriangleAlert className="h-4 w-4 text-amber-600" />
     return <CheckCircle2 className="h-4 w-4" />
   })()
   const runPrimaryAction = (): void => {
     if (primaryAction === 'commit') openCommit(false)
-    else if (primaryAction === 'pull') void pull()
+    else if (primaryAction === 'pull' || primaryAction === 'sync') void sync()
     else if (primaryAction === 'publish' || primaryAction === 'push') void push()
     else if (primaryAction === 'pull-request') void createPullRequest()
     else setMenuOpen((open) => !open)
@@ -432,14 +445,14 @@ function InspectorGitActions({
             <GitCommitHorizontal className="h-3.5 w-3.5" />
             <span>{t('gitCommitLocal')}</span>
           </button>
-          <button type="button" role="menuitem" disabled={stagedPaths.length === 0 || !hasRemote || behind > 0} className={menuItemClass} onClick={() => openCommit(true)}>
-            <Upload className="h-3.5 w-3.5" />
+          <button type="button" role="menuitem" disabled={stagedPaths.length === 0 || !hasRemote} className={menuItemClass} onClick={() => openCommit(true)}>
+            <RefreshCw className="h-3.5 w-3.5" />
             <span>{t('gitCommitAndPush')}</span>
           </button>
           {upstream ? (
-            <button type="button" role="menuitem" disabled={ahead > 0 || hasLocalChanges} className={menuItemClass} onClick={() => void pull()}>
-              <Download className="h-3.5 w-3.5" />
-              <span>{behind > 0 ? t('gitPullCommits', { count: behind }) : t('gitPullCheck')}</span>
+            <button type="button" role="menuitem" disabled={busyAction !== null} className={menuItemClass} onClick={() => void sync()}>
+              <RefreshCw className="h-3.5 w-3.5" />
+              <span>{ahead > 0 && behind > 0 ? t('gitSyncChanges') : behind > 0 ? t('gitPullCommits', { count: behind }) : t('gitPullCheck')}</span>
             </button>
           ) : null}
           {hasRemote ? (
@@ -459,12 +472,6 @@ function InspectorGitActions({
               <GitPullRequest className="h-3.5 w-3.5" />
               <span>{remoteRepository?.provider === 'gitlab' ? t('gitCreateMergeRequest') : t('gitCreatePullRequest')}</span>
             </button>
-          ) : null}
-          {behind > 0 && ahead > 0 ? (
-            <p className="mt-1 flex items-start gap-1.5 rounded-lg bg-amber-500/10 px-2 py-1.5 text-[11px] leading-4 text-amber-700 dark:text-amber-200">
-              <TriangleAlert className="mt-0.5 h-3 w-3 shrink-0" />
-              <span>{t('gitBranchDiverged')}</span>
-            </p>
           ) : null}
         </div>
       ) : null}
@@ -497,8 +504,8 @@ function InspectorGitActions({
             <button type="button" disabled={busyAction !== null || !message.trim()} onClick={() => void submit(false)} className={`inline-flex h-8 items-center justify-center rounded-lg text-[11.5px] font-medium active:scale-[0.98] disabled:opacity-40 ${commitPushPreferred ? 'bg-ds-hover text-ds-ink' : 'bg-accent text-white'}`}>
               {t('gitCommitLocal')}
             </button>
-            <button type="button" disabled={busyAction !== null || !message.trim() || !hasRemote || behind > 0} onClick={() => void submit(true)} className={`inline-flex h-8 items-center justify-center gap-1 rounded-lg px-2 text-[11.5px] font-medium active:scale-[0.98] disabled:opacity-40 ${commitPushPreferred ? 'bg-accent text-white' : 'bg-ds-hover text-ds-ink'}`}>
-              <Upload className="h-3.5 w-3.5" />
+            <button type="button" disabled={busyAction !== null || !message.trim() || !hasRemote} onClick={() => void submit(true)} className={`inline-flex h-8 items-center justify-center gap-1 rounded-lg px-2 text-[11.5px] font-medium active:scale-[0.98] disabled:opacity-40 ${commitPushPreferred ? 'bg-accent text-white' : 'bg-ds-hover text-ds-ink'}`}>
+              <RefreshCw className="h-3.5 w-3.5" />
               {t('gitCommitAndPush')}
             </button>
           </div>

@@ -12,6 +12,7 @@ import {
   createAndSwitchGitBranch,
   pullGitBranch,
   pushGitBranch,
+  syncGitBranch,
   stageGitChanges,
   stashAndSwitchGitBranch,
   switchGitBranch,
@@ -401,6 +402,179 @@ describe('git-service integration', () => {
       const result = await pullGitBranch(repo)
       expect(result).toMatchObject({ ok: true, branch: 'main', updated: true })
       expect(run(repo, 'show', '-s', '--format=%s', 'HEAD')).toBe('peer update')
+    } finally {
+      rmSync(parent, { recursive: true, force: true })
+    }
+  })
+
+  it('syncs diverged branches with one merge and pushes the result', async () => {
+    const parent = mkdtempSync(join(tmpdir(), 'deepseek-git-sync-diverged-'))
+    const repo = join(parent, 'repo')
+    const peer = join(parent, 'peer')
+    const remote = join(parent, 'remote.git')
+    const run = (cwd: string, ...args: string[]): string =>
+      execFileSync('git', args, { cwd, encoding: 'utf8' }).trim()
+    try {
+      mkdirSync(repo)
+      run(repo, 'init')
+      run(repo, 'config', 'user.name', 'Workbench Test')
+      run(repo, 'config', 'user.email', 'workbench@example.test')
+      run(repo, 'branch', '-M', 'main')
+      writeFileSync(join(repo, 'tracked.txt'), 'initial\n')
+      run(repo, 'add', 'tracked.txt')
+      run(repo, 'commit', '-m', 'initial')
+      run(parent, 'init', '--bare', remote)
+      run(repo, 'remote', 'add', 'origin', remote)
+      run(repo, 'push', '-u', 'origin', 'main')
+      run(remote, 'symbolic-ref', 'HEAD', 'refs/heads/main')
+      run(parent, 'clone', remote, peer)
+      run(peer, 'config', 'user.name', 'Peer Test')
+      run(peer, 'config', 'user.email', 'peer@example.test')
+
+      writeFileSync(join(repo, 'local.txt'), 'local\n')
+      run(repo, 'add', 'local.txt')
+      run(repo, 'commit', '-m', 'local update')
+      writeFileSync(join(peer, 'remote.txt'), 'remote\n')
+      run(peer, 'add', 'remote.txt')
+      run(peer, 'commit', '-m', 'remote update')
+      run(peer, 'push')
+
+      const result = await syncGitBranch(repo)
+      expect(result).toMatchObject({ ok: true, action: 'merged', updated: true, pushed: true })
+      expect(run(repo, 'show', '-s', '--format=%P', 'HEAD').split(/\s+/)).toHaveLength(2)
+      expect(run(remote, 'rev-parse', 'refs/heads/main')).toBe(run(repo, 'rev-parse', 'HEAD'))
+    } finally {
+      rmSync(parent, { recursive: true, force: true })
+    }
+  })
+
+  it('syncs remote commits while preserving staged local changes', async () => {
+    const parent = mkdtempSync(join(tmpdir(), 'deepseek-git-sync-dirty-'))
+    const repo = join(parent, 'repo')
+    const peer = join(parent, 'peer')
+    const remote = join(parent, 'remote.git')
+    const run = (cwd: string, ...args: string[]): string =>
+      execFileSync('git', args, { cwd, encoding: 'utf8' }).trim()
+    try {
+      mkdirSync(repo)
+      run(repo, 'init')
+      run(repo, 'config', 'user.name', 'Workbench Test')
+      run(repo, 'config', 'user.email', 'workbench@example.test')
+      run(repo, 'branch', '-M', 'main')
+      writeFileSync(join(repo, 'tracked.txt'), 'initial\n')
+      run(repo, 'add', 'tracked.txt')
+      run(repo, 'commit', '-m', 'initial')
+      run(parent, 'init', '--bare', remote)
+      run(repo, 'remote', 'add', 'origin', remote)
+      run(repo, 'push', '-u', 'origin', 'main')
+      run(remote, 'symbolic-ref', 'HEAD', 'refs/heads/main')
+      run(parent, 'clone', remote, peer)
+      run(peer, 'config', 'user.name', 'Peer Test')
+      run(peer, 'config', 'user.email', 'peer@example.test')
+
+      writeFileSync(join(repo, 'local.txt'), 'local work\n')
+      run(repo, 'add', 'local.txt')
+      writeFileSync(join(peer, 'remote.txt'), 'remote work\n')
+      run(peer, 'add', 'remote.txt')
+      run(peer, 'commit', '-m', 'remote update')
+      run(peer, 'push')
+
+      const result = await syncGitBranch(repo)
+      expect(result).toMatchObject({ ok: true, action: 'pulled', updated: true, pushed: false })
+      expect(run(repo, 'diff', '--cached', '--name-only')).toBe('local.txt')
+      expect(run(repo, 'show', '-s', '--format=%s', 'HEAD')).toBe('remote update')
+    } finally {
+      rmSync(parent, { recursive: true, force: true })
+    }
+  })
+
+  it('aborts a conflicting sync and restores the local branch', async () => {
+    const parent = mkdtempSync(join(tmpdir(), 'deepseek-git-sync-conflict-'))
+    const repo = join(parent, 'repo')
+    const peer = join(parent, 'peer')
+    const remote = join(parent, 'remote.git')
+    const run = (cwd: string, ...args: string[]): string =>
+      execFileSync('git', args, { cwd, encoding: 'utf8' }).trim()
+    try {
+      mkdirSync(repo)
+      run(repo, 'init')
+      run(repo, 'config', 'user.name', 'Workbench Test')
+      run(repo, 'config', 'user.email', 'workbench@example.test')
+      run(repo, 'branch', '-M', 'main')
+      writeFileSync(join(repo, 'tracked.txt'), 'initial\n')
+      run(repo, 'add', 'tracked.txt')
+      run(repo, 'commit', '-m', 'initial')
+      run(parent, 'init', '--bare', remote)
+      run(repo, 'remote', 'add', 'origin', remote)
+      run(repo, 'push', '-u', 'origin', 'main')
+      run(remote, 'symbolic-ref', 'HEAD', 'refs/heads/main')
+      run(parent, 'clone', remote, peer)
+      run(peer, 'config', 'user.name', 'Peer Test')
+      run(peer, 'config', 'user.email', 'peer@example.test')
+
+      writeFileSync(join(repo, 'tracked.txt'), 'local\n')
+      run(repo, 'add', 'tracked.txt')
+      run(repo, 'commit', '-m', 'local update')
+      writeFileSync(join(repo, 'dirty.txt'), 'uncommitted\n')
+      run(repo, 'add', 'dirty.txt')
+      writeFileSync(join(peer, 'tracked.txt'), 'remote\n')
+      run(peer, 'add', 'tracked.txt')
+      run(peer, 'commit', '-m', 'remote update')
+      run(peer, 'push')
+
+      const result = await syncGitBranch(repo)
+      expect(result).toMatchObject({
+        ok: false,
+        reason: 'conflict',
+        conflictedFiles: ['tracked.txt'],
+        recovered: true
+      })
+      expect(run(repo, 'show', '-s', '--format=%s', 'HEAD')).toBe('local update')
+      expect(run(repo, 'status', '--porcelain')).toBe('A  dirty.txt')
+    } finally {
+      rmSync(parent, { recursive: true, force: true })
+    }
+  })
+
+  it('preserves the autostash when local working changes conflict after updating', async () => {
+    const parent = mkdtempSync(join(tmpdir(), 'deepseek-git-sync-stash-conflict-'))
+    const repo = join(parent, 'repo')
+    const peer = join(parent, 'peer')
+    const remote = join(parent, 'remote.git')
+    const run = (cwd: string, ...args: string[]): string =>
+      execFileSync('git', args, { cwd, encoding: 'utf8' }).trim()
+    try {
+      mkdirSync(repo)
+      run(repo, 'init')
+      run(repo, 'config', 'user.name', 'Workbench Test')
+      run(repo, 'config', 'user.email', 'workbench@example.test')
+      run(repo, 'branch', '-M', 'main')
+      writeFileSync(join(repo, 'tracked.txt'), 'initial\n')
+      run(repo, 'add', 'tracked.txt')
+      run(repo, 'commit', '-m', 'initial')
+      run(parent, 'init', '--bare', remote)
+      run(repo, 'remote', 'add', 'origin', remote)
+      run(repo, 'push', '-u', 'origin', 'main')
+      run(remote, 'symbolic-ref', 'HEAD', 'refs/heads/main')
+      run(parent, 'clone', remote, peer)
+      run(peer, 'config', 'user.name', 'Peer Test')
+      run(peer, 'config', 'user.email', 'peer@example.test')
+
+      writeFileSync(join(repo, 'tracked.txt'), 'local working change\n')
+      writeFileSync(join(peer, 'tracked.txt'), 'remote change\n')
+      run(peer, 'add', 'tracked.txt')
+      run(peer, 'commit', '-m', 'remote update')
+      run(peer, 'push')
+
+      const result = await syncGitBranch(repo)
+      expect(result).toMatchObject({
+        ok: false,
+        reason: 'recovery_required',
+        conflictedFiles: ['tracked.txt'],
+        recovered: false
+      })
+      expect(run(repo, 'show', '-s', '--format=%s', 'HEAD')).toBe('remote update')
+      expect(run(repo, 'stash', 'list')).toContain('autostash')
     } finally {
       rmSync(parent, { recursive: true, force: true })
     }

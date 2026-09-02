@@ -931,6 +931,17 @@ def check_command_policy(command: str, context: ToolContext) -> ToolResult | Non
     FORBIDDEN, returns a refusal :class:`ToolResult` on PROMPT, and
     returns ``None`` when execution may proceed.
     """
+    from deepseek_tui.workspace.managed_worktree import is_managed_path
+    from deepseek_tui.workspace.shell_write_guard import check_managed_worktree_git
+
+    if is_managed_path(context.working_directory):
+        git_guard = check_managed_worktree_git(command)
+        if not git_guard.allowed:
+            return ToolResult(
+                success=False,
+                content=git_guard.reason,
+                metadata={"managed_worktree_git_denied": True},
+            )
     if not context.policy:
         return None
     evaluation = context.policy.check(

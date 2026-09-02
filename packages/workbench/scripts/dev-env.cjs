@@ -26,7 +26,6 @@ if (!env.DEEPSEEK_PYTHON?.trim() && existsSync(venvPython)) {
   env.DEEPSEEK_PYTHON = venvPython
 }
 
-env.DEEPSEEK_SKIP_KEYRING = '1'
 // Usage mock is opt-in: run `npm run dev:usage-mock` or export
 // DEEPSEEK_USAGE_MOCK=1 to overlay demo data. Default `npm run dev` shows the
 // real ledger so day-to-day usage stats reflect actual sessions.

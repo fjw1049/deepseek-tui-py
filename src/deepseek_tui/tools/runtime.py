@@ -312,51 +312,6 @@ async def create_tool_runtime(
 
         policy = load_user_policy()
 
-    # Network policy — domain-level allow/deny for outbound HTTP, from the
-    # ``[network]`` config table. Rule entries carry ``host`` (or
-    # ``domain``) plus ``action`` ("allow" / "deny"); session amendments
-    # recorded by approval flows use the same shape.
-    network_decider = None
-    net_cfg = getattr(cfg, "network", None)
-    if net_cfg is not None and getattr(net_cfg, "enabled", False):
-        from deepseek_tui.policy.network import (
-            Decision as NetworkDecision,
-            NetworkPolicy,
-            NetworkPolicyDecider,
-        )
-
-        allow_hosts: list[str] = []
-        deny_hosts: list[str] = []
-        raw_rules = [
-            *getattr(net_cfg, "rules", []),
-            *getattr(net_cfg, "amendments", []),
-        ]
-        for rule in raw_rules:
-            if not isinstance(rule, dict):
-                continue
-            host = str(rule.get("host") or rule.get("domain") or "").strip()
-            action = str(rule.get("action") or "").strip().lower()
-            if not host:
-                continue
-            if action == "allow":
-                allow_hosts.append(host)
-            elif action == "deny":
-                deny_hosts.append(host)
-        default_action = str(
-            getattr(net_cfg, "default_action", "ask") or "ask"
-        ).strip().lower()
-        default_decision = {
-            "allow": NetworkDecision.ALLOW,
-            "deny": NetworkDecision.DENY,
-        }.get(default_action, NetworkDecision.PROMPT)
-        network_decider = NetworkPolicyDecider(
-            policy=NetworkPolicy(
-                allow=allow_hosts,
-                deny=deny_hosts,
-                default=default_decision,
-            ),
-        )
-
     trust_mode = bool(getattr(cfg, "trust_mode", False))
     approval_policy = getattr(cfg, "approval_policy", None)
     sandbox_mode = getattr(cfg, "sandbox_mode", None)
@@ -392,7 +347,7 @@ async def create_tool_runtime(
         policy=policy,
         task_manager=task_manager,
         subagent_manager=subagent_manager,
-        network_policy=network_decider,
+        network_policy=None,
         execution_sandbox_policy=resolve_execution_sandbox_policy(
             mode,
             workspace,

@@ -124,6 +124,7 @@ const api = {
     ipcRenderer.invoke('git:unstage', { workspaceRoot, paths }),
   pullGitBranch: (workspaceRoot) => ipcRenderer.invoke('git:pull', workspaceRoot),
   pushGitBranch: (workspaceRoot) => ipcRenderer.invoke('git:push', workspaceRoot),
+  syncGitBranch: (workspaceRoot) => ipcRenderer.invoke('git:sync', workspaceRoot),
   listEditors: () => ipcRenderer.invoke('editor:list'),
   openEditorPath: (options) =>
     ipcRenderer.invoke('editor:open-path', options),
