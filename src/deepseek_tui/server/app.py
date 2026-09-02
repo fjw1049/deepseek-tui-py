@@ -665,6 +665,11 @@ async def run_http(
         insecure_no_auth=options.insecure_no_auth,
         cors_origins=options.cors_origins,
     )
+    # Manager was built in a worker thread without an event loop; start the
+    # deferred MCP warmup now that we're back on the loop.
+    thread_manager = getattr(app.state, "thread_manager", None)
+    if thread_manager is not None:
+        thread_manager.schedule_mcp_warmup()
     # Both modes resolve the same bearer auth now, so the token-file
     # bookkeeping applies to the legacy app-server too.
     from deepseek_tui.server.auth import (

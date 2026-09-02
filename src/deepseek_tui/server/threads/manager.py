@@ -6503,12 +6503,24 @@ class RuntimeThreadManager:
         """Fire-and-forget background MCP tool discovery so first turn is fast."""
         if self._shared_tool_runtime is None:
             return
+        if self._mcp_warmup_task is not None:
+            return
         mcp = getattr(self._shared_tool_runtime, "mcp_manager", None)
         if mcp is None:
+            return
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            # Built in a worker thread (asyncio.to_thread) — deferred until
+            # schedule_mcp_warmup is re-invoked from the event loop.
             return
         self._mcp_warmup_task = asyncio.create_task(
             self._warmup_mcp(mcp), name="mcp-warmup"
         )
+
+    def schedule_mcp_warmup(self) -> None:
+        """Public re-entry for warmup when __init__ ran without a loop."""
+        self._schedule_mcp_warmup()
 
     async def _warmup_mcp(self, mcp: object) -> None:
         """Background MCP discover_tools so cache is hot before first turn."""
