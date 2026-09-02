@@ -100,3 +100,20 @@ describe('settings select material', () => {
     expect(darkMenuRule).toContain('background: var(--ds-surface-elevated, #1c1c1e);')
   })
 })
+
+describe('native window drag targets', () => {
+  it('keeps an unobstructed top-edge drag strip active across transient menus', () => {
+    const stripRule = stylesheet.match(
+      /\.ds-window-drag-strip \{(?<body>[^}]*)\}/
+    )?.groups?.body
+    expect(stripRule).toContain('position: absolute;')
+    expect(stripRule).toContain('height: var(--ds-window-inset, 8px);')
+    expect(stripRule).toContain('-webkit-app-region: drag;')
+    expect(workbenchSource).toContain('className="ds-window-drag-strip"')
+
+    const lightDismissRule = stylesheet.match(
+      /html\.ds-light-dismiss-active \.ds-window-drag-strip,[^{]*\{(?<body>[^}]*)\}/
+    )?.groups?.body
+    expect(lightDismissRule).toContain('-webkit-app-region: drag !important;')
+  })
+})

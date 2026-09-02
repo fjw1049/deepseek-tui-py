@@ -1424,6 +1424,7 @@ export function Workbench(): ReactElement {
         } as CSSProperties
       }
     >
+      <div className="ds-window-drag-strip" aria-hidden />
       {resizeShieldCursor !== null ? (
         <div
           aria-hidden
@@ -1689,7 +1690,7 @@ export function Workbench(): ReactElement {
         <div ref={mainRowRef} className="flex min-h-0 flex-1">
           <div className={`min-h-0 min-w-0 flex-1 flex-col ${chatColumnHidden ? 'hidden' : 'flex'}`}>
           <section className="ds-drag flex min-h-0 min-w-0 flex-1 flex-col">
-            <header className="ds-workbench-topbar ds-surface-divider relative z-10 shrink-0 bg-transparent">
+            <header className="ds-workbench-topbar ds-window-drag-region ds-surface-divider relative z-10 shrink-0 bg-transparent">
               <div className="ds-workbench-topbar__inner flex w-full min-w-0 items-center justify-between gap-2">
                 <div className="flex h-7 min-w-0 flex-1 items-center overflow-hidden">
                   <SessionHeader compact className="min-w-0" />

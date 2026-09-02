@@ -56,7 +56,7 @@ export function SessionHeader({ compact = false, className = '' }: Props): React
   if (compact) {
     return (
       <div
-        className={`ds-session-header ds-no-drag flex h-7 min-h-0 min-w-0 flex-1 items-center gap-2 text-left ${className}`}
+        className={`ds-session-header ds-window-drag-region flex h-7 min-h-0 min-w-0 flex-1 items-center gap-2 text-left ${className}`}
       >
         {active ? (
           <div className="flex h-7 min-w-0 flex-1 items-center gap-2 overflow-hidden">
