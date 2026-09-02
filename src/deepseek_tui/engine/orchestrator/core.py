@@ -15,12 +15,7 @@ from typing import TYPE_CHECKING, Any
 
 from deepseek_tui.client.base import LLMClient
 from deepseek_tui.engine.capacity import (
-    CapacityController,
-    CapacityControllerConfig,
     CompactionConfig,
-    run_error_escalation_checkpoint,
-    run_post_tool_checkpoint,
-    run_pre_request_checkpoint,
     should_compact,
 )
 from deepseek_tui.engine.context import WorkingSet
@@ -105,9 +100,8 @@ _STOP_HOOK_MAX_FIRES = 3
 def _path_under(path: Path, root: Path) -> bool:
     """Whether ``path`` is inside ``root`` (both resolved)."""
     try:
-        path.resolve().relative_to(root.resolve())
-        return True
-    except (ValueError, OSError):
+        return path.resolve().is_relative_to(root.resolve())
+    except OSError:
         return False
 
 
@@ -304,7 +298,6 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         # Reply language from config.ui.locale (Workbench settings). Default zh.
         self.reply_locale: str = "zh"
         self.compaction_config = compaction_config or CompactionConfig()
-        self.capacity_controller = CapacityController(config=CapacityControllerConfig())
         self.session_messages: list[Message] = []
         # Last rewrite-bridge text (for iterative re-compaction). The live
         # bridge is a leading user message in session_messages — never the
@@ -1386,9 +1379,6 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                 engine.tool_context.metadata["plugin_trust"] = {
                     p.name.lower(): bool(p.trusted) for p in loaded_plugins
                 }
-        engine.capacity_controller = CapacityController(
-            config=CapacityControllerConfig.from_app_config(cfg.capacity)
-        )
         # Cycle wiring — ratios from ContextConfig; absolute token
         # cutoffs are derived per request from the live model window.
         ctx_cfg = getattr(cfg, "context", None)
@@ -1613,6 +1603,47 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             return None
         return reminders.reminder_message(reminders.GIT_SNAPSHOT, snapshot)
 
+    async def _apply_plugin_mount(self, raw: str) -> str:
+        """Apply an ``@plugin:`` mount/unmount prefix in ``raw``.
+
+        Detects the prefix, updates the session-level active plugin,
+        strips the prefix, and emits the mount/unmount event. Returns the
+        text with the prefix removed (unchanged when no prefix present).
+        The caller decides what to do with empty remaining text.
+        """
+        plugin_mount = _detect_plugin_mount(raw)
+        if plugin_mount is None:
+            return raw
+        mount_note = self.set_active_plugin(
+            None if plugin_mount == "off" else plugin_mount
+        )
+        raw = _strip_plugin_mount(raw, plugin_mount)
+        # Structured state change for the UI (persistent badge) and for
+        # reload-restore. Only emit on a real transition: unmount always
+        # clears; mount only when the plugin was actually found & applied.
+        mounted = self._active_plugin
+        if plugin_mount == "off":
+            await self.handle.emit(PluginMountEvent(name=None, message=mount_note))
+        elif mounted is not None and mounted.name.lower() == plugin_mount.lower():
+            has_mcp = bool(mounted.manifest.mcp_servers)
+            await self.handle.emit(
+                PluginMountEvent(
+                    name=mounted.name,
+                    version=mounted.manifest.version,
+                    path=str(mounted.path.expanduser().resolve()),
+                    scope=mounted.scope,
+                    trusted=mounted.trusted,
+                    permissions=mounted.manifest.permissions,
+                    mcp_active=has_mcp and mounted.trusted,
+                    message=mount_note,
+                )
+            )
+        else:
+            # Mount failed (unknown plugin) — surface the error; do not
+            # leave the UI assuming the scenario chip applied.
+            await self.handle.emit(StatusEvent(message=mount_note))
+        return raw
+
     def context_breakdown(self, model: str | None = None) -> dict[str, int]:
         """Estimate token occupancy by category for the next request.
 
@@ -1657,22 +1688,23 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         """Estimate context using the same tool catalog sent to the model.
 
         Unlike :meth:`context_breakdown`, this async path considers dynamically
-        discovered MCP tools.
-
-        Never blocks on cold MCP discovery — Workbench polls this endpoint and
-        must not wait on subprocess startup.
+        discovered MCP tools. Never blocks on cold MCP discovery — Workbench
+        polls this endpoint and must not wait on subprocess startup.
         """
-        from deepseek_tui.engine.context import estimate_context_breakdown
-
-        target_model = model or self.default_model
         try:
             api_tools = await self._get_tools_with_mcp()
         except Exception:  # noqa: BLE001
             api_tools = []
         api_tools = self._initial_request_tools_for_context(api_tools)
+        return await self._context_breakdown_with(api_tools, model)
+
+    async def _context_breakdown_with(
+        self, api_tools: list[dict[str, Any]], model: str | None = None
+    ) -> dict[str, int]:
+        from deepseek_tui.engine.context import estimate_context_breakdown
 
         return estimate_context_breakdown(
-            model=target_model,
+            model=model or self.default_model,
             messages=self.session_messages or None,
             skills_context=self._render_skills_context(),
             api_tools=api_tools,
@@ -1973,45 +2005,13 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         # _active_plugin、剥掉前缀，本轮起即生效（持续态）。UI 只靠
         # PluginMountEvent（composer 底部徽章），不再发带 [plugin] 前缀的
         # StatusEvent，避免时间线重复系统气泡。
-        plugin_mount = _detect_plugin_mount(raw_content)
-        if plugin_mount is not None:
-            mount_note = self.set_active_plugin(
-                None if plugin_mount == "off" else plugin_mount
-            )
-            raw_content = _strip_plugin_mount(raw_content, plugin_mount)
-            # Structured state change for the UI (persistent badge) and for
-            # reload-restore. Only emit on a real transition: unmount always
-            # clears; mount only when the plugin was actually found & applied.
-            mounted = self._active_plugin
-            if plugin_mount == "off":
-                await self.handle.emit(PluginMountEvent(name=None, message=mount_note))
-            elif mounted is not None and mounted.name.lower() == plugin_mount.lower():
-                has_mcp = bool(mounted.manifest.mcp_servers)
-                await self.handle.emit(
-                    PluginMountEvent(
-                        name=mounted.name,
-                        version=mounted.manifest.version,
-                        path=str(mounted.path.expanduser().resolve()),
-                        scope=mounted.scope,
-                        trusted=mounted.trusted,
-                        permissions=mounted.manifest.permissions,
-                        mcp_active=has_mcp and mounted.trusted,
-                        message=mount_note,
-                    )
-                )
-            else:
-                # Mount failed (unknown plugin) — surface the error; do not
-                # leave the UI assuming the scenario chip applied.
-                await self.handle.emit(StatusEvent(message=mount_note))
+        pre_mount_raw = raw_content
+        raw_content = await self._apply_plugin_mount(raw_content)
+        if raw_content != pre_mount_raw and not (raw_content or "").strip():
             # Mount/unmount-only turn (no remaining user text): skip the LLM.
-            if not (raw_content or "").strip():
-                await self.handle.emit(
-                    TurnStartedEvent(user_text="" if op.hidden else "")
-                )
-                await self.handle.emit(
-                    TurnCompleteEvent(assistant_message=None, success=True)
-                )
-                return
+            await self.handle.emit(TurnStartedEvent(user_text="" if op.hidden else ""))
+            await self.handle.emit(TurnCompleteEvent(assistant_message=None, success=True))
+            return
         focus_mcp_ahead = _detect_focus_mcp(raw_content, self.mcp_manager)
         content_for_prepare = raw_content
         if focus_mcp_ahead is not None:
@@ -2174,7 +2174,6 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             metadata=self.tool_context.metadata,
         )
 
-        mode_hint = ""
 
         try:
             # 聚焦模式：置位 per-turn 工具白名单，``_get_tools_with_mcp`` 据此
@@ -2270,8 +2269,6 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                 locale_tag=self.reply_locale,
                 automations_guidelines=self.tool_registry.contains("cron_create"),
             )
-            if mode_hint:
-                sys_prompt += mode_hint
             # Compaction bridges live in session_messages (leading user
             # message), not in the system prompt — mutating system every
             # compact would destroy the stable KV prefix cache.
@@ -3103,38 +3100,10 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                 if not steer_text:
                     continue
                 # Honor @plugin: mount/unmount in steers (same as primary send).
-                plugin_mount = _detect_plugin_mount(steer_text)
-                if plugin_mount is not None:
-                    mount_note = self.set_active_plugin(
-                        None if plugin_mount == "off" else plugin_mount
-                    )
-                    steer_text = _strip_plugin_mount(steer_text, plugin_mount)
-                    mounted = self._active_plugin
-                    if plugin_mount == "off":
-                        await self.handle.emit(
-                            PluginMountEvent(name=None, message=mount_note)
-                        )
-                    elif (
-                        mounted is not None
-                        and mounted.name.lower() == plugin_mount.lower()
-                    ):
-                        has_mcp = bool(mounted.manifest.mcp_servers)
-                        await self.handle.emit(
-                            PluginMountEvent(
-                                name=mounted.name,
-                                version=mounted.manifest.version,
-                                path=str(mounted.path.expanduser().resolve()),
-                                scope=mounted.scope,
-                                trusted=mounted.trusted,
-                                permissions=mounted.manifest.permissions,
-                                mcp_active=has_mcp and mounted.trusted,
-                                message=mount_note,
-                            )
-                        )
-                    else:
-                        await self.handle.emit(StatusEvent(message=mount_note))
-                    if not steer_text.strip():
-                        continue
+                pre_mount_steer = steer_text
+                steer_text = await self._apply_plugin_mount(steer_text)
+                if steer_text != pre_mount_steer and not steer_text.strip():
+                    continue
                 processed = prepare_turn_for_model(
                     steer_text,
                     workspace=self.tool_context.working_directory,
@@ -3152,17 +3121,6 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                 )
                 self.working_set.observe_references(processed.references)
 
-            # Capacity pre-request checkpoint
-            # 观测 token/工具调用密度,容量预检查；改写式（删旧+塞摘要）
-            await run_pre_request_checkpoint(
-                self.capacity_controller,
-                self.turn_counter,
-                model,
-                messages,
-                compact_fn=self._emergency_compact,
-            )
-            # Capacity refresh rewrites messages in place (bridge included);
-            # do not mutate system_prompt.
             # L0: prune old tool bodies at ≥50% (deterministic, no LLM).
             self._maybe_l0_prune_tool_results(
                 messages, model, system_prompt=system_prompt, tools=tools
@@ -3421,11 +3379,6 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             ))
             messages.extend(tool_results)
 
-            # Capacity post-tool checkpoint
-            # 观测 token/工具调用密度,容量后检查
-            await run_post_tool_checkpoint(
-                self.capacity_controller, self.turn_counter, model, messages,
-            )
 
             # Optional durable transcript hook (Task true-resume).
             on_ckpt = self.tool_context.metadata.get("on_turn_checkpoint")
@@ -3441,14 +3394,6 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             if tool_errors > 0:
                 step_error_count += tool_errors
                 consecutive_tool_error_steps += 1
-                await run_error_escalation_checkpoint(
-                    self.capacity_controller,
-                    self.turn_counter,
-                    model,
-                    messages,
-                    step_error_count=step_error_count,
-                    consecutive_tool_error_steps=consecutive_tool_error_steps,
-                )
             else:
                 consecutive_tool_error_steps = 0
 

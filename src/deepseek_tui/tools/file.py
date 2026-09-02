@@ -11,6 +11,9 @@ from deepseek_tui.tools.registry import ToolCapability, ToolContext, ToolError, 
 from deepseek_tui.tools.utils.edit_diagnostics import build_edit_no_match_message
 from deepseek_tui.tools.utils.path_suggestions import format_not_found_error
 from deepseek_tui.tools.utils.sensitive import is_sensitive_path, is_sensitive_write_path
+from deepseek_tui.tools.utils.validation import (
+    optional_non_negative_int as _optional_non_negative_int,
+)
 from deepseek_tui.tools.utils.validation import require_string as _require_string
 from deepseek_tui.utils import write_text_atomic
 
@@ -385,19 +388,6 @@ def _require_string_with_alias(
         raise ToolError(f"{primary} (or {alias}) must be provided")
     if not isinstance(value, str):
         raise ToolError(f"{primary} must be a string")
-    return value
-
-
-def _optional_non_negative_int(
-    input_data: dict[str, object], key: str
-) -> int | None:
-    if key not in input_data:
-        return None
-    value = input_data[key]
-    if isinstance(value, bool) or not isinstance(value, int):
-        raise ToolError(f"{key} must be a non-negative integer")
-    if value < 0:
-        raise ToolError(f"{key} must be a non-negative integer")
     return value
 
 

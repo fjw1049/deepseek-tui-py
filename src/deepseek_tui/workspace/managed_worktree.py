@@ -2495,4 +2495,3 @@ async def _git(root: Path, args: list[str], *, check: bool = True) -> str | None
 _UNREADABLE = object()
 
 read_working_text = _read_text
-write_working_text = _write_text

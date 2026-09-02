@@ -311,31 +311,6 @@ def optimize_storage(
     return report
 
 
-def clean_threads_older_than(
-    store: RuntimeThreadStore,
-    checkpoints: TurnCheckpointStore,
-    *,
-    older_than_days: int,
-    now: datetime | None = None,
-) -> CleanReport:
-    """Hard-delete threads whose ``updated_at`` is older than the cutoff."""
-    if older_than_days < 1:
-        raise ValueError("older_than_days must be >= 1")
-    cutoff = (now or datetime.now(timezone.utc)) - timedelta(days=older_than_days)
-    report = CleanReport()
-    for thread in list(store.list_threads()):
-        updated = thread.updated_at
-        if updated.tzinfo is None:
-            updated = updated.replace(tzinfo=timezone.utc)
-        if updated >= cutoff:
-            continue
-        reclaimed = delete_thread_tree(store, checkpoints, thread.id)
-        report.threads_deleted += 1
-        report.bytes_reclaimed += reclaimed
-        report.thread_ids.append(thread.id)
-    return report
-
-
 def clear_conversation_history(
     store: RuntimeThreadStore,
     checkpoints: TurnCheckpointStore,

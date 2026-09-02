@@ -22,22 +22,6 @@ from deepseek_tui.protocol.responses import StreamEvent
 logger = logging.getLogger(__name__)
 
 
-def is_reasoning_model(model: str) -> bool:
-    """Check if a model supports reasoning_content output."""
-    lower = model.lower()
-    return any(
-        marker in lower
-        for marker in (
-            "deepseek-r",
-            "reasoner",
-            "-reasoning",
-            "-thinking",
-            "deepseek-v3.2",
-            "deepseek-v4",
-        )
-    )
-
-
 def _map_tool_choice_for_chat(
     choice: str | dict[str, Any] | None,
 ) -> str | dict[str, Any] | None:
@@ -94,14 +78,14 @@ class DeepSeekClient(LLMClient):
         thinking_supported: bool = False,
         extra_headers: dict[str, str] | None = None,
     ) -> None:
-        super().__init__()
-        self.api_key = api_key
-        self.base_url = base_url.rstrip("/")
-        self.timeout_seconds = timeout_seconds
-        self.transport = transport
+        super().__init__(
+            api_key=api_key,
+            base_url=base_url,
+            timeout_seconds=timeout_seconds,
+            transport=transport,
+            extra_headers=extra_headers,
+        )
         self.thinking_supported = thinking_supported
-        self.extra_headers = dict(extra_headers or {})
-        self._http_client: httpx.AsyncClient | None = None
 
     @classmethod
     def from_config(cls, config: object) -> DeepSeekClient:
@@ -128,37 +112,6 @@ class DeepSeekClient(LLMClient):
             timeout_seconds=float(pc.timeout),
             thinking_supported=thinking,
         )
-
-    def _get_http_client(self) -> httpx.AsyncClient:
-        """Return a persistent httpx client for connection reuse.
-
-        ``read=None`` lets the per-chunk ``asyncio.wait_for`` in
-        ``stream_chat_completion`` be the sole source of truth for SSE idle
-        timeouts. With a finite httpx ``read`` the global timer can fire
-        first and surface as ``httpx.ReadTimeout`` instead of
-        ``asyncio.TimeoutError``, hitting different retry branches in
-        ``TurnLoop._run_turn_loop`` and confusing transparent-retry
-        accounting. Connect/write timeouts stay bounded so DNS or TLS
-        stalls still surface promptly.
-        """
-        if self._http_client is None or self._http_client.is_closed:
-            self._http_client = httpx.AsyncClient(
-                timeout=httpx.Timeout(
-                    connect=self.timeout_seconds,
-                    write=self.timeout_seconds,
-                    read=None,
-                    pool=self.timeout_seconds,
-                ),
-                transport=self.transport,
-            )
-        return self._http_client
-
-    async def close(self) -> None:
-        """Close the persistent HTTP client."""
-        if self._http_client is not None and not self._http_client.is_closed:
-            logger.debug("http_client_close base_url=%s", self.base_url)
-            await self._http_client.aclose()
-            self._http_client = None
 
     async def stream_chat_completion(self, request: MessageRequest) -> AsyncIterator[StreamEvent]:
         parser = OpenAIStreamParser()
@@ -362,23 +315,3 @@ class DeepSeekClient(LLMClient):
             payload["thinking"] = {"type": "enabled"}
         payload.update(sanitize_extra_body(request.extra_body))
         return payload
-
-
-class OpenAICompatClient(DeepSeekClient):
-    def __init__(
-        self,
-        api_key: str,
-        base_url: str,
-        timeout_seconds: float = 90.0,
-        transport: httpx.AsyncBaseTransport | None = None,
-        thinking_supported: bool = False,
-        extra_headers: dict[str, str] | None = None,
-    ) -> None:
-        super().__init__(
-            api_key=api_key,
-            base_url=base_url,
-            timeout_seconds=timeout_seconds,
-            transport=transport,
-            thinking_supported=thinking_supported,
-            extra_headers=extra_headers,
-        )

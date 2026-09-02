@@ -293,3 +293,16 @@ async def test_manager_thread_operation_reentry_is_task_scoped(
         await asyncio.create_task(competing_task())
 
     await manager._release_thread_lease("thr_owned", expected=lease)
+
+
+def test_permanent_lock_error_raises_instead_of_returning_false(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    lease = project_lease_module.FileLease(tmp_path / "broken.lock")
+
+    def _boom(fd: int, operation: int) -> None:
+        raise OSError(errno.ENOSPC, "no space left on device")
+
+    monkeypatch.setattr(project_lease_module.fcntl, "flock", _boom)
+    with pytest.raises(OSError, match="no space left"):
+        lease.acquire_blocking(nonblocking=True)

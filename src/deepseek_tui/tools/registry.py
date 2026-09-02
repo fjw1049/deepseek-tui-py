@@ -120,7 +120,7 @@ class ToolSpec(ABC):
 
 
 if TYPE_CHECKING:
-    from deepseek_tui.policy.exec_policy import Policy
+    from deepseek_tui.policy.exec_policy import TomlBackedPolicy
     from deepseek_tui.policy.sandbox import ExecutionSandboxPolicy
     from deepseek_tui.policy.network import NetworkPolicyDecider
     from deepseek_tui.tools.subagent import SubAgentManager
@@ -146,7 +146,7 @@ class ToolContext:
     cycle_archive_root: Path | None = None
     active_task_id: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
-    policy: Policy | None = None
+    policy: TomlBackedPolicy | None = None
     task_manager: TaskManager | None = None
     subagent_manager: SubAgentManager | None = None
     network_policy: NetworkPolicyDecider | None = None
@@ -504,32 +504,6 @@ class ToolRegistry:
         except ValueError as exc:
             raise ToolError(str(exc)) from exc
 
-    async def execute_full(
-        self,
-        name: str,
-        input_data: dict[str, Any],
-        context: ToolContext | None = None,
-        context_override: ToolContext | None = None,
-    ) -> ToolResult:
-        """Alias for :meth:`execute`, with context override.
-
-        Resolution order for the actual context passed to the tool:
-
-        1. ``context_override`` if provided (used when the engine retries
-           with an elevated sandbox policy)
-        2. ``context`` if provided
-        3. ``self.context`` (the registry-level default)
-
-        Raises :class:`ToolError` if no context is resolvable.
-        """
-        ctx = context_override or context or self._context
-        if ctx is None:
-            raise ToolError(
-                "ToolRegistry.execute_full: no context available "
-                "(pass context= or call set_context() first)"
-            )
-        return await self.execute(name, input_data, ctx)
-
     # ------------------------------------------------------------------
     # API serialisation
     # ------------------------------------------------------------------
@@ -633,9 +607,7 @@ class ToolRegistry:
         # Python in-memory name (which may contain `.` / `:` / non-ASCII)
         # round-trips correctly via `from_api_tool_name` when the model
         # echoes it back. See client.streaming for the decode side.
-        from deepseek_tui.tools.encoding import to_api_tool_name
-
-        from deepseek_tui.tools.encoding import sanitize
+        from deepseek_tui.tools.encoding import sanitize, to_api_tool_name
 
         params = tool.input_schema()
         if isinstance(params, dict):
@@ -654,10 +626,9 @@ class ToolRegistry:
 
 
 
-from deepseek_tui.config.models import Config
-
 if TYPE_CHECKING:
     from deepseek_tui.client.base import LLMClient
+    from deepseek_tui.config.models import Config
 
 
 def build_default_registry(config: Config | None = None, *, mode: str = "agent") -> ToolRegistry:
@@ -665,6 +636,7 @@ def build_default_registry(config: Config | None = None, *, mode: str = "agent")
     # time, so importing them lazily here (instead of at module level) keeps
     # ``import deepseek_tui.tools.<any_tool_module>`` usable as an entry
     # point without a circular-import failure.
+    from deepseek_tui.config.models import Config
     from deepseek_tui.tools.automation import (
         CronCreateTool,
         CronDeleteTool,
@@ -788,16 +760,12 @@ def build_default_registry(config: Config | None = None, *, mode: str = "agent")
     # Engine-intercepted special tools (always active)
     registry.register(RequestUserInputTool())
     # Plan enter/exit: agent proposes, engine asks the user, then switches mode.
-    # Shared runtimes keep both registered; call-time checks enforce mode.
+    # Shared runtimes keep both registered; call-time checks enforce mode —
+    # every mode exposes exit so a mid-turn enter can later exit without
+    # rebuilding a shared registry (call-time rejects exit outside plan mode).
     if mode != "plan":
         registry.register(EnterPlanModeTool())
-    if mode == "plan":
-        registry.register(ExitPlanModeTool())
-    else:
-        # Agent/yolo/ask catalogs also expose exit so a mid-turn enter can
-        # later exit without rebuilding a shared registry. Call-time rejects
-        # exit when not in plan mode.
-        registry.register(ExitPlanModeTool())
+    registry.register(ExitPlanModeTool())
 
     if mode != "plan":
         for tool in goal_tools():
@@ -820,6 +788,8 @@ def build_subagent_registry(
     Default ``allowed_tools=None`` inherits the full agent registry. Custom
     agents pass an explicit allowlist.
     """
+    from deepseek_tui.config.models import Config
+
     cfg = config or Config()
     registry = build_default_registry(cfg, mode=mode)
     from deepseek_tui.goal.types import GOAL_TOOL_NAMES

@@ -29,7 +29,7 @@ if TYPE_CHECKING:
 # ============================================================================
 
 
-def write_json_atomic(path: Path, value: Any) -> None:
+def write_json_atomic(path: Path, value: Any, *, sort_keys: bool = False) -> None:
     """Write a JSON-serialisable value to *path* atomically (write-tmp + rename)."""
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp_path = tempfile.mkstemp(
@@ -37,7 +37,7 @@ def write_json_atomic(path: Path, value: Any) -> None:
     )
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump(value, f, indent=2, ensure_ascii=False, default=str)
+            json.dump(value, f, indent=2, ensure_ascii=False, default=str, sort_keys=sort_keys)
             f.flush()
             os.fsync(f.fileno())
         os.replace(tmp_path, path)
@@ -47,6 +47,14 @@ def write_json_atomic(path: Path, value: Any) -> None:
         except OSError:
             pass
         raise
+
+
+def read_json_or_none(path: Path) -> Any | None:
+    """Read JSON from *path*; return ``None`` when missing or unparseable."""
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
 
 
 def write_text_atomic(path: Path, content: str) -> None:
@@ -84,6 +92,21 @@ def write_text_atomic(path: Path, content: str) -> None:
         except OSError:
             pass
         raise
+
+
+def utc_now_iso() -> str:
+    """Aware-UTC ISO 8601 timestamp (single source for all persistence stamps)."""
+    from datetime import datetime, timezone
+
+    return datetime.now(timezone.utc).isoformat()
+
+
+def optional_text(value: object) -> str | None:
+    """Coerce to stripped text; ``None``/empty becomes ``None``."""
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
 
 
 def summarize_text(text: str, limit: int = 280) -> str:

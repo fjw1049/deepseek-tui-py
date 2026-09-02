@@ -23,8 +23,6 @@ from pathlib import Path
 
 # --- Constants ------------------------------------------------------------
 
-MIN_RECENT_MESSAGES_TO_KEEP = 4
-MAX_CONTEXT_RECOVERY_ATTEMPTS = 2
 CONTEXT_HEADROOM_TOKENS = 1024
 
 TOOL_RESULT_CONTEXT_HARD_LIMIT_CHARS = 12_000
@@ -343,10 +341,6 @@ def estimate_tokens(text: str) -> int:
     return _estimate_tokens_char_split(text)
 
 
-def _estimate_text_tokens_conservative(text: str) -> int:
-    return estimate_tokens(text)
-
-
 def estimate_input_tokens_conservative(
     messages: list[Message], system_prompt: str | None = None
 ) -> int:
@@ -363,7 +357,7 @@ def estimate_input_tokens_conservative(
     message_tokens = (msg_chars * 3) // 2  # conservative 1.5x
 
     system_tokens = (
-        _estimate_text_tokens_conservative(system_prompt) if system_prompt else 0
+        estimate_tokens(system_prompt) if system_prompt else 0
     )
 
     framing_overhead = len(messages) * 12 + 48
@@ -441,7 +435,7 @@ def _tool_schema_buckets(api_tools: list[dict[str, Any]] | None) -> tuple[int, i
     tool_definitions = 0
     mcp = 0
     for tool in api_tools:
-        tokens = _estimate_text_tokens_conservative(json.dumps(tool, ensure_ascii=False))
+        tokens = estimate_tokens(json.dumps(tool, ensure_ascii=False))
         if is_mcp_tool(_api_tool_name(tool)):
             mcp += tokens
         else:
@@ -497,7 +491,7 @@ def estimate_context_breakdown(
     except ValueError:
         app_mode = AppMode.AGENT
     if system_prompt_override and system_prompt_override.strip():
-        system_tokens = _estimate_text_tokens_conservative(
+        system_tokens = estimate_tokens(
             system_prompt_override.strip()
         )
         rules_tokens = 0
@@ -510,19 +504,19 @@ def estimate_context_breakdown(
             mode=app_mode,
             project_context_enabled=False,
         )
-        system_tokens = _estimate_text_tokens_conservative(system_text)
+        system_tokens = estimate_tokens(system_text)
 
         rules_text = ""
         if ws is not None:
 
             rules_text = load_project_context_with_parents(ws).as_system_block()
         rules_tokens = (
-            _estimate_text_tokens_conservative(rules_text.strip())
+            estimate_tokens(rules_text.strip())
             if rules_text.strip()
             else 0
         )
         skills_tokens = (
-            _estimate_text_tokens_conservative(skills_context.strip())
+            estimate_tokens(skills_context.strip())
             if skills_context and skills_context.strip()
             else 0
         )

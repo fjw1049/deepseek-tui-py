@@ -46,9 +46,6 @@ ENV_TO_FIELD: dict[str, tuple[str, ...]] = {
     "DEEPSEEK_MANAGED_CONFIG_PATH": ("managed_config_path",),
     "DEEPSEEK_REQUIREMENTS_PATH": ("requirements_path",),
     "DEEPSEEK_MAX_SUBAGENTS": ("max_subagents",),
-    "DEEPSEEK_CAPACITY_ENABLED": ("capacity", "enabled"),
-    "DEEPSEEK_CAPACITY_LOW_RISK_MAX": ("capacity", "low_risk_max"),
-    "DEEPSEEK_CAPACITY_MEDIUM_RISK_MAX": ("capacity", "medium_risk_max"),
 }
 
 

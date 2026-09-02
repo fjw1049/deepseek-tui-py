@@ -13,7 +13,6 @@ from deepseek_tui.server.threads import CreateThreadRequest, RuntimeThreadManage
 from deepseek_tui.server.threads import RuntimeThreadManager
 from deepseek_tui.config.models import Config, FeatureConfig
 from deepseek_tui.tools.approval import ExecPolicyEngine, exec_policy_for_config
-from deepseek_tui.tools.registry import ToolCapability
 from deepseek_tui.tools.registry import ToolContext
 
 
@@ -24,8 +23,11 @@ def test_exec_policy_for_config_reads_approval_policy() -> None:
 
 
 def test_exec_policy_never_blocks_high_risk_tools() -> None:
+    from deepseek_tui.tools.approval import approval_request_for_tool
+    from deepseek_tui.tools.file import WriteFileTool
+
     engine = ExecPolicyEngine(approval_policy="never")
-    req = engine.evaluate("write_file", [ToolCapability.WRITES_FILES])
+    req = approval_request_for_tool(WriteFileTool(), engine.approval_policy)
     assert req is not None
     assert "never" in req.reason
 

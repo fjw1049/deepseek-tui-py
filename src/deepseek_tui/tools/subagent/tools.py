@@ -26,6 +26,9 @@ import logging
 from dataclasses import asdict
 from typing import TYPE_CHECKING, Any
 
+from deepseek_tui.tools.utils.validation import pick_bool as _pick_bool
+from deepseek_tui.tools.utils.validation import pick_int as _pick_int
+from deepseek_tui.tools.utils.validation import pick_str as _pick_str
 from deepseek_tui.tools.registry import (
     ApprovalRequirement,
     ToolCapability,
@@ -98,14 +101,6 @@ def _result_to_json(result: SubAgentResult) -> dict[str, Any]:
     }
 
 
-def _pick_str(data: dict[str, Any], *keys: str) -> str | None:
-    for key in keys:
-        value = data.get(key)
-        if isinstance(value, str) and value.strip():
-            return value
-    return None
-
-
 def _pick_str_aliased(data: dict[str, Any], canonical: str, *aliases: str) -> str | None:
     """Pick ``canonical`` first; fall back to legacy aliases (debug-logged)."""
     value = _pick_str(data, canonical)
@@ -117,24 +112,6 @@ def _pick_str_aliased(data: dict[str, Any], canonical: str, *aliases: str) -> st
             logger.debug("agent tool: legacy alias %r used for %r", alias, canonical)
             return value
     return None
-
-
-def _pick_bool(data: dict[str, Any], *keys: str, default: bool = False) -> bool:
-    for key in keys:
-        value = data.get(key)
-        if isinstance(value, bool):
-            return value
-    return default
-
-
-def _pick_int(data: dict[str, Any], *keys: str, default: int | None = None) -> int | None:
-    for key in keys:
-        value = data.get(key)
-        if isinstance(value, bool):
-            continue
-        if isinstance(value, int):
-            return value
-    return default
 
 
 def _parse_wait_ids(data: dict[str, Any]) -> list[str]:
@@ -359,13 +336,12 @@ async def _execute_spawn(input_data: dict[str, Any], context: ToolContext) -> To
         background=background,
     )
     runtime_raw = _spawn_runtime(context)
-    if runtime_raw is not None and hasattr(runtime_raw, "would_exceed_depth"):
-        if runtime_raw.would_exceed_depth():
-            raise ToolError(
-                f"Sub-agent depth limit reached (current depth "
-                f"{runtime_raw.spawn_depth}, max "
-                f"{runtime_raw.max_spawn_depth})"
-            )
+    if runtime_raw is not None and runtime_raw.spawn_depth + 1 > runtime_raw.max_spawn_depth:
+        raise ToolError(
+            f"Sub-agent depth limit reached (current depth "
+            f"{runtime_raw.spawn_depth}, max "
+            f"{runtime_raw.max_spawn_depth})"
+        )
     try:
         snapshot = await manager.spawn(request)
     except RuntimeError as exc:

@@ -256,3 +256,18 @@ async def test_binary_and_large_files_do_not_choke(git_repo: Path) -> None:
 
     mutations = await detect_shell_mutations(snapshot)
     assert [m["path"] for m in mutations] == ["tracked.py"]
+
+
+def test_read_file_distinguishes_absence_from_permission_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A permission failure must surface as _UNREADABLE, not None (absent):
+    # treating it as absence would later report the file as a fresh create.
+    from deepseek_tui.workspace.shell_mutation_watch import _read_file, _Unreadable
+
+    (tmp_path / "gone.py").write_text("x")
+    monkeypatch.setattr(
+        Path, "read_bytes", lambda self: (_ for _ in ()).throw(PermissionError(13))
+    )
+    assert _read_file(tmp_path, "missing.py") is None
+    assert isinstance(_read_file(tmp_path, "gone.py"), _Unreadable)

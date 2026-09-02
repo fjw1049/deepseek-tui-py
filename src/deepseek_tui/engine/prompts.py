@@ -21,19 +21,6 @@ HANDOFF_RELATIVE_PATH = ".deepseek/handoff.md"
 INSTRUCTIONS_FILE_MAX_BYTES = 100 * 1024
 
 
-class Personality(enum.Enum):
-    """Personality overlay selection."""
-    CALM = "calm"
-
-    def prompt(self) -> str:
-        return CALM_PERSONALITY()
-
-    @staticmethod
-    def from_settings(calm_mode: bool) -> Personality:
-        del calm_mode  # single personality; kept for call-site compat
-        return Personality.CALM
-
-
 class AppMode(enum.Enum):
     """Application mode."""
     AGENT = "agent"
@@ -227,10 +214,6 @@ def render_plugin_context(
 # (helpful for small installs). Above it, switch to the thin per-plugin
 # catalog so large marketplaces don't balloon the session-stable prompt.
 PLUGIN_DETAILED_LIST_LIMIT = 10
-
-# Legacy alias used by older call sites / tests.
-PLUGIN_COMPONENT_LIST_LIMIT = PLUGIN_DETAILED_LIST_LIMIT
-
 
 def _group_by_plugin(items: list[Any]) -> dict[str, list[Any]]:
     grouped: dict[str, list[Any]] = {}
@@ -427,7 +410,6 @@ def build_system_prompt(
     override: str | None = None,
     *,
     mode: AppMode = AppMode.AGENT,
-    personality: Personality = Personality.CALM,
     workspace: Path | None = None,
     working_set_summary: str | None = None,
     skills_context: str | None = None,
@@ -467,7 +449,7 @@ def build_system_prompt(
     if override is not None and override.strip():
         return override
 
-    full_prompt = compose_prompt(mode, personality)
+    full_prompt = compose_prompt(mode)
 
     # Project instructions: ~/.deepseek/AGENTS.md (global) merged with
     # workspace AGENTS.md / CLAUDE.md / instructions (parents / auto-gen).
@@ -848,7 +830,7 @@ def SUBAGENT_OUTPUT_FORMAT() -> str:  # noqa: N802
 # ── Composition ──────────────────────────────────────────────────────────
 
 
-def compose_prompt(mode: AppMode, personality: Personality = Personality.CALM) -> str:
+def compose_prompt(mode: AppMode) -> str:
     """Compose the full system prompt in deterministic order.
 
     Order (most-static to most-volatile for KV prefix cache):
@@ -859,7 +841,7 @@ def compose_prompt(mode: AppMode, personality: Personality = Personality.CALM) -
     """
     parts = [
         BASE_PROMPT().strip(),
-        personality.prompt().strip(),
+        CALM_PERSONALITY().strip(),
         mode.mode_prompt().strip(),
         mode.approval_prompt().strip(),
     ]

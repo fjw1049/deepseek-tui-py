@@ -28,7 +28,7 @@ from deepseek_tui.config.paths import (
     user_sessions_dir,
     user_threads_dir,
 )
-from deepseek_tui.utils import write_json_atomic
+from deepseek_tui.utils import read_json_or_none, write_json_atomic
 
 logger = logging.getLogger(__name__)
 
@@ -47,10 +47,7 @@ def _read_settings() -> dict[str, Any]:
     path = settings_path()
     if not path.is_file():
         return {}
-    try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {}
+    raw = read_json_or_none(path)
     return raw if isinstance(raw, dict) else {}
 
 
@@ -385,9 +382,8 @@ def _copy_related(
     dest_dir = dest / folder
     dest_dir.mkdir(parents=True, exist_ok=True)
     for path in src_dir.glob("*.json"):
-        try:
-            raw = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
+        raw = read_json_or_none(path)
+        if raw is None:
             continue
         if str(raw.get(id_field) or "") not in keep_thread_ids:
             continue
@@ -405,18 +401,16 @@ def _copy_related_items(src: Path, dest: Path, keep_thread_ids: set[str]) -> Non
         return
     turn_ids: set[str] = set()
     for path in src_turns.glob("*.json"):
-        try:
-            raw = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
+        raw = read_json_or_none(path)
+        if raw is None:
             continue
         if str(raw.get("thread_id") or "") in keep_thread_ids:
             turn_ids.add(path.stem)
     dest_items = dest / "items"
     dest_items.mkdir(parents=True, exist_ok=True)
     for path in src_items.glob("*.json"):
-        try:
-            raw = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
+        raw = read_json_or_none(path)
+        if raw is None:
             continue
         if str(raw.get("turn_id") or "") not in turn_ids:
             continue
@@ -448,9 +442,8 @@ def _copy_checkpoints(src: Path, dest: Path, keep_thread_ids: set[str]) -> None:
     dest_dir = dest / "checkpoints"
     dest_dir.mkdir(parents=True, exist_ok=True)
     for path in src_dir.glob("*.json"):
-        try:
-            raw = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
+        raw = read_json_or_none(path)
+        if raw is None:
             continue
         if str(raw.get("thread_id") or "") not in keep_thread_ids:
             continue
@@ -463,16 +456,14 @@ def _copy_checkpoints(src: Path, dest: Path, keep_thread_ids: set[str]) -> None:
 def _merge_state_json(src: Path, dest: Path) -> None:
     if not src.is_file():
         return
-    try:
-        src_state = json.loads(src.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    src_state = read_json_or_none(src)
+    if src_state is None:
         return
     dest_state: dict[str, Any] = {"schema_version": 2, "next_seq": 1}
     if dest.is_file():
-        try:
-            dest_state = json.loads(dest.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            pass
+        parsed_dest = read_json_or_none(dest)
+        if parsed_dest is not None:
+            dest_state = parsed_dest
     dest_state["next_seq"] = max(
         int(dest_state.get("next_seq") or 1),
         int(src_state.get("next_seq") or 1),

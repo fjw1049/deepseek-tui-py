@@ -18,11 +18,6 @@ class GoalQueue:
         self.items.append(item)
         return item
 
-    def pop_next(self) -> GoalQueueItem | None:
-        if not self.items:
-            return None
-        return self.items.pop(0)
-
     def peek_next(self) -> GoalQueueItem | None:
         return self.items[0] if self.items else None
 
@@ -41,9 +36,6 @@ class GoalQueue:
             raise GoalError("queue_index", "Upcoming-goal index out of range")
         item = self.items.pop(src - 1)
         self.items.insert(dest - 1, item)
-
-    def clear(self) -> None:
-        self.items.clear()
 
     def to_list(self) -> list[dict[str, str]]:
         return [item.to_dict() for item in self.items]

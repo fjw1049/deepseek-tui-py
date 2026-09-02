@@ -30,7 +30,6 @@ DEFAULT_RESULT_TIMEOUT_MS = 180_000
 MIN_WAIT_TIMEOUT_MS = 30_000
 MAX_RESULT_TIMEOUT_MS = 3_600_000
 SUBAGENT_STATE_SCHEMA_VERSION = 1
-SUBAGENT_STATE_FILE = "subagents.v1.json"
 SUBAGENT_RESTART_REASON = "Interrupted by process restart"
 
 
@@ -77,14 +76,6 @@ class SubAgentType(str, Enum):
     def type_prompt(self) -> str:
         """Persona / method body for this agent type (no output contract)."""
         return _SUBAGENT_PROMPTS.get(self.value, "")
-
-    def system_prompt(self) -> str:
-        """Return the system prompt for this agent type (with markdown report)."""
-        from deepseek_tui.engine.prompts import load_prompt
-
-        output_contract = load_prompt("sub_output")
-        base = self.type_prompt()
-        return f"{base}\n\n{output_contract}" if base else output_contract
 
     def allowed_tools(self) -> frozenset[str] | None:
         """Default tool allowlist for this type, or None to keep the full registry.

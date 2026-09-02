@@ -170,19 +170,6 @@ class ContextConfig(BaseModel):
     cycle_ratio: float = 0.90
 
 
-class CapacityConfig(BaseModel):
-    enabled: bool = False
-    low_risk_max: float = 0.50
-    medium_risk_max: float = 0.62
-    severe_min_slack: float = -0.25
-    severe_violation_ratio: float = 0.40
-    refresh_cooldown_turns: int = 6
-    replan_cooldown_turns: int = 5
-    max_replay_per_turn: int = 1
-    min_turns_before_guardrail: int = 4
-    profile_window: int = 8
-
-
 class SubagentConfig(BaseModel):
     max_concurrent: int = 10
     # Max sub-agent LLM streams in flight at once (per engine). Keeps
@@ -350,7 +337,6 @@ class Config(BaseModel):
     features: FeatureConfig = Field(default_factory=FeatureConfig)
     snapshots: SnapshotConfig = Field(default_factory=SnapshotConfig)
     context: ContextConfig = Field(default_factory=ContextConfig)
-    capacity: CapacityConfig = Field(default_factory=CapacityConfig)
     subagents: SubagentConfig = Field(default_factory=SubagentConfig)
     hooks: HooksConfig = Field(default_factory=HooksConfig)
     lsp: LspSettings = Field(default_factory=LspSettings)

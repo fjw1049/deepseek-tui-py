@@ -128,15 +128,29 @@ def elevation_bridge(request: Request) -> Any:
 
 
 async def body(request: Request) -> dict[str, Any]:
-    if request.headers.get("content-length", "0") == "0":
+    # Read raw bytes so chunked bodies work; only a truly empty body is `{}`.
+    raw = await request.body()
+    if not raw:
         return {}
     try:
-        data = await request.json()
+        data = json.loads(raw)
     except ValueError as exc:
         raise api_error(400, "request body must be valid JSON", error="invalid_json") from exc
     if not isinstance(data, dict):
         raise api_error(400, "request body must be a JSON object", error="invalid_json") from None
     return data
+
+
+def int_query(request: Request, name: str, default: int | None = None) -> int | None:
+    value = request.query_params.get(name)
+    if not value:
+        return default
+    try:
+        return int(value)
+    except ValueError as exc:
+        raise api_error(
+            400, f"{name} must be an integer, got {value!r}", error=f"invalid_{name}"
+        ) from exc
 
 
 def classify_turn_value_error(exc: ValueError) -> Exception:
@@ -507,8 +521,7 @@ async def list_automation_runs(
     automation_id: str,
 ) -> list[dict[str, Any]]:
     runtime = runtime_from_request(request)
-    limit_str = request.query_params.get("limit")
-    limit = int(limit_str) if limit_str else None
+    limit = int_query(request, "limit")
     payload = _unwrap_or_raise(await runtime.list_automation_runs(automation_id, limit=limit))
     return payload.get("runs", [])
 
@@ -536,7 +549,9 @@ async def decide_elevation(request: Request, elevation_id: str) -> dict[str, obj
     payload = DecideElevationBody.model_validate(await body(request))
     decision = payload.decision.strip().lower()
     if decision not in {"allow", "deny", "approve", "reject", "elevate"}:
-        raise api_error(400, "decision must be allow or deny", error="invalid_decision")
+        raise api_error(
+            400, "decision must be allow, deny, or elevate", error="invalid_decision"
+        )
     approved = decision in {"allow", "approve", "elevate"}
     if not bridge.resolve(elevation_id, approved):
         raise api_error(
@@ -697,8 +712,7 @@ router_sessions = APIRouter(prefix="/v1")
 @router_sessions.get("/sessions")
 async def list_sessions(request: Request) -> dict[str, Any]:
     mgr = manager(request)
-    limit_str = request.query_params.get("limit")
-    limit = int(limit_str) if limit_str else 50
+    limit = int_query(request, "limit", default=50)
     threads = await mgr.list_threads(include_archived=False)
     sessions = list_unified_sessions(mgr.store, threads, limit=limit)
     return {
@@ -739,35 +753,22 @@ async def export_session(request: Request, thread_id: str) -> dict[str, Any]:
 # GET /v1/skills — discovered skills for Workbench settings/diagnostics.
 
 
-from deepseek_tui.integrations.skills import discover_in_workspace
-
 router_skills = APIRouter(prefix="/v1")
 
 
 @router_skills.get("/skills")
 async def list_skills(request: Request) -> dict[str, Any]:
     runtime = runtime_from_request(request)
-    workspace = request.query_params.get("workspace")
-    wd = (
-        Path(workspace).expanduser().resolve()
-        if workspace
-        else runtime.working_directory
+    result = await runtime.list_skills(
+        workspace=request.query_params.get("workspace")
     )
-    skills_dir = Path(runtime.config.skills_dir).expanduser()
-    try:
-        registry = discover_in_workspace(skills_dir=skills_dir, workspace=wd)
-    except (OSError, ValueError) as exc:
-        raise api_error(503, f"skill discovery failed: {exc}", error="skills_unavailable") from exc
+    if result.get("ok") is False:
+        raise api_error(
+            503, str(result.get("error")), error="skills_unavailable"
+        )
     return {
-        "skills": [
-            {
-                "name": skill.name,
-                "description": skill.description,
-                "path": str(skill.path),
-            }
-            for skill in registry.skills
-        ],
-        "warnings": registry.warnings,
+        "skills": result["skills"],
+        "warnings": result["warnings"],
     }
 
 
@@ -1095,8 +1096,7 @@ router_tasks = APIRouter(prefix="/v1")
 @router_tasks.get("/tasks")
 async def list_tasks(request: Request) -> dict[str, Any]:
     runtime = runtime_from_request(request)
-    limit_str = request.query_params.get("limit")
-    limit = int(limit_str) if limit_str else None
+    limit = int_query(request, "limit")
     payload = unwrap_runtime_result(await runtime.list_tasks(limit=limit))
     return {"tasks": payload.get("tasks", [])}
 
@@ -1195,8 +1195,7 @@ async def thread_usage(request: Request) -> dict[str, Any]:
 async def list_threads(request: Request) -> list[dict[str, Any]]:
     mgr = manager(request)
     include_archived = request.query_params.get("include_archived", "false") == "true"
-    limit_str = request.query_params.get("limit")
-    limit = int(limit_str) if limit_str else None
+    limit = int_query(request, "limit")
     threads = await mgr.list_threads(include_archived=include_archived, limit=limit)
     return [t.model_dump(mode="json") for t in threads]
 

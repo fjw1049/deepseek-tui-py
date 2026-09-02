@@ -10,7 +10,6 @@ from deepseek_tui.goal.types import (
     MAX_GOAL_COMPLETION_CRITERION_LENGTH,
     MAX_GOAL_OBJECTIVE_LENGTH,
     RESUME_AFTER_RESTORE_REASON,
-    GoalActor,
     GoalBudgetLimits,
     GoalBudgetReport,
     GoalError,
@@ -93,9 +92,7 @@ def new_goal(
     objective: str,
     *,
     completion_criterion: str | None = None,
-    actor: GoalActor = GoalActor.USER,
 ) -> GoalState:
-    del actor
     return GoalState(
         goal_id=str(uuid.uuid4()),
         objective=validate_objective(objective),

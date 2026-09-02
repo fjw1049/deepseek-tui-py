@@ -11,8 +11,10 @@ from deepseek_tui.tools.utils.sensitive import is_sensitive_path
 from deepseek_tui.tools.utils.validation import (
     optional_bool,
     optional_int,
+    optional_non_negative_int,
     optional_string,
     optional_string_list,
+    require_nonempty_string,
     require_string,
 )
 
@@ -22,7 +24,9 @@ __all__ = [
     "is_sensitive_path",
     "optional_bool",
     "optional_int",
+    "optional_non_negative_int",
     "optional_string",
     "optional_string_list",
+    "require_nonempty_string",
     "require_string",
 ]

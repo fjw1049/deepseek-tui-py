@@ -41,13 +41,13 @@ class AnthropicCompatClient(LLMClient):
         transport: httpx.AsyncBaseTransport | None = None,
         extra_headers: dict[str, str] | None = None,
     ) -> None:
-        super().__init__()
-        self.api_key = api_key
-        self.base_url = base_url.rstrip("/")
-        self.timeout_seconds = timeout_seconds
-        self.transport = transport
-        self.extra_headers = dict(extra_headers or {})
-        self._http_client: httpx.AsyncClient | None = None
+        super().__init__(
+            api_key=api_key,
+            base_url=base_url,
+            timeout_seconds=timeout_seconds,
+            transport=transport,
+            extra_headers=extra_headers,
+        )
 
     def _messages_url(self) -> str:
         if self.base_url.endswith("/v1/messages"):
@@ -55,24 +55,6 @@ class AnthropicCompatClient(LLMClient):
         if self.base_url.endswith("/v1"):
             return f"{self.base_url}/messages"
         return f"{self.base_url}/v1/messages"
-
-    def _get_http_client(self) -> httpx.AsyncClient:
-        if self._http_client is None or self._http_client.is_closed:
-            self._http_client = httpx.AsyncClient(
-                timeout=httpx.Timeout(
-                    connect=self.timeout_seconds,
-                    write=self.timeout_seconds,
-                    read=None,
-                    pool=self.timeout_seconds,
-                ),
-                transport=self.transport,
-            )
-        return self._http_client
-
-    async def close(self) -> None:
-        if self._http_client is not None and not self._http_client.is_closed:
-            await self._http_client.aclose()
-            self._http_client = None
 
     async def stream_chat_completion(
         self, request: MessageRequest

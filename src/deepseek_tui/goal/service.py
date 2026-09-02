@@ -87,7 +87,7 @@ class GoalService:
                     "A goal already exists; use replace to start a new one",
                 )
             self._clear(GoalActor.SYSTEM, emit=True)
-        self._state = new_goal(objective, completion_criterion=completion_criterion, actor=actor)
+        self._state = new_goal(objective, completion_criterion=completion_criterion)
         self._turn_counted = False
         self._last_promoted = None
         snapshot = self._state.snapshot()

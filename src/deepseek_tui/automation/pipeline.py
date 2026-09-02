@@ -205,7 +205,7 @@ async def enqueue_automation_task(
         except Exception:  # noqa: BLE001
             pass
 
-    from deepseek_tui.tools.automation import _utc_now_iso
+    from deepseek_tui.utils import utc_now_iso as _utc_now_iso
 
     workspace = automation.cwds[0] if automation.cwds else None
     new_task = NewTaskRequest(

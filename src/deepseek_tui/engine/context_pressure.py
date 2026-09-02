@@ -97,10 +97,6 @@ class ContextPressure:
     ratio: float
     source: PressureSource
 
-    @property
-    def at_or_above(self) -> float:
-        return self.ratio
-
 
 def measure_context_pressure(
     model: str,
@@ -131,17 +127,6 @@ def measure_context_pressure(
         source = "estimate"
     ratio = min(1.5, tokens / window)  # allow >1.0 under overflow
     return ContextPressure(tokens=tokens, window=window, ratio=ratio, source=source)
-
-
-def thresholds_for_window(window: int) -> dict[str, int]:
-    """Absolute token thresholds derived from a context window."""
-    w = max(1, int(window))
-    return {
-        "l0_prune": int(w * RATIO_L0_PRUNE),
-        "rewrite": int(w * RATIO_REWRITE),
-        "cycle": int(w * RATIO_CYCLE),
-        "auto_floor": int(w * RATIO_AUTO_FLOOR),
-    }
 
 
 def wrap_system_reminder(body: str) -> str:

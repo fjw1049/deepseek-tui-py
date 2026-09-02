@@ -121,16 +121,22 @@ def test_both_tool_loops_pass_the_ratio() -> None:
     into only one would leave parallel reads truncating as before."""
     from deepseek_tui.engine.orchestrator.tooling import ToolExecutionMixin
 
+    # Both loops share one finish helper; the ratio call must live there and
+    # both loops must route their results through it.
+    finish = inspect.getsource(ToolExecutionMixin._finish_tool_result)
+    call = re.search(
+        r"compact_tool_result_for_context\((.*?)\n\s*\)", finish, re.DOTALL
+    )
+    assert call is not None, "_finish_tool_result lost the compaction call"
+    assert "pressure_ratio=self._ingress_pressure_ratio(" in call.group(1)
     for fn in (
         ToolExecutionMixin._execute_tool_calls,
         ToolExecutionMixin._execute_tools_parallel,
     ):
         source = inspect.getsource(fn)
-        call = re.search(
-            r"compact_tool_result_for_context\((.*?)\n\s*\)", source, re.DOTALL
+        assert "_finish_tool_result(" in source, (
+            f"{fn.__name__} no longer routes through _finish_tool_result"
         )
-        assert call is not None, f"{fn.__name__} lost the compaction call"
-        assert "pressure_ratio=self._ingress_pressure_ratio(" in call.group(1)
 
 
 def test_the_ratio_is_none_until_the_provider_reports_tokens() -> None:

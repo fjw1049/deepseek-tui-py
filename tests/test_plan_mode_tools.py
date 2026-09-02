@@ -7,7 +7,6 @@ from pathlib import Path
 import pytest
 
 from deepseek_tui.config import Config
-from deepseek_tui.engine.dispatch import should_stop_after_plan_tool
 from deepseek_tui.protocol.messages import Message
 from deepseek_tui.tools.plan_mode import (
     APPROVED_PLAN_MARKER,
@@ -94,11 +93,6 @@ def test_questions_follow_locale() -> None:
     zh_exit = exit_plan_questions("zh")[0]
     assert "计划" in str(zh_exit["header"])
     assert zh_exit["options"][0]["value"] == EXIT_ACCEPT_AGENT
-
-
-def test_update_plan_no_longer_stops_turn() -> None:
-    assert should_stop_after_plan_tool("plan", "update_plan", True) is False
-    assert should_stop_after_plan_tool("plan", "exit_plan_mode", True) is False
 
 
 def test_plan_catalog_has_exit_not_enter() -> None:

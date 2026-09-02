@@ -30,7 +30,7 @@ from deepseek_tui.server.threads import (
     reconstruct_messages_from_turns,
     tool_kind_for_name,
 )
-from deepseek_tui.utils import summarize_text, write_json_atomic
+from deepseek_tui.utils import read_json_or_none, summarize_text, write_json_atomic
 
 
 def _title_from_metadata(metadata: dict[str, Any] | None, fallback: str) -> str:
@@ -56,9 +56,8 @@ def scan_tui_session_files(*, limit: int = 50) -> list[dict[str, Any]]:
         key=lambda p: p.stat().st_mtime,
         reverse=True,
     ):
-        try:
-            raw = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
+        raw = read_json_or_none(path)
+        if raw is None:
             continue
         if not isinstance(raw, dict):
             continue

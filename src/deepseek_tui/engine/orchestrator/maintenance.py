@@ -390,7 +390,6 @@ class SessionMaintenanceMixin:
             return
         if not should_advance_cycle(
             active_tokens,
-            reserved_headroom_tokens=8_000,
             model=model,
             config=self.cycle_config,
             in_flight=False,

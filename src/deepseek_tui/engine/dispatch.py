@@ -91,19 +91,6 @@ def should_parallelize_tool_batch(plans: list[ToolExecutionPlan]) -> bool:
     )
 
 
-def should_stop_after_plan_tool(
-    mode: str, tool_name: str, success: bool
-) -> bool:
-    """Legacy helper — plan turns no longer auto-stop on ``update_plan``.
-
-    ``exit_plan_mode`` approval is blocking; Accept continues the turn so
-    implementation can start. Leave-without-implement sets
-    ``Engine._stop_after_exit_plan`` instead.
-    """
-    del mode, tool_name, success
-    return False
-
-
 def should_force_update_plan_first(mode: str, content: str) -> bool:
     """In Plan mode, detect quick-plan requests that skip repo exploration."""
     if mode != "plan":

@@ -76,25 +76,6 @@ class TodoItem:
     content: str
     status: TodoStatus = "pending"
 
-    # Legacy compatibility — older callers / tests read ``item.text`` and
-    # toggle ``item.done``. These are simple computed proxies over the
-    # canonical ``content`` / ``status`` fields.
-    @property
-    def text(self) -> str:
-        return self.content
-
-    @text.setter
-    def text(self, value: str) -> None:
-        self.content = value
-
-    @property
-    def done(self) -> bool:
-        return self.status == "completed"
-
-    @done.setter
-    def done(self, value: bool) -> None:
-        self.status = "completed" if value else "pending"
-
 
 def _render_items(items: list[TodoItem]) -> str:
     return "\n".join(

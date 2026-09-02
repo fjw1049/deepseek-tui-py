@@ -32,6 +32,9 @@ from __future__ import annotations
 #
 from typing import Any, cast
 
+from deepseek_tui.utils import optional_text as _opt_str_value
+from deepseek_tui.utils import utc_now_iso as _utc_now_iso
+from deepseek_tui.utils import write_json_atomic
 from deepseek_tui.tools.utils.validation import optional_string as _optional_string
 from deepseek_tui.tools.utils.validation import require_string as _require_string
 from deepseek_tui.tools.registry import (
@@ -895,23 +898,12 @@ def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def _utc_now_iso() -> str:
-    return _utc_now().isoformat()
-
-
 def _parse_iso(value: str) -> datetime:
     """Parse an ISO 8601 string back into an aware ``datetime``."""
     dt = datetime.fromisoformat(value)
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
     return dt
-
-
-def _opt_str_value(value: object) -> str | None:
-    if value is None:
-        return None
-    text = str(value).strip()
-    return text or None
 
 
 def _normalize_run_at(value: str, tz_name: str) -> str:
@@ -946,13 +938,6 @@ def validate_name_and_prompt(name: str, prompt: str) -> None:
         raise ValueError("Automation name is required")
     if not prompt.strip():
         raise ValueError("Automation prompt is required")
-
-
-def write_json_atomic(path: Path, value: Any) -> None:
-    """Tmp file + ``os.replace`` — delegates to the shared utils helper."""
-    from deepseek_tui.utils import write_json_atomic as _impl
-
-    _impl(path, value)
 
 
 def default_automations_dir() -> Path:
