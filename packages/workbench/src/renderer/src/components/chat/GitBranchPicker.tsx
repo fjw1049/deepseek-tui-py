@@ -35,7 +35,7 @@ type Props = {
   onCurrentBranchChange?: (branch: string | null) => void
 }
 
-const MENU_WIDTH = 420
+const MENU_WIDTH = 280
 
 /** Body zooms with the UI scale, while trigger rectangles use viewport pixels. */
 function readUiScale(): number {

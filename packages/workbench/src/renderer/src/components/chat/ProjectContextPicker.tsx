@@ -42,7 +42,7 @@ type Props = {
   size?: 'dense' | 'tray'
 }
 
-const MENU_WIDTH = 340
+const MENU_WIDTH = 280
 const RECENT_LIMIT = 4
 const MENU_GAP = 8
 const VIEWPORT_GUTTER = 12

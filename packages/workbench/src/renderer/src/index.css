@@ -7982,8 +7982,8 @@ select:focus-visible,
 }
 
 .ds-dialogue-gutter.ds-chat-stage {
-  width: min(940px, 100%);
-  max-width: 940px;
+  width: min(54rem, 100%);
+  max-width: 54rem;
   margin-inline: auto;
 }
 
@@ -8008,8 +8008,8 @@ select:focus-visible,
 
 .ds-chat-operation-band__dialogue .ds-chat-stage {
   /* Keep the shared stage max-width; center so the right side opens toward the rail. */
-  width: min(940px, 100%);
-  max-width: 940px;
+  width: min(54rem, 100%);
+  max-width: 54rem;
   margin-inline: auto;
   padding-inline: 0;
 }
@@ -8019,7 +8019,7 @@ select:focus-visible,
 }
 
 .ds-chat-operation-band__dialogue > .ds-chat-stage.flex.shrink-0 {
-  width: min(940px, 100%);
+  width: min(54rem, 100%);
 }
 
 .ds-chat-operation-band__dialogue > .ds-chat-stage.flex.shrink-0 > .flex.w-full.flex-col {

@@ -263,7 +263,7 @@ class ChatGPTModelSelector extends HTMLElement {
         position: absolute;
         bottom: calc(100% + 10px);
         left: 0;
-        width: 316px;
+        width: 300px;
         /* Material: thicker blur + catch-light edge (Apple materials). */
         background: color-mix(in srgb, var(--ds-card-strong, #fff) 78%, transparent);
         backdrop-filter: blur(40px) saturate(190%);
@@ -1176,10 +1176,20 @@ class ChatGPTModelSelector extends HTMLElement {
       pop.style.width = Math.min(300, Math.max(240, window.innerWidth - 32)) + 'px';
       pop.style.transformOrigin = 'calc(100% - 28px) calc(100% + 18px)';
     } else {
-      pop.style.right = 'auto';
-      pop.style.left = (pillRect.left - hostRect.left) + 'px';
       pop.style.width = '300px';
-      pop.style.transformOrigin = '28px calc(100% + 18px)';
+      const composerRect = this.closest('.ds-chat-composer')?.getBoundingClientRect();
+      if (composerRect && this.offsetWidth > 0) {
+        const scale = hostRect.width / this.offsetWidth || 1;
+        const right = (hostRect.right - composerRect.right) / scale;
+        const origin = 300 - (composerRect.right - pillRect.left - pillRect.width / 2) / scale;
+        pop.style.left = 'auto';
+        pop.style.right = right + 'px';
+        pop.style.transformOrigin = `${Math.max(28, Math.min(272, origin))}px calc(100% + 18px)`;
+      } else {
+        pop.style.right = 'auto';
+        pop.style.left = (pillRect.left - hostRect.left) + 'px';
+        pop.style.transformOrigin = '28px calc(100% + 18px)';
+      }
     }
     pop.style.display = 'block';
     this.$menu.classList.add('menu-stagger');
