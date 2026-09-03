@@ -189,15 +189,6 @@ class DeepSeekTUI(App[None]):
             self._resume_session_id,
             self._fork_session_id,
         )
-        # Historical hook: used to copy skill-creator / execution-router
-        # into ~/.deepseek/skills. Packaged skills now stay in
-        # ``deepseek_tui/skills`` (deepseek-tui-docs only).
-        try:
-            from deepseek_tui.integrations.skills import install_system_skills
-
-            install_system_skills()
-        except Exception:  # noqa: BLE001 — must never block TUI launch.
-            logger.exception("install_system_skills failed at startup")
         self.query_one(Composer).focus()
         # Seed StatusBar + ComposerHint with mode/model *before* the
         # engine starts so the bottom chrome already shows them (chord
@@ -249,7 +240,7 @@ class DeepSeekTUI(App[None]):
             if client is None:
                 logger.warning("tui_no_api_key onboarding=%s", not is_onboarded())
                 self.query_one(StatusBar).set_status(
-                    "no API key — run `deepseek-tui setup` or `deepseek-tui login`"
+                    "no API key — run `deepseek-tui setup` or `deepseek-tui auth set`"
                 )
                 if not is_onboarded():
                     def _on_onboarding(api_key: str | None) -> None:
@@ -704,7 +695,6 @@ class DeepSeekTUI(App[None]):
                 transcript.start_assistant_message()
                 self._presentation.reset()
                 self._presentation.locale = resolve_narration_locale(
-                    event.user_text,
                     config_locale=self.config.ui.locale,
                 )
                 self._refresh_plan_progress_hint(status)

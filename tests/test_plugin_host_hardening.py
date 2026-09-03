@@ -18,7 +18,6 @@ from deepseek_tui.plugins.identity import (
     source_content_digest,
     validate_plugin_id,
 )
-from deepseek_tui.plugins.store import read_derived, write_derived
 
 
 def test_plugin_id_rejects_traversal() -> None:
@@ -324,30 +323,6 @@ def test_mutable_install_digest_recomputed_after_edit(
     contribs = collect_light_contributions(loaded2)
     assert contribs.hook_entries == []
     assert any("no execution grant" in w for w in contribs.warnings)
-
-
-def test_write_derived_roundtrip(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setenv("DEEPSEEK_HOME", str(tmp_path / "home"))
-    from deepseek_tui.plugins.model import (
-        CompatibilityReport,
-        CompatibilityStatus,
-        DerivedPlugin,
-        SourceProvenance,
-    )
-
-    plugin = DerivedPlugin(
-        1,
-        "demo",
-        "1.0.0",
-        "desc",
-        SourceProvenance("local", str(tmp_path), "sha256:" + ("a" * 64)),
-        (),
-        (),
-        CompatibilityReport(CompatibilityStatus.NATIVE, "claude", 1),
-    )
-    path = write_derived(plugin)
-    assert path.is_file()
-    assert read_derived(plugin.source.digest, "claude") is not None
 
 
 def test_local_artifact_rejects_symlinks(tmp_path: Path) -> None:

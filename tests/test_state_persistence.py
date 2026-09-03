@@ -55,7 +55,7 @@ def test_cli_thread_commands_use_runtime_store(
 
     unarchived = runner.invoke(app, ["thread", "unarchive", "thread-1"])
     assert unarchived.exit_code == 0
-    assert "thread-1" in runner.invoke(app, ["sessions"]).stdout
+    assert "thread-1" in runner.invoke(app, ["thread", "list"]).stdout
 
     metrics = runner.invoke(app, ["metrics", "--json"])
     assert metrics.exit_code == 0

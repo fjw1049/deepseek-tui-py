@@ -13,7 +13,7 @@
   --bg-canvas: #ffffff;
   --ds-canvas-dot: rgba(0, 0, 0, 0.04);
   --ds-canvas-dot-size: 22px;
-  --font-ui: 'Inter', 'Noto Sans SC', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-ui: 'Inter', 'PingFang SC', 'Noto Sans SC', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   --font-display: var(--font-ui);
   /* Real monospace for code-like UI strings (URLs, model/task ids, tool
      output). Static stack — user's terminal font choice only affects
@@ -5316,6 +5316,10 @@ samp {
   box-sizing: border-box;
 }
 
+:root:not([data-theme='dark']) .ds-markdown .ds-mermaid-block {
+  border-color: var(--ds-border-strong);
+}
+
 .ds-markdown .ds-mermaid-block-header {
   display: flex;
   align-items: center;
@@ -6489,36 +6493,32 @@ html[data-theme='dark'] .ds-code-fullscreen .shiki span {
 .ds-markdown.ds-markdown--answer h3,
 .ds-markdown.ds-markdown--answer h4 {
   color: var(--ds-text);
-  font-family: var(--font-display);
+  /* Let Chinese headings use the same PingFang-backed UI stack as prose. */
+  font-family: inherit;
   font-weight: 600;
-  letter-spacing: -0.02em;
+  letter-spacing: -0.01em;
+  line-height: 1.25;
   scroll-margin-top: 0.75rem;
 }
 
 .ds-markdown.ds-markdown--answer h1 {
   margin: 1.15em 0 0.45em;
-  font-size: 1.35rem;
-  line-height: 1.25;
+  font-size: 1.45em;
 }
 
 .ds-markdown.ds-markdown--answer h2 {
   margin: 1.25em 0 0.4em;
-  font-size: 1.18rem;
-  line-height: 1.3;
+  font-size: 1.28em;
 }
 
 .ds-markdown.ds-markdown--answer h3 {
   margin: 1.1em 0 0.35em;
-  font-size: 1.05rem;
-  line-height: 1.35;
-  letter-spacing: -0.015em;
+  font-size: 1.12em;
 }
 
 .ds-markdown.ds-markdown--answer h4 {
   margin: 1em 0 0.3em;
-  font-size: 1rem;
-  line-height: 1.4;
-  font-weight: 600;
+  font-size: 1.04em;
 }
 
 .ds-markdown.ds-markdown--answer h1:first-child,
@@ -6640,11 +6640,27 @@ html[data-theme='dark'] .ds-code-fullscreen .shiki span {
   background: var(--ds-accent-soft);
 }
 
-.ds-markdown.ds-markdown--answer .ds-code-block,
-.ds-markdown.ds-markdown--answer .ds-mermaid-block {
-  margin: 0 0 0.85em;
-  border-color: color-mix(in srgb, var(--ds-border) 72%, transparent);
-  border-radius: 10px;
+.ds-markdown.ds-markdown--answer .ds-code-block {
+  margin: 0.65rem 0;
+  border: 0;
+  border-radius: 0.65rem;
+}
+
+.ds-markdown.ds-markdown--answer .ds-code-block-header {
+  border-bottom: 0;
+  background: transparent;
+  padding: 0.1rem 0.4rem 0.1rem 0.6rem;
+}
+
+.ds-markdown.ds-markdown--answer .ds-code-block-html > pre,
+.ds-markdown.ds-markdown--answer pre {
+  border: 0;
+  border-radius: 0.65rem;
+  padding: 0.5rem 0.6rem;
+}
+
+.ds-markdown.ds-markdown--answer .ds-code-block-html > pre {
+  line-height: 1.5;
 }
 
 .ds-markdown.ds-markdown--answer table {

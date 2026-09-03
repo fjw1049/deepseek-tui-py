@@ -24,11 +24,11 @@ import {
   ChevronRight,
   ChevronUp,
   Copy,
+  Eye,
   FilePlus2,
   FileText,
   FolderOpen,
   GitFork,
-  Globe2,
   Loader2,
   PencilLine,
   Plug,
@@ -41,11 +41,6 @@ import {
   Wrench,
   X
 } from 'lucide-react'
-import {
-  formatHtmlPreviewPathLabel,
-  type OpenableTurnResult,
-  selectOpenableTurnResults
-} from '../../lib/html-preview-detection'
 import { TaskSuggestionHero, TaskSuggestionOfflineHero } from './TaskSuggestionHero'
 import { SquareGrid } from './SquareGrid'
 import type { ChatBlock, RuntimeConnectionStatus, ToolBlock } from '../../agent/types'
@@ -1205,12 +1200,6 @@ function MessageTurn({
               completed write receipt. */}
           {!hasAssistantAnswer ? turnChangeSummary : null}
 
-          {!isProcessing && turnFileChanges.length === 0 && htmlPreviewAction ? (
-            <HtmlPreviewStandaloneCard
-              path={htmlPreviewAction.path}
-              onOpen={htmlPreviewAction.onOpen}
-            />
-          ) : null}
         </>
       )}
 
@@ -1294,24 +1283,10 @@ function TurnChangeSummary({
         : t('turnChangeFilesMany', { count: changes.length }),
     [changes.length, t]
   )
-  const openableResults = useMemo(() => selectOpenableTurnResults(changes), [changes])
   const previewPath = htmlPreview?.path?.trim() ?? ''
   const visibleChanges = expanded ? changes : changes.slice(0, previewLimit)
   const remainingCount = Math.max(changes.length - previewLimit, 0)
   const canUndo = Boolean(userBlockId?.startsWith('item_'))
-
-  const openTurnResult = (result: OpenableTurnResult): void => {
-    if (
-      result.kind === 'html' &&
-      htmlPreview &&
-      previewPath &&
-      pathsReferToSameFile(result.path, previewPath)
-    ) {
-      htmlPreview.onOpen()
-      return
-    }
-    onOpenWorkspaceFile?.(result.path)
-  }
 
   const undoCode = async (): Promise<void> => {
     if (!userBlockId || undoing) return
@@ -1380,16 +1355,21 @@ function TurnChangeSummary({
           const stats = fileStats[index]
           const filePath = change.filePath?.trim() ?? ''
           const pathParts = splitFileNameAndParent(filePath)
+          const canPreviewHtml = Boolean(
+            htmlPreview && previewPath && pathsReferToSameFile(filePath, previewPath)
+          )
 
           return (
-            <button
+            <div
               key={change.id}
-              type="button"
-              disabled={!filePath || !onOpenWorkspaceFile}
-              onClick={() => filePath && onOpenWorkspaceFile?.(filePath)}
-              className="ds-turn-change-summary__row flex h-10 w-full min-w-0 items-center gap-3 px-4 text-left transition-colors duration-150 hover:bg-ds-hover disabled:cursor-default"
+              className="ds-turn-change-summary__row flex h-10 w-full min-w-0 items-center gap-2 px-4 text-left transition-colors duration-150 hover:bg-ds-hover"
             >
-              <span className="ds-turn-change-summary__path min-w-0 flex-1 truncate text-[14px] font-normal text-ds-ink">
+              <button
+                type="button"
+                disabled={!filePath || !onOpenWorkspaceFile}
+                onClick={() => filePath && onOpenWorkspaceFile?.(filePath)}
+                className="ds-turn-change-summary__path min-w-0 flex-1 truncate text-left text-[14px] font-normal text-ds-ink disabled:cursor-default"
+              >
                 {filePath ? (
                   <>
                     {pathParts.parent ? (
@@ -1400,28 +1380,27 @@ function TurnChangeSummary({
                 ) : (
                   t('toolActionFile')
                 )}
-              </span>
+              </button>
+              {canPreviewHtml ? (
+                <button
+                  type="button"
+                  onClick={htmlPreview!.onOpen}
+                  aria-label={t('htmlPreviewCardOpen')}
+                  title={t('htmlPreviewCardOpen')}
+                  className="ml-1 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-ds-muted transition-[background-color,color,transform] duration-150 hover:bg-ds-hover hover:text-ds-ink active:scale-[0.94]"
+                >
+                  <Eye className="h-4 w-4" strokeWidth={1.8} />
+                </button>
+              ) : null}
               {stats ? (
                 <span className="shrink-0 text-[14px] tabular-nums">
                   <span className="text-ds-diff-added">+{stats.added}</span>
                   <span className="ml-2 text-ds-diff-removed">-{stats.removed}</span>
                 </span>
               ) : null}
-            </button>
+            </div>
           )
         })}
-        {openableResults.length > 0 ? (
-          <div className="border-t border-ds-border-muted/70 px-2 py-1.5">
-            {openableResults.map((result) => (
-              <TurnOpenableResultRow
-                key={result.path}
-                result={result}
-                compact={openableResults.length > 1}
-                onOpen={() => openTurnResult(result)}
-              />
-            ))}
-          </div>
-        ) : null}
       </div>
 
       {remainingCount > 0 ? (
@@ -1476,129 +1455,6 @@ function TurnChangeSummary({
         </div>
       ) : null}
     </section>
-  )
-}
-
-function TurnOpenableResultRow({
-  result,
-  compact,
-  onOpen
-}: {
-  result: OpenableTurnResult
-  compact: boolean
-  onOpen: () => void
-}): ReactElement {
-  const { t } = useTranslation('common')
-  const label = formatHtmlPreviewPathLabel(result.path)
-  const isHtml = result.kind === 'html'
-  const openLabel = isHtml ? t('htmlPreviewCardOpen') : t('turnMarkdownResultOpen')
-  const hint = isHtml ? t('htmlPreviewNestedHint') : t('turnMarkdownResultHint')
-
-  if (compact) {
-    return (
-      <div className="flex items-center gap-3 py-1.5">
-        <span
-          className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-[10px] ${
-            isHtml
-              ? 'bg-amber-500/10 text-amber-600 dark:bg-amber-300/10 dark:text-amber-300'
-              : 'bg-accent/10 text-accent'
-          }`}
-        >
-          {isHtml ? (
-            <Globe2 className="h-4 w-4" strokeWidth={1.9} />
-          ) : (
-            <FileText className="h-4 w-4" strokeWidth={1.9} />
-          )}
-        </span>
-        <div className="min-w-0 flex-1 truncate text-[13.5px] font-semibold tracking-[-0.01em] text-ds-ink">
-          {label}
-        </div>
-        <button
-          type="button"
-          onClick={onOpen}
-          className="inline-flex h-8 shrink-0 items-center justify-center rounded-full bg-accent px-3.5 text-[12.5px] font-semibold text-white shadow-[0_8px_18px_rgba(0,136,255,0.2)] transition hover:brightness-110 active:scale-[0.97]"
-          title={openLabel}
-        >
-          {openLabel}
-        </button>
-      </div>
-    )
-  }
-
-  return (
-    <div
-      className={`relative flex items-center gap-3 overflow-hidden rounded-[12px] border bg-ds-elevated/90 py-2.5 pl-3.5 pr-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] ${
-        isHtml
-          ? 'border-amber-500/15 dark:border-amber-300/15 dark:bg-white/[0.035]'
-          : 'border-ds-border'
-      }`}
-    >
-      <span
-        aria-hidden
-        className={`absolute inset-y-2 left-0 w-[3px] rounded-full ${
-          isHtml ? 'bg-amber-500/70 dark:bg-amber-300/60' : 'bg-accent/70'
-        }`}
-      />
-      <span
-        className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-[11px] ${
-          isHtml
-            ? 'bg-amber-500/10 text-amber-600 dark:bg-amber-300/10 dark:text-amber-300'
-            : 'bg-accent/10 text-accent'
-        }`}
-      >
-        {isHtml ? (
-          <Globe2 className="h-4 w-4" strokeWidth={1.9} />
-        ) : (
-          <FileText className="h-4 w-4" strokeWidth={1.9} />
-        )}
-      </span>
-      <div className="min-w-0 flex-1">
-        <div className="truncate text-[13.5px] font-semibold tracking-[-0.01em] text-ds-ink">
-          {label}
-        </div>
-        <div className="mt-0.5 truncate text-[11.5px] text-ds-muted">{hint}</div>
-      </div>
-      <button
-        type="button"
-        onClick={onOpen}
-        className="inline-flex h-8 shrink-0 items-center justify-center rounded-full bg-accent px-3.5 text-[12.5px] font-semibold text-white shadow-[0_8px_18px_rgba(0,136,255,0.2)] transition hover:brightness-110 active:scale-[0.97]"
-        title={openLabel}
-      >
-        {openLabel}
-      </button>
-    </div>
-  )
-}
-
-function HtmlPreviewStandaloneCard({
-  path,
-  onOpen
-}: {
-  path: string
-  onOpen: () => void
-}): ReactElement {
-  const { t } = useTranslation('common')
-  const label = formatHtmlPreviewPathLabel(path)
-  return (
-    <div className="ds-html-preview-card flex min-h-[64px] w-full items-center gap-3 rounded-[14px] border border-ds-border bg-ds-elevated/90 px-4 py-3 shadow-[0_12px_34px_rgba(0,0,0,0.06)]">
-      <div className="ds-html-preview-card__icon flex h-10 w-10 shrink-0 items-center justify-center rounded-[12px] bg-amber-500/10 text-amber-600 dark:bg-amber-300/10 dark:text-amber-300">
-        <Globe2 className="h-5 w-5" strokeWidth={1.9} />
-      </div>
-      <div className="min-w-0 flex-1">
-        <div className="ds-html-preview-card__title truncate text-[14.5px] font-semibold text-ds-ink">{label}</div>
-        <div className="mt-0.5 truncate text-[12px] text-ds-muted">
-          {t('htmlPreviewStandaloneHint')}
-        </div>
-      </div>
-      <button
-        type="button"
-        onClick={onOpen}
-        className="inline-flex h-9 shrink-0 items-center justify-center rounded-full bg-accent px-4 text-[13px] font-semibold text-white shadow-[0_10px_24px_rgba(0,136,255,0.22)] transition hover:brightness-110 active:scale-[0.97]"
-        title={t('htmlPreviewCardOpen')}
-      >
-        {t('htmlPreviewCardOpen')}
-      </button>
-    </div>
   )
 }
 

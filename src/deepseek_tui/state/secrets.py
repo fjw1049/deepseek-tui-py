@@ -111,6 +111,13 @@ def _format_string(value: str) -> str:
     return json.dumps(value, ensure_ascii=False)
 
 
+def _format_scalar(value: object) -> str:
+    """TOML literal for a str/bool/int value."""
+    if isinstance(value, str):
+        return _format_string(value)
+    return json.dumps(value)
+
+
 def _is_key_assignment(line: str, key: str) -> bool:
     return re.match(rf"^\s*{re.escape(key)}\s*=", line) is not None
 
@@ -142,12 +149,12 @@ def _update_top_level_value(lines: list[str], key: str, value: str | None) -> li
             continue
         found = True
         if value is not None:
-            updated.append(f"{key} = {_format_string(value)}")
+            updated.append(f"{key} = {_format_scalar(value)}")
 
     if value is not None and not found:
         while updated and not updated[-1].strip():
             updated.pop()
-        updated.append(f"{key} = {_format_string(value)}")
+        updated.append(f"{key} = {_format_scalar(value)}")
 
     if rest and updated and updated[-1].strip():
         updated.append("")
@@ -170,7 +177,7 @@ def _update_section_value(
         header = _SECTION_RE.match(line)
         if header:
             if in_section and value is not None and not found_key:
-                updated.append(f"{key} = {_format_string(value)}")
+                updated.append(f"{key} = {_format_scalar(value)}")
             in_section = header.group(1).strip() == section
             found_section = found_section or in_section
             updated.append(line)
@@ -178,19 +185,62 @@ def _update_section_value(
 
         if in_section and _is_key_assignment(line, key):
             if value is not None and not found_key:
-                updated.append(f"{key} = {_format_string(value)}")
+                updated.append(f"{key} = {_format_scalar(value)}")
             found_key = True
             continue
         updated.append(line)
 
     if in_section and value is not None and not found_key:
-        updated.append(f"{key} = {_format_string(value)}")
+        updated.append(f"{key} = {_format_scalar(value)}")
     elif not found_section and value is not None:
         if updated and updated[-1].strip():
             updated.append("")
-        updated.extend((f"[{section}]", f"{key} = {_format_string(value)}"))
+        updated.extend((f"[{section}]", f"{key} = {_format_scalar(value)}"))
 
     return updated
+
+
+def write_config_value(key: str, value: str | None, *, path: Path | None = None) -> Path:
+    """Set or clear a config.toml value by dotted key (``a`` or ``section.a``).
+
+    ``value`` is a raw CLI string: "true"/"false" become booleans, digit-only
+    strings become integers, anything else is stored as a TOML string.
+    """
+    from deepseek_tui.config.paths import user_config_path
+
+    if not key or any(not _BARE_KEY_RE.fullmatch(part) for part in key.split(".")):
+        raise ValueError(
+            f"invalid config key: {key!r} (letters, digits, '_', '-', '.' only)"
+        )
+
+    config_path = path or user_config_path()
+    original = config_path.read_text(encoding="utf-8") if config_path.exists() else ""
+    lines = original.splitlines()
+
+    if "." in key:
+        section, leaf = key.rsplit(".", 1)
+        lines = _update_section_value(lines, section=section, key=leaf, value=_format_value(value))
+    else:
+        lines = _update_top_level_value(lines, key, value=_format_value(value))
+
+    updated = "\n".join(lines)
+    if updated:
+        updated += "\n"
+    if updated != original:
+        write_text_atomic(config_path, updated)
+    return config_path
+
+
+def _format_value(value: str | None) -> object:
+    if value is None:
+        return None
+    if value == "true":
+        return True
+    if value == "false":
+        return False
+    if value.isdigit():
+        return int(value)
+    return value
 
 
 class SecretsManager:

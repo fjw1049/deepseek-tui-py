@@ -4,12 +4,11 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from deepseek_tui.plugins.identity import is_safe_plugin_id, validate_plugin_id
-from deepseek_tui.utils import write_json_atomic
+from deepseek_tui.utils import utc_now_iso, write_json_atomic
 
 EXECUTION_CAPABILITIES = frozenset(
     {
@@ -148,7 +147,7 @@ def grant_execution(
         plugin_id=validate_plugin_id(plugin_id),
         digest=digest,
         capabilities=frozenset(caps),
-        granted_at=datetime.now(timezone.utc).isoformat(),
+        granted_at=utc_now_iso(),
     )
     write_grant(grant, home=home)
     return grant
@@ -244,19 +243,3 @@ def execution_authorized(
     if not trusted or not digest or not is_safe_plugin_id(plugin_id):
         return False
     return has_execution_grant(plugin_id, digest, capability, home=home)
-
-def legacy_trust_implies_grant(
-    *,
-    trusted: bool,
-    plugin_id: str,
-    digest: str,
-    home: Path | None = None,
-) -> bool:
-    """Compatibility wrapper; prefer :func:`execution_authorized`."""
-    return execution_authorized(
-        trusted=trusted,
-        plugin_id=plugin_id,
-        digest=digest,
-        capability="hooks.execute",
-        home=home,
-    )

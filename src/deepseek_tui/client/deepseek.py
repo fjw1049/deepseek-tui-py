@@ -219,7 +219,7 @@ class DeepSeekClient(LLMClient):
                         if status in (401, 403):
                             message += (
                                 " — API key invalid or unauthorized; run"
-                                " `deepseek-tui login` or check config.toml"
+                                " `deepseek-tui auth set` or check config.toml"
                             )
                         raise httpx.HTTPStatusError(
                             message,

@@ -12,7 +12,12 @@ from pathlib import Path
 from typing import Any
 
 from deepseek_tui.config.models import Config
-from deepseek_tui.mcp.config import DEFAULT_TIMEOUTS, McpServerConfig, load_mcp_config
+from deepseek_tui.mcp.config import (
+    DEFAULT_TIMEOUTS,
+    McpServerConfig,
+    find_servers_table,
+    load_mcp_config,
+)
 from deepseek_tui.utils import write_json_atomic
 
 
@@ -51,25 +56,17 @@ def load_raw_document(path: Path) -> dict[str, Any]:
 
 def _servers_table(doc: dict[str, Any]) -> dict[str, dict[str, Any]]:
     """Return the mutable servers map, preserving the document's existing shape."""
+    _, key, table = find_servers_table(doc)
+    if table is not None:
+        return doc if key is None else table  # type: ignore[return-value]
+    # New/empty document — default to the nested TikHub-compatible shape.
     mcp = doc.get("mcp")
-    if isinstance(mcp, dict):
-        servers = mcp.get("servers")
-        if isinstance(servers, dict):
-            return servers  # type: ignore[return-value]
-        servers = {}
-        mcp["servers"] = servers
-        return servers  # type: ignore[return-value]
-    servers = doc.get("servers", doc.get("mcpServers"))
-    if isinstance(servers, dict):
-        if "servers" not in doc and "mcpServers" in doc:
-            # Keep mcpServers key as-is when that was the original shape.
-            return servers  # type: ignore[return-value]
-        doc["servers"] = servers
-        return servers  # type: ignore[return-value]
-    # Default new documents to the nested TikHub-compatible shape.
-    servers = {}
-    doc["mcp"] = {"servers": servers}
-    return servers  # type: ignore[return-value]
+    if not isinstance(mcp, dict):
+        mcp = {}
+        doc["mcp"] = mcp
+    servers: dict[str, dict[str, Any]] = {}
+    mcp["servers"] = servers
+    return servers
 
 
 def save_document(path: Path, doc: dict[str, Any]) -> None:

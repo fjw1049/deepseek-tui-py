@@ -799,8 +799,7 @@ export function OperationContextDock({
               workspaceRoot={gitRoot}
               compact
               usePortal
-              menuPlacement="below"
-              matchTriggerWidth
+              menuPlacement="left"
             />
           </div>
         ) : gitLoading && !gitResult ? (

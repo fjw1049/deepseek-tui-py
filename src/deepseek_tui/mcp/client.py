@@ -254,18 +254,6 @@ class McpClient:
         resources = result.get("resources", [])
         return [item for item in resources if isinstance(item, dict)]
 
-    async def list_resource_templates(self) -> list[dict[str, Any]]:
-        if self.supports_capability("resources") is False:
-            return []
-        try:
-            result = await self._send_request("resources/templates/list", {})
-        except McpError as exc:
-            if is_method_not_found(exc):
-                return []
-            raise
-        templates = result.get("resourceTemplates", [])
-        return [item for item in templates if isinstance(item, dict)]
-
     async def read_resource(self, uri: str) -> dict[str, Any]:
         if self.supports_capability("resources") is False:
             raise McpError(
@@ -281,15 +269,6 @@ class McpClient:
                     code=exc.code,
                 ) from exc
             raise
-
-    async def get_prompt(
-        self,
-        name: str,
-        arguments: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
-        return await self._send_request(
-            "prompts/get", {"name": name, "arguments": arguments or {}}
-        )
 
     # --- internal -------------------------------------------------------
 

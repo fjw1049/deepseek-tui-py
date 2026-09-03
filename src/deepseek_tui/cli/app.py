@@ -1,15 +1,16 @@
 """CLI entry point.
 
-22 subcommands + global flags, using typer (Python equivalent of clap).
-Passthrough subcommands (doctor/models/sessions/resume/fork/init/setup/exec/
-review/apply/eval/mcp/features/completions) become direct calls into the
-corresponding Python modules rather than spawning a sibling binary.
+Subcommands + global flags, using typer (Python equivalent of clap).
+Passthrough subcommands (doctor/resume/fork/init/setup/exec/review/apply/
+mcp/features) become direct calls into the corresponding Python modules
+rather than spawning a sibling binary.
 """
 
 from __future__ import annotations
 
 
 import asyncio
+import contextlib
 import ipaddress
 import json
 import sys
@@ -156,7 +157,10 @@ async def _run_one_shot_async(config: Config, prompt: str) -> None:
 
     client = build_llm_client(config)
     if not client.api_key:
-        typer.echo("No API key configured. Run `deepseek-tui login` first.", err=True)
+        typer.echo(
+            "No API key configured. Run `deepseek-tui auth set --provider <name>` first.",
+            err=True,
+        )
         raise typer.Exit(1)
 
     # 引擎↔调用方的双向管道：op 队列收输入、event 队列吐输出
@@ -189,6 +193,8 @@ async def _run_one_shot_async(config: Config, prompt: str) -> None:
                 break
     finally:
         engine_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await engine_task
         await engine.shutdown()
 
 
@@ -248,18 +254,6 @@ def doctor(
     typer.echo(f"  git: {git_path or 'NOT FOUND'}")
 
     typer.echo("  status: OK" if api_key else "  status: MISSING API KEY")
-
-
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# Subcommand: models
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-@app.command()
-def models(
-    provider: str | None = PROVIDER_OPTION,
-) -> None:
-    """List available models from the provider registry."""
-    model_list(provider=provider)
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -450,38 +444,6 @@ def auth_list(
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# Subcommand: login / logout
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-@app.command()
-def login(
-    provider: str = typer.Option("deepseek", "--provider", help="Provider name."),
-    api_key: str | None = typer.Option(None, "--api-key", help="API key value."),
-) -> None:
-    """Save a provider API key to the shared config."""
-    if api_key is None:
-        api_key = typer.prompt(f"Enter API key for {provider}", hide_input=True)
-    if not api_key or not api_key.strip():
-        typer.echo("error: empty API key provided", err=True)
-        raise typer.Exit(1)
-    from deepseek_tui.state.secrets import write_api_key
-
-    write_api_key(provider, api_key)
-    typer.echo(f"logged in using API key mode ({provider})")
-
-
-@app.command()
-def logout() -> None:
-    """Remove saved authentication state for all providers."""
-    from deepseek_tui.state.secrets import credential_providers, write_api_key
-
-    loaded = _load_config()
-    for prov in credential_providers(loaded):
-        write_api_key(prov, None)
-    typer.echo("logged out")
-
-
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Subcommand group: config
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -513,13 +475,20 @@ def config_set(
     profile: str | None = PROFILE_OPTION,
 ) -> None:
     """Set a single config value (writes to config.toml)."""
+    from deepseek_tui.state.secrets import write_config_value
+
     if key == "api_key":
         from deepseek_tui.state.secrets import write_active_api_key
 
         path = write_active_api_key(value, path=config)
         typer.echo(f"set api_key in {path}")
         return
-    _cli_config_write(key, value, path=config)
+    try:
+        path = write_config_value(key, value, path=config)
+    except ValueError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(1) from exc
+    typer.echo(f"set {key} = {value} in {path}")
 
 
 @config_app.command("unset")
@@ -529,13 +498,20 @@ def config_unset(
     profile: str | None = PROFILE_OPTION,
 ) -> None:
     """Remove a config key (writes to config.toml)."""
+    from deepseek_tui.state.secrets import write_config_value
+
     if key == "api_key":
         from deepseek_tui.state.secrets import write_active_api_key
 
         path = write_active_api_key(None, path=config)
         typer.echo(f"unset api_key from {path}")
         return
-    _cli_config_write(key, None, path=config)
+    try:
+        path = write_config_value(key, None, path=config)
+    except ValueError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(1) from exc
+    typer.echo(f"unset {key} from {path}")
 
 
 @config_app.command("list")
@@ -588,41 +564,6 @@ def _config_get_value(config: Config, key: str) -> str | None:
     if obj is None:
         return None
     return str(obj)
-
-
-def _cli_config_write(key: str, value: str | None, *, path: Path | None = None) -> None:
-    """Set or unset a key in the config TOML file."""
-    from deepseek_tui.config.paths import user_config_path
-
-    config_path = path or user_config_path()
-    config_path.parent.mkdir(parents=True, exist_ok=True)
-
-    lines: list[str] = []
-    if config_path.exists():
-        lines = config_path.read_text(encoding="utf-8").splitlines()
-
-    found = False
-    new_lines: list[str] = []
-    for line in lines:
-        stripped = line.strip()
-        if stripped.startswith(f"{key}") and "=" in stripped:
-            left = stripped.split("=", 1)[0].strip()
-            if left == key:
-                found = True
-                if value is not None:
-                    new_lines.append(f'{key} = "{value}"')
-                continue
-        new_lines.append(line)
-
-    if not found and value is not None:
-        new_lines.append(f'{key} = "{value}"')
-
-    config_path.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
-
-    if value is not None:
-        typer.echo(f"set {key} = {value} in {config_path}")
-    else:
-        typer.echo(f"unset {key} from {config_path}")
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -728,7 +669,7 @@ def thread_list(
     for thread in threads:
         label = thread.title or Path(thread.workspace).name or "(unnamed)"
         tag = " [archived]" if thread.archived else ""
-        typer.echo(f"{thread.id}  {label}{tag}")
+        typer.echo(f"{thread.id}  {label}{tag}  {thread.updated_at.isoformat()}")
 
 
 @thread_app.command("read")
@@ -945,21 +886,6 @@ def apply(
 
 
 @app.command()
-def sessions(
-    config: Path | None = CONFIG_OPTION,
-    limit: int = typer.Option(20, "--limit", help="Max sessions to show."),
-) -> None:
-    """List canonical Workbench/server threads."""
-    threads = [t for t in _thread_store().list_threads() if not t.archived][:limit]
-    if not threads:
-        typer.echo("No saved sessions.")
-        return
-    for thread in threads:
-        name = thread.title or Path(thread.workspace).name or "(unnamed)"
-        typer.echo(f"{thread.id}  {name}  {thread.updated_at.isoformat()}")
-
-
-@app.command()
 def resume(
     session_id: str = typer.Argument(..., help="Canonical thread ID to resume."),
     config: Path | None = CONFIG_OPTION,
@@ -1013,8 +939,6 @@ def setup() -> None:
     status = init_config(mcp_path, force=False)
     if status == McpWriteStatus.CREATED:
         typer.echo(f"Created {mcp_path}")
-    elif not mcp_path.exists():
-        typer.echo(f"Created {mcp_path}")
     skills_dir = user_skills_dir()
     skills_dir.mkdir(parents=True, exist_ok=True)
     typer.echo(f"Skills directory: {skills_dir}")
@@ -1060,16 +984,9 @@ def mcp_init_cmd(
     config: Path | None = CONFIG_OPTION,
 ) -> None:
     """Initialize MCP config template."""
-    from deepseek_tui.mcp.store import McpWriteStatus, init_config
+    from deepseek_tui.mcp.actions import run_init
 
-    path = _mcp_path(config)
-    status = init_config(path, force=force)
-    if status == McpWriteStatus.SKIPPED_EXISTS:
-        typer.echo(f"MCP config already exists at {path} (use --force to overwrite)")
-    elif status == McpWriteStatus.CREATED:
-        typer.echo(f"Created MCP config at {path}")
-    else:
-        typer.echo(f"Overwrote MCP config at {path}")
+    typer.echo(run_init(_mcp_path(config), force=force).message)
 
 
 @mcp_app.command("add")
@@ -1755,62 +1672,15 @@ def plugin_install_all_cmd(
 
 
 @app.command()
-def completions(
-    shell: str = typer.Argument("bash", help="Shell type (bash/zsh/fish)."),
-) -> None:
-    """Generate shell completions for deepseek-tui."""
-    typer.echo(f"# Shell completions for {shell}")
-    typer.echo("# Add to your shell profile:")
-    if shell == "bash":
-        typer.echo('eval "$(deepseek-tui --show-completion bash)"')
-    elif shell == "zsh":
-        typer.echo('eval "$(deepseek-tui --show-completion zsh)"')
-    elif shell == "fish":
-        typer.echo("deepseek-tui --show-completion fish | source")
-    else:
-        typer.echo(f"Unknown shell: {shell}", err=True)
-
-
-@app.command(name="app-server")
-def app_server(
-    host: str = typer.Option("127.0.0.1", "--host", help="Bind host."),
-    port: int = typer.Option(8787, "--port", help="Bind port."),
-    stdio: bool = typer.Option(False, "--stdio", help="Use stdio JSON-RPC."),
-    config: Path | None = CONFIG_OPTION,
-) -> None:
-    """Run the app-server transport (alias for serve)."""
-    from deepseek_tui.server import AppServerOptions, run_http, run_stdio
-
-    loaded = _load_config(config)
-    if stdio:
-        asyncio.run(run_stdio(config=loaded))
-        return
-    options = AppServerOptions(host=host, port=port, config_path=config)
-    asyncio.run(run_http(options, config=loaded))
-
-
-@app.command()
 def metrics(
     json_output: bool = typer.Option(False, "--json", help="Emit JSON."),
-    since: str | None = typer.Option(None, "--since", help="Duration filter (e.g. 7d, 24h)."),
     config: Path | None = CONFIG_OPTION,
 ) -> None:
     """Print a thread-count rollup from the canonical runtime store."""
     total_sessions = len(_thread_store().list_threads())
-    data = {
-        "total_sessions": total_sessions,
-        "period": since or "all-time",
-    }
+    data = {"total_sessions": total_sessions}
     if json_output:
         typer.echo(json.dumps(data, indent=2))
     else:
         typer.echo("DeepSeek TUI Metrics")
         typer.echo(f"  Total sessions: {total_sessions}")
-        typer.echo(f"  Period: {since or 'all-time'}")
-
-
-@app.command()
-def update() -> None:
-    """Check for and apply updates."""
-    typer.echo("update — self-update not applicable for pip-installed Python package.")
-    typer.echo("Use: pip install --upgrade deepseek-tui-py")

@@ -70,10 +70,12 @@ def inspect_local_source(
                 )
             )
             continue
-        scores = [(adapter.probe(candidate), adapter) for adapter in _ADAPTERS]
-        top = max((score for score, _ in scores), default=0)
-        winners = [adapter for score, adapter in scores if score == top and score > 0]
-        if not winners:
+        # ponytail: with two adapters whose probe scores never tie above 0,
+        # best-score-wins replaces the scoring/tie-detection machinery; if a
+        # third adapter lands and ties become possible, revisit.
+        scored = [(adapter.probe(candidate), adapter) for adapter in _ADAPTERS]
+        best_score, best = max(scored, key=lambda item: item[0], default=(0, None))
+        if best is None or best_score <= 0:
             diagnostics.append(
                 Diagnostic(
                     "PLUGIN_ADAPTER_NOT_FOUND",
@@ -83,26 +85,14 @@ def inspect_local_source(
                 )
             )
             continue
-        if len(winners) > 1:
-            names = ", ".join(adapter.adapter_id for adapter in winners)
-            diagnostics.append(
-                Diagnostic(
-                    "AMBIGUOUS_PLUGIN_ADAPTER",
-                    DiagnosticSeverity.ERROR,
-                    f"ambiguous plugin format at {candidate.relative_root}: {names}",
-                    source_path=candidate.relative_root,
-                    remediation="disambiguate the package layout or select an adapter explicitly",
-                )
-            )
-            continue
         try:
-            packages.append(winners[0].derive(artifact, candidate))
+            packages.append(best.derive(artifact, candidate))
         except Exception as exc:  # noqa: BLE001 - one bad plugin must not abort discovery
             diagnostics.append(
                 Diagnostic(
                     "PLUGIN_DERIVE_FAILED",
                     DiagnosticSeverity.ERROR,
-                    f"adapter {winners[0].adapter_id} could not derive "
+                    f"adapter {best.adapter_id} could not derive "
                     f"{candidate.relative_root}: {exc}",
                     source_path=candidate.relative_root,
                     remediation="inspect the plugin manifest or frontmatter syntax",

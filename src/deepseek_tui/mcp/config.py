@@ -91,24 +91,28 @@ def _looks_like_server_entry(value: Any) -> bool:
     return isinstance(value.get("command"), str) or isinstance(value.get("url"), str)
 
 
-def extract_servers_table(data: dict[str, Any]) -> dict[str, Any]:
-    """Resolve the servers map from supported mcp.json shapes.
+def find_servers_table(data: dict[str, Any]) -> tuple[dict[str, Any] | None, str | None, dict[str, Any] | None]:
+    """Locate the servers map in a supported mcp.json shape.
+
+    Returns ``(container, key, table)`` where mutating ``table`` mutates the
+    document. ``key is None`` means the bare Cursor-style layout (the document
+    itself is the servers map). All ``None`` when no supported shape is found.
 
     Accepted layouts (first match wins):
     - ``{"mcp": {"servers": {...}}}``  (TikHub / nested form)
-    - ``{"servers": {...}}``
     - ``{"mcpServers": {...}}``
+    - ``{"servers": {...}}``
     - bare Cursor-style ``{"name": {"url"|"command": ...}}``
     """
     mcp = data.get("mcp")
     if isinstance(mcp, dict):
         nested = mcp.get("servers")
         if isinstance(nested, dict):
-            return nested
-    if "mcpServers" in data and isinstance(data.get("mcpServers"), dict):
-        return data["mcpServers"]
-    if "servers" in data and isinstance(data.get("servers"), dict):
-        return data["servers"]
+            return mcp, "servers", nested
+    for key in ("mcpServers", "servers"):
+        table = data.get(key)
+        if isinstance(table, dict):
+            return data, key, table
     # Bare map — only when no wrapper keys are present.
     if "mcp" not in data and "servers" not in data and "mcpServers" not in data:
         candidates = {
@@ -117,10 +121,18 @@ def extract_servers_table(data: dict[str, Any]) -> dict[str, Any]:
             if key != "timeouts" and isinstance(key, str)
         }
         if not candidates:
-            return {}
+            return data, None, {}
         if all(_looks_like_server_entry(value) for value in candidates.values()):
-            return candidates
-    raise ValueError("Invalid MCP servers table")
+            return data, None, data
+    return None, None, None
+
+
+def extract_servers_table(data: dict[str, Any]) -> dict[str, Any]:
+    """Resolve the read-only servers map from supported mcp.json shapes."""
+    _, _, table = find_servers_table(data)
+    if table is None:
+        raise ValueError("Invalid MCP servers table")
+    return table
 
 
 def servers_from_document(data: dict[str, Any]) -> list[McpServerConfig]:

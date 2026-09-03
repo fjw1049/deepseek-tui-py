@@ -31,8 +31,6 @@ _SEARCH_TOOLS = frozenset(
 )
 _READ_TOOLS = frozenset({"read_file", "read"})
 _DIR_TOOLS = frozenset({"list_dir", "list_directory"})
-_CJK_RE = re.compile(r"[\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff]")
-_LATIN_RE = re.compile(r"[A-Za-z]")
 
 
 class BatchKind(str, Enum):
@@ -52,19 +50,12 @@ class Phase(str, Enum):
     RECOVER = "recover"
 
 
-def script_counts(text: str) -> tuple[int, int]:
-    return len(_CJK_RE.findall(text)), len(_LATIN_RE.findall(text))
 
-
-def resolve_narration_locale(
-    user_text: str = "", *, config_locale: str = "zh"
-) -> NarrationLocale:
+def resolve_narration_locale(*, config_locale: str = "zh") -> NarrationLocale:
     """Resolve narration/reply language from settings only.
 
-    ``user_text`` is ignored (kept for call-site compatibility). Language
-    strictly follows Workbench / ``config.ui.locale``.
+    Language strictly follows Workbench / ``config.ui.locale``.
     """
-    del user_text  # settings-only; message script must not override
     if config_locale in {"zh", "en"}:
         return config_locale  # type: ignore[return-value]
     return "zh"
@@ -226,7 +217,6 @@ __all__ = [
     "contains_tool_name",
     "infer_next_phase",
     "resolve_narration_locale",
-    "script_counts",
     "template_narration",
     "tool_path",
     "truncate_text",

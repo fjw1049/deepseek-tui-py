@@ -7,17 +7,14 @@ store so updates can switch digests without rewriting vendor bytes.
 
 from __future__ import annotations
 
-import json
 import re
 import shutil
 import tempfile
 from pathlib import Path
 from typing import Any
 
-from deepseek_tui.config.paths import user_deepseek_dir, user_plugin_host_dir
-from deepseek_tui.plugins.model import DerivedPlugin
+from deepseek_tui.config.paths import user_plugin_host_dir
 from deepseek_tui.plugins.source import LocalArtifact, PluginSourceError
-from deepseek_tui.utils import write_json_atomic
 
 _HEX = re.compile(r"^[0-9a-f]{64}$")
 
@@ -34,28 +31,6 @@ def sources_root(home: Path | None = None) -> Path:
 
 def source_path(digest: str, *, home: Path | None = None) -> Path:
     return sources_root(home) / _normalize_digest(digest)
-
-
-def derived_path(
-    digest: str,
-    adapter_id: str,
-    *,
-    home: Path | None = None,
-) -> Path:
-    hex_digest = _normalize_digest(digest)
-    safe_adapter = _safe_segment(adapter_id)
-    return plugin_host_root(home) / "derived" / "v1" / hex_digest / f"{safe_adapter}.json"
-
-
-def report_path(
-    digest: str,
-    adapter_id: str,
-    *,
-    home: Path | None = None,
-) -> Path:
-    hex_digest = _normalize_digest(digest)
-    safe_adapter = _safe_segment(adapter_id)
-    return plugin_host_root(home) / "reports" / hex_digest / f"{safe_adapter}.json"
 
 
 def publish_source_tree(
@@ -128,40 +103,6 @@ def link_or_copy_from_store(
     except OSError:
         shutil.copytree(store_path, dest)
         return "copy"
-
-
-def write_derived(plugin: DerivedPlugin, *, home: Path | None = None) -> Path:
-    path = derived_path(
-        plugin.source.digest,
-        plugin.compatibility.adapter_id,
-        home=home,
-    )
-    path.parent.mkdir(parents=True, exist_ok=True)
-    write_json_atomic(path, plugin.to_dict())
-    report = report_path(
-        plugin.source.digest,
-        plugin.compatibility.adapter_id,
-        home=home,
-    )
-    report.parent.mkdir(parents=True, exist_ok=True)
-    write_json_atomic(report, plugin.compatibility.to_dict())
-    return path
-
-
-def read_derived(
-    digest: str,
-    adapter_id: str,
-    *,
-    home: Path | None = None,
-) -> dict[str, Any] | None:
-    path = derived_path(digest, adapter_id, home=home)
-    if not path.is_file():
-        return None
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
-    return data if isinstance(data, dict) else None
 
 
 def referenced_source_digests(
@@ -248,10 +189,6 @@ def gc_unreferenced_sources(
         removed.append(child.name)
         if not dry_run:
             shutil.rmtree(child, ignore_errors=True)
-            derived = plugin_host_root(home) / "derived" / "v1" / child.name
-            reports = plugin_host_root(home) / "reports" / child.name
-            shutil.rmtree(derived, ignore_errors=True)
-            shutil.rmtree(reports, ignore_errors=True)
     return removed
 
 
@@ -294,10 +231,3 @@ def _normalize_digest(digest: str) -> str:
     if not _HEX.fullmatch(value):
         raise ValueError(f"invalid content digest: {digest!r}")
     return value
-
-
-def _safe_segment(value: str) -> str:
-    cleaned = re.sub(r"[^A-Za-z0-9._-]+", "_", value.strip()) or "adapter"
-    if ".." in cleaned:
-        raise ValueError(f"unsafe path segment: {value!r}")
-    return cleaned
