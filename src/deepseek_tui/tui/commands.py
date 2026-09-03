@@ -488,7 +488,7 @@ def cmd_provider(args: str, app: DeepSeekTUI) -> CommandResult:
         cfg.model = previous_model
         return CommandResult(
             error=(
-                f"No API key found for {requested} — run `deepseek-tui login`, "
+                f"No API key found for {requested} — run `deepseek-tui auth set --provider <name>`, "
                 f"set the provider env var, or add [providers.{requested}] "
                 "api_key to config.toml, then retry."
             )

@@ -1179,10 +1179,10 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                 # crash engine construction; degrade to no plugin contributions.
                 logger.warning("plugin discovery failed", exc_info=True)
             if plugin_contribs is not None:
-                for warning in plugin_contribs.warnings:
+                for warning in plugin_contribs.diagnostics:
                     logger.warning("plugin: %s", warning)
             if plugin_skill_contribs is not None:
-                for warning in plugin_skill_contribs.warnings:
+                for warning in plugin_skill_contribs.diagnostics:
                     logger.warning("plugin: %s", warning)
         hooks_cfg = cfg
         if plugin_contribs is not None and plugin_contribs.hook_entries:
@@ -1223,9 +1223,9 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         # Discover skills for system prompt injection
         skill_reg = discover_in_workspace(workspace=working_directory)
         if plugin_skill_contribs is not None and plugin_skill_contribs.skills:
-            from deepseek_tui.plugins.host import merge_session_skills
+            from deepseek_tui.integrations.plugins import merge_plugin_skills
 
-            merge_session_skills(skill_reg, plugin_skill_contribs)
+            merge_plugin_skills(skill_reg, plugin_skill_contribs)
         # Pull sampling / reasoning defaults out of Config so the per-turn
         # MessageRequest carries them all the way to DeepSeekClient.
         provider_cfg = cfg.effective_provider_config()

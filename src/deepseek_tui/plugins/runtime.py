@@ -129,30 +129,8 @@ class CompositeMcpManager(McpManager):
         groups = await asyncio.gather(*(manager.list_resources() for manager in self._managers))
         return {name: items for group in groups for name, items in group.items()}
 
-    async def list_resource_templates(
-        self, server: str | None = None
-    ) -> dict[str, list[dict[str, Any]]]:
-        if server is not None:
-            manager = self._manager_for_server(server)
-            return await manager.list_resource_templates(server) if manager else {}
-        groups = await asyncio.gather(
-            *(manager.list_resource_templates() for manager in self._managers)
-        )
-        return {name: items for group in groups for name, items in group.items()}
-
     async def read_resource(self, server: str, uri: str) -> dict[str, Any]:
         manager = self._manager_for_server(server)
         if manager is None:
             raise McpError(f"Unknown MCP server: {server}")
         return await manager.read_resource(server, uri)
-
-    async def get_prompt(
-        self,
-        server: str,
-        name: str,
-        arguments: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
-        manager = self._manager_for_server(server)
-        if manager is None:
-            raise McpError(f"Unknown MCP server: {server}")
-        return await manager.get_prompt(server, name, arguments)

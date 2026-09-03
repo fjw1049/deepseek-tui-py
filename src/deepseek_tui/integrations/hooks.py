@@ -14,13 +14,12 @@ from __future__ import annotations
 """Hook event definitions."""
 
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 from pydantic import BaseModel
 import asyncio
 import json
 from abc import ABC, abstractmethod
-from datetime import datetime, timezone
 from pathlib import Path
 import httpx
 import logging
@@ -216,7 +215,7 @@ class JsonlHookSink(HookSink):
     async def emit(self, event: HookEvent) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         payload: dict[str, Any] = {
-            "at": datetime.now(timezone.utc).isoformat(),
+            "at": utc_now_iso(),
             "event": event_to_dict(event),
         }
         line = json.dumps(payload) + "\n"
@@ -246,7 +245,7 @@ class WebhookHookSink(HookSink):
     async def emit(self, event: HookEvent) -> None:
         client = await self._get_client()
         payload: dict[str, Any] = {
-            "at": datetime.now(timezone.utc).isoformat(),
+            "at": utc_now_iso(),
             "event": event_to_dict(event),
         }
         retries = 0
@@ -271,6 +270,50 @@ class WebhookHookSink(HookSink):
             self._client = None
 
 
+def _truncate(text: str, limit: int) -> str:
+    """Cap hook payload strings so a huge tool result can't blow up env/stdin."""
+    return text if len(text) <= limit else text[:limit] + "...[truncated]"
+
+
+async def _run_shell(
+    command: str,
+    *,
+    timeout: float,
+    stdin_data: bytes = b"",
+    cwd: str | None = None,
+    env: dict[str, str] | None = None,
+    devnull_output: bool = False,
+) -> tuple[int, bytes | None, bytes | None]:
+    """Run one shell hook command to completion.
+
+    Returns ``(exit_code, stdout, stderr)`` — outputs are ``None`` with
+    ``devnull_output``. Raises ``asyncio.TimeoutError`` (child killed and
+    reaped) or ``OSError``.
+    """
+    pipe = asyncio.subprocess.DEVNULL if devnull_output else asyncio.subprocess.PIPE
+    proc = await asyncio.create_subprocess_shell(
+        command,
+        cwd=cwd,
+        env=env,
+        stdin=asyncio.subprocess.PIPE,
+        stdout=pipe,
+        stderr=pipe,
+    )
+    try:
+        stdout_b, stderr_b = await asyncio.wait_for(
+            proc.communicate(input=stdin_data), timeout=timeout
+        )
+    except asyncio.TimeoutError:
+        proc.kill()
+        # Reap the killed child; otherwise it lingers as a zombie.
+        try:
+            await proc.wait()
+        except (OSError, ProcessLookupError):
+            pass
+        raise
+    return proc.returncode or 0, stdout_b, stderr_b
+
+
 class ShellHookSink(HookSink):
     """Execute a shell command when a matching event fires.
 
@@ -291,23 +334,10 @@ class ShellHookSink(HookSink):
             return
         stdin_data = json.dumps(event_dict).encode()
         try:
-            proc = await asyncio.create_subprocess_shell(
-                self.command,
-                stdin=asyncio.subprocess.PIPE,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
+            await _run_shell(
+                self.command, timeout=self.timeout, stdin_data=stdin_data
             )
-            await asyncio.wait_for(
-                proc.communicate(input=stdin_data), timeout=self.timeout
-            )
-        except asyncio.TimeoutError:
-            proc.kill()  # type: ignore[union-attr]
-            # Reap the killed child; otherwise it lingers as a zombie.
-            try:
-                await proc.wait()  # type: ignore[union-attr]
-            except (OSError, ProcessLookupError):
-                pass
-        except OSError:
+        except (asyncio.TimeoutError, OSError):
             pass
 
 
@@ -360,6 +390,7 @@ at session/tool/mode/message/error/shell_env lifecycle points.
 
 
 from deepseek_tui.config.models import HooksConfig, LifecycleHookEntry
+from deepseek_tui.utils import utc_now_iso
 
 logger = logging.getLogger(__name__)
 
@@ -438,10 +469,7 @@ class HookContext:
             payload["tool_input"] = tool_input
         if event == "tool_call_after":
             if self.tool_result is not None:
-                response = self.tool_result
-                if len(response) > 10_000:
-                    response = response[:10_000] + "...[truncated]"
-                payload["tool_response"] = response
+                payload["tool_response"] = _truncate(self.tool_result, 10_000)
             if self.tool_success is not None:
                 payload["tool_success"] = self.tool_success
         if event == "message_submit" and self.message is not None:
@@ -457,10 +485,7 @@ class HookContext:
         if self.tool_args:
             env["DEEPSEEK_TOOL_ARGS"] = self.tool_args
         if self.tool_result is not None:
-            truncated = self.tool_result
-            if len(truncated) > 10_000:
-                truncated = truncated[:10_000] + "...[truncated]"
-            env["DEEPSEEK_TOOL_RESULT"] = truncated
+            env["DEEPSEEK_TOOL_RESULT"] = _truncate(self.tool_result, 10_000)
         if self.tool_exit_code is not None:
             env["DEEPSEEK_TOOL_EXIT_CODE"] = str(self.tool_exit_code)
         if self.tool_success is not None:
@@ -472,10 +497,7 @@ class HookContext:
         if self.session_id:
             env["DEEPSEEK_SESSION_ID"] = self.session_id
         if self.message:
-            msg = self.message
-            if len(msg) > 5000:
-                msg = msg[:5000] + "...[truncated]"
-            env["DEEPSEEK_MESSAGE"] = msg
+            env["DEEPSEEK_MESSAGE"] = _truncate(self.message, 5000)
         if self.error_message:
             env["DEEPSEEK_ERROR"] = self.error_message
         if self.workspace:
@@ -524,14 +546,8 @@ class HookDecision:
     blocked: bool = False
     reason: str | None = None
     ask: bool = False
-    additional_context: list[str] = None  # type: ignore[assignment]
-    system_messages: list[str] = None  # type: ignore[assignment]
-
-    def __post_init__(self) -> None:
-        if self.additional_context is None:
-            self.additional_context = []
-        if self.system_messages is None:
-            self.system_messages = []
+    additional_context: list[str] = field(default_factory=list)
+    system_messages: list[str] = field(default_factory=list)
 
 
 def aggregate_hook_decision(results: list[HookResult]) -> HookDecision:
@@ -803,26 +819,15 @@ class HookExecutor:
         stdin_data: bytes = b"",
     ) -> HookResult:
         timeout = self._timeout(hook)
-        cwd = str(self._working_dir())
         try:
-            proc = await asyncio.create_subprocess_shell(
+            exit_code, stdout_b, stderr_b = await _run_shell(
                 hook.command,
-                cwd=cwd,
+                timeout=timeout,
+                stdin_data=stdin_data,
+                cwd=str(self._working_dir()),
                 env={**_base_env(), **env_vars},
-                stdin=asyncio.subprocess.PIPE,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            stdout_b, stderr_b = await asyncio.wait_for(
-                proc.communicate(input=stdin_data), timeout=timeout
             )
         except asyncio.TimeoutError:
-            proc.kill()  # type: ignore[union-attr]
-            # Reap the killed child; otherwise it lingers as a zombie.
-            try:
-                await proc.wait()  # type: ignore[union-attr]
-            except (OSError, ProcessLookupError):
-                pass
             return HookResult(
                 name=hook.name,
                 success=False,
@@ -834,7 +839,6 @@ class HookExecutor:
                 success=False,
                 error=f"Failed to spawn hook: {exc}",
             )
-        exit_code = proc.returncode
         return HookResult(
             name=hook.name,
             success=exit_code == 0,
@@ -862,17 +866,15 @@ class HookExecutor:
         stdin_data: bytes = b"",
     ) -> None:
         # 这个 task 没人持有引用，后续在优化
-        cwd = str(self._working_dir())
         try:
-            proc = await asyncio.create_subprocess_shell(
+            await _run_shell(
                 hook.command,
-                cwd=cwd,
+                timeout=self._timeout(hook),
+                stdin_data=stdin_data,
+                cwd=str(self._working_dir()),
                 env={**_base_env(), **env_vars},
-                stdin=asyncio.subprocess.PIPE,
-                stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.DEVNULL,
+                devnull_output=True,
             )
-            await proc.communicate(input=stdin_data)
         except Exception:
             logger.warning(
                 "background lifecycle hook failed hook=%s event=%s",

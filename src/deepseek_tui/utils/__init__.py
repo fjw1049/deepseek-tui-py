@@ -13,6 +13,7 @@ import json
 import logging
 import logging.handlers
 import os
+import re
 import stat
 import tempfile
 import uuid
@@ -107,6 +108,38 @@ def optional_text(value: object) -> str | None:
         return None
     text = str(value).strip()
     return text or None
+
+
+_FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*", re.DOTALL)
+
+
+def parse_md_frontmatter(
+    path: Path, *, strict: bool = False
+) -> tuple[dict[str, Any], str]:
+    """Parse a Markdown file's YAML frontmatter into ``(meta, body)``.
+
+    Tolerant of files without frontmatter: returns ``({}, full_text)``.
+    Keys are lowercased. With ``strict=True`` a YAML error raises
+    ``ValueError`` instead of degrading to no frontmatter.
+    """
+    import yaml
+
+    content = path.read_text(encoding="utf-8")
+    match = _FRONTMATTER_RE.match(content)
+    if match is None:
+        return {}, content.strip()
+    try:
+        document = yaml.safe_load(match.group(1))
+    except yaml.YAMLError as exc:
+        if strict:
+            raise ValueError(f"invalid YAML frontmatter at {path}: {exc}") from exc
+        document = None
+    meta = (
+        {str(key).strip().lower(): value for key, value in document.items()}
+        if isinstance(document, dict)
+        else {}
+    )
+    return meta, content[match.end() :].strip()
 
 
 def summarize_text(text: str, limit: int = 280) -> str:

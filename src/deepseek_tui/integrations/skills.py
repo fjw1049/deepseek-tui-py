@@ -32,21 +32,6 @@ from urllib.parse import urlparse
 import httpx
 import yaml
 
-__all__ = [
-    "Skill",
-    "SkillRegistry",
-    "agents_global_skills_dir",
-    "claude_global_skills_dir",
-    "codex_global_skills_dir",
-    "cursor_global_skills_dir",
-    "default_skills_dir",
-    "bundled_skills_dir",
-    "discover_in_workspace",
-    "invalidate_skills_prompt_cache",
-    "render_available_skills_context",
-    "skills_directories",
-]
-
 _skills_prompt_cache_token = 0
 
 
@@ -478,37 +463,14 @@ def render_available_skills_context(
 # From system.py
 # ======================================================================
 
-"""Startup hook kept for call sites.
+"""Startup hook removed.
 
 The only packaged skill is ``deepseek-tui-docs`` under
 ``deepseek_tui/skills``, discovered via :func:`bundled_skills_dir`.
 Older builds copied ``skill-creator`` / ``execution-router`` into
-``~/.deepseek/skills`` and locked them with ``.system-installed-version``.
-That copy step is gone so leftover folders can be deleted like any
-user skill.
+``~/.deepseek/skills``; that copy step is gone and leftover folders
+can be deleted like any user skill.
 """
-
-__all__ = ["install_system_skills", "uninstall_system_skills"]
-
-
-def install_system_skills(skills_dir: Path | None = None) -> None:
-    """No-op. Packaged skills stay in the package; they are not copied out."""
-    del skills_dir
-
-
-def uninstall_system_skills(skills_dir: Path | None = None) -> None:
-    """Remove leftover copies from older auto-installs.
-
-    Used by tests and ``deepseek setup --clean``.
-    """
-    import shutil
-
-    target = skills_dir or default_skills_dir()
-    for name in ("skill-creator", "execution-router"):
-        dest = target / name
-        if dest.is_dir():
-            shutil.rmtree(dest)
-            _LOG.info("Removed leftover auto-installed skill: %s", name)
 
 
 # ======================================================================
@@ -713,6 +675,61 @@ def _host_is_allowed(url: str, allow: frozenset[str]) -> bool:
     return host in allow
 
 
+class GithubFetchError(Exception):
+    """A GitHub archive download/extract failed (message is user-facing)."""
+
+
+def fetch_github_archive(
+    source: InstallSource, parent: Path, *, max_size_bytes: int
+) -> tuple[Path, str]:
+    """Shared GitHub repo download+extract prologue (K-1..K-5 hardened).
+
+    Downloads the first working candidate archive and extracts it into a
+    sibling staging dir ``.<repo>.tmp`` under *parent*. Returns
+    ``(staging, source_url)``; raises :class:`GithubFetchError` on failure.
+    The caller validates layout and publishes the staging dir by rename.
+    """
+    # K-2: every candidate URL must clear the host allow-list. Since we
+    # only construct them from github.com, this is belt-and-suspenders —
+    # but if a future caller injects an arbitrary URL here, the guard
+    # holds.
+    urls = [u for u in _github_archive_urls(source) if _host_is_allowed(u, GITHUB_ALLOWED_HOSTS)]
+    if not urls:
+        raise GithubFetchError("No allowed archive URLs for source")
+
+    data: bytes | None = None
+    source_url: str | None = None
+    last_error = ""
+    for candidate in urls:
+        try:
+            data = _stream_download(candidate, max_size_bytes)
+            source_url = candidate
+            break
+        except _DownloadTooLarge as exc:
+            raise GithubFetchError(
+                f"Download exceeds {max_size_bytes} bytes: {exc}"
+            ) from exc
+        except _DownloadMissing:
+            last_error = f"{candidate}: not found"
+            continue
+        except Exception as exc:  # noqa: BLE001 — surface any failure
+            last_error = f"{candidate}: {exc}"
+            continue
+
+    if data is None or source_url is None:
+        raise GithubFetchError(f"Download failed: {last_error or 'unknown error'}")
+
+    staging = parent / f".{source.repo}.tmp"
+    if staging.exists():
+        shutil.rmtree(staging, ignore_errors=True)
+    try:
+        _extract_tarball(data, staging, max_size_bytes=max_size_bytes)
+    except Exception as exc:  # noqa: BLE001
+        shutil.rmtree(staging, ignore_errors=True)
+        raise GithubFetchError(f"Extract failed: {exc}") from exc
+    return staging, source_url
+
+
 def _install_from_github(
     source: InstallSource,
     target_dir: Path,
@@ -722,56 +739,21 @@ def _install_from_github(
 ) -> tuple[InstallOutcome, str]:
     """Fetch a skill from GitHub (tarball download) and extract.
 
-    Hardened path. See module docstring for K-1..K-7 notes.
-
-    Extraction is **atomic**: tarball lands in a sibling ``.<name>.tmp``
-    directory; a successful, validated extract is then ``rename``-d into
-    place. A mid-flight failure (Ctrl-C, network error, bomb, traversal
-    attempt) leaves no half-baked ``dest/`` behind that the user has to
-    ``rm -rf`` before retrying.
+    Hardened path. See module docstring for K-1..K-7 notes. Extraction is
+    **atomic** via :func:`fetch_github_archive` + rename: a mid-flight
+    failure leaves no half-baked ``dest/`` behind.
     """
     name = name_override or source.repo
     dest = target_dir / name
     if dest.exists():
         return (InstallOutcome.ALREADY_EXISTS, f"Skill {name} already exists at {dest}")
 
-    urls = _github_archive_urls(source)
-    # K-2: every candidate URL must clear the host allow-list. Since we
-    # only construct them from github.com, this is belt-and-suspenders —
-    # but if a future caller injects an arbitrary URL here, the guard
-    # holds.
-    urls = [u for u in urls if _host_is_allowed(u, GITHUB_ALLOWED_HOSTS)]
-    if not urls:
-        return (InstallOutcome.FAILED, "No allowed archive URLs for source")
-
-    data: bytes | None = None
-    source_url: str | None = None
-    last_error: str = ""
-    for candidate in urls:
-        try:
-            data = _stream_download(candidate, max_size_bytes)
-            source_url = candidate
-            break
-        except _DownloadTooLarge as exc:
-            return (InstallOutcome.FAILED, f"Download exceeds {max_size_bytes} bytes: {exc}")
-        except _DownloadMissing:
-            last_error = f"{candidate}: not found"
-            continue
-        except Exception as exc:  # noqa: BLE001 — surface any failure
-            last_error = f"{candidate}: {exc}"
-            continue
-
-    if data is None or source_url is None:
-        return (InstallOutcome.FAILED, f"Download failed: {last_error or 'unknown error'}")
-
-    staging = target_dir / f".{name}.tmp"
-    if staging.exists():
-        shutil.rmtree(staging, ignore_errors=True)
     try:
-        _extract_tarball(data, staging, max_size_bytes=max_size_bytes)
-    except Exception as exc:  # noqa: BLE001
-        shutil.rmtree(staging, ignore_errors=True)
-        return (InstallOutcome.FAILED, f"Extract failed: {exc}")
+        staging, source_url = fetch_github_archive(
+            source, target_dir, max_size_bytes=max_size_bytes
+        )
+    except GithubFetchError as exc:
+        return (InstallOutcome.FAILED, str(exc))
 
     # K-7: accept either ``staging/SKILL.md`` (flat) or
     # ``staging/<single-subdir>/SKILL.md`` (nested) as a valid layout.
@@ -1043,14 +1025,17 @@ def _write_installed_from(dest: Path, source_spec: str) -> None:
     )
 
 
-def fetch_registry(url: str | None = None) -> RegistryDocument | None:
-    """Fetch the remote skill registry index.
+def _fetch_registry_index(
+    url: str | None,
+    default_url: str,
+    from_json: Any,
+) -> Any | None:
+    """Shared registry-index fetch: host allow-list, best-effort.
 
-    Returns None on network/parse failure. Host allow-listed for
-    safety — passing a URL whose host isn't in ``REGISTRY_ALLOWED_HOSTS``
-    returns None (logged).
+    Returns ``None`` on network/parse failure or a disallowed host.
+    ``from_json`` is a ``str -> document`` classmethod.
     """
-    target = url or DEFAULT_REGISTRY_URL
+    target = url or default_url
     if not _host_is_allowed(target, REGISTRY_ALLOWED_HOSTS):
         _LOG.warning("registry host not allow-listed: %s", target)
         return None
@@ -1058,57 +1043,20 @@ def fetch_registry(url: str | None = None) -> RegistryDocument | None:
         with httpx.Client(timeout=10.0, follow_redirects=True) as client:
             resp = client.get(target)
             resp.raise_for_status()
-            return RegistryDocument.from_json(resp.text)
+            return from_json(resp.text)
     except Exception:
         _LOG.debug("Failed to fetch registry from %s", target)
         return None
 
 
-# ── Backwards-compat helpers used by tests ──────────────────────────────
+def fetch_registry(url: str | None = None) -> RegistryDocument | None:
+    """Fetch the remote skill registry index.
 
-
-def _read_test_archive(path: Path) -> bytes:
-    """Tiny helper kept here so tests don't have to know the internal
-    layout — read a fixture tarball into bytes."""
-    return path.read_bytes()
-
-
-def install_from_bytes(
-    archive_bytes: bytes,
-    spec: str,
-    skills_dir: Path,
-    name: str,
-    *,
-    max_size_bytes: int = DEFAULT_MAX_SIZE_BYTES,
-) -> tuple[InstallOutcome, str]:
-    """Test seam: install from a tarball passed inline.
-
-    Bypasses the network so the K-3..K-7 extract path can be unit-tested
-    end-to-end without spinning a fake HTTP server. Atomic-publish path
-    mirrors ``_install_from_github`` — staging dir + ``rename``.
+    Returns None on network/parse failure. Host allow-listed for
+    safety — passing a URL whose host isn't in ``REGISTRY_ALLOWED_HOSTS``
+    returns None (logged).
     """
-    dest = skills_dir / name
-    if dest.exists():
-        return (InstallOutcome.ALREADY_EXISTS, f"Skill {name} already exists at {dest}")
-    skills_dir.mkdir(parents=True, exist_ok=True)
-    staging = skills_dir / f".{name}.tmp"
-    if staging.exists():
-        shutil.rmtree(staging, ignore_errors=True)
-    try:
-        _extract_tarball(archive_bytes, staging, max_size_bytes=max_size_bytes)
-    except Exception as exc:  # noqa: BLE001
-        shutil.rmtree(staging, ignore_errors=True)
-        return (InstallOutcome.FAILED, f"Extract failed: {exc}")
-    if not _has_skill_file(staging):
-        shutil.rmtree(staging, ignore_errors=True)
-        return (InstallOutcome.FAILED, f"No {SKILL_FILENAME} in archive")
-    _write_installed_from(staging, spec)
-    try:
-        staging.rename(dest)
-    except OSError as exc:
-        shutil.rmtree(staging, ignore_errors=True)
-        return (InstallOutcome.FAILED, f"Atomic rename failed: {exc}")
-    return (InstallOutcome.INSTALLED, f"Installed {name} to {dest}")
+    return _fetch_registry_index(url, DEFAULT_REGISTRY_URL, RegistryDocument.from_json)
 
 
 def __getattr__(name: str) -> Any:  # pragma: no cover — friendly errors

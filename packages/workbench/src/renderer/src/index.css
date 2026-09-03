@@ -5316,6 +5316,10 @@ samp {
   box-sizing: border-box;
 }
 
+:root:not([data-theme='dark']) .ds-markdown .ds-mermaid-block {
+  border-color: var(--ds-border-strong);
+}
+
 .ds-markdown .ds-mermaid-block-header {
   display: flex;
   align-items: center;

@@ -2,10 +2,22 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from enum import Enum
 from pathlib import PurePosixPath
 from typing import Any
+
+
+def _json_dict(obj: Any) -> dict[str, Any]:
+    """``dataclasses.asdict`` with Enum → value and tuples → list."""
+    def encode(value: Any) -> Any:
+        if isinstance(value, Enum):
+            return value.value
+        if isinstance(value, list):
+            return [encode(item) for item in value]
+        return value
+
+    return {key: encode(val) for key, val in asdict(obj).items()}
 
 
 class CompatibilityStatus(str, Enum):
@@ -43,13 +55,7 @@ class Diagnostic:
     remediation: str = ""
 
     def to_dict(self) -> dict[str, Any]:
-        return {
-            "code": self.code,
-            "severity": self.severity.value,
-            "message": self.message,
-            "source_path": self.source_path,
-            "remediation": self.remediation,
-        }
+        return _json_dict(self)
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,7 +75,7 @@ class ResourceRef:
             raise ValueError(f"unsafe plugin resource path: {self.path!r}")
 
     def to_dict(self) -> dict[str, str]:
-        return {"path": self.path, "media_type": self.media_type}
+        return _json_dict(self)
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,11 +85,7 @@ class PermissionClaim:
     required: bool = True
 
     def to_dict(self) -> dict[str, Any]:
-        return {
-            "capability": self.capability,
-            "reason": self.reason,
-            "required": self.required,
-        }
+        return _json_dict(self)
 
 
 @dataclass(frozen=True, slots=True)
@@ -99,17 +101,7 @@ class ContributionSpec:
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        return {
-            "kind": self.kind,
-            "name": self.name,
-            "summary": self.summary,
-            "status": self.status.value,
-            "activation": self.activation.value,
-            "risk": self.risk.value,
-            "resources": [item.to_dict() for item in self.resources],
-            "permissions": [item.to_dict() for item in self.permissions],
-            "metadata": self.metadata,
-        }
+        return _json_dict(self)
 
 
 @dataclass(frozen=True, slots=True)
@@ -120,12 +112,7 @@ class SourceProvenance:
     relative_root: str = "."
 
     def to_dict(self) -> dict[str, str]:
-        return {
-            "kind": self.kind,
-            "locator": self.locator,
-            "digest": self.digest,
-            "relative_root": self.relative_root,
-        }
+        return _json_dict(self)
 
 
 @dataclass(frozen=True, slots=True)
@@ -138,14 +125,7 @@ class CompatibilityReport:
     can_activate: bool = True
 
     def to_dict(self) -> dict[str, Any]:
-        return {
-            "status": self.status.value,
-            "adapter_id": self.adapter_id,
-            "adapter_version": self.adapter_version,
-            "can_install": self.can_install,
-            "can_activate": self.can_activate,
-            "diagnostics": [item.to_dict() for item in self.diagnostics],
-        }
+        return _json_dict(self)
 
 
 @dataclass(frozen=True, slots=True)
@@ -161,14 +141,4 @@ class DerivedPlugin:
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        return {
-            "schema_version": self.schema_version,
-            "plugin_id": self.plugin_id,
-            "version": self.version,
-            "description": self.description,
-            "source": self.source.to_dict(),
-            "contributions": [item.to_dict() for item in self.contributions],
-            "permission_claims": [item.to_dict() for item in self.permission_claims],
-            "compatibility": self.compatibility.to_dict(),
-            "metadata": self.metadata,
-        }
+        return _json_dict(self)

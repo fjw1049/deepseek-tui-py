@@ -1,16 +1,12 @@
 from __future__ import annotations
 
 import json
-import re
 from pathlib import Path
 from typing import Any
 
-import yaml
-
 from deepseek_tui.plugins.model import ResourceRef
 from deepseek_tui.plugins.source import LocalArtifact, PackageCandidate, PluginSourceError
-
-_FRONTMATTER = re.compile(r"^---\s*\n(.*?)\n---\s*", re.DOTALL)
+from deepseek_tui.utils import parse_md_frontmatter
 
 
 def read_json(path: Path) -> dict[str, Any]:
@@ -24,17 +20,10 @@ def read_json(path: Path) -> dict[str, Any]:
 
 
 def markdown_metadata(path: Path) -> tuple[dict[str, Any], str]:
-    text = path.read_text(encoding="utf-8")
-    match = _FRONTMATTER.match(text)
-    if match is None:
-        return {}, text.strip()
     try:
-        metadata = yaml.safe_load(match.group(1)) or {}
-    except yaml.YAMLError as exc:
-        raise PluginSourceError(f"invalid YAML frontmatter at {path}: {exc}") from exc
-    if not isinstance(metadata, dict):
-        metadata = {}
-    return metadata, text[match.end() :].strip()
+        return parse_md_frontmatter(path, strict=True)
+    except ValueError as exc:
+        raise PluginSourceError(str(exc)) from exc
 
 
 def resource_ref(candidate: PackageCandidate, path: Path) -> ResourceRef:

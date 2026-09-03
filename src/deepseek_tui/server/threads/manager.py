@@ -5018,7 +5018,6 @@ class RuntimeThreadManager:
         turn_input_summary = self.store.load_turn(turn_id).input_summary
         narration_cfg = self.config.ui.process_narration
         narration_locale = resolve_narration_locale(
-            turn_input_summary,
             config_locale=self.config.ui.locale,
         )
 

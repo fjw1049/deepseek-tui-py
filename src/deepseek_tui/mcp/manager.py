@@ -29,7 +29,12 @@ from deepseek_tui.mcp.client import (
     parse_qualified_tool_name,
     qualify_tool_name,
 )
-from deepseek_tui.mcp.config import DEFAULT_TIMEOUTS, McpServerConfig, load_mcp_config
+from deepseek_tui.mcp.config import (
+    DEFAULT_TIMEOUTS,
+    McpServerConfig,
+    servers_from_document,
+)
+
 from deepseek_tui.mcp.store import hash_mcp_document, load_raw_document
 from deepseek_tui.protocol.events import (
     McpStartupCompleteEvent,
@@ -95,10 +100,6 @@ def raise_if_required_mcp_failed(
 # --- Background preload status (HTTP / diagnostics) -------------------------
 
 
-def _preload_now_ms() -> int:
-    return int(time.time() * 1000)
-
-
 @dataclass
 class McpPreloadSnapshot:
     """Point-in-time preload status for HTTP / diagnostics."""
@@ -139,12 +140,6 @@ class McpPreloadTracker:
     completed_at_ms: int | None = None
     error: str | None = None
     _task: Any = field(default=None, repr=False)
-
-    def mark_ready_from_disk(self, *, tools_count: int, enabled_servers: int) -> None:
-        self.phase = "ready"
-        self.from_disk_cache = True
-        self.completed_at_ms = _preload_now_ms()
-        self.error = None
 
     def snapshot(
         self,
@@ -651,7 +646,7 @@ class McpManager:
             return False
         try:
             doc = load_raw_document(self._config_path)
-            configs = load_mcp_config(self._config_path)
+            configs = servers_from_document(doc)
         except (OSError, ValueError, json.JSONDecodeError):
             return False
         new_hash = hash_mcp_document(doc)
@@ -668,9 +663,12 @@ class McpManager:
         await self.stop_all()
         if self._config_path is not None and self._config_path.exists():
             try:
-                configs = load_mcp_config(self._config_path)
-                self._configs = {cfg.name: cfg for cfg in configs}
-                self._record_config_fingerprint(self._config_path)
+                doc = load_raw_document(self._config_path)
+                self._configs = {
+                    cfg.name: cfg for cfg in servers_from_document(doc)
+                }
+                self._config_hash = hash_mcp_document(doc)
+                self._last_mtime = self._config_path.stat().st_mtime
             except (OSError, ValueError, json.JSONDecodeError):
                 pass
         return await self.start_all()
@@ -1075,24 +1073,9 @@ class McpManager:
     async def list_resources(self, server: str | None = None) -> dict[str, list[dict[str, Any]]]:
         return await self._collect(server, "list_resources")
 
-    async def list_resource_templates(
-        self,
-        server: str | None = None,
-    ) -> dict[str, list[dict[str, Any]]]:
-        return await self._collect(server, "list_resource_templates")
-
     async def read_resource(self, server: str, uri: str) -> dict[str, Any]:
         client = await self._ensure_client(server)
         return await client.read_resource(uri)
-
-    async def get_prompt(
-        self,
-        server: str,
-        name: str,
-        arguments: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
-        client = await self._ensure_client(server)
-        return await client.get_prompt(name, arguments)
 
     async def _ensure_client(self, server_name: str) -> McpClient:
         await self.reload_if_config_changed()

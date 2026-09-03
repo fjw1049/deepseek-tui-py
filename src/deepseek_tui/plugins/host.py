@@ -128,11 +128,6 @@ class PluginStartup:
     skills: list[Any] = field(default_factory=list)
     diagnostics: list[str] = field(default_factory=list)
 
-    @property
-    def warnings(self) -> list[str]:
-        """Legacy-compatible name while callers migrate to diagnostics."""
-        return self.diagnostics
-
 
 @dataclass(slots=True)
 class PluginActivation:
@@ -156,11 +151,6 @@ class PluginSession:
         self.workspace = workspace
         self.loaded_plugins = tuple(loaded_plugins)
         self.startup = startup
-        self.catalog = {
-            plugin.name: plugin.contribution_index
-            for plugin in loaded_plugins
-            if plugin.contribution_index
-        }
         self._by_name = {plugin.name.lower(): plugin for plugin in loaded_plugins}
         self._activations: dict[str, PluginActivation] = {}
         self._closed = False
@@ -225,49 +215,6 @@ class PluginSession:
             trusted=bool(entry.get("trusted", plugin.trusted)),
             contribution_index=plugin.contribution_index,
         )
-
-    def declared_write_capabilities(self, name: str) -> frozenset[str]:
-        plugin = self._by_name.get(name.lower())
-        if plugin is None or not getattr(plugin, "trusted", False):
-            return frozenset()
-        from deepseek_tui.integrations.plugins import (
-            capability_values_from_permissions,
-        )
-
-        return frozenset(
-            capability_values_from_permissions(plugin.manifest.permissions)
-        )
-
-    def catalog_entries(self, kind: str | None = None) -> tuple[dict[str, Any], ...]:
-        """Thin catalog rows from the frozen contribution indexes."""
-        rows: list[dict[str, Any]] = []
-        for plugin in self.loaded_plugins:
-            index = plugin.contribution_index or {}
-            if kind is None:
-                rows.append(
-                    {
-                        "plugin_id": plugin.name,
-                        "kinds": {
-                            key: index.get(key, [])
-                            for key in ("skills", "commands", "agents", "rules")
-                        },
-                    }
-                )
-                continue
-            key = {
-                "prompt.skill": "skills",
-                "prompt.command": "commands",
-                "agent.persona": "agents",
-                "prompt.rule": "rules",
-                "skills": "skills",
-                "commands": "commands",
-                "agents": "agents",
-                "rules": "rules",
-            }.get(kind, kind)
-            for item in index.get(key, []):
-                if isinstance(item, dict):
-                    rows.append({"plugin_id": plugin.name, **item})
-        return tuple(rows)
 
     def activate(self, name: str) -> PluginActivation | None:
         """Load declarative bodies for one package captured by this session."""
@@ -499,7 +446,6 @@ class PluginHost:
         """Select and install one loadable package from a local artifact."""
         from deepseek_tui.integrations.plugins import install_plugin
         from deepseek_tui.plugins.source import PluginSourceError
-        from deepseek_tui.plugins.store import write_derived
 
         try:
             inspection = self.inspect(source=source)
@@ -557,10 +503,6 @@ class PluginHost:
                 "failed",
                 f"Plugin {package.plugin_id} does not have an installable local source",
             )
-        try:
-            write_derived(package)
-        except (OSError, ValueError):
-            pass
         outcome, message = install_plugin(
             str(package_path),
             operation.plugins_dir,
@@ -666,16 +608,6 @@ class PluginHost:
                 diagnostics=[*light.warnings, *skills.warnings],
             ),
         )
-
-
-def merge_session_skills(skill_registry, contribs) -> None:
-    """Merge PluginSession skill contributions into a SkillRegistry.
-
-    Thin façade so Engine never imports ``integrations.plugins`` collectors.
-    """
-    from deepseek_tui.integrations.plugins import merge_plugin_skills
-
-    merge_plugin_skills(skill_registry, contribs)
 
 
 def _normalize_candidate_root(value: str | None) -> str | None:

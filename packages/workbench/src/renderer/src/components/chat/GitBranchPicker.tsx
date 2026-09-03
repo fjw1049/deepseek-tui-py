@@ -22,7 +22,7 @@ type Props = {
   workspaceRoot: string
   compact?: boolean
   usePortal?: boolean
-  menuPlacement?: 'above' | 'below'
+  menuPlacement?: 'above' | 'below' | 'left'
   /** Compact tray: drop the branch name, keep the git icon. */
   hideLabel?: boolean
   /** Compact tray: drop the chevron before hiding the control. */
@@ -124,6 +124,17 @@ export function GitBranchPicker({
     const left = Math.max(12, Math.min(triggerLeft, viewportWidth - width - 12))
 
     if (usePortal) {
+      if (menuPlacement === 'left') {
+        const menuHeight = (menuRef.current?.getBoundingClientRect().height ?? 0) / scale
+        setMenuStyle({
+          position: 'fixed',
+          left: Math.max(12, triggerLeft - width - 8),
+          top: Math.max(12, Math.min(rect.top / scale, viewportHeight - menuHeight - 12)),
+          width,
+          zIndex: 120
+        })
+        return
+      }
       if (menuPlacement === 'below') {
         setMenuStyle({
           position: 'fixed',
@@ -146,11 +157,12 @@ export function GitBranchPicker({
 
     setMenuStyle({
       position: 'absolute',
-      left: 0,
       width: matchTriggerWidth ? '100%' : `min(${MENU_WIDTH}px, calc(100vw - 48px))`,
-      ...(menuPlacement === 'below'
-        ? { top: 'calc(100% + 8px)' }
-        : { bottom: 'calc(100% + 8px)' })
+      ...(menuPlacement === 'left'
+        ? { right: 'calc(100% + 8px)', top: 0 }
+        : menuPlacement === 'below'
+          ? { left: 0, top: 'calc(100% + 8px)' }
+          : { left: 0, bottom: 'calc(100% + 8px)' })
     })
   }, [matchTriggerWidth, menuPlacement, usePortal])
 
@@ -267,7 +279,11 @@ export function GitBranchPicker({
       ref={menuRef}
       style={menuStyle}
       className={`ds-project-context-menu ds-morph-pop z-50 overflow-hidden ${
-        menuPlacement === 'below' ? 'ds-morph-pop--below' : ''
+        menuPlacement === 'below'
+          ? 'ds-morph-pop--below'
+          : menuPlacement === 'left'
+            ? 'ds-morph-pop--from-end'
+            : ''
       }`}
       onMouseDown={(event) => event.stopPropagation()}
     >

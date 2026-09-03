@@ -67,9 +67,8 @@ import os
 import re
 import shutil
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import yaml
 
@@ -79,21 +78,21 @@ from deepseek_tui.integrations.plugin_compat import (
     matcher_to_condition,
 )
 from deepseek_tui.integrations.skills import (
-    GITHUB_ALLOWED_HOSTS,
     REGISTRY_ALLOWED_HOSTS,
+    GithubFetchError,
     InstallOutcome,
     InstallSource,
     Skill,
     SkillRegistry,
-    _DownloadMissing,
-    _DownloadTooLarge,
-    _extract_tarball,
-    _github_archive_urls,
+    fetch_github_archive,
+    truncate_for_prompt,
+    _fetch_registry_index,
     _host_is_allowed,
     _parse_skill_file,
-    _stream_download,
 )
 from deepseek_tui.mcp.config import McpServerConfig, load_mcp_config, servers_from_document
+from deepseek_tui.utils import parse_md_frontmatter as _parse_md_frontmatter
+from deepseek_tui.utils import utc_now_iso
 
 __all__ = [
     "DEFAULT_PLUGIN_REGISTRY_URL",
@@ -519,20 +518,26 @@ def _lockfile_path(plugins_dir: Path) -> Path:
     return plugins_dir / LOCKFILE_NAME
 
 
-def read_lockfile(plugins_dir: Path) -> dict[str, dict[str, Any]]:
-    """Read the scope lockfile. Missing/corrupt → empty mapping."""
-    path = _lockfile_path(plugins_dir)
+def _read_registry_table(path: Path, key: str, label: str) -> dict[str, dict[str, Any]]:
+    """Read a scope registry JSON's mapping. Missing/corrupt → empty mapping."""
     if not path.is_file():
         return {}
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
-        _LOG.warning("failed to read plugin lockfile %s: %s", path, exc)
+        _LOG.warning("failed to read %s %s: %s", label, path, exc)
         return {}
-    plugins = data.get("plugins") if isinstance(data, dict) else None
-    if not isinstance(plugins, dict):
+    table = data.get(key) if isinstance(data, dict) else None
+    if not isinstance(table, dict):
         return {}
-    return {k: v for k, v in plugins.items() if isinstance(v, dict)}
+    return {k: v for k, v in table.items() if isinstance(v, dict)}
+
+
+def read_lockfile(plugins_dir: Path) -> dict[str, dict[str, Any]]:
+    """Read the scope lockfile. Missing/corrupt → empty mapping."""
+    return _read_registry_table(
+        _lockfile_path(plugins_dir), "plugins", "plugin lockfile"
+    )
 
 
 def _write_lockfile(plugins_dir: Path, plugins: dict[str, dict[str, Any]]) -> None:
@@ -582,8 +587,7 @@ def plugin_description_blurb(
     """Short human-facing blurb: manifest description, else README excerpt."""
     desc = (plugin.manifest.description or "").strip()
     if desc:
-        one = " ".join(desc.split())
-        return one if len(one) <= max_chars else one[: max_chars - 1] + "…"
+        return truncate_for_prompt(desc, max_chars)
     readme = plugin.path / "README.md"
     if readme.is_file():
         try:
@@ -595,7 +599,7 @@ def plugin_description_blurb(
             if not s or s.startswith("#") or s.startswith(">") or s.startswith("```"):
                 continue
             one = " ".join(s.split())
-            return one if len(one) <= max_chars else one[: max_chars - 1] + "…"
+            return truncate_for_prompt(one, max_chars)
     return ""
 
 
@@ -959,30 +963,6 @@ class PluginContributions:
 
 def _substitute(value: str, plugin_dir: Path) -> str:
     return value.replace(_PLUGIN_DIR_TOKEN, str(plugin_dir))
-
-
-_MD_FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.DOTALL)
-
-
-def _parse_md_frontmatter(path: Path) -> tuple[dict[str, Any], str]:
-    """Parse a Markdown file's YAML frontmatter into ``(meta, body)``.
-
-    Tolerant of files without frontmatter (mainstream plugins ship some
-    commands with a bare body): returns ``({}, full_text)`` in that case.
-    """
-    content = path.read_text(encoding="utf-8")
-    meta: dict[str, Any] = {}
-    body = content
-    match = _MD_FRONTMATTER_RE.match(content)
-    if match:
-        try:
-            document = yaml.safe_load(match.group(1))
-        except yaml.YAMLError:
-            document = None
-        if isinstance(document, dict):
-            meta = {str(key).strip().lower(): value for key, value in document.items()}
-        body = content[match.end() :]
-    return meta, body.strip()
 
 
 def _frontmatter_text(meta: dict[str, Any], key: str, default: str = "") -> str:
@@ -1581,23 +1561,28 @@ def _collect_mcp(plugin: LoadedPlugin, out: PluginContributions) -> None:
         out.mcp_servers.append(server)
 
 
-def merge_plugin_skills(
-    registry: SkillRegistry, contributions: PluginContributions
-) -> None:
-    """Merge plugin skills into a workspace registry (workspace wins)."""
+def merge_plugin_skills(registry: SkillRegistry, contributions: Any) -> None:
+    """Merge plugin skills into a workspace registry (workspace wins).
+
+    ``contributions`` is a :class:`PluginContributions` or a plugin-host
+    ``PluginStartup`` (whose warnings live under ``diagnostics``).
+    """
     seen = {s.name.lower() for s in registry.skills}
     for skill in contributions.skills:
         if skill.name.lower() not in seen:
             registry.skills.append(skill)
             seen.add(skill.name.lower())
-    registry.warnings.extend(contributions.warnings)
+    warnings = getattr(contributions, "warnings", None)
+    if warnings is None:
+        warnings = contributions.diagnostics
+    registry.warnings.extend(warnings)
 
 
 # ── Install / lifecycle ──────────────────────────────────────────────────
 
 
 def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return utc_now_iso()
 
 
 def _valid_plugin_name(name: str) -> bool:
@@ -1632,14 +1617,18 @@ def _plugin_child_path(target_dir: Path, name: str) -> Path | None:
     return candidate
 
 
-def _find_manifest_root(staging: Path) -> Path | None:
-    """Manifest at staging root, or exactly one level down."""
-    if load_plugin_manifest(staging) is not None:
+def _find_root_with(staging: Path, has_marker: Callable[[Path], bool]) -> Path | None:
+    """Dir under *staging* where *has_marker* holds, or exactly one level down."""
+    if has_marker(staging):
         return staging
     for child in sorted(staging.iterdir()):
-        if child.is_dir() and load_plugin_manifest(child) is not None:
+        if child.is_dir() and has_marker(child):
             return child
     return None
+
+
+def _find_manifest_root(staging: Path) -> Path | None:
+    return _find_root_with(staging, load_plugin_manifest)
 
 
 def install_plugin(
@@ -1871,42 +1860,12 @@ def _install_from_github(
             max_size_bytes=max_size_bytes,
             provenance=provenance,
         )
-    urls = [
-        u
-        for u in _github_archive_urls(source)
-        if _host_is_allowed(u, GITHUB_ALLOWED_HOSTS)
-    ]
-    if not urls:
-        return (InstallOutcome.FAILED, "No allowed archive URLs for source")
-
-    data: bytes | None = None
-    last_error = ""
-    for candidate in urls:
-        try:
-            data = _stream_download(candidate, max_size_bytes)
-            break
-        except _DownloadTooLarge as exc:
-            return (
-                InstallOutcome.FAILED,
-                f"Download exceeds {max_size_bytes} bytes: {exc}",
-            )
-        except _DownloadMissing:
-            last_error = f"{candidate}: not found"
-            continue
-        except Exception as exc:  # noqa: BLE001 — surface any failure
-            last_error = f"{candidate}: {exc}"
-            continue
-    if data is None:
-        return (InstallOutcome.FAILED, f"Download failed: {last_error or 'unknown'}")
-
-    staging = target_dir / f".{source.repo}.tmp"
-    if staging.exists():
-        shutil.rmtree(staging, ignore_errors=True)
     try:
-        _extract_tarball(data, staging, max_size_bytes=max_size_bytes)
-    except Exception as exc:  # noqa: BLE001
-        shutil.rmtree(staging, ignore_errors=True)
-        return (InstallOutcome.FAILED, f"Extract failed: {exc}")
+        staging, _ = fetch_github_archive(
+            source, target_dir, max_size_bytes=max_size_bytes
+        )
+    except GithubFetchError as exc:
+        return (InstallOutcome.FAILED, str(exc))
 
     root = _find_manifest_root(staging)
     if root is None:
@@ -2345,6 +2304,29 @@ def _remove_path(path: Path) -> None:
     shutil.rmtree(path, ignore_errors=True)
 
 
+def _swap_with_backup(staged: Path, move_aside: Path, dest: Path, backup: Path) -> None:
+    """Atomic dir swap: ``move_aside → backup``, then ``staged → dest``.
+
+    If the second replace fails, *backup* is restored so the previous
+    copy is never lost. On success the backup is removed.
+    """
+    _remove_path(backup)
+    if move_aside.exists() or move_aside.is_symlink():
+        os.replace(move_aside, backup)
+    try:
+        os.replace(staged, dest)
+    except BaseException:
+        if (backup.exists() or backup.is_symlink()) and not (
+            move_aside.exists() or move_aside.is_symlink()
+        ):
+            try:
+                os.replace(backup, move_aside)
+            except OSError:
+                pass
+        raise
+    _remove_path(backup)
+
+
 def update_plugin(
     name: str, plugins_dir: Path | None = None
 ) -> tuple[InstallOutcome, str]:
@@ -2436,21 +2418,8 @@ def update_plugin(
         # restore backup so the user never loses the previous install.
         # Prefer swapping onto the canonical manifest-named path.
         live_dest = target_dir / lock_name
-        if plugin_path.exists() or plugin_path.is_symlink():
-            os.replace(plugin_path, backup)
-        try:
-            os.replace(staged_plugin, live_dest)
-            plugin_path = live_dest
-        except BaseException:
-            if (backup.exists() or backup.is_symlink()) and not (
-                plugin_path.exists() or plugin_path.is_symlink()
-            ):
-                try:
-                    os.replace(backup, plugin_path)
-                except OSError:
-                    pass
-            raise
-        _remove_path(backup)
+        _swap_with_backup(staged_plugin, plugin_path, live_dest, backup)
+        plugin_path = live_dest
     finally:
         _remove_path(staging)
         # Orphan backup from a previous crashed update — keep live intact.
@@ -2857,20 +2826,9 @@ def fetch_plugin_registry(url: str | None = None) -> PluginRegistryDocument | No
     Same host allow-list and failure semantics as the skill registry:
     returns ``None`` on network/parse failure or a disallowed host.
     """
-    import httpx
-
-    target = url or DEFAULT_PLUGIN_REGISTRY_URL
-    if not _host_is_allowed(target, REGISTRY_ALLOWED_HOSTS):
-        _LOG.warning("plugin registry host not allow-listed: %s", target)
-        return None
-    try:
-        with httpx.Client(timeout=10.0, follow_redirects=True) as client:
-            resp = client.get(target)
-            resp.raise_for_status()
-            return PluginRegistryDocument.from_json(resp.text)
-    except Exception:  # noqa: BLE001 — registry fetch is best-effort
-        _LOG.debug("Failed to fetch plugin registry from %s", target)
-        return None
+    return _fetch_registry_index(
+        url, DEFAULT_PLUGIN_REGISTRY_URL, PluginRegistryDocument.from_json
+    )
 
 
 # ── Local marketplace (.claude-plugin/marketplace.json) ──────────────────
@@ -2995,18 +2953,9 @@ def parse_plugin_at_marketplace(spec: str) -> tuple[str, str] | None:
 def read_marketplaces(root: Path | None = None) -> dict[str, dict[str, Any]]:
     """Read the marketplace registry. Missing/corrupt → empty mapping."""
     base = root or marketplaces_dir()
-    path = base / MARKETPLACES_REGISTRY_NAME
-    if not path.is_file():
-        return {}
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        _LOG.warning("failed to read marketplace registry %s: %s", path, exc)
-        return {}
-    table = data.get("marketplaces") if isinstance(data, dict) else None
-    if not isinstance(table, dict):
-        return {}
-    return {k: v for k, v in table.items() if isinstance(v, dict)}
+    return _read_registry_table(
+        base / MARKETPLACES_REGISTRY_NAME, "marketplaces", "marketplace registry"
+    )
 
 
 def _write_marketplaces(base: Path, table: dict[str, dict[str, Any]]) -> None:
@@ -3060,12 +3009,9 @@ def _marketplace_display_name(repo: Path, fallback: str) -> str:
 
 def _find_marketplace_root(staging: Path) -> Path | None:
     """marketplace.json at staging root, or exactly one level down."""
-    if _marketplace_json_path(staging) is not None:
-        return staging
-    for child in sorted(staging.iterdir()):
-        if child.is_dir() and _marketplace_json_path(child) is not None:
-            return child
-    return None
+    return _find_root_with(
+        staging, lambda path: _marketplace_json_path(path) is not None
+    )
 
 
 def add_marketplace(
@@ -3124,42 +3070,12 @@ def _add_marketplace_from_github(
     *,
     max_size_bytes: int,
 ) -> tuple[InstallOutcome, str]:
-    urls = [
-        u
-        for u in _github_archive_urls(source)
-        if _host_is_allowed(u, GITHUB_ALLOWED_HOSTS)
-    ]
-    if not urls:
-        return (InstallOutcome.FAILED, "No allowed archive URLs for source")
-
-    data: bytes | None = None
-    last_error = ""
-    for candidate in urls:
-        try:
-            data = _stream_download(candidate, max_size_bytes)
-            break
-        except _DownloadTooLarge as exc:
-            return (
-                InstallOutcome.FAILED,
-                f"Download exceeds {max_size_bytes} bytes: {exc}",
-            )
-        except _DownloadMissing:
-            last_error = f"{candidate}: not found"
-            continue
-        except Exception as exc:  # noqa: BLE001 — surface any failure
-            last_error = f"{candidate}: {exc}"
-            continue
-    if data is None:
-        return (InstallOutcome.FAILED, f"Download failed: {last_error or 'unknown'}")
-
-    staging = base / f".{source.repo}.tmp"
-    if staging.exists():
-        shutil.rmtree(staging, ignore_errors=True)
     try:
-        _extract_tarball(data, staging, max_size_bytes=max_size_bytes)
-    except Exception as exc:  # noqa: BLE001
-        shutil.rmtree(staging, ignore_errors=True)
-        return (InstallOutcome.FAILED, f"Extract failed: {exc}")
+        staging, _ = fetch_github_archive(
+            source, base, max_size_bytes=max_size_bytes
+        )
+    except GithubFetchError as exc:
+        return (InstallOutcome.FAILED, str(exc))
 
     repo_root = _find_marketplace_root(staging)
     if repo_root is None:
@@ -3270,21 +3186,7 @@ def update_marketplace(
             )
         live = base / name
         backup = base / f".backup-{name}"
-        if backup.exists():
-            shutil.rmtree(backup, ignore_errors=True)
-        if live.is_dir():
-            os.replace(live, backup)
-        try:
-            os.replace(staged, live)
-        except BaseException:
-            if backup.is_dir() and not live.exists():
-                try:
-                    os.replace(backup, live)
-                except OSError:
-                    pass
-            raise
-        if backup.exists():
-            shutil.rmtree(backup, ignore_errors=True)
+        _swap_with_backup(staged, live, live, backup)
     finally:
         if staging_root.exists():
             shutil.rmtree(staging_root, ignore_errors=True)
