@@ -278,7 +278,7 @@ export function GitBranchPicker({
     <div
       ref={menuRef}
       style={menuStyle}
-      className={`ds-project-context-menu ds-morph-pop z-50 overflow-hidden ${
+      className={`ds-project-context-menu ds-git-branch-menu ds-morph-pop z-50 overflow-hidden ${
         menuPlacement === 'below'
           ? 'ds-morph-pop--below'
           : menuPlacement === 'left'

@@ -14,6 +14,7 @@
   --ds-canvas-dot: rgba(0, 0, 0, 0.04);
   --ds-canvas-dot-size: 22px;
   --font-ui: 'Inter', 'PingFang SC', 'Noto Sans SC', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-chat: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Noto Sans SC', sans-serif;
   --font-display: var(--font-ui);
   /* Real monospace for code-like UI strings (URLs, model/task ids, tool
      output). Static stack — user's terminal font choice only affects
@@ -24,7 +25,7 @@
     'Courier New', monospace;
   /* Appearance: density scale (spacing only) and chat reading size. */
   --ds-density: 1;
-  --ds-chat-font-size: 15px;
+  --ds-chat-font-size: 14px;
   --surface-1: #ffffff;
   --surface-2: #ffffff;
   --surface-3: #ffffff;
@@ -1666,6 +1667,10 @@ samp {
     transform 100ms ease-out;
 }
 
+.ds-git-branch-menu .ds-project-context-menu__row {
+  padding-block: 4px;
+}
+
 .ds-project-context-menu__row:hover:not(:disabled),
 .ds-editor-picker-menu__row:hover:not(:disabled) {
   background: rgba(0, 0, 0, 0.04);
@@ -2595,8 +2600,8 @@ samp {
 
 /* Empty-state hero + composer share one centered column. */
 .ds-chat-stage {
-  width: min(940px, 100%);
-  max-width: 940px;
+  width: min(52rem, 100%);
+  max-width: 52rem;
   margin-inline: auto;
 }
 
@@ -2661,7 +2666,7 @@ samp {
   flex-direction: column;
   align-items: stretch;
   width: 100%;
-  max-width: min(100%, 940px);
+  max-width: min(100%, 52rem);
   margin-inline: auto;
 }
 
@@ -2918,8 +2923,8 @@ samp {
 
 .ds-chat-stage-stack {
   display: flex;
-  width: min(940px, 100%);
-  max-width: 940px;
+  width: min(52rem, 100%);
+  max-width: 52rem;
   margin-inline: auto;
   flex-direction: column;
   gap: calc(1.25rem * var(--ds-density, 1));
@@ -6408,8 +6413,8 @@ html[data-theme='dark'] .ds-code-fullscreen .shiki span {
 }
 
 .ds-chat-answer {
-  font-family: var(--font-ui);
-  font-size: var(--ds-chat-font-size, 15px);
+  font-family: var(--font-chat);
+  font-size: var(--ds-chat-font-size, 14px);
   line-height: 1.6;
 }
 
@@ -6434,24 +6439,23 @@ html[data-theme='dark'] .ds-code-fullscreen .shiki span {
    keep full column width with roomier rhythm, scannable headings, and soft
    inline code (no pill border). */
 .ds-markdown.ds-markdown--answer {
-  /* Keep the 940 stage width from the chat column — do not re-clamp here. */
+  /* Keep the chat-stage width — code and tables scroll inside this measure. */
   max-width: none;
   width: 100%;
-  font-size: var(--ds-chat-font-size, 15px);
-  line-height: 1.68;
-  letter-spacing: -0.006em;
+  font-size: var(--ds-chat-font-size, 14px);
+  line-height: 1.625;
+  letter-spacing: normal;
   color: color-mix(in srgb, var(--ds-text) 97%, var(--ds-text-muted));
   -webkit-font-smoothing: antialiased;
 }
 
-/* Word-style justify: even left/right edges on prose. Long inline tokens
-   (paths, identifiers) were leaving a ragged right margin when left-aligned. */
+/* Keep mixed CJK/Latin prose readable without stretching word spacing. */
 .ds-markdown.ds-markdown--answer p,
 .ds-markdown.ds-markdown--answer li {
-  text-align: justify;
-  text-justify: inter-ideograph;
-  -webkit-hyphens: auto;
-  hyphens: auto;
+  text-align: start;
+  text-justify: auto;
+  -webkit-hyphens: manual;
+  hyphens: manual;
 }
 
 .ds-markdown.ds-markdown--answer h1,
@@ -6502,23 +6506,23 @@ html[data-theme='dark'] .ds-code-fullscreen .shiki span {
 }
 
 .ds-markdown.ds-markdown--answer h1 {
-  margin: 1.15em 0 0.45em;
-  font-size: 1.45em;
+  margin: 1.1em 0 0.38em;
+  font-size: 1.65em;
 }
 
 .ds-markdown.ds-markdown--answer h2 {
-  margin: 1.25em 0 0.4em;
-  font-size: 1.28em;
+  margin: 1.1em 0 0.36em;
+  font-size: 1.45em;
 }
 
 .ds-markdown.ds-markdown--answer h3 {
-  margin: 1.1em 0 0.35em;
-  font-size: 1.12em;
+  margin: 1.05em 0 0.34em;
+  font-size: 1.25em;
 }
 
 .ds-markdown.ds-markdown--answer h4 {
   margin: 1em 0 0.3em;
-  font-size: 1.04em;
+  font-size: 1.1em;
 }
 
 .ds-markdown.ds-markdown--answer h1:first-child,
@@ -6537,7 +6541,7 @@ html[data-theme='dark'] .ds-code-fullscreen .shiki span {
 
 .ds-markdown.ds-markdown--answer strong,
 .ds-markdown.ds-markdown--answer b {
-  font-weight: 575;
+  font-weight: 500;
   color: var(--ds-text);
 }
 
@@ -6622,9 +6626,9 @@ html[data-theme='dark'] .ds-code-fullscreen .shiki span {
 .ds-markdown.ds-markdown--answer .ds-code-inline {
   border: none;
   border-radius: 0.35rem;
-  background: color-mix(in srgb, var(--ds-bubble-user, var(--ds-code-bg)) 88%, transparent);
-  padding: 0.08em 0.32em;
-  /* Let long paths break so justify can keep a clean right edge. */
+  background: color-mix(in srgb, var(--ds-bubble-user, var(--ds-code-bg)) 72%, transparent);
+  padding: 0.06em 0.28em;
+  /* Let long paths wrap without widening the reading column. */
   overflow-wrap: anywhere;
   word-break: break-word;
   font-family: var(--ds-chat-code-font, var(--font-mono), ui-monospace, monospace);
@@ -6665,11 +6669,28 @@ html[data-theme='dark'] .ds-code-fullscreen .shiki span {
 
 .ds-markdown.ds-markdown--answer table {
   font-size: 0.94em;
+  border: 0;
+  border-radius: 0;
 }
 
 .ds-markdown.ds-markdown--answer th,
 .ds-markdown.ds-markdown--answer td {
-  padding: 0.45rem 0.65rem;
+  padding: 0.4rem 0.5rem;
+}
+
+.ds-markdown.ds-markdown--answer th {
+  font-weight: 500;
+}
+
+/* Streamdown supplies scrolling; the table itself supplies content. Keep one
+   quiet boundary instead of a card, toolbar, and nested table frame. */
+.ds-markdown.ds-markdown--answer [data-streamdown='table-wrapper'] {
+  gap: 0;
+  margin: 0.75em 0;
+  border: 0;
+  border-radius: 0.65rem;
+  background: transparent;
+  padding: 0;
 }
 
 .ds-user-message {
@@ -6685,13 +6706,13 @@ html[data-theme='dark'] .ds-code-fullscreen .shiki span {
   background: var(--ds-bubble-user);
   padding: 0.6rem 0.95rem;
   color: var(--ds-bubble-user-fg);
-  font-family: var(--font-ui);
-  font-size: var(--ds-chat-font-size, 15px);
+  font-family: var(--font-chat);
+  font-size: var(--ds-chat-font-size, 14px);
   font-weight: 400;
   line-height: 1.58;
   box-shadow: none;
-  text-align: justify;
-  text-justify: inter-ideograph;
+  text-align: start;
+  text-justify: auto;
   overflow-wrap: anywhere;
   word-break: break-word;
 }
@@ -8023,8 +8044,8 @@ select:focus-visible,
 }
 
 .ds-dialogue-gutter.ds-chat-stage {
-  width: min(54rem, 100%);
-  max-width: 54rem;
+  width: min(52rem, 100%);
+  max-width: 52rem;
   margin-inline: auto;
 }
 
@@ -8049,8 +8070,8 @@ select:focus-visible,
 
 .ds-chat-operation-band__dialogue .ds-chat-stage {
   /* Keep the shared stage max-width; center so the right side opens toward the rail. */
-  width: min(54rem, 100%);
-  max-width: 54rem;
+  width: min(52rem, 100%);
+  max-width: 52rem;
   margin-inline: auto;
   padding-inline: 0;
 }
@@ -8060,7 +8081,7 @@ select:focus-visible,
 }
 
 .ds-chat-operation-band__dialogue > .ds-chat-stage.flex.shrink-0 {
-  width: min(54rem, 100%);
+  width: min(52rem, 100%);
 }
 
 .ds-chat-operation-band__dialogue > .ds-chat-stage.flex.shrink-0 > .flex.w-full.flex-col {
@@ -11131,7 +11152,7 @@ select:focus-visible,
 /*
  * IDE rail typography — match Synara transcript tokens
  * (DEFAULT_CHAT_FONT_SIZE_PX=12, line-height ratio 1.625, left-aligned).
- * Scoped to .ds-ide-chat-rail only; main chat keeps 15px answer mode.
+ * Scoped to .ds-ide-chat-rail only; main chat follows the appearance setting.
  *
  * Token ladder (narrow ~440px rail):
  *   base 12 · title 13 · meta 11 · code 11

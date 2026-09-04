@@ -79,7 +79,7 @@ def test_hard_clear_waits_until_the_batch_is_worth_a_prefix_break() -> None:
 
 def test_hard_clear_fires_once_enough_is_reclaimable() -> None:
     """Same threshold, but now the batch pays for the break."""
-    messages = _session(20, fat_turns=10)
+    messages = _session(24, fat_turns=10)
 
     changed = prune_old_tool_results(
         messages,
@@ -94,7 +94,7 @@ def test_threshold_is_opt_in() -> None:
     """The default stays eager, so callers that want batching must ask."""
     assert ToolPruneConfig().hard_clear_min_reclaim == 0
 
-    messages = _session(14, fat_turns=1)
+    messages = _session(19, fat_turns=1)
     assert prune_old_tool_results(messages, config=ToolPruneConfig()) > 0
     assert any("omitted" in body for body in _bodies(messages))
 
@@ -107,8 +107,8 @@ def test_batching_keeps_the_payload_prefix_reusable() -> None:
     is a full cache hit, anything else re-bills from the first changed message.
     """
     batched_config = ToolPruneConfig(hard_clear_min_reclaim=L0_HARD_CLEAR_MIN_RECLAIM)
-    eager = _session(14, fat_turns=1)
-    batched = _session(14, fat_turns=1)
+    eager = _session(19, fat_turns=1)
+    batched = _session(19, fat_turns=1)
     prune_old_tool_results(eager, config=ToolPruneConfig())
     prune_old_tool_results(batched, config=batched_config)
     eager_before, batched_before = _wire(eager), _wire(batched)
@@ -145,11 +145,11 @@ def test_engine_defers_at_l0_pressure_but_not_in_the_rewrite_band() -> None:
     """
     window = context_window_for_model(MODEL)
 
-    moderate = _session(14, fat_turns=1)
+    moderate = _session(19, fat_turns=1)
     changed = _Stub(int(window * 0.60))._maybe_l0_prune_tool_results(moderate, MODEL)
     assert changed == 0, "0.60 ratio: keep the cache, the batch is too small"
 
-    urgent = _session(14, fat_turns=1)
+    urgent = _session(19, fat_turns=1)
     changed = _Stub(int(window * 0.80))._maybe_l0_prune_tool_results(urgent, MODEL)
     assert changed > 0, "0.80 ratio: reclaim the window regardless of the cache"
     assert any("omitted" in body for body in _bodies(urgent))

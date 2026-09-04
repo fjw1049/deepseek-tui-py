@@ -37,11 +37,11 @@ LARGE_CONTEXT_SUMMARY_MAX_TOKENS = 2_048
 LARGE_CONTEXT_WINDOW_TOKENS = 500_000
 
 # L0 mid-session tool-result prune (grok-style).
-L0_KEEP_LAST_N_TURNS = 3
+L0_KEEP_LAST_N_TURNS = 5
 L0_SOFT_TRIM_THRESHOLD = 4_000
 L0_SOFT_TRIM_HEAD = 1_500
 L0_SOFT_TRIM_TAIL = 1_500
-L0_HARD_CLEAR_AGE_TURNS = 10
+L0_HARD_CLEAR_AGE_TURNS = 15
 # Default hard-clear body when no spillover path is recoverable. Prefer
 # ``format_hard_clear_placeholder`` so spilled outputs keep a re-read pointer.
 L0_HARD_CLEAR_PLACEHOLDER = "[Tool result omitted — too old]"
