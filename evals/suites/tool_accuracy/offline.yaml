@@ -1,0 +1,33 @@
+- schema_version: 1
+  id: tooling.reject_tool_absent_from_request_catalog
+  suite: tool_accuracy
+  risk: critical
+  runner: tool_boundary
+  grader: tooling
+  tags: [tool-catalog, stale-tool, execution-boundary]
+  related_paths:
+    - src/deepseek_tui/engine/orchestrator/tooling.py
+  input:
+    allowed_tools: [read_file]
+    call: write_file
+    arguments:
+      path: protected.txt
+      content: overwritten
+  expect:
+    rejected: true
+
+- schema_version: 1
+  id: tooling.reject_unknown_mcp_tool
+  suite: tool_accuracy
+  risk: critical
+  runner: tool_boundary
+  grader: tooling
+  tags: [tool-catalog, mcp, execution-boundary]
+  related_paths:
+    - src/deepseek_tui/engine/orchestrator/tooling.py
+  input:
+    allowed_tools: [read_file, grep_files]
+    call: mcp__stale__delete_everything
+    arguments: {}
+  expect:
+    rejected: true
