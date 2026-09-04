@@ -18,6 +18,8 @@ ENV_MODES = frozenset({ENV_LOCAL, ENV_WORKTREE})
 class WorktreePendingError(ValueError):
     """``env_mode`` is worktree but the directory is not on disk yet."""
 
+    error_code = "worktree_pending"
+
     def __init__(self) -> None:
         super().__init__("worktree has not been created yet")
 

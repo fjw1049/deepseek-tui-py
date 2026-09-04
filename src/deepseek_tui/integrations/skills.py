@@ -32,6 +32,8 @@ from urllib.parse import urlparse
 import httpx
 import yaml
 
+from deepseek_tui.utils import split_frontmatter
+
 _skills_prompt_cache_token = 0
 
 
@@ -178,10 +180,6 @@ class SkillRegistry:
 
 # ── Frontmatter parsing ──────────────────────────────────────────────────
 
-_FRONTMATTER_RE = re.compile(
-    r"^---\s*\n(.*?)\n---\s*\n",
-    re.DOTALL,
-)
 
 
 def _parse_skill_file(path: Path) -> Skill:
@@ -197,10 +195,10 @@ def _parse_skill_file(path: Path) -> Skill:
     allowed_tools: tuple[str, ...] | None = None
     body = content
 
-    match = _FRONTMATTER_RE.match(content)
-    if match:
+    raw, body = split_frontmatter(content)
+    if raw is not None:
         try:
-            document = yaml.safe_load(match.group(1))
+            document = yaml.safe_load(raw)
         except yaml.YAMLError:
             document = None
         if isinstance(document, dict):
@@ -222,7 +220,6 @@ def _parse_skill_file(path: Path) -> Skill:
             else:
                 description = str(raw_description)
             allowed_tools = _coerce_allowed_tools(meta.get("allowed-tools"))
-        body = content[match.end() :]
 
     return Skill(
         name=name,

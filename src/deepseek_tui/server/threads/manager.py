@@ -112,6 +112,7 @@ from deepseek_tui.server.threads.models import (
     TurnRecord,
     UpdateThreadRequest,
 )
+from deepseek_tui.server.threads.errors import TurnConflictError, TurnNotActiveError
 from deepseek_tui.workspace.execution import (
     ENV_LOCAL,
     ENV_WORKTREE,
@@ -3424,7 +3425,7 @@ class RuntimeThreadManager:
                 raise RuntimeError("Thread engine not loaded")
             if state.active_turn is not None:
                 pop_turn_latency(turn_id)
-                raise ValueError("Thread already has an active turn")
+                raise TurnConflictError("Thread already has an active turn")
             if state.provider != provider:
                 client = self._get_llm_client(provider)
                 state.engine.client = client
@@ -3823,9 +3824,9 @@ class RuntimeThreadManager:
         async with self._active_lock:
             state = self._active.get(thread_id)
             if state is None:
-                raise ValueError("Thread is not loaded")
+                raise TurnNotActiveError("Thread is not loaded")
             if state.active_turn is None or state.active_turn.turn_id != turn_id:
-                raise ValueError(f"Turn {turn_id} is not active on thread {thread_id}")
+                raise TurnNotActiveError(f"Turn {turn_id} is not active on thread {thread_id}")
             state.active_turn.interrupt_requested = True
             handle = state.handle
             self._touch_lru(thread_id)
@@ -3853,9 +3854,9 @@ class RuntimeThreadManager:
         async with self._active_lock:
             state = self._active.get(thread_id)
             if state is None:
-                raise ValueError("Thread is not loaded")
+                raise TurnNotActiveError("Thread is not loaded")
             if state.active_turn is None or state.active_turn.turn_id != turn_id:
-                raise ValueError(f"Turn {turn_id} is not active on thread {thread_id}")
+                raise TurnNotActiveError(f"Turn {turn_id} is not active on thread {thread_id}")
             handle = state.handle
             self._touch_lru(thread_id)
 
@@ -3910,7 +3911,7 @@ class RuntimeThreadManager:
             if state is None:
                 raise RuntimeError("Thread engine not loaded")
             if state.active_turn is not None:
-                raise ValueError("Thread already has an active turn")
+                raise TurnConflictError("Thread already has an active turn")
 
         now = datetime.now(timezone.utc)
         turn_id = f"turn_{uuid.uuid4().hex[:8]}"
@@ -4065,7 +4066,9 @@ class RuntimeThreadManager:
         try:
             await self._ensure_engine_loaded(thread)
         except ValueError as exc:
-            if str(exc).startswith("missing_api_key"):
+            from deepseek_tui.client.factory import MissingApiKeyError
+
+            if isinstance(exc, MissingApiKeyError):
                 return {
                     "thread_id": thread_id,
                     "status": "skipped",

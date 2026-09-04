@@ -368,23 +368,16 @@ class ToolExecutionMixin:
             self._mark_subagent_tool_result_consumed(
                 tool_call.name,
                 result.metadata,
-                tool_call.arguments
-                if isinstance(tool_call.arguments, dict)
-                else None,
+                tool_call.arguments if isinstance(tool_call.arguments, dict) else None,
             )
         self._mark_process_tool_result_consumed(
             tool_call.name,
             result.metadata if isinstance(result.metadata, dict) else None,
-            tool_call.arguments
-            if isinstance(tool_call.arguments, dict)
-            else None,
+            tool_call.arguments if isinstance(tool_call.arguments, dict) else None,
         )
         self.working_set.observe_tool_call(
             tool_call.name,
-            tool_call.arguments
-            if isinstance(tool_call.arguments, dict)
-            else None,
-            result.content,
+            tool_call.arguments if isinstance(tool_call.arguments, dict) else None,
         )
         await self.handle.emit(
             ToolResultEvent(

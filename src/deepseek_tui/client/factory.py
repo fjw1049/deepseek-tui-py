@@ -20,6 +20,12 @@ if TYPE_CHECKING:
     from deepseek_tui.config.models import Config
 
 
+class MissingApiKeyError(ValueError):
+    """No API key configured for the active provider (HTTP 400)."""
+
+    error_code = "missing_api_key"
+
+
 @dataclass(frozen=True, slots=True)
 class EndpointTestResult:
     """Result of a connectivity test against an endpoint."""
@@ -60,7 +66,7 @@ def build_llm_client(config: Config) -> LLMClient:
     # (httpx rejects it as an illegal header). Surface a clear missing-key
     # error instead of a cryptic stream failure after provider switch.
     if not api_key.strip():
-        raise ValueError(
+        raise MissingApiKeyError(
             f"missing_api_key: no API key configured for provider "
             f"'{config.provider}'. Add it in Settings → Models, then retry."
         )

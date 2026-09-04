@@ -16,6 +16,7 @@ from typing import Any
 
 from deepseek_tui.config.providers import context_window_for_model
 from deepseek_tui.protocol.messages import Message
+from deepseek_tui.utils import split_frontmatter
 from deepseek_tui.tools.registry import ToolResult
 import logging
 from dataclasses import dataclass, field
@@ -758,8 +759,6 @@ def load_project_context(workspace: Path) -> ProjectContext:
     return ctx
 
 
-_CURSOR_FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.DOTALL)
-
 
 def load_cursor_rules(workspace: Path) -> tuple[str | None, list[Path], list[str]]:
     """Read always-on ``.cursor/rules/*.mdc`` rules from *workspace*.
@@ -790,16 +789,14 @@ def load_cursor_rules(workspace: Path) -> tuple[str | None, list[Path], list[str
         except ValueError as exc:
             warnings.append(str(exc))
             continue
-        match = _CURSOR_FRONTMATTER_RE.match(raw)
+        raw_frontmatter, body = split_frontmatter(raw)
         meta: object = None
-        body = raw
-        if match:
+        if raw_frontmatter is not None:
             try:
-                meta = yaml.safe_load(match.group(1))
+                meta = yaml.safe_load(raw_frontmatter)
             except yaml.YAMLError as exc:
                 warnings.append(f"Invalid frontmatter in {path}: {exc}")
                 continue
-            body = raw[match.end():]
         if not (isinstance(meta, dict) and meta.get("alwaysApply") is True):
             skipped += 1
             continue
@@ -1085,19 +1082,21 @@ class WorkingSet:
         self,
         tool_name: str,
         tool_input: dict[str, Any] | None,
-        tool_output: str | None = None,
         workspace: Path | None = None,
     ) -> None:
-        """Observe tool execution and track usage."""
+        """Observe tool execution and track usage.
+
+        Paths come from the structured ``tool_input`` only — re-scanning
+        tool *output* text with the path regex was redundant (every path a
+        tool prints arrived in its arguments first) and noisy (grep output
+        seeds the working set with unrelated files).
+        """
         self.recent_tool_uses.append(tool_name)
         if len(self.recent_tool_uses) > 20:
             self.recent_tool_uses.pop(0)
 
         if tool_input:
             self._extract_paths_from_dict(tool_input, workspace)
-
-        if tool_output:
-            self._extract_paths_from_text(tool_output, workspace)
 
     def pinned_message_indices(
         self,
