@@ -14,7 +14,7 @@ from collections import OrderedDict
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -138,6 +138,9 @@ logger = logging.getLogger(__name__)
 
 # Sentinel: "argument not provided" (distinct from an explicit None value).
 _UNSET = object()
+
+# ponytail: fixed threshold; make configurable when per-project needs appear.
+IDLE_WORKTREE_RECLAIM_AFTER = timedelta(days=3)
 
 UNPUBLISHED_WORKTREE_LABOR = "<unpublished-worktree-labor>"
 PUBLISH_FAILED = "<publish-failed>"
@@ -1972,6 +1975,11 @@ class RuntimeThreadManager:
                 self._reset_publish_request(thread)
             self._touch(thread)
             await self._emit_publish_state(thread)
+        # Turn boundary: cheapest moment to drop long-idle clean worktrees.
+        try:
+            await self.reclaim_idle_worktrees()
+        except Exception:  # noqa: BLE001 — never fail turn release on GC
+            logger.debug("idle_worktrees_reclaim_failed", exc_info=True)
         try:
             root = project_root(thread)
         except Exception:
@@ -2216,6 +2224,38 @@ class RuntimeThreadManager:
         from deepseek_tui.workspace.managed_worktree import prune_orphaned_worktrees
 
         return prune_orphaned_worktrees(self._referenced_worktree_paths())
+
+    async def reclaim_idle_worktrees(self) -> int:
+        """Remove clean worktrees of threads idle beyond the reclaim threshold.
+
+        Purely a disk tradeoff: a fully published worktree holds no unique
+        bytes and ``_prepare_isolated_workspace`` rebuilds it on the next
+        turn. Threads with unpublished labor or blocked publishes are never
+        touched (``_reclaim_owned_worktree`` re-checks and keeps them).
+        """
+        now = datetime.now(timezone.utc)
+        removed = 0
+        for thread in self.store.list_threads():
+            if thread.archived or not (
+                thread.worktree_path or thread.associated_worktree_path
+            ):
+                continue
+            if thread.id in self._active:
+                continue
+            if now - thread.updated_at < IDLE_WORKTREE_RECLAIM_AFTER:
+                continue
+            if self._unpublished_checkpoints(thread) or thread.publish_blocked:
+                continue
+            try:
+                status = await self._reclaim_owned_worktree(thread)
+            except Exception:  # noqa: BLE001 — one stale tree must not stop the rest
+                logger.debug(
+                    "idle_reclaim_failed thread=%s", thread.id, exc_info=True
+                )
+                continue
+            if status in {"removed", "gone"}:
+                removed += 1
+        return removed
 
     async def _reclaim_owned_worktree(self, thread: ThreadRecord) -> str:
         async with self._hold_thread_operation(thread.id):
