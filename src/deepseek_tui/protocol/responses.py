@@ -1,5 +1,3 @@
-
-
 from __future__ import annotations
 
 from enum import Enum
@@ -30,56 +28,81 @@ class Usage(BaseModel):
     )
     cache_creation_input_tokens: int = Field(
         default=0,
-        validation_alias=AliasChoices(
-            "cache_creation_input_tokens", "prompt_cache_miss_tokens"
-        ),
+        validation_alias=AliasChoices("cache_creation_input_tokens", "prompt_cache_miss_tokens"),
     )
     cache_read_input_tokens: int = Field(
         default=0,
-        validation_alias=AliasChoices(
-            "cache_read_input_tokens", "prompt_cache_hit_tokens"
-        ),
+        validation_alias=AliasChoices("cache_read_input_tokens", "prompt_cache_hit_tokens"),
     )
     reasoning_tokens: int = 0
+    # Provider wire formats disagree about ``input_tokens``: OpenAI/DeepSeek
+    # include cached tokens, while Anthropic excludes cache reads/writes. Keep
+    # that fact beside the parsed value instead of guessing from magnitudes.
+    # Keep it in serialised usage records: without the marker an inclusive
+    # OpenAI/DeepSeek count is re-read as Anthropic-exclusive and doubled.
+    input_tokens_include_cache: bool | None = Field(
+        default=None,
+        repr=False,
+    )
 
     @property
     def total_input_tokens(self) -> int:
-        """Full prompt size, normalised across the two provider conventions.
-
-        DeepSeek's ``prompt_tokens`` is the whole prompt and hit/miss are its
-        internal split, so the cache counters are already included. Anthropic's
-        ``input_tokens`` is only the part that neither hit nor wrote the cache,
-        so the counters must be added. Reading ``input_tokens`` directly is
-        wrong on Anthropic-style gateways: with a warm prefix it reports a few
-        hundred tokens for a 150K prompt.
-
-        Distinguished by containment — the cache counters cannot exceed an
-        inclusive ``input_tokens``, and cannot fit inside an exclusive one
-        whenever caching actually happened.
-        """
+        """Full prompt size, normalised across provider conventions."""
         cached = self.cache_read_input_tokens + self.cache_creation_input_tokens
-        if self.input_tokens >= cached:
+        if self.input_tokens_include_cache is True:
             return self.input_tokens
-        return self.input_tokens + cached
+        if self.input_tokens_include_cache is False:
+            return self.input_tokens + cached
+        # Backward-compatible fallback for Usage objects restored from older
+        # data that predates the explicit convention marker.
+        return (
+            self.input_tokens
+            if self.input_tokens >= cached
+            else self.input_tokens + cached
+        )
 
     @model_validator(mode="before")
     @classmethod
-    def _extract_nested_reasoning(cls, data: Any) -> Any:
-        """Pull reasoning_tokens out of completion_tokens_details if present.
-
-        DeepSeek puts it nested under ``completion_tokens_details``; this
-        handles that path. Avoid clobbering an explicit top-level
-        ``reasoning_tokens`` if the caller already set one.
-        """
+    def _normalise_provider_fields(cls, data: Any) -> Any:
+        """Record token semantics and extract nested OpenAI-style counters."""
         if not isinstance(data, dict):
             return data
-        if "reasoning_tokens" in data and data["reasoning_tokens"]:
-            return data
+        data = dict(data)
+
+        if "input_tokens_include_cache" not in data:
+            if "prompt_tokens" in data:
+                data["input_tokens_include_cache"] = True
+            elif "input_tokens" in data and (
+                "cache_read_input_tokens" in data or "cache_creation_input_tokens" in data
+            ):
+                data["input_tokens_include_cache"] = False
+
         details = data.get("completion_tokens_details")
-        if isinstance(details, dict):
+        if not data.get("reasoning_tokens") and isinstance(details, dict):
             nested = details.get("reasoning_tokens")
             if isinstance(nested, int):
-                data = {**data, "reasoning_tokens": nested}
+                data["reasoning_tokens"] = nested
+
+        # OpenAI reports cached input under prompt_tokens_details while its
+        # prompt_tokens remains inclusive. Treat the uncached remainder as a
+        # cache miss so hit ratios and tiered cost estimates have a denominator.
+        prompt_details = data.get("prompt_tokens_details")
+        prompt_tokens = data.get("prompt_tokens")
+        if isinstance(prompt_details, dict) and isinstance(prompt_tokens, int):
+            cached = prompt_details.get("cached_tokens")
+            if isinstance(cached, int) and cached >= 0:
+                if not any(
+                    key in data for key in ("cache_read_input_tokens", "prompt_cache_hit_tokens")
+                ):
+                    data["cache_read_input_tokens"] = cached
+                if not any(
+                    key in data
+                    for key in (
+                        "cache_creation_input_tokens",
+                        "prompt_cache_miss_tokens",
+                    )
+                ):
+                    data["cache_creation_input_tokens"] = max(0, prompt_tokens - cached)
         return data
 
 

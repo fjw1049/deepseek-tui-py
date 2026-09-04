@@ -98,6 +98,11 @@ class RateLimitedLLMClient(LLMClient):
         self._limit = limit
         self._registry = registry or default_registry()
 
+    def cache_fingerprint_units(
+        self, request: MessageRequest
+    ) -> list[tuple[str, object]]:
+        return self._inner.cache_fingerprint_units(request)
+
     async def stream_chat_completion(self, request: MessageRequest) -> AsyncIterator[StreamEvent]:
         allowed, retry_after = await self._registry.try_acquire(
             self._fingerprint, self._limit

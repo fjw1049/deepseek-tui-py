@@ -347,6 +347,7 @@ def should_compact(
     pinned_indices: set[int] | None = None,
     *,
     real_input_tokens: int = 0,
+    real_input_estimate: int = 0,
     model: str | None = None,
     system_prompt: str | None = None,
     tools: list[dict[str, Any]] | None = None,
@@ -370,6 +371,7 @@ def should_compact(
         model or config.model or "deepseek-chat",
         messages,
         real_input_tokens=real_input_tokens,
+        real_input_estimate=real_input_estimate,
         system_prompt=system_prompt,
         tools=tools,
     )
@@ -416,10 +418,27 @@ async def compact_messages_safe(
     )
 
     # Drop any prior bridge from the plan input; its text becomes previous_summary.
+    # Remap caller-provided pins at the same time: their indices refer to the
+    # original list, so removing a leading bridge otherwise shifts every pin.
     prior_bridge = extract_compaction_bridge_text(messages)
-    work_messages = [m for m in messages if not is_compaction_bridge_message(m)]
+    indexed_work = [
+        (old_index, message)
+        for old_index, message in enumerate(messages)
+        if not is_compaction_bridge_message(message)
+    ]
+    work_messages = [message for _old_index, message in indexed_work]
+    remapped_pins = (
+        {
+            new_index
+            for new_index, (old_index, _message) in enumerate(indexed_work)
+            if old_index in pinned_indices
+        }
+        if pinned_indices
+        else None
+    )
     if not work_messages:
         work_messages = list(messages)
+        remapped_pins = pinned_indices
 
     prev = previous_summary or prior_bridge
     last_real_query = find_last_real_user_query(work_messages)
@@ -429,7 +448,7 @@ async def compact_messages_safe(
 
     plan = plan_compaction(
         work_messages,
-        pinned_indices,
+        remapped_pins,
         keep_recent_tokens=config.keep_recent_tokens,
     )
 
@@ -565,8 +584,9 @@ async def _create_summary(
     previous_block = ""
     if previous_summary and previous_summary.strip():
         previous_block = (
-            "Your previous handoff note (authoritative; PRESERVE still-true "
-            "facts, ADD new progress, UPDATE Next step):\n"
+            "Your previous handoff note is continuity context, not evidence. "
+            "PRESERVE still-supported facts, ADD new progress, and UPDATE "
+            "Next step:\n"
             f"<previous-summary>\n{previous_summary.strip()}\n</previous-summary>\n\n"
         )
     user_prompt = (
@@ -735,6 +755,7 @@ def should_l0_prune(
     model: str,
     messages: list[Message],
     real_input_tokens: int = 0,
+    real_input_estimate: int = 0,
     config: CompactionConfig | None = None,
     system_prompt: str | None = None,
     tools: list[dict[str, Any]] | None = None,
@@ -756,6 +777,7 @@ def should_l0_prune(
             model,
             messages,
             real_input_tokens=real_input_tokens,
+            real_input_estimate=real_input_estimate,
             system_prompt=system_prompt,
             tools=tools,
         )

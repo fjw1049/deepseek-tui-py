@@ -22,8 +22,8 @@ from deepseek_tui.protocol.responses import (
     StreamTextDelta,
     StreamToolCallComplete,
 )
-from deepseek_tui.tui.commands import cmd_provider
 from deepseek_tui.server.threads import RuntimeThreadManager, StartTurnRequest
+from deepseek_tui.tui.commands import cmd_provider
 
 
 def _config(provider: str, *, protocol: str, base_url: str) -> Config:
@@ -50,6 +50,20 @@ def test_factory_selects_anthropic_protocol() -> None:
     )
     assert isinstance(client, AnthropicCompatClient)
     assert client._messages_url() == "https://ark.example/api/coding/v1/messages"
+
+
+def test_factory_passes_explicit_prompt_cache_capability() -> None:
+    config = _config(
+        "anthropic",
+        protocol="anthropic",
+        base_url="https://api.anthropic.com",
+    )
+    config.providers["anthropic"].prompt_cache = "explicit"
+
+    client = build_llm_client(config)
+
+    assert isinstance(client, AnthropicCompatClient)
+    assert client.prompt_cache == "explicit"
 
 
 def test_ark_anthropic_registry_default_is_complete() -> None:
@@ -233,6 +247,72 @@ def test_anthropic_payload_maps_tools_and_tool_results() -> None:
     }
     assert payload["messages"][2]["role"] == "user"
     assert payload["messages"][2]["content"][0]["tool_use_id"] == "call-1"
+
+
+def test_anthropic_explicit_cache_marks_stable_system_and_tool_prefix() -> None:
+    tool = {
+        "type": "function",
+        "function": {
+            "name": "read_file",
+            "description": "Read a file",
+            "parameters": {"type": "object"},
+        },
+    }
+    client = AnthropicCompatClient(
+        api_key="test-key",
+        base_url="https://api.anthropic.com",
+        prompt_cache="explicit",
+    )
+
+    payload = client._build_payload(
+        MessageRequest(
+            model="claude-sonnet",
+            system_prompt="stable system",
+            messages=[Message.user("hello")],
+            tools=[tool],
+        )
+    )
+
+    assert payload["system"] == [
+        {
+            "type": "text",
+            "text": "stable system",
+            "cache_control": {"type": "ephemeral"},
+        }
+    ]
+    assert payload["tools"][-1]["cache_control"] == {"type": "ephemeral"}
+    assert "cache_control" not in tool
+
+
+def test_provider_fingerprint_uses_anthropic_wire_shape() -> None:
+    client = AnthropicCompatClient(
+        api_key="test-key",
+        base_url="https://api.anthropic.com",
+        prompt_cache="explicit",
+    )
+    request = MessageRequest(
+        model="claude-sonnet",
+        system_prompt="stable system",
+        messages=[Message.user("hello")],
+        tools=[
+            {
+                "name": "read_file",
+                "description": "Read a file",
+                "input_schema": {"type": "object"},
+            }
+        ],
+    )
+
+    units = client.cache_fingerprint_units(request)
+
+    assert [label for label, _ in units] == [
+        "model",
+        "tools",
+        "system",
+        "message[0] role=user",
+    ]
+    assert units[1][1]["tools"][-1]["cache_control"] == {"type": "ephemeral"}
+    assert units[2][1][0]["cache_control"] == {"type": "ephemeral"}
 
 
 @pytest.mark.asyncio

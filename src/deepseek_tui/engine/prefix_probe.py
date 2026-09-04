@@ -6,9 +6,11 @@ drop means some unit the previous request already sent came back different —
 the static prefix, or a message that history rewriting touched. Digesting each
 unit per round turns that into an answer: the first mismatch names the culprit.
 
-Only ``role`` and ``content`` feed a message digest. ``origin`` is session-local
-and never reaches the wire, so folding it in would report breaks the provider
-cannot see — but it makes an excellent label once a break is found.
+System text and tool schemas are fingerprinted separately so diagnostics can
+name which static component moved. Only ``role`` and ``content`` feed a message
+digest. ``origin`` is session-local and never reaches the wire, so folding it
+in would report breaks the provider cannot see — but it makes an excellent
+label once a break is found.
 """
 
 from __future__ import annotations
@@ -19,24 +21,64 @@ from typing import Any
 
 from deepseek_tui.protocol.messages import Message
 
+FingerprintUnit = tuple[str, object]
+
+
+def fingerprint_units(units: list[FingerprintUnit]) -> list[str]:
+    """Digest provider-rendered cache units without logging their contents."""
+    return [_digest(payload) for _, payload in units]
+
+
+def unit_token_weights(units: list[FingerprintUnit]) -> list[int]:
+    """Estimate token weight for provider-rendered cache units."""
+    from deepseek_tui.engine.context import estimate_tokens
+
+    return [estimate_tokens(_encode(payload)) for _, payload in units]
+
 
 def fingerprint_request(
     system_prompt: str | None,
     messages: list[Message],
     tools: list[dict[str, Any]] | None = None,
 ) -> list[str]:
-    """Digest each cacheable unit, in the order the provider reads them.
+    """Digest each conceptual cacheable unit.
 
-    Slot 0 is the static prefix — the system prompt plus the tool schemas, which
-    sit ahead of every message and share their cache lifetime. One digest per
-    message follows.
+    Slots 0 and 1 are system text and tool schemas. One digest per message
+    follows. Providers may serialise the two static components in different
+    orders, so callers conservatively treat a change in either as zero reuse.
     """
-    units = [_digest([system_prompt or "", tools or []])]
+    units: list[FingerprintUnit] = [
+        ("system_prompt", system_prompt or ""),
+        ("tools", tools or []),
+    ]
     units.extend(
-        _digest([message.role.value, [block.model_dump() for block in message.content]])
-        for message in messages
+        (
+            f"message[{index}]",
+            [message.role.value, [block.model_dump() for block in message.content]],
+        )
+        for index, message in enumerate(messages)
     )
-    return units
+    return fingerprint_units(units)
+
+
+def request_token_weights(
+    system_prompt: str | None,
+    messages: list[Message],
+    tools: list[dict[str, Any]] | None = None,
+) -> list[int]:
+    """Estimate each fingerprint unit's token weight for useful percentages."""
+    units: list[FingerprintUnit] = [
+        ("system_prompt", system_prompt or ""),
+        ("tools", tools or []),
+    ]
+    units.extend(
+        (
+            f"message[{index}]",
+            [message.role.value, [block.model_dump() for block in message.content]],
+        )
+        for index, message in enumerate(messages)
+    )
+    return unit_token_weights(units)
 
 
 def first_divergence(previous: list[str], current: list[str]) -> int | None:
@@ -55,8 +97,10 @@ def first_divergence(previous: list[str], current: list[str]) -> int | None:
 def describe_break(index: int, messages: list[Message]) -> str:
     """Name the unit at *index* so a log line points at something actionable."""
     if index == 0:
-        return "static_prefix(system_prompt|tools)"
-    position = index - 1
+        return "system_prompt"
+    if index == 1:
+        return "tools"
+    position = index - 2
     if position >= len(messages):
         return f"message[{position}] (dropped)"
     message = messages[position]
@@ -68,5 +112,9 @@ def _digest(payload: object) -> str:
     # Deliberately not ``sort_keys``: the provider sees whatever key order the
     # serializer emits, so normalising it here would hide real instability in,
     # say, tool-schema construction.
-    encoded = json.dumps(payload, default=str, ensure_ascii=False)
+    encoded = _encode(payload)
     return hashlib.blake2b(encoded.encode("utf-8"), digest_size=8).hexdigest()
+
+
+def _encode(payload: object) -> str:
+    return json.dumps(payload, default=str, ensure_ascii=False)

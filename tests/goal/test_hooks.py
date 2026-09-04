@@ -19,7 +19,6 @@ from deepseek_tui.engine.turn import TurnResult
 from deepseek_tui.goal.persist import apply_goal_to_engine
 from deepseek_tui.goal.service import GoalService
 from deepseek_tui.goal.types import (
-    GOAL_CONTROL_TOOL_NAMES,
     GOAL_TOOL_NAMES,
     GOAL_TURN_ID_KEY,
     RESUME_AFTER_RESTORE_REASON,
@@ -47,33 +46,6 @@ def test_subagent_registry_never_has_goal_tools() -> None:
     assert not (GOAL_TOOL_NAMES & names)
 
 
-def test_control_tools_hidden_without_goal() -> None:
-    service = GoalService()
-    assert service.snapshot() is None
-    catalog = [
-        {"function": {"name": name}}
-        for name in ("read_file", "CreateGoal", "GetGoal", "UpdateGoal", "SetGoalBudget")
-    ]
-    visible = [
-        (t.get("function") or t).get("name")
-        for t in catalog
-        if service.snapshot() is not None
-        or (t.get("function") or t).get("name") not in GOAL_CONTROL_TOOL_NAMES
-    ]
-    assert "UpdateGoal" not in visible
-    assert "SetGoalBudget" not in visible
-    assert "CreateGoal" in visible
-    service.create("now there is a goal")
-    visible = [
-        (t.get("function") or t).get("name")
-        for t in catalog
-        if service.snapshot() is not None
-        or (t.get("function") or t).get("name") not in GOAL_CONTROL_TOOL_NAMES
-    ]
-    assert "UpdateGoal" in visible
-    assert "SetGoalBudget" in visible
-
-
 @pytest.mark.asyncio
 async def test_engine_restore_pauses_active_goal(engine_ctx) -> None:
     engine, _handle = engine_ctx
@@ -87,17 +59,16 @@ async def test_engine_restore_pauses_active_goal(engine_ctx) -> None:
 
 
 @pytest.mark.asyncio
-async def test_engine_hides_control_tools_until_goal(engine_ctx) -> None:
+async def test_engine_keeps_goal_tool_catalog_stable(engine_ctx) -> None:
     engine, _handle = engine_ctx
     names = {(t.get("function") or t).get("name") for t in await engine._get_tools_with_mcp()}
     assert "CreateGoal" in names
     assert "GetGoal" in names
-    assert "UpdateGoal" not in names
-    assert "SetGoalBudget" not in names
-    engine.goal_service.create("Ship it")
-    names = {(t.get("function") or t).get("name") for t in await engine._get_tools_with_mcp()}
     assert "UpdateGoal" in names
     assert "SetGoalBudget" in names
+    engine.goal_service.create("Ship it")
+    after = {(t.get("function") or t).get("name") for t in await engine._get_tools_with_mcp()}
+    assert after == names
 
 
 def test_entering_goal_leaves_plan_and_ask() -> None:

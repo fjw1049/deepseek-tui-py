@@ -37,10 +37,16 @@ class TestIsMcpTool:
 class TestBuildModelToolCatalog:
     def test_merges_native_and_mcp(self):
         native = [
-            {"type": "function", "function": {"name": "read_file", "description": "Read", "parameters": {}}},
+            {
+                "type": "function",
+                "function": {"name": "read_file", "description": "Read", "parameters": {}},
+            },
         ]
         mcp = [
-            {"type": "function", "function": {"name": "mcp_fs_list", "description": "List", "parameters": {}}},
+            {
+                "type": "function",
+                "function": {"name": "mcp_fs_list", "description": "List", "parameters": {}},
+            },
         ]
         result = build_model_tool_catalog(native, mcp, "agent")
         names = [t["function"]["name"] for t in result]
@@ -49,7 +55,10 @@ class TestBuildModelToolCatalog:
 
     def test_empty_mcp_returns_native_only(self):
         native = [
-            {"type": "function", "function": {"name": "read_file", "description": "Read", "parameters": {}}},
+            {
+                "type": "function",
+                "function": {"name": "read_file", "description": "Read", "parameters": {}},
+            },
         ]
         result = build_model_tool_catalog(native, [], "agent")
         assert len(result) == 1
@@ -115,7 +124,8 @@ class TestDiscoverToolsMerged:
         engine = Engine(handle=handle, client=client, tool_context=ctx)
         tools = await engine._get_tools_with_mcp()
         mcp_names = [
-            t.get("function", t).get("name") for t in tools
+            t.get("function", t).get("name")
+            for t in tools
             if t.get("function", t).get("name", "").startswith("mcp_")
         ]
         assert mcp_names == []
@@ -131,11 +141,15 @@ class TestDiscoverToolsConnects:
         mock_client.is_running = True
         mock_client.list_tools = AsyncMock(
             return_value=[
-                type("D", (), {
-                    "name": "hello",
-                    "description": "Say hello",
-                    "input_schema": {},
-                })()
+                type(
+                    "D",
+                    (),
+                    {
+                        "name": "hello",
+                        "description": "Say hello",
+                        "input_schema": {},
+                    },
+                )()
             ]
         )
         mgr._ensure_client = AsyncMock(return_value=mock_client)  # noqa: SLF001
@@ -162,15 +176,15 @@ class TestMcpToolApproval:
         from pathlib import Path
 
         mgr = McpManager([McpServerConfig(name="srv", command="echo")])
-        mgr.call_tool = AsyncMock(return_value={
-            "content": [{"type": "text", "text": "ok"}],
-            "isError": False,
-        })
+        mgr.call_tool = AsyncMock(
+            return_value={
+                "content": [{"type": "text", "text": "ok"}],
+                "isError": False,
+            }
+        )
 
         approval_handler = AsyncMock()
-        approval_handler.request_approval = AsyncMock(
-            return_value=ApprovalDecision.DENIED
-        )
+        approval_handler.request_approval = AsyncMock(return_value=ApprovalDecision.DENIED)
 
         ctx = ToolContext(
             working_directory=Path("/tmp"),
@@ -183,11 +197,46 @@ class TestMcpToolApproval:
             exec_policy=ExecPolicyEngine(approval_policy="on-request"),
             approval_handler=approval_handler,
         )
-        tool_call = ToolCall(
-            id="tc-mcp", name="mcp_srv_write", arguments={"x": 1}
-        )
-        result = await engine._execute_single_tool(tool_call, [], "deepseek-chat")
+        tool_call = ToolCall(id="tc-mcp", name="mcp_srv_write", arguments={"x": 1})
+        api_tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "mcp_srv_write",
+                    "description": "write",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            }
+        ]
+        result = await engine._execute_single_tool(tool_call, api_tools, "deepseek-chat")
         assert result is None
+        mgr.call_tool.assert_not_awaited()
+
+    async def test_tool_missing_from_request_catalog_is_rejected(self):
+        from deepseek_tui.engine.handle import EngineHandle
+        from deepseek_tui.engine.orchestrator import Engine
+        from deepseek_tui.protocol.responses import ToolCall
+        from deepseek_tui.tools.mcp import MCP_MANAGER_KEY
+        from deepseek_tui.tools.registry import ToolContext
+        from pathlib import Path
+
+        mgr = McpManager([McpServerConfig(name="srv", command="echo")])
+        mgr.call_tool = AsyncMock()
+        engine = Engine(
+            handle=EngineHandle(),
+            client=AsyncMock(),
+            tool_context=ToolContext(
+                working_directory=Path("/tmp"),
+                metadata={MCP_MANAGER_KEY: mgr},
+            ),
+        )
+
+        with pytest.raises(ToolError, match="current tool catalog"):
+            await engine._execute_single_tool(
+                ToolCall(id="hidden", name="mcp_srv_write", arguments={}),
+                [],
+                "deepseek-chat",
+            )
         mgr.call_tool.assert_not_awaited()
 
 
@@ -196,13 +245,13 @@ class TestExecuteMcpTool:
         from deepseek_tui.mcp.execute import execute_external_mcp_tool
 
         mgr = McpManager([McpServerConfig(name="srv", command="echo")])
-        mgr.call_tool = AsyncMock(return_value={
-            "content": [{"type": "text", "text": "hello world"}],
-            "isError": False,
-        })
-        result = await execute_external_mcp_tool(
-            mgr, "mcp_srv_greet", {"name": "test"}
+        mgr.call_tool = AsyncMock(
+            return_value={
+                "content": [{"type": "text", "text": "hello world"}],
+                "isError": False,
+            }
         )
+        result = await execute_external_mcp_tool(mgr, "mcp_srv_greet", {"name": "test"})
         assert result.success is True
         assert result.content == "hello world"
         mgr.call_tool.assert_awaited_once_with("mcp_srv_greet", {"name": "test"})
@@ -211,10 +260,12 @@ class TestExecuteMcpTool:
         from deepseek_tui.mcp.execute import execute_external_mcp_tool
 
         mgr = McpManager([McpServerConfig(name="srv", command="echo")])
-        mgr.call_tool = AsyncMock(return_value={
-            "content": [{"type": "text", "text": "not found"}],
-            "isError": True,
-        })
+        mgr.call_tool = AsyncMock(
+            return_value={
+                "content": [{"type": "text", "text": "not found"}],
+                "isError": True,
+            }
+        )
         result = await execute_external_mcp_tool(mgr, "mcp_srv_find", {})
         assert result.success is False
         assert "not found" in result.content
@@ -231,16 +282,19 @@ class TestExecuteMcpTool:
         from deepseek_tui.mcp.execute import execute_external_mcp_tool
 
         mgr = McpManager([McpServerConfig(name="srv", command="echo")])
-        mgr.call_tool = AsyncMock(return_value={
-            "content": [
-                {"type": "text", "text": "line 1"},
-                {"type": "text", "text": "line 2"},
-            ],
-            "isError": False,
-        })
+        mgr.call_tool = AsyncMock(
+            return_value={
+                "content": [
+                    {"type": "text", "text": "line 1"},
+                    {"type": "text", "text": "line 2"},
+                ],
+                "isError": False,
+            }
+        )
         result = await execute_external_mcp_tool(mgr, "mcp_srv_multi", {})
         assert result.success is True
         assert result.content == "line 1\nline 2"
+
 
 # --- Native deferral on MCP-less branches ------------------------------------
 

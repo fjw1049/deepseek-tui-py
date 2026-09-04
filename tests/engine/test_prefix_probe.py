@@ -7,6 +7,7 @@ that a real rewrite is caught and that wire-invisible churn is not.
 
 from __future__ import annotations
 
+from deepseek_tui.client.deepseek import DeepSeekClient
 from deepseek_tui.engine.capacity import (
     L0_HARD_CLEAR_MIN_RECLAIM,
     ToolPruneConfig,
@@ -16,10 +17,12 @@ from deepseek_tui.engine.prefix_probe import (
     describe_break,
     fingerprint_request,
     first_divergence,
+    request_token_weights,
 )
 from deepseek_tui.protocol.messages import (
     Message,
     MessageOrigin,
+    MessageRequest,
     Role,
     TextBlock,
     ToolUseBlock,
@@ -62,7 +65,7 @@ def test_rewriting_an_old_body_breaks_at_that_message() -> None:
 
     break_at = first_divergence(before, fingerprint_request(SYSTEM, messages, TOOLS))
 
-    assert break_at == 3, "slot 0 is the static prefix, so message[2] lands at 3"
+    assert break_at == 4, "two static slots put message[2] at slot 4"
     assert describe_break(break_at, messages) == "message[2] role=tool origin=-"
 
 
@@ -73,8 +76,20 @@ def test_static_prefix_churn_breaks_at_slot_zero() -> None:
     reordered = [{"function": {"name": "exec_shell"}, "type": "function"}]
     break_at = first_divergence(before, fingerprint_request(SYSTEM, messages, reordered))
 
-    assert break_at == 0, "tool schemas share the system prompt's cache lifetime"
-    assert describe_break(break_at, messages) == "static_prefix(system_prompt|tools)"
+    assert break_at == 1
+    assert describe_break(break_at, messages) == "tools"
+
+
+def test_system_and_tools_have_independent_diagnostics() -> None:
+    messages = _history()
+    before = fingerprint_request(SYSTEM, messages, TOOLS)
+
+    break_at = first_divergence(
+        before, fingerprint_request("Different system", messages, TOOLS)
+    )
+
+    assert break_at == 0
+    assert describe_break(break_at, messages) == "system_prompt"
 
 
 def test_origin_alone_is_not_a_break() -> None:
@@ -97,7 +112,7 @@ def test_break_reports_the_earliest_rewrite() -> None:
     messages[0] = Message.user("different question")
     messages[3] = Message.assistant("different answer")
 
-    assert first_divergence(before, fingerprint_request(SYSTEM, messages, TOOLS)) == 1
+    assert first_divergence(before, fingerprint_request(SYSTEM, messages, TOOLS)) == 2
 
 
 def test_reminder_injection_is_attributed_to_its_origin() -> None:
@@ -115,7 +130,7 @@ def test_reminder_injection_is_attributed_to_its_origin() -> None:
 
     break_at = first_divergence(before, fingerprint_request(SYSTEM, messages, TOOLS))
 
-    assert break_at == 3
+    assert break_at == 4
     assert describe_break(break_at, messages) == (
         "message[2] role=user origin=system_reminder"
     )
@@ -167,6 +182,16 @@ class _Probe:
 
     def __init__(self) -> None:
         self._prefix_digests: list[str] = []
+        self._prefix_token_weights: list[int] = []
+        self.client = DeepSeekClient(api_key="test", base_url="https://example.test")
+
+
+def test_token_weights_reflect_payload_size_not_message_count() -> None:
+    messages = _history()
+    weights = request_token_weights(SYSTEM, messages, TOOLS)
+
+    assert len(weights) == len(messages) + 2
+    assert weights[4] > weights[2], "large tool result must outweigh short user text"
 
 
 def test_engine_logs_the_break_with_its_culprit(caplog) -> None:
@@ -178,11 +203,29 @@ def test_engine_logs_the_break_with_its_culprit(caplog) -> None:
     probe = _Probe()
     messages = _history()
     with caplog.at_level(logging.INFO, logger="deepseek_tui.engine.orchestrator.core"):
-        Engine._log_prefix_break(probe, 0, SYSTEM, messages, TOOLS)
+        Engine._log_prefix_break(
+            probe,
+            0,
+            MessageRequest(
+                model="test-model",
+                system_prompt=SYSTEM,
+                messages=messages,
+                tools=TOOLS,
+            ),
+        )
         assert "prefix_break" not in caplog.text, "nothing to compare on round 0"
 
         messages[2] = Message.tool_result("call-1", "[Tool result omitted — too old]")
-        Engine._log_prefix_break(probe, 1, SYSTEM, messages, TOOLS)
+        Engine._log_prefix_break(
+            probe,
+            1,
+            MessageRequest(
+                model="test-model",
+                system_prompt=SYSTEM,
+                messages=messages,
+                tools=TOOLS,
+            ),
+        )
 
-    assert "prefix_break round=1 at=3/5" in caplog.text
-    assert "culprit=message[2] role=tool" in caplog.text
+    assert "prefix_break round=1 at=5/7 reusable_tokens=" in caplog.text
+    assert "culprit=message[3] role=tool" in caplog.text

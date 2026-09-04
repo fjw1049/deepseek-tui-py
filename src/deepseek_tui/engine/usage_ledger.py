@@ -74,7 +74,7 @@ class TurnUsageLedger:
         reasoning = 0
         for item in self.items:
             u = item.usage
-            input_tokens += u.input_tokens
+            input_tokens += u.total_input_tokens
             output_tokens += u.output_tokens
             cache_read += u.cache_read_input_tokens
             cache_creation += u.cache_creation_input_tokens
@@ -85,6 +85,7 @@ class TurnUsageLedger:
             cache_read_input_tokens=cache_read,
             cache_creation_input_tokens=cache_creation,
             reasoning_tokens=reasoning,
+            input_tokens_include_cache=True,
         )
 
     def totals(self) -> dict[str, Any]:

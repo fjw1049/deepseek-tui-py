@@ -59,15 +59,34 @@ from deepseek_tui.utils import bind_tool
 logger = logging.getLogger(__name__)
 
 
+def _normalise_tool_call(name: str, arguments: Any) -> tuple[str, Any]:
+    """Map wire/legacy aliases to the registry name used for dispatch."""
+    from deepseek_tui.engine.dispatch import normalize_legacy_tool_call
+    from deepseek_tui.mcp.execute import normalize_mcp_bridge_tool_name
+
+    return normalize_legacy_tool_call(
+        normalize_mcp_bridge_tool_name(name), arguments
+    )
+
+
+def _allowed_tool_names(api_tools: list[dict[str, Any]]) -> set[str]:
+    """Canonical names from the exact catalog sent with this request."""
+    names: set[str] = set()
+    for definition in api_tools:
+        function = definition.get("function") or definition
+        name = function.get("name") if isinstance(function, dict) else None
+        if isinstance(name, str) and name:
+            names.add(_normalise_tool_call(name, {})[0])
+    return names
+
+
 class ToolExecutionMixin:
     """Tool dispatch / approval / elevation methods shared into Engine."""
 
     # Populated by Engine.__init__; declared here for type-checkers / mixins.
     _tool_dedup: ToolCallDeduplicator
 
-    async def _emit_tool_failure(
-        self, tool_call: ToolCall, error_msg: str
-    ) -> None:
+    async def _emit_tool_failure(self, tool_call: ToolCall, error_msg: str) -> None:
         """Emit a failed tool result so the UI/runtime can close the tool item."""
         emit_tool_audit(
             {
@@ -121,11 +140,15 @@ class ToolExecutionMixin:
         return self.mcp_manager.declared_capabilities(tool_name)
 
     async def _execute_tool_calls(
-        self, tool_calls: list[ToolCall], model: str | None = None
+        self,
+        tool_calls: list[ToolCall],
+        model: str | None = None,
     ) -> list[Message]:
         results: list[Message] = []
         effective_model = model or self.default_model
-        api_tools = await self._get_tools_with_mcp()
+        api_tools = getattr(self, "_active_api_tools", None)
+        if api_tools is None:
+            api_tools = await self._get_tools_with_mcp()
         self._tool_dedup.begin_batch()
 
         try:
@@ -138,11 +161,13 @@ class ToolExecutionMixin:
                     mcp_tool_is_parallel_safe,
                     mcp_tool_is_read_only,
                 )
+
                 plans = []
                 for i, tc in enumerate(tool_calls):
                     tool = (
                         self.tool_registry.get(tc.name)
-                        if self.tool_registry.contains(tc.name) else None
+                        if self.tool_registry.contains(tc.name)
+                        else None
                     )
                     from deepseek_tui.tools.approval import (
                         plan_requires_approval,
@@ -153,39 +178,44 @@ class ToolExecutionMixin:
                     if tool is not None:
                         args = tc.arguments if isinstance(tc.arguments, dict) else {}
                         read_only = tool.is_read_only_for_input(args)
-                        plans.append(ToolExecutionPlan(
-                            index=i,
-                            id=tc.id,
-                            name=tc.name,
-                            input=args,
-                            read_only=read_only,
-                            supports_parallel=read_only
-                            and tool.supports_parallel(),
-                            approval_required=plan_requires_approval(tool, policy, args),
-                        ))
+                        plans.append(
+                            ToolExecutionPlan(
+                                index=i,
+                                id=tc.id,
+                                name=tc.name,
+                                input=args,
+                                read_only=read_only,
+                                supports_parallel=read_only and tool.supports_parallel(),
+                                approval_required=plan_requires_approval(tool, policy, args),
+                            )
+                        )
                     elif is_mcp_tool(tc.name):
-                        plans.append(ToolExecutionPlan(
-                            index=i,
-                            id=tc.id,
-                            name=tc.name,
-                            input=tc.arguments if isinstance(tc.arguments, dict) else {},
-                            read_only=mcp_tool_is_read_only(tc.name),
-                            supports_parallel=mcp_tool_is_parallel_safe(tc.name),
-                            approval_required=plan_requires_mcp_approval(
-                                tc.name,
-                                policy,
-                            ),
-                        ))
+                        plans.append(
+                            ToolExecutionPlan(
+                                index=i,
+                                id=tc.id,
+                                name=tc.name,
+                                input=tc.arguments if isinstance(tc.arguments, dict) else {},
+                                read_only=mcp_tool_is_read_only(tc.name),
+                                supports_parallel=mcp_tool_is_parallel_safe(tc.name),
+                                approval_required=plan_requires_mcp_approval(
+                                    tc.name,
+                                    policy,
+                                ),
+                            )
+                        )
                     else:
-                        plans.append(ToolExecutionPlan(
-                            index=i,
-                            id=tc.id,
-                            name=tc.name,
-                            input=tc.arguments if isinstance(tc.arguments, dict) else {},
-                            read_only=False,
-                            supports_parallel=False,
-                            approval_required=False,
-                        ))
+                        plans.append(
+                            ToolExecutionPlan(
+                                index=i,
+                                id=tc.id,
+                                name=tc.name,
+                                input=tc.arguments if isinstance(tc.arguments, dict) else {},
+                                read_only=False,
+                                supports_parallel=False,
+                                approval_required=False,
+                            )
+                        )
                 has_dup_keys = self._tool_dedup.batch_has_duplicate_keys(
                     [
                         (
@@ -206,9 +236,7 @@ class ToolExecutionMixin:
                 if goal_terminal:
                     content = "Goal reached a terminal state; skipped later tool call."
                     await self._emit_tool_failure(tool_call, content)
-                    results.append(
-                        Message.tool_result(tool_call.id, content, is_error=True)
-                    )
+                    results.append(Message.tool_result(tool_call.id, content, is_error=True))
                     continue
                 decision = self._tool_dedup.classify(
                     tool_call.name,
@@ -247,9 +275,7 @@ class ToolExecutionMixin:
                     )
                     await self._emit_tool_failure(tool_call, content)
                     self._tool_dedup.record(decision.key, content, is_error=True)
-                    results.append(
-                        Message.tool_result(tool_call.id, content, is_error=True)
-                    )
+                    results.append(Message.tool_result(tool_call.id, content, is_error=True))
                     continue
 
                 with bind_tool(tool_call.id):
@@ -271,15 +297,9 @@ class ToolExecutionMixin:
                                 tool_call.name,
                                 duration_ms,
                             )
-                            denied = (
-                                f"Tool {tool_call.name} denied by approval policy"
-                            )
-                            self._tool_dedup.record(
-                                decision.key, denied, is_error=True
-                            )
-                            denied = self._tool_dedup.decorate_execute_content(
-                                decision, denied
-                            )
+                            denied = f"Tool {tool_call.name} denied by approval policy"
+                            self._tool_dedup.record(decision.key, denied, is_error=True)
+                            denied = self._tool_dedup.decorate_execute_content(decision, denied)
                             results.append(
                                 Message.tool_result(
                                     tool_call.id,
@@ -294,8 +314,7 @@ class ToolExecutionMixin:
                         )
 
                         logger.info(
-                            "tool_call_end name=%s success=%s duration_ms=%d "
-                            "content_bytes=%d",
+                            "tool_call_end name=%s success=%s duration_ms=%d content_bytes=%d",
                             tool_call.name,
                             result.success,
                             duration_ms,
@@ -308,8 +327,7 @@ class ToolExecutionMixin:
                             result.success
                             and tool_call.name == "UpdateGoal"
                             and isinstance(tool_call.arguments, dict)
-                            and tool_call.arguments.get("status")
-                            in {"complete", "blocked"}
+                            and tool_call.arguments.get("status") in {"complete", "blocked"}
                         )
                     except ToolError as exc:
                         duration_ms = int((time.monotonic() - tool_started) * 1000)
@@ -320,9 +338,7 @@ class ToolExecutionMixin:
                             duration_ms,
                             error_msg,
                         )
-                        await self._finish_tool_error(
-                            tool_call, decision, error_msg, results
-                        )
+                        await self._finish_tool_error(tool_call, decision, error_msg, results)
                     except Exception as exc:  # noqa: BLE001
                         duration_ms = int((time.monotonic() - tool_started) * 1000)
                         error_msg = f"{tool_call.name}: {type(exc).__name__}: {exc}"
@@ -332,14 +348,11 @@ class ToolExecutionMixin:
                             duration_ms,
                             error_msg,
                         )
-                        await self._finish_tool_error(
-                            tool_call, decision, error_msg, results
-                        )
+                        await self._finish_tool_error(tool_call, decision, error_msg, results)
             return results
 
         finally:
             self._tool_dedup.end_batch()
-
 
     async def _finish_tool_result(
         self,
@@ -385,17 +398,11 @@ class ToolExecutionMixin:
                 tool_name=tool_call.name,
                 content=result.content,
                 success=result.success,
-                metadata=(
-                    dict(result.metadata)
-                    if isinstance(result.metadata, dict)
-                    else None
-                ),
+                metadata=(dict(result.metadata) if isinstance(result.metadata, dict) else None),
             )
         )
         if result.success:
-            await self._run_post_edit_lsp_hook(
-                tool_call.name, tool_call.arguments
-            )
+            await self._run_post_edit_lsp_hook(tool_call.name, tool_call.arguments)
         from deepseek_tui.tools.runtime import apply_spillover
 
         result = apply_spillover(result, tool_call.id)
@@ -410,9 +417,7 @@ class ToolExecutionMixin:
             output_for_context,
             is_error=not result.success,
         )
-        output_for_context = self._tool_dedup.decorate_execute_content(
-            decision, output_for_context
-        )
+        output_for_context = self._tool_dedup.decorate_execute_content(decision, output_for_context)
         results.append(
             Message.tool_result(
                 tool_call.id,
@@ -433,12 +438,8 @@ class ToolExecutionMixin:
         await self._emit_tool_failure(tool_call, error_msg)
         err_content = f"Error: {error_msg}"
         self._tool_dedup.record(decision.key, err_content, is_error=True)
-        err_content = self._tool_dedup.decorate_execute_content(
-            decision, err_content
-        )
-        results.append(
-            Message.tool_result(tool_call.id, err_content, is_error=True)
-        )
+        err_content = self._tool_dedup.decorate_execute_content(decision, err_content)
+        results.append(Message.tool_result(tool_call.id, err_content, is_error=True))
 
     async def _execute_tools_parallel(
         self,
@@ -481,9 +482,7 @@ class ToolExecutionMixin:
                 tool_started = time.monotonic()
 
                 try:
-                    result = await self._execute_single_tool(
-                        tool_call, api_tools, model
-                    )
+                    result = await self._execute_single_tool(tool_call, api_tools, model)
                     duration_ms = int((time.monotonic() - tool_started) * 1000)
 
                     if result is None:
@@ -532,9 +531,7 @@ class ToolExecutionMixin:
                     return (tool_call, None, error_msg)
 
         outcomes = (
-            await asyncio.gather(*[_exec_one_parallel(tc) for tc in runnable])
-            if runnable
-            else []
+            await asyncio.gather(*[_exec_one_parallel(tc) for tc in runnable]) if runnable else []
         )
         outcome_by_id = {tc.id: (tc, result, err) for tc, result, err in outcomes}
 
@@ -544,31 +541,24 @@ class ToolExecutionMixin:
             if decision.kind == "block":
                 content = self._tool_dedup.block_content(decision)
                 logger.warning(
-                    "tool_call_dedup_blocked name=%s streak=%d tool_id=%s "
-                    "(parallel batch)",
+                    "tool_call_dedup_blocked name=%s streak=%d tool_id=%s (parallel batch)",
                     tool_call.name,
                     decision.projected_streak,
                     tool_call.id,
                 )
                 await self._emit_tool_failure(tool_call, content)
                 self._tool_dedup.record(decision.key, content, is_error=True)
-                results.append(
-                    Message.tool_result(tool_call.id, content, is_error=True)
-                )
+                results.append(Message.tool_result(tool_call.id, content, is_error=True))
                 continue
 
             _tc, result, error_msg = outcome_by_id[tool_call.id]
             if error_msg is not None:
-                await self._finish_tool_error(
-                    tool_call, decision, error_msg, results
-                )
+                await self._finish_tool_error(tool_call, decision, error_msg, results)
             elif result is None:
                 # Denial case (shouldn't happen)
                 denied = f"Tool {tool_call.name} denied"
                 self._tool_dedup.record(decision.key, denied, is_error=True)
-                denied = self._tool_dedup.decorate_execute_content(
-                    decision, denied
-                )
+                denied = self._tool_dedup.decorate_execute_content(decision, denied)
                 results.append(
                     Message.tool_result(
                         tool_call.id,
@@ -577,9 +567,7 @@ class ToolExecutionMixin:
                     )
                 )
             else:
-                await self._finish_tool_result(
-                    tool_call, decision, result, model, results
-                )
+                await self._finish_tool_result(tool_call, decision, result, model, results)
 
         return results
 
@@ -590,14 +578,18 @@ class ToolExecutionMixin:
         model: str,
     ) -> ToolResult | None:
         """Execute a single tool call, handling special tools and approval."""
+        tool_name, _arguments = _normalise_tool_call(
+            tool_call.name, tool_call.arguments
+        )
+        if tool_name not in _allowed_tool_names(api_tools):
+            raise ToolError(missing_tool_error_message(tool_call.name, api_tools))
+
         hook_ctx = self._lifecycle_hook_context(
             tool_name=tool_call.name,
             tool_args=tool_call.arguments,
             model=model,
         )
-        pre_hook_results = await self._run_lifecycle_hook(
-            "tool_call_before", hook_ctx
-        )
+        pre_hook_results = await self._run_lifecycle_hook("tool_call_before", hook_ctx)
         if pre_hook_results:
             from deepseek_tui.integrations.hooks import aggregate_hook_decision
 
@@ -626,12 +618,9 @@ class ToolExecutionMixin:
                 approval_request = build_approval_request(
                     tool_call.name,
                     [],
-                    reason=decision.reason
-                    or "A PreToolUse hook requested user confirmation",
+                    reason=decision.reason or "A PreToolUse hook requested user confirmation",
                 )
-                denied = await self._handle_approval_flow(
-                    tool_call, approval_request
-                )
+                denied = await self._handle_approval_flow(tool_call, approval_request)
                 if denied:
                     return ToolResult(
                         success=False,
@@ -642,6 +631,7 @@ class ToolExecutionMixin:
             m.model_dump(mode="json") for m in self.session_messages
         ]
         from deepseek_tui.engine.usage_ledger import usage_source
+
         # usage_source("tool") 是一个上下文管理器，把这期间产生的 token 用量都归类到 "tool" 来源
         with usage_source("tool"):
             result = await self._execute_single_tool_impl(tool_call, api_tools, model)
@@ -650,9 +640,7 @@ class ToolExecutionMixin:
             self._accrue_child_token_cost_from_metadata(result.metadata)
             hook_ctx.tool_result = result.content
             hook_ctx.tool_success = result.success
-        post_hook_results = await self._run_lifecycle_hook(
-            "tool_call_after", hook_ctx
-        )
+        post_hook_results = await self._run_lifecycle_hook("tool_call_after", hook_ctx)
         if post_hook_results and result is not None:
             from deepseek_tui.integrations.hooks import aggregate_hook_decision
 
@@ -668,9 +656,7 @@ class ToolExecutionMixin:
 
                 result = _dc_replace(
                     result,
-                    content=result.content
-                    + "\n\n[hook feedback]\n"
-                    + "\n".join(feedback),
+                    content=result.content + "\n\n[hook feedback]\n" + "\n".join(feedback),
                 )
         return result
 
@@ -681,18 +667,8 @@ class ToolExecutionMixin:
         model: str,
     ) -> ToolResult | None:
         """Inner tool dispatch (lifecycle hooks handled by wrapper)."""
-        from deepseek_tui.mcp.execute import normalize_mcp_bridge_tool_name
-
-        # 先归一化：把桥接别名（如 mcp_read_resource）映射回注册表工具名，
-        # 后续的 is_external_mcp_tool 判定才会把它正确归到注册表分支而非外部 MCP 分支。
-        tool_name = normalize_mcp_bridge_tool_name(tool_call.name)
-        # 再把已下线工具的旧名（agent_resume / exec_shell_interact）转发到
-        # 合并后的工具（schema 只暴露新名；debug 日志记录旧名命中）。
-        from deepseek_tui.engine.dispatch import normalize_legacy_tool_call
-
-        tool_name, arguments = normalize_legacy_tool_call(
-            tool_name, tool_call.arguments
-        )
+        # Map bridge/legacy aliases before policy checks and registry dispatch.
+        tool_name, arguments = _normalise_tool_call(tool_call.name, tool_call.arguments)
         # 写文件类工具执行前拍快照（供 /undo）。
         self._take_pre_tool_snapshot(tool_call.id, tool_name, tool_call.arguments)
 
@@ -730,9 +706,7 @@ class ToolExecutionMixin:
                 self._mcp_declared_capabilities(tool_name),
             )
             if approval_request is not None:
-                denied = await self._handle_approval_flow(
-                    tool_call, approval_request
-                )
+                denied = await self._handle_approval_flow(tool_call, approval_request)
                 if denied:
                     return None
             return await execute_external_mcp_tool(
@@ -767,9 +741,7 @@ class ToolExecutionMixin:
             if denied:
                 return None
 
-        return await self.tool_registry.execute(
-            tool_name, arguments, self.tool_context
-        )
+        return await self.tool_registry.execute(tool_name, arguments, self.tool_context)
 
     async def _handle_approval_flow(
         self,
@@ -791,17 +763,13 @@ class ToolExecutionMixin:
 
         fp_name = fingerprint_name if fingerprint_name is not None else tool_call.name
         fp_args = (
-            fingerprint_arguments
-            if fingerprint_arguments is not None
-            else tool_call.arguments
+            fingerprint_arguments if fingerprint_arguments is not None else tool_call.arguments
         )
         cache_key = build_approval_key(fp_name, fp_args)
         cache_status = self.approval_cache.check(cache_key)
 
         if cache_status is ApprovalCacheStatus.APPROVED:
-            logger.info(
-                "approval_cache_hit tool=%s reason=cached_session", tool_call.name
-            )
+            logger.info("approval_cache_hit tool=%s reason=cached_session", tool_call.name)
             await self.handle.emit(
                 ApprovalResolvedEvent(
                     tool_call_id=tool_call.id,
@@ -871,12 +839,8 @@ class ToolExecutionMixin:
                     request=approval_request,
                 )
             )
-        decision = await self.approval_handler.request_approval(
-            tool_call.id, approval_request
-        )
-        logger.info(
-            "approval_decision tool=%s decision=%s", tool_call.name, decision.value
-        )
+        decision = await self.approval_handler.request_approval(tool_call.id, approval_request)
+        logger.info("approval_decision tool=%s decision=%s", tool_call.name, decision.value)
         approved = decision in {
             ApprovalDecision.APPROVED,
             ApprovalDecision.APPROVED_SESSION,
@@ -951,14 +915,10 @@ class ToolExecutionMixin:
 
         policy = self.tool_context.execution_sandbox_policy
         if policy is None:
-            policy = sandbox_policy_for_mode(
-                self.mode, self.tool_context.working_directory
-            )
+            policy = sandbox_policy_for_mode(self.mode, self.tool_context.working_directory)
 
         meta = result.metadata if isinstance(result.metadata, dict) else {}
-        denial_msg = str(
-            meta.get("denial_message") or result.content or "Sandbox blocked command"
-        )
+        denial_msg = str(meta.get("denial_message") or result.content or "Sandbox blocked command")
         elevated = suggest_elevation_policy(
             policy,
             denial_msg,
@@ -1038,9 +998,7 @@ class ToolExecutionMixin:
             self.tool_context.elevated_sandbox_policy = prev
         return retry if retry is not None else result
 
-    async def _await_user_input(
-        self, tool_call_id: str, input_data: dict[str, Any]
-    ) -> ToolResult:
+    async def _await_user_input(self, tool_call_id: str, input_data: dict[str, Any]) -> ToolResult:
         """Emit UserInputRequiredEvent and block until TUI resolves."""
         from deepseek_tui.tools.user_input import validate_user_input_request
 
@@ -1054,9 +1012,7 @@ class ToolExecutionMixin:
             }
             for q in questions
         ]
-        response = await self._await_user_input_raw(
-            tool_call_id, questions_payload, purpose=None
-        )
+        response = await self._await_user_input_raw(tool_call_id, questions_payload, purpose=None)
         if response is None:
             return ToolResult(
                 content="User input request cancelled (turn cancelled)",
@@ -1074,9 +1030,7 @@ class ToolExecutionMixin:
         purpose: str | None,
     ) -> dict[str, Any] | None:
         """Block on a UserInputRequiredEvent; None means cancelled."""
-        future: asyncio.Future[dict[str, Any]] = (
-            asyncio.get_event_loop().create_future()
-        )
+        future: asyncio.Future[dict[str, Any]] = asyncio.get_event_loop().create_future()
         self.handle.pending_user_inputs[tool_call_id] = future
         await self.handle.emit(
             UserInputRequiredEvent(
@@ -1089,9 +1043,7 @@ class ToolExecutionMixin:
             self.handle.cancel_event.wait(), name="user-input-cancel-wait"
         )
         try:
-            done, _ = await asyncio.wait(
-                {future, cancel_wait}, return_when=asyncio.FIRST_COMPLETED
-            )
+            done, _ = await asyncio.wait({future, cancel_wait}, return_when=asyncio.FIRST_COMPLETED)
             if future not in done:
                 future.cancel()
                 return None
@@ -1162,12 +1114,9 @@ class ToolExecutionMixin:
                 "(or have the user switch to plan) before exit_plan_mode.",
                 success=False,
             )
-        if not plan_file_exists(
-            self.tool_context.working_directory, self.tool_context.metadata
-        ):
+        if not plan_file_exists(self.tool_context.working_directory, self.tool_context.metadata):
             return ToolResult(
-                content="No plan found. Call update_plan with the full plan "
-                "before exit_plan_mode.",
+                content="No plan found. Call update_plan with the full plan before exit_plan_mode.",
                 success=False,
             )
 
@@ -1239,9 +1188,7 @@ class ToolExecutionMixin:
     def _set_approved_plan(self, approved: bool) -> None:
         self.tool_context.metadata["approved_plan"] = bool(approved)
 
-    async def apply_interaction_mode(
-        self, mode: str, *, reason: str = ""
-    ) -> None:
+    async def apply_interaction_mode(self, mode: str, *, reason: str = "") -> None:
         """Switch interaction mode and notify listeners.
 
         Rebuilds a private registry when this engine owns its tool runtime.

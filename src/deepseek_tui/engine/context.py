@@ -152,9 +152,7 @@ def _summarize_subagent_snapshot(snapshot: Any, index: int) -> str:
     return "\n".join(lines)
 
 
-def _compact_subagent_tool_result_for_context(
-    tool_name: str, raw: str
-) -> str | None:
+def _compact_subagent_tool_result_for_context(tool_name: str, raw: str) -> str | None:
     """Compact ``agent`` result/wait payloads for parent context.
 
     Only the result/wait actions emit JSON content, so keying off the merged
@@ -185,9 +183,7 @@ def _compact_subagent_tool_result_for_context(
     for idx, snap in enumerate(snapshots):
         if idx >= 8:
             remaining = len(snapshots) - idx
-            out.append(
-                f"- ... {remaining} more sub-agent result(s) omitted from context summary"
-            )
+            out.append(f"- ... {remaining} more sub-agent result(s) omitted from context summary")
             break
         out.append(_summarize_subagent_snapshot(snap, idx + 1))
     return "\n".join(out)
@@ -260,9 +256,7 @@ def compact_tool_result_for_context(
     if subagent is not None:
         return subagent
 
-    hard_limit, noisy_soft, snippet_chars = _tool_result_context_limits(
-        model, pressure_ratio
-    )
+    hard_limit, noisy_soft, snippet_chars = _tool_result_context_limits(model, pressure_ratio)
     raw_len = len(raw)
     should_compact = raw_len > hard_limit or (
         _tool_result_is_noisy(tool_name) and raw_len > noisy_soft
@@ -357,9 +351,7 @@ def estimate_input_tokens_conservative(
                     msg_chars += len(json.dumps(val))
     message_tokens = (msg_chars * 3) // 2  # conservative 1.5x
 
-    system_tokens = (
-        estimate_tokens(system_prompt) if system_prompt else 0
-    )
+    system_tokens = estimate_tokens(system_prompt) if system_prompt else 0
 
     framing_overhead = len(messages) * 12 + 48
 
@@ -398,6 +390,7 @@ def is_context_length_error_message(message: str) -> bool:
 
 
 # --- Legacy aliases (keep backward compatibility with turn_loop) ----------
+
 
 def estimated_input_tokens(messages: list[Message]) -> int:
     """Rough estimate of input tokens from message list (legacy).
@@ -455,6 +448,8 @@ def estimate_context_breakdown(
     workspace: Any | None = None,
     mode: str = "agent",
     real_input_tokens: int = 0,
+    real_input_estimate: int = 0,
+    auto_approve: bool | None = None,
 ) -> dict[str, int]:
     """Estimate token occupancy by category for the next request.
 
@@ -466,7 +461,12 @@ def estimate_context_breakdown(
     ``tool_definitions``, ``mcp``, ``skills``, ``rules``, and ``conversation``.
 
     ``real_input_tokens``: when > 0, the provider's last reported input
-    (from the previous turn's StreamDone). Used to calibrate the total:
+    (from the previous turn's StreamDone). ``real_input_estimate`` is the
+    local estimate captured for that exact request. When both are available,
+    the displayed total applies the estimated change since that request to
+    the provider measurement; otherwise the provider total is used directly.
+
+    The calibrated total is split as follows:
 
     - If real ≥ static estimates: static buckets stay as-is and conversation
       is back-derived as ``real - static`` (typical case; char estimates
@@ -491,36 +491,25 @@ def estimate_context_breakdown(
         app_mode = AppMode((mode or "agent").strip().lower())
     except ValueError:
         app_mode = AppMode.AGENT
-    if system_prompt_override and system_prompt_override.strip():
-        system_tokens = estimate_tokens(
-            system_prompt_override.strip()
-        )
-        rules_tokens = 0
-        skills_tokens = 0
-    else:
-        ws = Path(workspace).expanduser().resolve() if workspace else None
-        system_text = build_system_prompt(
-            None,
-            workspace=ws,
-            mode=app_mode,
-            project_context_enabled=False,
-        )
-        system_tokens = estimate_tokens(system_text)
+    ws = Path(workspace).expanduser().resolve() if workspace else None
+    system_text = build_system_prompt(
+        system_prompt_override,
+        workspace=ws,
+        mode=app_mode,
+        project_context_enabled=False,
+        auto_approve=auto_approve,
+    )
+    system_tokens = estimate_tokens(system_text)
 
-        rules_text = ""
-        if ws is not None:
-
-            rules_text = load_project_context_with_parents(ws).as_system_block()
-        rules_tokens = (
-            estimate_tokens(rules_text.strip())
-            if rules_text.strip()
-            else 0
+    rules_text = ""
+    if ws is not None:
+        rules_text = (
+            load_project_context_with_parents(ws, allow_auto_generate=False).as_system_block() or ""
         )
-        skills_tokens = (
-            estimate_tokens(skills_context.strip())
-            if skills_context and skills_context.strip()
-            else 0
-        )
+    rules_tokens = estimate_tokens(rules_text.strip()) if rules_text.strip() else 0
+    skills_tokens = (
+        estimate_tokens(skills_context.strip()) if skills_context and skills_context.strip() else 0
+    )
 
     tool_definitions_tokens, mcp_tokens = _tool_schema_buckets(api_tools)
     tools_tokens = tool_definitions_tokens + mcp_tokens
@@ -532,13 +521,17 @@ def estimate_context_breakdown(
     # so the GUI would show "13% Full" when reality is ~44%. Real total is
     # authoritative; conversation is back-derived as real - static when
     # estimates undershoot. When estimates overshoot, scale static buckets.
-    static_total = (
-        system_tokens + rules_tokens + skills_tokens + tools_tokens
-    )
+    static_total = system_tokens + rules_tokens + skills_tokens + tools_tokens
+    estimated_total = static_total + conv_tokens
     if real_input_tokens > 0:
         total = real_input_tokens
-        if real_input_tokens >= static_total:
-            conv_tokens = real_input_tokens - static_total
+        if real_input_estimate > 0:
+            total = max(
+                0,
+                real_input_tokens + estimated_total - real_input_estimate,
+            )
+        if total >= static_total:
+            conv_tokens = total - static_total
         else:
             conv_tokens = 0
             (
@@ -548,7 +541,7 @@ def estimate_context_breakdown(
                 skills_tokens,
                 rules_tokens,
             ) = _scale_static_context_buckets(
-                real_input_tokens,
+                total,
                 system_tokens,
                 tool_definitions_tokens,
                 mcp_tokens,
@@ -557,7 +550,7 @@ def estimate_context_breakdown(
             )
             tools_tokens = tool_definitions_tokens + mcp_tokens
     else:
-        total = static_total + conv_tokens
+        total = estimated_total
     window = context_window_for_model(target_model) or 0
     free = max(0, window - total) if window else 0
 
@@ -684,6 +677,8 @@ class ProjectContext:
 
     def as_system_block(self) -> str | None:
         """Format the instructions as a system-prompt block."""
+        from html import escape as html_escape
+
         if self.instructions is None:
             return None
         paths = list(self.source_paths)
@@ -696,8 +691,8 @@ class ProjectContext:
         else:
             source = ",".join(str(p) for p in paths)
         return (
-            f'<project_instructions source="{source}">\n'
-            f"{self.instructions}\n"
+            f'<project_instructions source="{html_escape(source, quote=True)}">\n'
+            f"{html_escape(self.instructions, quote=False)}\n"
             f"</project_instructions>"
         )
 
@@ -719,9 +714,7 @@ def _load_context_file(path: Path) -> str:
         raise ValueError(f"Failed to stat context file {path}: {exc}") from exc
 
     if size > MAX_CONTEXT_SIZE:
-        raise ValueError(
-            f"Context file {path} is too large ({size} bytes, max {MAX_CONTEXT_SIZE})"
-        )
+        raise ValueError(f"Context file {path} is too large ({size} bytes, max {MAX_CONTEXT_SIZE})")
 
     try:
         content = path.read_text(encoding="utf-8")
@@ -822,9 +815,7 @@ def load_cursor_rules(workspace: Path) -> tuple[str | None, list[Path], list[str
 # ---------------------------------------------------------------------------
 
 
-def _load_project_layer(
-    workspace: Path, *, allow_auto_generate: bool = True
-) -> ProjectContext:
+def _load_project_layer(workspace: Path, *, allow_auto_generate: bool = True) -> ProjectContext:
     """Project-scoped instructions: workspace → parents → optional auto-gen.
 
     Does not read ``~/.deepseek/AGENTS.md``; that is merged separately.
@@ -877,6 +868,7 @@ def load_project_context_with_parents(
     workspace: Path,
     *,
     home_dir: Path | None = None,
+    allow_auto_generate: bool = True,
 ) -> ProjectContext:
     """Full project-context resolution with global+project merge.
 
@@ -884,7 +876,7 @@ def load_project_context_with_parents(
       1. Project layer: ``workspace`` → parents (no auto-gen yet)
       2. Global layer: ``~/.deepseek/AGENTS.md`` (always attempted)
       3. Cursor layer: always-on ``.cursor/rules/*.mdc`` under ``workspace``
-      4. If none exists: auto-generate project placeholder
+      4. If none exists and ``allow_auto_generate``: create project placeholder
       5. Merge in that order, each labelled with its source
 
     The optional ``home_dir`` parameter is for tests; production callers
@@ -894,11 +886,10 @@ def load_project_context_with_parents(
     global_ctx = _load_global_agents_context(workspace, home_dir)
     cursor_text, cursor_paths, cursor_warnings = load_cursor_rules(workspace)
 
-    has_global = (
-        global_ctx is not None and global_ctx.has_instructions()
-    )
+    has_global = global_ctx is not None and global_ctx.has_instructions()
     if (
-        not project_ctx.has_instructions()
+        allow_auto_generate
+        and not project_ctx.has_instructions()
         and not has_global
         and cursor_text is None
     ):
@@ -914,17 +905,11 @@ def load_project_context_with_parents(
         if global_ctx is not None and global_ctx.has_instructions()
         else None
     )
-    project_text = (
-        project_ctx.instructions if project_ctx.has_instructions() else None
-    )
+    project_text = project_ctx.instructions if project_ctx.has_instructions() else None
     global_path = (
-        global_ctx.source_path
-        if global_ctx is not None and global_ctx.has_instructions()
-        else None
+        global_ctx.source_path if global_ctx is not None and global_ctx.has_instructions() else None
     )
-    project_path = (
-        project_ctx.source_path if project_ctx.has_instructions() else None
-    )
+    project_path = project_ctx.source_path if project_ctx.has_instructions() else None
 
     merged = ProjectContext.empty(workspace)
     merged.warnings = warnings
@@ -934,18 +919,22 @@ def load_project_context_with_parents(
     layers: list[tuple[str, str | None, list[Path]]] = []
     if global_text:
         label = str(global_path) if global_path is not None else "global"
-        layers.append((
-            global_text,
-            f"<!-- deepseek: global AGENTS.md ({label}) -->",
-            [global_path] if global_path is not None else [],
-        ))
+        layers.append(
+            (
+                global_text,
+                f"<!-- deepseek: global AGENTS.md ({label}) -->",
+                [global_path] if global_path is not None else [],
+            )
+        )
     if project_text:
         label = str(project_path) if project_path is not None else "project"
-        layers.append((
-            project_text,
-            f"<!-- deepseek: project ({label}) -->",
-            [project_path] if project_path is not None else [],
-        ))
+        layers.append(
+            (
+                project_text,
+                f"<!-- deepseek: project ({label}) -->",
+                [project_path] if project_path is not None else [],
+            )
+        )
     if cursor_text:
         layers.append((cursor_text, None, cursor_paths))
 
@@ -1040,8 +1029,6 @@ def _auto_generate_context(workspace: Path) -> str | None:
 
 
 # Working set management for tracking user-relevant files and context.
-
-
 
 
 class WorkingSet:
@@ -1158,9 +1145,7 @@ class WorkingSet:
         import re
 
         # Match common path patterns
-        pattern = (
-            r"(?:^|\s)([./][^\s\"\']*\.(?:py|rs|toml|json|yaml|md|txt|sh))"
-        )
+        pattern = r"(?:^|\s)([./][^\s\"\']*\.(?:py|rs|toml|json|yaml|md|txt|sh))"
         for match in re.finditer(pattern, text):
             path = match.group(1)
             if path and len(path) > 2:
@@ -1172,9 +1157,7 @@ class WorkingSet:
             for path in list(self.recent_paths)[:excess]:
                 self.recent_paths.discard(path)
 
-    def _extract_paths_from_dict(
-        self, obj: dict[str, Any], workspace: Path | None = None
-    ) -> None:
+    def _extract_paths_from_dict(self, obj: dict[str, Any], workspace: Path | None = None) -> None:
         """Extract file paths from tool input dictionary."""
         if not obj:
             return
@@ -1216,23 +1199,17 @@ class WorkingSet:
         except (ValueError, OSError):
             return None
 
-    def _message_references_working_set(
-        self, msg: Message, workspace: Path | None = None
-    ) -> bool:
+    def _message_references_working_set(self, msg: Message, workspace: Path | None = None) -> bool:
         """Check if message references any working set paths."""
         if not self.recent_paths:
             return False
 
         for block in msg.content:
             text = getattr(block, "text", None)
-            if isinstance(text, str) and any(
-                path in text for path in self.recent_paths
-            ):
+            if isinstance(text, str) and any(path in text for path in self.recent_paths):
                 return True
             content = getattr(block, "content", None)
-            if isinstance(content, str) and any(
-                path in content for path in self.recent_paths
-            ):
+            if isinstance(content, str) and any(path in content for path in self.recent_paths):
                 return True
 
         return False

@@ -98,32 +98,60 @@ class ContextPressure:
     source: PressureSource
 
 
+def estimate_request_tokens(
+    messages: list[Message],
+    *,
+    system_prompt: str | None = None,
+    tools: list[dict[str, Any]] | None = None,
+) -> int:
+    """Estimate all input buckets for one concrete model request."""
+    import json
+
+    from deepseek_tui.engine.context import (
+        estimate_tokens,
+        estimated_input_tokens,
+    )
+
+    tokens = estimated_input_tokens(messages)
+    if system_prompt:
+        tokens += estimate_tokens(system_prompt)
+    if tools:
+        try:
+            tokens += estimate_tokens(json.dumps(tools, ensure_ascii=False))
+        except (TypeError, ValueError):
+            pass
+    return tokens
+
+
 def measure_context_pressure(
     model: str,
     messages: list[Message],
     *,
     real_input_tokens: int = 0,
+    real_input_estimate: int = 0,
     system_prompt: str | None = None,
     tools: list[dict[str, Any]] | None = None,
 ) -> ContextPressure:
-    """Prefer provider ``input_tokens``; fall back to a char-based estimate."""
+    """Calibrate the current estimate against the last provider measurement.
+
+    ``real_input_estimate`` is the local estimate of the exact request that
+    produced ``real_input_tokens``. Their difference calibrates estimator
+    bias while the signed estimate delta accounts for content added or removed
+    since that request.
+    """
     window = max(1, int(context_window_for_model(model) or DEFAULT_CONTEXT_WINDOW_TOKENS))
     if real_input_tokens > 0:
         tokens = int(real_input_tokens)
+        if real_input_estimate > 0:
+            current_estimate = estimate_request_tokens(
+                messages, system_prompt=system_prompt, tools=tools
+            )
+            tokens = max(0, tokens + current_estimate - real_input_estimate)
         source: PressureSource = "real"
     else:
-        from deepseek_tui.engine.context import estimate_tokens, estimated_input_tokens
-
-        tokens = estimated_input_tokens(messages)
-        if system_prompt:
-            tokens += estimate_tokens(system_prompt)
-        if tools:
-            try:
-                import json
-
-                tokens += estimate_tokens(json.dumps(tools))
-            except (TypeError, ValueError):
-                pass
+        tokens = estimate_request_tokens(
+            messages, system_prompt=system_prompt, tools=tools
+        )
         source = "estimate"
     ratio = min(1.5, tokens / window)  # allow >1.0 under overflow
     return ContextPressure(tokens=tokens, window=window, ratio=ratio, source=source)

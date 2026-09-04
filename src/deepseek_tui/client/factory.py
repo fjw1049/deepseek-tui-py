@@ -77,6 +77,7 @@ def build_llm_client(config: Config) -> LLMClient:
             base_url=base_url,
             timeout_seconds=float(pc.timeout),
             extra_headers=pc.extra_headers,
+            prompt_cache=pc.prompt_cache,
         )
     else:
         # thinking_supported gates whether reasoning_effort / thinking fields

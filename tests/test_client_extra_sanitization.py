@@ -73,6 +73,18 @@ def test_anthropic_extra_body_cannot_override_conversation_core() -> None:
     assert payload["top_k"] == 5
 
 
+def test_anthropic_prompt_cache_is_explicitly_opt_in() -> None:
+    client = AnthropicCompatClient(api_key="k", base_url="https://api.example")
+    request = _request(
+        system_prompt="stable-system",
+        extra_body={"cache_control": {"type": "ephemeral"}},
+    )
+
+    payload = client._build_payload(request)
+
+    assert payload["cache_control"] == {"type": "ephemeral"}
+
+
 # --- extra_headers ------------------------------------------------------------
 
 _EVIL_HEADERS = {

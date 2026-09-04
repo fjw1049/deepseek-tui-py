@@ -315,3 +315,30 @@ class DeepSeekClient(LLMClient):
             payload["thinking"] = {"type": "enabled"}
         payload.update(sanitize_extra_body(request.extra_body))
         return payload
+
+    def cache_fingerprint_units(
+        self, request: MessageRequest
+    ) -> list[tuple[str, object]]:
+        payload = self._build_payload(request)
+        units: list[tuple[str, object]] = [
+            ("model", payload["model"]),
+            (
+                "tools",
+                {
+                    "tools": payload.get("tools", []),
+                    "tool_choice": payload.get("tool_choice"),
+                },
+            ),
+        ]
+        units.extend(
+            (
+                (
+                    "system"
+                    if message.get("role") == "system"
+                    else f"message[{index}] role={message.get('role', '-')}"
+                ),
+                message,
+            )
+            for index, message in enumerate(payload["messages"])
+        )
+        return units

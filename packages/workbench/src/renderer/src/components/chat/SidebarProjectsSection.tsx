@@ -231,7 +231,7 @@ function SidebarProjectsToolbar({
     'flex w-full items-center gap-2.5 rounded-md px-2.5 py-1.5 text-left text-[13px] text-ds-ink transition-colors duration-150 hover:bg-ds-hover disabled:opacity-40'
 
   return (
-    <div className="ds-sidebar-projects-toolbar ds-sidebar-projects-toolbar--fixed ds-no-drag shrink-0">
+    <div className="ds-sidebar-projects-toolbar ds-sidebar-projects-toolbar--fixed ds-no-drag group shrink-0">
       {selectMode ? (
         <>
           <span className="ds-sidebar-section-label min-w-0 flex-1 truncate">
@@ -293,7 +293,7 @@ function SidebarProjectsToolbar({
             }}
             title={workspaceRoot ? t('changeWorkspace') : t('selectWorkspace')}
             aria-label={workspaceRoot ? t('changeWorkspace') : t('selectWorkspace')}
-            className="shrink-0 rounded-md p-1 text-ds-faint transition-colors duration-200 hover:bg-ds-hover/70 hover:text-ds-ink"
+            className="shrink-0 rounded-md p-1 text-ds-faint opacity-0 transition duration-200 hover:bg-ds-hover/70 hover:text-ds-ink hover:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100"
           >
             <Plus className="h-3.5 w-3.5" strokeWidth={1.75} />
           </button>
@@ -1124,7 +1124,7 @@ function SidebarProjectsSection({
                       event.stopPropagation()
                       onCreateThreadInWorkspace(workspacePath)
                     }}
-                    className="rounded-md p-1 text-ds-faint opacity-40 transition duration-200 hover:bg-ds-hover/80 hover:text-ds-ink hover:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100"
+                    className="rounded-md p-1 text-ds-faint opacity-0 transition duration-200 hover:bg-ds-hover/80 hover:text-ds-ink hover:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100"
                     title={t('sidebarWorkspaceNewThread')}
                     aria-label={t('sidebarWorkspaceNewThread')}
                   >

@@ -67,6 +67,25 @@ async def test_update_goal_rejects_paused_status() -> None:
 
 
 @pytest.mark.asyncio
+async def test_control_tools_fail_cleanly_without_a_goal() -> None:
+    service = GoalService()
+
+    update = await UpdateGoalTool().execute(
+        {"status": "complete"},
+        _context(service),
+    )
+    budget = await SetGoalBudgetTool().execute(
+        {"turnBudget": 3},
+        _context(service),
+    )
+
+    assert not update.success
+    assert not budget.success
+    assert update.content == "No active goal"
+    assert budget.content == "No current goal"
+
+
+@pytest.mark.asyncio
 async def test_stale_update_goal_is_ignored() -> None:
     service = GoalService()
     first = service.create("old")

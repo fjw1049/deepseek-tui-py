@@ -40,6 +40,7 @@ class AnthropicCompatClient(LLMClient):
         timeout_seconds: float = 90.0,
         transport: httpx.AsyncBaseTransport | None = None,
         extra_headers: dict[str, str] | None = None,
+        prompt_cache: str = "off",
     ) -> None:
         super().__init__(
             api_key=api_key,
@@ -48,6 +49,7 @@ class AnthropicCompatClient(LLMClient):
             transport=transport,
             extra_headers=extra_headers,
         )
+        self.prompt_cache = prompt_cache
 
     def _messages_url(self) -> str:
         if self.base_url.endswith("/v1/messages"):
@@ -119,9 +121,23 @@ class AnthropicCompatClient(LLMClient):
             "stream": request.stream,
         }
         if system:
-            payload["system"] = system
+            if self.prompt_cache == "explicit":
+                payload["system"] = [
+                    {
+                        "type": "text",
+                        "text": system,
+                        "cache_control": {"type": "ephemeral"},
+                    }
+                ]
+            else:
+                payload["system"] = system
         if request.tools:
-            payload["tools"] = [_map_tool(tool) for tool in request.tools]
+            mapped_tools = [_map_tool(tool) for tool in request.tools]
+            if self.prompt_cache == "explicit":
+                # A breakpoint on the final definition covers the complete,
+                # ordered tool catalog without mutating caller-owned schemas.
+                mapped_tools[-1]["cache_control"] = {"type": "ephemeral"}
+            payload["tools"] = mapped_tools
         if request.tool_choice is not None:
             payload["tool_choice"] = _map_tool_choice(request.tool_choice)
         if request.temperature is not None:
@@ -130,6 +146,27 @@ class AnthropicCompatClient(LLMClient):
             payload["top_p"] = request.top_p
         payload.update(sanitize_extra_body(request.extra_body))
         return payload
+
+    def cache_fingerprint_units(
+        self, request: MessageRequest
+    ) -> list[tuple[str, object]]:
+        payload = self._build_payload(request)
+        units: list[tuple[str, object]] = [
+            ("model", payload["model"]),
+            (
+                "tools",
+                {
+                    "tools": payload.get("tools", []),
+                    "tool_choice": payload.get("tool_choice"),
+                },
+            ),
+            ("system", payload.get("system", "")),
+        ]
+        units.extend(
+            (f"message[{index}] role={message.get('role', '-')}", message)
+            for index, message in enumerate(payload["messages"])
+        )
+        return units
 
 
 def _build_anthropic_messages(
@@ -195,7 +232,7 @@ def _map_tool(tool: dict[str, Any]) -> dict[str, Any]:
             "description": function.get("description", ""),
             "input_schema": function.get("parameters", {"type": "object"}),
         }
-    return tool
+    return dict(tool)
 
 
 def _map_tool_choice(choice: str | dict[str, Any]) -> dict[str, Any]:

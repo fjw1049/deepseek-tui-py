@@ -305,14 +305,14 @@ class ChatGPTModelSelector extends HTMLElement {
       }
 
       .menu {
-        padding: 12px 10px 10px;
+        padding: 8px 10px 6px;
         display: flex;
         flex-direction: column;
         gap: 2px;
       }
 
       .intensity {
-        padding: 2px 6px 10px;
+        padding: 0 6px 4px;
       }
       .intensity-top {
         display: flex;
@@ -320,7 +320,7 @@ class ChatGPTModelSelector extends HTMLElement {
         justify-content: space-between;
         gap: 10px;
         min-height: 18px;
-        margin-bottom: 10px;
+        margin-bottom: 6px;
       }
       .intensity-title {
         font-size: 13px;
@@ -411,7 +411,7 @@ class ChatGPTModelSelector extends HTMLElement {
         background: var(--row-hover);
       }
       .model-list {
-        max-height: 228px;
+        max-height: calc(38px * 4 + 4px);
         overflow-y: auto;
         overscroll-behavior: contain;
         padding: 2px 0;
@@ -512,9 +512,12 @@ class ChatGPTModelSelector extends HTMLElement {
       .footer {
         padding-top: 0;
       }
+      .model-list + .divider {
+        margin: 4px;
+      }
       .configure-btn {
         width: 100%;
-        min-height: 38px;
+        min-height: 32px;
         border-radius: var(--r-row);
         display: flex;
         align-items: center;

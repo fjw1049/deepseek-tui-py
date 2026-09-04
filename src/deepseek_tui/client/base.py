@@ -103,6 +103,31 @@ class LLMClient(ABC):
     def stream_chat_completion(self, request: MessageRequest) -> AsyncIterator[StreamEvent]:
         raise NotImplementedError
 
+    def cache_fingerprint_units(
+        self, request: MessageRequest
+    ) -> list[tuple[str, object]]:
+        """Return ordered, cache-relevant units as this client sends them.
+
+        Concrete protocol clients override this when they transform messages
+        or tools. The fallback keeps custom/testing clients useful.
+        """
+        units: list[tuple[str, object]] = [
+            ("model", request.model),
+            (
+                "tools",
+                {"tools": request.tools or [], "tool_choice": request.tool_choice},
+            ),
+            ("system", request.system_prompt or ""),
+        ]
+        units.extend(
+            (
+                f"message[{index}] role={message.role.value}",
+                [block.model_dump() for block in message.content],
+            )
+            for index, message in enumerate(request.messages)
+        )
+        return units
+
     async def stream_with_retry(self, request: MessageRequest) -> AsyncIterator[StreamEvent]:
         transparent_retries = 0
         error_retries = 0
@@ -155,6 +180,11 @@ class MeteredLLMClient(LLMClient):
         super().__init__(retry_config=inner.retry_config)
         self._inner = inner
         self._ledger = ledger
+
+    def cache_fingerprint_units(
+        self, request: MessageRequest
+    ) -> list[tuple[str, object]]:
+        return self._inner.cache_fingerprint_units(request)
 
     async def stream_chat_completion(self, request: MessageRequest) -> AsyncIterator[StreamEvent]:
         from deepseek_tui.engine.usage_ledger import current_usage_source
