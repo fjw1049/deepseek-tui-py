@@ -40,6 +40,9 @@ def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any
 
 class ProviderConfig(BaseModel):
     protocol: Literal["openai", "anthropic"] | None = None
+    # Anthropic Messages API block-level prompt caching. Disabled by default
+    # because compatibility gateways may reject ``cache_control`` fields.
+    prompt_cache: Literal["off", "explicit"] = "off"
     api_key: str | None = None
     base_url: str | None = None
     model: str | None = None

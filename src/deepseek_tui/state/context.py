@@ -30,6 +30,7 @@ class ContextConfig:
 @dataclass(slots=True)
 class UserTurnInput:
     raw_text: str
+    already_expanded: bool = False
 
 
 @dataclass(slots=True)
@@ -82,7 +83,7 @@ def process_turn_input(
     raw = inp.raw_text or ""
     display_text = raw
 
-    if _already_expanded(raw, cfg):
+    if inp.already_expanded:
         return ProcessedTurnInput(display_text=display_text, model_text=raw)
 
     ws = workspace.expanduser().resolve()
@@ -224,13 +225,6 @@ def process_turn_input(
 # ============================================================================
 # Internal helpers
 # ============================================================================
-
-
-def _already_expanded(raw: str, cfg: ContextConfig) -> bool:
-    # Structured model text from a prior process_turn_input — do not re-wrap.
-    if "<user_query>" in raw:
-        return True
-    return _EXPANSION_MARKER in raw and cfg.expansion_header in raw
 
 
 def _format_model_text(raw: str, expansion: str) -> str:

@@ -45,6 +45,16 @@ timeout = 120
 # "glm-5.2" = 1000000
 # "glm-5.2-air" = 500000
 
+# Anthropic-compatible endpoints can opt in to block-level prompt caching.
+# Enable this only when the endpoint documents cache_control support; some
+# compatibility gateways reject unknown request fields.
+# [providers.my-anthropic-provider]
+# protocol = "anthropic"
+# base_url = "https://api.anthropic.com"
+# api_key = "sk-ant-..."
+# model = "your-model-id"
+# prompt_cache = "explicit"
+
 [ui]
 show_thinking = true
 # Reply + UI language: "zh" (default) or "en". Workbench Settings syncs this.

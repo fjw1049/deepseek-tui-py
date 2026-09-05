@@ -3336,13 +3336,7 @@ function UserMessageBubble({
     <div id={`block-${block.id}`} className="ds-user-message group relative">
       <div className="ds-user-message-bubble min-w-0">
         {previewChipLabels.length > 0 || focus || displayBody ? (
-          <div
-            className={`whitespace-pre-wrap break-words [overflow-wrap:anywhere] ${
-              previewChipLabels.length > 0 || focus
-                ? 'text-start'
-                : 'text-justify [text-justify:inter-ideograph]'
-            }`}
-          >
+          <div className="whitespace-pre-wrap break-words text-start [overflow-wrap:anywhere]">
             {[
               ...previewChipLabels.map((label, index) => (
                 <PreviewPickChip key={`${label}:${index}`} label={label} />

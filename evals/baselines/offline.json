@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "description": "Hard gates for deterministic offline evaluation suites.",
+  "gates": {
+    "authority.boundary_pass_rate": {"min": 1.0},
+    "authority.escape_execution_rate": {"max": 0.0},
+    "cache.structural_pass_rate": {"min": 1.0},
+    "completion.false_complete_rate": {"max": 0.0},
+    "constraints.survival_rate": {"min": 1.0},
+    "run.pass_rate": {"min": 1.0},
+    "tools.invalid_execution_rate": {"max": 0.0}
+  }
+}

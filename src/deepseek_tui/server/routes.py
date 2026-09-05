@@ -156,20 +156,30 @@ def int_query(request: Request, name: str, default: int | None = None) -> int | 
 def classify_turn_value_error(exc: ValueError) -> Exception:
     """Map RuntimeThreadManager ``ValueError`` to HTTP shape.
 
+    Typed errors (``error_code`` attribute, e.g. ``TurnConflictError``) take
+    precedence; the substring checks remain only as a fallback for plain
+    ``ValueError``s, so rewording a typed raise site can no longer silently
+    flip a 409 into a 400.
+
     Active-turn collisions are 409 ``turn_conflict``. Empty prompt /
     not-loaded / wrong turn id are caller errors → 400.
     """
     msg = str(exc)
-    lowered = msg.lower()
-    if lowered.startswith("missing_api_key"):
-        return api_error(400, msg, error="missing_api_key")
-    if "already has an active turn" in lowered:
-        return api_error(409, msg, error="turn_conflict")
-    if "worktree has not been created" in lowered:
-        return api_error(409, msg, error="worktree_pending")
-    if "is not active" in lowered or "is not loaded" in lowered:
-        return api_error(409, msg, error="turn_not_active")
-    return api_error(400, msg, error="invalid_request")
+    code = getattr(exc, "error_code", None)
+    if code is None:
+        lowered = msg.lower()
+        if lowered.startswith("missing_api_key"):
+            code = "missing_api_key"
+        elif "already has an active turn" in lowered:
+            code = "turn_conflict"
+        elif "worktree has not been created" in lowered:
+            code = "worktree_pending"
+        elif "is not active" in lowered or "is not loaded" in lowered:
+            code = "turn_not_active"
+    status = 409 if code in {
+        "turn_conflict", "worktree_pending", "turn_not_active",
+    } else 400
+    return api_error(status, msg, error=code or "invalid_request")
 
 
 # POST /v1/approvals/{id} — resolve a pending tool approval.

@@ -1,0 +1,19 @@
+schema_version: 1
+id: cache.live_provider_reports_cache_reads
+suite: cache_behavior
+risk: medium
+runner: live_cache
+grader: cache
+live: true
+tags: [cache, provider-usage, live]
+related_paths:
+  - src/deepseek_tui/protocol/responses.py
+  - src/deepseek_tui/client/anthropic.py
+  - src/deepseek_tui/client/deepseek.py
+input:
+  rounds: 3
+  stable_prompt: "Stable cache-evaluation prefix. "
+  stable_prompt_chars: 16000
+expect:
+  first_divergence: null
+  minimum_cache_read_tokens: 1

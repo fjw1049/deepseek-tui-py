@@ -2814,3 +2814,75 @@ async def test_apply_endpoint_queues_behind_active_sibling_and_retries(
     assert applied.publish_request_action is None
     assert applied.publish_waiting_on is None
     assert (repo / "app.py").read_text(encoding="utf-8") == "queued-draft\n"
+
+
+@pytest.mark.asyncio
+async def test_idle_reclaim_removes_clean_worktree_and_keeps_thread(
+    runtime_app, tmp_path: Path
+) -> None:
+    from datetime import timedelta
+
+    from deepseek_tui.server.threads.manager import IDLE_WORKTREE_RECLAIM_AFTER
+
+    manager = runtime_app.state.thread_manager
+    repo = _repo(tmp_path)
+    thread = await manager.create_thread(
+        CreateThreadRequest(workspace=str(repo), model="deepseek-chat")
+    )
+    prepared = await manager._prepare_isolated_workspace(thread)
+    tree = execution_root(prepared)
+    assert tree.is_dir()
+
+    prepared.updated_at = datetime.now(timezone.utc) - (
+        IDLE_WORKTREE_RECLAIM_AFTER + timedelta(hours=1)
+    )
+    manager.store.save_thread(prepared)
+
+    removed = await manager.reclaim_idle_worktrees()
+
+    assert removed == 1
+    assert not tree.exists()
+    reloaded = manager.store.load_thread(prepared.id)
+    assert reloaded.archived is False
+    assert reloaded.worktree_path is None
+    assert reloaded.env_mode == "local"
+
+    # Resuming the thread rebuilds the worktree from the project.
+    resumed = await manager._prepare_isolated_workspace(reloaded)
+    assert execution_root(resumed).is_dir()
+
+
+@pytest.mark.asyncio
+async def test_idle_reclaim_keeps_recent_and_unpublished_worktrees(
+    runtime_app, tmp_path: Path
+) -> None:
+    from datetime import timedelta
+
+    from deepseek_tui.server.threads.manager import IDLE_WORKTREE_RECLAIM_AFTER
+
+    manager = runtime_app.state.thread_manager
+    repo = _repo(tmp_path)
+    recent = await manager._prepare_isolated_workspace(
+        await manager.create_thread(
+            CreateThreadRequest(workspace=str(repo), model="deepseek-chat")
+        )
+    )
+    stale = await manager._prepare_isolated_workspace(
+        await manager.create_thread(
+            CreateThreadRequest(workspace=str(repo), model="deepseek-chat")
+        )
+    )
+    (execution_root(stale) / "app.py").write_text(
+        "unpublished\n", encoding="utf-8"
+    )
+    stale.publish_blocked = True
+    stale.updated_at = datetime.now(timezone.utc) - (
+        IDLE_WORKTREE_RECLAIM_AFTER + timedelta(hours=1)
+    )
+    manager.store.save_thread(stale)
+
+    removed = await manager.reclaim_idle_worktrees()
+
+    assert removed == 0
+    assert execution_root(recent).is_dir()
+    assert execution_root(stale).is_dir()

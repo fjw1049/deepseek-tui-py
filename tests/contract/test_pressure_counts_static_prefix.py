@@ -12,13 +12,18 @@ counts the prefix, so adding it again would double-count.
 
 from __future__ import annotations
 
+import pytest
+
 from deepseek_tui.config.providers import set_context_window_override
 from deepseek_tui.engine.capacity import (
     CompactionConfig,
     should_compact,
     should_l0_prune,
 )
-from deepseek_tui.engine.context_pressure import measure_context_pressure
+from deepseek_tui.engine.context_pressure import (
+    estimate_request_tokens,
+    measure_context_pressure,
+)
 from deepseek_tui.engine.orchestrator.maintenance import SessionMaintenanceMixin
 from deepseek_tui.protocol.messages import Message, MessageOrigin
 
@@ -26,7 +31,12 @@ from deepseek_tui.protocol.messages import Message, MessageOrigin
 # is the term that decides every threshold.
 MODEL = "pressure-contract-test-model"
 WINDOW = 20_000
-set_context_window_override(MODEL, WINDOW)
+
+
+@pytest.fixture(autouse=True)
+def _restore_context_window_override() -> None:
+    """Other config tests rebuild the process-global override registry."""
+    set_context_window_override(MODEL, WINDOW)
 
 # ~18k tokens: over the 0.75 rewrite ratio on its own, so any assertion below
 # that flips is attributable to the prefix and nothing else.
@@ -70,6 +80,26 @@ def test_real_token_path_ignores_them_to_avoid_double_counting() -> None:
 
     assert real.source == "real"
     assert real.tokens == 50_000
+
+
+def test_real_token_path_accounts_for_content_added_since_measurement() -> None:
+    baseline = _messages()
+    baseline_estimate = estimate_request_tokens(
+        baseline, system_prompt=_BIG_SYSTEM_PROMPT, tools=_BIG_TOOLS
+    )
+    current = [*baseline, Message.tool_result("call-1", "x" * 20_000)]
+
+    pressure = measure_context_pressure(
+        MODEL,
+        current,
+        real_input_tokens=50_000,
+        real_input_estimate=baseline_estimate,
+        system_prompt=_BIG_SYSTEM_PROMPT,
+        tools=_BIG_TOOLS,
+    )
+
+    assert pressure.source == "real"
+    assert pressure.tokens > 50_000
 
 
 def test_should_compact_forwards_the_static_prefix() -> None:
@@ -132,6 +162,8 @@ def test_every_pressure_consumer_in_the_turn_loop_is_wired() -> None:
         args = call.group(1)
         assert "system_prompt=system_prompt" in args, f"{name} drops system_prompt"
         assert "tools=tools" in args, f"{name} drops tools"
+        if name == "should_compact":
+            assert "real_input_estimate=" in args
 
 
 class _Stub(SessionMaintenanceMixin):

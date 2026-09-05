@@ -19,12 +19,15 @@ from __future__ import annotations
 
 import inspect
 import re
+from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
 from deepseek_tui.engine.capacity import CompactionConfig, compact_messages_safe
 from deepseek_tui.engine.context_pressure import (
+    build_compaction_bridge_text,
     collect_user_requests,
     find_last_real_user_query,
 )
@@ -159,6 +162,42 @@ async def test_repeated_compaction_does_not_stack_carriers() -> None:
     assert body.count(BANNED_REGEX_RULE) == 1
 
 
+@pytest.mark.asyncio
+async def test_repeated_compaction_remaps_pinned_indices() -> None:
+    """Removing the old leading bridge must not shift working-set pins."""
+    messages = [
+        Message.user(
+            build_compaction_bridge_text(_FORGETFUL_SUMMARY),
+            origin=MessageOrigin.COMPACTION_BRIDGE,
+        ),
+        Message.user("summarize-before-pin"),
+        Message.user("keep-this-working-set-message"),
+        Message.user("wrong-neighbour"),
+    ]
+    messages.extend(Message.user(f"tail-{i}") for i in range(8))
+
+    result = await compact_messages_safe(  # type: ignore[arg-type]
+        _ForgetfulSummarizer(),
+        messages,
+        CompactionConfig(enabled=True, keep_recent_tokens=1),
+        pinned_indices={2},
+        model_override="deepseek-chat",
+    )
+
+    assert result.success
+    verbatim = [
+        m.text_content()
+        for m in result.messages
+        if m.origin not in {
+            MessageOrigin.COMPACTION_BRIDGE,
+            MessageOrigin.REQUEST_LEDGER,
+        }
+    ]
+    transcript = "\n".join(verbatim)
+    assert "keep-this-working-set-message" in transcript
+    assert "wrong-neighbour" not in transcript
+
+
 def test_the_ledger_is_not_mistaken_for_a_fresh_request() -> None:
     """The carrier holds user words but must not read as the current turn."""
     seeded_first_goal_only = build_seed_messages(
@@ -192,3 +231,62 @@ def test_cycle_advance_passes_the_ledger() -> None:
     call = re.search(r"build_seed_messages\((.*?)\n\s*\)", source, re.DOTALL)
     assert call is not None, "build_seed_messages call not found"
     assert "prior_requests=collect_user_requests(" in call.group(1)
+
+
+def test_cycle_snapshot_carries_live_runtime_state() -> None:
+    from deepseek_tui.engine.orchestrator.maintenance import SessionMaintenanceMixin
+    from deepseek_tui.tools.subagent.types import (
+        SubAgentAssignment,
+        SubAgentStatus,
+        SubAgentType,
+    )
+    from deepseek_tui.tools.todo import TodoItem
+
+    running = SimpleNamespace(
+        agent_id="agent-1",
+        agent_type=SubAgentType.EXPLORE,
+        assignment=SubAgentAssignment(objective="inspect parser", role="reviewer"),
+        status=SubAgentStatus.running(),
+    )
+    completed = SimpleNamespace(
+        agent_id="agent-2",
+        agent_type=SubAgentType.GENERAL,
+        assignment=SubAgentAssignment(objective="done already"),
+        status=SubAgentStatus.completed(),
+    )
+    stub = SimpleNamespace(
+        mode="agent",
+        working_set=SimpleNamespace(summary=lambda: "working set"),
+        tool_context=SimpleNamespace(
+            working_directory=Path("/workspace"),
+            metadata={
+                "todos": {
+                    "items": [TodoItem("1", "run tests", "in_progress")]
+                },
+                "plan": {
+                    "steps": [
+                        {"title": "fix parser", "status": "in_progress"}
+                    ]
+                },
+            },
+            subagent_manager=SimpleNamespace(
+                list_agents=lambda: [running, completed]
+            ),
+        ),
+    )
+
+    state = SessionMaintenanceMixin._cycle_structured_state(stub)
+
+    assert state.todo_snapshot == [
+        {"content": "run tests", "status": "in_progress"}
+    ]
+    assert state.plan_snapshot == [
+        {"step": "fix parser", "status": "in_progress"}
+    ]
+    assert state.subagent_snapshots == [
+        {
+            "agent_id": "agent-1",
+            "role": "reviewer",
+            "objective": "inspect parser",
+        }
+    ]

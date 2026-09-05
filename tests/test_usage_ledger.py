@@ -41,6 +41,7 @@ def test_ledger_combined_usage_sums_multiple_calls() -> None:
                 output_tokens=10,
                 cache_read_input_tokens=30,
                 reasoning_tokens=5,
+                input_tokens_include_cache=True,
             ),
         )
 

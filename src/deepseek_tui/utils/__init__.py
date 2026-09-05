@@ -113,6 +113,21 @@ def optional_text(value: object) -> str | None:
 _FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*", re.DOTALL)
 
 
+def split_frontmatter(text: str) -> tuple[str | None, str]:
+    """Split a Markdown document into ``(raw frontmatter YAML, body)``.
+
+    Single source of truth for frontmatter extraction — SKILL.md parsing,
+    Cursor ``.mdc`` rules and generic markdown all go through here so the
+    three can never drift apart. Returns ``(None, text)`` when the document
+    has no frontmatter block. The body is returned unstripped; callers
+    strip as suits them.
+    """
+    match = _FRONTMATTER_RE.match(text)
+    if match is None:
+        return None, text
+    return match.group(1), text[match.end() :]
+
+
 def parse_md_frontmatter(
     path: Path, *, strict: bool = False
 ) -> tuple[dict[str, Any], str]:
@@ -125,11 +140,11 @@ def parse_md_frontmatter(
     import yaml
 
     content = path.read_text(encoding="utf-8")
-    match = _FRONTMATTER_RE.match(content)
-    if match is None:
+    raw, body = split_frontmatter(content)
+    if raw is None:
         return {}, content.strip()
     try:
-        document = yaml.safe_load(match.group(1))
+        document = yaml.safe_load(raw)
     except yaml.YAMLError as exc:
         if strict:
             raise ValueError(f"invalid YAML frontmatter at {path}: {exc}") from exc
@@ -139,7 +154,7 @@ def parse_md_frontmatter(
         if isinstance(document, dict)
         else {}
     )
-    return meta, content[match.end() :].strip()
+    return meta, body.strip()
 
 
 def summarize_text(text: str, limit: int = 280) -> str:

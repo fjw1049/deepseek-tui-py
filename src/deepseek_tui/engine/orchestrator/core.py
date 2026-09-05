@@ -324,6 +324,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         # Previous round's per-unit request digests, for attributing a prefix
         # cache miss to whatever rewrote history. See ``_log_prefix_break``.
         self._prefix_digests: list[str] = []
+        self._prefix_token_weights: list[int] = []
         # Stage 4.4 post-edit LSP diagnostics — pending diagnostic blocks.
         self.pending_lsp_blocks: list[DiagnosticBlock] = []
         self.turn_counter = 0
@@ -333,6 +334,10 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         # error. Zero before the first turn completes — callers fall back
         # to the char-based estimate. See HANDOVER §compaction tuning.
         self.last_real_input_tokens: int = 0
+        # Local estimate of the exact request that produced the real count.
+        # Later pressure checks apply only the signed estimate delta, retaining
+        # provider calibration while accounting for new tool results/steers.
+        self.last_real_input_estimate: int = 0
         # Auto-compaction failure cooldown: rounds remaining before we try
         # auto-compaction again after a failed attempt. Without this, a
         # failing compaction (e.g. summary model returns empty) would retry
@@ -460,20 +465,12 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         self._mcp_tools_cache: list[dict[str, Any]] | None = None
         self.tool_profile: str | None = None
         # Issue #756: parent turn resumes when direct children complete.
-        self._subagent_completions: asyncio.Queue[SubAgentCompletion] = (
-            asyncio.Queue(maxsize=64)
-        )
+        self._subagent_completions: asyncio.Queue[SubAgentCompletion] = asyncio.Queue(maxsize=64)
         self._consumed_subagent_completions: set[str] = set()
-        self._process_completions: asyncio.Queue[dict[str, Any]] = asyncio.Queue(
-            maxsize=64
-        )
+        self._process_completions: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=64)
         self._consumed_process_completions: set[str] = set()
-        self.tool_context.on_shell_process_done = (
-            self._enqueue_shell_process_completion
-        )
-        self._activity_coordinator = SessionActivityCoordinator(
-            self, self.handle.try_emit
-        )
+        self.tool_context.on_shell_process_done = self._enqueue_shell_process_completion
+        self._activity_coordinator = SessionActivityCoordinator(self, self.handle.try_emit)
 
     def _emit_goal_updated(self, snapshot: Any, change: Any) -> None:
         queue = tuple(item.to_dict() for item in self.goal_service.queue_items())
@@ -525,11 +522,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
 
         await asyncio.sleep(max(0, remaining_ms) / 1000)
         snapshot = self.goal_service.snapshot()
-        if (
-            snapshot is None
-            or snapshot.goal_id != goal_id
-            or snapshot.status.value != "active"
-        ):
+        if snapshot is None or snapshot.goal_id != goal_id or snapshot.status.value != "active":
             return
         reason = (
             "Blocked after goal budget reached: "
@@ -545,9 +538,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         failed: bool,
         error_message: str | None,
     ) -> None:
-        total_output_tokens = int(
-            self.turn_usage_ledger.totals().get("output_tokens") or 0
-        )
+        total_output_tokens = int(self.turn_usage_ledger.totals().get("output_tokens") or 0)
         output_tokens = max(
             0,
             total_output_tokens - self._goal_accounted_output_tokens,
@@ -593,6 +584,8 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         """Replace in-memory chat history."""
         self.session_messages.clear()
         self.session_messages.extend(messages)
+        self.last_real_input_tokens = 0
+        self.last_real_input_estimate = 0
         if model:
             self.default_model = model
 
@@ -608,6 +601,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         if self.tool_runtime is not None:
             return self.tool_runtime.mcp_manager
         from deepseek_tui.tools.mcp import MCP_MANAGER_KEY
+
         return self.tool_context.metadata.get(MCP_MANAGER_KEY)
 
     def _server_tool_names(self, server: str) -> set[str]:
@@ -620,15 +614,9 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         if mcp is None:
             return set()
         grouped = mcp.grouped_discovered_tools()
-        return {
-            entry["model_name"]
-            for entry in grouped.get(server, [])
-            if entry.get("model_name")
-        }
+        return {entry["model_name"] for entry in grouped.get(server, []) if entry.get("model_name")}
 
-    def _mcp_focus_whitelist(
-        self, server: str
-    ) -> tuple[frozenset[str], frozenset[str]]:
+    def _mcp_focus_whitelist(self, server: str) -> tuple[frozenset[str], frozenset[str]]:
         """聚焦某个 MCP 连接器时的工具白名单 + 放行 server 集合。
 
         返回 ``(tool_names, server_names)``。tool_names = ``FOCUS_MCP_BASE``
@@ -638,9 +626,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
 
         连接器聚焦不仅查询连接器，还要能对工作区动手（kernel：读改搜跑）。
         """
-        tool_names = frozenset(
-            self._server_tool_names(server) | FOCUS_MCP_BASE
-        )
+        tool_names = frozenset(self._server_tool_names(server) | FOCUS_MCP_BASE)
         return tool_names, frozenset({server})
 
     def set_active_plugin(self, name: str | None) -> str:
@@ -660,11 +646,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             match = self.plugin_session.plugin(name)
         if match is None and self._loaded_plugins:
             match = next(
-                (
-                    p
-                    for p in self._loaded_plugins
-                    if p.manifest.name.lower() == name.lower()
-                ),
+                (p for p in self._loaded_plugins if p.manifest.name.lower() == name.lower()),
                 None,
             )
         if match is None:
@@ -682,9 +664,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         if self.tool_context is not None:
             trust_map = self.tool_context.metadata.setdefault("plugin_trust", {})
             if isinstance(trust_map, dict):
-                trust_map[match.manifest.name.lower()] = bool(
-                    getattr(match, "trusted", False)
-                )
+                trust_map[match.manifest.name.lower()] = bool(getattr(match, "trusted", False))
         m = match.manifest
         note = f"已进入场景 {m.name}，本会话仅用其工具 + 基础工具。"
         # trusted 才收 MCP；未信任时提示。
@@ -694,30 +674,18 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             # MCP servers are injected only at Engine.create. In-session trust
             # cannot register a new server into the live manager.
             owned = getattr(self, "_owned_plugin_mcp_manager", None)
-            manager_names = {
-                n.lower() for n in (owned.server_names if owned is not None else [])
-            }
+            manager_names = {n.lower() for n in (owned.server_names if owned is not None else [])}
             light = None
             if self.plugin_session is not None:
                 try:
                     light = self.plugin_session.light_contributions(m.name)
                 except Exception:  # noqa: BLE001
                     light = None
-            declared = (
-                [s.name for s in light.mcp_servers] if light is not None else []
-            )
-            if not declared or any(
-                name.lower() not in manager_names for name in declared
-            ):
-                note += (
-                    " 注意：该插件的 MCP 未在本会话启动时注册，"
-                    "需新开会话后才会生效。"
-                )
+            declared = [s.name for s in light.mcp_servers] if light is not None else []
+            if not declared or any(name.lower() not in manager_names for name in declared):
+                note += " 注意：该插件的 MCP 未在本会话启动时注册，需新开会话后才会生效。"
         if m.name.lower() not in self._session_plugin_names:
-            note += (
-                " 注意：本会话启动后新发现的插件，其 hooks/MCP "
-                "需新开会话才会生效。"
-            )
+            note += " 注意：本会话启动后新发现的插件，其 hooks/MCP 需新开会话才会生效。"
         # Ensure heavy components (commands/agents/rules) are loaded for
         # this plugin so prompt rendering and command dispatch work.
         self.ensure_plugin_activated(m.name, plugin=match)
@@ -736,9 +704,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                 note += f" 注意：声明的默认 agent「{default_agent}」未找到。"
         return note
 
-    def ensure_plugin_activated(
-        self, name: str, *, plugin: object | None = None
-    ) -> bool:
+    def ensure_plugin_activated(self, name: str, *, plugin: object | None = None) -> bool:
         """Lazily heavy-assemble a single plugin's commands/agents/rules.
 
         Loads declarative text components from disk for the named plugin and
@@ -767,9 +733,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         try:
             activation = session.activate(name)
         except Exception:  # noqa: BLE001 - a malformed plugin must not crash
-            logger.warning(
-                "plugin heavy assembly failed for %s", name, exc_info=True
-            )
+            logger.warning("plugin heavy assembly failed for %s", name, exc_info=True)
             return False
         if activation is None:
             return False
@@ -809,9 +773,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         plugin_name = self._active_plugin.name
         idx = self.plugin_index.get(plugin_name, {})
         skill_names = {
-            s["name"]
-            for s in idx.get("skills", [])
-            if isinstance(s, dict) and s.get("name")
+            s["name"] for s in idx.get("skills", []) if isinstance(s, dict) and s.get("name")
         }
         if not skill_names:
             # No index -- fall back to registry skills whose path is under
@@ -820,18 +782,13 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                 plugin_root = self._active_plugin.path.resolve()
             except (OSError, ValueError):
                 return []
-            return [
-                s
-                for s in self.skill_registry.skills
-                if _path_under(s.path, plugin_root)
-            ]
+            return [s for s in self.skill_registry.skills if _path_under(s.path, plugin_root)]
         # Registry names are qualified (``plugin:skill``); older lockfile
         # indexes may store bare names — match either form.
         return [
             s
             for s in self.skill_registry.skills
-            if s.name in skill_names
-            or s.name.split(":", 1)[-1] in skill_names
+            if s.name in skill_names or s.name.split(":", 1)[-1] in skill_names
         ]
 
     def _plugin_catalog_entries(self) -> list[Any]:
@@ -846,9 +803,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             idx = self.plugin_index.get(name) or {}
             n_skills = len(idx.get("skills") or [])
             n_commands = len(idx.get("commands") or []) + sum(
-                1
-                for c in self.plugin_commands.values()
-                if getattr(c, "plugin", None) == name
+                1 for c in self.plugin_commands.values() if getattr(c, "plugin", None) == name
             )
             n_agents = len(idx.get("agents") or []) + sum(
                 1
@@ -856,9 +811,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                 if getattr(a, "plugin", None) == name
             )
             n_rules = len(idx.get("rules") or []) + sum(
-                1
-                for r in self.plugin_rules
-                if getattr(r, "plugin", None) == name
+                1 for r in self.plugin_rules if getattr(r, "plugin", None) == name
             )
             n_mcp = len(idx.get("mcp_servers") or [])
             if not n_mcp and plugin.manifest.mcp_servers:
@@ -912,9 +865,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             try:
                 contribs = self.plugin_session.light_contributions(plugin.name)
             except Exception:  # noqa: BLE001
-                logger.warning(
-                    "plugin session light contributions failed", exc_info=True
-                )
+                logger.warning("plugin session light contributions failed", exc_info=True)
         if contribs is not None and plugin.trusted:
             for server in contribs.mcp_servers:
                 allowed |= self._server_tool_names(server.name)
@@ -1002,11 +953,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         installed plugin would bloat and dilute the prompt).
         """
         active_plugin = self._active_plugin
-        if (
-            not self.plugin_rules
-            and not self.plugin_index
-            and active_plugin is None
-        ):
+        if not self.plugin_rules and not self.plugin_index and active_plugin is None:
             return None
         from deepseek_tui.engine.prompts import render_plugin_rules_context
 
@@ -1063,25 +1010,17 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                 result = filter_tools_for_profile(list(native_tools), profile)
             else:
                 self._mcp_tools_cache = list(mcp_tools)
-                combined = build_model_tool_catalog(
-                    list(native_tools), list(mcp_tools), self.mode
-                )
+                combined = build_model_tool_catalog(list(native_tools), list(mcp_tools), self.mode)
                 result = filter_tools_for_profile(combined, profile)
 
         # on_focus (@connector) tools are kept out of progressive cache —
         # merge them in only while a focus whitelist is active.
-        if (
-            self._focus_allowed_servers
-            and mcp is not None
-            and hasattr(mcp, "focus_api_tools")
-        ):
+        if self._focus_allowed_servers and mcp is not None and hasattr(mcp, "focus_api_tools"):
             focus_extra: list[dict[str, Any]] = []
             for server in self._focus_allowed_servers:
                 focus_extra.extend(mcp.focus_api_tools(server))
             if focus_extra:
-                combined = build_model_tool_catalog(
-                    list(result), list(focus_extra), self.mode
-                )
+                combined = build_model_tool_catalog(list(result), list(focus_extra), self.mode)
                 result = filter_tools_for_profile(combined, profile)
 
         # 聚焦模式：收窄到最小工具白名单。MCP 工具额外按 server 级放行：
@@ -1116,15 +1055,6 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                 if (t.get("function") or t).get("name") in PLAN_MODE_TOOL_ALLOWLIST
             ]
 
-        from deepseek_tui.goal.types import GOAL_CONTROL_TOOL_NAMES
-
-        if self.goal_service.snapshot() is None:
-            result = [
-                t
-                for t in result
-                if (t.get("function") or t).get("name") not in GOAL_CONTROL_TOOL_NAMES
-            ]
-
         if trace is not None and build_start is not None:
             trace.note_catalog_build(build_start, now_ms() - build_start, len(result))
         return result
@@ -1153,9 +1083,13 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         from deepseek_tui.config.models import Config
         from deepseek_tui.integrations.skills import discover_in_workspace
         from deepseek_tui.tools.runtime import ToolRuntime, create_tool_runtime
+
         # 装配 HookDispatcher + HookExecutor
         cfg = config if isinstance(config, Config) else Config()
-        from deepseek_tui.integrations.hooks import build_hook_dispatcher, build_lifecycle_hook_executor
+        from deepseek_tui.integrations.hooks import (
+            build_hook_dispatcher,
+            build_lifecycle_hook_executor,
+        )
 
         if handle.hooks is None:
             handle.attach_hooks(build_hook_dispatcher(cfg))
@@ -1189,10 +1123,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             hooks_cfg = cfg.model_copy(
                 update={
                     "hooks": cfg.hooks.model_copy(
-                        update={
-                            "hooks": list(cfg.hooks.hooks)
-                            + plugin_contribs.hook_entries
-                        }
+                        update={"hooks": list(cfg.hooks.hooks) + plugin_contribs.hook_entries}
                     )
                 }
             )
@@ -1210,9 +1141,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                 task_data_dir=task_data_dir,
                 start_mcp=mcp_flag,
                 mcp_manager=mcp_manager,  # type: ignore[arg-type]
-                extra_mcp_servers=(
-                    plugin_contribs.mcp_servers if plugin_contribs else None
-                ),
+                extra_mcp_servers=(plugin_contribs.mcp_servers if plugin_contribs else None),
             )
         # Make [providers.X] context_window overrides visible to
         # context_window_for_model() even when Config was built directly
@@ -1265,11 +1194,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                 # runtime's dict into every engine built from it.
                 file_reads={},
             )
-            if (
-                cfg.features.mcp
-                and plugin_contribs is not None
-                and plugin_contribs.mcp_servers
-            ):
+            if cfg.features.mcp and plugin_contribs is not None and plugin_contribs.mcp_servers:
                 from deepseek_tui.mcp.manager import McpManager
                 from deepseek_tui.plugins.runtime import CompositeMcpManager
                 from deepseek_tui.tools.mcp import MCP_MANAGER_KEY
@@ -1287,9 +1212,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                         base_mcp,
                         owned_plugin_mcp_manager,
                     )
-                    per_engine_context.metadata[MCP_MANAGER_KEY] = (
-                        session_mcp_manager
-                    )
+                    per_engine_context.metadata[MCP_MANAGER_KEY] = session_mcp_manager
         engine = cls(
             handle=handle,
             client=client,
@@ -1333,17 +1256,12 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         # the optimization is opt-in per plugin, not all-or-nothing.
         if loaded_plugins:
             engine._loaded_plugins = loaded_plugins
-            engine._session_plugin_names = {
-                p.name.lower() for p in loaded_plugins
-            }
+            engine._session_plugin_names = {p.name.lower() for p in loaded_plugins}
             engine.plugin_index = {
-                p.name: p.contribution_index
-                for p in loaded_plugins
-                if p.contribution_index
+                p.name: p.contribution_index for p in loaded_plugins if p.contribution_index
             }
             engine.plugin_skill_names = {
-                s.name
-                for s in (plugin_skill_contribs.skills if plugin_skill_contribs else [])
+                s.name for s in (plugin_skill_contribs.skills if plugin_skill_contribs else [])
             }
             # Backward-compatible eager assembly for plugins without an index.
             unindexed = [p for p in loaded_plugins if p.contribution_index is None]
@@ -1370,11 +1288,9 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             # the ``agent`` tool (action="spawn") can lazily activate a plugin
             # when resolving a persona that hasn't been heavy-assembled yet.
             if engine.tool_context is not None:
-                engine.tool_context.metadata["activate_plugin"] = (
-                    engine.ensure_plugin_activated
-                )
-                engine.tool_context.metadata["plugin_agent_index"] = (
-                    _agent_index_from_plugin_index(engine.plugin_index)
+                engine.tool_context.metadata["activate_plugin"] = engine.ensure_plugin_activated
+                engine.tool_context.metadata["plugin_agent_index"] = _agent_index_from_plugin_index(
+                    engine.plugin_index
                 )
                 engine.tool_context.metadata["plugin_trust"] = {
                     p.name.lower(): bool(p.trusted) for p in loaded_plugins
@@ -1410,9 +1326,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         subagent_manager = engine.tool_context.subagent_manager
         if subagent_manager is not None:
             subagent_manager.attach_parent_cancel(handle.cancel_event)
-            subagent_manager.attach_parent_completion_sink(
-                engine._enqueue_subagent_completion
-            )
+            subagent_manager.attach_parent_completion_sink(engine._enqueue_subagent_completion)
             from deepseek_tui.tools.subagent import SubAgentRuntime
 
             auto_approve = await engine.approval_handler.auto_approve_enabled()
@@ -1432,7 +1346,6 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                 hook_executor=engine.hook_executor,
             )
             subagent_manager.attach_loop_runtime(loop_runtime)
-
 
         return engine
 
@@ -1457,8 +1370,6 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             self.plugin_session = None
         if self.tool_runtime is not None and self._owns_tool_runtime:
             await self.tool_runtime.shutdown()
-
-
 
     def _is_plugin_packaged_skill(self, skill: object) -> bool:
         """True when the skill file lives inside an installed plugin.
@@ -1511,9 +1422,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             registry = SkillRegistry(skills=skills)
         else:
             workspace_skills = [
-                skill
-                for skill in registry.skills
-                if not self._is_plugin_packaged_skill(skill)
+                skill for skill in registry.skills if not self._is_plugin_packaged_skill(skill)
             ]
             if len(workspace_skills) != len(registry.skills):
                 registry = SkillRegistry(
@@ -1522,9 +1431,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                 )
         return render_available_skills_context(registry) or None
 
-    def _accrue_child_token_cost_from_metadata(
-        self, metadata: dict[str, Any] | None
-    ) -> None:
+    def _accrue_child_token_cost_from_metadata(self, metadata: dict[str, Any] | None) -> None:
         """Roll child-tool token usage into session cost."""
         if not metadata:
             return
@@ -1540,12 +1447,9 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         usage = Usage(
             input_tokens=input_tokens,
             output_tokens=output_tokens,
-            cache_read_input_tokens=int(
-                metadata.get("child_prompt_cache_hit_tokens") or 0
-            ),
-            cache_creation_input_tokens=int(
-                metadata.get("child_prompt_cache_miss_tokens") or 0
-            ),
+            cache_read_input_tokens=int(metadata.get("child_prompt_cache_hit_tokens") or 0),
+            cache_creation_input_tokens=int(metadata.get("child_prompt_cache_miss_tokens") or 0),
+            input_tokens_include_cache=True,
         )
         # Metadata-only child totals when the parent client
         # did not already meter the same subagent streams this turn.
@@ -1572,10 +1476,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             mtime = path.stat().st_mtime
         except OSError:
             return None
-        if (
-            self._handoff_injected_mtime is not None
-            and mtime <= self._handoff_injected_mtime
-        ):
+        if self._handoff_injected_mtime is not None and mtime <= self._handoff_injected_mtime:
             return None
         body = load_handoff_reminder(workspace)
         if not body:
@@ -1614,9 +1515,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         plugin_mount = _detect_plugin_mount(raw)
         if plugin_mount is None:
             return raw
-        mount_note = self.set_active_plugin(
-            None if plugin_mount == "off" else plugin_mount
-        )
+        mount_note = self.set_active_plugin(None if plugin_mount == "off" else plugin_mount)
         raw = _strip_plugin_mount(raw, plugin_mount)
         # Structured state change for the UI (persistent badge) and for
         # reload-restore. Only emit on a real transition: unmount always
@@ -1682,6 +1581,8 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             workspace=self.tool_context.working_directory,
             mode=(self.mode or "agent").strip() or "agent",
             real_input_tokens=self.last_real_input_tokens,
+            real_input_estimate=self.last_real_input_estimate,
+            auto_approve=bool(self.tool_context.metadata.get("session_auto_approve")),
         )
 
     async def context_breakdown_live(self, model: str | None = None) -> dict[str, int]:
@@ -1711,6 +1612,8 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             workspace=self.tool_context.working_directory,
             mode=(self.mode or "agent").strip() or "agent",
             real_input_tokens=self.last_real_input_tokens,
+            real_input_estimate=self.last_real_input_estimate,
+            auto_approve=bool(self.tool_context.metadata.get("session_auto_approve")),
         )
 
     def _initial_request_tools_for_context(
@@ -1729,9 +1632,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         await self.shutdown_session()
         try:
             await self.handle.emit(
-                SessionEndedEvent(
-                    session_id=self._cycle_session_id, turns=self.turn_counter
-                )
+                SessionEndedEvent(session_id=self._cycle_session_id, turns=self.turn_counter)
             )
         except Exception:  # noqa: BLE001
             pass
@@ -1759,9 +1660,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         with bind_turn() as turn_id:
             self.handle.reset_cancel()
             if self.tool_context.subagent_manager is not None:
-                self.tool_context.subagent_manager.attach_parent_cancel(
-                    self.handle.cancel_event
-                )
+                self.tool_context.subagent_manager.attach_parent_cancel(self.handle.cancel_event)
             self.handle._mark_turn_active()
             try:
                 await self._handle_send_message_inner(op, turn_id)
@@ -1775,9 +1674,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             self._cycle_session_id,
         )
         self._activity_coordinator.start()
-        await self.handle.emit(
-            SessionStartedEvent(session_id=self._cycle_session_id)
-        )
+        await self.handle.emit(SessionStartedEvent(session_id=self._cycle_session_id))
         turn_task: asyncio.Task[None] | None = None
         try:
             while True:
@@ -1801,9 +1698,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                 if turn_task is None:
                     op = await self.handle.next_op()
                 else:
-                    op_wait = asyncio.create_task(
-                        self.handle.next_op(), name="engine-next-op"
-                    )
+                    op_wait = asyncio.create_task(self.handle.next_op(), name="engine-next-op")
                     done, _pending = await asyncio.wait(
                         {op_wait, turn_task},
                         return_when=asyncio.FIRST_COMPLETED,
@@ -1865,9 +1760,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         with bind_turn() as turn_id:
             self.handle.reset_cancel()
             if self.tool_context.subagent_manager is not None:
-                self.tool_context.subagent_manager.attach_parent_cancel(
-                    self.handle.cancel_event
-                )
+                self.tool_context.subagent_manager.attach_parent_cancel(self.handle.cancel_event)
             self.handle._mark_turn_active()
             # Publish the live auto-approve flag so task_create inherits the
             # session's actual approval mode (yolo/auto) instead of silently
@@ -1937,9 +1830,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         logger.info("plugin_command_expanded command=%s", command.qualified)
         return body
 
-    async def _handle_send_message_inner(
-        self, op: SendMessageOp, turn_id: str
-    ) -> None:
+    async def _handle_send_message_inner(self, op: SendMessageOp, turn_id: str) -> None:
         """
         同步沙箱策略、预处理用户输入、探测工具 profile / skill 聚焦模式 / 语言,
         把用户消息拼进会话历史并按模式(plan/中文)追加临时 hint,
@@ -1963,9 +1854,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         # additionalContext 作为 system reminder 注入（不改用户消息原文）。
         hook_context_extra = ""
         if not op.hidden:
-            hook_results = await self.run_lifecycle_hook(
-                "message_submit", message=raw_content
-            )
+            hook_results = await self.run_lifecycle_hook("message_submit", message=raw_content)
             if hook_results:
                 from deepseek_tui.integrations.hooks import aggregate_hook_decision
 
@@ -1980,18 +1869,12 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                             f"Blocked by UserPromptSubmit hook: {reason}",
                             actor=GoalActor.RUNTIME,
                         )
-                    logger.info(
-                        "user_prompt_blocked_by_hook reason=%r", reason[:200]
-                    )
+                    logger.info("user_prompt_blocked_by_hook reason=%r", reason[:200])
                     await self.handle.emit(
-                        StatusEvent(
-                            message=f"Message blocked by hook: {reason[:200]}"
-                        )
+                        StatusEvent(message=f"Message blocked by hook: {reason[:200]}")
                     )
                     await self.handle.emit(TurnStartedEvent(user_text=""))
-                    await self.handle.emit(
-                        TurnCompleteEvent(assistant_message=None, success=True)
-                    )
+                    await self.handle.emit(TurnCompleteEvent(assistant_message=None, success=True))
                     return
                 hook_context_extra = "\n".join(decision.additional_context)
         # 插件命令（/<plugin>:<command> [args]）：把命令 markdown 正文按
@@ -2032,7 +1915,9 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             model = processed.model_text or ""
             processed = _dc_replace(
                 processed,
-                display_text=f"{token_prefix}{display}".rstrip() if display else f"@{focus_mcp_ahead}",
+                display_text=f"{token_prefix}{display}".rstrip()
+                if display
+                else f"@{focus_mcp_ahead}",
                 model_text=f"{token_prefix}{model}".rstrip() if model else f"@{focus_mcp_ahead}",
             )
         from deepseek_tui.engine.prompts import (
@@ -2119,6 +2004,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         goal_text = self.goal_service.reminder_text()
         if goal_text:
             from deepseek_tui.engine import reminders as goal_reminders
+
             spec = goal_reminders.GOAL_ACTIVE
             if snap is not None and snap.status is GoalStatus.PAUSED:
                 spec = goal_reminders.GOAL_PAUSED
@@ -2161,9 +2047,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             from deepseek_tui.engine.prompts import PLAN_GROUNDING_REMINDER
 
             working_messages.append(
-                reminders.reminder_message(
-                    reminders.PLAN_NUDGE, PLAN_GROUNDING_REMINDER
-                )
+                reminders.reminder_message(reminders.PLAN_NUDGE, PLAN_GROUNDING_REMINDER)
             )
         from deepseek_tui.tools.plan_mode import sync_approved_plan_reminder
 
@@ -2173,7 +2057,6 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             working_directory=self.tool_context.working_directory,
             metadata=self.tool_context.metadata,
         )
-
 
         try:
             # 聚焦模式：置位 per-turn 工具白名单，``_get_tools_with_mcp`` 据此
@@ -2199,9 +2082,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                             await ensure(focus_mcp)
                         except Exception as exc:  # noqa: BLE001
                             focus_ready = False
-                            await self.handle.emit(
-                                StatusEvent(message=f"连接器未就绪：{exc}")
-                            )
+                            await self.handle.emit(StatusEvent(message=f"连接器未就绪：{exc}"))
                 if focus_ready:
                     # Drop progressive MCP cache so this turn rebuilds with focus tools.
                     self._mcp_tools_cache = None
@@ -2214,9 +2095,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             elif self._active_plugin is not None:
                 wl_result = self._active_plugin_whitelist()
                 if wl_result is not None:
-                    self._focus_tool_whitelist, self._focus_allowed_servers = (
-                        wl_result
-                    )
+                    self._focus_tool_whitelist, self._focus_allowed_servers = wl_result
                 else:
                     self._focus_tool_whitelist = None
                     self._focus_allowed_servers = None
@@ -2235,9 +2114,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             self.turn_usage_ledger.reset()
             self._goal_accounted_output_tokens = 0
             checkpoint_messages = [
-                message
-                for message in working_messages
-                if message is not goal_reminder_message
+                message for message in working_messages if message is not goal_reminder_message
             ]
             self._save_crash_checkpoint(
                 checkpoint_messages,
@@ -2268,6 +2145,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                 workspace=self.tool_context.working_directory,
                 locale_tag=self.reply_locale,
                 automations_guidelines=self.tool_registry.contains("cron_create"),
+                auto_approve=bool(self.tool_context.metadata.get("session_auto_approve")),
             )
             # Compaction bridges live in session_messages (leading user
             # message), not in the system prompt — mutating system every
@@ -2297,16 +2175,14 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                 # early), keep the previous value rather than zeroing — a
                 # stale-but-real reading beats falling back to the estimate.
                 cancelled_usage = result.usage
-                cancelled_input = getattr(
-                    cancelled_usage, "total_input_tokens", 0
-                )
+                cancelled_input = getattr(cancelled_usage, "total_input_tokens", 0)
                 if cancelled_input:
+                    if cancelled_input != self.last_real_input_tokens:
+                        self.last_real_input_estimate = 0
                     self.last_real_input_tokens = cancelled_input
                 await self._emit_checklist_turn_end_reconcile()
                 await self.handle.emit(
-                    TurnCancelledEvent(
-                        reason=self.handle.cancel_reason or "user_cancelled"
-                    )
+                    TurnCancelledEvent(reason=self.handle.cancel_reason or "user_cancelled")
                 )
                 await self._finish_goal_turn(
                     cancelled=True,
@@ -2325,9 +2201,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             # cancelled path above, which also discards working state.
             if turn_ok:
                 persisted_messages = [
-                    message
-                    for message in working_messages
-                    if message is not goal_reminder_message
+                    message for message in working_messages if message is not goal_reminder_message
                 ]
                 if op.hidden:
                     self.session_messages = [
@@ -2348,6 +2222,8 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             # turn (messages only grow between rounds).
             turn_input_tokens = getattr(usage, "total_input_tokens", 0)
             if turn_input_tokens:
+                if turn_input_tokens != self.last_real_input_tokens:
+                    self.last_real_input_estimate = 0
                 self.last_real_input_tokens = turn_input_tokens
             ledger_totals = self.turn_usage_ledger.totals()
             combined_usage = self.turn_usage_ledger.combined_usage()
@@ -2358,9 +2234,12 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                 "cache_hit=%s reasoning_tokens=%s last_round_tool_calls=%d "
                 "tool_rounds=%d metered_llm_calls=%d",
                 duration_ms,
-                ledger_totals.get("input_tokens", 0) or (getattr(usage, "input_tokens", 0) if usage else 0),
-                ledger_totals.get("output_tokens", 0) or (getattr(usage, "output_tokens", 0) if usage else 0),
-                ledger_totals.get("cache_hit_tokens", 0) or (getattr(usage, "cache_read_input_tokens", 0) if usage else 0),
+                ledger_totals.get("input_tokens", 0)
+                or (getattr(usage, "input_tokens", 0) if usage else 0),
+                ledger_totals.get("output_tokens", 0)
+                or (getattr(usage, "output_tokens", 0) if usage else 0),
+                ledger_totals.get("cache_hit_tokens", 0)
+                or (getattr(usage, "cache_read_input_tokens", 0) if usage else 0),
                 getattr(usage, "reasoning_tokens", 0) if usage else 0,
                 len(result.tool_calls or []),
                 result.tool_round_count,
@@ -2512,8 +2391,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             if rendered:
                 parts.append(rendered)
         parts.extend(
-            reminders.render(reminders.SUBAGENT_DONE, item.payload)
-            for item in completions
+            reminders.render(reminders.SUBAGENT_DONE, item.payload) for item in completions
         )
         body = "\n\n".join(part for part in parts if part)
         logger.info(
@@ -2528,9 +2406,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             )
         )
 
-    async def _subagent_handoff_ledger(
-        self, completions: list[SubAgentCompletion]
-    ) -> str | None:
+    async def _subagent_handoff_ledger(self, completions: list[SubAgentCompletion]) -> str | None:
         """Batch scorecard for the parent. ``None`` when a ledger would be noise."""
         mgr = self.tool_context.subagent_manager
         if mgr is None or not completions:
@@ -2740,15 +2616,12 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         if not isinstance(items, list):
             return ""
         open_items = [
-            it
-            for it in items
-            if getattr(it, "status", None) in ("pending", "in_progress")
+            it for it in items if getattr(it, "status", None) in ("pending", "in_progress")
         ]
         if not open_items:
             return ""
         return ", ".join(
-            f"#{getattr(it, 'id', '?')} {getattr(it, 'status', '?')}"
-            for it in open_items
+            f"#{getattr(it, 'id', '?')} {getattr(it, 'status', '?')}" for it in open_items
         )
 
     @staticmethod
@@ -2776,9 +2649,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             return False
         return not self._open_checklist_summary()
 
-    def _next_checklist_gate_summary(
-        self, *, fired: int, last_open: str | None
-    ) -> str | None:
+    def _next_checklist_gate_summary(self, *, fired: int, last_open: str | None) -> str | None:
         """Open-item summary to block on, or ``None`` to let the turn end.
 
         The gate re-fires only while blocking it moves the checklist forward:
@@ -2846,9 +2717,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         running = mgr.running_foreground_count()
         if running > 0:
             await self.handle.emit(
-                StatusEvent(
-                    message=f"Waiting on {running} sub-agent(s) to complete..."
-                )
+                StatusEvent(message=f"Waiting on {running} sub-agent(s) to complete...")
             )
             deadline = time.monotonic() + mgr.handoff_timeout_secs
             timed_out = False
@@ -2887,27 +2756,19 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
 
         ledger = await self._subagent_handoff_ledger(completions)
         if ledger:
-            messages.append(
-                reminders.reminder_message(reminders.SUBAGENT_HANDOFF, ledger)
-            )
+            messages.append(reminders.reminder_message(reminders.SUBAGENT_HANDOFF, ledger))
         for item in completions:
             # Mark consumed so idle-delivery cannot re-inject the same payload
             # if a race schedules a wake after this handoff drains the queue.
             self._consumed_subagent_completions.add(item.agent_id)
-            messages.append(
-                reminders.reminder_message(reminders.SUBAGENT_DONE, item.payload)
-            )
+            messages.append(reminders.reminder_message(reminders.SUBAGENT_DONE, item.payload))
         await self.handle.emit(
-            StatusEvent(
-                message=f"Resuming turn with {count} sub-agent completion(s)"
-            )
+            StatusEvent(message=f"Resuming turn with {count} sub-agent completion(s)")
         )
         logger.info("subagent_handoff count=%d", count)
         return True
 
-    async def _handle_shell_process_turn_handoff(
-        self, messages: list[Message]
-    ) -> bool:
+    async def _handle_shell_process_turn_handoff(self, messages: list[Message]) -> bool:
         """Wait for non-detached background shells and inject their results.
 
         The shell counterpart of :meth:`_handle_subagent_turn_handoff`. Without
@@ -2933,9 +2794,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             running = 0
         if running > 0:
             await self.handle.emit(
-                StatusEvent(
-                    message=f"Waiting on {running} background shell process(es)..."
-                )
+                StatusEvent(message=f"Waiting on {running} background shell process(es)...")
             )
             # Deliberately shorter than the sub-agent handoff budget: a shell
             # already burned up to EXEC_MAX_TIMEOUT_MS (600s) in the
@@ -2955,9 +2814,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                     )
                     break
                 try:
-                    payload = await asyncio.wait_for(
-                        self._process_completions.get(), timeout=0.25
-                    )
+                    payload = await asyncio.wait_for(self._process_completions.get(), timeout=0.25)
                     process_id = payload.get("process_id")
                     if (
                         not isinstance(process_id, str)
@@ -2982,25 +2839,17 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             if isinstance(process_id, str):
                 self._consumed_process_completions.add(process_id)
             messages.append(
-                reminders.reminder_message(
-                    reminders.PROCESS_DONE, _format_process_done(item)
-                )
+                reminders.reminder_message(reminders.PROCESS_DONE, _format_process_done(item))
             )
         count = len(completions)
-        await self.handle.emit(
-            StatusEvent(
-                message=f"Resuming turn with {count} shell result(s)"
-            )
-        )
+        await self.handle.emit(StatusEvent(message=f"Resuming turn with {count} shell result(s)"))
         logger.info("shell_handoff count=%d", count)
         return True
 
     def _log_prefix_break(
         self,
         round_idx: int,
-        system_prompt: str | None,
-        messages: list[Message],
-        tools: list[dict[str, Any]] | None,
+        request: MessageRequest,
     ) -> None:
         """Name whatever invalidated the provider's KV prefix this round.
 
@@ -3016,25 +2865,42 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         if not logger.isEnabledFor(logging.INFO):
             return
         from deepseek_tui.engine.prefix_probe import (
-            describe_break,
-            fingerprint_request,
+            fingerprint_units,
             first_divergence,
+            unit_token_weights,
         )
 
-        digests = fingerprint_request(system_prompt, messages, tools)
+        units = self.client.cache_fingerprint_units(request)
+        digests = fingerprint_units(units)
+        weights = unit_token_weights(units)
         previous, self._prefix_digests = self._prefix_digests, digests
+        previous_weights = self._prefix_token_weights
+        self._prefix_token_weights = weights
         if not previous:
             return
         break_at = first_divergence(previous, digests)
         if break_at is None:
             return
+        total_tokens = sum(previous_weights)
+        culprit = units[break_at][0]
+        # Model, tools and system are static cache roots. A change in any of
+        # them invalidates the useful prompt prefix even if an earlier tiny
+        # metadata unit still matches.
+        reusable_tokens = (
+            0
+            if culprit in {"model", "tools", "system"}
+            else sum(previous_weights[:break_at])
+        )
+        reusable_ratio = reusable_tokens / total_tokens * 100 if total_tokens else 0
         logger.info(
-            "prefix_break round=%d at=%d/%d reusable=%.0f%% culprit=%s",
+            "prefix_break round=%d at=%d/%d reusable_tokens=%d/%d reusable=%.0f%% culprit=%s",
             round_idx,
             break_at,
             len(previous),
-            break_at / len(previous) * 100,
-            describe_break(break_at, messages),
+            reusable_tokens,
+            total_tokens,
+            reusable_ratio,
+            culprit,
         )
 
     async def _run_conversation(
@@ -3051,6 +2917,9 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         再带上工具向 LLM 发一次请求;若模型回工具调用就执行工具、把结果塞回消息列表进入下一轮,直到模型给出最终答案(或触发取消/错误上限),返回 TurnResult
         """
         tools = await self._get_tools_with_mcp()
+        # Execute calls against the exact catalog attached to their request;
+        # background MCP discovery must not change eligibility after sampling.
+        self._active_api_tools = tools
         self.turn_counter += 1
         self._tool_dedup.reset_turn()
         step_error_count = 0
@@ -3114,32 +2983,27 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                     len(processed.display_text),
                     len(processed.model_text),
                 )
-                messages.append(
-                    Message.user(
-                        processed.model_text, origin=MessageOrigin.REAL_USER
-                    )
-                )
+                messages.append(Message.user(processed.model_text, origin=MessageOrigin.REAL_USER))
                 self.working_set.observe_references(processed.references)
 
             # L0: prune old tool bodies at ≥50% (deterministic, no LLM).
             self._maybe_l0_prune_tool_results(
                 messages, model, system_prompt=system_prompt, tools=tools
             )
-            should_trigger = (
-                self._compact_cooldown_rounds <= 0
-                and should_compact(
-                    messages,
-                    self.compaction_config,
-                    real_input_tokens=self.last_real_input_tokens,
-                    model=model,
-                    system_prompt=system_prompt,
-                    tools=tools,
-                )
+            should_trigger = self._compact_cooldown_rounds <= 0 and should_compact(
+                messages,
+                self.compaction_config,
+                real_input_tokens=self.last_real_input_tokens,
+                real_input_estimate=self.last_real_input_estimate,
+                model=model,
+                system_prompt=system_prompt,
+                tools=tools,
             )
             if should_trigger:
                 logger.info(
                     "compact_triggered before_count=%d cooldown=%d",
-                    len(messages), self._compact_cooldown_rounds,
+                    len(messages),
+                    self._compact_cooldown_rounds,
                 )
                 compact_result = await self._run_compaction(messages)
                 messages[:] = compact_result.messages
@@ -3183,6 +3047,11 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                 reasoning_effort=reasoning_effort or self.default_reasoning_effort,
                 extra_body=dict(self.default_extra_body),
             )
+            from deepseek_tui.engine.context_pressure import estimate_request_tokens
+
+            request_input_estimate = estimate_request_tokens(
+                messages, system_prompt=system_prompt, tools=tools
+            )
             logger.info(
                 "llm_invoke_start round=%d msg_count=%d tools_count=%d model=%s",
                 round_idx,
@@ -3190,7 +3059,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                 len(tools),
                 model,
             )
-            self._log_prefix_break(round_idx, system_prompt, messages, tools)
+            self._log_prefix_break(round_idx, request)
             from deepseek_tui.engine.usage_ledger import usage_source
 
             with usage_source("agent_round"):
@@ -3215,17 +3084,14 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             goal_budget_blocked = False
             if round_usage is not None and round_usage.output_tokens:
                 goal_before_usage = self.goal_service.snapshot()
-                if (
-                    goal_before_usage is not None
-                    and goal_before_usage.status.value == "active"
-                ):
+                if goal_before_usage is not None and goal_before_usage.status.value == "active":
                     self._goal_accounted_output_tokens += round_usage.output_tokens
                     goal_budget_blocked = (
-                        self.goal_service.account_tokens(round_usage.output_tokens)
-                        is not None
+                        self.goal_service.account_tokens(round_usage.output_tokens) is not None
                     )
             if round_usage is not None and round_usage.total_input_tokens:
                 self.last_real_input_tokens = round_usage.total_input_tokens
+                self.last_real_input_estimate = request_input_estimate
                 # Prefix-cache baseline, per round. Anything that perturbs the
                 # stable system prefix mid-turn shows up here as a sudden ratio
                 # drop. Both counters zero means the provider reported nothing
@@ -3308,9 +3174,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                     messages.append(
                         reminders.reminder_message(
                             reminders.CHECKLIST_INCOMPLETE_GATE,
-                            CHECKLIST_GATE_REMINDER.format(
-                                open_summary=gate_summary
-                            ),
+                            CHECKLIST_GATE_REMINDER.format(open_summary=gate_summary),
                         )
                     )
                     logger.info(
@@ -3333,9 +3197,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                 elif self.hook_executor.has_hooks_for_event("turn_end"):
                     stop_ctx = self._lifecycle_hook_context(model=model)
                     stop_ctx.stop_hook_active = stop_hook_active
-                    stop_results = await self._run_lifecycle_hook(
-                        "turn_end", stop_ctx
-                    )
+                    stop_results = await self._run_lifecycle_hook("turn_end", stop_ctx)
                     from deepseek_tui.integrations.hooks import (
                         aggregate_hook_decision,
                     )
@@ -3344,10 +3206,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                     if stop_decision.blocked:
                         stop_hook_active = True
                         stop_hook_fires += 1
-                        reason = (
-                            stop_decision.reason
-                            or "A Stop hook blocked ending the turn."
-                        )
+                        reason = stop_decision.reason or "A Stop hook blocked ending the turn."
                         from deepseek_tui.engine import reminders
 
                         messages.append(
@@ -3374,11 +3233,12 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             tool_results = await self._execute_tool_calls(result.tool_calls, model)
             if round_trace is not None:
                 round_trace.tool_exec_ms = latency_now_ms() - tool_exec_start
-            tool_errors = sum(1 for m in tool_results if any(
-                getattr(b, "is_error", False) for b in m.content if hasattr(b, "is_error")
-            ))
+            tool_errors = sum(
+                1
+                for m in tool_results
+                if any(getattr(b, "is_error", False) for b in m.content if hasattr(b, "is_error"))
+            )
             messages.extend(tool_results)
-
 
             # Optional durable transcript hook (Task true-resume).
             on_ckpt = self.tool_context.metadata.get("on_turn_checkpoint")
@@ -3420,9 +3280,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
 
                     return replace(result, tool_round_count=tool_round_count)
 
-        logger.warning(
-            "round_trip_limit_exceeded limit=%d", self.max_tool_round_trips
-        )
+        logger.warning("round_trip_limit_exceeded limit=%d", self.max_tool_round_trips)
         await self.handle.emit(
             ErrorEvent(
                 message="Tool round-trip limit exceeded",

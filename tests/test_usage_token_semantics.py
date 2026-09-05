@@ -9,6 +9,8 @@ meter and kept the compaction ladder permanently idle.
 
 from __future__ import annotations
 
+import pytest
+
 from deepseek_tui.client.pricing import calculate_turn_cost_estimate_from_usage
 from deepseek_tui.engine.context import estimate_context_breakdown
 from deepseek_tui.engine.usage_ledger import TurnUsageLedger, usage_source
@@ -39,10 +41,48 @@ def test_total_input_tokens_adds_cache_counters_for_anthropic_payloads() -> None
     assert usage.total_input_tokens == ANTHROPIC_TOTAL_INPUT
 
 
+def test_anthropic_semantics_do_not_depend_on_counter_magnitude() -> None:
+    """A large uncached suffix must not masquerade as an inclusive total."""
+    usage = Usage.model_validate({"input_tokens": 10_000, "cache_read_input_tokens": 5_000})
+    assert usage.total_input_tokens == 15_000
+
+
 def test_total_input_tokens_does_not_double_count_deepseek_payloads() -> None:
     usage = Usage.model_validate(DEEPSEEK_CACHED)
     assert usage.input_tokens == 147008
     assert usage.total_input_tokens == 147008
+
+
+def test_openai_nested_cached_tokens_are_normalised() -> None:
+    usage = Usage.model_validate(
+        {
+            "prompt_tokens": 10_000,
+            "completion_tokens": 100,
+            "prompt_tokens_details": {"cached_tokens": 6_000},
+        }
+    )
+    assert usage.total_input_tokens == 10_000
+    assert usage.cache_read_input_tokens == 6_000
+    assert usage.cache_creation_input_tokens == 4_000
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        DEEPSEEK_CACHED,
+        {
+            "prompt_tokens": 10_000,
+            "completion_tokens": 100,
+            "prompt_tokens_details": {"cached_tokens": 6_000},
+        },
+    ],
+)
+def test_inclusive_usage_semantics_survive_serialisation(payload) -> None:
+    usage = Usage.model_validate(payload)
+    restored = Usage.model_validate(usage.model_dump())
+
+    assert restored.input_tokens_include_cache is True
+    assert restored.total_input_tokens == usage.total_input_tokens
 
 
 def test_total_input_tokens_handles_partial_and_absent_caching() -> None:

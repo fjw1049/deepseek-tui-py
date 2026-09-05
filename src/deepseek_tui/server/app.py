@@ -517,11 +517,19 @@ def build_fastapi_app(
     When ``http_mode`` is True, mount Workbench routes (bare JSON +
     long-lived SSE) and keep legacy envelope routes under ``/legacy`` only.
     """
+    from contextlib import asynccontextmanager
+
     from fastapi import FastAPI
+
+    @asynccontextmanager
+    async def _lifespan(app: Any) -> Any:
+        await app.state.thread_manager.reclaim_idle_worktrees()
+        yield
 
     app = FastAPI(
         title="deepseek-runtime-api" if http_mode else "deepseek-app-server",
         version="0.1.0",
+        lifespan=_lifespan,
     )
     app.state.runtime = runtime
 
