@@ -174,7 +174,7 @@ export function StreamdownAssistant({ text, streaming, className }: Props): Reac
       parseIncompleteMarkdown={streaming}
       isAnimating={isAnimating}
       animated={animated}
-      controls={{ table: false }}
+      controls={{ table: true }}
       remarkPlugins={[remarkGfm]}
       rehypePlugins={rehypePlugins}
       components={components}
