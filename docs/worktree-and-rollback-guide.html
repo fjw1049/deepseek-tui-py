@@ -1,0 +1,715 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DeepSeek TUI · Worktree 管理与回滚机制详解</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --bg-soft: #161b22;
+    --bg-card: #1a212b;
+    --border: #30363d;
+    --text: #e6edf3;
+    --text-dim: #9aa7b3;
+    --accent: #58a6ff;
+    --green: #3fb950;
+    --amber: #d29922;
+    --red: #f85149;
+    --purple: #bc8cff;
+    --mono: "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    line-height: 1.75;
+    font-size: 16px;
+    padding: 0 0 120px;
+  }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 0 32px; }
+  header.hero {
+    padding: 72px 0 48px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 48px;
+  }
+  header.hero h1 { font-size: 34px; font-weight: 700; letter-spacing: -0.5px; margin-bottom: 12px; }
+  header.hero .sub { color: var(--text-dim); font-size: 17px; max-width: 720px; }
+  header.hero .meta { margin-top: 20px; color: var(--text-dim); font-size: 13px; font-family: var(--mono); }
+  nav.toc {
+    background: var(--bg-soft);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 24px 28px;
+    margin-bottom: 56px;
+  }
+  nav.toc h2 { font-size: 14px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 12px; }
+  nav.toc ol { list-style: none; counter-reset: toc; }
+  nav.toc li { counter-increment: toc; padding: 4px 0; }
+  nav.toc li::before { content: counter(toc, decimal-leading-zero) "  "; color: var(--accent); font-family: var(--mono); font-size: 13px; }
+  nav.toc a { color: var(--text); text-decoration: none; }
+  nav.toc a:hover { color: var(--accent); }
+  section { margin-bottom: 72px; }
+  h2.sec {
+    font-size: 26px;
+    font-weight: 700;
+    padding-bottom: 12px;
+    border-bottom: 2px solid var(--border);
+    margin-bottom: 28px;
+    letter-spacing: -0.3px;
+  }
+  h2.sec .no { color: var(--accent); font-family: var(--mono); font-size: 20px; margin-right: 12px; }
+  h3 { font-size: 19px; margin: 36px 0 14px; color: var(--text); }
+  h4 { font-size: 16px; margin: 24px 0 10px; color: var(--accent); }
+  p { margin-bottom: 14px; }
+  p.dim { color: var(--text-dim); }
+  ul, ol { margin: 0 0 16px 24px; }
+  li { margin-bottom: 6px; }
+  code {
+    font-family: var(--mono);
+    font-size: 0.88em;
+    background: var(--bg-soft);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    padding: 1px 6px;
+    color: #79c0ff;
+    white-space: nowrap;
+  }
+  code.path { color: #ffa657; }
+  pre {
+    background: var(--bg-soft);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 18px 20px;
+    overflow-x: auto;
+    margin: 16px 0 22px;
+    font-family: var(--mono);
+    font-size: 13.5px;
+    line-height: 1.6;
+    color: #c9d1d9;
+  }
+  pre code { background: none; border: none; padding: 0; color: inherit; white-space: pre; }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 16px 0 24px;
+    font-size: 14.5px;
+  }
+  th, td { border: 1px solid var(--border); padding: 10px 14px; text-align: left; vertical-align: top; }
+  th { background: var(--bg-soft); font-weight: 600; }
+  td code { white-space: nowrap; }
+  .callout {
+    border-left: 4px solid var(--accent);
+    background: var(--bg-soft);
+    border-radius: 0 10px 10px 0;
+    padding: 16px 20px;
+    margin: 20px 0;
+  }
+  .callout.warn { border-left-color: var(--amber); }
+  .callout.danger { border-left-color: var(--red); }
+  .callout.ok { border-left-color: var(--green); }
+  .callout .t { font-weight: 700; margin-bottom: 6px; display: flex; align-items: center; gap: 8px; }
+  .callout.warn .t { color: var(--amber); }
+  .callout.danger .t { color: var(--red); }
+  .callout.ok .t { color: var(--green); }
+  .callout p:last-child { margin-bottom: 0; }
+  .card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 22px 26px;
+    margin: 18px 0;
+  }
+  .card h4 { margin-top: 0; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+  @media (max-width: 760px) { .grid2 { grid-template-columns: 1fr; } }
+  .flow { margin: 18px 0; overflow-x: auto; }
+  .flow .lane {
+    display: flex; align-items: stretch; gap: 0; min-width: 640px;
+  }
+  .flow .step {
+    flex: 1;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px 12px;
+    position: relative;
+    font-size: 13px;
+    text-align: center;
+  }
+  .flow .step + .step { margin-left: 34px; }
+  .flow .step + .step::before {
+    content: "→";
+    position: absolute;
+    left: -26px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--accent);
+    font-size: 18px;
+  }
+  .flow .step .n { display: block; font-family: var(--mono); font-size: 11px; color: var(--accent); margin-bottom: 6px; }
+  .flow .step .t { font-weight: 700; font-size: 14px; display: block; margin-bottom: 4px; }
+  .flow .step .d { color: var(--text-dim); font-size: 12px; line-height: 1.5; }
+  .flow .step.hot { border-color: var(--accent); }
+  .badge {
+    display: inline-block;
+    font-size: 12px;
+    font-family: var(--mono);
+    padding: 2px 10px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    margin-right: 6px;
+  }
+  .badge.b-green { color: var(--green); border-color: rgba(63,185,80,.4); }
+  .badge.b-amber { color: var(--amber); border-color: rgba(210,153,34,.4); }
+  .badge.b-red { color: var(--red); border-color: rgba(248,81,73,.4); }
+  .badge.b-blue { color: var(--accent); border-color: rgba(88,166,255,.4); }
+  .badge.b-purple { color: var(--purple); border-color: rgba(188,140,255,.4); }
+  .klabel {
+    color: var(--text-dim);
+    font-size: 13px;
+    font-family: var(--mono);
+  }
+  .kbd {
+    display: inline-block;
+    font-family: var(--mono);
+    font-size: 12px;
+    border: 1px solid var(--border);
+    border-bottom-width: 2px;
+    border-radius: 5px;
+    padding: 1px 7px;
+    background: var(--bg-soft);
+  }
+  .footer { color: var(--text-dim); font-size: 13px; border-top: 1px solid var(--border); padding-top: 24px; margin-top: 80px; }
+  .footer code { font-size: 12px; }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+
+<header class="hero">
+  <h1>Worktree 管理与回滚机制详解</h1>
+  <div class="sub">DeepSeek TUI 是怎么做到「AI 改代码不弄脏你的项目、随时能反悔、出冲突绝不覆盖」的——把托管 worktree 的完整生命周期、发布事务与回滚链路一次讲透。</div>
+  <div class="meta">对应代码：src/deepseek_tui/workspace/ · src/deepseek_tui/server/threads/ · packages/workbench/src/ ｜ 整理日期 2026-09-05</div>
+</header>
+
+<nav class="toc">
+  <h2>目录</h2>
+  <ol>
+    <li><a href="#s1">一句话总览：三层世界观</a></li>
+    <li><a href="#s2">磁盘上到底有什么（目录布局）</a></li>
+    <li><a href="#s3">Worktree 的一生：创建 → 同步 → 发布 → 回收</a></li>
+    <li><a href="#s4">发布事务：为什么你的文件永远不会被写坏</a></li>
+    <li><a href="#s5">冲突与恢复：横幅上的五个状态</a></li>
+    <li><a href="#s6">回滚（Rewind / 恢复代码）：完整链路</a></li>
+    <li><a href="#s7">Workbench 前端：两个世界、五个入口</a></li>
+    <li><a href="#s8">安全防线清单（所有保护机制一览）</a></li>
+    <li><a href="#s9">常见疑问 FAQ</a></li>
+  </ol>
+</nav>
+
+<!-- ================================================================ -->
+<section id="s1">
+  <h2 class="sec"><span class="no">01</span>一句话总览：三层世界观</h2>
+
+  <p>整套机制围绕一个朴素的目标：<strong>AI 在一个隔离副本里干活，干完经过「安全的合并事务」把成果搬回你的项目；任何一步不满意，都能按回合精确倒带。</strong>为此系统里同时存在三份「世界」：</p>
+
+  <table>
+    <tr><th>世界</th><th>位置</th><th>谁在用</th><th>说明</th></tr>
+    <tr>
+      <td><strong>项目（Project）</strong></td>
+      <td><code class="path">你的仓库目录</code></td>
+      <td>你本人 + 编辑器</td>
+      <td>唯一「真身」。AI 正常情况下<strong>永远不直接碰它</strong>，只在回合结束的发布瞬间经事务写入。</td>
+    </tr>
+    <tr>
+      <td><strong>隔离副本（Isolate / Worktree）</strong></td>
+      <td><code class="path">~/.deepseek/worktrees/&lt;仓库&gt;-&lt;哈希&gt;/&lt;线程ID&gt;</code></td>
+      <td>AI 工具</td>
+      <td>真正的 git worktree（detached checkout）。每个会话线程独享一个，AI 的所有读写都发生在这里。</td>
+    </tr>
+    <tr>
+      <td><strong>检查点（Checkpoint）</strong></td>
+      <td><code class="path">~/.deepseek/threads/checkpoints/&lt;turn_id&gt;.json</code></td>
+      <td>回滚系统</td>
+      <td>每个回合一份「快照账本」：回合开始前每个文件长什么样、结束时变成了什么样。它是回滚能力的根基。</td>
+    </tr>
+  </table>
+
+  <p>把这三个概念记住，后面所有流程都是它们之间的搬运：</p>
+
+  <pre><code>     你的项目 (Project)                 AI 隔离副本 (Worktree)              回合账本 (Checkpoint)
+  ┌────────────────────┐   回合开始: 复制过去   ┌────────────────────┐   回合结束: 捕获快照   ┌──────────────┐
+  │   你的真实仓库      │ ───────────────────▶ │  ~/.deepseek/      │ ───────────────────▶ │ turn_id.json │
+  │  (唯一真身)         │ ◀─────────────────── │  worktrees/...     │                      │ + raw sidecar│
+  └────────────────────┘   回合结束: 发布事务   └────────────────────┘                      └──────────────┘
+                                  (三路合并 + 全有全无)              ↑ 回滚 = 按账本把项目文件倒带回回合开始前</code></pre>
+
+  <div class="callout ok">
+    <div class="t">✓ 为什么值得这样设计</div>
+    <p>AI 跑测试可能生成临时文件、改坏配置、甚至执行 <code>rm</code>。隔离副本让这些破坏被限制在 <code class="path">~/.deepseek/worktrees</code> 里；发布端的三路合并又保证「你自己刚改过的文件」不会被 AI 的旧版本悄悄盖掉。两层保护缺一不可。</p>
+  </div>
+</section>
+
+<!-- ================================================================ -->
+<section id="s2">
+  <h2 class="sec"><span class="no">02</span>磁盘上到底有什么（目录布局）</h2>
+
+  <h3>2.1 Worktree 的命名规则</h3>
+  <p>每个线程的副本路径由 <code>planned_worktree_path()</code> 决定（<code class="path">src/deepseek_tui/workspace/managed_worktree.py:168</code>）：</p>
+
+  <pre><code>~/.deepseek/worktrees/&lt;仓库名&gt;-&lt;SHA256前8位&gt;/&lt;线程ID&gt;
+                      └──── repo_slug() ────┘   └─ _safe_segment(thread_id) ─┘</code></pre>
+
+  <ul>
+    <li><code>repo_slug()</code>（managed_worktree.py:161）：用仓库目录名 + 绝对路径哈希的前 8 位，保证同名仓库不混淆，也允许同名仓库放在不同位置。</li>
+    <li><code>_safe_segment()</code>（managed_worktree.py:2459）：把线程 ID 清洗成只含字母数字、<code>-_.</code> 的安全目录名，最长 80 字符。</li>
+  </ul>
+
+  <h3>2.2 检查点与基线的存放位置</h3>
+  <table>
+    <tr><th>文件</th><th>路径</th><th>内容</th></tr>
+    <tr><td>回合检查点</td><td><code class="path">~/.deepseek/threads/checkpoints/&lt;turn_id&gt;.json</code></td><td>回合前后每个文件的文本内容、权限位、签名、改动路径清单（<code class="path">turn_checkpoints.py</code>）</td></tr>
+    <tr><td>不透明映像 sidecar</td><td><code class="path">~/.deepseek/threads/checkpoints/&lt;turn_id&gt;.raw/</code></td><td>二进制、符号链接等无法放进 JSON 的文件字节本体</td></tr>
+    <tr><td>Worktree 基线</td><td><code class="path">~/.deepseek/threads/worktree_baselines/&lt;thread_id&gt;</code></td><td>线程最近一次「从项目完整同步过来」的状态指纹（<code class="path">server/threads/store.py:47</code>），含 <code>head</code> + 每个路径的内容签名；恢复决策快照 <code>recovery_snapshot</code> 也存在这里</td></tr>
+  </table>
+
+  <div class="callout">
+    <div class="t">ℹ 什么是「签名（signature）」</div>
+    <p><code>_path_signature()</code>（managed_worktree.py:1926）对每个路径算一个字符串：<code>类型:权限位:内容SHA256</code>，例如 <code>file:100644:3f2a…</code>。符号链接取链接目标、目录记类型、不存在的文件是 <code>missing</code>。全文比对太贵，签名比对等价且快——它是整个系统判断「这个文件到底变没变」的通用货币。</p>
+  </div>
+</section>
+
+<!-- ================================================================ -->
+<section id="s3">
+  <h2 class="sec"><span class="no">03</span>Worktree 的一生：创建 → 同步 → 发布 → 回收</h2>
+
+  <p>生命周期由两层协作完成：<code class="path">workspace/managed_worktree.py</code>（约 2500 行）提供全部<strong>无状态原子原语</strong>；<code class="path">server/threads/manager.py</code>（约 6600 行）作为<strong>回合编排者</strong>，在正确的时机调用它们并持久化基线与日志。下面按时间顺序走一遍。</p>
+
+  <div class="flow">
+    <div class="lane">
+      <div class="step"><span class="n">STEP 1</span><span class="t">创建</span><span class="d">回合开始时若无副本则新建 detached checkout</span></div>
+      <div class="step"><span class="n">STEP 2</span><span class="t">同步</span><span class="d">把项目当前状态（含未提交改动）镜像进副本</span></div>
+      <div class="step hot"><span class="n">STEP 3</span><span class="t">干活</span><span class="d">AI 工具全部工作在副本目录里</span></div>
+      <div class="step hot"><span class="n">STEP 4</span><span class="t">发布</span><span class="d">回合结束，检查点影像三路合并回项目</span></div>
+      <div class="step"><span class="n">STEP 5</span><span class="t">回收</span><span class="d">空闲 3 天且干净的副本被删除</span></div>
+    </div>
+  </div>
+
+  <h3>3.1 创建：<code>create_managed_worktree()</code></h3>
+  <p>managed_worktree.py:185。编排者 <code>_prepare_isolated_workspace()</code>（manager.py:1168）在每个回合开始、会话恢复（resume）、预热时调用它。步骤：</p>
+  <ol>
+    <li><strong>校验</strong>：目标必须是 git 仓库且有 HEAD 提交，否则抛 <code>WorktreeError</code>。</li>
+    <li><strong>占用检查</strong>：目标路径已存在时，若里面有未发布的成果（<code>worktree_has_labor()</code>）就<strong>拒绝覆盖</strong>直接报错；只有干净副本才会被移除重建。</li>
+    <li><strong>建树</strong>：<code>git worktree add --detach &lt;路径&gt; &lt;HEAD&gt;</code> —— 用 detached checkout（不占分支名），基线就是当前项目的 HEAD。</li>
+    <li><strong>复制脏状态</strong>（<code>copy_tracked_dirty=True</code> 时）：
+      <ul>
+        <li>已跟踪文件的未提交改动：<code>git diff --binary HEAD</code> 生成补丁，在副本里 <code>git apply --binary</code>（managed_worktree.py:1797）——二进制安全。</li>
+        <li>未跟踪文件：逐个 <code>_copy_raw()</code> 原样复制（保留符号链接身份，managed_worktree.py:1822）。</li>
+        <li><code>.worktreeinclude</code> 指定的「故意被 gitignore 的环境文件」（如本地 <code>.env</code>、配置）也会复制（managed_worktree.py:1839），让 AI 在副本里能跑起同样的开发环境。</li>
+      </ul>
+    </li>
+  </ol>
+  <div class="callout">
+    <div class="t">ℹ 为什么要复制未提交改动</div>
+    <p>你常常写到一半就丢任务给 AI（比如让它「帮我跑测试」）。如果不复制 <code>node_modules</code> 之外的未提交文件，AI 在副本里看到的是另一个世界，测试结论就不可信。复制让副本成为项目的<strong>完整镜像</strong>，而不是某个历史提交的快照。</p>
+  </div>
+
+  <h3>3.2 同步：<code>sync_isolate_from_project()</code></h3>
+  <p>managed_worktree.py:564。每次回合开始都执行，目的是<strong>让副本和项目此刻完全一致</strong>——包括副本创建之后你在项目里新做的提交和修改。这是整套系统里防御最严密的一段：</p>
+  <ol>
+    <li><strong>劳动清点</strong>：用基线（<code>WorktreeBaseline</code>）区分副本里的文件是「项目同步来的」还是「AI 上回合的劳动」。有未发布劳动且与项目不一致时，抛 <code class="path">UnpublishedWorktreeError</code>（→ 触发第 5 节的恢复横幅），<strong>绝不静默丢弃</strong>。</li>
+    <li><strong>分支保护</strong>（manager.py 同步封装处）：若副本被 <code>promote_worktree_branch()</code> 升级成了用户命名的分支，同步<strong>直接返回不动它</strong>——用户命名的分支是持久性承诺，不静默移动。只有 <code>ds/</code> 前缀的遗留内部分支才参与自动管理（<code>_is_legacy_internal_branch()</code>，managed_worktree.py:2245）。</li>
+    <li><strong>提交保护</strong>：若副本 HEAD 上有尚未进入项目分支的提交（<code>merge-base --is-ancestor</code> 判定不可达），同步返回、保留这些提交。</li>
+    <li><strong>执行同步</strong>（在 <code>before_mutation</code> 日志保护下）：
+      <pre><code>git checkout --detach --force &lt;项目HEAD&gt;   # 先把副本的 git 状态对齐项目提交
+overlay_working_paths(项目 → 副本)         # 再把所有差异路径的字节逐个覆盖过去</code></pre>
+      覆盖前先写入 <strong>journal</strong>（<code>before/target/target_head/checkout_target_head</code> 四组签名，manager.py:1163 附近调用 <code>before_mutation</code>）——如果同步中途崩溃，重启后系统能靠 journal 判断「这些字节是同步写到一半的产物」，而不是误判成 AI 的劳动。
+    </li>
+    <li><strong>收尾校验</strong>：同步完成后重新捕获基线，与目标基线比对；不一致说明同步期间有人动了文件，抛错重来。</li>
+  </ol>
+
+  <h3>3.3 干活：工具被「圈」在副本里</h3>
+  <p><code class="path">workspace/execution.py</code> 只做一件事：回答「工具应该在哪个目录工作」。worktree 模式下返回 <code>execution_root</code>（即副本路径）；副本还没准备好时抛 <code class="path">WorktreePendingError</code>，上游会等待重试。另外两道护栏：</p>
+  <ul>
+    <li><strong>项目租约</strong>（<code class="path">workspace/project_lease.py</code>）：跨进程文件锁（flock）。同一时刻只允许一个线程对同一个项目执行发布/恢复等写操作，多窗口互不踩踏。</li>
+    <li><strong>Shell 写保护</strong>（<code class="path">workspace/shell_write_guard.py</code>）：审查 AI 发出的 shell 命令，阻止它改写允许目录之外的源码文件。允许写入的只有 <code>scratch/</code>、<code>tmp/</code>、<code>node_modules/</code>、<code>dist/</code> 等白名单前缀和日志类后缀（shell_write_guard.py:10-40）。</li>
+  </ul>
+
+  <h3>3.4 回收：三种途径，全部「宁留勿删」</h3>
+  <table>
+    <tr><th>途径</th><th>触发时机</th><th>安全条件</th></tr>
+    <tr>
+      <td><code>reclaim_managed_worktree()</code><br><span class="klabel">managed_worktree.py:1741</span></td>
+      <td>回合边界定期清理（manager.py:2229 <code>reclaim_idle_worktrees()</code>，空闲超过 <code>IDLE_WORKTREE_RECLAIM_AFTER = 3 天</code>，manager.py:144）</td>
+      <td>只删 <strong>owned + 路径合法 + 无任何劳动</strong> 的副本；返回四态 <code>removed / kept / skipped / gone</code>。清理前最后再查一次干净状态，绝不 <code>--force</code>。</td>
+    </tr>
+    <tr>
+      <td><code>prune_orphaned_worktrees()</code><br><span class="klabel">managed_worktree.py:849</span></td>
+      <td>启动、清理线程等时机（manager.py:2224）</td>
+      <td>只回收<strong>不被任何线程引用</strong>的孤儿副本；不属于管理目录、不是 git worktree、有脏文件、有不可达 detached 提交的一律留下。</td>
+    </tr>
+    <tr>
+      <td>删除会话时的 <code>delete_thread_tree()</code></td>
+      <td>用户在侧边栏删除会话</td>
+      <td>见第 7 节：脏副本会先弹「未同步代码将被永久丢弃」的二次确认（i18n key <code>sidebarDeleteUnpublishedConfirm</code>）。</td>
+    </tr>
+  </table>
+
+  <div class="callout warn">
+    <div class="t">⚠ 「劳动」的判定比你想象的宽</div>
+    <p><code>_has_labor_sync()</code>（managed_worktree.py:2092）认为以下任一情况都算有劳动、不许删：git status 非空；<code>.worktreeinclude</code> 文件存在（宁滥勿缺）；甚至 <strong>detached HEAD 不可达</strong>（<code>_detached_head_is_unreachable_sync()</code>，managed_worktree.py:2161）——即当前检出没有任何分支/标签引用保护，删了目录提交就真丢了。宁可多留几个空目录，也绝不冒丢代码的险。</p>
+  </div>
+</section>
+
+<!-- ================================================================ -->
+<section id="s4">
+  <h2 class="sec"><span class="no">04</span>发布事务：为什么你的文件永远不会被写坏</h2>
+
+  <p>回合结束时，编排者调用 <code>_publish_isolated_thread()</code>（manager.py:1372）把本回合 AI 改过的文件搬回项目。这是全文最核心的一段，它是一条<strong>多阶段事务</strong>：</p>
+
+  <div class="flow">
+    <div class="lane">
+      <div class="step"><span class="n">1</span><span class="t">取检查点</span><span class="d">读出本回合 mutated 路径的 base（回合前）/ theirs（回合后）影像</span></div>
+      <div class="step"><span class="n">2</span><span class="t">规划</span><span class="d">对每个路径做三路合并判定，任何冲突则整体不写</span></div>
+      <div class="step"><span class="n">3</span><span class="t">记账</span><span class="d">写前先把影像重定向到项目（retarget_to_project），日志落盘</span></div>
+      <div class="step"><span class="n">4</span><span class="t">写入</span><span class="d">逐路径原子写，写入前后都校验签名</span></div>
+      <div class="step"><span class="n">5</span><span class="t">收尾</span><span class="d">全部成功→标记 checkpoint 已消费；任何失败→整批回滚</span></div>
+    </div>
+  </div>
+
+  <h3>4.1 三路合并怎么判（<code>_plan_path()</code>，managed_worktree.py:1773）</h3>
+  <p>每个文件涉及三个版本：<code>base</code>（回合开始前）、<code>ours</code>(项目此刻)、<code>theirs</code>(AI 回合结束)。判定顺序：</p>
+  <table>
+    <tr><th>情况</th><th>结果</th></tr>
+    <tr><td><code>ours == theirs</code>（AI 改完又变回了原样 / 项目已是目标态）</td><td><span class="badge b-green">applied</span> 无操作，视为成功</td></tr>
+    <tr><td>强制模式（<code>overwrite</code> / <code>force</code> / 用户选「使用本次对话版本」）</td><td><span class="badge b-green">applied</span> 直接采用 AI 版本</td></tr>
+    <tr><td><code>ours == base</code>（回合期间<strong>你</strong>没动过它）</td><td><span class="badge b-green">applied</span> 安全采用 AI 版本</td></tr>
+    <tr><td><code>theirs == base</code>（<strong>AI</strong> 没动过它）</td><td><span class="badge b-green">applied</span> 保留项目版本</td></tr>
+    <tr><td>两边都改了但改的是不同区域</td><td><span class="badge b-purple">merged</span> 三路文本合并（<code>_merge3</code>）成功</td></tr>
+    <tr><td>两边都改且合并不了</td><td><span class="badge b-red">conflicted</span> 挂起等用户决定</td></tr>
+  </table>
+
+  <h3>4.2 文本路径的事务：<code>apply_path_images()</code></h3>
+  <p>managed_worktree.py:1012。要点逐条：</p>
+  <ul>
+    <li><strong>全有全无</strong>：规划阶段出现任何 conflict/skip 且未强制 → 一个字节都不写，报告清空返回。用户看到的是「这次发布整体没发生」，而不是写了一半的混合状态。</li>
+    <li><strong>写前记账</strong>：<code>before_write</code> 回调（即 manager.py 的 <code>stage_publish</code> → <code>checkpoints.retarget_to_project()</code>）在第一个字节写入项目<strong>之前</strong>把检查点日志固化——即使进程在写一半时被杀死，重启后日志也能指导恢复。</li>
+    <li><strong>双签名校验</strong>：写每个文件前后都比对 <code>_path_signature</code>。写前发现项目文件变了（比如你的编辑器刚保存）→ 立刻中止并回滚；写后验证落盘内容确实等于预期。</li>
+    <li><strong>失败即回滚</strong>：按写入的<strong>逆序</strong>把每个文件恢复为写入前的 pre-image；回滚时如果发现文件又被第三方改了，<strong>跳过该文件不覆盖</strong>（「绝不滚回盖掉别人刚写的字节」），并在报告中如实标注。</li>
+    <li><strong>产出 post_signatures</strong>：全部成功后记录每个文件「写入后的签名」，后续回滚用它与当前磁盘状态做 CAS（compare-and-swap）比对，保证只回滚「确实是我们写的状态」。</li>
+  </ul>
+
+  <h3>4.3 不透明路径的事务：<code>apply_raw_path_images()</code></h3>
+  <p>二进制文件、符号链接、超大文件（&gt;512KB）不能走文本合并。它们有独立的事务通道（managed_worktree.py:1199）：</p>
+  <ul>
+    <li>检查点为它们保存 <strong>pre/post 两张「原始映像」</strong>：<code>kind</code>（missing/file/symlink）+ 权限位 + 内容 SHA256，字节本体在 <code class="path">.raw/</code> sidecar 里，写入前会重新校验 sidecar 哈希（<code>_raw_image_is_valid()</code>）。</li>
+    <li>写入时要求目标<strong>当前必须等于 pre 或 post 之一</strong>：等于 post → 幂等跳过；等于 pre → 覆盖；两者都不是（「第三态」，比如你刚手动改了这个二进制）→ <strong>拒绝写入，报 conflicted</strong>。</li>
+    <li>失败时按逆序把已写的路径翻回对面映像；中途崩溃则下次重放同一调用自动补完（幂等）。</li>
+  </ul>
+
+  <div class="callout ok">
+    <div class="t">✓ 文本与原始两条通道被编排者绑成一个事务</div>
+    <p>manager.py:1686 附近：若文本路径全部写成功、随后 raw 路径失败，编排者会用文本报告里的 <code>post_signatures</code> 构造<strong>反向影像</strong>（base=post, theirs=pre）调用 <code>apply_path_images</code> 把文本部分也滚回去——保证「一次发布」在磁盘上要么完整发生，要么整体没发生。</p>
+  </div>
+
+  <h3>4.4 发布成功后</h3>
+  <ul>
+    <li><code>checkpoints.mark_publish_applied()</code> 把检查点标记为已消费；已发布路径不再是「未发布劳动」。</li>
+    <li>副本被再次同步到项目最新状态（含刚发布的改动），基线前移——下个回合从干净一致的状态开始。</li>
+    <li>检查点文件<strong>保留在磁盘</strong>（不删除），因为「回滚到这个回合之前」的能力还需要它；只有被回滚消费后才删除。</li>
+  </ul>
+</section>
+
+<!-- ================================================================ -->
+<section id="s5">
+  <h2 class="sec"><span class="no">05</span>冲突与恢复：横幅上的五个状态</h2>
+
+  <p>发布并非总是一帆风顺。线程记录上有一个 <code>publish_issue</code> 字段（manager.py:149-155），前端据此渲染 <code class="path">PublishConflictBanner</code>。状态机在 <code class="path">publish-conflict-state.ts</code>：</p>
+
+  <pre><code>publishAttentionState(rawConflicts, publishBlocked, publishIssue)
+  → hidden | recovery | failure | missing | conflict</code></pre>
+
+  <table>
+    <tr><th>状态</th><th>含义</th><th>触发原因</th><th>横幅文案（zh）</th><th>用户可选动作</th></tr>
+    <tr>
+      <td><span class="badge b-green">hidden</span></td>
+      <td>一切正常</td><td>无阻塞、无冲突</td><td>不显示横幅（可能只有状态提示：「正在同步…」「本次对话的修改已同步到项目文件夹」）</td><td>—</td></tr>
+    <tr>
+      <td><span class="badge b-blue">conflict</span></td>
+      <td>文件级冲突</td><td>发布时某些路径两边都改过且无法合并</td><td>「项目中的 N 个文件也被修改过」<br><code>publishConflictTitle</code></td>
+      <td><strong>保留项目版本</strong>（keep_project）｜<strong>使用本次对话版本</strong>（use_agent）｜查看冲突</td></tr>
+    <tr>
+      <td><span class="badge b-purple">recovery</span></td>
+      <td>未发布劳动待裁决</td><td>副本里存在没有检查点背书的改动（<code>UnpublishedWorktreeError</code>），或发布/恢复链路中断后的残留</td><td>「发现两份不同的文件版本…两边都还在，没有内容被覆盖」<br><code>publishRecoveryTitle</code></td>
+      <td>保留项目版本｜使用这次任务版本｜取消（选择需与 <code>recovery_token</code> 快照匹配，防止「看的是旧状态、删的是新字节」）</td></tr>
+    <tr>
+      <td><span class="badge b-amber">failure</span></td>
+      <td>发布失败</td><td>写盘/合并流程出错（<code>PUBLISH_FAILED</code>）</td><td>「修改未能自动同步…修改仍安全保存在当前任务中」<br><code>publishSyncFailedTitle</code></td>
+      <td>重试同步</td></tr>
+    <tr>
+      <td><span class="badge b-red">missing</span></td>
+      <td>工作区丢失</td><td>副本目录不见了（被手动删除等，<code>WorktreePendingError</code>）</td><td>「找不到这次任务的工作区…为保护文件，已停止同步，项目不会被覆盖」<br><code>publishMissingTitle</code></td>
+      <td>重新检查工作区</td></tr>
+  </table>
+
+  <h3>5.1 用户的每个决定如何被执行</h3>
+  <p>横幅按钮 → <code>POST /v1/threads/{id}/worktree/resolve</code>（routes.py:1353），请求体 <code>ResolvePublishRequest</code>（models.py:233）带 <code>action / paths / recovery_token</code> 三字段，进入 <code>manager.request_publish_action()</code>（manager.py:1854）：</p>
+
+  <table>
+    <tr><th>action</th><th>后端做什么</th><th>后果</th></tr>
+    <tr>
+      <td><code>apply</code></td>
+      <td>正常发布一次（<code>_publish_isolated_thread</code>），可带 <code>force_paths</code> 或 <code>keep_project</code> 路径清单</td>
+      <td>按第 4 节事务走一遍；冲突路径按清单强制采用 AI 版或保留项目版</td>
+    </tr>
+    <tr>
+      <td><code>use_agent</code></td>
+      <td>对指定路径走 <code>resolve_unpublished_worktree_labor(use_worktree=True)</code>（managed_worktree.py:1645）：把副本字节<strong>原子 raw 拷贝</strong>到项目（<code>apply_raw_paths</code>，先做源签名绑定+备份），然后重新同步副本、前移基线</td>
+      <td>项目指定文件 = 副本版本；拷贝失败会整批还原</td>
+    </tr>
+    <tr>
+      <td><code>keep_project</code></td>
+      <td><code>use_worktree=False</code>：方向反过来，把项目字节拷回副本覆盖</td>
+      <td><strong>副本里的这些改动被放弃</strong>；项目不动</td>
+    </tr>
+  </table>
+
+  <div class="callout danger">
+    <div class="t">⛔ 不会发生的事</div>
+    <p>无论哪个状态，后端都不存在「把项目文件静默覆盖」的路径：文本冲突挂起等选择、二进制第三态拒写、recovery 选择绑快照令牌、横幅上明确告诉你「两边都还在，没有内容被覆盖」——这些都是同一原则的不同侧面。</p>
+  </div>
+</section>
+
+<!-- ================================================================ -->
+<section id="s6">
+  <h2 class="sec"><span class="no">06</span>回滚（Rewind / 恢复代码）：完整链路</h2>
+
+  <p>回滚回答的是另一个问题：「前面几个回合 AI 改的东西，我不想要了，把文件<strong>和</strong>对话倒回去。」它和发布（第 4 节）是两条独立链路，但共享同一批检查点。</p>
+
+  <h3>6.1 检查点里有什么</h3>
+  <p>每个回合一份 <code>TurnCheckpoint</code>（turn_checkpoints.py:128-232），关键字段：</p>
+  <table>
+    <tr><th>字段</th><th>含义</th></tr>
+    <tr><td><code>pre_contents / post_contents</code></td><td>回合开始前 / 结束时每个改动路径的完整文本；<code>None</code> 表示当时不存在（恢复 = 删除该文件）</td></tr>
+    <tr><td><code>pre_modes / post_modes</code></td><td>对应的权限位，恢复时连 chmod 一起还原</td></tr>
+    <tr><td><code>raw_pre_images / raw_post_images</code></td><td>二进制/符号链接的原始映像描述符，字节在 <code class="path">.raw/</code> sidecar</td></tr>
+    <tr><td><code>mutated</code></td><td>本回合 AI 确认改动过的路径（有序）</td></tr>
+    <tr><td><code>uncertain</code></td><td>回合末由 git 状态推断「可能是它改的」路径——所有权是猜测，<strong>恢复时按不确定处理，绝不与第三方修改合并</strong></td></tr>
+    <tr><td><code>head</code> / <code>execution_root</code></td><td>回合开始的项目 HEAD；捕获时的执行根（发布成功后重定向为项目根）</td></tr>
+    <tr><td><code>publish_pending_sync / publish_apply_complete</code></td><td>发布两阶段日志标志，崩溃后据此续跑</td></tr>
+  </table>
+
+  <h3>6.2 三个 HTTP 端点（前端 → 后端）</h3>
+  <table>
+    <tr><th>端点</th><th>定义</th><th>作用</th></tr>
+    <tr>
+      <td><code>GET /v1/threads/{id}/rewind-preview?before_item_id=…</code></td>
+      <td>routes.py:1420 → <code>mgr.rewind_preview()</code>（manager.py:3299）</td>
+      <td><strong>预演</strong>：不写盘，汇总「如果回滚到这条消息之前，哪些文件会被还原、哪些会冲突、哪些不可恢复」。前端弹确认框的数据来源。</td>
+    </tr>
+    <tr>
+      <td><code>POST /v1/threads/{id}/rewind</code></td>
+      <td>routes.py:1380 → <code>rewind_thread_with_result()</code>（manager.py:3070）</td>
+      <td><strong>倒带</strong>：截断对话（可选同时还原文件），支撑「编辑并重发」。</td>
+    </tr>
+    <tr>
+      <td><code>POST /v1/threads/{id}/restore-code</code></td>
+      <td>routes.py:1403 → <code>mgr.restore_code()</code>（manager.py:3237 附近）</td>
+      <td><strong>只还原代码</strong>：对话保持不变，把文件回滚到指定消息之前。</td>
+    </tr>
+    <tr>
+      <td><code>POST /v1/threads/{id}/worktree/resolve</code></td>
+      <td>routes.py:1353</td>
+      <td>恢复/冲突裁决（见第 5 节）。</td>
+    </tr>
+  </table>
+
+  <h3>6.3 一次「还原代码并重发」的完整时序</h3>
+  <pre><code>前端 MessageTimeline（用户点消息菜单「回到此处」）
+  ├─ 1. provider.rewindPreview(threadId, itemId)      → GET /rewind-preview
+  │     rewindPreviewNeedsConfirmation() 判断是否需要弹窗（有文件影响就弹）
+  ├─ 2. 弹出 rewind-resend-confirm 确认框：
+  │     · 仅回退对话并重发        → restore_files=false
+  │     · 还原代码并重发          → restore_files=true
+  │     · 「同时覆盖冲突文件」     → force_conflicts=true（勾选才传）
+  └─ 3. provider.rewindThread(...)                    → POST /rewind
+
+后端 _rewind_thread_with_result（manager.py:3086）—— 全程在一个临界区内：
+  ├─ 校验：该线程当前没有活跃回合（否则 400 "cannot rewind thread while a turn is active"）
+  ├─ 加锁：线程操作锁 + 项目租约（restore_files 时）+ _active_lock
+  │        （start_turn 抢的是同一把锁 → 回滚绝不会和新回合的写入交错）
+  ├─ 选检查点 _checkpoint_candidates()（manager.py:2942）：
+  │     被删回合的 checkpoint + 本线程的「孤儿 checkpoint」（更早对话级回滚遗留）
+  │     按创建时间新→旧排序；早于截断点的孤儿绝不重放（保守）
+  ├─ restore_files=true 时：
+  │     checkpoints.restore() 把每个文件写回回合开始前的状态
+  │     · 第三方改过的路径 → 合并或标 conflicted（force 才覆盖）
+  │     · 不可恢复的 → skipped；结果分四类返回 restored/merged/conflicted/skipped
+  │     · 有未解决路径的 checkpoint 保留为孤儿（还能再次 restore-code / 强制恢复）
+  ├─ _resync_isolate_after_project_restore()：项目回滚后把干净副本重新对齐；
+  │     副本此时若有脏文件 → 置 publish_pending + recovery 横幅（绝不覆盖）
+  ├─ 消费：全部成功的 checkpoint 从磁盘删除（幂等重放不再发生）
+  ├─ 截断对话：删除 before_item_id 及之后所有 item/turn，重算 latest_turn_id
+  └─ 重建引擎会话：warm engine 不再看到被删历史；广播 thread.rewound 事件</code></pre>
+
+  <h3>6.4 restore_code 与 rewind 的分工</h3>
+  <table>
+    <tr><th></th><th>rewind（编辑并重发）</th><th>restore-code（恢复代码）</th></tr>
+    <tr><td>对话</td><td>截断到目标消息之前</td><td><strong>不动</strong></td></tr>
+    <tr><td>文件</td><td>可选还原（弹窗让用户选）</td><td>必还原</td></tr>
+    <tr><td>典型入口</td><td>消息悬停「编辑」→「重新发送」</td><td>「回到此处」的纯代码恢复路径</td></tr>
+    <tr><td>checkpoint 处理</td><td>restore_files=false 时<strong>保留为孤儿</strong>（只回对话不删证据），之后仍可 restore-code</td><td>成功后消费删除</td></tr>
+  </table>
+
+  <div class="callout">
+    <div class="t">ℹ 剪切点语义（v1）</div>
+    <p>两个接口都以「回合（turn）」为最小剪切单位：即使 <code>before_item_id</code> 位于回合中间，该回合整体被还原/消费。UI 只在用户消息（必是回合第一条）上暴露回退入口，所以当前语义没有歧义；未来若开放回合内截断，需先解决这个语义问题（manager.py:3116 注释原文）。</p>
+  </div>
+
+  <h3>6.5 与 TUI 内置机制的区分（容易混淆）</h3>
+  <ul>
+    <li><strong>Workbench 的 rewind / restore-code</strong> —— 本节主角，基于持久化检查点，重启后依然可用，字节级精确。</li>
+    <li><strong>TUI 的 <code>/undo</code></strong>（tui/commands.py:2027）—— 另一套弱机制：只撤销<strong>最近一次改文件的工具调用</strong>，基于内存快照，不等于回合回滚。两者不要混为一谈。</li>
+    <li><strong>TUI 的 Esc-Esc backtrack 状态机</strong> —— 目前只接线到选择状态（confirm/step 无调用方），真正可用的回滚 UI 在 Workbench 前端。</li>
+  </ul>
+</section>
+
+<!-- ================================================================ -->
+<section id="s7">
+  <h2 class="sec"><span class="no">07</span>Workbench 前端：两个世界、五个入口</h2>
+
+  <p>前端代码在 <code class="path">packages/workbench</code>（Electron：main 主进程 / preload 桥 / renderer 渲染进程）。关键认知：<strong>「AI 的 worktree」由后端 Python 运行时管理，前端只通过 HTTP 交互；「你自己的 git 操作」由主进程直接调 git CLI</strong>。两条链路并行：</p>
+
+  <pre><code>链 A — 纯 git 操作（分支/暂存/提交/推拉，主进程直连 git）
+  渲染组件 → window.dsGui.getGitBranches(...)      [preload/index.ts:103-127]
+           → ipcRenderer.invoke('git:branches')    [IPC 通道 git:*]
+           → main/ipc/register-app-ipc-handlers.ts [ipcMain.handle]
+           → main/services/git-service.ts          [execFile('git', args)]
+           → 结果原路返回渲染进程更新 UI
+
+链 B — worktree 生命周期与回滚（运行时 HTTP API）
+  渲染组件 → renderer/src/agent/deepseek-runtime.ts [fetch /v1/threads/...]
+           → Python FastAPI server（routes.py）
+           → ThreadManager（manager.py 编排）
+           → SSE thread.* 事件把状态变化推回前端</code></pre>
+
+  <h3>7.1 入口一：GitBranchPicker —— 分支切换器</h3>
+  <p><code class="path">components/chat/GitBranchPicker.tsx</code>。显示当前分支、可切换目标分支、提交历史入口。切分支走链 A，三个动作对应 git-service 的三个函数：</p>
+  <table>
+    <tr><th>前端动作</th><th>git-service 函数</th><th>git 行为</th></tr>
+    <tr><td>直接切换</td><td><code>switchGitBranch()</code>（git-service.ts:390）</td><td>checkout 目标分支；工作区脏则失败，由前端转 stash 流程</td></tr>
+    <tr><td>暂存并切换</td><td><code>stashAndSwitchGitBranch()</code>（git-service.ts:420）</td><td>先把当前改动 stash（含未跟踪文件），再 checkout</td></tr>
+    <tr><td>新建并切换</td><td><code>createAndSwitchGitBranch()</code>（git-service.ts:784）</td><td>从当前 HEAD 建新分支并检出</td></tr>
+  </table>
+  <div class="callout warn">
+    <div class="t">⚠ 运行时自保护</div>
+    <p><code>protectRuntimeCheckout()</code>（git-service.ts:82）：如果你打开的「工作区」恰好就是 DeepSeek TUI 自己的运行时仓库（<code>DEEPSEEK_REPO_ROOT</code> 环境变量指向的 checkout），所有链 A 的分支操作会被拒绝——防止你在 TUI 运行中途把它的源码切走。</p>
+  </div>
+
+  <h3>7.2 入口二：PublishConflictBanner —— 发布状态横幅</h3>
+  <p>第 5 节的完整状态机就渲染在这里（<code class="path">components/chat/PublishConflictBanner.tsx</code>）。状态来源是 SSE <code>thread.updated</code> 事件携带的 <code>publish_pending / publish_blocked / publish_issue / publish_conflicts</code> 字段（manager.py:821 附近打包进线程视图）。兼容细节：<code>publish-conflict-state.ts:22-53</code> 还能识别旧版运行时把原因编码在 conflicts 数组里的特殊标记串（如 <code>&lt;unpublished-worktree-labor&gt;</code>），只摘除一个匹配项，避免把同名合法文件名误删。</p>
+
+  <h3>7.3 入口三：MessageTimeline —— 消息级回退</h3>
+  <p>消息菜单提供「编辑 / 回到此处」，进入 6.3 节的预演 → 确认 → 执行流程（<code class="path">components/chat/MessageTimeline.tsx:3057</code> 起）。确认框由 <code class="path">rewind-resend-confirm.ts</code> 的 <code>rewindPreviewNeedsConfirmation()</code> 决定是否弹出；i18n（<code class="path">locales/zh/common.json:1845-1869</code>）把结果讲得很直白：</p>
+  <ul>
+    <li><code>rewindResendConfirmBody</code>：「你可以只回退对话，也可以同时把以下文件还原到该消息之前」</li>
+    <li><code>rewindResendConfirmConflictNote</code>：「N 个文件在这次对话之后又被改过，<strong>默认先保持原样</strong>」——冲突默认保守，勾选 <code>rewindResendConfirmForce</code> 才覆盖。</li>
+    <li><code>rewindResendConfirmNoCheckpoint</code>：「N 个回合没有可用的代码还原记录；对话仍会回退，但代码改动可能无法一起还原」——<strong>检查点缺失永远不阻止对话回退，但会如实告知文件回不去了</strong>。</li>
+  </ul>
+
+  <h3>7.4 入口四：ChangeInspector 的 Git 操作栏</h3>
+  <p>查看 AI 改动差异的面板，附一条 Git 操作栏：发布分支、推送（<code>pushGitBranch</code>，git-service.ts:1062）、拉取/同步（<code>pullGitBranch</code> / <code>syncGitBranch</code>，git-service.ts:1032/1126，同步=rebase+push 的安全组合）、暂存（<code>stageGitChanges</code> / <code>unstageGitChanges</code>）、提交（<code>commitGitChanges</code>，git-service.ts:1250；可让模型建议提交信息 <code>suggestGitCommitMessage</code>）。全部走链 A。</p>
+
+  <h3>7.5 入口五：侧边栏删除会话</h3>
+  <p>删除有未发布代码的会话时弹二次确认（<code>sidebarDeleteUnpublishedConfirm</code>）：「继续删除会永久丢弃这些代码，且无法恢复」。确认后 <code>delete_thread_tree()</code>（manager.py:2354 附近）清掉线程数据、检查点并回收副本——这是整个系统里唯一「主动丢代码」的地方，因此它是唯一需要显式二次确认的操作。</p>
+
+  <h3>7.6 前端如何知道 worktree 的状态</h3>
+  <table>
+    <tr><th>信息</th><th>来源</th></tr>
+    <tr><td>发布待定 / 阻塞 / 问题类型 / 冲突路径</td><td>SSE <code>thread.updated</code>：线程记录的 <code>publish_pending</code>、<code>publish_blocked</code>、<code>publish_issue</code>、<code>publish_conflicts</code></td></tr>
+    <tr><td>回滚影响预览</td><td><code>GET /rewind-preview</code> 一次性返回（含孤儿检查点）</td></tr>
+    <tr><td>分支 / 领先落后 / 提交图</td><td>链 A：<code>getGitBranches</code>（含 <code>refreshRemote</code> 强刷）、<code>getGitLog</code>（git-service.ts:1524）</td></tr>
+    <tr><td>工作区改动清单（暂存/未暂存/冲突）</td><td>链 A：<code>getGitWorkingChanges</code>（git-service.ts:712，解析 porcelain 输出）</td></tr>
+  </table>
+</section>
+
+<!-- ================================================================ -->
+<section id="s8">
+  <h2 class="sec"><span class="no">08</span>安全防线清单（所有保护机制一览）</h2>
+
+  <p>把散落在各节的保护机制收拢成一张总表，每一条都能在代码里指认：</p>
+
+  <table>
+    <tr><th>#</th><th>防线</th><th>挡住什么</th><th>位置</th></tr>
+    <tr><td>1</td><td>隔离目录 + detached worktree</td><td>AI 的所有写操作落在 <code class="path">~/.deepseek/worktrees</code>，项目不被直接触碰</td><td>managed_worktree.py:185</td></tr>
+    <tr><td>2</td><td>Shell 写白名单</td><td>AI 用 shell 命令越界改源码</td><td>shell_write_guard.py:10-40</td></tr>
+    <tr><td>3</td><td>路径逃逸校验 <code>_exact_workspace_path()</code></td><td>绝对路径、<code>..</code>、符号链接逃出工作区根</td><td>managed_worktree.py:2446</td></tr>
+    <tr><td>4</td><td>项目租约（flock）</td><td>多个会话/进程同时写同一个项目</td><td>project_lease.py；manager.py 发布入口持有</td></tr>
+    <tr><td>5</td><td>三路合并 + 全有全无</td><td>覆盖你刚改过的文件；写一半的混合状态</td><td>managed_worktree.py:1773/1012</td></tr>
+    <tr><td>6</td><td>写前 journal / retarget</td><td>进程崩溃留下的半成品无法恢复</td><td>manager.py stage_publish；turn_checkpoints.py retarget_to_project</td></tr>
+    <tr><td>7</td><td>签名 CAS 校验</td><td>「我看到的」和「我要写的」不是同一份字节（并发第三方修改）</td><td>managed_worktree.py:1926 及各 apply 内</td></tr>
+    <tr><td>8</td><td>原始映像 pre/post 事务 + 第三态拒写</td><td>二进制/符号链接被盲目覆盖</td><td>managed_worktree.py:1199</td></tr>
+    <tr><td>9</td><td>失败逆序回滚 + 回滚自身保守化</td><td>回滚过程把别人刚写的字节盖掉</td><td>managed_worktree.py:1144-1166</td></tr>
+    <tr><td>10</td><td>UnpublishedWorktreeError + recovery_token</td><td>未发布成果被静默丢弃；基于过期快照做破坏性选择</td><td>managed_worktree.py:75；models.py:241</td></tr>
+    <tr><td>11</td><td>用户分支 / 不可达提交保护</td><td>自动同步移动你命名的分支、丢弃未合并提交</td><td>managed_worktree.py:660-677</td></tr>
+    <tr><td>12</td><td>回收多重检查（劳动/.worktreeinclude/不可达 HEAD）</td><td>清理例程误删还有价值的副本</td><td>managed_worktree.py:2092-2196</td></tr>
+    <tr><td>13</td><td>回滚临界区（线程锁+项目租约+active_lock）</td><td>回滚与新回合写入交错</td><td>manager.py:3125 附近</td></tr>
+    <tr><td>14</td><td>孤儿 checkpoint 保留策略</td><td>只回退对话后，文件无法再恢复</td><td>manager.py:3108-3113（有意不设 TTL）</td></tr>
+    <tr><td>15</td><td>运行时自保护</td><td>在 TUI 自己的源码仓库里切分支</td><td>git-service.ts:82</td></tr>
+  </table>
+
+  <p class="dim">贯穿一切的原则：<strong>宁可拒绝、挂起、多留副本，也绝不静默覆盖或丢弃任何一方的字节。</strong>所有「丢弃」都必须由用户显式选择（横幅裁决 / 二次确认 / 强制覆盖勾选），且选择绑定当时的快照证据。</p>
+</section>
+
+<!-- ================================================================ -->
+<section id="s9">
+  <h2 class="sec"><span class="no">09</span>常见疑问 FAQ</h2>
+
+  <div class="card">
+    <h4>Q1：AI 说「已修改文件」，我的项目目录里为什么看不到？</h4>
+    <p>改动先落在 <code class="path">~/.deepseek/worktrees/&lt;仓库&gt;/&lt;线程&gt;</code>。回合结束发布成功（横幅短暂显示「本次对话的修改已同步到项目文件夹」）后才会出现在你的项目里。若横幅显示「正在等待另一个任务完成」，说明另一个会话正持有项目租约，会自动排队。</p>
+  </div>
+
+  <div class="card">
+    <h4>Q2：发布冲突时选「使用本次对话版本」，会丢掉我自己的修改吗？</h4>
+    <p>被选中的那几个文件会（这正是选项的字面含义），但只作用于冲突清单里的文件——横幅文案明确「你的选择只作用于这些冲突文件，其余修改仍会正常同步」。选择前可以点「查看冲突」逐个看差异。</p>
+  </div>
+
+  <div class="card">
+    <h4>Q3：只回退了对话没还原代码，之后还能还原吗？</h4>
+    <p>能。那时检查点被保留为「孤儿」且有意不清理（无 TTL），随时可用 restore-code（或再次 rewind 勾选还原代码）把文件回滚。代价是磁盘占用——这是「空间换可回滚性」的明确取舍（manager.py:3110 注释）。</p>
+  </div>
+
+  <div class="card">
+    <h4>Q4：为什么有的回合「没有可用的代码还原记录」？</h4>
+    <p>检查点只可靠记录文本文件；二进制/符号链接有 raw sidecar，但极旧版本、捕获失败或超大文件的路径可能没被记录。这类回合对话仍可回退，文件部分会如实标注「不可恢复」（<code>rewindResendConfirmNoCheckpoint</code>）。</p>
+  </div>
+
+  <div class="card">
+    <h4>Q5：<code>~/.deepseek/worktrees</code> 里有一堆目录，能手动删吗？</h4>
+    <p>可以，但建议先让系统自清理：空闲 3 天的干净副本会被自动回收。手动删除一个「有未发布劳动」的副本，会触发该线程的 <span class="badge b-red">missing</span> 横幅（工作区丢失）——系统不会因此覆盖项目，但那个会话的未同步改动就真没了。</p>
+  </div>
+
+  <div class="card">
+    <h4>Q6：回滚会不会把回滚之后我自己改的文件覆盖掉？</h4>
+    <p>不会。restore 时对每个路径都检查「它现在是否还是回合结束时的样子」：被你改过的路径要么三路合并、要么标记冲突保持原样，默认绝不覆盖；只有显式勾选「同时覆盖冲突文件（会丢弃他人的改动）」才会强制。</p>
+  </div>
+
+  <div class="card">
+    <h4>Q7：两个会话同时给一个项目改代码会怎样？</h4>
+    <p>各自有独立副本互不干扰；发布端靠项目租约串行化——后完成的会话发布时，会看到先完成会话写入的字节（作为新的 <code>ours</code> 参与三路合并），冲突才挂起，不冲突直接合入。</p>
+  </div>
+
+</section>
+
+<div class="footer">
+  基于仓库快照 <code>deepseek-tui-py-main</code>（2026-09-05）整理 · 主要代码：<code>src/deepseek_tui/workspace/{managed_worktree,turn_checkpoints,project_lease,shell_write_guard,execution}.py</code> · <code>src/deepseek_tui/server/threads/{manager,routes,models,store}.py</code> · <code>packages/workbench/src/{main/services/git-service.ts, preload/index.ts, renderer/src/components/chat/*, renderer/src/agent/deepseek-runtime.ts}</code>
+</div>
+
+</div>
+</body>
+</html>

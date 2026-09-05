@@ -205,8 +205,10 @@ export function buildChromeThemeCssVars(
     '--ds-chip-border': borderSoft,
     '--ds-chip-active': `linear-gradient(180deg, ${rgba(accentDisplay, light ? 0.16 : 0.18)}, ${rgba(accentDisplay, light ? 0.08 : 0.1)})`,
     '--ds-kbd-bg': rgba(elevated1, light ? 0.9 : 0.94),
-    '--ds-code-bg': hex(mixRgb(canvasBg, anchor, light ? 0.04 : 0.033)),
-    '--ds-pre-bg': hex(mixRgb(canvasBg, anchor, light ? 0.035 : 0.03)),
+    // Light code surfaces need an ink tint: mixing a white canvas toward
+    // white erases the block's separation from the surrounding answer.
+    '--ds-code-bg': hex(mixRgb(canvasBg, ink, light ? 0.065 : 0.033)),
+    '--ds-pre-bg': hex(mixRgb(canvasBg, ink, light ? 0.05 : 0.03)),
     '--ds-table-head-bg': rgba(elevated1, light ? 0.96 : 0.94),
     '--ds-scrollbar-thumb': rgba(ink, light ? 0.2 : 0.14),
     '--ds-scrollbar-thumb-hover': rgba(ink, light ? 0.3 : 0.24),

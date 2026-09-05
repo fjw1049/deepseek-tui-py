@@ -25,7 +25,8 @@
     'Courier New', monospace;
   /* Appearance: density scale (spacing only) and chat reading size. */
   --ds-density: 1;
-  --ds-chat-font-size: 14px;
+  --ds-chat-font-size: 16px;
+  --ds-chat-column-width: 760px;
   --surface-1: #ffffff;
   --surface-2: #ffffff;
   --surface-3: #ffffff;
@@ -2600,8 +2601,8 @@ samp {
 
 /* Empty-state hero + composer share one centered column. */
 .ds-chat-stage {
-  width: min(52rem, 100%);
-  max-width: 52rem;
+  width: min(var(--ds-chat-column-width), 100%);
+  max-width: var(--ds-chat-column-width);
   margin-inline: auto;
 }
 
@@ -2923,8 +2924,8 @@ samp {
 
 .ds-chat-stage-stack {
   display: flex;
-  width: min(52rem, 100%);
-  max-width: 52rem;
+  width: min(var(--ds-chat-column-width), 100%);
+  max-width: var(--ds-chat-column-width);
   margin-inline: auto;
   flex-direction: column;
   gap: calc(1.25rem * var(--ds-density, 1));
@@ -6447,16 +6448,17 @@ html[data-theme='dark'] .ds-code-fullscreen .shiki span {
 
 /* ── Final-answer reading mode ───────────────────────────────────────────
    Dense `.ds-markdown` stays for process-trace / reasoning. Final answers
-   keep full column width with roomier rhythm, scannable headings, and soft
+   use a bounded reading column with scannable headings and soft
    inline code (no pill border). */
 .ds-markdown.ds-markdown--answer {
-  /* Keep the chat-stage width — code and tables scroll inside this measure. */
-  max-width: none;
+  /* Bound prose even when the IDE rail or a report surface grows wider. */
+  max-width: var(--ds-chat-column-width);
   width: 100%;
-  font-size: var(--ds-chat-font-size, 14px);
-  line-height: 1.625;
+  margin-inline: auto;
+  font-size: var(--ds-chat-font-size, 16px);
+  line-height: 1.7;
   letter-spacing: normal;
-  color: color-mix(in srgb, var(--ds-text) 97%, var(--ds-text-muted));
+  color: color-mix(in srgb, var(--ds-text) 86%, var(--ds-text-muted));
   -webkit-font-smoothing: antialiased;
 }
 
@@ -6482,7 +6484,7 @@ html[data-theme='dark'] .ds-code-fullscreen .shiki span {
 }
 
 .ds-markdown.ds-markdown--answer .space-y-4 > :not([hidden]) ~ :not([hidden]) {
-  margin-top: 0.75rem;
+  margin-block: var(--ds-answer-block-gap, 0.875rem) 0;
 }
 
 .ds-markdown.ds-markdown--answer > :first-child {
@@ -6500,7 +6502,7 @@ html[data-theme='dark'] .ds-code-fullscreen .shiki span {
 .ds-markdown.ds-markdown--answer pre,
 .ds-markdown.ds-markdown--answer table,
 .ds-markdown.ds-markdown--answer hr {
-  margin: 0 0 0.7em;
+  margin: 0 0 0.875rem;
 }
 
 .ds-markdown.ds-markdown--answer h1,
@@ -6511,28 +6513,32 @@ html[data-theme='dark'] .ds-code-fullscreen .shiki span {
   /* Let Chinese headings use the same PingFang-backed UI stack as prose. */
   font-family: inherit;
   font-weight: 600;
-  letter-spacing: -0.01em;
-  line-height: 1.25;
-  scroll-margin-top: 0.75rem;
+  letter-spacing: normal;
+  line-height: 1.4;
+  scroll-margin-top: 0.875rem;
 }
 
 .ds-markdown.ds-markdown--answer h1 {
-  margin: 1.1em 0 0.38em;
-  font-size: 1.65em;
+  --ds-answer-block-gap: 1.875rem;
+  margin: 1.875rem 0 0.625rem;
+  font-size: 1.4em;
 }
 
 .ds-markdown.ds-markdown--answer h2 {
-  margin: 1.1em 0 0.36em;
-  font-size: 1.45em;
+  --ds-answer-block-gap: 1.875rem;
+  margin: 1.875rem 0 0.625rem;
+  font-size: 1.35em;
 }
 
 .ds-markdown.ds-markdown--answer h3 {
-  margin: 1.05em 0 0.34em;
+  --ds-answer-block-gap: 1.5rem;
+  margin: 1.5rem 0 0.5rem;
   font-size: 1.25em;
 }
 
 .ds-markdown.ds-markdown--answer h4 {
-  margin: 1em 0 0.3em;
+  --ds-answer-block-gap: 1.25rem;
+  margin: 1.25rem 0 0.375rem;
   font-size: 1.1em;
 }
 
@@ -6547,13 +6553,16 @@ html[data-theme='dark'] .ds-code-fullscreen .shiki span {
 .ds-markdown.ds-markdown--answer h2 + p,
 .ds-markdown.ds-markdown--answer h3 + p,
 .ds-markdown.ds-markdown--answer h4 + p {
+  --ds-answer-block-gap: 0.625rem;
   margin-top: 0;
 }
 
 .ds-markdown.ds-markdown--answer strong,
-.ds-markdown.ds-markdown--answer b {
+.ds-markdown.ds-markdown--answer b,
+.ds-markdown.ds-markdown--answer [data-streamdown="strong"] {
   font-weight: 500;
   color: var(--ds-text);
+  font-synthesis: none;
 }
 
 .ds-markdown.ds-markdown--answer ul,
@@ -6590,7 +6599,7 @@ html[data-theme='dark'] .ds-code-fullscreen .shiki span {
 }
 
 .ds-markdown.ds-markdown--answer li + li {
-  margin-top: 0.28em;
+  margin-top: 0.5rem;
 }
 
 .ds-markdown.ds-markdown--answer li::marker {
@@ -6602,7 +6611,7 @@ html[data-theme='dark'] .ds-code-fullscreen .shiki span {
 }
 
 .ds-markdown.ds-markdown--answer li > p + p {
-  margin-top: 0.4em;
+  margin-top: 0.625rem;
 }
 
 .ds-markdown.ds-markdown--answer li > ul,
@@ -6637,14 +6646,14 @@ html[data-theme='dark'] .ds-code-fullscreen .shiki span {
 .ds-markdown.ds-markdown--answer .ds-code-inline {
   border: none;
   border-radius: 0.35rem;
-  background: color-mix(in srgb, var(--ds-bubble-user, var(--ds-code-bg)) 72%, transparent);
-  padding: 0.06em 0.28em;
+  background: color-mix(in srgb, var(--ds-text) 5%, transparent);
+  padding: 0.08em 0.26em;
   /* Let long paths wrap without widening the reading column. */
   overflow-wrap: anywhere;
   word-break: break-word;
   font-family: var(--ds-chat-code-font, var(--font-mono), ui-monospace, monospace);
-  font-size: 0.88em;
-  font-weight: 500;
+  font-size: 0.9em;
+  font-weight: 400;
   line-height: 1.35;
   color: var(--ds-text);
   box-shadow: none;
@@ -6665,6 +6674,15 @@ html[data-theme='dark'] .ds-code-fullscreen .shiki span {
   border-bottom: 0;
   background: transparent;
   padding: 0.1rem 0.4rem 0.1rem 0.6rem;
+}
+
+:root:not([data-theme='dark']) .ds-markdown.ds-markdown--answer .ds-code-block {
+  border: 1px solid var(--ds-border-muted);
+}
+
+:root:not([data-theme='dark']) .ds-markdown.ds-markdown--answer .ds-code-block-header {
+  border-bottom: 1px solid var(--ds-border-muted);
+  background: var(--ds-code-bg);
 }
 
 .ds-markdown.ds-markdown--answer .ds-code-block-html > pre,
@@ -6691,6 +6709,37 @@ html[data-theme='dark'] .ds-code-fullscreen .shiki span {
 
 .ds-markdown.ds-markdown--answer th {
   font-weight: 500;
+}
+
+.ds-markdown.ds-markdown--answer details {
+  --ds-answer-block-gap: 1.5rem;
+  margin: 1.5rem 0 0.875rem;
+  padding-top: 0.875rem;
+  border-top: 1px solid var(--ds-border-muted);
+}
+
+.ds-markdown.ds-markdown--answer summary {
+  width: fit-content;
+  max-width: 100%;
+  margin-bottom: 0.625rem;
+  color: var(--ds-text-muted);
+  font-size: 0.9em;
+  font-weight: 500;
+  cursor: pointer;
+  list-style: disclosure-closed inside;
+}
+
+.ds-markdown.ds-markdown--answer details[open] > summary {
+  list-style-type: disclosure-open;
+}
+
+.ds-markdown.ds-markdown--answer summary:hover,
+.ds-markdown.ds-markdown--answer summary:focus-visible {
+  color: var(--ds-text);
+}
+
+.ds-markdown.ds-markdown--answer details > :last-child {
+  margin-bottom: 0;
 }
 
 .ds-user-message {
@@ -8044,8 +8093,8 @@ select:focus-visible,
 }
 
 .ds-dialogue-gutter.ds-chat-stage {
-  width: min(52rem, 100%);
-  max-width: 52rem;
+  width: min(var(--ds-chat-column-width), 100%);
+  max-width: var(--ds-chat-column-width);
   margin-inline: auto;
 }
 
@@ -8065,13 +8114,13 @@ select:focus-visible,
   min-height: 0;
   /* Symmetric inset so the message list and composer both pull away from the
      column edges by the same amount (overrides the asymmetric ds-dialogue-gutter). */
-  padding-inline: calc(clamp(1rem, 4cqi, 4rem) * var(--ds-density, 1));
+  padding-inline: clamp(1rem, 3cqi, 1.5rem);
 }
 
 .ds-chat-operation-band__dialogue .ds-chat-stage {
   /* Keep the shared stage max-width; center so the right side opens toward the rail. */
-  width: min(52rem, 100%);
-  max-width: 52rem;
+  width: min(var(--ds-chat-column-width), 100%);
+  max-width: var(--ds-chat-column-width);
   margin-inline: auto;
   padding-inline: 0;
 }
@@ -11180,6 +11229,13 @@ select:focus-visible,
   color: var(--ds-text);
 }
 
+.ds-ide-chat-rail .ds-markdown.ds-markdown--answer {
+  font-size: var(--ds-answer-font-size, 16px);
+  line-height: 1.7;
+  color: color-mix(in srgb, var(--ds-text) 86%, var(--ds-text-muted));
+  --ds-ide-space-block: 0.875rem;
+}
+
 .ds-ide-chat-rail .ds-markdown.ds-markdown--answer p,
 .ds-ide-chat-rail .ds-markdown.ds-markdown--answer li {
   text-align: start;
@@ -11213,11 +11269,11 @@ select:focus-visible,
 }
 
 .ds-ide-chat-rail .ds-markdown.ds-markdown--answer .space-y-4 > :not([hidden]) ~ :not([hidden]) {
-  margin-top: var(--ds-ide-space-block);
+  margin-block: var(--ds-answer-block-gap, var(--ds-ide-space-block)) 0;
 }
 
 .ds-ide-chat-rail .ds-markdown.ds-markdown--answer li + li {
-  margin-top: 0.25rem;
+  margin-top: 0.5rem;
 }
 
 .ds-ide-chat-rail .ds-markdown.ds-markdown--answer ul,
@@ -11237,15 +11293,15 @@ select:focus-visible,
 }
 
 .ds-ide-chat-rail .ds-markdown.ds-markdown--answer h1 {
-  font-size: 1.2em;
+  font-size: 1.35em;
 }
 
 .ds-ide-chat-rail .ds-markdown.ds-markdown--answer h2 {
-  font-size: 1.12em;
+  font-size: 1.25em;
 }
 
 .ds-ide-chat-rail .ds-markdown.ds-markdown--answer h3 {
-  font-size: 1.06em;
+  font-size: 1.15em;
 }
 
 .ds-ide-chat-rail .ds-markdown.ds-markdown--answer h4 {
@@ -11254,10 +11310,10 @@ select:focus-visible,
 
 .ds-ide-chat-rail .ds-markdown.ds-markdown--answer :not(pre) > code,
 .ds-ide-chat-rail .ds-markdown.ds-markdown--answer .ds-code-inline {
-  font-size: var(--ds-ide-font-code);
-  font-weight: 500;
+  font-size: 0.9em;
+  font-weight: 400;
   line-height: 1.5;
-  padding: 0.1rem 0.3rem;
+  padding: 0.08em 0.26em;
   border-radius: 0.35rem;
 }
 

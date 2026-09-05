@@ -215,6 +215,20 @@ function linkifyTextNode(node: HastNode): HastNode[] {
 }
 
 function visit(node: HastNode, blocked: boolean): void {
+  // Normalize authored local destinations before harden interprets :line as a
+  // protocol. Only recognized file paths qualify; custom schemes stay blocked.
+  if (!blocked && node.tagName === 'a' && typeof node.properties?.href === 'string') {
+    const target = parseMarkdownFileReferenceHref(node.properties.href)
+    if (target) {
+      node.properties.href = createFileReferenceHref(target)
+      const classes = node.properties.className
+      node.properties.className = [
+        ...(Array.isArray(classes) ? classes : typeof classes === 'string' ? classes.split(/\s+/) : []),
+        'ds-file-reference-link',
+        'ds-file-reference-authored'
+      ]
+    }
+  }
   const children = node.children
   if (!children?.length) return
 

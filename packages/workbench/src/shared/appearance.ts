@@ -66,7 +66,7 @@ export const CONTRAST_BASELINE: Record<ThemeVariant, number> = {
 
 export const MIN_CHAT_FONT_SIZE_PX = 12
 export const MAX_CHAT_FONT_SIZE_PX = 20
-export const DEFAULT_CHAT_FONT_SIZE_PX = 14
+export const DEFAULT_CHAT_FONT_SIZE_PX = 16
 export const MIN_TERMINAL_FONT_SIZE_PX = 10
 export const MAX_TERMINAL_FONT_SIZE_PX = 22
 export const DEFAULT_TERMINAL_FONT_SIZE_PX = 13
