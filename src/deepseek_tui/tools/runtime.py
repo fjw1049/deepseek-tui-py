@@ -335,6 +335,7 @@ async def create_tool_runtime(
 
         sandbox_mode = sandbox_mode_for_approval_tier(approval_policy)
 
+    metadata["allow_shell"] = cfg.allow_shell and cfg.features.shell_tool
     context = ToolContext(
         working_directory=workspace,
         trust_mode=trust_mode,

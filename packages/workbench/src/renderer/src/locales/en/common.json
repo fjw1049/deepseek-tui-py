@@ -1464,6 +1464,7 @@
   "approvalTool": "Tool: {{name}}",
   "approvalCommand": "Command",
   "approvalRiskLevel": "Risk: {{level}}",
+  "approvalExpired": "This approval expired because its turn ended.",
   "approvalPending": "Waiting for your decision…",
   "approvalAllow": "Allow",
   "approvalAllowConfirm": "Confirm allow",
@@ -1889,5 +1890,18 @@
   "petSlashWakeTitle": "Wake pet",
   "petSlashWakeDescription": "Show the desktop pet again.",
   "petSlashTuckTitle": "Tuck pet away",
-  "petSlashTuckDescription": "Hide the desktop pet until you wake it again."
+  "petSlashTuckDescription": "Hide the desktop pet until you wake it again.",
+  "taskResume": {
+    "review": "This task exceeds the current session permissions. Resuming preserves its identity, directory, and the permissions below:",
+    "confirm": "Resume with these original permissions? Completed actions will not be undone.",
+    "workspace": "Working directory",
+    "mode": "Work mode",
+    "allow_shell": "Run terminal commands",
+    "trust_mode": "Access files outside the workspace",
+    "auto_approve": "Automatically approve actions",
+    "allowed": "Allowed",
+    "disallowed": "Not allowed",
+    "cancelled": "Resume cancelled; the task remains stopped.",
+    "changed": "Task permissions changed. Review the task again before resuming."
+  }
 }

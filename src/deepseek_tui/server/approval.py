@@ -7,7 +7,9 @@ from __future__ import annotations
 
 # HTTP-suspended tool approvals for headless / GUI runtimes.
 import asyncio
-from collections.abc import Awaitable, Callable
+import uuid
+from collections.abc import Awaitable, Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 
 from deepseek_tui.engine.handle import ApprovalHandler
@@ -26,6 +28,8 @@ class PendingApprovalRecord:
     presentation_risk: str = ""
     approval_key: str = ""
     task_id: str | None = None
+    turn_id: str | None = None
+    tool_call_id: str = ""
 
 
 @dataclass
@@ -42,6 +46,12 @@ class ApprovalBridge:
         *,
         meta: PendingApprovalRecord | None = None,
     ) -> asyncio.Future[bool]:
+        if (
+            approval_id in self._pending
+            or approval_id in self._meta
+            or approval_id in self._remember
+        ):
+            raise ValueError("approval id is already registered")
         fut: asyncio.Future[bool] = asyncio.get_running_loop().create_future()
         self._pending[approval_id] = fut
         if meta is not None:
@@ -49,20 +59,27 @@ class ApprovalBridge:
         return fut
 
     def resolve(self, approval_id: str, approved: bool, *, remember: bool = False) -> bool:
-        fut = self._pending.pop(approval_id, None)
-        self._meta.pop(approval_id, None)
+        fut = self._pending.get(approval_id)
         if fut is None or fut.done():
-            self._remember.pop(approval_id, None)
             return False
+        self._pending.pop(approval_id)
         if approved and remember:
             self._remember[approval_id] = True
         else:
-            self._remember.pop(approval_id, None)
+            self._meta.pop(approval_id, None)
         fut.set_result(approved)
         return True
 
     def consume_remember(self, approval_id: str) -> bool:
+        self._meta.pop(approval_id, None)
         return self._remember.pop(approval_id, False)
+
+    def discard(self, approval_id: str) -> None:
+        fut = self._pending.pop(approval_id, None)
+        self._meta.pop(approval_id, None)
+        self._remember.pop(approval_id, None)
+        if fut is not None and not fut.done():
+            fut.cancel()
 
     def list_pending(self, thread_id: str | None = None) -> list[dict[str, object]]:
         out: list[dict[str, object]] = []
@@ -76,6 +93,8 @@ class ApprovalBridge:
                 "approval_id": approval_id,
                 "id": approval_id,
                 "thread_id": meta.thread_id if meta else "",
+                "turn_id": meta.turn_id if meta else None,
+                "tool_call_id": meta.tool_call_id if meta else "",
                 "tool_name": meta.tool_name if meta else "",
                 "description": meta.description if meta else "",
                 "summary": meta.description if meta else "",
@@ -94,21 +113,16 @@ class ApprovalBridge:
             out.append(row)
         return out
 
-    def cancel_for_thread(self, thread_id: str) -> None:
-        """Cancel all pending approvals belonging to a specific thread."""
-        to_cancel: list[str] = []
-        for approval_id, fut in self._pending.items():
-            if fut.done():
-                continue
-            meta = self._meta.get(approval_id)
-            if meta is not None and meta.thread_id == thread_id:
-                to_cancel.append(approval_id)
-        for approval_id in to_cancel:
-            fut = self._pending.pop(approval_id, None)
-            self._meta.pop(approval_id, None)
-            self._remember.pop(approval_id, None)
-            if fut is not None and not fut.done():
-                fut.cancel()
+    def cancel_for_turn(self, thread_id: str, turn_id: str) -> None:
+        for approval_id, meta in list(self._meta.items()):
+            if meta.thread_id == thread_id and meta.turn_id == turn_id:
+                self.discard(approval_id)
+
+    def cancel_for_thread(self, thread_id: str, *, include_tasks: bool = True) -> None:
+        """Cancel thread waits; idle-engine eviction can preserve detached tasks."""
+        for approval_id, meta in list(self._meta.items()):
+            if meta.thread_id == thread_id and (include_tasks or meta.task_id is None):
+                self.discard(approval_id)
 
     def cancel_all(self) -> None:
         for fut in self._pending.values():
@@ -132,33 +146,41 @@ class HttpApprovalHandler(ApprovalHandler):
         thread_id: str = "",
         auto_approve: AutoApproveFn | None = None,
         task_id: str | None = None,
+        get_turn_id: Callable[[], str | None] | None = None,
     ) -> None:
         self._bridge = bridge
         self._thread_id = thread_id
         self._auto_approve = auto_approve
         self._task_id = task_id
+        self._get_turn_id = get_turn_id
+        self._active_requests: dict[int, asyncio.Future[bool]] = {}
 
     async def auto_approve_enabled(self) -> bool:
         return self._auto_approve is not None and await self._auto_approve()
 
-    async def request_approval(
-        self,
-        tool_call_id: str,
-        request: ApprovalRequest,
-    ) -> ApprovalDecision:
-        if await self.auto_approve_enabled():
-            return ApprovalDecision.APPROVED
+    @contextmanager
+    def approval_scope(
+        self, tool_call_id: str, request: ApprovalRequest
+    ) -> Iterator[asyncio.Future[bool]]:
+        # The engine opens the outer scope before emitting the card. Direct
+        # callers open it in request_approval; nested scopes share the future.
+        existing = self._active_requests.get(id(request))
+        if existing is not None:
+            yield existing
+            return
+        approval_id = f"appr_{uuid.uuid4().hex}"
+        request.approval_id = approval_id
+        request.tool_call_id = tool_call_id
+        request.turn_id = self._get_turn_id() if self._get_turn_id is not None else None
         summary = (
-            request.title
-            or request.primary_preview
-            or request.input_summary
-            or request.reason
-            or ""
+            request.title or request.primary_preview or request.input_summary or request.reason
         )
         fut = self._bridge.register(
-            tool_call_id,
+            approval_id,
             meta=PendingApprovalRecord(
                 thread_id=self._thread_id,
+                turn_id=request.turn_id,
+                tool_call_id=tool_call_id,
                 tool_name=request.tool_name,
                 description=request.title or summary,
                 input_summary=request.input_summary or request.primary_preview,
@@ -168,15 +190,27 @@ class HttpApprovalHandler(ApprovalHandler):
                 task_id=self._task_id,
             ),
         )
+        self._active_requests[id(request)] = fut
         try:
+            yield fut
+        finally:
+            self._active_requests.pop(id(request), None)
+            self._bridge.discard(approval_id)
+
+    async def request_approval(
+        self,
+        tool_call_id: str,
+        request: ApprovalRequest,
+    ) -> ApprovalDecision:
+        if await self.auto_approve_enabled():
+            return ApprovalDecision.APPROVED
+        with self.approval_scope(tool_call_id, request) as fut:
             approved = await fut
-        except asyncio.CancelledError:
-            return ApprovalDecision.DENIED
-        if not approved:
-            return ApprovalDecision.DENIED
-        if self._bridge.consume_remember(tool_call_id):
-            return ApprovalDecision.APPROVED_SESSION
-        return ApprovalDecision.APPROVED
+            if not approved:
+                return ApprovalDecision.DENIED
+            if self._bridge.consume_remember(request.approval_id):
+                return ApprovalDecision.APPROVED_SESSION
+            return ApprovalDecision.APPROVED
 
 
 # HTTP-suspended sandbox elevation for Workbench / headless runtimes.

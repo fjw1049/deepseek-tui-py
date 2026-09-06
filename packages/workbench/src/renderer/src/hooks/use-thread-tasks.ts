@@ -1,3 +1,4 @@
+import { requestTaskResume } from '../lib/resume-task'
 import { useEffect, useState, useSyncExternalStore } from 'react'
 import {
   isActiveTaskStatus,
@@ -79,26 +80,7 @@ export async function resumeTask(id: string): Promise<TaskDetail> {
   if (typeof window.dsGui?.runtimeRequest !== 'function') {
     throw new Error('runtime unavailable')
   }
-  const r = await window.dsGui.runtimeRequest(
-    `/v1/tasks/${encodeURIComponent(id)}/resume`,
-    'POST'
-  )
-  if (!r.ok) {
-    throw new Error(r.body?.trim() || `resume task failed (${r.status})`)
-  }
-  let raw: Record<string, unknown>
-  try {
-    raw = JSON.parse(r.body) as Record<string, unknown>
-  } catch {
-    throw new Error('resume task returned invalid JSON')
-  }
-  if (raw.ok === false) {
-    throw new Error(
-      typeof raw.error === 'string' && raw.error.trim()
-        ? raw.error
-        : 'resume task failed'
-    )
-  }
+  const raw = await requestTaskResume(id, useChatStore.getState().activeThreadId)
   const t =
     raw.task && typeof raw.task === 'object' ? (raw.task as Record<string, unknown>) : raw
   return {

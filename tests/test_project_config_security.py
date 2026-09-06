@@ -471,3 +471,60 @@ def test_cwd_dotenv_cannot_redirect_trust_root(
     assert config.profile is None
     assert config.model == "env-model"
     assert any("DEEPSEEK_CONFIG_PATH" in r.message for r in caplog.records)
+
+
+@pytest.mark.parametrize("filename", ["deepseek-tui.toml", ".deepseek-tui.toml", "custom.toml"])
+def test_project_symlink_cannot_promote_config_to_trusted(tmp_path, monkeypatch, filename):
+    project = tmp_path / "project"
+    project.mkdir()
+    outside = tmp_path / "outside.toml"
+    outside.write_text('model="project-model"\napproval_policy="auto"\n')
+    link = project / filename
+    link.symlink_to(outside)
+    monkeypatch.chdir(project)
+    config = ConfigLoader().load(config_path=link if filename == "custom.toml" else None)
+    assert config.model == "project-model"
+    assert config.approval_policy == "on-request"
+
+
+def test_project_lsp_commands_and_exec_policy_cannot_override_user(tmp_path, monkeypatch, caplog):
+    from deepseek_tui.config.paths import user_config_path
+
+    user = user_config_path()
+    user.parent.mkdir(parents=True, exist_ok=True)
+    user.write_text('[lsp]\nservers={python=["trusted-server", "--stdio"]}\n')
+    project = tmp_path / "project"
+    project.mkdir()
+    monkeypatch.chdir(project)
+    (project / "deepseek-tui.toml").write_text(
+        "[features]\nexec_policy=false\n[lsp]\nenabled=true\ninclude_warnings=true\n"
+        'servers={python=["untrusted-program"]}\n'
+    )
+    config = ConfigLoader().load()
+    assert config.features.exec_policy is True
+    assert config.lsp.servers == {"python": ["trusted-server", "--stdio"]}
+    assert config.lsp.enabled and config.lsp.include_warnings
+    assert "lsp.servers" in caplog.text
+    assert str(user) in caplog.text
+
+
+async def test_filtered_lsp_command_reaches_process_boundary_as_user_command(tmp_path, monkeypatch):
+    from unittest.mock import AsyncMock
+
+    from deepseek_tui.config.paths import user_config_path
+    from deepseek_tui.integrations.lsp import LspConfig, LspManager
+
+    user = user_config_path()
+    user.parent.mkdir(parents=True, exist_ok=True)
+    user.write_text('[lsp]\nenabled=true\nservers={python=["trusted-server", "--stdio"]}\n')
+    project = tmp_path / "project"
+    project.mkdir()
+    monkeypatch.chdir(project)
+    (project / "deepseek-tui.toml").write_text('[lsp]\nservers={python=["untrusted-program"]}\n')
+    config = ConfigLoader().load()
+    spawn = AsyncMock(side_effect=FileNotFoundError("test process boundary"))
+    monkeypatch.setattr("deepseek_tui.integrations.lsp.asyncio.create_subprocess_exec", spawn)
+    manager = LspManager(LspConfig(**config.lsp.model_dump()))
+    await manager.diagnostics_for(project / "example.py", "x = 1")
+    spawn.assert_awaited_once()
+    assert spawn.call_args.args == ("trusted-server", "--stdio")

@@ -127,6 +127,7 @@ class TaskCreateTool(ToolSpec):
         self, input_data: dict[str, Any], context: ToolContext
     ) -> ToolResult:
         manager = _require_manager(context)
+        _enforce_max_task_nest_depth(context)
         resume_id = _optional_string(input_data, "resume")
         if resume_id is not None:
             if _optional_string(input_data, "prompt") is not None:
@@ -134,13 +135,32 @@ class TaskCreateTool(ToolSpec):
                     "'resume' is mutually exclusive with 'prompt' — pass only one"
                 )
             try:
-                task = await manager.resume_task(resume_id)
+                from .resume import permission_changes, scope_key, task_scope
+
+                record = await manager.get_task(resume_id)
+                if record is None:
+                    raise KeyError(resume_id)
+                original = task_scope(record)
+                current = {
+                    "workspace": str(context.working_directory.resolve()),
+                    "mode": context.metadata.get("engine_mode", "agent"),
+                    "allow_shell": context.metadata.get("allow_shell", False),
+                    "trust_mode": context.trust_mode,
+                    "auto_approve": context.metadata.get("session_auto_approve", False),
+                }
+                changes = permission_changes(original, current)
+                if changes:
+                    fields = ", ".join(change["field"] for change in changes)
+                    raise ToolError(
+                        f"Task resume exceeds this session's permissions ({fields}). "
+                        "The user must review and resume it from the Tasks panel."
+                    )
+                task = await manager.resume_task(resume_id, expected_scope=scope_key(original))
             except KeyError as exc:
                 raise ToolError(str(exc)) from exc
             except RuntimeError as exc:
                 raise ToolError(str(exc)) from exc
             return _task_result("task_create", task)
-        _enforce_max_task_nest_depth(context)
         prompt = _require_string(input_data, "prompt")
         origin_thread = context.metadata.get("runtime_thread_id")
         workspace = self._resolve_workspace(input_data, context)
@@ -171,7 +191,7 @@ class TaskCreateTool(ToolSpec):
     @staticmethod
     def _resolve_workspace(
         input_data: dict[str, Any], context: ToolContext
-    ) -> str | None:
+    ) -> str:
         """Resolve the ``workspace`` argument against the session workspace.
 
         A detached task runs with the given path as its working directory,
@@ -180,9 +200,9 @@ class TaskCreateTool(ToolSpec):
         session workspace itself is allowed.
         """
         raw = _optional_string(input_data, "workspace")
-        if raw is None:
-            return None
         base = context.working_directory.resolve()
+        if raw is None:
+            return str(base)
         candidate = Path(raw).expanduser()
         if not candidate.is_absolute():
             candidate = base / candidate

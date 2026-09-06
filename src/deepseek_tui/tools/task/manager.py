@@ -86,6 +86,7 @@ class TaskManager:
         self._tasks: dict[str, TaskRecord] = {}
         self._queue: deque[str] = deque()
         self._running_cancel: dict[str, asyncio.Event] = {}
+        self._running_done: dict[str, asyncio.Event] = {}
         self._lock = asyncio.Lock()
         self._notify = asyncio.Event()
         self._shutdown = asyncio.Event()
@@ -253,7 +254,9 @@ class TaskManager:
                     continue
         return None
 
-    async def resume_task(self, id_or_prefix: str) -> TaskRecord:
+    async def resume_task(
+        self, id_or_prefix: str, *, expected_scope: str | None = None
+    ) -> TaskRecord:
         """Re-queue a resumable terminal task for transcript (or detach) resume.
 
         Clears sticky error and appends a timeline entry. Detach jobs keep
@@ -271,6 +274,11 @@ class TaskManager:
                 raise RuntimeError(
                     f"Task {task_id} status={task.status.value} cannot be resumed"
                 )
+            if expected_scope is not None:
+                from .resume import scope_key, task_scope
+
+                if scope_key(task_scope(task)) != expected_scope:
+                    raise RuntimeError("Task permissions changed; review the task again")
             task.status = TaskStatus.QUEUED
             task.error = None
             task.ended_at = None
@@ -293,6 +301,7 @@ class TaskManager:
     async def cancel_task(self, id_or_prefix: str) -> TaskRecord:
         now = _utc_now_iso()
         token_to_cancel: asyncio.Event | None = None
+        finished: asyncio.Event | None = None
         async with self._lock:
             task_id = _resolve_task_id(self._tasks, id_or_prefix)
             task = self._tasks[task_id]
@@ -317,12 +326,15 @@ class TaskManager:
                     )
                 )
                 token_to_cancel = self._running_cancel.get(task_id)
+                finished = self._running_done.get(task_id)
 
             self._persist_all_locked()
             result = self._tasks[task_id]
 
         if token_to_cancel is not None:
             token_to_cancel.set()
+        if finished is not None:
+            await finished.wait()
         return result
 
     async def record_tool_metadata(
@@ -599,6 +611,7 @@ class TaskManager:
                 )
                 cancel = asyncio.Event()
                 self._running_cancel[task_id] = cancel
+                self._running_done[task_id] = asyncio.Event()
                 self._persist_all_locked()
                 return task_id, request, cancel
         return None
@@ -606,9 +619,40 @@ class TaskManager:
     async def _run_task(
         self, task_id: str, request: ExecutionTask, cancel: asyncio.Event
     ) -> None:
+        try:
+            await self._run_task_and_finalize(task_id, request, cancel)
+        finally:
+            finished = self._running_done.pop(task_id, None)
+            if finished is not None:
+                finished.set()
+
+    async def _execute_cancellable(
+        self, request: ExecutionTask, cancel: asyncio.Event
+    ) -> TaskExecutionResult:
+        if cancel.is_set():
+            raise asyncio.CancelledError
+        execution = asyncio.create_task(self._executor(request, cancel))
+        cancellation = asyncio.create_task(cancel.wait())
+        try:
+            await asyncio.wait((execution, cancellation), return_when=asyncio.FIRST_COMPLETED)
+            if not execution.done() and not execution.cancelling():
+                execution.cancel()
+            return await asyncio.shield(execution)
+        finally:
+            cancellation.cancel()
+            if not execution.done() and not execution.cancelling():
+                execution.cancel()
+            await asyncio.gather(execution, cancellation, return_exceptions=True)
+
+    async def _run_task_and_finalize(
+        self, task_id: str, request: ExecutionTask, cancel: asyncio.Event
+    ) -> None:
         result: TaskExecutionResult
         try:
-            result = await self._executor(request, cancel)
+            result = await self._execute_cancellable(request, cancel)
+        except asyncio.CancelledError:
+            cancel.set()
+            result = TaskExecutionResult(summary="", error="canceled")
         except Exception as exc:  # noqa: BLE001 -- translate all errors into task state
             result = TaskExecutionResult(summary="", error=str(exc))
 

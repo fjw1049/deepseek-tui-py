@@ -1460,6 +1460,7 @@
   "approvalTool": "工具：{{name}}",
   "approvalCommand": "指令",
   "approvalRiskLevel": "风险：{{level}}",
+  "approvalExpired": "本轮已结束，此审批已失效。",
   "approvalPending": "等待你选择…",
   "approvalAllow": "允许",
   "approvalAllowConfirm": "确认允许",
@@ -1889,5 +1890,18 @@
   "petSlashWakeTitle": "唤醒宠物",
   "petSlashWakeDescription": "重新显示桌面宠物。",
   "petSlashTuckTitle": "收起宠物",
-  "petSlashTuckDescription": "隐藏桌面宠物，直到再次唤醒。"
+  "petSlashTuckDescription": "隐藏桌面宠物，直到再次唤醒。",
+  "taskResume": {
+    "review": "旧任务的权限超出当前会话。恢复后会保留原任务身份、目录和以下权限：",
+    "confirm": "是否按这些原有权限恢复？已执行的操作不会撤销。",
+    "workspace": "工作目录",
+    "mode": "工作模式",
+    "allow_shell": "运行终端命令",
+    "trust_mode": "访问工作目录之外的文件",
+    "auto_approve": "自动批准操作",
+    "allowed": "允许",
+    "disallowed": "不允许",
+    "cancelled": "已取消恢复，任务保持停止。",
+    "changed": "任务权限已变化，请重新查看后再恢复。"
+  }
 }

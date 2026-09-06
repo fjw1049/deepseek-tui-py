@@ -103,7 +103,7 @@ _PROJECT_SENSITIVE_KEYS = (
     "requirements_path",
     "skills_dir",
 )
-_PROJECT_SENSITIVE_FEATURE_KEYS = ("automations",)
+_PROJECT_SENSITIVE_FEATURE_KEYS = ("automations", "exec_policy")
 _PROJECT_SENSITIVE_PROVIDER_KEYS = (
     "api_key",
     "base_url",
@@ -161,6 +161,17 @@ def strip_project_security_keys(
                     source,
                 )
         cleaned["features"] = features
+    lsp = cleaned.get("lsp")
+    if isinstance(lsp, dict) and "servers" in lsp:
+        lsp = dict(lsp)
+        lsp.pop("servers")
+        cleaned["lsp"] = lsp
+        logger.warning(
+            "project config ignored security-sensitive key: lsp.servers (%s); "
+            "move custom server commands to user config %s under [lsp.servers]",
+            source,
+            user_config_path(),
+        )
     providers = cleaned.get("providers")
     if isinstance(providers, dict):
         stripped_providers: dict[str, Any] = {}
@@ -278,12 +289,13 @@ class ConfigLoader:
         True for the two cwd candidates and for any file inside the cwd
         (e.g. an explicit relative ``--config ./deepseek-tui.toml``), except
         the user-level candidates, which stay trusted even when the cwd is
-        the user's home. Comparison is done on resolved paths so relative
-        or symlinked spellings cannot escape the filter.
+        the user's home. Classify the discovered path before resolving links;
+        a project link to an outside file must remain a project source.
         """
+        discovered = Path(os.path.abspath(path))
         resolved = path.resolve()
         cwd = Path.cwd().resolve()
-        if resolved in (
+        if discovered in (
             cwd / "deepseek-tui.toml",
             cwd / ".deepseek-tui.toml",
         ):
@@ -292,9 +304,9 @@ class ConfigLoader:
             Path.home() / ".config" / "deepseek-tui" / "config.toml",
             user_config_path(),
         )
-        if any(resolved == candidate.resolve() for candidate in user_candidates):
+        if any(discovered == Path(os.path.abspath(candidate)) for candidate in user_candidates):
             return False
-        return resolved.is_relative_to(cwd)
+        return discovered.is_relative_to(cwd) or resolved.is_relative_to(cwd)
 
     def _load_project_overlay(self, path: Path) -> Config:
         """Load a project-level file as an overlay on the user-level base.

@@ -1,3 +1,4 @@
+import { requestTaskResume } from '../lib/resume-task'
 import type {
   AgentProvider,
   AgentProviderId,
@@ -132,6 +133,8 @@ function approvalPayloadFromRecord(
       : undefined
   return {
     approvalId,
+    toolCallId: typeof row.tool_call_id === 'string' ? row.tool_call_id : undefined,
+    turnId: typeof row.turn_id === 'string' ? row.turn_id : undefined,
     summary: String(row.title ?? row.description ?? row.summary ?? 'Approval required'),
     inputSummary:
       typeof row.primary_preview === 'string' && row.primary_preview.trim()
@@ -1551,25 +1554,7 @@ export class DeepseekRuntimeProvider implements AgentProvider {
   }
 
   async resumeTask(taskId: string): Promise<void> {
-    const r = await window.dsGui.runtimeRequest(
-      `/v1/tasks/${encodeURIComponent(taskId)}/resume`,
-      'POST'
-    )
-    if (!r.ok) throw toRuntimeError(readRuntimeError(r.body, 'resume task failed'))
-    if (!r.body.trim()) return
-    try {
-      const raw = JSON.parse(r.body) as Record<string, unknown>
-      if (raw.ok === false) {
-        throw toRuntimeError(
-          typeof raw.error === 'string' && raw.error.trim()
-            ? raw.error
-            : 'resume task failed'
-        )
-      }
-    } catch (err) {
-      if (err instanceof SyntaxError) return
-      throw err
-    }
+    await requestTaskResume(taskId)
   }
 
   async resumeThreadAgent(threadId: string, agentId: string): Promise<void> {
@@ -1631,6 +1616,7 @@ export class DeepseekRuntimeProvider implements AgentProvider {
     const isFatalSseStatus = (status: number | undefined): boolean =>
       typeof status === 'number' && status >= 400 && status < 500 && status !== 408 && status !== 429
 
+    const pendingApprovalNotifications = new Map<string, string | undefined>()
     let nextSinceSeq = sinceSeq
     let reconnectDelayMs = 750
     let consecutiveFailures = 0
@@ -1933,6 +1919,11 @@ export class DeepseekRuntimeProvider implements AgentProvider {
 
               if (ev === 'turn.completed') {
                 const turn = payload.turn as Record<string, unknown> | undefined
+                if (typeof turn?.id === 'string') {
+                  for (const [id, turnId] of pendingApprovalNotifications) {
+                    if (turnId === turn.id) pendingApprovalNotifications.delete(id)
+                  }
+                }
                 const latencyTrace =
                   payload.latency_trace && typeof payload.latency_trace === 'object'
                     ? (payload.latency_trace as Record<string, unknown>)
@@ -2121,9 +2112,15 @@ export class DeepseekRuntimeProvider implements AgentProvider {
               if (ev === 'approval.required') {
                 const approvalId = String(payload.approval_id ?? payload.id ?? '')
                 if (!approvalId) return
+                pendingApprovalNotifications.set(
+                  approvalId, typeof payload.turn_id === 'string' ? payload.turn_id : undefined
+                )
+                const stillPending = (): boolean =>
+                  !signal.aborted && pendingApprovalNotifications.has(approvalId)
                 void window.dsGui
                   .getSettings()
                   .then(async (settings) => {
+                    if (!stillPending()) return
                     if (runtimeExecutionFlags(settings).auto_approve) {
                       await this.submitApprovalDecision(approvalId, 'allow').catch(() => {
                         /* Runtime may already have auto-approved this request. */
@@ -2139,8 +2136,9 @@ export class DeepseekRuntimeProvider implements AgentProvider {
                     emitApprovalFromSsePayload(sink, payload, approvalId)
                   })
                   .catch(() => {
-                    emitApprovalFromSsePayload(sink, payload, approvalId)
+                    if (stillPending()) emitApprovalFromSsePayload(sink, payload, approvalId)
                   })
+                  .finally(() => pendingApprovalNotifications.delete(approvalId))
               }
 
               if (ev === 'elevation.required') {

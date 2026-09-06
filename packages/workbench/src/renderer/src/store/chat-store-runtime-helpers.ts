@@ -9,6 +9,8 @@ import type { ChatState, QueuedUserMessage } from './chat-store-types'
 
 export type PendingApprovalPayload = {
   approvalId: string
+  toolCallId?: string
+  turnId?: string
   summary: string
   inputSummary?: string
   impacts?: string[]
@@ -65,6 +67,20 @@ export function mergePendingUserInputBlocks(
   }
 }
 
+export function expireTurnApprovals(
+  blocks: ChatBlock[],
+  turnId: string | null | undefined,
+  message: string
+): ChatBlock[] {
+  if (!turnId) return blocks
+  return blocks.map((block) =>
+    block.kind === 'approval' && block.status === 'pending' &&
+    block.turnId === turnId && !block.taskId
+      ? { ...block, status: 'error' as const, errorMessage: message }
+      : block
+  )
+}
+
 export function mergePendingApprovalBlocks(
   blocks: ChatBlock[],
   pending: PendingApprovalPayload[]
@@ -84,6 +100,8 @@ export function mergePendingApprovalBlocks(
       id: `approval-${item.approvalId}`,
       createdAt: new Date().toISOString(),
       approvalId: item.approvalId,
+      ...(item.toolCallId ? { toolCallId: item.toolCallId } : {}),
+      ...(item.turnId ? { turnId: item.turnId } : {}),
       summary: item.summary,
       inputSummary: item.inputSummary,
       impacts: item.impacts,

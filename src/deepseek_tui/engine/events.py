@@ -77,6 +77,7 @@ class ApprovalResolvedEvent:
     tool_call_id: str
     approved: bool
     reason: str = ""
+    approval_id: str = ""
 
 
 @dataclass(frozen=True, slots=True)

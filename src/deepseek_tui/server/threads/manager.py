@@ -2795,6 +2795,8 @@ class RuntimeThreadManager:
             load_task = self._engine_load_tasks.pop(thread_id, None)
         if load_task is not None and not load_task.done():
             load_task.cancel()
+        if self._approval_bridge is not None:
+            self._approval_bridge.cancel_for_thread(thread_id)
         if state is None:
             return
         try:
@@ -3834,7 +3836,7 @@ class RuntimeThreadManager:
         await handle.cancel(reason="interrupt_requested")
 
         if self._approval_bridge is not None:
-            self._approval_bridge.cancel_for_thread(thread_id)
+            self._approval_bridge.cancel_for_turn(thread_id, turn_id)
         if self._elevation_bridge is not None:
             self._elevation_bridge.cancel_for_thread(thread_id)
 
@@ -4206,6 +4208,8 @@ class RuntimeThreadManager:
             self._touch_lru(thread.id)
 
         for evicted_tid, evicted_state in evicted:
+            if self._approval_bridge is not None:
+                self._approval_bridge.cancel_for_thread(evicted_tid, include_tasks=False)
             await evicted_state.handle.cancel(reason="lru_eviction")
             evicted_state.engine_task.cancel()
 
@@ -4353,10 +4357,15 @@ class RuntimeThreadManager:
             thread = manager.store.load_thread(thread_id)
             return thread.auto_approve
 
+        def get_turn_id() -> str | None:
+            state = manager._active.get(thread_id)
+            return state.active_turn.turn_id if state and state.active_turn else None
+
         return HttpApprovalHandler(
             self._approval_bridge,
             thread_id=thread_id,
             auto_approve=auto_approve,
+            get_turn_id=get_turn_id,
         )
 
     def _get_llm_client(self, provider: str | None = None) -> LLMClient:
@@ -4485,6 +4494,8 @@ class RuntimeThreadManager:
                         "Turn monitor recovery failed for %s", turn_id
                     )
         finally:
+            if self._approval_bridge is not None:
+                self._approval_bridge.cancel_for_turn(thread_id, turn_id)
             if checkpoint_ready is not None and not checkpoint_ready.done():
                 checkpoint_ready.set_exception(
                     RuntimeError("Turn monitor exited before checkpoint initialization")
@@ -4537,6 +4548,8 @@ class RuntimeThreadManager:
         diff_snapshot: Any = _UNSET,
     ) -> None:
         """Shared turn teardown: persist record, emit turn.completed, release."""
+        if self._approval_bridge is not None:
+            self._approval_bridge.cancel_for_turn(thread_id, turn_id)
         ended_at = datetime.now(timezone.utc)
         turn = self.store.load_turn(turn_id)
         turn.status = turn_status
@@ -5735,8 +5748,8 @@ class RuntimeThreadManager:
                     approval_request_to_sse_payload,
                 )
 
-                approval_id = event.tool_call_id
-                approval_pending_ms[approval_id] = now_ms()
+                approval_id = event.request.approval_id or event.tool_call_id
+                approval_pending_ms[event.tool_call_id] = now_ms()
                 await self._emit_event(
                     thread_id,
                     turn_id,
