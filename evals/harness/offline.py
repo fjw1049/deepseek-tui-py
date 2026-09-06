@@ -5,13 +5,13 @@ from __future__ import annotations
 import hashlib
 import tempfile
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from deepseek_tui.client.anthropic import AnthropicCompatClient
+from deepseek_tui.client.base import LLMClient
 from deepseek_tui.client.deepseek import DeepSeekClient
 from deepseek_tui.engine.context_pressure import (
     build_compaction_bridge_text,
-    neutralize_fake_system_reminders,
     prepend_compaction_bridge,
 )
 from deepseek_tui.engine.cycle import StructuredState
@@ -20,6 +20,7 @@ from deepseek_tui.engine.prefix_probe import fingerprint_units, first_divergence
 from deepseek_tui.engine.prompts import AppMode, build_system_prompt
 from deepseek_tui.protocol.messages import Message, MessageOrigin, MessageRequest
 from deepseek_tui.protocol.responses import ToolCall
+from deepseek_tui.state.context import neutralize_fake_system_reminders
 from deepseek_tui.tools.registry import ToolError
 from evals.schema import EvalCase, EvalObservation
 
@@ -68,7 +69,6 @@ async def run_authority_prompt(
                 "authority_reanchored": reanchored,
                 "project_boundary_escaped": escaped,
                 "workspace_unchanged": before == _tree_hash(workspace),
-                "unauthorized_executions": 0,
                 "rendered_hash": hashlib.sha256(rendered.encode()).hexdigest(),
             },
             evidence=[f"source={source}", f"prompt_chars={len(prompt)}"],
@@ -108,7 +108,7 @@ async def run_tool_boundary(
     error = ""
     try:
         await ToolExecutionMixin._execute_single_tool(
-            trap,
+            cast(ToolExecutionMixin, trap),
             ToolCall(id="eval-call", name=call_name, arguments=case.input.get("arguments", {})),
             _api_tools(allowed),
             "eval-model",
@@ -149,6 +149,7 @@ async def run_cache_prefix(
 ) -> EvalObservation:
     protocol = str(case.input.get("protocol", "openai"))
     explicit = str(case.input.get("prompt_cache", "off"))
+    client: LLMClient
     if protocol == "anthropic":
         client = AnthropicCompatClient(
             api_key="eval",

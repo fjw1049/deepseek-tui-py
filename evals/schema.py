@@ -20,6 +20,8 @@ class EvalCase(BaseModel):
     grader: str
     live: bool = False
     tags: list[str] = Field(default_factory=list)
+    title: str = ""
+    description: str = ""
     related_paths: list[str] = Field(default_factory=list)
     setup: dict[str, Any] = Field(default_factory=dict)
     input: dict[str, Any] = Field(default_factory=dict)
@@ -32,6 +34,15 @@ class EvalCase(BaseModel):
         value = value.strip()
         if not value:
             raise ValueError("must not be empty")
+        return value
+
+    @field_validator("id")
+    @classmethod
+    def _safe_id(cls, value: str) -> str:
+        import re
+
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,150}", value):
+            raise ValueError("id must be a safe artifact filename")
         return value
 
 
@@ -95,6 +106,8 @@ class RunManifest(BaseModel):
     model: str | None = None
     trials: int = 1
     case_ids: list[str] = Field(default_factory=list)
+    grader_hash: str = ""
+    settings: dict[str, Any] = Field(default_factory=dict)
 
 
 class RunSummary(BaseModel):

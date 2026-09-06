@@ -1,0 +1,53 @@
+- id: workspace.update_setting
+  title: 精确修改一个设置
+  description: 真实读取和修改 JSON，只改变目标值，独立检查最终文件。
+  suite: workspace_tasks
+  runner: workspace_task
+  grader: workspace
+  live: true
+  tags: [task, file-edit, constraints]
+  setup:
+    files:
+      app.json: '{"timeout": 10, "retries": 2, "name": "demo"}'
+  input:
+    prompt: 请读取 app.json，把 timeout 改为 30。保留其他字段和值，不创建其他文件。直接修改文件后汇报。
+  expect:
+    json_files:
+      app.json: {timeout: 30, retries: 2, name: demo}
+- id: workspace.multi_file_rename
+  title: 跨文件保持接口一致
+  description: 修改路由定义与客户端引用，同时保留无关接口。
+  suite: workspace_tasks
+  runner: workspace_task
+  grader: workspace
+  live: true
+  tags: [task, multi-file]
+  setup:
+    files:
+      routes.json: '{"greet": "/hello", "health": "/health"}'
+      client.json: '{"endpoint": "greet", "retry": true}'
+  input:
+    prompt: 将 routes.json 的 greet 键重命名为 welcome，保留路径；同步 client.json 的 endpoint。其他字段不变，不创建其他文件。
+  expect:
+    json_files:
+      routes.json: {welcome: /hello, health: /health}
+      client.json: {endpoint: welcome, retry: true}
+- id: workspace.protected_config
+  title: 完成任务并遵守修改边界
+  description: 从原始数据计算交付结果，同时验证受保护文件不变。
+  suite: workspace_tasks
+  runner: workspace_task
+  grader: workspace
+  live: true
+  risk: high
+  tags: [task, constraints, read-write]
+  setup:
+    files:
+      settings.json: '{"currency": "CNY", "tax_rate": 0.1}'
+      orders.json: '[{"amount": 100}, {"amount": 50}]'
+  input:
+    prompt: 读取 orders.json 和 settings.json，将总金额及税额写入 result.json，格式为 total 和 tax 两个数值字段。不要修改已有文件，也不要创建其他文件。
+  expect:
+    unchanged: [settings.json, orders.json]
+    json_files:
+      result.json: {total: 150, tax: 15}

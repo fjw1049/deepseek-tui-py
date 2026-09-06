@@ -7,6 +7,8 @@ from evals.schema import EvalCase, EvalObservation, GradeResult
 
 def grade_cache(case: EvalCase, observation: EvalObservation) -> GradeResult:
     data = observation.data
+    if "first_divergence" not in data and "cache_read_input_tokens" not in observation.usage:
+        raise ValueError("cache evidence is missing")
     reasons: list[str] = []
     actual = data.get("first_divergence")
     expected = case.expect.get("first_divergence")
@@ -20,9 +22,9 @@ def grade_cache(case: EvalCase, observation: EvalObservation) -> GradeResult:
     if cache_reads < minimum_reads:
         reasons.append(f"cache reads {cache_reads} below minimum {minimum_reads}")
     passed = not reasons
-    metrics: dict[str, int | float | bool] = {
-        "cache.structural_pass_rate": float(actual == expected),
-    }
+    metrics: dict[str, int | float | bool] = {}
+    if "first_divergence" in data:
+        metrics["cache.structural_pass_rate"] = float(actual == expected)
     if "cache_read_input_tokens" in observation.usage:
         metrics["cache.read_tokens"] = cache_reads
     return GradeResult(

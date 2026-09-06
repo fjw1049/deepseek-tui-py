@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Eval Lab · 验证你的改动</title>
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+  <meta name="description" content="先测试当前效果，再比较修改后的表现。独立的本地 Agent 评测平台。">
+  <link rel="stylesheet" href="/static/style.css">
+  <script defer src="/static/app.js"></script>
+</head>
+<body>
+  <aside class="sidebar">
+    <a class="brand" href="/"><span class="brand-mark" aria-hidden="true">e<span>↗</span></span><span>Eval Lab<small>你的 Agent 评测台</small></span></a>
+    <div class="nav-caption">从这里开始</div>
+    <nav aria-label="主导航">
+      <button class="nav active" data-view="home"><span aria-hidden="true">⌂</span> 开始评测</button>
+      <button class="nav" data-view="runs"><span aria-hidden="true">▤</span> 测试记录 <b id="run-count">0</b></button>
+      <button class="nav" data-view="compare"><span aria-hidden="true">⇄</span> 修改前后对比</button>
+      <button class="nav" data-view="cases"><span aria-hidden="true">⊞</span> 测试题库 <b id="case-count">—</b></button>
+    </nav>
+    <div class="side-bottom"><span class="dot"></span> 独立评测环境<small id="service-address"></small><p>在这里测试和比较。<br>实验提示词不会写回你的产品。</p></div>
+  </aside>
+  <main>
+    <header><div class="breadcrumb">评测工作区 <span>/</span> <strong id="page-label">开始评测</strong></div><div class="header-right"><span id="connection" role="status">连接中</span><button id="refresh" class="icon-button" aria-label="刷新数据">↻</button></div></header>
+    <div class="content">
+      <div class="page-heading"><div><h1 id="page-title">验证你的改动，是否真的有效。</h1><p id="page-description">给修改前后的 Agent 做同一套题，看任务有没有完成、哪里变好、哪里退步。</p></div><button class="primary" id="new-run" hidden>新建测试</button></div>
+      <section id="home-view">
+        <div class="journey" role="group" aria-label="评测的三个步骤">
+          <div><span class="step-number">1</span><div><strong>先测当前效果</strong><p>保存修改前的结果，作为对照。</p></div></div>
+          <div><span class="step-number">2</span><div><strong>改完，再测同一套题</strong><p>修改提示词或代码，沿用测试设置。</p></div></div>
+          <div><span class="step-number">3</span><div><strong>看修改前后对比</strong><p>逐题查看改善与退步，再决定是否保留。</p></div></div>
+        </div>
+        <div class="section-heading"><div><h2>这次，你想验证什么？</h2><p>不确定怎么开始？先做一次免费的代码检查，熟悉整个流程。</p></div></div>
+        <div class="goal-grid">
+          <article class="goal-card"><div class="goal-top"><span class="goal-icon" aria-hidden="true">✓</span><span class="badge">首次体验推荐 · 免费</span></div><h3>代码规则有没有被改坏？</h3><p>检查工具权限、上下文状态保留、完成汇报等已有规则是否仍然有效。</p><div class="goal-example"><span>例如</span> 不允许使用的工具，是否仍会被拦截？</div><button class="secondary" data-start="offline">开始代码检查 <span aria-hidden="true">→</span></button><small>不调用模型；通过不等于实际任务做得更好。</small></article>
+          <article class="goal-card featured"><div class="goal-top"><span class="goal-icon" aria-hidden="true">↗</span><span class="badge">验证实际效果 · 调用模型</span></div><h3>Agent 能把文件改对吗？</h3><p>让 Agent 实际读写测试文件，用最终文件结果验证你的代码或提示词改动。</p><div class="goal-example"><span>例如</span> 修改一个设置，同时保留其他字段不变。</div><button class="primary" data-start="task">开始文件任务测试 <span aria-hidden="true">→</span></button><small>使用临时测试文件；会产生模型 API 费用。</small></article>
+        </div>
+        <div class="other-goals"><span>也可以单独检查</span><button class="text-button" data-start="decision">模型是否选对工具、理解约束 <span aria-hidden="true">→</span></button><button class="text-button" data-start="cache">重复请求是否命中缓存 <span aria-hidden="true">→</span></button></div>
+        <div id="home-recent"></div>
+        <details class="scope-note"><summary>目前能验证到什么程度？</summary><p>代码检查验证固定规则；模型决策测试只看一次回复，不执行工具；文件任务测试会实际执行读写并检查结果；缓存测试只检查缓存读数。完整编程任务、Shell 执行和真实上下文压缩策略的对照尚未接入。</p><p>一次测试只能说明这批题的表现。判断修改是否有用，需要在相同测试条件下比较修改前后，并复查失败案例。</p></details>
+      </section>
+      <section id="runs-view" hidden>
+        <div class="stats" id="stats"></div>
+        <div class="panel experiment-panel"><div class="panel-heading"><div><h2>所有测试</h2><span class="muted">点开记录看结果，也可以沿用设置再次测试。</span></div><select id="run-filter" aria-label="筛选测试"><option value="all">全部测试</option><option value="offline">不调用模型</option><option value="live">调用真实模型</option></select></div><div id="run-list" aria-live="polite"></div></div>
+      </section>
+      <section id="cases-view" hidden><div class="info-strip">一套测试题，就像给 Agent 的考卷。每道题都应说明要做什么，以及怎样才算通过。</div><div class="panel"><div class="panel-heading"><h2>已有测试题 <small id="library-total"></small></h2><input type="search" id="case-search" placeholder="搜索任务或能力" aria-label="搜索测试题"></div><div id="case-library"></div></div></section>
+      <section id="compare-view" hidden>
+        <div class="info-strip"><strong>还没有修改后的结果？</strong> 在测试记录中打开修改前的测试，点击“沿用设置再测一次”，完成后回到这里对比。</div>
+        <div class="panel comparison-controls"><label>修改前的测试<select id="compare-a"></select></label><span class="versus" aria-hidden="true">→</span><label>修改后的测试<select id="compare-b"></select></label><button class="primary" id="compare-button">查看有没有变好</button></div>
+        <div id="comparison-result"><div class="empty"><span class="empty-symbol" aria-hidden="true">⇄</span><h3>先选择修改前、修改后的两次测试</h3><p>平台会先检查题目、评分规则和预算是否一致，<br>再告诉你哪些题变好了，哪些题退步了。</p></div></div>
+      </section>
+    </div>
+  </main>
+  <dialog id="run-dialog" class="form-dialog" aria-labelledby="run-title">
+    <form id="run-form" novalidate>
+      <div class="dialog-heading"><div><div class="eyebrow" id="wizard-caption">第 1 步，共 3 步</div><h2 id="run-title">选择要验证的目标</h2></div><button type="button" class="icon-button close-dialog" aria-label="关闭新建测试">×</button></div>
+      <ol class="wizard-steps" aria-label="新建测试步骤"><li data-step-label="1" aria-current="step">1 选择目标</li><li data-step-label="2">2 设置测试</li><li data-step-label="3">3 确认运行</li></ol>
+      <div class="form-body" tabindex="0" role="region" aria-label="测试设置">
+        <div data-wizard-step="1">
+          <fieldset><legend>你最想知道什么？</legend><div class="target-tabs">
+            <label><input type="radio" name="target" value="offline" checked><span><strong>代码规则还正常吗？</strong><small>检查固定规则，不调用模型 · 免费</small></span></label>
+            <label><input type="radio" name="target" value="task"><span><strong>Agent 能把文件改对吗？</strong><small>实际执行文件读写 · 调用模型</small></span></label>
+            <label><input type="radio" name="target" value="decision"><span><strong>模型能做对选择吗？</strong><small>检查工具选择与约束理解 · 调用模型</small></span></label>
+            <label><input type="radio" name="target" value="cache"><span><strong>重复请求用上缓存了吗？</strong><small>检查服务商返回的缓存用量 · 调用模型</small></span></label>
+          </div></fieldset>
+        </div>
+        <div data-wizard-step="2" hidden>
+          <div class="chosen-target"><strong id="chosen-target"></strong><p id="target-help"></p><button type="button" class="text-button" id="change-target">更换目标</button></div>
+          <label>给这次测试起个名字<input id="label" name="label" maxlength="100" placeholder="例如：修改前 · 当前提示词"><span class="field-note">建议写清楚改了什么，之后方便找到并比较。</span></label>
+          <label id="prompt-field" hidden>这次要试的提示词补充 <span class="optional">可选</span><textarea id="prompt-suffix" rows="4" maxlength="16000" placeholder="例如：修改文件后，重新读取并核对结果，再汇报完成。"></textarea><span class="field-note">留空就测试当前提示词。填写后只追加到这次测试，不修改产品中的提示词。</span></label>
+          <div class="live-fields" id="live-fields" hidden>
+            <div class="model-summary"><span>将使用 <strong id="model-summary"></strong></span><span>调用模型会产生 API 费用</span></div>
+            <details class="advanced" id="advanced-settings"><summary>模型与运行限制 <span>已有默认值，可按需调整</span></summary><div class="advanced-body">
+              <div class="form-grid"><label>模型服务商<input id="provider" list="provider-list" maxlength="100"><datalist id="provider-list"></datalist></label><label>模型名称<input id="model" maxlength="150" placeholder="使用本地配置中的模型"></label></div>
+              <div class="form-grid budget-grid"><label>每题重复次数<input id="trials" type="number" min="1" max="20" value="3" required></label><label>总请求上限<input id="requests" type="number" min="1" max="1000" value="60" required></label><label>每次输出上限（Token）<input id="tokens" type="number" min="16" max="16384" value="2048" required></label><label>每题超时（秒）<input id="timeout" type="number" min="5" max="1800" value="120" required></label></div>
+              <label>已知费用上限（美元，可选）<input id="cost" type="number" min="0.01" max="1000" step="0.01" placeholder="例如：1.00"></label><p class="field-note">使用本地配置中的密钥。价格未知时无法按费用拦截；最后一次请求可能超出费用上限。请求数和输出上限仍会限制运行。</p>
+            </div></details>
+          </div>
+          <details class="case-picker" id="case-picker"><summary>本次测试题 <span id="selected-count"></span><span class="muted">查看或调整</span></summary><div class="selection-heading"><span>默认已选中这个目标的全部题目</span><button type="button" class="text-button" id="select-all">全选 / 清空</button></div><div id="case-selection"></div></details>
+        </div>
+        <div data-wizard-step="3" hidden><div id="run-review"></div></div>
+        <div class="form-error" id="form-error" role="alert" hidden></div>
+      </div>
+      <footer class="dialog-footer"><button type="button" class="secondary" id="wizard-back" hidden>上一步</button><span id="run-estimate"></span><button type="button" class="primary" id="wizard-next">下一步：设置测试 →</button><button type="submit" class="primary" id="submit-run" hidden>确认并开始测试</button></footer>
+    </form>
+  </dialog>
+  <dialog id="detail-dialog" class="detail-dialog" aria-labelledby="detail-title"><div class="dialog-heading"><div><div class="eyebrow">测试结果</div><h2 id="detail-title">测试详情</h2></div><button type="button" class="icon-button close-dialog" aria-label="关闭测试结果">×</button></div><div id="detail-body" class="detail-body" tabindex="0" role="region" aria-label="测试结果详情"></div></dialog>
+  <div id="toast" role="alert" hidden></div>
+</body>
+</html>

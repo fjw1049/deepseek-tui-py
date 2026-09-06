@@ -19,9 +19,7 @@ _SECRET_KEYS = {
     "secret",
     "x-api-key",
 }
-_SECRET_TEXT = re.compile(
-    r"(?i)(bearer\s+)[A-Za-z0-9._~+/=-]+|\b(sk-[A-Za-z0-9_-]{8,})"
-)
+_SECRET_TEXT = re.compile(r"(?i)(bearer\s+)[A-Za-z0-9._~+/=-]+|\b(sk-[A-Za-z0-9_-]{8,})")
 
 
 def redact(value: Any) -> Any:
@@ -64,7 +62,7 @@ def summarize(run_id: str, results: list[TrialResult]) -> RunSummary:
         for name, value in result.grade.metrics.items():
             metric_values[name].append(float(value))
 
-    decided = [result for result in results if result.status != "skipped"]
+    decided = results
     passed = sum(result.status == "passed" for result in results)
     failed = sum(result.status == "failed" for result in results)
     errors = sum(result.status == "error" for result in results)
@@ -84,6 +82,45 @@ def summarize(run_id: str, results: list[TrialResult]) -> RunSummary:
         "min": passed / len(decided) if decided else 0.0,
         "max": passed / len(decided) if decided else 0.0,
     }
+    completed = sum(r.status in {"passed", "failed"} for r in results)
+    metrics["run.completion_rate"] = {
+        "count": len(results),
+        "mean": completed / len(results) if results else 0.0,
+        "min": 0.0,
+        "max": 1.0,
+    }
+    for name in (
+        "input_tokens",
+        "output_tokens",
+        "requests",
+        "metered_requests",
+        "priced_requests",
+        "known_cost_usd",
+        "cost_usd",
+        "cache_read_input_tokens",
+    ):
+        values = [
+            r.observation.usage[name]
+            for r in results
+            if r.observation is not None and name in r.observation.usage
+        ]
+        if values:
+            metrics[f"usage.{name}"] = {
+                "count": len(values),
+                "sum": sum(values),
+                "mean": sum(values) / len(values),
+                "min": min(values),
+                "max": max(values),
+            }
+    if results:
+        durations = sorted(r.duration_ms for r in results)
+        metrics["run.duration_ms"] = {
+            "count": len(results),
+            "sum": sum(durations),
+            "mean": sum(durations) / len(results),
+            "min": durations[0],
+            "max": durations[-1],
+        }
     return RunSummary(
         run_id=run_id,
         completed_at=datetime.now(timezone.utc).isoformat(),
