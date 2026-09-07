@@ -1295,6 +1295,8 @@
   "queuedMessageRemove": "删除",
   "queuedMessageSendNow": "立即发送",
   "queuedMessageWithdraw": "撤回",
+  "sessionQueriesHint": "移入展开问题列表，双击复制最新问题",
+  "sessionQueryCopyHint": "双击复制完整问题",
   "copyMessage": "复制消息",
   "copySuccess": "已复制",
   "copyFailed": "复制失败",
