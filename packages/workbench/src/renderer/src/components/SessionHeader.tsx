@@ -62,7 +62,7 @@ export function SessionHeader({ compact = false, className = '' }: Props): React
           <>
             <SessionQueries>
               <span
-                className="block min-w-0 flex-1 truncate text-[13px] font-medium leading-none tracking-[-0.01em] text-ds-ink"
+                className="block min-w-0 flex-1 truncate text-[13px] font-medium leading-6 tracking-[-0.01em] text-ds-ink"
                 title={active.title}
               >
                 {active.title}

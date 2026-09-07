@@ -119,7 +119,7 @@ export function SessionQueries({ children }: { children: ReactNode }): React.Rea
         <div className="overflow-y-auto overscroll-contain [scrollbar-width:thin]" style={{ maxHeight: position.maxHeight }}>
           {queries.map((query) => <div
             key={query.id}
-            className="group flex h-9 w-full select-none items-center rounded-xl px-2.5 text-[13px] text-ds-ink transition-colors hover:bg-ds-hover focus-within:bg-ds-hover"
+            className="group flex h-9 w-full select-none items-center rounded-xl px-2.5 font-ui text-[13px] font-medium leading-6 tracking-[-0.01em] text-ds-ink transition-colors hover:bg-ds-hover focus-within:bg-ds-hover"
           >
             <button
               type="button"

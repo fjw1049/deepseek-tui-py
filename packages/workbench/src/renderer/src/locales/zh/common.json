@@ -1219,6 +1219,8 @@
   "promptDesignSub": "提出界面改进建议和设计方案",
   "promptDesignPrompt": "请审视当前 UI 与交互流程，找出体验卡点并给出可落地的优化方案。",
   "settings": "设置",
+  "noUnreadThreads": "暂无未读通知",
+  "openNextUnreadThread": "还有 {{count}} 个未读会话，点击查看：{{title}}",
   "emptyHomeLayoutToggleToSimple": "切换为简洁布局",
   "emptyHomeLayoutToggleToNormal": "切换为普通布局",
   "selectWorkspace": "选择工作目录",
