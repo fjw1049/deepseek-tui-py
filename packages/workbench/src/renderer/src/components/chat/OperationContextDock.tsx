@@ -19,7 +19,6 @@ import {
   PanelsTopLeft,
   FileEdit,
   Globe2,
-  Loader2,
   Terminal,
   X
 } from 'lucide-react'
@@ -31,8 +30,9 @@ import type { GitRemoteProvider } from '@shared/github-repository'
 import gitlabTanukiUrl from '../../assets/brand/gitlab-tanuki.svg'
 import { useGitHubRepository } from '../../hooks/use-github-repository'
 import { openPreviewUrl } from '../../lib/open-preview-url'
-import { useDockSubagents, type DockSubagentView } from '../../hooks/use-dock-subagents'
-import { fetchTaskDetail, useLiveTasks } from '../../hooks/use-thread-tasks'
+import { extractSubagentsFromBlocks, type DockSubagentItem } from '../../lib/extract-subagents-from-blocks'
+import { openRunPanel } from '../../store/run-panel-store'
+import { useLiveTasks } from '../../hooks/use-thread-tasks'
 import {
   useGitBranchCompareBase,
   useGitWorkingChanges
@@ -52,9 +52,6 @@ import {
   isActiveSubagentStatus,
   subagentListTitle
 } from '../../lib/extract-subagents-from-blocks'
-import { timelineToFlowItems } from '../../lib/task-step-flow'
-import { TaskRunDialog } from './TaskRunDialog'
-import { StepFlow } from './StepFlow'
 import { taskStatusLabelKey } from './task-status'
 import { extractTodosFromBlocks } from '../../lib/extract-todos-from-blocks'
 import {
@@ -189,30 +186,24 @@ function SectionHeader({
   )
 }
 
-function subagentDockDotClass(status: DockSubagentView['status']): string {
+function subagentDockDotClass(status: DockSubagentItem['status']): string {
   if (status === 'failed') return 'bg-red-500'
   if (status === 'completed') return 'bg-sky-500'
   if (status === 'cancelled') return 'bg-ds-border'
   return 'bg-emerald-500'
 }
 
-function SubagentDockRow({ item }: { item: DockSubagentView }): ReactElement {
+function SubagentDockRow({ item }: { item: DockSubagentItem }): ReactElement {
   const { t } = useTranslation('common')
-  const scrollToBlock = useChatStore((s) => s.scrollToBlock)
   const active = isActiveSubagentStatus(item.status)
   const label = subagentListTitle(item, 56, t('contextRailSubagentFallback'))
   const fullPrompt = (item.prompt || '').replace(/\s+/g, ' ').trim()
 
   return (
-    <li
-      className={[
-        'transition-opacity duration-500',
-        item.fading ? 'pointer-events-none opacity-0' : 'opacity-100'
-      ].join(' ')}
-    >
+    <li>
       <button
         type="button"
-        onClick={() => scrollToBlock(item.id)}
+        onClick={() => openRunPanel({ kind: 'subagent', id: item.agentId })}
         title={fullPrompt || t('contextRailSubagentJump')}
         className="flex w-full items-center gap-2 rounded-[9px] px-1.5 py-1 text-left transition-colors hover:bg-ds-hover/60"
       >
@@ -251,59 +242,21 @@ function TaskRow({
   const { t } = useTranslation()
   const { status } = task
   const running = isActiveTaskStatus(status)
-  const [dialogOpen, setDialogOpen] = useState(false)
-  // Collapsed by default — expand only when the user wants the step rail.
-  const [stepsOpen, setStepsOpen] = useState(false)
-  const [timeline, setTimeline] = useState<ReturnType<typeof timelineToFlowItems>>([])
-  const [loadingSteps, setLoadingSteps] = useState(false)
   const title = taskListTitle(task)
-
-  useEffect(() => {
-    if (!stepsOpen) return
-    let cancelled = false
-    let interval: number | undefined
-    const load = (): void => {
-      void fetchTaskDetail(task.id)
-        .then((detail) => {
-          if (cancelled) return
-          if (detail) {
-            setTimeline(timelineToFlowItems(detail.timeline))
-            if (!isActiveTaskStatus(detail.status) && interval !== undefined) {
-              window.clearInterval(interval)
-              interval = undefined
-            }
-          }
-          setLoadingSteps(false)
-        })
-        .catch(() => {
-          if (!cancelled) setLoadingSteps(false)
-        })
-    }
-    setLoadingSteps(true)
-    load()
-    if (running) {
-      interval = window.setInterval(load, 1500)
-    }
-    return () => {
-      cancelled = true
-      if (interval !== undefined) window.clearInterval(interval)
-    }
-  }, [stepsOpen, task.id, running])
 
   return (
     <li className="rounded-[10px] px-0.5 py-0.5">
       <div className="flex items-center gap-1">
         <button
           type="button"
-          onClick={() => setStepsOpen((v) => !v)}
+          onClick={() => openRunPanel({ kind: 'task', id: task.id })}
           title={task.prompt.trim() || task.id}
-          aria-expanded={stepsOpen}
           className="flex min-w-0 flex-1 items-center gap-1.5 rounded-[9px] px-1.5 py-1 text-left transition-colors hover:bg-ds-hover/60"
         >
           <ChevronDown
             className={[
               'h-3.5 w-3.5 shrink-0 text-ds-faint transition-transform duration-200',
-              stepsOpen ? 'rotate-0' : '-rotate-90'
+              '-rotate-90'
             ].join(' ')}
             strokeWidth={1.8}
           />
@@ -319,15 +272,6 @@ function TaskRow({
             {t(taskStatusLabelKey(status))}
           </span>
         </button>
-        {!running ? (
-          <button
-            type="button"
-            onClick={() => setDialogOpen(true)}
-            className="shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium text-ds-muted transition hover:bg-ds-hover hover:text-ds-ink"
-          >
-            {t('subagentDetails')}
-          </button>
-        ) : null}
         {onDismiss ? (
           <button
             type="button"
@@ -341,31 +285,6 @@ function TaskRow({
         ) : null}
       </div>
 
-      {stepsOpen ? (
-        <div className="mt-1 border-t border-ds-border-muted/40 px-1 pt-1">
-          {timeline.length > 0 ? (
-            <StepFlow items={timeline} compact />
-          ) : loadingSteps ? (
-            <div className="flex items-center gap-1.5 px-1 py-1.5 text-[11.5px] text-ds-faint">
-              <Loader2 className="h-3 w-3 animate-spin" />
-              {t('contextRailTaskLoading')}
-            </div>
-          ) : (
-            <p className="px-1 py-1.5 text-[11.5px] text-ds-faint">
-              {running
-                ? t('subagentStepFlowWaiting')
-                : t('stepFlowEmpty')}
-            </p>
-          )}
-        </div>
-      ) : null}
-
-      <TaskRunDialog
-        taskId={task.id}
-        initialStatus={status}
-        open={dialogOpen}
-        onClose={() => setDialogOpen(false)}
-      />
     </li>
   )
 }
@@ -446,7 +365,7 @@ export function OperationContextDock({
       return next
     })
   }, [])
-  const dockSubagents = useDockSubagents(blocks)
+  const dockSubagents = useMemo(() => extractSubagentsFromBlocks(blocks), [blocks])
   const changeStats = useMemo(
     () =>
       sumWorkspaceChangeStats(

@@ -723,13 +723,18 @@ export function subagentCardsFromBlocks(blocks: ChatBlock[]): Record<string, Sub
   return out
 }
 
-export function subagentBlockFromCard(card: SubagentCardState, createdAt?: string): ChatBlock {
+export function subagentBlockFromCard(card: SubagentCardState, createdAt?: string, previous?: Extract<ChatBlock, { kind: 'subagent' }>): Extract<ChatBlock, { kind: 'subagent' }> {
   const status = cardLifecycle(card)
+  const active = status === 'running' || status === 'pending'
+  const wasActive = previous?.status === 'running' || previous?.status === 'pending'
+  const startedAt = active && previous && !wasActive ? createdAt : previous?.startedAt ?? (active ? createdAt : undefined)
+  const finishedAt = active ? undefined : previous?.finishedAt ?? (startedAt ? createdAt : undefined)
+  const timing = { createdAt: previous?.createdAt ?? createdAt, startedAt, finishedAt }
   if (card.cardKind === 'delegate') {
     return {
       kind: 'subagent',
       id: `subagent-${card.agentId}`,
-      createdAt,
+      ...timing,
       cardKind: 'delegate',
       agentId: card.agentId,
       agentType: card.agentType,
@@ -751,7 +756,7 @@ export function subagentBlockFromCard(card: SubagentCardState, createdAt?: strin
   return {
     kind: 'subagent',
     id: `subagent-${card.agentId}`,
-    createdAt,
+    ...timing,
     cardKind: 'fanout',
     agentId: card.agentId,
     agentType: card.dispatchKind,

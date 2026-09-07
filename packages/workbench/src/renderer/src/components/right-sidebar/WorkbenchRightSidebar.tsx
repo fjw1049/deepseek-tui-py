@@ -10,6 +10,7 @@ import {
 } from 'react'
 import {
   Code2,
+  ListChecks,
   FileEdit,
   Globe2,
   Maximize2,
@@ -19,6 +20,8 @@ import {
   Terminal
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
+import { useRunPanelStore } from '../../store/run-panel-store'
+import { useChatStore } from '../../store/chat-store'
 import type { ChatBlock } from '../../agent/types'
 import type { PreviewElementPick } from '../../lib/preview-element-picker'
 import type { ChangeReviewContext } from '../../lib/change-review'
@@ -29,6 +32,8 @@ import {
 } from '../../lib/right-sidebar-tab-bar-layout'
 import { AppTerminalPanel } from '../AppTerminalPanel'
 import { RightSidebarCollapsedStrip } from './RightSidebarCollapsedStrip'
+
+const RunPanel = lazy(() => import('./RunPanel').then((module) => ({ default: module.RunPanel })))
 
 const ChangeInspector = lazy(() =>
   import('../ChangeInspector').then((module) => ({ default: module.ChangeInspector }))
@@ -78,7 +83,8 @@ const TAB_ITEMS: Array<{ id: RightSidebarTab; icon: typeof Code2; labelKey: stri
   { id: 'editor', icon: Code2, labelKey: 'rightSidebarTabEditor' },
   { id: 'changes', icon: FileEdit, labelKey: 'rightSidebarTabChanges' },
   { id: 'terminal', icon: Terminal, labelKey: 'rightSidebarTabTerminal' },
-  { id: 'preview', icon: Globe2, labelKey: 'rightSidebarTabPreview' }
+  { id: 'preview', icon: Globe2, labelKey: 'rightSidebarTabPreview' },
+  { id: 'runs', icon: ListChecks, labelKey: 'rightSidebarTabRuns' }
 ]
 
 function TabButton({
@@ -150,11 +156,14 @@ export function WorkbenchRightSidebar({
   terminalMountActive = true
 }: Props): ReactElement | null {
   const { t } = useTranslation('common')
+  const runTarget = useRunPanelStore((state) => state.target)
+  const activeThreadId = useChatStore((state) => state.activeThreadId)
+  const hasRunSelection = !!runTarget && runTarget.threadId === activeThreadId
   const tabRowRef = useRef<HTMLDivElement>(null)
   const [tabRowWidth, setTabRowWidth] = useState<number | null>(null)
   const tabPlan = useMemo(
-    () => rightSidebarTabBarPlanForWidth(tabRowWidth, tab),
-    [tab, tabRowWidth]
+    () => rightSidebarTabBarPlanForWidth(tabRowWidth, tab, hasRunSelection || tab === 'runs'),
+    [tab, tabRowWidth, hasRunSelection]
   )
   const tabTier = rightSidebarTabBarTierForWidth(tabRowWidth)
 
@@ -195,7 +204,9 @@ export function WorkbenchRightSidebar({
   }
 
   let otherPanel: ReactNode = null
-  if (tab === 'editor') {
+  if (tab === 'runs') {
+    otherPanel = <Suspense fallback={<PanelFallback />}><RunPanel /></Suspense>
+  } else if (tab === 'editor') {
     otherPanel = (
       <Suspense fallback={<PanelFallback />}>
         <WorkspaceEditorPanel workspaceRoot={workspaceRoot} blocks={blocks} />
@@ -268,7 +279,7 @@ export function WorkbenchRightSidebar({
                 key={item.id}
                 active={tab === item.id}
                 label={t(item.labelKey)}
-                showLabel={tabPlan.showLabel[item.id]}
+                showLabel={!!tabPlan.showLabel[item.id]}
                 icon={item.icon}
                 onClick={() => onTabChange(item.id)}
               />

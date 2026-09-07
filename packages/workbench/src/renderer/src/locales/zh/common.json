@@ -1907,5 +1907,25 @@
     "disallowed": "不允许",
     "cancelled": "已取消恢复，任务保持停止。",
     "changed": "任务权限已变化，请重新查看后再恢复。"
-  }
+  },
+  "rightSidebarTabRuns": "运行",
+  "runPanelSelect": "选择任务或子代理",
+  "runPanelLoadFailed": "暂时无法加载运行过程，正在重试…",
+  "runPanelUnavailable": "当前会话中没有这条运行记录。",
+  "runPanelLatest": "回到最新",
+  "runPanelSwitch": "切换任务",
+  "runPanelActiveGroup": "进行中",
+  "runPanelDoneGroup": "已结束",
+  "runPanelTask": "后台任务",
+  "runPanelAgent": "子代理",
+  "runPanelAssignment": "任务说明",
+  "runPanelUpdate": "进展 {{index}}",
+  "runPanelActions": "执行过程",
+  "runPanelActionCount": "{{count}} 次操作",
+  "runPanelFoldPhase": "收起第 {{index}} 段过程",
+  "runPanelExpandPhase": "展开第 {{index}} 段过程",
+  "runPanelBackground": "任务在后台运行",
+  "runPanelFinished": "运行已结束",
+  "runPanelProgressCount": "{{count}} 段进展",
+  "runPanelResult": "执行结果"
 }

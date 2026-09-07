@@ -29,7 +29,7 @@ export type RightSidebarTabBarTier = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8
 
 export type RightSidebarTabBarPlan = {
   visibleTabs: RightSidebarTab[]
-  showLabel: Record<RightSidebarTab, boolean>
+  showLabel: Partial<Record<RightSidebarTab, boolean>>
 }
 
 /** Tab-row clientWidth breakpoints (px) — exclusive upper bound for each tier. */
@@ -61,8 +61,14 @@ export function rightSidebarTabBarTierForWidth(
 
 export function rightSidebarTabBarPlanForWidth(
   width: number | null,
-  activeTab: RightSidebarTab
+  activeTab: RightSidebarTab,
+  includeRuns = activeTab === 'runs'
 ): RightSidebarTabBarPlan {
+  if (includeRuns) {
+    const plan = rightSidebarTabBarPlanForWidth(width == null ? null : width - 65, activeTab === 'runs' ? 'editor' : activeTab, false)
+    if (activeTab === 'runs' && width != null && width < 140) plan.visibleTabs = []
+    return { visibleTabs: [...plan.visibleTabs, 'runs'], showLabel: { ...plan.showLabel, runs: true } }
+  }
   const tier = rightSidebarTabBarTierForWidth(width)
   const labelCutoff = Math.min(tier, 4)
   const tabHideCutoff = tier >= 5 ? Math.min(tier - 4, 4) : 0
@@ -72,7 +78,7 @@ export function rightSidebarTabBarPlanForWidth(
     changes: labelCutoff < 2,
     terminal: labelCutoff < 3,
     preview: labelCutoff < 4
-  } satisfies Record<RightSidebarTab, boolean>
+  } satisfies Partial<Record<RightSidebarTab, boolean>>
 
   const visibleTabs = RIGHT_SIDEBAR_TAB_ORDER.filter((tab, index) => {
     if (tab === activeTab) return true

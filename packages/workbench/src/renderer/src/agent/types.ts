@@ -210,6 +210,8 @@ export type ChatBlock =
       kind: 'subagent'
       id: string
       createdAt?: string
+      startedAt?: string
+      finishedAt?: string
       cardKind: 'delegate' | 'fanout'
       agentId: string
       agentType: string

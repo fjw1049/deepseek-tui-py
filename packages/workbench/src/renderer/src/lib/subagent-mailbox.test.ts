@@ -513,3 +513,20 @@ describe('subagent-mailbox', () => {
     expect(items.filter((i) => i.variant === 'narration')).toHaveLength(1)
   })
 })
+
+
+it('retains event timing through completion and resets it on resume', () => {
+  const card = createDelegateCard('timed', 'code')
+  card.status = 'running'
+  const first = subagentBlockFromCard(card, '2026-09-08T00:00:00Z')
+  card.status = 'completed'
+  const done = subagentBlockFromCard(card, '2026-09-08T00:01:20Z', first)
+  expect(done.startedAt).toBe(first.startedAt)
+  expect(done.finishedAt).toBe('2026-09-08T00:01:20Z')
+  expect(subagentBlockFromCard(card, '2026-09-08T00:03:00Z', done).finishedAt).toBe(done.finishedAt)
+  expect(subagentBlockFromCard(card, '2026-09-08T00:03:00Z').startedAt).toBeUndefined()
+  card.status = 'running'
+  const resumed = subagentBlockFromCard(card, '2026-09-08T00:04:00Z', done)
+  expect(resumed.finishedAt).toBeUndefined()
+  expect(resumed.startedAt).toBe('2026-09-08T00:04:00Z')
+})

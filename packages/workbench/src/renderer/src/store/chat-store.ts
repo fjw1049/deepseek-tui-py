@@ -1288,7 +1288,7 @@ function buildThreadEventSink(
           )
           // Keep a previously backfilled spawn prompt if this mailbox event
           // did not carry one (e.g. tool_call / progress envelopes).
-          const nextBlock = subagentBlockFromCard(card, existing?.createdAt)
+          const nextBlock = subagentBlockFromCard(card, new Date().toISOString(), existing?.kind === 'subagent' ? existing : undefined)
           const merged =
             !nextBlock.prompt && existing && existing.kind === 'subagent' && existing.prompt
               ? { ...nextBlock, prompt: existing.prompt }

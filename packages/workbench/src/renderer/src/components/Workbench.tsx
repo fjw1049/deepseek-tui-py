@@ -1,3 +1,4 @@
+import { useRunPanelStore } from '../store/run-panel-store'
 import type {
   CSSProperties,
   PointerEvent as ReactPointerEvent,
@@ -332,6 +333,8 @@ export function Workbench(): ReactElement {
   // Cold start always lands on the main chat shell: left rail expanded, no IDE
   // mode, no right tool panel (editor / changes / terminal / browser). Widths
   // and the last right-sidebar tab still persist for when the user opens them.
+  const runTarget = useRunPanelStore((state) => state.target)
+  const runRequest = useRunPanelStore((state) => state.request)
   const [rightSidebarOpen, setRightSidebarOpen] = useState(false)
   const [rightSidebarCollapsed, setRightSidebarCollapsed] = useState(false)
   const [rightSidebarTab, setRightSidebarTab] = useState<RightSidebarTab>(readStoredRightSidebarTab)
@@ -621,6 +624,20 @@ export function Workbench(): ReactElement {
     setLayoutMode('chat')
     persistLayoutMode('chat')
   }, [])
+
+  useEffect(() => {
+    if (runTarget?.threadId !== useChatStore.getState().activeThreadId) return
+    setRightSidebarOpen(true)
+    setRightSidebarCollapsed(false)
+    setRightSidebarTab('runs')
+  }, [runRequest, runTarget])
+
+  useEffect(() => {
+    if (rightSidebarTab === 'runs' && runTarget?.threadId !== activeThreadId) {
+      setRightSidebarOpen(false)
+      setRightSidebarTab('editor')
+    }
+  }, [activeThreadId, rightSidebarTab, runTarget])
 
   const closeRightSidebar = useCallback((): void => {
     setRightSidebarOpen(false)

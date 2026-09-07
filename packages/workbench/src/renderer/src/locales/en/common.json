@@ -1907,5 +1907,25 @@
     "disallowed": "Not allowed",
     "cancelled": "Resume cancelled; the task remains stopped.",
     "changed": "Task permissions changed. Review the task again before resuming."
-  }
+  },
+  "rightSidebarTabRuns": "Run",
+  "runPanelSelect": "Select a task or subagent",
+  "runPanelLoadFailed": "Unable to load progress. Retrying…",
+  "runPanelUnavailable": "This run is not available in the current conversation.",
+  "runPanelLatest": "Jump to latest",
+  "runPanelSwitch": "Switch task",
+  "runPanelActiveGroup": "In progress",
+  "runPanelDoneGroup": "Finished",
+  "runPanelTask": "Background task",
+  "runPanelAgent": "Subagent",
+  "runPanelAssignment": "Assignment",
+  "runPanelUpdate": "Update {{index}}",
+  "runPanelActions": "Activity",
+  "runPanelActionCount": "{{count}} actions",
+  "runPanelFoldPhase": "Collapse update {{index}}",
+  "runPanelExpandPhase": "Expand update {{index}}",
+  "runPanelBackground": "Running in the background",
+  "runPanelFinished": "Run finished",
+  "runPanelProgressCount": "{{count}} progress updates",
+  "runPanelResult": "Result"
 }

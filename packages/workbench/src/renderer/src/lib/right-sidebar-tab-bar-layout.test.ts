@@ -90,3 +90,11 @@ describe('rightSidebarTabBarPlanForWidth', () => {
     }
   })
 })
+
+it('keeps the contextual run tab reachable at narrow widths', () => {
+  for (const width of [70, 150, 250, 400]) {
+    const plan = rightSidebarTabBarPlanForWidth(width, 'runs')
+    expect(plan.visibleTabs).toContain('runs')
+    expect(plan.showLabel.runs).toBe(true)
+  }
+})

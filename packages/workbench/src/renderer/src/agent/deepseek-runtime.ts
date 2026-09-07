@@ -746,7 +746,8 @@ function upsertSubagentBlock(
 ): ChatBlock[] {
   const card = cards[agentId]
   if (!card) return blocks
-  const nextBlock = subagentBlockFromCard(card, createdAt)
+  const previous = blocks.find((b): b is Extract<ChatBlock, { kind: 'subagent' }> => b.kind === 'subagent' && b.agentId === agentId)
+  const nextBlock = subagentBlockFromCard(card, createdAt, previous)
   const idx = blocks.findIndex((b) => b.kind === 'subagent' && b.agentId === agentId)
   if (idx >= 0) {
     const next = [...blocks]

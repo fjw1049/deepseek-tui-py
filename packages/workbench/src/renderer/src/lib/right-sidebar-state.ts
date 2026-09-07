@@ -1,4 +1,4 @@
-export type RightSidebarTab = 'editor' | 'changes' | 'terminal' | 'preview'
+export type RightSidebarTab = 'editor' | 'changes' | 'terminal' | 'preview' | 'runs'
 
 const OPEN_KEY = 'deepseekgui.layout.rightSidebarOpen'
 const TAB_KEY = 'deepseekgui.layout.rightSidebarTab'
