@@ -10,6 +10,7 @@ export function SessionQueries({ children }: { children: ReactNode }): React.Rea
   const { t } = useTranslation('common')
   const blocks = useChatStore((s) => s.blocks)
   const threadId = useChatStore((s) => s.activeThreadId)
+  const scrollToBlock = useChatStore((s) => s.scrollToBlock)
   const queries = useMemo(() => {
     const users = blocks.filter((block) => block.kind === 'user')
     const previews = deriveQueryTrailItems(users)
@@ -20,9 +21,14 @@ export function SessionQueries({ children }: { children: ReactNode }): React.Rea
   const [open, setOpen] = useState(false)
   const [notice, setNotice] = useState('')
   const [copiedId, setCopiedId] = useState<string | null>(null)
-  const [position, setPosition] = useState({ left: 0, top: 0, width: 0, maxHeight: 360 })
+  const [position, setPosition] = useState({ left: 0, top: 0, width: 0, maxWidth: 420, maxHeight: 360 })
   const buttonRef = useRef<HTMLButtonElement>(null)
   const panelRef = useRef<HTMLDivElement>(null)
+  const jumpTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const cancelJump = (): void => {
+    if (jumpTimer.current) clearTimeout(jumpTimer.current)
+    jumpTimer.current = null
+  }
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const cancelClose = (): void => {
     if (closeTimer.current) clearTimeout(closeTimer.current)
@@ -40,18 +46,21 @@ export function SessionQueries({ children }: { children: ReactNode }): React.Rea
     closeTimer.current = setTimeout(() => setOpen(false), 180)
   }
 
-  useLightDismiss({ open, onDismiss: () => setOpen(false), refs: [buttonRef, panelRef] })
+  useLightDismiss({ open, onDismiss: () => { cancelJump(); setOpen(false) }, refs: [buttonRef, panelRef] })
   useEffect(() => {
     setOpen(false)
     setNotice('')
     setCopiedId(null)
-    return () => { if (closeTimer.current) clearTimeout(closeTimer.current) }
+    return () => {
+      if (closeTimer.current) clearTimeout(closeTimer.current)
+      if (jumpTimer.current) clearTimeout(jumpTimer.current)
+    }
   }, [threadId])
   useEffect(() => {
     if (!notice) return
     const timer = setTimeout(() => { setNotice(''); setCopiedId(null) }, 1600)
     return () => clearTimeout(timer)
-  }, [notice])
+  }, [notice, copiedId])
   useLayoutEffect(() => {
     if (!open) return
     const update = (): void => {
@@ -59,7 +68,8 @@ export function SessionQueries({ children }: { children: ReactNode }): React.Rea
       const scale = parseFloat(getComputedStyle(document.body).zoom) || 1
       const left = rect.left / scale
       const top = rect.bottom / scale + 6
-      setPosition({ left, top, width: Math.min(rect.width / scale, window.innerWidth / scale - left - 8),
+      setPosition({ left, top, width: rect.width / scale,
+        maxWidth: Math.max(0, Math.min(420, window.innerWidth / scale - left - 8)),
         maxHeight: Math.max(0, Math.min(360, window.innerHeight / scale - top - 8)) })
     }
     update()
@@ -83,7 +93,7 @@ export function SessionQueries({ children }: { children: ReactNode }): React.Rea
     <button
       ref={buttonRef}
       type="button"
-      className="ds-no-drag group flex h-7 min-w-0 max-w-[420px] flex-1 select-none items-center gap-2 rounded-full pr-1.5 text-left transition-colors hover:bg-ds-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+      className="ds-no-drag group flex h-7 min-w-0 max-w-[420px] flex-initial select-none items-center gap-2 rounded-full pr-1.5 text-left transition-colors hover:bg-ds-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
       disabled={queries.length === 0}
       aria-expanded={open}
       aria-label={t('sessionQueriesHint')}
@@ -105,26 +115,49 @@ export function SessionQueries({ children }: { children: ReactNode }): React.Rea
     </button>
     <span role="status" className="sr-only">{notice}</span>
     {open && createPortal(
-      <div ref={panelRef} onPointerEnter={enter} onPointerLeave={leave} className="ds-no-drag fixed z-[100] overflow-hidden rounded-2xl border border-ds-border bg-[color:var(--ds-card-strong)] p-1 shadow-[0_8px_28px_rgba(0,0,0,0.14)]" style={{ left: position.left, top: position.top, width: position.width }}>
+      <div ref={panelRef} onPointerEnter={enter} onPointerLeave={leave} className="ds-no-drag fixed z-[100] overflow-hidden rounded-2xl border border-ds-border bg-[color:var(--ds-card-strong)] p-1 shadow-[0_8px_28px_rgba(0,0,0,0.14)]" style={{ left: position.left, top: position.top, width: 'max-content', minWidth: Math.min(position.width, position.maxWidth), maxWidth: position.maxWidth }}>
         <div className="overflow-y-auto overscroll-contain [scrollbar-width:thin]" style={{ maxHeight: position.maxHeight }}>
-          {queries.map((query) => <button
+          {queries.map((query) => <div
             key={query.id}
-            type="button"
-            className="group flex h-9 w-full select-none items-center gap-2.5 rounded-xl px-2.5 text-left text-[13px] text-ds-ink transition-colors hover:bg-ds-hover focus-visible:bg-ds-hover focus-visible:outline-none"
-            title={t('sessionQueryCopyHint')}
-            aria-label={`${t('sessionQueryCopyHint')}: ${query.preview}`}
-            onDoubleClick={() => void copy(query.text, query.id)}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter' || event.key === ' ') {
-                event.preventDefault()
-                void copy(query.text, query.id)
-              }
-            }}
+            className="group flex h-9 w-full select-none items-center rounded-xl px-2.5 text-[13px] text-ds-ink transition-colors hover:bg-ds-hover focus-within:bg-ds-hover"
           >
-            <span aria-hidden="true" className={`h-1 w-1 shrink-0 rounded-full bg-current ${query === queries[0] ? 'text-ds-muted' : 'text-ds-faint opacity-40'}`} />
-            <span className="min-w-0 flex-1 truncate">{query.preview}</span>
-            {copiedId === query.id ? <Check aria-hidden="true" className="h-3 w-3 shrink-0 text-ds-muted" /> : <Copy aria-hidden="true" className="h-3 w-3 shrink-0 text-ds-faint opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100" />}
-          </button>)}
+            <button
+              type="button"
+              className="flex h-full min-w-0 flex-1 items-center gap-2.5 text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+              title={t('sessionQueryCopyHint')}
+              aria-label={`${t('sessionQueryCopyHint')}: ${query.preview}`}
+              onClick={(event) => {
+                cancelJump()
+                if (event.detail > 1) return
+                const jump = (): void => {
+                  scrollToBlock(query.id)
+                  setOpen(false)
+                }
+                if (event.detail === 0) jump()
+                else jumpTimer.current = setTimeout(jump, 400)
+              }}
+              onDoubleClick={() => {
+                cancelJump()
+                void copy(query.text, query.id)
+              }}
+            >
+              <span aria-hidden="true" className={`h-1 w-1 shrink-0 rounded-full bg-current ${query === queries[0] ? 'text-ds-muted' : 'text-ds-faint opacity-40'}`} />
+              <span className="min-w-0 flex-1 truncate">{query.preview}</span>
+            </button>
+            <button
+              type="button"
+              className={`ml-1 flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-ds-faint transition-opacity hover:text-ds-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent ${copiedId === query.id ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 group-focus-within:opacity-100'}`}
+              title={t(copiedId === query.id ? 'copySuccess' : 'copyMessage')}
+              aria-label={`${t('copyMessage')}: ${query.preview}`}
+              onClick={(event) => {
+                event.stopPropagation()
+                cancelJump()
+                void copy(query.text, query.id)
+              }}
+            >
+              {copiedId === query.id ? <Check aria-hidden="true" className="h-3 w-3" /> : <Copy aria-hidden="true" className="h-3 w-3" />}
+            </button>
+          </div>)}
         </div>
       </div>, document.body
     )}

@@ -1300,7 +1300,7 @@
   "queuedMessageSendNow": "Send now",
   "queuedMessageWithdraw": "Withdraw",
   "sessionQueriesHint": "Hover to expand queries; double-click to copy the latest query",
-  "sessionQueryCopyHint": "Double-click to copy the full query",
+  "sessionQueryCopyHint": "Click to jump to this conversation; double-click to copy the full query",
   "copyMessage": "Copy message",
   "copySuccess": "Copied",
   "copyFailed": "Copy failed",
