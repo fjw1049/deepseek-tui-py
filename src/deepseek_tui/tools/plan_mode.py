@@ -357,11 +357,11 @@ class EnterPlanModeTool(ToolSpec):
 
     def description(self) -> str:
         return (
-            "Proactively enter read-only plan mode before a non-trivial "
-            "implementation. Use when the task has multiple valid approaches, "
-            "architectural trade-offs, multi-file changes, or unclear "
-            "requirements. Requires user consent. Do not use for trivial "
-            "one-line fixes or pure research questions."
+            "Enter read-only plan mode when the user requests planning before "
+            "implementation, or a consequential scope or architectural choice "
+            "requires their decision and benefits from a reviewed plan. "
+            "Multiple files or behavior changes alone do not require it. "
+            "Requires user consent. Do not use for pure research questions."
         )
 
     def input_schema(self) -> dict[str, object]:

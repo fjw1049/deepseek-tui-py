@@ -1359,7 +1359,13 @@ class RuntimeThreadManager:
                     await self._emit_publish_state(thread)
                 raise
 
-        self._touch(thread)
+        # Selecting a conversation prepares/syncs its isolate without new
+        # conversation activity. Keep its recency unless publish state changed;
+        # recovery decisions still need a fresh updated_at token.
+        if publish_pending_changed:
+            self._touch(thread)
+        else:
+            self.store.save_thread(thread)
         environment_changed = previous_environment != (
             thread.env_mode,
             thread.worktree_path,
