@@ -94,16 +94,10 @@ export function buildChromeThemeCssVars(
   const elevated1 = mixRgb(surface, anchor, light ? 0.08 + c * 0.08 : 0.022 + c * 0.04)
   const elevated2 = mixRgb(surface, anchor, light ? 0.16 + c * 0.12 : 0.042 + c * 0.06)
 
-  // Synara's stack in BOTH variants: the content canvas is the theme surface
-  // (the main working tone) and the sidebar takes the panel mix — a slightly
-  // lifted veil over the darker window ground. Dark previously inverted this
-  // (darkest sidebar, lifted canvas), which read backwards next to Synara.
-  //
-  // Light caveat: panel mixes toward white, so a pure-white surface collapses
-  // sidebar onto the content card and the window-inset gutters disappear.
-  // Fall back to the window-ground mix so chrome stays distinct.
+  // Keep the light sidebar close to the reading surface; window gutters
+  // retain their own contrast. Dark themes keep the existing panel mix.
   const canvasBg = surface
-  const sidebarBg = light && hex(panel) === hex(surface) ? surfaceUnder : panel
+  const sidebarBg = light ? mixRgb(surface, ink, 0.02) : panel
 
   // Near-black dark surfaces otherwise yield ΔL≈3 between board and canvas and
   // read as a flat slab. Nudge the board further toward black until the gap is
@@ -260,7 +254,7 @@ export function buildChromeThemeCssVars(
 
 function withUiFallback(family: string): string {
   const generic = /(sans-serif|serif|monospace|system-ui)\s*$/i.test(family)
-  return generic ? family : `${family}, 'Inter', 'Noto Sans SC', sans-serif`
+  return generic ? family : `${family}, 'PingFang SC', 'Microsoft YaHei', 'Inter', 'Noto Sans SC', sans-serif`
 }
 
 function withMonoFallback(family: string): string {

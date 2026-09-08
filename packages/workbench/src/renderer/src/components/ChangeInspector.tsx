@@ -152,8 +152,11 @@ function InspectorGitActions({
   }, [commitOpen, menuOpen])
 
   useEffect(() => {
-    if (feedback?.kind !== 'success') return
-    const timer = window.setTimeout(() => setFeedback(null), 3_500)
+    if (!feedback) return
+    const timer = window.setTimeout(
+      () => setFeedback(null),
+      feedback.kind === 'success' ? 3_500 : 8_000
+    )
     return () => window.clearTimeout(timer)
   }, [feedback])
 

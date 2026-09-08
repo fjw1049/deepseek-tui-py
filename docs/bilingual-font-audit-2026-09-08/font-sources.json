@@ -1,0 +1,652 @@
+[
+  {
+    "file": "packages/workbench/src/renderer/src/components/AppTerminalPanel.tsx",
+    "line": 83,
+    "source": "fontFamily: readTerminalFontFamily(),"
+  },
+  {
+    "file": "packages/workbench/src/renderer/src/components/AppTerminalPanel.tsx",
+    "line": 260,
+    "source": "fontFamily: readTerminalFontFamily(),"
+  },
+  {
+    "file": "packages/workbench/src/renderer/src/components/chat/reasoning-effort-selector.js",
+    "line": 95,
+    "source": "font-family: var(--font-ui, system-ui, sans-serif);"
+  },
+  {
+    "file": "packages/workbench/src/renderer/src/components/right-sidebar/run-panel.css",
+    "line": 8,
+    "selector": ".ds-run-panel",
+    "property": "font-family",
+    "value": "var(--font-ui)"
+  },
+  {
+    "file": "packages/workbench/src/renderer/src/components/right-sidebar/run-panel.css",
+    "line": 128,
+    "selector": ".ds-run-action-detail pre",
+    "property": "font",
+    "value": "11px/1.65 var(--font-mono)"
+  },
+  {
+    "file": "packages/workbench/src/renderer/src/components/right-sidebar/run-panel.css",
+    "line": 132,
+    "selector": ".ds-run-target-list code",
+    "property": "font",
+    "value": "10.5px/1.6 var(--font-mono)"
+  },
+  {
+    "file": "packages/workbench/src/renderer/src/components/workspace-editor/WorkspaceEditorSurface.tsx",
+    "line": 147,
+    "source": ".getPropertyValue('--font-mono')"
+  },
+  {
+    "file": "packages/workbench/src/renderer/src/index.css",
+    "line": 16,
+    "selector": ":root",
+    "property": "--font-native",
+    "value": "-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',\n    'Microsoft YaHei', 'Noto Sans SC', sans-serif"
+  },
+  {
+    "file": "packages/workbench/src/renderer/src/index.css",
+    "line": 18,
+    "selector": ":root",
+    "property": "--font-ui",
+    "value": "var(--font-native)"
+  },
+  {
+    "file": "packages/workbench/src/renderer/src/index.css",
+    "line": 19,
+    "selector": ":root",
+    "property": "--font-chat",
+    "value": "var(--font-ui)"
+  },
+  {
+    "file": "packages/workbench/src/renderer/src/index.css",
+    "line": 20,
+    "selector": ":root",
+    "property": "--font-display",
+    "value": "var(--font-ui)"
+  },
+  {
+    "file": "packages/workbench/src/renderer/src/index.css",
+    "line": 24,
+    "selector": ":root",
+    "property": "--font-mono",
+    "value": "ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono',\n    'PingFang SC', 'Microsoft YaHei', monospace"
+  },
+  {
+    "file": "packages/workbench/src/renderer/src/index.css",
+    "line": 26,
+    "selector": ":root",
+    "property": "--font-terminal",
+    "value": "'SF Mono', SFMono-Regular, ui-monospace, Menlo, Monaco, Consolas, 'Liberation Mono',\n    'Courier New', monospace"
+  },
+  {
+    "file": "packages/workbench/src/renderer/src/index.css",
+    "line": 306,
+    "selector": ":root[data-ui-font='system-native']",
+    "property": "--font-ui",
+    "value": "var(--font-native)"
+  },
+  {
+    "file": "packages/workbench/src/renderer/src/index.css",
+    "line": 307,
+    "selector": ":root[data-ui-font='system-native']",
+    "property": "--font-display",
+    "value": "var(--font-ui)"
+  },
+  {
+    "file": "packages/workbench/src/renderer/src/index.css",
+    "line": 313,
+    "selector": "html,\n#root,\n.ds-app-root",
+    "property": "font-family",
+    "value": "var(--font-ui)"
+  },
+  {
+    "file": "packages/workbench/src/renderer/src/index.css",
+    "line": 587,
+    "selector": ".ds-guide-hero__meta",
+    "property": "font-family",
+    "value": "var(--font-mono)"
+  },
+  {
+    "file": "packages/workbench/src/renderer/src/index.css",
+    "line": 632,
+    "selector": ".ds-guide-section",
+    "property": "font-family",
+    "value": "var(--font-mono)"
+  },
+  {
+    "file": "packages/workbench/src/renderer/src/index.css",
+    "line": 844,
+    "selector": ".ds-workbench-shell,\n.ds-workbench-main,\n.ds-workbench-sidebar-wrap,\n.ds-workbench-right-panel,\n.ds-workbench-terminal-wrap,\n.ds-stage-surface,\n.ds-settings-page,\n.ds-feature-page,\n.ds-plugin-page,\n.ds-channel-page,\n.ds-automation-page,\n.ds-automation-form,\n.ds-page-scroll,\n.ds-modal-surface,\n.ds-modal-backdrop,\n.ds-glass,\n.ds-tool-panel,\n.ds-terminal-panel,\n.ds-hero-panel,\n.ds-content-card,\n.ds-card-soft,\n.ds-card-strong,\n.ds-card-muted,\n.ds-card-ghost,\n.ds-chat-stage,\n.ds-topbar-surface,\n.ds-composer-shell,\n.ds-composer-command-popover,\n.ds-workbench-topbar,\n.ds-session-header",
+    "property": "font-family",
+    "value": "var(--font-ui)"
+  },
+  {
+    "file": "packages/workbench/src/renderer/src/index.css",
+    "line": 853,
+    "selector": "body",
+    "property": "font-family",
+    "value": "var(--font-ui)"
+  },
+  {
+    "file": "packages/workbench/src/renderer/src/index.css",
+    "line": 882,
+    "selector": "button,\ninput,\nselect,\ntextarea,\noption",
+    "property": "font-family",
+    "value": "var(--font-ui)"
+  },
+  {
+    "file": "packages/workbench/src/renderer/src/index.css",
+    "line": 894,
+    "selector": "code,\npre,\nkbd,\nsamp",
+    "property": "font-family",
+    "value": "var(--font-mono)"
+  },
+  {
+    "file": "packages/workbench/src/renderer/src/index.css",
+    "line": 1138,
+    "selector": ".ds-workspace-context-bar",
+    "property": "font-family",
+    "value": "var(--font-ui)"
+  },
+  {
+    "file": "packages/workbench/src/renderer/src/index.css",
+    "line": 1183,
+    "selector": ".ds-workspace-context-chip",
+    "property": "font-family",
+    "value": "var(--font-ui)"
+  },
+  {
+    "file": "packages/workbench/src/renderer/src/index.css",
+    "line": 1535,
+    "selector": ".ds-project-context-menu,\n.ds-editor-picker-menu",
+    "property": "font-family",
+    "value": "var(--font-ui)"
+  },
+  {
+    "file": "packages/workbench/src/renderer/src/index.css",
+    "line": 1612,
+    "selector": ".ds-project-context-menu__search-input",
+    "property": "font",
+    "value": "inherit"
+  },
+  {
+    "file": "packages/workbench/src/renderer/src/index.css",
+    "line": 1819,
+    "selector": ".ds-settings-select-menu",
+    "property": "font-family",
+    "value": "var(--font-ui)"
+  },
+  {
+    "file": "packages/workbench/src/renderer/src/index.css",
+    "line": 2153,
+    "selector": ".ds-chat-composer textarea,\n.ds-composer-empty textarea,\n.ds-composer-input",
+    "property": "font-family",
+    "value": "var(--font-ui)"
+  },
+  {
+    "file": "packages/workbench/src/renderer/src/index.css",
+    "line": 2196,
+    "selector": ".ds-user-message-edit-textarea",
+    "property": "font-family",
+    "value": "var(--font-ui)"
+  },
+  {
+    "file": "packages/workbench/src/renderer/src/index.css",
+    "line": 2207,
+    "selector": ".ds-composer-input::placeholder",
+    "property": "font-family",
+    "value": "var(--font-ui)"
+  },
+  {
+    "file": "packages/workbench/src/renderer/src/index.css",
+    "line": 2212,
+    "selector": ".ds-composer-model-label",
+    "property": "font-family",
+    "value": "var(--font-ui)"
+  },
+  {
+    "file": "packages/workbench/src/renderer/src/index.css",
+    "line": 2585,
+    "selector": ".ds-hero-title",
+    "property": "font-family",
+    "value": "var(--font-display)"
+  },
+  {
+    "file": "packages/workbench/src/renderer/src/index.css",
+    "line": 2595,
+    "selector": ".ds-hero-sub",
+    "property": "font-family",
+    "value": "var(--font-ui)"
+  },
+  {
+    "file": "packages/workbench/src/renderer/src/index.css",
+    "line": 2699,
+    "selector": ".ds-simple-empty-prompt__title",
+    "property": "font-family",
+    "value": "var(--font-display)"
+  },
+  {
+    "file": "packages/workbench/src/renderer/src/index.css",
+    "line": 2971,
+    "selector": ".ds-sidebar-shell",
+    "property": "--font-sidebar",
+    "value": "var(--font-ui)"
+  },
+  {
+    "file": "packages/workbench/src/renderer/src/index.css",
+    "line": 2977,
+    "selector": ".ds-sidebar-shell",
+    "property": "font-family",
+    "value": "var(--font-sidebar)"
+  },
+  {
+    "file": "packages/workbench/src/renderer/src/index.css",
+    "line": 2998,
+    "selector": ".ds-sidebar-shell button,\n.ds-sidebar-shell input,\n.ds-sidebar-shell kbd",
+    "property": "font-family",
+    "value": "inherit"
+  },
+  {
+    "file": "packages/workbench/src/renderer/src/index.css",
+    "line": 3005,
+    "selector": ".ds-sidebar-brand",
+    "property": "font-family",
+    "value": "inherit"
+  },
+  {
+    "file": "packages/workbench/src/renderer/src/index.css",
+    "line": 3028,
+    "selector": ".ds-sidebar-section-label",
+    "property": "font-family",
+    "value": "inherit"
+  },
+  {
+    "file": "packages/workbench/src/renderer/src/index.css",
+    "line": 3057,
+    "selector": ".ds-sidebar-search",
+    "property": "font-family",
+    "value": "var(--font-sidebar)"
+  },
+  {
+    "file": "packages/workbench/src/renderer/src/index.css",
+    "line": 3070,
+    "selector": ".ds-sidebar-search::placeholder",
+    "property": "font-family",
+    "value": "var(--font-sidebar)"
+  },
+  {
+    "file": "packages/workbench/src/renderer/src/index.css",
+    "line": 3097,
+    "selector": ".ds-sidebar-projects-panel",
+    "property": "font-family",
+    "value": "inherit"
+  },
+  {
+    "file": "packages/workbench/src/renderer/src/index.css",
+    "line": 3155,
+    "selector": ".ds-sidebar-link",
+    "property": "font-family",
+    "value": "inherit"
+  },
+  {
+    "file": "packages/workbench/src/renderer/src/index.css",
+    "line": 3448,
+    "selector": ".ds-sidebar-thread-row",
+    "property": "font-family",
+    "value": "var(--font-sidebar)"
+  },
+  {
+    "file": "packages/workbench/src/renderer/src/index.css",
+    "line": 3457,
+    "selector": ".ds-sidebar-thread-row button",
+    "property": "font-family",
+    "value": "inherit"
+  },
+  {
+    "file": "packages/workbench/src/renderer/src/index.css",
+    "line": 3526,
+    "selector": ".ds-sidebar-workspace",
+    "property": "font-family",
+    "value": "inherit"
+  },
+  {
+    "file": "packages/workbench/src/renderer/src/index.css",
+    "line": 3538,
+    "selector": ".ds-sidebar-project-label",
+    "property": "font",
+    "value": "inherit"
+  },
+  {
+    "file": "packages/workbench/src/renderer/src/index.css",
+    "line": 3562,
+    "selector": ".ds-sidebar-thread-list",
+    "property": "font-family",
+    "value": "var(--font-sidebar)"
+  },
+  {
+    "file": "packages/workbench/src/renderer/src/index.css",
+    "line": 3570,
+    "selector": ".ds-sidebar-thread",
+    "property": "font-family",
+    "value": "inherit"
+  },
+  {
+    "file": "packages/workbench/src/renderer/src/index.css",
+    "line": 3591,
+    "selector": ".ds-sidebar-thread-meta",
+    "property": "font-family",
+    "value": "inherit"
+  },
+  {
+    "file": "packages/workbench/src/renderer/src/index.css",
+    "line": 3603,
+    "selector": ".ds-sidebar-empty-copy",
+    "property": "font-family",
+    "value": "inherit"
+  },
+  {
+    "file": "packages/workbench/src/renderer/src/index.css",
+    "line": 3609,
+    "selector": ".ds-session-header-title,\n.ds-session-header-meta,\n.ds-session-header-hint",
+    "property": "font-family",
+    "value": "var(--font-ui)"
+  },
+  {
+    "file": "packages/workbench/src/renderer/src/index.css",
+    "line": 3690,
+    "selector": ".ds-terminal-host",
+    "property": "font-family",
+    "value": "var(--font-terminal)"
+  },
+  {
+    "file": "packages/workbench/src/renderer/src/index.css",
+    "line": 4052,
+    "selector": ".ds-dev-browser__omnibox",
+    "property": "font-family",
+    "value": "inherit"
+  },
+  {
+    "file": "packages/workbench/src/renderer/src/index.css",
+    "line": 4251,
+    "selector": ".ds-keycap",
+    "property": "font-family",
+    "value": "var(--font-ui)"
+  },
+  {
+    "file": "packages/workbench/src/renderer/src/index.css",
+    "line": 4303,
+    "selector": ".ds-search-modal",
+    "property": "font-family",
+    "value": "var(--font-ui)"
+  },
+  {
+    "file": "packages/workbench/src/renderer/src/index.css",
+    "line": 4364,
+    "selector": ".ds-search-modal__input",
+    "property": "font-family",
+    "value": "inherit"
+  },
+  {
+    "file": "packages/workbench/src/renderer/src/index.css",
+    "line": 4880,
+    "selector": ".ds-markdown",
+    "property": "font-family",
+    "value": "var(--font-ui)"
+  },
+  {
+    "file": "packages/workbench/src/renderer/src/index.css",
+    "line": 4887,
+    "selector": ".ds-markdown :where([data-streamdown]:not(code):not(pre):not([data-streamdown='code-block']):not([data-streamdown='code-block-actions']))",
+    "property": "font-family",
+    "value": "inherit"
+  },
+  {
+    "file": "packages/workbench/src/renderer/src/index.css",
+    "line": 4915,
+    "selector": ".ds-markdown h1,\n.ds-markdown h2,\n.ds-markdown h3",
+    "property": "font-family",
+    "value": "var(--font-display)"
+  },
+  {
+    "file": "packages/workbench/src/renderer/src/index.css",
+    "line": 4994,
+    "selector": ".ds-markdown code",
+    "property": "font-family",
+    "value": "var(--ds-chat-code-font, var(--font-mono))"
+  },
+  {
+    "file": "packages/workbench/src/renderer/src/index.css",
+    "line": 5012,
+    "selector": ".ds-markdown pre",
+    "property": "font-family",
+    "value": "var(--ds-chat-code-font, var(--font-mono))"
+  },
+  {
+    "file": "packages/workbench/src/renderer/src/index.css",
+    "line": 5034,
+    "selector": ".ds-code-inline",
+    "property": "font-family",
+    "value": "var(--ds-chat-code-font, var(--font-mono))"
+  },
+  {
+    "file": "packages/workbench/src/renderer/src/index.css",
+    "line": 5063,
+    "selector": ".ds-file-chip",
+    "property": "font",
+    "value": "inherit"
+  },
+  {
+    "file": "packages/workbench/src/renderer/src/index.css",
+    "line": 5337,
+    "selector": ".ds-markdown .ds-mermaid-block-label",
+    "property": "font-family",
+    "value": "var(--font-mono)"
+  },
+  {
+    "file": "packages/workbench/src/renderer/src/index.css",
+    "line": 5422,
+    "selector": ".ds-mermaid-fullscreen .ds-expand-header .ds-mermaid-block-label",
+    "property": "font-family",
+    "value": "var(--font-mono)"
+  },
+  {
+    "file": "packages/workbench/src/renderer/src/index.css",
+    "line": 5679,
+    "selector": ".ds-code-fullscreen .ds-expand-header .ds-code-block-language",
+    "property": "font-family",
+    "value": "var(--font-ui)"
+  },
+  {
+    "file": "packages/workbench/src/renderer/src/index.css",
+    "line": 5793,
+    "selector": ".ds-markdown .ds-mermaid-error-detail",
+    "property": "font-family",
+    "value": "var(--font-mono)"
+  },
+  {
+    "file": "packages/workbench/src/renderer/src/index.css",
+    "line": 5815,
+    "selector": ".ds-markdown .ds-mermaid-source",
+    "property": "font-family",
+    "value": "var(--font-mono)"
+  },
+  {
+    "file": "packages/workbench/src/renderer/src/index.css",
+    "line": 5845,
+    "selector": ".ds-markdown .ds-structure-block-label",
+    "property": "font-family",
+    "value": "var(--font-ui)"
+  },
+  {
+    "file": "packages/workbench/src/renderer/src/index.css",
+    "line": 5862,
+    "selector": ".ds-markdown .ds-structure-block-body",
+    "property": "font-family",
+    "value": "var(--font-mono)"
+  },
+  {
+    "file": "packages/workbench/src/renderer/src/index.css",
+    "line": 5882,
+    "selector": ".ds-markdown .ds-code-block-language",
+    "property": "font-family",
+    "value": "var(--font-ui)"
+  },
+  {
+    "file": "packages/workbench/src/renderer/src/index.css",
+    "line": 6093,
+    "selector": ".ds-markdown.ds-markdown--document h1,\n.ds-markdown.ds-markdown--document h2,\n.ds-markdown.ds-markdown--document h3,\n.ds-markdown.ds-markdown--document h4",
+    "property": "font-family",
+    "value": "var(--font-display)"
+  },
+  {
+    "file": "packages/workbench/src/renderer/src/index.css",
+    "line": 6325,
+    "selector": ".ds-marketplace-doc-file",
+    "property": "font-family",
+    "value": "var(--ds-chat-code-font, ui-monospace, monospace)"
+  },
+  {
+    "file": "packages/workbench/src/renderer/src/index.css",
+    "line": 6424,
+    "selector": ".ds-chat-answer",
+    "property": "font-family",
+    "value": "var(--font-chat)"
+  },
+  {
+    "file": "packages/workbench/src/renderer/src/index.css",
+    "line": 6510,
+    "selector": ".ds-markdown.ds-markdown--answer h1,\n.ds-markdown.ds-markdown--answer h2,\n.ds-markdown.ds-markdown--answer h3,\n.ds-markdown.ds-markdown--answer h4",
+    "property": "font-family",
+    "value": "inherit"
+  },
+  {
+    "file": "packages/workbench/src/renderer/src/index.css",
+    "line": 6650,
+    "selector": ".ds-markdown.ds-markdown--answer :not(pre) > code,\n.ds-markdown.ds-markdown--answer .ds-code-inline",
+    "property": "font-family",
+    "value": "var(--ds-chat-code-font, var(--font-mono), ui-monospace, monospace)"
+  },
+  {
+    "file": "packages/workbench/src/renderer/src/index.css",
+    "line": 6754,
+    "selector": ".ds-user-message-bubble",
+    "property": "font-family",
+    "value": "var(--font-chat)"
+  },
+  {
+    "file": "packages/workbench/src/renderer/src/index.css",
+    "line": 7347,
+    "selector": ".ds-operation-dock",
+    "property": "font-family",
+    "value": "var(--font-ui)"
+  },
+  {
+    "file": "packages/workbench/src/renderer/src/index.css",
+    "line": 7698,
+    "selector": ".ds-operation-dock-section-label",
+    "property": "font-family",
+    "value": "var(--font-ui)"
+  },
+  {
+    "file": "packages/workbench/src/renderer/src/index.css",
+    "line": 7742,
+    "selector": ".ds-change-inspector",
+    "property": "font-family",
+    "value": "var(--font-ui)"
+  },
+  {
+    "file": "packages/workbench/src/renderer/src/index.css",
+    "line": 7905,
+    "selector": ".ds-change-inspector__code",
+    "property": "font-family",
+    "value": "var(--font-terminal)"
+  },
+  {
+    "file": "packages/workbench/src/renderer/src/index.css",
+    "line": 8228,
+    "selector": ".ds-workspace-editor-pane .ds-editor-deleted-line",
+    "property": "font-family",
+    "value": "var(--font-mono)"
+  },
+  {
+    "file": "packages/workbench/src/renderer/src/index.css",
+    "line": 8506,
+    "selector": ".ds-automation-drawer",
+    "property": "font-family",
+    "value": "var(--font-ui)"
+  },
+  {
+    "file": "packages/workbench/src/renderer/src/index.css",
+    "line": 8765,
+    "selector": ".ds-media-catalog__search-input",
+    "property": "font",
+    "value": "inherit"
+  },
+  {
+    "file": "packages/workbench/src/renderer/src/index.css",
+    "line": 8961,
+    "selector": ".ds-media-sheet__id",
+    "property": "font-family",
+    "value": "var(--font-mono, ui-monospace, monospace)"
+  },
+  {
+    "file": "packages/workbench/src/renderer/src/index.css",
+    "line": 9015,
+    "selector": ".ds-media-sheet__input",
+    "property": "font",
+    "value": "inherit"
+  },
+  {
+    "file": "packages/workbench/src/renderer/src/index.css",
+    "line": 10434,
+    "selector": ".ds-llm-model-row__name",
+    "property": "font-family",
+    "value": "var(--font-mono)"
+  },
+  {
+    "file": "packages/workbench/src/renderer/src/index.css",
+    "line": 11326,
+    "selector": ".ds-ide-chat-rail .ds-markdown.ds-markdown--answer h1,\n.ds-ide-chat-rail .ds-markdown.ds-markdown--answer h2,\n.ds-ide-chat-rail .ds-markdown.ds-markdown--answer h3,\n.ds-ide-chat-rail .ds-markdown.ds-markdown--answer h4",
+    "property": "font-family",
+    "value": "inherit"
+  },
+  {
+    "file": "packages/workbench/src/renderer/src/lib/apply-appearance.ts",
+    "line": 61,
+    "source": "// specificity (e.g. --font-ui vs :root[data-ui-font=…]) resolve to us."
+  },
+  {
+    "file": "packages/workbench/src/renderer/src/lib/apply-theme.ts",
+    "line": 53,
+    "source": "const family = getComputedStyle(document.documentElement).getPropertyValue('--font-ui').trim()"
+  },
+  {
+    "file": "packages/workbench/src/renderer/src/lib/load-mermaid.ts",
+    "line": 58,
+    "source": "fontFamily: 'var(--font-mono), ui-monospace, monospace',"
+  },
+  {
+    "file": "packages/workbench/src/renderer/src/lib/preview-element-picker.ts",
+    "line": 237,
+    "source": "fontFamily: 'system-ui, sans-serif',"
+  },
+  {
+    "file": "packages/workbench/src/shared/appearance-derive.ts",
+    "line": 246,
+    "source": "// --font-display chains to var(--font-ui) in index.css, so one override is enough."
+  },
+  {
+    "file": "packages/workbench/src/shared/appearance-derive.ts",
+    "line": 247,
+    "source": "vars['--font-ui'] = withUiFallback(theme.uiFont)"
+  },
+  {
+    "file": "packages/workbench/src/shared/appearance-derive.ts",
+    "line": 252,
+    "source": "vars['--font-mono'] = stack"
+  }
+]

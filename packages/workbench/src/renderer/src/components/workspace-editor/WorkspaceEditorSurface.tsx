@@ -11,8 +11,8 @@ import {
 import { MessageSquarePlus } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import Editor from '@monaco-editor/react'
-import type { editor as MonacoEditor } from 'monaco-editor'
 import { subscribeAppearance } from '../../lib/apply-appearance'
+import type { editor as MonacoEditor } from 'monaco-editor'
 import { applyEditorDiffHighlights } from '../../lib/apply-editor-diff-highlights'
 import {
   ensureMonacoConfigured,
@@ -139,7 +139,7 @@ export const WorkspaceEditorSurface = forwardRef<WorkspaceEditorSurfaceHandle, P
       }
     }, [editorReady, syncHighlights, tab.loading, patch])
 
-    // Keep Monaco's glyph metrics in sync with the existing theme code font.
+    // Monaco measures glyphs independently of the surrounding UI CSS.
     useEffect(() => {
       if (!editorReady) return
       const syncFont = (): void => {
@@ -282,8 +282,8 @@ export const WorkspaceEditorSurface = forwardRef<WorkspaceEditorSurfaceHandle, P
             overviewRulerBorder: false,
             glyphMargin: false,
             lineDecorationsWidth: 0,
-            fontSize: 14,
-            lineHeight: 22,
+            fontSize: 12,
+            lineHeight: 20,
             scrollBeyondLastLine: false,
             automaticLayout: false,
             wordWrap: 'off',

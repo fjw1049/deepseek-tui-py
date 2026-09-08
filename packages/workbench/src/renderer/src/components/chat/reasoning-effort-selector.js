@@ -123,7 +123,7 @@ class ChatGPTModelSelector extends HTMLElement {
       :host([hide-effort]) .pill .label {
         gap: 0;
       }
-      /* IDE rail: compact controls follow the shared UI font. */
+      /* IDE rail: match 12px transcript + flatter composer footer. */
       :host([dense]) .pill {
         height: 28px;
         gap: 5px;
@@ -139,7 +139,7 @@ class ChatGPTModelSelector extends HTMLElement {
         height: 13px;
       }
       :host([dense]) .pill .label {
-        font-size: 13px;
+        font-size: 12px;
         letter-spacing: normal;
       }
       :host([dense]) .chev {

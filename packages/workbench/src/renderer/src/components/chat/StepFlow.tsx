@@ -117,7 +117,7 @@ function StatusDot({
         ].join(' ')}
       >
         {style.mark ? (
-          <span className="text-[10px] font-semibold leading-none text-ds-ink/75">{style.mark}</span>
+          <span className="text-[9px] font-semibold leading-none text-ds-ink/75">{style.mark}</span>
         ) : (
           <span
             className={[

@@ -319,7 +319,7 @@ export function WorkspaceFileTree({
               event.stopPropagation()
               toggleDirectory(entry.path)
             }}
-            className="ds-no-drag ds-workspace-file-tree__row ds-workspace-file-tree__row-pad flex h-7 w-full items-center gap-1.5 text-left text-[13px] text-ds-muted transition hover:bg-ds-hover/55 hover:text-ds-ink"
+            className="ds-no-drag ds-workspace-file-tree__row ds-workspace-file-tree__row-pad flex h-7 w-full items-center gap-1.5 text-left text-[12px] text-ds-muted transition hover:bg-ds-hover/55 hover:text-ds-ink"
             style={{ paddingLeft: `${indentPx(depth)}px` }}
           >
             <ChevronRight
@@ -365,7 +365,7 @@ export function WorkspaceFileTree({
             onFileContextMenu(event, entry.path)
           }}
           aria-current={isActive ? 'page' : undefined}
-          className={`ds-no-drag ds-workspace-file-tree__row ds-workspace-file-tree__row-pad flex h-7 w-full items-center gap-1.5 text-left text-[13px] transition ${
+          className={`ds-no-drag ds-workspace-file-tree__row ds-workspace-file-tree__row-pad flex h-7 w-full items-center gap-1.5 text-left text-[12px] transition ${
             isActive
               ? 'ds-workspace-file-tree__row--active'
               : isDirty

@@ -104,7 +104,7 @@ function RepoRow({
         <div className="flex min-w-0 items-center gap-2 pr-7">
           <span
             className={[
-              'inline-flex h-4 shrink-0 items-center rounded-md border px-1 text-[10px] font-semibold tabular-nums',
+              'inline-flex h-4 shrink-0 items-center rounded-md border px-1 text-[8px] font-semibold tabular-nums',
               theme.rank
             ].join(' ')}
           >
