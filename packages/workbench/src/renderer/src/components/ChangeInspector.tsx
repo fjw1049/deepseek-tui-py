@@ -10,17 +10,18 @@ import {
 import { useTranslation } from 'react-i18next'
 import { useShallow } from 'zustand/react/shallow'
 import {
-  ArrowRight,
   Check,
   CheckCircle2,
   ChevronDown,
   Download,
   FileEdit,
+  FolderTree,
   GitCommitHorizontal,
   GitCompareArrows,
   GitPullRequest,
   Loader2,
   Minus,
+  Minimize2,
   Plus,
   RefreshCw,
   Search,
@@ -386,8 +387,8 @@ function InspectorGitActions({
     'flex min-h-8 w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[12.5px] text-ds-ink transition hover:bg-ds-hover active:scale-[0.99] disabled:pointer-events-none disabled:opacity-35'
 
   return (
-    <div ref={popoverRef} className="relative ml-auto flex shrink-0 items-center">
-      <div className="inline-flex h-8 overflow-hidden rounded-lg border border-ds-border bg-ds-elevated shadow-sm">
+    <div ref={popoverRef} className="ds-change-git-actions relative ml-auto flex shrink-0 items-center">
+      <div className="inline-flex h-7 overflow-hidden rounded-md border border-ds-border bg-ds-elevated">
         <button
           type="button"
           disabled={primaryDisabled}
@@ -400,11 +401,11 @@ function InspectorGitActions({
               : primaryLabel
           }
           aria-label={primaryLabel}
-          className="inline-flex w-10 items-center justify-center text-ds-ink transition hover:bg-ds-hover active:scale-[0.96] disabled:opacity-40"
+          className="ds-change-git-actions__primary inline-flex w-10 items-center justify-center text-ds-ink transition hover:bg-ds-hover active:scale-[0.96] disabled:opacity-40"
         >
           {primaryIcon}
         </button>
-        <span className="w-px bg-ds-border" aria-hidden />
+        <span className="ds-change-git-actions__divider w-px bg-ds-border" aria-hidden />
         <button
           type="button"
           disabled={busyAction !== null}
@@ -604,21 +605,22 @@ function ChangeSourcePicker({
   }
 
   return (
-    <div ref={menuRef} className="ds-change-source relative min-w-0">
+    <div ref={menuRef} data-context={context} className="ds-change-source relative min-w-0">
       <button
         type="button"
         aria-haspopup="menu"
         aria-expanded={open}
         title={hint}
+        aria-label={selected.label}
         onClick={() => setOpen((value) => !value)}
-        className="inline-flex h-8 min-w-0 max-w-full items-center gap-1.5 rounded-lg px-2 text-left text-[12.5px] font-semibold text-ds-ink transition hover:bg-ds-hover active:scale-[0.98]"
+        className="inline-flex h-7 min-w-0 max-w-full items-center gap-1.5 rounded-md px-2 text-left text-[12.5px] font-semibold text-ds-ink transition hover:bg-ds-hover active:scale-[0.98]"
       >
         {context === 'conflicts' ? (
           <TriangleAlert className="h-3.5 w-3.5 shrink-0 text-amber-600" strokeWidth={1.9} />
         ) : isGitReviewContext(context) ? (
           <GitCompareArrows className="h-3.5 w-3.5 shrink-0 text-ds-muted" strokeWidth={1.9} />
         ) : null}
-        <span className="min-w-0 flex-1 truncate">{selected.label}</span>
+        <span className="ds-change-source__label min-w-0 flex-1 truncate">{selected.label}</span>
         <ChevronDown
           className={`h-3.5 w-3.5 shrink-0 text-ds-faint transition-transform ${open ? 'rotate-180' : ''}`}
           strokeWidth={1.9}
@@ -674,7 +676,6 @@ function BranchComparisonPicker({
   currentBranch,
   branches,
   defaultBranch,
-  dirtyCount,
   selectedBase,
   loading,
   onChange
@@ -682,7 +683,6 @@ function BranchComparisonPicker({
   currentBranch: string | null
   branches: Array<{ name: string }>
   defaultBranch: string | null
-  dirtyCount: number
   selectedBase?: string
   loading: boolean
   onChange: (baseRef: string) => void
@@ -741,14 +741,9 @@ function BranchComparisonPicker({
     </button>
   )
 
-  const currentLabel = currentBranch ?? 'HEAD'
   const baseLabel = selectedBase ?? (loading ? t('gitBranchLoading') : t('gitNoBranch'))
-  const workspaceTitle = t('changeBranchWorkspaceTitle', {
-    branch: currentLabel,
-    count: dirtyCount
-  })
   return (
-    <div ref={menuRef} className="relative flex min-w-0 items-center gap-2 px-2 text-[12.5px]">
+    <div ref={menuRef} className="ds-change-branch relative min-w-0 flex-1 text-[12.5px]">
       <button
         type="button"
         disabled={loading && !selectedBase}
@@ -757,7 +752,7 @@ function BranchComparisonPicker({
         aria-label={t('changeBranchBaseTitle', { branch: baseLabel })}
         title={t('changeBranchBaseTitle', { branch: baseLabel })}
         onClick={() => setOpen((value) => !value)}
-        className="flex h-7 min-w-0 max-w-[42%] items-center gap-1 rounded-md px-1.5 font-medium text-ds-muted transition hover:bg-ds-hover hover:text-ds-ink active:scale-[0.98] disabled:opacity-45"
+        className="flex h-7 min-w-0 max-w-full items-center gap-1 rounded-md px-2 font-medium text-ds-muted transition hover:bg-ds-hover hover:text-ds-ink active:scale-[0.98] disabled:opacity-45"
       >
         <span className="truncate">{baseLabel}</span>
         {loading ? (
@@ -769,26 +764,11 @@ function BranchComparisonPicker({
           />
         )}
       </button>
-      <ArrowRight className="h-3.5 w-3.5 shrink-0 text-ds-faint" strokeWidth={1.8} />
-      <span
-        className="flex min-w-0 max-w-[50%] items-center gap-1 font-medium text-ds-muted"
-        title={workspaceTitle}
-      >
-        <span className="truncate">
-          {t('changeBranchWorkspaceLabel')} · {currentLabel}
-        </span>
-        {dirtyCount > 0 ? (
-          <span className="inline-flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full bg-ds-hover px-1 text-[10px] tabular-nums text-ds-faint">
-            {dirtyCount}
-          </span>
-        ) : null}
-      </span>
-
       {open ? (
         <div
           role="dialog"
           aria-label={t('changeBranchBaseMenuLabel')}
-          className="absolute left-0 top-[calc(100%+6px)] z-[80] w-[min(300px,calc(100vw-32px))] overflow-hidden rounded-xl border border-ds-border bg-ds-elevated shadow-xl"
+          className="ds-change-branch__menu absolute right-0 top-[calc(100%+6px)] z-[80] w-[min(300px,calc(100vw-32px))] overflow-hidden rounded-xl border border-ds-border bg-ds-elevated shadow-xl"
         >
           <div className="border-b border-ds-border-muted p-2">
             <label className="flex h-8 items-center gap-2 rounded-lg bg-ds-hover/60 px-2">
@@ -847,6 +827,8 @@ function BranchComparisonPicker({
   )
 }
 
+const FILE_LIST_RAIL = 32
+const FILE_LIST_SNAP = 100
 const FILE_LIST_DEFAULT = 280
 const FILE_LIST_MIN = 180
 const FILE_LIST_MAX = 480
@@ -1038,7 +1020,27 @@ export function ChangeInspector({
   const isList = variant === 'list'
   const isDiff = variant === 'diff'
   const isStack = variant === 'stack'
-  const compactList = isReview || isList
+  const [diffExpanded, setDiffExpanded] = useState(false)
+  const [sideListWidth, setSideListWidth] = useState(FILE_LIST_DEFAULT)
+  const lastSideListWidth = useRef(FILE_LIST_DEFAULT)
+  const sideListDrag = useRef<{ start: number; width: number; previousWidth: number } | null>(null)
+  const sideListCollapsed = sideListWidth === FILE_LIST_RAIL
+
+  const resizeSideList = (width: number): number =>
+    width <= FILE_LIST_SNAP ? FILE_LIST_RAIL : Math.min(FILE_LIST_MAX, Math.max(FILE_LIST_MIN, width))
+
+  const finishSideListResize = (event: ReactPointerEvent<HTMLDivElement>): void => {
+    const drag = sideListDrag.current
+    if (!drag) return
+    sideListDrag.current = null
+    const width = event.type === 'pointercancel'
+      ? drag.previousWidth
+      : resizeSideList(drag.width + drag.start - event.clientX)
+    setSideListWidth(width)
+    if (event.type !== 'pointercancel' && width !== FILE_LIST_RAIL) lastSideListWidth.current = width
+    event.currentTarget.releasePointerCapture(event.pointerId)
+  }
+  const compactList = isReview || isList || (isStack && diffExpanded)
   const [listSize, setListSize] = useState(isReview ? FILE_LIST_DEFAULT : STACK_LIST_DEFAULT)
   const [diffCollapsed, setDiffCollapsed] = useState(false)
   // Unified by default — denser, no empty half-pane on new/deleted files.
@@ -1068,7 +1070,7 @@ export function ChangeInspector({
       const drag = resizeDrag.current
       if (!drag) return
       const delta = (isReview ? event.clientX : event.clientY) - drag.start
-      const min = isReview ? FILE_LIST_MIN : STACK_LIST_MIN
+      const min = isReview ? FILE_LIST_MIN : 0
       const max = isReview ? FILE_LIST_MAX : STACK_LIST_MAX
       setListSize(Math.min(max, Math.max(min, drag.startSize + delta)))
     },
@@ -1076,14 +1078,24 @@ export function ChangeInspector({
   )
 
   const onListResizePointerUp = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
-    if (!resizeDrag.current) return
+    const drag = resizeDrag.current
+    if (!drag) return
     resizeDrag.current = null
+    if (!isReview) {
+      const size = drag.startSize + event.clientY - drag.start
+      if (event.type === 'pointercancel' || size <= 32) {
+        setListSize(drag.startSize)
+        if (event.type !== 'pointercancel') setDiffExpanded(true)
+      } else {
+        setListSize(Math.min(STACK_LIST_MAX, Math.max(STACK_LIST_MIN, size)))
+      }
+    }
     try {
       event.currentTarget.releasePointerCapture(event.pointerId)
     } catch {
       /* already released */
     }
-  }, [])
+  }, [isReview])
 
   const fileChanges = useMemo(() => {
     if (scopedGitFiles) {
@@ -1405,7 +1417,7 @@ export function ChangeInspector({
   }
 
   const fileList = (
-    <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+    <div className={`${isStack && diffExpanded && sideListCollapsed ? 'hidden' : 'flex'} min-h-0 min-w-0 flex-1 flex-col overflow-hidden`}>
       {pathActionError ? (
         <div role="alert" className="border-b border-ds-border-muted px-2 py-1.5 text-[11px] text-amber-700 dark:text-amber-200">
           {pathActionError}
@@ -1429,6 +1441,19 @@ export function ChangeInspector({
 
   const diffViewport = (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+      {isStack && diffExpanded && !(selectedItem?.detail ?? '').trim() ? (
+        <div className="ds-change-inspector__pane-header flex shrink-0 items-center justify-end">
+          <button
+            type="button"
+            onClick={() => setDiffExpanded(false)}
+            aria-label={t('inspectorRestoreDiff')}
+            title={t('inspectorRestoreDiff')}
+            className="inline-flex h-7 w-7 items-center justify-center rounded text-ds-faint hover:bg-ds-hover hover:text-ds-ink"
+          >
+            <Minimize2 className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      ) : null}
       {selectedItem ? (
         (selectedItem.detail ?? '').trim() ? (
           <DiffView
@@ -1440,7 +1465,12 @@ export function ChangeInspector({
             onDiffStyleChange={setDiffStyle}
             chrome="flush"
             className="min-h-0 flex-1"
-            onCollapse={isStack ? () => setDiffCollapsed(true) : onCollapse}
+            onToggleExpand={isStack ? () => setDiffExpanded((value) => !value) : undefined}
+            expanded={isStack && diffExpanded}
+            onCollapse={isStack ? () => {
+              setDiffExpanded(false)
+              setDiffCollapsed(true)
+            } : onCollapse}
             onAddToChat={
               selectedItem.filePath
                 ? () => {
@@ -1471,12 +1501,10 @@ export function ChangeInspector({
     >
       {onContextChange ? (
         <div
-          className={`relative z-30 shrink-0 border-b border-ds-border-muted/70 px-2 ${
-            context === 'branch' ? 'py-1.5' : 'flex h-12 items-center gap-2'
-          }`}
+          className="relative z-30 flex h-9 shrink-0 items-center gap-2 border-b border-ds-border-muted/70 px-2"
         >
-          <div className="flex h-8 w-full min-w-0 items-center gap-2">
-            <div className="min-w-0 flex-1">
+          <div className="flex h-7 w-full min-w-0 items-center gap-2">
+            <div className={context === 'branch' ? 'shrink-0' : 'min-w-0 flex-1'}>
               <ChangeSourcePicker
                 context={context}
                 conflictCount={conflictCount}
@@ -1485,6 +1513,16 @@ export function ChangeInspector({
                 onChange={onContextChange}
               />
             </div>
+            {context === 'branch' ? (
+              <BranchComparisonPicker
+                currentBranch={gitBranches?.ok ? gitBranches.currentBranch : null}
+                branches={gitBranches?.ok ? gitBranches.branches : []}
+                defaultBranch={gitBranches?.ok ? gitBranches.defaultBranch : null}
+                selectedBase={selectedBranchBase}
+                loading={!gitBranches?.ok || scopedLoading}
+                onChange={setBranchBase}
+              />
+            ) : null}
             {visibleFileCount > 0 || changeStats ? (
               <div className="ds-change-inspector__summary flex shrink-0 items-center gap-2">
                 {visibleFileCount > 0 ? (
@@ -1512,17 +1550,6 @@ export function ChangeInspector({
               />
             ) : null}
           </div>
-          {context === 'branch' ? (
-            <BranchComparisonPicker
-              currentBranch={gitBranches?.ok ? gitBranches.currentBranch : null}
-              branches={gitBranches?.ok ? gitBranches.branches : []}
-              defaultBranch={gitBranches?.ok ? gitBranches.defaultBranch : null}
-              dirtyCount={gitBranches?.ok ? gitBranches.dirtyCount : 0}
-              selectedBase={selectedBranchBase}
-              loading={!gitBranches?.ok || scopedLoading}
-              onChange={setBranchBase}
-            />
-          ) : null}
         </div>
       ) : null}
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
@@ -1568,16 +1595,73 @@ export function ChangeInspector({
             {diffViewport}
           </div>
         ) : (
-          <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+          <div className={`relative flex min-h-0 flex-1 overflow-hidden ${diffExpanded ? 'flex-row' : 'flex-col'}`}>
             <div
-              className={`flex min-h-0 flex-col overflow-hidden ${diffCollapsed ? 'flex-1' : 'shrink-0'}`}
-              style={diffCollapsed ? undefined : { height: listSize }}
+              className={`flex min-h-0 flex-col overflow-hidden ${diffExpanded ? 'order-2 shrink-0 border-l border-ds-border-muted' : diffCollapsed ? 'flex-1' : 'shrink-0'}`}
+              style={diffExpanded ? { width: sideListWidth, maxWidth: '60%' } : diffCollapsed ? undefined : { height: listSize }}
             >
+              {diffExpanded && sideListCollapsed ? (
+                <button
+                  type="button"
+                  onClick={() => setSideListWidth(lastSideListWidth.current)}
+                  aria-label={t('inspectorExpandFileList')}
+                  title={t('inspectorExpandFileList')}
+                  className="mx-auto mt-1 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-ds-muted transition hover:bg-ds-hover hover:text-ds-ink"
+                >
+                  <FolderTree className="h-4 w-4" strokeWidth={1.8} />
+                </button>
+              ) : null}
               {fileList}
             </div>
+            {diffExpanded ? (
+              <div
+                role="separator"
+                tabIndex={0}
+                aria-orientation="vertical"
+                aria-label={t('inspectorResizeFileList')}
+                aria-valuemin={FILE_LIST_RAIL}
+                aria-valuemax={FILE_LIST_MAX}
+                aria-valuenow={sideListWidth}
+                title={t('inspectorResizeFileList')}
+                className={`group ds-no-drag z-10 flex shrink-0 cursor-col-resize touch-none items-center justify-center outline-none hover:bg-ds-hover focus-visible:bg-ds-hover ${sideListCollapsed ? 'absolute bottom-0 right-0 top-9 w-8' : 'relative order-1 w-2'}`}
+                onPointerDown={(event) => {
+                  event.preventDefault()
+                  event.stopPropagation()
+                  event.currentTarget.setPointerCapture(event.pointerId)
+                  const pane = event.currentTarget.previousElementSibling as HTMLDivElement
+                  sideListDrag.current = {
+                    start: event.clientX,
+                    width: pane.getBoundingClientRect().width,
+                    previousWidth: sideListWidth
+                  }
+                }}
+                onPointerMove={(event) => {
+                  const drag = sideListDrag.current
+                  if (drag) setSideListWidth(resizeSideList(drag.width + drag.start - event.clientX))
+                }}
+                onPointerUp={finishSideListResize}
+                onPointerCancel={finishSideListResize}
+                onKeyDown={(event) => {
+                  if (!['ArrowLeft', 'ArrowRight', 'Enter'].includes(event.key)) return
+                  event.preventDefault()
+                  const width = event.key === 'Enter'
+                    ? sideListCollapsed ? lastSideListWidth.current : FILE_LIST_RAIL
+                    : sideListCollapsed && event.key === 'ArrowLeft'
+                      ? lastSideListWidth.current
+                      : event.key === 'ArrowRight' && sideListWidth <= FILE_LIST_MIN
+                        ? FILE_LIST_RAIL
+                        : resizeSideList(sideListWidth + (event.key === 'ArrowLeft' ? 32 : -32))
+                  setSideListWidth(width)
+                  if (width !== FILE_LIST_RAIL) lastSideListWidth.current = width
+                }}
+              >
+                <span className="pointer-events-none h-8 w-0.5 rounded-full bg-ds-faint/40 transition-colors group-hover:bg-ds-muted group-focus-visible:bg-ds-muted" />
+              </div>
+            ) : null}
             {!diffCollapsed ? (
               <>
                 <div
+                  hidden={diffExpanded}
                   role="separator"
                   aria-orientation="horizontal"
                   aria-label={t('inspectorResizeSplit')}

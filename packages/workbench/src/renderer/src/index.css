@@ -7766,13 +7766,44 @@ select:focus-visible,
     transform 220ms cubic-bezier(0.32, 0.72, 0, 1);
 }
 
-@container change-inspector-list (max-width: 320px) {
+@container change-inspector-list (max-width: 480px) {
   .ds-change-inspector__summary {
     max-width: 0;
     margin-left: -0.5rem;
     opacity: 0;
     transform: translateX(0.25rem);
     pointer-events: none;
+  }
+}
+
+/* Anchor narrow IDE menus to the toolbar, rather than the shrunken trigger. */
+@container change-inspector-list (max-width: 480px) {
+  .ds-change-source,
+  .ds-change-branch,
+  .ds-change-git-actions {
+    position: static;
+  }
+
+  .ds-change-source__menu,
+  .ds-change-branch__menu,
+  .ds-change-git-actions > .absolute {
+    left: 8px;
+    right: auto;
+    max-width: calc(100% - 16px);
+    width: calc(100% - 16px);
+  }
+
+  .ds-change-inspector__summary {
+    display: none;
+  }
+}
+
+@container change-inspector-list (max-width: 280px) {
+  .ds-change-source[data-context="branch"] .ds-change-source__label,
+  .ds-change-source[data-context="branch"] > button > svg:last-child,
+  .ds-change-git-actions__primary,
+  .ds-change-git-actions__divider {
+    display: none;
   }
 }
 
