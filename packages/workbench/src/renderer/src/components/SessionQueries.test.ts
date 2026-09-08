@@ -95,3 +95,18 @@ it('lists all queries newest first, bridges hover between title and list, copies
   expect(scrollToBlock).toHaveBeenCalledTimes(1)
   await act(async () => root.unmount())
 })
+
+it.each([false, true])('preserves the IDE typography scope across the portal (IDE=%s)', async (ide) => {
+  state = { ...state, blocks: [{ kind: 'user', id: 'query', text: '测试 query' }] }
+  const container = document.createElement('div')
+  if (ide) container.className = 'ds-ide-chat-rail'
+  document.body.append(container)
+  const root = createRoot(container)
+  await act(async () => root.render(createElement(SessionQueries, null, 'Session')))
+  await act(async () => container.querySelector('button')!.click())
+  const panel = document.querySelector('.ds-session-queries')!
+  expect(panel.parentElement).toBe(document.body)
+  expect(panel.classList.contains('ds-session-queries--ide')).toBe(ide)
+  expect(panel.querySelector('.ds-session-query-row')).not.toBeNull()
+  await act(async () => root.unmount())
+})

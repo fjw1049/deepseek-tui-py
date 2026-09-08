@@ -1312,6 +1312,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         engine._cycle_started_at = int(time.time())
         engine.mode = mode
         engine._app_config = cfg
+        engine.tool_context.metadata["task_config"] = cfg
         from deepseek_tui.policy.sandbox import sync_execution_sandbox_policy
 
         sync_execution_sandbox_policy(
@@ -1995,6 +1996,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                     ),
                 )
         self.tool_context.metadata["engine_mode"] = self.mode
+        self.tool_context.metadata["task_model"] = op.model or self.default_model
         self.goal_service.on_turn_started()
         from deepseek_tui.goal.types import GOAL_TURN_ID_KEY, GoalStatus
 

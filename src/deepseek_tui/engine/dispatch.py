@@ -713,8 +713,12 @@ async def _run_task_engine_turn(
     from deepseek_tui.tools.runtime import create_tool_runtime
     from deepseek_tui.tools.task import TaskExecutionResult
 
-    cfg = ConfigLoader().load()
-    cfg = cfg.model_copy(deep=True)
+    cfg = (task.config or ConfigLoader().load()).model_copy(deep=True)
+    if task.provider and task.provider != cfg.provider:
+        cfg.provider = task.provider
+        cfg.api_key = None
+        cfg.base_url = None
+    cfg.model = task.model
     cfg.features = cfg.features.model_copy(
         update={"tasks": True, "subagents": True, "mcp": True, "automations": False}
     )

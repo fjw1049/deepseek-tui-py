@@ -173,7 +173,8 @@ class TaskCreateTool(ToolSpec):
         auto_approve = session_auto if isinstance(session_auto, bool) else False
         req = NewTaskRequest(
             prompt=prompt,
-            model=_optional_string(input_data, "model"),
+            model=_optional_string(input_data, "model") or context.metadata.get("task_model"),
+            config=context.metadata.get("task_config"),
             workspace=workspace,
             # mode / allow_shell are deliberately NOT taken from model input
             # (they are not in the schema): the task inherits the manager's

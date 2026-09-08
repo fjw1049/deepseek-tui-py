@@ -21,7 +21,7 @@ export function SessionQueries({ children }: { children: ReactNode }): React.Rea
   const [open, setOpen] = useState(false)
   const [notice, setNotice] = useState('')
   const [copiedId, setCopiedId] = useState<string | null>(null)
-  const [position, setPosition] = useState({ left: 0, top: 0, width: 0, maxWidth: 420, maxHeight: 360 })
+  const [position, setPosition] = useState({ left: 0, top: 0, width: 0, maxWidth: 420, maxHeight: 360, ide: false })
   const buttonRef = useRef<HTMLButtonElement>(null)
   const panelRef = useRef<HTMLDivElement>(null)
   const jumpTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -69,6 +69,7 @@ export function SessionQueries({ children }: { children: ReactNode }): React.Rea
       const left = rect.left / scale
       const top = rect.bottom / scale + 6
       setPosition({ left, top, width: rect.width / scale,
+        ide: Boolean(buttonRef.current!.closest('.ds-ide-chat-rail')),
         maxWidth: Math.max(0, Math.min(420, window.innerWidth / scale - left - 8)),
         maxHeight: Math.max(0, Math.min(360, window.innerHeight / scale - top - 8)) })
     }
@@ -115,11 +116,11 @@ export function SessionQueries({ children }: { children: ReactNode }): React.Rea
     </button>
     <span role="status" className="sr-only">{notice}</span>
     {open && createPortal(
-      <div ref={panelRef} onPointerEnter={enter} onPointerLeave={leave} className="ds-no-drag fixed z-[100] overflow-hidden rounded-2xl border border-ds-border bg-[color:var(--ds-card-strong)] p-1 shadow-[0_8px_28px_rgba(0,0,0,0.14)]" style={{ left: position.left, top: position.top, width: 'max-content', minWidth: Math.min(position.width, position.maxWidth), maxWidth: position.maxWidth }}>
+      <div ref={panelRef} onPointerEnter={enter} onPointerLeave={leave} className={`ds-session-queries ${position.ide ? 'ds-session-queries--ide' : ''} ds-no-drag fixed z-[100] overflow-hidden rounded-2xl border border-ds-border bg-[color:var(--ds-card-strong)] p-1 shadow-[0_8px_28px_rgba(0,0,0,0.14)]`} style={{ left: position.left, top: position.top, width: 'max-content', minWidth: Math.min(position.width, position.maxWidth), maxWidth: position.maxWidth }}>
         <div className="overflow-y-auto overscroll-contain [scrollbar-width:thin]" style={{ maxHeight: position.maxHeight }}>
           {queries.map((query) => <div
             key={query.id}
-            className="group flex h-9 w-full select-none items-center rounded-xl px-2.5 font-ui text-[13px] font-medium leading-6 tracking-[-0.01em] text-ds-ink transition-colors hover:bg-ds-hover focus-within:bg-ds-hover"
+            className="ds-session-query-row group flex h-9 w-full select-none items-center rounded-xl px-2.5 font-ui text-[13px] font-medium leading-6 tracking-[-0.01em] text-ds-ink transition-colors hover:bg-ds-hover focus-within:bg-ds-hover"
           >
             <button
               type="button"

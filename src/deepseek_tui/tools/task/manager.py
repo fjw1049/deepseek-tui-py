@@ -84,6 +84,8 @@ class TaskManager:
         self._artifacts_dir = cfg.data_dir / "artifacts"
         self._queue_path = cfg.data_dir / "queue.json"
         self._tasks: dict[str, TaskRecord] = {}
+        # Keep live credentials in memory; only the provider name is persisted.
+        self._execution_configs: dict[str, Any] = {}
         self._queue: deque[str] = deque()
         self._running_cancel: dict[str, asyncio.Event] = {}
         self._running_done: dict[str, asyncio.Event] = {}
@@ -171,12 +173,18 @@ class TaskManager:
         if not prompt:
             raise ValueError("Task prompt cannot be empty")
 
+        config = req.config or self._cfg.config
         now = _utc_now_iso()
         task = TaskRecord(
             schema_version=CURRENT_TASK_SCHEMA_VERSION,
             id=f"task_{uuid.uuid4().hex[:8]}",
             prompt=prompt,
-            model=req.model or self._cfg.default_model,
+            model=(
+                req.model
+                or (config.effective_provider_config().model if config else None)
+                or self._cfg.default_model
+            ),
+            provider=config.provider if config else None,
             workspace=str(
                 Path(req.workspace) if req.workspace else self._cfg.default_workspace
             ),
@@ -197,6 +205,9 @@ class TaskManager:
                 )
             ],
         )
+
+        if config is not None:
+            self._execution_configs[task.id] = config.model_copy(deep=True)
 
         async with self._lock:
             self._queue.append(task.id)
@@ -608,6 +619,8 @@ class TaskManager:
                     auto_approve=task.auto_approve,
                     thread_id=task.thread_id,
                     task_manager=self,
+                    provider=task.provider,
+                    config=self._execution_configs.get(task.id, self._cfg.config),
                 )
                 cancel = asyncio.Event()
                 self._running_cancel[task_id] = cancel
@@ -719,6 +732,7 @@ class TaskManager:
         to_remove = len(terminal) - _MAX_TERMINAL_IN_MEMORY
         for tid, _ in terminal[:to_remove]:
             del self._tasks[tid]
+            self._execution_configs.pop(tid, None)
 
     def _persist_all_locked(self) -> None:
         """全量落盘：先写队列，再逐个写入所有任务记录。

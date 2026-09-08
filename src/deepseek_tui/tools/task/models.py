@@ -9,7 +9,10 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from deepseek_tui.config.models import Config
 
 
 def _summarize_text(text: str, limit: int) -> str:
@@ -183,6 +186,7 @@ class TaskRecord:
     error: str | None = None
     thread_id: str | None = None
     turn_id: str | None = None
+    provider: str | None = None
     runtime_event_count: int = 0
     checklist: TaskChecklistState = field(default_factory=TaskChecklistState)
     gates: list[TaskGateRecord] = field(default_factory=list)
@@ -250,6 +254,7 @@ class NewTaskRequest:
     trust_mode: bool | None = None
     auto_approve: bool | None = None
     thread_id: str | None = None
+    config: Config | None = None
 
 
 @dataclass(slots=True)
@@ -262,6 +267,7 @@ class TaskManagerConfig:
     trust_mode: bool = False
     worker_count: int = 1
     max_subagents: int = 4
+    config: Config | None = None
 
 
 @dataclass(slots=True)
@@ -284,6 +290,8 @@ class ExecutionTask:
     # task record via :meth:`TaskManager.record_tool_metadata`.
     # Typed as ``Any`` to avoid a forward reference / circular type.
     task_manager: Any = None
+    provider: str | None = None
+    config: Config | None = None
 
 
 @dataclass(slots=True)

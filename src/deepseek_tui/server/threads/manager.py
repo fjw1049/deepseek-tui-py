@@ -3460,6 +3460,9 @@ class RuntimeThreadManager:
             )
             # Let task_create inherit the live session flag (YOLO / auto).
             state.engine.tool_context.metadata["session_auto_approve"] = auto_approve
+            state.engine.tool_context.metadata["task_config"] = self._config_for_provider(
+                provider, model
+            )
             self._sync_trust_mode(state.engine, trust_mode)
             self._touch_lru(thread_id)
 

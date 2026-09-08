@@ -768,10 +768,10 @@ function BranchComparisonPicker({
         <div
           role="dialog"
           aria-label={t('changeBranchBaseMenuLabel')}
-          className="ds-change-branch__menu absolute right-0 top-[calc(100%+6px)] z-[80] w-[min(300px,calc(100vw-32px))] overflow-hidden rounded-xl border border-ds-border bg-ds-elevated shadow-xl"
+          className="ds-change-branch__menu absolute left-0 top-[calc(100%+6px)] z-[80] w-[min(300px,calc(100vw-32px))] overflow-hidden rounded-xl border border-ds-border bg-ds-elevated shadow-xl"
         >
           <div className="border-b border-ds-border-muted p-2">
-            <label className="flex h-8 items-center gap-2 rounded-lg bg-ds-hover/60 px-2">
+            <label className="ds-change-branch__search flex h-8 items-center gap-2 rounded-lg bg-ds-hover/60 px-2">
               <Search className="h-3.5 w-3.5 shrink-0 text-ds-faint" strokeWidth={1.9} />
               <input
                 ref={inputRef}

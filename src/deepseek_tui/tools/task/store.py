@@ -123,6 +123,7 @@ def _task_record_from_dict(data: dict[str, Any]) -> TaskRecord:
         id=data["id"],
         prompt=data["prompt"],
         model=data["model"],
+        provider=data.get("provider"),
         workspace=data["workspace"],
         mode=data["mode"],
         allow_shell=data["allow_shell"],
