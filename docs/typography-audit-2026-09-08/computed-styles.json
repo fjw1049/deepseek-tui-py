@@ -1,0 +1,1622 @@
+[
+  {
+    "mode": "chat",
+    "setting": 12,
+    "probe": "composer",
+    "size": "15px",
+    "family": "-apple-system, \"system-ui\", \"PingFang SC\", \"Hiragino Sans GB\", \"Segoe UI\", \"Microsoft YaHei\", sans-serif",
+    "weight": "400",
+    "line": "22.5px",
+    "style": "normal"
+  },
+  {
+    "mode": "chat",
+    "setting": 12,
+    "probe": "user",
+    "size": "12px",
+    "family": "system-ui, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Noto Sans SC\", sans-serif",
+    "weight": "400",
+    "line": "18.96px",
+    "style": "normal"
+  },
+  {
+    "mode": "chat",
+    "setting": 12,
+    "probe": "edit-user",
+    "size": "15px",
+    "family": "-apple-system, \"system-ui\", \"PingFang SC\", \"Hiragino Sans GB\", \"Segoe UI\", \"Microsoft YaHei\", sans-serif",
+    "weight": "400",
+    "line": "22.5px",
+    "style": "normal"
+  },
+  {
+    "mode": "chat",
+    "setting": 12,
+    "probe": "answer",
+    "size": "12px",
+    "family": "system-ui, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Noto Sans SC\", sans-serif",
+    "weight": "400",
+    "line": "20.4px",
+    "style": "normal"
+  },
+  {
+    "mode": "chat",
+    "setting": 12,
+    "probe": "strong",
+    "size": "12px",
+    "family": "system-ui, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Noto Sans SC\", sans-serif",
+    "weight": "500",
+    "line": "20.4px",
+    "style": "normal"
+  },
+  {
+    "mode": "chat",
+    "setting": 12,
+    "probe": "em",
+    "size": "12px",
+    "family": "system-ui, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Noto Sans SC\", sans-serif",
+    "weight": "400",
+    "line": "20.4px",
+    "style": "italic"
+  },
+  {
+    "mode": "chat",
+    "setting": 12,
+    "probe": "h1",
+    "size": "16.8px",
+    "family": "system-ui, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Noto Sans SC\", sans-serif",
+    "weight": "600",
+    "line": "23.52px",
+    "style": "normal"
+  },
+  {
+    "mode": "chat",
+    "setting": 12,
+    "probe": "h2",
+    "size": "16.2px",
+    "family": "system-ui, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Noto Sans SC\", sans-serif",
+    "weight": "600",
+    "line": "22.68px",
+    "style": "normal"
+  },
+  {
+    "mode": "chat",
+    "setting": 12,
+    "probe": "h3",
+    "size": "15px",
+    "family": "system-ui, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Noto Sans SC\", sans-serif",
+    "weight": "600",
+    "line": "21px",
+    "style": "normal"
+  },
+  {
+    "mode": "chat",
+    "setting": 12,
+    "probe": "h4",
+    "size": "13.2px",
+    "family": "system-ui, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Noto Sans SC\", sans-serif",
+    "weight": "600",
+    "line": "18.48px",
+    "style": "normal"
+  },
+  {
+    "mode": "chat",
+    "setting": 12,
+    "probe": "h5",
+    "size": "16px",
+    "family": "system-ui, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Noto Sans SC\", sans-serif",
+    "weight": "600",
+    "line": "24px",
+    "style": "normal"
+  },
+  {
+    "mode": "chat",
+    "setting": 12,
+    "probe": "h6",
+    "size": "14px",
+    "family": "system-ui, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Noto Sans SC\", sans-serif",
+    "weight": "600",
+    "line": "20px",
+    "style": "normal"
+  },
+  {
+    "mode": "chat",
+    "setting": 12,
+    "probe": "inline-code",
+    "size": "10.8px",
+    "family": "system-ui, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Noto Sans SC\", sans-serif",
+    "weight": "400",
+    "line": "14.58px",
+    "style": "normal"
+  },
+  {
+    "mode": "chat",
+    "setting": 12,
+    "probe": "file-chip",
+    "size": "12px",
+    "family": "system-ui, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Noto Sans SC\", sans-serif",
+    "weight": "500",
+    "line": "20.4px",
+    "style": "normal"
+  },
+  {
+    "mode": "chat",
+    "setting": 12,
+    "probe": "th",
+    "size": "13px",
+    "family": "system-ui, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Noto Sans SC\", sans-serif",
+    "weight": "500",
+    "line": "20px",
+    "style": "normal"
+  },
+  {
+    "mode": "chat",
+    "setting": 12,
+    "probe": "td",
+    "size": "14px",
+    "family": "system-ui, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Noto Sans SC\", sans-serif",
+    "weight": "400",
+    "line": "20px",
+    "style": "normal"
+  },
+  {
+    "mode": "chat",
+    "setting": 12,
+    "probe": "code-label",
+    "size": "10px",
+    "family": "-apple-system, \"system-ui\", \"PingFang SC\", \"Hiragino Sans GB\", \"Segoe UI\", \"Microsoft YaHei\", sans-serif",
+    "weight": "400",
+    "line": "17px",
+    "style": "normal"
+  },
+  {
+    "mode": "chat",
+    "setting": 12,
+    "probe": "block-code",
+    "size": "12px",
+    "family": "-apple-system, \"system-ui\", \"PingFang SC\", \"Hiragino Sans GB\", \"Segoe UI\", \"Microsoft YaHei\", sans-serif",
+    "weight": "400",
+    "line": "14.16px",
+    "style": "normal"
+  },
+  {
+    "mode": "chat",
+    "setting": 12,
+    "probe": "structure",
+    "size": "12.5px",
+    "family": "\"SF Mono\", SFMono-Regular, ui-monospace, Menlo, Monaco, Consolas, \"Liberation Mono\", \"Courier New\", monospace",
+    "weight": "400",
+    "line": "19.375px",
+    "style": "normal"
+  },
+  {
+    "mode": "chat",
+    "setting": 12,
+    "probe": "summary",
+    "size": "10.8px",
+    "family": "system-ui, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Noto Sans SC\", sans-serif",
+    "weight": "500",
+    "line": "18.36px",
+    "style": "normal"
+  },
+  {
+    "mode": "chat",
+    "setting": 12,
+    "probe": "reasoning",
+    "size": "15px",
+    "family": "-apple-system, \"system-ui\", \"PingFang SC\", \"Hiragino Sans GB\", \"Segoe UI\", \"Microsoft YaHei\", sans-serif",
+    "weight": "400",
+    "line": "22.5px",
+    "style": "normal"
+  },
+  {
+    "mode": "chat",
+    "setting": 12,
+    "probe": "process-markdown",
+    "size": "15px",
+    "family": "-apple-system, \"system-ui\", \"PingFang SC\", \"Hiragino Sans GB\", \"Segoe UI\", \"Microsoft YaHei\", sans-serif",
+    "weight": "400",
+    "line": "22.5px",
+    "style": "normal"
+  },
+  {
+    "mode": "chat",
+    "setting": 12,
+    "probe": "narration",
+    "size": "13.5px",
+    "family": "-apple-system, \"system-ui\", \"PingFang SC\", \"Hiragino Sans GB\", \"Segoe UI\", \"Microsoft YaHei\", sans-serif",
+    "weight": "400",
+    "line": "24px",
+    "style": "normal"
+  },
+  {
+    "mode": "chat",
+    "setting": 12,
+    "probe": "fullscreen-label",
+    "size": "11px",
+    "family": "-apple-system, \"system-ui\", \"PingFang SC\", \"Hiragino Sans GB\", \"Segoe UI\", \"Microsoft YaHei\", sans-serif",
+    "weight": "400",
+    "line": "17.05px",
+    "style": "normal"
+  },
+  {
+    "mode": "chat",
+    "setting": 12,
+    "probe": "fullscreen-code",
+    "size": "15px",
+    "family": "-apple-system, \"system-ui\", \"PingFang SC\", \"Hiragino Sans GB\", \"Segoe UI\", \"Microsoft YaHei\", sans-serif",
+    "weight": "400",
+    "line": "23.25px",
+    "style": "normal"
+  },
+  {
+    "mode": "chat",
+    "setting": 12,
+    "probe": "subagent-report",
+    "size": "12px",
+    "family": "-apple-system, \"system-ui\", \"PingFang SC\", \"Hiragino Sans GB\", \"Segoe UI\", \"Microsoft YaHei\", sans-serif",
+    "weight": "400",
+    "line": "19.8px",
+    "style": "normal"
+  },
+  {
+    "mode": "chat",
+    "setting": 12,
+    "probe": "document",
+    "size": "16px",
+    "family": "-apple-system, \"system-ui\", \"PingFang SC\", \"Hiragino Sans GB\", \"Segoe UI\", \"Microsoft YaHei\", sans-serif",
+    "weight": "400",
+    "line": "27.52px",
+    "style": "normal"
+  },
+  {
+    "mode": "chat",
+    "setting": 16,
+    "probe": "composer",
+    "size": "15px",
+    "family": "-apple-system, \"system-ui\", \"PingFang SC\", \"Hiragino Sans GB\", \"Segoe UI\", \"Microsoft YaHei\", sans-serif",
+    "weight": "400",
+    "line": "22.5px",
+    "style": "normal"
+  },
+  {
+    "mode": "chat",
+    "setting": 16,
+    "probe": "user",
+    "size": "16px",
+    "family": "system-ui, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Noto Sans SC\", sans-serif",
+    "weight": "400",
+    "line": "25.28px",
+    "style": "normal"
+  },
+  {
+    "mode": "chat",
+    "setting": 16,
+    "probe": "edit-user",
+    "size": "15px",
+    "family": "-apple-system, \"system-ui\", \"PingFang SC\", \"Hiragino Sans GB\", \"Segoe UI\", \"Microsoft YaHei\", sans-serif",
+    "weight": "400",
+    "line": "22.5px",
+    "style": "normal"
+  },
+  {
+    "mode": "chat",
+    "setting": 16,
+    "probe": "answer",
+    "size": "16px",
+    "family": "system-ui, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Noto Sans SC\", sans-serif",
+    "weight": "400",
+    "line": "27.2px",
+    "style": "normal"
+  },
+  {
+    "mode": "chat",
+    "setting": 16,
+    "probe": "strong",
+    "size": "16px",
+    "family": "system-ui, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Noto Sans SC\", sans-serif",
+    "weight": "500",
+    "line": "27.2px",
+    "style": "normal"
+  },
+  {
+    "mode": "chat",
+    "setting": 16,
+    "probe": "em",
+    "size": "16px",
+    "family": "system-ui, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Noto Sans SC\", sans-serif",
+    "weight": "400",
+    "line": "27.2px",
+    "style": "italic"
+  },
+  {
+    "mode": "chat",
+    "setting": 16,
+    "probe": "h1",
+    "size": "22.4px",
+    "family": "system-ui, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Noto Sans SC\", sans-serif",
+    "weight": "600",
+    "line": "31.36px",
+    "style": "normal"
+  },
+  {
+    "mode": "chat",
+    "setting": 16,
+    "probe": "h2",
+    "size": "21.6px",
+    "family": "system-ui, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Noto Sans SC\", sans-serif",
+    "weight": "600",
+    "line": "30.24px",
+    "style": "normal"
+  },
+  {
+    "mode": "chat",
+    "setting": 16,
+    "probe": "h3",
+    "size": "20px",
+    "family": "system-ui, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Noto Sans SC\", sans-serif",
+    "weight": "600",
+    "line": "28px",
+    "style": "normal"
+  },
+  {
+    "mode": "chat",
+    "setting": 16,
+    "probe": "h4",
+    "size": "17.6px",
+    "family": "system-ui, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Noto Sans SC\", sans-serif",
+    "weight": "600",
+    "line": "24.64px",
+    "style": "normal"
+  },
+  {
+    "mode": "chat",
+    "setting": 16,
+    "probe": "h5",
+    "size": "16px",
+    "family": "system-ui, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Noto Sans SC\", sans-serif",
+    "weight": "600",
+    "line": "24px",
+    "style": "normal"
+  },
+  {
+    "mode": "chat",
+    "setting": 16,
+    "probe": "h6",
+    "size": "14px",
+    "family": "system-ui, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Noto Sans SC\", sans-serif",
+    "weight": "600",
+    "line": "20px",
+    "style": "normal"
+  },
+  {
+    "mode": "chat",
+    "setting": 16,
+    "probe": "inline-code",
+    "size": "14.4px",
+    "family": "system-ui, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Noto Sans SC\", sans-serif",
+    "weight": "400",
+    "line": "19.44px",
+    "style": "normal"
+  },
+  {
+    "mode": "chat",
+    "setting": 16,
+    "probe": "file-chip",
+    "size": "16px",
+    "family": "system-ui, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Noto Sans SC\", sans-serif",
+    "weight": "500",
+    "line": "27.2px",
+    "style": "normal"
+  },
+  {
+    "mode": "chat",
+    "setting": 16,
+    "probe": "th",
+    "size": "13px",
+    "family": "system-ui, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Noto Sans SC\", sans-serif",
+    "weight": "500",
+    "line": "20px",
+    "style": "normal"
+  },
+  {
+    "mode": "chat",
+    "setting": 16,
+    "probe": "td",
+    "size": "14px",
+    "family": "system-ui, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Noto Sans SC\", sans-serif",
+    "weight": "400",
+    "line": "20px",
+    "style": "normal"
+  },
+  {
+    "mode": "chat",
+    "setting": 16,
+    "probe": "code-label",
+    "size": "10px",
+    "family": "-apple-system, \"system-ui\", \"PingFang SC\", \"Hiragino Sans GB\", \"Segoe UI\", \"Microsoft YaHei\", sans-serif",
+    "weight": "400",
+    "line": "17px",
+    "style": "normal"
+  },
+  {
+    "mode": "chat",
+    "setting": 16,
+    "probe": "block-code",
+    "size": "12px",
+    "family": "-apple-system, \"system-ui\", \"PingFang SC\", \"Hiragino Sans GB\", \"Segoe UI\", \"Microsoft YaHei\", sans-serif",
+    "weight": "400",
+    "line": "14.16px",
+    "style": "normal"
+  },
+  {
+    "mode": "chat",
+    "setting": 16,
+    "probe": "structure",
+    "size": "12.5px",
+    "family": "\"SF Mono\", SFMono-Regular, ui-monospace, Menlo, Monaco, Consolas, \"Liberation Mono\", \"Courier New\", monospace",
+    "weight": "400",
+    "line": "19.375px",
+    "style": "normal"
+  },
+  {
+    "mode": "chat",
+    "setting": 16,
+    "probe": "summary",
+    "size": "14.4px",
+    "family": "system-ui, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Noto Sans SC\", sans-serif",
+    "weight": "500",
+    "line": "24.48px",
+    "style": "normal"
+  },
+  {
+    "mode": "chat",
+    "setting": 16,
+    "probe": "reasoning",
+    "size": "15px",
+    "family": "-apple-system, \"system-ui\", \"PingFang SC\", \"Hiragino Sans GB\", \"Segoe UI\", \"Microsoft YaHei\", sans-serif",
+    "weight": "400",
+    "line": "22.5px",
+    "style": "normal"
+  },
+  {
+    "mode": "chat",
+    "setting": 16,
+    "probe": "process-markdown",
+    "size": "15px",
+    "family": "-apple-system, \"system-ui\", \"PingFang SC\", \"Hiragino Sans GB\", \"Segoe UI\", \"Microsoft YaHei\", sans-serif",
+    "weight": "400",
+    "line": "22.5px",
+    "style": "normal"
+  },
+  {
+    "mode": "chat",
+    "setting": 16,
+    "probe": "narration",
+    "size": "13.5px",
+    "family": "-apple-system, \"system-ui\", \"PingFang SC\", \"Hiragino Sans GB\", \"Segoe UI\", \"Microsoft YaHei\", sans-serif",
+    "weight": "400",
+    "line": "24px",
+    "style": "normal"
+  },
+  {
+    "mode": "chat",
+    "setting": 16,
+    "probe": "fullscreen-label",
+    "size": "11px",
+    "family": "-apple-system, \"system-ui\", \"PingFang SC\", \"Hiragino Sans GB\", \"Segoe UI\", \"Microsoft YaHei\", sans-serif",
+    "weight": "400",
+    "line": "17.05px",
+    "style": "normal"
+  },
+  {
+    "mode": "chat",
+    "setting": 16,
+    "probe": "fullscreen-code",
+    "size": "15px",
+    "family": "-apple-system, \"system-ui\", \"PingFang SC\", \"Hiragino Sans GB\", \"Segoe UI\", \"Microsoft YaHei\", sans-serif",
+    "weight": "400",
+    "line": "23.25px",
+    "style": "normal"
+  },
+  {
+    "mode": "chat",
+    "setting": 16,
+    "probe": "subagent-report",
+    "size": "16px",
+    "family": "-apple-system, \"system-ui\", \"PingFang SC\", \"Hiragino Sans GB\", \"Segoe UI\", \"Microsoft YaHei\", sans-serif",
+    "weight": "400",
+    "line": "26.4px",
+    "style": "normal"
+  },
+  {
+    "mode": "chat",
+    "setting": 16,
+    "probe": "document",
+    "size": "16px",
+    "family": "-apple-system, \"system-ui\", \"PingFang SC\", \"Hiragino Sans GB\", \"Segoe UI\", \"Microsoft YaHei\", sans-serif",
+    "weight": "400",
+    "line": "27.52px",
+    "style": "normal"
+  },
+  {
+    "mode": "chat",
+    "setting": 20,
+    "probe": "composer",
+    "size": "15px",
+    "family": "-apple-system, \"system-ui\", \"PingFang SC\", \"Hiragino Sans GB\", \"Segoe UI\", \"Microsoft YaHei\", sans-serif",
+    "weight": "400",
+    "line": "22.5px",
+    "style": "normal"
+  },
+  {
+    "mode": "chat",
+    "setting": 20,
+    "probe": "user",
+    "size": "20px",
+    "family": "system-ui, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Noto Sans SC\", sans-serif",
+    "weight": "400",
+    "line": "31.6px",
+    "style": "normal"
+  },
+  {
+    "mode": "chat",
+    "setting": 20,
+    "probe": "edit-user",
+    "size": "15px",
+    "family": "-apple-system, \"system-ui\", \"PingFang SC\", \"Hiragino Sans GB\", \"Segoe UI\", \"Microsoft YaHei\", sans-serif",
+    "weight": "400",
+    "line": "22.5px",
+    "style": "normal"
+  },
+  {
+    "mode": "chat",
+    "setting": 20,
+    "probe": "answer",
+    "size": "20px",
+    "family": "system-ui, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Noto Sans SC\", sans-serif",
+    "weight": "400",
+    "line": "34px",
+    "style": "normal"
+  },
+  {
+    "mode": "chat",
+    "setting": 20,
+    "probe": "strong",
+    "size": "20px",
+    "family": "system-ui, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Noto Sans SC\", sans-serif",
+    "weight": "500",
+    "line": "34px",
+    "style": "normal"
+  },
+  {
+    "mode": "chat",
+    "setting": 20,
+    "probe": "em",
+    "size": "20px",
+    "family": "system-ui, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Noto Sans SC\", sans-serif",
+    "weight": "400",
+    "line": "34px",
+    "style": "italic"
+  },
+  {
+    "mode": "chat",
+    "setting": 20,
+    "probe": "h1",
+    "size": "28px",
+    "family": "system-ui, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Noto Sans SC\", sans-serif",
+    "weight": "600",
+    "line": "39.2px",
+    "style": "normal"
+  },
+  {
+    "mode": "chat",
+    "setting": 20,
+    "probe": "h2",
+    "size": "27px",
+    "family": "system-ui, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Noto Sans SC\", sans-serif",
+    "weight": "600",
+    "line": "37.8px",
+    "style": "normal"
+  },
+  {
+    "mode": "chat",
+    "setting": 20,
+    "probe": "h3",
+    "size": "25px",
+    "family": "system-ui, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Noto Sans SC\", sans-serif",
+    "weight": "600",
+    "line": "35px",
+    "style": "normal"
+  },
+  {
+    "mode": "chat",
+    "setting": 20,
+    "probe": "h4",
+    "size": "22px",
+    "family": "system-ui, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Noto Sans SC\", sans-serif",
+    "weight": "600",
+    "line": "30.8px",
+    "style": "normal"
+  },
+  {
+    "mode": "chat",
+    "setting": 20,
+    "probe": "h5",
+    "size": "16px",
+    "family": "system-ui, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Noto Sans SC\", sans-serif",
+    "weight": "600",
+    "line": "24px",
+    "style": "normal"
+  },
+  {
+    "mode": "chat",
+    "setting": 20,
+    "probe": "h6",
+    "size": "14px",
+    "family": "system-ui, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Noto Sans SC\", sans-serif",
+    "weight": "600",
+    "line": "20px",
+    "style": "normal"
+  },
+  {
+    "mode": "chat",
+    "setting": 20,
+    "probe": "inline-code",
+    "size": "18px",
+    "family": "system-ui, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Noto Sans SC\", sans-serif",
+    "weight": "400",
+    "line": "24.3px",
+    "style": "normal"
+  },
+  {
+    "mode": "chat",
+    "setting": 20,
+    "probe": "file-chip",
+    "size": "20px",
+    "family": "system-ui, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Noto Sans SC\", sans-serif",
+    "weight": "500",
+    "line": "34px",
+    "style": "normal"
+  },
+  {
+    "mode": "chat",
+    "setting": 20,
+    "probe": "th",
+    "size": "13px",
+    "family": "system-ui, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Noto Sans SC\", sans-serif",
+    "weight": "500",
+    "line": "20px",
+    "style": "normal"
+  },
+  {
+    "mode": "chat",
+    "setting": 20,
+    "probe": "td",
+    "size": "14px",
+    "family": "system-ui, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Noto Sans SC\", sans-serif",
+    "weight": "400",
+    "line": "20px",
+    "style": "normal"
+  },
+  {
+    "mode": "chat",
+    "setting": 20,
+    "probe": "code-label",
+    "size": "10px",
+    "family": "-apple-system, \"system-ui\", \"PingFang SC\", \"Hiragino Sans GB\", \"Segoe UI\", \"Microsoft YaHei\", sans-serif",
+    "weight": "400",
+    "line": "17px",
+    "style": "normal"
+  },
+  {
+    "mode": "chat",
+    "setting": 20,
+    "probe": "block-code",
+    "size": "12px",
+    "family": "-apple-system, \"system-ui\", \"PingFang SC\", \"Hiragino Sans GB\", \"Segoe UI\", \"Microsoft YaHei\", sans-serif",
+    "weight": "400",
+    "line": "14.16px",
+    "style": "normal"
+  },
+  {
+    "mode": "chat",
+    "setting": 20,
+    "probe": "structure",
+    "size": "12.5px",
+    "family": "\"SF Mono\", SFMono-Regular, ui-monospace, Menlo, Monaco, Consolas, \"Liberation Mono\", \"Courier New\", monospace",
+    "weight": "400",
+    "line": "19.375px",
+    "style": "normal"
+  },
+  {
+    "mode": "chat",
+    "setting": 20,
+    "probe": "summary",
+    "size": "18px",
+    "family": "system-ui, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Noto Sans SC\", sans-serif",
+    "weight": "500",
+    "line": "30.6px",
+    "style": "normal"
+  },
+  {
+    "mode": "chat",
+    "setting": 20,
+    "probe": "reasoning",
+    "size": "15px",
+    "family": "-apple-system, \"system-ui\", \"PingFang SC\", \"Hiragino Sans GB\", \"Segoe UI\", \"Microsoft YaHei\", sans-serif",
+    "weight": "400",
+    "line": "22.5px",
+    "style": "normal"
+  },
+  {
+    "mode": "chat",
+    "setting": 20,
+    "probe": "process-markdown",
+    "size": "15px",
+    "family": "-apple-system, \"system-ui\", \"PingFang SC\", \"Hiragino Sans GB\", \"Segoe UI\", \"Microsoft YaHei\", sans-serif",
+    "weight": "400",
+    "line": "22.5px",
+    "style": "normal"
+  },
+  {
+    "mode": "chat",
+    "setting": 20,
+    "probe": "narration",
+    "size": "13.5px",
+    "family": "-apple-system, \"system-ui\", \"PingFang SC\", \"Hiragino Sans GB\", \"Segoe UI\", \"Microsoft YaHei\", sans-serif",
+    "weight": "400",
+    "line": "24px",
+    "style": "normal"
+  },
+  {
+    "mode": "chat",
+    "setting": 20,
+    "probe": "fullscreen-label",
+    "size": "11px",
+    "family": "-apple-system, \"system-ui\", \"PingFang SC\", \"Hiragino Sans GB\", \"Segoe UI\", \"Microsoft YaHei\", sans-serif",
+    "weight": "400",
+    "line": "17.05px",
+    "style": "normal"
+  },
+  {
+    "mode": "chat",
+    "setting": 20,
+    "probe": "fullscreen-code",
+    "size": "15px",
+    "family": "-apple-system, \"system-ui\", \"PingFang SC\", \"Hiragino Sans GB\", \"Segoe UI\", \"Microsoft YaHei\", sans-serif",
+    "weight": "400",
+    "line": "23.25px",
+    "style": "normal"
+  },
+  {
+    "mode": "chat",
+    "setting": 20,
+    "probe": "subagent-report",
+    "size": "20px",
+    "family": "-apple-system, \"system-ui\", \"PingFang SC\", \"Hiragino Sans GB\", \"Segoe UI\", \"Microsoft YaHei\", sans-serif",
+    "weight": "400",
+    "line": "33px",
+    "style": "normal"
+  },
+  {
+    "mode": "chat",
+    "setting": 20,
+    "probe": "document",
+    "size": "16px",
+    "family": "-apple-system, \"system-ui\", \"PingFang SC\", \"Hiragino Sans GB\", \"Segoe UI\", \"Microsoft YaHei\", sans-serif",
+    "weight": "400",
+    "line": "27.52px",
+    "style": "normal"
+  },
+  {
+    "mode": "ide",
+    "setting": 12,
+    "probe": "composer",
+    "size": "12px",
+    "family": "system-ui, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Noto Sans SC\", sans-serif",
+    "weight": "400",
+    "line": "20.4px",
+    "style": "normal"
+  },
+  {
+    "mode": "ide",
+    "setting": 12,
+    "probe": "user",
+    "size": "12px",
+    "family": "system-ui, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Noto Sans SC\", sans-serif",
+    "weight": "400",
+    "line": "20.4px",
+    "style": "normal"
+  },
+  {
+    "mode": "ide",
+    "setting": 12,
+    "probe": "edit-user",
+    "size": "12px",
+    "family": "system-ui, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Noto Sans SC\", sans-serif",
+    "weight": "400",
+    "line": "20.4px",
+    "style": "normal"
+  },
+  {
+    "mode": "ide",
+    "setting": 12,
+    "probe": "answer",
+    "size": "12px",
+    "family": "system-ui, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Noto Sans SC\", sans-serif",
+    "weight": "400",
+    "line": "20.4px",
+    "style": "normal"
+  },
+  {
+    "mode": "ide",
+    "setting": 12,
+    "probe": "strong",
+    "size": "12px",
+    "family": "system-ui, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Noto Sans SC\", sans-serif",
+    "weight": "500",
+    "line": "20.4px",
+    "style": "normal"
+  },
+  {
+    "mode": "ide",
+    "setting": 12,
+    "probe": "em",
+    "size": "12px",
+    "family": "system-ui, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Noto Sans SC\", sans-serif",
+    "weight": "400",
+    "line": "20.4px",
+    "style": "italic"
+  },
+  {
+    "mode": "ide",
+    "setting": 12,
+    "probe": "h1",
+    "size": "16.2px",
+    "family": "system-ui, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Noto Sans SC\", sans-serif",
+    "weight": "600",
+    "line": "20.25px",
+    "style": "normal"
+  },
+  {
+    "mode": "ide",
+    "setting": 12,
+    "probe": "h2",
+    "size": "15px",
+    "family": "system-ui, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Noto Sans SC\", sans-serif",
+    "weight": "600",
+    "line": "18.75px",
+    "style": "normal"
+  },
+  {
+    "mode": "ide",
+    "setting": 12,
+    "probe": "h3",
+    "size": "13.8px",
+    "family": "system-ui, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Noto Sans SC\", sans-serif",
+    "weight": "600",
+    "line": "17.25px",
+    "style": "normal"
+  },
+  {
+    "mode": "ide",
+    "setting": 12,
+    "probe": "h4",
+    "size": "12.24px",
+    "family": "system-ui, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Noto Sans SC\", sans-serif",
+    "weight": "600",
+    "line": "15.3px",
+    "style": "normal"
+  },
+  {
+    "mode": "ide",
+    "setting": 12,
+    "probe": "h5",
+    "size": "16px",
+    "family": "system-ui, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Noto Sans SC\", sans-serif",
+    "weight": "600",
+    "line": "24px",
+    "style": "normal"
+  },
+  {
+    "mode": "ide",
+    "setting": 12,
+    "probe": "h6",
+    "size": "14px",
+    "family": "system-ui, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Noto Sans SC\", sans-serif",
+    "weight": "600",
+    "line": "20px",
+    "style": "normal"
+  },
+  {
+    "mode": "ide",
+    "setting": 12,
+    "probe": "inline-code",
+    "size": "10.8px",
+    "family": "system-ui, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Noto Sans SC\", sans-serif",
+    "weight": "400",
+    "line": "16.2px",
+    "style": "normal"
+  },
+  {
+    "mode": "ide",
+    "setting": 12,
+    "probe": "file-chip",
+    "size": "12px",
+    "family": "system-ui, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Noto Sans SC\", sans-serif",
+    "weight": "500",
+    "line": "20.4px",
+    "style": "normal"
+  },
+  {
+    "mode": "ide",
+    "setting": 12,
+    "probe": "th",
+    "size": "12px",
+    "family": "system-ui, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Noto Sans SC\", sans-serif",
+    "weight": "600",
+    "line": "20.4px",
+    "style": "normal"
+  },
+  {
+    "mode": "ide",
+    "setting": 12,
+    "probe": "td",
+    "size": "12px",
+    "family": "system-ui, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Noto Sans SC\", sans-serif",
+    "weight": "400",
+    "line": "20.4px",
+    "style": "normal"
+  },
+  {
+    "mode": "ide",
+    "setting": 12,
+    "probe": "code-label",
+    "size": "10.88px",
+    "family": "-apple-system, \"system-ui\", \"PingFang SC\", \"Hiragino Sans GB\", \"Segoe UI\", \"Microsoft YaHei\", sans-serif",
+    "weight": "400",
+    "line": "18.496px",
+    "style": "normal"
+  },
+  {
+    "mode": "ide",
+    "setting": 12,
+    "probe": "block-code",
+    "size": "10.8px",
+    "family": "-apple-system, \"system-ui\", \"PingFang SC\", \"Hiragino Sans GB\", \"Segoe UI\", \"Microsoft YaHei\", sans-serif",
+    "weight": "400",
+    "line": "16.2px",
+    "style": "normal"
+  },
+  {
+    "mode": "ide",
+    "setting": 12,
+    "probe": "structure",
+    "size": "12.5px",
+    "family": "\"SF Mono\", SFMono-Regular, ui-monospace, Menlo, Monaco, Consolas, \"Liberation Mono\", \"Courier New\", monospace",
+    "weight": "400",
+    "line": "19.375px",
+    "style": "normal"
+  },
+  {
+    "mode": "ide",
+    "setting": 12,
+    "probe": "summary",
+    "size": "10.8px",
+    "family": "system-ui, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Noto Sans SC\", sans-serif",
+    "weight": "500",
+    "line": "18.36px",
+    "style": "normal"
+  },
+  {
+    "mode": "ide",
+    "setting": 12,
+    "probe": "reasoning",
+    "size": "12px",
+    "family": "-apple-system, \"system-ui\", \"PingFang SC\", \"Hiragino Sans GB\", \"Segoe UI\", \"Microsoft YaHei\", sans-serif",
+    "weight": "400",
+    "line": "18.6px",
+    "style": "normal"
+  },
+  {
+    "mode": "ide",
+    "setting": 12,
+    "probe": "process-markdown",
+    "size": "12px",
+    "family": "-apple-system, \"system-ui\", \"PingFang SC\", \"Hiragino Sans GB\", \"Segoe UI\", \"Microsoft YaHei\", sans-serif",
+    "weight": "400",
+    "line": "18.6px",
+    "style": "normal"
+  },
+  {
+    "mode": "ide",
+    "setting": 12,
+    "probe": "narration",
+    "size": "12px",
+    "family": "-apple-system, \"system-ui\", \"PingFang SC\", \"Hiragino Sans GB\", \"Segoe UI\", \"Microsoft YaHei\", sans-serif",
+    "weight": "400",
+    "line": "18.6px",
+    "style": "normal"
+  },
+  {
+    "mode": "ide",
+    "setting": 12,
+    "probe": "fullscreen-label",
+    "size": "11px",
+    "family": "-apple-system, \"system-ui\", \"PingFang SC\", \"Hiragino Sans GB\", \"Segoe UI\", \"Microsoft YaHei\", sans-serif",
+    "weight": "400",
+    "line": "17.05px",
+    "style": "normal"
+  },
+  {
+    "mode": "ide",
+    "setting": 12,
+    "probe": "fullscreen-code",
+    "size": "12px",
+    "family": "-apple-system, \"system-ui\", \"PingFang SC\", \"Hiragino Sans GB\", \"Segoe UI\", \"Microsoft YaHei\", sans-serif",
+    "weight": "400",
+    "line": "18.6px",
+    "style": "normal"
+  },
+  {
+    "mode": "ide",
+    "setting": 12,
+    "probe": "subagent-report",
+    "size": "12px",
+    "family": "system-ui, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Noto Sans SC\", sans-serif",
+    "weight": "400",
+    "line": "20.4px",
+    "style": "normal"
+  },
+  {
+    "mode": "ide",
+    "setting": 12,
+    "probe": "document",
+    "size": "16px",
+    "family": "-apple-system, \"system-ui\", \"PingFang SC\", \"Hiragino Sans GB\", \"Segoe UI\", \"Microsoft YaHei\", sans-serif",
+    "weight": "400",
+    "line": "27.52px",
+    "style": "normal"
+  },
+  {
+    "mode": "ide",
+    "setting": 16,
+    "probe": "composer",
+    "size": "16px",
+    "family": "system-ui, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Noto Sans SC\", sans-serif",
+    "weight": "400",
+    "line": "27.2px",
+    "style": "normal"
+  },
+  {
+    "mode": "ide",
+    "setting": 16,
+    "probe": "user",
+    "size": "16px",
+    "family": "system-ui, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Noto Sans SC\", sans-serif",
+    "weight": "400",
+    "line": "27.2px",
+    "style": "normal"
+  },
+  {
+    "mode": "ide",
+    "setting": 16,
+    "probe": "edit-user",
+    "size": "16px",
+    "family": "system-ui, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Noto Sans SC\", sans-serif",
+    "weight": "400",
+    "line": "27.2px",
+    "style": "normal"
+  },
+  {
+    "mode": "ide",
+    "setting": 16,
+    "probe": "answer",
+    "size": "16px",
+    "family": "system-ui, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Noto Sans SC\", sans-serif",
+    "weight": "400",
+    "line": "27.2px",
+    "style": "normal"
+  },
+  {
+    "mode": "ide",
+    "setting": 16,
+    "probe": "strong",
+    "size": "16px",
+    "family": "system-ui, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Noto Sans SC\", sans-serif",
+    "weight": "500",
+    "line": "27.2px",
+    "style": "normal"
+  },
+  {
+    "mode": "ide",
+    "setting": 16,
+    "probe": "em",
+    "size": "16px",
+    "family": "system-ui, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Noto Sans SC\", sans-serif",
+    "weight": "400",
+    "line": "27.2px",
+    "style": "italic"
+  },
+  {
+    "mode": "ide",
+    "setting": 16,
+    "probe": "h1",
+    "size": "21.6px",
+    "family": "system-ui, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Noto Sans SC\", sans-serif",
+    "weight": "600",
+    "line": "27px",
+    "style": "normal"
+  },
+  {
+    "mode": "ide",
+    "setting": 16,
+    "probe": "h2",
+    "size": "20px",
+    "family": "system-ui, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Noto Sans SC\", sans-serif",
+    "weight": "600",
+    "line": "25px",
+    "style": "normal"
+  },
+  {
+    "mode": "ide",
+    "setting": 16,
+    "probe": "h3",
+    "size": "18.4px",
+    "family": "system-ui, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Noto Sans SC\", sans-serif",
+    "weight": "600",
+    "line": "23px",
+    "style": "normal"
+  },
+  {
+    "mode": "ide",
+    "setting": 16,
+    "probe": "h4",
+    "size": "16.32px",
+    "family": "system-ui, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Noto Sans SC\", sans-serif",
+    "weight": "600",
+    "line": "20.4px",
+    "style": "normal"
+  },
+  {
+    "mode": "ide",
+    "setting": 16,
+    "probe": "h5",
+    "size": "16px",
+    "family": "system-ui, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Noto Sans SC\", sans-serif",
+    "weight": "600",
+    "line": "24px",
+    "style": "normal"
+  },
+  {
+    "mode": "ide",
+    "setting": 16,
+    "probe": "h6",
+    "size": "14px",
+    "family": "system-ui, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Noto Sans SC\", sans-serif",
+    "weight": "600",
+    "line": "20px",
+    "style": "normal"
+  },
+  {
+    "mode": "ide",
+    "setting": 16,
+    "probe": "inline-code",
+    "size": "14.4px",
+    "family": "system-ui, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Noto Sans SC\", sans-serif",
+    "weight": "400",
+    "line": "21.6px",
+    "style": "normal"
+  },
+  {
+    "mode": "ide",
+    "setting": 16,
+    "probe": "file-chip",
+    "size": "16px",
+    "family": "system-ui, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Noto Sans SC\", sans-serif",
+    "weight": "500",
+    "line": "27.2px",
+    "style": "normal"
+  },
+  {
+    "mode": "ide",
+    "setting": 16,
+    "probe": "th",
+    "size": "16px",
+    "family": "system-ui, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Noto Sans SC\", sans-serif",
+    "weight": "600",
+    "line": "27.2px",
+    "style": "normal"
+  },
+  {
+    "mode": "ide",
+    "setting": 16,
+    "probe": "td",
+    "size": "16px",
+    "family": "system-ui, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Noto Sans SC\", sans-serif",
+    "weight": "400",
+    "line": "27.2px",
+    "style": "normal"
+  },
+  {
+    "mode": "ide",
+    "setting": 16,
+    "probe": "code-label",
+    "size": "10.88px",
+    "family": "-apple-system, \"system-ui\", \"PingFang SC\", \"Hiragino Sans GB\", \"Segoe UI\", \"Microsoft YaHei\", sans-serif",
+    "weight": "400",
+    "line": "18.496px",
+    "style": "normal"
+  },
+  {
+    "mode": "ide",
+    "setting": 16,
+    "probe": "block-code",
+    "size": "14.4px",
+    "family": "-apple-system, \"system-ui\", \"PingFang SC\", \"Hiragino Sans GB\", \"Segoe UI\", \"Microsoft YaHei\", sans-serif",
+    "weight": "400",
+    "line": "21.6px",
+    "style": "normal"
+  },
+  {
+    "mode": "ide",
+    "setting": 16,
+    "probe": "structure",
+    "size": "12.5px",
+    "family": "\"SF Mono\", SFMono-Regular, ui-monospace, Menlo, Monaco, Consolas, \"Liberation Mono\", \"Courier New\", monospace",
+    "weight": "400",
+    "line": "19.375px",
+    "style": "normal"
+  },
+  {
+    "mode": "ide",
+    "setting": 16,
+    "probe": "summary",
+    "size": "14.4px",
+    "family": "system-ui, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Noto Sans SC\", sans-serif",
+    "weight": "500",
+    "line": "24.48px",
+    "style": "normal"
+  },
+  {
+    "mode": "ide",
+    "setting": 16,
+    "probe": "reasoning",
+    "size": "12px",
+    "family": "-apple-system, \"system-ui\", \"PingFang SC\", \"Hiragino Sans GB\", \"Segoe UI\", \"Microsoft YaHei\", sans-serif",
+    "weight": "400",
+    "line": "18.6px",
+    "style": "normal"
+  },
+  {
+    "mode": "ide",
+    "setting": 16,
+    "probe": "process-markdown",
+    "size": "12px",
+    "family": "-apple-system, \"system-ui\", \"PingFang SC\", \"Hiragino Sans GB\", \"Segoe UI\", \"Microsoft YaHei\", sans-serif",
+    "weight": "400",
+    "line": "18.6px",
+    "style": "normal"
+  },
+  {
+    "mode": "ide",
+    "setting": 16,
+    "probe": "narration",
+    "size": "12px",
+    "family": "-apple-system, \"system-ui\", \"PingFang SC\", \"Hiragino Sans GB\", \"Segoe UI\", \"Microsoft YaHei\", sans-serif",
+    "weight": "400",
+    "line": "18.6px",
+    "style": "normal"
+  },
+  {
+    "mode": "ide",
+    "setting": 16,
+    "probe": "fullscreen-label",
+    "size": "11px",
+    "family": "-apple-system, \"system-ui\", \"PingFang SC\", \"Hiragino Sans GB\", \"Segoe UI\", \"Microsoft YaHei\", sans-serif",
+    "weight": "400",
+    "line": "17.05px",
+    "style": "normal"
+  },
+  {
+    "mode": "ide",
+    "setting": 16,
+    "probe": "fullscreen-code",
+    "size": "12px",
+    "family": "-apple-system, \"system-ui\", \"PingFang SC\", \"Hiragino Sans GB\", \"Segoe UI\", \"Microsoft YaHei\", sans-serif",
+    "weight": "400",
+    "line": "18.6px",
+    "style": "normal"
+  },
+  {
+    "mode": "ide",
+    "setting": 16,
+    "probe": "subagent-report",
+    "size": "16px",
+    "family": "system-ui, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Noto Sans SC\", sans-serif",
+    "weight": "400",
+    "line": "27.2px",
+    "style": "normal"
+  },
+  {
+    "mode": "ide",
+    "setting": 16,
+    "probe": "document",
+    "size": "16px",
+    "family": "-apple-system, \"system-ui\", \"PingFang SC\", \"Hiragino Sans GB\", \"Segoe UI\", \"Microsoft YaHei\", sans-serif",
+    "weight": "400",
+    "line": "27.52px",
+    "style": "normal"
+  },
+  {
+    "mode": "ide",
+    "setting": 20,
+    "probe": "composer",
+    "size": "20px",
+    "family": "system-ui, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Noto Sans SC\", sans-serif",
+    "weight": "400",
+    "line": "34px",
+    "style": "normal"
+  },
+  {
+    "mode": "ide",
+    "setting": 20,
+    "probe": "user",
+    "size": "20px",
+    "family": "system-ui, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Noto Sans SC\", sans-serif",
+    "weight": "400",
+    "line": "34px",
+    "style": "normal"
+  },
+  {
+    "mode": "ide",
+    "setting": 20,
+    "probe": "edit-user",
+    "size": "20px",
+    "family": "system-ui, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Noto Sans SC\", sans-serif",
+    "weight": "400",
+    "line": "34px",
+    "style": "normal"
+  },
+  {
+    "mode": "ide",
+    "setting": 20,
+    "probe": "answer",
+    "size": "20px",
+    "family": "system-ui, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Noto Sans SC\", sans-serif",
+    "weight": "400",
+    "line": "34px",
+    "style": "normal"
+  },
+  {
+    "mode": "ide",
+    "setting": 20,
+    "probe": "strong",
+    "size": "20px",
+    "family": "system-ui, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Noto Sans SC\", sans-serif",
+    "weight": "500",
+    "line": "34px",
+    "style": "normal"
+  },
+  {
+    "mode": "ide",
+    "setting": 20,
+    "probe": "em",
+    "size": "20px",
+    "family": "system-ui, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Noto Sans SC\", sans-serif",
+    "weight": "400",
+    "line": "34px",
+    "style": "italic"
+  },
+  {
+    "mode": "ide",
+    "setting": 20,
+    "probe": "h1",
+    "size": "27px",
+    "family": "system-ui, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Noto Sans SC\", sans-serif",
+    "weight": "600",
+    "line": "33.75px",
+    "style": "normal"
+  },
+  {
+    "mode": "ide",
+    "setting": 20,
+    "probe": "h2",
+    "size": "25px",
+    "family": "system-ui, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Noto Sans SC\", sans-serif",
+    "weight": "600",
+    "line": "31.25px",
+    "style": "normal"
+  },
+  {
+    "mode": "ide",
+    "setting": 20,
+    "probe": "h3",
+    "size": "23px",
+    "family": "system-ui, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Noto Sans SC\", sans-serif",
+    "weight": "600",
+    "line": "28.75px",
+    "style": "normal"
+  },
+  {
+    "mode": "ide",
+    "setting": 20,
+    "probe": "h4",
+    "size": "20.4px",
+    "family": "system-ui, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Noto Sans SC\", sans-serif",
+    "weight": "600",
+    "line": "25.5px",
+    "style": "normal"
+  },
+  {
+    "mode": "ide",
+    "setting": 20,
+    "probe": "h5",
+    "size": "16px",
+    "family": "system-ui, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Noto Sans SC\", sans-serif",
+    "weight": "600",
+    "line": "24px",
+    "style": "normal"
+  },
+  {
+    "mode": "ide",
+    "setting": 20,
+    "probe": "h6",
+    "size": "14px",
+    "family": "system-ui, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Noto Sans SC\", sans-serif",
+    "weight": "600",
+    "line": "20px",
+    "style": "normal"
+  },
+  {
+    "mode": "ide",
+    "setting": 20,
+    "probe": "inline-code",
+    "size": "18px",
+    "family": "system-ui, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Noto Sans SC\", sans-serif",
+    "weight": "400",
+    "line": "27px",
+    "style": "normal"
+  },
+  {
+    "mode": "ide",
+    "setting": 20,
+    "probe": "file-chip",
+    "size": "20px",
+    "family": "system-ui, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Noto Sans SC\", sans-serif",
+    "weight": "500",
+    "line": "34px",
+    "style": "normal"
+  },
+  {
+    "mode": "ide",
+    "setting": 20,
+    "probe": "th",
+    "size": "20px",
+    "family": "system-ui, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Noto Sans SC\", sans-serif",
+    "weight": "600",
+    "line": "34px",
+    "style": "normal"
+  },
+  {
+    "mode": "ide",
+    "setting": 20,
+    "probe": "td",
+    "size": "20px",
+    "family": "system-ui, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Noto Sans SC\", sans-serif",
+    "weight": "400",
+    "line": "34px",
+    "style": "normal"
+  },
+  {
+    "mode": "ide",
+    "setting": 20,
+    "probe": "code-label",
+    "size": "10.88px",
+    "family": "-apple-system, \"system-ui\", \"PingFang SC\", \"Hiragino Sans GB\", \"Segoe UI\", \"Microsoft YaHei\", sans-serif",
+    "weight": "400",
+    "line": "18.496px",
+    "style": "normal"
+  },
+  {
+    "mode": "ide",
+    "setting": 20,
+    "probe": "block-code",
+    "size": "18px",
+    "family": "-apple-system, \"system-ui\", \"PingFang SC\", \"Hiragino Sans GB\", \"Segoe UI\", \"Microsoft YaHei\", sans-serif",
+    "weight": "400",
+    "line": "27px",
+    "style": "normal"
+  },
+  {
+    "mode": "ide",
+    "setting": 20,
+    "probe": "structure",
+    "size": "12.5px",
+    "family": "\"SF Mono\", SFMono-Regular, ui-monospace, Menlo, Monaco, Consolas, \"Liberation Mono\", \"Courier New\", monospace",
+    "weight": "400",
+    "line": "19.375px",
+    "style": "normal"
+  },
+  {
+    "mode": "ide",
+    "setting": 20,
+    "probe": "summary",
+    "size": "18px",
+    "family": "system-ui, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Noto Sans SC\", sans-serif",
+    "weight": "500",
+    "line": "30.6px",
+    "style": "normal"
+  },
+  {
+    "mode": "ide",
+    "setting": 20,
+    "probe": "reasoning",
+    "size": "12px",
+    "family": "-apple-system, \"system-ui\", \"PingFang SC\", \"Hiragino Sans GB\", \"Segoe UI\", \"Microsoft YaHei\", sans-serif",
+    "weight": "400",
+    "line": "18.6px",
+    "style": "normal"
+  },
+  {
+    "mode": "ide",
+    "setting": 20,
+    "probe": "process-markdown",
+    "size": "12px",
+    "family": "-apple-system, \"system-ui\", \"PingFang SC\", \"Hiragino Sans GB\", \"Segoe UI\", \"Microsoft YaHei\", sans-serif",
+    "weight": "400",
+    "line": "18.6px",
+    "style": "normal"
+  },
+  {
+    "mode": "ide",
+    "setting": 20,
+    "probe": "narration",
+    "size": "12px",
+    "family": "-apple-system, \"system-ui\", \"PingFang SC\", \"Hiragino Sans GB\", \"Segoe UI\", \"Microsoft YaHei\", sans-serif",
+    "weight": "400",
+    "line": "18.6px",
+    "style": "normal"
+  },
+  {
+    "mode": "ide",
+    "setting": 20,
+    "probe": "fullscreen-label",
+    "size": "11px",
+    "family": "-apple-system, \"system-ui\", \"PingFang SC\", \"Hiragino Sans GB\", \"Segoe UI\", \"Microsoft YaHei\", sans-serif",
+    "weight": "400",
+    "line": "17.05px",
+    "style": "normal"
+  },
+  {
+    "mode": "ide",
+    "setting": 20,
+    "probe": "fullscreen-code",
+    "size": "12px",
+    "family": "-apple-system, \"system-ui\", \"PingFang SC\", \"Hiragino Sans GB\", \"Segoe UI\", \"Microsoft YaHei\", sans-serif",
+    "weight": "400",
+    "line": "18.6px",
+    "style": "normal"
+  },
+  {
+    "mode": "ide",
+    "setting": 20,
+    "probe": "subagent-report",
+    "size": "20px",
+    "family": "system-ui, -apple-system, \"system-ui\", \"Segoe UI\", \"PingFang SC\", \"Noto Sans SC\", sans-serif",
+    "weight": "400",
+    "line": "34px",
+    "style": "normal"
+  },
+  {
+    "mode": "ide",
+    "setting": 20,
+    "probe": "document",
+    "size": "16px",
+    "family": "-apple-system, \"system-ui\", \"PingFang SC\", \"Hiragino Sans GB\", \"Segoe UI\", \"Microsoft YaHei\", sans-serif",
+    "weight": "400",
+    "line": "27.52px",
+    "style": "normal"
+  }
+]

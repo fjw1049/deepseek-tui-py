@@ -141,7 +141,7 @@ function ActivityButton({
     >
       {children}
       {badge && badge > 0 ? (
-        <span className="absolute right-0.5 top-0.5 min-w-[14px] rounded-full bg-ds-ink px-1 text-[9px] font-semibold leading-[14px] text-ds-canvas">
+        <span className="absolute right-0.5 top-0.5 min-w-[14px] rounded-full bg-ds-ink px-1 text-[10px] font-semibold leading-[14px] text-ds-canvas">
           {badge > 99 ? '99+' : badge}
         </span>
       ) : null}

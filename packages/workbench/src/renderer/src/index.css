@@ -14,7 +14,7 @@
   --ds-canvas-dot: rgba(0, 0, 0, 0.04);
   --ds-canvas-dot-size: 22px;
   --font-ui: 'Inter', 'PingFang SC', 'Noto Sans SC', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  --font-chat: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Noto Sans SC', sans-serif;
+  --font-chat: var(--font-ui);
   --font-display: var(--font-ui);
   /* Real monospace for code-like UI strings (URLs, model/task ids, tool
      output). Static stack — user's terminal font choice only affects
@@ -26,6 +26,7 @@
   /* Appearance: density scale (spacing only) and chat reading size. */
   --ds-density: 1;
   --ds-chat-font-size: 16px;
+  --ds-chat-code-font-size: calc(var(--ds-answer-font-size, 16px) * 0.9);
   --ds-chat-column-width: 760px;
   --surface-1: #ffffff;
   --surface-2: #ffffff;
@@ -2150,11 +2151,11 @@ samp {
 .ds-chat-composer textarea,
 .ds-composer-empty textarea,
 .ds-composer-input {
-  font-family: var(--font-ui);
-  font-size: 15px;
+  font-family: var(--font-chat);
+  font-size: var(--ds-answer-font-size, 16px);
   font-weight: 400;
-  line-height: 1.5;
-  letter-spacing: -0.011em;
+  line-height: 1.7;
+  letter-spacing: normal;
   -webkit-font-smoothing: antialiased;
   font-synthesis: none;
   text-align: start;
@@ -2193,19 +2194,19 @@ samp {
 }
 
 .ds-user-message-edit-textarea {
-  font-family: var(--font-ui);
-  font-size: 15px;
+  font-family: var(--font-chat);
+  font-size: var(--ds-answer-font-size, 16px);
   font-weight: 400;
-  line-height: 1.5;
-  letter-spacing: -0.011em;
+  line-height: 1.7;
+  letter-spacing: normal;
   -webkit-font-smoothing: antialiased;
   font-synthesis: none;
   text-align: start;
 }
 
 .ds-composer-input::placeholder {
-  font-family: var(--font-ui);
-  letter-spacing: -0.011em;
+  font-family: var(--font-chat);
+  letter-spacing: normal;
 }
 
 .ds-composer-model-label {
@@ -2968,11 +2969,7 @@ samp {
 }
 
 .ds-sidebar-shell {
-  /* One CJK-first stack for the whole sidebar — Inter mixed with PingFang
-     was why nav vs thread titles felt like different products. */
-  --font-sidebar:
-    -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Hiragino Sans GB', 'Noto Sans SC',
-    'Segoe UI', 'Microsoft YaHei', sans-serif;
+  --font-sidebar: var(--font-ui);
   --sidebar-text: 0.9375rem; /* 15px — nav, projects, threads */
   --sidebar-text-sm: 0.875rem; /* 14px — indented nav, search */
   --sidebar-text-xs: 0.8125rem; /* 13px — section labels, meta */
@@ -4886,8 +4883,15 @@ samp {
   line-height: 1.5;
 }
 
-/* Streamdown prose and inline code inherit the configured UI font stack. */
-.ds-markdown [data-streamdown]:not([data-streamdown='code-block']):not([data-streamdown='code-block-actions']) {
+.ds-process-narration p,
+.ds-process-reasoning .ds-markdown,
+.ds-process-assistant-md.ds-markdown {
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+/* Prose inherits the reading font; code owns its monospace stack. */
+.ds-markdown :where([data-streamdown]:not(code):not(pre):not([data-streamdown='code-block']):not([data-streamdown='code-block-actions'])) {
   font-family: inherit;
 }
 
@@ -4993,9 +4997,7 @@ samp {
   border-radius: 7px;
   background: var(--ds-code-bg);
   padding: 0.04rem 0.3rem;
-  /* Default look keeps the UI font; a theme pack's custom code font
-     (--ds-chat-code-font, set by appearance-derive) takes over when present. */
-  font-family: var(--ds-chat-code-font, var(--font-ui));
+  font-family: var(--ds-chat-code-font, var(--font-mono));
   font-size: 0.8em;
   line-height: 1.18;
   vertical-align: baseline;
@@ -5011,9 +5013,7 @@ samp {
   background: var(--ds-pre-bg);
   padding: 0.6rem 0.72rem;
   box-sizing: border-box;
-  /* `monospace` = UA default, identical to the implicit pre font. A theme
-     pack's custom code font takes over via --ds-chat-code-font. */
-  font-family: var(--ds-chat-code-font, monospace);
+  font-family: var(--ds-chat-code-font, var(--font-mono));
 }
 
 .ds-markdown pre code {
@@ -5035,7 +5035,7 @@ samp {
   border-radius: 7px;
   background: var(--ds-code-bg);
   padding: 0.04rem 0.3rem;
-  font-family: var(--ds-chat-code-font, var(--font-ui));
+  font-family: var(--ds-chat-code-font, var(--font-mono));
   font-size: 0.78em;
   line-height: 1.12;
   vertical-align: baseline;
@@ -5681,7 +5681,7 @@ samp {
   text-overflow: ellipsis;
   white-space: nowrap;
   font-family: var(--font-ui);
-  font-size: 11px;
+  font-size: 12px;
   letter-spacing: 0.02em;
   color: var(--ds-text-muted);
 }
@@ -5863,9 +5863,9 @@ samp {
   margin: 0;
   padding: 0.7rem 0.85rem 0.85rem;
   overflow: auto;
-  font-family: var(--font-mono);
-  font-size: 12.5px;
-  line-height: 1.55;
+  font-family: var(--ds-chat-code-font, var(--font-mono));
+  font-size: var(--ds-chat-code-font-size);
+  line-height: 1.5;
   color: var(--ds-text);
   white-space: pre;
   tab-size: 2;
@@ -5884,7 +5884,7 @@ samp {
 .ds-markdown .ds-code-block-language {
   min-width: 0;
   font-family: var(--font-ui);
-  font-size: 10px;
+  font-size: 12px;
   text-transform: lowercase;
   letter-spacing: 0.02em;
   color: var(--ds-text-muted);
@@ -5938,6 +5938,7 @@ samp {
   min-width: 0;
 }
 
+.ds-code-fullscreen .ds-code-block-html > pre,
 .ds-markdown .ds-code-block-html > pre {
   margin: 0;
   width: 100%;
@@ -5948,16 +5949,20 @@ samp {
   border-radius: 0;
   background: transparent !important;
   padding: 0.52rem 0.66rem;
-  font-size: 12px;
-  line-height: 1.4;
+  font-family: var(--ds-chat-code-font, var(--font-mono));
+  font-size: var(--ds-chat-code-font-size);
+  line-height: 1.5;
   box-sizing: border-box;
 }
 
+.ds-code-fullscreen .ds-code-block-html > pre code,
 .ds-markdown .ds-code-block-html > pre code {
   border: 0;
   background: transparent;
   padding: 0;
+  font-family: inherit;
   font-size: inherit;
+  line-height: inherit;
 }
 
 .ds-markdown .ds-code-block-html .line {
@@ -6508,7 +6513,9 @@ html[data-theme='dark'] .ds-code-fullscreen .shiki span {
 .ds-markdown.ds-markdown--answer h1,
 .ds-markdown.ds-markdown--answer h2,
 .ds-markdown.ds-markdown--answer h3,
-.ds-markdown.ds-markdown--answer h4 {
+.ds-markdown.ds-markdown--answer h4,
+.ds-markdown.ds-markdown--answer h5,
+.ds-markdown.ds-markdown--answer h6 {
   color: var(--ds-text);
   /* Let Chinese headings use the same PingFang-backed UI stack as prose. */
   font-family: inherit;
@@ -6542,10 +6549,22 @@ html[data-theme='dark'] .ds-code-fullscreen .shiki span {
   font-size: 1.1em;
 }
 
+.ds-markdown.ds-markdown--answer h5 {
+  margin: 1.25rem 0 0.375rem;
+  font-size: 1em;
+}
+
+.ds-markdown.ds-markdown--answer h6 {
+  margin: 1.25rem 0 0.375rem;
+  font-size: 0.95em;
+}
+
 .ds-markdown.ds-markdown--answer h1:first-child,
 .ds-markdown.ds-markdown--answer h2:first-child,
 .ds-markdown.ds-markdown--answer h3:first-child,
-.ds-markdown.ds-markdown--answer h4:first-child {
+.ds-markdown.ds-markdown--answer h4:first-child,
+.ds-markdown.ds-markdown--answer h5:first-child,
+.ds-markdown.ds-markdown--answer h6:first-child {
   margin-top: 0;
 }
 
@@ -6704,6 +6723,8 @@ html[data-theme='dark'] .ds-code-fullscreen .shiki span {
 
 .ds-markdown.ds-markdown--answer th,
 .ds-markdown.ds-markdown--answer td {
+  font-size: var(--ds-answer-font-size, 16px);
+  line-height: 1.7;
   padding: 0.4rem 0.5rem;
 }
 
@@ -6758,7 +6779,7 @@ html[data-theme='dark'] .ds-code-fullscreen .shiki span {
   font-family: var(--font-chat);
   font-size: var(--ds-chat-font-size, 14px);
   font-weight: 400;
-  line-height: 1.58;
+  line-height: 1.7;
   box-shadow: none;
   text-align: start;
   text-justify: auto;
@@ -11163,7 +11184,7 @@ select:focus-visible,
   max-width: none;
 }
 
-/* Flatter IDE composer — match rail 12px / 1.625 transcript. */
+/* Flatter IDE composer; editable prose follows the reading font setting. */
 .ds-ide-chat-rail .ds-composer-shell,
 .ds-ide-chat-rail .ds-composer-shell--compact {
   border-radius: 0.75rem;
@@ -11171,15 +11192,23 @@ select:focus-visible,
 
 .ds-ide-chat-rail .ds-composer-input,
 .ds-ide-chat-rail .ds-chat-composer textarea {
-  font-size: 12px;
-  line-height: 1.625;
+  font-family: var(--font-chat);
+  font-size: var(--ds-answer-font-size, 16px);
+  line-height: 1.7;
   letter-spacing: normal;
   min-height: 22px;
   max-height: 120px;
 }
 
 .ds-ide-chat-rail .ds-composer-input::placeholder {
+  font-family: var(--font-chat);
   letter-spacing: normal;
+}
+
+.ds-ide-chat-rail .ds-composer-input:placeholder-shown {
+  height: 1lh;
+  min-height: 1lh;
+  max-height: 1lh;
 }
 
 /* Only the compact host is capped from the light DOM (avoids stale CE styles). */
@@ -11230,21 +11259,15 @@ select:focus-visible,
 }
 
 /*
- * IDE rail typography — match Synara transcript tokens
- * (DEFAULT_CHAT_FONT_SIZE_PX=12, line-height ratio 1.625, left-aligned).
- * Scoped to .ds-ide-chat-rail only; main chat follows the appearance setting.
- *
- * Token ladder (narrow ~440px rail):
- *   base 12 · title 13 · meta 11 · code 11
- * Title never exceeds base+2; Chat-mode absolute px chrome is remapped here.
+ * IDE chrome stays compact (base 13 / title 14 / meta 12 / trace code 12).
+ * Conversation prose and reports follow the reading-size setting; their
+ * code scales to 90% of that size. Editor and navigation fonts stay separate.
  */
 .ds-ide-chat-rail {
-  --ds-chat-font-size: 12px;
-  --ds-chat-code-font-size: 11px; /* Synara chatCodePx ≈ base * 0.95 */
-  --ds-ide-font-base: 12px;
-  --ds-ide-font-title: 13px;
-  --ds-ide-font-meta: 11px;
-  --ds-ide-font-code: 11px;
+  --ds-ide-font-base: 13px;
+  --ds-ide-font-title: 14px;
+  --ds-ide-font-meta: 12px;
+  --ds-ide-font-code: 12px;
   --ds-ide-space-block: 0.55rem;
   --ds-ide-card-pad-y: 0.5rem;
   --ds-ide-card-pad-x: 0.65rem;
@@ -11255,12 +11278,14 @@ select:focus-visible,
 .ds-ide-chat-rail .ds-markdown.ds-markdown--answer,
 .ds-ide-chat-rail .ds-chat-answer {
   font-size: var(--ds-ide-font-base);
-  line-height: 1.625; /* 19.5px at 12px — Synara CHAT_TRANSCRIPT_LINE_HEIGHT_RATIO */
+  line-height: 1.6;
   letter-spacing: normal;
   color: var(--ds-text);
 }
 
-.ds-ide-chat-rail .ds-markdown.ds-markdown--answer {
+.ds-ide-chat-rail .ds-markdown.ds-markdown--answer,
+body:has(.ds-workbench-shell[data-ide-mode]) .ds-subagent-dialog .ds-markdown.ds-markdown--answer {
+  font-family: var(--font-chat);
   font-size: var(--ds-answer-font-size, 16px);
   line-height: 1.7;
   color: color-mix(in srgb, var(--ds-text) 86%, var(--ds-text-muted));
@@ -11315,28 +11340,30 @@ select:focus-visible,
 .ds-ide-chat-rail .ds-markdown.ds-markdown--answer h1,
 .ds-ide-chat-rail .ds-markdown.ds-markdown--answer h2,
 .ds-ide-chat-rail .ds-markdown.ds-markdown--answer h3,
-.ds-ide-chat-rail .ds-markdown.ds-markdown--answer h4 {
+.ds-ide-chat-rail .ds-markdown.ds-markdown--answer h4,
+.ds-ide-chat-rail .ds-markdown.ds-markdown--answer h5,
+.ds-ide-chat-rail .ds-markdown.ds-markdown--answer h6 {
   margin: 1.1em 0 0.35em;
   font-family: inherit;
   font-weight: 600;
-  letter-spacing: -0.01em;
-  line-height: 1.25;
+  letter-spacing: normal;
+  line-height: 1.4;
 }
 
 .ds-ide-chat-rail .ds-markdown.ds-markdown--answer h1 {
-  font-size: 1.35em;
+  font-size: 1.4em;
 }
 
 .ds-ide-chat-rail .ds-markdown.ds-markdown--answer h2 {
-  font-size: 1.25em;
+  font-size: 1.35em;
 }
 
 .ds-ide-chat-rail .ds-markdown.ds-markdown--answer h3 {
-  font-size: 1.15em;
+  font-size: 1.25em;
 }
 
 .ds-ide-chat-rail .ds-markdown.ds-markdown--answer h4 {
-  font-size: 1.02em;
+  font-size: 1.1em;
 }
 
 .ds-ide-chat-rail .ds-markdown.ds-markdown--answer :not(pre) > code,
@@ -11351,13 +11378,14 @@ select:focus-visible,
 .ds-ide-chat-rail .ds-markdown.ds-markdown--answer .ds-code-block-body,
 .ds-ide-chat-rail .ds-markdown.ds-markdown--answer .ds-code-block-html > pre,
 .ds-ide-chat-rail .ds-markdown.ds-markdown--answer .ds-code-block-html > pre code,
-.ds-ide-chat-rail .ds-markdown.ds-markdown--answer pre code {
-  font-size: var(--ds-ide-font-code);
+.ds-ide-chat-rail .ds-markdown.ds-markdown--answer pre code,
+body:has(.ds-workbench-shell[data-ide-mode]) .ds-subagent-dialog .ds-markdown.ds-markdown--answer :is(.ds-code-block-body, .ds-code-block-html > pre, pre code) {
+  font-size: calc(var(--ds-answer-font-size, 16px) * 0.9);
   line-height: 1.5;
 }
 
 .ds-ide-chat-rail .ds-markdown.ds-markdown--answer .ds-code-block-language {
-  font-size: 0.68rem;
+  font-size: 12px;
 }
 
 /* Tables: follow rail base (Chat th is hard-coded 13px). */
@@ -11595,8 +11623,11 @@ select:focus-visible,
 }
 
 .ds-ide-chat-rail .ds-user-message-edit-textarea {
-  font-size: var(--ds-ide-font-base);
-  line-height: 1.55;
+  font-family: var(--font-chat);
+  font-size: var(--ds-answer-font-size, 16px);
+  font-weight: 400;
+  line-height: 1.7;
+  letter-spacing: normal;
 }
 
 /* Soft cards / evolution / misc timeline chips inside the rail. */
@@ -11725,8 +11756,8 @@ select:focus-visible,
   max-width: 100%;
   padding: 0.45rem 0.7rem;
   border-radius: 0.65rem;
-  font-size: var(--ds-ide-font-base);
-  line-height: 1.55;
+  font-size: var(--ds-answer-font-size, 16px);
+  line-height: 1.7;
   text-align: start;
   text-justify: auto;
 }
@@ -11754,10 +11785,10 @@ select:focus-visible,
  * Do NOT target all .ds-modal-surface — Settings / Search / Git dialogs share it.
  */
 body:has(.ds-workbench-shell[data-ide-mode]) {
-  --ds-ide-font-base: 12px;
-  --ds-ide-font-title: 13px;
-  --ds-ide-font-meta: 11px;
-  --ds-ide-font-code: 11px;
+  --ds-ide-font-base: 13px;
+  --ds-ide-font-title: 14px;
+  --ds-ide-font-meta: 12px;
+  --ds-ide-font-code: 12px;
 }
 
 body:has(.ds-workbench-shell[data-ide-mode]) .ds-subagent-dialog-panel,
@@ -11809,8 +11840,7 @@ body:has(.ds-workbench-shell[data-ide-mode]) .ds-subagent-dialog .ds-step-flow .
   line-height: 1.45;
 }
 
-body:has(.ds-workbench-shell[data-ide-mode]) .ds-subagent-dialog .ds-markdown,
-body:has(.ds-workbench-shell[data-ide-mode]) .ds-subagent-dialog .ds-markdown.ds-markdown--answer {
+body:has(.ds-workbench-shell[data-ide-mode]) .ds-subagent-dialog .ds-markdown:not(.ds-markdown--answer) {
   font-size: var(--ds-ide-font-base);
   line-height: 1.625;
 }
@@ -11823,6 +11853,17 @@ body:has(.ds-workbench-shell[data-ide-mode]) .ds-subagent-dialog .ds-markdown td
 
 body:has(.ds-workbench-shell[data-ide-mode]) .ds-subagent-dialog .ds-markdown th {
   font-size: var(--ds-ide-font-meta);
+}
+
+/* Reading content must not inherit the compact table/trace overrides. */
+.ds-ide-chat-rail .ds-markdown.ds-markdown--answer :is(th, td),
+body:has(.ds-workbench-shell[data-ide-mode]) .ds-subagent-dialog .ds-markdown.ds-markdown--answer :is(th, td) {
+  font-size: var(--ds-answer-font-size, 16px);
+  line-height: 1.7;
+}
+
+body:has(.ds-workbench-shell[data-ide-mode]) .ds-subagent-dialog .ds-subagent-report-body.ds-markdown--answer p {
+  line-height: inherit;
 }
 
 /* Rewind confirm only — not Settings / Search / Git modals. */

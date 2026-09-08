@@ -92,7 +92,7 @@ class ChatGPTModelSelector extends HTMLElement {
         vertical-align: middle;
         z-index: 1;
         min-width: 0;
-        font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+        font-family: var(--font-ui, system-ui, sans-serif);
         -webkit-font-smoothing: antialiased;
         font-variant-numeric: tabular-nums;
         user-select: none;
@@ -123,7 +123,7 @@ class ChatGPTModelSelector extends HTMLElement {
       :host([hide-effort]) .pill .label {
         gap: 0;
       }
-      /* IDE rail: match 12px transcript + flatter composer footer. */
+      /* IDE rail: compact controls follow the shared UI font. */
       :host([dense]) .pill {
         height: 28px;
         gap: 5px;
@@ -139,7 +139,7 @@ class ChatGPTModelSelector extends HTMLElement {
         height: 13px;
       }
       :host([dense]) .pill .label {
-        font-size: 12px;
+        font-size: 13px;
         letter-spacing: normal;
       }
       :host([dense]) .chev {

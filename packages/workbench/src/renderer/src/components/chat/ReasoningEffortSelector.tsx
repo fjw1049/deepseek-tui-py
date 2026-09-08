@@ -138,7 +138,7 @@ export function ReasoningEffortSelector({
       if (dense) {
         pill.style.height = '28px'
         const label = pill.querySelector('.label') as HTMLElement | null
-        if (label) label.style.fontSize = '12px'
+        if (label) label.style.fontSize = '13px'
       } else {
         pill.style.height = ''
         const label = pill.querySelector('.label') as HTMLElement | null

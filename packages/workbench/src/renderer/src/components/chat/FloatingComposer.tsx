@@ -1694,7 +1694,7 @@ export function FloatingComposer({
                   >
                     <div className="flex items-center gap-2">
                       <span
-                        className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-[9px] text-[9px] font-semibold tracking-tight ${badge.className}`}
+                        className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-[9px] text-[10px] font-semibold tracking-tight ${badge.className}`}
                         aria-hidden
                       >
                         {badge.label}

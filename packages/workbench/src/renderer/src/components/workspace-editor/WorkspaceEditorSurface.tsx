@@ -12,6 +12,7 @@ import { MessageSquarePlus } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import Editor from '@monaco-editor/react'
 import type { editor as MonacoEditor } from 'monaco-editor'
+import { subscribeAppearance } from '../../lib/apply-appearance'
 import { applyEditorDiffHighlights } from '../../lib/apply-editor-diff-highlights'
 import {
   ensureMonacoConfigured,
@@ -138,6 +139,25 @@ export const WorkspaceEditorSurface = forwardRef<WorkspaceEditorSurfaceHandle, P
       }
     }, [editorReady, syncHighlights, tab.loading, patch])
 
+    // Keep Monaco's glyph metrics in sync with the existing theme code font.
+    useEffect(() => {
+      if (!editorReady) return
+      const syncFont = (): void => {
+        const fontFamily = getComputedStyle(document.documentElement)
+          .getPropertyValue('--font-mono')
+          .trim()
+        editorRef.current?.updateOptions({ fontFamily })
+      }
+      syncFont()
+      const unsubscribe = subscribeAppearance(syncFont)
+      const observer = new MutationObserver(syncFont)
+      observer.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] })
+      return () => {
+        unsubscribe()
+        observer.disconnect()
+      }
+    }, [editorReady, tab.id])
+
     // Honor "open at line N" requests (e.g. a file-edit tool card). Deps are the
     // tab/line primitives only, so typing, scrolling, or content updates never
     // re-trigger a reveal — it fires on mount and on actual tab/line changes.
@@ -262,8 +282,8 @@ export const WorkspaceEditorSurface = forwardRef<WorkspaceEditorSurfaceHandle, P
             overviewRulerBorder: false,
             glyphMargin: false,
             lineDecorationsWidth: 0,
-            fontSize: 12,
-            lineHeight: 20,
+            fontSize: 14,
+            lineHeight: 22,
             scrollBeyondLastLine: false,
             automaticLayout: false,
             wordWrap: 'off',
