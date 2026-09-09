@@ -46,8 +46,10 @@ import { normalizeBrowseUrlInput } from '@shared/dev-preview-url'
 import {
   persistRightSidebarCollapsed,
   persistRightSidebarOpen,
-  persistRightSidebarTab,
-  readStoredRightSidebarTab,
+  persistRightSidebarPanels,
+  readStoredRightSidebarPanels,
+  addRightSidebarTab,
+  removeRightSidebarTab,
   type RightSidebarTab
 } from '../lib/right-sidebar-state'
 import {
@@ -337,7 +339,11 @@ export function Workbench(): ReactElement {
   const runRequest = useRunPanelStore((state) => state.request)
   const [rightSidebarOpen, setRightSidebarOpen] = useState(false)
   const [rightSidebarCollapsed, setRightSidebarCollapsed] = useState(false)
-  const [rightSidebarTab, setRightSidebarTab] = useState<RightSidebarTab>(readStoredRightSidebarTab)
+  const [rightSidebarPanels, setRightSidebarPanels] = useState(readStoredRightSidebarPanels)
+  const rightSidebarTab = rightSidebarPanels.activeTab
+  const setRightSidebarTab = useCallback((tab: RightSidebarTab): void => {
+    setRightSidebarPanels((state) => addRightSidebarTab(state, tab))
+  }, [])
   const openEditorFile = useWorkspaceEditorStore((s) => s.openFile)
   const [leftSidebarWidth, setLeftSidebarWidth] = useState(() =>
     readStoredWidth(LEFT_PANEL_WIDTH_KEY, LEFT_PANEL_DEFAULT)
@@ -570,7 +576,7 @@ export function Workbench(): ReactElement {
     setRightSidebarOpen(true)
     setRightSidebarCollapsed(false)
     setRightSidebarTab(tab)
-  }, [])
+  }, [setRightSidebarTab])
 
   const openInAppEditorSurface = useCallback(
     async (
@@ -630,12 +636,11 @@ export function Workbench(): ReactElement {
     setRightSidebarOpen(true)
     setRightSidebarCollapsed(false)
     setRightSidebarTab('runs')
-  }, [runRequest, runTarget])
+  }, [runRequest, runTarget, setRightSidebarTab])
 
   useEffect(() => {
-    if (rightSidebarTab === 'runs' && runTarget?.threadId !== activeThreadId) {
-      setRightSidebarOpen(false)
-      setRightSidebarTab('editor')
+    if (runTarget?.threadId !== activeThreadId) {
+      setRightSidebarPanels((state) => removeRightSidebarTab(state, 'runs'))
     }
   }, [activeThreadId, rightSidebarTab, runTarget])
 
@@ -740,8 +745,8 @@ export function Workbench(): ReactElement {
   }, [rightSidebarOpen])
 
   useEffect(() => {
-    persistRightSidebarTab(rightSidebarTab)
-  }, [rightSidebarTab])
+    persistRightSidebarPanels(rightSidebarPanels)
+  }, [rightSidebarPanels])
 
   useEffect(() => {
     persistRightSidebarCollapsed(rightSidebarCollapsed)
@@ -1989,6 +1994,11 @@ export function Workbench(): ReactElement {
             open={rightSidebarOpen}
             collapsed={rightSidebarCollapsed}
             tab={rightSidebarTab}
+            tabs={rightSidebarPanels.tabs}
+            onCloseTab={(tab) => {
+              if (tab === 'preview') previewAutoOpenSuppressedRef.current = true
+              setRightSidebarPanels((state) => removeRightSidebarTab(state, tab))
+            }}
             width={rightSidebarWidth}
             workspaceRoot={activeWorkspaceRoot}
             blocks={blocks}

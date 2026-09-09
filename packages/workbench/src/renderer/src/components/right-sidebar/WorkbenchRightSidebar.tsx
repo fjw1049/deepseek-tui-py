@@ -1,15 +1,17 @@
 import {
   lazy,
   Suspense,
-  useLayoutEffect,
-  useMemo,
+  useEffect,
   useRef,
   useState,
   type ReactElement,
   type ReactNode
 } from 'react'
 import {
-  Code2,
+  Check,
+  FolderOpen,
+  Plus,
+  X,
   ListChecks,
   FileEdit,
   Globe2,
@@ -26,10 +28,7 @@ import type { ChatBlock } from '../../agent/types'
 import type { PreviewElementPick } from '../../lib/preview-element-picker'
 import type { ChangeReviewContext } from '../../lib/change-review'
 import type { RightSidebarTab } from '../../lib/right-sidebar-state'
-import {
-  rightSidebarTabBarPlanForWidth,
-  rightSidebarTabBarTierForWidth
-} from '../../lib/right-sidebar-tab-bar-layout'
+import { useLightDismiss } from '../../hooks/use-light-dismiss'
 import { AppTerminalPanel } from '../AppTerminalPanel'
 import { RightSidebarCollapsedStrip } from './RightSidebarCollapsedStrip'
 
@@ -50,7 +49,9 @@ const WorkspaceEditorPanel = lazy(() =>
 type Props = {
   open: boolean
   collapsed: boolean
-  tab: RightSidebarTab
+  tab: RightSidebarTab | null
+  tabs: RightSidebarTab[]
+  onCloseTab: (tab: RightSidebarTab) => void
   width: number
   workspaceRoot: string
   blocks: ChatBlock[]
@@ -79,47 +80,13 @@ type Props = {
   terminalMountActive?: boolean
 }
 
-const TAB_ITEMS: Array<{ id: RightSidebarTab; icon: typeof Code2; labelKey: string }> = [
-  { id: 'editor', icon: Code2, labelKey: 'rightSidebarTabEditor' },
+const TAB_ITEMS: Array<{ id: RightSidebarTab; icon: typeof FolderOpen; labelKey: string }> = [
+  { id: 'editor', icon: FolderOpen, labelKey: 'rightSidebarTabEditor' },
   { id: 'changes', icon: FileEdit, labelKey: 'rightSidebarTabChanges' },
   { id: 'terminal', icon: Terminal, labelKey: 'rightSidebarTabTerminal' },
   { id: 'preview', icon: Globe2, labelKey: 'rightSidebarTabPreview' },
   { id: 'runs', icon: ListChecks, labelKey: 'rightSidebarTabRuns' }
 ]
-
-function TabButton({
-  active,
-  label,
-  showLabel,
-  icon: Icon,
-  onClick
-}: {
-  active: boolean
-  label: string
-  showLabel: boolean
-  icon: typeof Code2
-  onClick: () => void
-}): ReactElement {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      title={label}
-      aria-label={label}
-      className={`inline-flex shrink-0 items-center gap-1 rounded-full border py-0.5 text-[11.5px] font-medium transition ${
-        showLabel ? 'px-2' : 'px-1.5'
-      } ${
-        active
-          ? 'border-ds-border bg-ds-card text-ds-ink shadow-[0_1px_2px_rgba(0,0,0,0.04)]'
-          : 'border-transparent text-ds-faint hover:bg-ds-hover/60 hover:text-ds-muted'
-      }`}
-      aria-pressed={active}
-    >
-      <Icon className="h-3 w-3 shrink-0" strokeWidth={1.9} />
-      {showLabel ? <span className="whitespace-nowrap">{label}</span> : null}
-    </button>
-  )
-}
 
 function PanelFallback(): ReactElement {
   return <div className="h-full w-full bg-ds-sidebar" />
@@ -129,6 +96,8 @@ export function WorkbenchRightSidebar({
   open,
   collapsed,
   tab,
+  tabs,
+  onCloseTab,
   width,
   workspaceRoot,
   blocks,
@@ -159,36 +128,24 @@ export function WorkbenchRightSidebar({
   const runTarget = useRunPanelStore((state) => state.target)
   const activeThreadId = useChatStore((state) => state.activeThreadId)
   const hasRunSelection = !!runTarget && runTarget.threadId === activeThreadId
-  const tabRowRef = useRef<HTMLDivElement>(null)
-  const [tabRowWidth, setTabRowWidth] = useState<number | null>(null)
-  const tabPlan = useMemo(
-    () => rightSidebarTabBarPlanForWidth(tabRowWidth, tab, hasRunSelection || tab === 'runs'),
-    [tab, tabRowWidth, hasRunSelection]
-  )
-  const tabTier = rightSidebarTabBarTierForWidth(tabRowWidth)
-
-  useLayoutEffect(() => {
-    if (!open || collapsed) return
-    const el = tabRowRef.current
-    if (!el || typeof ResizeObserver === 'undefined') return
-
-    let frame = 0
-    const apply = (nextWidth: number): void => {
-      setTabRowWidth((prev) => (prev === nextWidth ? prev : nextWidth))
-    }
-    apply(el.getBoundingClientRect().width)
-
-    const observer = new ResizeObserver(([entry]) => {
-      const nextWidth = entry?.contentRect.width ?? el.getBoundingClientRect().width
-      window.cancelAnimationFrame(frame)
-      frame = window.requestAnimationFrame(() => apply(nextWidth))
-    })
-    observer.observe(el)
-    return () => {
-      window.cancelAnimationFrame(frame)
-      observer.disconnect()
-    }
-  }, [collapsed, open])
+  const [menuOpen, setMenuOpen] = useState(false)
+  const menuRef = useRef<HTMLDivElement>(null)
+  const addButtonRef = useRef<HTMLButtonElement>(null)
+  const activeTabRef = useRef<HTMLButtonElement>(null)
+  useLightDismiss({ open: menuOpen, onDismiss: () => setMenuOpen(false), refs: [menuRef] })
+  useEffect(() => {
+    if (!open || collapsed) setMenuOpen(false)
+    activeTabRef.current?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' })
+  }, [open, collapsed, tab])
+  useEffect(() => {
+    if (menuOpen) menuRef.current?.querySelector<HTMLButtonElement>('[role="menuitem"]')?.focus()
+  }, [menuOpen])
+  const chooseTab = (nextTab: RightSidebarTab): void => {
+    onTabChange(nextTab)
+    setMenuOpen(false)
+    addButtonRef.current?.focus()
+  }
+  const launcherItems = TAB_ITEMS.filter((item) => item.id !== 'runs' || hasRunSelection)
 
   if (!open) return null
 
@@ -245,7 +202,7 @@ export function WorkbenchRightSidebar({
   }
 
   const terminalVisible = tab === 'terminal'
-  const visibleTabItems = TAB_ITEMS.filter((item) => tabPlan.visibleTabs.includes(item.id))
+  const visibleTabItems = tabs.flatMap((id) => TAB_ITEMS.filter((item) => item.id === id))
 
   return (
     <aside
@@ -268,29 +225,74 @@ export function WorkbenchRightSidebar({
       <div className="ds-tool-panel ds-right-panel-surface flex h-full min-h-0 flex-col overflow-hidden bg-ds-sidebar">
         {/* Same height + divider treatment as the workbench topbar so the two
             header lines read as one continuous rule across the card. */}
-        <div className="ds-no-drag ds-surface-divider ds-right-panel-tabbar flex min-h-[var(--ds-header-height,38px)] shrink-0 items-center gap-0.5 px-1.5">
-          <div
-            ref={tabRowRef}
-            className="flex min-w-0 flex-1 flex-nowrap items-center gap-0.5 overflow-hidden"
-            data-right-sidebar-tab-tier={tabRowWidth == null ? 'unknown' : String(tabTier)}
-          >
-            {visibleTabItems.map((item) => (
-              <TabButton
-                key={item.id}
-                active={tab === item.id}
-                label={t(item.labelKey)}
-                showLabel={!!tabPlan.showLabel[item.id]}
-                icon={item.icon}
-                onClick={() => onTabChange(item.id)}
-              />
+        <div className="ds-no-drag ds-surface-divider ds-right-panel-tabbar ds-dock-header">
+          <div className="ds-dock-tabs" aria-label={t('rightSidebarTitle')}>
+            {visibleTabItems.map(({ id, icon: Icon, labelKey }) => (
+              <div key={id} className="ds-dock-tab" data-active={tab === id ? '' : undefined}>
+                <button
+                  ref={tab === id ? activeTabRef : undefined}
+                  type="button"
+                  aria-pressed={tab === id}
+                  onClick={() => onTabChange(id)}
+                  className="ds-dock-tab-label"
+                >
+                  <Icon className="h-3.5 w-3.5" />
+                  <span className="whitespace-nowrap">{t(labelKey)}</span>
+                </button>
+                <button
+                  type="button"
+                  aria-label={t('rightSidebarCloseTab', { name: t(labelKey) })}
+                  title={t('rightSidebarCloseTab', { name: t(labelKey) })}
+                  onClick={() => onCloseTab(id)}
+                  className="ds-dock-tab-close"
+                ><X className="h-3 w-3" /></button>
+              </div>
             ))}
+          </div>
+          <div ref={menuRef} className="relative shrink-0">
+            <button
+              ref={addButtonRef}
+              type="button"
+              aria-label={t('rightSidebarAddPanel')}
+              title={t('rightSidebarAddPanel')}
+              aria-haspopup="menu"
+              aria-expanded={menuOpen}
+              onClick={() => setMenuOpen((value) => !value)}
+              className="ds-dock-action"
+            ><Plus className="h-3.5 w-3.5" /></button>
+            {menuOpen ? (
+              <div
+                role="menu"
+                aria-label={t('rightSidebarAddPanel')}
+                className="ds-dock-menu"
+                onKeyDown={(event) => {
+                  if (event.key === 'Escape') {
+                    event.stopPropagation()
+                    setMenuOpen(false)
+                    addButtonRef.current?.focus()
+                  } else if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
+                    event.preventDefault()
+                    const items = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'))
+                    const index = items.indexOf(document.activeElement as HTMLButtonElement)
+                    const next = event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1 : (index + (event.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length
+                    items[next]?.focus()
+                  } else if (event.key === 'Tab') setMenuOpen(false)
+                }}
+              >
+                {launcherItems.map(({ id, icon: Icon, labelKey }) => (
+                  <button key={id} type="button" role="menuitem" onClick={() => chooseTab(id)}
+                    className="ds-dock-menu-item">
+                    <Icon className="h-4 w-4" strokeWidth={1.8} /><span>{t(labelKey)}</span>
+                    {tabs.includes(id) ? <Check className="ml-auto h-3.5 w-3.5 text-ds-faint" aria-hidden="true" /> : null}
+                  </button>
+                ))}
+              </div>
+            ) : null}
           </div>
           <button
             type="button"
             onClick={onToggleMaximize}
-            className={`inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md transition hover:bg-ds-hover/70 hover:text-ds-ink ${
-              maximized ? 'bg-ds-hover/50 text-ds-ink' : 'text-ds-faint'
-            }`}
+            className="ds-dock-action"
             aria-label={maximized ? t('rightSidebarRestoreHalf') : t('rightSidebarMaximize')}
             aria-pressed={maximized}
             title={maximized ? t('rightSidebarRestoreHalf') : t('rightSidebarMaximize')}
@@ -304,7 +306,7 @@ export function WorkbenchRightSidebar({
           <button
             type="button"
             onClick={onClose}
-            className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-ds-faint transition hover:bg-ds-hover/70 hover:text-ds-ink"
+            className="ds-dock-action"
             aria-label={t('rightSidebarCollapse')}
             title={t('rightSidebarCollapse')}
           >
@@ -313,6 +315,18 @@ export function WorkbenchRightSidebar({
         </div>
 
         <div className="relative min-h-0 flex-1 overflow-hidden">
+          {tab === null ? (
+            <nav aria-label={t('rightSidebarAddPanel')} className="ds-dock-launcher">
+              <div className="ds-dock-launcher-list">
+                {launcherItems.map(({ id, icon: Icon, labelKey }) => (
+                  <button key={id} type="button" onClick={() => chooseTab(id)}
+                    className="ds-dock-launcher-item">
+                    <Icon className="h-[18px] w-[18px] shrink-0" strokeWidth={1.8} /><span>{t(labelKey)}</span>
+                  </button>
+                ))}
+              </div>
+            </nav>
+          ) : null}
           {/* Terminal stays mounted (just hidden) when other tabs are active so
               xterm buffers and the terminal:data IPC listener survive tab
               switches; otherwise switching tabs would unmount the panel and

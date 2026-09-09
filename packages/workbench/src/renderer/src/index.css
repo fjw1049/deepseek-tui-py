@@ -8221,6 +8221,148 @@ select:focus-visible,
   border-left: 1px solid color-mix(in srgb, var(--ds-text) 14%, transparent);
 }
 
+/* Right dock chrome uses theme tokens directly: Tailwind alpha modifiers do
+   not work with this project's full-color CSS variables. */
+.ds-dock-header {
+  position: relative;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  min-height: var(--ds-header-height, 38px);
+  gap: 4px;
+  padding: 0 8px;
+}
+
+.ds-dock-tabs {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  align-items: center;
+  gap: 4px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.ds-dock-tabs::-webkit-scrollbar { display: none; }
+
+.ds-dock-tab {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  height: 30px;
+  border-radius: 8px;
+  color: var(--ds-text-muted);
+}
+.ds-dock-tab[data-active] {
+  background: var(--ds-surface-hover);
+  color: var(--ds-text);
+}
+.ds-dock-tab-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 30px;
+  padding: 0 8px 0 10px;
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 18px;
+}
+.ds-dock-tab-close,
+.ds-dock-action {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  color: var(--ds-text-muted);
+}
+.ds-dock-tab-close {
+  width: 22px;
+  height: 22px;
+  margin-right: 4px;
+  opacity: 0;
+}
+.ds-dock-tab:hover .ds-dock-tab-close,
+.ds-dock-tab:focus-within .ds-dock-tab-close { opacity: 1; }
+.ds-dock-tab:hover,
+.ds-dock-action:hover,
+.ds-dock-action[aria-expanded='true'],
+.ds-dock-action[aria-pressed='true'],
+.ds-dock-tab-close:hover {
+  background: var(--ds-surface-hover);
+  color: var(--ds-text);
+}
+.ds-dock-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 50;
+  width: 208px;
+  padding: 6px;
+  border: 1px solid var(--ds-border);
+  border-radius: 12px;
+  background: var(--ds-surface-elevated);
+  box-shadow: var(--ds-shadow-panel);
+}
+.ds-dock-menu-item {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: 36px;
+  gap: 10px;
+  padding: 7px 10px;
+  border-radius: 7px;
+  color: var(--ds-text);
+  font-size: 13px;
+  text-align: left;
+}
+.ds-dock-menu-item:hover,
+.ds-dock-menu-item:focus-visible { background: var(--ds-surface-hover); }
+
+.ds-dock-launcher {
+  display: flex;
+  height: 100%;
+  overflow-y: auto;
+  padding: 32px 24px;
+}
+.ds-dock-launcher-list {
+  display: flex;
+  flex-direction: column;
+  width: min(100%, 320px);
+  gap: 8px;
+  margin: auto;
+}
+.ds-dock-launcher-item {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  min-height: 48px;
+  gap: 12px;
+  padding: 12px 16px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--ds-text) 4%, var(--ds-bg-sidebar));
+  color: var(--ds-text);
+  font-size: 14px;
+  line-height: 20px;
+  text-align: left;
+}
+.ds-dock-launcher-item:hover {
+  background: color-mix(in srgb, var(--ds-text) 8%, var(--ds-bg-sidebar));
+}
+.ds-dock-header button:focus-visible,
+.ds-dock-launcher-item:focus-visible {
+  outline: 2px solid var(--ds-accent);
+  outline-offset: -2px;
+}
+.ds-dock-launcher-item:active,
+.ds-dock-menu-item:active,
+.ds-dock-action:active { background: var(--ds-surface-hover); }
+@media (hover: none) {
+  .ds-dock-tab-close { opacity: 1; }
+}
+
 .ds-workspace-editor-pane .ds-editor-line-added,
 .monaco-editor .view-lines .view-line.ds-editor-line-added {
   background-color: var(--ds-diff-added-soft) !important;
