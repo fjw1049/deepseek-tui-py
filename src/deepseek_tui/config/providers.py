@@ -134,21 +134,13 @@ def register_provider_context_windows(config: object) -> None:
         per_model = getattr(entry, "context_windows", None) or {}
         for model_id, window in per_model.items():
             model_key = str(model_id).strip()
-            if (
-                isinstance(window, int)
-                and window > 0
-                and _context_window_for_model_optional(model_key) is None
-            ):
+            if isinstance(window, int) and window > 0:
                 overrides[model_key.lower()] = window
         model = (getattr(entry, "model", None) or "").strip()
         if not model or model in per_model:
             continue
         window = getattr(entry, "context_window", None)
-        if (
-            isinstance(window, int)
-            and window > 0
-            and _context_window_for_model_optional(model) is None
-        ):
+        if isinstance(window, int) and window > 0:
             overrides[model.lower()] = window
         elif _context_window_for_model_optional(model) is None:
             overrides[model.lower()] = CUSTOM_MODEL_CONTEXT_WINDOW_TOKENS

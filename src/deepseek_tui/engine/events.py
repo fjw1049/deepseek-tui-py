@@ -24,6 +24,7 @@ class StatusEvent:
 @dataclass(frozen=True, slots=True)
 class TurnStartedEvent:
     user_text: str
+    input_message: Message | None = None
 
 
 @dataclass(frozen=True, slots=True)

@@ -1931,5 +1931,6 @@
   "runPanelBackground": "Running in the background",
   "runPanelFinished": "Run finished",
   "runPanelProgressCount": "{{count}} progress updates",
-  "runPanelResult": "Result"
+  "runPanelResult": "Result",
+  "composerImageTooLarge": "Images must not exceed 32 MiB."
 }

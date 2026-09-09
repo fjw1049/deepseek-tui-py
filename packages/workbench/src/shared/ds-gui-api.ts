@@ -33,6 +33,7 @@ import type {
   WorkspaceListDirectoryResult,
   WorkspacePasteTextResult,
   WorkspacePasteTextTarget,
+  WorkspacePasteImageTarget,
   WorkspaceSearchEntriesResult
 } from './workspace-file'
 import type { UsageQueryResult, UsageRange } from './usage-ledger'
@@ -430,6 +431,7 @@ export type DsGuiApi = {
   resolveWorkspaceFile: (options: WorkspaceFileTarget) => Promise<WorkspaceFileResolveResult>
   readWorkspaceFile: (options: WorkspaceFileTarget) => Promise<WorkspaceFileReadResult>
   writeWorkspaceFile: (options: WorkspaceFileWriteTarget) => Promise<WorkspaceFileWriteResult>
+  writePasteImageFile: (options: WorkspacePasteImageTarget) => Promise<WorkspacePasteTextResult>
   writePasteTextFile: (options: WorkspacePasteTextTarget) => Promise<WorkspacePasteTextResult>
   getWorkspaceHtmlPreviewUrl: (options: {
     path: string

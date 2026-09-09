@@ -399,7 +399,10 @@ class ToolExecutionMixin:
                 tool_name=tool_call.name,
                 content=result.content,
                 success=result.success,
-                metadata=(dict(result.metadata) if isinstance(result.metadata, dict) else None),
+                metadata={
+                    **(result.metadata or {}),
+                    "images": [i.model_dump() for i in result.images],
+                },
             )
         )
         if result.success:
@@ -413,17 +416,23 @@ class ToolExecutionMixin:
             result,
             pressure_ratio=self._ingress_pressure_ratio(model),
         )
-        self._tool_dedup.record(
-            decision.key,
-            output_for_context,
-            is_error=not result.success,
-        )
+        if not result.images:
+            self._tool_dedup.record(
+                decision.key,
+                output_for_context,
+                is_error=not result.success,
+            )
+        for image in result.images:
+            self.tool_context.metadata.setdefault("image_assets", {})[image.asset_id] = (
+                image.model_dump()
+            )
         output_for_context = self._tool_dedup.decorate_execute_content(decision, output_for_context)
         results.append(
             Message.tool_result(
                 tool_call.id,
                 output_for_context,
                 is_error=not result.success,
+                images=result.images,
             )
         )
         return result

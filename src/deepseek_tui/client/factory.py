@@ -95,6 +95,10 @@ def build_llm_client(config: Config) -> LLMClient:
             extra_headers=pc.extra_headers,
         )
 
+    client.media_config = config.model_copy(deep=True)
+    if isinstance(client, DeepSeekClient):
+        client.dynamic_thinking = True
+
     limit = pc.rate_limit or 0
     if limit > 0:
         from deepseek_tui.client.rate_limit import RateLimitedLLMClient

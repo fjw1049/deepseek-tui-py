@@ -589,6 +589,32 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         if model:
             self.default_model = model
 
+    def set_model_route(self, client: LLMClient, config: Any, model: str) -> None:
+        """Apply a complete route for new work; running children keep their snapshot."""
+        from dataclasses import replace
+
+        from deepseek_tui.client.base import MeteredLLMClient
+
+        if not isinstance(client, MeteredLLMClient):
+            client = MeteredLLMClient(client, self.turn_usage_ledger)
+        self.client = client
+        self.turn_loop.client = client
+        self.default_model = model
+        self._app_config = config
+        pc = config.effective_provider_config()
+        self.default_temperature = pc.temperature
+        self.default_reasoning_effort = config.reasoning_effort
+        self.default_extra_body = dict(pc.extra_body)
+        self.tool_context.metadata["task_config"] = config
+        manager = self.tool_context.subagent_manager
+        if manager is not None:
+            manager.default_model = config.subagents.default_model or model
+            runtime = manager.loop_runtime
+            if runtime is not None:
+                manager.attach_loop_runtime(
+                    replace(runtime, client=client, model=model, config=config)
+                )
+
     def invalidate_mcp_tools_cache(self) -> None:
         """Drop cached MCP tool descriptors so the next turn re-discovers."""
         self._mcp_tools_cache = None
@@ -1969,7 +1995,16 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             user_origin = MessageOrigin.GOAL_CONTINUATION
         else:
             user_origin = MessageOrigin.REAL_USER
-        user_message = Message.user(processed.model_text, origin=user_origin)
+        user_message = Message.user(
+            processed.model_text, origin=user_origin, images=processed.images
+        )
+        from deepseek_tui.media import message_images
+
+        self.tool_context.metadata["image_assets"] = {
+            image.asset_id: image.model_dump()
+            for message in [*self.session_messages, user_message]
+            for image in [*message.image_references, *message_images(message)]
+        }
 
         prior_count = len(self.session_messages)
         working_messages = [*self.session_messages, user_message]
@@ -2111,7 +2146,10 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                 self._focus_tool_whitelist = None
                 self._focus_allowed_servers = None
             await self.handle.emit(
-                TurnStartedEvent(user_text="" if op.hidden else processed.display_text)
+                TurnStartedEvent(
+                    user_text="" if op.hidden else processed.display_text,
+                    input_message=None if op.hidden else user_message,
+                )
             )
             self.turn_usage_ledger.reset()
             self._goal_accounted_output_tokens = 0
@@ -2871,7 +2909,13 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             first_divergence,
             unit_token_weights,
         )
+        from deepseek_tui.media import message_images
 
+        if any(message_images(message) for message in request.messages):
+            # Text-token prefix weights cannot represent image tokens or helper projections.
+            self._prefix_digests = []
+            self._prefix_token_weights = []
+            return
         units = self.client.cache_fingerprint_units(request)
         digests = fingerprint_units(units)
         weights = unit_token_weights(units)
@@ -2985,7 +3029,17 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                     len(processed.display_text),
                     len(processed.model_text),
                 )
-                messages.append(Message.user(processed.model_text, origin=MessageOrigin.REAL_USER))
+                messages.append(
+                    Message.user(
+                        processed.model_text,
+                        origin=MessageOrigin.REAL_USER,
+                        images=processed.images,
+                    )
+                )
+                for image in processed.images:
+                    self.tool_context.metadata.setdefault("image_assets", {})[image.asset_id] = (
+                        image.model_dump()
+                    )
                 self.working_set.observe_references(processed.references)
 
             # L0: prune old tool bodies at ≥50% (deterministic, no LLM).

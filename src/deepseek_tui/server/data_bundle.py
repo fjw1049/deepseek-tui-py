@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import shutil
 import tempfile
 import zipfile
@@ -25,6 +26,7 @@ from deepseek_tui.config.paths import (
     user_config_path,
     user_deepseek_dir,
     user_mcp_config_path,
+    user_media_dir,
     user_sessions_dir,
     user_threads_dir,
 )
@@ -112,6 +114,7 @@ def export_bundle(
         "includes": {
             "threads": include_conversations,
             "sessions": include_conversations,
+            "media": include_conversations,
             "config": include_settings,
             "mcp": include_settings,
             "workbench_settings": include_settings,
@@ -129,6 +132,10 @@ def export_bundle(
             n, b = _zip_tree(zf, threads_root, arc_prefix="threads")
             files_written += n
             bytes_written += b
+            for asset in _referenced_media(threads_root, sessions_root):
+                zf.write(asset, arcname=f"media/{asset.name}")
+                files_written += 1
+                bytes_written += asset.stat().st_size
             n, b = _zip_tree(zf, sessions_root, arc_prefix="sessions")
             files_written += n
             bytes_written += b
@@ -194,6 +201,20 @@ def import_bundle(
             "sessions_restored": False,
             "settings_restored": [],
         }
+
+        if includes.get("media"):
+            import hashlib
+
+            from deepseek_tui.media import MAX_IMAGE_BYTES, import_image
+
+            for asset in (tmp_root / "media").glob("*"):
+                if not asset.is_file() or asset.is_symlink():
+                    raise ValueError("Invalid image asset in conversation bundle")
+                with asset.open("rb") as stream:
+                    data = stream.read(MAX_IMAGE_BYTES + 1)
+                if hashlib.sha256(data).hexdigest() != asset.name:
+                    raise ValueError("Image asset hash mismatch in conversation bundle")
+                import_image(data)
 
         if mode == "replace" and includes.get("threads"):
             from deepseek_tui.server.data_inventory import clear_conversation_history
@@ -273,6 +294,12 @@ def create_backup(
         dest = target / "threads"
         shutil.copytree(threads_root, dest)
         files, bytes_copied = _count_tree(dest)
+    for asset in _referenced_media(threads_root, sessions_root):
+        dest = target / "media" / asset.name
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(asset, dest)
+        files += 1
+        bytes_copied += asset.stat().st_size
     if sessions_root.exists():
         dest = target / "sessions"
         shutil.copytree(sessions_root, dest)
@@ -300,6 +327,23 @@ def create_backup(
         "bytes": bytes_copied,
         "last_backup_at": at,
     }
+
+
+def _referenced_media(*roots: Path) -> list[Path]:
+    """Export only assets referenced by the exported conversations, never orphaned images."""
+    asset_ids: set[str] = set()
+    pattern = re.compile(rb'"asset_id"\s*:\s*"([a-f0-9]{64})"')
+    for root in roots:
+        for record in root.rglob("*.json"):
+            if record.is_file() and not record.is_symlink():
+                asset_ids.update(
+                    value.decode("ascii") for value in pattern.findall(record.read_bytes())
+                )
+    assets = [user_media_dir() / asset_id for asset_id in sorted(asset_ids)]
+    for asset in assets:
+        if not asset.is_file() or asset.is_symlink():
+            raise ValueError(f"Cannot export conversation: missing image {asset.name}")
+    return assets
 
 
 def _zip_tree(zf: zipfile.ZipFile, root: Path, *, arc_prefix: str) -> tuple[int, int]:

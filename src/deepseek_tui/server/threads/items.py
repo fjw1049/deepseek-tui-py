@@ -67,6 +67,7 @@ def reconstruct_messages_from_turn(
       replace history accumulated so far (manual /compact persistence).
     """
     from deepseek_tui.protocol.messages import (
+        ImageBlock,
         Message,
         MessageOrigin,
         Role,
@@ -85,6 +86,10 @@ def reconstruct_messages_from_turn(
                 messages = list(dicts_to_messages(snap))
             continue
         if item.kind == TurnItemKind.USER_MESSAGE:
+            saved = item.metadata.get("input_message") if isinstance(item.metadata, dict) else None
+            if isinstance(saved, dict):
+                messages.append(Message.model_validate(saved))
+                continue
             if not text:
                 continue
             # The item kind is the provenance: USER_MESSAGE is what the human
@@ -152,6 +157,7 @@ def reconstruct_messages_from_turn(
                     tool_use_id,
                     _compact_persisted_tool_detail(tool_name, text),
                     is_error=item.status == TurnItemLifecycleStatus.FAILED,
+                    images=[ImageBlock.model_validate(i) for i in meta.get("images", [])],
                 )
             )
     return messages

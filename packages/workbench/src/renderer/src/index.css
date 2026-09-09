@@ -9756,6 +9756,51 @@ select:focus-visible,
   padding-top: 0.85rem;
 }
 
+.ds-llm-vision-setting {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem 1.5rem;
+  padding: 0.35rem 0.15rem;
+}
+
+.ds-llm-vision-setting__copy {
+  flex: 1 1 15rem;
+  min-width: 0;
+}
+
+.ds-llm-vision-setting__title {
+  display: block;
+  font-size: 13px;
+  font-weight: 550;
+  color: var(--ds-text);
+}
+
+.ds-llm-vision-setting__hint {
+  margin: 0.3rem 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--ds-text-faint, var(--ds-text-muted));
+}
+
+.ds-llm-vision-setting__select {
+  flex: 1 1 20rem;
+  width: auto;
+  max-width: 28rem;
+  min-width: 0;
+}
+
+.ds-llm-vision-setting__select [role='combobox'] {
+  text-align: left;
+}
+
+@media (max-width: 640px) {
+  .ds-llm-vision-setting__select {
+    flex-basis: 100%;
+    max-width: none;
+  }
+}
+
 .ds-llm-panel__section-head {
   display: flex;
   align-items: center;

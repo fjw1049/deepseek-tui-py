@@ -1931,5 +1931,6 @@
   "runPanelBackground": "任务在后台运行",
   "runPanelFinished": "运行已结束",
   "runPanelProgressCount": "{{count}} 段进展",
-  "runPanelResult": "执行结果"
+  "runPanelResult": "执行结果",
+  "composerImageTooLarge": "图片不能超过 32 MiB。"
 }

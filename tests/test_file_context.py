@@ -92,16 +92,13 @@ class TestFormats:
         assert out.references[0].kind == "binary"
         assert "<unreadable-file" in out.model_text
 
-    def test_media_hint_only(self, workspace: Path) -> None:
-        raw = "@photo.png\ndescribe"
-        out = process_turn_input(
-            UserTurnInput(raw_text=raw),
-            workspace=workspace,
-            cwd=workspace,
-        )
-        assert out.references[0].kind == "media"
-        assert out.references[0].included is False
-        assert "/attach" in out.model_text
+    def test_damaged_image_is_not_silently_replaced_with_path_hint(self, workspace: Path) -> None:
+        with pytest.raises(ValueError, match="Image is damaged"):
+            process_turn_input(
+                UserTurnInput(raw_text="@photo.png\ndescribe"),
+                workspace=workspace,
+                cwd=workspace,
+            )
 
 
 class TestLargeFile:

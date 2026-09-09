@@ -3434,10 +3434,11 @@ class RuntimeThreadManager:
             if state.active_turn is not None:
                 pop_turn_latency(turn_id)
                 raise TurnConflictError("Thread already has an active turn")
-            if state.provider != provider:
+            if state.provider != provider or state.engine.default_model != model:
                 client = self._get_llm_client(provider)
-                state.engine.client = client
-                state.engine.turn_loop.client = client
+                state.engine.set_model_route(
+                    client, self._config_for_provider(provider, model), model
+                )
                 state.provider = provider
             state.engine.mode = effective_mode
             if effective_mode == "plan":
@@ -5481,6 +5482,15 @@ class RuntimeThreadManager:
                 break
 
             if isinstance(event, TurnStartedEvent):
+                if event.input_message is not None:
+                    for user_item in self.store.list_items_for_turn(turn_id):
+                        if user_item.kind == TurnItemKind.USER_MESSAGE:
+                            user_item.metadata = {
+                                **(user_item.metadata or {}),
+                                "input_message": event.input_message.model_dump(mode="json"),
+                            }
+                            self.store.save_item(user_item)
+                            break
                 await flush_delta_batch()
                 await self._emit_event(
                     thread_id, turn_id, None, "turn.lifecycle", {"status": "in_progress"}
@@ -5689,6 +5699,7 @@ class RuntimeThreadManager:
                             "mutations",
                             "path",
                             "occurrences",
+                            "images",
                             "agent_id",
                             "agent_type",
                             "nickname",

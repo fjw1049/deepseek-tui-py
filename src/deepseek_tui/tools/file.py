@@ -35,7 +35,10 @@ class ReadFileTool(ToolSpec):
 
     def description(self) -> str:
         return (
-            "Read a UTF-8 text file from disk. Output is line-numbered "
+            "Read a text file or image from disk. For an attached image use "
+            "path='media:<asset_id>'. Images are returned as visual content; "
+            "crop=[x,y,width,height] inspects a region in original oriented pixels. "
+            "Text output is line-numbered "
             "(cat -n style). By default at most 2000 lines are returned and "
             "lines longer than 2000 characters are truncated; use offset/limit "
             "to page through large files in ranges. Files larger than 1 MiB "
@@ -49,6 +52,12 @@ class ReadFileTool(ToolSpec):
         return {
             "type": "object",
             "properties": {
+                "crop": {
+                    "type": "array",
+                    "items": {"type": "integer"},
+                    "minItems": 4,
+                    "maxItems": 4,
+                },
                 "path": {
                     "type": "string",
                     "description": (
@@ -81,6 +90,50 @@ class ReadFileTool(ToolSpec):
 
     async def execute(self, input_data: dict[str, object], context: ToolContext) -> ToolResult:
         rel = _require_string(input_data, "path")
+        from deepseek_tui.media import IMAGE_EXTENSIONS, import_image_path
+        from deepseek_tui.protocol.messages import ImageBlock
+
+        image = None
+        if rel.startswith("media:"):
+            raw = context.metadata.get("image_assets", {}).get(rel[6:])
+            if raw is None:
+                raise ToolError("Image is not attached to this conversation")
+            image = ImageBlock.model_validate(raw).model_copy(
+                update={"crop": None, "detail": "auto"}
+            )
+        if image is not None:
+            path = None
+        else:
+            path = context.resolve_path(rel, allow_read_roots=True)
+            if is_sensitive_path(path):
+                raise ToolError(f"refusing to read sensitive file: {path}")
+            if path.suffix.lower() in IMAGE_EXTENSIONS:
+                try:
+                    image = await asyncio.to_thread(import_image_path, path)
+                except (ValueError, OSError) as exc:
+                    raise ToolError(str(exc)) from exc
+        if image is not None:
+            crop = input_data.get("crop")
+            if crop is not None:
+                if (
+                    not isinstance(crop, list)
+                    or len(crop) != 4
+                    or any(type(v) is not int for v in crop)
+                ):
+                    raise ToolError("crop must be [x, y, width, height] in pixels")
+                x, y, w, h = crop
+                if min(x, y) < 0 or min(w, h) <= 0 or x + w > image.width or y + h > image.height:
+                    raise ToolError("crop is outside the original image")
+                image = image.model_copy(update={"crop": tuple(crop), "detail": "high"})
+            context.metadata.setdefault("image_assets", {})[image.asset_id] = image.model_dump()
+            return ToolResult(
+                success=True,
+                content=(
+                    f"Image {image.asset_id}: original {image.width}x{image.height}; "
+                    f"crop={image.crop}. Re-read with path='media:{image.asset_id}'."
+                ),
+                images=[image],
+            )
         path = context.resolve_path(rel, allow_read_roots=True)
         if is_sensitive_path(path):
             raise ToolError(

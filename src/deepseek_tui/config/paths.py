@@ -63,6 +63,11 @@ def user_config_path() -> Path:
     return user_deepseek_dir() / "config.toml"
 
 
+def user_media_dir() -> Path:
+    """Durable image originals shared by saved conversation references."""
+    return user_deepseek_dir() / "media"
+
+
 def user_agents_path() -> Path:
     """``~/.deepseek/AGENTS.md`` — global fallback instructions."""
     return user_deepseek_dir() / "AGENTS.md"

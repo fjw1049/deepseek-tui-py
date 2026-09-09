@@ -290,7 +290,11 @@ def _estimate_tokens_for_message(msg: Message, include_thinking: bool = True) ->
         if hasattr(block, "thinking") and include_thinking:
             parts.append(str(getattr(block, "thinking", "")))
 
-    return max(1, estimate_tokens("".join(parts)))
+    from deepseek_tui.media import image_token_estimate, message_images
+
+    return max(1, estimate_tokens("".join(parts))) + sum(
+        image_token_estimate(img) for img in message_images(msg)
+    )
 
 
 def plan_compaction(
@@ -482,9 +486,18 @@ async def compact_messages_safe(
                 for i in sorted(plan.pinned_indices)
                 if i < len(work_messages)
             ]
-            bridge_text = build_compaction_bridge_text(
-                summary, working_set_paths=working_set_paths
-            )
+            bridge_text = build_compaction_bridge_text(summary, working_set_paths=working_set_paths)
+            from deepseek_tui.media import message_images
+
+            references = {
+                img.asset_id: img
+                for msg in messages
+                for img in [*msg.image_references, *message_images(msg)]
+            }
+            if references:
+                bridge_text += "\nOriginal images available via read_file: " + ", ".join(
+                    f"media:{key}" for key in references
+                )
             compacted = prepend_compaction_bridge(
                 pinned_messages,
                 bridge_text,
@@ -492,6 +505,7 @@ async def compact_messages_safe(
                 prior_requests=prior_requests,
             )
 
+            compacted[0].image_references = list(references.values())
             return CompactionResult(
                 messages=compacted,
                 summary_prompt=bridge_text,

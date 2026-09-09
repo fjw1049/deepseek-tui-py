@@ -232,6 +232,13 @@ export const workspaceFileWritePayloadSchema = z
   })
   .strict()
 
+export const workspacePasteImagePayloadSchema = z
+  .object({
+    workspaceRoot: workspaceRootSchema,
+    dataUrl: z.string().min(1).max(45_000_000)
+  })
+  .strict()
+
 export const workspacePasteTextPayloadSchema = z
   .object({
     workspaceRoot: workspaceRootSchema,

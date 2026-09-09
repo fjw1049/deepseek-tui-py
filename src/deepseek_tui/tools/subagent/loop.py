@@ -226,6 +226,10 @@ async def _execute_subagent_tool(
             return f"Error: Tool {tool_name} denied by approval policy"
     try:
         result = await registry.execute(tool_name, tool_input, context)  # type: ignore[arg-type]
+        if result.images:
+            context.metadata.setdefault("tool_images", {})[tool_call_id] = result.images
+            for image in result.images:
+                context.metadata.setdefault("image_assets", {})[image.asset_id] = image.model_dump()
         if not result.success:
             return f"Error: {result.content}"
         # Same ingress compaction the parent orchestrator applies before a
@@ -431,11 +435,12 @@ async def run_subagent_loop(
         default_set = agent.agent_type.allowed_tools()
         if default_set is not None:
             effective_tools = sorted(default_set)
+    effective_model = agent.model.split("::", 1)[-1]
     registry = build_subagent_registry(
         runtime.config,
         allowed_tools=effective_tools,
         client=runtime.client,
-        root_model=agent.model,
+        root_model=effective_model,
         extra_tools=extra_tools or None,
     )
     approval_policy = getattr(runtime.config, "approval_policy", None)
@@ -505,7 +510,22 @@ async def run_subagent_loop(
     else:
         if agent.fork_messages:
             messages.extend(dicts_to_messages(agent.fork_messages))
-        messages.append(Message.user(agent.prompt, origin=MessageOrigin.REAL_USER))
+        from deepseek_tui.engine.turn import prepare_turn_for_model
+
+        prepared = prepare_turn_for_model(agent.prompt, workspace=agent.workspace)
+        messages.append(
+            Message.user(
+                prepared.model_text, origin=MessageOrigin.REAL_USER, images=prepared.images
+            )
+        )
+
+    from deepseek_tui.media import message_images
+
+    context.metadata["image_assets"] = {
+        img.asset_id: img.model_dump()
+        for msg in messages
+        for img in [*msg.image_references, *message_images(msg)]
+    }
 
     turn_loop = TurnLoop(runtime.client, compact_fn=_compact_subagent_messages)
     final_text = ""
@@ -589,7 +609,7 @@ async def run_subagent_loop(
         ctx = HookContext(
             session_id=agent.id,
             workspace=Path(agent.workspace),
-            model=agent.model,
+            model=effective_model,
             stop_hook_active=stop_hook_active,
         )
         try:
@@ -682,7 +702,20 @@ async def run_subagent_loop(
                     break
                 text = (text or "").strip()
                 if text:
-                    messages.append(Message.user(text, origin=MessageOrigin.REAL_USER))
+                    from deepseek_tui.engine.turn import prepare_turn_for_model
+
+                    prepared = prepare_turn_for_model(text, workspace=agent.workspace)
+                    messages.append(
+                        Message.user(
+                            prepared.model_text,
+                            origin=MessageOrigin.REAL_USER,
+                            images=prepared.images,
+                        )
+                    )
+                    for image in prepared.images:
+                        context.metadata.setdefault("image_assets", {})[image.asset_id] = (
+                            image.model_dump()
+                        )
                     received_input = True
             agent.interrupt_event.clear()
             if received_input:
@@ -693,12 +726,15 @@ async def run_subagent_loop(
 
             round_tools = [] if force_summary else api_tools
             request = MessageRequest(
-                model=agent.model,
+                model=effective_model,
                 messages=messages,
                 system_prompt=system_prompt,
                 tools=round_tools,
                 tool_choice={"type": "auto"} if round_tools else None,
                 max_tokens=agent.agent_type.max_tokens(),
+                temperature=runtime.config.effective_provider_config().temperature,
+                reasoning_effort=runtime.config.reasoning_effort,
+                extra_body=dict(runtime.config.effective_provider_config().extra_body),
                 stream=True,
             )
 
@@ -832,7 +868,7 @@ async def run_subagent_loop(
                     )
                     _save_complete_checkpoint("round")
                     continue
-                if round_thinking:
+                if round_thinking and not final_text:
                     final_text = round_thinking
                 if _try_summary_recovery():
                     _save_complete_checkpoint("round")
@@ -902,7 +938,7 @@ async def run_subagent_loop(
                         auto_approve=runtime.auto_approve,
                         tool_call_id=tc.id,
                         runtime=runtime,
-                        model=agent.model,
+                        model=effective_model,
                         interrupt=agent.interrupt_event,
                     )
                     ok = not output.startswith("Error:")
@@ -919,7 +955,14 @@ async def run_subagent_loop(
                         )
                     )
                 tool_failures = 0 if ok else tool_failures + 1
-                messages.append(Message.tool_result(tc.id, output, is_error=not ok))
+                messages.append(
+                    Message.tool_result(
+                        tc.id,
+                        output,
+                        is_error=not ok,
+                        images=context.metadata.get("tool_images", {}).pop(tc.id, []),
+                    )
+                )
                 if structured_value is not None and not agent.interrupt_event.is_set():
                     break
 
@@ -954,7 +997,7 @@ async def run_subagent_loop(
         runtime.mailbox.send(
             MailboxMessage.token_usage(
                 agent.id,
-                agent.model,
+                effective_model,
                 {
                     "input_tokens": getattr(last_usage, "input_tokens", 0),
                     "output_tokens": getattr(last_usage, "output_tokens", 0),
@@ -973,4 +1016,3 @@ async def run_subagent_loop(
     # memory in place after distillSummary. close() is the only wipe.
     _save_complete_checkpoint("round")
     return AgentRunOutput(text=final_text, structured=structured_value)
-
