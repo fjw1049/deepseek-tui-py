@@ -3451,7 +3451,7 @@ samp {
   /* Lock type on the row so project-nested vs workspace chats can't diverge
      via button UA styles or intermediate inheritance. */
   font-family: var(--font-sidebar);
-  font-size: var(--sidebar-text);
+  font-size: var(--ds-chat-font-size, 16px);
   font-weight: var(--sidebar-weight);
   letter-spacing: 0;
   line-height: 1.4;
@@ -3565,7 +3565,7 @@ samp {
   /* Same type scale as workspace chats — nesting under a project must not
      shrink titles via em/inheritance quirks. */
   font-family: var(--font-sidebar);
-  font-size: var(--sidebar-text);
+  font-size: var(--ds-chat-font-size, 16px);
   font-weight: var(--sidebar-weight);
   letter-spacing: 0;
   line-height: 1.4;

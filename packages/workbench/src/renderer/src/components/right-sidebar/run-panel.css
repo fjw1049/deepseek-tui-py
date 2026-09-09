@@ -1,4 +1,7 @@
 .ds-run-panel {
+  --ds-run-content-width: 700px;
+  --ds-run-content-inset: 22px;
+  --ds-run-scrollbar-width: 7px;
   display: flex;
   flex-direction: column;
   height: 100%;
@@ -20,7 +23,9 @@
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 8px 18px;
+  /* Match the centered reading column, including its reserved scrollbar gutter. */
+  --ds-run-header-inset: max(var(--ds-run-content-inset), calc((100% - var(--ds-run-scrollbar-width) - var(--ds-run-content-width)) / 2 + var(--ds-run-content-inset)));
+  padding: 8px calc(var(--ds-run-header-inset) + var(--ds-run-scrollbar-width)) 8px var(--ds-run-header-inset);
   min-height: 46px;
   border-bottom: 1px solid var(--ds-border-muted);
 }
@@ -88,7 +93,8 @@ svg.ds-run-state-icon.lucide-loader-circle { animation: ds-run-spin 1s linear in
 .ds-run-menu-check { width: 12px; height: 12px; flex-shrink: 0; }
 .ds-run-detail { display: flex; flex: 1; flex-direction: column; min-height: 0; position: relative; }
 .ds-run-scroll { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
-.ds-run-content { max-width: 700px; margin: 0 auto; padding: 16px 22px 24px; }
+.ds-run-scroll::-webkit-scrollbar { width: var(--ds-run-scrollbar-width); }
+.ds-run-content { max-width: var(--ds-run-content-width); margin: 0 auto; padding: 16px var(--ds-run-content-inset) 24px; }
 .ds-run-context { margin-bottom: 12px; padding-bottom: 12px; border-bottom: 1px solid var(--ds-border-muted); }
 .ds-run-context summary { display: flex; align-items: flex-start; gap: 7px; padding: 6px 0; cursor: pointer; list-style: none; }
 .ds-run-context summary > .ds-run-chevron { margin-top: 4px; }
@@ -143,7 +149,7 @@ svg.ds-run-state-icon.lucide-loader-circle { animation: ds-run-spin 1s linear in
 .ds-run-panel .ds-markdown.ds-markdown--answer { font-size: 12px; line-height: 1.75; max-width: none; overflow-wrap: anywhere; }
 .ds-run-panel .ds-run-result .ds-markdown.ds-markdown--answer { font-size: 13px; }
 @container (min-width: 700px) {
-  .ds-run-content { max-width: 840px; padding-inline: 32px; }
+  .ds-run-header, .ds-run-content { --ds-run-content-width: 840px; --ds-run-content-inset: 32px; }
   .ds-run-panel .ds-markdown.ds-markdown--answer { font-size: 14px; }
   .ds-run-panel .ds-run-result .ds-markdown.ds-markdown--answer { font-size: 15px; }
   .ds-run-phase-label, .ds-run-result-header, .ds-run-panel .ds-run-process-toggle { font-size: 15px; }
@@ -159,8 +165,8 @@ svg.ds-run-state-icon.lucide-loader-circle { animation: ds-run-spin 1s linear in
   .ds-run-phase-toggle:hover, .ds-run-action-summary:hover, .ds-run-footer button:hover, .ds-run-resume:hover { background: var(--ds-surface-hover); }
 }
 @container (max-width: 360px) {
-  .ds-run-header { padding: 8px 14px; gap: 8px; }
-  .ds-run-content { padding: 16px 16px 24px; }
+  .ds-run-header, .ds-run-content { --ds-run-content-inset: 16px; }
+  .ds-run-header { gap: 8px; }
   .ds-run-title { font-size: 12px; }
   .ds-run-target { max-width: 90px; }
   .ds-run-phase-body { padding-left: 14px; }
