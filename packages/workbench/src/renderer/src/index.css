@@ -3350,6 +3350,13 @@ samp {
   background: transparent;
 }
 
+/* When Projects is folded away, Workspace takes the available list space. */
+.ds-sidebar-middle:not(:has(> .ds-sidebar-projects-scroll)) > .ds-sidebar-chats-pane {
+  max-height: none;
+  min-height: 0;
+  flex: 1 1 0%;
+}
+
 .ds-sidebar-chats-section {
   min-height: 0;
 }
