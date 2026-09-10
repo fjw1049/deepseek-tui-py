@@ -30,6 +30,10 @@ async def test_approval_remember_returns_session_decision(
 
     decision_task = asyncio.create_task(resolve_later())
     await asyncio.sleep(0.01)
+    pending = bridge.list_pending(thread_id="thr_test")
+    assert len(pending) == 1
+    assert pending[0]["tool_call_id"] == approval_id
+    approval_id = str(pending[0]["approval_id"])
 
     r = await client.post(
         f"/v1/approvals/{approval_id}",

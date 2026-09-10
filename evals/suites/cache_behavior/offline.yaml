@@ -1,0 +1,68 @@
+- schema_version: 1
+  id: cache.openai_append_preserves_prefix
+  suite: cache_behavior
+  risk: high
+  runner: cache_prefix
+  grader: cache
+  tags: [cache, openai-compatible, append-only]
+  related_paths:
+    - src/deepseek_tui/client/deepseek.py
+    - src/deepseek_tui/engine/prefix_probe.py
+  input:
+    protocol: openai
+    mutation: append
+  expect:
+    first_divergence: null
+    system_cache_control: false
+    tool_cache_control: false
+
+- schema_version: 1
+  id: cache.tool_change_breaks_at_tools
+  suite: cache_behavior
+  risk: high
+  runner: cache_prefix
+  grader: cache
+  tags: [cache, tool-schema]
+  related_paths:
+    - src/deepseek_tui/client/deepseek.py
+    - src/deepseek_tui/engine/prefix_probe.py
+  input:
+    protocol: openai
+    mutation: tools
+  expect:
+    first_divergence: tools
+
+- schema_version: 1
+  id: cache.system_change_breaks_at_system
+  suite: cache_behavior
+  risk: high
+  runner: cache_prefix
+  grader: cache
+  tags: [cache, system-prompt]
+  related_paths:
+    - src/deepseek_tui/client/deepseek.py
+    - src/deepseek_tui/engine/prefix_probe.py
+  input:
+    protocol: openai
+    mutation: system
+  expect:
+    first_divergence: system
+
+- schema_version: 1
+  id: cache.anthropic_explicit_marks_and_preserves_prefix
+  suite: cache_behavior
+  risk: high
+  runner: cache_prefix
+  grader: cache
+  tags: [cache, anthropic, explicit]
+  related_paths:
+    - src/deepseek_tui/client/anthropic.py
+    - src/deepseek_tui/engine/prefix_probe.py
+  input:
+    protocol: anthropic
+    prompt_cache: explicit
+    mutation: append
+  expect:
+    first_divergence: null
+    system_cache_control: true
+    tool_cache_control: true

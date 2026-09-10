@@ -74,6 +74,11 @@ export type WorkspaceFileWriteResult =
     }
   | { ok: false; message: string }
 
+export type WorkspacePasteImageTarget = {
+  workspaceRoot: string
+  dataUrl: string
+}
+
 export type WorkspacePasteTextTarget = {
   workspaceRoot: string
   content: string

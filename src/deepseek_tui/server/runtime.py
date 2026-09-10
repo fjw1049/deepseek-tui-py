@@ -725,15 +725,66 @@ class AppRuntime:
             return {"ok": False, "error": f"task not found: {exc}"}
         return {"ok": True, "task": _task_record_to_dict(record)}
 
-    async def resume_task(self, task_id: str) -> dict[str, Any]:
-        """Re-queue a resumable terminal task from its durable transcript."""
+    async def resume_task(
+        self, task_id: str, body: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        """Review authority changes before a user resumes an existing task."""
+        from deepseek_tui.tools.task.resume import permission_changes, scope_key, task_scope
+
         if self._tool_runtime is None or self._tool_runtime.task_manager is None:
             return {"ok": False, "error": "task manager not configured"}
+        manager = self._tool_runtime.task_manager
+        body = body or {}
         try:
-            record = await self._tool_runtime.task_manager.resume_task(task_id)
-        except KeyError as exc:
-            return {"ok": False, "error": f"task not found: {exc}"}
-        except RuntimeError as exc:
+            record = await manager.get_task(task_id)
+            if record is None:
+                raise KeyError(task_id)
+            if not record.status.is_resumable():
+                raise RuntimeError(f"Task status={record.status.value} cannot be resumed")
+            original = task_scope(record)
+            current = {
+                "workspace": str(self.working_directory),
+                "mode": "agent",
+                "allow_shell": self.config.allow_shell and self.config.features.shell_tool,
+                "trust_mode": False,
+                "auto_approve": False,
+            }
+            # Without a selected session, review against ordinary runtime authority.
+            # A detached task may outlive its origin thread.
+            thread_id = body.get("thread_id")
+            thread_manager = manager.thread_manager
+            if thread_id and thread_manager is not None:
+                if not isinstance(thread_id, str):
+                    raise ValueError("thread_id must be a string")
+                from deepseek_tui.workspace.execution import execution_root
+
+                thread = thread_manager.store.load_thread(thread_id)
+                current.update(
+                    workspace=str(execution_root(thread)),
+                    mode=thread.mode,
+                    allow_shell=thread.allow_shell,
+                    trust_mode=thread.trust_mode,
+                    auto_approve=thread.auto_approve,
+                )
+            elif body.get("thread_id"):
+                raise ValueError("Cannot verify the selected thread")
+            changes = permission_changes(original, current)
+            confirmation = scope_key(
+                {"task_id": record.id, "original": original, "current": current}
+            )
+            if changes and body.get("confirmation_key") != confirmation:
+                return {
+                    "ok": False,
+                    "code": "resume_confirmation_required",
+                    "permission_changes": changes,
+                    "resume_permissions": original,
+                    "confirmation_key": confirmation,
+                    "task": _task_record_to_dict(record),
+                }
+            record = await manager.resume_task(record.id, expected_scope=scope_key(original))
+        except (KeyError, FileNotFoundError) as exc:
+            return {"ok": False, "error": f"task or thread not found: {exc}"}
+        except (RuntimeError, ValueError) as exc:
             return {"ok": False, "error": str(exc), "code": "conflict"}
         return {"ok": True, "task": _task_record_to_dict(record)}
 
@@ -1280,12 +1331,14 @@ def engine_event_to_sse(event: EngineEvent) -> dict[str, Any]:
     if isinstance(event, ApprovalRequiredEvent):
         return {
             "event": "approval_required",
+            "approval_id": event.request.approval_id or event.tool_call_id,
             "tool_call_id": event.tool_call_id,
             "request": _render_approval_request(event.request),
         }
     if isinstance(event, ApprovalResolvedEvent):
         return {
             "event": "approval_resolved",
+            "approval_id": event.approval_id or event.tool_call_id,
             "tool_call_id": event.tool_call_id,
             "approved": event.approved,
             "reason": event.reason,

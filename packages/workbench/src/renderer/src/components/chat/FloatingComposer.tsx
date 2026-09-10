@@ -446,6 +446,9 @@ export function FloatingComposer({
   )
   const refreshPendingUserInputs = useChatStore((s) => s.refreshPendingUserInputs)
 
+  const [imageImports, setImageImports] = useState(0)
+  const imageTargetRef = useRef('')
+  imageTargetRef.current = `${activeThreadId ?? ""}:${effectiveWorkspaceRoot}`
   const canCompose = runtimeReady && (hasActiveThread || !!effectiveWorkspaceRoot)
   const canChangeModel = canCompose && !busy
   const outboundPreview = buildOutboundMessage(attachments, input)
@@ -453,6 +456,7 @@ export function FloatingComposer({
   // with no typed request yet.
   const canSend =
     canCompose &&
+    imageImports === 0 &&
     !activeThreadPublishUnresolved &&
     (outboundPreview.length > 0 ||
       focusSkill != null ||
@@ -1317,6 +1321,37 @@ export function FloatingComposer({
     setInput(`${current.slice(0, start)}${text}${current.slice(end)}`)
   }
 
+  const attachImageFiles = async (files: File[]): Promise<void> => {
+    if (!canCompose || !effectiveWorkspaceRoot || !files.length) return
+    const target = imageTargetRef.current
+    setImageImports((count) => count + 1)
+    try {
+      if (typeof window.dsGui?.writePasteImageFile !== 'function') throw new Error(t('composerPasteNeedRestart'))
+      for (const file of files) {
+        if (file.size > 32 * 1024 * 1024) throw new Error(t('composerImageTooLarge'))
+        const dataUrl = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader()
+          reader.onload = () => resolve(String(reader.result))
+          reader.onerror = () => reject(new Error(t('composerPasteFailed')))
+          reader.readAsDataURL(file)
+        })
+        if (target !== imageTargetRef.current) return
+        const result = await window.dsGui.writePasteImageFile({ workspaceRoot: effectiveWorkspaceRoot, dataUrl })
+        if (!result.ok) throw new Error(result.message)
+        if (target !== imageTargetRef.current) return
+        setAttachments((previous) => [...previous, {
+          id: `att-${result.relativePath}`, path: result.relativePath, name: file.name || result.name,
+          size: result.size, status: 'done', progress: 100
+        }])
+      }
+      focusComposer()
+    } catch (error) {
+      if (target === imageTargetRef.current) showAttachNotice(error instanceof Error ? error.message : t('composerPasteFailed'))
+    } finally {
+      setImageImports((count) => count - 1)
+    }
+  }
+
   const handleLargePaste = async (text: string): Promise<void> => {
     if (!effectiveWorkspaceRoot) {
       insertTextAtCursor(text)
@@ -1379,6 +1414,7 @@ export function FloatingComposer({
   }, [])
 
   const handlePrimaryAction = (): void => {
+    if (imageImports > 0) return
     if (voiceActive) return
     if (petSlashQuery != null) {
       const trimmed = input.trim()
@@ -1454,11 +1490,17 @@ export function FloatingComposer({
         useChatStageWidth ? 'ds-chat-stage px-3 sm:px-4' : 'max-w-none px-0'
       } ${compactChrome ? 'pb-0 pt-0' : 'shrink-0 pb-1 pt-0'}`}
       onDragOver={(event) => {
-        if (!event.dataTransfer.types.includes(WORKSPACE_PATH_DRAG_MIME)) return
+        if (!event.dataTransfer.types.includes(WORKSPACE_PATH_DRAG_MIME) && !event.dataTransfer.types.includes('Files')) return
         event.preventDefault()
         event.dataTransfer.dropEffect = 'copy'
       }}
       onDrop={(event) => {
+        const images = Array.from(event.dataTransfer.files).filter((file) => /^image\/(png|jpeg|webp)$/.test(file.type))
+        if (images.length) {
+          event.preventDefault()
+          void attachImageFiles(images)
+          return
+        }
         const path = workspacePathFromDrag(event.dataTransfer)
         if (!path) return
         event.preventDefault()
@@ -1857,6 +1899,14 @@ export function FloatingComposer({
               if (voiceActive) resetVoiceSession()
             }}
             onPaste={(event) => {
+              const images = Array.from(event.clipboardData.files).filter((file) => /^image\/(png|jpeg|webp)$/.test(file.type))
+              if (images.length) {
+                event.preventDefault()
+                const text = event.clipboardData.getData('text/plain')
+                if (text) insertTextAtCursor(text)
+                void attachImageFiles(images)
+                return
+              }
               const text = event.clipboardData?.getData('text/plain') ?? ''
               if (!isLargePaste(text)) return
               event.preventDefault()

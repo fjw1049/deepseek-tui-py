@@ -5,8 +5,10 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from contextlib import nullcontext
+from collections.abc import Coroutine
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from deepseek_tui.tools.subagent.agent import SubAgent
 from deepseek_tui.tools.subagent.completion import (
@@ -23,6 +25,27 @@ from deepseek_tui.utils import summarize_text
 if TYPE_CHECKING:
     from deepseek_tui.protocol.messages import Message
     from deepseek_tui.tools.subagent.manager import SubAgentRuntime
+
+_T = TypeVar("_T")
+
+
+async def _await_input_interrupt(
+    work: Coroutine[Any, Any, _T], interrupt: asyncio.Event
+) -> _T | None:
+    """Interrupt generation/approval waits, never an already-running tool."""
+    pending = asyncio.create_task(work)
+    interrupted = asyncio.create_task(interrupt.wait())
+    try:
+        await asyncio.wait((pending, interrupted), return_when=asyncio.FIRST_COMPLETED)
+        if interrupt.is_set():
+            return None
+        return await pending
+    finally:
+        if not pending.done() and not pending.cancelling():
+            pending.cancel()
+        interrupted.cancel()
+        await asyncio.gather(pending, interrupted, return_exceptions=True)
+
 
 _LOG = logging.getLogger(__name__)
 
@@ -108,6 +131,7 @@ async def _execute_subagent_tool(
     tool_call_id: str = "",
     runtime: SubAgentRuntime | None = None,
     model: str = "",
+    interrupt: asyncio.Event | None = None,
 ) -> str:
     from deepseek_tui.tools.approval import (
         ApprovalDecision,
@@ -159,6 +183,7 @@ async def _execute_subagent_tool(
             tool_name,
             args,
             tool_description=approval_request.reason,
+            working_directory=getattr(context, "working_directory", None),
         )
         call_id = tool_call_id or f"subagent-{tool_name}"
         # Mirror Engine tooling: auto-approve short-circuits inside
@@ -169,15 +194,31 @@ async def _execute_subagent_tool(
         if callable(check):
             still_needs_prompt = not bool(await check())
         emit = getattr(runtime, "emit_event", None) if runtime else None
-        if still_needs_prompt and emit is not None:
-            from deepseek_tui.engine.events import ApprovalRequiredEvent
+        from deepseek_tui.engine.handle import ApprovalHandler
 
-            maybe = emit(
-                ApprovalRequiredEvent(tool_call_id=call_id, request=approval_request)
+        scope = (
+            handler.approval_scope(call_id, approval_request)
+            if still_needs_prompt and isinstance(handler, ApprovalHandler)
+            else nullcontext()
+        )
+        with scope:
+            if still_needs_prompt and emit is not None:
+                from deepseek_tui.engine.events import ApprovalRequiredEvent
+
+                maybe = emit(
+                    ApprovalRequiredEvent(tool_call_id=call_id, request=approval_request)
+                )
+                if asyncio.iscoroutine(maybe):
+                    await maybe
+            decision = (
+                await _await_input_interrupt(
+                    handler.request_approval(call_id, approval_request), interrupt
+                )
+                if interrupt is not None
+                else await handler.request_approval(call_id, approval_request)
             )
-            if asyncio.iscoroutine(maybe):
-                await maybe
-        decision = await handler.request_approval(call_id, approval_request)
+            if decision is None:
+                return "Error: Not executed: approval interrupted by new user input."
         if decision not in (
             ApprovalDecision.APPROVED,
             ApprovalDecision.APPROVED_SESSION,
@@ -185,6 +226,10 @@ async def _execute_subagent_tool(
             return f"Error: Tool {tool_name} denied by approval policy"
     try:
         result = await registry.execute(tool_name, tool_input, context)  # type: ignore[arg-type]
+        if result.images:
+            context.metadata.setdefault("tool_images", {})[tool_call_id] = result.images
+            for image in result.images:
+                context.metadata.setdefault("image_assets", {})[image.asset_id] = image.model_dump()
         if not result.success:
             return f"Error: {result.content}"
         # Same ingress compaction the parent orchestrator applies before a
@@ -390,11 +435,12 @@ async def run_subagent_loop(
         default_set = agent.agent_type.allowed_tools()
         if default_set is not None:
             effective_tools = sorted(default_set)
+    effective_model = agent.model.split("::", 1)[-1]
     registry = build_subagent_registry(
         runtime.config,
         allowed_tools=effective_tools,
         client=runtime.client,
-        root_model=agent.model,
+        root_model=effective_model,
         extra_tools=extra_tools or None,
     )
     approval_policy = getattr(runtime.config, "approval_policy", None)
@@ -464,18 +510,22 @@ async def run_subagent_loop(
     else:
         if agent.fork_messages:
             messages.extend(dicts_to_messages(agent.fork_messages))
-        messages.append(Message.user(agent.prompt, origin=MessageOrigin.REAL_USER))
+        from deepseek_tui.engine.turn import prepare_turn_for_model
 
-    # Queued input is real user data — fold it in before any snapshot so a
-    # cancel on this round can't silently drop it (queue is drained either way).
-    while True:
-        try:
-            text, _interrupt = agent.input_queue.get_nowait()
-        except asyncio.QueueEmpty:
-            break
-        text = (text or "").strip()
-        if text:
-            messages.append(Message.user(text, origin=MessageOrigin.REAL_USER))
+        prepared = prepare_turn_for_model(agent.prompt, workspace=agent.workspace)
+        messages.append(
+            Message.user(
+                prepared.model_text, origin=MessageOrigin.REAL_USER, images=prepared.images
+            )
+        )
+
+    from deepseek_tui.media import message_images
+
+    context.metadata["image_assets"] = {
+        img.asset_id: img.model_dump()
+        for msg in messages
+        for img in [*msg.image_references, *message_images(msg)]
+    }
 
     turn_loop = TurnLoop(runtime.client, compact_fn=_compact_subagent_messages)
     final_text = ""
@@ -559,7 +609,7 @@ async def run_subagent_loop(
         ctx = HookContext(
             session_id=agent.id,
             workspace=Path(agent.workspace),
-            model=agent.model,
+            model=effective_model,
             stop_hook_active=stop_hook_active,
         )
         try:
@@ -643,35 +693,63 @@ async def run_subagent_loop(
                 _save_cancel_checkpoint()
                 raise asyncio.CancelledError
 
+            # Consume between rounds and checkpoint before starting cancellable work.
+            received_input = False
+            while True:
+                try:
+                    text, _interrupt = agent.input_queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
+                text = (text or "").strip()
+                if text:
+                    from deepseek_tui.engine.turn import prepare_turn_for_model
+
+                    prepared = prepare_turn_for_model(text, workspace=agent.workspace)
+                    messages.append(
+                        Message.user(
+                            prepared.model_text,
+                            origin=MessageOrigin.REAL_USER,
+                            images=prepared.images,
+                        )
+                    )
+                    for image in prepared.images:
+                        context.metadata.setdefault("image_assets", {})[image.asset_id] = (
+                            image.model_dump()
+                        )
+                    received_input = True
+            agent.interrupt_event.clear()
+            if received_input:
+                _save_complete_checkpoint("input")
+
             steps += 1
             agent.steps_taken = steps
 
             round_tools = [] if force_summary else api_tools
             request = MessageRequest(
-                model=agent.model,
+                model=effective_model,
                 messages=messages,
                 system_prompt=system_prompt,
                 tools=round_tools,
                 tool_choice={"type": "auto"} if round_tools else None,
                 max_tokens=agent.agent_type.max_tokens(),
+                temperature=runtime.config.effective_provider_config().temperature,
+                reasoning_effort=runtime.config.reasoning_effort,
+                extra_body=dict(runtime.config.effective_provider_config().extra_body),
                 stream=True,
             )
-            llm_gate = getattr(runtime.manager, "llm_semaphore", None)
-            if llm_gate is not None:
-                async with llm_gate:
-                    result = await turn_loop.run(
-                        request,
-                        _noop_emit,
-                        cancel,
-                        tools=round_tools,
-                    )
-            else:
-                result = await turn_loop.run(
-                    request,
-                    _noop_emit,
-                    cancel,
-                    tools=round_tools,
-                )
+
+            async def run_round():
+                llm_gate = getattr(runtime.manager, "llm_semaphore", None)
+                if llm_gate is not None:
+                    async with llm_gate:
+                        return await turn_loop.run(request, _noop_emit, cancel, tools=round_tools)
+                return await turn_loop.run(request, _noop_emit, cancel, tools=round_tools)
+
+            result = await _await_input_interrupt(run_round(), agent.interrupt_event)
+            if result is None:
+                # No tools from a discarded generation have run. The next
+                # iteration consumes the queued input at the normal boundary.
+                continue
 
             if result.usage is not None:
                 last_usage = result.usage
@@ -750,6 +828,9 @@ async def run_subagent_loop(
                         _save_complete_checkpoint("round")
                         continue
                     if await _subagent_stop_allowed():
+                        if not agent.input_queue.empty():
+                            _save_complete_checkpoint("round")
+                            continue
                         break
                     # Blocked: give the agent its tools back and keep going.
                     force_summary = False
@@ -787,12 +868,15 @@ async def run_subagent_loop(
                     )
                     _save_complete_checkpoint("round")
                     continue
-                if round_thinking:
+                if round_thinking and not final_text:
                     final_text = round_thinking
                 if _try_summary_recovery():
                     _save_complete_checkpoint("round")
                     continue
                 if await _subagent_stop_allowed():
+                    if not agent.input_queue.empty():
+                        _save_complete_checkpoint("round")
+                        continue
                     break
                 force_summary = False
                 _save_complete_checkpoint("round")
@@ -817,6 +901,13 @@ async def run_subagent_loop(
                 if _subagent_cancelled(cancel, agent):
                     _save_cancel_checkpoint()
                     raise asyncio.CancelledError
+                if agent.interrupt_event.is_set():
+                    messages.append(
+                        Message.tool_result(
+                            tc.id, "Not executed: superseded by new user input.", is_error=True
+                        )
+                    )
+                    continue
                 input_preview = _mailbox_input_summary(tc.arguments)
                 if runtime.mailbox is not None:
                     runtime.mailbox.send(
@@ -847,7 +938,8 @@ async def run_subagent_loop(
                         auto_approve=runtime.auto_approve,
                         tool_call_id=tc.id,
                         runtime=runtime,
-                        model=agent.model,
+                        model=effective_model,
+                        interrupt=agent.interrupt_event,
                     )
                     ok = not output.startswith("Error:")
                 if runtime.mailbox is not None:
@@ -863,8 +955,15 @@ async def run_subagent_loop(
                         )
                     )
                 tool_failures = 0 if ok else tool_failures + 1
-                messages.append(Message.tool_result(tc.id, output, is_error=not ok))
-                if structured_value is not None:
+                messages.append(
+                    Message.tool_result(
+                        tc.id,
+                        output,
+                        is_error=not ok,
+                        images=context.metadata.get("tool_images", {}).pop(tc.id, []),
+                    )
+                )
+                if structured_value is not None and not agent.interrupt_event.is_set():
                     break
 
             if tool_failures >= MAX_CONSECUTIVE_TOOL_FAILURES:
@@ -878,6 +977,10 @@ async def run_subagent_loop(
                 # than once; the step budget stays the hard bound.
                 tool_failures = 0
             _save_complete_checkpoint("round")
+            if agent.interrupt_event.is_set():
+                structured_value = None
+                force_summary = False
+                continue
             if structured_value is not None:
                 break
         else:
@@ -894,7 +997,7 @@ async def run_subagent_loop(
         runtime.mailbox.send(
             MailboxMessage.token_usage(
                 agent.id,
-                agent.model,
+                effective_model,
                 {
                     "input_tokens": getattr(last_usage, "input_tokens", 0),
                     "output_tokens": getattr(last_usage, "output_tokens", 0),
@@ -913,4 +1016,3 @@ async def run_subagent_loop(
     # memory in place after distillSummary. close() is the only wipe.
     _save_complete_checkpoint("round")
     return AgentRunOutput(text=final_text, structured=structured_value)
-

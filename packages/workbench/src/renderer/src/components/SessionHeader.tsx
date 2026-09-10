@@ -1,4 +1,5 @@
 import type { ReactElement } from 'react'
+import { SessionQueries } from './SessionQueries'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useChatStore } from '../store/chat-store'
@@ -50,8 +51,7 @@ export function SessionHeader({ compact = false, className = '' }: Props): React
     void renameActiveThread(next).finally(() => setEditing(false))
   }
 
-  // Compact: a synara-style breadcrumb row — thread title in ink, then a
-  // muted "workspace · mode · time" trail. No boxed icon chips.
+  // Compact: only the title opens the query list; mode/time stay outside the trigger.
   // Row box matches the 28px sidebar toggle so the title shares its centreline.
   if (compact) {
     return (
@@ -59,21 +59,23 @@ export function SessionHeader({ compact = false, className = '' }: Props): React
         className={`ds-session-header ds-window-drag-region flex h-7 min-h-0 min-w-0 flex-1 items-center gap-2 text-left ${className}`}
       >
         {active ? (
-          <div className="flex h-7 min-w-0 flex-1 items-center gap-2 overflow-hidden">
-            <span
-              className="inline-flex h-7 max-w-[min(38vw,320px)] shrink-0 items-center truncate text-[13px] font-medium leading-none tracking-[-0.01em] text-ds-ink"
-              title={active.title}
-            >
-              {active.title}
-            </span>
-            <span className="ds-session-header-meta inline-flex h-7 min-w-0 items-center gap-1.5 truncate text-[12px] leading-none text-ds-faint">
-              <span className="shrink-0 capitalize">{active.mode}</span>
+          <>
+            <SessionQueries>
+              <span
+                className="block min-w-0 flex-1 truncate text-[13px] font-medium leading-6 tracking-[-0.01em] text-ds-ink"
+                title={active.title}
+              >
+                {active.title}
+              </span>
+            </SessionQueries>
+            <span className="ds-session-header-meta ds-no-drag inline-flex h-7 shrink-0 select-none items-center gap-1.5 text-[12px] leading-none text-ds-faint">
+              <span className="capitalize">{active.mode}</span>
               <span className="opacity-60">·</span>
-              <span className="shrink-0 tabular-nums">
+              <span className="tabular-nums">
                 {formatRelativeTimeCompact(active.updatedAt)}
               </span>
             </span>
-          </div>
+          </>
         ) : showWorkspaceMeta ? (
           <div className="flex h-7 min-w-0 items-center overflow-hidden">
             <div className="truncate text-[13px] font-medium leading-none text-ds-muted">

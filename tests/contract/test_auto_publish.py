@@ -121,6 +121,40 @@ async def test_start_turn_never_dispatches_without_checkpoint(
 
 
 @pytest.mark.asyncio
+async def test_warmup_preserves_thread_recency_and_order(
+    runtime_app, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manager = runtime_app.state.thread_manager
+    repo = _repo(tmp_path)
+    older = await manager.create_thread(
+        CreateThreadRequest(workspace=str(repo), model="deepseek-chat")
+    )
+    old_updated_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    older.updated_at = old_updated_at
+    manager.store.save_thread(older)
+    newer = await manager.create_thread(
+        CreateThreadRequest(workspace=str(repo), model="deepseek-chat")
+    )
+
+    async def fake_ensure_engine_loaded(_thread):
+        return None
+
+    monkeypatch.setattr(manager, "_ensure_engine_loaded", fake_ensure_engine_loaded)
+
+    # Opening an old conversation creates its isolate, then reuses and syncs it.
+    for content in ("one\n", "from-editor\n", "from-editor\n"):
+        (repo / "app.py").write_text(content, encoding="utf-8")
+        result = await manager.warmup_thread(older.id)
+        assert result["status"] == "ready"
+        detail = await manager.get_thread_detail(older.id)
+        assert detail.thread.updated_at == old_updated_at
+        assert detail.thread.env_mode == "worktree"
+        assert (execution_root(detail.thread) / "app.py").read_text() == content
+        listed = await manager.list_threads()
+        assert [t.id for t in listed] == [newer.id, older.id]
+
+
+@pytest.mark.asyncio
 async def test_prepare_isolates_git_and_publish_writes_project(
     runtime_app, tmp_path: Path
 ) -> None:
@@ -2814,3 +2848,75 @@ async def test_apply_endpoint_queues_behind_active_sibling_and_retries(
     assert applied.publish_request_action is None
     assert applied.publish_waiting_on is None
     assert (repo / "app.py").read_text(encoding="utf-8") == "queued-draft\n"
+
+
+@pytest.mark.asyncio
+async def test_idle_reclaim_removes_clean_worktree_and_keeps_thread(
+    runtime_app, tmp_path: Path
+) -> None:
+    from datetime import timedelta
+
+    from deepseek_tui.server.threads.manager import IDLE_WORKTREE_RECLAIM_AFTER
+
+    manager = runtime_app.state.thread_manager
+    repo = _repo(tmp_path)
+    thread = await manager.create_thread(
+        CreateThreadRequest(workspace=str(repo), model="deepseek-chat")
+    )
+    prepared = await manager._prepare_isolated_workspace(thread)
+    tree = execution_root(prepared)
+    assert tree.is_dir()
+
+    prepared.updated_at = datetime.now(timezone.utc) - (
+        IDLE_WORKTREE_RECLAIM_AFTER + timedelta(hours=1)
+    )
+    manager.store.save_thread(prepared)
+
+    removed = await manager.reclaim_idle_worktrees()
+
+    assert removed == 1
+    assert not tree.exists()
+    reloaded = manager.store.load_thread(prepared.id)
+    assert reloaded.archived is False
+    assert reloaded.worktree_path is None
+    assert reloaded.env_mode == "local"
+
+    # Resuming the thread rebuilds the worktree from the project.
+    resumed = await manager._prepare_isolated_workspace(reloaded)
+    assert execution_root(resumed).is_dir()
+
+
+@pytest.mark.asyncio
+async def test_idle_reclaim_keeps_recent_and_unpublished_worktrees(
+    runtime_app, tmp_path: Path
+) -> None:
+    from datetime import timedelta
+
+    from deepseek_tui.server.threads.manager import IDLE_WORKTREE_RECLAIM_AFTER
+
+    manager = runtime_app.state.thread_manager
+    repo = _repo(tmp_path)
+    recent = await manager._prepare_isolated_workspace(
+        await manager.create_thread(
+            CreateThreadRequest(workspace=str(repo), model="deepseek-chat")
+        )
+    )
+    stale = await manager._prepare_isolated_workspace(
+        await manager.create_thread(
+            CreateThreadRequest(workspace=str(repo), model="deepseek-chat")
+        )
+    )
+    (execution_root(stale) / "app.py").write_text(
+        "unpublished\n", encoding="utf-8"
+    )
+    stale.publish_blocked = True
+    stale.updated_at = datetime.now(timezone.utc) - (
+        IDLE_WORKTREE_RECLAIM_AFTER + timedelta(hours=1)
+    )
+    manager.store.save_thread(stale)
+
+    removed = await manager.reclaim_idle_worktrees()
+
+    assert removed == 0
+    assert execution_root(recent).is_dir()
+    assert execution_root(stale).is_dir()

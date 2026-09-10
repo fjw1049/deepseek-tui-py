@@ -11,6 +11,7 @@ import {
 import { MessageSquarePlus } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import Editor from '@monaco-editor/react'
+import { subscribeAppearance } from '../../lib/apply-appearance'
 import type { editor as MonacoEditor } from 'monaco-editor'
 import { applyEditorDiffHighlights } from '../../lib/apply-editor-diff-highlights'
 import {
@@ -137,6 +138,25 @@ export const WorkspaceEditorSurface = forwardRef<WorkspaceEditorSurfaceHandle, P
         cleanupRef.current = null
       }
     }, [editorReady, syncHighlights, tab.loading, patch])
+
+    // Monaco measures glyphs independently of the surrounding UI CSS.
+    useEffect(() => {
+      if (!editorReady) return
+      const syncFont = (): void => {
+        const fontFamily = getComputedStyle(document.documentElement)
+          .getPropertyValue('--font-mono')
+          .trim()
+        editorRef.current?.updateOptions({ fontFamily })
+      }
+      syncFont()
+      const unsubscribe = subscribeAppearance(syncFont)
+      const observer = new MutationObserver(syncFont)
+      observer.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] })
+      return () => {
+        unsubscribe()
+        observer.disconnect()
+      }
+    }, [editorReady, tab.id])
 
     // Honor "open at line N" requests (e.g. a file-edit tool card). Deps are the
     // tab/line primitives only, so typing, scrolling, or content updates never

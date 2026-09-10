@@ -212,6 +212,7 @@ async def create_tool_runtime(
             data_dir=data_dir,
             default_workspace=workspace,
             default_model=default_runtime_model(cfg),
+            config=cfg,
             allow_shell=cfg.allow_shell,
             trust_mode=getattr(cfg, "trust_mode", False),
             worker_count=1,
@@ -335,6 +336,7 @@ async def create_tool_runtime(
 
         sandbox_mode = sandbox_mode_for_approval_tier(approval_policy)
 
+    metadata["allow_shell"] = cfg.allow_shell and cfg.features.shell_tool
     context = ToolContext(
         working_directory=workspace,
         trust_mode=trust_mode,

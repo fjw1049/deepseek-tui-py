@@ -262,3 +262,25 @@ describe('workspace-service boundary checks', () => {
     expect(result.ok).toBe(false)
   })
 })
+
+describe('pasted image attachment', () => {
+  it('preserves image bytes within the workspace and returns an attachable relative path', async () => {
+    const { writePasteImageFile } = await import('./workspace-service')
+    const { readFile } = await import('node:fs/promises')
+    const workspaceRoot = await mkdtemp(join(tmpdir(), 'ds-image-paste-'))
+    const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j3h0AAAAASUVORK5CYII=', 'base64')
+    const result = await writePasteImageFile({ workspaceRoot, dataUrl: `data:image/png;base64,${png.toString('base64')}` })
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.relativePath).toMatch(/^\.deepseek\/pastes\/image-.+\.png$/)
+    expect(await readFile(result.path)).toEqual(png)
+    expect(result.size).toBe(png.length)
+  })
+
+  it('rejects non-image data URLs without writing an attachment', async () => {
+    const { writePasteImageFile } = await import('./workspace-service')
+    const workspaceRoot = await mkdtemp(join(tmpdir(), 'ds-image-paste-'))
+    const result = await writePasteImageFile({ workspaceRoot, dataUrl: 'data:text/html;base64,PHNjcmlwdD4=' })
+    expect(result.ok).toBe(false)
+  })
+})

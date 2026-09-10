@@ -461,7 +461,8 @@ async def test_engine_pre_tool_hook_deny_blocks_execution(
     engine._execute_single_tool_impl = impl  # type: ignore[method-assign]
 
     tc = ToolCall(id="t1", name="write_file", arguments={"path": "x", "content": "y"})
-    result = await engine._execute_single_tool(tc, [], "deepseek-chat")
+    api_tools = [{"type": "function", "function": {"name": "write_file"}}]
+    result = await engine._execute_single_tool(tc, api_tools, "deepseek-chat")
 
     impl.assert_not_called()
     assert result is not None and not result.success
@@ -505,7 +506,8 @@ async def test_engine_post_tool_hook_feedback_appended(tmp_path: Path) -> None:
     engine._execute_single_tool_impl = impl  # type: ignore[method-assign]
 
     tc = ToolCall(id="t2", name="edit_file", arguments={"path": "x"})
-    result = await engine._execute_single_tool(tc, [], "deepseek-chat")
+    api_tools = [{"type": "function", "function": {"name": "edit_file"}}]
+    result = await engine._execute_single_tool(tc, api_tools, "deepseek-chat")
 
     impl.assert_called_once()
     assert result is not None and result.success

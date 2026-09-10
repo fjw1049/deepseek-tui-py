@@ -48,6 +48,15 @@ async def test_monitor_turn_emits_approval_required_sse(
         )
     )
     approval_id = "appr_monitor_e2e"
+    from deepseek_tui.server.approval import PendingApprovalRecord
+
+    pending = manager._approval_bridge.register(
+        approval_id,
+        meta=PendingApprovalRecord(
+            thread_id=thread.id, turn_id=turn_id,
+            tool_name="bash", description="Run ls", tool_call_id="original-call",
+        ),
+    )
 
     stub_engine = SimpleNamespace(tool_context=ToolContext(working_directory=manager.workspace))
     engine_task = asyncio.create_task(asyncio.sleep(3600), name="test-engine-idle")
@@ -60,8 +69,11 @@ async def test_monitor_turn_emits_approval_required_sse(
     async def pump() -> None:
         await handle.emit(
             ApprovalRequiredEvent(
-                tool_call_id=approval_id,
+                tool_call_id="original-call",
                 request=ApprovalRequest(
+                    approval_id=approval_id,
+                    tool_call_id="original-call",
+                    turn_id=turn_id,
                     tool_name="bash",
                     risk_level=RiskLevel.MEDIUM,
                     category=ToolCategory.CODE_EXEC,
@@ -78,6 +90,10 @@ async def test_monitor_turn_emits_approval_required_sse(
     ]
     assert len(approval_events) == 1
     assert approval_events[0].payload["approval_id"] == approval_id
+    assert approval_events[0].payload["tool_call_id"] == "original-call"
+    assert approval_events[0].payload["turn_id"] == turn_id
+    assert pending.cancelled()
+    assert manager._approval_bridge.list_pending(thread.id) == []
 
     engine_task.cancel()
     with pytest.raises(asyncio.CancelledError):
@@ -107,7 +123,7 @@ async def test_http_approval_handler_and_post_allow(
     async def wait_and_post() -> None:
         await asyncio.sleep(0.05)
         r = await client.post(
-            f"/v1/approvals/{approval_id}",
+            f"/v1/approvals/{request.approval_id}",
             json={"decision": "allow", "remember": False},
         )
         assert r.status_code == 200

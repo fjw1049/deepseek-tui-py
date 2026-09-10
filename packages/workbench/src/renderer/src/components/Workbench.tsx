@@ -1,3 +1,4 @@
+import { useRunPanelStore } from '../store/run-panel-store'
 import type {
   CSSProperties,
   PointerEvent as ReactPointerEvent,
@@ -45,8 +46,10 @@ import { normalizeBrowseUrlInput } from '@shared/dev-preview-url'
 import {
   persistRightSidebarCollapsed,
   persistRightSidebarOpen,
-  persistRightSidebarTab,
-  readStoredRightSidebarTab,
+  persistRightSidebarPanels,
+  readStoredRightSidebarPanels,
+  addRightSidebarTab,
+  removeRightSidebarTab,
   type RightSidebarTab
 } from '../lib/right-sidebar-state'
 import {
@@ -332,9 +335,15 @@ export function Workbench(): ReactElement {
   // Cold start always lands on the main chat shell: left rail expanded, no IDE
   // mode, no right tool panel (editor / changes / terminal / browser). Widths
   // and the last right-sidebar tab still persist for when the user opens them.
+  const runTarget = useRunPanelStore((state) => state.target)
+  const runRequest = useRunPanelStore((state) => state.request)
   const [rightSidebarOpen, setRightSidebarOpen] = useState(false)
   const [rightSidebarCollapsed, setRightSidebarCollapsed] = useState(false)
-  const [rightSidebarTab, setRightSidebarTab] = useState<RightSidebarTab>(readStoredRightSidebarTab)
+  const [rightSidebarPanels, setRightSidebarPanels] = useState(readStoredRightSidebarPanels)
+  const rightSidebarTab = rightSidebarPanels.activeTab
+  const setRightSidebarTab = useCallback((tab: RightSidebarTab): void => {
+    setRightSidebarPanels((state) => addRightSidebarTab(state, tab))
+  }, [])
   const openEditorFile = useWorkspaceEditorStore((s) => s.openFile)
   const [leftSidebarWidth, setLeftSidebarWidth] = useState(() =>
     readStoredWidth(LEFT_PANEL_WIDTH_KEY, LEFT_PANEL_DEFAULT)
@@ -567,7 +576,7 @@ export function Workbench(): ReactElement {
     setRightSidebarOpen(true)
     setRightSidebarCollapsed(false)
     setRightSidebarTab(tab)
-  }, [])
+  }, [setRightSidebarTab])
 
   const openInAppEditorSurface = useCallback(
     async (
@@ -621,6 +630,19 @@ export function Workbench(): ReactElement {
     setLayoutMode('chat')
     persistLayoutMode('chat')
   }, [])
+
+  useEffect(() => {
+    if (runTarget?.threadId !== useChatStore.getState().activeThreadId) return
+    setRightSidebarOpen(true)
+    setRightSidebarCollapsed(false)
+    setRightSidebarTab('runs')
+  }, [runRequest, runTarget, setRightSidebarTab])
+
+  useEffect(() => {
+    if (runTarget?.threadId !== activeThreadId) {
+      setRightSidebarPanels((state) => removeRightSidebarTab(state, 'runs'))
+    }
+  }, [activeThreadId, rightSidebarTab, runTarget])
 
   const closeRightSidebar = useCallback((): void => {
     setRightSidebarOpen(false)
@@ -723,8 +745,8 @@ export function Workbench(): ReactElement {
   }, [rightSidebarOpen])
 
   useEffect(() => {
-    persistRightSidebarTab(rightSidebarTab)
-  }, [rightSidebarTab])
+    persistRightSidebarPanels(rightSidebarPanels)
+  }, [rightSidebarPanels])
 
   useEffect(() => {
     persistRightSidebarCollapsed(rightSidebarCollapsed)
@@ -1972,6 +1994,11 @@ export function Workbench(): ReactElement {
             open={rightSidebarOpen}
             collapsed={rightSidebarCollapsed}
             tab={rightSidebarTab}
+            tabs={rightSidebarPanels.tabs}
+            onCloseTab={(tab) => {
+              if (tab === 'preview') previewAutoOpenSuppressedRef.current = true
+              setRightSidebarPanels((state) => removeRightSidebarTab(state, tab))
+            }}
             width={rightSidebarWidth}
             workspaceRoot={activeWorkspaceRoot}
             blocks={blocks}

@@ -37,11 +37,11 @@ LARGE_CONTEXT_SUMMARY_MAX_TOKENS = 2_048
 LARGE_CONTEXT_WINDOW_TOKENS = 500_000
 
 # L0 mid-session tool-result prune (grok-style).
-L0_KEEP_LAST_N_TURNS = 3
+L0_KEEP_LAST_N_TURNS = 5
 L0_SOFT_TRIM_THRESHOLD = 4_000
 L0_SOFT_TRIM_HEAD = 1_500
 L0_SOFT_TRIM_TAIL = 1_500
-L0_HARD_CLEAR_AGE_TURNS = 10
+L0_HARD_CLEAR_AGE_TURNS = 15
 # Default hard-clear body when no spillover path is recoverable. Prefer
 # ``format_hard_clear_placeholder`` so spilled outputs keep a re-read pointer.
 L0_HARD_CLEAR_PLACEHOLDER = "[Tool result omitted — too old]"
@@ -290,7 +290,11 @@ def _estimate_tokens_for_message(msg: Message, include_thinking: bool = True) ->
         if hasattr(block, "thinking") and include_thinking:
             parts.append(str(getattr(block, "thinking", "")))
 
-    return max(1, estimate_tokens("".join(parts)))
+    from deepseek_tui.media import image_token_estimate, message_images
+
+    return max(1, estimate_tokens("".join(parts))) + sum(
+        image_token_estimate(img) for img in message_images(msg)
+    )
 
 
 def plan_compaction(
@@ -347,6 +351,7 @@ def should_compact(
     pinned_indices: set[int] | None = None,
     *,
     real_input_tokens: int = 0,
+    real_input_estimate: int = 0,
     model: str | None = None,
     system_prompt: str | None = None,
     tools: list[dict[str, Any]] | None = None,
@@ -370,6 +375,7 @@ def should_compact(
         model or config.model or "deepseek-chat",
         messages,
         real_input_tokens=real_input_tokens,
+        real_input_estimate=real_input_estimate,
         system_prompt=system_prompt,
         tools=tools,
     )
@@ -416,10 +422,27 @@ async def compact_messages_safe(
     )
 
     # Drop any prior bridge from the plan input; its text becomes previous_summary.
+    # Remap caller-provided pins at the same time: their indices refer to the
+    # original list, so removing a leading bridge otherwise shifts every pin.
     prior_bridge = extract_compaction_bridge_text(messages)
-    work_messages = [m for m in messages if not is_compaction_bridge_message(m)]
+    indexed_work = [
+        (old_index, message)
+        for old_index, message in enumerate(messages)
+        if not is_compaction_bridge_message(message)
+    ]
+    work_messages = [message for _old_index, message in indexed_work]
+    remapped_pins = (
+        {
+            new_index
+            for new_index, (old_index, _message) in enumerate(indexed_work)
+            if old_index in pinned_indices
+        }
+        if pinned_indices
+        else None
+    )
     if not work_messages:
         work_messages = list(messages)
+        remapped_pins = pinned_indices
 
     prev = previous_summary or prior_bridge
     last_real_query = find_last_real_user_query(work_messages)
@@ -429,7 +452,7 @@ async def compact_messages_safe(
 
     plan = plan_compaction(
         work_messages,
-        pinned_indices,
+        remapped_pins,
         keep_recent_tokens=config.keep_recent_tokens,
     )
 
@@ -463,9 +486,18 @@ async def compact_messages_safe(
                 for i in sorted(plan.pinned_indices)
                 if i < len(work_messages)
             ]
-            bridge_text = build_compaction_bridge_text(
-                summary, working_set_paths=working_set_paths
-            )
+            bridge_text = build_compaction_bridge_text(summary, working_set_paths=working_set_paths)
+            from deepseek_tui.media import message_images
+
+            references = {
+                img.asset_id: img
+                for msg in messages
+                for img in [*msg.image_references, *message_images(msg)]
+            }
+            if references:
+                bridge_text += "\nOriginal images available via read_file: " + ", ".join(
+                    f"media:{key}" for key in references
+                )
             compacted = prepend_compaction_bridge(
                 pinned_messages,
                 bridge_text,
@@ -473,6 +505,7 @@ async def compact_messages_safe(
                 prior_requests=prior_requests,
             )
 
+            compacted[0].image_references = list(references.values())
             return CompactionResult(
                 messages=compacted,
                 summary_prompt=bridge_text,
@@ -565,8 +598,9 @@ async def _create_summary(
     previous_block = ""
     if previous_summary and previous_summary.strip():
         previous_block = (
-            "Your previous handoff note (authoritative; PRESERVE still-true "
-            "facts, ADD new progress, UPDATE Next step):\n"
+            "Your previous handoff note is continuity context, not evidence. "
+            "PRESERVE still-supported facts, ADD new progress, and UPDATE "
+            "Next step:\n"
             f"<previous-summary>\n{previous_summary.strip()}\n</previous-summary>\n\n"
         )
     user_prompt = (
@@ -735,6 +769,7 @@ def should_l0_prune(
     model: str,
     messages: list[Message],
     real_input_tokens: int = 0,
+    real_input_estimate: int = 0,
     config: CompactionConfig | None = None,
     system_prompt: str | None = None,
     tools: list[dict[str, Any]] | None = None,
@@ -756,6 +791,7 @@ def should_l0_prune(
             model,
             messages,
             real_input_tokens=real_input_tokens,
+            real_input_estimate=real_input_estimate,
             system_prompt=system_prompt,
             tools=tools,
         )

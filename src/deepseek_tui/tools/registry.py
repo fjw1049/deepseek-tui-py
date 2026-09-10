@@ -5,16 +5,16 @@ Consolidates base.py, context.py, registry.py, builder.py.
 
 from __future__ import annotations
 
-
-
-from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
-from enum import Enum
-from typing import Any, Callable
-from pathlib import Path
-from typing import TYPE_CHECKING
 import asyncio
 import logging
+from abc import ABC, abstractmethod
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from enum import Enum
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
+
+from deepseek_tui.protocol.messages import ImageBlock
 
 if TYPE_CHECKING:
     from jsonschema import Draft202012Validator
@@ -53,6 +53,7 @@ class ToolResult:
     success: bool
     content: str
     metadata: dict[str, Any] = field(default_factory=dict)
+    images: list[ImageBlock] = field(default_factory=list)
 
 
 class ToolSpec(ABC):

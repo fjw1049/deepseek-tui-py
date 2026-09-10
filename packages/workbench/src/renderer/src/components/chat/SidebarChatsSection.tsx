@@ -259,7 +259,7 @@ export function SidebarChatsSection({
 
   return (
     <div className="ds-sidebar-chats-section ds-no-drag flex h-full min-h-0 flex-col">
-      <div className="ds-sidebar-chats-header shrink-0">
+      <div className="ds-sidebar-chats-header group shrink-0">
         {selectMode ? (
           <>
             <span className="ds-sidebar-section-label min-w-0 flex-1 truncate">
@@ -321,7 +321,7 @@ export function SidebarChatsSection({
               }}
               title={t('sidebarChatsNewThread')}
               aria-label={t('sidebarChatsNewThread')}
-              className="shrink-0 rounded-md p-1 text-ds-faint transition-colors duration-200 hover:bg-ds-hover/70 hover:text-ds-ink"
+              className="shrink-0 rounded-md p-1 text-ds-faint opacity-0 transition duration-200 hover:bg-ds-hover/70 hover:text-ds-ink hover:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100"
             >
               <Plus className="h-3.5 w-3.5" strokeWidth={1.75} />
             </button>

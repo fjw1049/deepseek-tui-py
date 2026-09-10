@@ -50,6 +50,21 @@ class ThinkingBlock(BaseModel):
     signature: str | None = None
 
 
+class ImageBlock(BaseModel):
+    """Durable image reference; binary data never lives in the transcript."""
+
+    type: Literal["image"] = "image"
+    asset_id: str = Field(pattern=r"^[a-f0-9]{64}$")
+    mime_type: Literal[
+        "image/png", "image/jpeg", "image/webp", "image/gif", "image/bmp", "image/tiff"
+    ]
+    width: int = Field(gt=0)
+    height: int = Field(gt=0)
+    byte_size: int = Field(gt=0)
+    detail: Literal["auto", "low", "high"] = "auto"
+    crop: tuple[int, int, int, int] | None = None
+
+
 class ToolUseBlock(BaseModel):
     type: Literal["tool_use"] = "tool_use"
     id: str
@@ -62,10 +77,11 @@ class ToolResultBlock(BaseModel):
     tool_use_id: str
     content: str
     is_error: bool = False
+    images: list[ImageBlock] = Field(default_factory=list)
 
 
 ContentBlock = Annotated[
-    TextBlock | ThinkingBlock | ToolUseBlock | ToolResultBlock,
+    TextBlock | ImageBlock | ThinkingBlock | ToolUseBlock | ToolResultBlock,
     Field(discriminator="type"),
 ]
 
@@ -75,14 +91,22 @@ class Message(BaseModel):
     content: list[ContentBlock] = Field(default_factory=list)
     # Session-local tag; ignored by API serializers that only read role/content.
     origin: MessageOrigin | None = None
+    # Archived assets remain available for read_file without resending their pixels.
+    image_references: list[ImageBlock] = Field(default_factory=list)
 
     @classmethod
     def system(cls, text: str, *, origin: MessageOrigin | None = None) -> Message:
         return cls(role=Role.SYSTEM, content=[TextBlock(text=text)], origin=origin)
 
     @classmethod
-    def user(cls, text: str, *, origin: MessageOrigin | None = None) -> Message:
-        return cls(role=Role.USER, content=[TextBlock(text=text)], origin=origin)
+    def user(
+        cls,
+        text: str,
+        *,
+        origin: MessageOrigin | None = None,
+        images: list[ImageBlock] | None = None,
+    ) -> Message:
+        return cls(role=Role.USER, content=[TextBlock(text=text), *(images or [])], origin=origin)
 
     @classmethod
     def assistant(cls, text: str, *, origin: MessageOrigin | None = None) -> Message:
@@ -94,10 +118,21 @@ class Message(BaseModel):
         return cls(role=Role.ASSISTANT, content=cast(list[ContentBlock], blocks))
 
     @classmethod
-    def tool_result(cls, tool_use_id: str, content: str, is_error: bool = False) -> Message:
+    def tool_result(
+        cls,
+        tool_use_id: str,
+        content: str,
+        is_error: bool = False,
+        *,
+        images: list[ImageBlock] | None = None,
+    ) -> Message:
         return cls(
             role=Role.TOOL,
-            content=[ToolResultBlock(tool_use_id=tool_use_id, content=content, is_error=is_error)],
+            content=[
+                ToolResultBlock(
+                    tool_use_id=tool_use_id, content=content, is_error=is_error, images=images or []
+                )
+            ],
         )
 
     def text_content(self) -> str:

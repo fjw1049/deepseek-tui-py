@@ -35,14 +35,43 @@ def mcp_response_to_tool_result(
 ) -> ToolResult:
     """Convert an MCP ``tools/call`` payload into a :class:`ToolResult`."""
     content_parts: list[str] = []
+    images = []
     for block in payload.get("content", []):
         if isinstance(block, dict) and block.get("type") == "text":
             content_parts.append(block.get("text", ""))
-    content = "\n".join(content_parts) if content_parts else json.dumps(payload)
+        elif isinstance(block, dict) and block.get("type") == "image":
+            import base64
+
+            from deepseek_tui.media import MAX_IMAGE_BYTES, import_image
+
+            encoded = block.get("data", "")
+            if not isinstance(encoded, str) or len(encoded) > (MAX_IMAGE_BYTES * 4 // 3 + 4):
+                raise ToolError("MCP image exceeds the supported image size")
+            try:
+                images.append(import_image(base64.b64decode(encoded, validate=True)))
+            except (ValueError, OSError) as exc:
+                raise ToolError(f"MCP image could not be read: {exc}") from exc
+        elif (
+            isinstance(block, dict)
+            and block.get("type") == "resource"
+            and isinstance(block.get("resource", {}).get("text"), str)
+        ):
+            content_parts.append(block["resource"]["text"])
+        elif isinstance(block, dict) and block.get("type") == "resource_link":
+            content_parts.append(json.dumps(block, ensure_ascii=False))
+        elif isinstance(block, dict):
+            content_parts.append(f"[Unsupported MCP content: {block.get('type', 'unknown')}]")
+    content = (
+        "\n".join(content_parts)
+        if content_parts
+        else (f"{len(images)} image(s) attached." if images else json.dumps(payload))
+    )
     is_error = bool(payload.get("isError", False))
     if is_error and looks_like_argument_error(content):
         content = f"{content}\n\n{format_schema_hint(parameters)}"
-    return ToolResult(success=not is_error, content=content, metadata={"mcp_tool": name})
+    return ToolResult(
+        success=not is_error, content=content, metadata={"mcp_tool": name}, images=images
+    )
 
 
 async def execute_external_mcp_tool(

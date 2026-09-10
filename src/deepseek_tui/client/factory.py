@@ -20,6 +20,12 @@ if TYPE_CHECKING:
     from deepseek_tui.config.models import Config
 
 
+class MissingApiKeyError(ValueError):
+    """No API key configured for the active provider (HTTP 400)."""
+
+    error_code = "missing_api_key"
+
+
 @dataclass(frozen=True, slots=True)
 class EndpointTestResult:
     """Result of a connectivity test against an endpoint."""
@@ -60,7 +66,7 @@ def build_llm_client(config: Config) -> LLMClient:
     # (httpx rejects it as an illegal header). Surface a clear missing-key
     # error instead of a cryptic stream failure after provider switch.
     if not api_key.strip():
-        raise ValueError(
+        raise MissingApiKeyError(
             f"missing_api_key: no API key configured for provider "
             f"'{config.provider}'. Add it in Settings → Models, then retry."
         )
@@ -71,6 +77,7 @@ def build_llm_client(config: Config) -> LLMClient:
             base_url=base_url,
             timeout_seconds=float(pc.timeout),
             extra_headers=pc.extra_headers,
+            prompt_cache=pc.prompt_cache,
         )
     else:
         # thinking_supported gates whether reasoning_effort / thinking fields
@@ -87,6 +94,10 @@ def build_llm_client(config: Config) -> LLMClient:
             thinking_supported=thinking,
             extra_headers=pc.extra_headers,
         )
+
+    client.media_config = config.model_copy(deep=True)
+    if isinstance(client, DeepSeekClient):
+        client.dynamic_thinking = True
 
     limit = pc.rate_limit or 0
     if limit > 0:

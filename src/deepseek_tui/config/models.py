@@ -40,6 +40,9 @@ def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any
 
 class ProviderConfig(BaseModel):
     protocol: Literal["openai", "anthropic"] | None = None
+    # Anthropic Messages API block-level prompt caching. Disabled by default
+    # because compatibility gateways may reject ``cache_control`` fields.
+    prompt_cache: Literal["off", "explicit"] = "off"
     api_key: str | None = None
     base_url: str | None = None
     model: str | None = None
@@ -63,6 +66,16 @@ class ProviderConfig(BaseModel):
     context_windows: dict[str, int] = Field(default_factory=dict)
     extra_headers: dict[str, str] = Field(default_factory=dict)
     extra_body: dict[str, Any] = Field(default_factory=dict)
+    image_input: bool | None = None
+    image_models: dict[str, bool] = Field(default_factory=dict)
+    image_max_side: int = Field(default=2048, ge=512, le=8192)
+    image_request_bytes: int = Field(default=20 * 1024 * 1024, ge=1024 * 1024)
+
+
+class VisionConfig(BaseModel):
+    # Provider-qualified reference, e.g. "my-vision-endpoint::model-id".
+    model: str | None = None
+    timeout_seconds: float = Field(default=90, gt=0)
 
 
 class ProcessNarrationConfig(BaseModel):
@@ -345,6 +358,7 @@ class Config(BaseModel):
     automation: AutomationConfig = Field(default_factory=AutomationConfig)
     # Cycle archive-and-replan, consumed by ``Engine.create``.
     cycle_enabled: bool = True
+    vision: VisionConfig = Field(default_factory=VisionConfig)
 
     @model_validator(mode="before")
     @classmethod

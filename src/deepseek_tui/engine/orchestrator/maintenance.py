@@ -20,7 +20,11 @@ from deepseek_tui.engine.capacity import (
     prune_old_tool_results,
     should_l0_prune,
 )
-from deepseek_tui.engine.cycle import archive_cycle, should_advance_cycle
+from deepseek_tui.engine.cycle import (
+    StructuredState,
+    archive_cycle,
+    should_advance_cycle,
+)
 from deepseek_tui.protocol.messages import Message
 
 logger = logging.getLogger(__name__)
@@ -151,6 +155,7 @@ class SessionMaintenanceMixin:
             model,
             messages,
             real_input_tokens=self.last_real_input_tokens,
+            real_input_estimate=getattr(self, "last_real_input_estimate", 0),
             system_prompt=system_prompt,
             tools=tools,
         )
@@ -296,6 +301,7 @@ class SessionMaintenanceMixin:
             model,
             messages,
             real_input_tokens=self.last_real_input_tokens,
+            real_input_estimate=getattr(self, "last_real_input_estimate", 0),
             system_prompt=system_prompt,
             tools=tools,
         )
@@ -303,6 +309,7 @@ class SessionMaintenanceMixin:
             model=model,
             messages=messages,
             real_input_tokens=self.last_real_input_tokens,
+            real_input_estimate=getattr(self, "last_real_input_estimate", 0),
             config=self.compaction_config,
             system_prompt=system_prompt,
             tools=tools,
@@ -354,6 +361,57 @@ class SessionMaintenanceMixin:
             )
         return changed
 
+    def _cycle_structured_state(self) -> StructuredState:
+        """Capture live UI/runtime state before replacing conversation history."""
+        from deepseek_tui.tools.subagent.types import SubAgentStatusKind
+
+        metadata = self.tool_context.metadata
+        todo_store = metadata.get("todos")
+        todo_items = (
+            todo_store.get("items", []) if isinstance(todo_store, dict) else []
+        )
+        todos = [
+            {"content": item.content, "status": item.status}
+            for item in todo_items
+            if hasattr(item, "content") and hasattr(item, "status")
+        ]
+
+        plan_store = metadata.get("plan")
+        raw_steps = (
+            plan_store.get("steps", []) if isinstance(plan_store, dict) else []
+        )
+        plan = [
+            {
+                "step": str(step.get("title") or step.get("step") or ""),
+                "status": str(step.get("status") or "pending"),
+            }
+            for step in raw_steps
+            if isinstance(step, dict) and (step.get("title") or step.get("step"))
+        ]
+
+        agents: list[dict[str, str]] = []
+        manager = self.tool_context.subagent_manager
+        if manager is not None:
+            for snapshot in manager.list_agents():
+                if snapshot.status.kind is not SubAgentStatusKind.RUNNING:
+                    continue
+                agents.append(
+                    {
+                        "agent_id": snapshot.agent_id,
+                        "role": snapshot.assignment.role or snapshot.agent_type.value,
+                        "objective": snapshot.assignment.objective,
+                    }
+                )
+
+        return StructuredState(
+            mode_label=self.mode or "agent",
+            workspace=str(self.tool_context.working_directory),
+            working_set_summary=self.working_set.summary() or None,
+            todo_snapshot=todos or None,
+            plan_snapshot=plan or None,
+            subagent_snapshots=agents,
+        )
+
     async def _maybe_advance_cycle(
         self,
         messages: list[Message],
@@ -383,6 +441,7 @@ class SessionMaintenanceMixin:
                 model,
                 messages,
                 real_input_tokens=self.last_real_input_tokens,
+                real_input_estimate=getattr(self, "last_real_input_estimate", 0),
                 system_prompt=system_prompt,
                 tools=tools,
             ).tokens
@@ -420,18 +479,13 @@ class SessionMaintenanceMixin:
         briefing_text = ""
         from deepseek_tui.engine.cycle import (
             CycleBriefing,
-            StructuredState,
             build_seed_messages,
             produce_briefing,
         )
         from deepseek_tui.engine.usage_ledger import usage_source
 
         # Build structured state snapshot
-        structured = StructuredState(
-            mode_label=self.mode or "agent",
-            workspace=str(self.tool_context.working_directory),
-            working_set_summary=self.working_set.summary() or None,
-        )
+        structured = self._cycle_structured_state()
         structured_block = structured.to_system_block()
 
         try:

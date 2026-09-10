@@ -62,6 +62,7 @@ import {
   workspaceFileTargetPayloadSchema,
   workspaceFileWritePayloadSchema,
   workspacePasteTextPayloadSchema,
+  workspacePasteImagePayloadSchema,
   workspaceHtmlPreviewPayloadSchema,
   workspaceListDirectoryPayloadSchema,
   workspaceSearchEntriesPayloadSchema,
@@ -145,6 +146,7 @@ import {
   resolveWorkspaceFile,
   searchWorkspaceEntries,
   writePasteTextFile,
+  writePasteImageFile,
   writeWorkspaceFile
 } from '../services/workspace-service'
 import {
@@ -1432,6 +1434,11 @@ export function registerAppIpcHandlers(options: RegisterAppIpcHandlersOptions): 
   ipcMain.handle('file:write-workspace', async (_, payload: unknown) =>
     writeWorkspaceFile(
       parseIpcPayload('file:write-workspace', workspaceFileWritePayloadSchema, payload)
+    )
+  )
+  ipcMain.handle('file:write-paste-image', async (_, payload: unknown) =>
+    writePasteImageFile(
+      parseIpcPayload('file:write-paste-image', workspacePasteImagePayloadSchema, payload)
     )
   )
   ipcMain.handle('file:write-paste-text', async (_, payload: unknown) =>

@@ -573,7 +573,7 @@ async def bridge_background_approval(
     try:
         await thread_manager.emit_bridged_approval(
             thread_id.strip(),
-            event.tool_call_id,
+            event.request.approval_id or event.tool_call_id,
             event.request,
             task_id=task.id,
         )
@@ -708,58 +708,73 @@ async def _run_task_engine_turn(
 ) -> "TaskExecutionResult":
     from deepseek_tui.client.factory import build_llm_client
     from deepseek_tui.config.loader import ConfigLoader
-    from deepseek_tui.config.models import FeatureConfig, HooksConfig
+    from deepseek_tui.config.models import HooksConfig
     from deepseek_tui.engine.orchestrator import Engine
     from deepseek_tui.tools.runtime import create_tool_runtime
     from deepseek_tui.tools.task import TaskExecutionResult
 
-    cfg = ConfigLoader().load()
-    cfg = cfg.model_copy(deep=True)
-    cfg.features = FeatureConfig(
-        tasks=True,
-        subagents=True,
-        mcp=True,
-        automations=False,
+    cfg = (task.config or ConfigLoader().load()).model_copy(deep=True)
+    if task.provider and task.provider != cfg.provider:
+        cfg.provider = task.provider
+        cfg.api_key = None
+        cfg.base_url = None
+    cfg.model = task.model
+    cfg.features = cfg.features.model_copy(
+        update={"tasks": True, "subagents": True, "mcp": True, "automations": False}
     )
-    # Cron runs opt into shell (see TOOL_PROFILE_CRON + enqueue allow_shell).
-    # Honor the task flag so a global allow_shell=false config does not
-    # strip exec_shell from the registry for scheduled jobs.
-    if _is_cron_task(task.prompt) and task.allow_shell:
-        cfg.allow_shell = True
+    # Execute the stored task authority, including when global settings changed.
+    cfg.allow_shell = task.allow_shell
+    cfg.approval_policy = "auto" if task.auto_approve else "on-request"
+    cfg.sandbox_mode = "danger-full-access" if task.trust_mode else "workspace-write"
     cfg.hooks = HooksConfig(enabled=False, hooks=[])
     handle = EngineHandle()
     client = build_llm_client(cfg)
     workspace = Path(task.workspace).resolve()  # noqa: ASYNC240
 
     shared_mcp = getattr(task.task_manager, "_shared_mcp_manager", None)
-    runtime = await create_tool_runtime(
-        config=cfg,
-        working_directory=workspace,
-        shared_task_manager=task.task_manager,
-        mcp_manager=shared_mcp,
-        start_mcp=False,
-    )
+    runtime = None
+    try:
+        runtime = await create_tool_runtime(
+            config=cfg,
+            mode=task.mode_label,
+            working_directory=workspace,
+            shared_task_manager=task.task_manager,
+            mcp_manager=shared_mcp,
+            start_mcp=False,
+        )
 
-    # Default auto_approve=True for fire-and-forget. When False, bridge tool
-    # approvals onto the origin thread (HttpApprovalHandler + ApprovalBridge)
-    # so the Workbench can confirm — same UX as the main session.
-    approval_handler = _build_task_approval_handler(task)
-    max_rounds = (
-        CRON_MAX_TOOL_ROUND_TRIPS
-        if _is_cron_task(task.prompt)
-        else TASK_MAX_TOOL_ROUND_TRIPS
-    )
+        # Auto approval alone must not grant filesystem trust to child agents.
+        runtime.context.trust_mode = task.trust_mode
 
-    engine = await Engine.create(
-        handle=handle,
-        client=client,
-        config=cfg,
-        working_directory=workspace,
-        default_model=task.model,
-        max_tool_round_trips=max_rounds,
-        approval_handler=approval_handler,
-        tool_runtime=runtime,
-    )
+        # Default auto_approve=True for fire-and-forget. When False, bridge tool
+        # approvals onto the origin thread (HttpApprovalHandler + ApprovalBridge)
+        # so the Workbench can confirm — same UX as the main session.
+        approval_handler = _build_task_approval_handler(task)
+        max_rounds = (
+            CRON_MAX_TOOL_ROUND_TRIPS
+            if _is_cron_task(task.prompt)
+            else TASK_MAX_TOOL_ROUND_TRIPS
+        )
+
+        engine = await Engine.create(
+            handle=handle,
+            client=client,
+            config=cfg,
+            mode=task.mode_label,
+            working_directory=workspace,
+            default_model=task.model,
+            max_tool_round_trips=max_rounds,
+            approval_handler=approval_handler,
+            tool_runtime=runtime,
+        )
+    except BaseException:
+        # A stop can arrive during initialization, before the turn's finally block.
+        try:
+            if runtime is not None:
+                await runtime.shutdown()
+        finally:
+            await client.close()
+        raise
     engine.tool_context.trust_mode = task.trust_mode
     engine.tool_context.active_task_id = task.id
     engine.tool_context.metadata["task_id"] = task.id
@@ -984,7 +999,27 @@ async def real_subagent_executor(agent: SubAgent, cancel: asyncio.Event) -> Agen
             "Sub-agent loop runtime is missing; Engine.create must call "
             "SubAgentManager.attach_loop_runtime"
         )
-    out = await run_subagent_loop(agent, runtime, cancel)
+    owned_client = None
+    if "::" in agent.model:
+        from dataclasses import replace
+
+        from deepseek_tui.client.base import MeteredLLMClient
+        from deepseek_tui.client.factory import build_llm_client
+        from deepseek_tui.config.routing import config_for_model
+
+        cfg = config_for_model(runtime.config, agent.model)
+        owned_client = build_llm_client(cfg)
+        client = owned_client
+        if isinstance(runtime.client, MeteredLLMClient):
+            client = MeteredLLMClient(client, runtime.client._ledger)
+        runtime = replace(
+            runtime, client=client, config=cfg, model=cfg.effective_provider_config().model
+        )
+    try:
+        out = await run_subagent_loop(agent, runtime, cancel)
+    finally:
+        if owned_client is not None:
+            await owned_client.close()
     if isinstance(out, AgentRunOutput):
         return out
     return AgentRunOutput(text=str(out), structured=None)

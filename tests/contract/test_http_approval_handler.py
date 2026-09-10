@@ -29,7 +29,10 @@ async def test_http_approval_handler_blocks_until_bridge_allow() -> None:
 
     async def resolve_later() -> None:
         await asyncio.sleep(0.02)
-        assert bridge.resolve("appr_1", True)
+        pending = bridge.list_pending()
+        assert len(pending) == 1
+        assert pending[0]["tool_call_id"] == "appr_1"
+        assert bridge.resolve(str(pending[0]["approval_id"]), True)
 
     asyncio.create_task(resolve_later())
     decision = await handler.request_approval(

@@ -627,5 +627,8 @@
   "dataDeleteAndExitAction": "删除并退出",
   "dataDeleteAndExitConfirm": "确定删除本机 GUI 设置与缓存并退出吗？对话、Skills 与 Claw 沙箱不会被删除。",
   "dataDeleteAndExitConfirm2": "再次确认：将清除 GUI 设置（~/.deepseek/settings.json）与 ~/.deepseek/caches 下的缓存及 Electron 缓存并立即退出，此操作不可撤销。",
-  "dataDeleteAndExitFailed": "删除本机数据失败"
+  "dataDeleteAndExitFailed": "删除本机数据失败",
+  "visionHelper": "视觉辅助模型",
+  "visionHelperNone": "未设置",
+  "visionHelperHint": "主模型无法看图时，使用此模型分析图片。"
 }

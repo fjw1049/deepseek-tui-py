@@ -1,0 +1,18 @@
+schema_version: 1
+id: tooling.live_read_uses_dedicated_tool
+suite: tool_accuracy
+risk: high
+runner: live_decision
+grader: tooling
+live: true
+tags: [tool-selection, read-only, live]
+related_paths:
+  - src/deepseek_tui/tools/registry.py
+  - src/deepseek_tui/prompts/base.md
+input:
+  messages:
+    - role: user
+      content: 读取 README.md 的前 20 行，并告诉我项目用途。
+expect:
+  expected_any_tool: [read_file]
+  forbidden_tools: [write_file, edit_file]

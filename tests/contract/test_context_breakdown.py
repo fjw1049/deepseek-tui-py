@@ -1,6 +1,7 @@
 from deepseek_tui.engine.context import estimate_context_breakdown
 from deepseek_tui.engine.orchestrator import Engine
 from deepseek_tui.engine.handle import EngineHandle
+from deepseek_tui.protocol.messages import Message
 from deepseek_tui.tools.registry import ToolContext
 from deepseek_tui.tools.registry import ToolRegistry
 
@@ -137,6 +138,29 @@ def test_context_breakdown_back_derives_conversation_when_real_overshoots(tmp_pa
     )
 
 
+def test_context_breakdown_applies_delta_since_real_measurement(tmp_path):
+    baseline_messages = [Message.user("short request")]
+    baseline = estimate_context_breakdown(
+        model="deepseek-chat",
+        workspace=tmp_path,
+        messages=baseline_messages,
+        api_tools=[_api_tool("read_file")],
+    )
+    real = baseline["total"] * 2
+
+    current = estimate_context_breakdown(
+        model="deepseek-chat",
+        workspace=tmp_path,
+        messages=baseline_messages + [Message.user("x" * 8_000)],
+        api_tools=[_api_tool("read_file")],
+        real_input_tokens=real,
+        real_input_estimate=baseline["total"],
+    )
+
+    assert current["total"] > real
+    assert current["conversation"] > baseline["conversation"]
+
+
 def test_initial_request_tools_keep_full_catalog(tmp_path):
     engine = Engine(
         handle=EngineHandle(),
@@ -158,6 +182,22 @@ def test_initial_request_tools_keep_full_catalog(tmp_path):
     assert "read_file" in active_names
     assert "write_file" in active_names
     assert "note" in active_names
+
+
+def test_sync_session_resets_request_calibration(tmp_path):
+    engine = Engine(
+        handle=EngineHandle(),
+        client=object(),  # type: ignore[arg-type]
+        tool_registry=ToolRegistry(),
+        tool_context=ToolContext(working_directory=tmp_path),
+    )
+    engine.last_real_input_tokens = 12_000
+    engine.last_real_input_estimate = 4_000
+
+    engine.sync_session([Message.user("restored session")])
+
+    assert engine.last_real_input_tokens == 0
+    assert engine.last_real_input_estimate == 0
 
 
 async def test_live_context_breakdown_counts_native_and_mcp_tools(tmp_path):

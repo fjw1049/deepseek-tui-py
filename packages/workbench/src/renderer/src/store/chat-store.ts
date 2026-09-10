@@ -78,6 +78,7 @@ import {
 } from '../lib/sidebar-chrome'
 import {
   clearedThreadSelection,
+  expireTurnApprovals,
   finalizeOrphanRuntimeBlocks,
   findLatestUserBlockId,
   findReusableEmptyThreadId,
@@ -999,6 +1000,8 @@ function buildThreadEventSink(
               id: `approval-${req.approvalId}`,
               createdAt: new Date().toISOString(),
               approvalId: req.approvalId,
+              ...(req.toolCallId ? { toolCallId: req.toolCallId } : {}),
+              ...(req.turnId ? { turnId: req.turnId } : {}),
               summary: req.summary,
               inputSummary: req.inputSummary,
               impacts: req.impacts,
@@ -1285,7 +1288,7 @@ function buildThreadEventSink(
           )
           // Keep a previously backfilled spawn prompt if this mailbox event
           // did not carry one (e.g. tool_call / progress envelopes).
-          const nextBlock = subagentBlockFromCard(card, existing?.createdAt)
+          const nextBlock = subagentBlockFromCard(card, new Date().toISOString(), existing?.kind === 'subagent' ? existing : undefined)
           const merged =
             !nextBlock.prompt && existing && existing.kind === 'subagent' && existing.prompt
               ? { ...nextBlock, prompt: existing.prompt }
@@ -1420,7 +1423,11 @@ function buildThreadEventSink(
         if (s.busy) base.busy = false
         // Interrupt can finish before a cancelled mailbox is persisted; clear
         // stale running cards so the queue/composer are not blocked.
-        base.blocks = finalizeOrphanSubagentBlocks(base.blocks ?? s.blocks)
+        base.blocks = expireTurnApprovals(
+          finalizeOrphanSubagentBlocks(base.blocks ?? s.blocks),
+          payload?.turnId ?? completedTurnId,
+          i18n.t('common:approvalExpired')
+        )
         const id = s.activeThreadId
         if (id) {
           const w = { ...s.watchTurnCompletion }
@@ -3585,7 +3592,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
         busy: false,
         currentTurnId: null
       })
-      const blocks = finalizeOrphanRuntimeBlocks(flushed.blocks ?? s.blocks)
+      const blocks = expireTurnApprovals(
+        finalizeOrphanRuntimeBlocks(flushed.blocks ?? s.blocks),
+        s.currentTurnId,
+        i18n.t('common:approvalExpired')
+      )
       return {
         ...flushed,
         blocks,

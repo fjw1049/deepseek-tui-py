@@ -14,7 +14,7 @@ from collections import OrderedDict
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -112,6 +112,7 @@ from deepseek_tui.server.threads.models import (
     TurnRecord,
     UpdateThreadRequest,
 )
+from deepseek_tui.server.threads.errors import TurnConflictError, TurnNotActiveError
 from deepseek_tui.workspace.execution import (
     ENV_LOCAL,
     ENV_WORKTREE,
@@ -138,6 +139,9 @@ logger = logging.getLogger(__name__)
 
 # Sentinel: "argument not provided" (distinct from an explicit None value).
 _UNSET = object()
+
+# ponytail: fixed threshold; make configurable when per-project needs appear.
+IDLE_WORKTREE_RECLAIM_AFTER = timedelta(days=3)
 
 UNPUBLISHED_WORKTREE_LABOR = "<unpublished-worktree-labor>"
 PUBLISH_FAILED = "<publish-failed>"
@@ -1355,7 +1359,13 @@ class RuntimeThreadManager:
                     await self._emit_publish_state(thread)
                 raise
 
-        self._touch(thread)
+        # Selecting a conversation prepares/syncs its isolate without new
+        # conversation activity. Keep its recency unless publish state changed;
+        # recovery decisions still need a fresh updated_at token.
+        if publish_pending_changed:
+            self._touch(thread)
+        else:
+            self.store.save_thread(thread)
         environment_changed = previous_environment != (
             thread.env_mode,
             thread.worktree_path,
@@ -1972,6 +1982,11 @@ class RuntimeThreadManager:
                 self._reset_publish_request(thread)
             self._touch(thread)
             await self._emit_publish_state(thread)
+        # Turn boundary: cheapest moment to drop long-idle clean worktrees.
+        try:
+            await self.reclaim_idle_worktrees()
+        except Exception:  # noqa: BLE001 — never fail turn release on GC
+            logger.debug("idle_worktrees_reclaim_failed", exc_info=True)
         try:
             root = project_root(thread)
         except Exception:
@@ -2216,6 +2231,38 @@ class RuntimeThreadManager:
         from deepseek_tui.workspace.managed_worktree import prune_orphaned_worktrees
 
         return prune_orphaned_worktrees(self._referenced_worktree_paths())
+
+    async def reclaim_idle_worktrees(self) -> int:
+        """Remove clean worktrees of threads idle beyond the reclaim threshold.
+
+        Purely a disk tradeoff: a fully published worktree holds no unique
+        bytes and ``_prepare_isolated_workspace`` rebuilds it on the next
+        turn. Threads with unpublished labor or blocked publishes are never
+        touched (``_reclaim_owned_worktree`` re-checks and keeps them).
+        """
+        now = datetime.now(timezone.utc)
+        removed = 0
+        for thread in self.store.list_threads():
+            if thread.archived or not (
+                thread.worktree_path or thread.associated_worktree_path
+            ):
+                continue
+            if thread.id in self._active:
+                continue
+            if now - thread.updated_at < IDLE_WORKTREE_RECLAIM_AFTER:
+                continue
+            if self._unpublished_checkpoints(thread) or thread.publish_blocked:
+                continue
+            try:
+                status = await self._reclaim_owned_worktree(thread)
+            except Exception:  # noqa: BLE001 — one stale tree must not stop the rest
+                logger.debug(
+                    "idle_reclaim_failed thread=%s", thread.id, exc_info=True
+                )
+                continue
+            if status in {"removed", "gone"}:
+                removed += 1
+        return removed
 
     async def _reclaim_owned_worktree(self, thread: ThreadRecord) -> str:
         async with self._hold_thread_operation(thread.id):
@@ -2754,6 +2801,8 @@ class RuntimeThreadManager:
             load_task = self._engine_load_tasks.pop(thread_id, None)
         if load_task is not None and not load_task.done():
             load_task.cancel()
+        if self._approval_bridge is not None:
+            self._approval_bridge.cancel_for_thread(thread_id)
         if state is None:
             return
         try:
@@ -3384,11 +3433,12 @@ class RuntimeThreadManager:
                 raise RuntimeError("Thread engine not loaded")
             if state.active_turn is not None:
                 pop_turn_latency(turn_id)
-                raise ValueError("Thread already has an active turn")
-            if state.provider != provider:
+                raise TurnConflictError("Thread already has an active turn")
+            if state.provider != provider or state.engine.default_model != model:
                 client = self._get_llm_client(provider)
-                state.engine.client = client
-                state.engine.turn_loop.client = client
+                state.engine.set_model_route(
+                    client, self._config_for_provider(provider, model), model
+                )
                 state.provider = provider
             state.engine.mode = effective_mode
             if effective_mode == "plan":
@@ -3411,6 +3461,9 @@ class RuntimeThreadManager:
             )
             # Let task_create inherit the live session flag (YOLO / auto).
             state.engine.tool_context.metadata["session_auto_approve"] = auto_approve
+            state.engine.tool_context.metadata["task_config"] = self._config_for_provider(
+                provider, model
+            )
             self._sync_trust_mode(state.engine, trust_mode)
             self._touch_lru(thread_id)
 
@@ -3783,9 +3836,9 @@ class RuntimeThreadManager:
         async with self._active_lock:
             state = self._active.get(thread_id)
             if state is None:
-                raise ValueError("Thread is not loaded")
+                raise TurnNotActiveError("Thread is not loaded")
             if state.active_turn is None or state.active_turn.turn_id != turn_id:
-                raise ValueError(f"Turn {turn_id} is not active on thread {thread_id}")
+                raise TurnNotActiveError(f"Turn {turn_id} is not active on thread {thread_id}")
             state.active_turn.interrupt_requested = True
             handle = state.handle
             self._touch_lru(thread_id)
@@ -3793,7 +3846,7 @@ class RuntimeThreadManager:
         await handle.cancel(reason="interrupt_requested")
 
         if self._approval_bridge is not None:
-            self._approval_bridge.cancel_for_thread(thread_id)
+            self._approval_bridge.cancel_for_turn(thread_id, turn_id)
         if self._elevation_bridge is not None:
             self._elevation_bridge.cancel_for_thread(thread_id)
 
@@ -3813,9 +3866,9 @@ class RuntimeThreadManager:
         async with self._active_lock:
             state = self._active.get(thread_id)
             if state is None:
-                raise ValueError("Thread is not loaded")
+                raise TurnNotActiveError("Thread is not loaded")
             if state.active_turn is None or state.active_turn.turn_id != turn_id:
-                raise ValueError(f"Turn {turn_id} is not active on thread {thread_id}")
+                raise TurnNotActiveError(f"Turn {turn_id} is not active on thread {thread_id}")
             handle = state.handle
             self._touch_lru(thread_id)
 
@@ -3870,7 +3923,7 @@ class RuntimeThreadManager:
             if state is None:
                 raise RuntimeError("Thread engine not loaded")
             if state.active_turn is not None:
-                raise ValueError("Thread already has an active turn")
+                raise TurnConflictError("Thread already has an active turn")
 
         now = datetime.now(timezone.utc)
         turn_id = f"turn_{uuid.uuid4().hex[:8]}"
@@ -4025,7 +4078,9 @@ class RuntimeThreadManager:
         try:
             await self._ensure_engine_loaded(thread)
         except ValueError as exc:
-            if str(exc).startswith("missing_api_key"):
+            from deepseek_tui.client.factory import MissingApiKeyError
+
+            if isinstance(exc, MissingApiKeyError):
                 return {
                     "thread_id": thread_id,
                     "status": "skipped",
@@ -4163,6 +4218,8 @@ class RuntimeThreadManager:
             self._touch_lru(thread.id)
 
         for evicted_tid, evicted_state in evicted:
+            if self._approval_bridge is not None:
+                self._approval_bridge.cancel_for_thread(evicted_tid, include_tasks=False)
             await evicted_state.handle.cancel(reason="lru_eviction")
             evicted_state.engine_task.cancel()
 
@@ -4310,10 +4367,15 @@ class RuntimeThreadManager:
             thread = manager.store.load_thread(thread_id)
             return thread.auto_approve
 
+        def get_turn_id() -> str | None:
+            state = manager._active.get(thread_id)
+            return state.active_turn.turn_id if state and state.active_turn else None
+
         return HttpApprovalHandler(
             self._approval_bridge,
             thread_id=thread_id,
             auto_approve=auto_approve,
+            get_turn_id=get_turn_id,
         )
 
     def _get_llm_client(self, provider: str | None = None) -> LLMClient:
@@ -4442,6 +4504,8 @@ class RuntimeThreadManager:
                         "Turn monitor recovery failed for %s", turn_id
                     )
         finally:
+            if self._approval_bridge is not None:
+                self._approval_bridge.cancel_for_turn(thread_id, turn_id)
             if checkpoint_ready is not None and not checkpoint_ready.done():
                 checkpoint_ready.set_exception(
                     RuntimeError("Turn monitor exited before checkpoint initialization")
@@ -4494,6 +4558,8 @@ class RuntimeThreadManager:
         diff_snapshot: Any = _UNSET,
     ) -> None:
         """Shared turn teardown: persist record, emit turn.completed, release."""
+        if self._approval_bridge is not None:
+            self._approval_bridge.cancel_for_turn(thread_id, turn_id)
         ended_at = datetime.now(timezone.utc)
         turn = self.store.load_turn(turn_id)
         turn.status = turn_status
@@ -5416,6 +5482,15 @@ class RuntimeThreadManager:
                 break
 
             if isinstance(event, TurnStartedEvent):
+                if event.input_message is not None:
+                    for user_item in self.store.list_items_for_turn(turn_id):
+                        if user_item.kind == TurnItemKind.USER_MESSAGE:
+                            user_item.metadata = {
+                                **(user_item.metadata or {}),
+                                "input_message": event.input_message.model_dump(mode="json"),
+                            }
+                            self.store.save_item(user_item)
+                            break
                 await flush_delta_batch()
                 await self._emit_event(
                     thread_id, turn_id, None, "turn.lifecycle", {"status": "in_progress"}
@@ -5624,6 +5699,7 @@ class RuntimeThreadManager:
                             "mutations",
                             "path",
                             "occurrences",
+                            "images",
                             "agent_id",
                             "agent_type",
                             "nickname",
@@ -5692,8 +5768,8 @@ class RuntimeThreadManager:
                     approval_request_to_sse_payload,
                 )
 
-                approval_id = event.tool_call_id
-                approval_pending_ms[approval_id] = now_ms()
+                approval_id = event.request.approval_id or event.tool_call_id
+                approval_pending_ms[event.tool_call_id] = now_ms()
                 await self._emit_event(
                     thread_id,
                     turn_id,

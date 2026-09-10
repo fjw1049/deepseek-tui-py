@@ -134,12 +134,28 @@ export function deepseekTuiConfigChanged(prev: AppSettingsV1, next: AppSettingsV
     deepseekConfigFieldsChanged(prev, next) ||
     llmProviderConfigChanged(prev, next) ||
     prev.locale !== next.locale ||
+    prev.visionModel !== next.visionModel ||
     JSON.stringify(prev.customEndpoints) !== JSON.stringify(next.customEndpoints)
   )
 }
 
 export function localeConfigChanged(prev: AppSettingsV1, next: AppSettingsV1): boolean {
   return prev.locale !== next.locale
+}
+
+async function syncVisionConfig(settings: AppSettingsV1): Promise<void> {
+  // An absent field leaves manually configured helpers intact on startup.
+  if (settings.visionModel === undefined) return
+  const configPath = resolveDeepseekConfigPath()
+  let content = ''
+  try {
+    content = await readFile(configPath, 'utf8')
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+  }
+  const next = upsertTomlSections(content, { vision: { model: settings.visionModel.trim() } })
+  await mkdir(dirname(configPath), { recursive: true })
+  await writeFile(configPath, next, 'utf8')
 }
 
 async function syncUiLocaleConfig(settings: AppSettingsV1): Promise<void> {
@@ -415,6 +431,9 @@ export async function syncDeepseekTuiConfig(
     for (const command of commands) {
       await runDeepseekCommand(launcher, command)
     }
+  }
+  if (!previous || previous.visionModel !== settings.visionModel) {
+    await syncVisionConfig(settings)
   }
   if (!previous || previous.locale !== settings.locale) {
     await syncUiLocaleConfig(settings)

@@ -169,6 +169,8 @@ export type ChatBlock =
       id: string
       createdAt?: string
       approvalId: string
+      toolCallId?: string
+      turnId?: string
       summary: string
       inputSummary?: string
       impacts?: string[]
@@ -208,6 +210,8 @@ export type ChatBlock =
       kind: 'subagent'
       id: string
       createdAt?: string
+      startedAt?: string
+      finishedAt?: string
       cardKind: 'delegate' | 'fanout'
       agentId: string
       agentType: string
@@ -247,6 +251,9 @@ export type EvolutionProposalPayload = {
 
 export type ApprovalRequestPayload = {
   approvalId: string
+  /** Original model tool call; never used as the approval submission ID. */
+  toolCallId?: string
+  turnId?: string
   summary: string
   inputSummary?: string
   impacts?: string[]

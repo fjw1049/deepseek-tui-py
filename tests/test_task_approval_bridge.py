@@ -140,5 +140,6 @@ async def test_http_handler_registers_task_id() -> None:
     pending = bridge.list_pending(thread_id="thread_1")
     assert len(pending) == 1
     assert pending[0]["task_id"] == "task_9"
-    assert bridge.resolve("appr_1", True)
+    assert pending[0]["tool_call_id"] == "appr_1"
+    assert bridge.resolve(str(pending[0]["approval_id"]), True)
     assert await task == ApprovalDecision.APPROVED

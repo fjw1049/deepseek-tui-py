@@ -208,6 +208,39 @@ export function LlmProvidersPanel({ form, onUpdate }: Props): ReactElement {
   return (
     <section className="ds-llm-panel ds-llm-panel--embedded">
       <div className="ds-llm-panel__section">
+        <div className="ds-llm-vision-setting">
+          <div className="ds-llm-vision-setting__copy">
+            <label className="ds-llm-vision-setting__title" htmlFor="vision-helper">
+              {t('visionHelper')}
+            </label>
+            <p className="ds-llm-vision-setting__hint">{t('visionHelperHint')}</p>
+          </div>
+          <SettingsSelect
+            id="vision-helper"
+            className="ds-llm-vision-setting__select"
+            title={form.visionModel?.replace('::', ' / ')}
+            value={form.visionModel ?? ''}
+            onChange={(event) => onUpdate({ visionModel: event.target.value })}
+          >
+            <option value="">{t('visionHelperNone')}</option>
+            {BUILTIN_LLM_PROVIDER_IDS.flatMap((id) =>
+              providers[id]?.models.filter((model) => model.enabled).map((model) => (
+                <option key={`${id}::${model.id}`} value={`${id}::${model.id}`}>
+                  {`${id} / ${model.id}`}
+                </option>
+              )) ?? []
+            )}
+            {endpoints.filter((endpoint) => endpoint.enabled).flatMap((endpoint) =>
+              endpoint.models.filter((model) => model.enabled).map((model) => (
+                <option key={`${endpoint.id}::${model.id}`} value={`${endpoint.id}::${model.id}`}>
+                  {`${endpoint.name} / ${model.id}`}
+                </option>
+              ))
+            )}
+          </SettingsSelect>
+        </div>
+      </div>
+      <div className="ds-llm-panel__section">
         <div className="ds-llm-panel__section-head">
           <h3 className="ds-llm-panel__section-title">{t('llmSectionLlm')}</h3>
           <button
