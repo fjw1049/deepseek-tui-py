@@ -151,7 +151,16 @@ def process_turn_input(
             from deepseek_tui.media import IMAGE_EXTENSIONS, import_image_path
 
             if path.suffix.lower() in IMAGE_EXTENSIONS:
-                image = import_image_path(path)
+                try:
+                    image = import_image_path(path)
+                except ValueError:
+                    ref = ContextReference(
+                        kind="media", source=source, label=token, target=str(path),
+                        included=False, expanded=False, detail="unreadable image",
+                    )
+                    references.append(ref)
+                    blocks.append(_render_media_hint_block(token, display_path))
+                    continue
                 images.append(image)
                 references.append(
                     ContextReference(

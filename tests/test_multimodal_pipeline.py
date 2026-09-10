@@ -181,6 +181,27 @@ def test_budget_counts_repeated_images_and_never_mutates_history(monkeypatch):
         budget_media_request(repeated, config)
 
 
+def test_budget_strips_overflowing_tool_images_after_latest_user(monkeypatch):
+    block = import_image(image_bytes())
+    monkeypatch.setattr("deepseek_tui.client.media.image_data_url", lambda *a, **k: "x" * 600_000)
+    config = Config(providers={"deepseek": ProviderConfig(image_request_bytes=1_048_576)})
+    request = MessageRequest(
+        model="vision",
+        messages=[
+            Message.user("look", origin=MessageOrigin.REAL_USER),
+            Message.tool_result("a", "Screenshot 1", images=[block]),
+            Message.tool_result("b", "Screenshot 2", images=[block]),
+            Message.tool_result("c", "Screenshot 3", images=[block]),
+        ],
+    )
+    projected = budget_media_request(request, config)
+    # Oldest tool images are stripped with a re-read hint instead of failing the turn.
+    assert not message_images(projected.messages[1])
+    assert "re-read" in projected.messages[1].content[0].content
+    assert message_images(projected.messages[3])
+    assert message_images(request.messages[1])
+
+
 def test_images_count_toward_context_budget():
     text = Message.user("screen")
     visual = Message.user("screen", images=[import_image(image_bytes(size=(1024, 1024)))])

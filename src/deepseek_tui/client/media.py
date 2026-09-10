@@ -42,7 +42,11 @@ def budget_media_request(request: MessageRequest, config: Config | None) -> Mess
         default=max((i for i, m in enumerate(request.messages) if m.role is Role.USER), default=0),
     )
     messages = list(request.messages)
-    for index, message in enumerate(messages[:latest_user]):
+    # Strip images from every message except the user's own latest attachments;
+    # tool images after the latest user message are the common overflow source.
+    for index, message in enumerate(messages):
+        if index == latest_user:
+            continue
         if total <= limit * 0.75:
             break
         images = message_images(message)
