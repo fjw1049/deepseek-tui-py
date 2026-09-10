@@ -27,7 +27,7 @@
     'Courier New', monospace;
   /* Appearance: density scale (spacing only) and chat reading size. */
   --ds-density: 1;
-  --ds-chat-font-size: 16px;
+  --ds-chat-font-size: 15px;
   --ds-chat-column-width: 760px;
   --surface-1: #ffffff;
   --surface-2: #ffffff;
@@ -3031,7 +3031,7 @@ samp {
 
 .ds-sidebar-section-label {
   font-family: inherit;
-  font-size: var(--sidebar-text-xs);
+  font-size: 0.875rem; /* 14px preview — 原 var(--sidebar-text-xs) 13px */
   font-weight: var(--sidebar-weight-strong);
   letter-spacing: 0.01em;
   color: var(--text-tertiary);
@@ -3252,9 +3252,12 @@ samp {
 }
 
 /* Top nav: tighter than default, but looser than the previous 0.28rem trial. */
-.ds-sidebar-top-nav .ds-sidebar-link {
+.ds-sidebar-top-nav .ds-sidebar-link:not(.ds-settings-nav-setup) {
   padding-top: calc(0.34rem * var(--ds-density, 1));
   padding-bottom: calc(0.34rem * var(--ds-density, 1));
+  font-size: calc(var(--sidebar-text) + 0.5px); /* 15.5px preview */
+  font-weight: var(--sidebar-weight); /* 400 — 苹方无中间字重, 440/460 会被取整 */
+  color: color-mix(in srgb, var(--text-primary) 62%, var(--text-secondary));
 }
 
 .ds-sidebar-scroll {
@@ -3451,7 +3454,7 @@ samp {
   /* Lock type on the row so project-nested vs workspace chats can't diverge
      via button UA styles or intermediate inheritance. */
   font-family: var(--font-sidebar);
-  font-size: var(--ds-chat-font-size, 16px);
+  font-size: var(--ds-chat-font-size, 15px); /* 跟随聊天字号, 与正文同步 */
   font-weight: var(--sidebar-weight);
   letter-spacing: 0;
   line-height: 1.4;
@@ -3565,7 +3568,7 @@ samp {
   /* Same type scale as workspace chats — nesting under a project must not
      shrink titles via em/inheritance quirks. */
   font-family: var(--font-sidebar);
-  font-size: var(--ds-chat-font-size, 16px);
+  font-size: var(--ds-chat-font-size, 15px); /* 跟随聊天字号, 与正文同步 */
   font-weight: var(--sidebar-weight);
   letter-spacing: 0;
   line-height: 1.4;
@@ -4998,7 +5001,7 @@ samp {
   /* Default look keeps the UI font; a theme pack's custom code font
      (--ds-chat-code-font, set by appearance-derive) takes over when present. */
   font-family: var(--ds-chat-code-font, var(--font-mono));
-  font-size: 0.8em;
+  font-size: 13px; /* 行内代码与代码块统一 13px, 不随正文缩放 */
   line-height: 1.18;
   vertical-align: baseline;
 }
@@ -6532,7 +6535,7 @@ html[data-theme='dark'] .ds-code-fullscreen .shiki span {
 .ds-markdown.ds-markdown--answer h1 {
   --ds-answer-block-gap: 1.875rem;
   margin: 1.875rem 0 0.625rem;
-  font-size: 1.4em;
+  font-size: 19px; /* 固定值, 不随正文缩放 */
 }
 
 .ds-markdown.ds-markdown--answer h2 {

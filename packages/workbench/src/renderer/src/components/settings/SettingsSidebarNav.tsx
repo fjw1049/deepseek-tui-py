@@ -61,7 +61,7 @@ export function SettingsSidebarNav(): ReactElement {
           <span className="min-w-0 flex-1 truncate text-left">{t('back')}</span>
         </button>
       </div>
-      <nav className="flex min-h-0 flex-1 flex-col gap-px overflow-y-auto px-1" aria-label={t('title')}>
+      <nav className="ds-sidebar-top-nav flex min-h-0 flex-1 flex-col gap-px overflow-y-auto px-1" aria-label={t('title')}>
         {NAV_ITEMS.map((item) => {
           const active = category === item.id
           const isSetup = item.id === 'setup'
