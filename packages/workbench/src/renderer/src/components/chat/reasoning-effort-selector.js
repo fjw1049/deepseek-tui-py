@@ -139,7 +139,7 @@ class ChatGPTModelSelector extends HTMLElement {
         height: 13px;
       }
       :host([dense]) .pill .label {
-        font-size: 12px;
+        font-size: var(--ds-selector-font-size, 12px);
         letter-spacing: normal;
       }
       :host([dense]) .chev {
@@ -233,7 +233,7 @@ class ChatGPTModelSelector extends HTMLElement {
         gap: 5px;
         justify-content: flex-start;
         overflow: hidden;
-        font-size: 14px;
+        font-size: var(--ds-selector-font-size, 14px);
         font-weight: 600;
         color: var(--ink);
         letter-spacing: -0.01em;
@@ -323,7 +323,7 @@ class ChatGPTModelSelector extends HTMLElement {
         margin-bottom: 6px;
       }
       .intensity-title {
-        font-size: 13px;
+        font-size: var(--ds-selector-font-size, 13px);
         font-weight: 600;
         line-height: 1.15;
         color: var(--ink);
@@ -351,21 +351,21 @@ class ChatGPTModelSelector extends HTMLElement {
         translate: 0 0;
       }
       .intensity-value {
-        font-size: 12px;
+        font-size: var(--ds-selector-font-size, 12px);
         font-weight: 500;
         letter-spacing: -0.01em;
         color: var(--ink-2);
       }
       .intensity-value.is-ultra { color: var(--ultra-text); font-weight: 600; }
       .intensity-hint {
-        font-size: 11px;
+        font-size: var(--ds-selector-font-size, 11px);
         font-weight: 500;
         letter-spacing: 0.01em;
         color: var(--ink-2);
         white-space: nowrap;
       }
       .intensity-warning {
-        font-size: 11px;
+        font-size: var(--ds-selector-font-size, 11px);
         font-weight: 600;
         letter-spacing: -0.01em;
         color: var(--ultra-text);
@@ -392,7 +392,7 @@ class ChatGPTModelSelector extends HTMLElement {
         background: transparent;
         outline: none;
         font: inherit;
-        font-size: 13px;
+        font-size: var(--ds-selector-font-size, 13px);
         font-weight: 500;
         letter-spacing: -0.01em;
         color: var(--ink);
@@ -403,7 +403,7 @@ class ChatGPTModelSelector extends HTMLElement {
       }
       .model-empty {
         padding: 12px 10px;
-        font-size: 12.5px;
+        font-size: var(--ds-selector-font-size, 12.5px);
         letter-spacing: 0.01em;
         color: var(--ink-3);
       }
@@ -427,7 +427,7 @@ class ChatGPTModelSelector extends HTMLElement {
         align-items: center;
         gap: 10px;
         padding: 0 10px;
-        font-size: 13px;
+        font-size: var(--ds-selector-font-size, 13px);
         font-weight: 500;
         letter-spacing: -0.01em;
         color: var(--ink);
@@ -485,7 +485,7 @@ class ChatGPTModelSelector extends HTMLElement {
       }
       .model-effort {
         flex: none;
-        font-size: 12px;
+        font-size: var(--ds-selector-font-size, 12px);
         font-weight: 500;
         letter-spacing: -0.01em;
         color: var(--ink-2);
@@ -523,7 +523,7 @@ class ChatGPTModelSelector extends HTMLElement {
         align-items: center;
         gap: 10px;
         padding: 0 10px;
-        font-size: 13px;
+        font-size: var(--ds-selector-font-size, 13px);
         font-weight: 500;
         letter-spacing: -0.01em;
         color: var(--ink);

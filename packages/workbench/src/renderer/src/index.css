@@ -1482,6 +1482,17 @@ samp {
   border-color: color-mix(in srgb, var(--ds-accent) 58%, transparent);
 }
 
+.ds-ide-workspace .ds-workspace-file-tree__header > div,
+.ds-ide-workspace .ds-workspace-file-tree__row-pad,
+.ds-ide-workspace .ds-workspace-editor-tab > button,
+.ds-ide-workspace .ds-workspace-editor-breadcrumb,
+.ds-workbench-right-panel .ds-workspace-file-tree__header > div,
+.ds-workbench-right-panel .ds-workspace-file-tree__row-pad,
+.ds-workbench-right-panel .ds-workspace-editor-tab > button,
+.ds-workbench-right-panel .ds-workspace-editor-breadcrumb {
+  font-size: 15px;
+}
+
 /* IDE: flush tabs against the editor top edge — not chat pills. */
 .ds-ide-workspace .ds-workspace-editor-tabstrip {
   height: 28px;
@@ -6061,6 +6072,15 @@ html[data-theme='dark'] .ds-code-fullscreen .shiki span {
   letter-spacing: -0.003em;
   color: color-mix(in srgb, var(--ds-text) 96%, var(--ds-text-muted));
   -webkit-font-smoothing: antialiased;
+}
+
+.ds-ide-workspace .ds-markdown.ds-markdown--document {
+  font-size: 15px;
+}
+
+.ds-ide-workspace .ds-markdown.ds-markdown--document :is(code, pre, table, th, td),
+.ds-workbench-right-panel .ds-markdown.ds-markdown--document :is(code, pre, table, th, td) {
+  font-size: 15px;
 }
 
 .ds-markdown.ds-markdown--document p,
@@ -11381,7 +11401,7 @@ select:focus-visible,
   max-width: none;
 }
 
-/* Flatter IDE composer — match rail 12px / 1.625 transcript. */
+/* Flatter IDE composer. */
 .ds-ide-chat-rail .ds-composer-shell,
 .ds-ide-chat-rail .ds-composer-shell--compact {
   border-radius: 0.75rem;
@@ -11389,7 +11409,7 @@ select:focus-visible,
 
 .ds-ide-chat-rail .ds-composer-input,
 .ds-ide-chat-rail .ds-chat-composer textarea {
-  font-size: 12px;
+  font-size: 15px;
   line-height: 1.625;
   letter-spacing: normal;
   min-height: 22px;
@@ -11448,21 +11468,19 @@ select:focus-visible,
 }
 
 /*
- * IDE rail typography — match Synara transcript tokens
- * (DEFAULT_CHAT_FONT_SIZE_PX=12, line-height ratio 1.625, left-aligned).
+ * IDE rail typography — 13px controls and code, 15px answer prose.
  * Scoped to .ds-ide-chat-rail only; main chat follows the appearance setting.
  *
- * Token ladder (narrow ~440px rail):
- *   base 12 · title 13 · meta 11 · code 11
- * Title never exceeds base+2; Chat-mode absolute px chrome is remapped here.
+ * Controls, metadata, tables, and code share the local 13px scale.
  */
 .ds-ide-chat-rail {
-  --ds-chat-font-size: 12px;
-  --ds-chat-code-font-size: 11px; /* Synara chatCodePx ≈ base * 0.95 */
-  --ds-ide-font-base: 12px;
+  --ds-answer-font-size: 15px;
+  --ds-chat-font-size: 13px;
+  --ds-chat-code-font-size: 13px;
+  --ds-ide-font-base: 13px;
   --ds-ide-font-title: 13px;
-  --ds-ide-font-meta: 11px;
-  --ds-ide-font-code: 11px;
+  --ds-ide-font-meta: 13px;
+  --ds-ide-font-code: 13px;
   --ds-ide-space-block: 0.55rem;
   --ds-ide-card-pad-y: 0.5rem;
   --ds-ide-card-pad-x: 0.65rem;
@@ -11473,7 +11491,7 @@ select:focus-visible,
 .ds-ide-chat-rail .ds-markdown.ds-markdown--answer,
 .ds-ide-chat-rail .ds-chat-answer {
   font-size: var(--ds-ide-font-base);
-  line-height: 1.625; /* 19.5px at 12px — Synara CHAT_TRANSCRIPT_LINE_HEIGHT_RATIO */
+  line-height: 1.625;
   letter-spacing: normal;
   color: var(--ds-text);
 }
@@ -11568,7 +11586,7 @@ select:focus-visible,
 
 .ds-ide-chat-rail .ds-markdown.ds-markdown--answer :not(pre) > code,
 .ds-ide-chat-rail .ds-markdown.ds-markdown--answer .ds-code-inline {
-  font-size: 0.9em;
+  font-size: var(--ds-ide-font-code);
   font-weight: 400;
   line-height: 1.5;
   padding: 0.08em 0.26em;
@@ -11584,7 +11602,7 @@ select:focus-visible,
 }
 
 .ds-ide-chat-rail .ds-markdown.ds-markdown--answer .ds-code-block-language {
-  font-size: 0.68rem;
+  font-size: var(--ds-ide-font-code);
 }
 
 /* Tables: follow rail base (Chat th is hard-coded 13px). */
@@ -11767,12 +11785,12 @@ select:focus-visible,
 }
 
 .ds-ide-chat-rail .ds-turn-change-summary__title {
-  font-size: 15px;
+  font-size: var(--ds-ide-font-title);
   letter-spacing: -0.01em;
 }
 
 .ds-ide-chat-rail .ds-turn-change-summary__path {
-  font-size: 14px;
+  font-size: var(--ds-ide-font-base);
 }
 
 .ds-ide-chat-rail .ds-html-preview-card {
@@ -11822,7 +11840,7 @@ select:focus-visible,
 }
 
 .ds-ide-chat-rail .ds-user-message-edit-textarea {
-  font-size: var(--ds-ide-font-base);
+  font-size: 15px;
   line-height: 1.55;
 }
 
@@ -11952,7 +11970,7 @@ select:focus-visible,
   max-width: 100%;
   padding: 0.45rem 0.7rem;
   border-radius: 0.65rem;
-  font-size: var(--ds-ide-font-base);
+  font-size: 15px;
   line-height: 1.55;
   text-align: start;
   text-justify: auto;
@@ -11981,10 +11999,10 @@ select:focus-visible,
  * Do NOT target all .ds-modal-surface — Settings / Search / Git dialogs share it.
  */
 body:has(.ds-workbench-shell[data-ide-mode]) {
-  --ds-ide-font-base: 12px;
+  --ds-ide-font-base: 13px;
   --ds-ide-font-title: 13px;
-  --ds-ide-font-meta: 11px;
-  --ds-ide-font-code: 11px;
+  --ds-ide-font-meta: 13px;
+  --ds-ide-font-code: 13px;
 }
 
 body:has(.ds-workbench-shell[data-ide-mode]) .ds-subagent-dialog-panel,
@@ -12063,4 +12081,18 @@ body:has(.ds-workbench-shell[data-ide-mode]) .ds-chat-rail-modal__title {
 
 body:has(.ds-workbench-shell[data-ide-mode]) .ds-chat-rail-modal .text-\[13px\] {
   font-size: var(--ds-ide-font-base);
+}
+
+/* IDE-only controls, including menus rendered outside the rail. */
+.ds-ide-chat-rail reasoning-effort-selector {
+  --ds-selector-font-size: 13px;
+}
+
+.ds-ide-chat-rail :is(.ds-composer-shell, .ds-composer-command-popover, .ds-ide-chat-rail__header) [class*="text-["],
+.ds-ide-chat-rail .ds-composer-model-label,
+.ds-ide-chat-rail .ds-markdown code,
+body:has(.ds-workbench-shell[data-ide-mode]) :is(.ds-subagent-dialog, .ds-code-fullscreen, .ds-chat-rail-modal) [class*="text-["],
+body:has(.ds-workbench-shell[data-ide-mode]) :is(.ds-subagent-dialog, .ds-code-fullscreen) :is(code, .ds-code-block-language),
+body:has(.ds-workbench-shell[data-ide-mode]) .ds-project-context-menu :is(input, button, [class*="ds-project-context-menu__"]) {
+  font-size: 13px;
 }

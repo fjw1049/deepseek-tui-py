@@ -282,7 +282,7 @@ export const WorkspaceEditorSurface = forwardRef<WorkspaceEditorSurfaceHandle, P
             overviewRulerBorder: false,
             glyphMargin: false,
             lineDecorationsWidth: 0,
-            fontSize: 12,
+            fontSize: monacoTheme.startsWith('ds-ide-workspace-') ? 13 : 12,
             lineHeight: 20,
             scrollBeyondLastLine: false,
             automaticLayout: false,
