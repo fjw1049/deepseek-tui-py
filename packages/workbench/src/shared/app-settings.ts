@@ -129,6 +129,8 @@ export type NotificationConfigV1 = {
 export const DEFAULT_ASR_MODEL = 'glm-asr-2512'
 export const DEFAULT_ASR_BASE_URL = 'https://open.bigmodel.cn/api/paas/v4'
 export const BUILTIN_ASR_PROVIDER_ID = 'zhipu-asr'
+/** Reserved custom-endpoint id backing the vision helper config. */
+export const VISION_ENDPOINT_ID = 'vision-helper'
 
 export type AsrSettingsV1 = {
   apiKey: string
@@ -1211,7 +1213,9 @@ export function defaultAsrProviders(): AsrProviderV1[] {
     {
       id: BUILTIN_ASR_PROVIDER_ID,
       name: '智谱 ASR',
-      baseUrl: DEFAULT_ASR_BASE_URL,
+      // Empty by design: the user fills their own endpoint. Runtime falls
+      // back to DEFAULT_ASR_BASE_URL via resolveActiveAsrSettings.
+      baseUrl: '',
       apiKey: '',
       models: [{ id: DEFAULT_ASR_MODEL, enabled: true }],
       builtin: true
@@ -1271,16 +1275,16 @@ export function normalizeAsrProviders(
         models.push({ id: modelId, enabled: model.enabled !== false })
       }
       const builtin = source.builtin === true || id === BUILTIN_ASR_PROVIDER_ID
-      if (models.length === 0 && builtin) {
-        models.push({ id: DEFAULT_ASR_MODEL, enabled: true })
-      }
+      // No refill when the builtin ends up with zero models: the user deleted
+      // them on purpose. resolveActiveAsrSettings falls back to
+      // DEFAULT_ASR_MODEL at runtime.
       list.push({
         id,
         name,
         baseUrl:
           typeof source.baseUrl === 'string' && source.baseUrl.trim()
             ? source.baseUrl.trim()
-            : DEFAULT_ASR_BASE_URL,
+            : '',
         apiKey: typeof source.apiKey === 'string' ? source.apiKey.trim() : '',
         models,
         ...(builtin ? { builtin: true } : {})
@@ -1299,7 +1303,7 @@ export function normalizeAsrProviders(
     const legacyUrl =
       typeof legacy?.baseUrl === 'string' && legacy.baseUrl.trim()
         ? legacy.baseUrl.trim()
-        : DEFAULT_ASR_BASE_URL
+        : ''
     list.unshift({
       ...seeded,
       apiKey: legacyKey,
@@ -1332,9 +1336,25 @@ export function normalizeAsrProviders(
 
 export function normalizeCustomEndpoints(endpoints: unknown): CustomEndpointV1[] {
   if (!Array.isArray(endpoints)) return []
+  const rawList = endpoints.filter(
+    (ep): ep is Record<string, unknown> => typeof ep === 'object' && ep !== null
+  )
+  // 'vision-helper' is reserved for the vision helper config (managed entirely
+  // by the vision sheet). Collapse the whole id family (vision-helper-2, …)
+  // into its last entry so stale duplicates can never resurface elsewhere.
+  const isVisionEndpointId = (id: unknown): boolean =>
+    typeof id === 'string' &&
+    (id === VISION_ENDPOINT_ID || id.startsWith(`${VISION_ENDPOINT_ID}-`))
+  let lastVisionIndex = -1
+  rawList.forEach((ep, index) => {
+    if (isVisionEndpointId(ep.id)) lastVisionIndex = index
+  })
+  const keptList =
+    lastVisionIndex === -1
+      ? rawList
+      : rawList.filter((ep, index) => !isVisionEndpointId(ep.id) || index === lastVisionIndex)
   const usedEndpointIds = new Set<string>([...BUILTIN_LLM_PROVIDER_IDS])
-  return endpoints
-    .filter((ep): ep is Record<string, unknown> => typeof ep === 'object' && ep !== null)
+  return keptList
     .filter((ep) => typeof ep.name === 'string' && ep.name.trim())
     .map((ep, index) => {
       const name = String(ep.name).trim()
@@ -1342,12 +1362,16 @@ export function normalizeCustomEndpoints(endpoints: unknown): CustomEndpointV1[]
       const rawId = typeof ep.id === 'string' && ep.id.trim() ? ep.id.trim() : fallbackId
       const requestedId = rawId.toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^-|-$/g, '') || fallbackId
       let endpointId = requestedId
-      let endpointSuffix = 2
-      while (usedEndpointIds.has(endpointId)) {
-        endpointId = `${requestedId}-${endpointSuffix}`
-        endpointSuffix += 1
+      if (isVisionEndpointId(requestedId)) {
+        endpointId = VISION_ENDPOINT_ID
+      } else {
+        let endpointSuffix = 2
+        while (usedEndpointIds.has(endpointId)) {
+          endpointId = `${requestedId}-${endpointSuffix}`
+          endpointSuffix += 1
+        }
+        usedEndpointIds.add(endpointId)
       }
-      usedEndpointIds.add(endpointId)
       const rawModels = Array.isArray(ep.models)
         ? ep.models
         : typeof ep.model === 'string' && ep.model.trim()
