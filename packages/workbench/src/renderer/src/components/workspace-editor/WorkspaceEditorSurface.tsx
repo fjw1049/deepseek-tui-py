@@ -282,7 +282,7 @@ export const WorkspaceEditorSurface = forwardRef<WorkspaceEditorSurfaceHandle, P
             overviewRulerBorder: false,
             glyphMargin: false,
             lineDecorationsWidth: 0,
-            fontSize: 12,
+            fontSize: 15,
             lineHeight: 20,
             scrollBeyondLastLine: false,
             automaticLayout: false,

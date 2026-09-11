@@ -295,7 +295,7 @@ function SidebarLink({
       </span>
       <span className="min-w-0 flex-1 truncate text-left">{label}</span>
       {shortcut && !disabled ? (
-        <kbd className="ds-kbd ds-sidebar-link-shortcut hidden items-center gap-0.5 rounded-md px-1.5 py-0.5 font-mono font-medium text-ds-faint group-hover:inline-flex group-focus-within:inline-flex">
+        <kbd className="ds-kbd ds-sidebar-link-shortcut inline-flex invisible items-center gap-0.5 rounded-md px-1.5 py-0.5 font-mono font-medium text-ds-faint group-hover:visible group-focus-within:visible">
           <Command className="h-2.5 w-2.5" strokeWidth={2} />
           {shortcut.replace('⌘', '')}
         </kbd>

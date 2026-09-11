@@ -5,8 +5,9 @@ const source = readFileSync(new URL('./LlmProvidersPanel.tsx', import.meta.url),
 const stylesheet = readFileSync(new URL('../../index.css', import.meta.url), 'utf8')
 
 describe('LLM provider sheet materials', () => {
-  it('uses the shared settings popover for protocol and vision selectors', () => {
-    expect(source.match(/<SettingsSelect\s/g)).toHaveLength(3)
+  it('uses the shared settings popover for protocol selectors', () => {
+    // Vision helper is a free-form sheet now (own endpoint form), not a selector.
+    expect(source.match(/<SettingsSelect\s/g)).toHaveLength(2)
     expect(source).not.toContain('<select')
   })
 
@@ -15,7 +16,7 @@ describe('LLM provider sheet materials', () => {
       source.match(
         /className="ds-llm-sheet__add-model ds-llm-sheet__add-model--inset"/g
       )
-    ).toHaveLength(3)
+    ).toHaveLength(4)
 
     const insetInputRule = stylesheet.match(
       /\.ds-llm-sheet__add-model--inset \.ds-llm-sheet__add-model-input \{(?<body>[^}]*)\}/

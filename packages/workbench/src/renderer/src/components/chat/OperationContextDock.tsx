@@ -13,11 +13,13 @@ import {
   ChevronRight,
   ChevronsLeftRight,
   GitBranch,
+  GitGraph,
   Github,
   ListChecks,
   ListTodo,
   PanelsTopLeft,
   FileEdit,
+  FolderOpen,
   Globe2,
   Terminal,
   X
@@ -66,7 +68,9 @@ type Props = {
   /** Project currently rendered by the owning Workbench. */
   workspaceRoot: string
   onOpenChanges?: () => void
-  /** Enter IDE/editor layout — top entry, labeled as Editor. */
+  /** Open the right-sidebar file tree (文件 tab) — chat-mode files entry. */
+  onOpenFilesSidebar: () => void
+  /** Enter IDE/editor layout — EditView row entry. */
   onEnterIdeMode?: () => void
   previewActive: boolean
   terminalPanelOpen: boolean
@@ -292,6 +296,7 @@ function TaskRow({
 export function OperationContextDock({
   workspaceRoot,
   onOpenChanges,
+  onOpenFilesSidebar,
   onEnterIdeMode,
   previewActive,
   terminalPanelOpen,
@@ -511,8 +516,8 @@ export function OperationContextDock({
               type="button"
               className="ds-operation-dock-rail__btn"
               onClick={onEnterIdeMode}
-              title={t('rightSidebarTabEditor')}
-              aria-label={t('rightSidebarTabEditor')}
+              title={t('operationDockEditView')}
+              aria-label={t('operationDockEditView')}
             >
               <PanelsTopLeft className="h-[15px] w-[15px]" strokeWidth={1.75} />
             </button>
@@ -592,15 +597,15 @@ export function OperationContextDock({
         className="ds-operation-dock-launchers"
         data-count={onEnterIdeMode ? '3' : '2'}
       >
-        {onEnterIdeMode ? (
+        {onOpenFilesSidebar ? (
           <button
             type="button"
-            onClick={onEnterIdeMode}
+            onClick={onOpenFilesSidebar}
             className="ds-operation-dock-launcher group"
             title={t('rightSidebarTabEditor')}
             aria-label={t('rightSidebarTabEditor')}
           >
-            <RowIcon icon={PanelsTopLeft} tint="violet" />
+            <RowIcon icon={FolderOpen} tint="violet" />
             <span className="ds-operation-dock-launcher__label">
               {t('rightSidebarTabEditor')}
             </span>
@@ -664,10 +669,31 @@ export function OperationContextDock({
           />
         </button>
       ) : null}
+      {onEnterIdeMode ? (
+        <button
+          type="button"
+          onClick={onEnterIdeMode}
+          title={t('operationDockEditView')}
+          className="ds-operation-dock-repository group"
+        >
+          <span className="ds-operation-dock-repository__icon" aria-hidden>
+            <PanelsTopLeft className="h-[17px] w-[17px]" strokeWidth={1.75} />
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="ds-operation-dock-repository__name">
+              {t('operationDockEditView')}
+            </span>
+          </span>
+          <ChevronRight
+            className="h-3.5 w-3.5 shrink-0 text-ds-faint"
+            strokeWidth={1.85}
+          />
+        </button>
+      ) : null}
       <div className="ds-operation-dock-status__section">
       <SectionHeader
         label={t('operationDockGitTitle')}
-        icon={GitBranch}
+        icon={GitGraph}
         collapsed={collapsed.git}
         onToggle={() => toggle('git')}
         trailing={

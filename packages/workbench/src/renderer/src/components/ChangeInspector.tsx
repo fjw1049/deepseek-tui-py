@@ -387,7 +387,7 @@ function InspectorGitActions({
     else setMenuOpen((open) => !open)
   }
   const menuItemClass =
-    'flex min-h-8 w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[12.5px] text-ds-ink transition hover:bg-ds-hover active:scale-[0.99] disabled:pointer-events-none disabled:opacity-35'
+    'flex min-h-8 w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[14.5px] text-ds-ink transition hover:bg-ds-hover active:scale-[0.99] disabled:pointer-events-none disabled:opacity-35'
 
   return (
     <div ref={popoverRef} className="ds-change-git-actions relative ml-auto flex shrink-0 items-center">
@@ -484,7 +484,7 @@ function InspectorGitActions({
         <div className="absolute right-0 top-[calc(100%+6px)] z-[70] w-[min(320px,calc(100vw-24px))] rounded-xl border border-ds-border bg-ds-elevated p-3 shadow-xl">
           <div className="mb-2 flex items-center gap-2">
             <GitCommitHorizontal className="h-4 w-4 text-ds-muted" />
-            <span className="min-w-0 flex-1 truncate text-[12.5px] font-semibold text-ds-ink">
+            <span className="min-w-0 flex-1 truncate text-[14.5px] font-semibold text-ds-ink">
               {t('gitCommitStagedCount', { count: stagedPaths.length })}
             </span>
             <button type="button" onClick={() => setCommitOpen(false)} aria-label={t('close')} className="rounded-md p-1 text-ds-faint hover:bg-ds-hover hover:text-ds-ink">
@@ -498,17 +498,17 @@ function InspectorGitActions({
               onChange={(event) => setMessage(event.target.value)}
               placeholder={t('operationDockCommitMessagePlaceholder')}
               rows={3}
-              className="w-full resize-none rounded-lg border border-ds-border bg-ds-card px-2.5 py-2 pr-9 text-[12px] text-ds-ink outline-none placeholder:text-ds-faint focus:border-ds-border-strong"
+              className="w-full resize-none rounded-lg border border-ds-border bg-ds-card px-2.5 py-2 pr-9 text-[14px] text-ds-ink outline-none placeholder:text-ds-faint focus:border-ds-border-strong"
             />
             <button type="button" disabled={busyAction !== null} onClick={() => void suggest()} title={t('operationDockCommitGenerate')} aria-label={t('operationDockCommitGenerate')} className="absolute right-1.5 top-1.5 rounded-md p-1.5 text-ds-faint hover:bg-ds-hover hover:text-ds-ink disabled:opacity-40">
               {busyAction === 'suggest' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
             </button>
           </div>
           <div className="mt-2 grid grid-cols-2 gap-1.5">
-            <button type="button" disabled={busyAction !== null || !message.trim()} onClick={() => void submit(false)} className={`inline-flex h-8 items-center justify-center rounded-lg text-[11.5px] font-medium active:scale-[0.98] disabled:opacity-40 ${commitPushPreferred ? 'bg-ds-hover text-ds-ink' : 'bg-accent text-white'}`}>
+            <button type="button" disabled={busyAction !== null || !message.trim()} onClick={() => void submit(false)} className={`inline-flex h-8 items-center justify-center rounded-lg text-[13.5px] font-medium active:scale-[0.98] disabled:opacity-40 ${commitPushPreferred ? 'bg-ds-hover text-ds-ink' : 'bg-accent text-white'}`}>
               {t('gitCommitLocal')}
             </button>
-            <button type="button" disabled={busyAction !== null || !message.trim() || !hasRemote} onClick={() => void submit(true)} className={`inline-flex h-8 items-center justify-center gap-1 rounded-lg px-2 text-[11.5px] font-medium active:scale-[0.98] disabled:opacity-40 ${commitPushPreferred ? 'bg-accent text-white' : 'bg-ds-hover text-ds-ink'}`}>
+            <button type="button" disabled={busyAction !== null || !message.trim() || !hasRemote} onClick={() => void submit(true)} className={`inline-flex h-8 items-center justify-center gap-1 rounded-lg px-2 text-[13.5px] font-medium active:scale-[0.98] disabled:opacity-40 ${commitPushPreferred ? 'bg-accent text-white' : 'bg-ds-hover text-ds-ink'}`}>
               <RefreshCw className="h-3.5 w-3.5" />
               {t('gitCommitAndPush')}
             </button>
@@ -517,7 +517,7 @@ function InspectorGitActions({
       ) : null}
 
       {feedback ? (
-        <div role="status" className={`absolute right-0 top-[calc(100%+6px)] z-[80] flex w-max max-w-72 items-start gap-1.5 rounded-lg border border-ds-border bg-ds-elevated px-2.5 py-2 text-[11px] leading-4 shadow-lg ${feedback.kind === 'success' ? 'text-emerald-600 dark:text-emerald-300' : 'text-amber-700 dark:text-amber-200'}`}>
+        <div role="status" className={`absolute right-0 top-[calc(100%+6px)] z-[80] flex w-max max-w-72 items-start gap-1.5 rounded-lg border border-ds-border bg-ds-elevated px-2.5 py-2 text-[13px] leading-4 shadow-lg ${feedback.kind === 'success' ? 'text-emerald-600 dark:text-emerald-300' : 'text-amber-700 dark:text-amber-200'}`}>
           {feedback.kind === 'success' ? <CheckCircle2 className="mt-0.5 h-3 w-3 shrink-0" /> : <TriangleAlert className="mt-0.5 h-3 w-3 shrink-0" />}
           <span>{feedback.text}</span>
         </div>
@@ -616,7 +616,7 @@ function ChangeSourcePicker({
         title={hint}
         aria-label={selected.label}
         onClick={() => setOpen((value) => !value)}
-        className="inline-flex h-7 min-w-0 max-w-full items-center gap-1.5 rounded-md px-2 text-left text-[12.5px] font-semibold text-ds-ink transition hover:bg-ds-hover active:scale-[0.98]"
+        className="inline-flex h-7 min-w-0 max-w-full items-center gap-1.5 rounded-md px-2 text-left text-[14.5px] font-semibold text-ds-ink transition hover:bg-ds-hover active:scale-[0.98]"
       >
         {context === 'conflicts' ? (
           <TriangleAlert className="h-3.5 w-3.5 shrink-0 text-amber-600" strokeWidth={1.9} />
@@ -640,7 +640,7 @@ function ChangeSourcePicker({
             if (groupItems.length === 0) return null
             return (
               <div key={group} className="ds-change-source__group">
-                <div className="px-2 pb-1 pt-1.5 text-[10.5px] font-medium text-ds-faint">
+                <div className="px-2 pb-1 pt-1.5 text-[12.5px] font-medium text-ds-faint">
                   {groupLabel(group)}
                 </div>
                 {groupItems.map((item) => (
@@ -653,14 +653,14 @@ function ChangeSourcePicker({
                       onChange(item.value)
                       setOpen(false)
                     }}
-                    className="flex min-h-8 w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[12.5px] text-ds-ink transition hover:bg-ds-hover active:scale-[0.99]"
+                    className="flex min-h-8 w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[14.5px] text-ds-ink transition hover:bg-ds-hover active:scale-[0.99]"
                   >
                     <span className="flex h-4 w-4 shrink-0 items-center justify-center">
                       {context === item.value ? <Check className="h-3.5 w-3.5" strokeWidth={2.2} /> : null}
                     </span>
                     <span className="min-w-0 flex-1 truncate">{item.label}</span>
                     {item.hint ? (
-                      <span className="max-w-24 shrink-0 truncate text-[10.5px] text-ds-faint">
+                      <span className="max-w-24 shrink-0 truncate text-[12.5px] text-ds-faint">
                         {item.hint}
                       </span>
                     ) : null}
@@ -735,7 +735,7 @@ function BranchComparisonPicker({
         setOpen(false)
         setQuery('')
       }}
-      className="flex min-h-8 w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[12.5px] text-ds-ink transition hover:bg-ds-hover active:scale-[0.99]"
+      className="flex min-h-8 w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[14.5px] text-ds-ink transition hover:bg-ds-hover active:scale-[0.99]"
     >
       <span className="flex h-4 w-4 shrink-0 items-center justify-center">
         {selectedBase === branch ? <Check className="h-3.5 w-3.5" strokeWidth={2.2} /> : null}
@@ -746,7 +746,7 @@ function BranchComparisonPicker({
 
   const baseLabel = selectedBase ?? (loading ? t('gitBranchLoading') : t('gitNoBranch'))
   return (
-    <div ref={menuRef} className="ds-change-branch relative min-w-0 flex-1 text-[12.5px]">
+    <div ref={menuRef} className="ds-change-branch relative min-w-0 flex-1 text-[14.5px]">
       <button
         type="button"
         disabled={loading && !selectedBase}
@@ -781,7 +781,7 @@ function BranchComparisonPicker({
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
                 placeholder={t('gitSearchBranches')}
-                className="min-w-0 flex-1 bg-transparent text-[12.5px] text-ds-ink outline-none placeholder:text-ds-faint"
+                className="min-w-0 flex-1 bg-transparent text-[14.5px] text-ds-ink outline-none placeholder:text-ds-faint"
               />
             </label>
           </div>
@@ -790,13 +790,13 @@ function BranchComparisonPicker({
               filteredBranches.length > 0 ? (
                 filteredBranches.map(option)
               ) : (
-                <div className="px-2 py-3 text-[12px] text-ds-faint">{t('gitNoBranches')}</div>
+                <div className="px-2 py-3 text-[14px] text-ds-faint">{t('gitNoBranches')}</div>
               )
             ) : (
               <>
                 {options.current ? (
                   <div>
-                    <div className="px-2 pb-1 pt-1 text-[10.5px] font-medium text-ds-faint">
+                    <div className="px-2 pb-1 pt-1 text-[12.5px] font-medium text-ds-faint">
                       {t('changeBranchCurrentGroup')}
                     </div>
                     {option(options.current)}
@@ -804,7 +804,7 @@ function BranchComparisonPicker({
                 ) : null}
                 {options.default ? (
                   <div>
-                    <div className="px-2 pb-1 pt-1 text-[10.5px] font-medium text-ds-faint">
+                    <div className="px-2 pb-1 pt-1 text-[12.5px] font-medium text-ds-faint">
                       {t('changeBranchDefaultGroup')}
                     </div>
                     {option(options.default)}
@@ -812,14 +812,14 @@ function BranchComparisonPicker({
                 ) : null}
                 {options.recent.length > 0 ? (
                   <div className="mt-1 border-t border-ds-border-muted pt-1">
-                    <div className="px-2 pb-1 pt-1 text-[10.5px] font-medium text-ds-faint">
+                    <div className="px-2 pb-1 pt-1 text-[12.5px] font-medium text-ds-faint">
                       {t('changeBranchRecentGroup')}
                     </div>
                     {options.recent.map(option)}
                   </div>
                 ) : null}
                 {!options.current && !options.default && options.recent.length === 0 ? (
-                  <div className="px-2 py-3 text-[12px] text-ds-faint">{t('gitNoBranches')}</div>
+                  <div className="px-2 py-3 text-[14px] text-ds-faint">{t('gitNoBranches')}</div>
                 ) : null}
               </>
             )}
@@ -1343,7 +1343,7 @@ export function ChangeInspector({
           >
             {compactList ? (
               <>
-                <span className="min-w-0 flex-1 truncate text-[12.5px]">
+                <span className="min-w-0 flex-1 truncate text-[14.5px]">
                   {item.filePath ? (
                     <FileTypeIcon
                       path={item.filePath}
@@ -1358,16 +1358,16 @@ export function ChangeInspector({
                     {name || t('toolActionFile')}
                   </span>
                   {parent ? (
-                    <span className="ml-1.5 text-[11px] text-ds-faint">{parent}</span>
+                    <span className="ml-1.5 text-[13px] text-ds-faint">{parent}</span>
                   ) : null}
                 </span>
                 {item.gitStage === 'partial' ? (
-                  <span className="shrink-0 text-[10px] font-medium text-ds-muted">
+                  <span className="shrink-0 text-[12px] font-medium text-ds-muted">
                     {gitStageLabel(item.gitStage)}
                   </span>
                 ) : null}
                 {item.status === 'running' ? (
-                  <span className="shrink-0 text-[10px] font-medium text-amber-700 dark:text-amber-200">
+                  <span className="shrink-0 text-[12px] font-medium text-amber-700 dark:text-amber-200">
                     {t('inspectorStatusRunning')}
                   </span>
                 ) : null}
@@ -1379,11 +1379,11 @@ export function ChangeInspector({
                   {item.filePath ? (
                     <FileTypeIcon path={item.filePath} className="h-3.5 w-3.5 shrink-0" />
                   ) : null}
-                  <div className="min-w-0 flex-1 truncate text-[13px] text-ds-ink">
+                  <div className="min-w-0 flex-1 truncate text-[15px] text-ds-ink">
                     {displayPath ?? t('toolActionFile')}
                   </div>
                   {item.status === 'running' ? (
-                    <span className="shrink-0 text-[11px] font-medium text-amber-700 dark:text-amber-200">
+                    <span className="shrink-0 text-[13px] font-medium text-amber-700 dark:text-amber-200">
                       {t('inspectorStatusRunning')}
                     </span>
                   ) : null}
@@ -1422,7 +1422,7 @@ export function ChangeInspector({
   const fileList = (
     <div className={`${isStack && diffExpanded && sideListCollapsed ? 'hidden' : 'flex'} min-h-0 min-w-0 flex-1 flex-col overflow-hidden`}>
       {pathActionError ? (
-        <div role="alert" className="border-b border-ds-border-muted px-2 py-1.5 text-[11px] text-amber-700 dark:text-amber-200">
+        <div role="alert" className="border-b border-ds-border-muted px-2 py-1.5 text-[13px] text-amber-700 dark:text-amber-200">
           {pathActionError}
         </div>
       ) : null}
@@ -1430,7 +1430,7 @@ export function ChangeInspector({
         {fileGroups.map((group) => (
           <div key={group.key}>
             {group.label ? (
-              <div className="sticky top-0 z-10 flex h-7 items-center bg-ds-sidebar px-2 text-[10.5px] font-semibold uppercase tracking-wide text-ds-faint">
+              <div className="sticky top-0 z-10 flex h-7 items-center bg-ds-sidebar px-2 text-[12.5px] font-semibold uppercase tracking-wide text-ds-faint">
                 {group.label}
                 <span className="ml-auto tabular-nums">{group.items.length}</span>
               </div>
@@ -1486,12 +1486,12 @@ export function ChangeInspector({
             }
           />
         ) : (
-          <div className="flex flex-1 items-center justify-center text-[12px] text-ds-faint">
+          <div className="flex flex-1 items-center justify-center text-[14px] text-ds-faint">
             {t('inspectorDiffEmpty')}
           </div>
         )
       ) : (
-        <div className="flex flex-1 items-center justify-center px-4 text-center text-[13px] text-ds-faint">
+        <div className="flex flex-1 items-center justify-center px-4 text-center text-[15px] text-ds-faint">
           {t('inspectorSelectHint')}
         </div>
       )}
@@ -1529,7 +1529,7 @@ export function ChangeInspector({
             {visibleFileCount > 0 || changeStats ? (
               <div className="ds-change-inspector__summary flex shrink-0 items-center gap-2">
                 {visibleFileCount > 0 ? (
-                  <span className="inline-flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full bg-ds-hover px-1.5 text-[10.5px] font-medium tabular-nums text-ds-muted">
+                  <span className="inline-flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full bg-ds-hover px-1.5 text-[12.5px] font-medium tabular-nums text-ds-muted">
                     {visibleFileCount}
                   </span>
                 ) : null}
@@ -1560,7 +1560,7 @@ export function ChangeInspector({
           isList || isDiff || isReview ? (
             <EditorListSkeleton rows={isDiff ? 12 : 8} />
           ) : (
-            <div className="flex flex-1 items-center justify-center px-6 py-10 text-center text-[13px] text-ds-faint">
+            <div className="flex flex-1 items-center justify-center px-6 py-10 text-center text-[15px] text-ds-faint">
               {t('gitBranchLoading')}
             </div>
           )
@@ -1568,10 +1568,10 @@ export function ChangeInspector({
           <div className="flex flex-1 items-center justify-center px-6 py-10 text-center">
             <div>
               <FileEdit className="mx-auto h-7 w-7 text-ds-faint" strokeWidth={1.25} />
-              <div className="mt-3 text-[13px] font-medium text-ds-muted">
+              <div className="mt-3 text-[15px] font-medium text-ds-muted">
                 {t('inspectorEmptyTitle')}
               </div>
-              <div className="mt-1 text-[12px] leading-6 text-ds-faint">
+              <div className="mt-1 text-[14px] leading-6 text-ds-faint">
                 {emptyMessage}
               </div>
             </div>

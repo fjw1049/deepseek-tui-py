@@ -14,6 +14,7 @@ import {
   Eye,
   EyeOff,
   Loader2,
+  Mic,
   Plus,
   RefreshCw,
   Trash2,
@@ -38,7 +39,8 @@ import {
   type CustomEndpointV1,
   type EndpointProtocol,
   type LlmProviderConfigV1,
-  type LlmProviderModelV1
+  type LlmProviderModelV1,
+  VISION_ENDPOINT_ID
 } from '@shared/app-settings'
 import { buildSilentWavProbeBytes } from '@shared/asr-probe-wav'
 import { resolveProviderIcon, uniquifySvgIds } from '../chat/provider-icons.js'
@@ -56,6 +58,25 @@ const PROVIDER_NAME_KEY: Record<BuiltinLlmProviderId, string> = {
   'volcengine-ark': 'llmProviderVolcengine'
 }
 
+/** Generic purpose icon for speech/vision sheets (no vendor branding). */
+function PurposeIcon({
+  kind,
+  size = 'h-10 w-10'
+}: {
+  kind: 'speech' | 'vision'
+  size?: string
+}): ReactElement {
+  const Icon = kind === 'speech' ? Mic : Eye
+  return (
+    <span
+      className={`flex shrink-0 items-center justify-center rounded-xl border border-ds-border bg-ds-card text-ds-muted ${size}`}
+      aria-hidden
+    >
+      <Icon className="h-5 w-5" strokeWidth={1.8} />
+    </span>
+  )
+}
+
 const PROVIDER_ICON_TOKEN: Record<BuiltinLlmProviderId, string> = {
   deepseek: 'deepseek',
   kimi: 'kimi',
@@ -67,6 +88,7 @@ type DetailTarget =
   | { kind: 'builtin'; id: BuiltinLlmProviderId }
   | { kind: 'custom'; id: string }
   | { kind: 'asr'; id: string }
+  | { kind: 'vision' }
   | { kind: 'add-llm' }
   | { kind: 'add-asr' }
 
@@ -208,39 +230,6 @@ export function LlmProvidersPanel({ form, onUpdate }: Props): ReactElement {
   return (
     <section className="ds-llm-panel ds-llm-panel--embedded">
       <div className="ds-llm-panel__section">
-        <div className="ds-llm-vision-setting">
-          <div className="ds-llm-vision-setting__copy">
-            <label className="ds-llm-vision-setting__title" htmlFor="vision-helper">
-              {t('visionHelper')}
-            </label>
-            <p className="ds-llm-vision-setting__hint">{t('visionHelperHint')}</p>
-          </div>
-          <SettingsSelect
-            id="vision-helper"
-            className="ds-llm-vision-setting__select"
-            title={form.visionModel?.replace('::', ' / ')}
-            value={form.visionModel ?? ''}
-            onChange={(event) => onUpdate({ visionModel: event.target.value })}
-          >
-            <option value="">{t('visionHelperNone')}</option>
-            {BUILTIN_LLM_PROVIDER_IDS.flatMap((id) =>
-              providers[id]?.models.filter((model) => model.enabled).map((model) => (
-                <option key={`${id}::${model.id}`} value={`${id}::${model.id}`}>
-                  {`${id} / ${model.id}`}
-                </option>
-              )) ?? []
-            )}
-            {endpoints.filter((endpoint) => endpoint.enabled).flatMap((endpoint) =>
-              endpoint.models.filter((model) => model.enabled).map((model) => (
-                <option key={`${endpoint.id}::${model.id}`} value={`${endpoint.id}::${model.id}`}>
-                  {`${endpoint.name} / ${model.id}`}
-                </option>
-              ))
-            )}
-          </SettingsSelect>
-        </div>
-      </div>
-      <div className="ds-llm-panel__section">
         <div className="ds-llm-panel__section-head">
           <h3 className="ds-llm-panel__section-title">{t('llmSectionLlm')}</h3>
           <button
@@ -281,7 +270,9 @@ export function LlmProvidersPanel({ form, onUpdate }: Props): ReactElement {
               </button>
             )
           })}
-          {endpoints.map((endpoint) => {
+          {endpoints
+            .filter((endpoint) => endpoint.id !== VISION_ENDPOINT_ID)
+            .map((endpoint) => {
             const configured = Boolean(endpoint.apiKey.trim() && endpoint.enabled)
             const modelCount = endpoint.models.filter((model) => model.enabled).length
             return (
@@ -314,50 +305,56 @@ export function LlmProvidersPanel({ form, onUpdate }: Props): ReactElement {
 
       <div className="ds-llm-panel__section">
         <div className="ds-llm-panel__section-head">
-          <h3 className="ds-llm-panel__section-title">{t('llmSectionSpeech')}</h3>
-          <button
-            type="button"
-            className="ds-llm-panel__add-btn"
-            onClick={() => setDetail({ kind: 'add-asr' })}
-            aria-label={t('asrAddProviderBtn')}
-          >
-            <Plus className="h-3.5 w-3.5" strokeWidth={2.2} />
-          </button>
+          <h3 className="ds-llm-panel__section-title">{t('llmSectionAuxiliary')}</h3>
         </div>
         <div className="ds-llm-panel__stack">
-          {asrProviders.map((provider) => {
-            const configured = Boolean(provider.apiKey.trim())
-            const modelLabel =
-              provider.models.find((model) => model.enabled)?.id ||
-              provider.models[0]?.id ||
-              DEFAULT_ASR_MODEL
-            return (
-              <button
-                key={provider.id}
-                type="button"
-                onClick={() => setDetail({ kind: 'asr', id: provider.id })}
-                className="ds-llm-card"
-              >
-                <BrandIcon token="glm" />
-                <span className="ds-llm-card__body">
-                  <span className="ds-llm-card__name">
-                    {provider.id === BUILTIN_ASR_PROVIDER_ID
-                      ? t('asrProviderZhipu')
-                      : provider.name}
-                  </span>
-                  <span className="ds-llm-card__meta">
-                    {configured ? modelLabel : t('llmProviderConfigureHint')}
-                  </span>
-                </span>
-                <StatusPill configured={configured} />
-                <ChevronRight
-                  className="ds-llm-card__chevron h-4 w-4 shrink-0"
-                  strokeWidth={1.8}
-                  aria-hidden
-                />
-              </button>
-            )
-          })}
+        {(() => {
+          const activeAsr =
+            asrProviders.find((provider) => provider.apiKey.trim()) ?? asrProviders[0]
+          const asrConfigured = Boolean(activeAsr?.apiKey.trim())
+          return (
+            <button
+              type="button"
+              className="ds-llm-card"
+              onClick={() => {
+                if (activeAsr) setDetail({ kind: 'asr', id: activeAsr.id })
+              }}
+            >
+              <PurposeIcon kind="speech" size="h-9 w-9" />
+              <span className="ds-llm-card__body">
+                <span className="ds-llm-card__name">{t('llmAuxiliarySpeech')}</span>
+                <span className="ds-llm-card__meta">{t('asrProviderHint')}</span>
+              </span>
+              <StatusPill configured={asrConfigured} />
+              <ChevronRight
+                className="ds-llm-card__chevron h-4 w-4 shrink-0"
+                strokeWidth={1.8}
+                aria-hidden
+              />
+            </button>
+          )
+        })()}
+        <button
+          type="button"
+          className="ds-llm-card"
+          onClick={() => setDetail({ kind: 'vision' })}
+        >
+          <PurposeIcon kind="vision" size="h-9 w-9" />
+          <span className="ds-llm-card__body">
+            <span className="ds-llm-card__name">{t('llmAuxiliaryVision')}</span>
+            <span className="ds-llm-card__meta">{t('visionHelperHint')}</span>
+          </span>
+          <StatusPill
+            configured={Boolean(
+              endpoints.find((endpoint) => endpoint.id === VISION_ENDPOINT_ID)?.apiKey.trim()
+            )}
+          />
+          <ChevronRight
+            className="ds-llm-card__chevron h-4 w-4 shrink-0"
+            strokeWidth={1.8}
+            aria-hidden
+          />
+        </button>
         </div>
       </div>
 
@@ -413,7 +410,7 @@ export function LlmProvidersPanel({ form, onUpdate }: Props): ReactElement {
 
       {detail?.kind === 'add-llm' ? (
         <AddLlmProviderSheet
-          endpoints={endpoints}
+          endpoints={endpoints.filter((endpoint) => endpoint.id !== VISION_ENDPOINT_ID)}
           onClose={() => setDetail(null)}
           onSave={(endpoint) => {
             onUpdate({ customEndpoints: [...endpoints, endpoint] })
@@ -456,6 +453,18 @@ export function LlmProvidersPanel({ form, onUpdate }: Props): ReactElement {
           onClose={() => setDetail(null)}
           onSave={(provider) => {
             onUpdate({ asrProviders: [...asrProviders, provider] })
+            setDetail(null)
+          }}
+        />
+      ) : null}
+
+      {detail?.kind === 'vision' ? (
+        <VisionHelperSheet
+          value={form.visionModel ?? ''}
+          endpoints={endpoints}
+          onClose={() => setDetail(null)}
+          onSave={(visionModel, nextEndpoints) => {
+            onUpdate({ visionModel, customEndpoints: nextEndpoints })
             setDetail(null)
           }}
         />
@@ -520,6 +529,7 @@ function AddLlmProviderSheet({
                   .replace(/^-|-$/g, '') || 'endpoint'
               const used = new Set<string>([
                 ...BUILTIN_LLM_PROVIDER_IDS,
+                VISION_ENDPOINT_ID,
                 ...endpoints.map((item) => item.id)
               ])
               const trimmedModel = modelId.trim()
@@ -630,7 +640,7 @@ function AddAsrProviderSheet({
     <SheetShell
       title={t('asrAddProviderBtn')}
       caption={t('asrAddProviderHint')}
-      icon={<BrandIcon token="glm" size={40} />}
+      icon={<PurposeIcon kind="speech" />}
       onClose={onClose}
       footer={
         <>
@@ -709,6 +719,282 @@ function AddAsrProviderSheet({
             title={t('asrModelDesc')}
           />
         </div>
+      </div>
+    </SheetShell>
+  )
+}
+
+function VisionHelperSheet({
+  value,
+  endpoints,
+  onClose,
+  onSave
+}: {
+  value: string
+  endpoints: CustomEndpointV1[]
+  onClose: () => void
+  onSave: (visionModel: string | undefined, nextEndpoints: CustomEndpointV1[]) => void
+}): ReactElement {
+  const { t } = useTranslation('settings')
+  // 视觉辅助的凭证存成保留 id 的自定义端点，后端按 providers.<id> 解析。
+  const existing = endpoints.find((endpoint) => endpoint.id === VISION_ENDPOINT_ID)
+  const existingModel = value.startsWith(`${VISION_ENDPOINT_ID}::`)
+    ? value.slice(VISION_ENDPOINT_ID.length + 2)
+    : ''
+  const [baseUrl, setBaseUrl] = useState(existing?.baseUrl ?? '')
+  const [apiKey, setApiKey] = useState(existing?.apiKey ?? '')
+  const [models, setModels] = useState<{ id: string; enabled: boolean }[]>(
+    existing?.models.length
+      ? existing.models.map((model) => ({ id: model.id, enabled: model.enabled }))
+      : existingModel
+        ? [{ id: existingModel, enabled: true }]
+        : []
+  )
+  const [modelDraft, setModelDraft] = useState('')
+  const [showKey, setShowKey] = useState(false)
+  const [testing, setTesting] = useState(false)
+  const [testResult, setTestResult] = useState<{
+    status: 'passed' | 'failed'
+    message: string
+  } | null>(null)
+
+  // 视觉只取一个模型：点选即切换启用项（单选语义，区别于 ASR 的多选）。
+  const activateModel = (id: string): void => {
+    setModels((current) =>
+      current.map((model) => ({ ...model, enabled: model.id === id }))
+    )
+  }
+
+  const addVisionModel = (): void => {
+    const id = modelDraft.trim()
+    if (!id) return
+    setModels((current) =>
+      current.some((model) => model.id === id)
+        ? current.map((model) => ({ ...model, enabled: model.id === id }))
+        : [...current.map((model) => ({ ...model, enabled: false })), { id, enabled: true }]
+    )
+    setModelDraft('')
+  }
+
+  const removeVisionModel = (id: string): void => {
+    setModels((current) => {
+      const next = current.filter((model) => model.id !== id)
+      return next.some((model) => model.enabled)
+        ? next
+        : next.map((model, index) => ({ ...model, enabled: index === 0 }))
+    })
+  }
+
+  const activeModelId = models.find((model) => model.enabled)?.id ?? models[0]?.id ?? ''
+
+  // 与自定义端点同一套探测：testEndpoint 走 chat-completions 探活。
+  const runVisionTest = async (): Promise<void> => {
+    if (!apiKey.trim() || !baseUrl.trim() || !activeModelId || testing) return
+    setTesting(true)
+    setTestResult(null)
+    try {
+      const result = await window.dsGui.testEndpoint(
+        existing?.protocol ?? 'openai',
+        baseUrl.trim(),
+        apiKey.trim(),
+        activeModelId
+      )
+      setTestResult({
+        status: result.ok ? 'passed' : 'failed',
+        message: result.message
+      })
+    } catch (error) {
+      setTestResult({
+        status: 'failed',
+        message: error instanceof Error ? error.message : String(error)
+      })
+    } finally {
+      setTesting(false)
+    }
+  }
+
+  const buildEndpoint = (): CustomEndpointV1 => ({
+    id: VISION_ENDPOINT_ID,
+    name: t('visionHelper'),
+    protocol: existing?.protocol ?? 'openai',
+    baseUrl: baseUrl.trim(),
+    apiKey: apiKey.trim(),
+    enabled: true,
+    models: models.map((model) => ({
+      id: model.id,
+      enabled: model.enabled,
+      contextWindow: CUSTOM_MODEL_CONTEXT_WINDOW_DEFAULT,
+      testStatus: 'untested'
+    }))
+  })
+
+  return (
+    <SheetShell
+      title={t('visionHelper')}
+      caption={t('visionHelperHint')}
+      icon={<PurposeIcon kind="vision" />}
+      onClose={onClose}
+      footer={
+        <>
+          {existing?.apiKey.trim() ? (
+            <button
+              type="button"
+              onClick={() =>
+                onSave(
+                  undefined,
+                  endpoints.map((endpoint) =>
+                    endpoint.id === VISION_ENDPOINT_ID
+                      ? { ...endpoint, enabled: false }
+                      : endpoint
+                  )
+                )
+              }
+              className="ds-llm-sheet__btn ds-llm-sheet__btn--danger"
+            >
+              <Trash2 className="h-3.5 w-3.5" strokeWidth={2} />
+              {t('llmClearProviderBtn')}
+            </button>
+          ) : null}
+          <button type="button" onClick={onClose} className="ds-llm-sheet__btn">
+            {t('llmProviderCancel')}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              const next = buildEndpoint()
+              onSave(
+                activeModelId ? `${VISION_ENDPOINT_ID}::${activeModelId}` : undefined,
+                [...endpoints, next].map(
+                (endpoint) => (endpoint.id === VISION_ENDPOINT_ID ? next : endpoint)
+              ))
+            }}
+            className="ds-llm-sheet__btn ds-llm-sheet__btn--primary"
+          >
+            {t('saveEndpointBtn')}
+          </button>
+        </>
+      }
+    >
+      <div className="ds-llm-inset">
+        <div className="ds-llm-inset__row">
+          <div className="ds-llm-inset__key">{t('endpointUrlLabel')}</div>
+          <input
+            className="ds-llm-inset__input"
+            value={baseUrl}
+            onChange={(e) => setBaseUrl(e.target.value)}
+            placeholder={t('endpointUrlPlaceholder')}
+          />
+        </div>
+        <div className="ds-llm-inset__row">
+          <div className="ds-llm-inset__key">{t('llmApiKey')}</div>
+          <div className="ds-llm-inset__secret">
+            <input
+              type={showKey ? 'text' : 'password'}
+              autoComplete="off"
+              placeholder="sk-…"
+              className="ds-llm-inset__input"
+              value={apiKey}
+              onChange={(e) => setApiKey(e.target.value)}
+            />
+            <button
+              type="button"
+              aria-label={showKey ? t('hideSecret') : t('showSecret')}
+              className="ds-llm-inset__eye"
+              onClick={() => setShowKey((v) => !v)}
+            >
+              {showKey ? <EyeOff className="h-4 w-4" strokeWidth={1.75} /> : <Eye className="h-4 w-4" strokeWidth={1.75} />}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div className="ds-llm-sheet__section-label">
+        <span>{t('llmAvailableModels')}</span>
+        <span className="ds-llm-sheet__section-actions">
+          <button
+            type="button"
+            disabled={!apiKey.trim() || !baseUrl.trim() || !activeModelId || testing}
+            onClick={() => void runVisionTest()}
+            className="ds-llm-sheet__refresh"
+          >
+            {testing ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={1.8} />
+            ) : (
+              <Zap className="h-3.5 w-3.5" strokeWidth={1.8} />
+            )}
+            {t('asrTestBtn')}
+          </button>
+        </span>
+      </div>
+      {testResult ? (
+        <p
+          className={`ds-llm-sheet__note ${
+            testResult.status === 'passed'
+              ? 'ds-llm-sheet__note--ok'
+              : 'ds-llm-sheet__note--err'
+          }`}
+        >
+          {testResult.message}
+        </p>
+      ) : null}
+
+      {models.length ? (
+        <ul className="ds-llm-inset ds-llm-inset--list">
+          {models.map((model, index) => {
+            const last = index === models.length - 1
+            return (
+              <li
+                key={model.id}
+                className={`ds-llm-inset__pick-row ${last ? 'is-last' : ''}`}
+              >
+                <button
+                  type="button"
+                  onClick={() => activateModel(model.id)}
+                  className={`ds-llm-inset__pick ds-llm-inset__pick--with-actions ${
+                    model.enabled ? 'is-on' : ''
+                  }`}
+                >
+                  <span className="ds-llm-inset__pick-label">{model.id}</span>
+                  {model.enabled ? (
+                    <Check className="ds-llm-inset__pick-check h-4 w-4" strokeWidth={2.4} />
+                  ) : null}
+                </button>
+                <button
+                  type="button"
+                  className="ds-llm-model-row__remove ds-llm-inset__pick-remove"
+                  onClick={() => removeVisionModel(model.id)}
+                  aria-label={t('llmDeleteModel', { model: model.id })}
+                  title={t('llmDeleteModel', { model: model.id })}
+                >
+                  <Trash2 className="h-3.5 w-3.5" strokeWidth={2} />
+                </button>
+              </li>
+            )
+          })}
+        </ul>
+      ) : null}
+
+      <div className="ds-llm-sheet__add-model ds-llm-sheet__add-model--inset">
+        <input
+          type="text"
+          className="ds-llm-sheet__add-model-input"
+          placeholder={t('llmAddModelPlaceholder')}
+          value={modelDraft}
+          onChange={(e) => setModelDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key !== 'Enter' || e.nativeEvent.isComposing || e.keyCode === 229) return
+            e.preventDefault()
+            addVisionModel()
+          }}
+        />
+        <button
+          type="button"
+          disabled={!modelDraft.trim()}
+          onClick={addVisionModel}
+          className="ds-llm-sheet__add-model-btn"
+        >
+          {t('llmAddModelBtn')}
+        </button>
       </div>
     </SheetShell>
   )
@@ -1568,9 +1854,9 @@ function AsrProviderDetailSheet({
 
   return (
     <SheetShell
-      title={builtin ? t('asrProviderZhipu') : name || provider.name}
+      title={builtin ? t('llmSectionSpeech') : name || provider.name}
       caption={t('asrProviderHint')}
-      icon={<BrandIcon token="glm" size={40} />}
+      icon={<PurposeIcon kind="speech" />}
       onClose={onClose}
       footer={
         <>
@@ -1685,7 +1971,10 @@ function AsrProviderDetailSheet({
         {models.map((model, index) => {
           const last = index === models.length - 1
           return (
-            <li key={model.id}>
+            <li
+              key={model.id}
+              className={`ds-llm-inset__pick-row ${last ? 'is-last' : ''}`}
+            >
               <button
                 type="button"
                 onClick={() =>
@@ -1695,14 +1984,23 @@ function AsrProviderDetailSheet({
                     )
                   )
                 }
-                className={`ds-llm-inset__pick ${model.enabled ? 'is-on' : ''} ${
-                  last ? 'is-last' : ''
+                className={`ds-llm-inset__pick ds-llm-inset__pick--with-actions ${
+                  model.enabled ? 'is-on' : ''
                 }`}
               >
                 <span className="ds-llm-inset__pick-label">{model.id}</span>
                 {model.enabled ? (
                   <Check className="ds-llm-inset__pick-check h-4 w-4" strokeWidth={2.4} />
                 ) : null}
+              </button>
+              <button
+                type="button"
+                className="ds-llm-model-row__remove ds-llm-inset__pick-remove"
+                onClick={() => commitModels(models.filter((item) => item.id !== model.id))}
+                aria-label={t('llmDeleteModel', { model: model.id })}
+                title={t('llmDeleteModel', { model: model.id })}
+              >
+                <Trash2 className="h-3.5 w-3.5" strokeWidth={2} />
               </button>
             </li>
           )

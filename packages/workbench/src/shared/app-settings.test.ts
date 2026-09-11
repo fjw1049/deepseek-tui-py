@@ -343,3 +343,16 @@ describe('mergeLlmProviders', () => {
     expect(next.glm.hiddenModels).toEqual(['glm-4.7'])
   })
 })
+
+describe('normalizeCustomEndpoints vision-helper reservation', () => {
+  it('collapses the vision-helper id family into the single reserved id', () => {
+    const endpoints = normalizeCustomEndpoints([
+      { id: 'endpoint', name: '众安', baseUrl: 'https://a.test', apiKey: 'k', enabled: true, models: [] },
+      { id: 'vision-helper', name: '视觉辅助模型', baseUrl: 'https://v.test', apiKey: 'k1', enabled: true, models: [] },
+      { id: 'vision-helper-2', name: '视觉辅助模型', baseUrl: 'https://v2.test', apiKey: 'k2', enabled: true, models: [] }
+    ])
+
+    expect(endpoints.map((endpoint) => endpoint.id)).toEqual(['endpoint', 'vision-helper'])
+    expect(endpoints[1].apiKey).toBe('k2')
+  })
+})
