@@ -13,6 +13,7 @@ import {
   ChevronRight,
   ChevronsLeftRight,
   GitBranch,
+  GitGraph,
   Github,
   ListChecks,
   ListTodo,
@@ -667,7 +668,7 @@ export function OperationContextDock({
       <div className="ds-operation-dock-status__section">
       <SectionHeader
         label={t('operationDockGitTitle')}
-        icon={GitBranch}
+        icon={GitGraph}
         collapsed={collapsed.git}
         onToggle={() => toggle('git')}
         trailing={
