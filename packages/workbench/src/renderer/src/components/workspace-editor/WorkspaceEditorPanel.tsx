@@ -29,7 +29,6 @@ import {
   formatComposerPathMention,
   insertComposerSnippet
 } from '../../lib/composer-insert'
-import { breadcrumbSegments, collapseBreadcrumbSegments } from '../../lib/editor-breadcrumb'
 import { EDITOR_CLOSE_ACTIVE_TAB_EVENT } from '../../lib/workspace-editor-events'
 import { isShortcutEnabled } from '../../lib/shortcuts-runtime'
 import {
@@ -154,42 +153,6 @@ function EditorTabMark({
   return null
 }
 
-function EditorBreadcrumb({
-  path,
-  workspaceRoot
-}: {
-  path: string
-  workspaceRoot: string
-}): ReactElement {
-  return (
-    <div className="ds-workspace-editor-breadcrumb flex h-7 shrink-0 items-center gap-1 overflow-hidden border-b border-[color-mix(in_srgb,var(--ds-text)_10%,transparent)] px-2.5 text-[11px] text-ds-faint">
-      {collapseBreadcrumbSegments(breadcrumbSegments(path, workspaceRoot)).map(
-        (segment, index, all) => {
-          const isLast = index === all.length - 1
-          return (
-            <span key={`${segment}-${index}`} className="flex min-w-0 items-center gap-1">
-              {index > 0 ? <span className="shrink-0 text-ds-faint/70">›</span> : null}
-              {segment !== '…' ? (
-                <FileKindIcon
-                  path={isLast ? path : segment}
-                  directory={!isLast}
-                  className="ds-file-kind-icon--chrome"
-                />
-              ) : null}
-              <span
-                className={isLast ? 'min-w-0 truncate font-medium text-ds-ink' : 'shrink-0'}
-                title={segment}
-              >
-                {segment}
-              </span>
-            </span>
-          )
-        }
-      )}
-    </div>
-  )
-}
-
 function EditorTabStrip({
   tabs,
   currentTabId,
@@ -219,7 +182,7 @@ function EditorTabStrip({
 }): ReactElement {
   return (
     <div className="ds-workspace-editor-tabstrip flex shrink-0 items-center gap-1.5 border-b border-ds-border-muted/60">
-      <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto">
+      <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto overflow-y-hidden">
         {tabs.length === 0 ? (
           <span className="px-2 py-1 text-[12px] text-ds-faint">{emptyLabel}</span>
         ) : (
@@ -935,9 +898,6 @@ export function WorkspaceEditorPanel({
                 onClose={(tabId) => handleCloseTab(tabId, 'primary')}
                 onContextMenu={(event, path) => openFileMenu(event, path, 'primary')}
               />
-              {focusedTab ? (
-                <EditorBreadcrumb path={focusedTab.path} workspaceRoot={trimmedRoot} />
-              ) : null}
             </>
           ) : null}
 
@@ -959,9 +919,6 @@ export function WorkspaceEditorPanel({
                       onClose={(tabId) => handleCloseTab(tabId, 'primary')}
                       onContextMenu={(event, path) => openFileMenu(event, path, 'primary')}
                     />
-                    {primaryTab ? (
-                      <EditorBreadcrumb path={primaryTab.path} workspaceRoot={trimmedRoot} />
-                    ) : null}
                   </>
                 ) : null}
                 <EditorPaneView
@@ -1006,9 +963,6 @@ export function WorkspaceEditorPanel({
                       onClose={(tabId) => handleCloseTab(tabId, 'secondary')}
                       onContextMenu={(event, path) => openFileMenu(event, path, 'secondary')}
                     />
-                    {secondaryTab ? (
-                      <EditorBreadcrumb path={secondaryTab.path} workspaceRoot={trimmedRoot} />
-                    ) : null}
                     <EditorPaneView
                       ref={secondaryPaneRef}
                       tab={secondaryTab}

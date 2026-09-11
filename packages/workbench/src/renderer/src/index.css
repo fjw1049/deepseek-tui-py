@@ -1485,11 +1485,9 @@ samp {
 .ds-ide-workspace .ds-workspace-file-tree__header > div,
 .ds-ide-workspace .ds-workspace-file-tree__row-pad,
 .ds-ide-workspace .ds-workspace-editor-tab > button,
-.ds-ide-workspace .ds-workspace-editor-breadcrumb,
 .ds-workbench-right-panel .ds-workspace-file-tree__header > div,
 .ds-workbench-right-panel .ds-workspace-file-tree__row-pad,
-.ds-workbench-right-panel .ds-workspace-editor-tab > button,
-.ds-workbench-right-panel .ds-workspace-editor-breadcrumb {
+.ds-workbench-right-panel .ds-workspace-editor-tab > button {
   font-size: 15px;
 }
 
@@ -1527,10 +1525,6 @@ samp {
   color: var(--ds-text);
   font-weight: 600;
   box-shadow: inset 0 -2px 0 var(--ds-accent);
-}
-
-.ds-ide-workspace .ds-workspace-editor-breadcrumb {
-  background: var(--ds-bg-sidebar);
 }
 
 .ds-ide-workspace .ds-workspace-editor-pane .monaco-editor,
