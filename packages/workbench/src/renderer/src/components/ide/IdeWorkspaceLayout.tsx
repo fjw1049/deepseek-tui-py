@@ -427,7 +427,7 @@ export function IdeWorkspaceLayout({
             label={t('ideActivityFiles')}
             onClick={() => selectActivity('files')}
           >
-            <Folders className="h-4 w-4" strokeWidth={1.85} />
+            <Folders className="h-[18px] w-[18px]" strokeWidth={1.85} />
           </ActivityButton>
           <ActivityButton
             active={centerTab === 'changes' && activitySidebarVisible}
@@ -435,14 +435,14 @@ export function IdeWorkspaceLayout({
             badge={changeBadge}
             onClick={() => selectActivity('changes')}
           >
-            <FileEdit className="h-4 w-4" strokeWidth={1.85} />
+            <FileEdit className="h-[18px] w-[18px]" strokeWidth={1.85} />
           </ActivityButton>
           <ActivityButton
             active={quickOpenOpen}
             label={t('ideActivitySearch')}
             onClick={() => setQuickOpenOpen((open) => !open)}
           >
-            <FileSearch className="h-4 w-4" strokeWidth={1.85} />
+            <FileSearch className="h-[18px] w-[18px]" strokeWidth={1.85} />
           </ActivityButton>
         </nav>
 

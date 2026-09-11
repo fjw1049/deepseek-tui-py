@@ -1089,6 +1089,7 @@
   "operationDockOpenGithub": "在内置浏览器打开 {{repo}}",
   "operationDockOpenRepository": "在内置浏览器打开 {{repo}}",
   "operationDockChanges": "更改",
+  "operationDockEditView": "编辑视图",
   "operationDockNoChanges": "暂无更改",
   "operationDockCommit": "提交",
   "operationDockCommitTitle": "提交改动",

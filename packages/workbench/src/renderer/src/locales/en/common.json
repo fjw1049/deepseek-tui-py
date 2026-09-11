@@ -1093,6 +1093,7 @@
   "operationDockOpenGithub": "Open {{repo}} in the built-in browser",
   "operationDockOpenRepository": "Open {{repo}} in the built-in browser",
   "operationDockChanges": "Changes",
+  "operationDockEditView": "Edit View",
   "operationDockNoChanges": "No changes",
   "operationDockCommit": "Commit",
   "operationDockCommitTitle": "Commit changes",

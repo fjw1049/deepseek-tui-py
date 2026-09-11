@@ -578,6 +578,10 @@ export function Workbench(): ReactElement {
     setRightSidebarTab(tab)
   }, [setRightSidebarTab])
 
+  const openFilesSidebar = useCallback((): void => {
+    openRightSidebar('editor')
+  }, [openRightSidebar])
+
   const openInAppEditorSurface = useCallback(
     async (
       path: string,
@@ -1847,6 +1851,7 @@ export function Workbench(): ReactElement {
                         <OperationContextDock
                           workspaceRoot={activeWorkspaceRoot}
                           onOpenChanges={handleBranchOpenDiff}
+                          onOpenFilesSidebar={openFilesSidebar}
                           onEnterIdeMode={enterIdeMode}
                           previewActive={rightSidebarOpen && rightSidebarTab === 'preview'}
                           terminalPanelOpen={bottomTerminalOpen}
@@ -1895,6 +1900,7 @@ export function Workbench(): ReactElement {
                       <OperationContextDock
                         workspaceRoot={activeWorkspaceRoot}
                         onOpenChanges={handleBranchOpenDiff}
+                        onOpenFilesSidebar={openFilesSidebar}
                         onEnterIdeMode={enterIdeMode}
                         previewActive={rightSidebarOpen && rightSidebarTab === 'preview'}
                         terminalPanelOpen={bottomTerminalOpen}
