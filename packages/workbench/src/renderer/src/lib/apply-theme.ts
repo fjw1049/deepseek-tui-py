@@ -40,10 +40,10 @@ export function applyUiFontScale(scale: UiFontScale): void {
   const root = document.documentElement
   const factor =
     scale === 'small'
-      ? '0.82'
+      ? '0.86'
       : scale === 'large'
         ? '1'
-        : '0.88'
+        : '0.92'
   root.style.setProperty('--ds-ui-scale', factor)
 }
 
@@ -51,7 +51,10 @@ export const UI_FONT_CHANGED_EVENT = 'deepseekgui:ui-font-changed'
 
 export function readUiFontFamily(): string {
   const family = getComputedStyle(document.documentElement).getPropertyValue('--font-ui').trim()
-  return family || "'Inter', 'Noto Sans SC', sans-serif"
+  return (
+    family ||
+    "-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', 'Noto Sans SC', sans-serif"
+  )
 }
 
 /** Terminal/xterm must stay monospace — proportional UI fonts break column layout and FitAddon. */

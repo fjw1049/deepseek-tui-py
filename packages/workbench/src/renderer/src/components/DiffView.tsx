@@ -1,5 +1,5 @@
 import { useLayoutEffect, useMemo, useRef, useState, type ReactElement } from 'react'
-import { Check, ChevronDown, Columns2, Copy, MessageSquarePlus, Rows3 } from 'lucide-react'
+import { Check, ChevronDown, ChevronUp, Minimize2, Columns2, Copy, MessageSquarePlus, Rows3 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { countDiffStats, extractDiffFilePath } from '../lib/diff-stats'
 import { FileChip } from './chat/FileChip'
@@ -25,6 +25,8 @@ type Props = {
   onAddToChat?: () => void
   /** Change inspector: replace copy with a control that collapses the diff pane. */
   onCollapse?: () => void
+  onToggleExpand?: () => void
+  expanded?: boolean
   /** Hide the file/stats header when a parent card already shows it. */
   showHeader?: boolean
   /** Keep the viewport pinned to the latest row (live file writes). */
@@ -252,6 +254,8 @@ export function DiffView({
   chrome = 'card',
   onAddToChat,
   onCollapse,
+  onToggleExpand,
+  expanded = false,
   showHeader = true,
   follow = false
 }: Props): ReactElement {
@@ -323,6 +327,8 @@ export function DiffView({
       flush={flush}
       onAddToChat={onAddToChat}
       onCollapse={onCollapse}
+      onToggleExpand={onToggleExpand}
+      expanded={expanded}
     />
   ) : null
 
@@ -433,7 +439,9 @@ function DiffHeader({
   onDiffStyleChange,
   flush = false,
   onAddToChat,
-  onCollapse
+  onCollapse,
+  onToggleExpand,
+  expanded = false
 }: {
   badge: { label: string; tone: string }
   name: string | null
@@ -448,6 +456,8 @@ function DiffHeader({
   flush?: boolean
   onAddToChat?: () => void
   onCollapse?: () => void
+  onToggleExpand?: () => void
+  expanded?: boolean
 }): ReactElement {
   const { t } = useTranslation('common')
   return (
@@ -520,6 +530,18 @@ function DiffHeader({
           title={t('workspaceEditorAddToChat')}
         >
           <MessageSquarePlus className="h-3.5 w-3.5" strokeWidth={1.85} />
+        </button>
+      ) : null}
+      {onToggleExpand ? (
+        <button
+          type="button"
+          onClick={onToggleExpand}
+          className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded text-ds-faint transition hover:bg-ds-hover hover:text-ds-ink active:scale-[0.96]"
+          aria-label={t(expanded ? 'inspectorRestoreDiff' : 'inspectorExpandDiff')}
+          title={t(expanded ? 'inspectorRestoreDiff' : 'inspectorExpandDiff')}
+          aria-pressed={expanded}
+        >
+          {expanded ? <Minimize2 className="h-3.5 w-3.5" strokeWidth={1.9} /> : <ChevronUp className="h-3.5 w-3.5" strokeWidth={1.9} />}
         </button>
       ) : null}
       {onCollapse ? (

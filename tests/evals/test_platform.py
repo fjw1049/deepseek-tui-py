@@ -23,6 +23,7 @@ def test_corpus_is_valid_and_covers_every_risk_suite() -> None:
         "completion_truthfulness",
         "constraint_survival",
         "tool_accuracy",
+        "workspace_tasks",
     }
     assert len({case.id for case in cases}) == len(cases)
     assert any(case.live for case in cases)

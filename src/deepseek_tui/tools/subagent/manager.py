@@ -273,7 +273,9 @@ class SubAgentManager:
                 raise RuntimeError(
                     f"Cannot send input to {agent_id}: {agent.status.kind.value}"
                 )
-        await agent.input_queue.put((text, interrupt))
+            agent.input_queue.put_nowait((text, interrupt))
+            if interrupt:
+                agent.interrupt_event.set()
 
     async def resume(self, agent_id: str) -> SubAgentResult:
         """True-resume a terminated agent from its durable transcript.

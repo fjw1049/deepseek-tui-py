@@ -627,5 +627,8 @@
   "dataDeleteAndExitAction": "Delete and Quit",
   "dataDeleteAndExitConfirm": "Delete local GUI settings and caches and quit? Conversations, Skills, and Claw sandboxes will not be deleted.",
   "dataDeleteAndExitConfirm2": "Confirm again: GUI settings (~/.deepseek/settings.json) and caches under ~/.deepseek/caches, plus Electron caches, will be cleared and the app will quit immediately. This cannot be undone.",
-  "dataDeleteAndExitFailed": "Failed to delete local data"
+  "dataDeleteAndExitFailed": "Failed to delete local data",
+  "visionHelper": "Vision helper",
+  "visionHelperNone": "Not configured",
+  "visionHelperHint": "Analyzes images when the main model does not support them."
 }

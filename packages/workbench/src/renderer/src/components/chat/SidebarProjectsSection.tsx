@@ -1759,23 +1759,6 @@ export function ThreadRow({
         >
           <Archive className="h-3.5 w-3.5" strokeWidth={1.9} />
         </button>
-        <button
-          type="button"
-          onClick={(event) => {
-            event.stopPropagation()
-            onDelete()
-          }}
-          disabled={deleting}
-          className="flex h-6 w-6 items-center justify-center rounded-md text-ds-faint transition-colors duration-200 hover:bg-ds-hover hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-100"
-          title={t('sidebarThreadDelete')}
-          aria-label={t('sidebarThreadDelete')}
-        >
-          {deleting ? (
-            <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={2} />
-          ) : (
-            <Trash2 className="h-3.5 w-3.5" strokeWidth={1.9} />
-          )}
-        </button>
       </div>
       {!selectionMode && hoverAnchor && !menuPos ? (
         <HoverInfoCard

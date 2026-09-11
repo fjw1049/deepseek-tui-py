@@ -356,3 +356,69 @@ describe('isolated draft apply result', () => {
     )
   })
 })
+
+describe('server-generated approval identities', () => {
+  it('keeps tool correlation separate and submits the server approval ID', async () => {
+    const runtimeRequest = vi.fn()
+      .mockResolvedValueOnce({ ok: true, body: JSON.stringify([
+        { approval_id: 'appr_server_a', tool_call_id: 'same_call', turn_id: 'turn_a', description: 'A' },
+        { approval_id: 'appr_server_b', tool_call_id: 'same_call', turn_id: 'turn_b', description: 'B' }
+      ]) })
+      .mockResolvedValueOnce({ ok: true, body: '{}' })
+    Object.defineProperty(window, 'dsGui', { configurable: true, value: { runtimeRequest } })
+    const provider = new DeepseekRuntimeProvider()
+    const pending = await provider.fetchPendingApprovals('thread')
+    expect(pending.map((item) => item.approvalId)).toEqual(['appr_server_a', 'appr_server_b'])
+    expect(pending.map((item) => item.toolCallId)).toEqual(['same_call', 'same_call'])
+    expect(pending[0].turnId).toBe('turn_a')
+    await provider.submitApprovalDecision(pending[1].approvalId, 'allow', true)
+    expect(runtimeRequest).toHaveBeenLastCalledWith(
+      '/v1/approvals/appr_server_b', 'POST', JSON.stringify({ decision: 'allow', remember: true })
+    )
+  })
+})
+
+describe('approval notification completion race', () => {
+  it('does not display a late card for a completed turn, but keeps a task card', async () => {
+    let deliver: (event: { streamId: string; data: unknown }) => void = () => {}
+    let finishSettings: (value: { deepseek: { approvalPolicy: string } }) => void = () => {}
+    const settings = new Promise<{ deepseek: { approvalPolicy: string } }>((resolve) => {
+      finishSettings = resolve
+    })
+    const controller = new AbortController()
+    const sink = {
+      onSeq: vi.fn(), onDeltas: vi.fn(), onUserMessage: vi.fn(), onTool: vi.fn(),
+      onApproval: vi.fn(), onUserInput: vi.fn(), onUserInputStatus: vi.fn(),
+      onTurnComplete: vi.fn(), onError: vi.fn()
+    }
+    Object.defineProperty(window, 'dsGui', {
+      configurable: true,
+      value: {
+        getSettings: vi.fn().mockReturnValue(settings),
+        onSseEvent: (callback: typeof deliver) => { deliver = callback; return () => {} },
+        onSseError: () => () => {}, onSseEnd: () => () => {}, stopSse: vi.fn(),
+        startSse: async (_thread: string, _seq: number, streamId: string) => {
+          deliver({ streamId, data: { event: 'approval.required', payload: {
+            approval_id: 'expired', tool_call_id: 'same', turn_id: 'turn'
+          } } })
+          deliver({ streamId, data: { event: 'approval.required', payload: {
+            approval_id: 'task-approval', tool_call_id: 'same', task_id: 'task'
+          } } })
+          deliver({ streamId, data: { event: 'turn.completed', payload: {
+            turn: { id: 'turn', thread_id: 'thread' }
+          } } })
+        }
+      }
+    })
+    const subscription = new DeepseekRuntimeProvider().subscribeThreadEvents('thread', 0, sink, controller.signal)
+    try {
+      finishSettings({ deepseek: { approvalPolicy: 'on-request' } })
+      await vi.waitFor(() => expect(sink.onApproval).toHaveBeenCalledTimes(1))
+      expect(sink.onApproval).toHaveBeenCalledWith(expect.objectContaining({ approvalId: 'task-approval' }))
+      expect(sink.onTurnComplete).toHaveBeenCalledTimes(1)
+    } finally {
+      controller.abort()
+      await subscription
+    }
+  })
+})

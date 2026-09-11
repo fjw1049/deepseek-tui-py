@@ -4,6 +4,7 @@ import asyncio
 import random
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
+from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -26,6 +27,7 @@ from deepseek_tui.protocol.responses import (
 )
 
 logger = logging.getLogger(__name__)
+_media_ledger_context: ContextVar = ContextVar("media_usage_ledger", default=None)
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,6 +69,15 @@ class LLMClient(ABC):
         self.transport = transport
         self.extra_headers = dict(extra_headers or {})
         self._http_client: httpx.AsyncClient | None = None
+        self.media_config = None
+        self._vision_cache: dict[str, str] = {}
+
+    async def prepare_media(self, request: MessageRequest) -> MessageRequest:
+        from deepseek_tui.client.media import prepare_media_request
+
+        return await prepare_media_request(
+            request, self.media_config, self._vision_cache, _media_ledger_context.get()
+        )
 
     def _get_http_client(self) -> httpx.AsyncClient:
         """Return a persistent httpx client for connection reuse.
@@ -181,9 +192,10 @@ class MeteredLLMClient(LLMClient):
         self._inner = inner
         self._ledger = ledger
 
-    def cache_fingerprint_units(
-        self, request: MessageRequest
-    ) -> list[tuple[str, object]]:
+    async def close(self) -> None:
+        await self._inner.close()
+
+    def cache_fingerprint_units(self, request: MessageRequest) -> list[tuple[str, object]]:
         return self._inner.cache_fingerprint_units(request)
 
     async def stream_chat_completion(self, request: MessageRequest) -> AsyncIterator[StreamEvent]:
@@ -193,6 +205,7 @@ class MeteredLLMClient(LLMClient):
         # Captured alongside the usage: the finally block may run after the
         # caller's ``usage_source(...)`` scope has already been reset.
         source: str | None = None
+        ledger_token = _media_ledger_context.set(self._ledger)
         try:
             async for event in self._inner.stream_chat_completion(request):
                 if isinstance(event, StreamDone) and event.usage is not None:
@@ -200,6 +213,7 @@ class MeteredLLMClient(LLMClient):
                     source = current_usage_source()
                 yield event
         finally:
+            _media_ledger_context.reset(ledger_token)
             if last_usage is not None:
                 self._ledger.add(
                     model=request.model,

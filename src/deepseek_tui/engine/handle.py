@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -44,6 +45,11 @@ EngineOp = SendMessageOp | CancelRequestOp
 
 
 class ApprovalHandler:
+    @contextmanager
+    def approval_scope(self, tool_call_id: str, request: ApprovalRequest) -> Iterator[object]:
+        """Keep registration alive across notification and the approval wait."""
+        yield None
+
     async def auto_approve_enabled(self) -> bool:
         return False
 
@@ -238,13 +244,13 @@ class EngineHandle:
             )
         elif isinstance(event, ApprovalRequiredEvent):
             hook_event = ApprovalLifecycleEvent(
-                approval_id=event.tool_call_id,
+                approval_id=event.request.approval_id or event.tool_call_id,
                 phase="requested",
                 reason=getattr(event.request, "reason", None),
             )
         elif isinstance(event, ApprovalResolvedEvent):
             hook_event = ApprovalLifecycleEvent(
-                approval_id=event.tool_call_id,
+                approval_id=event.approval_id or event.tool_call_id,
                 phase="resolved",
                 reason=event.reason,
             )

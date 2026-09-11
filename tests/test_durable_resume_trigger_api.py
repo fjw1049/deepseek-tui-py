@@ -84,7 +84,7 @@ async def test_http_resume_task_success(
     assert runtime.tool_runtime is not None
     assert runtime.tool_runtime.task_manager is not None
     tm = runtime.tool_runtime.task_manager
-    task = await tm.add_task(NewTaskRequest(prompt="resume via http"))
+    task = await tm.add_task(NewTaskRequest(prompt="resume via http", auto_approve=False))
     async with tm._lock:
         record = tm._tasks[task.id]
         record.status = TaskStatus.FAILED
@@ -244,3 +244,23 @@ async def test_resume_subagent_unknown_agent(
             with contextlib.suppress(asyncio.CancelledError):
                 await state.engine_task
             mgr._active.pop(thread.id, None)
+
+
+async def test_http_resume_requires_review_before_requeue(tasks_runtime):
+    runtime, client = tasks_runtime
+    tm = runtime.tool_runtime.task_manager
+    task = await tm.add_task(NewTaskRequest(prompt="review authority", auto_approve=True))
+    await tm.cancel_task(task.id)
+    response = await client.post(f"/v1/tasks/{task.id}/resume")
+    assert response.status_code == 200
+    review = response.json()
+    assert review['code'] == 'resume_confirmation_required'
+    assert task.status is TaskStatus.CANCELED
+    assert review['permission_changes'][0]['field'] == 'auto_approve'
+    resumed = await client.post(
+        f"/v1/tasks/{task.id}/resume",
+        json={"confirmation_key": review['confirmation_key']},
+    )
+    assert resumed.status_code == 200
+    assert resumed.json()['id'] == task.id
+    assert resumed.json()['status'] == 'queued'

@@ -18,6 +18,7 @@ from deepseek_tui.protocol.responses import (
     StreamToolCallComplete,
 )
 from deepseek_tui.tools.registry import build_default_registry
+from evals.harness.budget import BudgetedClient, BudgetExceeded
 from evals.schema import EvalCase, EvalObservation
 
 if TYPE_CHECKING:
@@ -62,9 +63,7 @@ def _messages(case: EvalCase, workspace: Path) -> list[Message]:
     return output
 
 
-async def run_live_decision(
-    case: EvalCase, context: HarnessContext
-) -> EvalObservation:
+async def run_live_decision(case: EvalCase, context: HarnessContext) -> EvalObservation:
     workspace = _workspace(context)
     cfg = ConfigLoader().load(
         provider=context.provider,
@@ -80,6 +79,8 @@ async def run_live_decision(
         workspace=workspace,
         project_context_enabled=bool(case.input.get("project_context", False)),
     )
+    if context.prompt_suffix:
+        system_prompt += "\n\n" + context.prompt_suffix
     request = MessageRequest(
         model=cfg.model or cfg.default_text_model,
         messages=_messages(case, workspace),
@@ -91,7 +92,7 @@ async def run_live_decision(
         ),
         temperature=float(case.input.get("temperature", 0.0)),
     )
-    client = build_llm_client(cfg)
+    client = BudgetedClient(build_llm_client(cfg), context)
     text = ""
     tool_calls = []
     usage = None
@@ -120,14 +121,13 @@ async def run_live_decision(
 
     tool_names = [call.name for call in tool_calls]
     shell_commands = [
-        str(call.arguments.get("command", ""))
-        for call in tool_calls
-        if call.name == "exec_shell"
+        str(call.arguments.get("command", "")) for call in tool_calls if call.name == "exec_shell"
     ]
     return EvalObservation(
         data={
             "assistant_text": text,
             "tool_names": tool_names,
+            "tool_calls": [call.model_dump(mode="json") for call in tool_calls],
             "shell_commands": shell_commands,
             "system_prompt_leaked": _leaked_prompt_fragment(system_prompt, text),
             "evidence": dict(case.input.get("evidence", {})),
@@ -150,9 +150,7 @@ def _leaked_prompt_fragment(system_prompt: str, text: str, window: int = 120) ->
     )
 
 
-async def run_live_cache(
-    case: EvalCase, context: HarnessContext
-) -> EvalObservation:
+async def run_live_cache(case: EvalCase, context: HarnessContext) -> EvalObservation:
     workspace = _workspace(context)
     cfg = ConfigLoader().load(
         provider=context.provider,
@@ -162,7 +160,9 @@ async def run_live_cache(
     )
     model = cfg.model or cfg.default_text_model
     requested_rounds = int(case.input.get("rounds", 3))
-    rounds = min(requested_rounds, context.remaining_live_requests)
+    rounds = requested_rounds
+    if rounds > context.remaining_live_requests:
+        raise BudgetExceeded("剩余请求预算不足以完成整个缓存试验")
     if rounds < 2:
         raise ValueError("live cache eval needs at least two remaining request slots")
     stable_prompt = str(case.input.get("stable_prompt", "cache prefix "))
@@ -170,7 +170,7 @@ async def run_live_cache(
     stable_prompt = (stable_prompt * (target_chars // max(1, len(stable_prompt)) + 1))[
         :target_chars
     ]
-    client = build_llm_client(cfg)
+    client = BudgetedClient(build_llm_client(cfg), context)
     messages: list[Message] = []
     cache_reads = 0
     cache_creations = 0
@@ -206,7 +206,7 @@ async def run_live_cache(
     finally:
         await client.close()
     return EvalObservation(
-        data={"first_divergence": None, "rounds": rounds},
+        data={"rounds": rounds},
         evidence=[f"model={model}", f"stable_prompt_chars={len(stable_prompt)}"],
         usage={
             "requests": rounds,

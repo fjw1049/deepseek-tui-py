@@ -285,6 +285,7 @@ class SseTransport(McpTransport):
         self._reader_task: asyncio.Task[None] | None = None
         self._endpoint_ready = asyncio.Event()
         self._endpoint_url: str | None = None
+        self._endpoint_error: McpTransportError | None = None
         self._cancel = asyncio.Event()
 
     @property
@@ -307,6 +308,15 @@ class SseTransport(McpTransport):
             raise McpTransportError(
                 f"MCP SSE endpoint discovery timed out for {_mask_url(self.base_url)}"
             ) from exc
+        except asyncio.CancelledError:
+            await self.stop()
+            raise
+        if self._endpoint_error is not None or self._endpoint_url is None:
+            error = self._endpoint_error or McpTransportError(
+                "MCP SSE stream closed before endpoint discovery"
+            )
+            await self.stop()
+            raise error
 
     async def stop(self) -> None:
         self._cancel.set()
@@ -321,10 +331,12 @@ class SseTransport(McpTransport):
             await self._client.aclose()
 
     async def send(self, message: dict[str, Any]) -> None:
+        if self._endpoint_error is not None:
+            raise self._endpoint_error
         if self._endpoint_url is None:
             raise McpTransportError("SSE endpoint not yet discovered")
         response = await self._client.post(
-            self._endpoint_url, json=message, headers=self.headers
+            self._endpoint_url, json=message, headers=self.headers, follow_redirects=False
         )
         if response.status_code >= 300:
             raise McpTransportError(
@@ -350,6 +362,7 @@ class SseTransport(McpTransport):
                 "GET",
                 self.base_url,
                 headers=self.headers,
+                follow_redirects=False,
             ) as event_source:
                 response = event_source.response
                 if response.status_code >= 300:
@@ -375,8 +388,13 @@ class SseTransport(McpTransport):
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001 — surfaced via the sentinel below
+            self._endpoint_error = (
+                exc if isinstance(exc, McpTransportError)
+                else McpTransportError("MCP SSE stream failed")
+            )
             logger.debug("mcp_sse_loop_error url=%s error=%s", _mask_url(self.base_url), exc)
         finally:
+            self._endpoint_ready.set()
             # Wake any recv() waiter — otherwise a dead SSE stream leaves
             # callers blocked on the queue forever.
             self._queue.put_nowait(_SSE_CLOSED)
@@ -384,12 +402,28 @@ class SseTransport(McpTransport):
     def _set_endpoint(self, raw: str) -> None:
         value = raw.strip()
         if not value:
-            return
-        if value.startswith(("http://", "https://")):
-            self._endpoint_url = value
-        else:
+            raise McpTransportError("MCP SSE endpoint is empty")
+        try:
             base = httpx.URL(self.base_url)
-            self._endpoint_url = str(base.join(value))
+            endpoint = base.join(value)
+
+            def origin(url: httpx.URL) -> tuple[str, str, int | None]:
+                port = url.port
+                if port is None:
+                    port = {"http": 80, "https": 443}.get(url.scheme)
+                return url.scheme, url.host, port
+
+            if (
+                endpoint.scheme not in ("http", "https")
+                or not endpoint.host
+                or endpoint.userinfo
+                or endpoint.fragment
+                or origin(endpoint) != origin(base)
+            ):
+                raise McpTransportError("MCP SSE endpoint must use the configured HTTP origin")
+        except (httpx.InvalidURL, ValueError) as exc:
+            raise McpTransportError("MCP SSE endpoint URL is invalid") from exc
+        self._endpoint_url = str(endpoint)
         self._endpoint_ready.set()
 
 

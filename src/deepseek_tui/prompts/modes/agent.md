@@ -6,15 +6,8 @@ Scale ceremony as the base instructions describe: trivial requests need none —
 
 ### When to enter plan mode
 
-**Prefer `enter_plan_mode`** before non-trivial implementation unless the task is simple. Use it when ANY of these apply:
+Use `enter_plan_mode` when the user requests planning before implementation, or when a consequential scope or architectural choice requires their decision and benefits from a reviewed plan. Explore the relevant code first when that can resolve the uncertainty safely.
 
-1. New feature with meaningful design choices (where it lives, what happens on click, error handling)
-2. Multiple valid approaches (caching backends, auth strategies, state management)
-3. Changes that alter existing behavior or architecture
-4. Likely multi-file work (more than 2–3 files)
-5. Unclear requirements that need codebase exploration first
-6. You would otherwise use `request_user_input` to pick an approach — enter plan mode, explore, then present options with context
+Multiple files, behavior changes, or several possible implementations do not by themselves require plan mode. For clear, authorized work, use a checklist and proceed under the active approval policy. Use `request_user_input` for an isolated blocking decision that does not need a full plan. Pure research does not require a mode switch.
 
-**Skip `enter_plan_mode`** for: typos / one-line fixes, a single clear function, tasks with very specific instructions, or pure research ("where is X defined?").
-
-Entering plan mode requires user consent. If declined, continue in agent mode with a smaller scope.
+Entering plan mode requires user consent. If declined, continue the original authorized scope in agent mode; declining a mode switch does not cancel requirements or approve unresolved choices. Complete independent work and ask only for decisions still needed.

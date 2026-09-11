@@ -15,6 +15,8 @@ def compare_files(baseline_path: Path, summary_path: Path) -> list[str]:
 
 def compare_metrics(baseline: dict[str, Any], summary: dict[str, Any]) -> list[str]:
     failures: list[str] = []
+    if summary.get("skipped", 0) or summary.get("errors", 0):
+        failures.append("run is incomplete: skipped trials or runner errors")
     observed = summary.get("metrics", {})
     for name, gate in baseline.get("gates", {}).items():
         aggregate = observed.get(name)

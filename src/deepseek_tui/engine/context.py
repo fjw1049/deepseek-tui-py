@@ -355,7 +355,12 @@ def estimate_input_tokens_conservative(
 
     framing_overhead = len(messages) * 12 + 48
 
-    return message_tokens + system_tokens + framing_overhead
+    from deepseek_tui.media import image_token_estimate, message_images
+
+    visual_tokens = sum(
+        image_token_estimate(img) for msg in messages for img in message_images(msg)
+    )
+    return message_tokens + system_tokens + framing_overhead + visual_tokens
 
 
 def context_input_budget(model: str, requested_output_tokens: int) -> int | None:
@@ -409,6 +414,9 @@ def estimated_input_tokens(messages: list[Message]) -> int:
     total = 0
     for m in messages:
         total += estimate_tokens(json.dumps(m.model_dump(), ensure_ascii=False))
+    from deepseek_tui.media import image_token_estimate, message_images
+
+    total += sum(image_token_estimate(img) for msg in messages for img in message_images(msg))
     return max(1, total)
 
 

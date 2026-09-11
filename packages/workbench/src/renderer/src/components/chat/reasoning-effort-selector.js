@@ -92,7 +92,7 @@ class ChatGPTModelSelector extends HTMLElement {
         vertical-align: middle;
         z-index: 1;
         min-width: 0;
-        font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+        font-family: var(--font-ui, system-ui, sans-serif);
         -webkit-font-smoothing: antialiased;
         font-variant-numeric: tabular-nums;
         user-select: none;

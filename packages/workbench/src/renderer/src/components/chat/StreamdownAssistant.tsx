@@ -1,5 +1,5 @@
 import type { ComponentPropsWithRef, MouseEvent, ReactElement } from 'react'
-import { Streamdown, type AnimateOptions, type StreamdownProps } from 'streamdown'
+import { Streamdown, defaultRehypePlugins, type AnimateOptions, type StreamdownProps } from 'streamdown'
 import remarkGfm from 'remark-gfm'
 import { harden } from 'rehype-harden'
 import 'streamdown/styles.css'
@@ -26,6 +26,9 @@ const STREAMING_ANIMATED: AnimateOptions = {
 }
 
 const rehypePlugins = [
+  // Parse disclosures, then sanitize HTML before generating trusted file links.
+  defaultRehypePlugins.raw,
+  defaultRehypePlugins.sanitize,
   rehypeFileReferences,
   [
     harden,
@@ -102,7 +105,8 @@ function StreamdownLink({
   const fileTarget = generatedFileReference
     ? parseFileReferenceHref(href)
     : parseMarkdownFileReferenceHref(href)
-  const cleanClassName = className?.replace(/\bds-file-reference-link\b/g, '').trim()
+  const authoredFileReference = className?.split(/\s+/).includes('ds-file-reference-authored') === true
+  const cleanClassName = className?.replace(/\bds-file-reference-(?:link|authored)\b/g, '').trim()
   const isExternal = href ? /^(https?:|mailto:)/i.test(href) : false
 
   if (fileTarget) {
@@ -111,7 +115,7 @@ function StreamdownLink({
         path={fileTarget.path}
         line={fileTarget.line}
         column={fileTarget.column}
-        label={generatedFileReference ? undefined : children}
+        label={generatedFileReference && !authoredFileReference ? undefined : children}
         className={cleanClassName}
       />
     )

@@ -84,8 +84,11 @@ class TaskManager:
         self._artifacts_dir = cfg.data_dir / "artifacts"
         self._queue_path = cfg.data_dir / "queue.json"
         self._tasks: dict[str, TaskRecord] = {}
+        # Keep live credentials in memory; only the provider name is persisted.
+        self._execution_configs: dict[str, Any] = {}
         self._queue: deque[str] = deque()
         self._running_cancel: dict[str, asyncio.Event] = {}
+        self._running_done: dict[str, asyncio.Event] = {}
         self._lock = asyncio.Lock()
         self._notify = asyncio.Event()
         self._shutdown = asyncio.Event()
@@ -170,12 +173,18 @@ class TaskManager:
         if not prompt:
             raise ValueError("Task prompt cannot be empty")
 
+        config = req.config or self._cfg.config
         now = _utc_now_iso()
         task = TaskRecord(
             schema_version=CURRENT_TASK_SCHEMA_VERSION,
             id=f"task_{uuid.uuid4().hex[:8]}",
             prompt=prompt,
-            model=req.model or self._cfg.default_model,
+            model=(
+                req.model
+                or (config.effective_provider_config().model if config else None)
+                or self._cfg.default_model
+            ),
+            provider=config.provider if config else None,
             workspace=str(
                 Path(req.workspace) if req.workspace else self._cfg.default_workspace
             ),
@@ -196,6 +205,9 @@ class TaskManager:
                 )
             ],
         )
+
+        if config is not None:
+            self._execution_configs[task.id] = config.model_copy(deep=True)
 
         async with self._lock:
             self._queue.append(task.id)
@@ -253,7 +265,9 @@ class TaskManager:
                     continue
         return None
 
-    async def resume_task(self, id_or_prefix: str) -> TaskRecord:
+    async def resume_task(
+        self, id_or_prefix: str, *, expected_scope: str | None = None
+    ) -> TaskRecord:
         """Re-queue a resumable terminal task for transcript (or detach) resume.
 
         Clears sticky error and appends a timeline entry. Detach jobs keep
@@ -271,6 +285,11 @@ class TaskManager:
                 raise RuntimeError(
                     f"Task {task_id} status={task.status.value} cannot be resumed"
                 )
+            if expected_scope is not None:
+                from .resume import scope_key, task_scope
+
+                if scope_key(task_scope(task)) != expected_scope:
+                    raise RuntimeError("Task permissions changed; review the task again")
             task.status = TaskStatus.QUEUED
             task.error = None
             task.ended_at = None
@@ -293,6 +312,7 @@ class TaskManager:
     async def cancel_task(self, id_or_prefix: str) -> TaskRecord:
         now = _utc_now_iso()
         token_to_cancel: asyncio.Event | None = None
+        finished: asyncio.Event | None = None
         async with self._lock:
             task_id = _resolve_task_id(self._tasks, id_or_prefix)
             task = self._tasks[task_id]
@@ -317,12 +337,15 @@ class TaskManager:
                     )
                 )
                 token_to_cancel = self._running_cancel.get(task_id)
+                finished = self._running_done.get(task_id)
 
             self._persist_all_locked()
             result = self._tasks[task_id]
 
         if token_to_cancel is not None:
             token_to_cancel.set()
+        if finished is not None:
+            await finished.wait()
         return result
 
     async def record_tool_metadata(
@@ -596,9 +619,12 @@ class TaskManager:
                     auto_approve=task.auto_approve,
                     thread_id=task.thread_id,
                     task_manager=self,
+                    provider=task.provider,
+                    config=self._execution_configs.get(task.id, self._cfg.config),
                 )
                 cancel = asyncio.Event()
                 self._running_cancel[task_id] = cancel
+                self._running_done[task_id] = asyncio.Event()
                 self._persist_all_locked()
                 return task_id, request, cancel
         return None
@@ -606,9 +632,40 @@ class TaskManager:
     async def _run_task(
         self, task_id: str, request: ExecutionTask, cancel: asyncio.Event
     ) -> None:
+        try:
+            await self._run_task_and_finalize(task_id, request, cancel)
+        finally:
+            finished = self._running_done.pop(task_id, None)
+            if finished is not None:
+                finished.set()
+
+    async def _execute_cancellable(
+        self, request: ExecutionTask, cancel: asyncio.Event
+    ) -> TaskExecutionResult:
+        if cancel.is_set():
+            raise asyncio.CancelledError
+        execution = asyncio.create_task(self._executor(request, cancel))
+        cancellation = asyncio.create_task(cancel.wait())
+        try:
+            await asyncio.wait((execution, cancellation), return_when=asyncio.FIRST_COMPLETED)
+            if not execution.done() and not execution.cancelling():
+                execution.cancel()
+            return await asyncio.shield(execution)
+        finally:
+            cancellation.cancel()
+            if not execution.done() and not execution.cancelling():
+                execution.cancel()
+            await asyncio.gather(execution, cancellation, return_exceptions=True)
+
+    async def _run_task_and_finalize(
+        self, task_id: str, request: ExecutionTask, cancel: asyncio.Event
+    ) -> None:
         result: TaskExecutionResult
         try:
-            result = await self._executor(request, cancel)
+            result = await self._execute_cancellable(request, cancel)
+        except asyncio.CancelledError:
+            cancel.set()
+            result = TaskExecutionResult(summary="", error="canceled")
         except Exception as exc:  # noqa: BLE001 -- translate all errors into task state
             result = TaskExecutionResult(summary="", error=str(exc))
 
@@ -675,6 +732,7 @@ class TaskManager:
         to_remove = len(terminal) - _MAX_TERMINAL_IN_MEMORY
         for tid, _ in terminal[:to_remove]:
             del self._tasks[tid]
+            self._execution_configs.pop(tid, None)
 
     def _persist_all_locked(self) -> None:
         """全量落盘：先写队列，再逐个写入所有任务记录。

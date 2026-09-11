@@ -24,6 +24,7 @@ class StatusEvent:
 @dataclass(frozen=True, slots=True)
 class TurnStartedEvent:
     user_text: str
+    input_message: Message | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,6 +78,7 @@ class ApprovalResolvedEvent:
     tool_call_id: str
     approved: bool
     reason: str = ""
+    approval_id: str = ""
 
 
 @dataclass(frozen=True, slots=True)

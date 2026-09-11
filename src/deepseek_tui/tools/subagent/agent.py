@@ -91,6 +91,7 @@ class SubAgent:
         self.loop_runtime = loop_runtime
         self.background = background
         self.cancel_token: asyncio.Event = asyncio.Event()
+        self.interrupt_event: asyncio.Event = asyncio.Event()
         self.task: asyncio.Task[None] | None = None
         self.input_queue: asyncio.Queue[tuple[str, bool]] = asyncio.Queue()
 

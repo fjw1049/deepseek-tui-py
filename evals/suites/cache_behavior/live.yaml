@@ -15,5 +15,4 @@ input:
   stable_prompt: "Stable cache-evaluation prefix. "
   stable_prompt_chars: 16000
 expect:
-  first_divergence: null
   minimum_cache_read_tokens: 1

@@ -8,24 +8,27 @@
   --ds-window-controls-safe-block: 0px;
   --ds-ui-scale: 1;
   --bg-app: #fcfcfc;
-  --bg-sidebar: #f0f0f0;
+  --bg-sidebar: #f8f8f8;
   --ds-sidebar-dot: rgba(0, 0, 0, 0.03);
   --bg-canvas: #ffffff;
   --ds-canvas-dot: rgba(0, 0, 0, 0.04);
   --ds-canvas-dot-size: 22px;
-  --font-ui: 'Inter', 'PingFang SC', 'Noto Sans SC', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  --font-chat: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Noto Sans SC', sans-serif;
+  --font-native: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
+    'Microsoft YaHei', 'Noto Sans SC', sans-serif;
+  --font-ui: var(--font-native);
+  --font-chat: var(--font-ui);
   --font-display: var(--font-ui);
   /* Real monospace for code-like UI strings (URLs, model/task ids, tool
      output). Static stack — user's terminal font choice only affects
      --font-terminal, which is overridden inline by apply-appearance.ts. */
-  --font-mono: 'SF Mono', SFMono-Regular, ui-monospace, Menlo, Monaco, Consolas, 'Liberation Mono',
-    'Courier New', monospace;
+  --font-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono',
+    'PingFang SC', 'Microsoft YaHei', monospace;
   --font-terminal: 'SF Mono', SFMono-Regular, ui-monospace, Menlo, Monaco, Consolas, 'Liberation Mono',
     'Courier New', monospace;
   /* Appearance: density scale (spacing only) and chat reading size. */
   --ds-density: 1;
-  --ds-chat-font-size: 14px;
+  --ds-chat-font-size: 15px;
+  --ds-chat-column-width: 760px;
   --surface-1: #ffffff;
   --surface-2: #ffffff;
   --surface-3: #ffffff;
@@ -300,8 +303,7 @@ html {
    dark tokens from the [data-theme='dark'] root block above. */
 
 :root[data-ui-font='system-native'] {
-  --font-ui: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Hiragino Sans GB', 'Segoe UI',
-    'Microsoft YaHei', sans-serif;
+  --font-ui: var(--font-native);
   --font-display: var(--font-ui);
 }
 
@@ -889,7 +891,7 @@ code,
 pre,
 kbd,
 samp {
-  font-family: var(--font-ui);
+  font-family: var(--font-mono);
   -webkit-font-smoothing: antialiased;
   font-synthesis: none;
 }
@@ -1530,8 +1532,7 @@ samp {
 /* Apple menu chrome — shared by project picker + editor picker. */
 .ds-project-context-menu,
 .ds-editor-picker-menu {
-  font-family: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Hiragino Sans GB', 'Segoe UI',
-    'Microsoft YaHei', sans-serif;
+  font-family: var(--font-ui);
   -webkit-font-smoothing: antialiased;
   font-synthesis: none;
   border-radius: 14px;
@@ -2600,8 +2601,8 @@ samp {
 
 /* Empty-state hero + composer share one centered column. */
 .ds-chat-stage {
-  width: min(52rem, 100%);
-  max-width: 52rem;
+  width: min(var(--ds-chat-column-width), 100%);
+  max-width: var(--ds-chat-column-width);
   margin-inline: auto;
 }
 
@@ -2923,8 +2924,8 @@ samp {
 
 .ds-chat-stage-stack {
   display: flex;
-  width: min(52rem, 100%);
-  max-width: 52rem;
+  width: min(var(--ds-chat-column-width), 100%);
+  max-width: var(--ds-chat-column-width);
   margin-inline: auto;
   flex-direction: column;
   gap: calc(1.25rem * var(--ds-density, 1));
@@ -2967,11 +2968,7 @@ samp {
 }
 
 .ds-sidebar-shell {
-  /* One CJK-first stack for the whole sidebar — Inter mixed with PingFang
-     was why nav vs thread titles felt like different products. */
-  --font-sidebar:
-    -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Hiragino Sans GB', 'Noto Sans SC',
-    'Segoe UI', 'Microsoft YaHei', sans-serif;
+  --font-sidebar: var(--font-ui);
   --sidebar-text: 0.9375rem; /* 15px — nav, projects, threads */
   --sidebar-text-sm: 0.875rem; /* 14px — indented nav, search */
   --sidebar-text-xs: 0.8125rem; /* 13px — section labels, meta */
@@ -3004,6 +3001,11 @@ samp {
   letter-spacing: inherit;
 }
 
+/* Navigation buttons must outrank the generic sidebar button inheritance. */
+.ds-sidebar-shell .ds-sidebar-link {
+  font-weight: var(--sidebar-weight-strong);
+}
+
 .ds-sidebar-brand {
   font-family: inherit;
   font-size: 1.125rem;
@@ -3029,7 +3031,7 @@ samp {
 
 .ds-sidebar-section-label {
   font-family: inherit;
-  font-size: var(--sidebar-text-xs);
+  font-size: 0.875rem; /* 14px preview — 原 var(--sidebar-text-xs) 13px */
   font-weight: var(--sidebar-weight-strong);
   letter-spacing: 0.01em;
   color: var(--text-tertiary);
@@ -3157,7 +3159,7 @@ samp {
   padding: calc(0.4rem * var(--ds-density, 1)) 0.5rem;
   font-family: inherit;
   font-size: var(--sidebar-text);
-  font-weight: var(--sidebar-weight);
+  font-weight: var(--sidebar-weight-strong);
   line-height: 1.4;
   letter-spacing: 0;
   transition:
@@ -3250,9 +3252,12 @@ samp {
 }
 
 /* Top nav: tighter than default, but looser than the previous 0.28rem trial. */
-.ds-sidebar-top-nav .ds-sidebar-link {
+.ds-sidebar-top-nav .ds-sidebar-link:not(.ds-settings-nav-setup) {
   padding-top: calc(0.34rem * var(--ds-density, 1));
   padding-bottom: calc(0.34rem * var(--ds-density, 1));
+  font-size: calc(var(--sidebar-text) + 0.5px); /* 15.5px preview */
+  font-weight: var(--sidebar-weight); /* 400 — 苹方无中间字重, 440/460 会被取整 */
+  color: color-mix(in srgb, var(--text-primary) 62%, var(--text-secondary));
 }
 
 .ds-sidebar-scroll {
@@ -3449,7 +3454,7 @@ samp {
   /* Lock type on the row so project-nested vs workspace chats can't diverge
      via button UA styles or intermediate inheritance. */
   font-family: var(--font-sidebar);
-  font-size: var(--sidebar-text);
+  font-size: var(--ds-chat-font-size, 15px); /* 跟随聊天字号, 与正文同步 */
   font-weight: var(--sidebar-weight);
   letter-spacing: 0;
   line-height: 1.4;
@@ -3471,12 +3476,12 @@ samp {
 .ds-sidebar-thread-row--active {
   color: var(--text-primary);
   /* Soft full-row pill — same weight as idle rows; no left accent bar / no bold. */
-  background: color-mix(in srgb, var(--text-primary) 9%, var(--ds-bg-sidebar));
+  background: color-mix(in srgb, var(--text-primary) 5%, var(--ds-bg-sidebar));
   box-shadow: none;
 }
 
 .ds-sidebar-thread-row--active:hover {
-  background: color-mix(in srgb, var(--text-primary) 11%, var(--ds-bg-sidebar));
+  background: color-mix(in srgb, var(--text-primary) 7%, var(--ds-bg-sidebar));
 }
 
 .ds-sidebar-thread-row--active .ds-sidebar-thread {
@@ -3531,7 +3536,7 @@ samp {
   font-weight: var(--sidebar-weight);
   line-height: 1.4;
   letter-spacing: 0;
-  color: var(--text-primary);
+  color: var(--text-secondary);
   transition:
     background 0.2s ease,
     color 0.2s ease;
@@ -3563,7 +3568,7 @@ samp {
   /* Same type scale as workspace chats — nesting under a project must not
      shrink titles via em/inheritance quirks. */
   font-family: var(--font-sidebar);
-  font-size: var(--sidebar-text);
+  font-size: var(--ds-chat-font-size, 15px); /* 跟随聊天字号, 与正文同步 */
   font-weight: var(--sidebar-weight);
   letter-spacing: 0;
   line-height: 1.4;
@@ -3586,7 +3591,8 @@ samp {
 
 .ds-sidebar-thread-meta {
   display: flex;
-  width: 2.35rem;
+  width: 2rem;
+  margin-left: -0.25rem;
   flex-shrink: 0;
   align-items: center;
   justify-content: flex-end;
@@ -4885,8 +4891,8 @@ samp {
   line-height: 1.5;
 }
 
-/* Streamdown prose and inline code inherit the configured UI font stack. */
-.ds-markdown [data-streamdown]:not([data-streamdown='code-block']):not([data-streamdown='code-block-actions']) {
+/* Prose inherits the UI font; code retains its monospace family. */
+.ds-markdown :where([data-streamdown]:not(code):not(pre):not([data-streamdown='code-block']):not([data-streamdown='code-block-actions'])) {
   font-family: inherit;
 }
 
@@ -4994,8 +5000,8 @@ samp {
   padding: 0.04rem 0.3rem;
   /* Default look keeps the UI font; a theme pack's custom code font
      (--ds-chat-code-font, set by appearance-derive) takes over when present. */
-  font-family: var(--ds-chat-code-font, var(--font-ui));
-  font-size: 0.8em;
+  font-family: var(--ds-chat-code-font, var(--font-mono));
+  font-size: 13px; /* 行内代码与代码块统一 13px, 不随正文缩放 */
   line-height: 1.18;
   vertical-align: baseline;
 }
@@ -5012,7 +5018,7 @@ samp {
   box-sizing: border-box;
   /* `monospace` = UA default, identical to the implicit pre font. A theme
      pack's custom code font takes over via --ds-chat-code-font. */
-  font-family: var(--ds-chat-code-font, monospace);
+  font-family: var(--ds-chat-code-font, var(--font-mono));
 }
 
 .ds-markdown pre code {
@@ -5034,7 +5040,7 @@ samp {
   border-radius: 7px;
   background: var(--ds-code-bg);
   padding: 0.04rem 0.3rem;
-  font-family: var(--ds-chat-code-font, var(--font-ui));
+  font-family: var(--ds-chat-code-font, var(--font-mono));
   font-size: 0.78em;
   line-height: 1.12;
   vertical-align: baseline;
@@ -6447,16 +6453,17 @@ html[data-theme='dark'] .ds-code-fullscreen .shiki span {
 
 /* ── Final-answer reading mode ───────────────────────────────────────────
    Dense `.ds-markdown` stays for process-trace / reasoning. Final answers
-   keep full column width with roomier rhythm, scannable headings, and soft
+   use a bounded reading column with scannable headings and soft
    inline code (no pill border). */
 .ds-markdown.ds-markdown--answer {
-  /* Keep the chat-stage width — code and tables scroll inside this measure. */
-  max-width: none;
+  /* Bound prose even when the IDE rail or a report surface grows wider. */
+  max-width: var(--ds-chat-column-width);
   width: 100%;
-  font-size: var(--ds-chat-font-size, 14px);
-  line-height: 1.625;
+  margin-inline: auto;
+  font-size: var(--ds-chat-font-size, 16px);
+  line-height: 1.7;
   letter-spacing: normal;
-  color: color-mix(in srgb, var(--ds-text) 97%, var(--ds-text-muted));
+  color: color-mix(in srgb, var(--ds-text) 86%, var(--ds-text-muted));
   -webkit-font-smoothing: antialiased;
 }
 
@@ -6482,7 +6489,16 @@ html[data-theme='dark'] .ds-code-fullscreen .shiki span {
 }
 
 .ds-markdown.ds-markdown--answer .space-y-4 > :not([hidden]) ~ :not([hidden]) {
-  margin-top: 0.75rem;
+  margin-block: var(--ds-answer-block-gap, 0.875rem) 0;
+}
+
+/* Separate paragraphs and section transitions without loosening every line. */
+.ds-markdown.ds-markdown--answer > p + p {
+  margin-top: 1.25rem;
+}
+
+.ds-markdown.ds-markdown--answer > :is(ul, ol) + p {
+  margin-top: 1.5rem;
 }
 
 .ds-markdown.ds-markdown--answer > :first-child {
@@ -6500,7 +6516,7 @@ html[data-theme='dark'] .ds-code-fullscreen .shiki span {
 .ds-markdown.ds-markdown--answer pre,
 .ds-markdown.ds-markdown--answer table,
 .ds-markdown.ds-markdown--answer hr {
-  margin: 0 0 0.7em;
+  margin: 0 0 0.875rem;
 }
 
 .ds-markdown.ds-markdown--answer h1,
@@ -6511,28 +6527,32 @@ html[data-theme='dark'] .ds-code-fullscreen .shiki span {
   /* Let Chinese headings use the same PingFang-backed UI stack as prose. */
   font-family: inherit;
   font-weight: 600;
-  letter-spacing: -0.01em;
-  line-height: 1.25;
-  scroll-margin-top: 0.75rem;
+  letter-spacing: normal;
+  line-height: 1.4;
+  scroll-margin-top: 0.875rem;
 }
 
 .ds-markdown.ds-markdown--answer h1 {
-  margin: 1.1em 0 0.38em;
-  font-size: 1.65em;
+  --ds-answer-block-gap: 1.875rem;
+  margin: 1.875rem 0 0.625rem;
+  font-size: 19px; /* 固定值, 不随正文缩放 */
 }
 
 .ds-markdown.ds-markdown--answer h2 {
-  margin: 1.1em 0 0.36em;
-  font-size: 1.45em;
+  --ds-answer-block-gap: 1.875rem;
+  margin: 1.875rem 0 0.625rem;
+  font-size: 1.35em;
 }
 
 .ds-markdown.ds-markdown--answer h3 {
-  margin: 1.05em 0 0.34em;
+  --ds-answer-block-gap: 1.5rem;
+  margin: 1.5rem 0 0.5rem;
   font-size: 1.25em;
 }
 
 .ds-markdown.ds-markdown--answer h4 {
-  margin: 1em 0 0.3em;
+  --ds-answer-block-gap: 1.25rem;
+  margin: 1.25rem 0 0.375rem;
   font-size: 1.1em;
 }
 
@@ -6547,13 +6567,16 @@ html[data-theme='dark'] .ds-code-fullscreen .shiki span {
 .ds-markdown.ds-markdown--answer h2 + p,
 .ds-markdown.ds-markdown--answer h3 + p,
 .ds-markdown.ds-markdown--answer h4 + p {
+  --ds-answer-block-gap: 0.625rem;
   margin-top: 0;
 }
 
 .ds-markdown.ds-markdown--answer strong,
-.ds-markdown.ds-markdown--answer b {
-  font-weight: 500;
+.ds-markdown.ds-markdown--answer b,
+.ds-markdown.ds-markdown--answer [data-streamdown="strong"] {
+  font-weight: 600;
   color: var(--ds-text);
+  font-synthesis: none;
 }
 
 .ds-markdown.ds-markdown--answer ul,
@@ -6590,7 +6613,7 @@ html[data-theme='dark'] .ds-code-fullscreen .shiki span {
 }
 
 .ds-markdown.ds-markdown--answer li + li {
-  margin-top: 0.28em;
+  margin-top: 0.5rem;
 }
 
 .ds-markdown.ds-markdown--answer li::marker {
@@ -6602,7 +6625,7 @@ html[data-theme='dark'] .ds-code-fullscreen .shiki span {
 }
 
 .ds-markdown.ds-markdown--answer li > p + p {
-  margin-top: 0.4em;
+  margin-top: 0.625rem;
 }
 
 .ds-markdown.ds-markdown--answer li > ul,
@@ -6637,14 +6660,14 @@ html[data-theme='dark'] .ds-code-fullscreen .shiki span {
 .ds-markdown.ds-markdown--answer .ds-code-inline {
   border: none;
   border-radius: 0.35rem;
-  background: color-mix(in srgb, var(--ds-bubble-user, var(--ds-code-bg)) 72%, transparent);
-  padding: 0.06em 0.28em;
+  background: color-mix(in srgb, var(--ds-text) 5%, transparent);
+  padding: 0.08em 0.26em;
   /* Let long paths wrap without widening the reading column. */
   overflow-wrap: anywhere;
   word-break: break-word;
   font-family: var(--ds-chat-code-font, var(--font-mono), ui-monospace, monospace);
-  font-size: 0.88em;
-  font-weight: 500;
+  font-size: 0.9em;
+  font-weight: 400;
   line-height: 1.35;
   color: var(--ds-text);
   box-shadow: none;
@@ -6665,6 +6688,15 @@ html[data-theme='dark'] .ds-code-fullscreen .shiki span {
   border-bottom: 0;
   background: transparent;
   padding: 0.1rem 0.4rem 0.1rem 0.6rem;
+}
+
+:root:not([data-theme='dark']) .ds-markdown.ds-markdown--answer .ds-code-block {
+  border: 1px solid var(--ds-border-muted);
+}
+
+:root:not([data-theme='dark']) .ds-markdown.ds-markdown--answer .ds-code-block-header {
+  border-bottom: 1px solid var(--ds-border-muted);
+  background: var(--ds-code-bg);
 }
 
 .ds-markdown.ds-markdown--answer .ds-code-block-html > pre,
@@ -6691,6 +6723,37 @@ html[data-theme='dark'] .ds-code-fullscreen .shiki span {
 
 .ds-markdown.ds-markdown--answer th {
   font-weight: 500;
+}
+
+.ds-markdown.ds-markdown--answer details {
+  --ds-answer-block-gap: 1.5rem;
+  margin: 1.5rem 0 0.875rem;
+  padding-top: 0.875rem;
+  border-top: 1px solid var(--ds-border-muted);
+}
+
+.ds-markdown.ds-markdown--answer summary {
+  width: fit-content;
+  max-width: 100%;
+  margin-bottom: 0.625rem;
+  color: var(--ds-text-muted);
+  font-size: 0.9em;
+  font-weight: 500;
+  cursor: pointer;
+  list-style: disclosure-closed inside;
+}
+
+.ds-markdown.ds-markdown--answer details[open] > summary {
+  list-style-type: disclosure-open;
+}
+
+.ds-markdown.ds-markdown--answer summary:hover,
+.ds-markdown.ds-markdown--answer summary:focus-visible {
+  color: var(--ds-text);
+}
+
+.ds-markdown.ds-markdown--answer details > :last-child {
+  margin-bottom: 0;
 }
 
 .ds-user-message {
@@ -7700,9 +7763,10 @@ select:focus-visible,
   background: var(--ds-bg-sidebar);
 }
 
-.ds-change-inspector--list {
+.ds-change-inspector--list,
+.ds-change-inspector--stack {
   container-type: inline-size;
-  container-name: change-inspector-list;
+  container-name: change-inspector;
 }
 
 .ds-change-inspector__summary {
@@ -7717,7 +7781,7 @@ select:focus-visible,
     transform 220ms cubic-bezier(0.32, 0.72, 0, 1);
 }
 
-@container change-inspector-list (max-width: 320px) {
+@container change-inspector (max-width: 480px) {
   .ds-change-inspector__summary {
     max-width: 0;
     margin-left: -0.5rem;
@@ -7725,6 +7789,46 @@ select:focus-visible,
     transform: translateX(0.25rem);
     pointer-events: none;
   }
+}
+
+/* Anchor narrow menus to the toolbar on both chat and IDE surfaces. */
+@container change-inspector (max-width: 480px) {
+  .ds-change-source,
+  .ds-change-branch,
+  .ds-change-git-actions {
+    position: static;
+  }
+
+  .ds-change-source__menu,
+  .ds-change-branch__menu,
+  .ds-change-git-actions > .absolute {
+    left: 8px;
+    right: auto;
+    max-width: calc(100% - 16px);
+    width: min(300px, calc(100% - 16px));
+  }
+
+  .ds-change-inspector__summary {
+    display: none;
+  }
+}
+
+@container change-inspector (max-width: 280px) {
+  .ds-change-source[data-context="branch"] .ds-change-source__label,
+  .ds-change-source[data-context="branch"] > button > svg:last-child,
+  .ds-change-git-actions__primary,
+  .ds-change-git-actions__divider {
+    display: none;
+  }
+}
+
+.ds-change-branch__search:focus-within {
+  outline: 2px solid color-mix(in srgb, var(--ds-accent) 35%, transparent);
+  outline-offset: 0;
+}
+
+.ds-change-branch__search input:focus-visible {
+  outline: none;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -8044,8 +8148,8 @@ select:focus-visible,
 }
 
 .ds-dialogue-gutter.ds-chat-stage {
-  width: min(52rem, 100%);
-  max-width: 52rem;
+  width: min(var(--ds-chat-column-width), 100%);
+  max-width: var(--ds-chat-column-width);
   margin-inline: auto;
 }
 
@@ -8065,13 +8169,13 @@ select:focus-visible,
   min-height: 0;
   /* Symmetric inset so the message list and composer both pull away from the
      column edges by the same amount (overrides the asymmetric ds-dialogue-gutter). */
-  padding-inline: calc(clamp(1rem, 4cqi, 4rem) * var(--ds-density, 1));
+  padding-inline: clamp(1rem, 3cqi, 1.5rem);
 }
 
 .ds-chat-operation-band__dialogue .ds-chat-stage {
   /* Keep the shared stage max-width; center so the right side opens toward the rail. */
-  width: min(52rem, 100%);
-  max-width: 52rem;
+  width: min(var(--ds-chat-column-width), 100%);
+  max-width: var(--ds-chat-column-width);
   margin-inline: auto;
   padding-inline: 0;
 }
@@ -8120,6 +8224,148 @@ select:focus-visible,
   border-left: 1px solid color-mix(in srgb, var(--ds-text) 14%, transparent);
 }
 
+/* Right dock chrome uses theme tokens directly: Tailwind alpha modifiers do
+   not work with this project's full-color CSS variables. */
+.ds-dock-header {
+  position: relative;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  min-height: var(--ds-header-height, 38px);
+  gap: 4px;
+  padding: 0 8px;
+}
+
+.ds-dock-tabs {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  align-items: center;
+  gap: 4px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.ds-dock-tabs::-webkit-scrollbar { display: none; }
+
+.ds-dock-tab {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  height: 30px;
+  border-radius: 8px;
+  color: var(--ds-text-muted);
+}
+.ds-dock-tab[data-active] {
+  background: var(--ds-surface-hover);
+  color: var(--ds-text);
+}
+.ds-dock-tab-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 30px;
+  padding: 0 8px 0 10px;
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 18px;
+}
+.ds-dock-tab-close,
+.ds-dock-action {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  color: var(--ds-text-muted);
+}
+.ds-dock-tab-close {
+  width: 22px;
+  height: 22px;
+  margin-right: 4px;
+  opacity: 0;
+}
+.ds-dock-tab:hover .ds-dock-tab-close,
+.ds-dock-tab:focus-within .ds-dock-tab-close { opacity: 1; }
+.ds-dock-tab:hover,
+.ds-dock-action:hover,
+.ds-dock-action[aria-expanded='true'],
+.ds-dock-action[aria-pressed='true'],
+.ds-dock-tab-close:hover {
+  background: var(--ds-surface-hover);
+  color: var(--ds-text);
+}
+.ds-dock-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 50;
+  width: 208px;
+  padding: 6px;
+  border: 1px solid var(--ds-border);
+  border-radius: 12px;
+  background: var(--ds-surface-elevated);
+  box-shadow: var(--ds-shadow-panel);
+}
+.ds-dock-menu-item {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: 36px;
+  gap: 10px;
+  padding: 7px 10px;
+  border-radius: 7px;
+  color: var(--ds-text);
+  font-size: 13px;
+  text-align: left;
+}
+.ds-dock-menu-item:hover,
+.ds-dock-menu-item:focus-visible { background: var(--ds-surface-hover); }
+
+.ds-dock-launcher {
+  display: flex;
+  height: 100%;
+  overflow-y: auto;
+  padding: 32px 24px;
+}
+.ds-dock-launcher-list {
+  display: flex;
+  flex-direction: column;
+  width: min(100%, 320px);
+  gap: 8px;
+  margin: auto;
+}
+.ds-dock-launcher-item {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  min-height: 48px;
+  gap: 12px;
+  padding: 12px 16px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--ds-text) 4%, var(--ds-bg-sidebar));
+  color: var(--ds-text);
+  font-size: 14px;
+  line-height: 20px;
+  text-align: left;
+}
+.ds-dock-launcher-item:hover {
+  background: color-mix(in srgb, var(--ds-text) 8%, var(--ds-bg-sidebar));
+}
+.ds-dock-header button:focus-visible,
+.ds-dock-launcher-item:focus-visible {
+  outline: 2px solid var(--ds-accent);
+  outline-offset: -2px;
+}
+.ds-dock-launcher-item:active,
+.ds-dock-menu-item:active,
+.ds-dock-action:active { background: var(--ds-surface-hover); }
+@media (hover: none) {
+  .ds-dock-tab-close { opacity: 1; }
+}
+
 .ds-workspace-editor-pane .ds-editor-line-added,
 .monaco-editor .view-lines .view-line.ds-editor-line-added {
   background-color: var(--ds-diff-added-soft) !important;
@@ -8139,7 +8385,7 @@ select:focus-visible,
 
 .ds-workspace-editor-pane .ds-editor-deleted-line {
   color: var(--ds-diff-removed);
-  font-family: var(--ds-font-mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace);
+  font-family: var(--font-mono);
   font-size: 12px;
   line-height: 20px;
   white-space: pre;
@@ -9513,6 +9759,51 @@ select:focus-visible,
   padding-top: 0.85rem;
 }
 
+.ds-llm-vision-setting {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem 1.5rem;
+  padding: 0.35rem 0.15rem;
+}
+
+.ds-llm-vision-setting__copy {
+  flex: 1 1 15rem;
+  min-width: 0;
+}
+
+.ds-llm-vision-setting__title {
+  display: block;
+  font-size: 13px;
+  font-weight: 550;
+  color: var(--ds-text);
+}
+
+.ds-llm-vision-setting__hint {
+  margin: 0.3rem 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--ds-text-faint, var(--ds-text-muted));
+}
+
+.ds-llm-vision-setting__select {
+  flex: 1 1 20rem;
+  width: auto;
+  max-width: 28rem;
+  min-width: 0;
+}
+
+.ds-llm-vision-setting__select [role='combobox'] {
+  text-align: left;
+}
+
+@media (max-width: 640px) {
+  .ds-llm-vision-setting__select {
+    flex-basis: 100%;
+    max-width: none;
+  }
+}
+
 .ds-llm-panel__section-head {
   display: flex;
   align-items: center;
@@ -10345,7 +10636,7 @@ select:focus-visible,
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: 13.5px;
   font-weight: 500;
   letter-spacing: -0.02em;
@@ -11180,6 +11471,13 @@ select:focus-visible,
   color: var(--ds-text);
 }
 
+.ds-ide-chat-rail .ds-markdown.ds-markdown--answer {
+  font-size: var(--ds-answer-font-size, 16px);
+  line-height: 1.7;
+  color: color-mix(in srgb, var(--ds-text) 86%, var(--ds-text-muted));
+  --ds-ide-space-block: 0.875rem;
+}
+
 .ds-ide-chat-rail .ds-markdown.ds-markdown--answer p,
 .ds-ide-chat-rail .ds-markdown.ds-markdown--answer li {
   text-align: start;
@@ -11204,7 +11502,16 @@ select:focus-visible,
   margin: var(--ds-ide-space-block) 0;
 }
 
-.ds-ide-chat-rail .ds-markdown.ds-markdown--answer > :first-child {
+.ds-ide-chat-rail /* Separate paragraphs and section transitions without loosening every line. */
+.ds-markdown.ds-markdown--answer > p + p {
+  margin-top: 1.25rem;
+}
+
+.ds-markdown.ds-markdown--answer > :is(ul, ol) + p {
+  margin-top: 1.5rem;
+}
+
+.ds-markdown.ds-markdown--answer > :first-child {
   margin-top: 0;
 }
 
@@ -11213,11 +11520,11 @@ select:focus-visible,
 }
 
 .ds-ide-chat-rail .ds-markdown.ds-markdown--answer .space-y-4 > :not([hidden]) ~ :not([hidden]) {
-  margin-top: var(--ds-ide-space-block);
+  margin-block: var(--ds-answer-block-gap, var(--ds-ide-space-block)) 0;
 }
 
 .ds-ide-chat-rail .ds-markdown.ds-markdown--answer li + li {
-  margin-top: 0.25rem;
+  margin-top: 0.5rem;
 }
 
 .ds-ide-chat-rail .ds-markdown.ds-markdown--answer ul,
@@ -11237,15 +11544,15 @@ select:focus-visible,
 }
 
 .ds-ide-chat-rail .ds-markdown.ds-markdown--answer h1 {
-  font-size: 1.2em;
+  font-size: 1.35em;
 }
 
 .ds-ide-chat-rail .ds-markdown.ds-markdown--answer h2 {
-  font-size: 1.12em;
+  font-size: 1.25em;
 }
 
 .ds-ide-chat-rail .ds-markdown.ds-markdown--answer h3 {
-  font-size: 1.06em;
+  font-size: 1.15em;
 }
 
 .ds-ide-chat-rail .ds-markdown.ds-markdown--answer h4 {
@@ -11254,10 +11561,10 @@ select:focus-visible,
 
 .ds-ide-chat-rail .ds-markdown.ds-markdown--answer :not(pre) > code,
 .ds-ide-chat-rail .ds-markdown.ds-markdown--answer .ds-code-inline {
-  font-size: var(--ds-ide-font-code);
-  font-weight: 500;
+  font-size: 0.9em;
+  font-weight: 400;
   line-height: 1.5;
-  padding: 0.1rem 0.3rem;
+  padding: 0.08em 0.26em;
   border-radius: 0.35rem;
 }
 

@@ -786,11 +786,14 @@ class AgentTool(ToolSpec):
                 },
                 "input": {
                     "type": "string",
-                    "description": "Text to send (action=send_input)",
+                    "description": "Text queued for the next agent round (action=send_input)",
                 },
                 "interrupt": {
                     "type": "boolean",
-                    "description": "Interrupt current work (action=send_input)",
+                    "description": (
+                        "Stop current generation and continue with this input. "
+                        "A running tool finishes and is recorded; pending tools are skipped."
+                    ),
                 },
                 "wait_mode": {
                     "type": "string",

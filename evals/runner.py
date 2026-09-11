@@ -21,6 +21,7 @@ from deepseek_tui.engine.prompts import AppMode, build_system_prompt
 from deepseek_tui.tools.registry import build_default_registry
 from evals.graders import GRADERS, grade
 from evals.harness import HARNESSES, HarnessContext, run_harness
+from evals.harness.budget import BudgetExceeded
 from evals.report import append_result, summarize, write_json
 from evals.schema import EvalCase, RunManifest, RunSummary, TrialResult
 
@@ -42,6 +43,9 @@ class RunOptions:
     max_cost_usd: float | None = None
     timeout_seconds: float = 120.0
     output_dir: Path | None = None
+    case_ids: tuple[str, ...] = ()
+    label: str = ""
+    prompt_suffix: str = ""
 
 
 def load_cases(root: Path = DEFAULT_SUITES_ROOT) -> list[EvalCase]:
@@ -69,9 +73,9 @@ def validate_cases(cases: list[EvalCase], repo_root: Path = REPO_ROOT) -> list[s
             errors.append(f"{case.id}: unknown runner {case.runner!r}")
         if case.grader not in GRADERS:
             errors.append(f"{case.id}: unknown grader {case.grader!r}")
-        if case.live and case.runner not in {"live_decision", "live_cache"}:
+        if case.live and case.runner not in {"live_decision", "live_cache", "workspace_task"}:
             errors.append(f"{case.id}: unsupported live runner {case.runner!r}")
-        if not case.live and case.runner in {"live_decision", "live_cache"}:
+        if not case.live and case.runner in {"live_decision", "live_cache", "workspace_task"}:
             errors.append(f"{case.id}: live runner requires live=true")
         for related in case.related_paths:
             if not (repo_root / related).exists():
@@ -154,6 +158,22 @@ def _manifest(run_id: str, cases: list[EvalCase], options: RunOptions) -> RunMan
         model=options.model,
         trials=options.trials,
         case_ids=[case.id for case in cases],
+        grader_hash=_hash_json(
+            {
+                str(p.relative_to(REPO_ROOT)): p.read_text()
+                for p in sorted((REPO_ROOT / "evals" / "graders").glob("*.py"))
+            }
+        ),
+        settings={
+            "label": options.label,
+            "prompt_suffix": options.prompt_suffix,
+            "max_live_requests": options.max_live_requests,
+            "max_output_tokens": options.max_output_tokens,
+            "max_cost_usd": options.max_cost_usd,
+            "timeout_seconds": options.timeout_seconds,
+            "retry_policy": "metered-attempts-v1",
+            "expected_trials": sum(options.trials if c.live else 1 for c in cases),
+        },
     )
 
 
@@ -180,6 +200,11 @@ async def run_evaluations(
         raise ValueError("invalid eval cases:\n" + "\n".join(f"- {error}" for error in errors))
     if options.suites:
         selected = [case for case in selected if case.suite in options.suites]
+    if options.case_ids:
+        unknown = set(options.case_ids) - {c.id for c in selected}
+        if unknown:
+            raise ValueError(f"unknown selected cases: {sorted(unknown)}")
+        selected = [case for case in selected if case.id in options.case_ids]
     if options.mode == "offline":
         selected = [case for case in selected if not case.live]
     if options.max_cases is not None:
@@ -202,15 +227,16 @@ async def run_evaluations(
         model=options.model,
         max_output_tokens=options.max_output_tokens,
         remaining_live_requests=options.max_live_requests,
+        max_cost_usd=options.max_cost_usd,
+        prompt_suffix=options.prompt_suffix,
     )
     results: list[TrialResult] = []
-    live_requests = 0
-    known_cost = 0.0
+    cancelled = False
     try:
         for case in selected:
             repeat = options.trials if case.live else 1
             for trial in range(1, repeat + 1):
-                if case.live and live_requests >= options.max_live_requests:
+                if cancelled or (case.live and context.remaining_live_requests <= 0):
                     result = TrialResult(
                         case_id=case.id,
                         suite=case.suite,
@@ -221,12 +247,16 @@ async def run_evaluations(
                         trial=trial,
                         status="skipped",
                         duration_ms=0,
-                        error="live request budget exhausted",
+                        error="用户已停止运行" if cancelled else "live request budget exhausted",
                     )
                     results.append(result)
                     append_result(output / "cases.jsonl", result)
                     continue
-                if options.max_cost_usd is not None and known_cost >= options.max_cost_usd:
+                if (
+                    case.live
+                    and options.max_cost_usd is not None
+                    and context.cost_usd >= options.max_cost_usd
+                ):
                     result = TrialResult(
                         case_id=case.id,
                         suite=case.suite,
@@ -244,16 +274,19 @@ async def run_evaluations(
                     continue
 
                 started = time.monotonic()
+                before_requests = context.requests
+                before_metered = context.metered_requests
+                before_priced = context.priced_requests
+                before_cost = context.cost_usd
+                before_usage = dict(context.usage)
+                context.trace = []
                 try:
-                    context.remaining_live_requests = options.max_live_requests - live_requests
                     observation = await asyncio.wait_for(
                         run_harness(case, context),
                         timeout=options.timeout_seconds,
                     )
                     verdict = grade(case, observation)
-                    status: Literal["passed", "failed"] = (
-                        "passed" if verdict.passed else "failed"
-                    )
+                    status: Literal["passed", "failed"] = "passed" if verdict.passed else "failed"
                     result = TrialResult(
                         case_id=case.id,
                         suite=case.suite,
@@ -267,9 +300,33 @@ async def run_evaluations(
                         grade=verdict,
                         observation=observation,
                     )
-                    if case.live:
-                        live_requests += int(observation.usage.get("requests", 1))
-                        known_cost += float(observation.usage.get("cost_usd", 0.0))
+                except asyncio.CancelledError:
+                    cancelled = True
+                    result = TrialResult(
+                        case_id=case.id,
+                        suite=case.suite,
+                        risk=case.risk,
+                        source_file=case.source_file,
+                        tags=case.tags,
+                        related_paths=case.related_paths,
+                        trial=trial,
+                        status="skipped",
+                        duration_ms=int((time.monotonic() - started) * 1000),
+                        error="用户停止：当前试验已中断，不能作为成功结果",
+                    )
+                except BudgetExceeded as exc:
+                    result = TrialResult(
+                        case_id=case.id,
+                        suite=case.suite,
+                        risk=case.risk,
+                        source_file=case.source_file,
+                        tags=case.tags,
+                        related_paths=case.related_paths,
+                        trial=trial,
+                        status="skipped",
+                        duration_ms=int((time.monotonic() - started) * 1000),
+                        error=str(exc),
+                    )
                 except Exception as exc:  # noqa: BLE001 - one case must not abort the run
                     result = TrialResult(
                         case_id=case.id,
@@ -283,6 +340,29 @@ async def run_evaluations(
                         duration_ms=int((time.monotonic() - started) * 1000),
                         error=f"{type(exc).__name__}: {exc}",
                     )
+                if case.live:
+                    from evals.schema import EvalObservation
+
+                    if result.observation is None:
+                        result.observation = EvalObservation()
+                    requests = context.requests - before_requests
+                    priced = context.priced_requests - before_priced
+                    result.observation.usage = {
+                        key: value - before_usage.get(key, 0)
+                        for key, value in context.usage.items()
+                    }
+                    result.observation.usage.update(
+                        {
+                            "requests": requests,
+                            "metered_requests": context.metered_requests - before_metered,
+                            "priced_requests": priced,
+                            "known_cost_usd": context.cost_usd - before_cost,
+                        }
+                    )
+                    if requests > 0 and priced == requests:
+                        result.observation.usage["cost_usd"] = context.cost_usd - before_cost
+                    write_json(output / "traces" / f"{case.id}-trial-{trial}.json", context.trace)
+                    result.observation.data["trace_file"] = f"traces/{case.id}-trial-{trial}.json"
                 results.append(result)
                 append_result(output / "cases.jsonl", result)
                 if result.status in {"failed", "error"}:
@@ -291,6 +371,10 @@ async def run_evaluations(
                         result.model_dump(mode="json"),
                     )
     finally:
+        end_hash = _dirty_state_hash()
+        manifest.settings["source_changed_during_run"] = end_hash != manifest.dirty_diff_hash
+        manifest.settings["end_dirty_diff_hash"] = end_hash
+        write_json(output / "manifest.json", manifest.model_dump(mode="json"))
         summary = summarize(run_id, results)
         write_json(output / "summary.json", summary.model_dump(mode="json"))
     return output, summary

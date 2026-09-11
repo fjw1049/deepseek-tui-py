@@ -9,6 +9,7 @@ from evals.graders.cache import grade_cache
 from evals.graders.completion import grade_completion
 from evals.graders.constraints import grade_constraints
 from evals.graders.tooling import grade_tooling
+from evals.graders.workspace import grade_workspace
 from evals.schema import EvalCase, EvalObservation, GradeResult
 
 Grader = Callable[[EvalCase, EvalObservation], GradeResult]
@@ -19,6 +20,7 @@ GRADERS: dict[str, Grader] = {
     "completion": grade_completion,
     "constraints": grade_constraints,
     "tooling": grade_tooling,
+    "workspace": grade_workspace,
 }
 
 

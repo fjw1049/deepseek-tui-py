@@ -56,7 +56,7 @@ import {
   turnSummaryFromSources,
   type TurnDiffSnapshot
 } from '../../lib/turn-mutation-view'
-import { resumeThreadAgent } from '../../hooks/use-thread-tasks'
+import { openRunPanel } from '../../store/run-panel-store'
 import {
   getEmptyHomeLayout,
   getTimestampFormat,
@@ -69,7 +69,7 @@ import { EvolutionBubble } from './EvolutionBubble'
 import { ElevationBubble } from './ElevationBubble'
 import { InlineTodoBlock } from './InlineTodoBlock'
 import { UserInputBubble } from './UserInputBubble'
-import { StepFlow, lifecycleToStepStatus, type StepFlowItem } from './StepFlow'
+import { lifecycleToStepStatus, type StepFlowItem } from './StepFlow'
 import { humanizeAgentType } from '../../lib/agent-type-label'
 import { subagentListTitle } from '../../lib/extract-subagents-from-blocks'
 import { subagentStepsToFlowItems } from '../../lib/subagent-mailbox'
@@ -106,7 +106,6 @@ import {
 import { pluginDisplayTitle } from '../extensions/plugin-presentation'
 import { QueryTrail } from './QueryTrail'
 import { createActiveTrailStore, deriveQueryTrailItems } from './queryTrail.logic'
-import { ResizableFullscreenDialog } from './ResizableFullscreenDialog'
 import {
   clipMidTurnPrefaceText,
   shouldParseIncompleteAssistantMarkdown,
@@ -1703,7 +1702,6 @@ function visibleExecutionBlocks(
 function SubagentSummaryPanel({ summary }: { summary: SubagentTurnSummary }): ReactElement {
   const { t } = useTranslation('common')
   const [expanded, setExpanded] = useState(true)
-  const [detailBlock, setDetailBlock] = useState<SubagentBlock | null>(null)
   const active = summary.running > 0 || summary.pending > 0
   const hasFailure = summary.failed > 0
   const countParts = [
@@ -1775,18 +1773,11 @@ function SubagentSummaryPanel({ summary }: { summary: SubagentTurnSummary }): Re
                 block={block}
                 // Anchor id lives on the panel; other rows keep their own jump targets.
                 scrollTargetId={block.id === summary.anchorBlockId ? null : block.id}
-                onOpen={() => setDetailBlock(block)}
+                onOpen={() => openRunPanel({ kind: 'subagent', id: block.agentId })}
               />
             ))}
           </div>
         </div>
-      ) : null}
-      {detailBlock ? (
-        <SubagentDetailDialog
-          block={detailBlock}
-          relatedBlocks={summary.blocks}
-          onClose={() => setDetailBlock(null)}
-        />
       ) : null}
     </section>
   )
@@ -1950,8 +1941,6 @@ function SubagentSummaryRow({
   const isActive = block.status === 'running' || block.status === 'pending'
   const failed = block.status === 'failed'
   const flowItems = useMemo(() => flowItemsForSubagentBlock(block), [block])
-  // Collapsed by default so many agents don't flood the timeline.
-  const [stepsOpen, setStepsOpen] = useState(false)
   const title = subagentCardTitle(block, t)
 
   return (
@@ -1962,15 +1951,14 @@ function SubagentSummaryRow({
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
         <button
           type="button"
-          onClick={() => setStepsOpen((v) => !v)}
+          onClick={onOpen}
           className="flex min-w-0 flex-1 items-center gap-2 text-left"
-          aria-expanded={stepsOpen}
           title={block.prompt?.trim() || undefined}
         >
           <ChevronDown
             className={[
               'h-3.5 w-3.5 shrink-0 text-ds-faint transition-transform duration-200',
-              stepsOpen ? 'rotate-0' : '-rotate-90'
+              '-rotate-90'
             ].join(' ')}
             strokeWidth={1.8}
           />
@@ -2032,415 +2020,7 @@ function SubagentSummaryRow({
         </div>
       ) : null}
 
-      {stepsOpen ? (
-        <div className="mt-1.5 border-t border-ds-border-muted/50 pt-1.5">
-          {flowItems.length > 0 ? (
-            <StepFlow
-              items={flowItems}
-              compact
-              emptyLabel={t('subagentStepFlowEmpty')}
-            />
-          ) : (
-            <p className="px-1 py-1.5 text-[11.5px] text-ds-faint">
-              {isActive
-                ? t('subagentStepFlowWaiting')
-                : t('subagentStepFlowEmpty')}
-            </p>
-          )}
-        </div>
-      ) : null}
     </div>
-  )
-}
-
-/** Terminal statuses `agent_resume` accepts (manager rejects running/completed). */
-function isResumableSubagentStatus(status: SubagentBlock['status']): boolean {
-  return status === 'failed' || status === 'cancelled'
-}
-
-function subagentStatusDotClass(
-  status: SubagentBlock['status']
-): string {
-  switch (status) {
-    case 'running':
-    case 'pending':
-      return 'text-ds-ink/70'
-    case 'completed':
-      return 'text-ds-muted'
-    case 'failed':
-      return 'text-ds-ink/80 font-semibold'
-    default:
-      return 'text-ds-faint'
-  }
-}
-
-function subagentStatusGlyph(status: SubagentBlock['status']): string {
-  switch (status) {
-    case 'running':
-      return '●'
-    case 'pending':
-      return '○'
-    case 'completed':
-      return '✓'
-    case 'failed':
-      return '!'
-    default:
-      return '−'
-  }
-}
-
-type SubagentTreeNode = {
-  id: string
-  label: string
-  status: SubagentBlock['status']
-  depth: number
-}
-
-function buildSubagentTreeNodes(
-  root: SubagentBlock,
-  related: SubagentBlock[]
-): SubagentTreeNode[] {
-  const byId = new Map<string, SubagentBlock>()
-  for (const b of related) byId.set(b.agentId, b)
-  byId.set(root.agentId, root)
-
-  const nodes: SubagentTreeNode[] = []
-  const seen = new Set<string>()
-
-  const visit = (id: string, depth: number): void => {
-    if (seen.has(id)) return
-    seen.add(id)
-    const block = byId.get(id)
-    if (block) {
-      nodes.push({
-        id,
-        label:
-          block.cardKind === 'fanout'
-            ? `${humanizeAgentType(block.agentType)} · fanout`
-            : humanizeAgentType(block.agentType),
-        status: block.status,
-        depth
-      })
-      if (block.cardKind === 'fanout') {
-        for (const worker of block.workers ?? []) {
-          if (byId.has(worker.id)) {
-            visit(worker.id, depth + 1)
-          } else {
-            nodes.push({
-              id: worker.id,
-              label: `worker`,
-              status: worker.status,
-              depth: depth + 1
-            })
-          }
-        }
-      }
-      for (const childId of block.childIds ?? []) {
-        visit(childId, depth + 1)
-      }
-      return
-    }
-    nodes.push({
-      id,
-      label: 'agent',
-      status: 'pending',
-      depth
-    })
-  }
-
-  visit(root.agentId, 0)
-  return nodes
-}
-
-function resolveSubagentFlowItems(
-  root: SubagentBlock,
-  related: SubagentBlock[],
-  selectedId: string
-): StepFlowItem[] {
-  const byId = new Map<string, SubagentBlock>()
-  for (const b of related) byId.set(b.agentId, b)
-  byId.set(root.agentId, root)
-
-  const selected = byId.get(selectedId)
-  if (selected) {
-    if (selected.cardKind === 'fanout' && selectedId === selected.agentId) {
-      // Root fanout: concatenate worker rails with indent.
-      const items: StepFlowItem[] = [
-        {
-          id: `${selected.agentId}-root`,
-          status: lifecycleToStepStatus(selected.status),
-          label: `${humanizeAgentType(selected.agentType)} · ${selected.status}`,
-          depth: 0
-        }
-      ]
-      for (const worker of selected.workers ?? []) {
-        items.push({
-          id: `${worker.id}-head`,
-          status: lifecycleToStepStatus(worker.status),
-          label: `worker ${worker.id.slice(0, 8)} · ${worker.status}`,
-          depth: 1
-        })
-        items.push(
-          ...subagentStepsToFlowItems(selected.workerSteps?.[worker.id], 2, worker.status)
-        )
-      }
-      return items
-    }
-    return subagentStepsToFlowItems(selected.steps, 0, selected.status)
-  }
-
-  // Fanout worker without its own block — steps live on the root fanout card.
-  if (root.cardKind === 'fanout') {
-    return subagentStepsToFlowItems(root.workerSteps?.[selectedId], 0, root.status)
-  }
-  return []
-}
-
-function SubagentDetailDialog({
-  block: initialBlock,
-  relatedBlocks,
-  onClose
-}: {
-  block: SubagentBlock
-  relatedBlocks: SubagentBlock[]
-  onClose: () => void
-}): ReactElement {
-  const { t } = useTranslation('common')
-  const activeThreadId = useChatStore((s) => s.activeThreadId)
-  // Select the blocks array by reference — never filter inside the Zustand
-  // selector (a new array each call trips useSyncExternalStore into a loop).
-  const allBlocks = useChatStore((s) => s.blocks)
-  const [resuming, setResuming] = useState(false)
-  const [resumeError, setResumeError] = useState<string | null>(null)
-  const [selectedId, setSelectedId] = useState(initialBlock.agentId)
-
-  // Prefer live store blocks so the step rail updates while the dialog is open.
-  const related = useMemo(() => {
-    const map = new Map<string, SubagentBlock>()
-    for (const b of relatedBlocks) map.set(b.agentId, b)
-    for (const b of allBlocks) {
-      if (b.kind === 'subagent') map.set(b.agentId, b)
-    }
-    return [...map.values()]
-  }, [relatedBlocks, allBlocks])
-
-  const block =
-    related.find((b) => b.agentId === initialBlock.agentId) ?? initialBlock
-
-  const treeNodes = useMemo(
-    () => buildSubagentTreeNodes(block, related),
-    [block, related]
-  )
-  const flowItems = useMemo(
-    () => resolveSubagentFlowItems(block, related, selectedId),
-    [block, related, selectedId]
-  )
-
-  const selectedBlock = related.find((b) => b.agentId === selectedId) ?? null
-  const selectedStatus =
-    selectedBlock?.status ??
-    (block.cardKind === 'fanout'
-      ? block.workers?.find((w) => w.id === selectedId)?.status
-      : undefined) ??
-    block.status
-
-  const title =
-    block.cardKind === 'fanout'
-      ? t('subagentFanoutTitle', { kind: humanizeAgentType(block.agentType) })
-      : t('subagentDelegateTitle', { type: humanizeAgentType(block.agentType) })
-  const statusLabel = subagentStatusLabel(block.status, t)
-  const resultTitle =
-    block.status === 'failed' ? t('subagentFailureReason') : t('subagentFinalResult')
-  const resultText = block.summary?.trim() ?? ''
-  const hasResult = resultText.length > 0
-  const finalText =
-    resultText ||
-    (block.status === 'running' || block.status === 'pending'
-      ? t('subagentDetailNoResultRunning')
-      : t('subagentDetailNoResult'))
-
-  // Delegate cards resume as a single agent; fanout cards resume every
-  // failed/cancelled worker via direct API (no per-worker UI exists yet).
-  const resumableWorkerIds =
-    block.cardKind === 'fanout'
-      ? (block.workers ?? [])
-          .filter((worker) => isResumableSubagentStatus(worker.status))
-          .map((worker) => worker.id)
-      : []
-  const canResumeDelegate =
-    block.cardKind === 'delegate' && isResumableSubagentStatus(block.status)
-  const canResume =
-    (canResumeDelegate || resumableWorkerIds.length > 0) &&
-    Boolean(activeThreadId) &&
-    !resuming
-
-  const onResume = async (): Promise<void> => {
-    if (!canResume || !activeThreadId) return
-    setResuming(true)
-    setResumeError(null)
-    try {
-      const ids =
-        block.cardKind === 'fanout' ? resumableWorkerIds : [block.agentId]
-      for (const agentId of ids) {
-        await resumeThreadAgent(activeThreadId, agentId)
-      }
-    } catch (err) {
-      setResumeError(
-        err instanceof Error && err.message.trim()
-          ? err.message
-          : t('subagentResumeFailed')
-      )
-    } finally {
-      setResuming(false)
-    }
-  }
-
-  const [stepsOpen, setStepsOpen] = useState(() => !hasResult)
-
-  return (
-    <ResizableFullscreenDialog
-      open
-      onClose={onClose}
-      ariaLabel={title}
-      overlayClassName="ds-subagent-dialog"
-      panelClassName="ds-subagent-dialog-panel"
-      bodyClassName="ds-subagent-dialog-body"
-      dataAttr="subagent-dialog"
-      header={
-        <>
-          <div className="flex min-w-0 flex-1 items-start gap-3">
-            <span className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-[12px] bg-ds-hover/80 text-ds-ink/80">
-              <Bot className="h-5 w-5" strokeWidth={1.7} />
-            </span>
-            <div className="min-w-0 flex-1">
-              <h3 className="ds-subagent-dialog__title text-[18px] font-semibold leading-tight tracking-[-0.025em] text-ds-ink">
-                {title}
-              </h3>
-              <p className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[12.5px] leading-5 text-ds-muted">
-                <span className="font-mono tabular-nums text-ds-faint">{block.agentId}</span>
-                <span className="inline-flex items-center rounded-full bg-ds-hover/70 px-2 py-0.5 text-[11px] font-semibold text-ds-muted">
-                  {statusLabel}
-                </span>
-                {selectedStatus === 'failed' ? (
-                  <span
-                    className="text-[14px] font-semibold leading-none tracking-tight text-ds-ink/70"
-                    aria-hidden
-                  >
-                    !
-                  </span>
-                ) : null}
-              </p>
-            </div>
-          </div>
-          <div className="flex shrink-0 items-center gap-1.5">
-            {hasResult ? <ToolCopyButton text={resultText} className="!opacity-100" /> : null}
-            {canResumeDelegate || resumableWorkerIds.length > 0 ? (
-              <button
-                type="button"
-                disabled={!canResume}
-                onClick={() => void onResume()}
-                className="rounded-full bg-ds-hover px-3 py-1.5 text-[12.5px] font-semibold text-ds-ink transition active:scale-[0.97] hover:bg-ds-hover/80 disabled:opacity-45"
-              >
-                {resuming
-                  ? t('subagentResuming')
-                  : block.cardKind === 'fanout'
-                    ? t('subagentResumeMulti', { count: resumableWorkerIds.length })
-                    : t('subagentResume')}
-              </button>
-            ) : null}
-            <button
-              type="button"
-              onClick={onClose}
-              className="flex h-8 w-8 items-center justify-center rounded-full bg-black/[0.06] text-ds-muted transition active:scale-95 hover:bg-black/[0.1] hover:text-ds-ink dark:bg-white/[0.08] dark:hover:bg-white/[0.12]"
-              aria-label={t('close')}
-            >
-              <X className="h-3.5 w-3.5" strokeWidth={2} />
-            </button>
-          </div>
-        </>
-      }
-    >
-      <div className="flex min-h-full flex-col gap-4">
-        {resumeError ? (
-          <p className="rounded-[12px] bg-ds-hover/70 px-3 py-2 text-[12.5px] leading-5 text-ds-ink/80">
-            {resumeError}
-          </p>
-        ) : null}
-        {treeNodes.length > 1 ? (
-          <section>
-            <div className="mb-2 px-1 text-[12px] font-semibold tracking-[0.02em] text-ds-muted">
-              {t('subagentTreeTitle')}
-            </div>
-            <div className="flex gap-1.5 overflow-x-auto pb-0.5 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-              {treeNodes.map((node) => {
-                const active = node.id === selectedId
-                return (
-                  <button
-                    key={node.id}
-                    type="button"
-                    onClick={() => setSelectedId(node.id)}
-                    className={[
-                      'flex shrink-0 items-center gap-2 rounded-full px-3 py-1.5 text-left transition active:scale-[0.98]',
-                      active
-                        ? 'bg-ds-hover text-ds-ink ring-1 ring-ds-ink/20'
-                        : 'bg-ds-card/70 text-ds-ink ring-1 ring-ds-border/60 hover:bg-ds-hover/50'
-                    ].join(' ')}
-                    style={node.depth > 0 ? { marginLeft: node.depth > 1 ? 4 : 0 } : undefined}
-                  >
-                    <span
-                      className={`text-[11px] ${subagentStatusDotClass(node.status)}`}
-                      aria-hidden
-                    >
-                      {subagentStatusGlyph(node.status)}
-                    </span>
-                    <span className="max-w-[9rem] truncate text-[12.5px] font-medium tracking-[-0.01em]">
-                      {node.label}
-                    </span>
-                    <span className="font-mono text-[10px] text-ds-faint">
-                      {node.id.slice(0, 6)}
-                    </span>
-                  </button>
-                )
-              })}
-            </div>
-          </section>
-        ) : null}
-
-        <section>
-          <button
-            type="button"
-            className="mb-2 flex w-full items-center justify-between gap-2 px-1 text-left"
-            onClick={() => setStepsOpen((value) => !value)}
-            aria-expanded={stepsOpen}
-          >
-            <h4 className="text-[12px] font-semibold tracking-[0.02em] text-ds-muted">
-              {t('subagentStepFlowTitle')}
-            </h4>
-            <span className="flex items-center gap-1.5 font-mono text-[11px] tabular-nums text-ds-faint">
-              {selectedId.slice(0, 10)} · {subagentStatusLabel(selectedStatus, t)}
-              <ChevronDown
-                className={`h-3.5 w-3.5 transition ${stepsOpen ? 'rotate-180' : ''}`}
-                strokeWidth={1.9}
-              />
-            </span>
-          </button>
-          {stepsOpen ? (
-            <div className="overflow-hidden rounded-[16px] border border-ds-border/70 bg-ds-card/55 px-1.5 py-1">
-              <StepFlow items={flowItems} emptyLabel={t('subagentStepFlowEmpty')} />
-            </div>
-          ) : null}
-        </section>
-
-        <section className="ds-subagent-report min-h-0 flex-1">
-          <div className="mb-2 px-1 text-[12px] font-semibold tracking-[0.02em] text-ds-muted">
-            {resultTitle}
-          </div>
-          <div className="ds-subagent-report-body ds-markdown ds-markdown--answer ds-chat-answer text-ds-ink">
-            <AssistantMarkdown text={finalText} streaming={false} />
-          </div>
-        </section>
-      </div>
-    </ResizableFullscreenDialog>
   )
 }
 

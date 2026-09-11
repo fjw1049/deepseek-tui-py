@@ -12,6 +12,7 @@ import hashlib
 import json
 from dataclasses import dataclass, field
 from enum import Enum
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
@@ -61,6 +62,9 @@ class ApprovalRequest:
     primary_preview: str = ""
     presentation_risk: str = ""  # benign | destructive
     approval_key: str = ""
+    approval_id: str = ""
+    tool_call_id: str = ""
+    turn_id: str | None = None
 
 
 class ApprovalDecision(Enum):
@@ -78,8 +82,8 @@ class ApprovalDecision(Enum):
 #
 # Fingerprint shapes:
 #
-# - ``exec_shell`` (command) → ``shell:<tokens including flags>``
-#   so ``rm a.txt`` ≠ ``rm b.txt`` and ``git push`` ≠ ``git push --force``.
+# - ``exec_shell`` (command) → ``shell:<digest of command, cwd, pty, background>``
+#   preserving command case and whitespace, including inside quotes.
 # - ``exec_shell`` (interact / process_id) → ``shell:interact:<process_id>``
 # - ``task_create(resume=)`` / ``task_resume`` → ``task_create:resume:<id>``
 # - ``task_stop`` / ``task_cancel`` → ``task_stop:<kind>:<id>``
@@ -167,7 +171,9 @@ class ApprovalCache:
 # --- Fingerprint builders --------------------------------------------------
 
 
-def build_approval_key(tool_name: str, tool_input: Any) -> ApprovalKey:
+def build_approval_key(
+    tool_name: str, tool_input: Any, *, working_directory: Path | None = None
+) -> ApprovalKey:
     """Build the approval-cache key for a tool call.
 
     Fingerprints follow **execution semantics** (what will actually run), not
@@ -185,7 +191,7 @@ def build_approval_key(tool_name: str, tool_input: Any) -> ApprovalKey:
             has_command = isinstance(tool_input.get("command"), str)
             if isinstance(raw_pid, str) and raw_pid and not has_command:
                 return ApprovalKey(f"shell:interact:{raw_pid}")
-        return ApprovalKey(f"shell:{_command_prefix(tool_input)}")
+        return ApprovalKey(f"shell:{_shell_command_key(tool_input, working_directory)}")
     if tool_name in _FETCH_TOOLS:
         return ApprovalKey(f"net:{_parse_host(tool_input)}")
     if tool_name in _FILE_WRITE_TOOLS:
@@ -263,29 +269,22 @@ def build_approval_key(tool_name: str, tool_input: Any) -> ApprovalKey:
     return ApprovalKey(f"tool:{tool_name}")
 
 
-def _command_prefix(tool_input: Any) -> str:
-    """Fingerprint shell commands by all tokens, including flags.
-
-    Paths stay distinct (``rm a.txt`` ≠ ``rm b.txt``). Flags stay too:
-    remembering ``git push`` must not unlock ``git push --force``, and
-    ``rm a`` must not unlock ``rm -rf a``.
-    """
-    command = ""
-    if isinstance(tool_input, dict):
-        raw = tool_input.get("command")
-        if isinstance(raw, str):
-            command = raw
-    tokens = command.split()
-    if not tokens:
-        return "<empty>"
-    normalized = [t.lower() for t in tokens]
-    # Bound key size for very long argument lists while keeping identity.
-    joined = " ".join(normalized)
-    if len(joined) <= 200:
-        return joined
-    digest = hashlib.blake2b(joined.encode("utf-8"), digest_size=8).hexdigest()
-    head = " ".join(normalized[:3])
-    return f"{head}:{digest}"
+def _shell_command_key(tool_input: Any, working_directory: Path | None) -> str:
+    """Preserve literal shell syntax and scope grants to the execution directory."""
+    args = tool_input if isinstance(tool_input, dict) else {}
+    raw = args.get("command")
+    command = raw if isinstance(raw, str) else ""
+    payload = json.dumps(
+        [
+            command,
+            str(working_directory.resolve()) if working_directory is not None else None,
+            bool(args.get("pty", False)),
+            bool(args.get("background", False)),
+        ],
+        ensure_ascii=True,
+        separators=(",", ":"),
+    )
+    return hashlib.blake2b(payload.encode("utf-8"), digest_size=16).hexdigest()
 
 
 def _cron_create_key(tool_input: Any) -> str:
@@ -581,6 +580,7 @@ def enrich_approval_request(
     arguments: dict[str, Any] | None,
     *,
     tool_description: str | None = None,
+    working_directory: Path | None = None,
 ) -> None:
     """Fill presentation fields on ``request`` for UI / SSE."""
     args = arguments if isinstance(arguments, dict) else {}
@@ -602,7 +602,9 @@ def enrich_approval_request(
     request.impacts = impacts
     request.primary_preview = preview
     request.presentation_risk = risk
-    request.approval_key = str(build_approval_key(tool_name, args))
+    request.approval_key = str(
+        build_approval_key(tool_name, args, working_directory=working_directory)
+    )
     if preview:
         request.input_summary = preview[:500]
     elif tool_description and not request.input_summary:
@@ -627,6 +629,8 @@ def approval_request_to_sse_payload(
     return {
         "id": approval_id,
         "approval_id": approval_id,
+        "tool_call_id": request.tool_call_id or approval_id,
+        "turn_id": request.turn_id,
         "tool_name": request.tool_name,
         "title": title,
         "description": title,

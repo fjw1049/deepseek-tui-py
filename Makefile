@@ -1,7 +1,7 @@
 PYTHON := .venv/bin/python
 PRE_COMMIT := .venv/bin/pre-commit
 
-.PHONY: install-dev format lint typecheck test eval-validate eval-typecheck eval-offline check pre-commit-install
+.PHONY: install-dev format lint typecheck test eval-validate eval-typecheck eval-offline eval-serve check pre-commit-install
 
 install-dev:
 	$(PYTHON) -m pip install -e ".[dev]"
@@ -22,7 +22,10 @@ eval-validate:
 	PYTHONPATH=src:. $(PYTHON) -m evals validate
 
 eval-typecheck:
-	PYTHONPATH=src:. $(PYTHON) -m mypy evals --ignore-missing-imports
+	MYPYPATH=src $(PYTHON) -m mypy evals --ignore-missing-imports --follow-imports=silent
+
+eval-serve:
+	bash scripts/dev-eval.sh
 
 eval-offline:
 	PYTHONPATH=src:. $(PYTHON) -m evals run --mode offline --baseline evals/baselines/offline.json

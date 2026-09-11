@@ -15,6 +15,9 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="python -m evals")
     commands = parser.add_subparsers(dest="command", required=True)
 
+    serve = commands.add_parser("serve", help="start the independent local Eval Lab")
+    serve.add_argument("--port", type=int, default=7879)
+
     validate = commands.add_parser("validate", help="validate all case files")
     validate.add_argument("--suite", action="append", default=[])
 
@@ -31,6 +34,9 @@ def _parser() -> argparse.ArgumentParser:
     run.add_argument("--timeout", type=float, default=120.0)
     run.add_argument("--output", type=Path)
     run.add_argument("--baseline", type=Path)
+    run.add_argument("--case", action="append", default=[])
+    run.add_argument("--label", default="")
+    run.add_argument("--prompt-suffix", default="")
 
     compare = commands.add_parser("compare", help="compare summary against gates")
     compare.add_argument("baseline", type=Path)
@@ -40,6 +46,13 @@ def _parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
+    if args.command == "serve":
+        import uvicorn
+
+        from evals.server import create_app
+
+        uvicorn.run(create_app(), host="127.0.0.1", port=args.port, access_log=False)
+        return 0
     if args.command == "validate":
         cases = load_cases()
         if args.suite:
@@ -85,6 +98,9 @@ def main(argv: list[str] | None = None) -> int:
         max_cost_usd=args.max_cost_usd,
         timeout_seconds=args.timeout,
         output_dir=args.output,
+        case_ids=tuple(args.case),
+        label=args.label,
+        prompt_suffix=args.prompt_suffix,
     )
     output, summary = asyncio.run(run_evaluations(options))
     print(
@@ -98,10 +114,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"REGRESSION {failure}")
     return (
         0
-        if summary.failed == 0
-        and summary.errors == 0
-        and summary.skipped == 0
-        and not failures
+        if summary.failed == 0 and summary.errors == 0 and summary.skipped == 0 and not failures
         else 1
     )
 

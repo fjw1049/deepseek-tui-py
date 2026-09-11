@@ -94,16 +94,10 @@ export function buildChromeThemeCssVars(
   const elevated1 = mixRgb(surface, anchor, light ? 0.08 + c * 0.08 : 0.022 + c * 0.04)
   const elevated2 = mixRgb(surface, anchor, light ? 0.16 + c * 0.12 : 0.042 + c * 0.06)
 
-  // Synara's stack in BOTH variants: the content canvas is the theme surface
-  // (the main working tone) and the sidebar takes the panel mix — a slightly
-  // lifted veil over the darker window ground. Dark previously inverted this
-  // (darkest sidebar, lifted canvas), which read backwards next to Synara.
-  //
-  // Light caveat: panel mixes toward white, so a pure-white surface collapses
-  // sidebar onto the content card and the window-inset gutters disappear.
-  // Fall back to the window-ground mix so chrome stays distinct.
+  // Keep the light sidebar close to the reading surface; window gutters
+  // retain their own contrast. Dark themes keep the existing panel mix.
   const canvasBg = surface
-  const sidebarBg = light && hex(panel) === hex(surface) ? surfaceUnder : panel
+  const sidebarBg = light ? mixRgb(surface, ink, 0.02) : panel
 
   // Near-black dark surfaces otherwise yield ΔL≈3 between board and canvas and
   // read as a flat slab. Nudge the board further toward black until the gap is
@@ -205,8 +199,10 @@ export function buildChromeThemeCssVars(
     '--ds-chip-border': borderSoft,
     '--ds-chip-active': `linear-gradient(180deg, ${rgba(accentDisplay, light ? 0.16 : 0.18)}, ${rgba(accentDisplay, light ? 0.08 : 0.1)})`,
     '--ds-kbd-bg': rgba(elevated1, light ? 0.9 : 0.94),
-    '--ds-code-bg': hex(mixRgb(canvasBg, anchor, light ? 0.04 : 0.033)),
-    '--ds-pre-bg': hex(mixRgb(canvasBg, anchor, light ? 0.035 : 0.03)),
+    // Light code surfaces need an ink tint: mixing a white canvas toward
+    // white erases the block's separation from the surrounding answer.
+    '--ds-code-bg': hex(mixRgb(canvasBg, ink, light ? 0.065 : 0.033)),
+    '--ds-pre-bg': hex(mixRgb(canvasBg, ink, light ? 0.05 : 0.03)),
     '--ds-table-head-bg': rgba(elevated1, light ? 0.96 : 0.94),
     '--ds-scrollbar-thumb': rgba(ink, light ? 0.2 : 0.14),
     '--ds-scrollbar-thumb-hover': rgba(ink, light ? 0.3 : 0.24),
@@ -258,7 +254,7 @@ export function buildChromeThemeCssVars(
 
 function withUiFallback(family: string): string {
   const generic = /(sans-serif|serif|monospace|system-ui)\s*$/i.test(family)
-  return generic ? family : `${family}, 'Inter', 'Noto Sans SC', sans-serif`
+  return generic ? family : `${family}, 'PingFang SC', 'Microsoft YaHei', 'Inter', 'Noto Sans SC', sans-serif`
 }
 
 function withMonoFallback(family: string): string {

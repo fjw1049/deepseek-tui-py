@@ -12,6 +12,7 @@ from evals.harness.offline import (
     run_completion_evidence,
     run_tool_boundary,
 )
+from evals.harness.workspace import run_workspace_task
 from evals.schema import EvalCase, EvalObservation
 
 Harness = Callable[[EvalCase, "HarnessContext"], Awaitable[EvalObservation]]
@@ -26,12 +27,22 @@ class HarnessContext:
         model: str | None = None,
         max_output_tokens: int = 2048,
         remaining_live_requests: int = 0,
+        max_cost_usd: float | None = None,
+        prompt_suffix: str = "",
     ) -> None:
         self.workspace = workspace
         self.provider = provider
         self.model = model
         self.max_output_tokens = max_output_tokens
         self.remaining_live_requests = remaining_live_requests
+        self.max_cost_usd = max_cost_usd
+        self.prompt_suffix = prompt_suffix
+        self.requests = 0
+        self.metered_requests = 0
+        self.priced_requests = 0
+        self.cost_usd = 0.0
+        self.usage: dict[str, int | float] = {}
+        self.trace: list[dict[str, object]] = []
 
 
 HARNESSES: dict[str, Harness] = {
@@ -42,12 +53,11 @@ HARNESSES: dict[str, Harness] = {
     "live_decision": run_live_decision,
     "live_cache": run_live_cache,
     "tool_boundary": run_tool_boundary,
+    "workspace_task": run_workspace_task,
 }
 
 
-async def run_harness(
-    case: EvalCase, context: HarnessContext
-) -> EvalObservation:
+async def run_harness(case: EvalCase, context: HarnessContext) -> EvalObservation:
     try:
         harness = HARNESSES[case.runner]
     except KeyError as exc:

@@ -473,6 +473,8 @@ export type AppSettingsV1 = {
   deepseek: DeepseekSettingsV1
   /** Active vendor for `provider = …` in config.toml. Defaults to deepseek. */
   defaultLlmProviderId: BuiltinLlmProviderId
+  /** Provider-qualified native vision helper for text-only models. */
+  visionModel?: string
   /** Per-vendor API keys + models (built-in catalogue only). */
   llmProviders: Record<BuiltinLlmProviderId, LlmProviderConfigV1>
   customEndpoints: CustomEndpointV1[]
@@ -1419,6 +1421,7 @@ export function normalizeAppSettings(settings: AppSettingsV1): AppSettingsV1 {
     iconAnimation: maybeSettings.iconAnimation === true,
     deepseek: llm.deepseek,
     defaultLlmProviderId: llm.defaultLlmProviderId,
+    visionModel: typeof settings.visionModel === 'string' ? settings.visionModel.trim() : undefined,
     llmProviders: llm.llmProviders,
     customEndpoints: normalizeCustomEndpoints(maybeSettings.customEndpoints),
     asrProviders: normalizeAsrProviders(

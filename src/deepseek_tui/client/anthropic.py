@@ -17,6 +17,7 @@ from deepseek_tui.client.normalize import drop_orphaned_tool_blocks
 from deepseek_tui.client.sanitize import sanitize_extra_body, sanitize_extra_headers
 from deepseek_tui.client.streaming import AnthropicStreamParser
 from deepseek_tui.protocol.messages import (
+    ImageBlock,
     Message,
     MessageRequest,
     Role,
@@ -58,9 +59,8 @@ class AnthropicCompatClient(LLMClient):
             return f"{self.base_url}/messages"
         return f"{self.base_url}/v1/messages"
 
-    async def stream_chat_completion(
-        self, request: MessageRequest
-    ) -> AsyncIterator[StreamEvent]:
+    async def stream_chat_completion(self, request: MessageRequest) -> AsyncIterator[StreamEvent]:
+        request = await self.prepare_media(request)
         parser = AnthropicStreamParser()
         headers = {
             "x-api-key": self.api_key,
@@ -68,7 +68,7 @@ class AnthropicCompatClient(LLMClient):
             "content-type": "application/json",
             **sanitize_extra_headers(self.extra_headers),
         }
-        payload = self._build_payload(request)
+        payload = await asyncio.to_thread(self._build_payload, request)
         url = self._messages_url()
         client = self._get_http_client()
         started = time.monotonic()
@@ -111,8 +111,15 @@ class AnthropicCompatClient(LLMClient):
         )
 
     def _build_payload(self, request: MessageRequest) -> dict[str, Any]:
+        from deepseek_tui.client.media import budget_media_request
+
+        request = budget_media_request(request, self.media_config)
         system, messages = _build_anthropic_messages(
-            request.messages, system_prompt=request.system_prompt
+            request.messages,
+            system_prompt=request.system_prompt,
+            image_max_side=self.media_config.effective_provider_config().image_max_side
+            if self.media_config
+            else 2048,
         )
         payload: dict[str, Any] = {
             "model": request.model,
@@ -170,7 +177,7 @@ class AnthropicCompatClient(LLMClient):
 
 
 def _build_anthropic_messages(
-    messages: list[Message], *, system_prompt: str | None
+    messages: list[Message], *, system_prompt: str | None, image_max_side: int = 2048
 ) -> tuple[str, list[dict[str, Any]]]:
     system_parts = [system_prompt.strip()] if system_prompt and system_prompt.strip() else []
     output: list[dict[str, Any]] = []
@@ -183,6 +190,15 @@ def _build_anthropic_messages(
         else:
             output.append({"role": role, "content": blocks})
 
+    from deepseek_tui.media import image_data_url
+
+    def image_content(image: ImageBlock) -> dict[str, Any]:
+        header, data = image_data_url(image, max_side=image_max_side).split(",", 1)
+        return {
+            "type": "image",
+            "source": {"type": "base64", "media_type": header[5:].split(";")[0], "data": data},
+        }
+
     for message in drop_orphaned_tool_blocks(messages):
         blocks: list[dict[str, Any]] = []
         for block in message.content:
@@ -191,6 +207,8 @@ def _build_anthropic_messages(
                     system_parts.append(block.text)
                 else:
                     blocks.append({"type": "text", "text": block.text})
+            elif isinstance(block, ImageBlock):
+                blocks.append(image_content(block))
             elif isinstance(block, ThinkingBlock) and block.signature:
                 blocks.append(
                     {
@@ -213,7 +231,14 @@ def _build_anthropic_messages(
                     {
                         "type": "tool_result",
                         "tool_use_id": block.tool_use_id,
-                        "content": block.content,
+                        "content": (
+                            [
+                                {"type": "text", "text": block.content},
+                                *[image_content(img) for img in block.images],
+                            ]
+                            if block.images
+                            else block.content
+                        ),
                         "is_error": block.is_error,
                     }
                 )

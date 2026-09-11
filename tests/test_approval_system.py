@@ -87,7 +87,8 @@ async def test_unified_bridge_pending_carries_impacts() -> None:
     assert "npm test" in summary or any("npm test" in str(line) for line in row["impacts"])
     assert row["risk"] == "destructive"
 
-    assert bridge.resolve("appr-unified-bridge", True)
+    assert row["tool_call_id"] == "appr-unified-bridge"
+    assert bridge.resolve(str(row["approval_id"]), True)
     assert await task is ApprovalDecision.APPROVED
 
 

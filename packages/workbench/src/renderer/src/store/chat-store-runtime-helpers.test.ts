@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import type { ChatBlock, NormalizedThread } from '../agent/types'
 import {
+  expireTurnApprovals,
+  mergePendingApprovalBlocks,
   findReusableEmptyThreadId,
   finalizeOrphanRuntimeBlocks,
   hasPendingRuntimeWork,
@@ -227,5 +229,23 @@ describe('findReusableEmptyThreadId', () => {
     )
 
     expect(reusable).toBeNull()
+  })
+})
+
+
+describe('approval scope in cards', () => {
+  it('expires only the finished turn and preserves detached task approvals', () => {
+    const pending = [
+      { approvalId: 'a', toolCallId: 'same', turnId: 'old', summary: 'A' },
+      { approvalId: 'b', toolCallId: 'same', turnId: 'new', summary: 'B' },
+      { approvalId: 'c', toolCallId: 'same', taskId: 'task', summary: 'C' }
+    ]
+    const hydrated = mergePendingApprovalBlocks([], pending).blocks
+    expect(hydrated[0]).toMatchObject({ approvalId: 'a', toolCallId: 'same', turnId: 'old' })
+    const expired = expireTurnApprovals(hydrated, 'old', 'Expired')
+    expect(expired[0]).toMatchObject({ status: 'error', errorMessage: 'Expired' })
+    expect(expired[1]).toMatchObject({ approvalId: 'b', status: 'pending' })
+    expect(expired[2]).toMatchObject({ approvalId: 'c', status: 'pending' })
+    expect(expireTurnApprovals(hydrated, undefined, 'Expired')).toBe(hydrated)
   })
 })

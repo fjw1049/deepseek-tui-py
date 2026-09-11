@@ -86,6 +86,7 @@ class DeepSeekClient(LLMClient):
             extra_headers=extra_headers,
         )
         self.thinking_supported = thinking_supported
+        self.dynamic_thinking = False
 
     @classmethod
     def from_config(cls, config: object) -> DeepSeekClient:
@@ -114,13 +115,14 @@ class DeepSeekClient(LLMClient):
         )
 
     async def stream_chat_completion(self, request: MessageRequest) -> AsyncIterator[StreamEvent]:
+        request = await self.prepare_media(request)
         parser = OpenAIStreamParser()
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
             **sanitize_extra_headers(self.extra_headers),
         }
-        payload = self._build_payload(request)
+        payload = await asyncio.to_thread(self._build_payload, request)
         client = self._get_http_client()
         chunk_timeout = self.timeout_seconds
         # Pre-stream retry on 429 / 5xx / connect errors: only retries
@@ -275,6 +277,10 @@ class DeepSeekClient(LLMClient):
                 ) from exc
 
     def _build_payload(self, request: MessageRequest) -> dict[str, Any]:
+        from deepseek_tui.client.factory import _infer_thinking_supported
+        from deepseek_tui.client.media import budget_media_request
+
+        request = budget_media_request(request, self.media_config)
         payload: dict[str, Any] = {
             "model": request.model,
             "messages": build_chat_messages(
@@ -282,6 +288,9 @@ class DeepSeekClient(LLMClient):
                 system_prompt=request.system_prompt,
                 model=request.model,
                 reasoning_effort=request.reasoning_effort,
+                image_max_side=self.media_config.effective_provider_config().image_max_side
+                if self.media_config
+                else 2048,
             ),
             "stream": request.stream,
         }
@@ -308,7 +317,11 @@ class DeepSeekClient(LLMClient):
         if (
             request.reasoning_effort is not None
             and request.reasoning_effort != "off"
-            and self.thinking_supported
+            and (
+                _infer_thinking_supported(self.base_url, request.model)
+                if self.dynamic_thinking
+                else self.thinking_supported
+            )
             and not _is_forced_tool_choice(payload.get("tool_choice"))
         ):
             payload["reasoning_effort"] = request.reasoning_effort

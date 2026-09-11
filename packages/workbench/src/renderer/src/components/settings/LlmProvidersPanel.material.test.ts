@@ -5,8 +5,8 @@ const source = readFileSync(new URL('./LlmProvidersPanel.tsx', import.meta.url),
 const stylesheet = readFileSync(new URL('../../index.css', import.meta.url), 'utf8')
 
 describe('LLM provider sheet materials', () => {
-  it('uses the shared settings popover for both protocol selectors', () => {
-    expect(source.match(/<SettingsSelect\s/g)).toHaveLength(2)
+  it('uses the shared settings popover for protocol and vision selectors', () => {
+    expect(source.match(/<SettingsSelect\s/g)).toHaveLength(3)
     expect(source).not.toContain('<select')
   })
 

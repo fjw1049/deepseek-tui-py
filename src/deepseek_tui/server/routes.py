@@ -1132,9 +1132,16 @@ async def cancel_task(request: Request, task_id: str) -> dict[str, Any]:
 
 
 @router_tasks.post("/tasks/{task_id}/resume")
-async def resume_task(request: Request, task_id: str) -> dict[str, Any]:
+async def resume_task(
+    request: Request, task_id: str, body: dict[str, Any] | None = None
+) -> dict[str, Any]:
     runtime = runtime_from_request(request)
-    result = await runtime.resume_task(task_id)
+    result = (
+        await runtime.resume_task(task_id, body)
+        if body else await runtime.resume_task(task_id)
+    )
+    if result.get("code") == "resume_confirmation_required":
+        return result
     if not result.get("ok"):
         message = str(result.get("error") or "resume task failed")
         if result.get("code") == "conflict":

@@ -12,6 +12,8 @@ from html import escape
 from pathlib import Path
 from typing import Literal
 
+from deepseek_tui.protocol.messages import ImageBlock
+
 # ============================================================================
 # Types (formerly context/types.py)
 # ============================================================================
@@ -51,6 +53,7 @@ class ProcessedTurnInput:
     model_text: str
     references: list[ContextReference] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    images: list[ImageBlock] = field(default_factory=list)
 
 
 # ============================================================================
@@ -100,6 +103,7 @@ def process_turn_input(
     references: list[ContextReference] = []
     warnings: list[str] = []
     total_inlined = 0
+    images: list[ImageBlock] = []
 
     for idx, (token, source) in enumerate(tokens):
         if idx >= cfg.max_mentions:
@@ -144,9 +148,45 @@ def process_turn_input(
             continue
 
         if kind == "media":
+            from deepseek_tui.media import IMAGE_EXTENSIONS, import_image_path
+
+            if path.suffix.lower() in IMAGE_EXTENSIONS:
+                try:
+                    image = import_image_path(path)
+                except ValueError:
+                    ref = ContextReference(
+                        kind="media", source=source, label=token, target=str(path),
+                        included=False, expanded=False, detail="unreadable image",
+                    )
+                    references.append(ref)
+                    blocks.append(_render_media_hint_block(token, display_path))
+                    continue
+                images.append(image)
+                references.append(
+                    ContextReference(
+                        kind="media",
+                        source=source,
+                        label=token,
+                        target=str(path),
+                        included=True,
+                        expanded=True,
+                        detail=f"image {image.asset_id}",
+                    )
+                )
+                blocks.append(
+                    f'<image-file path="{_xml_text(display_path)}" '
+                    f'asset="{image.asset_id}">Image attached. '
+                    f'Read again using read_file path="media:{image.asset_id}".</image-file>'
+                )
+                continue
             ref = ContextReference(
-                kind="media", source=source, label=token, target=str(path),
-                included=False, expanded=False, detail="use /attach for media bytes",
+                kind="media",
+                source=source,
+                label=token,
+                target=str(path),
+                included=False,
+                expanded=False,
+                detail="unsupported media type",
             )
             references.append(ref)
             blocks.append(_render_media_hint_block(token, display_path))
@@ -217,8 +257,11 @@ def process_turn_input(
     expansion = _assemble_expansion(blocks, cfg)
     model_text = _format_model_text(raw, expansion)
     return ProcessedTurnInput(
-        display_text=display_text, model_text=model_text,
-        references=references, warnings=warnings,
+        display_text=display_text,
+        model_text=model_text,
+        references=references,
+        warnings=warnings,
+        images=images,
     )
 
 
@@ -453,7 +496,7 @@ def _render_media_hint_block(token: str, display_path: str) -> str:
     return (
         f'<media-file mention="@{_xml_attr(token)}" '
         f'path="{_xml_attr(display_path)}">\n'
-        f"Use /attach {_xml_text(token)} when the intent is to attach this image or video.\n"
+        "This media format is not supported for model input yet. Its contents have not been read.\n"
         f"</media-file>"
     )
 

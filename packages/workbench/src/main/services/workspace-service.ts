@@ -21,6 +21,7 @@ import type {
   WorkspaceListDirectoryResult,
   WorkspacePasteTextResult,
   WorkspacePasteTextTarget,
+  WorkspacePasteImageTarget,
   WorkspaceSearchEntriesResult,
   WorkspaceTreeEntry
 } from '../../shared/workspace-file'
@@ -989,6 +990,29 @@ function uniquePasteName(destDir: string): string {
     n += 1
   }
   return name
+}
+
+/** Preserve pasted image bytes; the runtime validates and prepares model variants. */
+export async function writePasteImageFile(
+  payload: WorkspacePasteImageTarget
+): Promise<WorkspacePasteTextResult> {
+  try {
+    if (!payload.workspaceRoot.trim()) throw new Error('Workspace root is required.')
+    const match = /^data:image\/(png|jpeg|webp);base64,([A-Za-z0-9+/]+={0,2})$/.exec(payload.dataUrl)
+    if (!match || match[2].length > 44_739_244) throw new Error('Unsupported or oversized image.')
+    const bytes = Buffer.from(match[2], 'base64')
+    if (!bytes.length || bytes.length > 32 * 1024 * 1024) throw new Error('Image exceeds 32 MiB.')
+    const workspacePath = await canonicalPath(resolve(expandHomePath(payload.workspaceRoot.trim())))
+    const destDir = join(workspacePath, ...PASTE_DIR_SEGMENTS)
+    await enforceWorkspaceBoundary(destDir, workspacePath)
+    await mkdir(destDir, { recursive: true })
+    const name = `image-${randomUUID()}.${match[1] === 'jpeg' ? 'jpg' : match[1]}`
+    const dest = await enforceWorkspaceBoundary(join(destDir, name), workspacePath)
+    await writeFile(dest, bytes, { flag: 'wx' })
+    return { ok: true, path: dest, relativePath: relativePathFromWorkspace(workspacePath, dest), name, size: bytes.length }
+  } catch (error) {
+    return { ok: false, message: error instanceof Error ? error.message : String(error) }
+  }
 }
 
 export async function writePasteTextFile(

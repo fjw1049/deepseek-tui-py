@@ -121,6 +121,40 @@ async def test_start_turn_never_dispatches_without_checkpoint(
 
 
 @pytest.mark.asyncio
+async def test_warmup_preserves_thread_recency_and_order(
+    runtime_app, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manager = runtime_app.state.thread_manager
+    repo = _repo(tmp_path)
+    older = await manager.create_thread(
+        CreateThreadRequest(workspace=str(repo), model="deepseek-chat")
+    )
+    old_updated_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    older.updated_at = old_updated_at
+    manager.store.save_thread(older)
+    newer = await manager.create_thread(
+        CreateThreadRequest(workspace=str(repo), model="deepseek-chat")
+    )
+
+    async def fake_ensure_engine_loaded(_thread):
+        return None
+
+    monkeypatch.setattr(manager, "_ensure_engine_loaded", fake_ensure_engine_loaded)
+
+    # Opening an old conversation creates its isolate, then reuses and syncs it.
+    for content in ("one\n", "from-editor\n", "from-editor\n"):
+        (repo / "app.py").write_text(content, encoding="utf-8")
+        result = await manager.warmup_thread(older.id)
+        assert result["status"] == "ready"
+        detail = await manager.get_thread_detail(older.id)
+        assert detail.thread.updated_at == old_updated_at
+        assert detail.thread.env_mode == "worktree"
+        assert (execution_root(detail.thread) / "app.py").read_text() == content
+        listed = await manager.list_threads()
+        assert [t.id for t in listed] == [newer.id, older.id]
+
+
+@pytest.mark.asyncio
 async def test_prepare_isolates_git_and_publish_writes_project(
     runtime_app, tmp_path: Path
 ) -> None:

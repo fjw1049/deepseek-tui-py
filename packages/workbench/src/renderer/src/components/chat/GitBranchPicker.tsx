@@ -102,6 +102,12 @@ export function GitBranchPicker({
       setError(null)
       return
     }
+    // `not_git_repo` / `no_workspace` are expected, benign states — never raise
+    // the centered alert for them (same filter as use-git-working-changes).
+    if (!result.ok && (result.reason === 'not_git_repo' || result.reason === 'no_workspace')) {
+      setError(null)
+      return
+    }
     setError(result.ok ? null : gitErrorMessage(result))
   }, [gitErrorMessage, result])
 

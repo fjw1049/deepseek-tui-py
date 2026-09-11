@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from contextlib import nullcontext
 from typing import Any
 
 from deepseek_tui.engine.context import compact_tool_result_for_context
@@ -398,7 +399,10 @@ class ToolExecutionMixin:
                 tool_name=tool_call.name,
                 content=result.content,
                 success=result.success,
-                metadata=(dict(result.metadata) if isinstance(result.metadata, dict) else None),
+                metadata={
+                    **(result.metadata or {}),
+                    "images": [i.model_dump() for i in result.images],
+                },
             )
         )
         if result.success:
@@ -412,17 +416,23 @@ class ToolExecutionMixin:
             result,
             pressure_ratio=self._ingress_pressure_ratio(model),
         )
-        self._tool_dedup.record(
-            decision.key,
-            output_for_context,
-            is_error=not result.success,
-        )
+        if not result.images:
+            self._tool_dedup.record(
+                decision.key,
+                output_for_context,
+                is_error=not result.success,
+            )
+        for image in result.images:
+            self.tool_context.metadata.setdefault("image_assets", {})[image.asset_id] = (
+                image.model_dump()
+            )
         output_for_context = self._tool_dedup.decorate_execute_content(decision, output_for_context)
         results.append(
             Message.tool_result(
                 tool_call.id,
                 output_for_context,
                 is_error=not result.success,
+                images=result.images,
             )
         )
         return result
@@ -765,7 +775,9 @@ class ToolExecutionMixin:
         fp_args = (
             fingerprint_arguments if fingerprint_arguments is not None else tool_call.arguments
         )
-        cache_key = build_approval_key(fp_name, fp_args)
+        cache_key = build_approval_key(
+            fp_name, fp_args, working_directory=self.tool_context.working_directory
+        )
         cache_status = self.approval_cache.check(cache_key)
 
         if cache_status is ApprovalCacheStatus.APPROVED:
@@ -817,6 +829,7 @@ class ToolExecutionMixin:
             fp_name,
             enrich_args,
             tool_description=approval_request.reason,
+            working_directory=self.tool_context.working_directory,
         )
         # Auto-approve short-circuits inside request_approval without ever
         # registering the id on the ApprovalBridge. Emitting
@@ -824,22 +837,30 @@ class ToolExecutionMixin:
         # the UI shows a card / auto-responds, POSTs
         # /v1/approvals/{id} for an id the bridge never knew, and gets 404.
         # Only surface the approval request when someone can actually answer.
+        from deepseek_tui.engine.handle import ApprovalHandler
+
         auto_approved = await self.approval_handler.auto_approve_enabled()
-        if not auto_approved:
-            emit_tool_audit(
-                {
-                    "event": "tool.approval_required",
-                    "tool_id": tool_call.id,
-                    "tool_name": tool_call.name,
-                }
-            )
-            await self.handle.emit(
-                ApprovalRequiredEvent(
-                    tool_call_id=tool_call.id,
-                    request=approval_request,
+        scope = (
+            self.approval_handler.approval_scope(tool_call.id, approval_request)
+            if not auto_approved and isinstance(self.approval_handler, ApprovalHandler)
+            else nullcontext()
+        )
+        with scope:
+            if not auto_approved:
+                emit_tool_audit(
+                    {
+                        "event": "tool.approval_required",
+                        "tool_id": tool_call.id,
+                        "tool_name": tool_call.name,
+                    }
                 )
-            )
-        decision = await self.approval_handler.request_approval(tool_call.id, approval_request)
+                await self.handle.emit(
+                    ApprovalRequiredEvent(
+                        tool_call_id=tool_call.id,
+                        request=approval_request,
+                    )
+                )
+            decision = await self.approval_handler.request_approval(tool_call.id, approval_request)
         logger.info("approval_decision tool=%s decision=%s", tool_call.name, decision.value)
         approved = decision in {
             ApprovalDecision.APPROVED,
@@ -858,6 +879,7 @@ class ToolExecutionMixin:
                 tool_call_id=tool_call.id,
                 approved=approved,
                 reason=decision.value,
+                approval_id=approval_request.approval_id,
             )
         )
         if decision is ApprovalDecision.DENIED:

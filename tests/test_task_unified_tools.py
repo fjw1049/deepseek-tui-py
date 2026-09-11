@@ -263,7 +263,7 @@ async def test_task_output_block_ignored_for_durable_task(tmp_path) -> None:
 
 async def test_task_create_resume_requeues_same_id(tmp_path) -> None:
     manager = _task_manager(tmp_path)
-    task = await manager.add_task(NewTaskRequest(prompt="durable work"))
+    task = await manager.add_task(NewTaskRequest(prompt="durable work", auto_approve=False))
     ctx = ToolContext(working_directory=tmp_path, task_manager=manager)
     await manager.cancel_task(task.id)
 
