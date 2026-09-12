@@ -311,7 +311,6 @@ html,
 #root,
 .ds-app-root {
   font-family: var(--font-ui);
-  -webkit-font-smoothing: antialiased;
   font-synthesis: none;
 }
 
@@ -842,7 +841,6 @@ html,
 .ds-workbench-topbar,
 .ds-session-header {
   font-family: var(--font-ui);
-  -webkit-font-smoothing: antialiased;
   font-synthesis: none;
 }
 
@@ -856,7 +854,6 @@ body {
   background-color: var(--ds-bg-main);
   color: var(--ds-text);
   zoom: var(--ds-ui-scale);
-  -webkit-font-smoothing: antialiased;
   font-synthesis: none;
 }
 
@@ -883,7 +880,6 @@ option {
   font-size: inherit;
   font-weight: inherit;
   line-height: inherit;
-  -webkit-font-smoothing: antialiased;
   font-synthesis: none;
 }
 
@@ -892,7 +888,6 @@ pre,
 kbd,
 samp {
   font-family: var(--font-mono);
-  -webkit-font-smoothing: antialiased;
   font-synthesis: none;
 }
 
@@ -1136,7 +1131,6 @@ samp {
     0 8px 28px -12px rgba(15, 23, 42, 0.14),
     0 1px 2px rgba(0, 0, 0, 0.04);
   font-family: var(--font-ui);
-  -webkit-font-smoothing: antialiased;
 }
 
 .ds-workspace-context-bar--embedded {
@@ -1186,7 +1180,6 @@ samp {
   line-height: 1.25;
   letter-spacing: 0.01em;
   color: var(--ds-text-muted);
-  -webkit-font-smoothing: antialiased;
   transition:
     color 120ms ease,
     background-color 120ms ease,
@@ -1603,7 +1596,7 @@ samp {
   border-color: color-mix(in srgb, var(--ds-accent) 40%, transparent);
   background: color-mix(in srgb, var(--ds-accent) 14%, #ffffff);
   color: color-mix(in srgb, var(--ds-accent) 48%, var(--ds-text));
-  font-weight: 600;
+  font-weight: 500;
   box-shadow: none;
 }
 
@@ -1739,7 +1732,7 @@ samp {
 .ds-ide-workspace .ds-workspace-editor-tab--active {
   background: var(--ds-bg-sidebar);
   color: var(--ds-text);
-  font-weight: 600;
+  font-weight: 500;
   box-shadow: inset 0 -2px 0 var(--ds-accent);
 }
 
@@ -1754,7 +1747,6 @@ samp {
 .ds-project-context-menu,
 .ds-editor-picker-menu {
   font-family: var(--font-ui);
-  -webkit-font-smoothing: antialiased;
   font-synthesis: none;
   border-radius: 14px;
   border: 1px solid rgba(255, 255, 255, 0.4);
@@ -2376,7 +2368,6 @@ samp {
   font-weight: 400;
   line-height: 1.5;
   letter-spacing: -0.011em;
-  -webkit-font-smoothing: antialiased;
   font-synthesis: none;
   text-align: start;
   text-justify: auto;
@@ -2419,7 +2410,6 @@ samp {
   font-weight: 400;
   line-height: 1.5;
   letter-spacing: -0.011em;
-  -webkit-font-smoothing: antialiased;
   font-synthesis: none;
   text-align: start;
 }
@@ -2432,7 +2422,6 @@ samp {
 .ds-composer-model-label {
   font-family: var(--font-ui);
   letter-spacing: -0.01em;
-  -webkit-font-smoothing: antialiased;
   font-synthesis: none;
 }
 
@@ -3201,7 +3190,6 @@ samp {
   letter-spacing: 0;
   line-height: 1.4;
   color: var(--text-primary);
-  -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   font-synthesis: none;
   /* Solid --bg-sidebar (not frosted --glass-bg): glass-over-board mixed a
@@ -3285,7 +3273,6 @@ samp {
   font-weight: var(--sidebar-weight);
   letter-spacing: 0;
   color: var(--text-primary);
-  -webkit-font-smoothing: antialiased;
   font-synthesis: none;
   transition:
     border-color 0.2s ease,
@@ -3298,7 +3285,6 @@ samp {
   letter-spacing: 0;
   color: var(--text-tertiary);
   opacity: 1;
-  -webkit-font-smoothing: antialiased;
   font-synthesis: none;
 }
 
@@ -3844,7 +3830,6 @@ samp {
 .ds-session-header-meta,
 .ds-session-header-hint {
   font-family: var(--font-ui);
-  -webkit-font-smoothing: antialiased;
   font-synthesis: none;
 }
 
@@ -6281,7 +6266,6 @@ html[data-theme='dark'] .ds-code-fullscreen .shiki span {
   line-height: 1.72;
   letter-spacing: -0.003em;
   color: color-mix(in srgb, var(--ds-text) 96%, var(--ds-text-muted));
-  -webkit-font-smoothing: antialiased;
 }
 
 .ds-ide-workspace .ds-markdown.ds-markdown--document {
@@ -6701,7 +6685,6 @@ html[data-theme='dark'] .ds-code-fullscreen .shiki span {
   line-height: 1.7;
   letter-spacing: normal;
   color: color-mix(in srgb, var(--ds-text) 86%, var(--ds-text-muted));
-  -webkit-font-smoothing: antialiased;
 }
 
 /* Keep mixed CJK/Latin prose readable without stretching word spacing. */
@@ -7600,7 +7583,6 @@ select:focus-visible,
 .ds-operation-dock {
   pointer-events: auto;
   font-family: var(--font-ui);
-  -webkit-font-smoothing: antialiased;
   font-synthesis: none;
 }
 
@@ -7955,7 +7937,6 @@ select:focus-visible,
   font-weight: 600;
   letter-spacing: -0.005em;
   color: var(--text-secondary);
-  -webkit-font-smoothing: antialiased;
   font-synthesis: none;
 }
 
@@ -7995,7 +7976,6 @@ select:focus-visible,
 
 .ds-change-inspector {
   font-family: var(--font-ui);
-  -webkit-font-smoothing: antialiased;
   font-synthesis: none;
   background: var(--ds-bg-sidebar);
 }
@@ -8139,15 +8119,15 @@ select:focus-visible,
 }
 
 .ds-change-stats--sm {
-  font-size: 0.875rem;
+  font-size: 12.5px;
 }
 
 .ds-change-stats--md {
-  font-size: 0.9375rem;
+  font-size: 13.5px;
 }
 
 .ds-change-stats--lg {
-  font-size: 1rem;
+  font-size: 15px;
 }
 
 .ds-change-stats__added {
@@ -8655,7 +8635,7 @@ select:focus-visible,
 .ds-workspace-editor-pane .ds-editor-deleted-line {
   color: var(--ds-diff-removed);
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: 15px;
   line-height: 20px;
   white-space: pre;
   opacity: 1;

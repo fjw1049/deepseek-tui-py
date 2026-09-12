@@ -397,7 +397,7 @@ export function DiffView({
                 if (row.kind === 'meta') {
                   return (
                     <tr key={row.key} className="bg-accent-soft/60 text-ds-muted">
-                      <td colSpan={4} className="ds-diff-meta-sticky break-all px-2 py-0.5 font-mono text-[14px]">
+                      <td colSpan={4} className="ds-diff-meta-sticky break-all px-2 py-0.5 font-mono text-[13.5px]">
                         {row.meta}
                       </td>
                     </tr>
@@ -406,22 +406,22 @@ export function DiffView({
                 return (
                   <tr key={row.key}>
                     <td
-                      className={`select-none px-1 text-right align-top font-mono text-[13px] tabular-nums text-ds-faint ${sideCls(row.leftKind)}`}
+                      className={`select-none px-1 text-right align-top font-mono text-[13.5px] tabular-nums text-ds-faint ${sideCls(row.leftKind)}`}
                     >
                       {row.leftNo ?? ''}
                     </td>
                     <td
-                      className={`max-w-0 break-all whitespace-pre-wrap ${cellPad} align-top font-mono text-[14.5px] leading-[1.45] ${sideCls(row.leftKind)}`}
+                      className={`max-w-0 break-all whitespace-pre-wrap ${cellPad} align-top font-mono text-[15px] leading-[1.45] ${sideCls(row.leftKind)}`}
                     >
                       {row.leftText ?? '\u00a0'}
                     </td>
                     <td
-                      className={`select-none border-l border-ds-border-muted/50 px-1 text-right align-top font-mono text-[13px] tabular-nums text-ds-faint ${sideCls(row.rightKind)}`}
+                      className={`select-none border-l border-ds-border-muted/50 px-1 text-right align-top font-mono text-[13.5px] tabular-nums text-ds-faint ${sideCls(row.rightKind)}`}
                     >
                       {row.rightNo ?? ''}
                     </td>
                     <td
-                      className={`max-w-0 break-all whitespace-pre-wrap ${cellPad} align-top font-mono text-[14.5px] leading-[1.45] ${sideCls(row.rightKind)}`}
+                      className={`max-w-0 break-all whitespace-pre-wrap ${cellPad} align-top font-mono text-[15px] leading-[1.45] ${sideCls(row.rightKind)}`}
                     >
                       {row.rightText ?? '\u00a0'}
                     </td>
@@ -466,9 +466,9 @@ export function DiffView({
                 if (row.kind === 'meta') {
                   return (
                     <tr key={row.key}>
-                      <td className="ds-diff-meta-sticky select-none px-1 text-right align-top font-mono text-[13px]" />
-                      <td className="ds-diff-meta-sticky select-none px-1 text-right align-top font-mono text-[13px]" />
-                      <td className="ds-diff-meta-sticky max-w-0 truncate px-2 align-top font-mono text-[14px] text-ds-muted">
+                      <td className="ds-diff-meta-sticky select-none px-1 text-right align-top font-mono text-[13.5px]" />
+                      <td className="ds-diff-meta-sticky select-none px-1 text-right align-top font-mono text-[13.5px]" />
+                      <td className="ds-diff-meta-sticky max-w-0 truncate px-2 align-top font-mono text-[13.5px] text-ds-muted">
                         {row.text || '\u00a0'}
                       </td>
                     </tr>
@@ -476,13 +476,13 @@ export function DiffView({
                 }
                 return (
                   <tr key={row.key} className={row.cls}>
-                    <td className="select-none px-1 text-right align-top font-mono text-[13px] tabular-nums text-ds-faint">
+                    <td className="select-none px-1 text-right align-top font-mono text-[13.5px] tabular-nums text-ds-faint">
                       {row.oldNo ?? ''}
                     </td>
-                    <td className="select-none border-r border-ds-border-muted/40 px-1 text-right align-top font-mono text-[13px] tabular-nums text-ds-faint">
+                    <td className="select-none border-r border-ds-border-muted/40 px-1 text-right align-top font-mono text-[13.5px] tabular-nums text-ds-faint">
                       {row.newNo ?? ''}
                     </td>
-                    <td className="max-w-0 break-all whitespace-pre-wrap px-2 align-top font-mono text-[14.5px] leading-[1.45]">
+                    <td className="max-w-0 break-all whitespace-pre-wrap px-2 align-top font-mono text-[15px] leading-[1.45]">
                       {row.text || '\u00a0'}
                     </td>
                   </tr>
@@ -572,16 +572,16 @@ function DiffHeader({
           label={name ?? undefined}
           variant="list"
           skipValidation
-          className="min-w-0 flex-1 text-[14.5px] font-medium"
+          className="min-w-0 flex-1 text-[15px] font-medium"
         />
       ) : (
-        <span className="min-w-0 flex-1 truncate text-[14.5px] font-medium text-ds-ink" title={name ?? ''}>
+        <span className="min-w-0 flex-1 truncate text-[15px] font-medium text-ds-ink" title={name ?? ''}>
           {name ?? 'patch'}
         </span>
       )}
       {added != null || removed != null ? (
         <>
-          <span className="shrink-0 text-[14px] tabular-nums">
+          <span className="shrink-0 text-[13.5px] tabular-nums">
             {(added ?? 0) > 0 ? <span className="text-ds-diff-added">+{added}</span> : null}
             {(added ?? 0) > 0 && (removed ?? 0) > 0 ? <span className="px-1 text-ds-faint">·</span> : null}
             {(removed ?? 0) > 0 ? <span className="text-ds-diff-removed">-{removed}</span> : null}

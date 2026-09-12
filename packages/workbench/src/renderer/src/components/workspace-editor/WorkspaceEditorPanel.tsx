@@ -215,7 +215,7 @@ function EditorTabStrip({
         style={overflowMask ? { maskImage: overflowMask, WebkitMaskImage: overflowMask } : undefined}
       >
         {tabs.length === 0 ? (
-          <span className="px-2 py-1 text-[12px] text-ds-faint">{emptyLabel}</span>
+          <span className="px-2 py-1 text-[12.5px] text-ds-faint">{emptyLabel}</span>
         ) : (
           tabs.map((tab) => {
             const shown = tab.id === currentTabId
@@ -243,7 +243,7 @@ function EditorTabStrip({
                 <button
                   type="button"
                   onClick={() => onSelect(tab.id)}
-                  className="inline-flex min-w-0 items-center gap-1 truncate px-2 py-1 text-[12px]"
+                  className="inline-flex min-w-0 items-center gap-1 truncate px-2 py-1 text-[12.5px]"
                   title={formatFilePathForDisplay(tab.path, workspaceRoot) ?? tab.path}
                 >
                   <FileKindIcon path={tab.path} className="ds-file-kind-icon--chrome" />
@@ -330,7 +330,7 @@ function PaneTabActions({
               <button
                 type="button"
                 onClick={onCancelEdit}
-                className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[12px] text-ds-muted transition hover:bg-ds-hover/60 hover:text-ds-ink"
+                className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[12.5px] text-ds-muted transition hover:bg-ds-hover/60 hover:text-ds-ink"
               >
                 {t('workspaceEditorCancelEdit')}
               </button>
@@ -338,7 +338,7 @@ function PaneTabActions({
                 type="button"
                 onClick={onSave}
                 disabled={tab.loading || tab.content === tab.savedContent}
-                className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[12px] text-ds-muted transition hover:bg-ds-hover/60 hover:text-ds-ink disabled:opacity-45"
+                className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[12.5px] text-ds-muted transition hover:bg-ds-hover/60 hover:text-ds-ink disabled:opacity-45"
               >
                 {justSaved ? (
                   <Check className="h-3.5 w-3.5 text-ds-diff-added" strokeWidth={2.2} />
@@ -471,7 +471,7 @@ const EditorPaneView = forwardRef<
   if (!tab) {
     return (
       <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-ds-sidebar" onMouseDown={onFocus}>
-        <div className="flex flex-1 items-center justify-center px-6 text-center text-[13px] text-ds-faint">
+        <div className="flex flex-1 items-center justify-center px-6 text-center text-[13.5px] text-ds-faint">
           {t('workspaceEditorSplitEmpty')}
         </div>
       </div>
@@ -488,16 +488,16 @@ const EditorPaneView = forwardRef<
       onMouseDown={onFocus}
     >
       {externalOpenError && focused ? (
-        <div className="shrink-0 border-b border-amber-200/70 bg-amber-50/80 px-3 py-2 text-[12px] text-amber-900 dark:border-amber-700/40 dark:bg-amber-950/30 dark:text-amber-100">
+        <div className="shrink-0 border-b border-amber-200/70 bg-amber-50/80 px-3 py-2 text-[12.5px] text-amber-900 dark:border-amber-700/40 dark:bg-amber-950/30 dark:text-amber-100">
           {t('workspaceEditorOpenExternalFailed', { message: externalOpenError })}
         </div>
       ) : null}
       {tab.error ? (
-        <div className="shrink-0 border-b border-amber-200/70 bg-amber-50/80 px-3 py-2 text-[12px] text-amber-900 dark:border-amber-700/40 dark:bg-amber-950/30 dark:text-amber-100">
+        <div className="shrink-0 border-b border-amber-200/70 bg-amber-50/80 px-3 py-2 text-[12.5px] text-amber-900 dark:border-amber-700/40 dark:bg-amber-950/30 dark:text-amber-100">
           {tab.error}
         </div>
       ) : tab.truncated ? (
-        <div className="shrink-0 border-b border-amber-200/70 bg-amber-50/80 px-3 py-2 text-[12px] text-amber-900 dark:border-amber-700/40 dark:bg-amber-950/30 dark:text-amber-100">
+        <div className="shrink-0 border-b border-amber-200/70 bg-amber-50/80 px-3 py-2 text-[12.5px] text-amber-900 dark:border-amber-700/40 dark:bg-amber-950/30 dark:text-amber-100">
           {t('workspaceEditorTruncated')}
         </div>
       ) : null}
@@ -1062,7 +1062,7 @@ export function WorkspaceEditorPanel({
               ) : null}
             </div>
           ) : (
-            <div className="flex flex-1 items-center justify-center px-6 text-center text-[13px] text-ds-faint">
+            <div className="flex flex-1 items-center justify-center px-6 text-center text-[13.5px] text-ds-faint">
               {t('workspaceEditorPickFile')}
             </div>
           )}

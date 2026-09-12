@@ -350,7 +350,7 @@ export function WorkspaceFileTree({
       return [
         <div
           key={`${key}__error`}
-          className="ds-workspace-file-tree__row-pad py-1 text-[12px] text-red-600 dark:text-red-300"
+          className="ds-workspace-file-tree__row-pad py-1 text-[12.5px] text-red-600 dark:text-red-300"
           style={{ paddingLeft: `${indentPx(depth)}px` }}
         >
           {node.error}
@@ -362,7 +362,7 @@ export function WorkspaceFileTree({
       return [
         <div
           key={`${key}__empty`}
-          className="ds-workspace-file-tree__row-pad py-1 text-[12px] text-ds-faint"
+          className="ds-workspace-file-tree__row-pad py-1 text-[12.5px] text-ds-faint"
           style={{ paddingLeft: `${indentPx(depth)}px` }}
         >
           {t('workspaceTreeEmpty')}
@@ -395,7 +395,7 @@ export function WorkspaceFileTree({
               toggleDirectory(entry.path)
             }}
             onPointerEnter={() => loadChildDirectory(entry.path)}
-            className="ds-no-drag ds-workspace-file-tree__row ds-workspace-file-tree__row-pad flex h-7 w-full items-center gap-1.5 text-left text-[12px] text-ds-muted transition hover:bg-ds-hover/55 hover:text-ds-ink"
+            className="ds-no-drag ds-workspace-file-tree__row ds-workspace-file-tree__row-pad flex h-7 w-full items-center gap-1.5 text-left text-[12.5px] text-ds-muted transition hover:bg-ds-hover/55 hover:text-ds-ink"
             style={{ paddingLeft: `${indentPx(depth)}px` }}
           >
             <ChevronRight
@@ -455,7 +455,7 @@ export function WorkspaceFileTree({
             onFileContextMenu(event, entry.path)
           }}
           aria-current={isActive ? 'page' : undefined}
-          className={`ds-no-drag ds-workspace-file-tree__row ds-workspace-file-tree__row-pad flex h-7 w-full items-center gap-1.5 text-left text-[12px] transition ${
+          className={`ds-no-drag ds-workspace-file-tree__row ds-workspace-file-tree__row-pad flex h-7 w-full items-center gap-1.5 text-left text-[12.5px] transition ${
             isFlashing ? 'ds-tree-row-flash' : ''
           } ${
             isActive
@@ -483,7 +483,7 @@ export function WorkspaceFileTree({
         {trimmedRoot ? (
           <>
             <FileKindIcon path={workspaceLabel} directory className="ds-file-kind-icon--chrome" />
-            <div className="min-w-0 truncate text-[12px] font-semibold text-ds-ink" title={trimmedRoot}>
+            <div className="min-w-0 truncate text-[12.5px] font-medium text-ds-ink" title={trimmedRoot}>
               {workspaceLabel}
             </div>
             <div className="ml-auto flex shrink-0 items-center gap-0.5">
@@ -514,7 +514,7 @@ export function WorkspaceFileTree({
             </div>
           </>
         ) : (
-          <div className="text-[12px] leading-5 text-ds-faint">{t('workspaceTreeNoRoot')}</div>
+          <div className="text-[12.5px] leading-5 text-ds-faint">{t('workspaceTreeNoRoot')}</div>
         )}
       </div>
       <div className="ds-workspace-file-tree__scroll min-h-0 flex-1 overflow-y-auto py-1">
