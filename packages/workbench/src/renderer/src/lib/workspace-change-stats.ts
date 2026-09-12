@@ -1,6 +1,10 @@
 /** One workspace-change list + one +/- total for inspector, dock, sidebar, and live fold-up. */
 
-import type { GitWorkingChangeFile, GitWorkingChangeStage } from '@shared/git-working-changes'
+import type {
+  GitWorkingChangeFile,
+  GitWorkingChangeStage,
+  GitWorkingChangeStatus
+} from '@shared/git-working-changes'
 import type { ChatBlock } from '../agent/types'
 import {
   countDiffStats,
@@ -23,6 +27,8 @@ export type WorkspaceChangeEntry = {
   editLine?: number
   committable?: boolean
   gitStage?: GitWorkingChangeStage
+  /** Git rename/add/delete classification (git-sourced entries only). */
+  gitStatus?: GitWorkingChangeStatus
   additions?: number
   deletions?: number
 }
@@ -149,7 +155,12 @@ export function collectWorkspaceChangeEntries(opts: {
     if (!key) continue
     const prev = byPath.get(key)
     if (prev?.status === 'running' && (prev.detail ?? '').trim()) {
-      byPath.set(key, { ...prev, committable: true, gitStage: file.stage })
+      byPath.set(key, {
+        ...prev,
+        committable: true,
+        gitStage: file.stage,
+        gitStatus: file.status
+      })
       continue
     }
     const patch = file.patch?.trim() ?? ''
@@ -162,6 +173,7 @@ export function collectWorkspaceChangeEntries(opts: {
       editLine: firstChangedEditorLineFromPatch(patch) ?? prev?.editLine,
       committable: true,
       gitStage: file.stage,
+      gitStatus: file.status,
       // Git vs HEAD is the working-tree truth. Drop last-edit ledger counts
       // so the header +/- matches the patch the list actually renders.
       additions: gitStats?.added ?? (patch ? undefined : prev?.additions),

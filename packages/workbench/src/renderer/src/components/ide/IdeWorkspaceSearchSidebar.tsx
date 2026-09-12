@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState, type ReactElement } from 'react'
-import { File, Search } from 'lucide-react'
+import { Search } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import type { WorkspaceTreeEntry } from '@shared/workspace-file'
 import { splitFileNameAndParent } from '../../lib/editor-breadcrumb'
 import { EditorListSkeleton } from '../workspace-editor/EditorListSkeleton'
+import { FileKindIcon } from '../chat/FileKindIcon'
 
 type Props = {
   workspaceRoot: string
@@ -129,7 +130,7 @@ export function IdeWorkspaceSearchSidebar({
                         : 'text-ds-muted hover:bg-ds-hover/60 hover:text-ds-ink'
                     }`}
                   >
-                    <File className="h-3.5 w-3.5 shrink-0 text-ds-faint" strokeWidth={1.85} />
+                    <FileKindIcon path={entry.path} className="ds-file-kind-icon--chrome" />
                     <span className="min-w-0 flex-1 truncate text-[12.5px]">
                       <span className="font-medium text-ds-ink">{name}</span>
                       {parent ? (

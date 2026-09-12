@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState, type CSSProperties, type ReactElement } from 'react'
+import { useCallback, useLayoutEffect, useRef, useState, type CSSProperties, type ReactElement } from 'react'
 import { createPortal } from 'react-dom'
 import {
   Columns2,
@@ -50,6 +50,15 @@ export function WorkspaceFileContextMenu({
 }: WorkspaceFileContextMenuProps): ReactElement | null {
   const menuRef = useRef<HTMLDivElement | null>(null)
   const editorLabel = usePreferredEditorLabel(t('threadMenuEditorFallback'))
+  const [closing, setClosing] = useState(false)
+  const closingRef = useRef(false)
+  // Delay unmount so the ds-pop-out fade can play (parent owns the mount).
+  const requestClose = useCallback((): void => {
+    if (closingRef.current) return
+    closingRef.current = true
+    setClosing(true)
+    window.setTimeout(onClose, 110)
+  }, [onClose])
   const [style, setStyle] = useState<CSSProperties>({
     position: 'fixed',
     left: x,
@@ -79,13 +88,13 @@ export function WorkspaceFileContextMenu({
 
   useLightDismiss({
     open: true,
-    onDismiss: onClose,
+    onDismiss: requestClose,
     refs: [menuRef]
   })
 
   const run = (action: WorkspaceFileContextMenuAction): void => {
     onAction(action)
-    onClose()
+    requestClose()
   }
 
   const itemClass =
@@ -96,7 +105,9 @@ export function WorkspaceFileContextMenu({
     <div
       ref={menuRef}
       style={style}
-      className="ds-no-drag overflow-hidden rounded-xl border border-ds-border bg-ds-elevated p-1 shadow-[0_24px_70px_rgba(44,55,78,0.18)] backdrop-blur-xl dark:shadow-[0_30px_80px_rgba(0,0,0,0.42)]"
+      className={`ds-no-drag ds-pop origin-top-left overflow-hidden rounded-xl border border-ds-border bg-ds-elevated p-1 shadow-[0_24px_70px_rgba(44,55,78,0.18)] backdrop-blur-xl dark:shadow-[0_30px_80px_rgba(0,0,0,0.42)] ${
+        closing ? 'ds-pop-out' : ''
+      }`}
       onMouseDown={(event) => event.stopPropagation()}
     >
       <button type="button" className={itemClass} onClick={() => run('open-with-editor')}>

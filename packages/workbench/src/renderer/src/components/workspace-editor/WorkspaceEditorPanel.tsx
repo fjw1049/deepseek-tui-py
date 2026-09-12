@@ -10,7 +10,7 @@ import {
   useRef,
   useState
 } from 'react'
-import { Columns2, Pencil, Save, Search, X } from 'lucide-react'
+import { Check, Columns2, Loader2, Pencil, Save, Search, X } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { isImagePreviewPath } from '@shared/image-preview'
 import { isHtmlPreviewPath } from '@shared/html-preview'
@@ -43,7 +43,9 @@ import {
   type EditorTab
 } from '../../store/workspace-editor-store'
 import { FileKindIcon } from '../chat/FileKindIcon'
+import { Tooltip } from '../common/Tooltip'
 import { EditorListSkeleton } from './EditorListSkeleton'
+import { ConfirmDialog } from './ConfirmDialog'
 import { ImageDocumentPreview } from './ImageDocumentPreview'
 import { HtmlDocumentPreview } from './HtmlDocumentPreview'
 import { MarkdownDocumentPreview } from './MarkdownDocumentPreview'
@@ -84,6 +86,16 @@ type FileMenuState = {
   path: string
   pane?: EditorPaneId
 }
+
+type PendingConfirmState =
+  | {
+      kind: 'close-tab'
+      tabId: string
+      target: EditorPaneId
+      otherPaneStillHas: boolean
+      fileName: string
+    }
+  | { kind: 'discard-edit'; tabId: string }
 
 function readStoredTreeWidth(): number {
   try {
@@ -129,24 +141,21 @@ function EditorSurfaceFallback(): ReactElement {
 
 function EditorTabMark({
   editing,
-  dirty,
   changed,
   loading
 }: {
   editing: boolean
-  dirty: boolean
   changed: boolean
   loading: boolean
 }): ReactElement | null {
   if (loading) {
-    return <span className="ml-1 shrink-0 text-ds-faint">…</span>
+    return <Loader2 className="ds-workspace-editor-tab__mark animate-spin text-ds-faint" strokeWidth={2} aria-hidden />
   }
   if (editing) {
-    return <span className="ml-1 shrink-0 text-[10px] text-ds-muted">✎</span>
+    return <Pencil className="ds-workspace-editor-tab__mark text-ds-muted" strokeWidth={2} aria-hidden />
   }
-  if (dirty) {
-    return <span className="ds-workspace-editor-tab__dirty" aria-hidden />
-  }
+  // Unsaved changes are shown as a dot in the close-button slot (VS Code),
+  // so there is no in-content dirty mark here.
   if (changed) {
     return <span className="ds-workspace-editor-tab__changed" aria-hidden />
   }
@@ -180,9 +189,31 @@ function EditorTabStrip({
   onClose: (tabId: string) => void
   onContextMenu: (event: ReactMouseEvent<HTMLElement>, path: string) => void
 }): ReactElement {
+  const scrollRef = useRef<HTMLDivElement | null>(null)
+  const [overflows, setOverflows] = useState(false)
+
+  useEffect(() => {
+    const el = scrollRef.current
+    if (!el) return
+    const update = (): void => setOverflows(el.scrollWidth > el.clientWidth + 1)
+    update()
+    const observer = new ResizeObserver(update)
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [tabs.length])
+
+  // Fade the clipped last tab into the edge instead of a hard cut.
+  const overflowMask = overflows
+    ? 'linear-gradient(to right, black calc(100% - 28px), transparent)'
+    : undefined
+
   return (
     <div className="ds-workspace-editor-tabstrip flex shrink-0 items-center gap-1.5 border-b border-ds-border-muted/60">
-      <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto overflow-y-hidden">
+      <div
+        ref={scrollRef}
+        className="flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto overflow-y-hidden"
+        style={overflowMask ? { maskImage: overflowMask, WebkitMaskImage: overflowMask } : undefined}
+      >
         {tabs.length === 0 ? (
           <span className="px-2 py-1 text-[12px] text-ds-faint">{emptyLabel}</span>
         ) : (
@@ -195,7 +226,7 @@ function EditorTabStrip({
             return (
               <span
                 key={tab.id}
-                className={`ds-workspace-editor-tab inline-flex max-w-[220px] shrink-0 items-center ${
+                className={`ds-workspace-editor-tab group inline-flex max-w-[220px] shrink-0 items-center ${
                   focused
                     ? 'ds-workspace-editor-tab--active'
                     : shown
@@ -203,6 +234,11 @@ function EditorTabStrip({
                       : ''
                 }`}
                 onContextMenu={(event) => onContextMenu(event, tab.path)}
+                onAuxClick={(event) => {
+                  if (event.button !== 1) return
+                  event.preventDefault()
+                  onClose(tab.id)
+                }}
               >
                 <button
                   type="button"
@@ -214,19 +250,21 @@ function EditorTabStrip({
                   <span className="truncate">{fileNameFromPath(tab.path)}</span>
                   <EditorTabMark
                     editing={editing}
-                    dirty={dirty}
                     changed={changed}
                     loading={Boolean(tab.loading)}
                   />
                 </button>
-                <button
-                  type="button"
-                  onClick={() => onClose(tab.id)}
-                  className="ds-workspace-editor-tab__close mr-0.5 inline-flex h-5 w-5 items-center justify-center rounded"
-                  aria-label={closeLabel}
-                >
-                  <X className="h-3 w-3" strokeWidth={2} />
-                </button>
+                <Tooltip label={closeLabel}>
+                  <button
+                    type="button"
+                    onClick={() => onClose(tab.id)}
+                    className="ds-workspace-editor-tab__close relative mr-0.5 inline-flex h-5 w-5 items-center justify-center rounded"
+                    aria-label={closeLabel}
+                  >
+                    {dirty ? <span className="ds-workspace-editor-tab__close-dot" aria-hidden /> : null}
+                    <X className="ds-workspace-editor-tab__close-x h-3 w-3" strokeWidth={2} />
+                  </button>
+                </Tooltip>
               </span>
             )
           })
@@ -240,6 +278,7 @@ function EditorTabStrip({
 function PaneTabActions({
   tab,
   isEditing,
+  justSaved,
   onFind,
   onStartEdit,
   onCancelEdit,
@@ -248,6 +287,7 @@ function PaneTabActions({
 }: {
   tab: EditorTab | null
   isEditing: boolean
+  justSaved: boolean
   onFind: () => void
   onStartEdit: () => void
   onCancelEdit: () => void
@@ -300,7 +340,11 @@ function PaneTabActions({
                 disabled={tab.loading || tab.content === tab.savedContent}
                 className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[12px] text-ds-muted transition hover:bg-ds-hover/60 hover:text-ds-ink disabled:opacity-45"
               >
-                <Save className="h-3.5 w-3.5" strokeWidth={1.85} />
+                {justSaved ? (
+                  <Check className="h-3.5 w-3.5 text-ds-diff-added" strokeWidth={2.2} />
+                ) : (
+                  <Save className="h-3.5 w-3.5" strokeWidth={1.85} />
+                )}
                 {t('workspaceEditorSave')}
               </button>
             </>
@@ -436,11 +480,11 @@ const EditorPaneView = forwardRef<
 
   return (
     <div
-      className={`flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-ds-sidebar ${
+      className={`relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-ds-sidebar ${
         showFocusChrome && focused
           ? 'shadow-[inset_0_0_0_1px_color-mix(in_srgb,var(--ds-text)_12%,transparent)]'
           : ''
-      }`}
+      } ${isEditing ? 'ds-workspace-editor-pane--editing' : ''}`}
       onMouseDown={onFocus}
     >
       {externalOpenError && focused ? (
@@ -533,6 +577,8 @@ export function WorkspaceEditorPanel({
   const [editingTabId, setEditingTabId] = useState<string | null>(null)
   const [externalOpenError, setExternalOpenError] = useState<string | null>(null)
   const [fileMenu, setFileMenu] = useState<FileMenuState | null>(null)
+  const [pendingConfirm, setPendingConfirm] = useState<PendingConfirmState | null>(null)
+  const [savedFlashTabId, setSavedFlashTabId] = useState<string | null>(null)
   const endPointerDragRef = useRef<(() => void) | null>(null)
   const splitHostRef = useRef<HTMLDivElement | null>(null)
   const primaryPaneRef = useRef<EditorPaneHandle | null>(null)
@@ -602,6 +648,18 @@ export function WorkspaceEditorPanel({
     setExternalOpenError(null)
   }, [focusedTab?.id])
 
+  const runSaveWithFeedback = useCallback(
+    async (tabId: string): Promise<void> => {
+      const ok = await saveTab(tabId, trimmedRoot)
+      if (!ok) return
+      setSavedFlashTabId(tabId)
+      window.setTimeout(() => {
+        setSavedFlashTabId((current) => (current === tabId ? null : current))
+      }, 1400)
+    },
+    [saveTab, trimmedRoot]
+  )
+
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
       if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== 's') return
@@ -613,11 +671,11 @@ export function WorkspaceEditorPanel({
       if (!tab || tab.kind === 'image' || tab.truncated) return
       event.preventDefault()
       if (editingTabId !== tab.id) setEditingTabId(tab.id)
-      if (tab.content !== tab.savedContent) void saveTab(tab.id, trimmedRoot)
+      if (tab.content !== tab.savedContent) void runSaveWithFeedback(tab.id)
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [editingTabId, focusedTab, saveTab, trimmedRoot])
+  }, [editingTabId, focusedTab, runSaveWithFeedback])
 
   const beginTreeResize = (event: ReactPointerEvent<HTMLDivElement>): void => {
     if (event.button !== 0) return
@@ -722,13 +780,14 @@ export function WorkspaceEditorPanel({
               : 'primary')
       const otherPaneStillHas = target === 'primary' ? inSecondary : inPrimary
       if (tab && tab.content !== tab.savedContent && !otherPaneStillHas) {
-        if (
-          !window.confirm(
-            t('workspaceEditorCloseDirtyConfirm', { file: fileNameFromPath(tab.path) })
-          )
-        ) {
-          return
-        }
+        setPendingConfirm({
+          kind: 'close-tab',
+          tabId,
+          target,
+          otherPaneStillHas,
+          fileName: fileNameFromPath(tab.path)
+        })
+        return
       }
       if (editingTabId === tabId && !otherPaneStillHas) setEditingTabId(null)
       closeTab(tabId, pane ?? target)
@@ -737,7 +796,6 @@ export function WorkspaceEditorPanel({
       tabs,
       editingTabId,
       closeTab,
-      t,
       splitEnabled,
       focusedPane,
       primaryTabIds,
@@ -760,16 +818,30 @@ export function WorkspaceEditorPanel({
       return
     }
     if (tab.content !== tab.savedContent) {
-      if (!window.confirm(t('workspaceEditorDiscardConfirm'))) return
-      revertTab(tab.id)
+      setPendingConfirm({ kind: 'discard-edit', tabId: tab.id })
+      return
     }
     setEditingTabId(null)
   }
+
+  const resolvePendingConfirm = useCallback((): void => {
+    if (!pendingConfirm) return
+    const confirm = pendingConfirm
+    setPendingConfirm(null)
+    if (confirm.kind === 'close-tab') {
+      if (editingTabId === confirm.tabId && !confirm.otherPaneStillHas) setEditingTabId(null)
+      closeTab(confirm.tabId, confirm.target)
+      return
+    }
+    revertTab(confirm.tabId)
+    setEditingTabId(null)
+  }, [pendingConfirm, editingTabId, closeTab, revertTab])
 
   const paneActions = (tab: EditorTab | null, pane: EditorPaneId): ReactElement | null => (
     <PaneTabActions
       tab={tab}
       isEditing={Boolean(tab && editingTabId === tab.id && !tab.truncated)}
+      justSaved={Boolean(tab && savedFlashTabId === tab.id)}
       onFind={() =>
         (pane === 'secondary' ? secondaryPaneRef : primaryPaneRef).current?.openFind()
       }
@@ -780,7 +852,7 @@ export function WorkspaceEditorPanel({
       }}
       onCancelEdit={() => cancelEditForTab(tab)}
       onSave={() => {
-        if (tab) void saveTab(tab.id, trimmedRoot)
+        if (tab) void runSaveWithFeedback(tab.id)
       }}
       onCloseSplit={splitEnabled && pane === 'secondary' ? closeSplit : undefined}
     />
@@ -1008,6 +1080,21 @@ export function WorkspaceEditorPanel({
           onAction={handleFileMenuAction}
           onClose={() => setFileMenu(null)}
           t={t}
+        />
+      ) : null}
+
+      {pendingConfirm ? (
+        <ConfirmDialog
+          title={
+            pendingConfirm.kind === 'close-tab'
+              ? t('workspaceEditorCloseDirtyConfirm', { file: pendingConfirm.fileName })
+              : t('workspaceEditorDiscardConfirm')
+          }
+          confirmLabel={t('confirmDialogConfirm')}
+          cancelLabel={t('cancel')}
+          destructive={pendingConfirm.kind === 'discard-edit'}
+          onConfirm={resolvePendingConfirm}
+          onCancel={() => setPendingConfirm(null)}
         />
       ) : null}
     </div>

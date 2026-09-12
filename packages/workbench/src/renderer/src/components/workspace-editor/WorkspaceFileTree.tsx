@@ -1,9 +1,10 @@
-import type { MouseEvent as ReactMouseEvent, ReactElement } from 'react'
+import type { CSSProperties, MouseEvent as ReactMouseEvent, ReactElement } from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ChevronRight } from 'lucide-react'
+import { ChevronsDownUp, ChevronRight, RefreshCw } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import type { WorkspaceTreeEntry } from '@shared/workspace-file'
 import { FileKindIcon } from '../chat/FileKindIcon'
+import { Tooltip } from '../common/Tooltip'
 import { formatFilePathForDisplay } from '../../lib/diff-stats'
 import { directoryHasChanges, pathHasChanges } from '../../lib/workspace-change-patches'
 import { setWorkspacePathDragData } from '../../lib/composer-insert'
@@ -255,6 +256,76 @@ export function WorkspaceFileTree({
     [loadChildDirectory]
   )
 
+  const [refreshing, setRefreshing] = useState(false)
+
+  // New-file flash: entries that first appear after the tree has settled get a
+  // short accent highlight (agent just created them). The initial load — root
+  // plus restored expansion — must not flash, hence the settle window.
+  const [flashPaths, setFlashPaths] = useState<Record<string, number>>({})
+  const seenPathsRef = useRef<Set<string> | null>(null)
+  const mountedAtRef = useRef(Date.now())
+
+  useEffect(() => {
+    seenPathsRef.current = null
+    mountedAtRef.current = Date.now()
+    setFlashPaths({})
+  }, [trimmedRoot])
+
+  useEffect(() => {
+    const collectFilePaths = (): string[] => {
+      const paths: string[] = []
+      for (const node of Object.values(nodes)) {
+        if (!node.loaded) continue
+        for (const entry of node.entries) {
+          if (entry.kind === 'directory') continue
+          paths.push(treeKey(entry.path))
+        }
+      }
+      return paths
+    }
+
+    if (!seenPathsRef.current) {
+      if (Date.now() - mountedAtRef.current < 1200) return
+      seenPathsRef.current = new Set(collectFilePaths())
+      return
+    }
+
+    const seen = seenPathsRef.current
+    const fresh = collectFilePaths().filter((key) => !seen.has(key))
+    if (fresh.length === 0) return
+    for (const key of fresh) seen.add(key)
+    const expiry = Date.now() + 2000
+    setFlashPaths((prev) => {
+      const next = { ...prev }
+      for (const key of fresh) next[key] = expiry
+      return next
+    })
+    const timer = window.setTimeout(() => {
+      const now = Date.now()
+      setFlashPaths((prev) => {
+        const next: Record<string, number> = {}
+        for (const [key, value] of Object.entries(prev)) {
+          if (value > now) next[key] = value
+        }
+        return next
+      })
+    }, 2200)
+    return () => window.clearTimeout(timer)
+  }, [nodes])
+
+  const handleManualRefresh = useCallback((): void => {
+    if (refreshing) return
+    setRefreshing(true)
+    refreshLoadedDirectories()
+    window.setTimeout(() => setRefreshing(false), 600)
+  }, [refreshing, refreshLoadedDirectories])
+
+  const collapseAll = useCallback((): void => {
+    const next = new Set<string>()
+    writeExpandedDirs(trimmedRootRef.current, next)
+    setExpanded(next)
+  }, [])
+
   const renderEntries = (directoryPath: string, depth: number): ReactElement[] => {
     const key = treeKey(directoryPath)
     const node = nodes[key]
@@ -266,11 +337,12 @@ export function WorkspaceFileTree({
       return [
         <div
           key={`${key}__loading`}
-          className="ds-workspace-file-tree__row-pad flex flex-col gap-1.5 py-1.5"
+          className="ds-workspace-file-tree__row-pad flex flex-col gap-[5px] py-1.5"
           style={{ paddingLeft: `${indentPx(depth)}px` }}
         >
-          <div className="ds-editor-skeleton__bar h-2 w-[72%] rounded-sm" />
-          <div className="ds-editor-skeleton__bar ml-3 h-2 w-[54%] rounded-sm" />
+          <div className="ds-editor-skeleton__bar h-2 w-[76%] rounded-sm" />
+          <div className="ds-editor-skeleton__bar ml-[22px] h-2 w-[52%] rounded-sm" />
+          <div className="ds-editor-skeleton__bar ml-[22px] h-2 w-[64%] rounded-sm" />
         </div>
       ]
     }
@@ -309,6 +381,9 @@ export function WorkspaceFileTree({
       const dirHasChanges = isDir && patchMap ? directoryHasChanges(patchMap, entry.path) : false
 
       if (isDir) {
+        // Children stay mounted once loaded so collapse can animate; the branch
+        // wrapper hides them (grid 0fr + visibility) until expanded.
+        const childMounted = Boolean(nodes[entryKey])
         return [
           <button
             key={entryKey}
@@ -319,6 +394,7 @@ export function WorkspaceFileTree({
               event.stopPropagation()
               toggleDirectory(entry.path)
             }}
+            onPointerEnter={() => loadChildDirectory(entry.path)}
             className="ds-no-drag ds-workspace-file-tree__row ds-workspace-file-tree__row-pad flex h-7 w-full items-center gap-1.5 text-left text-[12px] text-ds-muted transition hover:bg-ds-hover/55 hover:text-ds-ink"
             style={{ paddingLeft: `${indentPx(depth)}px` }}
           >
@@ -339,11 +415,25 @@ export function WorkspaceFileTree({
               {entry.name}
             </span>
           </button>,
-          ...(isExpanded ? renderEntries(entry.path, depth + 1) : [])
+          ...(childMounted ? (
+            [
+              <div
+                key={`${entryKey}__branch`}
+                className="ds-tree-branch"
+                data-open={isExpanded ? '' : undefined}
+                style={{ '--ds-tree-guide': `${indentPx(depth + 1) - 4}px` } as CSSProperties}
+              >
+                <div className="ds-tree-branch__inner">
+                  {renderEntries(entry.path, depth + 1)}
+                </div>
+              </div>
+            ]
+          ) : [])
         ]
       }
 
       const isActive = activeKeys.has(entryKey)
+      const isFlashing = (flashPaths[entryKey] ?? 0) > Date.now()
 
       return [
         <button
@@ -366,6 +456,8 @@ export function WorkspaceFileTree({
           }}
           aria-current={isActive ? 'page' : undefined}
           className={`ds-no-drag ds-workspace-file-tree__row ds-workspace-file-tree__row-pad flex h-7 w-full items-center gap-1.5 text-left text-[12px] transition ${
+            isFlashing ? 'ds-tree-row-flash' : ''
+          } ${
             isActive
               ? 'ds-workspace-file-tree__row--active'
               : isDirty
@@ -379,7 +471,7 @@ export function WorkspaceFileTree({
         >
           <FileKindIcon path={entry.path} className="ds-file-kind-icon--chrome" />
           <span className="min-w-0 truncate">{entry.name}</span>
-          {isDirty ? <span className="ml-auto text-[10px] text-accent">●</span> : null}
+          {isDirty ? <span className="ds-tree-dirty-dot" aria-hidden /> : null}
         </button>
       ]
     })
@@ -393,6 +485,32 @@ export function WorkspaceFileTree({
             <FileKindIcon path={workspaceLabel} directory className="ds-file-kind-icon--chrome" />
             <div className="min-w-0 truncate text-[12px] font-semibold text-ds-ink" title={trimmedRoot}>
               {workspaceLabel}
+            </div>
+            <div className="ml-auto flex shrink-0 items-center gap-0.5">
+              <Tooltip label={t('workspaceTreeRefresh')}>
+                <button
+                  type="button"
+                  onClick={handleManualRefresh}
+                  aria-label={t('workspaceTreeRefresh')}
+                  className="inline-flex h-6 w-6 items-center justify-center rounded-md text-ds-faint transition hover:bg-ds-hover/55 hover:text-ds-ink active:scale-[0.94]"
+                >
+                  <RefreshCw
+                    className={`h-3.5 w-3.5 ${refreshing ? 'animate-spin' : ''}`}
+                    strokeWidth={1.85}
+                    aria-hidden
+                  />
+                </button>
+              </Tooltip>
+              <Tooltip label={t('workspaceTreeCollapseAll')}>
+                <button
+                  type="button"
+                  onClick={collapseAll}
+                  aria-label={t('workspaceTreeCollapseAll')}
+                  className="inline-flex h-6 w-6 items-center justify-center rounded-md text-ds-faint transition hover:bg-ds-hover/55 hover:text-ds-ink active:scale-[0.94]"
+                >
+                  <ChevronsDownUp className="h-3.5 w-3.5" strokeWidth={1.85} aria-hidden />
+                </button>
+              </Tooltip>
             </div>
           </>
         ) : (

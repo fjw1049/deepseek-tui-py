@@ -34,17 +34,19 @@ import { FileTypeIcon } from './chat/FileChip'
 import type {
   GitChangeScope,
   GitWorkingChangeFile,
-  GitWorkingChangeStage
+  GitWorkingChangeStage,
+  GitWorkingChangeStatus
 } from '@shared/git-working-changes'
 import type { GitRemoteRepository } from '@shared/github-repository'
 import { ChangeDiffStatsLabel } from './ChangeDiffStatsLabel'
-import { DiffView, type DiffRenderStyle } from './DiffView'
+import { DiffStatBar, DiffView, type DiffRenderStyle } from './DiffView'
 import { EditorListSkeleton } from './workspace-editor/EditorListSkeleton'
 import {
   useGitBranchCompareBase,
   useGitWorkingChanges
 } from '../hooks/use-git-working-changes'
 import { useGitBranches } from '../hooks/use-git-branches'
+import { usePopExit } from '../hooks/use-pop-exit'
 import { useGitHubRepository } from '../hooks/use-github-repository'
 import { useWorkspaceDirtyGitRefresh } from '../hooks/use-workspace-dirty-git-refresh'
 import { formatFilePathForDisplay } from '../lib/diff-stats'
@@ -119,6 +121,16 @@ function InspectorGitActions({
   const [feedback, setFeedback] = useState<{ kind: 'error' | 'success'; text: string } | null>(null)
   const [menuOpen, setMenuOpen] = useState(false)
   const [commitOpen, setCommitOpen] = useState(false)
+  const { closing: menuClosing, requestClose: requestMenuPopExit } = usePopExit(menuOpen)
+  const { closing: commitClosing, requestClose: requestCommitPopExit } = usePopExit(commitOpen)
+  const closeMenu = useCallback((): void => {
+    requestMenuPopExit()
+    setMenuOpen(false)
+  }, [requestMenuPopExit])
+  const closeCommit = useCallback((): void => {
+    requestCommitPopExit()
+    setCommitOpen(false)
+  }, [requestCommitPopExit])
   const [commitPushPreferred, setCommitPushPreferred] = useState(false)
   const popoverRef = useRef<HTMLDivElement | null>(null)
   const [busyAction, setBusyAction] = useState<
@@ -135,13 +147,13 @@ function InspectorGitActions({
     if (!menuOpen && !commitOpen) return
     const close = (event: MouseEvent): void => {
       if (popoverRef.current?.contains(event.target as Node)) return
-      setMenuOpen(false)
-      setCommitOpen(false)
+      closeMenu()
+      closeCommit()
     }
     const onKeyDown = (event: KeyboardEvent): void => {
       if (event.key !== 'Escape') return
-      setMenuOpen(false)
-      setCommitOpen(false)
+      closeMenu()
+      closeCommit()
     }
     window.addEventListener('mousedown', close)
     window.addEventListener('keydown', onKeyDown)
@@ -149,7 +161,7 @@ function InspectorGitActions({
       window.removeEventListener('mousedown', close)
       window.removeEventListener('keydown', onKeyDown)
     }
-  }, [commitOpen, menuOpen])
+  }, [closeCommit, closeMenu, commitOpen, menuOpen])
 
   useEffect(() => {
     if (!feedback) return
@@ -175,7 +187,7 @@ function InspectorGitActions({
       setFeedback({ kind: 'error', text: t('gitActionUnavailable') })
       return
     }
-    setMenuOpen(false)
+    closeMenu()
     setBusyAction(action)
     setFeedback(null)
     try {
@@ -217,7 +229,7 @@ function InspectorGitActions({
       return false
     }
     setBusyAction('push')
-    setMenuOpen(false)
+    closeMenu()
     setFeedback(null)
     try {
       const result = await window.dsGui.pushGitBranch(root)
@@ -245,7 +257,7 @@ function InspectorGitActions({
       return false
     }
     setBusyAction('sync')
-    setMenuOpen(false)
+    closeMenu()
     setFeedback(null)
     try {
       const result = await window.dsGui.syncGitBranch(root)
@@ -297,7 +309,7 @@ function InspectorGitActions({
         return
       }
       setMessage('')
-      setCommitOpen(false)
+      closeCommit()
       setFeedback({
         kind: 'success',
         text: t('gitCommitLocalSuccess', { hash: result.commitHash })
@@ -313,7 +325,7 @@ function InspectorGitActions({
 
   const createPullRequest = async (): Promise<void> => {
     if (!remoteRepository || !branch || typeof window.dsGui?.openExternal !== 'function') return
-    setMenuOpen(false)
+    closeMenu()
     const encodedBranch = encodeURIComponent(branch)
     const url =
       remoteRepository.provider === 'github'
@@ -328,7 +340,7 @@ function InspectorGitActions({
     remoteRepository?.provider === 'github' || remoteRepository?.provider === 'gitlab'
   const featureBranch = Boolean(branch && !['main', 'master'].includes(branch))
   const openCommit = (pushAfterCommit = false): void => {
-    setMenuOpen(false)
+    closeMenu()
     setCommitOpen(true)
     setCommitPushPreferred(pushAfterCommit)
     setFeedback(null)
@@ -384,7 +396,8 @@ function InspectorGitActions({
     else if (primaryAction === 'pull' || primaryAction === 'sync') void sync()
     else if (primaryAction === 'publish' || primaryAction === 'push') void push()
     else if (primaryAction === 'pull-request') void createPullRequest()
-    else setMenuOpen((open) => !open)
+    else if (menuOpen) closeMenu()
+    else setMenuOpen(true)
   }
   const menuItemClass =
     'flex min-h-8 w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[14.5px] text-ds-ink transition hover:bg-ds-hover active:scale-[0.99] disabled:pointer-events-none disabled:opacity-35'
@@ -415,8 +428,9 @@ function InspectorGitActions({
           aria-haspopup="menu"
           aria-expanded={menuOpen}
           onClick={() => {
-            setCommitOpen(false)
-            setMenuOpen((open) => !open)
+            closeCommit()
+            if (menuOpen) closeMenu()
+            else setMenuOpen(true)
           }}
           title={t('gitActionsMenu')}
           aria-label={t('gitActionsMenu')}
@@ -426,11 +440,11 @@ function InspectorGitActions({
         </button>
       </div>
 
-      {menuOpen ? (
+      {menuOpen || menuClosing ? (
         <div
           role="menu"
           aria-label={t('gitActionsMenu')}
-          className="absolute right-0 top-[calc(100%+6px)] z-[70] w-56 rounded-xl border border-ds-border bg-ds-elevated p-1.5 shadow-xl"
+          className={`ds-pop origin-top-right absolute right-0 top-[calc(100%+6px)] z-[70] w-56 rounded-xl border border-ds-border bg-ds-elevated p-1.5 shadow-xl ${menuClosing ? 'ds-pop-out' : ''}`}
         >
           {unstagedPaths.length > 0 ? (
             <button type="button" role="menuitem" className={menuItemClass} onClick={() => void runPathAction('stage', unstagedPaths)}>
@@ -480,14 +494,14 @@ function InspectorGitActions({
         </div>
       ) : null}
 
-      {commitOpen ? (
-        <div className="absolute right-0 top-[calc(100%+6px)] z-[70] w-[min(320px,calc(100vw-24px))] rounded-xl border border-ds-border bg-ds-elevated p-3 shadow-xl">
+      {commitOpen || commitClosing ? (
+        <div className={`ds-pop origin-top-right absolute right-0 top-[calc(100%+6px)] z-[70] w-[min(320px,calc(100vw-24px))] rounded-xl border border-ds-border bg-ds-elevated p-3 shadow-xl ${commitClosing ? 'ds-pop-out' : ''}`}>
           <div className="mb-2 flex items-center gap-2">
             <GitCommitHorizontal className="h-4 w-4 text-ds-muted" />
             <span className="min-w-0 flex-1 truncate text-[14.5px] font-semibold text-ds-ink">
               {t('gitCommitStagedCount', { count: stagedPaths.length })}
             </span>
-            <button type="button" onClick={() => setCommitOpen(false)} aria-label={t('close')} className="rounded-md p-1 text-ds-faint hover:bg-ds-hover hover:text-ds-ink">
+            <button type="button" onClick={() => closeCommit()} aria-label={t('close')} className="rounded-md p-1 text-ds-faint hover:bg-ds-hover hover:text-ds-ink">
               <X className="h-3.5 w-3.5" />
             </button>
           </div>
@@ -517,12 +531,36 @@ function InspectorGitActions({
       ) : null}
 
       {feedback ? (
-        <div role="status" className={`absolute right-0 top-[calc(100%+6px)] z-[80] flex w-max max-w-72 items-start gap-1.5 rounded-lg border border-ds-border bg-ds-elevated px-2.5 py-2 text-[13px] leading-4 shadow-lg ${feedback.kind === 'success' ? 'text-emerald-600 dark:text-emerald-300' : 'text-amber-700 dark:text-amber-200'}`}>
+        <div role="status" className={`ds-pop origin-top-right absolute right-0 top-[calc(100%+6px)] z-[80] flex w-max max-w-72 items-start gap-1.5 rounded-lg border border-ds-border bg-ds-elevated px-2.5 py-2 text-[13px] leading-4 shadow-lg ${feedback.kind === 'success' ? 'text-emerald-600 dark:text-emerald-300' : 'text-amber-700 dark:text-amber-200'}`}>
           {feedback.kind === 'success' ? <CheckCircle2 className="mt-0.5 h-3 w-3 shrink-0" /> : <TriangleAlert className="mt-0.5 h-3 w-3 shrink-0" />}
           <span>{feedback.text}</span>
         </div>
       ) : null}
     </div>
+  )
+}
+
+/** VS Code-style git status letter, colored by change kind (git-sourced rows only). */
+const GIT_STATUS_BADGES: Record<GitWorkingChangeStatus, { label: string; cls: string }> = {
+  modified: { label: 'M', cls: 'text-amber-700 dark:text-amber-300' },
+  added: { label: 'A', cls: 'text-emerald-600 dark:text-emerald-300' },
+  untracked: { label: 'U', cls: 'text-emerald-600 dark:text-emerald-300' },
+  deleted: { label: 'D', cls: 'text-red-600 dark:text-red-400' },
+  renamed: { label: 'R', cls: 'text-sky-600 dark:text-sky-300' },
+  copied: { label: 'C', cls: 'text-sky-600 dark:text-sky-300' }
+}
+
+function GitStatusBadge({ status }: { status?: GitWorkingChangeStatus }): ReactElement | null {
+  if (!status) return null
+  const badge = GIT_STATUS_BADGES[status]
+  if (!badge) return null
+  return (
+    <span
+      className={`shrink-0 font-mono text-[11px] font-semibold leading-none ${badge.cls}`}
+      aria-hidden
+    >
+      {badge.label}
+    </span>
   )
 }
 
@@ -556,15 +594,20 @@ function ChangeSourcePicker({
 }): ReactElement {
   const { t } = useTranslation('common')
   const [open, setOpen] = useState(false)
+  const { closing, requestClose } = usePopExit(open)
   const menuRef = useRef<HTMLDivElement | null>(null)
+  const closeMenu = useCallback((): void => {
+    requestClose()
+    setOpen(false)
+  }, [requestClose])
 
   useEffect(() => {
     if (!open) return
     const close = (event: MouseEvent): void => {
-      if (!menuRef.current?.contains(event.target as Node)) setOpen(false)
+      if (!menuRef.current?.contains(event.target as Node)) closeMenu()
     }
     const onKeyDown = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') setOpen(false)
+      if (event.key === 'Escape') closeMenu()
     }
     window.addEventListener('mousedown', close)
     window.addEventListener('keydown', onKeyDown)
@@ -572,7 +615,7 @@ function ChangeSourcePicker({
       window.removeEventListener('mousedown', close)
       window.removeEventListener('keydown', onKeyDown)
     }
-  }, [open])
+  }, [closeMenu, open])
 
   const items: Array<{
     group: 'git' | 'agent' | 'issue'
@@ -615,7 +658,7 @@ function ChangeSourcePicker({
         aria-expanded={open}
         title={hint}
         aria-label={selected.label}
-        onClick={() => setOpen((value) => !value)}
+        onClick={() => (open ? closeMenu() : setOpen(true))}
         className="inline-flex h-7 min-w-0 max-w-full items-center gap-1.5 rounded-md px-2 text-left text-[14.5px] font-semibold text-ds-ink transition hover:bg-ds-hover active:scale-[0.98]"
       >
         {context === 'conflicts' ? (
@@ -629,11 +672,11 @@ function ChangeSourcePicker({
           strokeWidth={1.9}
         />
       </button>
-      {open ? (
+      {open || closing ? (
         <div
           role="menu"
           aria-label={t('changeSourceMenuLabel')}
-          className="ds-change-source__menu absolute left-0 top-[calc(100%+6px)] z-50 w-[min(272px,calc(100vw-32px))] overflow-hidden rounded-xl border border-ds-border bg-ds-elevated p-1.5 shadow-xl"
+          className={`ds-change-source__menu absolute left-0 top-[calc(100%+6px)] z-50 w-[min(272px,calc(100vw-32px))] overflow-hidden rounded-xl border border-ds-border bg-ds-elevated p-1.5 shadow-xl ${closing ? 'ds-pop-out' : ''}`}
         >
           {(['git', 'agent', 'issue'] as const).map((group) => {
             const groupItems = items.filter((item) => item.group === group)
@@ -651,7 +694,7 @@ function ChangeSourcePicker({
                     aria-checked={context === item.value}
                     onClick={() => {
                       onChange(item.value)
-                      setOpen(false)
+                      closeMenu()
                     }}
                     className="flex min-h-8 w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[14.5px] text-ds-ink transition hover:bg-ds-hover active:scale-[0.99]"
                   >
@@ -693,16 +736,22 @@ function BranchComparisonPicker({
   const { t } = useTranslation('common')
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
+  const { closing, requestClose } = usePopExit(open)
   const menuRef = useRef<HTMLDivElement | null>(null)
   const inputRef = useRef<HTMLInputElement | null>(null)
+  const closeMenu = useCallback((): void => {
+    requestClose()
+    setOpen(false)
+    setQuery('')
+  }, [requestClose])
 
   useEffect(() => {
     if (!open) return
     const close = (event: MouseEvent): void => {
-      if (!menuRef.current?.contains(event.target as Node)) setOpen(false)
+      if (!menuRef.current?.contains(event.target as Node)) closeMenu()
     }
     const onKeyDown = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') setOpen(false)
+      if (event.key === 'Escape') closeMenu()
     }
     window.addEventListener('mousedown', close)
     window.addEventListener('keydown', onKeyDown)
@@ -711,7 +760,7 @@ function BranchComparisonPicker({
       window.removeEventListener('mousedown', close)
       window.removeEventListener('keydown', onKeyDown)
     }
-  }, [open])
+  }, [closeMenu, open])
 
   const options = buildBranchComparisonOptions({
     currentBranch,
@@ -732,8 +781,7 @@ function BranchComparisonPicker({
       aria-selected={selectedBase === branch}
       onClick={() => {
         onChange(branch)
-        setOpen(false)
-        setQuery('')
+        closeMenu()
       }}
       className="flex min-h-8 w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[14.5px] text-ds-ink transition hover:bg-ds-hover active:scale-[0.99]"
     >
@@ -754,7 +802,7 @@ function BranchComparisonPicker({
         aria-expanded={open}
         aria-label={t('changeBranchBaseTitle', { branch: baseLabel })}
         title={t('changeBranchBaseTitle', { branch: baseLabel })}
-        onClick={() => setOpen((value) => !value)}
+        onClick={() => (open ? closeMenu() : setOpen(true))}
         className="flex h-7 min-w-0 max-w-full items-center gap-1 rounded-md px-2 font-medium text-ds-muted transition hover:bg-ds-hover hover:text-ds-ink active:scale-[0.98] disabled:opacity-45"
       >
         <span className="truncate">{baseLabel}</span>
@@ -767,11 +815,11 @@ function BranchComparisonPicker({
           />
         )}
       </button>
-      {open ? (
+      {open || closing ? (
         <div
           role="dialog"
           aria-label={t('changeBranchBaseMenuLabel')}
-          className="ds-change-branch__menu absolute left-0 top-[calc(100%+6px)] z-[80] w-[min(300px,calc(100vw-32px))] overflow-hidden rounded-xl border border-ds-border bg-ds-elevated shadow-xl"
+          className={`ds-change-branch__menu absolute left-0 top-[calc(100%+6px)] z-[80] w-[min(300px,calc(100vw-32px))] overflow-hidden rounded-xl border border-ds-border bg-ds-elevated shadow-xl ${closing ? 'ds-pop-out' : ''}`}
         >
           <div className="border-b border-ds-border-muted p-2">
             <label className="ds-change-branch__search flex h-8 items-center gap-2 rounded-lg bg-ds-hover/60 px-2">
@@ -1200,7 +1248,6 @@ export function ChangeInspector({
     if (stage === 'partial') return t('gitStagePartial')
     return t('gitStageUnstaged')
   }
-
   const conflictCount = activeThread?.publishConflicts?.length ?? 0
   const contextHint = (() => {
     switch (context) {
@@ -1317,7 +1364,7 @@ export function ChangeInspector({
     const actionBusy = item.filePath && pathActionBusy === `${stageAction}:${item.filePath}`
 
     return (
-      <li key={item.id}>
+      <li key={item.id} className="group/row">
         <div className={rowClass}>
           <button
             type="button"
@@ -1366,12 +1413,18 @@ export function ChangeInspector({
                     {gitStageLabel(item.gitStage)}
                   </span>
                 ) : null}
+                <GitStatusBadge status={item.gitStatus} />
                 {item.status === 'running' ? (
                   <span className="shrink-0 text-[12px] font-medium text-amber-700 dark:text-amber-200">
                     {t('inspectorStatusRunning')}
                   </span>
                 ) : null}
-                {stats ? <ChangeDiffStatsLabel stats={stats} size="sm" /> : null}
+                {stats ? (
+                  <>
+                    <DiffStatBar added={stats.added} removed={stats.removed} className="w-7" />
+                    <ChangeDiffStatsLabel stats={stats} size="sm" />
+                  </>
+                ) : null}
               </>
             ) : (
               <>
@@ -1382,13 +1435,19 @@ export function ChangeInspector({
                   <div className="min-w-0 flex-1 truncate text-[15px] text-ds-ink">
                     {displayPath ?? t('toolActionFile')}
                   </div>
+                  <GitStatusBadge status={item.gitStatus} />
                   {item.status === 'running' ? (
                     <span className="shrink-0 text-[13px] font-medium text-amber-700 dark:text-amber-200">
                       {t('inspectorStatusRunning')}
                     </span>
                   ) : null}
                 </div>
-                {stats ? <ChangeDiffStatsLabel stats={stats} size="sm" /> : null}
+                {stats ? (
+                  <span className="flex items-center gap-1.5">
+                    <DiffStatBar added={stats.added} removed={stats.removed} className="w-10" />
+                    <ChangeDiffStatsLabel stats={stats} size="sm" />
+                  </span>
+                ) : null}
               </>
             )}
           </button>
@@ -1403,7 +1462,11 @@ export function ChangeInspector({
                   ? t('gitStageFileNamed', { file: displayPath ?? item.filePath })
                   : t('gitUnstageFileNamed', { file: displayPath ?? item.filePath })
               }
-              className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-ds-faint transition hover:bg-ds-card hover:text-ds-ink active:scale-[0.96] disabled:opacity-40"
+              className={`inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-ds-faint transition hover:bg-ds-card hover:text-ds-ink active:scale-[0.96] disabled:opacity-40 ${
+                actionBusy
+                  ? 'opacity-100'
+                  : 'opacity-0 group-hover/row:opacity-100 group-focus-within/row:opacity-100'
+              }`}
             >
               {actionBusy ? (
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
