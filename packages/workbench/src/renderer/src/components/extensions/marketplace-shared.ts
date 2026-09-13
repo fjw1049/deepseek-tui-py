@@ -10,6 +10,8 @@ export type NoticeTone = 'success' | 'error' | 'info'
 export type Notice = {
   tone: NoticeTone
   message: string
+  /** Instructions or unresolved conditions that need explicit dismissal. */
+  persistent?: boolean
 }
 
 /** Success/info feedback is transient; failures remain until dismissed or resolved. */
@@ -18,10 +20,20 @@ export function useNoticeAutoDismiss(
   setNotice: (value: Notice | null) => void
 ): void {
   useEffect(() => {
-    if (!notice || notice.tone === 'error') return
-    const ms = 3000
-    const timer = window.setTimeout(() => setNotice(null), ms)
-    return () => window.clearTimeout(timer)
+    if (!notice || notice.tone === 'error' || notice.persistent) return
+    let timer: number | undefined
+    const schedule = (): void => {
+      window.clearTimeout(timer)
+      if (document.visibilityState !== 'hidden') {
+        timer = window.setTimeout(() => setNotice(null), 3000)
+      }
+    }
+    schedule()
+    document.addEventListener('visibilitychange', schedule)
+    return () => {
+      window.clearTimeout(timer)
+      document.removeEventListener('visibilitychange', schedule)
+    }
   }, [notice, setNotice])
 }
 

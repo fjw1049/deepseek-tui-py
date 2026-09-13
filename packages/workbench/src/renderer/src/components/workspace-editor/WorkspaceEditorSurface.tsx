@@ -11,6 +11,7 @@ import {
 import { MessageSquarePlus } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import Editor from '@monaco-editor/react'
+import { useWorkspaceViewPreferences } from '../../store/workspace-view-preferences'
 import { subscribeAppearance } from '../../lib/apply-appearance'
 import type { editor as MonacoEditor } from 'monaco-editor'
 import { applyEditorDiffHighlights } from '../../lib/apply-editor-diff-highlights'
@@ -49,6 +50,7 @@ export const WorkspaceEditorSurface = forwardRef<WorkspaceEditorSurfaceHandle, P
     { paneId, tab, patch, readOnly, onChange, openFindOnReady = false, onQuoteSelection },
     ref
   ): ReactElement {
+    const wrapLines = useWorkspaceViewPreferences((s) => s.wrapLines)
     const hostRef = useRef<HTMLDivElement>(null)
     const editorRef = useRef<MonacoEditor.IStandaloneCodeEditor | null>(null)
     const cleanupRef = useRef<(() => void) | null>(null)
@@ -287,6 +289,7 @@ export const WorkspaceEditorSurface = forwardRef<WorkspaceEditorSurfaceHandle, P
           options={{
             readOnly,
             domReadOnly: readOnly,
+            hover: { enabled: !readOnly, delay: 500 },
             find: {
               addExtraSpaceOnTop: false,
               autoFindInSelection: 'never',
@@ -309,7 +312,7 @@ export const WorkspaceEditorSurface = forwardRef<WorkspaceEditorSurfaceHandle, P
             lineHeight: 23,
             scrollBeyondLastLine: false,
             automaticLayout: false,
-            wordWrap: languageForPath(tab.path) === 'plaintext' ? 'on' : 'off',
+            wordWrap: (wrapLines ?? (languageForPath(tab.path) === 'plaintext')) ? 'on' : 'off',
             padding: { top: 12, bottom: 12 },
             scrollbar: {
               vertical: 'auto',

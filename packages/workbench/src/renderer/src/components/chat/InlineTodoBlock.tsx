@@ -1,5 +1,5 @@
 import type { ReactElement } from 'react'
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { ChevronDown, ChevronRight } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import type { TodoItemView, TodoTurnSession } from '../../lib/extract-todos-from-blocks'
@@ -65,18 +65,11 @@ export function InlineTodoBlock({ session, active = false, className = '' }: Pro
     return { openItems: open, completedItems: done }
   }, [session.items])
 
-  const [completedExpanded, setCompletedExpanded] = useState(() => session.isComplete)
-  const [listExpanded, setListExpanded] = useState(true)
-
-  useEffect(() => {
-    if (session.isComplete) {
-      setCompletedExpanded(true)
-    }
-  }, [session.isComplete])
-
-  useEffect(() => {
-    setListExpanded(true)
-  }, [session.anchorBlockId])
+  const [completedExpanded, setCompletedExpanded] = useState(false)
+  const [expansion, setExpansion] = useState<{ anchor: string; complete: boolean; expanded: boolean } | null>(null)
+  const listExpanded = expansion?.anchor === session.anchorBlockId && expansion.complete === session.isComplete
+    ? expansion.expanded
+    : !session.isComplete
 
   const statusLabel = session.isComplete
     ? t('todoInlineDone', { count: completedCount })
@@ -92,11 +85,11 @@ export function InlineTodoBlock({ session, active = false, className = '' }: Pro
   return (
     <section
       id={`todo-session-${session.anchorBlockId}`}
-      className={`ds-inline-todo my-2 overflow-hidden rounded-[12px] border border-ds-border bg-ds-card/70 shadow-[0_10px_28px_rgba(86,103,136,0.04)] ${className}`.trim()}
+      className={`ds-inline-todo my-2 overflow-hidden rounded-[12px] border border-ds-border bg-ds-card/70 ${className}`.trim()}
     >
       <button
         type="button"
-        onClick={() => setListExpanded((value) => !value)}
+        onClick={() => setExpansion({ anchor: session.anchorBlockId, complete: session.isComplete, expanded: !listExpanded })}
         aria-expanded={listExpanded}
         className="ds-inline-todo__header group flex w-full items-start gap-3 px-4 py-3 text-left transition hover:bg-ds-hover/40"
       >
@@ -129,13 +122,13 @@ export function InlineTodoBlock({ session, active = false, className = '' }: Pro
             >
               {statusLabel}
             </span>
-            {count > 0 ? (
+            {count > 0 && !session.isComplete ? (
               <span className="text-[13px] tabular-nums text-ds-faint">
                 {t('todoInlineProgress', { done: completedCount, total: count })}
               </span>
             ) : null}
           </span>
-          {!listExpanded && previewItem ? (
+          {!listExpanded && !session.isComplete && previewItem ? (
             <span className="mt-1 block truncate text-[13px] text-ds-muted">
               {currentItem
                 ? t('todoInlineCurrent', { item: currentItem.content })

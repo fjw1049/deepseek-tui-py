@@ -166,7 +166,7 @@ export function WorkbenchRightSidebar({
   } else if (tab === 'editor') {
     otherPanel = (
       <Suspense fallback={<PanelFallback />}>
-        <WorkspaceEditorPanel workspaceRoot={workspaceRoot} blocks={blocks} />
+        <WorkspaceEditorPanel workspaceRoot={workspaceRoot} blocks={blocks} collapsibleTree />
       </Suspense>
     )
   } else if (tab === 'changes') {

@@ -164,8 +164,8 @@ const api = {
     ipcRenderer.invoke('file:write-paste-text', options),
   getWorkspaceHtmlPreviewUrl: (options) =>
     ipcRenderer.invoke('workspace:html-preview-url', options),
-  listWorkspaceDirectory: (workspaceRoot, directoryPath) =>
-    ipcRenderer.invoke('file:list-workspace', { workspaceRoot, directoryPath }),
+  listWorkspaceDirectory: (workspaceRoot, directoryPath, includeIgnored) =>
+    ipcRenderer.invoke('file:list-workspace', { workspaceRoot, directoryPath, includeIgnored }),
   searchWorkspaceEntries: (workspaceRoot, query, limit) =>
     ipcRenderer.invoke('file:search-workspace', { workspaceRoot, query, limit }),
   startSse: (threadId, sinceSeq, streamId) =>

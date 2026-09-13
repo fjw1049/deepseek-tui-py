@@ -10,7 +10,7 @@ import {
   useRef,
   useState
 } from 'react'
-import { Check, Columns2, Loader2, Pencil, Save, Search, X } from 'lucide-react'
+import { Check, Columns2, Loader2, Pencil, Save, Search, X, WrapText, Folder } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { isImagePreviewPath } from '@shared/image-preview'
 import { isHtmlPreviewPath } from '@shared/html-preview'
@@ -19,7 +19,8 @@ import { formatFilePathForDisplay } from '../../lib/diff-stats'
 import { useGitWorkingChanges } from '../../hooks/use-git-working-changes'
 import { useWorkspaceDirtyGitRefresh } from '../../hooks/use-workspace-dirty-git-refresh'
 import { useChatStore } from '../../store/chat-store'
-import { isMarkdownPath } from '../../lib/monaco-language-for-path'
+import { useWorkspaceViewPreferences } from '../../store/workspace-view-preferences'
+import { isMarkdownPath, languageForPath } from '../../lib/monaco-language-for-path'
 import {
   openWorkspacePathInEditor,
   revealWorkspacePathInFolder
@@ -68,6 +69,7 @@ type Props = {
   blocks: ChatBlock[]
   /** When true, hide the embedded file tree (IDE layout owns its own explorer/search). */
   hideTree?: boolean
+  collapsibleTree?: boolean
 }
 
 const TREE_WIDTH_KEY = 'deepseekgui.layout.workspaceEditorTreeWidth'
@@ -334,6 +336,9 @@ function PaneTabActions({
   onCloseSplit?: () => void
 }): ReactElement | null {
   const { t } = useTranslation('common')
+  const wrapPreference = useWorkspaceViewPreferences((s) => s.wrapLines)
+  const setWrapLines = useWorkspaceViewPreferences((s) => s.setWrapLines)
+  const wrapLines = wrapPreference ?? (tab ? languageForPath(tab.path) === 'plaintext' : false)
   const canEditFile = Boolean(tab && tab.kind !== 'image')
   if (!canEditFile && !onCloseSplit) return null
 
@@ -341,6 +346,9 @@ function PaneTabActions({
     <div className="flex shrink-0 items-center gap-0.5 pl-1">
       {canEditFile && tab ? (
         <>
+          <span className="px-1.5 text-[11px] text-ds-muted" role="status">
+            {t(!isEditing ? 'workspaceEditorReadOnly' : tab.content !== tab.savedContent ? 'workspaceEditorUnsaved' : 'workspaceEditorSaved')}
+          </span>
           <button
             type="button"
             onClick={onFind}
@@ -351,6 +359,19 @@ function PaneTabActions({
           >
             <Search className="h-3.5 w-3.5" strokeWidth={1.85} />
           </button>
+          {tab && ((!isMarkdownPath(tab.path) && !isHtmlPreviewPath(tab.path)) || isEditing) ? (
+            <Tooltip label={t('workspaceEditorWrapLines')}>
+              <button
+                type="button"
+                onClick={() => setWrapLines(!wrapLines)}
+                aria-label={t('workspaceEditorWrapLines')}
+                aria-pressed={wrapLines}
+                className={`inline-flex h-7 w-7 items-center justify-center rounded-md transition hover:bg-ds-hover ${wrapLines ? 'bg-ds-hover text-ds-ink' : 'text-ds-muted'}`}
+              >
+                <WrapText className="h-3.5 w-3.5" strokeWidth={1.85} />
+              </button>
+            </Tooltip>
+          ) : null}
           {!isEditing ? (
             <button
               type="button"
@@ -371,7 +392,7 @@ function PaneTabActions({
                 onClick={onCancelEdit}
                 className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[12.5px] text-ds-muted transition hover:bg-ds-hover hover:text-ds-ink"
               >
-                {t('workspaceEditorCancelEdit')}
+                {t(tab.content !== tab.savedContent ? 'workspaceEditorDiscardChanges' : 'workspaceEditorCancelEdit')}
               </button>
               <button
                 type="button"
@@ -583,9 +604,11 @@ const EditorPaneView = forwardRef<
 export function WorkspaceEditorPanel({
   workspaceRoot,
   blocks,
-  hideTree = false
+  hideTree = false,
+  collapsibleTree = false
 }: Props): ReactElement {
   const { t } = useTranslation('common')
+  const [treeOpen, setTreeOpen] = useState(false)
   const trimmedRoot = workspaceRoot.trim()
   const tabs = useWorkspaceEditorStore((s) => s.tabs)
   const activeTabId = useWorkspaceEditorStore((s) => s.activeTabId)
@@ -982,9 +1005,18 @@ export function WorkspaceEditorPanel({
 
   return (
     <div className="ds-workspace-editor-pane ds-no-drag flex h-full min-h-0 flex-col">
+      {collapsibleTree && !hideTree ? (
+        <div className="flex h-9 shrink-0 items-center border-b border-ds-border-muted px-2">
+          <button type="button" onClick={() => setTreeOpen(!treeOpen)} aria-expanded={treeOpen}
+            className="inline-flex h-7 items-center gap-2 rounded-md px-2 text-[12.5px] text-ds-muted hover:bg-ds-hover">
+            <Folder className="h-3.5 w-3.5" aria-hidden />
+            {t(treeOpen ? 'workspaceEditorHideFiles' : 'workspaceEditorBrowseFiles')}
+          </button>
+        </div>
+      ) : null}
       <div className="relative flex h-full min-h-0 flex-1 bg-ds-sidebar">
-        {hideTree ? null : (
-          <div className="relative h-full min-h-0 shrink-0" style={{ width: treeWidth }}>
+        {hideTree || (collapsibleTree && !treeOpen) ? null : (
+          <div className={collapsibleTree ? 'absolute inset-y-0 left-0 z-30 border-r border-ds-border bg-ds-sidebar shadow-lg' : 'relative h-full min-h-0 shrink-0'} style={{ width: treeWidth, maxWidth: collapsibleTree ? '85%' : undefined }}>
             {/* Expand state is cached per workspace root inside WorkspaceFileTree
                 so switching IDE center tabs (changes/search) does not reset folds. */}
             <WorkspaceFileTree
@@ -995,6 +1027,7 @@ export function WorkspaceEditorPanel({
               workspaceDirtyTick={workspaceDirtyTick}
               onOpenFile={(path) => {
                 void openFile(path, trimmedRoot)
+                if (collapsibleTree) setTreeOpen(false)
               }}
               onFileContextMenu={openFileMenu}
             />

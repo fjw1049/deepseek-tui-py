@@ -659,7 +659,7 @@ function ChangeSourcePicker({
         title={hint}
         aria-label={selected.label}
         onClick={() => (open ? closeMenu() : setOpen(true))}
-        className="inline-flex h-7 min-w-0 max-w-full items-center gap-1.5 rounded-md px-2 text-left text-[15px] font-medium text-ds-ink transition hover:bg-ds-hover active:scale-[0.98]"
+        className="inline-flex h-7 min-w-0 max-w-full items-center gap-1.5 rounded-md px-2 text-left text-[13px] font-medium text-ds-ink transition hover:bg-ds-hover active:scale-[0.98]"
       >
         {context === 'conflicts' ? (
           <TriangleAlert className="h-3.5 w-3.5 shrink-0 text-amber-600" strokeWidth={1.9} />
@@ -696,7 +696,7 @@ function ChangeSourcePicker({
                       onChange(item.value)
                       closeMenu()
                     }}
-                    className="flex min-h-8 w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[15px] text-ds-ink transition hover:bg-ds-hover active:scale-[0.99]"
+                    className="flex min-h-8 w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[13px] text-ds-ink transition hover:bg-ds-hover active:scale-[0.99]"
                   >
                     <span className="flex h-4 w-4 shrink-0 items-center justify-center">
                       {context === item.value ? <Check className="h-3.5 w-3.5" strokeWidth={2.2} /> : null}
@@ -783,7 +783,7 @@ function BranchComparisonPicker({
         onChange(branch)
         closeMenu()
       }}
-      className="flex min-h-8 w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[15px] text-ds-ink transition hover:bg-ds-hover active:scale-[0.99]"
+      className="flex min-h-8 w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[13px] text-ds-ink transition hover:bg-ds-hover active:scale-[0.99]"
     >
       <span className="flex h-4 w-4 shrink-0 items-center justify-center">
         {selectedBase === branch ? <Check className="h-3.5 w-3.5" strokeWidth={2.2} /> : null}
@@ -794,7 +794,7 @@ function BranchComparisonPicker({
 
   const baseLabel = selectedBase ?? (loading ? t('gitBranchLoading') : t('gitNoBranch'))
   return (
-    <div ref={menuRef} className="ds-change-branch relative min-w-0 flex-1 text-[15px]">
+    <div ref={menuRef} className="ds-change-branch relative min-w-0 flex-1 text-[13px]">
       <button
         type="button"
         disabled={loading && !selectedBase}
@@ -829,7 +829,7 @@ function BranchComparisonPicker({
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
                 placeholder={t('gitSearchBranches')}
-                className="min-w-0 flex-1 bg-transparent text-[15px] text-ds-ink outline-none placeholder:text-ds-faint"
+                className="min-w-0 flex-1 bg-transparent text-[13px] text-ds-ink outline-none placeholder:text-ds-faint"
               />
             </label>
           </div>
@@ -1616,6 +1616,12 @@ export function ChangeInspector({
               />
             ) : null}
           </div>
+        </div>
+      ) : null}
+      {!isDiff ? (
+        <div className="ds-change-inspector__scope shrink-0 border-b border-ds-border-muted/60 px-3 py-2 text-[12px] leading-5 text-ds-muted">
+          <span className="mr-1.5 font-medium text-ds-ink">{t('changeScopeLabel')}</span>
+          {contextHint}
         </div>
       ) : null}
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">

@@ -116,7 +116,7 @@ export function ConnectorsView({
       await window.dsGui.setMcpConfigFile(ensured.next)
       setMcpConfigText(ensured.next)
       void reloadMcpWithRuntime(readMcpConfig).then((result) => {
-          if (!result.runtime) setNotice({ tone: 'info', message: tSettings('mcpReloadDiskOnly') })
+          if (!result.runtime) setNotice({ tone: 'info', persistent: true, message: tSettings('mcpReloadDiskOnly') })
         }).catch((error) => setNotice({ tone: 'error', message: String(error) }))
     })
   }, [mcpLoaded, mcpConfigText, readMcpConfig, withMcpWriteLock])
@@ -130,7 +130,7 @@ export function ConnectorsView({
       // The happy path speaks for itself in the header; only an offline runtime
       // needs the banner, because the change is not live yet.
       if (!result.runtime) {
-        setNotice({ tone: 'info', message: tSettings('mcpReloadDiskOnly') })
+        setNotice({ tone: 'info', persistent: true, message: tSettings('mcpReloadDiskOnly') })
         return false
       }
       return true
@@ -199,7 +199,7 @@ export function ConnectorsView({
         // Propagate the change to the running runtime so the new connector is
         // live immediately, without forcing the user to click 重新加载.
         void reloadMcpWithRuntime(readMcpConfig).then((result) => {
-          if (!result.runtime) setNotice({ tone: 'info', message: tSettings('mcpReloadDiskOnly') })
+          if (!result.runtime) setNotice({ tone: 'info', persistent: true, message: tSettings('mcpReloadDiskOnly') })
         }).catch((error) => setNotice({ tone: 'error', message: String(error) }))
       })
     },
@@ -224,7 +224,7 @@ export function ConnectorsView({
         })
         setNotice({ tone: 'success', message: t('connectorDeleted', { name: connector.name, path: result.path }) })
         void reloadMcpWithRuntime(readMcpConfig).then((result) => {
-          if (!result.runtime) setNotice({ tone: 'info', message: tSettings('mcpReloadDiskOnly') })
+          if (!result.runtime) setNotice({ tone: 'info', persistent: true, message: tSettings('mcpReloadDiskOnly') })
         }).catch((error) => setNotice({ tone: 'error', message: String(error) }))
       })
     } catch (e) {
@@ -245,7 +245,7 @@ export function ConnectorsView({
         await window.dsGui.setMcpConfigFile(next)
         setMcpConfigText(next)
         void reloadMcpWithRuntime(readMcpConfig).then((result) => {
-          if (!result.runtime) setNotice({ tone: 'info', message: tSettings('mcpReloadDiskOnly') })
+          if (!result.runtime) setNotice({ tone: 'info', persistent: true, message: tSettings('mcpReloadDiskOnly') })
         }).catch((error) => setNotice({ tone: 'error', message: String(error) }))
       })
     } catch (e) {
@@ -267,7 +267,7 @@ export function ConnectorsView({
       if (item.sourceUrl && typeof window.dsGui?.openExternal === 'function') {
         await window.dsGui.openExternal(item.sourceUrl)
       }
-      return { tone: 'info', message: t('marketplaceMcpManual') }
+      return { tone: 'info', persistent: true, message: t('marketplaceMcpManual') }
     }
     await appendMcpServer(item.id, resolution.entry)
     return null

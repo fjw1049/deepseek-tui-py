@@ -2,6 +2,8 @@ import { useEffect, useState, type ReactElement } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   CalendarClock,
+  ChevronRight,
+  Wrench,
   Columns3,
   Command,
   MessageCircle,
@@ -19,6 +21,8 @@ import { SidebarProjectsColumn } from './SidebarProjectsSection'
 import { SidebarPinnedSection } from './SidebarPinnedSection'
 import { SidebarChatsSection } from './SidebarChatsSection'
 import { SettingsSidebarNav } from '../settings/SettingsSidebarNav'
+import { isWorkspaceHidden } from '../../lib/sidebar-chrome'
+import { normalizeWorkspaceRoot } from '../../lib/workspace-path'
 import { EmptyHomeLayoutToggle } from './EmptyHomeLayoutToggle'
 
 type Props = {
@@ -64,7 +68,12 @@ export function Sidebar({
   const unreadThreadIds = useChatStore((s) => s.unreadThreadIds)
   const pinnedThreadIds = useChatStore((s) => s.pinnedThreadIds)
   const togglePin = useChatStore((s) => s.togglePin)
+  const [sectionHeaderHost, setSectionHeaderHost] = useState<HTMLDivElement | null>(null)
+  const hiddenWorkspacePaths = useChatStore((s) => s.hiddenWorkspacePaths)
+  const storedThreads = useChatStore((s) => s.threads)
+  const hasVisiblePinned = storedThreads.some((thread) => pinnedThreadIds.includes(thread.id) && !isWorkspaceHidden(normalizeWorkspaceRoot(thread.workspace), hiddenWorkspacePaths))
   const [searchModalOpen, setSearchModalOpen] = useState(false)
+  const [toolsExpanded, setToolsExpanded] = useState<boolean | null>(null)
   const settingsActive = route === 'settings'
   const kanbanActive = route === 'kanban'
   const automationActive = route === 'automation'
@@ -123,36 +132,49 @@ export function Sidebar({
               active={kanbanActive}
             />
 
-            <SidebarLink
-              icon={<Store className="h-4 w-4" strokeWidth={1.9} />}
-              label={t('extensions')}
-              onClick={() => openMarketplace()}
-              variant="flat"
-              active={marketplaceActive}
-            />
+            <button
+              type="button"
+              className="ds-sidebar-link ds-sidebar-link--plain ds-no-drag"
+              aria-expanded={toolsExpanded ?? (marketplaceActive || automationActive || channelsActive)}
+              aria-controls="sidebar-tools"
+              onClick={() => setToolsExpanded(!(toolsExpanded ?? (marketplaceActive || automationActive || channelsActive)))}
+            >
+              <span className="ds-sidebar-link__icon text-ds-muted"><Wrench className="h-4 w-4" strokeWidth={1.9} /></span>
+              <span className="min-w-0 flex-1 text-left">{t('sidebarTools')}</span>
+              <ChevronRight className={`h-3.5 w-3.5 text-ds-faint ${toolsExpanded ?? (marketplaceActive || automationActive || channelsActive) ? 'rotate-90' : ''}`} />
+            </button>
+            <div id="sidebar-tools" hidden={!(toolsExpanded ?? (marketplaceActive || automationActive || channelsActive))} className="ml-3 border-l border-ds-border-muted pl-2">
+              <SidebarLink
+                icon={<Store className="h-4 w-4" strokeWidth={1.9} />}
+                label={t('extensions')}
+                onClick={() => openMarketplace()}
+                variant="flat"
+                active={marketplaceActive}
+              />
 
-            <SidebarLink
-              icon={<CalendarClock className="h-4 w-4" strokeWidth={1.9} />}
-              label={t('newAutomationTask')}
-              onClick={
-                runtimeReady
-                  ? () => {
-                      setRoute('automation')
-                    }
-                  : undefined
-              }
-              disabled={!runtimeReady}
-              disabledHint={t('runtimeActionNeedsConnection')}
-              variant="flat"
-              active={automationActive}
-            />
-            <SidebarLink
-              icon={<MessageCircle className="h-4 w-4" strokeWidth={1.9} />}
-              label={t('messageChannels')}
-              onClick={() => setRoute('channels')}
-              variant="flat"
-              active={channelsActive}
-            />
+              <SidebarLink
+                icon={<CalendarClock className="h-4 w-4" strokeWidth={1.9} />}
+                label={t('newAutomationTask')}
+                onClick={
+                  runtimeReady
+                    ? () => {
+                        setRoute('automation')
+                      }
+                    : undefined
+                }
+                disabled={!runtimeReady}
+                disabledHint={t('runtimeActionNeedsConnection')}
+                variant="flat"
+                active={automationActive}
+              />
+              <SidebarLink
+                icon={<MessageCircle className="h-4 w-4" strokeWidth={1.9} />}
+                label={t('messageChannels')}
+                onClick={() => setRoute('channels')}
+                variant="flat"
+                active={channelsActive}
+              />
+            </div>
           </nav>
         )}
       </div>
@@ -161,8 +183,10 @@ export function Sidebar({
         <SettingsSidebarNav />
       ) : (
         <>
+          <div ref={setSectionHeaderHost} className="ds-sidebar-section-heading ds-no-drag shrink-0" />
           <div className="ds-sidebar-middle ds-no-drag min-h-0 flex-1">
             <SidebarProjectsColumn
+              headerHost={hasVisiblePinned ? null : sectionHeaderHost}
               threads={threads}
               activeThreadId={activeThreadId}
               runtimeReady={runtimeReady}
@@ -174,6 +198,7 @@ export function Sidebar({
               locale={i18n.language}
               pinnedSlot={
                 <SidebarPinnedSection
+                  headerHost={sectionHeaderHost}
                   onSelectThread={onSelectThread}
                   onOpenThreadTerminal={onOpenThreadTerminal}
                   onDeleteThread={onDeleteThread}
@@ -207,7 +232,7 @@ export function Sidebar({
             </div>
           </div>
 
-          <div className="ds-sidebar-footer ds-no-drag flex shrink-0 items-center gap-1 px-1 pt-2">
+          <div className="ds-sidebar-footer ds-no-drag flex shrink-0 items-center gap-1 px-1 pt-1">
             <div className="min-w-0 flex-1">
               <SidebarLink
                 icon={<Settings className="h-4 w-4" strokeWidth={1.75} />}

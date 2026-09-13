@@ -66,7 +66,7 @@ export function applyAppearance(appearance: AppearanceSettingsV1): void {
 
   root.setAttribute('data-density', appearance.uiDensity)
   root.style.setProperty('--ds-chat-font-size', `${appearance.chatFontSizePx}px`)
-  // IDE chrome uses a compact local token; answers still honor the reading setting.
+  // The IDE rail overrides this with its compact local reading size.
   root.style.setProperty('--ds-answer-font-size', `${appearance.chatFontSizePx}px`)
 
   // Terminal font: index.css defines --font-terminal at :root; an inline

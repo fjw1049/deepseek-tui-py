@@ -51,26 +51,11 @@ export function ConnectionStatusBar({ compact = false }: Props): ReactElement | 
             ? t('runtimeOfflineShort')
             : t('runtimeIdle')
 
-  const barTone = compact
-    ? warmingThread || runtimeConnection === 'checking'
-        ? 'text-amber-700/90 dark:text-amber-100/80'
-        : runtimeConnection === 'ready'
-          ? 'text-emerald-700/90 dark:text-emerald-200/80'
-          : 'text-ds-faint'
-    : warmingThread || runtimeConnection === 'checking'
-        ? 'bg-amber-500/12 text-amber-950 dark:text-amber-100/90'
-        : runtimeConnection === 'ready'
-          ? 'bg-emerald-500/12 text-emerald-900 dark:text-emerald-100/90'
-          : 'bg-ds-subtle text-ds-muted'
-
-  const dotClass =
-    warmingThread
-      ? 'animate-pulse bg-amber-500'
-      : runtimeConnection === 'ready'
-        ? 'bg-emerald-500'
-        : runtimeConnection === 'checking'
-          ? 'animate-pulse bg-amber-500'
-          : 'bg-ds-faint'
+  const offline = runtimeConnection === 'offline'
+  const barTone = offline
+    ? 'text-amber-800 dark:text-amber-200'
+    : 'text-ds-muted'
+  const dotClass = offline ? 'bg-amber-500' : 'bg-ds-muted'
 
   const showRetry =
     runtimeConnection === 'offline' || runtimeConnection === 'idle'
@@ -79,14 +64,14 @@ export function ConnectionStatusBar({ compact = false }: Props): ReactElement | 
     return (
       <div
         role="status"
-        className={`ds-no-drag inline-flex h-6 max-w-[min(190px,30vw)] shrink-0 items-center gap-1 ${barTone}`}
+        className={`ds-no-drag inline-flex min-h-8 max-w-[min(240px,40vw)] shrink-0 items-center gap-1 ${barTone}`}
       >
         <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${dotClass}`} aria-hidden />
-        <span className="truncate text-[10px] font-medium tabular-nums">{label}</span>
+        <span className="truncate text-[12px] font-medium tabular-nums">{label}</span>
         {showRetry ? (
           <button
             type="button"
-            className="shrink-0 rounded-md px-1 py-0.5 text-[11.5px] font-semibold text-ds-muted underline decoration-ds-border underline-offset-2 transition hover:text-ds-ink"
+            className="shrink-0 rounded-md min-h-8 px-2 py-1 text-[12px] font-semibold text-ds-muted underline decoration-ds-border underline-offset-2 transition hover:text-ds-ink"
             onClick={() => void probeRuntime('user')}
           >
             {t('retryConnection')}

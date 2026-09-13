@@ -44,12 +44,10 @@ import {
   isActiveTaskStatus
 } from '../../lib/extract-tasks-from-blocks'
 import { ReasoningEffortSelector } from './ReasoningEffortSelector'
-import { ApprovalBubble } from './ApprovalBubble'
-import { ElevationBubble } from './ElevationBubble'
 import { FileChip } from './FileChip'
+import { PendingDecisionPanel } from './PendingDecisionPanel'
 import { ComposerLiveChangesHeader } from './ComposerLiveChangesHeader'
 import { openChangesPanel } from '../../lib/change-review'
-import { UserInputBubble } from './UserInputBubble'
 import { ComposerApprovalPolicySelector } from './ComposerApprovalPolicySelector'
 import {
   filterComposerModelOptions,
@@ -416,22 +414,6 @@ export function FloatingComposer({
       activePublishThread?.publishRequestAction
   )
 
-  const pendingApprovals = useMemo(
-    () =>
-      blocks.filter(
-        (block): block is Extract<(typeof blocks)[number], { kind: 'approval' }> =>
-          block.kind === 'approval' && block.status === 'pending'
-      ),
-    [blocks]
-  )
-  const pendingElevations = useMemo(
-    () =>
-      blocks.filter(
-        (block): block is Extract<(typeof blocks)[number], { kind: 'elevation' }> =>
-          block.kind === 'elevation' && block.status === 'pending'
-      ),
-    [blocks]
-  )
   const pendingUserInputs = useMemo(
     () =>
       blocks.filter(
@@ -440,11 +422,6 @@ export function FloatingComposer({
       ),
     [blocks]
   )
-  const failedDecisions = blocks.filter((block) =>
-    (block.kind === 'approval' || block.kind === 'elevation' || block.kind === 'user_input' || block.kind === 'evolution') &&
-    block.status === 'error' && block.submissionFailed
-  )
-  const [checkingDecisions, setCheckingDecisions] = useState(false)
   const hasActiveDurableTask = useMemo(
     () => extractTasksFromBlocks(blocks).some((task) => isActiveTaskStatus(task.status)),
     [blocks]
@@ -1513,31 +1490,7 @@ export function FloatingComposer({
         focusComposer()
       }}
     >
-      {failedDecisions.length > 0 ? (
-        <div role="alert" className="mb-2 rounded-xl border border-red-300/70 bg-red-50 p-3 text-[12px] text-red-800 dark:border-red-800/60 dark:bg-red-950/25 dark:text-red-200">
-          <p>{t('decisionSubmissionUncertain')}</p>
-          {failedDecisions.map((block) => <p key={block.id} className="mt-1 break-words">{'errorMessage' in block ? block.errorMessage : ''}</p>)}
-          <button type="button" disabled={checkingDecisions} className="mt-2 underline disabled:opacity-50" onClick={() => {
-            setCheckingDecisions(true)
-            void refreshPendingUserInputs().finally(() => setCheckingDecisions(false))
-          }}>{t(checkingDecisions ? 'decisionChecking' : 'decisionCheckStatus')}</button>
-        </div>
-      ) : null}
-      {pendingApprovals.length > 0 ||
-      pendingElevations.length > 0 ||
-      pendingUserInputs.length > 0 ? (
-        <div className="ds-no-drag ds-scroll-surface mb-2 max-h-[min(320px,40vh)] space-y-2 overflow-y-auto overscroll-contain">
-          {pendingApprovals.map((block) => (
-            <ApprovalBubble key={block.id} block={block} />
-          ))}
-          {pendingElevations.map((block) => (
-            <ElevationBubble key={block.id} block={block} />
-          ))}
-          {pendingUserInputs.map((block) => (
-            <UserInputBubble key={block.id} block={block} />
-          ))}
-        </div>
-      ) : null}
+      <PendingDecisionPanel key={activeThreadId ?? "empty"} blocks={blocks} />
       <ComposerLiveChangesHeader
         onReview={() => {
           openChangesPanel({

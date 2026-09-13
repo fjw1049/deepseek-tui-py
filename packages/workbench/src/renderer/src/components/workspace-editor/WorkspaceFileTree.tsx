@@ -1,6 +1,6 @@
 import type { CSSProperties, MouseEvent as ReactMouseEvent, ReactElement } from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ChevronsDownUp, ChevronRight, RefreshCw } from 'lucide-react'
+import { ChevronsDownUp, ChevronRight, RefreshCw, Folder, FolderOpen, Eye } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import type { WorkspaceTreeEntry } from '@shared/workspace-file'
 import { FileKindIcon } from '../chat/FileKindIcon'
@@ -15,6 +15,8 @@ import {
 } from '../../lib/workspace-file-tree-expand-cache'
 import { workspaceLabelFromPath } from '../../lib/workspace-label'
 import i18n from '../../i18n'
+import { isAuxiliaryWorkspaceEntry } from '../../lib/workspace-tree-filter'
+import { useWorkspaceViewPreferences } from '../../store/workspace-view-preferences'
 
 type TreeNodeState = {
   entries: WorkspaceTreeEntry[]
@@ -51,7 +53,7 @@ async function fetchDirectory(
   }
 
   try {
-    const result = await window.dsGui.listWorkspaceDirectory(workspaceRoot, directoryPath)
+    const result = await window.dsGui.listWorkspaceDirectory(workspaceRoot, directoryPath, true)
     if (result.ok) {
       return { ok: true, entries: result.entries }
     }
@@ -93,6 +95,8 @@ export function WorkspaceFileTree({
   onFileContextMenu
 }: Props): ReactElement {
   const { t } = useTranslation('common')
+  const showAllFiles = useWorkspaceViewPreferences((s) => s.showAllFiles)
+  const setShowAllFiles = useWorkspaceViewPreferences((s) => s.setShowAllFiles)
   const trimmedRoot = workspaceRoot.trim()
   const workspaceLabel = workspaceLabelFromPath(trimmedRoot) || trimmedRoot
   const activeKeys = new Set((activePaths ?? []).map(treeKey).filter(Boolean))
@@ -358,19 +362,22 @@ export function WorkspaceFileTree({
       ]
     }
 
-    if (node.loaded && node.entries.length === 0) {
+    const visibleEntries = showAllFiles
+      ? node.entries
+      : node.entries.filter((entry) => !isAuxiliaryWorkspaceEntry(entry))
+    if (node.loaded && visibleEntries.length === 0) {
       return [
         <div
           key={`${key}__empty`}
           className="ds-workspace-file-tree__row-pad py-1 text-[12.5px] text-ds-faint"
           style={{ paddingLeft: `${indentPx(depth)}px` }}
         >
-          {t('workspaceTreeEmpty')}
+          {t(node.entries.length ? 'workspaceTreeFilteredEmpty' : 'workspaceTreeEmpty')}
         </div>
       ]
     }
 
-    return node.entries.flatMap((entry) => {
+    return visibleEntries.flatMap((entry) => {
       const entryKey = treeKey(entry.path)
       const isDir = entry.kind === 'directory'
       const isExpanded = expanded.has(entryKey)
@@ -405,12 +412,7 @@ export function WorkspaceFileTree({
               strokeWidth={1.85}
               aria-hidden
             />
-            <FileKindIcon
-              path={entry.path}
-              directory
-              expanded={isExpanded}
-              className="ds-file-kind-icon--chrome"
-            />
+            {isExpanded ? <FolderOpen className="ds-tree-folder h-3.5 w-3.5 shrink-0" strokeWidth={1.6} aria-hidden /> : <Folder className="ds-tree-folder h-3.5 w-3.5 shrink-0" strokeWidth={1.6} aria-hidden />}
             <span className={`min-w-0 truncate ${dirHasChanges ? 'font-medium text-ds-ink' : ''}`}>
               {entry.name}
             </span>
@@ -482,11 +484,22 @@ export function WorkspaceFileTree({
       <div className="ds-workspace-file-tree__header flex h-9 shrink-0 items-center gap-2 border-b border-[color-mix(in_srgb,var(--ds-text)_10%,transparent)]">
         {trimmedRoot ? (
           <>
-            <FileKindIcon path={workspaceLabel} directory className="ds-file-kind-icon--chrome" />
+            <Folder className="ds-tree-folder h-3.5 w-3.5 shrink-0" strokeWidth={1.6} aria-hidden />
             <div className="min-w-0 truncate text-[12.5px] font-medium text-ds-ink" title={trimmedRoot}>
               {workspaceLabel}
             </div>
             <div className="ml-auto flex shrink-0 items-center gap-0.5">
+              <Tooltip label={t('workspaceTreeShowAll')}>
+                <button
+                  type="button"
+                  onClick={() => setShowAllFiles(!showAllFiles)}
+                  aria-label={t('workspaceTreeShowAll')}
+                  aria-pressed={showAllFiles}
+                  className={`inline-flex h-6 w-6 items-center justify-center rounded-md transition hover:bg-ds-hover ${showAllFiles ? 'bg-ds-hover text-ds-ink' : 'text-ds-faint'}`}
+                >
+                  <Eye className="h-3.5 w-3.5" strokeWidth={1.85} aria-hidden />
+                </button>
+              </Tooltip>
               <Tooltip label={t('workspaceTreeRefresh')}>
                 <button
                   type="button"

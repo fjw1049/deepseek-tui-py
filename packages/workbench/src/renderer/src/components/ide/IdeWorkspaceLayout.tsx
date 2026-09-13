@@ -395,7 +395,7 @@ export function IdeWorkspaceLayout({
               onClick={onExitIdeMode}
             >
               <MessageSquare className="h-3.5 w-3.5" strokeWidth={1.85} />
-              <span>{t('ideModeChat')}</span>
+              <span>{t('returnToConversation')}</span>
             </button>
             <button
               type="button"

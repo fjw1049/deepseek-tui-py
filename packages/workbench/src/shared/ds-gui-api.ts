@@ -441,7 +441,8 @@ export type DsGuiApi = {
   >
   listWorkspaceDirectory: (
     workspaceRoot: string,
-    directoryPath?: string
+    directoryPath?: string,
+    includeIgnored?: boolean
   ) => Promise<WorkspaceListDirectoryResult>
   searchWorkspaceEntries: (
     workspaceRoot: string,

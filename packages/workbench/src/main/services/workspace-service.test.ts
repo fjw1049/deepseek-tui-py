@@ -198,6 +198,16 @@ describe('workspace-service boundary checks', () => {
     }
   })
 
+  it('shows excluded directories only when explicitly requested', async () => {
+    await mkdir(join(workspaceRoot, '.git'))
+    await mkdir(join(workspaceRoot, 'node_modules'))
+    const normal = await listWorkspaceDirectory(workspaceRoot)
+    const all = await listWorkspaceDirectory(workspaceRoot, '', true)
+    expect(normal.ok && normal.entries.map((entry) => entry.name)).toEqual(['inside.txt'])
+    expect(all.ok && all.entries.map((entry) => entry.name)).toEqual(['.git', 'node_modules', 'inside.txt'])
+    expect((await listWorkspaceDirectory(workspaceRoot, '..', true)).ok).toBe(false)
+  })
+
   it('searches workspace files by path fragment', async () => {
     await mkdir(join(workspaceRoot, 'packages', 'core'), { recursive: true })
     await writeFile(join(workspaceRoot, 'packages', 'core', 'engine.ts'), 'export {}', 'utf8')

@@ -3410,9 +3410,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
         blockId
       })
       set((s) => ({
-        error: msg,
         ...(settingsSectionForRuntimeError(e)
-          ? { route: 'settings' as const, settingsSection: settingsSectionForRuntimeError(e)! }
+          ? { error: msg, route: 'settings' as const, settingsSection: settingsSectionForRuntimeError(e)! }
           : {}),
         blocks: s.blocks.map((b) =>
           b.id === blockId && b.kind === 'approval'
@@ -3469,7 +3468,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
         blockId
       })
       set((s) => ({
-        error: msg,
         blocks: s.blocks.map((b) =>
           b.id === blockId && b.kind === 'evolution'
             ? { ...b, status: 'error' as const, errorMessage: msg, submissionFailed: true }
@@ -3525,7 +3523,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
         blockId
       })
       set((s) => ({
-        error: msg,
         blocks: s.blocks.map((b) =>
           b.id === blockId && b.kind === 'elevation'
             ? { ...b, status: 'error' as const, errorMessage: msg, submissionFailed: true }
@@ -3623,9 +3620,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
         blockId
       })
       set((s) => ({
-        error: msg,
         ...(settingsSectionForRuntimeError(e)
-          ? { route: 'settings' as const, settingsSection: settingsSectionForRuntimeError(e)! }
+          ? { error: msg, route: 'settings' as const, settingsSection: settingsSectionForRuntimeError(e)! }
           : {}),
         blocks: s.blocks.map((b) =>
           b.kind === 'user_input' &&

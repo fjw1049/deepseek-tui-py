@@ -249,7 +249,8 @@ export const workspacePasteTextPayloadSchema = z
 export const workspaceListDirectoryPayloadSchema = z
   .object({
     workspaceRoot: trimmedString(MAX_PATH_LENGTH),
-    directoryPath: z.string().trim().max(MAX_PATH_LENGTH).optional()
+    directoryPath: z.string().trim().max(MAX_PATH_LENGTH).optional(),
+    includeIgnored: z.boolean().optional()
   })
   .strict()
 

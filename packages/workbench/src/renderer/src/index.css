@@ -1424,8 +1424,15 @@ samp {
   bottom: 0;
   left: var(--ds-tree-guide, 8px);
   width: 1px;
-  background: color-mix(in srgb, var(--ds-text) 9%, transparent);
+  background: color-mix(in srgb, var(--ds-text) 4%, transparent);
 }
+
+.ds-tree-branch__inner:hover::before,
+.ds-tree-branch__inner:focus-within::before {
+  background: color-mix(in srgb, var(--ds-text) 12%, transparent);
+}
+
+.ds-tree-folder { color: var(--ds-text-faint); }
 
 @media (prefers-reduced-motion: reduce) {
   .ds-tree-branch,
@@ -2284,7 +2291,7 @@ samp {
 .ds-composer-empty textarea,
 .ds-composer-input {
   font-family: var(--font-ui);
-  font-size: 15px;
+  font-size: var(--ds-chat-font-size, 15px);
   font-weight: 400;
   line-height: 1.5;
   letter-spacing: -0.011em;
@@ -2326,7 +2333,7 @@ samp {
 
 .ds-user-message-edit-textarea {
   font-family: var(--font-ui);
-  font-size: 15px;
+  font-size: var(--ds-chat-font-size, 15px);
   font-weight: 400;
   line-height: 1.5;
   letter-spacing: -0.011em;
@@ -3237,8 +3244,7 @@ samp {
   padding: 0.35rem 0.25rem 0.5rem;
 }
 
-/* Sits outside the sidebar scroll surface so the projects header never scrolls away.
-   Transparent — inherit .ds-sidebar-shell; a solid fill here reads as a nested card. */
+/* Project heading shares the continuous sidebar scroll region. */
 .ds-sidebar-projects-toolbar--fixed {
   position: relative;
   z-index: 2;
@@ -3395,8 +3401,22 @@ samp {
   min-height: 0;
 }
 
-/* Middle column: projects scroll above a reserved workspace band. */
+.ds-sidebar-section-heading {
+  margin-top: 0.75rem;
+}
+
+.ds-sidebar-section-heading:empty {
+  display: none;
+}
+
+.ds-sidebar-section-heading > .ds-sidebar-projects-toolbar--fixed {
+  margin-top: 0;
+}
+
+/* Projects and conversations share one continuous scrolling region. */
 .ds-sidebar-middle {
+  overflow-y: auto;
+  overscroll-behavior: contain;
   display: flex;
   min-height: 0;
   flex: 1 1 auto;
@@ -3451,8 +3471,13 @@ samp {
   flex: 0 1 auto;
   flex-direction: column;
   margin-top: 0.75rem;
-  border-bottom: 1px solid color-mix(in srgb, var(--ds-sidebar-border) 80%, transparent);
   background: transparent;
+  border-bottom: 1px solid color-mix(in srgb, var(--ds-sidebar-border) 80%, transparent);
+}
+
+/* The first visible group has no leading space inside the scrollport. */
+.ds-sidebar-middle > :is(.ds-sidebar-pinned-pane, .ds-sidebar-projects-toolbar--fixed):first-child {
+  margin-top: 0;
 }
 
 /* Pinned sits above Projects — drop the toolbar's top gap to avoid double spacing. */
@@ -3481,15 +3506,23 @@ samp {
   background: transparent;
 }
 
-/* When Projects is folded away, Workspace takes the available list space. */
-.ds-sidebar-middle:not(:has(> .ds-sidebar-projects-scroll)) > .ds-sidebar-chats-pane {
+.ds-sidebar-middle > .ds-sidebar-projects-scroll,
+.ds-sidebar-middle > .ds-sidebar-pinned-pane,
+.ds-sidebar-middle > .ds-sidebar-chats-pane {
+  flex: 0 0 auto;
   max-height: none;
-  min-height: 0;
-  flex: 1 1 0%;
+  overflow: visible;
 }
 
-.ds-sidebar-chats-section {
-  min-height: 0;
+.ds-sidebar-middle .ds-sidebar-chats-section {
+  height: auto;
+}
+
+.ds-sidebar-middle .ds-sidebar-chats-list,
+.ds-sidebar-middle .ds-sidebar-pinned-list {
+  flex: 0 0 auto;
+  overflow: visible;
+  max-height: none;
 }
 
 .ds-sidebar-chats-header {
@@ -3522,6 +3555,19 @@ samp {
 .ds-sidebar-footer {
   position: relative;
   z-index: 2;
+}
+
+.ds-sidebar-footer .ds-sidebar-link--footer {
+  height: 28px;
+  padding-top: 0;
+  padding-bottom: 0;
+  font-size: 13px;
+  font-weight: 400;
+}
+
+.ds-sidebar-footer > button {
+  width: 28px;
+  height: 28px;
 }
 
 .ds-sidebar-zone {
@@ -6090,8 +6136,8 @@ samp {
   border-radius: 0;
   background: transparent !important;
   padding: 0.52rem 0.66rem;
-  font-size: 12px;
-  line-height: 1.4;
+  font-size: 13px;
+  line-height: 1.5;
   box-sizing: border-box;
 }
 
@@ -6100,6 +6146,7 @@ samp {
   background: transparent;
   padding: 0;
   font-size: inherit;
+  line-height: inherit;
 }
 
 .ds-markdown .ds-code-block-html .line {
@@ -6677,7 +6724,7 @@ html[data-theme='dark'] .ds-code-fullscreen .shiki span {
 .ds-markdown.ds-markdown--answer h1 {
   --ds-answer-block-gap: 1.875rem;
   margin: 1.875rem 0 0.625rem;
-  font-size: 19px; /* 固定值, 不随正文缩放 */
+  font-size: 1.45em;
 }
 
 .ds-markdown.ds-markdown--answer h2 {
@@ -11554,7 +11601,7 @@ html[data-theme='dark'] .ds-syntax-line span { color: var(--shiki-dark) !importa
 
 .ds-ide-chat-rail .ds-composer-input,
 .ds-ide-chat-rail .ds-chat-composer textarea {
-  font-size: 15px;
+  font-size: var(--ds-ide-font-base);
   line-height: 1.625;
   letter-spacing: normal;
   min-height: 22px;
@@ -11613,13 +11660,13 @@ html[data-theme='dark'] .ds-syntax-line span { color: var(--shiki-dark) !importa
 }
 
 /*
- * IDE rail typography — 13px controls and code, 15px answer prose.
+ * IDE rail typography — 13px prose, controls, and code; proportional headings.
  * Scoped to .ds-ide-chat-rail only; main chat follows the appearance setting.
  *
  * Controls, metadata, tables, and code share the local 13px scale.
  */
 .ds-ide-chat-rail {
-  --ds-answer-font-size: 15px;
+  --ds-answer-font-size: 13px;
   --ds-chat-font-size: 13px;
   --ds-chat-code-font-size: 13px;
   --ds-ide-font-base: 13px;
@@ -11658,7 +11705,7 @@ html[data-theme='dark'] .ds-syntax-line span { color: var(--shiki-dark) !importa
 
 .ds-ide-chat-rail .ds-markdown.ds-markdown--answer strong,
 .ds-ide-chat-rail .ds-markdown.ds-markdown--answer b {
-  font-weight: 500; /* Synara chat-markdown strong */
+  font-weight: 600;
   font-synthesis: none;
 }
 
@@ -11707,26 +11754,6 @@ html[data-theme='dark'] .ds-syntax-line span { color: var(--shiki-dark) !importa
 .ds-ide-chat-rail .ds-markdown.ds-markdown--answer h3,
 .ds-ide-chat-rail .ds-markdown.ds-markdown--answer h4 {
   margin: 1.1em 0 0.35em;
-  font-family: inherit;
-  font-weight: 600;
-  letter-spacing: -0.01em;
-  line-height: 1.25;
-}
-
-.ds-ide-chat-rail .ds-markdown.ds-markdown--answer h1 {
-  font-size: 1.35em;
-}
-
-.ds-ide-chat-rail .ds-markdown.ds-markdown--answer h2 {
-  font-size: 1.25em;
-}
-
-.ds-ide-chat-rail .ds-markdown.ds-markdown--answer h3 {
-  font-size: 1.15em;
-}
-
-.ds-ide-chat-rail .ds-markdown.ds-markdown--answer h4 {
-  font-size: 1.02em;
 }
 
 .ds-ide-chat-rail .ds-markdown.ds-markdown--answer :not(pre) > code,
@@ -11985,7 +12012,7 @@ html[data-theme='dark'] .ds-syntax-line span { color: var(--shiki-dark) !importa
 }
 
 .ds-ide-chat-rail .ds-user-message-edit-textarea {
-  font-size: 15px;
+  font-size: var(--ds-ide-font-base);
   line-height: 1.55;
 }
 
@@ -12115,7 +12142,7 @@ html[data-theme='dark'] .ds-syntax-line span { color: var(--shiki-dark) !importa
   max-width: 100%;
   padding: 0.45rem 0.7rem;
   border-radius: 0.65rem;
-  font-size: 15px;
+  font-size: var(--ds-ide-font-base);
   line-height: 1.55;
   text-align: start;
   text-justify: auto;

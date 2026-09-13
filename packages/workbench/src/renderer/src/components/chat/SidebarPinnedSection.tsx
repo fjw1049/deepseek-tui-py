@@ -1,5 +1,6 @@
 import type { ReactElement } from 'react'
 import { useMemo, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { ChevronDown, ChevronRight } from 'lucide-react'
 import type { NormalizedThread } from '../../agent/types'
 import { useThreadsWithActiveTasks } from '../../hooks/use-thread-tasks'
@@ -11,6 +12,7 @@ import { SidebarSortableList, SidebarSortableRow } from './SidebarSortable'
 import { ThreadRow } from './SidebarProjectsSection'
 
 type SidebarPinnedSectionProps = {
+  headerHost?: HTMLElement | null
   onSelectThread: (threadId: string) => void
   onOpenThreadTerminal: (threadId: string) => Promise<void>
   onDeleteThread: (threadId: string) => Promise<void>
@@ -20,6 +22,7 @@ type SidebarPinnedSectionProps = {
 }
 
 export function SidebarPinnedSection({
+  headerHost = null,
   onSelectThread,
   onOpenThreadTerminal,
   onDeleteThread,
@@ -95,9 +98,8 @@ export function SidebarPinnedSection({
     }
   }
 
-  return (
-    <div className="ds-sidebar-pinned-pane ds-no-drag">
-      <div className="ds-sidebar-pinned-header">
+  const header = (
+    <div className="ds-sidebar-pinned-header">
         <button
           type="button"
           onClick={() => setCollapsed(!collapsed)}
@@ -112,6 +114,11 @@ export function SidebarPinnedSection({
           <span className="ds-sidebar-section-label min-w-0 truncate">{t('sidebarPinned')}</span>
         </button>
       </div>
+  )
+
+  return (
+    <div className="ds-sidebar-pinned-pane ds-no-drag">
+      {headerHost ? createPortal(header, headerHost) : header}
       {sectionCollapsed ? null : (
         <div className="ds-sidebar-pinned-list ds-scroll-surface min-h-0 overflow-y-auto overscroll-contain">
           <div className="ds-sidebar-thread-list px-1.5 pb-1">
