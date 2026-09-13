@@ -1384,25 +1384,11 @@ samp {
   height: 7px;
 }
 
-.ds-workspace-file-tree__row--active {
-  color: color-mix(in srgb, var(--ds-accent) 42%, var(--ds-text));
-  background: color-mix(in srgb, var(--ds-text) 8%, transparent);
-  box-shadow: inset 2px 0 0 color-mix(in srgb, var(--ds-accent) 72%, transparent);
-  font-weight: 500;
-}
-
+.ds-workspace-file-tree__row--active,
 .ds-workspace-file-tree__row--active:hover {
-  background: color-mix(in srgb, var(--ds-text) 11%, transparent);
-}
-
-[data-theme='dark'] .ds-workspace-file-tree__row--active {
-  color: color-mix(in srgb, var(--ds-accent) 36%, #ffffff);
-  background: color-mix(in srgb, var(--ds-text) 10%, transparent);
-  box-shadow: inset 2px 0 0 color-mix(in srgb, var(--ds-accent) 68%, transparent);
-}
-
-[data-theme='dark'] .ds-workspace-file-tree__row--active:hover {
-  background: color-mix(in srgb, var(--ds-text) 14%, transparent);
+  color: var(--ds-text);
+  background: color-mix(in srgb, var(--ds-text) 8%, transparent);
+  font-weight: 500;
 }
 
 /* Folder branches: height-animated expand/collapse via the grid 0fr -> 1fr trick.
@@ -1565,56 +1551,43 @@ samp {
   }
 }
 
-/* Editor tab strip — idle vs active must be obvious (was nearly identical greys). */
+/* Shared file chrome: one baseline across explorer, editor and changes. */
 .ds-workspace-editor-tabstrip {
-  padding: 0.375rem 0.375rem;
+  height: 36px;
+  gap: 0;
+  padding: 0 4px;
+  background: transparent;
 }
+
 .ds-workspace-editor-tab {
-  border-radius: 8px;
-  border: 1px solid color-mix(in srgb, var(--ds-text) 10%, transparent);
-  background: color-mix(in srgb, var(--ds-text) 3%, transparent);
+  height: 35px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
   color: var(--ds-text-muted);
-  transition:
-    background-color 120ms ease,
-    border-color 120ms ease,
-    color 120ms ease;
+  transition: background-color 120ms ease, color 120ms ease;
 }
 
-.ds-workspace-editor-tab:hover {
-  border-color: color-mix(in srgb, var(--ds-text) 16%, transparent);
-  background: color-mix(in srgb, var(--ds-text) 6%, transparent);
-  color: var(--ds-text);
-}
-
+.ds-workspace-editor-tab:hover,
 .ds-workspace-editor-tab--open {
-  border-color: color-mix(in srgb, var(--ds-text) 14%, transparent);
-  background: color-mix(in srgb, var(--ds-text) 7%, transparent);
+  background: color-mix(in srgb, var(--ds-text) 4%, transparent);
   color: var(--ds-text);
 }
 
 .ds-workspace-editor-tab--active {
-  border-color: color-mix(in srgb, var(--ds-accent) 40%, transparent);
-  background: color-mix(in srgb, var(--ds-accent) 14%, #ffffff);
-  color: color-mix(in srgb, var(--ds-accent) 48%, var(--ds-text));
+  background: color-mix(in srgb, var(--ds-text) 5%, transparent);
+  color: var(--ds-text);
   font-weight: 500;
-  box-shadow: none;
+  box-shadow: inset 0 -2px 0 color-mix(in srgb, var(--ds-text) 45%, transparent);
 }
 
-.ds-workspace-editor-tab--active:hover {
-  background: color-mix(in srgb, var(--ds-accent) 18%, #ffffff);
-  border-color: color-mix(in srgb, var(--ds-accent) 50%, transparent);
-}
-
-/* Close slot (VS Code): hidden until the tab is hovered or focused; a dirty
-   tab shows an accent dot there that swaps to an X on hover. */
 .ds-workspace-editor-tab__close {
   color: inherit;
   opacity: 0;
-  transition:
-    opacity 150ms ease,
-    background-color 150ms ease;
+  transition: opacity 120ms ease, background-color 120ms ease;
 }
 
+.ds-workspace-editor-tab[data-dirty] .ds-workspace-editor-tab__close,
 .ds-workspace-editor-tab:hover .ds-workspace-editor-tab__close,
 .ds-workspace-editor-tab:focus-within .ds-workspace-editor-tab__close {
   opacity: 1;
@@ -1631,109 +1604,56 @@ samp {
   width: 6px;
   height: 6px;
   border-radius: 999px;
-  background: var(--ds-accent);
-  transition: opacity 120ms ease;
-  animation: ds-dot-in 160ms ease-out both;
+  background: currentColor;
 }
 
-.ds-workspace-editor-tab__close-x {
-  opacity: 0;
-  transition: opacity 120ms ease;
-}
+.ds-workspace-editor-tab__close-x { opacity: 0; }
 
 .ds-workspace-editor-tab:hover .ds-workspace-editor-tab__close-x,
-.ds-workspace-editor-tab:focus-within .ds-workspace-editor-tab__close-x {
-  opacity: 1;
-}
+.ds-workspace-editor-tab:focus-within .ds-workspace-editor-tab__close-x { opacity: 1; }
 
 .ds-workspace-editor-tab:hover .ds-workspace-editor-tab__close-dot,
-.ds-workspace-editor-tab:focus-within .ds-workspace-editor-tab__close-dot {
-  opacity: 0;
+.ds-workspace-editor-tab:focus-within .ds-workspace-editor-tab__close-dot { opacity: 0; }
+
+.ds-workspace-file-tree__header > div,
+.ds-workspace-file-tree__row-pad,
+.ds-workspace-editor-tab > button {
+  font-size: 13px;
+  line-height: 20px;
 }
 
-/* Editor pane is in edit mode: thin accent edge under the tab strip. */
-.ds-workspace-editor-pane--editing::after {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 2px;
-  z-index: 10;
-  pointer-events: none;
-  background: color-mix(in srgb, var(--ds-accent) 55%, transparent);
+.ds-workspace-file-tree__row:hover {
+  background: color-mix(in srgb, var(--ds-text) 5%, transparent);
+  color: var(--ds-text);
 }
 
-[data-theme='dark'] .ds-workspace-editor-tab {
-  border-color: color-mix(in srgb, #fff 10%, transparent);
-  background: color-mix(in srgb, #fff 4%, transparent);
+.ds-workspace-file-tree__row:focus-visible,
+.ds-workspace-editor-tab button:focus-visible,
+.ds-workspace-document-mode button:focus-visible {
+  outline: 2px solid var(--ds-accent);
+  outline-offset: -2px;
 }
 
-[data-theme='dark'] .ds-workspace-editor-tab:hover {
-  border-color: color-mix(in srgb, #fff 16%, transparent);
-  background: color-mix(in srgb, #fff 8%, transparent);
+.ds-workspace-document-mode {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 32px;
+  padding: 2px 12px;
+  border-bottom: 1px solid var(--ds-border-muted);
 }
 
-[data-theme='dark'] .ds-workspace-editor-tab--open {
-  border-color: color-mix(in srgb, #fff 14%, transparent);
-  background: color-mix(in srgb, #fff 9%, transparent);
-}
-
-[data-theme='dark'] .ds-workspace-editor-tab--active {
-  border-color: color-mix(in srgb, var(--ds-accent) 48%, transparent);
-  background: color-mix(in srgb, var(--ds-accent) 24%, #2a2a2a);
-  color: color-mix(in srgb, var(--ds-accent) 40%, #ffffff);
-  box-shadow: none;
-}
-
-[data-theme='dark'] .ds-workspace-editor-tab--active:hover {
-  background: color-mix(in srgb, var(--ds-accent) 30%, #2a2a2a);
-  border-color: color-mix(in srgb, var(--ds-accent) 58%, transparent);
-}
-
-.ds-ide-workspace .ds-workspace-file-tree__header > div,
-.ds-ide-workspace .ds-workspace-file-tree__row-pad,
-.ds-ide-workspace .ds-workspace-editor-tab > button,
-.ds-workbench-right-panel .ds-workspace-file-tree__header > div,
-.ds-workbench-right-panel .ds-workspace-file-tree__row-pad,
-.ds-workbench-right-panel .ds-workspace-editor-tab > button {
-  font-size: 15px;
-}
-
-/* IDE: flush tabs against the editor top edge — not chat pills. */
-.ds-ide-workspace .ds-workspace-editor-tabstrip {
-  height: 28px;
-  gap: 0;
-  padding: 0;
-  border-bottom: 1px solid color-mix(in srgb, var(--ds-text) 14%, transparent);
-  background: var(--ds-bg-canvas);
-}
-
-.ds-ide-workspace .ds-workspace-editor-tab {
-  max-width: 180px;
-  height: 28px;
-  border: none;
-  border-radius: 0;
-  border-right: 1px solid color-mix(in srgb, var(--ds-text) 10%, transparent);
-  background: transparent;
+.ds-workspace-document-mode button {
+  padding: 2px 8px;
+  border-radius: 5px;
+  font-size: 12px;
   color: var(--ds-text-muted);
 }
 
-.ds-ide-workspace .ds-workspace-editor-tab:hover {
+.ds-workspace-document-mode button:hover,
+.ds-workspace-document-mode button[aria-pressed='true'] {
   background: color-mix(in srgb, var(--ds-text) 6%, transparent);
   color: var(--ds-text);
-}
-
-.ds-ide-workspace .ds-workspace-editor-tab--open {
-  background: color-mix(in srgb, var(--ds-text) 4%, transparent);
-  color: var(--ds-text);
-}
-
-.ds-ide-workspace .ds-workspace-editor-tab--active {
-  background: var(--ds-bg-sidebar);
-  color: var(--ds-text);
-  font-weight: 500;
-  box-shadow: inset 0 -2px 0 var(--ds-accent);
 }
 
 .ds-ide-workspace .ds-workspace-editor-pane .monaco-editor,
@@ -3421,18 +3341,16 @@ samp {
   background: color-mix(in srgb, var(--text-primary) 10%, var(--ds-bg-sidebar));
 }
 
-/* Always emphasized — not only when selected. */
+/* Setup entry spacing. */
 .ds-sidebar-link.ds-settings-nav-setup,
 .ds-sidebar-link.ds-settings-nav-setup.ds-sidebar-link--active {
   min-height: 2.45rem;
   margin-top: 0.2rem;
-  font-size: 1rem; /* 16px — slightly above --sidebar-text (15px) */
-  font-weight: 700;
 }
 
 .ds-settings-nav-setup .ds-settings-nav-setup__label {
   font-size: inherit;
-  font-weight: 700;
+  font-weight: inherit;
 }
 
 .ds-settings-nav-setup .ds-sidebar-link__icon {
@@ -3465,6 +3383,12 @@ samp {
   font-size: calc(var(--sidebar-text) + 0.5px); /* 15.5px preview */
   font-weight: var(--sidebar-weight); /* 400 — 苹方无中间字重, 440/460 会被取整 */
   color: color-mix(in srgb, var(--text-primary) 62%, var(--text-secondary));
+}
+
+.ds-sidebar-sticky-nav .ds-sidebar-top-nav .ds-sidebar-link,
+.ds-sidebar-shell .ds-settings-sidebar-nav .ds-sidebar-link {
+  font-size: calc(var(--sidebar-text) - 0.5px);
+  font-weight: var(--sidebar-weight);
 }
 
 .ds-sidebar-scroll {
@@ -6255,10 +6179,10 @@ html[data-theme='dark'] .ds-code-fullscreen .shiki span {
 .ds-markdown-doc-page {
   box-sizing: border-box;
   width: 100%;
-  max-width: 1120px;
+  max-width: 82ch;
   margin: 0 auto;
   min-height: 100%;
-  padding: 1.15rem 1.35rem 2.25rem;
+  padding: 24px clamp(16px, 4%, 40px) 40px;
 }
 
 .ds-markdown.ds-markdown--document {
@@ -6269,7 +6193,7 @@ html[data-theme='dark'] .ds-code-fullscreen .shiki span {
 }
 
 .ds-ide-workspace .ds-markdown.ds-markdown--document {
-  font-size: 15px;
+  font-size: 16px;
 }
 
 .ds-ide-workspace .ds-markdown.ds-markdown--document :is(code, pre, table, th, td),
@@ -6279,10 +6203,8 @@ html[data-theme='dark'] .ds-code-fullscreen .shiki span {
 
 .ds-markdown.ds-markdown--document p,
 .ds-markdown.ds-markdown--document li {
-  text-align: justify;
-  text-justify: inter-ideograph;
-  -webkit-hyphens: auto;
-  hyphens: auto;
+  text-align: start;
+  hyphens: none;
 }
 
 .ds-markdown.ds-markdown--document h1,
@@ -8104,6 +8026,58 @@ select:focus-visible,
   background: var(--ds-bg-sidebar);
 }
 
+/* Code retains its line structure; the enclosing viewport owns horizontal scrolling. */
+.ds-diff-table {
+  width: max-content;
+  min-width: 100%;
+  table-layout: auto;
+}
+
+.ds-diff-view { container-type: inline-size; }
+
+.ds-diff-view[data-wrap] .ds-diff-table {
+  width: 100%;
+  table-layout: fixed;
+}
+
+.ds-diff-view[data-wrap] .ds-diff-code {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: normal;
+}
+
+.ds-diff-view [role='button']:focus-visible,
+.ds-diff-view button:focus-visible {
+  outline: 2px solid var(--ds-accent);
+  outline-offset: -2px;
+}
+
+@container (max-width: 440px) {
+  .ds-diff-header-statbar { display: none; }
+}
+
+.ds-diff-row-added { background: color-mix(in srgb, var(--ds-diff-added) 9%, transparent); }
+.ds-diff-row-removed { background: color-mix(in srgb, var(--ds-diff-removed) 9%, transparent); }
+.ds-diff-sign { display: inline-block; width: 2ch; user-select: none; }
+.ds-diff-sign--add { color: var(--ds-diff-added); }
+.ds-diff-sign--del { color: var(--ds-diff-removed); }
+.ds-syntax-line span { background: transparent !important; }
+html[data-theme='dark'] .ds-syntax-line span { color: var(--shiki-dark) !important; }
+
+.ds-markdown.ds-markdown--document .ds-document-code {
+  overflow-x: auto;
+  white-space: pre;
+  font-size: 14px;
+  line-height: 23px;
+  tab-size: 4;
+}
+
+.ds-markdown.ds-markdown--document .ds-document-code > code {
+  font-size: inherit;
+  line-height: inherit;
+  white-space: inherit;
+}
+
 /* Split-diff halves: equal gutters, shared vertical seam. */
 .ds-diff-view--flush table {
   border-spacing: 0;
@@ -8615,30 +8589,24 @@ select:focus-visible,
   .ds-dock-tab-close { opacity: 1; }
 }
 
-.ds-workspace-editor-pane .ds-editor-line-added,
-.monaco-editor .view-lines .view-line.ds-editor-line-added {
-  background-color: var(--ds-diff-added-soft) !important;
+.monaco-editor .ds-editor-gutter-added {
+  border-left: 3px solid var(--ds-diff-added);
+  margin-left: 4px;
 }
 
-.monaco-editor .margin-view-overlays .ds-editor-line-added-margin {
-  background-color: var(--ds-diff-added-soft) !important;
+.monaco-editor .ds-editor-gutter-deleted::after {
+  content: '';
+  position: absolute;
+  left: 4px;
+  bottom: 0;
+  width: 7px;
+  height: 3px;
+  background: var(--ds-diff-removed);
 }
 
-.ds-workspace-editor-pane .ds-editor-deleted-block {
-  box-sizing: border-box;
-  width: 100%;
-  padding: 1px 12px 1px 56px;
-  background: var(--ds-diff-removed-soft) !important;
-  border-left: 4px solid var(--ds-diff-removed);
-}
-
-.ds-workspace-editor-pane .ds-editor-deleted-line {
-  color: var(--ds-diff-removed);
-  font-family: var(--font-mono);
-  font-size: 15px;
-  line-height: 20px;
-  white-space: pre;
-  opacity: 1;
+.monaco-editor .ds-editor-gutter-deleted--before::after {
+  top: 0;
+  bottom: auto;
 }
 
 /* Editor / changes / browser stay on the sidebar sheet. Terminal is excluded:

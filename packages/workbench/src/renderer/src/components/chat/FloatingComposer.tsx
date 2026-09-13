@@ -440,6 +440,11 @@ export function FloatingComposer({
       ),
     [blocks]
   )
+  const failedDecisions = blocks.filter((block) =>
+    (block.kind === 'approval' || block.kind === 'elevation' || block.kind === 'user_input' || block.kind === 'evolution') &&
+    block.status === 'error' && block.submissionFailed
+  )
+  const [checkingDecisions, setCheckingDecisions] = useState(false)
   const hasActiveDurableTask = useMemo(
     () => extractTasksFromBlocks(blocks).some((task) => isActiveTaskStatus(task.status)),
     [blocks]
@@ -1508,6 +1513,16 @@ export function FloatingComposer({
         focusComposer()
       }}
     >
+      {failedDecisions.length > 0 ? (
+        <div role="alert" className="mb-2 rounded-xl border border-red-300/70 bg-red-50 p-3 text-[12px] text-red-800 dark:border-red-800/60 dark:bg-red-950/25 dark:text-red-200">
+          <p>{t('decisionSubmissionUncertain')}</p>
+          {failedDecisions.map((block) => <p key={block.id} className="mt-1 break-words">{'errorMessage' in block ? block.errorMessage : ''}</p>)}
+          <button type="button" disabled={checkingDecisions} className="mt-2 underline disabled:opacity-50" onClick={() => {
+            setCheckingDecisions(true)
+            void refreshPendingUserInputs().finally(() => setCheckingDecisions(false))
+          }}>{t(checkingDecisions ? 'decisionChecking' : 'decisionCheckStatus')}</button>
+        </div>
+      ) : null}
       {pendingApprovals.length > 0 ||
       pendingElevations.length > 0 ||
       pendingUserInputs.length > 0 ? (

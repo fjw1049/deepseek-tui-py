@@ -303,7 +303,7 @@ export function Workbench(): ReactElement {
       blocks: s.blocks,
       liveReasoning: s.liveReasoning,
       liveAssistant: s.liveAssistant,
-      error: s.error,
+      error: s.error ?? s.connectionError,
       runtimeErrorDetail: s.runtimeErrorDetail,
       busy: s.busy,
       route: s.route,
@@ -1512,42 +1512,16 @@ export function Workbench(): ReactElement {
           route === 'marketplace' ? 'px-0' : ''
         }`}
       >
-        {route === 'settings' ? (
-          <Suspense fallback={<div className="h-full bg-transparent" />}>
-            <SettingsView />
-          </Suspense>
-        ) : route === 'marketplace' ? (
-          <Suspense fallback={<div className="h-full bg-transparent" />}>
-            <MarketplaceView />
-          </Suspense>
-        ) : route === 'kanban' ? (
-          <Suspense fallback={<div className="h-full bg-transparent" />}>
-            <KanbanView
-              onOpenThread={openThread}
-              onOpenThreadTerminal={openThreadTerminal}
-            />
-          </Suspense>
-        ) : route === 'automation' ? (
-          <Suspense fallback={<div className="h-full bg-transparent" />}>
-            <AutomationCenter
-              runtimeReady={runtimeConnection === 'ready'}
-              workspaceRoot={activeWorkspaceRoot}
-              onOpenRuntimeSettings={() => openSettings('general')}
-            />
-          </Suspense>
-        ) : route === 'channels' ? (
-          <Suspense fallback={<div className="h-full bg-transparent" />}>
-            <ChannelCenter runtimeReady={runtimeConnection === 'ready'} />
-          </Suspense>
-        ) : (
-          <>
-        {error && !(runtimeConnection !== 'ready' && !activeThreadId) && (
-          <div className="ds-no-drag shrink-0 border-b border-amber-200/70 bg-[rgba(255,248,235,0.82)] backdrop-blur-lg dark:border-amber-800/50 dark:bg-amber-950/35">
+        {error && (
+          <div role="alert" className="ds-no-drag shrink-0 border-b border-amber-200/70 bg-[rgba(255,248,235,0.82)] backdrop-blur-lg dark:border-amber-800/50 dark:bg-amber-950/35">
             <div className={`${stageInsetClass} flex w-full min-w-0 items-start justify-between gap-3 py-3`}>
               <p className="min-w-0 flex-1 text-[14px] leading-6 text-amber-950 dark:text-amber-100">
                 {error}
               </p>
               <div className="flex shrink-0 items-center gap-2">
+                {runtimeConnection === 'ready' ? (
+                  <button type="button" onClick={() => setError(null)} className="rounded-lg px-3 py-1 text-[12px] underline">{t('dismissNotice')}</button>
+                ) : null}
                 {runtimeConnection !== 'ready' ? (
                   <>
                     <button
@@ -1577,6 +1551,36 @@ export function Workbench(): ReactElement {
             </div>
           </div>
         )}
+        {route === 'settings' ? (
+          <Suspense fallback={<div className="h-full bg-transparent" />}>
+            <SettingsView />
+          </Suspense>
+        ) : route === 'marketplace' ? (
+          <Suspense fallback={<div className="h-full bg-transparent" />}>
+            <MarketplaceView />
+          </Suspense>
+        ) : route === 'kanban' ? (
+          <Suspense fallback={<div className="h-full bg-transparent" />}>
+            <KanbanView
+              onOpenThread={openThread}
+              onOpenThreadTerminal={openThreadTerminal}
+            />
+          </Suspense>
+        ) : route === 'automation' ? (
+          <Suspense fallback={<div className="h-full bg-transparent" />}>
+            <AutomationCenter
+              runtimeReady={runtimeConnection === 'ready'}
+              workspaceRoot={activeWorkspaceRoot}
+              onOpenRuntimeSettings={() => openSettings('general')}
+            />
+          </Suspense>
+        ) : route === 'channels' ? (
+          <Suspense fallback={<div className="h-full bg-transparent" />}>
+            <ChannelCenter runtimeReady={runtimeConnection === 'ready'} />
+          </Suspense>
+        ) : (
+          <>
+
 
         {ideModeActive ? (
           <div ref={mainRowRef} className="flex min-h-0 min-w-0 flex-1 flex-col">

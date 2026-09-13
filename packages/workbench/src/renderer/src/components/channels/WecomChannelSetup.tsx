@@ -1,3 +1,4 @@
+import { formatRuntimeError } from '../../lib/format-runtime-error'
 import { useCallback, useEffect, useState, type ReactElement } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Loader2, Save, Send } from 'lucide-react'
@@ -44,7 +45,7 @@ export function WecomChannelSetup({ runtimeReady, onConfigured }: Props): ReactE
     } catch (err) {
       setNotice({
         tone: 'error',
-        message: err instanceof Error ? err.message : String(err)
+        message: formatRuntimeError(err)
       })
     }
   }, [])
@@ -70,7 +71,7 @@ export function WecomChannelSetup({ runtimeReady, onConfigured }: Props): ReactE
     } catch (err) {
       setNotice({
         tone: 'error',
-        message: err instanceof Error ? err.message : String(err)
+        message: formatRuntimeError(err)
       })
     } finally {
       setSaving(false)
@@ -95,19 +96,12 @@ export function WecomChannelSetup({ runtimeReady, onConfigured }: Props): ReactE
         JSON.stringify({ text: t('channelWecomTestMessage') })
       )
       if (!raw.ok) {
-        let message = `HTTP ${raw.status}`
-        try {
-          const parsed = JSON.parse(raw.body) as { detail?: string; message?: string }
-          message = parsed.detail ?? parsed.message ?? message
-        } catch {
-          if (raw.body.trim()) message = raw.body.trim().slice(0, 240)
-        }
-        setNotice({ tone: 'error', message })
+        setNotice({ tone: 'error', message: formatRuntimeError(raw.body || `HTTP ${raw.status}`) })
         return
       }
       setNotice({ tone: 'success', message: t('channelWecomTestOk') })
     } catch (err) {
-      setNotice({ tone: 'error', message: err instanceof Error ? err.message : String(err) })
+      setNotice({ tone: 'error', message: formatRuntimeError(err) })
     } finally {
       setTesting(false)
     }
@@ -115,7 +109,7 @@ export function WecomChannelSetup({ runtimeReady, onConfigured }: Props): ReactE
 
   return (
     <div className="flex flex-col gap-4">
-      {notice ? <div className={channelNoticeClass(notice.tone)}>{notice.message}</div> : null}
+      {notice ? <div role={notice.tone === 'error' ? 'alert' : 'status'} className={channelNoticeClass(notice.tone)}>{notice.message}</div> : null}
 
       <p className={CHANNEL_HINT}>{t('channelWecomSimpleDesc')}</p>
 

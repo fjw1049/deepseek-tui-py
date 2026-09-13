@@ -163,7 +163,7 @@ export type ChatBlock =
     }
   | { kind: 'reasoning'; id: string; createdAt?: string; text: string; narration?: string }
   | ToolBlock
-  | { kind: 'system'; id: string; createdAt?: string; text: string }
+  | { kind: 'system'; id: string; createdAt?: string; text: string; severity?: 'error' }
   | {
       kind: 'approval'
       id: string
@@ -179,6 +179,8 @@ export type ChatBlock =
       toolName?: string
       status: 'pending' | 'allowed' | 'denied' | 'error'
       errorMessage?: string
+      submitting?: boolean
+      submissionFailed?: boolean
       /** Present when a detached durable task bridged the approval here. */
       taskId?: string
     }
@@ -193,6 +195,8 @@ export type ChatBlock =
       commandPreview?: string
       status: 'pending' | 'allowed' | 'denied' | 'error'
       errorMessage?: string
+      submitting?: boolean
+      submissionFailed?: boolean
     }
   | {
       kind: 'user_input'
@@ -203,6 +207,8 @@ export type ChatBlock =
       status: 'pending' | 'submitted' | 'cancelled' | 'error'
       answers?: UserInputAnswer[]
       errorMessage?: string
+      submitting?: boolean
+      submissionFailed?: boolean
       /** Present when a detached durable task bridged the prompt here. */
       taskId?: string
     }
@@ -240,6 +246,8 @@ export type ChatBlock =
       assetPath?: string
       status: 'pending' | 'approved' | 'rejected' | 'error'
       errorMessage?: string
+      submitting?: boolean
+      submissionFailed?: boolean
     }
 
 export type EvolutionProposalPayload = {
@@ -345,6 +353,7 @@ export type ThreadDeltaEvent = {
 }
 
 export type TurnCompletePayload = {
+  status?: 'completed' | 'failed' | 'cancelled'
   threadId?: string | null
   turnId?: string | null
   durationMs?: number | null
@@ -423,7 +432,7 @@ export type ThreadEventSink = {
   /** Optional: thread metadata changed (title / archived). */
   onThreadUpdated?(ev: ThreadUpdatedPayload): void
   /** Optional: runtime status line (sub-agent wait, compaction, etc.). */
-  onSystemStatus?(text: string, itemId: string): void
+  onSystemStatus?(text: string, itemId: string, severity?: 'error'): void
   /** Optional: delegate / fanout sub-agent progress cards. */
   onSubagentMailbox?(ev: SubagentMailboxPayload): void
   /**
@@ -453,6 +462,7 @@ export interface AgentProvider {
     blocks: ChatBlock[]
     latestSeq: number
     threadStatus?: string
+    latestTurnOutcome?: 'completed' | 'failed' | 'cancelled'
     latestTurnId?: string
     latestUserMessageId?: string
     turnStartedAtByUserId?: Record<string, number>
@@ -562,6 +572,7 @@ export interface AgentProvider {
     decision: 'allow' | 'deny'
   ): Promise<void>
   /** Runtime HTTP: GET /v1/approvals/pending */
+  fetchPendingElevations?(threadId: string): Promise<ElevationRequestPayload[]>
   fetchPendingApprovals?(threadId: string): Promise<ApprovalRequestPayload[]>
   /** Runtime HTTP: POST /v1/evolution/{id}/approve */
   submitEvolutionDecision?(

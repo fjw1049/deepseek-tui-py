@@ -395,7 +395,7 @@ export function WorkspaceFileTree({
               toggleDirectory(entry.path)
             }}
             onPointerEnter={() => loadChildDirectory(entry.path)}
-            className="ds-no-drag ds-workspace-file-tree__row ds-workspace-file-tree__row-pad flex h-7 w-full items-center gap-1.5 text-left text-[12.5px] text-ds-muted transition hover:bg-ds-hover/55 hover:text-ds-ink"
+            className="ds-no-drag ds-workspace-file-tree__row ds-workspace-file-tree__row-pad flex h-7 w-full items-center gap-1.5 text-left text-[12.5px] text-ds-muted transition hover:bg-ds-hover hover:text-ds-ink"
             style={{ paddingLeft: `${indentPx(depth)}px` }}
           >
             <ChevronRight
@@ -411,7 +411,7 @@ export function WorkspaceFileTree({
               expanded={isExpanded}
               className="ds-file-kind-icon--chrome"
             />
-            <span className={`min-w-0 truncate ${dirHasChanges ? 'font-medium text-ds-diff-added' : ''}`}>
+            <span className={`min-w-0 truncate ${dirHasChanges ? 'font-medium text-ds-ink' : ''}`}>
               {entry.name}
             </span>
           </button>,
@@ -461,17 +461,17 @@ export function WorkspaceFileTree({
             isActive
               ? 'ds-workspace-file-tree__row--active'
               : isDirty
-                ? 'text-ds-ink hover:bg-ds-hover/55'
+                ? 'text-ds-ink hover:bg-ds-hover'
                 : isChanged
-                  ? 'text-ds-diff-added hover:bg-ds-hover/55 hover:text-ds-ink'
-                  : 'text-ds-muted hover:bg-ds-hover/55 hover:text-ds-ink'
+                  ? 'text-ds-ink'
+                  : 'text-ds-muted hover:bg-ds-hover hover:text-ds-ink'
           }`}
           style={{ paddingLeft: `${indentPx(depth) + 14}px` }}
           title={formatFilePathForDisplay(entry.path, trimmedRoot) ?? entry.path}
         >
           <FileKindIcon path={entry.path} className="ds-file-kind-icon--chrome" />
           <span className="min-w-0 truncate">{entry.name}</span>
-          {isDirty ? <span className="ds-tree-dirty-dot" aria-hidden /> : null}
+          {isDirty ? <span className="ds-tree-dirty-dot" aria-hidden /> : isChanged ? <span className="ml-auto shrink-0 text-[11px] text-ds-muted" title={t('workspaceEditorChanged')}>•</span> : null}
         </button>
       ]
     })
@@ -479,7 +479,7 @@ export function WorkspaceFileTree({
 
   return (
     <div className="ds-no-drag ds-workspace-file-tree flex h-full min-h-0 flex-col overflow-hidden bg-ds-sidebar">
-      <div className="ds-workspace-file-tree__header flex h-10 shrink-0 items-center gap-2 border-b border-[color-mix(in_srgb,var(--ds-text)_10%,transparent)]">
+      <div className="ds-workspace-file-tree__header flex h-9 shrink-0 items-center gap-2 border-b border-[color-mix(in_srgb,var(--ds-text)_10%,transparent)]">
         {trimmedRoot ? (
           <>
             <FileKindIcon path={workspaceLabel} directory className="ds-file-kind-icon--chrome" />
@@ -492,7 +492,7 @@ export function WorkspaceFileTree({
                   type="button"
                   onClick={handleManualRefresh}
                   aria-label={t('workspaceTreeRefresh')}
-                  className="inline-flex h-6 w-6 items-center justify-center rounded-md text-ds-faint transition hover:bg-ds-hover/55 hover:text-ds-ink active:scale-[0.94]"
+                  className="inline-flex h-6 w-6 items-center justify-center rounded-md text-ds-faint transition hover:bg-ds-hover hover:text-ds-ink active:scale-[0.94]"
                 >
                   <RefreshCw
                     className={`h-3.5 w-3.5 ${refreshing ? 'animate-spin' : ''}`}
@@ -506,7 +506,7 @@ export function WorkspaceFileTree({
                   type="button"
                   onClick={collapseAll}
                   aria-label={t('workspaceTreeCollapseAll')}
-                  className="inline-flex h-6 w-6 items-center justify-center rounded-md text-ds-faint transition hover:bg-ds-hover/55 hover:text-ds-ink active:scale-[0.94]"
+                  className="inline-flex h-6 w-6 items-center justify-center rounded-md text-ds-faint transition hover:bg-ds-hover hover:text-ds-ink active:scale-[0.94]"
                 >
                   <ChevronsDownUp className="h-3.5 w-3.5" strokeWidth={1.85} aria-hidden />
                 </button>

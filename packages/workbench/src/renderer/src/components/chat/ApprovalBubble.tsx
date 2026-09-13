@@ -92,7 +92,7 @@ export function ApprovalBubble({ block }: { block: ApprovalBlock }): ReactElemen
   const [submitting, setSubmitting] = useState(false)
 
   const done = block.status !== 'pending'
-  const busy = done || submitting
+  const busy = done || submitting || Boolean(block.submitting)
   const destructive = isDestructiveApproval(block)
   const commandText = block.inputSummary?.trim() || ''
   const shellLike = looksLikeShellTool(block.toolName, commandText)
@@ -132,7 +132,7 @@ export function ApprovalBubble({ block }: { block: ApprovalBlock }): ReactElemen
     if (done) setDetailsOpen(false)
   }, [done])
 
-  const visualStatus: ApprovalVisualStatus = submitting
+  const visualStatus: ApprovalVisualStatus = block.status === 'pending' && (submitting || block.submitting)
     ? 'approving'
     : block.status === 'pending'
       ? 'pending'
@@ -158,9 +158,7 @@ export function ApprovalBubble({ block }: { block: ApprovalBlock }): ReactElemen
     (decision: 'allow' | 'deny', remember = false) => {
       if (busy) return
       setSubmitting(true)
-      void resolveApproval(block.id, decision, remember).then((started) => {
-        if (!started) setSubmitting(false)
-      })
+      void resolveApproval(block.id, decision, remember).finally(() => setSubmitting(false))
     },
     [block.id, busy, resolveApproval]
   )

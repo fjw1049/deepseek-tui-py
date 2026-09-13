@@ -1,10 +1,12 @@
 import { useLayoutEffect, useMemo, useRef, useState, type ReactElement } from 'react'
-import { Check, ChevronDown, ChevronUp, Minimize2, Columns2, Copy, MessageSquarePlus, Rows3 } from 'lucide-react'
+import { Check, ChevronDown, ChevronUp, Minimize2, Columns2, Copy, MessageSquarePlus, Rows3, WrapText } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { countDiffStats, extractDiffFilePath } from '../lib/diff-stats'
 import { FileChip } from './chat/FileChip'
 import { FileKindIcon } from './chat/FileKindIcon'
 import { Tooltip } from './common/Tooltip'
+import { useCodeHighlights } from '../lib/use-code-highlights'
+import { languageForPath } from '../lib/monaco-language-for-path'
 
 export type DiffRenderStyle = 'unified' | 'split'
 
@@ -107,7 +109,7 @@ function buildUnifiedRows(bodyLines: Array<{ line: string; i: number }>): Unifie
         oldNo: null,
         newNo,
         text: line,
-        cls: 'bg-ds-diff-added-soft text-ds-diff-added'
+        cls: 'ds-diff-row-added text-ds-ink'
       })
       if (newNo != null) newNo += 1
       continue
@@ -119,7 +121,7 @@ function buildUnifiedRows(bodyLines: Array<{ line: string; i: number }>): Unifie
         oldNo,
         newNo: null,
         text: line,
-        cls: 'bg-ds-diff-removed-soft text-ds-diff-removed'
+        cls: 'ds-diff-row-removed text-ds-ink'
       })
       if (oldNo != null) oldNo += 1
       continue
@@ -263,8 +265,8 @@ function buildSplitRows(bodyLines: Array<{ line: string; i: number }>): SplitRow
 }
 
 function sideCls(kind: 'empty' | 'context' | 'del' | 'add'): string {
-  if (kind === 'del') return 'bg-ds-diff-removed-soft text-ds-diff-removed'
-  if (kind === 'add') return 'bg-ds-diff-added-soft text-ds-diff-added'
+  if (kind === 'del') return 'ds-diff-row-removed text-ds-ink'
+  if (kind === 'add') return 'ds-diff-row-added text-ds-ink'
   if (kind === 'empty') return 'bg-[color-mix(in_srgb,var(--ds-text)_3%,transparent)] text-ds-faint'
   return 'text-ds-ink'
 }
@@ -298,6 +300,7 @@ export function DiffView({
   const [copied, setCopied] = useState(false)
   const [localStyle, setLocalStyle] = useState<DiffRenderStyle>(controlledStyle ?? 'unified')
   const diffStyle = controlledStyle ?? localStyle
+  const [wrapLines, setWrapLines] = useState(false)
 
   const fileLabel = parsed.filePath ?? filePath ?? null
   const displayName = fileLabel ? fileLabel.split(/[/\\]/).pop() ?? fileLabel : null
@@ -305,6 +308,16 @@ export function DiffView({
 
   const bodyLines = useMemo(() => filterBodyLines(patch.split('\n')), [patch])
   const unifiedRows = useMemo(() => buildUnifiedRows(bodyLines), [bodyLines])
+  const oldSource = useMemo(() => unifiedRows.filter((row) => row.kind !== 'meta' && row.kind !== 'add'), [unifiedRows])
+  const newSource = useMemo(() => unifiedRows.filter((row) => row.kind !== 'meta' && row.kind !== 'del'), [unifiedRows])
+  const language = languageForPath(fileLabel ?? '')
+  const oldHighlights = useCodeHighlights(oldSource.map((row) => stripPrefix(row.text)).join('\n'), language)
+  const newHighlights = useCodeHighlights(newSource.map((row) => stripPrefix(row.text)).join('\n'), language)
+  const oldTokens = new Map(oldSource.map((row, index) => [row.oldNo, oldHighlights?.[index]]))
+  const newTokens = new Map(newSource.map((row, index) => [row.newNo, newHighlights?.[index]]))
+  const codeLine = (text: string, html: string | undefined): ReactElement => html === undefined
+    ? <span>{text || '\u00a0'}</span>
+    : <span className="ds-syntax-line" dangerouslySetInnerHTML={{ __html: html }} />
   const splitRows = useMemo(() => buildSplitRows(bodyLines), [bodyLines])
   const [unfoldedContext, setUnfoldedContext] = useState<Set<number>>(new Set())
   const displayRows = useMemo(
@@ -357,6 +370,8 @@ export function DiffView({
       showStyleToggle={looksLikePatch && showStyleToggle}
       diffStyle={diffStyle}
       onDiffStyleChange={setStyle}
+      wrapLines={wrapLines}
+      onToggleWrap={looksLikePatch ? () => setWrapLines((value) => !value) : undefined}
       flush={flush}
       onAddToChat={onAddToChat}
       onCollapse={onCollapse}
@@ -367,10 +382,10 @@ export function DiffView({
 
   if (!looksLikePatch) {
     return (
-      <div className={shellClass}>
+      <div className={shellClass} data-wrap={wrapLines ? '' : undefined}>
         {header}
         <pre
-          ref={bodyRef}
+          ref={(node) => { bodyRef.current = node }}
           className={`${bodyClass} whitespace-pre text-ds-ink ${flush ? 'px-2 py-1' : 'p-3'}`}
           style={fillParent || flush ? undefined : { maxHeight }}
         >
@@ -381,11 +396,11 @@ export function DiffView({
   }
 
   return (
-    <div className={shellClass}>
+    <div className={shellClass} data-wrap={wrapLines ? '' : undefined}>
       {header}
-      <div ref={bodyRef} className={bodyClass} style={fillParent || flush ? undefined : { maxHeight }}>
+      <div ref={(node) => { bodyRef.current = node }} className={bodyClass} style={fillParent || flush ? undefined : { maxHeight }}>
         {diffStyle === 'split' ? (
-          <table className="w-full table-fixed border-collapse">
+          <table className="ds-diff-table border-collapse">
             <colgroup>
               <col style={gutterStyle} />
               <col />
@@ -411,9 +426,9 @@ export function DiffView({
                       {row.leftNo ?? ''}
                     </td>
                     <td
-                      className={`max-w-0 break-all whitespace-pre-wrap ${cellPad} align-top font-mono text-[15px] leading-[1.45] ${sideCls(row.leftKind)}`}
+                      className={`ds-diff-code whitespace-pre ${cellPad} align-top font-mono text-[14px] leading-[23px] ${sideCls(row.leftKind)}`}
                     >
-                      {row.leftText ?? '\u00a0'}
+                      {codeLine(row.leftText ?? '', oldTokens.get(row.leftNo))}
                     </td>
                     <td
                       className={`select-none border-l border-ds-border-muted/50 px-1 text-right align-top font-mono text-[13.5px] tabular-nums text-ds-faint ${sideCls(row.rightKind)}`}
@@ -421,9 +436,9 @@ export function DiffView({
                       {row.rightNo ?? ''}
                     </td>
                     <td
-                      className={`max-w-0 break-all whitespace-pre-wrap ${cellPad} align-top font-mono text-[15px] leading-[1.45] ${sideCls(row.rightKind)}`}
+                      className={`ds-diff-code whitespace-pre ${cellPad} align-top font-mono text-[14px] leading-[23px] ${sideCls(row.rightKind)}`}
                     >
-                      {row.rightText ?? '\u00a0'}
+                      {codeLine(row.rightText ?? '', newTokens.get(row.rightNo))}
                     </td>
                   </tr>
                 )
@@ -431,7 +446,7 @@ export function DiffView({
             </tbody>
           </table>
         ) : (
-          <table className="w-full table-fixed border-collapse">
+          <table className="ds-diff-table border-collapse">
             <colgroup>
               <col style={gutterStyle} />
               <col style={gutterStyle} />
@@ -482,8 +497,9 @@ export function DiffView({
                     <td className="select-none border-r border-ds-border-muted/40 px-1 text-right align-top font-mono text-[13.5px] tabular-nums text-ds-faint">
                       {row.newNo ?? ''}
                     </td>
-                    <td className="max-w-0 break-all whitespace-pre-wrap px-2 align-top font-mono text-[15px] leading-[1.45]">
-                      {row.text || '\u00a0'}
+                    <td className="ds-diff-code whitespace-pre px-2 align-top font-mono text-[14px] leading-[23px]">
+                      <span className={`ds-diff-sign ds-diff-sign--${row.kind}`} aria-hidden>{row.kind === 'add' ? '+' : row.kind === 'del' ? '−' : ' '}</span>
+                      {codeLine(stripPrefix(row.text), row.kind === 'del' ? oldTokens.get(row.oldNo) : newTokens.get(row.newNo))}
                     </td>
                   </tr>
                 )
@@ -533,6 +549,8 @@ function DiffHeader({
   showStyleToggle,
   diffStyle,
   onDiffStyleChange,
+  wrapLines,
+  onToggleWrap,
   flush = false,
   onAddToChat,
   onCollapse,
@@ -548,6 +566,8 @@ function DiffHeader({
   showStyleToggle: boolean
   diffStyle: DiffRenderStyle
   onDiffStyleChange: (style: DiffRenderStyle) => void
+  wrapLines: boolean
+  onToggleWrap?: () => void
   flush?: boolean
   onAddToChat?: () => void
   onCollapse?: () => void
@@ -572,10 +592,10 @@ function DiffHeader({
           label={name ?? undefined}
           variant="list"
           skipValidation
-          className="min-w-0 flex-1 text-[15px] font-medium"
+          className="min-w-0 flex-1 text-[13px] font-medium"
         />
       ) : (
-        <span className="min-w-0 flex-1 truncate text-[15px] font-medium text-ds-ink" title={name ?? ''}>
+        <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-ds-ink" title={name ?? ''}>
           {name ?? 'patch'}
         </span>
       )}
@@ -586,8 +606,21 @@ function DiffHeader({
             {(added ?? 0) > 0 && (removed ?? 0) > 0 ? <span className="px-1 text-ds-faint">·</span> : null}
             {(removed ?? 0) > 0 ? <span className="text-ds-diff-removed">-{removed}</span> : null}
           </span>
-          <DiffStatBar added={added} removed={removed} />
+          <DiffStatBar added={added} removed={removed} className="ds-diff-header-statbar w-12" />
         </>
+      ) : null}
+      {onToggleWrap ? (
+        <Tooltip label={t('diffWrapLines')}>
+          <button
+            type="button"
+            onClick={onToggleWrap}
+            aria-label={t('diffWrapLines')}
+            aria-pressed={wrapLines}
+            className={`inline-flex h-7 w-7 shrink-0 items-center justify-center rounded transition hover:bg-ds-hover ${wrapLines ? 'bg-ds-hover text-ds-ink' : 'text-ds-faint'}`}
+          >
+            <WrapText className="h-3.5 w-3.5" strokeWidth={1.85} />
+          </button>
+        </Tooltip>
       ) : null}
       {showStyleToggle ? (
         <div className="flex shrink-0 items-center rounded border border-ds-border-muted/70 p-0.5">

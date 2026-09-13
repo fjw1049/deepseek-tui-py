@@ -115,7 +115,9 @@ export function ConnectorsView({
       if (!ensured.changed) return
       await window.dsGui.setMcpConfigFile(ensured.next)
       setMcpConfigText(ensured.next)
-      void reloadMcpWithRuntime(readMcpConfig).catch(() => undefined)
+      void reloadMcpWithRuntime(readMcpConfig).then((result) => {
+          if (!result.runtime) setNotice({ tone: 'info', message: tSettings('mcpReloadDiskOnly') })
+        }).catch((error) => setNotice({ tone: 'error', message: String(error) }))
     })
   }, [mcpLoaded, mcpConfigText, readMcpConfig, withMcpWriteLock])
 
@@ -179,9 +181,9 @@ export function ConnectorsView({
 
   const appendMcpServer = useCallback(
     async (id: string, entry: McpServerEntry): Promise<void> => {
-      if (typeof window.dsGui?.setMcpConfigFile !== 'function') return
+      if (typeof window.dsGui?.setMcpConfigFile !== 'function') throw new Error(t('mcpWriteUnavailable'))
       await withMcpWriteLock(async () => {
-        const content = mcpLoaded ? mcpConfigText : await readMcpConfig()
+        const content = await readMcpConfig()
         if (mcpConfigHasServer(content, id)) {
           markInstalled(storageKey('mcp', id))
           setNotice({ tone: 'info', message: t('pluginAlreadyAdded') })
@@ -196,7 +198,9 @@ export function ConnectorsView({
         setNotice({ tone: 'success', message: t('pluginMcpAdded', { path: result.path }) })
         // Propagate the change to the running runtime so the new connector is
         // live immediately, without forcing the user to click 重新加载.
-        void reloadMcpWithRuntime(readMcpConfig).catch(() => undefined)
+        void reloadMcpWithRuntime(readMcpConfig).then((result) => {
+          if (!result.runtime) setNotice({ tone: 'info', message: tSettings('mcpReloadDiskOnly') })
+        }).catch((error) => setNotice({ tone: 'error', message: String(error) }))
       })
     },
     [mcpLoaded, mcpConfigText, readMcpConfig, t, withMcpWriteLock]
@@ -209,7 +213,7 @@ export function ConnectorsView({
     setNotice(null)
     try {
       await withMcpWriteLock(async () => {
-        const content = mcpLoaded ? mcpConfigText : await readMcpConfig()
+        const content = await readMcpConfig()
         const next = removeMcpServerFromConfig(content, connector.id)
         const result = await window.dsGui.setMcpConfigFile(next)
         setMcpConfigText(next)
@@ -219,7 +223,9 @@ export function ConnectorsView({
           return filtered
         })
         setNotice({ tone: 'success', message: t('connectorDeleted', { name: connector.name, path: result.path }) })
-        void reloadMcpWithRuntime(readMcpConfig).catch(() => undefined)
+        void reloadMcpWithRuntime(readMcpConfig).then((result) => {
+          if (!result.runtime) setNotice({ tone: 'info', message: tSettings('mcpReloadDiskOnly') })
+        }).catch((error) => setNotice({ tone: 'error', message: String(error) }))
       })
     } catch (e) {
       setNotice({ tone: 'error', message: e instanceof Error ? e.message : String(e) })
@@ -234,11 +240,13 @@ export function ConnectorsView({
     setNotice(null)
     try {
       await withMcpWriteLock(async () => {
-        const content = mcpLoaded ? mcpConfigText : await readMcpConfig()
+        const content = await readMcpConfig()
         const next = setMcpServerEnabled(content, connector.id, enabled)
         await window.dsGui.setMcpConfigFile(next)
         setMcpConfigText(next)
-        void reloadMcpWithRuntime(readMcpConfig).catch(() => undefined)
+        void reloadMcpWithRuntime(readMcpConfig).then((result) => {
+          if (!result.runtime) setNotice({ tone: 'info', message: tSettings('mcpReloadDiskOnly') })
+        }).catch((error) => setNotice({ tone: 'error', message: String(error) }))
       })
     } catch (e) {
       setNotice({ tone: 'error', message: e instanceof Error ? e.message : String(e) })
@@ -300,7 +308,7 @@ export function ConnectorsView({
           )
         : null}
 
-      {notice ? <NoticeView notice={notice} /> : null}
+      {notice ? <NoticeView notice={notice} onDismiss={() => setNotice(null)} /> : null}
 
       <div className="mt-6">
         <InstalledConnectorsPanel

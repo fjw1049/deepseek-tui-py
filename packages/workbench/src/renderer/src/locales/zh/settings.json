@@ -632,5 +632,15 @@
   "dataDeleteAndExitConfirm2": "再次确认：将清除 GUI 设置（~/.deepseek/settings.json）与 ~/.deepseek/caches 下的缓存及 Electron 缓存并立即退出，此操作不可撤销。",
   "dataDeleteAndExitFailed": "删除本机数据失败",
   "visionHelper": "视觉辅助模型",
-  "visionHelperHint": "主模型无法看图时，使用此模型分析图片。"
+  "visionHelperHint": "主模型无法看图时，使用此模型分析图片。",
+  "settingsSaveFailedRetained": "设置保存失败，修改仍保留在当前页面。",
+  "settingsRetrySave": "重试保存",
+  "settingsUnsavedTitle": "设置尚未保存",
+  "settingsUnsavedBody": "保存未完成。你可以继续编辑并重试，或放弃未保存的修改后返回。",
+  "settingsDiscardAndLeave": "放弃修改并返回",
+  "settingsKeepEditing": "继续编辑",
+  "dataImportChooseTitle": "选择导入方式",
+  "dataImportChooseBody": "合并会跳过已有对话；替换会用导入内容替换现有对话。取消不会更改任何数据。",
+  "dataImportMerge": "合并导入",
+  "dataImportReplace": "替换现有对话"
 }

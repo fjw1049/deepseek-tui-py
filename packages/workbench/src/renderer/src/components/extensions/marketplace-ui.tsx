@@ -187,7 +187,8 @@ export function MarketplaceDocMarkdown({ content }: { content: string }): ReactE
   )
 }
 
-export function NoticeView({ notice }: { notice: Notice }): ReactElement {
+export function NoticeView({ notice, onDismiss }: { notice: Notice; onDismiss?: () => void }): ReactElement {
+  const { t } = useTranslation('common')
   const className =
     notice.tone === 'error'
       ? 'border-red-300/80 bg-red-50 text-red-800 dark:border-red-800/70 dark:bg-red-950/25 dark:text-red-200'
@@ -195,6 +196,9 @@ export function NoticeView({ notice }: { notice: Notice }): ReactElement {
         ? 'border-emerald-300/80 bg-emerald-50 text-emerald-800 dark:border-emerald-800/70 dark:bg-emerald-950/25 dark:text-emerald-200'
         : 'border-ds-border bg-ds-subtle text-ds-muted'
   return (
-    <div className={`mt-4 rounded-xl border px-3 py-2 text-[13px] leading-5 ${className}`}>{notice.message}</div>
+    <div role={notice.tone === 'error' ? 'alert' : 'status'} className={`mt-4 flex items-start gap-3 rounded-xl border px-3 py-2 text-[13px] leading-5 ${className}`}>
+      <span className="min-w-0 flex-1 break-words">{notice.message}</span>
+      {onDismiss ? <button type="button" className="shrink-0 underline" onClick={onDismiss}>{t('dismissNotice')}</button> : null}
+    </div>
   )
 }

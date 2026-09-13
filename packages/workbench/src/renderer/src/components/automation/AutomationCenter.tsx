@@ -137,6 +137,7 @@ export function AutomationCenter({
   const [templateBusy, setTemplateBusy] = useState<string | null>(null)
   const [allRuns, setAllRuns] = useState<AnnotatedRun[]>([])
   const [allRunsLoading, setAllRunsLoading] = useState(false)
+  const [allRunsError, setAllRunsError] = useState<string | null>(null)
   const [channelDelivery, setChannelDelivery] = useState<ChannelDeliveryState | null>(null)
 
   const selected = rows.find((row) => row.id === selectedId) ?? null
@@ -243,36 +244,34 @@ export function AutomationCenter({
     async (opts?: { notify?: boolean }) => {
       if (!rows.length) {
         setAllRuns([])
+        setAllRunsError(null)
         return
       }
       setAllRunsLoading(true)
       try {
         const nameMap = new Map(rows.map((r) => [r.id, r.name]))
+        const results = await Promise.allSettled(rows.map((row) => listAutomationRuns(row.id, 10)))
+        const failedIds = new Set<string>()
         const collected: AnnotatedRun[] = []
-        await Promise.all(
-          rows.map(async (row) => {
-            try {
-              const batch = await listAutomationRuns(row.id, 10)
-              collected.push(
-                ...batch.map((r) => ({
-                  ...r,
-                  automationName: nameMap.get(r.automation_id) || '—'
-                }))
-              )
-            } catch {
-              /* skip automations whose runs can't be fetched */
-            }
-          })
-        )
-        collected.sort(
-          (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-        )
-        setAllRuns(collected.slice(0, 100))
-        if (opts?.notify) {
-          setNotice({ tone: 'success', message: t('listReloaded') })
-        }
-      } catch {
-        setAllRuns([])
+        results.forEach((result, index) => {
+          if (result.status === 'rejected') {
+            failedIds.add(rows[index].id)
+          } else {
+            collected.push(...result.value.map((run) => ({
+              ...run, automationName: nameMap.get(run.automation_id) || '—'
+            })))
+          }
+        })
+        setAllRuns((previous) => [...collected, ...previous.filter((run) => failedIds.has(run.automation_id))]
+          .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+          .slice(0, 100))
+        setAllRunsError(failedIds.size > 0
+          ? t('automationRunsPartialFailure', { failed: failedIds.size, total: rows.length }) : null)
+        if (failedIds.size > 0) setNotice(null)
+        else if (opts?.notify) setNotice({ tone: 'success', message: t('listReloaded') })
+      } catch (error) {
+        setAllRunsError(error instanceof Error ? error.message : String(error))
+
       } finally {
         setAllRunsLoading(false)
       }
@@ -308,7 +307,7 @@ export function AutomationCenter({
   }, [tab, fetchAllRuns])
 
   useEffect(() => {
-    if (!notice) return
+    if (!notice || notice.tone === 'error') return
     const timer = window.setTimeout(() => setNotice(null), 10000)
     return () => window.clearTimeout(timer)
   }, [notice])
@@ -441,7 +440,7 @@ export function AutomationCenter({
       <div className="mt-4 shrink-0 px-8">
         <div className="mx-auto max-w-6xl">
           <div
-            role={notice ? 'status' : undefined}
+            role={notice?.tone === 'error' ? 'alert' : notice ? 'status' : undefined}
             className={`flex items-center gap-2 rounded-lg px-3 py-2.5 text-[12px] ${
               notice?.tone === 'error'
                 ? 'bg-red-500/10 text-red-700 dark:text-red-200'
@@ -676,12 +675,13 @@ export function AutomationCenter({
                   <RefreshCw className={`h-4 w-4 ${allRunsLoading ? 'animate-spin' : ''}`} />
                 </button>
               </div>
+              {allRunsError ? <p role="alert" className="mb-3 rounded-lg bg-red-500/10 p-3 text-[13px] text-red-700 dark:text-red-200">{allRunsError}</p> : null}
               {allRunsLoading && allRuns.length === 0 ? (
                 <div className="flex items-center justify-center gap-2 py-16 text-[13px] text-ds-muted">
                   <Loader2 className="h-4 w-4 animate-spin" />
                   {t('automationLoading')}
                 </div>
-              ) : allRuns.length === 0 ? (
+              ) : allRuns.length === 0 && allRunsError ? null : allRuns.length === 0 ? (
                 <div className="py-16 text-center text-[13px] text-ds-muted">
                   {t('automationAllRunsEmpty')}
                 </div>

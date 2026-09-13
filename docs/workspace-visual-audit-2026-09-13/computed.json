@@ -1,0 +1,52 @@
+{
+  "light": {
+    "tree": {
+      "height": 40,
+      "fontSize": "15px",
+      "lineHeight": "23.25px",
+      "opacity": "1",
+      "background": "rgba(0, 0, 0, 0)",
+      "wordBreak": "normal",
+      "whiteSpace": "normal"
+    },
+    "tabs": {
+      "height": 28,
+      "fontSize": "15px",
+      "lineHeight": "23.25px",
+      "opacity": "1",
+      "background": "rgb(255, 255, 255)",
+      "wordBreak": "normal",
+      "whiteSpace": "normal"
+    },
+    "close": {
+      "height": 20,
+      "fontSize": "15px",
+      "lineHeight": "23.25px",
+      "opacity": "0",
+      "background": "rgba(0, 0, 0, 0)",
+      "wordBreak": "normal",
+      "whiteSpace": "normal"
+    },
+    "code": {
+      "height": 89,
+      "fontSize": "15px",
+      "lineHeight": "21.75px",
+      "opacity": "1",
+      "background": "rgba(0, 0, 0, 0)",
+      "wordBreak": "break-all",
+      "whiteSpace": "pre-wrap"
+    }
+  },
+  "dark": {
+    "close": {
+      "height": 20,
+      "fontSize": "15px",
+      "lineHeight": "23.25px",
+      "opacity": "0",
+      "background": "rgba(0, 0, 0, 0)",
+      "wordBreak": "normal",
+      "whiteSpace": "normal"
+    }
+  },
+  "missingAlphaHoverRule": true
+}

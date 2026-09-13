@@ -21,7 +21,8 @@ import {
   type WorkspaceMonacoThemeName
 } from '../../lib/monaco-editor-setup'
 import { languageForPath } from '../../lib/monaco-language-for-path'
-import type { EditorTab } from '../../store/workspace-editor-store'
+import { workspaceModelPath, pruneClosedWorkspaceModels } from '../../lib/workspace-monaco-models'
+import type { EditorPaneId, EditorTab } from '../../store/workspace-editor-store'
 import { EditorListSkeleton } from './EditorListSkeleton'
 
 ensureMonacoConfigured()
@@ -33,6 +34,7 @@ export type WorkspaceEditorSurfaceHandle = {
 }
 
 type Props = {
+  paneId: EditorPaneId
   tab: EditorTab
   patch?: string
   readOnly: boolean
@@ -44,13 +46,14 @@ type Props = {
 
 export const WorkspaceEditorSurface = forwardRef<WorkspaceEditorSurfaceHandle, Props>(
   function WorkspaceEditorSurface(
-    { tab, patch, readOnly, onChange, openFindOnReady = false, onQuoteSelection },
+    { paneId, tab, patch, readOnly, onChange, openFindOnReady = false, onQuoteSelection },
     ref
   ): ReactElement {
     const hostRef = useRef<HTMLDivElement>(null)
     const editorRef = useRef<MonacoEditor.IStandaloneCodeEditor | null>(null)
     const cleanupRef = useRef<(() => void) | null>(null)
     const pendingFindRef = useRef(false)
+    const revealedRequestsRef = useRef(new Map<string, string>())
     const [editorReady, setEditorReady] = useState(false)
     const [monacoTheme, setMonacoTheme] = useState<WorkspaceMonacoThemeName>(() =>
       workspaceMonacoTheme(false)
@@ -105,8 +108,9 @@ export const WorkspaceEditorSurface = forwardRef<WorkspaceEditorSurfaceHandle, P
       editor.layout()
     }, [patch])
 
+    useEffect(() => pruneClosedWorkspaceModels, [])
+
     useEffect(() => {
-      setEditorReady(false)
       cleanupRef.current?.()
       cleanupRef.current = null
     }, [tab.id])
@@ -114,6 +118,16 @@ export const WorkspaceEditorSurface = forwardRef<WorkspaceEditorSurfaceHandle, P
     useEffect(() => {
       editorRef.current?.updateOptions({ readOnly })
     }, [readOnly])
+
+    useEffect(() => {
+      const editor = editorRef.current
+      const model = editor?.getModel()
+      if (!editorReady || !editor || !model || model.getValue() === tab.content) return
+      // The React wrapper's controlled read-only value resets the cursor even
+      // when a retained model already contains that value. Sync actual changes only.
+      if (readOnly) model.setValue(tab.content)
+      else editor.executeEdits('workspace-sync', [{ range: model.getFullModelRange(), text: tab.content }])
+    }, [editorReady, tab.id, tab.content, readOnly])
 
     useEffect(() => {
       const node = hostRef.current
@@ -137,20 +151,21 @@ export const WorkspaceEditorSurface = forwardRef<WorkspaceEditorSurfaceHandle, P
         cleanupRef.current?.()
         cleanupRef.current = null
       }
-    }, [editorReady, syncHighlights, tab.loading, patch])
+    }, [editorReady, syncHighlights, tab.loading, patch, tab.id])
 
     // Monaco measures glyphs independently of the surrounding UI CSS.
     useEffect(() => {
       if (!editorReady) return
-      const syncFont = (): void => {
+      const syncAppearance = (): void => {
+        setMonacoTheme(workspaceMonacoTheme(Boolean(hostRef.current?.closest('.ds-ide-workspace'))))
         const fontFamily = getComputedStyle(document.documentElement)
           .getPropertyValue('--font-mono')
           .trim()
         editorRef.current?.updateOptions({ fontFamily })
       }
-      syncFont()
-      const unsubscribe = subscribeAppearance(syncFont)
-      const observer = new MutationObserver(syncFont)
+      syncAppearance()
+      const unsubscribe = subscribeAppearance(syncAppearance)
+      const observer = new MutationObserver(syncAppearance)
       observer.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] })
       return () => {
         unsubscribe()
@@ -165,6 +180,8 @@ export const WorkspaceEditorSurface = forwardRef<WorkspaceEditorSurfaceHandle, P
       if (!editorReady || tab.loading) return
       const line = tab.line
       if (typeof line !== 'number' || !Number.isFinite(line) || line < 1) return
+      const request = `${tab.revealNonce ?? 0}:${line}:${tab.column ?? 1}`
+      if (revealedRequestsRef.current.get(tab.id) === request) return
       const editor = editorRef.current
       if (!editor) return
       let cancelled = false
@@ -175,6 +192,7 @@ export const WorkspaceEditorSurface = forwardRef<WorkspaceEditorSurfaceHandle, P
         const target = Math.min(Math.max(1, Math.floor(line)), model.getLineCount())
         editor.revealLineInCenter(target)
         editor.setPosition({ lineNumber: target, column: tab.column ?? 1 })
+        revealedRequestsRef.current.set(tab.id, request)
       }
       // Defer past Monaco's controlled `value` sync + layout. Otherwise the
       // model rewrite after loading snaps the viewport back to line 1.
@@ -246,13 +264,14 @@ export const WorkspaceEditorSurface = forwardRef<WorkspaceEditorSurfaceHandle, P
           </button>
         ) : null}
         <Editor
-          key={tab.id}
+          path={workspaceModelPath(tab.id, paneId)}
+          keepCurrentModel
           height="100%"
           width="100%"
           wrapperProps={{ className: 'absolute inset-0 overflow-hidden' }}
           theme={monacoTheme}
           language={languageForPath(tab.path)}
-          value={tab.content}
+          defaultValue={tab.content}
           onChange={readOnly ? undefined : (value) => onChange(value ?? '')}
           onMount={(editor) => {
             editorRef.current = editor
@@ -274,6 +293,8 @@ export const WorkspaceEditorSurface = forwardRef<WorkspaceEditorSurfaceHandle, P
               seedSearchStringFromSelection: 'always'
             },
             minimap: { enabled: false },
+            showUnused: false,
+            bracketPairColorization: { enabled: false },
             // Side-panel editor is short; sticky scope headers read as a heavy
             // "black bar" in dark theme (vs-dark shadow + widget bg).
             stickyScroll: { enabled: false },
@@ -281,13 +302,15 @@ export const WorkspaceEditorSurface = forwardRef<WorkspaceEditorSurfaceHandle, P
             hideCursorInOverviewRuler: true,
             overviewRulerBorder: false,
             glyphMargin: false,
-            lineDecorationsWidth: 0,
+            lineDecorationsWidth: 12,
+            lineNumbersMinChars: 3,
+            renderLineHighlight: readOnly ? 'none' : 'line',
             fontSize: 15,
-            lineHeight: 20,
+            lineHeight: 23,
             scrollBeyondLastLine: false,
             automaticLayout: false,
-            wordWrap: 'off',
-            padding: { top: 8 },
+            wordWrap: languageForPath(tab.path) === 'plaintext' ? 'on' : 'off',
+            padding: { top: 12, bottom: 12 },
             scrollbar: {
               vertical: 'auto',
               horizontal: 'auto',

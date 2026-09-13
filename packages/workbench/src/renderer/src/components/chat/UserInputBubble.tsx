@@ -128,7 +128,8 @@ function PendingUserInputCard({ block }: { block: UserInputBlock }): ReactElemen
     answersByQuestionId(block.answers)
   )
   const [step, setStep] = useState(0)
-  const [submitting, setSubmitting] = useState(false)
+  const [localSubmitting, setSubmitting] = useState(false)
+  const submitting = localSubmitting || Boolean(block.submitting)
   const autoAdvanceTimer = useRef<number | undefined>(undefined)
 
   const total = block.questions.length
@@ -194,7 +195,7 @@ function PendingUserInputCard({ block }: { block: UserInputBlock }): ReactElemen
     void resolveUserInput(block.id, {
       kind: 'submit',
       answers: block.questions.map((q) => answers[q.id]).filter(Boolean)
-    })
+    }).finally(() => setSubmitting(false))
   }
 
   const cancel = (): void => {

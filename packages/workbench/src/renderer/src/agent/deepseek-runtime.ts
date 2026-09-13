@@ -196,6 +196,7 @@ type TurnRecordJson = {
   ended_at?: string | null
   duration_ms?: number | null
   end_to_end_ms?: number | null
+  error?: string | null
   diff_snapshot?: unknown
 }
 
@@ -864,6 +865,15 @@ export class DeepseekRuntimeProvider implements AgentProvider {
     }
   }
 
+  async fetchPendingElevations(threadId: string): Promise<ElevationRequestPayload[]> {
+    const result = await window.dsGui.runtimeRequest(
+      `/v1/elevations/pending?thread_id=${encodeURIComponent(threadId)}`, 'GET'
+    )
+    if (!result.ok) throw toRuntimeError(readRuntimeError(result.body, 'Failed to check pending elevations'))
+    const rows = JSON.parse(result.body) as Array<Record<string, unknown>>
+    return rows.map(elevationPayloadFromRecord).filter((row): row is ElevationRequestPayload => row !== null)
+  }
+
   async fetchPendingApprovals(threadId: string): Promise<ApprovalRequestPayload[]> {
     const r = await window.dsGui.runtimeRequest(
       `/v1/approvals/pending?thread_id=${encodeURIComponent(threadId)}`,
@@ -1054,6 +1064,7 @@ export class DeepseekRuntimeProvider implements AgentProvider {
     blocks: ChatBlock[]
     latestSeq: number
     threadStatus?: string
+    latestTurnOutcome?: 'completed' | 'failed' | 'cancelled'
     latestTurnId?: string
     latestUserMessageId?: string
     turnStartedAtByUserId?: Record<string, number>
@@ -1199,7 +1210,7 @@ export class DeepseekRuntimeProvider implements AgentProvider {
       } else if (TOOL_ITEM_KINDS.has(it.kind)) {
         blocks.push(toolBlockFromItem(it))
       } else if (it.kind === 'error') {
-        blocks.push({ kind: 'system', id: it.id, createdAt: itemCreatedAt(it), text: `⚠ ${it.detail ?? it.summary}` })
+        blocks.push({ kind: 'system', id: it.id, createdAt: itemCreatedAt(it), text: it.detail ?? it.summary ?? '', severity: 'error' })
       } else if (isSubagentMailboxItem(it)) {
         const mailbox = readSubagentMailboxFromItem(it)
         if (mailbox) {
@@ -1222,6 +1233,18 @@ export class DeepseekRuntimeProvider implements AgentProvider {
         blocks.push({ kind: 'system', id: it.id, createdAt: itemCreatedAt(it), text })
       }
     }
+    for (const turn of detail.turns ?? []) {
+      if (!turn.error?.trim()) continue
+      const items = detail.items.filter((item) => item.turn_id === turn.id)
+      if (items.some((item) => item.kind === 'error' && (item.detail ?? item.summary) === turn.error)) continue
+      const ids = new Set(items.map((item) => item.id))
+      let last = -1
+      blocks.forEach((block, index) => { if (ids.has(block.id)) last = index })
+      blocks.splice(last < 0 ? blocks.length : last + 1, 0, {
+        kind: 'system', id: `turn-error-${turn.id}`, text: turn.error,
+        severity: 'error', createdAt: turn.ended_at ?? undefined
+      })
+    }
     // History may lack mailbox ``started.prompt``; spawn tool rows still carry it.
     blocks = applySpawnPromptsToSubagentBlocks(blocks)
     blocks = collapseDuplicateUserInputBlocks(blocks)
@@ -1229,6 +1252,8 @@ export class DeepseekRuntimeProvider implements AgentProvider {
       blocks,
       latestSeq: detail.latest_seq ?? 0,
       threadStatus: detail.thread.status ?? latestTurnStatus,
+      latestTurnOutcome: latestTurn?.error || latestTurnStatus === 'failed' ? 'failed'
+        : ['cancelled', 'canceled', 'interrupted'].includes(latestTurnStatus ?? '') ? 'cancelled' : 'completed',
       latestTurnId,
       latestUserMessageId,
       turnStartedAtByUserId,
@@ -1796,7 +1821,7 @@ export class DeepseekRuntimeProvider implements AgentProvider {
                   const text = (it.detail ?? it.summary ?? 'error').trim()
                   if (text) {
                     if (sink.onSystemStatus) {
-                      sink.onSystemStatus(text, it.id)
+                      sink.onSystemStatus(text, it.id, 'error')
                     } else {
                       sink.onError(new Error(text))
                     }
@@ -1947,12 +1972,14 @@ export class DeepseekRuntimeProvider implements AgentProvider {
                   const turnId =
                     typeof turn?.id === 'string' && turn.id.trim() ? turn.id.trim() : 'unknown'
                   if (sink.onSystemStatus) {
-                    sink.onSystemStatus(turnError, `turn-error-${turnId}`)
+                    sink.onSystemStatus(turnError, `turn-error-${turnId}`, 'error')
                   } else {
                     sink.onError(new Error(turnError))
                   }
                 }
                 sink.onTurnComplete({
+                  status: turnError || turn?.status === 'failed' ? 'failed'
+                    : ['cancelled', 'canceled', 'interrupted'].includes(String(turn?.status)) ? 'cancelled' : 'completed',
                   threadId:
                     typeof turn?.thread_id === 'string'
                       ? turn.thread_id

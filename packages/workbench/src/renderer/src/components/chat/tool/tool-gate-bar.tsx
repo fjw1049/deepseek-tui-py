@@ -32,9 +32,7 @@ function ApprovalActions({ block }: { block: ApprovalGate }): ReactElement {
     (decision: 'allow' | 'deny', remember = false) => {
       if (submitting) return
       setSubmitting(true)
-      void resolveApproval(block.id, decision, remember).then((started) => {
-        if (!started) setSubmitting(false)
-      })
+      void resolveApproval(block.id, decision, remember).finally(() => setSubmitting(false))
     },
     [block.id, resolveApproval, submitting]
   )
@@ -46,7 +44,7 @@ function ApprovalActions({ block }: { block: ApprovalGate }): ReactElement {
       <div className="mt-2 flex flex-wrap items-center gap-1.5">
         <button
           type="button"
-          disabled={submitting}
+          disabled={submitting || block.submitting}
           className="rounded-xl bg-ds-ink px-3 py-1.5 text-[12px] font-medium text-ds-canvas transition active:scale-[0.97] disabled:pointer-events-none disabled:opacity-50"
           onClick={() => submit('allow', false)}
         >
@@ -54,7 +52,7 @@ function ApprovalActions({ block }: { block: ApprovalGate }): ReactElement {
         </button>
         <button
           type="button"
-          disabled={submitting}
+          disabled={submitting || block.submitting}
           className="rounded-xl border border-ds-border bg-ds-card px-3 py-1.5 text-[12px] font-medium text-ds-ink transition hover:bg-ds-hover active:scale-[0.97] disabled:pointer-events-none disabled:opacity-50"
           onClick={() => submit('allow', true)}
         >
@@ -62,7 +60,7 @@ function ApprovalActions({ block }: { block: ApprovalGate }): ReactElement {
         </button>
         <button
           type="button"
-          disabled={submitting}
+          disabled={submitting || block.submitting}
           className="rounded-xl px-3 py-1.5 text-[12px] font-medium text-ds-muted transition hover:bg-ds-hover hover:text-ds-ink disabled:pointer-events-none disabled:opacity-50"
           onClick={() => submit('deny')}
         >
@@ -85,7 +83,7 @@ function ElevationActions({ block }: { block: ElevationGate }): ReactElement {
       <div className="mt-2 flex flex-wrap items-center gap-1.5">
         <button
           type="button"
-          disabled={submitting}
+          disabled={submitting || block.submitting}
           className="rounded-xl bg-accent px-3 py-1.5 text-[12px] font-medium text-white transition hover:brightness-[1.06] disabled:pointer-events-none disabled:opacity-50"
           onClick={() => {
             if (submitting) return
@@ -97,7 +95,7 @@ function ElevationActions({ block }: { block: ElevationGate }): ReactElement {
         </button>
         <button
           type="button"
-          disabled={submitting}
+          disabled={submitting || block.submitting}
           className="rounded-xl px-3 py-1.5 text-[12px] font-medium text-ds-muted transition hover:bg-ds-hover hover:text-ds-ink disabled:pointer-events-none disabled:opacity-50"
           onClick={() => {
             if (submitting) return

@@ -48,7 +48,7 @@ export function SettingsSidebarNav(): ReactElement {
   const openSettings = useChatStore((s) => s.openSettings)
 
   return (
-    <div className="ds-no-drag flex min-h-0 flex-1 flex-col">
+    <div className="ds-settings-sidebar-nav ds-no-drag flex min-h-0 flex-1 flex-col">
       <div className="shrink-0 px-1 pb-2">
         <button
           type="button"

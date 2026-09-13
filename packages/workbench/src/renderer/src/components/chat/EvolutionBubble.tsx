@@ -48,13 +48,15 @@ export function EvolutionBubble({ block }: { block: EvolutionBlock }): ReactElem
         <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-ds-border-muted pt-2.5">
           <button
             type="button"
+            disabled={block.submitting}
             className="rounded-[10px] bg-accent px-3.5 py-1.5 text-[13px] font-medium text-white shadow-sm transition hover:brightness-[1.06] active:brightness-95"
             onClick={() => void resolveEvolution(block.id, 'approve')}
           >
-            {t('evolutionApprove')}
+            {t(block.submitting ? 'approvalApproving' : 'evolutionApprove')}
           </button>
           <button
             type="button"
+            disabled={block.submitting}
             className="rounded-[10px] px-3 py-1.5 text-[13px] font-medium text-ds-muted transition hover:bg-ds-hover hover:text-ds-ink"
             onClick={() => void resolveEvolution(block.id, 'reject')}
           >

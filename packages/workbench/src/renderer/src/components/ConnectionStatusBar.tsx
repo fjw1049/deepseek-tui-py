@@ -73,11 +73,12 @@ export function ConnectionStatusBar({ compact = false }: Props): ReactElement | 
           : 'bg-ds-faint'
 
   const showRetry =
-    (runtimeConnection === 'offline' || runtimeConnection === 'idle') && activeThreadId !== null
+    runtimeConnection === 'offline' || runtimeConnection === 'idle'
 
   if (compact) {
     return (
       <div
+        role="status"
         className={`ds-no-drag inline-flex h-6 max-w-[min(190px,30vw)] shrink-0 items-center gap-1 ${barTone}`}
       >
         <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${dotClass}`} aria-hidden />
@@ -97,6 +98,7 @@ export function ConnectionStatusBar({ compact = false }: Props): ReactElement | 
 
   return (
     <div
+      role="status"
       className={`ds-no-drag inline-flex h-11 shrink-0 items-center gap-3 rounded-full border border-ds-border px-4 text-[13px] shadow-sm ${barTone}`}
     >
       <span className="flex min-w-0 items-center gap-2.5">

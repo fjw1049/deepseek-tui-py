@@ -340,7 +340,7 @@ export function PluginsView({
           )
         : null}
 
-      {notice ? <NoticeView notice={notice} /> : null}
+      {notice ? <NoticeView notice={notice} onDismiss={() => setNotice(null)} /> : null}
 
       <div className="mt-6">
         <InstalledPluginsPanel

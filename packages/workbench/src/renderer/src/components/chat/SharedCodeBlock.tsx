@@ -208,7 +208,7 @@ function renderFallbackHtml(code: string): string {
     .join('\n')}</code></pre>`
 }
 
-async function highlightCodeHtml(code: string, language: string): Promise<string> {
+export async function highlightCodeHtml(code: string, language: string): Promise<string> {
   const normalized = normalizeLanguage(language)
   const cacheKey = `${normalized || 'plain'}\u0000${code}`
   const cached = highlightCache.get(cacheKey)

@@ -1,5 +1,6 @@
 import type {
   ChatBlock,
+  ElevationRequestPayload,
   UserInputQuestion,
   UserMessageEventPayload
 } from '../agent/types'
@@ -41,6 +42,14 @@ export function mergePendingUserInputBlocks(
   pending: PendingUserInputPayload[]
 ): { blocks: ChatBlock[]; firstAddedBlockId: string | null } {
   if (!pending.length) return { blocks, firstAddedBlockId: null }
+  const pendingIds = new Set(pending.map((item) => item.requestId))
+  let recovered = false
+  const restored = blocks.map((block): ChatBlock => {
+    if (block.kind !== 'user_input' || block.status !== 'error' || !pendingIds.has(block.requestId)) return block
+    recovered = true
+    return { ...block, status: 'pending', submissionFailed: false, submitting: false }
+  })
+  if (recovered) blocks = restored
   const existing = new Set(
     blocks
       .filter((block) => block.kind === 'user_input')
@@ -86,6 +95,14 @@ export function mergePendingApprovalBlocks(
   pending: PendingApprovalPayload[]
 ): { blocks: ChatBlock[]; firstAddedBlockId: string | null } {
   if (!pending.length) return { blocks, firstAddedBlockId: null }
+  const pendingIds = new Set(pending.map((item) => item.approvalId))
+  let recovered = false
+  const restored = blocks.map((block): ChatBlock => {
+    if (block.kind !== 'approval' || block.status !== 'error' || !pendingIds.has(block.approvalId)) return block
+    recovered = true
+    return { ...block, status: 'pending', submissionFailed: false, submitting: false }
+  })
+  if (recovered) blocks = restored
   const existing = new Set(
     blocks
       .filter((block) => block.kind === 'approval')
@@ -119,6 +136,25 @@ export function mergePendingApprovalBlocks(
   }
 }
 
+export function mergePendingElevationBlocks(
+  blocks: ChatBlock[], pending: ElevationRequestPayload[]
+): { blocks: ChatBlock[]; firstAddedBlockId: string | null } {
+  let next = blocks
+  let firstAddedBlockId: string | null = null
+  for (const item of pending) {
+    const existing = next.find((block) => block.kind === 'elevation' && block.elevationId === item.elevationId)
+    if (existing?.kind === 'elevation') {
+      if (existing.status === 'error') next = next.map((block) => block === existing
+        ? { ...existing, status: 'pending', submitting: false, submissionFailed: false } : block)
+    } else {
+      const id = `elevation-${item.elevationId}`
+      next = [...next, { ...item, kind: 'elevation', id, status: 'pending' }]
+      firstAddedBlockId ??= id
+    }
+  }
+  return { blocks: next, firstAddedBlockId }
+}
+
 export type PendingEvolutionPayload = {
   recordId: string
   kind: string
@@ -131,6 +167,14 @@ export function mergePendingEvolutionBlocks(
   pending: PendingEvolutionPayload[]
 ): { blocks: ChatBlock[]; firstAddedBlockId: string | null } {
   if (!pending.length) return { blocks, firstAddedBlockId: null }
+  const pendingIds = new Set(pending.map((item) => item.recordId))
+  let recovered = false
+  const restored = blocks.map((block): ChatBlock => {
+    if (block.kind !== 'evolution' || block.status !== 'error' || !pendingIds.has(block.recordId)) return block
+    recovered = true
+    return { ...block, status: 'pending', submissionFailed: false, submitting: false }
+  })
+  if (recovered) blocks = restored
   const existing = new Set(
     blocks
       .filter((block) => block.kind === 'evolution')
