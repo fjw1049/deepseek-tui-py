@@ -1,6 +1,0 @@
-{
-  "baselineErrors": 25,
-  "currentErrors": 23,
-  "newSignaturesFromThisChange": [],
-  "method": "Same frozen source snapshot; only this task implementation restored to HEAD for comparison."
-}
