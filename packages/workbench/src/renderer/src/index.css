@@ -311,7 +311,6 @@ html,
 #root,
 .ds-app-root {
   font-family: var(--font-ui);
-  -webkit-font-smoothing: antialiased;
   font-synthesis: none;
 }
 
@@ -842,7 +841,6 @@ html,
 .ds-workbench-topbar,
 .ds-session-header {
   font-family: var(--font-ui);
-  -webkit-font-smoothing: antialiased;
   font-synthesis: none;
 }
 
@@ -856,7 +854,6 @@ body {
   background-color: var(--ds-bg-main);
   color: var(--ds-text);
   zoom: var(--ds-ui-scale);
-  -webkit-font-smoothing: antialiased;
   font-synthesis: none;
 }
 
@@ -883,7 +880,6 @@ option {
   font-size: inherit;
   font-weight: inherit;
   line-height: inherit;
-  -webkit-font-smoothing: antialiased;
   font-synthesis: none;
 }
 
@@ -892,7 +888,6 @@ pre,
 kbd,
 samp {
   font-family: var(--font-mono);
-  -webkit-font-smoothing: antialiased;
   font-synthesis: none;
 }
 
@@ -1136,7 +1131,6 @@ samp {
     0 8px 28px -12px rgba(15, 23, 42, 0.14),
     0 1px 2px rgba(0, 0, 0, 0.04);
   font-family: var(--font-ui);
-  -webkit-font-smoothing: antialiased;
 }
 
 .ds-workspace-context-bar--embedded {
@@ -1186,7 +1180,6 @@ samp {
   line-height: 1.25;
   letter-spacing: 0.01em;
   color: var(--ds-text-muted);
-  -webkit-font-smoothing: antialiased;
   transition:
     color 120ms ease,
     background-color 120ms ease,
@@ -1349,10 +1342,15 @@ samp {
   margin-left: 5px;
   flex-shrink: 0;
   border-radius: 999px;
+  animation: ds-dot-in 160ms ease-out both;
 }
 
-.ds-workspace-editor-tab__dirty {
-  background: var(--ds-accent);
+/* Icon marks (loading spinner / editing pencil) share the dirty dot's slot. */
+.ds-workspace-editor-tab__mark {
+  width: 10px;
+  height: 10px;
+  margin-left: 5px;
+  flex-shrink: 0;
 }
 
 .ds-workspace-editor-tab__changed {
@@ -1380,151 +1378,289 @@ samp {
   background-clip: padding-box;
 }
 
-.ds-workspace-file-tree__row--active {
-  color: color-mix(in srgb, var(--ds-accent) 42%, var(--ds-text));
+.ds-workspace-file-tree__scroll:hover::-webkit-scrollbar,
+.ds-workspace-file-tree__scroll:focus-within::-webkit-scrollbar {
+  width: 7px;
+  height: 7px;
+}
+
+.ds-workspace-file-tree__row--active,
+.ds-workspace-file-tree__row--active:hover {
+  color: var(--ds-text);
   background: color-mix(in srgb, var(--ds-text) 8%, transparent);
-  box-shadow: inset 2px 0 0 color-mix(in srgb, var(--ds-accent) 72%, transparent);
   font-weight: 500;
 }
 
-.ds-workspace-file-tree__row--active:hover {
-  background: color-mix(in srgb, var(--ds-text) 11%, transparent);
+/* Folder branches: height-animated expand/collapse via the grid 0fr -> 1fr trick.
+   Children stay mounted while collapsed so both directions animate. */
+.ds-tree-branch {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 180ms ease-out;
 }
 
-[data-theme='dark'] .ds-workspace-file-tree__row--active {
-  color: color-mix(in srgb, var(--ds-accent) 36%, #ffffff);
-  background: color-mix(in srgb, var(--ds-text) 10%, transparent);
-  box-shadow: inset 2px 0 0 color-mix(in srgb, var(--ds-accent) 68%, transparent);
+.ds-tree-branch[data-open] {
+  grid-template-rows: 1fr;
 }
 
-[data-theme='dark'] .ds-workspace-file-tree__row--active:hover {
-  background: color-mix(in srgb, var(--ds-text) 14%, transparent);
+.ds-tree-branch__inner {
+  position: relative;
+  min-height: 0;
+  overflow: hidden;
+  visibility: hidden;
+  transition: visibility 0s linear 180ms;
 }
 
-/* Editor tab strip — idle vs active must be obvious (was nearly identical greys). */
+.ds-tree-branch[data-open] .ds-tree-branch__inner {
+  visibility: visible;
+  transition: visibility 0s;
+}
+
+/* Per-level indent guide, aligned just left of the child rows' chevron column. */
+.ds-tree-branch__inner::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: var(--ds-tree-guide, 8px);
+  width: 1px;
+  background: color-mix(in srgb, var(--ds-text) 4%, transparent);
+}
+
+.ds-tree-branch__inner:hover::before,
+.ds-tree-branch__inner:focus-within::before {
+  background: color-mix(in srgb, var(--ds-text) 12%, transparent);
+}
+
+.ds-tree-folder { color: var(--ds-text-faint); }
+
+@media (prefers-reduced-motion: reduce) {
+  .ds-tree-branch,
+  .ds-tree-branch__inner {
+    transition: none;
+  }
+}
+
+/* Tree row: unsaved-changes dot (replaces the text character ●). */
+.ds-tree-dirty-dot {
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  margin-left: auto;
+  flex-shrink: 0;
+  border-radius: 999px;
+  background: var(--ds-accent);
+  animation: ds-dot-in 160ms ease-out both;
+}
+
+@keyframes ds-dot-in {
+  from {
+    opacity: 0;
+    transform: scale(0.4);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ds-tree-dirty-dot {
+    animation: none;
+  }
+}
+
+/* Newly created file: brief accent flash so the eye lands on it after refresh. */
+@keyframes ds-tree-row-flash {
+  from {
+    background-color: color-mix(in srgb, var(--ds-accent) 16%, transparent);
+  }
+  to {
+    background-color: transparent;
+  }
+}
+
+.ds-tree-row-flash {
+  animation: ds-tree-row-flash 1.8s ease-out both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ds-tree-row-flash {
+    animation: none;
+  }
+}
+
+/* Shared enter animation for floating menus / popovers (enter-only, no exit). */
+@keyframes ds-pop-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+}
+
+.ds-pop {
+  animation: ds-pop-in 140ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ds-pop {
+    animation: none;
+  }
+}
+
+/* App-styled tooltip chip (inverted surface, adapts to theme). */
+.ds-tooltip-chip {
+  position: fixed;
+  z-index: 200;
+  max-width: min(320px, calc(100vw - 16px));
+  padding: 4px 8px;
+  border-radius: 6px;
+  font-size: 11.5px;
+  line-height: 1.35;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--ds-bg-canvas);
+  background: color-mix(in srgb, var(--ds-text) 92%, transparent);
+  box-shadow: 0 6px 20px rgba(15, 23, 42, 0.18);
+  pointer-events: none;
+  animation: ds-tooltip-in 120ms ease-out both;
+}
+
+@keyframes ds-tooltip-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ds-tooltip-chip {
+    animation: none;
+  }
+}
+
+/* Popover exit: swap in `ds-pop-out` while the node lingers before unmount. */
+@keyframes ds-pop-out {
+  to {
+    opacity: 0;
+    transform: scale(0.97);
+  }
+}
+
+.ds-pop-out,
+.ds-change-source__menu.ds-pop-out,
+.ds-change-branch__menu.ds-pop-out {
+  animation: ds-pop-out 110ms ease-in both;
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ds-pop-out,
+  .ds-change-source__menu.ds-pop-out,
+  .ds-change-branch__menu.ds-pop-out {
+    animation: none;
+  }
+}
+
+/* Shared file chrome: one baseline across explorer, editor and changes. */
 .ds-workspace-editor-tabstrip {
-  padding: 0.375rem 0.375rem;
-}
-.ds-workspace-editor-tab {
-  border-radius: 8px;
-  border: 1px solid color-mix(in srgb, var(--ds-text) 10%, transparent);
-  background: color-mix(in srgb, var(--ds-text) 3%, transparent);
-  color: var(--ds-text-muted);
-  transition:
-    background-color 120ms ease,
-    border-color 120ms ease,
-    color 120ms ease;
-}
-
-.ds-workspace-editor-tab:hover {
-  border-color: color-mix(in srgb, var(--ds-text) 16%, transparent);
-  background: color-mix(in srgb, var(--ds-text) 6%, transparent);
-  color: var(--ds-text);
-}
-
-.ds-workspace-editor-tab--open {
-  border-color: color-mix(in srgb, var(--ds-text) 14%, transparent);
-  background: color-mix(in srgb, var(--ds-text) 7%, transparent);
-  color: var(--ds-text);
-}
-
-.ds-workspace-editor-tab--active {
-  border-color: color-mix(in srgb, var(--ds-accent) 40%, transparent);
-  background: color-mix(in srgb, var(--ds-accent) 14%, #ffffff);
-  color: color-mix(in srgb, var(--ds-accent) 48%, var(--ds-text));
-  font-weight: 600;
-  box-shadow: none;
-}
-
-.ds-workspace-editor-tab--active:hover {
-  background: color-mix(in srgb, var(--ds-accent) 18%, #ffffff);
-  border-color: color-mix(in srgb, var(--ds-accent) 50%, transparent);
-}
-
-.ds-workspace-editor-tab__close {
-  color: inherit;
-  opacity: 0.45;
-}
-
-.ds-workspace-editor-tab__close:hover {
-  opacity: 1;
-  background: color-mix(in srgb, var(--ds-text) 8%, transparent);
-}
-
-.ds-workspace-editor-tab--active .ds-workspace-editor-tab__close {
-  opacity: 0.65;
-}
-
-[data-theme='dark'] .ds-workspace-editor-tab {
-  border-color: color-mix(in srgb, #fff 10%, transparent);
-  background: color-mix(in srgb, #fff 4%, transparent);
-}
-
-[data-theme='dark'] .ds-workspace-editor-tab:hover {
-  border-color: color-mix(in srgb, #fff 16%, transparent);
-  background: color-mix(in srgb, #fff 8%, transparent);
-}
-
-[data-theme='dark'] .ds-workspace-editor-tab--open {
-  border-color: color-mix(in srgb, #fff 14%, transparent);
-  background: color-mix(in srgb, #fff 9%, transparent);
-}
-
-[data-theme='dark'] .ds-workspace-editor-tab--active {
-  border-color: color-mix(in srgb, var(--ds-accent) 48%, transparent);
-  background: color-mix(in srgb, var(--ds-accent) 24%, #2a2a2a);
-  color: color-mix(in srgb, var(--ds-accent) 40%, #ffffff);
-  box-shadow: none;
-}
-
-[data-theme='dark'] .ds-workspace-editor-tab--active:hover {
-  background: color-mix(in srgb, var(--ds-accent) 30%, #2a2a2a);
-  border-color: color-mix(in srgb, var(--ds-accent) 58%, transparent);
-}
-
-.ds-ide-workspace .ds-workspace-file-tree__header > div,
-.ds-ide-workspace .ds-workspace-file-tree__row-pad,
-.ds-ide-workspace .ds-workspace-editor-tab > button,
-.ds-workbench-right-panel .ds-workspace-file-tree__header > div,
-.ds-workbench-right-panel .ds-workspace-file-tree__row-pad,
-.ds-workbench-right-panel .ds-workspace-editor-tab > button {
-  font-size: 15px;
-}
-
-/* IDE: flush tabs against the editor top edge — not chat pills. */
-.ds-ide-workspace .ds-workspace-editor-tabstrip {
-  height: 28px;
+  height: 36px;
   gap: 0;
-  padding: 0;
-  border-bottom: 1px solid color-mix(in srgb, var(--ds-text) 14%, transparent);
-  background: var(--ds-bg-canvas);
+  padding: 0 4px;
+  background: transparent;
 }
 
-.ds-ide-workspace .ds-workspace-editor-tab {
-  max-width: 180px;
-  height: 28px;
-  border: none;
+.ds-workspace-editor-tab {
+  height: 35px;
+  border: 0;
   border-radius: 0;
-  border-right: 1px solid color-mix(in srgb, var(--ds-text) 10%, transparent);
   background: transparent;
   color: var(--ds-text-muted);
+  transition: background-color 120ms ease, color 120ms ease;
 }
 
-.ds-ide-workspace .ds-workspace-editor-tab:hover {
-  background: color-mix(in srgb, var(--ds-text) 6%, transparent);
-  color: var(--ds-text);
-}
-
-.ds-ide-workspace .ds-workspace-editor-tab--open {
+.ds-workspace-editor-tab:hover,
+.ds-workspace-editor-tab--open {
   background: color-mix(in srgb, var(--ds-text) 4%, transparent);
   color: var(--ds-text);
 }
 
-.ds-ide-workspace .ds-workspace-editor-tab--active {
-  background: var(--ds-bg-sidebar);
+.ds-workspace-editor-tab--active {
+  background: color-mix(in srgb, var(--ds-text) 5%, transparent);
   color: var(--ds-text);
-  font-weight: 600;
-  box-shadow: inset 0 -2px 0 var(--ds-accent);
+  font-weight: 500;
+  box-shadow: inset 0 -2px 0 color-mix(in srgb, var(--ds-text) 45%, transparent);
+}
+
+.ds-workspace-editor-tab__close {
+  color: inherit;
+  opacity: 0;
+  transition: opacity 120ms ease, background-color 120ms ease;
+}
+
+.ds-workspace-editor-tab[data-dirty] .ds-workspace-editor-tab__close,
+.ds-workspace-editor-tab:hover .ds-workspace-editor-tab__close,
+.ds-workspace-editor-tab:focus-within .ds-workspace-editor-tab__close {
+  opacity: 1;
+}
+
+.ds-workspace-editor-tab__close:hover {
+  background: color-mix(in srgb, var(--ds-text) 8%, transparent);
+}
+
+.ds-workspace-editor-tab__close-dot {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: currentColor;
+}
+
+.ds-workspace-editor-tab__close-x { opacity: 0; }
+
+.ds-workspace-editor-tab:hover .ds-workspace-editor-tab__close-x,
+.ds-workspace-editor-tab:focus-within .ds-workspace-editor-tab__close-x { opacity: 1; }
+
+.ds-workspace-editor-tab:hover .ds-workspace-editor-tab__close-dot,
+.ds-workspace-editor-tab:focus-within .ds-workspace-editor-tab__close-dot { opacity: 0; }
+
+.ds-workspace-file-tree__header > div,
+.ds-workspace-file-tree__row-pad,
+.ds-workspace-editor-tab > button {
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.ds-workspace-file-tree__row:hover {
+  background: color-mix(in srgb, var(--ds-text) 5%, transparent);
+  color: var(--ds-text);
+}
+
+.ds-workspace-file-tree__row:focus-visible,
+.ds-workspace-editor-tab button:focus-visible,
+.ds-workspace-document-mode button:focus-visible {
+  outline: 2px solid var(--ds-accent);
+  outline-offset: -2px;
+}
+
+.ds-workspace-document-mode {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 32px;
+  padding: 2px 12px;
+  border-bottom: 1px solid var(--ds-border-muted);
+}
+
+.ds-workspace-document-mode button {
+  padding: 2px 8px;
+  border-radius: 5px;
+  font-size: 12px;
+  color: var(--ds-text-muted);
+}
+
+.ds-workspace-document-mode button:hover,
+.ds-workspace-document-mode button[aria-pressed='true'] {
+  background: color-mix(in srgb, var(--ds-text) 6%, transparent);
+  color: var(--ds-text);
 }
 
 .ds-ide-workspace .ds-workspace-editor-pane .monaco-editor,
@@ -1538,7 +1674,6 @@ samp {
 .ds-project-context-menu,
 .ds-editor-picker-menu {
   font-family: var(--font-ui);
-  -webkit-font-smoothing: antialiased;
   font-synthesis: none;
   border-radius: 14px;
   border: 1px solid rgba(255, 255, 255, 0.4);
@@ -2156,11 +2291,10 @@ samp {
 .ds-composer-empty textarea,
 .ds-composer-input {
   font-family: var(--font-ui);
-  font-size: 15px;
+  font-size: var(--ds-chat-font-size, 15px);
   font-weight: 400;
   line-height: 1.5;
   letter-spacing: -0.011em;
-  -webkit-font-smoothing: antialiased;
   font-synthesis: none;
   text-align: start;
   text-justify: auto;
@@ -2199,11 +2333,10 @@ samp {
 
 .ds-user-message-edit-textarea {
   font-family: var(--font-ui);
-  font-size: 15px;
+  font-size: var(--ds-chat-font-size, 15px);
   font-weight: 400;
   line-height: 1.5;
   letter-spacing: -0.011em;
-  -webkit-font-smoothing: antialiased;
   font-synthesis: none;
   text-align: start;
 }
@@ -2216,7 +2349,6 @@ samp {
 .ds-composer-model-label {
   font-family: var(--font-ui);
   letter-spacing: -0.01em;
-  -webkit-font-smoothing: antialiased;
   font-synthesis: none;
 }
 
@@ -2985,7 +3117,6 @@ samp {
   letter-spacing: 0;
   line-height: 1.4;
   color: var(--text-primary);
-  -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   font-synthesis: none;
   /* Solid --bg-sidebar (not frosted --glass-bg): glass-over-board mixed a
@@ -3069,7 +3200,6 @@ samp {
   font-weight: var(--sidebar-weight);
   letter-spacing: 0;
   color: var(--text-primary);
-  -webkit-font-smoothing: antialiased;
   font-synthesis: none;
   transition:
     border-color 0.2s ease,
@@ -3082,7 +3212,6 @@ samp {
   letter-spacing: 0;
   color: var(--text-tertiary);
   opacity: 1;
-  -webkit-font-smoothing: antialiased;
   font-synthesis: none;
 }
 
@@ -3115,8 +3244,7 @@ samp {
   padding: 0.35rem 0.25rem 0.5rem;
 }
 
-/* Sits outside the sidebar scroll surface so the projects header never scrolls away.
-   Transparent — inherit .ds-sidebar-shell; a solid fill here reads as a nested card. */
+/* Project heading shares the continuous sidebar scroll region. */
 .ds-sidebar-projects-toolbar--fixed {
   position: relative;
   z-index: 2;
@@ -3219,18 +3347,16 @@ samp {
   background: color-mix(in srgb, var(--text-primary) 10%, var(--ds-bg-sidebar));
 }
 
-/* Always emphasized — not only when selected. */
+/* Setup entry spacing. */
 .ds-sidebar-link.ds-settings-nav-setup,
 .ds-sidebar-link.ds-settings-nav-setup.ds-sidebar-link--active {
   min-height: 2.45rem;
   margin-top: 0.2rem;
-  font-size: 1rem; /* 16px — slightly above --sidebar-text (15px) */
-  font-weight: 700;
 }
 
 .ds-settings-nav-setup .ds-settings-nav-setup__label {
   font-size: inherit;
-  font-weight: 700;
+  font-weight: inherit;
 }
 
 .ds-settings-nav-setup .ds-sidebar-link__icon {
@@ -3265,12 +3391,32 @@ samp {
   color: color-mix(in srgb, var(--text-primary) 62%, var(--text-secondary));
 }
 
+.ds-sidebar-sticky-nav .ds-sidebar-top-nav .ds-sidebar-link,
+.ds-sidebar-shell .ds-settings-sidebar-nav .ds-sidebar-link {
+  font-size: calc(var(--sidebar-text) - 0.5px);
+  font-weight: var(--sidebar-weight);
+}
+
 .ds-sidebar-scroll {
   min-height: 0;
 }
 
-/* Middle column: projects scroll above a reserved workspace band. */
+.ds-sidebar-section-heading {
+  margin-top: 0.75rem;
+}
+
+.ds-sidebar-section-heading:empty {
+  display: none;
+}
+
+.ds-sidebar-section-heading > .ds-sidebar-projects-toolbar--fixed {
+  margin-top: 0;
+}
+
+/* Projects and conversations share one continuous scrolling region. */
 .ds-sidebar-middle {
+  overflow-y: auto;
+  overscroll-behavior: contain;
   display: flex;
   min-height: 0;
   flex: 1 1 auto;
@@ -3325,8 +3471,13 @@ samp {
   flex: 0 1 auto;
   flex-direction: column;
   margin-top: 0.75rem;
-  border-bottom: 1px solid color-mix(in srgb, var(--ds-sidebar-border) 80%, transparent);
   background: transparent;
+  border-bottom: 1px solid color-mix(in srgb, var(--ds-sidebar-border) 80%, transparent);
+}
+
+/* The first visible group has no leading space inside the scrollport. */
+.ds-sidebar-middle > :is(.ds-sidebar-pinned-pane, .ds-sidebar-projects-toolbar--fixed):first-child {
+  margin-top: 0;
 }
 
 /* Pinned sits above Projects — drop the toolbar's top gap to avoid double spacing. */
@@ -3355,15 +3506,23 @@ samp {
   background: transparent;
 }
 
-/* When Projects is folded away, Workspace takes the available list space. */
-.ds-sidebar-middle:not(:has(> .ds-sidebar-projects-scroll)) > .ds-sidebar-chats-pane {
+.ds-sidebar-middle > .ds-sidebar-projects-scroll,
+.ds-sidebar-middle > .ds-sidebar-pinned-pane,
+.ds-sidebar-middle > .ds-sidebar-chats-pane {
+  flex: 0 0 auto;
   max-height: none;
-  min-height: 0;
-  flex: 1 1 0%;
+  overflow: visible;
 }
 
-.ds-sidebar-chats-section {
-  min-height: 0;
+.ds-sidebar-middle .ds-sidebar-chats-section {
+  height: auto;
+}
+
+.ds-sidebar-middle .ds-sidebar-chats-list,
+.ds-sidebar-middle .ds-sidebar-pinned-list {
+  flex: 0 0 auto;
+  overflow: visible;
+  max-height: none;
 }
 
 .ds-sidebar-chats-header {
@@ -3396,6 +3555,19 @@ samp {
 .ds-sidebar-footer {
   position: relative;
   z-index: 2;
+}
+
+.ds-sidebar-footer .ds-sidebar-link--footer {
+  height: 28px;
+  padding-top: 0;
+  padding-bottom: 0;
+  font-size: 13px;
+  font-weight: 400;
+}
+
+.ds-sidebar-footer > button {
+  width: 28px;
+  height: 28px;
 }
 
 .ds-sidebar-zone {
@@ -3628,7 +3800,6 @@ samp {
 .ds-session-header-meta,
 .ds-session-header-hint {
   font-family: var(--font-ui);
-  -webkit-font-smoothing: antialiased;
   font-synthesis: none;
 }
 
@@ -5965,8 +6136,8 @@ samp {
   border-radius: 0;
   background: transparent !important;
   padding: 0.52rem 0.66rem;
-  font-size: 12px;
-  line-height: 1.4;
+  font-size: 13px;
+  line-height: 1.5;
   box-sizing: border-box;
 }
 
@@ -5975,6 +6146,7 @@ samp {
   background: transparent;
   padding: 0;
   font-size: inherit;
+  line-height: inherit;
 }
 
 .ds-markdown .ds-code-block-html .line {
@@ -6054,10 +6226,10 @@ html[data-theme='dark'] .ds-code-fullscreen .shiki span {
 .ds-markdown-doc-page {
   box-sizing: border-box;
   width: 100%;
-  max-width: 1120px;
+  max-width: 82ch;
   margin: 0 auto;
   min-height: 100%;
-  padding: 1.15rem 1.35rem 2.25rem;
+  padding: 24px clamp(16px, 4%, 40px) 40px;
 }
 
 .ds-markdown.ds-markdown--document {
@@ -6065,11 +6237,10 @@ html[data-theme='dark'] .ds-code-fullscreen .shiki span {
   line-height: 1.72;
   letter-spacing: -0.003em;
   color: color-mix(in srgb, var(--ds-text) 96%, var(--ds-text-muted));
-  -webkit-font-smoothing: antialiased;
 }
 
 .ds-ide-workspace .ds-markdown.ds-markdown--document {
-  font-size: 15px;
+  font-size: 16px;
 }
 
 .ds-ide-workspace .ds-markdown.ds-markdown--document :is(code, pre, table, th, td),
@@ -6079,10 +6250,8 @@ html[data-theme='dark'] .ds-code-fullscreen .shiki span {
 
 .ds-markdown.ds-markdown--document p,
 .ds-markdown.ds-markdown--document li {
-  text-align: justify;
-  text-justify: inter-ideograph;
-  -webkit-hyphens: auto;
-  hyphens: auto;
+  text-align: start;
+  hyphens: none;
 }
 
 .ds-markdown.ds-markdown--document h1,
@@ -6485,7 +6654,6 @@ html[data-theme='dark'] .ds-code-fullscreen .shiki span {
   line-height: 1.7;
   letter-spacing: normal;
   color: color-mix(in srgb, var(--ds-text) 86%, var(--ds-text-muted));
-  -webkit-font-smoothing: antialiased;
 }
 
 /* Keep mixed CJK/Latin prose readable without stretching word spacing. */
@@ -6556,7 +6724,7 @@ html[data-theme='dark'] .ds-code-fullscreen .shiki span {
 .ds-markdown.ds-markdown--answer h1 {
   --ds-answer-block-gap: 1.875rem;
   margin: 1.875rem 0 0.625rem;
-  font-size: 19px; /* 固定值, 不随正文缩放 */
+  font-size: 1.45em;
 }
 
 .ds-markdown.ds-markdown--answer h2 {
@@ -7384,7 +7552,6 @@ select:focus-visible,
 .ds-operation-dock {
   pointer-events: auto;
   font-family: var(--font-ui);
-  -webkit-font-smoothing: antialiased;
   font-synthesis: none;
 }
 
@@ -7739,7 +7906,6 @@ select:focus-visible,
   font-weight: 600;
   letter-spacing: -0.005em;
   color: var(--text-secondary);
-  -webkit-font-smoothing: antialiased;
   font-synthesis: none;
 }
 
@@ -7779,7 +7945,6 @@ select:focus-visible,
 
 .ds-change-inspector {
   font-family: var(--font-ui);
-  -webkit-font-smoothing: antialiased;
   font-synthesis: none;
   background: var(--ds-bg-sidebar);
 }
@@ -7834,6 +7999,18 @@ select:focus-visible,
   }
 }
 
+.ds-change-source__menu,
+.ds-change-branch__menu {
+  animation: ds-pop-in 140ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ds-change-source__menu,
+  .ds-change-branch__menu {
+    animation: none;
+  }
+}
+
 @container change-inspector (max-width: 280px) {
   .ds-change-source[data-context="branch"] .ds-change-source__label,
   .ds-change-source[data-context="branch"] > button > svg:last-child,
@@ -7859,10 +8036,19 @@ select:focus-visible,
   }
 }
 
+/* Hunk headers pin to the top of the diff viewport while scrolling. */
+.ds-diff-meta-sticky {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  /* Opaque backdrop so scrolled rows do not show through. */
+  background-color: var(--ds-bg-canvas);
+  box-shadow: inset 0 -1px 0 color-mix(in srgb, var(--ds-accent) 16%, transparent);
+}
+
 /* Edge-to-edge diff: same plane as the file list, no nested card / grey frame. */
 .ds-diff-view--flush {
-  border: 0 !important;
-  border-radius: 0 !important;
+  border: 0 !important;  border-radius: 0 !important;
   box-shadow: none !important;
   background: var(--ds-bg-sidebar);
 }
@@ -7887,6 +8073,58 @@ select:focus-visible,
   background: var(--ds-bg-sidebar);
 }
 
+/* Code retains its line structure; the enclosing viewport owns horizontal scrolling. */
+.ds-diff-table {
+  width: max-content;
+  min-width: 100%;
+  table-layout: auto;
+}
+
+.ds-diff-view { container-type: inline-size; }
+
+.ds-diff-view[data-wrap] .ds-diff-table {
+  width: 100%;
+  table-layout: fixed;
+}
+
+.ds-diff-view[data-wrap] .ds-diff-code {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: normal;
+}
+
+.ds-diff-view [role='button']:focus-visible,
+.ds-diff-view button:focus-visible {
+  outline: 2px solid var(--ds-accent);
+  outline-offset: -2px;
+}
+
+@container (max-width: 440px) {
+  .ds-diff-header-statbar { display: none; }
+}
+
+.ds-diff-row-added { background: color-mix(in srgb, var(--ds-diff-added) 9%, transparent); }
+.ds-diff-row-removed { background: color-mix(in srgb, var(--ds-diff-removed) 9%, transparent); }
+.ds-diff-sign { display: inline-block; width: 2ch; user-select: none; }
+.ds-diff-sign--add { color: var(--ds-diff-added); }
+.ds-diff-sign--del { color: var(--ds-diff-removed); }
+.ds-syntax-line span { background: transparent !important; }
+html[data-theme='dark'] .ds-syntax-line span { color: var(--shiki-dark) !important; }
+
+.ds-markdown.ds-markdown--document .ds-document-code {
+  overflow-x: auto;
+  white-space: pre;
+  font-size: 14px;
+  line-height: 23px;
+  tab-size: 4;
+}
+
+.ds-markdown.ds-markdown--document .ds-document-code > code {
+  font-size: inherit;
+  line-height: inherit;
+  white-space: inherit;
+}
+
 /* Split-diff halves: equal gutters, shared vertical seam. */
 .ds-diff-view--flush table {
   border-spacing: 0;
@@ -7902,15 +8140,15 @@ select:focus-visible,
 }
 
 .ds-change-stats--sm {
-  font-size: 0.875rem;
+  font-size: 12.5px;
 }
 
 .ds-change-stats--md {
-  font-size: 0.9375rem;
+  font-size: 13.5px;
 }
 
 .ds-change-stats--lg {
-  font-size: 1rem;
+  font-size: 15px;
 }
 
 .ds-change-stats__added {
@@ -8276,6 +8514,9 @@ select:focus-visible,
   height: 30px;
   border-radius: 8px;
   color: var(--ds-text-muted);
+  transition:
+    background-color 120ms ease,
+    color 120ms ease;
 }
 .ds-dock-tab[data-active] {
   background: var(--ds-surface-hover);
@@ -8329,6 +8570,14 @@ select:focus-visible,
   border-radius: 12px;
   background: var(--ds-surface-elevated);
   box-shadow: var(--ds-shadow-panel);
+  transform-origin: top right;
+  animation: ds-pop-in 140ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ds-dock-menu {
+    animation: none;
+  }
 }
 .ds-dock-menu-item {
   display: flex;
@@ -8387,30 +8636,24 @@ select:focus-visible,
   .ds-dock-tab-close { opacity: 1; }
 }
 
-.ds-workspace-editor-pane .ds-editor-line-added,
-.monaco-editor .view-lines .view-line.ds-editor-line-added {
-  background-color: var(--ds-diff-added-soft) !important;
+.monaco-editor .ds-editor-gutter-added {
+  border-left: 3px solid var(--ds-diff-added);
+  margin-left: 4px;
 }
 
-.monaco-editor .margin-view-overlays .ds-editor-line-added-margin {
-  background-color: var(--ds-diff-added-soft) !important;
+.monaco-editor .ds-editor-gutter-deleted::after {
+  content: '';
+  position: absolute;
+  left: 4px;
+  bottom: 0;
+  width: 7px;
+  height: 3px;
+  background: var(--ds-diff-removed);
 }
 
-.ds-workspace-editor-pane .ds-editor-deleted-block {
-  box-sizing: border-box;
-  width: 100%;
-  padding: 1px 12px 1px 56px;
-  background: var(--ds-diff-removed-soft) !important;
-  border-left: 4px solid var(--ds-diff-removed);
-}
-
-.ds-workspace-editor-pane .ds-editor-deleted-line {
-  color: var(--ds-diff-removed);
-  font-family: var(--font-mono);
-  font-size: 12px;
-  line-height: 20px;
-  white-space: pre;
-  opacity: 1;
+.monaco-editor .ds-editor-gutter-deleted--before::after {
+  top: 0;
+  bottom: auto;
 }
 
 /* Editor / changes / browser stay on the sidebar sheet. Terminal is excluded:
@@ -11358,7 +11601,7 @@ select:focus-visible,
 
 .ds-ide-chat-rail .ds-composer-input,
 .ds-ide-chat-rail .ds-chat-composer textarea {
-  font-size: 15px;
+  font-size: var(--ds-ide-font-base);
   line-height: 1.625;
   letter-spacing: normal;
   min-height: 22px;
@@ -11417,13 +11660,13 @@ select:focus-visible,
 }
 
 /*
- * IDE rail typography — 13px controls and code, 15px answer prose.
+ * IDE rail typography — 13px prose, controls, and code; proportional headings.
  * Scoped to .ds-ide-chat-rail only; main chat follows the appearance setting.
  *
  * Controls, metadata, tables, and code share the local 13px scale.
  */
 .ds-ide-chat-rail {
-  --ds-answer-font-size: 15px;
+  --ds-answer-font-size: 13px;
   --ds-chat-font-size: 13px;
   --ds-chat-code-font-size: 13px;
   --ds-ide-font-base: 13px;
@@ -11462,7 +11705,7 @@ select:focus-visible,
 
 .ds-ide-chat-rail .ds-markdown.ds-markdown--answer strong,
 .ds-ide-chat-rail .ds-markdown.ds-markdown--answer b {
-  font-weight: 500; /* Synara chat-markdown strong */
+  font-weight: 600;
   font-synthesis: none;
 }
 
@@ -11511,26 +11754,6 @@ select:focus-visible,
 .ds-ide-chat-rail .ds-markdown.ds-markdown--answer h3,
 .ds-ide-chat-rail .ds-markdown.ds-markdown--answer h4 {
   margin: 1.1em 0 0.35em;
-  font-family: inherit;
-  font-weight: 600;
-  letter-spacing: -0.01em;
-  line-height: 1.25;
-}
-
-.ds-ide-chat-rail .ds-markdown.ds-markdown--answer h1 {
-  font-size: 1.35em;
-}
-
-.ds-ide-chat-rail .ds-markdown.ds-markdown--answer h2 {
-  font-size: 1.25em;
-}
-
-.ds-ide-chat-rail .ds-markdown.ds-markdown--answer h3 {
-  font-size: 1.15em;
-}
-
-.ds-ide-chat-rail .ds-markdown.ds-markdown--answer h4 {
-  font-size: 1.02em;
 }
 
 .ds-ide-chat-rail .ds-markdown.ds-markdown--answer :not(pre) > code,
@@ -11789,7 +12012,7 @@ select:focus-visible,
 }
 
 .ds-ide-chat-rail .ds-user-message-edit-textarea {
-  font-size: 15px;
+  font-size: var(--ds-ide-font-base);
   line-height: 1.55;
 }
 
@@ -11919,7 +12142,7 @@ select:focus-visible,
   max-width: 100%;
   padding: 0.45rem 0.7rem;
   border-radius: 0.65rem;
-  font-size: 15px;
+  font-size: var(--ds-ide-font-base);
   line-height: 1.55;
   text-align: start;
   text-justify: auto;

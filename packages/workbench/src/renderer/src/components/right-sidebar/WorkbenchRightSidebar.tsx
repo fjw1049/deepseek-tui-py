@@ -155,7 +155,7 @@ export function WorkbenchRightSidebar({
         className="ds-workbench-right-panel ds-no-drag relative h-full min-h-0 shrink-0"
         style={{ width: 52 }}
       >
-        <RightSidebarCollapsedStrip workspaceRoot={workspaceRoot} onExpand={onToggleCollapsed} />
+        <RightSidebarCollapsedStrip workspaceRoot={workspaceRoot} onExpand={onToggleCollapsed} activeTab={tab} />
       </aside>
     )
   }
@@ -166,7 +166,7 @@ export function WorkbenchRightSidebar({
   } else if (tab === 'editor') {
     otherPanel = (
       <Suspense fallback={<PanelFallback />}>
-        <WorkspaceEditorPanel workspaceRoot={workspaceRoot} blocks={blocks} />
+        <WorkspaceEditorPanel workspaceRoot={workspaceRoot} blocks={blocks} collapsibleTree />
       </Suspense>
     )
   } else if (tab === 'changes') {

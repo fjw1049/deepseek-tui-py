@@ -246,3 +246,52 @@ describe('editor split panes', () => {
     expect(after.tabs.map((tab) => tab.id)).toEqual(['src/a.ts', 'src/b.ts'])
   })
 })
+
+
+describe('save feedback and concurrent edits', () => {
+  const initial = useWorkspaceEditorStore.getState()
+  beforeEach(() => {
+    useWorkspaceEditorStore.setState({ ...initial, workspaceKey: '/workspace', tabs: [{ id: 'a.ts', path: 'a.ts', kind: 'text', content: 'first', savedContent: 'old', loading: false, error: null }] }, true)
+  })
+  afterEach(() => { useWorkspaceEditorStore.setState(initial, true); vi.unstubAllGlobals() })
+  it('only marks the written snapshot saved', async () => {
+    let finish!: (value: { ok: true }) => void
+    const write = vi.fn(() => new Promise(resolve => { finish = resolve }))
+    vi.stubGlobal('window', { dsGui: { writeWorkspaceFile: write } })
+    const pending = useWorkspaceEditorStore.getState().saveTab('a.ts', '/workspace')
+    await vi.waitFor(() => expect(write).toHaveBeenCalledOnce())
+    useWorkspaceEditorStore.getState().updateTabContent('a.ts', 'second')
+    finish({ ok: true })
+    expect(await pending).toBe(true)
+    expect(useWorkspaceEditorStore.getState().tabs[0]).toMatchObject({ content: 'second', savedContent: 'first' })
+  })
+  it('serializes overlapping saves in disk-write order', async () => {
+    const finishes: Array<(value: { ok: true }) => void> = []
+    const write = vi.fn((_input: { content: string }) => new Promise(resolve => { finishes.push(resolve) }))
+    vi.stubGlobal('window', { dsGui: { writeWorkspaceFile: write } })
+    const first = useWorkspaceEditorStore.getState().saveTab('a.ts', '/workspace')
+    useWorkspaceEditorStore.getState().updateTabContent('a.ts', 'second')
+    const second = useWorkspaceEditorStore.getState().saveTab('a.ts', '/workspace')
+    expect(write).toHaveBeenCalledOnce()
+    finishes[0]({ ok: true }); await first
+    await vi.waitFor(() => expect(write).toHaveBeenCalledTimes(2))
+    expect(write.mock.calls.map(([input]) => input.content)).toEqual(['first', 'second'])
+    finishes[1]({ ok: true }); await second
+    expect(useWorkspaceEditorStore.getState().tabs[0]).toMatchObject({ content: 'second', savedContent: 'second' })
+  })
+  it('turns a rejected write into a visible error and retains edits', async () => {
+    vi.stubGlobal('window', { dsGui: { writeWorkspaceFile: async () => { throw new Error('Disk unavailable') } } })
+    expect(await useWorkspaceEditorStore.getState().saveTab('a.ts', '/workspace')).toBe(false)
+    expect(useWorkspaceEditorStore.getState().tabs[0]).toMatchObject({ content: 'first', savedContent: 'old', error: 'Disk unavailable' })
+  })
+  it('does not update a different workspace after a late response', async () => {
+    let finish!: (value: { ok: true }) => void
+    const write = vi.fn(() => new Promise(resolve => { finish = resolve }))
+    vi.stubGlobal('window', { dsGui: { writeWorkspaceFile: write } })
+    const pending = useWorkspaceEditorStore.getState().saveTab('a.ts', '/workspace')
+    await vi.waitFor(() => expect(write).toHaveBeenCalledOnce())
+    useWorkspaceEditorStore.setState({ workspaceKey: '/other' })
+    finish({ ok: true }); await pending
+    expect(useWorkspaceEditorStore.getState().tabs[0].savedContent).toBe('old')
+  })
+})

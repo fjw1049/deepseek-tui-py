@@ -84,6 +84,7 @@ import {
   findReusableEmptyThreadId,
   hasPendingRuntimeWork,
   mergePendingApprovalBlocks,
+  mergePendingElevationBlocks,
   mergePendingEvolutionBlocks,
   mergePendingUserInputBlocks,
   moveQueuedMessageToFront,
@@ -130,6 +131,7 @@ const TURN_COMPLETION_PROBE_MS = 1_500
 let drainingQueuedMessages = false
 /** In-flight approval decisions — prevents double-submit before status flips. */
 const approvalSubmitInFlight = new Set<string>()
+const decisionSubmitInFlight = new Set<string>()
 let turnCompletionProbeTimer: ReturnType<typeof setTimeout> | null = null
 const COMPLETION_NOTIFICATION_DEDUPE_LIMIT = 200
 const completionNotificationKeys: string[] = []
@@ -156,7 +158,7 @@ function clearWatchedCompletionNotification(threadId: string): void {
   watchCompletionNotificationKeys.delete(threadId)
 }
 
-function notifyTurnComplete(threadId: string | null, state: ChatState, dedupeKey: string): void {
+function notifyTurnComplete(threadId: string | null, state: ChatState, dedupeKey: string, status?: 'completed' | 'failed' | 'cancelled'): void {
   if (!threadId || typeof window.dsGui?.showTurnCompleteNotification !== 'function') return
   if (!rememberCompletionNotificationKey(dedupeKey)) return
 
@@ -167,8 +169,8 @@ function notifyTurnComplete(threadId: string | null, state: ChatState, dedupeKey
   void window.dsGui
     .showTurnCompleteNotification({
       threadId,
-      title: i18n.t('common:turnCompleteNotificationTitle'),
-      body: i18n.t('common:turnCompleteNotificationBody', { title: threadTitle })
+      title: i18n.t(status === 'failed' ? 'common:turnFailedTitle' : status === 'cancelled' ? 'common:turnCancelledTitle' : 'common:turnCompleteNotificationTitle'),
+      body: i18n.t(status === 'failed' ? 'common:turnFailedNotificationBody' : status === 'cancelled' ? 'common:turnCancelledNotificationBody' : 'common:turnCompleteNotificationBody', { title: threadTitle })
     })
     .then((result) => {
       if (result.ok || typeof window.dsGui?.logError !== 'function') return
@@ -597,6 +599,14 @@ async function syncRuntimePendingApprovals(
       /* ignore */
     }
   }
+  if (typeof provider.fetchPendingElevations === 'function') {
+    try {
+      const pending = await provider.fetchPendingElevations(threadId)
+      nextBlocks = mergePendingElevationBlocks(nextBlocks, pending).blocks
+    } catch {
+      /* Preserve uncertain decisions until the server confirms their state. */
+    }
+  }
   if (typeof provider.fetchPendingUserInputs === 'function') {
     try {
       const pendingInputs = await provider.fetchPendingUserInputs(threadId)
@@ -730,10 +740,12 @@ function syncTurnCompletionPoll(
     },
     onCompletedThreads: async (doneIds, state, setState, getState) => {
       for (const id of doneIds) {
+        const detail = await getProvider(state.providerId).getThreadDetail(id).catch(() => null)
         notifyTurnComplete(
           id,
           state,
-          watchCompletionNotificationKeys.get(id) ?? `watch:${id}:${Date.now()}`
+          watchCompletionNotificationKeys.get(id) ?? `watch:${id}:${Date.now()}`,
+          detail?.latestTurnOutcome
         )
         clearWatchedCompletionNotification(id)
       }
@@ -1222,7 +1234,7 @@ function buildThreadEventSink(
           ...(syncComposer ? { composerMode: nextComposerMode } : {})
         }
       }),
-    onSystemStatus: (text, itemId) =>
+    onSystemStatus: (text, itemId, severity) =>
       set((s) => {
         const trimmed = text.trim()
         // Sub-agent handoff chrome is filtered in the runtime too; keep this as
@@ -1240,7 +1252,8 @@ function buildThreadEventSink(
               kind: 'system' as const,
               id: itemId,
               createdAt: new Date().toISOString(),
-              text
+              text,
+              severity
             }
           ]
         }
@@ -1415,7 +1428,6 @@ function buildThreadEventSink(
       set((s) => {
         const base = flushLiveBlocks(s, {
           ...finalizeTurnTiming(s, payload?.durationMs),
-          error: null,
           currentTurnId: null,
           // Keep ledger lookup key so TurnChangeSummary survives after busy clears.
           ...(completedTurnId ? { lastCompletedTurnId: completedTurnId } : {})
@@ -1444,7 +1456,7 @@ function buildThreadEventSink(
         usageRefreshKey: s.usageRefreshKey + 1,
         workspaceDirtyTick: s.workspaceDirtyTick + 1
       }))
-      notifyTurnComplete(completedThreadId, completedState, completedKey)
+      notifyTurnComplete(completedThreadId, completedState, completedKey, payload?.status)
       syncTurnCompletionPoll(set, get)
       void reloadActiveThreadBlocks(get, set)
       void get().refreshThreads()
@@ -1488,6 +1500,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   workspaceRoot: '',
   workspaceLabel: i18n.t('common:workingDirectory'),
   runtimeConnection: 'idle',
+  connectionError: null,
   startupPhase: null,
   activeThreadWarmup: { threadId: null, status: 'idle' },
   threads: [],
@@ -1649,7 +1662,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const settings = await window.dsGui.getSettings()
       const p = getProvider(settings.agentProvider)
       await p.connect({ light: mode === 'background' && prev === 'ready' })
-      set({ runtimeConnection: 'ready', error: null, runtimeErrorDetail: null })
+      set({ runtimeConnection: 'ready', connectionError: null, runtimeErrorDetail: null })
       void get().loadComposerModels()
       if (prev !== 'ready' || mode === 'user') {
         try {
@@ -1666,7 +1679,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         stopTurnCompletionPoll()
         set({
           runtimeConnection: 'offline',
-          error: msg,
+          connectionError: msg,
           runtimeErrorDetail: detail,
           ...(section
             ? { route: 'settings' as const, settingsSection: section }
@@ -1676,7 +1689,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         stopTurnCompletionPoll()
         set({
           runtimeConnection: 'offline',
-          error: msg,
+          connectionError: msg,
           runtimeErrorDetail: detail,
           ...(section
             ? { route: 'settings' as const, settingsSection: section }
@@ -1692,7 +1705,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       try {
         if (typeof window.dsGui === 'undefined') {
           set({
-            error: formatRuntimeError(
+            connectionError: formatRuntimeError(
               'Preload bridge missing (window.dsGui). Restart the app or check BrowserWindow preload path.'
             ),
             runtimeConnection: 'offline',
@@ -1729,7 +1742,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
           workspaceRoot,
           workspaceLabel: workspaceLabelFromPath(workspaceRoot),
           runtimeConnection: needsInitialSetup ? 'idle' : get().runtimeConnection,
-          error: needsInitialSetup ? null : get().error,
+          connectionError: needsInitialSetup ? null : get().connectionError,
           runtimeErrorDetail: needsInitialSetup ? null : get().runtimeErrorDetail
         })
         if (needsInitialSetup) return
@@ -1742,7 +1755,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         // visible instead of waiting for the main-process fallback timer.
         void window.dsGui?.notifyAppearanceApplied?.()
         set({
-          error: formatRuntimeError(e),
+          connectionError: formatRuntimeError(e),
           runtimeErrorDetail: runtimeErrorDetail(e),
           runtimeConnection: 'offline',
           initialSetupOpen: false,
@@ -2038,7 +2051,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       stopTurnCompletionPoll()
       set({
         runtimeConnection: 'offline',
-        error: formatRuntimeError(e),
+        connectionError: formatRuntimeError(e),
         ...(settingsSectionForRuntimeError(e)
           ? { route: 'settings' as const, settingsSection: settingsSectionForRuntimeError(e)! }
           : {})
@@ -3114,7 +3127,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
     const next = [...current, targetId]
     savePinnedThreadIds(next)
-    set({ pinnedThreadIds: next, error: null })
+    set({ pinnedThreadIds: next })
   },
 
   reorderPinnedThreadIds: (nextIds) => {
@@ -3358,21 +3371,24 @@ export const useChatStore = create<ChatState>((set, get) => ({
   resolveApproval: async (blockId, decision, remember = false) => {
     // Guard before any await so double-clicks cannot submit twice.
     if (approvalSubmitInFlight.has(blockId)) return false
-    const { blocks, providerId } = get()
+    const { blocks, providerId, activeThreadId: originThreadId } = get()
     const block = blocks.find((b) => b.id === blockId)
     if (!block || block.kind !== 'approval' || block.status !== 'pending') return false
     const p = getProvider(providerId)
     if (typeof p.submitApprovalDecision !== 'function') {
-      set({ error: 'Current provider does not support approval decisions.' })
+      set({ error: i18n.t('common:providerApprovalUnsupported') })
       return false
     }
     approvalSubmitInFlight.add(blockId)
+    set((s) => ({ blocks: s.blocks.map((b) => b.id === blockId && b.kind === 'approval'
+      ? { ...b, submitting: true } : b) }))
     try {
       await p.submitApprovalDecision(
         block.approvalId,
         decision === 'allow' ? 'allow' : 'deny',
         remember
       )
+      if (get().activeThreadId !== originThreadId) return false
       set((s) => ({
         blocks: s.blocks.map((b) =>
           b.id === blockId && b.kind === 'approval'
@@ -3387,19 +3403,19 @@ export const useChatStore = create<ChatState>((set, get) => ({
       })
       return true
     } catch (e) {
+      if (get().activeThreadId !== originThreadId) return false
       const msg = formatRuntimeError(e)
-      void window.dsGui.logError('approval', 'Failed to submit approval decision', {
+      void window.dsGui?.logError?.('approval', 'Failed to submit approval decision', {
         message: msg,
         blockId
       })
       set((s) => ({
-        error: msg,
         ...(settingsSectionForRuntimeError(e)
-          ? { route: 'settings' as const, settingsSection: settingsSectionForRuntimeError(e)! }
+          ? { error: msg, route: 'settings' as const, settingsSection: settingsSectionForRuntimeError(e)! }
           : {}),
         blocks: s.blocks.map((b) =>
           b.id === blockId && b.kind === 'approval'
-            ? { ...b, status: 'error' as const, errorMessage: msg }
+            ? { ...b, status: 'error' as const, errorMessage: msg, submissionFailed: true }
             : b
         )
       }))
@@ -3407,21 +3423,33 @@ export const useChatStore = create<ChatState>((set, get) => ({
       return true
     } finally {
       approvalSubmitInFlight.delete(blockId)
+      if (get().activeThreadId === originThreadId) {
+        set((s) => ({ blocks: s.blocks.map((b) => b.id === blockId && b.kind === 'approval'
+          ? { ...b, submitting: false } : b) }))
+      }
+
     }
   },
 
   resolveEvolution: async (blockId, decision) => {
     const { blocks, providerId, activeThreadId } = get()
+    const originThreadId = activeThreadId
     const block = blocks.find((b) => b.id === blockId)
     if (!block || block.kind !== 'evolution' || block.status !== 'pending') return
     if (!activeThreadId) return
+    const decisionKey = `${originThreadId}:evolution:${blockId}`
+    if (decisionSubmitInFlight.has(decisionKey)) return
     const p = getProvider(providerId)
     if (typeof p.submitEvolutionDecision !== 'function') {
-      set({ error: 'Current provider does not support evolution approvals.' })
+      set({ error: i18n.t('common:providerEvolutionUnsupported') })
       return
     }
+    decisionSubmitInFlight.add(decisionKey)
+    set((s) => ({ blocks: s.blocks.map((b) => b.id === blockId && b.kind === 'evolution'
+      ? { ...b, submitting: true } : b) }))
     try {
       await p.submitEvolutionDecision(block.recordId, decision, activeThreadId)
+      if (get().activeThreadId !== originThreadId) return
       set((s) => ({
         blocks: s.blocks.map((b) =>
           b.id === blockId && b.kind === 'evolution'
@@ -3433,36 +3461,48 @@ export const useChatStore = create<ChatState>((set, get) => ({
         )
       }))
     } catch (e) {
+      if (get().activeThreadId !== originThreadId) return
       const msg = formatRuntimeError(e)
-      void window.dsGui.logError('evolution', 'Failed to submit evolution decision', {
+      void window.dsGui?.logError?.('evolution', 'Failed to submit evolution decision', {
         message: msg,
         blockId
       })
       set((s) => ({
-        error: msg,
         blocks: s.blocks.map((b) =>
           b.id === blockId && b.kind === 'evolution'
-            ? { ...b, status: 'error' as const, errorMessage: msg }
+            ? { ...b, status: 'error' as const, errorMessage: msg, submissionFailed: true }
             : b
         )
       }))
+    } finally {
+      decisionSubmitInFlight.delete(decisionKey)
+      if (get().activeThreadId === originThreadId) {
+        set((s) => ({ blocks: s.blocks.map((b) => b.id === blockId && b.kind === 'evolution'
+          ? { ...b, submitting: false } : b) }))
+      }
     }
   },
 
   resolveElevation: async (blockId, decision) => {
-    const { blocks, providerId } = get()
+    const { blocks, providerId, activeThreadId: originThreadId } = get()
     const block = blocks.find((b) => b.id === blockId)
     if (!block || block.kind !== 'elevation' || block.status !== 'pending') return
+    const decisionKey = `${originThreadId}:elevation:${blockId}`
+    if (decisionSubmitInFlight.has(decisionKey)) return
     const p = getProvider(providerId)
     if (typeof p.submitElevationDecision !== 'function') {
-      set({ error: 'Current provider does not support sandbox elevation.' })
+      set({ error: i18n.t('common:providerElevationUnsupported') })
       return
     }
+    decisionSubmitInFlight.add(decisionKey)
+    set((s) => ({ blocks: s.blocks.map((b) => b.id === blockId && b.kind === 'elevation'
+      ? { ...b, submitting: true } : b) }))
     try {
       await p.submitElevationDecision(
         block.elevationId,
         decision === 'allow' ? 'allow' : 'deny'
       )
+      if (get().activeThreadId !== originThreadId) return
       set((s) => ({
         blocks: s.blocks.map((b) =>
           b.id === blockId && b.kind === 'elevation'
@@ -3476,20 +3516,26 @@ export const useChatStore = create<ChatState>((set, get) => ({
         status: decision === 'allow' ? 'allowed' : 'denied'
       })
     } catch (e) {
+      if (get().activeThreadId !== originThreadId) return
       const msg = formatRuntimeError(e)
-      void window.dsGui.logError('elevation', 'Failed to submit elevation decision', {
+      void window.dsGui?.logError?.('elevation', 'Failed to submit elevation decision', {
         message: msg,
         blockId
       })
       set((s) => ({
-        error: msg,
         blocks: s.blocks.map((b) =>
           b.id === blockId && b.kind === 'elevation'
-            ? { ...b, status: 'error' as const, errorMessage: msg }
+            ? { ...b, status: 'error' as const, errorMessage: msg, submissionFailed: true }
             : b
         )
       }))
       emitPetEvent({ type: 'elevation_resolved', itemId: blockId, status: 'error' })
+    } finally {
+      decisionSubmitInFlight.delete(decisionKey)
+      if (get().activeThreadId === originThreadId) {
+        set((s) => ({ blocks: s.blocks.map((b) => b.id === blockId && b.kind === 'elevation'
+          ? { ...b, submitting: false } : b) }))
+      }
     }
   },
 
@@ -3497,7 +3543,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const { activeThreadId, providerId, blocks, busy, runtimeConnection } = get()
     if (!activeThreadId || runtimeConnection !== 'ready') return
     const p = getProvider(providerId)
-    if (typeof p.fetchPendingUserInputs !== 'function') return
     try {
       const synced = await syncRuntimePendingApprovals(
         p,
@@ -3505,7 +3550,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         blocks,
         busy
       )
-      if (get().activeThreadId !== activeThreadId) return
+      if (get().activeThreadId !== activeThreadId || get().blocks !== blocks) return
       if (synced.blocks === blocks && !synced.scrollToBlockId) return
       set({
         blocks: synced.blocks,
@@ -3517,16 +3562,22 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   resolveUserInput: async (blockId, action) => {
-    const { blocks, providerId } = get()
+    const { blocks, providerId, activeThreadId: originThreadId } = get()
     const block = blocks.find((b) => b.id === blockId)
     if (!block || block.kind !== 'user_input' || block.status !== 'pending') return
+    const decisionKey = `${originThreadId}:user_input:${blockId}`
+    if (decisionSubmitInFlight.has(decisionKey)) return
     const p = getProvider(providerId)
+    decisionSubmitInFlight.add(decisionKey)
+    set((s) => ({ blocks: s.blocks.map((b) => b.id === blockId && b.kind === 'user_input'
+      ? { ...b, submitting: true } : b) }))
     try {
       if (action.kind === 'submit') {
         if (typeof p.submitUserInputResponse !== 'function') {
           throw new Error(i18n.t('common:runtimeUserInputUnsupported'))
         }
         await p.submitUserInputResponse(block.requestId, action.answers)
+        if (get().activeThreadId !== originThreadId) return
         if (get().busy) armBusyWatchdog(set, get)
         const nextMode = composerModeFromPlanUserInput(
           block.questions,
@@ -3551,6 +3602,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         throw new Error(i18n.t('common:runtimeUserInputUnsupported'))
       }
       await p.cancelUserInput(block.requestId)
+      if (get().activeThreadId !== originThreadId) return
       set((s) => ({
         blocks: s.blocks.map((b) =>
           b.kind === 'user_input' &&
@@ -3561,24 +3613,30 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }))
       emitPetEvent({ type: 'user_input_resolved', itemId: blockId, status: 'cancelled' })
     } catch (e) {
+      if (get().activeThreadId !== originThreadId) return
       const msg = formatRuntimeError(e)
-      void window.dsGui.logError('user-input', 'Failed to resolve user input', {
+      void window.dsGui?.logError?.('user-input', 'Failed to resolve user input', {
         message: msg,
         blockId
       })
       set((s) => ({
-        error: msg,
         ...(settingsSectionForRuntimeError(e)
-          ? { route: 'settings' as const, settingsSection: settingsSectionForRuntimeError(e)! }
+          ? { error: msg, route: 'settings' as const, settingsSection: settingsSectionForRuntimeError(e)! }
           : {}),
         blocks: s.blocks.map((b) =>
           b.kind === 'user_input' &&
           (b.id === blockId || b.requestId === block.requestId || b.id === block.requestId)
-            ? { ...b, status: 'error' as const, errorMessage: msg }
+            ? { ...b, status: 'error' as const, errorMessage: msg, submissionFailed: true, ...(action.kind === 'submit' ? { answers: action.answers } : {}) }
             : b
         )
       }))
       emitPetEvent({ type: 'user_input_resolved', itemId: blockId, status: 'error' })
+    } finally {
+      decisionSubmitInFlight.delete(decisionKey)
+      if (get().activeThreadId === originThreadId) {
+        set((s) => ({ blocks: s.blocks.map((b) => b.id === blockId && b.kind === 'user_input'
+          ? { ...b, submitting: false } : b) }))
+      }
     }
   },
 

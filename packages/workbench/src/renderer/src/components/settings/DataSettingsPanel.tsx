@@ -1,3 +1,5 @@
+import { ConfirmDialog } from '../workspace-editor/ConfirmDialog'
+import { formatRuntimeError } from '../../lib/format-runtime-error'
 import { useCallback, useEffect, useMemo, useState, type ReactElement, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { FolderOpen, Loader2, Trash2 } from 'lucide-react'
@@ -190,6 +192,7 @@ export function DataSettingsPanel(): ReactElement {
   const [clearState, setClearState] = useState<ActionState>('idle')
   const [exportState, setExportState] = useState<ActionState>('idle')
   const [importState, setImportState] = useState<ActionState>('idle')
+  const [importPath, setImportPath] = useState<string | null>(null)
   const [backupState, setBackupState] = useState<ActionState>('idle')
   const [deleteExitState, setDeleteExitState] = useState<ActionState>('idle')
   const [notice, setNotice] = useState<InlineNotice | null>(null)
@@ -389,16 +392,25 @@ export function DataSettingsPanel(): ReactElement {
       showNotice('error', t('dataImportFailed'))
       return
     }
-    const picked = await window.dsGui.pickDataImportPath()
-    if (picked.canceled || !picked.path) return
-    const mode = window.confirm(t('dataImportModeConfirm')) ? 'replace' : 'merge'
+    try {
+      const picked = await window.dsGui.pickDataImportPath()
+      if (!picked.canceled && picked.path) setImportPath(picked.path)
+    } catch (error) {
+      showNotice('error', formatRuntimeError(error))
+    }
+  }
+
+  const confirmImport = async (mode: 'merge' | 'replace'): Promise<void> => {
+    if (!importPath || importState === 'running') return
+    const path = importPath
+    setImportPath(null)
     setImportState('running')
     setNotice(null)
     try {
       const r = await window.dsGui.runtimeRequest(
         '/v1/data/import',
         'POST',
-        JSON.stringify({ path: picked.path, mode })
+        JSON.stringify({ path, mode })
       )
       if (!r.ok) {
         setImportState('error')
@@ -513,6 +525,13 @@ export function DataSettingsPanel(): ReactElement {
         : t('dataOpenDirectory')
 
   return (
+    <>
+      {importPath ? (
+        <ConfirmDialog title={t('dataImportChooseTitle')} body={t('dataImportChooseBody')} destructive
+          confirmLabel={t('dataImportReplace')} cancelLabel={t('cancel')}
+          secondaryAction={{ label: t('dataImportMerge'), onClick: () => void confirmImport('merge') }}
+          onConfirm={() => void confirmImport('replace')} onCancel={() => setImportPath(null)} />
+      ) : null}
     <div className="flex flex-col gap-6">
       {notice ? <InlineNoticeView notice={notice} /> : null}
 
@@ -767,6 +786,7 @@ export function DataSettingsPanel(): ReactElement {
         />
       </SettingsCard>
     </div>
+    </>
   )
 }
 

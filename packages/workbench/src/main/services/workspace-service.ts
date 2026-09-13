@@ -889,7 +889,8 @@ function relativePathFromWorkspace(workspaceRoot: string, absolutePath: string):
 
 export async function listWorkspaceDirectory(
   workspaceRoot: string,
-  directoryPath = ''
+  directoryPath = '',
+  includeIgnored = false
 ): Promise<WorkspaceListDirectoryResult> {
   try {
     const root = workspaceRoot.trim()
@@ -908,7 +909,7 @@ export async function listWorkspaceDirectory(
 
     const dirents = await readdir(targetPath, { withFileTypes: true })
     const entries: WorkspaceTreeEntry[] = dirents
-      .filter((entry) => entry.name !== '.git')
+      .filter((entry) => includeIgnored || entry.name !== '.git')
       .sort((a, b) => {
         const aDir = a.isDirectory()
         const bDir = b.isDirectory()
@@ -924,7 +925,7 @@ export async function listWorkspaceDirectory(
         } satisfies WorkspaceTreeEntry
       })
       .filter((entry) => {
-        if (entry.kind !== 'directory') return true
+        if (includeIgnored || entry.kind !== 'directory') return true
         return !SKIP_SEARCH_DIRS.has(entry.name)
       })
 

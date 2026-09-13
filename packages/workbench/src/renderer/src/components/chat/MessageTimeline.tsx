@@ -2313,7 +2313,9 @@ function ProcessStreamEntry({
   }
   if (block.kind === 'subagent') return <SubagentBubble block={block} />
   if (block.kind === 'system') {
-    return <p className="text-[12px] text-ds-faint">{block.text}</p>
+    return <p role={block.severity === 'error' ? 'alert' : undefined} className={block.severity === 'error'
+      ? 'rounded-xl border border-red-300/70 bg-red-50 p-3 text-[13px] leading-6 text-red-800 dark:border-red-800/60 dark:bg-red-950/25 dark:text-red-200'
+      : 'text-[12px] text-ds-faint'}>{block.text}</p>
   }
   return null
 }
@@ -3220,7 +3222,9 @@ function MessageBubble({
     return <ElevationBubble block={block} />
   }
   return (
-    <div className="ds-card-soft rounded-[12px] px-3 py-2 text-[13.5px] text-ds-muted">
+    <div role={block.severity === 'error' ? 'alert' : undefined} className={block.severity === 'error'
+      ? 'rounded-xl border border-red-300/70 bg-red-50 p-3 text-[13px] text-red-800 dark:border-red-800/60 dark:bg-red-950/25 dark:text-red-200'
+      : 'ds-card-soft rounded-[12px] px-3 py-2 text-[13.5px] text-ds-muted'}>
       {block.text}
     </div>
   )

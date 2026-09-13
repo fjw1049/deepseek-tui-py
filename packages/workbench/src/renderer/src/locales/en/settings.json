@@ -632,5 +632,15 @@
   "dataDeleteAndExitConfirm2": "Confirm again: GUI settings (~/.deepseek/settings.json) and caches under ~/.deepseek/caches, plus Electron caches, will be cleared and the app will quit immediately. This cannot be undone.",
   "dataDeleteAndExitFailed": "Failed to delete local data",
   "visionHelper": "Vision helper",
-  "visionHelperHint": "Analyzes images when the main model does not support them."
+  "visionHelperHint": "Analyzes images when the main model does not support them.",
+  "settingsSaveFailedRetained": "Settings could not be saved. Your changes remain on this page.",
+  "settingsRetrySave": "Retry save",
+  "settingsUnsavedTitle": "Unsaved settings",
+  "settingsUnsavedBody": "Saving did not complete. Keep editing and retry, or discard unsaved changes and leave.",
+  "settingsDiscardAndLeave": "Discard and leave",
+  "settingsKeepEditing": "Keep editing",
+  "dataImportChooseTitle": "Choose import mode",
+  "dataImportChooseBody": "Merge skips existing conversations. Replace replaces existing conversations with the imported content. Cancel leaves your data unchanged.",
+  "dataImportMerge": "Merge",
+  "dataImportReplace": "Replace conversations"
 }

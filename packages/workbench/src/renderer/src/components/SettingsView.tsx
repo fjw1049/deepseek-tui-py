@@ -1,3 +1,5 @@
+import { ConfirmDialog } from './workspace-editor/ConfirmDialog'
+import { formatRuntimeError } from '../lib/format-runtime-error'
 import type { ReactElement, ReactNode } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -175,6 +177,9 @@ export function SettingsView(): ReactElement {
   const [workspacePickerError, setWorkspacePickerError] = useState<string | null>(null)
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle')
   const [saveError, setSaveError] = useState<string | null>(null)
+  const [discardPrompt, setDiscardPrompt] = useState(false)
+  const savingQueue = useRef<Promise<unknown>>(Promise.resolve())
+  const leavingRef = useRef(false)
   const [petEnabled, setPetEnabled] = useState(() => readPetEnabled())
   const [petSlug, setPetSlug] = useState(() => readPetSlug())
   const [petFavoriteSlugs, setPetFavoriteSlugs] = useState(() => readPetFavoriteSlugs())
@@ -194,9 +199,10 @@ export function SettingsView(): ReactElement {
   })
   const [hooksNotice, setHooksNotice] = useState<InlineNotice | null>(null)
   const initializedCategory = useRef(false)
-  const saveTimer = useRef<ReturnType<typeof window.setTimeout> | null>(null)
-  const statusTimer = useRef<ReturnType<typeof window.setTimeout> | null>(null)
+  const saveTimer = useRef<number | null>(null)
+  const statusTimer = useRef<number | null>(null)
   const draftVersion = useRef(0)
+  const savedVersion = useRef(0)
   const formRef = useRef<AppSettingsV1 | null>(null)
   formRef.current = form
   const formTheme = form?.theme
@@ -414,21 +420,28 @@ export function SettingsView(): ReactElement {
     }
   }
 
-  const persistSettings = async (snapshot: AppSettingsV1, version: number): Promise<void> => {
-    if (!hasValidPort(snapshot)) return
+  const persistSettings = async (snapshot: AppSettingsV1, version: number): Promise<boolean> => {
+    if (!hasValidPort(snapshot)) {
+      setSaveError(t('portInvalid'))
+      setSaveStatus('error')
+      return false
+    }
     setSaveStatus('saving')
     setSaveError(null)
 
     try {
-      const next = await window.dsGui.setSettings(snapshot)
-      if (version !== draftVersion.current) return
+      const write = savingQueue.current.catch(() => undefined).then(() => window.dsGui.setSettings(snapshot))
+      savingQueue.current = write
+      const next = await write
+      savedVersion.current = version
+      if (version !== draftVersion.current) return false
 
       formRef.current = next
       setForm(next)
       await applyI18n(next.locale)
       void reloadUiSettings()
       void probeRuntime('background')
-      if (version !== draftVersion.current) return
+      if (version !== draftVersion.current) return false
 
       setSaveStatus('saved')
       if (statusTimer.current) window.clearTimeout(statusTimer.current)
@@ -436,10 +449,12 @@ export function SettingsView(): ReactElement {
         if (version === draftVersion.current) setSaveStatus('idle')
         statusTimer.current = null
       }, 1500)
+      return true
     } catch (e) {
-      if (version !== draftVersion.current) return
-      setSaveError(e instanceof Error ? e.message : String(e))
+      if (version !== draftVersion.current) return false
+      setSaveError(formatRuntimeError(e))
       setSaveStatus('error')
+      return false
     }
   }
 
@@ -464,8 +479,10 @@ export function SettingsView(): ReactElement {
     }, 450)
   }
 
-  const flushPendingSave = async (): Promise<void> => {
-    if (!form || !hasValidPort(form)) return
+  const flushPendingSave = async (): Promise<boolean> => {
+    const snapshot = formRef.current
+    if (!snapshot) return false
+    if (savedVersion.current === draftVersion.current) return true
     draftVersion.current += 1
     const version = draftVersion.current
 
@@ -478,14 +495,27 @@ export function SettingsView(): ReactElement {
       statusTimer.current = null
     }
 
-    await persistSettings(form, version)
+    return persistSettings(snapshot, version)
   }
 
   const goBack = (): void => {
+    if (!formRef.current) { setRoute('chat'); return }
+    if (leavingRef.current) return
+    leavingRef.current = true
     void (async () => {
-      await flushPendingSave()
-      await reloadUiSettings()
-      setRoute('chat')
+      try {
+        if (!await flushPendingSave()) {
+          setDiscardPrompt(true)
+          return
+        }
+        await reloadUiSettings()
+        setRoute('chat')
+      } catch (error) {
+        setSaveError(formatRuntimeError(error))
+        setSaveStatus('error')
+      } finally {
+        leavingRef.current = false
+      }
     })()
   }
   const goBackRef = useRef(goBack)
@@ -631,6 +661,36 @@ export function SettingsView(): ReactElement {
               </span>
             ) : null}
           </div>
+
+          {saveStatus === 'error' && saveError ? (
+            <div role="alert" className="mb-4 rounded-xl border border-red-300/70 bg-red-50 p-3 text-[13px] text-red-800 dark:border-red-800/60 dark:bg-red-950/25 dark:text-red-200">
+              <p>{t('settingsSaveFailedRetained')}</p>
+              <p className="mt-1 break-words">{saveError}</p>
+              <button type="button" className="mt-2 underline" onClick={() => void flushPendingSave()}>{t('settingsRetrySave')}</button>
+            </div>
+          ) : null}
+          {discardPrompt ? (
+            <ConfirmDialog
+              title={t('settingsUnsavedTitle')}
+              body={t('settingsUnsavedBody')}
+              destructive
+              confirmLabel={t('settingsDiscardAndLeave')}
+              cancelLabel={t('settingsKeepEditing')}
+              onCancel={() => setDiscardPrompt(false)}
+              onConfirm={() => {
+                if (saveTimer.current) window.clearTimeout(saveTimer.current)
+                draftVersion.current += 1
+                void savingQueue.current.catch(() => undefined).then(async () => {
+                  await reloadUiSettings()
+                  setRoute('chat')
+                }).catch((error) => {
+                  setDiscardPrompt(false)
+                  setSaveError(formatRuntimeError(error))
+                  setSaveStatus('error')
+                })
+              }}
+            />
+          ) : null}
 
           {category === 'general' && (
             <>

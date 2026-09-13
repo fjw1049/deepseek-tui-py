@@ -1,6 +1,11 @@
+import { formatRuntimeError } from '../lib/format-runtime-error'
+import i18n from '../i18n'
 import { create } from 'zustand'
 import { isImagePreviewPath } from '@shared/image-preview'
 import type { WorkspaceFileReadResult } from '@shared/workspace-file'
+
+// Serialize writes to the same file so older responses cannot overwrite newer saves.
+const fileSaves = new Map<string, Promise<boolean>>()
 
 export type EditorTabKind = 'text' | 'image'
 export type EditorPaneId = 'primary' | 'secondary'
@@ -429,39 +434,43 @@ export const useWorkspaceEditorStore = create<WorkspaceEditorStore>((set, get) =
   saveTab: async (tabId, workspaceRoot) => {
     const root = normalizeWorkspaceKey(workspaceRoot)
     if (!tabId || !root) return false
-    const tab = get().tabs.find((entry) => entry.id === tabId)
-    if (!tab || tab.loading || tab.kind === 'image') return true
-    if (tab.truncated) return false
-    if (!isDirty(tab)) return true
-    if (typeof window.dsGui?.writeWorkspaceFile !== 'function') return false
-
-    const result = await window.dsGui.writeWorkspaceFile({
-      path: tab.path,
-      workspaceRoot: root,
-      content: tab.content
-    })
-    if (!result.ok) {
-      set((state) => ({
-        tabs: state.tabs.map((entry) =>
-          entry.id === tab.id ? { ...entry, error: result.message } : entry
-        )
-      }))
-      return false
+    const workspaceKey = get().workspaceKey
+    const key = `${root}\0${tabId}`
+    const previous = fileSaves.get(key)
+    const save = async (): Promise<boolean> => {
+      if (get().workspaceKey !== workspaceKey) return false
+      const tab = get().tabs.find((entry) => entry.id === tabId)
+      if (!tab || tab.loading || tab.kind === 'image') return false
+      if (tab.truncated) return false
+      if (!isDirty(tab)) return true
+      const update = (patch: Partial<EditorTab>): void => {
+        if (get().workspaceKey !== workspaceKey) return
+        set((state) => ({ tabs: state.tabs.map((entry) =>
+          entry.id === tab.id ? { ...entry, ...patch } : entry
+        ) }))
+      }
+      try {
+        if (typeof window.dsGui?.writeWorkspaceFile !== 'function') {
+          throw new Error(i18n.t('common:workspaceEditorSaveUnavailable'))
+        }
+        const result = await window.dsGui.writeWorkspaceFile({
+          path: tab.path, workspaceRoot: root, content: tab.content
+        })
+        if (!result.ok) throw new Error(result.message)
+        update({ savedContent: tab.content, error: null })
+        return true
+      } catch (error) {
+        update({ error: formatRuntimeError(error) })
+        return false
+      }
     }
-
-    set((state) => ({
-      tabs: state.tabs.map((entry) =>
-        entry.id === tab.id
-          ? {
-              ...entry,
-              savedContent: entry.content,
-              error: null,
-              path: normalizeEditorPathForTab(entry.path)
-            }
-          : entry
-      )
-    }))
-    return true
+    const pending = previous ? previous.then(save) : save()
+    fileSaves.set(key, pending)
+    try {
+      return await pending
+    } finally {
+      if (fileSaves.get(key) === pending) fileSaves.delete(key)
+    }
   },
   saveActiveTab: async (workspaceRoot) => {
     const { focusedPane, activeTabId, secondaryTabId, splitEnabled } = get()

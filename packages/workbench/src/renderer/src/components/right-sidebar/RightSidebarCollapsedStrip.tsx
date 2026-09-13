@@ -21,9 +21,11 @@ import {
 type Props = {
   workspaceRoot: string
   onExpand: () => void
+  /** Dock tab that owns the collapsed strip; shown as a small accent dot. */
+  activeTab?: string | null
 }
 
-export function RightSidebarCollapsedStrip({ workspaceRoot, onExpand }: Props): ReactElement {
+export function RightSidebarCollapsedStrip({ workspaceRoot, onExpand, activeTab }: Props): ReactElement {
   const { t } = useTranslation('common')
   const workspaceDirtyTick = useChatStore((s) => s.workspaceDirtyTick)
   const activeThreadId = useChatStore((s) => s.activeThreadId)
@@ -59,6 +61,7 @@ export function RightSidebarCollapsedStrip({ workspaceRoot, onExpand }: Props): 
       className="ds-no-drag flex h-full w-full flex-col items-center gap-3 border-l border-ds-border-muted/50 bg-ds-sidebar/70 px-1 py-3 transition hover:bg-ds-hover/30"
       title={t('rightSidebarExpand')}
     >
+      {activeTab ? <span className="h-1 w-1 shrink-0 rounded-full bg-accent" aria-hidden /> : null}
       <span className="[writing-mode:vertical-rl] rotate-180 text-[11px] font-medium text-ds-muted">
         {t('rightSidebarTitle')}
       </span>

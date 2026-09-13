@@ -1,3 +1,4 @@
+import { FeedbackNotice } from './FeedbackNotice'
 import { useRunPanelStore } from '../store/run-panel-store'
 import type {
   CSSProperties,
@@ -267,6 +268,7 @@ export function Workbench(): ReactElement {
     liveReasoning,
     liveAssistant,
     error,
+    connectionError,
     runtimeErrorDetail,
     busy,
     route,
@@ -304,6 +306,7 @@ export function Workbench(): ReactElement {
       liveReasoning: s.liveReasoning,
       liveAssistant: s.liveAssistant,
       error: s.error,
+      connectionError: s.connectionError,
       runtimeErrorDetail: s.runtimeErrorDetail,
       busy: s.busy,
       route: s.route,
@@ -1512,6 +1515,25 @@ export function Workbench(): ReactElement {
           route === 'marketplace' ? 'px-0' : ''
         }`}
       >
+        {runtimeConnection !== 'ready' && connectionError ? (
+          <div className={`${stageInsetClass} ds-no-drag shrink-0 py-2`}>
+            <FeedbackNotice
+              tone={runtimeConnection === 'checking' ? 'info' : 'warning'}
+              title={t(runtimeConnection === 'checking' ? 'feedbackReconnecting' : 'feedbackConnectionLost')}
+              message={t('feedbackConnectionImpact')}
+              details={connectionError}
+              actions={<>
+                <button type="button" disabled={runtimeConnection === 'checking'} className="min-h-8 rounded-lg bg-ds-ink px-3 py-1 text-[12px] font-medium text-ds-card disabled:opacity-50" onClick={() => void probeRuntime('user')}>{t('retryConnection')}</button>
+                <button type="button" className="min-h-8 rounded-lg px-3 py-1 text-[12px] text-ds-muted hover:bg-ds-hover" onClick={() => setRuntimeDiagnosticsOpen(true)}>{t('runtimeDiagnosticsButton')}</button>
+              </>}
+            />
+          </div>
+        ) : null}
+        {error ? (
+          <div className={`${stageInsetClass} ds-no-drag shrink-0 py-2`}>
+            <FeedbackNotice tone="error" title={t('feedbackActionFailed')} message={error} onDismiss={() => setError(null)} />
+          </div>
+        ) : null}
         {route === 'settings' ? (
           <Suspense fallback={<div className="h-full bg-transparent" />}>
             <SettingsView />
@@ -1541,42 +1563,7 @@ export function Workbench(): ReactElement {
           </Suspense>
         ) : (
           <>
-        {error && !(runtimeConnection !== 'ready' && !activeThreadId) && (
-          <div className="ds-no-drag shrink-0 border-b border-amber-200/70 bg-[rgba(255,248,235,0.82)] backdrop-blur-lg dark:border-amber-800/50 dark:bg-amber-950/35">
-            <div className={`${stageInsetClass} flex w-full min-w-0 items-start justify-between gap-3 py-3`}>
-              <p className="min-w-0 flex-1 text-[14px] leading-6 text-amber-950 dark:text-amber-100">
-                {error}
-              </p>
-              <div className="flex shrink-0 items-center gap-2">
-                {runtimeConnection !== 'ready' ? (
-                  <>
-                    <button
-                      type="button"
-                      className="rounded-lg border border-amber-300/70 bg-white px-3 py-1 text-[12px] font-medium text-amber-950 transition hover:bg-amber-100/80 dark:border-amber-700/60 dark:bg-amber-900/20 dark:text-amber-100 dark:hover:bg-amber-900/40"
-                      onClick={() => void probeRuntime('user')}
-                    >
-                      {t('retryConnection')}
-                    </button>
-                    <button
-                      type="button"
-                      className="rounded-lg border border-amber-300/70 bg-white px-3 py-1 text-[12px] font-medium text-amber-950 transition hover:bg-amber-100/80 dark:border-amber-700/60 dark:bg-amber-900/20 dark:text-amber-100 dark:hover:bg-amber-900/40"
-                      onClick={() => setRuntimeDiagnosticsOpen(true)}
-                    >
-                      {t('runtimeDiagnosticsButton')}
-                    </button>
-                    <button
-                      type="button"
-                      className="rounded-lg px-3 py-1 text-[12px] font-medium text-amber-900/80 transition hover:bg-amber-50/70 dark:text-amber-100 dark:hover:bg-amber-900/30"
-                      onClick={() => openSettings('general')}
-                    >
-                      {t('openSettings')}
-                    </button>
-                  </>
-                ) : null}
-              </div>
-            </div>
-          </div>
-        )}
+
 
         {ideModeActive ? (
           <div ref={mainRowRef} className="flex min-h-0 min-w-0 flex-1 flex-col">
@@ -2049,7 +2036,7 @@ export function Workbench(): ReactElement {
       </main>
       <RuntimeDiagnosticsDialog
         open={runtimeDiagnosticsOpen}
-        lastError={runtimeErrorDetail ?? error}
+        lastError={runtimeErrorDetail ?? connectionError ?? error}
         onClose={() => setRuntimeDiagnosticsOpen(false)}
         onRetry={() => probeRuntime('user')}
         onOpenSettings={() => {

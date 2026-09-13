@@ -5,9 +5,23 @@ type RuntimeErrorPayload = {
   message?: string
 }
 
-function readJsonPayload(raw: string): RuntimeErrorPayload | null {
+function readJsonPayload(raw: unknown): RuntimeErrorPayload | null {
+  const decode = (value: unknown): RuntimeErrorPayload => {
+    if (typeof value === 'string') return { message: value }
+    if (Array.isArray(value)) {
+      return { message: value.map((item) => decode(item).message).filter(Boolean).join('; ') }
+    }
+    if (!value || typeof value !== 'object') return {}
+    const record = value as Record<string, unknown>
+    const nested = decode(record.detail ?? record.error)
+    return {
+      error: typeof record.error === 'string' ? record.error : nested.error,
+      message: typeof record.message === 'string' ? record.message
+        : typeof record.msg === 'string' ? record.msg : nested.message
+    }
+  }
   try {
-    return JSON.parse(raw) as RuntimeErrorPayload
+    return decode(typeof raw === 'string' ? JSON.parse(raw) : raw)
   } catch {
     return null
   }
@@ -22,7 +36,7 @@ function stripIpcPrefix(message: string): string {
 
 export function getRuntimeErrorCode(error: unknown): string | null {
   const raw = stripIpcPrefix(error instanceof Error ? error.message : String(error ?? ''))
-  const payload = readJsonPayload(raw)
+  const payload = readJsonPayload(error && typeof error === 'object' && !(error instanceof Error) ? error : raw)
   if (typeof payload?.error === 'string' && payload.error.trim()) {
     return payload.error.trim().toLowerCase()
   }
@@ -35,7 +49,7 @@ export function getRuntimeErrorCode(error: unknown): string | null {
 
 export function formatRuntimeError(error: unknown): string {
   const raw = stripIpcPrefix(error instanceof Error ? error.message : String(error ?? ''))
-  const payload = readJsonPayload(raw)
+  const payload = readJsonPayload(error && typeof error === 'object' && !(error instanceof Error) ? error : raw)
   const errorCode = payload?.error?.trim().toLowerCase()
   const payloadMessage = payload?.message?.trim()
   const text = stripIpcPrefix(payloadMessage || raw)

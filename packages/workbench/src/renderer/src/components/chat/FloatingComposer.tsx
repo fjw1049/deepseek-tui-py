@@ -44,12 +44,10 @@ import {
   isActiveTaskStatus
 } from '../../lib/extract-tasks-from-blocks'
 import { ReasoningEffortSelector } from './ReasoningEffortSelector'
-import { ApprovalBubble } from './ApprovalBubble'
-import { ElevationBubble } from './ElevationBubble'
 import { FileChip } from './FileChip'
+import { PendingDecisionPanel } from './PendingDecisionPanel'
 import { ComposerLiveChangesHeader } from './ComposerLiveChangesHeader'
 import { openChangesPanel } from '../../lib/change-review'
-import { UserInputBubble } from './UserInputBubble'
 import { ComposerApprovalPolicySelector } from './ComposerApprovalPolicySelector'
 import {
   filterComposerModelOptions,
@@ -416,22 +414,6 @@ export function FloatingComposer({
       activePublishThread?.publishRequestAction
   )
 
-  const pendingApprovals = useMemo(
-    () =>
-      blocks.filter(
-        (block): block is Extract<(typeof blocks)[number], { kind: 'approval' }> =>
-          block.kind === 'approval' && block.status === 'pending'
-      ),
-    [blocks]
-  )
-  const pendingElevations = useMemo(
-    () =>
-      blocks.filter(
-        (block): block is Extract<(typeof blocks)[number], { kind: 'elevation' }> =>
-          block.kind === 'elevation' && block.status === 'pending'
-      ),
-    [blocks]
-  )
   const pendingUserInputs = useMemo(
     () =>
       blocks.filter(
@@ -1508,21 +1490,7 @@ export function FloatingComposer({
         focusComposer()
       }}
     >
-      {pendingApprovals.length > 0 ||
-      pendingElevations.length > 0 ||
-      pendingUserInputs.length > 0 ? (
-        <div className="ds-no-drag ds-scroll-surface mb-2 max-h-[min(320px,40vh)] space-y-2 overflow-y-auto overscroll-contain">
-          {pendingApprovals.map((block) => (
-            <ApprovalBubble key={block.id} block={block} />
-          ))}
-          {pendingElevations.map((block) => (
-            <ElevationBubble key={block.id} block={block} />
-          ))}
-          {pendingUserInputs.map((block) => (
-            <UserInputBubble key={block.id} block={block} />
-          ))}
-        </div>
-      ) : null}
+      <PendingDecisionPanel key={activeThreadId ?? "empty"} blocks={blocks} />
       <ComposerLiveChangesHeader
         onReview={() => {
           openChangesPanel({

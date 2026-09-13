@@ -10,25 +10,30 @@ export type NoticeTone = 'success' | 'error' | 'info'
 export type Notice = {
   tone: NoticeTone
   message: string
+  /** Instructions or unresolved conditions that need explicit dismissal. */
+  persistent?: boolean
 }
 
-/**
- * Auto-dismiss a transient notice so success/error banners don't linger
- * forever (which is what left a stale "Not Found" error on screen after the
- * runtime came back up). Errors stay a bit longer since they matter more;
- * success/info clear faster. A fresh notice restarts the timer; unmount
- * clears it. Callers that want a permanent banner should render NoticeView
- * directly from a condition instead of going through setNotice.
- */
+/** Success/info feedback is transient; failures remain until dismissed or resolved. */
 export function useNoticeAutoDismiss(
   notice: Notice | null,
   setNotice: (value: Notice | null) => void
 ): void {
   useEffect(() => {
-    if (!notice) return
-    const ms = notice.tone === 'error' ? 5000 : 2000
-    const timer = window.setTimeout(() => setNotice(null), ms)
-    return () => window.clearTimeout(timer)
+    if (!notice || notice.tone === 'error' || notice.persistent) return
+    let timer: number | undefined
+    const schedule = (): void => {
+      window.clearTimeout(timer)
+      if (document.visibilityState !== 'hidden') {
+        timer = window.setTimeout(() => setNotice(null), 3000)
+      }
+    }
+    schedule()
+    document.addEventListener('visibilitychange', schedule)
+    return () => {
+      window.clearTimeout(timer)
+      document.removeEventListener('visibilitychange', schedule)
+    }
   }, [notice, setNotice])
 }
 

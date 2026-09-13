@@ -1452,7 +1452,7 @@ export function registerAppIpcHandlers(options: RegisterAppIpcHandlersOptions): 
       workspaceListDirectoryPayloadSchema,
       payload
     )
-    return listWorkspaceDirectory(request.workspaceRoot, request.directoryPath ?? '')
+    return listWorkspaceDirectory(request.workspaceRoot, request.directoryPath ?? '', request.includeIgnored)
   })
 
   ipcMain.handle('file:search-workspace', async (_, payload: unknown) => {

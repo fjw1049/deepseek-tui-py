@@ -123,6 +123,7 @@ type SidebarProjectsColumnProps = Omit<
   locale: string
   /** Rendered above the projects header (pinned threads). */
   pinnedSlot?: ReactElement | null
+  headerHost?: HTMLElement | null
 }
 
 type WorkspaceGroup = [string, NormalizedThread[]]
@@ -480,6 +481,7 @@ export function SidebarProjectsColumn({
   pinnedThreadIds,
   locale,
   pinnedSlot = null,
+  headerHost = null,
   onTogglePin,
   onPickWorkspace,
   onRemoveWorkspace,
@@ -659,10 +661,8 @@ export function SidebarProjectsColumn({
     setCollapsedWorkspaces(nextCollapsed)
   }
 
-  return (
-    <>
-      {pinnedSlot}
-      <SidebarProjectsToolbar
+  const projectsToolbar = (
+    <SidebarProjectsToolbar
         workspaceRoot={workspaceRoot}
         onPickWorkspace={onPickWorkspace}
         projectThreadCount={projectThreads.length}
@@ -684,6 +684,12 @@ export function SidebarProjectsColumn({
         onRestoreAutoProjectSort={handleRestoreAutoProjectSort}
         t={t}
       />
+  )
+
+  return (
+    <>
+      {pinnedSlot}
+      {headerHost ? createPortal(projectsToolbar, headerHost) : projectsToolbar}
       {!projectsHidden ? (
         <div className="ds-sidebar-projects-scroll ds-scroll-surface min-h-0 flex-1 overflow-y-auto overscroll-contain">
           <SidebarProjectsSection

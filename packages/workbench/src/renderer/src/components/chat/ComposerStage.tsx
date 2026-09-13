@@ -84,7 +84,7 @@ export function ComposerStage(props: Props): ReactElement {
     <div ref={rootRef} className="relative flex w-full flex-col items-stretch">
       {composerNotice ? (
         <div className="ds-chat-stage mb-1.5 flex w-full justify-center px-3 sm:px-4">
-          <ComposerNoticeToast notice={composerNotice} />
+          <ComposerNoticeToast notice={composerNotice} onDismiss={() => setComposerNotice(null)} />
         </div>
       ) : null}
       <div className="relative">

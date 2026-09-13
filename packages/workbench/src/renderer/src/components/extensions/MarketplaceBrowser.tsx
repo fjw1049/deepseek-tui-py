@@ -6,7 +6,7 @@ import type { MarketplaceCategory, MarketplaceItem, MarketplaceKind } from '../.
 import type { Notice } from './marketplace-shared'
 import { NoticeView } from './marketplace-ui'
 
-export type InstallOutcome = { tone: Notice['tone']; message: string }
+export type InstallOutcome = Notice
 
 /**
  * ModelScope's API only returns English category values (PascalCase for skills,

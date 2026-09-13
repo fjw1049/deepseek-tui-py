@@ -21,8 +21,7 @@ import {
   FileEdit,
   FolderOpen,
   Globe2,
-  Terminal,
-  X
+  Terminal
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { useShallow } from 'zustand/react/shallow'
@@ -47,14 +46,9 @@ import {
 import {
   extractTasksFromBlocks,
   isActiveTaskStatus,
-  taskListTitle,
   type TaskItemView
 } from '../../lib/extract-tasks-from-blocks'
-import {
-  isActiveSubagentStatus,
-  subagentListTitle
-} from '../../lib/extract-subagents-from-blocks'
-import { taskStatusLabelKey } from './task-status'
+import { isActiveSubagentStatus } from '../../lib/extract-subagents-from-blocks'
 import { extractTodosFromBlocks } from '../../lib/extract-todos-from-blocks'
 import {
   resolveThreadFilesystemRoot,
@@ -190,107 +184,42 @@ function SectionHeader({
   )
 }
 
-function subagentDockDotClass(status: DockSubagentItem['status']): string {
-  if (status === 'failed') return 'bg-red-500'
-  if (status === 'completed') return 'bg-sky-500'
-  if (status === 'cancelled') return 'bg-ds-border'
-  return 'bg-emerald-500'
-}
+/**
+ * One small status dot per agent: pulsing accent while active, then settled —
+ * green for success, red for failure, grey for cancelled.
+ */
+type AgentChipState = 'active' | 'completed' | 'failed' | 'cancelled'
 
-function SubagentDockRow({ item }: { item: DockSubagentItem }): ReactElement {
-  const { t } = useTranslation('common')
-  const active = isActiveSubagentStatus(item.status)
-  const label = subagentListTitle(item, 56, t('contextRailSubagentFallback'))
-  const fullPrompt = (item.prompt || '').replace(/\s+/g, ' ').trim()
-
+function AgentStatusDot({ state }: { state: AgentChipState }): ReactElement {
   return (
-    <li>
-      <button
-        type="button"
-        onClick={() => openRunPanel({ kind: 'subagent', id: item.agentId })}
-        title={fullPrompt || t('contextRailSubagentJump')}
-        className="flex w-full items-center gap-2 rounded-[9px] px-1.5 py-1 text-left transition-colors hover:bg-ds-hover/60"
-      >
-        <span
-          className={`h-2 w-2 shrink-0 rounded-full ${subagentDockDotClass(item.status)}`}
-          aria-hidden
-        />
-        <span
-          className={[
-            'min-w-0 flex-1 truncate text-[12.5px] leading-5 tracking-[-0.01em]',
-            active ? 'font-medium text-ds-ink' : 'font-medium text-ds-ink/85'
-          ].join(' ')}
-        >
-          {label}
-        </span>
-      </button>
-    </li>
+    <span
+      className={[
+        'h-1.5 w-1.5 rounded-full',
+        state === 'active'
+          ? 'animate-pulse bg-accent'
+          : state === 'completed'
+            ? 'bg-emerald-500'
+            : state === 'failed'
+              ? 'bg-red-500'
+              : 'bg-ds-border'
+      ].join(' ')}
+      aria-hidden
+    />
   )
 }
 
-function TaskGroupLabel({ label }: { label: string }): ReactElement {
-  return (
-    <p className="px-1.5 pb-0.5 pt-1 text-[11px] font-medium tracking-[0.02em] text-ds-faint">
-      {label}
-    </p>
-  )
+function taskChipState(status: TaskItemView['status']): AgentChipState {
+  if (isActiveTaskStatus(status)) return 'active'
+  if (status === 'completed') return 'completed'
+  if (status === 'failed' || status === 'timed_out') return 'failed'
+  return 'cancelled'
 }
 
-function TaskRow({
-  task,
-  onDismiss
-}: {
-  task: TaskItemView
-  onDismiss?: () => void
-}): ReactElement {
-  const { t } = useTranslation()
-  const { status } = task
-  const running = isActiveTaskStatus(status)
-  const title = taskListTitle(task)
-
-  return (
-    <li className="rounded-[10px] px-0.5 py-0.5">
-      <div className="flex items-center gap-1">
-        <button
-          type="button"
-          onClick={() => openRunPanel({ kind: 'task', id: task.id })}
-          title={task.prompt.trim() || task.id}
-          className="flex min-w-0 flex-1 items-center gap-1.5 rounded-[9px] px-1.5 py-1 text-left transition-colors hover:bg-ds-hover/60"
-        >
-          <ChevronDown
-            className={[
-              'h-3.5 w-3.5 shrink-0 text-ds-faint transition-transform duration-200',
-              '-rotate-90'
-            ].join(' ')}
-            strokeWidth={1.8}
-          />
-          <span
-            className={[
-              'min-w-0 flex-1 truncate text-[12.5px] leading-5 tracking-[-0.01em]',
-              running ? 'ds-shiny-text font-medium text-ds-ink' : 'font-medium text-ds-ink/85'
-            ].join(' ')}
-          >
-            {title}
-          </span>
-          <span className="shrink-0 text-[11px] text-ds-faint">
-            {t(taskStatusLabelKey(status))}
-          </span>
-        </button>
-        {onDismiss ? (
-          <button
-            type="button"
-            onClick={onDismiss}
-            title={t('contextRailTaskClear')}
-            aria-label={t('contextRailTaskClear')}
-            className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-ds-faint transition hover:bg-ds-hover hover:text-ds-ink"
-          >
-            <X className="h-3.5 w-3.5" strokeWidth={2} />
-          </button>
-        ) : null}
-      </div>
-
-    </li>
-  )
+function subagentChipState(status: DockSubagentItem['status']): AgentChipState {
+  if (isActiveSubagentStatus(status)) return 'active'
+  if (status === 'completed') return 'completed'
+  if (status === 'failed') return 'failed'
+  return 'cancelled'
 }
 
 export function OperationContextDock({
@@ -345,32 +274,18 @@ export function OperationContextDock({
   const totalCount = todos.length
   const baseTasks = useMemo(() => extractTasksFromBlocks(blocks), [blocks])
   const tasks = useLiveTasks(baseTasks)
-  /** Local dock dismissals — hide from the rail without cancelling the backend task. */
-  const [dismissedTaskIds, setDismissedTaskIds] = useState(() => new Set<string>())
-  useEffect(() => {
-    setDismissedTaskIds(new Set())
-  }, [activeThreadId])
-  const visibleTasks = useMemo(
-    () => tasks.filter((task) => !dismissedTaskIds.has(task.id)),
-    [tasks, dismissedTaskIds]
-  )
-  const activeTasks = useMemo(
-    () => visibleTasks.filter((task) => isActiveTaskStatus(task.status)),
-    [visibleTasks]
-  )
-  const doneTasks = useMemo(
-    () => visibleTasks.filter((task) => !isActiveTaskStatus(task.status)),
-    [visibleTasks]
-  )
-  const dismissTask = useCallback((taskId: string): void => {
-    setDismissedTaskIds((prev) => {
-      if (prev.has(taskId)) return prev
-      const next = new Set(prev)
-      next.add(taskId)
-      return next
-    })
-  }, [])
   const dockSubagents = useMemo(() => extractSubagentsFromBlocks(blocks), [blocks])
+  /** Single aggregate entry for the rail — per-run details live in the run panel. */
+  const agentStates = [
+    ...tasks.map((task) => taskChipState(task.status)),
+    ...dockSubagents.map((item) => subagentChipState(item.status))
+  ]
+  const firstRunTarget =
+    tasks.length > 0
+      ? { kind: 'task' as const, id: tasks[0]!.id }
+      : dockSubagents.length > 0
+        ? { kind: 'subagent' as const, id: dockSubagents[0]!.agentId }
+        : null
   const changeStats = useMemo(
     () =>
       sumWorkspaceChangeStats(
@@ -470,7 +385,7 @@ export function OperationContextDock({
   // empties. Each effect keys on a single boolean edge so manually toggling
   // one section never overrides another.
   const hasTodos = totalCount > 0
-  const hasTasks = visibleTasks.length > 0
+  const hasTasks = tasks.length > 0
   const hasSubagents = dockSubagents.length > 0
   const hasTaskSection = hasTasks || hasSubagents
   useEffect(() => {
@@ -888,7 +803,7 @@ export function OperationContextDock({
         trailing={
           hasTaskSection ? (
             <span className="shrink-0 text-[11px] tabular-nums text-ds-faint">
-              {visibleTasks.length + dockSubagents.length}
+              {tasks.length + dockSubagents.length}
             </span>
           ) : undefined
         }
@@ -896,33 +811,28 @@ export function OperationContextDock({
 
       {!collapsed.tasks ? (
         hasTaskSection ? (
-          <div className="mt-1.5 max-h-[min(36vh,240px)] space-y-0.5 overflow-y-auto overflow-x-hidden">
-            {hasTasks ? (
-              <>
-                {hasSubagents ? <TaskGroupLabel label={t('contextRailTaskGroup')} /> : null}
-                <ul className="space-y-0.5">
-                  {[...activeTasks, ...doneTasks].map((task) => (
-                    <TaskRow
-                      key={task.id}
-                      task={task}
-                      onDismiss={
-                        isActiveTaskStatus(task.status) ? undefined : () => dismissTask(task.id)
-                      }
-                    />
-                  ))}
-                </ul>
-              </>
-            ) : null}
-            {hasSubagents ? (
-              <>
-                <TaskGroupLabel label={t('contextRailSubagentGroup')} />
-                <ul className="space-y-0.5">
-                  {dockSubagents.map((item) => (
-                    <SubagentDockRow key={item.id} item={item} />
-                  ))}
-                </ul>
-              </>
-            ) : null}
+          <div className="mt-1.5">
+            <button
+              type="button"
+              onClick={() => {
+                if (firstRunTarget) openRunPanel(firstRunTarget)
+              }}
+              className="group flex w-full items-center gap-2 rounded-[9px] px-1.5 py-1 text-left transition-colors hover:bg-ds-hover/60"
+            >
+              <span className="flex shrink-0 items-center gap-[3px]" aria-hidden>
+                {agentStates.slice(0, 6).map((state, dotIndex) => (
+                  <AgentStatusDot key={dotIndex} state={state} />
+                ))}
+              </span>
+              <span className="min-w-0 flex-1 truncate text-[12.5px] font-medium tracking-[-0.01em] text-ds-ink/85">
+                {t('contextRailAgentGroupTitle')}
+              </span>
+              <ChevronRight
+                className="h-3.5 w-3.5 shrink-0 text-ds-faint transition-transform duration-150 group-hover:translate-x-0.5"
+                strokeWidth={2}
+                aria-hidden
+              />
+            </button>
           </div>
         ) : (
           <p className="mt-1 text-[13px] leading-5 text-ds-faint">{t('contextRailEmptyTasks')}</p>

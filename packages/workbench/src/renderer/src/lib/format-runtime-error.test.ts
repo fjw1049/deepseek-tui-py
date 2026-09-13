@@ -19,3 +19,21 @@ describe('formatRuntimeError', () => {
     expect(getRuntimeErrorCode(err)).toBe('runtime_auth_required')
   })
 })
+
+
+describe('HTTP error payloads', () => {
+  it('reads nested FastAPI errors without rendering objects', () => {
+    const error = JSON.stringify({ detail: { error: 'wecom_send_failed', message: 'Bad webhook' } })
+    expect(formatRuntimeError(error)).toBe('Bad webhook')
+    expect(getRuntimeErrorCode(error)).toBe('wecom_send_failed')
+  })
+  it('reads validation arrays and string details', () => {
+    expect(formatRuntimeError(JSON.stringify({ detail: [{ loc: ['body', 'email'], msg: 'Invalid email' }] }))).toContain('Invalid email')
+    expect(formatRuntimeError(JSON.stringify({ detail: 'Recipient missing' }))).toBe('Recipient missing')
+  })
+  it('always returns text for malformed or unexpected payloads', () => {
+    for (const value of [null, { error: 500 }, { message: {} }, '<html>Bad gateway</html>', '{broken']) {
+      expect(typeof formatRuntimeError(value)).toBe('string')
+    }
+  })
+})

@@ -14,7 +14,9 @@ export function ChangeDiffStatsLabel({
   size = 'md',
   className = '',
   hideZero = false
-}: Props): ReactElement {
+}: Props): ReactElement | null {
+  // No changes at all — an empty "+0 -0" is noise (VS Code / GitHub behavior).
+  if (stats.added === 0 && stats.removed === 0) return null
   return (
     <span className={`ds-change-stats ds-change-stats--${size} ${className}`.trim()}>
       {!hideZero || stats.added > 0 ? (

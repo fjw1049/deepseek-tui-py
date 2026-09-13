@@ -1,8 +1,12 @@
 import { useLayoutEffect, useMemo, useRef, useState, type ReactElement } from 'react'
-import { Check, ChevronDown, ChevronUp, Minimize2, Columns2, Copy, MessageSquarePlus, Rows3 } from 'lucide-react'
+import { Check, ChevronDown, ChevronUp, Minimize2, Columns2, Copy, MessageSquarePlus, Rows3, WrapText } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { countDiffStats, extractDiffFilePath } from '../lib/diff-stats'
 import { FileChip } from './chat/FileChip'
+import { FileKindIcon } from './chat/FileKindIcon'
+import { Tooltip } from './common/Tooltip'
+import { useCodeHighlights } from '../lib/use-code-highlights'
+import { languageForPath } from '../lib/monaco-language-for-path'
 
 export type DiffRenderStyle = 'unified' | 'split'
 
@@ -60,18 +64,6 @@ type SplitRow = {
   rightKind: 'empty' | 'context' | 'add'
 }
 
-const LANG_BADGES: Array<{ test: RegExp; label: string; tone: string }> = [
-  { test: /\.tsx?$/i, label: 'TS', tone: 'bg-sky-100 text-sky-700 dark:bg-sky-500/15 dark:text-sky-300' },
-  { test: /\.jsx?$/i, label: 'JS', tone: 'bg-amber-100 text-amber-800 dark:bg-amber-500/15 dark:text-amber-300' },
-  { test: /\.json$/i, label: 'JSON', tone: 'bg-zinc-100 text-zinc-700 dark:bg-zinc-500/15 dark:text-zinc-300' },
-  { test: /\.(css|scss|less)$/i, label: 'CSS', tone: 'bg-pink-100 text-pink-700 dark:bg-pink-500/15 dark:text-pink-300' },
-  { test: /\.md$/i, label: 'MD', tone: 'bg-slate-100 text-slate-700 dark:bg-slate-500/15 dark:text-slate-300' },
-  { test: /\.py$/i, label: 'PY', tone: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300' },
-  { test: /\.html?$/i, label: 'HTML', tone: 'bg-orange-100 text-orange-700 dark:bg-orange-500/15 dark:text-orange-300' },
-  { test: /\.ya?ml$/i, label: 'YML', tone: 'bg-violet-100 text-violet-700 dark:bg-violet-500/15 dark:text-violet-300' },
-  { test: /\.sh$/i, label: 'SH', tone: 'bg-zinc-100 text-zinc-700 dark:bg-zinc-500/15 dark:text-zinc-300' }
-]
-
 function parseDiff(patch: string, override?: string): ParsedDiff {
   const stats = countDiffStats(patch)
   return {
@@ -79,12 +71,6 @@ function parseDiff(patch: string, override?: string): ParsedDiff {
     added: stats?.added ?? 0,
     removed: stats?.removed ?? 0
   }
-}
-
-function badgeFor(name: string | null): { label: string; tone: string } {
-  if (!name) return { label: 'TXT', tone: 'bg-zinc-100 text-zinc-700 dark:bg-zinc-500/15 dark:text-zinc-300' }
-  for (const b of LANG_BADGES) if (b.test.test(name)) return { label: b.label, tone: b.tone }
-  return { label: 'TXT', tone: 'bg-zinc-100 text-zinc-700 dark:bg-zinc-500/15 dark:text-zinc-300' }
 }
 
 function filterBodyLines(lines: string[]): Array<{ line: string; i: number }> {
@@ -123,7 +109,7 @@ function buildUnifiedRows(bodyLines: Array<{ line: string; i: number }>): Unifie
         oldNo: null,
         newNo,
         text: line,
-        cls: 'bg-ds-diff-added-soft text-ds-diff-added'
+        cls: 'ds-diff-row-added text-ds-ink'
       })
       if (newNo != null) newNo += 1
       continue
@@ -135,7 +121,7 @@ function buildUnifiedRows(bodyLines: Array<{ line: string; i: number }>): Unifie
         oldNo,
         newNo: null,
         text: line,
-        cls: 'bg-ds-diff-removed-soft text-ds-diff-removed'
+        cls: 'ds-diff-row-removed text-ds-ink'
       })
       if (oldNo != null) oldNo += 1
       continue
@@ -159,6 +145,52 @@ function stripPrefix(line: string): string {
     return line.slice(1)
   }
   return line
+}
+
+/** A context run between hunks shorter than this stays fully visible. */
+const CONTEXT_FOLD_THRESHOLD = 10
+/** Keep a few context lines adjacent to each hunk when folding. */
+const CONTEXT_FOLD_KEEP = 3
+
+type UnifiedDisplayRow =
+  | { type: 'row'; row: UnifiedRow }
+  | { type: 'fold'; key: number; count: number; startKey: number }
+
+/**
+ * Collapse long context runs between hunks into an expandable separator
+ * (GitHub/VS Code style). Leading/trailing context and short runs stay intact;
+ * a run is only foldable when it sits between two hunk headers.
+ */
+function buildFoldedRows(rows: UnifiedRow[], unfolded: Set<number>): UnifiedDisplayRow[] {
+  const out: UnifiedDisplayRow[] = []
+  let i = 0
+  let seenMeta = false
+  while (i < rows.length) {
+    const row = rows[i]!
+    if (row.kind !== 'context') {
+      if (row.kind === 'meta') seenMeta = true
+      out.push({ type: 'row', row })
+      i += 1
+      continue
+    }
+    let j = i
+    while (j < rows.length && rows[j]!.kind === 'context') j += 1
+    const runLen = j - i
+    const foldable =
+      seenMeta && j < rows.length && runLen >= CONTEXT_FOLD_THRESHOLD && !unfolded.has(row.key)
+    if (foldable) {
+      const foldCount = runLen - CONTEXT_FOLD_KEEP * 2
+      for (let k = 0; k < CONTEXT_FOLD_KEEP; k += 1) out.push({ type: 'row', row: rows[i + k]! })
+      out.push({ type: 'fold', key: row.key, count: foldCount, startKey: rows[i + CONTEXT_FOLD_KEEP]!.key })
+      for (let k = runLen - CONTEXT_FOLD_KEEP; k < runLen; k += 1) {
+        out.push({ type: 'row', row: rows[i + k]! })
+      }
+    } else {
+      for (let k = i; k < j; k += 1) out.push({ type: 'row', row: rows[k]! })
+    }
+    i = j
+  }
+  return out
 }
 
 function buildSplitRows(bodyLines: Array<{ line: string; i: number }>): SplitRow[] {
@@ -233,8 +265,8 @@ function buildSplitRows(bodyLines: Array<{ line: string; i: number }>): SplitRow
 }
 
 function sideCls(kind: 'empty' | 'context' | 'del' | 'add'): string {
-  if (kind === 'del') return 'bg-ds-diff-removed-soft text-ds-diff-removed'
-  if (kind === 'add') return 'bg-ds-diff-added-soft text-ds-diff-added'
+  if (kind === 'del') return 'ds-diff-row-removed text-ds-ink'
+  if (kind === 'add') return 'ds-diff-row-added text-ds-ink'
   if (kind === 'empty') return 'bg-[color-mix(in_srgb,var(--ds-text)_3%,transparent)] text-ds-faint'
   return 'text-ds-ink'
 }
@@ -259,6 +291,7 @@ export function DiffView({
   showHeader = true,
   follow = false
 }: Props): ReactElement {
+  const { t } = useTranslation('common')
   const looksLikePatch = useMemo(
     () => patch.split('\n').some((l) => /^[+-]/.test(l) || l.startsWith('@@')),
     [patch]
@@ -267,15 +300,30 @@ export function DiffView({
   const [copied, setCopied] = useState(false)
   const [localStyle, setLocalStyle] = useState<DiffRenderStyle>(controlledStyle ?? 'unified')
   const diffStyle = controlledStyle ?? localStyle
+  const [wrapLines, setWrapLines] = useState(false)
 
   const fileLabel = parsed.filePath ?? filePath ?? null
   const displayName = fileLabel ? fileLabel.split(/[/\\]/).pop() ?? fileLabel : null
-  const badge = badgeFor(fileLabel)
   const fillParent = maxHeight >= 9000
 
   const bodyLines = useMemo(() => filterBodyLines(patch.split('\n')), [patch])
   const unifiedRows = useMemo(() => buildUnifiedRows(bodyLines), [bodyLines])
+  const oldSource = useMemo(() => unifiedRows.filter((row) => row.kind !== 'meta' && row.kind !== 'add'), [unifiedRows])
+  const newSource = useMemo(() => unifiedRows.filter((row) => row.kind !== 'meta' && row.kind !== 'del'), [unifiedRows])
+  const language = languageForPath(fileLabel ?? '')
+  const oldHighlights = useCodeHighlights(oldSource.map((row) => stripPrefix(row.text)).join('\n'), language)
+  const newHighlights = useCodeHighlights(newSource.map((row) => stripPrefix(row.text)).join('\n'), language)
+  const oldTokens = new Map(oldSource.map((row, index) => [row.oldNo, oldHighlights?.[index]]))
+  const newTokens = new Map(newSource.map((row, index) => [row.newNo, newHighlights?.[index]]))
+  const codeLine = (text: string, html: string | undefined): ReactElement => html === undefined
+    ? <span>{text || '\u00a0'}</span>
+    : <span className="ds-syntax-line" dangerouslySetInnerHTML={{ __html: html }} />
   const splitRows = useMemo(() => buildSplitRows(bodyLines), [bodyLines])
+  const [unfoldedContext, setUnfoldedContext] = useState<Set<number>>(new Set())
+  const displayRows = useMemo(
+    () => buildFoldedRows(unifiedRows, unfoldedContext),
+    [unifiedRows, unfoldedContext]
+  )
   const bodyRef = useRef<HTMLDivElement | HTMLPreElement>(null)
 
   useLayoutEffect(() => {
@@ -310,11 +358,9 @@ export function DiffView({
   /** Keep header inset and code gutters on the same 8px rhythm. */
   const gutterStyle = { width: flush ? 36 : 40 } as const
   const cellPad = 'px-2'
-  const metaPad = 'px-2'
 
   const header = showHeader ? (
     <DiffHeader
-      badge={badge}
       name={displayName}
       filePath={fileLabel}
       added={looksLikePatch ? parsed.added : null}
@@ -324,6 +370,8 @@ export function DiffView({
       showStyleToggle={looksLikePatch && showStyleToggle}
       diffStyle={diffStyle}
       onDiffStyleChange={setStyle}
+      wrapLines={wrapLines}
+      onToggleWrap={looksLikePatch ? () => setWrapLines((value) => !value) : undefined}
       flush={flush}
       onAddToChat={onAddToChat}
       onCollapse={onCollapse}
@@ -334,10 +382,10 @@ export function DiffView({
 
   if (!looksLikePatch) {
     return (
-      <div className={shellClass}>
+      <div className={shellClass} data-wrap={wrapLines ? '' : undefined}>
         {header}
         <pre
-          ref={bodyRef}
+          ref={(node) => { bodyRef.current = node }}
           className={`${bodyClass} whitespace-pre text-ds-ink ${flush ? 'px-2 py-1' : 'p-3'}`}
           style={fillParent || flush ? undefined : { maxHeight }}
         >
@@ -348,11 +396,11 @@ export function DiffView({
   }
 
   return (
-    <div className={shellClass}>
+    <div className={shellClass} data-wrap={wrapLines ? '' : undefined}>
       {header}
-      <div ref={bodyRef} className={bodyClass} style={fillParent || flush ? undefined : { maxHeight }}>
+      <div ref={(node) => { bodyRef.current = node }} className={bodyClass} style={fillParent || flush ? undefined : { maxHeight }}>
         {diffStyle === 'split' ? (
-          <table className="w-full table-fixed border-collapse">
+          <table className="ds-diff-table border-collapse">
             <colgroup>
               <col style={gutterStyle} />
               <col />
@@ -364,7 +412,7 @@ export function DiffView({
                 if (row.kind === 'meta') {
                   return (
                     <tr key={row.key} className="bg-accent-soft/60 text-ds-muted">
-                      <td colSpan={4} className={`break-all ${metaPad} py-0.5 font-mono text-[14px]`}>
+                      <td colSpan={4} className="ds-diff-meta-sticky break-all px-2 py-0.5 font-mono text-[13.5px]">
                         {row.meta}
                       </td>
                     </tr>
@@ -373,24 +421,24 @@ export function DiffView({
                 return (
                   <tr key={row.key}>
                     <td
-                      className={`select-none px-1 text-right align-top font-mono text-[13px] tabular-nums text-ds-faint ${sideCls(row.leftKind)}`}
+                      className={`select-none px-1 text-right align-top font-mono text-[13.5px] tabular-nums text-ds-faint ${sideCls(row.leftKind)}`}
                     >
                       {row.leftNo ?? ''}
                     </td>
                     <td
-                      className={`max-w-0 break-all whitespace-pre-wrap ${cellPad} align-top font-mono text-[14.5px] leading-[1.45] ${sideCls(row.leftKind)}`}
+                      className={`ds-diff-code whitespace-pre ${cellPad} align-top font-mono text-[14px] leading-[23px] ${sideCls(row.leftKind)}`}
                     >
-                      {row.leftText ?? '\u00a0'}
+                      {codeLine(row.leftText ?? '', oldTokens.get(row.leftNo))}
                     </td>
                     <td
-                      className={`select-none border-l border-ds-border-muted/50 px-1 text-right align-top font-mono text-[13px] tabular-nums text-ds-faint ${sideCls(row.rightKind)}`}
+                      className={`select-none border-l border-ds-border-muted/50 px-1 text-right align-top font-mono text-[13.5px] tabular-nums text-ds-faint ${sideCls(row.rightKind)}`}
                     >
                       {row.rightNo ?? ''}
                     </td>
                     <td
-                      className={`max-w-0 break-all whitespace-pre-wrap ${cellPad} align-top font-mono text-[14.5px] leading-[1.45] ${sideCls(row.rightKind)}`}
+                      className={`ds-diff-code whitespace-pre ${cellPad} align-top font-mono text-[14px] leading-[23px] ${sideCls(row.rightKind)}`}
                     >
-                      {row.rightText ?? '\u00a0'}
+                      {codeLine(row.rightText ?? '', newTokens.get(row.rightNo))}
                     </td>
                   </tr>
                 )
@@ -398,26 +446,64 @@ export function DiffView({
             </tbody>
           </table>
         ) : (
-          <table className="w-full table-fixed border-collapse">
+          <table className="ds-diff-table border-collapse">
             <colgroup>
               <col style={gutterStyle} />
               <col style={gutterStyle} />
               <col />
             </colgroup>
             <tbody>
-              {unifiedRows.map((row) => (
-                <tr key={row.key} className={row.cls}>
-                  <td className="select-none px-1 text-right align-top font-mono text-[13px] tabular-nums text-ds-faint">
-                    {row.oldNo ?? ''}
-                  </td>
-                  <td className="select-none border-r border-ds-border-muted/40 px-1 text-right align-top font-mono text-[13px] tabular-nums text-ds-faint">
-                    {row.newNo ?? ''}
-                  </td>
-                  <td className="max-w-0 break-all whitespace-pre-wrap px-2 align-top font-mono text-[14.5px] leading-[1.45]">
-                    {row.text || '\u00a0'}
-                  </td>
-                </tr>
-              ))}
+              {displayRows.map((entry) => {
+                if (entry.type === 'fold') {
+                  return (
+                    <tr key={`fold-${entry.key}`}>
+                      <td colSpan={3} className="bg-[color-mix(in_srgb,var(--ds-text)_4%,transparent)] px-2 py-0.5">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setUnfoldedContext((prev) => {
+                              const next = new Set(prev)
+                              next.add(entry.key)
+                              return next
+                            })
+                          }
+                          className="font-mono text-[12.5px] text-ds-faint transition hover:text-ds-muted"
+                          title={t('diffExpandContext')}
+                        >
+                          {'\u22ef '}
+                          {t('diffUnmodifiedLines', { count: entry.count })}
+                        </button>
+                      </td>
+                    </tr>
+                  )
+                }
+                const row = entry.row
+                if (row.kind === 'meta') {
+                  return (
+                    <tr key={row.key}>
+                      <td className="ds-diff-meta-sticky select-none px-1 text-right align-top font-mono text-[13.5px]" />
+                      <td className="ds-diff-meta-sticky select-none px-1 text-right align-top font-mono text-[13.5px]" />
+                      <td className="ds-diff-meta-sticky max-w-0 truncate px-2 align-top font-mono text-[13.5px] text-ds-muted">
+                        {row.text || '\u00a0'}
+                      </td>
+                    </tr>
+                  )
+                }
+                return (
+                  <tr key={row.key} className={row.cls}>
+                    <td className="select-none px-1 text-right align-top font-mono text-[13.5px] tabular-nums text-ds-faint">
+                      {row.oldNo ?? ''}
+                    </td>
+                    <td className="select-none border-r border-ds-border-muted/40 px-1 text-right align-top font-mono text-[13.5px] tabular-nums text-ds-faint">
+                      {row.newNo ?? ''}
+                    </td>
+                    <td className="ds-diff-code whitespace-pre px-2 align-top font-mono text-[14px] leading-[23px]">
+                      <span className={`ds-diff-sign ds-diff-sign--${row.kind}`} aria-hidden>{row.kind === 'add' ? '+' : row.kind === 'del' ? '−' : ' '}</span>
+                      {codeLine(stripPrefix(row.text), row.kind === 'del' ? oldTokens.get(row.oldNo) : newTokens.get(row.newNo))}
+                    </td>
+                  </tr>
+                )
+              })}
             </tbody>
           </table>
         )}
@@ -426,8 +512,34 @@ export function DiffView({
   )
 }
 
+/** GitHub-style two-segment bar; the green share encodes the added/removed ratio.
+ *  Width comes from the caller via `className` (e.g. `w-12`). */
+export function DiffStatBar({
+  added,
+  removed,
+  className = 'w-12'
+}: {
+  added: number | null
+  removed: number | null
+  className?: string
+}): ReactElement | null {
+  if (added == null && removed == null) return null
+  const a = added ?? 0
+  const r = removed ?? 0
+  if (a === 0 && r === 0) return null
+  const addedPct = Math.round((a / (a + r)) * 100)
+  return (
+    <span
+      className={`h-1 shrink-0 overflow-hidden rounded-full ${className}`.trim()}
+      style={{
+        background: `linear-gradient(to right, var(--ds-diff-added) 0%, var(--ds-diff-added) ${addedPct}%, var(--ds-diff-removed) ${addedPct}%, var(--ds-diff-removed) 100%)`
+      }}
+      aria-hidden
+    />
+  )
+}
+
 function DiffHeader({
-  badge,
   name,
   filePath,
   added,
@@ -437,13 +549,14 @@ function DiffHeader({
   showStyleToggle,
   diffStyle,
   onDiffStyleChange,
+  wrapLines,
+  onToggleWrap,
   flush = false,
   onAddToChat,
   onCollapse,
   onToggleExpand,
   expanded = false
 }: {
-  badge: { label: string; tone: string }
   name: string | null
   filePath?: string | null
   added: number | null
@@ -453,6 +566,8 @@ function DiffHeader({
   showStyleToggle: boolean
   diffStyle: DiffRenderStyle
   onDiffStyleChange: (style: DiffRenderStyle) => void
+  wrapLines: boolean
+  onToggleWrap?: () => void
   flush?: boolean
   onAddToChat?: () => void
   onCollapse?: () => void
@@ -468,106 +583,126 @@ function DiffHeader({
           : 'ds-diff-view__header flex h-9 shrink-0 items-center gap-2 border-b border-ds-border-muted px-3'
       }
     >
-      <span
-        className={`shrink-0 rounded px-1.5 py-0.5 font-mono text-[12px] font-semibold ${badge.tone}`}
-      >
-        {badge.label}
-      </span>
+      {filePath ? null : (
+        <FileKindIcon path={name ?? ''} className="ds-file-kind-icon--chrome" />
+      )}
       {filePath ? (
         <FileChip
           path={filePath}
           label={name ?? undefined}
           variant="list"
           skipValidation
-          className="min-w-0 flex-1 text-[14.5px] font-medium"
+          className="min-w-0 flex-1 text-[13px] font-medium"
         />
       ) : (
-        <span className="min-w-0 flex-1 truncate text-[14.5px] font-medium text-ds-ink" title={name ?? ''}>
+        <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-ds-ink" title={name ?? ''}>
           {name ?? 'patch'}
         </span>
       )}
       {added != null || removed != null ? (
-        <span className="shrink-0 text-[14px] tabular-nums">
-          {(added ?? 0) > 0 ? <span className="text-ds-diff-added">+{added}</span> : null}
-          {(added ?? 0) > 0 && (removed ?? 0) > 0 ? <span className="px-1 text-ds-faint">·</span> : null}
-          {(removed ?? 0) > 0 ? <span className="text-ds-diff-removed">-{removed}</span> : null}
-        </span>
+        <>
+          <span className="shrink-0 text-[13.5px] tabular-nums">
+            {(added ?? 0) > 0 ? <span className="text-ds-diff-added">+{added}</span> : null}
+            {(added ?? 0) > 0 && (removed ?? 0) > 0 ? <span className="px-1 text-ds-faint">·</span> : null}
+            {(removed ?? 0) > 0 ? <span className="text-ds-diff-removed">-{removed}</span> : null}
+          </span>
+          <DiffStatBar added={added} removed={removed} className="ds-diff-header-statbar w-12" />
+        </>
+      ) : null}
+      {onToggleWrap ? (
+        <Tooltip label={t('diffWrapLines')}>
+          <button
+            type="button"
+            onClick={onToggleWrap}
+            aria-label={t('diffWrapLines')}
+            aria-pressed={wrapLines}
+            className={`inline-flex h-7 w-7 shrink-0 items-center justify-center rounded transition hover:bg-ds-hover ${wrapLines ? 'bg-ds-hover text-ds-ink' : 'text-ds-faint'}`}
+          >
+            <WrapText className="h-3.5 w-3.5" strokeWidth={1.85} />
+          </button>
+        </Tooltip>
       ) : null}
       {showStyleToggle ? (
         <div className="flex shrink-0 items-center rounded border border-ds-border-muted/70 p-0.5">
-          <button
-            type="button"
-            onClick={() => onDiffStyleChange('unified')}
-            className={`rounded px-1 py-0.5 transition ${
-              diffStyle === 'unified' ? 'bg-ds-hover text-ds-ink' : 'text-ds-faint hover:text-ds-muted'
-            }`}
-            title="Unified"
-            aria-label="Unified diff"
-            aria-pressed={diffStyle === 'unified'}
-          >
-            <Rows3 className="h-3.5 w-3.5" strokeWidth={1.85} />
-          </button>
-          <button
-            type="button"
-            onClick={() => onDiffStyleChange('split')}
-            className={`rounded px-1 py-0.5 transition ${
-              diffStyle === 'split' ? 'bg-ds-hover text-ds-ink' : 'text-ds-faint hover:text-ds-muted'
-            }`}
-            title="Split"
-            aria-label="Split diff"
-            aria-pressed={diffStyle === 'split'}
-          >
-            <Columns2 className="h-3.5 w-3.5" strokeWidth={1.85} />
-          </button>
+          <Tooltip label="Unified">
+            <button
+              type="button"
+              onClick={() => onDiffStyleChange('unified')}
+              className={`rounded px-1 py-0.5 transition ${
+                diffStyle === 'unified' ? 'bg-ds-hover text-ds-ink' : 'text-ds-faint hover:text-ds-muted'
+              }`}
+              aria-label="Unified diff"
+              aria-pressed={diffStyle === 'unified'}
+            >
+              <Rows3 className="h-3.5 w-3.5" strokeWidth={1.85} />
+            </button>
+          </Tooltip>
+          <Tooltip label="Split">
+            <button
+              type="button"
+              onClick={() => onDiffStyleChange('split')}
+              className={`rounded px-1 py-0.5 transition ${
+                diffStyle === 'split' ? 'bg-ds-hover text-ds-ink' : 'text-ds-faint hover:text-ds-muted'
+              }`}
+              aria-label="Split diff"
+              aria-pressed={diffStyle === 'split'}
+            >
+              <Columns2 className="h-3.5 w-3.5" strokeWidth={1.85} />
+            </button>
+          </Tooltip>
         </div>
       ) : null}
       {onAddToChat ? (
-        <button
-          type="button"
-          onClick={onAddToChat}
-          className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded text-ds-faint transition hover:bg-ds-hover hover:text-ds-ink"
-          aria-label={t('workspaceEditorAddToChat')}
-          title={t('workspaceEditorAddToChat')}
-        >
-          <MessageSquarePlus className="h-3.5 w-3.5" strokeWidth={1.85} />
-        </button>
+        <Tooltip label={t('workspaceEditorAddToChat')}>
+          <button
+            type="button"
+            onClick={onAddToChat}
+            className="inline-flex h-7 w-7 items-center justify-center rounded text-ds-faint transition hover:bg-ds-hover hover:text-ds-ink"
+            aria-label={t('workspaceEditorAddToChat')}
+          >
+            <MessageSquarePlus className="h-3.5 w-3.5" strokeWidth={1.85} />
+          </button>
+        </Tooltip>
       ) : null}
       {onToggleExpand ? (
-        <button
-          type="button"
-          onClick={onToggleExpand}
-          className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded text-ds-faint transition hover:bg-ds-hover hover:text-ds-ink active:scale-[0.96]"
-          aria-label={t(expanded ? 'inspectorRestoreDiff' : 'inspectorExpandDiff')}
-          title={t(expanded ? 'inspectorRestoreDiff' : 'inspectorExpandDiff')}
-          aria-pressed={expanded}
-        >
-          {expanded ? <Minimize2 className="h-3.5 w-3.5" strokeWidth={1.9} /> : <ChevronUp className="h-3.5 w-3.5" strokeWidth={1.9} />}
-        </button>
+        <Tooltip label={t(expanded ? 'inspectorRestoreDiff' : 'inspectorExpandDiff')}>
+          <button
+            type="button"
+            onClick={onToggleExpand}
+            className="inline-flex h-7 w-7 items-center justify-center rounded text-ds-faint transition hover:bg-ds-hover hover:text-ds-ink active:scale-[0.96]"
+            aria-label={t(expanded ? 'inspectorRestoreDiff' : 'inspectorExpandDiff')}
+            aria-pressed={expanded}
+          >
+            {expanded ? <Minimize2 className="h-3.5 w-3.5" strokeWidth={1.9} /> : <ChevronUp className="h-3.5 w-3.5" strokeWidth={1.9} />}
+          </button>
+        </Tooltip>
       ) : null}
       {onCollapse ? (
-        <button
-          type="button"
-          onClick={onCollapse}
-          className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded text-ds-faint transition hover:bg-ds-hover hover:text-ds-ink active:scale-[0.96]"
-          aria-label={t('inspectorCollapseDiff')}
-          title={t('inspectorCollapseDiff')}
-        >
-          <ChevronDown className="h-3.5 w-3.5" strokeWidth={1.9} />
-        </button>
+        <Tooltip label={t('inspectorCollapseDiff')}>
+          <button
+            type="button"
+            onClick={onCollapse}
+            className="inline-flex h-7 w-7 items-center justify-center rounded text-ds-faint transition hover:bg-ds-hover hover:text-ds-ink active:scale-[0.96]"
+            aria-label={t('inspectorCollapseDiff')}
+          >
+            <ChevronDown className="h-3.5 w-3.5" strokeWidth={1.9} />
+          </button>
+        </Tooltip>
       ) : (
-        <button
-          type="button"
-          onClick={onCopy}
-          className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded text-ds-faint transition hover:bg-ds-hover hover:text-ds-ink"
-          aria-label="Copy diff"
-          title="Copy diff"
-        >
-          {copied ? (
-            <Check className="h-3.5 w-3.5 text-ds-diff-added" strokeWidth={2} />
-          ) : (
-            <Copy className="h-3.5 w-3.5" strokeWidth={1.8} />
-          )}
-        </button>
+        <Tooltip label="Copy diff">
+          <button
+            type="button"
+            onClick={onCopy}
+            className="inline-flex h-7 w-7 items-center justify-center rounded text-ds-faint transition hover:bg-ds-hover hover:text-ds-ink"
+            aria-label="Copy diff"
+          >
+            {copied ? (
+              <Check className="h-3.5 w-3.5 text-ds-diff-added" strokeWidth={2} />
+            ) : (
+              <Copy className="h-3.5 w-3.5" strokeWidth={1.8} />
+            )}
+          </button>
+        </Tooltip>
       )}
     </div>
   )

@@ -99,7 +99,7 @@ export function SkillsView({
       if (fetched.sourceUrl && typeof window.dsGui?.openExternal === 'function') {
         await window.dsGui.openExternal(fetched.sourceUrl)
       }
-      return { tone: 'info', message: t('marketplaceSkillManual') }
+      return { tone: 'info', persistent: true, message: t('marketplaceSkillManual') }
     }
     // The GitHub SKILL.md already carries a complete frontmatter — write it as-is.
     const result = await window.dsGui.saveSkillFile(skillsDir, item.id, fetched.content)
@@ -182,7 +182,7 @@ export function SkillsView({
           )
         : null}
 
-      {notice ? <NoticeView notice={notice} /> : null}
+      {notice ? <NoticeView notice={notice} onDismiss={() => setNotice(null)} /> : null}
 
       <div className="mt-6">
         <InstalledSkillsPanel

@@ -90,6 +90,7 @@ export type ChatState = {
   workspaceRoot: string
   workspaceLabel: string
   runtimeConnection: RuntimeConnectionStatus
+  connectionError: string | null
   startupPhase: StartupPhasePayload | null
   activeThreadWarmup: ThreadWarmupState
   threads: NormalizedThread[]
