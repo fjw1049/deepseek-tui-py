@@ -15,7 +15,6 @@ import {
   GitBranch,
   GitGraph,
   Github,
-  ListChecks,
   ListTodo,
   PanelsTopLeft,
   FileEdit,
@@ -31,7 +30,7 @@ import type { GitRemoteProvider } from '@shared/github-repository'
 import gitlabTanukiUrl from '../../assets/brand/gitlab-tanuki.svg'
 import { useGitHubRepository } from '../../hooks/use-github-repository'
 import { openPreviewUrl } from '../../lib/open-preview-url'
-import { extractSubagentsFromBlocks, type DockSubagentItem } from '../../lib/extract-subagents-from-blocks'
+import { extractSubagentsFromBlocks } from '../../lib/extract-subagents-from-blocks'
 import { openRunPanel } from '../../store/run-panel-store'
 import { useLiveTasks } from '../../hooks/use-thread-tasks'
 import {
@@ -43,12 +42,7 @@ import {
   collectWorkspaceChangeEntries,
   sumWorkspaceChangeStats
 } from '../../lib/workspace-change-stats'
-import {
-  extractTasksFromBlocks,
-  isActiveTaskStatus,
-  type TaskItemView
-} from '../../lib/extract-tasks-from-blocks'
-import { isActiveSubagentStatus } from '../../lib/extract-subagents-from-blocks'
+import { extractTasksFromBlocks } from '../../lib/extract-tasks-from-blocks'
 import { extractTodosFromBlocks } from '../../lib/extract-todos-from-blocks'
 import {
   resolveThreadFilesystemRoot,
@@ -57,6 +51,7 @@ import {
 import { workspaceLabelFromPath } from '../../lib/workspace-label'
 import { useChatStore } from '../../store/chat-store'
 import { GitBranchPicker } from './GitBranchPicker'
+import { TaskActivity } from './TaskActivity'
 
 type Props = {
   /** Project currently rendered by the owning Workbench. */
@@ -184,44 +179,6 @@ function SectionHeader({
   )
 }
 
-/**
- * One small status dot per agent: pulsing accent while active, then settled —
- * green for success, red for failure, grey for cancelled.
- */
-type AgentChipState = 'active' | 'completed' | 'failed' | 'cancelled'
-
-function AgentStatusDot({ state }: { state: AgentChipState }): ReactElement {
-  return (
-    <span
-      className={[
-        'h-1.5 w-1.5 rounded-full',
-        state === 'active'
-          ? 'animate-pulse bg-accent'
-          : state === 'completed'
-            ? 'bg-emerald-500'
-            : state === 'failed'
-              ? 'bg-red-500'
-              : 'bg-ds-border'
-      ].join(' ')}
-      aria-hidden
-    />
-  )
-}
-
-function taskChipState(status: TaskItemView['status']): AgentChipState {
-  if (isActiveTaskStatus(status)) return 'active'
-  if (status === 'completed') return 'completed'
-  if (status === 'failed' || status === 'timed_out') return 'failed'
-  return 'cancelled'
-}
-
-function subagentChipState(status: DockSubagentItem['status']): AgentChipState {
-  if (isActiveSubagentStatus(status)) return 'active'
-  if (status === 'completed') return 'completed'
-  if (status === 'failed') return 'failed'
-  return 'cancelled'
-}
-
 export function OperationContextDock({
   workspaceRoot,
   onOpenChanges,
@@ -275,17 +232,6 @@ export function OperationContextDock({
   const baseTasks = useMemo(() => extractTasksFromBlocks(blocks), [blocks])
   const tasks = useLiveTasks(baseTasks)
   const dockSubagents = useMemo(() => extractSubagentsFromBlocks(blocks), [blocks])
-  /** Single aggregate entry for the rail — per-run details live in the run panel. */
-  const agentStates = [
-    ...tasks.map((task) => taskChipState(task.status)),
-    ...dockSubagents.map((item) => subagentChipState(item.status))
-  ]
-  const firstRunTarget =
-    tasks.length > 0
-      ? { kind: 'task' as const, id: tasks[0]!.id }
-      : dockSubagents.length > 0
-        ? { kind: 'subagent' as const, id: dockSubagents[0]!.agentId }
-        : null
   const changeStats = useMemo(
     () =>
       sumWorkspaceChangeStats(
@@ -315,7 +261,7 @@ export function OperationContextDock({
     openPreviewUrl(githubRepo.url)
   }
 
-  const [collapsed, setCollapsed] = useState({ git: true, process: true, tasks: true })
+  const [collapsed, setCollapsed] = useState({ git: true, process: true })
   const [compact, setCompact] = useState(readStoredDockCompact)
   /** Drives rail width via `data-compact` — can lead the DOM swap during motion. */
   const [widthCompact, setWidthCompact] = useState(readStoredDockCompact)
@@ -385,17 +331,9 @@ export function OperationContextDock({
   // empties. Each effect keys on a single boolean edge so manually toggling
   // one section never overrides another.
   const hasTodos = totalCount > 0
-  const hasTasks = tasks.length > 0
-  const hasSubagents = dockSubagents.length > 0
-  const hasTaskSection = hasTasks || hasSubagents
   useEffect(() => {
     setCollapsed((prev) => (prev.process === !hasTodos ? prev : { ...prev, process: !hasTodos }))
   }, [hasTodos])
-  useEffect(() => {
-    setCollapsed((prev) =>
-      prev.tasks === !hasTaskSection ? prev : { ...prev, tasks: !hasTaskSection }
-    )
-  }, [hasTaskSection])
   useEffect(() => {
     setCollapsed((prev) => (prev.git === !hasChanges ? prev : { ...prev, git: !hasChanges }))
   }, [hasChanges])
@@ -794,51 +732,7 @@ export function OperationContextDock({
       ) : null}
       </div>
 
-      <div className="ds-operation-dock-status__section">
-      <SectionHeader
-        label={t('contextRailTasks')}
-        icon={ListChecks}
-        collapsed={collapsed.tasks}
-        onToggle={() => toggle('tasks')}
-        trailing={
-          hasTaskSection ? (
-            <span className="shrink-0 text-[11px] tabular-nums text-ds-faint">
-              {tasks.length + dockSubagents.length}
-            </span>
-          ) : undefined
-        }
-      />
-
-      {!collapsed.tasks ? (
-        hasTaskSection ? (
-          <div className="mt-1.5">
-            <button
-              type="button"
-              onClick={() => {
-                if (firstRunTarget) openRunPanel(firstRunTarget)
-              }}
-              className="group flex w-full items-center gap-2 rounded-[9px] px-1.5 py-1 text-left transition-colors hover:bg-ds-hover/60"
-            >
-              <span className="flex shrink-0 items-center gap-[3px]" aria-hidden>
-                {agentStates.slice(0, 6).map((state, dotIndex) => (
-                  <AgentStatusDot key={dotIndex} state={state} />
-                ))}
-              </span>
-              <span className="min-w-0 flex-1 truncate text-[12.5px] font-medium tracking-[-0.01em] text-ds-ink/85">
-                {t('contextRailAgentGroupTitle')}
-              </span>
-              <ChevronRight
-                className="h-3.5 w-3.5 shrink-0 text-ds-faint transition-transform duration-150 group-hover:translate-x-0.5"
-                strokeWidth={2}
-                aria-hidden
-              />
-            </button>
-          </div>
-        ) : (
-          <p className="mt-1 text-[13px] leading-5 text-ds-faint">{t('contextRailEmptyTasks')}</p>
-        )
-      ) : null}
-      </div>
+      <TaskActivity key={activeThreadId} tasks={tasks} agents={dockSubagents} onOpen={openRunPanel} />
       </div>
       </div>
     </div>
