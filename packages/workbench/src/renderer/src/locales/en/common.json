@@ -718,7 +718,6 @@
   "composerReasoningAria": "Reasoning intensity",
   "composerReasoningDesc": "Left for faster responses, right for smarter responses.",
   "composerConfigureModels": "Configure custom models",
-  "composerSearchModels": "Search models",
   "composerNoMatchingModels": "No matching models.",
   "composerModelSettingsAria": "Model settings",
   "composerVoiceInput": "Voice input",

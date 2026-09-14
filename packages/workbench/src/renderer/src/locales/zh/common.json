@@ -718,7 +718,6 @@
   "composerReasoningAria": "推理强度",
   "composerReasoningDesc": "向左更快，向右更强。",
   "composerConfigureModels": "配置自定义模型",
-  "composerSearchModels": "搜索模型",
   "composerNoMatchingModels": "没有匹配的模型。",
   "composerModelSettingsAria": "模型设置",
   "composerVoiceInput": "语音输入",
