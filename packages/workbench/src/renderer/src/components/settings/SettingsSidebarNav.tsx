@@ -11,7 +11,6 @@ import {
   Palette,
   Search,
   Rocket,
-  Settings,
   Shield
 } from 'lucide-react'
 import { useChatStore, type SettingsRouteSection } from '../../store/chat-store'
@@ -91,16 +90,6 @@ export function SettingsSidebarNav(): ReactElement {
           )
         })}
       </nav>
-      <div className="mt-auto shrink-0 border-t border-ds-border px-1 pt-2">
-        <div className="flex items-center gap-2 rounded-xl px-2 py-2">
-          <div className="flex h-8 w-8 items-center justify-center rounded-full bg-ds-subtle text-ds-muted">
-            <Settings className="h-4 w-4" strokeWidth={1.75} />
-          </div>
-          <div className="min-w-0 truncate text-[13px] font-medium text-ds-ink">
-            {t('settingsFooter')}
-          </div>
-        </div>
-      </div>
     </div>
   )
 }
