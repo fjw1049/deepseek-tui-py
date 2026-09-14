@@ -1390,7 +1390,7 @@ export function ChangeInspector({
           >
             {compactList ? (
               <>
-                <span className="min-w-0 flex-1 truncate text-[12.5px]">
+                <span className="min-w-0 flex-1 truncate text-[14px]">
                   {item.filePath ? (
                     <FileTypeIcon
                       path={item.filePath}
@@ -1405,7 +1405,7 @@ export function ChangeInspector({
                     {name || t('toolActionFile')}
                   </span>
                   {parent ? (
-                    <span className="ml-1.5 text-[11.5px] text-ds-muted">{parent}</span>
+                    <span className="ml-1.5 text-[14px] text-ds-muted">{parent}</span>
                   ) : null}
                 </span>
                 {item.gitStage === 'partial' ? (
