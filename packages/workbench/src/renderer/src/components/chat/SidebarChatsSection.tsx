@@ -5,8 +5,6 @@ import {
   CheckSquare,
   ChevronDown,
   ChevronRight,
-  ChevronsDownUp,
-  ChevronsUpDown,
   Loader2,
   MoreHorizontal,
   Plus,
@@ -150,16 +148,6 @@ export function SidebarChatsSection({
     setCollapsed(false)
     setSelectMode(true)
     setSelectedIds(new Set())
-  }
-
-  const handleExpandAll = (): void => {
-    setMenuOpen(false)
-    setCollapsed(false)
-  }
-
-  const handleCollapseAll = (): void => {
-    setMenuOpen(false)
-    setCollapsed(true)
   }
 
   const exitSelectMode = (): void => {
@@ -313,18 +301,6 @@ export function SidebarChatsSection({
               )}
               <span className="ds-sidebar-section-label min-w-0 truncate">{t('sidebarChats')}</span>
             </button>
-            <button
-              type="button"
-              onClick={() => {
-                setCollapsed(false)
-                onNewChat()
-              }}
-              title={t('sidebarChatsNewThread')}
-              aria-label={t('sidebarChatsNewThread')}
-              className="shrink-0 rounded-md p-1 text-ds-faint opacity-0 transition duration-200 hover:bg-ds-hover/70 hover:text-ds-ink hover:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100"
-            >
-              <Plus className="h-3.5 w-3.5" strokeWidth={1.75} />
-            </button>
             <div className="relative shrink-0" ref={menuRef}>
               <button
                 ref={menuButtonRef}
@@ -333,9 +309,9 @@ export function SidebarChatsSection({
                 title={t('sidebarChatsMenu')}
                 aria-label={t('sidebarChatsMenu')}
                 aria-expanded={menuOpen}
-                className="rounded-md p-1 text-ds-faint transition-colors duration-200 hover:bg-ds-hover/70 hover:text-ds-ink"
+                className="rounded-md p-1 text-ds-faint opacity-0 transition duration-200 hover:bg-ds-hover/70 hover:text-ds-ink group-hover:opacity-100 group-focus-within:opacity-100 aria-expanded:opacity-100"
               >
-                <MoreHorizontal className="h-3.5 w-3.5" strokeWidth={1.85} />
+                <MoreHorizontal className="h-4 w-4" strokeWidth={2.5} />
               </button>
               {menuOpen && menuPos
                 ? createPortal(
@@ -346,30 +322,6 @@ export function SidebarChatsSection({
                       style={{ top: menuPos.top, left: menuPos.left }}
                       onMouseDown={(event) => event.stopPropagation()}
                     >
-                      <button
-                        type="button"
-                        disabled={chatsThreads.length === 0}
-                        onClick={() => {
-                          closeMenu()
-                          handleExpandAll()
-                        }}
-                        className="flex w-full items-center gap-2.5 rounded-md px-2.5 py-1.5 text-left text-[13px] text-ds-ink transition-colors duration-150 hover:bg-ds-hover disabled:opacity-40"
-                      >
-                        <ChevronsUpDown className="h-3.5 w-3.5 shrink-0" strokeWidth={1.85} />
-                        {t('sidebarChatsExpandAll')}
-                      </button>
-                      <button
-                        type="button"
-                        disabled={chatsThreads.length === 0}
-                        onClick={() => {
-                          closeMenu()
-                          handleCollapseAll()
-                        }}
-                        className="flex w-full items-center gap-2.5 rounded-md px-2.5 py-1.5 text-left text-[13px] text-ds-ink transition-colors duration-150 hover:bg-ds-hover disabled:opacity-40"
-                      >
-                        <ChevronsDownUp className="h-3.5 w-3.5 shrink-0" strokeWidth={1.85} />
-                        {t('sidebarChatsCollapseAll')}
-                      </button>
                       <button
                         type="button"
                         disabled={chatsThreads.length === 0}
@@ -399,6 +351,30 @@ export function SidebarChatsSection({
                   )
                 : null}
             </div>
+            <button
+              type="button"
+              onClick={() => {
+                setCollapsed(false)
+                onNewChat()
+              }}
+              title={t('sidebarChatsNewThread')}
+              aria-label={t('sidebarChatsNewThread')}
+              className="shrink-0 rounded-md p-1 text-ds-faint transition duration-200 hover:bg-ds-hover/70 hover:text-ds-ink"
+            >
+              <Plus className="h-4 w-4" strokeWidth={2.25} />
+            </button>
+            <button
+              type="button"
+              onClick={() => setCollapsed(!collapsed)}
+              title={t(collapsed ? 'sidebarChatsExpandAll' : 'sidebarChatsCollapseAll')}
+              aria-label={t(collapsed ? 'sidebarChatsExpandAll' : 'sidebarChatsCollapseAll')}
+              aria-expanded={!collapsed}
+              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-ds-faint transition-colors duration-200 hover:bg-ds-hover/70 hover:text-ds-ink"
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+                <path d="M4 6h16M8 12h8M11 18h2" />
+              </svg>
+            </button>
           </>
         )}
       </div>

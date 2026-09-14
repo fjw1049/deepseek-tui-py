@@ -1,0 +1,186 @@
+.ds-task-activity {
+  --task-activity-row-height: 3.25rem;
+  --task-activity-running: light-dark(#27735f, #84c7b0);
+  --task-activity-attention: light-dark(#976124, #dfb87c);
+  --task-activity-line: color-mix(in srgb, var(--text-primary) 13%, transparent);
+}
+
+.ds-task-activity > .ds-task-activity-trigger {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.65rem 0.45rem;
+  border-radius: 0.65rem;
+  text-align: left;
+  transition: background-color 160ms ease;
+}
+
+.ds-task-activity-trigger:not(:disabled):hover,
+.ds-task-activity-row:hover {
+  background: color-mix(in srgb, var(--text-primary) 4%, transparent);
+}
+
+.ds-task-activity-trigger:not(:disabled):active,
+.ds-task-activity-row:active {
+  background: color-mix(in srgb, var(--text-primary) 7%, transparent);
+}
+
+.ds-task-activity-heading {
+  flex: 1;
+  min-width: 0;
+}
+
+.ds-task-activity-title,
+.ds-task-activity-summary {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ds-task-activity-title {
+  color: var(--text-primary);
+  font-size: 0.8125rem;
+  font-weight: 500;
+  line-height: 1.25rem;
+}
+
+.ds-task-activity-summary,
+.ds-task-activity-status {
+  color: var(--text-secondary);
+  font-size: 0.6875rem;
+  font-weight: 400;
+  line-height: 1.125rem;
+}
+
+.ds-task-activity-status {
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.ds-task-activity-mark {
+  display: grid;
+  place-items: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  flex-shrink: 0;
+  color: var(--text-secondary);
+}
+
+.ds-task-activity-mark svg,
+.ds-task-activity-chevron {
+  width: 0.875rem;
+  height: 0.875rem;
+  stroke-width: 1.75;
+}
+
+.ds-task-activity-mark[data-status='running'] {
+  color: var(--task-activity-running);
+}
+
+.ds-task-activity [data-status='failed'],
+.ds-task-activity [data-status='timed_out'],
+.ds-task-activity-summary[data-attention='true'] {
+  color: var(--task-activity-attention);
+}
+
+.ds-task-activity-orbit {
+  width: 0.3125rem;
+  height: 0.3125rem;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.ds-task-activity-mark[data-animate='true'] .ds-task-activity-orbit {
+  width: 0.875rem;
+  height: 0.875rem;
+  border: 1.5px solid var(--task-activity-line);
+  border-top-color: currentColor;
+  border-right-color: currentColor;
+  background: transparent;
+  animation: task-activity-turn 2.4s linear infinite;
+}
+
+.ds-task-activity-chevron {
+  flex-shrink: 0;
+  color: var(--text-tertiary);
+  transition: transform 200ms ease;
+}
+
+.ds-task-activity-trigger[aria-expanded='true'] > .ds-task-activity-chevron {
+  transform: rotate(90deg);
+}
+
+.ds-task-activity-body {
+  display: grid;
+  grid-template-rows: 0fr;
+  visibility: hidden;
+  transition: grid-template-rows 200ms ease, visibility 200ms;
+}
+
+.ds-task-activity-body[data-expanded='true'] {
+  grid-template-rows: 1fr;
+  visibility: visible;
+}
+
+.ds-task-activity-clip {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.ds-task-activity-list {
+  margin: 0 0.2rem 0.4rem 1.2rem;
+  padding: 0;
+  list-style: none;
+  max-height: min(36vh, calc(4 * var(--task-activity-row-height)));
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+
+.ds-task-activity-list > li {
+  position: relative;
+  padding-left: 0.85rem;
+}
+
+.ds-task-activity-list > li::before,
+.ds-task-activity-list > li::after {
+  position: absolute;
+  content: '';
+  left: 0;
+  background: var(--task-activity-line);
+}
+
+.ds-task-activity-list > li::before {
+  top: 0;
+  bottom: 0;
+  width: 1px;
+}
+
+.ds-task-activity-list > li:last-child::before { bottom: 50%; }
+.ds-task-activity-list > li::after { top: 50%; width: 0.65rem; height: 1px; }
+
+.ds-task-activity-row {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  width: 100%;
+  height: var(--task-activity-row-height);
+  padding: 0.4375rem 0.3rem;
+  border-radius: 0.5rem;
+  text-align: left;
+  transition: background-color 160ms ease;
+}
+
+.ds-task-activity-row .ds-task-activity-mark { width: 1rem; }
+.ds-task-activity-row .ds-task-activity-title { font-size: 0.75rem; }
+
+@keyframes task-activity-turn { to { transform: rotate(360deg); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .ds-task-activity-mark[data-animate='true'] .ds-task-activity-orbit { animation: none; }
+  .ds-task-activity-body,
+  .ds-task-activity-chevron { transition: none; }
+}

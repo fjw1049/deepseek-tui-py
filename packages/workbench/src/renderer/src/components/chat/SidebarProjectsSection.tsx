@@ -9,8 +9,6 @@ import {
   CheckSquare,
   ChevronDown,
   ChevronRight,
-  ChevronsDownUp,
-  ChevronsUpDown,
   Clock,
   Folder,
   FolderClosed,
@@ -153,6 +151,7 @@ type ProjectsToolbarProps = {
   onDeleteSelected: () => void
   onExitSelectMode: () => void
   onEnterSelectMode: () => void
+  allCollapsed: boolean
   onExpandAll: () => void
   onCollapseAll: () => void
   onClearAll: () => void
@@ -177,6 +176,7 @@ function SidebarProjectsToolbar({
   onDeleteSelected,
   onExitSelectMode,
   onEnterSelectMode,
+  allCollapsed,
   onExpandAll,
   onCollapseAll,
   onClearAll,
@@ -286,18 +286,6 @@ function SidebarProjectsToolbar({
             )}
             <span className="ds-sidebar-section-label min-w-0 truncate">{t('sidebarProjects')}</span>
           </button>
-          <button
-            type="button"
-            onClick={() => {
-              setCollapsed(false)
-              onPickWorkspace()
-            }}
-            title={workspaceRoot ? t('changeWorkspace') : t('selectWorkspace')}
-            aria-label={workspaceRoot ? t('changeWorkspace') : t('selectWorkspace')}
-            className="shrink-0 rounded-md p-1 text-ds-faint opacity-0 transition duration-200 hover:bg-ds-hover/70 hover:text-ds-ink hover:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100"
-          >
-            <Plus className="h-3.5 w-3.5" strokeWidth={1.75} />
-          </button>
           <div className="relative shrink-0" ref={menuRef}>
             <button
               ref={menuButtonRef}
@@ -311,9 +299,9 @@ function SidebarProjectsToolbar({
               title={t('sidebarProjectsMenu')}
               aria-label={t('sidebarProjectsMenu')}
               aria-expanded={menuOpen}
-              className="rounded-md p-1 text-ds-faint transition-colors duration-200 hover:bg-ds-hover/70 hover:text-ds-ink"
+              className="rounded-md p-1 text-ds-faint opacity-0 transition duration-200 hover:bg-ds-hover/70 hover:text-ds-ink group-hover:opacity-100 group-focus-within:opacity-100 aria-expanded:opacity-100"
             >
-              <MoreHorizontal className="h-3.5 w-3.5" strokeWidth={1.85} />
+              <MoreHorizontal className="h-4 w-4" strokeWidth={2.5} />
             </button>
             {menuOpen && menuPos
               ? createPortal(
@@ -324,32 +312,6 @@ function SidebarProjectsToolbar({
                     style={{ top: menuPos.top, left: menuPos.left }}
                     onMouseDown={(event) => event.stopPropagation()}
                   >
-                    <button
-                      type="button"
-                      disabled={workspaceCount === 0}
-                      onMouseEnter={() => setSortSubmenuOpen(false)}
-                      onClick={() => {
-                        closeMenu()
-                        onExpandAll()
-                      }}
-                      className={menuItemClass}
-                    >
-                      <ChevronsUpDown className="h-3.5 w-3.5 shrink-0" strokeWidth={1.85} />
-                      {t('sidebarProjectsExpandAll')}
-                    </button>
-                    <button
-                      type="button"
-                      disabled={workspaceCount === 0}
-                      onMouseEnter={() => setSortSubmenuOpen(false)}
-                      onClick={() => {
-                        closeMenu()
-                        onCollapseAll()
-                      }}
-                      className={menuItemClass}
-                    >
-                      <ChevronsDownUp className="h-3.5 w-3.5 shrink-0" strokeWidth={1.85} />
-                      {t('sidebarProjectsCollapseAll')}
-                    </button>
                     <div
                       className="relative"
                       onMouseEnter={() => {
@@ -463,6 +425,30 @@ function SidebarProjectsToolbar({
                 )
               : null}
           </div>
+          <button
+            type="button"
+            onClick={() => {
+              setCollapsed(false)
+              onPickWorkspace()
+            }}
+            title={workspaceRoot ? t('changeWorkspace') : t('selectWorkspace')}
+            aria-label={workspaceRoot ? t('changeWorkspace') : t('selectWorkspace')}
+            className="shrink-0 rounded-md p-1 text-ds-faint transition duration-200 hover:bg-ds-hover/70 hover:text-ds-ink"
+          >
+            <Plus className="h-4 w-4" strokeWidth={2.25} />
+          </button>
+          <button
+            type="button"
+            onClick={allCollapsed ? onExpandAll : onCollapseAll}
+            title={t(allCollapsed ? 'sidebarProjectsExpandAll' : 'sidebarProjectsCollapseAll')}
+            aria-label={t(allCollapsed ? 'sidebarProjectsExpandAll' : 'sidebarProjectsCollapseAll')}
+            aria-expanded={!allCollapsed}
+            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-ds-faint transition-colors duration-200 hover:bg-ds-hover/70 hover:text-ds-ink"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+              <path d="M4 6h16M8 12h8M11 18h2" />
+            </svg>
+          </button>
         </>
       )}
     </div>
@@ -675,6 +661,7 @@ export function SidebarProjectsColumn({
         onDeleteSelected={handleDeleteSelected}
         onExitSelectMode={exitSelectMode}
         onEnterSelectMode={enterSelectMode}
+        allCollapsed={projectsCollapsed || (workspacePaths.length > 0 && workspacePaths.every((path) => collapsedWorkspaces[path]))}
         onExpandAll={handleExpandAll}
         onCollapseAll={handleCollapseAll}
         onClearAll={handleClearAll}
