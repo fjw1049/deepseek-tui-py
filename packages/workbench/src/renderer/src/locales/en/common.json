@@ -1054,6 +1054,7 @@
   "workspaceTreeRestartRequired": "Fully restart the app (quit DeepSeek GUI, then reopen). Reloading the page is not enough.",
   "workspaceTreeNoRoot": "No workspace directory is bound to this conversation",
   "workspaceTreeEmpty": "This folder is empty",
+  "workspaceEditorOpenFile": "Open file",
   "workspaceEditorEmpty": "No open files",
   "workspaceEditorPickFile": "Pick a file from the tree, or click a file reference in chat",
   "workspaceEditorCloseTab": "Close tab",

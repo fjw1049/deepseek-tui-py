@@ -10,7 +10,7 @@ import {
   useRef,
   useState
 } from 'react'
-import { Check, Columns2, Loader2, Pencil, Save, Search, X, WrapText, Folder } from 'lucide-react'
+import { Check, Copy, Columns2, Loader2, Pencil, Save, Search, X, WrapText, Folder, FolderOpen } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { isImagePreviewPath } from '@shared/image-preview'
 import { isHtmlPreviewPath } from '@shared/html-preview'
@@ -608,8 +608,25 @@ export function WorkspaceEditorPanel({
   collapsibleTree = false
 }: Props): ReactElement {
   const { t } = useTranslation('common')
-  const [treeOpen, setTreeOpen] = useState(false)
+  const [treeOpen, setTreeOpen] = useState(true)
   const trimmedRoot = workspaceRoot.trim()
+  const [pathCopyStatus, setPathCopyStatus] = useState<'copySuccess' | 'copyFailed' | null>(null)
+
+  useEffect(() => {
+    if (!pathCopyStatus) return
+    const timer = window.setTimeout(() => setPathCopyStatus(null), 1600)
+    return () => window.clearTimeout(timer)
+  }, [pathCopyStatus])
+
+  const copyWorkspacePath = async (): Promise<void> => {
+    try {
+      await navigator.clipboard.writeText(trimmedRoot)
+      setPathCopyStatus('copySuccess')
+    } catch {
+      setPathCopyStatus('copyFailed')
+    }
+  }
+
   const tabs = useWorkspaceEditorStore((s) => s.tabs)
   const activeTabId = useWorkspaceEditorStore((s) => s.activeTabId)
   const secondaryTabId = useWorkspaceEditorStore((s) => s.secondaryTabId)
@@ -715,6 +732,7 @@ export function WorkspaceEditorPanel({
 
   useEffect(() => {
     resetForWorkspace(trimmedRoot)
+    setPathCopyStatus(null)
     setEditingTabId(null)
   }, [resetForWorkspace, trimmedRoot])
 
@@ -765,7 +783,7 @@ export function WorkspaceEditorPanel({
     document.body.style.userSelect = 'none'
 
     const onMove = (moveEvent: PointerEvent): void => {
-      setTreeWidth(clampTreeWidth(startWidth + (moveEvent.clientX - startX)))
+      setTreeWidth(clampTreeWidth(startWidth + (moveEvent.clientX - startX) * (collapsibleTree ? -1 : 1)))
     }
 
     const endDrag = (): void => {
@@ -1006,17 +1024,39 @@ export function WorkspaceEditorPanel({
   return (
     <div className="ds-workspace-editor-pane ds-no-drag flex h-full min-h-0 flex-col">
       {collapsibleTree && !hideTree ? (
-        <div className="flex h-9 shrink-0 items-center border-b border-ds-border-muted px-2">
-          <button type="button" onClick={() => setTreeOpen(!treeOpen)} aria-expanded={treeOpen}
-            className="inline-flex h-7 items-center gap-2 rounded-md px-2 text-[12.5px] text-ds-muted hover:bg-ds-hover">
-            <Folder className="h-3.5 w-3.5" aria-hidden />
-            {t(treeOpen ? 'workspaceEditorHideFiles' : 'workspaceEditorBrowseFiles')}
+        <div className="flex h-9 min-w-0 shrink-0 items-center gap-2 border-b border-ds-border-muted px-2">
+          {trimmedRoot ? (
+            <button
+              type="button"
+              onClick={() => void copyWorkspacePath()}
+              title={trimmedRoot}
+              aria-label={`${t('filePreviewCopyPath')}: ${trimmedRoot}`}
+              className="group inline-flex h-7 min-w-0 items-center gap-2 rounded-md px-2 text-[12.5px] text-ds-muted hover:bg-ds-hover hover:text-ds-ink"
+            >
+              <span className="truncate">{trimmedRoot}</span>
+              {pathCopyStatus === 'copySuccess' ? (
+                <Check className="h-3.5 w-3.5 shrink-0" aria-hidden />
+              ) : (
+                <Copy className="h-3.5 w-3.5 shrink-0 opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100" aria-hidden />
+              )}
+              <span role="status" className="shrink-0">{pathCopyStatus ? t(pathCopyStatus) : ''}</span>
+            </button>
+          ) : null}
+          <button
+            type="button"
+            onClick={() => setTreeOpen(!treeOpen)}
+            aria-expanded={treeOpen}
+            aria-label={t(treeOpen ? 'workspaceEditorHideFiles' : 'workspaceEditorBrowseFiles')}
+            title={t(treeOpen ? 'workspaceEditorHideFiles' : 'workspaceEditorBrowseFiles')}
+            className={`ml-auto inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md hover:bg-ds-hover ${treeOpen ? 'bg-ds-hover text-ds-ink' : 'text-ds-muted'}`}
+          >
+            {treeOpen ? <FolderOpen className="h-4 w-4" aria-hidden /> : <Folder className="h-4 w-4" aria-hidden />}
           </button>
         </div>
       ) : null}
       <div className="relative flex h-full min-h-0 flex-1 bg-ds-sidebar">
         {hideTree || (collapsibleTree && !treeOpen) ? null : (
-          <div className={collapsibleTree ? 'absolute inset-y-0 left-0 z-30 border-r border-ds-border bg-ds-sidebar shadow-lg' : 'relative h-full min-h-0 shrink-0'} style={{ width: treeWidth, maxWidth: collapsibleTree ? '85%' : undefined }}>
+          <div className={`relative h-full min-h-0 shrink-0 ${collapsibleTree ? 'order-last border-l border-ds-border-muted' : ''}`} style={{ width: treeWidth, maxWidth: collapsibleTree ? '50%' : undefined }}>
             {/* Expand state is cached per workspace root inside WorkspaceFileTree
                 so switching IDE center tabs (changes/search) does not reset folds. */}
             <WorkspaceFileTree
@@ -1027,7 +1067,6 @@ export function WorkspaceEditorPanel({
               workspaceDirtyTick={workspaceDirtyTick}
               onOpenFile={(path) => {
                 void openFile(path, trimmedRoot)
-                if (collapsibleTree) setTreeOpen(false)
               }}
               onFileContextMenu={openFileMenu}
             />
@@ -1036,14 +1075,14 @@ export function WorkspaceEditorPanel({
               role="separator"
               aria-orientation="vertical"
               aria-label={t('workspaceEditorTreeResize')}
-              className="ds-no-drag absolute inset-y-0 right-0 z-20 w-2 translate-x-1/2 cursor-col-resize"
+              className={`ds-no-drag absolute inset-y-0 z-20 w-2 cursor-col-resize ${collapsibleTree ? 'left-0 -translate-x-1/2' : 'right-0 translate-x-1/2'}`}
               onPointerDown={beginTreeResize}
             />
           </div>
         )}
 
         <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col bg-ds-sidebar">
-          {!splitEnabled ? (
+          {!splitEnabled && primaryTabs.length > 0 ? (
             <>
               <EditorTabStrip
                 {...tabStripShared}
@@ -1149,8 +1188,10 @@ export function WorkspaceEditorPanel({
               ) : null}
             </div>
           ) : (
-            <div className="flex flex-1 items-center justify-center px-6 text-center text-[13.5px] text-ds-faint">
-              {t('workspaceEditorPickFile')}
+            <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6 text-center text-[13.5px] text-ds-faint">
+              <Folder className="h-9 w-9" strokeWidth={1.5} aria-hidden />
+              <div className="text-base font-medium text-ds-ink">{t('workspaceEditorOpenFile')}</div>
+              <p>{t('workspaceEditorPickFile')}</p>
             </div>
           )}
         </div>

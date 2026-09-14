@@ -28,7 +28,6 @@ import {
   FilePlus2,
   FileText,
   FolderOpen,
-  GitFork,
   Loader2,
   PencilLine,
   Plug,
@@ -3060,7 +3059,18 @@ function ForkFromHereButton({ itemId }: { itemId: string }): ReactElement {
       {pending ? (
         <Loader2 className="h-4 w-4 animate-spin" strokeWidth={1.8} />
       ) : (
-        <GitFork className="h-4 w-4" strokeWidth={1.8} />
+        <svg
+          className="h-4 w-4"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth={1.8}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+        >
+          <path d="M6 20V4M6 16a8 8 0 0 1 8-8h6m-4-4 4 4-4 4" />
+        </svg>
       )}
     </button>
   )
