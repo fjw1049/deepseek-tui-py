@@ -48,9 +48,9 @@ function resolveTerminalShell(): { file: string; args: string[]; name: string } 
   return { file: shellPath || '/bin/bash', args: ['-l'], name: 'xterm-256color' }
 }
 
-function normalizeTerminalDimension(value: number | undefined, fallback: number): number {
+function normalizeTerminalDimension(value: number | undefined, fallback: number, minimum = 2): number {
   if (typeof value !== 'number' || !Number.isFinite(value)) return fallback
-  return Math.max(20, Math.floor(value))
+  return Math.max(minimum, Math.floor(value))
 }
 
 async function resolveTerminalCwd(raw: string): Promise<string> {
@@ -159,7 +159,7 @@ export function createTerminalService() {
       const shellConfig = resolveTerminalShell()
       const sessionId = randomUUID()
       const cols = normalizeTerminalDimension(options.cols, 120)
-      const rows = normalizeTerminalDimension(options.rows, 32)
+      const rows = normalizeTerminalDimension(options.rows, 32, 1)
       const env = {
         ...process.env,
         TERM: shellConfig.name,
@@ -228,7 +228,7 @@ export function createTerminalService() {
     if (!session) return false
     session.pty.resize(
       normalizeTerminalDimension(payload.cols, session.pty.cols),
-      normalizeTerminalDimension(payload.rows, session.pty.rows)
+      normalizeTerminalDimension(payload.rows, session.pty.rows, 1)
     )
     return true
   }

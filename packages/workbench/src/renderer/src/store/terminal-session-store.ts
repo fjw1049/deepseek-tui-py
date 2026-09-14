@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { terminalPaneIds, removeTerminalPane, replaceTerminalPane, resizeTerminalSplit, type TerminalLayout, type TerminalSplitDirection } from '../lib/terminal-layout'
 
 export type TerminalSessionInfo = {
   id: string
@@ -12,42 +13,49 @@ export type TerminalXtermMount = 'bottom' | 'sidebar'
 type TerminalSessionStore = {
   sessions: TerminalSessionInfo[]
   activeSessionId: string | null
-  /** Bottom pane when IDE down-split is on; null = single pane. */
-  splitSessionId: string | null
+  layouts: TerminalLayout[]
   creatingSession: boolean
   createError: string | null
   xtermMount: TerminalXtermMount
   hasStartedInitialSession: boolean
   setXtermMount: (mount: TerminalXtermMount) => void
   setActiveSessionId: (sessionId: string | null) => void
-  setSplitSessionId: (sessionId: string | null) => void
+  resizeSplit: (id: string, ratio: number) => void
   setCreatingSession: (creating: boolean) => void
   setCreateError: (message: string | null) => void
-  addSession: (session: TerminalSessionInfo) => void
+  addSession: (session: TerminalSessionInfo, split?: { targetId: string; direction: TerminalSplitDirection }) => void
   updateSession: (sessionId: string, patch: Partial<TerminalSessionInfo>) => void
   removeSession: (sessionId: string) => void
   resetSessions: () => void
   markInitialSessionStarted: () => void
 }
 
-export const useTerminalSessionStore = create<TerminalSessionStore>((set, get) => ({
+export const useTerminalSessionStore = create<TerminalSessionStore>((set) => ({
   sessions: [],
   activeSessionId: null,
-  splitSessionId: null,
+  layouts: [],
   creatingSession: false,
   createError: null,
   xtermMount: 'bottom',
   hasStartedInitialSession: false,
   setXtermMount: (mount) => set({ xtermMount: mount }),
   setActiveSessionId: (sessionId) => set({ activeSessionId: sessionId }),
-  setSplitSessionId: (sessionId) => set({ splitSessionId: sessionId }),
+  resizeSplit: (id, ratio) => set((state) => ({ layouts: state.layouts.map((node) => resizeTerminalSplit(node, id, ratio)) })),
   setCreatingSession: (creating) => set({ creatingSession: creating }),
   setCreateError: (message) => set({ createError: message }),
-  addSession: (session) =>
-    set((state) => ({
-      sessions: [...state.sessions, session],
-      activeSessionId: session.id
-    })),
+  addSession: (session, split) =>
+    set((state) => {
+      const pane: TerminalLayout = { type: 'pane', id: session.id }
+      const targetExists = split && state.layouts.some((node) => terminalPaneIds(node).includes(split.targetId))
+      return {
+        sessions: [...state.sessions, session],
+        activeSessionId: session.id,
+        layouts: targetExists ? state.layouts.map((node) => replaceTerminalPane(node, split.targetId, {
+          type: 'split', id: `split-${session.id}`, direction: split.direction, ratio: 0.5,
+          first: { type: 'pane', id: split.targetId }, second: pane
+        })) : [...state.layouts, pane]
+      }
+    }),
   updateSession: (sessionId, patch) =>
     set((state) => ({
       sessions: state.sessions.map((session) =>
@@ -57,23 +65,19 @@ export const useTerminalSessionStore = create<TerminalSessionStore>((set, get) =
   removeSession: (sessionId) =>
     set((state) => {
       const next = state.sessions.filter((session) => session.id !== sessionId)
-      const splitSessionId = state.splitSessionId === sessionId ? null : state.splitSessionId
-      let activeSessionId = state.activeSessionId
-      if (activeSessionId === sessionId) {
-        activeSessionId =
-          next.find((session) => session.id !== splitSessionId)?.id ?? next[0]?.id ?? null
-      }
+      const group = state.layouts.find((node) => terminalPaneIds(node).includes(sessionId))
+      const neighbor = group && terminalPaneIds(group).find((id) => id !== sessionId)
       return {
         sessions: next,
-        activeSessionId,
-        splitSessionId: splitSessionId && next.length >= 2 ? splitSessionId : null
+        activeSessionId: state.activeSessionId === sessionId ? neighbor || next[0]?.id || null : state.activeSessionId,
+        layouts: state.layouts.map((node) => removeTerminalPane(node, sessionId)).filter((node): node is TerminalLayout => node !== null)
       }
     }),
   resetSessions: () =>
     set({
       sessions: [],
       activeSessionId: null,
-      splitSessionId: null,
+      layouts: [],
       creatingSession: false,
       createError: null,
       hasStartedInitialSession: false
@@ -88,7 +92,8 @@ export type TerminalCreateDimensions = {
 
 export async function createTerminalSessionForWorkspace(
   workspaceRoot: string,
-  dimensions?: TerminalCreateDimensions
+  dimensions?: TerminalCreateDimensions,
+  split?: { targetId: string; direction: TerminalSplitDirection }
 ): Promise<boolean> {
   const cwd = workspaceRoot.trim()
   if (!cwd || typeof window.dsGui?.createTerminalSession !== 'function') return false
@@ -115,7 +120,7 @@ export async function createTerminalSessionForWorkspace(
       id: result.session.id,
       cwd: result.session.cwd,
       status: 'running'
-    })
+    }, split)
     return true
   } catch (error) {
     store.setCreateError(error instanceof Error ? error.message : String(error))
@@ -138,36 +143,10 @@ export function closeAllTerminalSessions(): void {
   useTerminalSessionStore.getState().resetSessions()
 }
 
-export function resolveTerminalPanes(
-  activeSessionId: string | null,
-  splitSessionId: string | null,
-  sessions: ReadonlyArray<TerminalSessionInfo>
-): { top: string | null; bottom: string | null } {
-  const splitExists =
-    Boolean(splitSessionId) && sessions.some((session) => session.id === splitSessionId)
-  if (!splitExists || !splitSessionId) {
-    return { top: activeSessionId, bottom: null }
-  }
-  const top =
-    activeSessionId && activeSessionId !== splitSessionId
-      ? activeSessionId
-      : (sessions.find((session) => session.id !== splitSessionId)?.id ?? null)
-  return { top, bottom: splitSessionId }
-}
-
-/** Toggle IDE down-split: second click unsplits; first click opens a new bottom pane. */
-export async function splitTerminalSessionDown(workspaceRoot: string): Promise<void> {
+/** Split the focused pane without changing its existing siblings. */
+export async function splitTerminalSession(workspaceRoot: string, direction: TerminalSplitDirection): Promise<void> {
   const store = useTerminalSessionStore.getState()
-  if (store.splitSessionId) {
-    store.setSplitSessionId(null)
-    return
-  }
-  const primaryId = store.activeSessionId
-  const ok = await createTerminalSessionForWorkspace(workspaceRoot)
-  if (!ok) return
-  const next = useTerminalSessionStore.getState()
-  const createdId = next.activeSessionId
-  if (!createdId || !primaryId || createdId === primaryId) return
-  next.setSplitSessionId(createdId)
-  next.setActiveSessionId(primaryId)
+  const target = store.sessions.find((session) => session.id === store.activeSessionId)
+  if (!target) return
+  await createTerminalSessionForWorkspace(target.cwd || workspaceRoot, undefined, { targetId: target.id, direction })
 }

@@ -1684,7 +1684,7 @@ export function ThreadRow({
             })()}
           />
         )}
-        {selectionMode ? null : (
+        {selectionMode || (!showConflict && !showCompleted && !sourceLabel) ? null : (
           <span
             className="ds-sidebar-thread-meta group-hover:hidden group-focus-within:hidden"
             title={
@@ -1692,7 +1692,7 @@ export function ThreadRow({
                 ? t('sidebarThreadConflict')
                 : showCompleted
                 ? t('sidebarThreadCompleted')
-                : (sourceLabel ?? formatRelativeTimeLargestUnit(thread.updatedAt))
+                : sourceLabel
             }
           >
             {showConflict ? (
@@ -1709,7 +1709,7 @@ export function ThreadRow({
               />
             ) : (
               <span className="min-w-0 truncate">
-                {sourceLabel ?? formatRelativeTimeLargestUnit(thread.updatedAt)}
+                {sourceLabel}
               </span>
             )}
           </span>

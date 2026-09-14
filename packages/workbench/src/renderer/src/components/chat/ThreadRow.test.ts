@@ -19,7 +19,7 @@ Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
 
 afterEach(() => { document.body.innerHTML = ''; vi.restoreAllMocks() })
 
-it('shows the original bubble and time with direct hover actions', async () => {
+it('gives the title the former timestamp space and keeps direct hover actions', async () => {
   const container = document.createElement('div')
   document.body.append(container)
   const root = createRoot(container)
@@ -31,8 +31,7 @@ it('shows the original bubble and time with direct hover actions', async () => {
   } satisfies ComponentProps<typeof ThreadRow>
   await act(async () => root.render(createElement(ThreadRow, props)))
   expect(container.querySelector('.lucide-message-square')).not.toBeNull()
-  const meta = container.querySelector('.ds-sidebar-thread-meta')!
-  expect(meta.classList.contains('group-hover:hidden')).toBe(true)
+  expect(container.querySelector('.ds-sidebar-thread-meta')).toBeNull()
   expect(container.querySelector('[aria-label="sidebarThreadOptions"]')).toBeNull()
   for (const [label, callback] of [
     ['sidebarPinThread', props.onTogglePin], ['sidebarThreadArchive', props.onArchive]

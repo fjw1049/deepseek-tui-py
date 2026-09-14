@@ -675,7 +675,6 @@ export function Workbench(): ReactElement {
     if (!activeWorkspaceRoot.trim()) return
     if (bottomTerminalOpen) {
       setIdeTerminalMaximized(false)
-      useTerminalSessionStore.getState().setSplitSessionId(null)
       setBottomTerminalOpen(false)
       return
     }
@@ -1600,7 +1599,6 @@ export function Workbench(): ReactElement {
                     terminalMaximized={ideTerminalMaximized}
                     onNewChat={() => {
                       setIdeTerminalMaximized(false)
-                      useTerminalSessionStore.getState().setSplitSessionId(null)
                       setBottomTerminalOpen(false)
                       if (activeWorkspaceRoot.trim()) {
                         startNewChatInWorkspace(activeWorkspaceRoot)
@@ -1621,7 +1619,6 @@ export function Workbench(): ReactElement {
                     }}
                     onCloseTerminal={() => {
                       setIdeTerminalMaximized(false)
-                      useTerminalSessionStore.getState().setSplitSessionId(null)
                       setBottomTerminalOpen(false)
                     }}
                     onToggleMaximize={() => setIdeTerminalMaximized((current) => !current)}

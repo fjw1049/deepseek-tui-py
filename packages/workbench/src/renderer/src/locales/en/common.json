@@ -1396,6 +1396,7 @@
   "terminalNewTab": "New terminal tab",
   "terminalClose": "Close terminal panel",
   "terminalCloseTab": "Close tab",
+  "terminalSplitRight": "Split right",
   "terminalSplitDown": "Split down",
   "terminalUnsplit": "Unsplit",
   "terminalSplitResize": "Resize split",

@@ -6,7 +6,6 @@ import {
   MessageSquarePlus,
   Minimize2,
   Plus,
-  SquareSplitHorizontal,
   Terminal,
   X
 } from 'lucide-react'
@@ -18,9 +17,9 @@ import { useChatStore } from '../../store/chat-store'
 import {
   closeTerminalSessionById,
   createTerminalSessionForWorkspace,
-  splitTerminalSessionDown,
   useTerminalSessionStore
 } from '../../store/terminal-session-store'
+import { TerminalSplitActions } from '../TerminalSplitActions'
 import { SessionHeader } from '../SessionHeader'
 
 const HISTORY_LIMIT = 30
@@ -55,7 +54,6 @@ export function IdeChatRailHeader({
   const selectThread = useChatStore((s) => s.selectThread)
   const sessions = useTerminalSessionStore((s) => s.sessions)
   const activeSessionId = useTerminalSessionStore((s) => s.activeSessionId)
-  const splitSessionId = useTerminalSessionStore((s) => s.splitSessionId)
   const creatingSession = useTerminalSessionStore((s) => s.creatingSession)
   const setActiveSessionId = useTerminalSessionStore((s) => s.setActiveSessionId)
 
@@ -159,21 +157,7 @@ export function IdeChatRailHeader({
 
       {terminalOpen ? (
         <div className="ds-no-drag flex shrink-0 items-center gap-0.5">
-          <button
-            type="button"
-            className={`inline-flex h-7 w-7 items-center justify-center rounded-md transition ${
-              splitSessionId
-                ? 'bg-ds-hover/70 text-ds-ink'
-                : 'text-ds-muted hover:bg-ds-hover/60 hover:text-ds-ink'
-            }`}
-            title={splitSessionId ? t('terminalUnsplit') : t('terminalSplitDown')}
-            aria-label={splitSessionId ? t('terminalUnsplit') : t('terminalSplitDown')}
-            aria-pressed={Boolean(splitSessionId)}
-            disabled={creatingSession || !workspaceRoot.trim()}
-            onClick={() => void splitTerminalSessionDown(workspaceRoot)}
-          >
-            <SquareSplitHorizontal className="h-3.5 w-3.5" strokeWidth={1.85} />
-          </button>
+          <TerminalSplitActions workspaceRoot={workspaceRoot} />
           <button
             type="button"
             className={`inline-flex h-7 w-7 items-center justify-center rounded-md transition ${
