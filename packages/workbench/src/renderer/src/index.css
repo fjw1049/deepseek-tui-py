@@ -12293,3 +12293,44 @@ body:has(.ds-workbench-shell[data-ide-mode]) :is(.ds-subagent-dialog, .ds-code-f
 body:has(.ds-workbench-shell[data-ide-mode]) .ds-project-context-menu :is(input, button, [class*="ds-project-context-menu__"]) {
   font-size: 13px;
 }
+
+/* Task plans keep each row in place as its status changes. */
+.ds-inline-todo__row {
+  transition: color 180ms ease-out;
+}
+.ds-inline-todo__mark {
+  transition: opacity 180ms ease-out;
+}
+.ds-inline-todo__chevron {
+  transition: transform 180ms ease-out;
+}
+.ds-inline-todo__body {
+  animation: ds-todo-reveal 180ms ease-out;
+}
+.ds-inline-todo__count {
+  animation: ds-todo-reveal 180ms ease-out;
+}
+.ds-inline-todo__spinner {
+  transform-origin: 12px 12px;
+  animation: ds-todo-spin 1.1s linear infinite;
+}
+@keyframes ds-todo-reveal {
+  from { opacity: 0; transform: translateY(3px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes ds-todo-spin {
+  from { transform: rotate(-90deg); }
+  to { transform: rotate(270deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ds-inline-todo__row,
+  .ds-inline-todo__mark,
+  .ds-inline-todo__chevron {
+    transition: none;
+  }
+  .ds-inline-todo__body,
+  .ds-inline-todo__count,
+  .ds-inline-todo__spinner {
+    animation: none;
+  }
+}
