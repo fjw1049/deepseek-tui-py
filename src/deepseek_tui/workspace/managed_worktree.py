@@ -10,9 +10,11 @@ import asyncio
 import hashlib
 import logging
 import os
+import signal
 import stat
 import subprocess
 import tempfile
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -224,11 +226,130 @@ async def create_managed_worktree(
     )
 
 
+_PROCESS_KILL_GRACE_SECONDS = 2.0
+
+
+def _pids_with_cwd_under_sync(directory: Path) -> list[int]:
+    """Processes whose current working directory is under ``directory``.
+
+    Best effort and POSIX only: ``/proc`` on Linux, ``lsof`` on macOS/BSD.
+    Unsupported platforms return no pids, so removal proceeds without
+    process cleanup.
+    """
+    root = directory.expanduser().resolve()
+    if os.name != "posix":
+        return []
+    if Path("/proc").is_dir():  # Linux
+        pids: list[int] = []
+        for entry in os.listdir("/proc"):
+            if not entry.isdigit():
+                continue
+            try:
+                cwd = Path(os.readlink(f"/proc/{entry}/cwd"))
+            except OSError:
+                continue  # process exited, or its cwd is not readable by us
+            try:
+                cwd.relative_to(root)
+            except ValueError:
+                continue
+            pids.append(int(entry))
+        return pids
+    try:
+        proc = subprocess.run(
+            ["lsof", "-w", "-d", "cwd", "-Fpn0"],
+            capture_output=True,
+            timeout=15,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    pids = []
+    current: int | None = None
+    for raw_field in proc.stdout.split(b"\0"):
+        # Records are NUL-terminated, but lsof also separates them with a
+        # newline ("p<pid>\0\nfcwd\0n<path>\0\n...") — strip it per field.
+        field = raw_field.strip(b"\n")
+        if not field:
+            continue
+        tag, value = field[:1], field[1:]
+        if tag == b"p":
+            try:
+                current = int(value)
+            except ValueError:
+                current = None
+            continue
+        if tag != b"n" or current is None:
+            continue
+        try:
+            Path(os.fsdecode(value)).relative_to(root)
+        except ValueError:
+            continue
+        if current not in pids:
+            pids.append(current)
+    return pids
+
+
+def _pid_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except OSError:
+        return True  # exists, but the probe was refused — treat as alive
+    return True
+
+
+def _terminate_processes_under_sync(
+    directory: Path, *, grace_seconds: float = _PROCESS_KILL_GRACE_SECONDS
+) -> int:
+    """SIGTERM every process with a cwd under ``directory``, then SIGKILL survivors.
+
+    Returns how many processes were signalled. Never touches this process.
+    Signal failures are ignored: cleanup is best effort and the caller
+    removes the directory regardless.
+    """
+    pids = [pid for pid in _pids_with_cwd_under_sync(directory) if pid != os.getpid()]
+    if not pids:
+        return 0
+    for pid in pids:
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except OSError:
+            continue
+    deadline = time.monotonic() + max(0.0, grace_seconds)
+    while time.monotonic() < deadline and any(_pid_alive(pid) for pid in pids):
+        time.sleep(0.1)
+    for pid in pids:
+        if _pid_alive(pid):
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except OSError:
+                pass
+    return len(pids)
+
+
+async def terminate_processes_under(
+    directory: Path, *, grace_seconds: float = _PROCESS_KILL_GRACE_SECONDS
+) -> int:
+    """Stop stray processes holding a cwd inside ``directory`` before removal.
+
+    Dev servers, test runners, or shells left inside a managed worktree
+    keep file handles and ports alive after the tree is deleted. Best
+    effort: a process that cannot be signalled (gone, owned by someone
+    else) is skipped.
+    """
+    return await _to_thread_complete(
+        _terminate_processes_under_sync, directory, grace_seconds=grace_seconds
+    )
+
+
 async def remove_managed_worktree(project_root: Path, worktree_path: Path) -> None:
     root = project_root.expanduser().resolve()
     dest = worktree_path.expanduser().resolve()
     if not is_managed_path(dest):
         raise WorktreeError("refusing to remove a worktree outside ~/.deepseek/worktrees")
+    if dest.is_dir():
+        await terminate_processes_under(dest)
     branch = await current_worktree_branch(dest) if dest.is_dir() else ""
     if await is_git_repo(root):
         try:
@@ -2197,6 +2318,7 @@ def _detached_head_is_unreachable_sync(path: Path) -> bool:
 def _remove_clean_worktree_sync(path: Path) -> bool:
     if _has_labor_sync(path) or not is_managed_path(path):
         return False
+    _terminate_processes_under_sync(path)
     project = _project_from_worktree_sync(path)
     if project is not None:
         branch = _current_branch_sync(path)

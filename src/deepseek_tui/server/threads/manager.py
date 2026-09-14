@@ -3076,6 +3076,41 @@ class RuntimeThreadManager:
         )
         return thread
 
+    def _archive_rewind_audit(
+        self,
+        thread_id: str,
+        turns: list[TurnRecord],
+        cutoff_turn_index: int,
+        before_item_id: str,
+        restore_files: bool,
+    ) -> tuple[str, str]:
+        """Persist an append-only audit of the turns/items about to be deleted.
+
+        Deletion is unrecoverable, so the snapshot must land before the
+        first delete. A failed archive is logged and skipped: it must not
+        block an explicit user rewind, but the gap stays visible in logs.
+        Returns ``(audit_id, fingerprint)``; both empty when the audit
+        could not be written.
+        """
+        from deepseek_tui.server.threads.rewind_audit import build_rewind_audit_record
+
+        try:
+            record = build_rewind_audit_record(
+                self.store,
+                thread_id,
+                turns,
+                cutoff_turn_index,
+                before_item_id=before_item_id,
+                restore_files=restore_files,
+            )
+            self.store.append_rewind_audit(thread_id, record)
+        except Exception:
+            logger.warning(
+                "rewind_audit_write_failed thread=%s", thread_id, exc_info=True
+            )
+            return "", ""
+        return str(record["audit_id"]), str(record["fingerprint"])
+
     async def rewind_thread_with_result(
         self,
         thread_id: str,
@@ -3181,6 +3216,10 @@ class RuntimeThreadManager:
                         self.checkpoints.delete(cp.turn_id)
                     self._finish_checkpoint_restore(thread)
 
+            audit_id, audit_fingerprint = self._archive_rewind_audit(
+                thread_id, turns, cutoff_turn_index, before_item_id, restore_files
+            )
+
             cutoff_turn = turns[cutoff_turn_index]
             kept_item_ids: list[str] = []
             dropping = False
@@ -3214,7 +3253,7 @@ class RuntimeThreadManager:
                 state.engine.sync_session(messages, model=thread.model)
 
         await self._emit_event(
-            thread_id,
+            thread.id,
             None,
             None,
             "thread.rewound",
@@ -3226,6 +3265,8 @@ class RuntimeThreadManager:
                 "merged_files": merged_files,
                 "conflicted_files": conflicted_files,
                 "skipped_files": skipped_files,
+                "audit_id": audit_id,
+                "audit_fingerprint": audit_fingerprint,
             },
         )
         return thread, {
