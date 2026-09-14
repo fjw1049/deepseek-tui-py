@@ -1286,7 +1286,20 @@ function ThreadQueryMarquee({
   const frameRef = useRef<number | null>(null)
   const previousTextRef = useRef(text)
   const [expanded, setExpanded] = useState(false)
+  const [overflowing, setOverflowing] = useState(false)
   const expandedRef = useRef(false)
+
+  useEffect(() => {
+    const viewport = viewportRef.current
+    const inner = textRef.current
+    if (!viewport || !inner) return
+    const measure = (): void => setOverflowing(inner.scrollWidth > viewport.clientWidth + 1)
+    const observer = new ResizeObserver(measure)
+    observer.observe(viewport)
+    observer.observe(inner)
+    measure()
+    return () => observer.disconnect()
+  }, [text])
 
   const updateExpanded = (next: boolean): void => {
     expandedRef.current = next
@@ -1383,17 +1396,13 @@ function ThreadQueryMarquee({
   return (
     <span
       ref={viewportRef}
-      className={`${className} overflow-hidden whitespace-nowrap`}
+      className={`${className} overflow-hidden whitespace-nowrap ${overflowing && !expanded ? 'ds-sidebar-title-fade' : ''}`}
       style={style}
       title={title}
     >
       <span
         ref={textRef}
-        className={
-          expanded
-            ? 'inline-block w-max max-w-none whitespace-nowrap will-change-transform'
-            : 'block max-w-full truncate'
-        }
+        className="inline-block w-max max-w-none whitespace-nowrap"
       >
         {text}
       </span>
@@ -1673,7 +1682,7 @@ export function ThreadRow({
           <ThreadQueryMarquee
             active={rowHovered}
             className={[
-              'ds-sidebar-thread min-w-0 flex-1 truncate',
+              'ds-sidebar-thread min-w-0 flex-1',
               showUnreadDot ? 'ds-sidebar-thread--emphasis' : ''
             ].join(' ')}
             style={labelSwatch ? { color: labelSwatch } : undefined}

@@ -3415,12 +3415,22 @@ samp {
 
 /* Projects and conversations share one continuous scrolling region. */
 .ds-sidebar-middle {
+  margin-right: -0.75rem;
+  padding-right: 0.75rem;
   overflow-y: auto;
   overscroll-behavior: contain;
   display: flex;
   min-height: 0;
   flex: 1 1 auto;
   flex-direction: column;
+}
+
+.ds-sidebar-middle::-webkit-scrollbar-thumb {
+  border: 0;
+}
+
+.ds-sidebar-title-fade {
+  mask-image: linear-gradient(to right, #000 calc(100% - 2em), transparent);
 }
 
 .ds-sidebar-projects-scroll {
