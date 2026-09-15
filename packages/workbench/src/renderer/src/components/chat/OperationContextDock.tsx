@@ -7,14 +7,12 @@ import {
   type ReactElement
 } from 'react'
 import {
-  ArrowUpRight,
   Check,
   ChevronDown,
   ChevronRight,
   ChevronsLeftRight,
   GitBranch,
   GitGraph,
-  Github,
   ListTodo,
   PanelsTopLeft,
   FileEdit,
@@ -25,10 +23,6 @@ import { useTranslation } from 'react-i18next'
 import { useShallow } from 'zustand/react/shallow'
 import { ChangeDiffStatsLabel } from '../ChangeDiffStatsLabel'
 import { useGitBranches } from '../../hooks/use-git-branches'
-import type { GitRemoteProvider } from '@shared/github-repository'
-import gitlabTanukiUrl from '../../assets/brand/gitlab-tanuki.svg'
-import { useGitHubRepository } from '../../hooks/use-github-repository'
-import { openPreviewUrl } from '../../lib/open-preview-url'
 import { extractSubagentsFromBlocks } from '../../lib/extract-subagents-from-blocks'
 import { openRunPanel } from '../../store/run-panel-store'
 import { useLiveTasks } from '../../hooks/use-thread-tasks'
@@ -95,27 +89,6 @@ function persistDockCompact(value: boolean): void {
 
 function prefersReducedMotion(): boolean {
   return window.matchMedia('(prefers-reduced-motion: reduce)').matches
-}
-
-function RemoteProviderIcon({
-  provider,
-  className
-}: {
-  provider: GitRemoteProvider
-  className: string
-}): ReactElement {
-  if (provider === 'gitlab') {
-    return (
-      <img
-        src={gitlabTanukiUrl}
-        alt=""
-        draggable={false}
-        className={`${className} rounded-full bg-white object-cover`}
-      />
-    )
-  }
-  if (provider === 'github') return <Github className={className} strokeWidth={1.75} />
-  return <GitBranch className={className} strokeWidth={1.75} />
 }
 
 const ROW_ICON_TINTS = {
@@ -213,13 +186,10 @@ export function OperationContextDock({
     'branch',
     branchBase
   )
-  const { result: githubResult, reload: reloadGithubRepository } = useGitHubRepository(gitRoot)
-  const githubRepo = githubResult?.ok ? githubResult : null
   const refreshGitState = useCallback((): void => {
     void reloadGitBranches()
     void reloadBranchChanges()
-    void reloadGithubRepository()
-  }, [reloadBranchChanges, reloadGitBranches, reloadGithubRepository])
+  }, [reloadBranchChanges, reloadGitBranches])
   useWorkspaceDirtyGitRefresh(workspaceDirtyTick, refreshGitState)
   const todoSnapshot = useMemo(() => extractTodosFromBlocks(blocks), [blocks])
   const todos = todoSnapshot?.items ?? []
@@ -250,11 +220,6 @@ export function OperationContextDock({
   const openChangesPanel = (): void => {
     if (!hasChanges) return
     onOpenChanges?.()
-  }
-
-  const openGithubRepository = (): void => {
-    if (!githubRepo) return
-    openPreviewUrl(githubRepo.url)
   }
 
   const [collapsed, setCollapsed] = useState({ git: true, process: true })
@@ -382,17 +347,6 @@ export function OperationContextDock({
           >
             <Globe2 className="h-[15px] w-[15px]" strokeWidth={1.75} />
           </button>
-          {githubRepo ? (
-            <button
-              type="button"
-              className="ds-operation-dock-rail__btn"
-              onClick={openGithubRepository}
-              title={t('operationDockOpenRepository', { repo: githubRepo.nameWithOwner })}
-              aria-label={t('operationDockOpenRepository', { repo: githubRepo.nameWithOwner })}
-            >
-              <RemoteProviderIcon provider={githubRepo.provider} className="h-[15px] w-[15px]" />
-            </button>
-          ) : null}
           <button
             type="button"
             className="ds-operation-dock-rail__btn"
@@ -443,33 +397,6 @@ export function OperationContextDock({
       </div>
       <div className="ds-operation-dock-body">
       <div className="ds-operation-dock-status">
-      {githubRepo ? (
-        <button
-          type="button"
-          onClick={openGithubRepository}
-          title={t('operationDockOpenRepository', { repo: githubRepo.nameWithOwner })}
-          className="ds-operation-dock-repository group"
-        >
-          <span className="ds-operation-dock-repository__icon" aria-hidden>
-            <RemoteProviderIcon
-              provider={githubRepo.provider}
-              className="h-[17px] w-[17px]"
-            />
-          </span>
-          <span className="min-w-0 flex-1">
-            <span className="ds-operation-dock-repository__eyebrow">
-              {t('operationDockRepository')}
-            </span>
-            <span className="ds-operation-dock-repository__name">
-              {githubRepo.nameWithOwner}
-            </span>
-          </span>
-          <ArrowUpRight
-            className="h-3.5 w-3.5 shrink-0 text-ds-faint"
-            strokeWidth={1.85}
-          />
-        </button>
-      ) : null}
       {onEnterIdeMode ? (
         <button
           type="button"
