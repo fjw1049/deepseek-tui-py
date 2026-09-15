@@ -16,8 +16,8 @@ import {
   ListTodo,
   PanelsTopLeft,
   FileEdit,
-  Globe2,
-  Terminal
+  FolderOpen,
+  Globe2
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { useShallow } from 'zustand/react/shallow'
@@ -50,14 +50,13 @@ type Props = {
   /** Project currently rendered by the owning Workbench. */
   workspaceRoot: string
   onOpenChanges?: () => void
+  /** Open the right-sidebar file tree (文件 tab) — collapsed-rail files entry. */
+  onOpenFilesSidebar: () => void
   /** Enter IDE/editor layout — EditView row entry. */
   onEnterIdeMode?: () => void
   previewActive: boolean
-  terminalPanelOpen: boolean
-  terminalPanelEnabled: boolean
   previewEnabled: boolean
   onTogglePreview: () => void
-  onToggleTerminalPanel: () => void
 }
 
 const DOCK_ROW_CLASS =
@@ -152,13 +151,11 @@ function SectionHeader({
 export function OperationContextDock({
   workspaceRoot,
   onOpenChanges,
+  onOpenFilesSidebar,
   onEnterIdeMode,
   previewActive,
-  terminalPanelOpen,
-  terminalPanelEnabled,
   previewEnabled,
-  onTogglePreview,
-  onToggleTerminalPanel
+  onTogglePreview
 }: Props): ReactElement | null {
   const { t } = useTranslation('common')
   const {
@@ -350,13 +347,11 @@ export function OperationContextDock({
           <button
             type="button"
             className="ds-operation-dock-rail__btn"
-            onClick={onToggleTerminalPanel}
-            disabled={!terminalPanelEnabled}
-            aria-pressed={terminalPanelOpen}
-            title={terminalPanelEnabled ? t('terminalToggle') : t('terminalWorkspaceRequired')}
-            aria-label={t('terminalPanelTitle')}
+            onClick={onOpenFilesSidebar}
+            title={t('rightSidebarTabEditor')}
+            aria-label={t('rightSidebarTabEditor')}
           >
-            <Terminal className="h-[15px] w-[15px]" strokeWidth={1.75} />
+            <FolderOpen className="h-[15px] w-[15px]" strokeWidth={1.75} />
           </button>
           <button
             type="button"
@@ -484,6 +479,7 @@ export function OperationContextDock({
       ) : null}
       </div>
 
+      {hasTodos ? (
       <div className="ds-operation-dock-status__section">
       <button
         type="button"
@@ -606,6 +602,7 @@ export function OperationContextDock({
         )
       ) : null}
       </div>
+      ) : null}
 
       <TaskActivity key={activeThreadId} tasks={tasks} agents={dockSubagents} onOpen={openRunPanel} />
       </div>

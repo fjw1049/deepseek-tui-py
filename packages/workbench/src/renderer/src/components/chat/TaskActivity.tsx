@@ -1,9 +1,9 @@
 import { useId, useState, type ReactElement } from 'react'
-import { Check, ChevronRight, CircleAlert, Clock3, ListChecks, Minus } from 'lucide-react'
+import { ChevronRight } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { subagentListTitle, type DockSubagentItem } from '../../lib/extract-subagents-from-blocks'
 import { taskListTitle, type TaskItemView } from '../../lib/extract-tasks-from-blocks'
-import { isRunActive, runDisplayTitle, runStatusKey } from '../../lib/run-activity'
+import { runDisplayTitle, runStatusKey } from '../../lib/run-activity'
 import type { RunTarget } from '../../store/run-panel-store'
 import './task-activity.css'
 
@@ -13,19 +13,17 @@ type Props = {
   onOpen: (target: Omit<RunTarget, 'threadId'>) => void
 }
 
+// ponytail: status is a plain dot — green done, red failed, spinning ring while
+// running. No glyphs; the color + motion carry the whole state.
 function StatusMark({ status, animate = false }: { status?: string; animate?: boolean }): ReactElement {
-  const Icon = status === 'completed' ? Check
-    : status === 'failed' || status === 'timed_out' ? CircleAlert
-      : status === 'queued' || status === 'pending' ? Clock3
-        : status ? Minus : ListChecks
   return (
     <span className="ds-task-activity-mark" data-status={status} data-animate={animate} aria-hidden>
-      {status === 'running' ? <span className="ds-task-activity-orbit" /> : <Icon />}
+      {status === 'running' ? <span className="ds-task-activity-orbit" /> : <span className="ds-task-activity-dot" />}
     </span>
   )
 }
 
-export function TaskActivity({ tasks, agents, onOpen }: Props): ReactElement {
+export function TaskActivity({ tasks, agents, onOpen }: Props): ReactElement | null {
   const { t } = useTranslation('common')
   const [expanded, setExpanded] = useState(false)
   const listId = useId()
@@ -34,6 +32,9 @@ export function TaskActivity({ tasks, agents, onOpen }: Props): ReactElement {
     ...agents.map((agent) => ({ kind: 'subagent' as const, id: agent.agentId, status: agent.status, title: runDisplayTitle(subagentListTitle(agent, Infinity)) }))
   ]
   const first = items[0]
+  // ponytail: hide the whole section when there are no tasks/agents — an empty
+  // "暂无任务" card is noise. Reappears automatically once a task exists.
+  if (!first) return null
   const multiple = items.length > 1
   const running = items.filter((item) => item.status === 'running').length
   const queued = items.filter((item) => item.status === 'queued' || item.status === 'pending').length
@@ -45,13 +46,6 @@ export function TaskActivity({ tasks, agents, onOpen }: Props): ReactElement {
   const statusText = multiple
     ? t('taskActivityCountStatus', { count, status: t(runStatusKey(status)) })
     : first ? t(runStatusKey(status)) : ''
-  const activeItems = items.filter((item) => isRunActive(item.status))
-  const titles = (activeItems.length ? activeItems : items).slice(0, 2).map((item) => item.title).join(' · ')
-  const summary = !first ? t('contextRailEmptyTasks') : !multiple
-    ? t(first.kind === 'task' ? 'taskActivityBackground' : 'taskActivitySubagent')
-    : failed && (running || queued)
-      ? `${t('taskActivityCountStatus', { count: failed, status: t('contextRailTaskStatusFailed') })} · ${titles}`
-      : titles
 
   return (
     <section className="ds-operation-dock-status__section ds-task-activity" aria-label={t('contextRailTasks')}>
@@ -69,10 +63,12 @@ export function TaskActivity({ tasks, agents, onOpen }: Props): ReactElement {
       >
         <StatusMark status={status} animate />
         <span className="ds-task-activity-heading">
-          <span className="ds-task-activity-title">{multiple ? t('taskActivityParallel') : first?.title || t('contextRailTasks')}</span>
-          <span className="ds-task-activity-summary" data-attention={failed > 0 && (running > 0 || queued > 0)}>{summary}</span>
+          <span className="ds-task-activity-title">
+            {multiple
+              ? t('taskActivityAgentsCount', { count: items.length })
+              : t('contextRailAgentGroupTitle')}
+          </span>
         </span>
-        <span className="ds-task-activity-status" data-status={status} role="status">{statusText}</span>
         {first ? <ChevronRight className="ds-task-activity-chevron" aria-hidden /> : null}
       </button>
       {multiple ? (

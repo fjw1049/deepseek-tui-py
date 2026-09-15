@@ -1,6 +1,8 @@
 .ds-task-activity {
   --task-activity-row-height: 3.25rem;
   --task-activity-running: light-dark(#27735f, #84c7b0);
+  --task-activity-done: light-dark(#1f9d57, #4ade80);
+  --task-activity-failed: light-dark(#d6453d, #f87171);
   --task-activity-attention: light-dark(#976124, #dfb87c);
   --task-activity-line: color-mix(in srgb, var(--text-primary) 13%, transparent);
 }
@@ -65,39 +67,50 @@
   width: 1.5rem;
   height: 1.5rem;
   flex-shrink: 0;
-  color: var(--text-secondary);
+  color: var(--text-tertiary);
 }
 
-.ds-task-activity-mark svg,
 .ds-task-activity-chevron {
   width: 0.875rem;
   height: 0.875rem;
   stroke-width: 1.75;
 }
 
-.ds-task-activity-mark[data-status='running'] {
-  color: var(--task-activity-running);
-}
-
-.ds-task-activity [data-status='failed'],
-.ds-task-activity [data-status='timed_out'],
-.ds-task-activity-summary[data-attention='true'] {
-  color: var(--task-activity-attention);
-}
-
-.ds-task-activity-orbit {
-  width: 0.3125rem;
-  height: 0.3125rem;
+/* ponytail: plain status dot — neutral by default, green done, red failed. */
+.ds-task-activity-dot {
+  width: 0.5rem;
+  height: 0.5rem;
   border-radius: 50%;
   background: currentColor;
 }
 
-.ds-task-activity-mark[data-animate='true'] .ds-task-activity-orbit {
+.ds-task-activity-mark[data-status='completed'] {
+  color: var(--task-activity-done);
+}
+
+.ds-task-activity-mark[data-status='failed'],
+.ds-task-activity-mark[data-status='timed_out'] {
+  color: var(--task-activity-failed);
+}
+
+.ds-task-activity-mark[data-status='running'] {
+  color: var(--task-activity-running);
+}
+
+.ds-task-activity-summary[data-attention='true'],
+.ds-task-activity-summary[data-status='failed'],
+.ds-task-activity-summary[data-status='timed_out'] {
+  color: var(--task-activity-attention);
+}
+
+/* Running = spinning ring in the running color. */
+.ds-task-activity-orbit {
   width: 0.875rem;
   height: 0.875rem;
   border: 1.5px solid var(--task-activity-line);
   border-top-color: currentColor;
   border-right-color: currentColor;
+  border-radius: 50%;
   background: transparent;
   animation: task-activity-turn 2.4s linear infinite;
 }
