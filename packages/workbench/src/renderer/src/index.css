@@ -6255,7 +6255,7 @@ html[data-theme='dark'] .ds-code-fullscreen .shiki span {
 .ds-markdown-doc-page {
   box-sizing: border-box;
   width: 100%;
-  max-width: 82ch;
+  max-width: 112ch;
   margin: 0 auto;
   min-height: 100%;
   padding: 24px clamp(16px, 4%, 40px) 40px;
