@@ -225,6 +225,7 @@ export function OperationContextDock({
   const [widthCompact, setWidthCompact] = useState(readStoredDockCompact)
   const [motion, setMotion] = useState<'idle' | 'collapsing' | 'expanding'>('idle')
   const motionTimerRef = useRef<number | null>(null)
+  const motionRafsRef = useRef<number[]>([])
   /** Which process todo row is expanded to full text (single-line by default). */
   const [expandedTodoKey, setExpandedTodoKey] = useState<string | null>(null)
   const toggle = (key: keyof typeof collapsed): void =>
@@ -235,13 +236,24 @@ export function OperationContextDock({
       window.clearTimeout(motionTimerRef.current)
       motionTimerRef.current = null
     }
+    motionRafsRef.current.forEach((id) => window.cancelAnimationFrame(id))
+    motionRafsRef.current = []
   }, [])
 
   useEffect(() => () => clearMotionTimer(), [clearMotionTimer])
 
   const setCompactMode = useCallback(
     (value: boolean): void => {
-      if (motion !== 'idle') return
+      if (motion !== 'idle') {
+        // Interrupt mid-animation: jump straight to the requested state so a
+        // click during the 220ms transition is never swallowed.
+        clearMotionTimer()
+        setCompact(value)
+        setWidthCompact(value)
+        setMotion('idle')
+        persistDockCompact(value)
+        return
+      }
       if (value === compact && value === widthCompact) return
 
       clearMotionTimer()
@@ -272,11 +284,15 @@ export function OperationContextDock({
       setMotion('expanding')
       setWidthCompact(true)
       persistDockCompact(false)
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-          setWidthCompact(false)
+      motionRafsRef.current.push(
+        window.requestAnimationFrame(() => {
+          motionRafsRef.current.push(
+            window.requestAnimationFrame(() => {
+              setWidthCompact(false)
+            })
+          )
         })
-      })
+      )
       motionTimerRef.current = window.setTimeout(() => {
         setMotion('idle')
         motionTimerRef.current = null
@@ -316,7 +332,6 @@ export function OperationContextDock({
           title={t('operationDockExpand')}
           aria-label={t('operationDockExpand')}
           aria-expanded={false}
-          disabled={motion !== 'idle'}
         >
           <ChevronsLeftRight className="h-4 w-4" strokeWidth={2.1} />
         </button>
@@ -385,7 +400,6 @@ export function OperationContextDock({
           title={t('operationDockCollapse')}
           aria-label={t('operationDockCollapse')}
           aria-expanded={true}
-          disabled={motion !== 'idle'}
         >
           <ChevronsLeftRight className="h-4 w-4" strokeWidth={2.1} />
         </button>

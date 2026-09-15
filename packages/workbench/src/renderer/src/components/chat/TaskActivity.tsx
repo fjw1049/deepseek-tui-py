@@ -1,4 +1,4 @@
-import { useId, useState, type ReactElement } from 'react'
+import { useEffect, useId, useState, type ReactElement } from 'react'
 import { ChevronRight } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { subagentListTitle, type DockSubagentItem } from '../../lib/extract-subagents-from-blocks'
@@ -32,10 +32,16 @@ export function TaskActivity({ tasks, agents, onOpen }: Props): ReactElement | n
     ...agents.map((agent) => ({ kind: 'subagent' as const, id: agent.agentId, status: agent.status, title: runDisplayTitle(subagentListTitle(agent, Infinity)) }))
   ]
   const first = items[0]
+  const multiple = items.length > 1
+  // The list only renders while multiple; without this reset a stale
+  // `expanded=true` survives a 1-item dip and the next click folds a list the
+  // user never saw open ("点没反应，再点就折叠了").
+  useEffect(() => {
+    if (!multiple) setExpanded(false)
+  }, [multiple])
   // ponytail: hide the whole section when there are no tasks/agents — an empty
   // "暂无任务" card is noise. Reappears automatically once a task exists.
   if (!first) return null
-  const multiple = items.length > 1
   const running = items.filter((item) => item.status === 'running').length
   const queued = items.filter((item) => item.status === 'queued' || item.status === 'pending').length
   const failed = items.filter((item) => item.status === 'failed' || item.status === 'timed_out').length

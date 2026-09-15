@@ -37,12 +37,12 @@ afterEach(async () => {
 
 it('opens a single run directly and stops its activity indicator on completion', async () => {
   await render([agent('a')])
-  expect(trigger().textContent).toContain('检查 a 的界面布局')
+  expect(trigger().textContent).toContain('智能体')
   expect(trigger().getAttribute('aria-expanded')).toBeNull()
   await act(async () => trigger().click())
   expect(onOpen).toHaveBeenCalledWith({ kind: 'subagent', id: 'a' })
   await render([agent('a', 'completed')])
-  expect(trigger().textContent).toContain('已完成')
+  expect(trigger().title).toContain('已完成')
   expect(container.querySelector('.ds-task-activity-orbit')).toBeNull()
   await render([], [{ id: 'task-a', prompt: '检查后台任务', status: 'queued' }])
   await act(async () => trigger().click())
@@ -53,8 +53,7 @@ it('counts running work separately from queued work and keeps failures visible',
   await render([agent('a'), agent('b', 'pending'), agent('c', 'failed')], [
     { id: 't', prompt: '等待执行', status: 'queued' }
   ])
-  expect(container.querySelector('[role="status"]')?.textContent).toBe('1 项运行中')
-  expect(trigger().textContent).toContain('1 项失败')
+  expect(trigger().textContent).toContain('4 个智能体')
   expect(trigger().getAttribute('aria-expanded')).toBe('false')
   expect(container.querySelector('.ds-task-activity-body')?.hasAttribute('inert')).toBe(true)
   await act(async () => trigger().click())
@@ -70,13 +69,26 @@ it('preserves disclosure and row order when runs finish or more work arrives', a
   await act(async () => trigger().click())
   await render([agent('a', 'completed'), agent('b', 'completed')])
   expect(trigger().getAttribute('aria-expanded')).toBe('true')
-  expect(container.querySelector('[role="status"]')?.textContent).toBe('2 项已完成')
   expect([...container.querySelectorAll('.ds-task-activity-row .ds-task-activity-title')].map((row) => row.textContent))
     .toEqual(['检查 a 的界面布局', '检查 b 的界面布局'])
   await act(async () => trigger().click())
   await render([agent('a', 'completed'), agent('b', 'completed'), agent('c')])
   expect(trigger().getAttribute('aria-expanded')).toBe('false')
+})
+
+it('hides the section entirely when there is no work', async () => {
   await render([])
-  expect(trigger().disabled).toBe(true)
-  expect(trigger().textContent).toContain('暂无任务')
+  expect(container.querySelector('.ds-task-activity')).toBeNull()
+})
+
+it('resets expanded when the list dips to a single item, so a later click expands instead of folding', async () => {
+  await render([agent('a'), agent('b')])
+  await act(async () => trigger().click())
+  expect(trigger().getAttribute('aria-expanded')).toBe('true')
+  // Subagent finishes and leaves the dock: body unmounts but state must reset.
+  await render([agent('a')])
+  await render([agent('a'), agent('c')])
+  expect(trigger().getAttribute('aria-expanded')).toBe('false')
+  await act(async () => trigger().click())
+  expect(trigger().getAttribute('aria-expanded')).toBe('true')
 })
