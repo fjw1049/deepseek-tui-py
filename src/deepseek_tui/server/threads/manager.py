@@ -3216,8 +3216,16 @@ class RuntimeThreadManager:
                         self.checkpoints.delete(cp.turn_id)
                     self._finish_checkpoint_restore(thread)
 
-            audit_id, audit_fingerprint = self._archive_rewind_audit(
-                thread_id, turns, cutoff_turn_index, before_item_id, restore_files
+            # Off-loop: the snapshot loads every dropped item and fsyncs, which
+            # can be megabytes on a long thread. Still awaited before the first
+            # deletion, so the archive-before-delete order holds.
+            audit_id, audit_fingerprint = await asyncio.to_thread(
+                self._archive_rewind_audit,
+                thread_id,
+                turns,
+                cutoff_turn_index,
+                before_item_id,
+                restore_files,
             )
 
             cutoff_turn = turns[cutoff_turn_index]
