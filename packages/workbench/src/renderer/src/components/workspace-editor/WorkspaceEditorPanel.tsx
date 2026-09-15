@@ -10,7 +10,7 @@ import {
   useRef,
   useState
 } from 'react'
-import { Check, Copy, Columns2, Loader2, Pencil, Save, Search, X, WrapText, Folder, FolderOpen } from 'lucide-react'
+import { Check, Code2, Copy, Columns2, Loader2, Pencil, Save, Search, X, WrapText, Folder, FolderOpen } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { isImagePreviewPath } from '@shared/image-preview'
 import { isHtmlPreviewPath } from '@shared/html-preview'
@@ -320,6 +320,8 @@ function PaneTabActions({
   tab,
   isEditing,
   justSaved,
+  sourceVisible,
+  onToggleSource,
   onFind,
   onStartEdit,
   onCancelEdit,
@@ -329,6 +331,8 @@ function PaneTabActions({
   tab: EditorTab | null
   isEditing: boolean
   justSaved: boolean
+  sourceVisible: boolean
+  onToggleSource: () => void
   onFind: () => void
   onStartEdit: () => void
   onCancelEdit: () => void
@@ -346,9 +350,6 @@ function PaneTabActions({
     <div className="flex shrink-0 items-center gap-0.5 pl-1">
       {canEditFile && tab ? (
         <>
-          <span className="px-1.5 text-[11px] text-ds-muted" role="status">
-            {t(!isEditing ? 'workspaceEditorReadOnly' : tab.content !== tab.savedContent ? 'workspaceEditorUnsaved' : 'workspaceEditorSaved')}
-          </span>
           <button
             type="button"
             onClick={onFind}
@@ -359,6 +360,21 @@ function PaneTabActions({
           >
             <Search className="h-3.5 w-3.5" strokeWidth={1.85} />
           </button>
+          {tab && (isMarkdownPath(tab.path) || isHtmlPreviewPath(tab.path)) && !isEditing ? (
+            <Tooltip label={sourceVisible ? t('workspaceEditorPreview') : t('workspaceEditorSource')}>
+              <button
+                type="button"
+                onClick={onToggleSource}
+                aria-label={sourceVisible ? t('workspaceEditorPreview') : t('workspaceEditorSource')}
+                aria-pressed={sourceVisible}
+                className={`inline-flex h-7 w-7 items-center justify-center rounded-md transition hover:bg-ds-hover ${
+                  sourceVisible ? 'bg-ds-hover text-ds-ink' : 'text-ds-muted'
+                }`}
+              >
+                <Code2 className="h-3.5 w-3.5" strokeWidth={1.85} />
+              </button>
+            </Tooltip>
+          ) : null}
           {tab && ((!isMarkdownPath(tab.path) && !isHtmlPreviewPath(tab.path)) || isEditing) ? (
             <Tooltip label={t('workspaceEditorWrapLines')}>
               <button
@@ -445,6 +461,10 @@ const EditorPaneView = forwardRef<
     /** Only when split — avoid stacking a left ring against the tree separator. */
     showFocusChrome: boolean
     externalOpenError: string | null
+    /** Preview/source for markdown & html tabs — owned by the parent so the
+        tab-strip toggle button and the pane share one source of truth. */
+    sourceVisible: boolean
+    onSourceVisibleChange: (visible: boolean) => void
     onFocus: () => void
     onChange: (content: string) => void
   }
@@ -458,6 +478,8 @@ const EditorPaneView = forwardRef<
     focused,
     showFocusChrome,
     externalOpenError,
+    sourceVisible,
+    onSourceVisibleChange,
     onFocus,
     onChange
   },
@@ -466,7 +488,6 @@ const EditorPaneView = forwardRef<
   const { t } = useTranslation('common')
   const surfaceRef = useRef<WorkspaceEditorSurfaceHandle | null>(null)
   const [sourceFindOpen, setSourceFindOpen] = useState(false)
-  const [sourceVisible, setSourceVisible] = useState(false)
   const isImageTab = tab?.kind === 'image'
   const isHtmlPreview =
     Boolean(tab) && !isImageTab && isHtmlPreviewPath(tab!.path) && !isEditing && !sourceVisible
@@ -487,12 +508,12 @@ const EditorPaneView = forwardRef<
       !isEditing &&
       !sourceVisible
     ) {
-      setSourceVisible(true)
       setSourceFindOpen(true)
+      onSourceVisibleChange(true)
       return
     }
     surfaceRef.current?.openFind()
-  }, [tab, isImageTab, isEditing, sourceVisible, onFocus])
+  }, [tab, isImageTab, isEditing, sourceVisible, onSourceVisibleChange, onFocus])
 
   useImperativeHandle(
     ref,
@@ -505,7 +526,6 @@ const EditorPaneView = forwardRef<
 
   useEffect(() => {
     setSourceFindOpen(false)
-    setSourceVisible(false)
   }, [tab?.id])
 
   useEffect(() => {
@@ -564,12 +584,6 @@ const EditorPaneView = forwardRef<
       ) : tab.truncated ? (
         <div className="shrink-0 border-b border-amber-200/70 bg-amber-50/80 px-3 py-2 text-[12.5px] text-amber-900 dark:border-amber-700/40 dark:bg-amber-950/30 dark:text-amber-100">
           {t('workspaceEditorTruncated')}
-        </div>
-      ) : null}
-      {!isImageTab && (isMarkdownPath(tab.path) || isHtmlPreviewPath(tab.path)) && !isEditing ? (
-        <div className="ds-workspace-document-mode">
-          <button type="button" aria-pressed={!sourceVisible} onClick={() => { setSourceVisible(false); setSourceFindOpen(false) }}>{t('workspaceEditorPreview')}</button>
-          <button type="button" aria-pressed={sourceVisible} onClick={() => { setSourceVisible(true); setSourceFindOpen(false) }}>{t('workspaceEditorSource')}</button>
         </div>
       ) : null}
       {tab.loading ? (
@@ -665,6 +679,10 @@ export function WorkspaceEditorPanel({
 
   const [treeWidth, setTreeWidth] = useState(readStoredTreeWidth)
   const [splitRatio, setSplitRatio] = useState(readStoredSplitRatio)
+  const [paneSourceVisible, setPaneSourceVisible] = useState<Record<EditorPaneId, boolean>>({
+    primary: false,
+    secondary: false
+  })
   const [editingTabId, setEditingTabId] = useState<string | null>(null)
   const [externalOpenError, setExternalOpenError] = useState<string | null>(null)
   const [fileMenu, setFileMenu] = useState<FileMenuState | null>(null)
@@ -739,6 +757,14 @@ export function WorkspaceEditorPanel({
   useEffect(() => {
     setExternalOpenError(null)
   }, [focusedTab?.id])
+
+  // New tab always starts in preview; source mode is a per-tab view choice.
+  useEffect(() => {
+    setPaneSourceVisible((state) => (state.primary ? { ...state, primary: false } : state))
+  }, [primaryTab?.id])
+  useEffect(() => {
+    setPaneSourceVisible((state) => (state.secondary ? { ...state, secondary: false } : state))
+  }, [secondaryTab?.id])
 
   const runSaveWithFeedback = useCallback(
     async (tabId: string): Promise<void> => {
@@ -935,6 +961,10 @@ export function WorkspaceEditorPanel({
       tab={tab}
       isEditing={Boolean(tab && editingTabId === tab.id && !tab.truncated)}
       justSaved={Boolean(tab && savedFlashTabId === tab.id)}
+      sourceVisible={paneSourceVisible[pane]}
+      onToggleSource={() =>
+        setPaneSourceVisible((state) => ({ ...state, [pane]: !state[pane] }))
+      }
       onFind={() =>
         (pane === 'secondary' ? secondaryPaneRef : primaryPaneRef).current?.openFind()
       }
@@ -1131,6 +1161,10 @@ export function WorkspaceEditorPanel({
                   focused={!splitEnabled || focusedPane === 'primary'}
                   showFocusChrome={splitEnabled}
                   externalOpenError={externalOpenError}
+                  sourceVisible={paneSourceVisible.primary}
+                  onSourceVisibleChange={(visible) =>
+                    setPaneSourceVisible((state) => ({ ...state, primary: visible }))
+                  }
                   onFocus={() => focusPane('primary')}
                   onChange={(content) => {
                     if (primaryTab) updateTabContent(primaryTab.id, content)
@@ -1178,6 +1212,10 @@ export function WorkspaceEditorPanel({
                       focused={focusedPane === 'secondary'}
                       showFocusChrome={splitEnabled}
                       externalOpenError={externalOpenError}
+                      sourceVisible={paneSourceVisible.secondary}
+                      onSourceVisibleChange={(visible) =>
+                        setPaneSourceVisible((state) => ({ ...state, secondary: visible }))
+                      }
                       onFocus={() => focusPane('secondary')}
                       onChange={(content) => {
                         if (secondaryTab) updateTabContent(secondaryTab.id, content)
