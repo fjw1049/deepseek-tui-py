@@ -37,6 +37,7 @@ from deepseek_tui.engine.events import (
     PluginMountEvent,
     StatusEvent,
     SubAgentMailboxEvent,
+    SubAgentTextDeltaEvent,
     TextDeltaEvent,
     ThinkingDeltaEvent,
     ToolCallEvent,
@@ -5982,6 +5983,18 @@ class RuntimeThreadManager:
                         "request_id": event.tool_call_id,
                         "questions": event.questions,
                     },
+                )
+
+            elif isinstance(event, SubAgentTextDeltaEvent):
+                # Live sub-agent text: batched into item.delta rows with a
+                # synthetic per-agent item id (frontend routes by kind). Not
+                # persisted as a turn item — the mailbox `completed` message
+                # carries the durable summary.
+                if event.agent_id in foreign_subagent_ids:
+                    continue
+                first_response.set()
+                await delta_batcher.append(
+                    f"subagent_text_{event.agent_id}", "subagent_message", event.text
                 )
 
             elif isinstance(event, SubAgentMailboxEvent):

@@ -19,6 +19,7 @@ import logging as _logging
 import os as _os
 import asyncio
 import logging
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 from collections.abc import Awaitable, Callable
@@ -189,6 +190,7 @@ from deepseek_tui.engine.events import (
     AgentRoundCompleteEvent,
     ApprovalRequiredEvent,
     ErrorEvent,
+    TextDeltaEvent,
     ToolResultEvent,
     TurnCancelledEvent,
     TurnCompleteEvent,
@@ -653,6 +655,29 @@ async def _collect_turn_events(
             # Older/test callbacks that only accept (kind, summary).
             await on_tool_event(kind, summary)
 
+    # Live-text streaming: accumulate deltas, flush to the task record at
+    # most twice a second so the polling UI shows progressive output without
+    # a disk write per token.
+    live_text_parts: list[str] = []
+    last_live_flush = time.monotonic() - 0.5  # first chunk flushes immediately
+
+    async def _flush_live_text(force: bool = False) -> None:
+        nonlocal last_live_flush
+        if task is None or not live_text_parts:
+            return
+        now = time.monotonic()
+        if not force and now - last_live_flush < 0.5:
+            return
+        last_live_flush = now
+        mgr = getattr(task, "task_manager", None)
+        recorder = getattr(mgr, "record_live_text", None)
+        if recorder is None:
+            return
+        try:
+            await recorder(task.id, "".join(live_text_parts))
+        except Exception:  # noqa: BLE001 -- streaming preview must never break the task
+            pass
+
     async for event in handle.events():
         if cancel.is_set():
             await handle.cancel("executor_cancelled")
@@ -660,6 +685,10 @@ async def _collect_turn_events(
 
         if isinstance(event, ErrorEvent):
             error_msg = event.message
+        elif isinstance(event, TextDeltaEvent):
+            if event.text:
+                live_text_parts.append(event.text)
+                await _flush_live_text()
         elif isinstance(event, AgentRoundCompleteEvent):
             for call in event.tool_calls:
                 pending_args[call.id] = dict(call.arguments or {})

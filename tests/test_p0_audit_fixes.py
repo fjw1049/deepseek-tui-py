@@ -477,3 +477,39 @@ async def test_subagent_loop_auto_approve_does_not_grant_trust_mode(
 
     assert captured, "sub-agent loop never built a tool context"
     assert all(ctx.trust_mode is False for ctx in captured)
+
+
+@pytest.mark.asyncio
+async def test_collect_turn_events_streams_live_text_to_task_record() -> None:
+    """Text deltas must land in task.live_text via record_live_text."""
+    recorded: list[tuple[str, str]] = []
+
+    class _Mgr:
+        async def record_live_text(self, task_id: str, text: str) -> None:
+            recorded.append((task_id, text))
+
+    class _Task:
+        id = "task_live1"
+        task_manager = _Mgr()
+
+    handle = EngineHandle()
+    cancel = asyncio.Event()
+
+    async def _produce() -> None:
+        await handle.emit(TextDeltaEvent(text="第一段"))
+        await asyncio.sleep(0.6)  # cross the throttle window
+        await handle.emit(TextDeltaEvent(text="流式输出"))
+        await handle.emit(
+            TurnCompleteEvent(assistant_message=Message.assistant("done"))
+        )
+
+    producer = asyncio.create_task(_produce())
+    text, err = await asyncio.wait_for(
+        _collect_turn_events(handle, cancel, task=_Task()), timeout=2.0
+    )
+    await producer
+    assert err is None
+    assert text == "done"
+    assert recorded, "no live text reached record_live_text"
+    assert recorded[0][0] == "task_live1"
+    assert "第一段流式输出" in recorded[-1][1]

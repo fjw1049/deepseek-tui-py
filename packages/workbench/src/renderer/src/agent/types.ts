@@ -230,6 +230,8 @@ export type ChatBlock =
       workers?: { id: string; status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled' }[]
       /** Full step history for StepFlow (delegate cards). */
       steps?: SubagentStepBlock[]
+      /** Live streamed text while running (cleared when the card settles). */
+      liveText?: string
       /** Fanout: per-worker step history. */
       workerSteps?: Record<string, SubagentStepBlock[]>
       parentId?: string | null
@@ -435,6 +437,8 @@ export type ThreadEventSink = {
   onSystemStatus?(text: string, itemId: string, severity?: 'error'): void
   /** Optional: delegate / fanout sub-agent progress cards. */
   onSubagentMailbox?(ev: SubagentMailboxPayload): void
+  /** Optional: live streamed text from a running sub-agent. */
+  onSubagentTextDelta?(agentId: string, text: string): void
   /**
    * Optional: session-level mounted-plugin state changed. `null` means
    * explicitly unmounted; the callback is also called on thread load with

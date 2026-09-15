@@ -1302,10 +1302,15 @@ function buildThreadEventSink(
           // Keep a previously backfilled spawn prompt if this mailbox event
           // did not carry one (e.g. tool_call / progress envelopes).
           const nextBlock = subagentBlockFromCard(card, new Date().toISOString(), existing?.kind === 'subagent' ? existing : undefined)
-          const merged =
-            !nextBlock.prompt && existing && existing.kind === 'subagent' && existing.prompt
-              ? { ...nextBlock, prompt: existing.prompt }
-              : nextBlock
+          const settle = ['completed', 'failed', 'cancelled']
+          const existingSub = existing?.kind === 'subagent' ? existing : undefined
+          const keepLive =
+            existingSub?.liveText && !settle.includes(existingSub.status)
+              ? { liveText: existingSub.liveText }
+              : {}
+          const keepPrompt =
+            !nextBlock.prompt && existingSub?.prompt ? { prompt: existingSub.prompt } : {}
+          const merged = { ...nextBlock, ...keepPrompt, ...keepLive }
           const idx = blocks.findIndex((b) => b.id === blockId)
           if (blocks === s.blocks) blocks = [...blocks]
           if (idx >= 0) {
@@ -1320,6 +1325,21 @@ function buildThreadEventSink(
         return { blocks }
       })
     },
+    onSubagentTextDelta: (agentId, text) =>
+      set((s) => {
+        const idx = s.blocks.findIndex(
+          (b) => b.kind === 'subagent' && b.agentId === agentId
+        )
+        // Deltas can only follow a mailbox ``started`` (the child must be
+        // spawned before it can emit) — ignore strays instead of creating
+        // a half-initialized card.
+        if (idx < 0) return {}
+        const block = s.blocks[idx]
+        if (block.kind !== 'subagent') return {}
+        const blocks = [...s.blocks]
+        blocks[idx] = { ...block, liveText: (block.liveText ?? '') + text }
+        return { blocks }
+      }),
     onLiveSegmentComplete: (kind, itemId, createdAt, text, processIntent) => {
       noteBusyStreamActivity(set, get)
       set((s) => {

@@ -75,7 +75,9 @@ function RunDetail({ target, blocks, options, onSelect }: {
   const status = isTask ? detail?.status ?? option?.status : worker?.status ?? agent?.status
   const active = isRunActive(status)
   const assignment = isTask ? detail?.prompt : agent?.prompt
-  const result = isTask ? detail?.resultSummary || detail?.error : selected?.summary
+  const result = isTask
+    ? detail?.resultSummary || detail?.error || (active ? detail?.liveText : undefined)
+    : selected?.summary ?? (active ? selected?.liveText : undefined)
   const flow = useMemo(() => isTask
     ? timelineToFlowItems(detail?.timeline ?? [])
     : root ? resolveSubagentFlowItems(root, related, selectedId) : [],
@@ -180,7 +182,7 @@ function RunDetail({ target, blocks, options, onSelect }: {
             {result ? (
               <section className="ds-run-result">
                 <div className="ds-run-result-header"><RunStateIcon status={status} /><span>{t(status === 'failed' ? 'subagentFailureReason' : 'runPanelResult')}</span><ToolCopyButton text={result} /></div>
-                <div className="ds-markdown ds-markdown--answer"><StreamdownAssistant text={result} streaming={false} /></div>
+                <div className="ds-markdown ds-markdown--answer"><StreamdownAssistant text={result} streaming={active && (isTask ? !!detail?.liveText && !detail?.resultSummary : !selected?.summary)} /></div>
               </section>
             ) : null}
           </div>

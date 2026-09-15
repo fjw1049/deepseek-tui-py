@@ -2019,6 +2019,12 @@ function SubagentSummaryRow({
         </div>
       ) : null}
 
+      {block.liveText ? (
+        <p className="mt-1 truncate pl-5 font-mono text-[11px] text-ds-muted">
+          {block.liveText}
+          <span className="ml-0.5 animate-pulse text-ds-faint">▍</span>
+        </p>
+      ) : null}
     </div>
   )
 }
@@ -3141,6 +3147,11 @@ function SubagentBubble({
       ) : null}
       {block.summary ? (
         <p className="mt-2 whitespace-pre-wrap text-[13px] text-ds-ink">{block.summary}</p>
+      ) : block.liveText ? (
+        <p className="mt-2 whitespace-pre-wrap text-[13px] text-ds-ink">
+          {block.liveText}
+          <span className="ml-0.5 animate-pulse text-ds-faint">▍</span>
+        </p>
       ) : null}
     </div>
   )

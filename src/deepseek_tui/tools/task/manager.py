@@ -541,6 +541,17 @@ class TaskManager:
             )
             self._persist_task_locked(task)
 
+    async def record_live_text(self, task_id: str, text: str) -> None:
+        """Update the task's accumulated live text (throttled by the caller)."""
+        async with self._lock:
+            task = self._tasks.get(task_id)
+            if task is None:
+                return
+            # ponytail: hard cap keeps the task JSON bounded; full text lives
+            # in result_detail once the task settles.
+            task.live_text = text[-20_000:]
+            self._persist_task_locked(task)
+
     async def counts(self) -> TaskCounts:
         async with self._lock:
             counts = TaskCounts()
@@ -676,6 +687,7 @@ class TaskManager:
                 return
             now = _utc_now_iso()
             task.ended_at = now
+            task.live_text = None
             if task.started_at is not None:
                 task.duration_ms = _duration_ms(task.started_at, now)
             if result.timed_out:

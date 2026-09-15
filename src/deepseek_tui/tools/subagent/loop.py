@@ -554,7 +554,24 @@ async def run_subagent_loop(
     if nudge_message is not None:
         messages.append(nudge_message)
 
-    async def _noop_emit(_event: object) -> None:
+    # Forward the child's text deltas to the parent engine so the GUI can
+    # stream sub-agent output live. Other events (thinking, tool calls)
+    # stay swallowed — the mailbox already narrates those. ``handle.emit``
+    # has no hook-bridge arm for SubAgentTextDeltaEvent, so the per-delta
+    # await is just a queue put.
+    _delta_emit = getattr(runtime, "emit_event", None) if runtime else None
+
+    async def _round_emit(event: object) -> None:
+        if _delta_emit is None:
+            return None
+        from deepseek_tui.engine.events import SubAgentTextDeltaEvent, TextDeltaEvent
+
+        if isinstance(event, TextDeltaEvent) and event.text:
+            maybe = _delta_emit(
+                SubAgentTextDeltaEvent(agent_id=agent.id, text=event.text)
+            )
+            if asyncio.iscoroutine(maybe):
+                await maybe
         return None
 
     # Missing ### SUMMARY: two continuations on the same memory, then accept.
@@ -742,8 +759,8 @@ async def run_subagent_loop(
                 llm_gate = getattr(runtime.manager, "llm_semaphore", None)
                 if llm_gate is not None:
                     async with llm_gate:
-                        return await turn_loop.run(request, _noop_emit, cancel, tools=round_tools)
-                return await turn_loop.run(request, _noop_emit, cancel, tools=round_tools)
+                        return await turn_loop.run(request, _round_emit, cancel, tools=round_tools)
+                return await turn_loop.run(request, _round_emit, cancel, tools=round_tools)
 
             result = await _await_input_interrupt(run_round(), agent.interrupt_event)
             if result is None:

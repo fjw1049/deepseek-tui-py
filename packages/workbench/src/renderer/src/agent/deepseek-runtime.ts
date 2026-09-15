@@ -1724,6 +1724,15 @@ export class DeepseekRuntimeProvider implements AgentProvider {
               if (ev === 'item.delta') {
                 const delta = (payload.delta as string) || ''
                 const kind = payload.kind as string | undefined
+                if (kind === 'subagent_message' && delta) {
+                  // Synthetic per-agent item id: subagent_text_<agent_id>
+                  const itemId = (data as { item_id?: string }).item_id ?? ''
+                  const agentId = itemId.startsWith('subagent_text_')
+                    ? itemId.slice('subagent_text_'.length)
+                    : ''
+                  if (agentId) sink.onSubagentTextDelta?.(agentId, delta)
+                  return
+                }
                 if ((kind === 'agent_message' || kind === 'agent_reasoning') && delta) {
                   pendingDeltas.push({ text: delta, kind, seq: eventSeq })
                   scheduleDeltaFlush()
