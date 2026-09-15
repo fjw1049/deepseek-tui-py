@@ -176,22 +176,13 @@ export function IdeChatRailHeader({
               <Maximize2 className="h-3.5 w-3.5" strokeWidth={1.85} />
             )}
           </button>
-          <button
-            type="button"
-            className="inline-flex h-7 w-7 items-center justify-center rounded-md text-ds-muted transition hover:bg-ds-hover/60 hover:text-ds-ink"
-            title={t('terminalCloseTab')}
-            aria-label={t('terminalCloseTab')}
-            disabled={!activeSessionId}
-            onClick={() => {
-              if (activeSessionId) closeTerminalTab(activeSessionId)
-            }}
-          >
-            <X className="h-3.5 w-3.5" strokeWidth={1.85} />
-          </button>
         </div>
       ) : null}
 
       <div className="ds-no-drag flex shrink-0 items-center gap-0.5">
+        {/* In terminal mode the tab strip already has +/×; the new-menu + is
+            redundant there, so it only renders for the chat rail. */}
+        {terminalOpen ? null : (
         <div ref={newMenuRef} className="relative">
           <button
             type="button"
@@ -238,6 +229,7 @@ export function IdeChatRailHeader({
             </div>
           ) : null}
         </div>
+        )}
 
         <div ref={historyRef} className="relative">
           <button
