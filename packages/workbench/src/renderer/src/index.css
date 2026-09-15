@@ -11213,8 +11213,8 @@ html[data-theme='dark'] .ds-syntax-line span { color: var(--shiki-dark) !importa
 }
 
 .ds-ide-topbar__action--labeled {
-  padding-inline: 0.45rem 0.55rem;
-  font-size: 12px;
+  padding-inline: 0.5rem 0.6rem;
+  font-size: 13px;
   font-weight: 500;
   letter-spacing: -0.01em;
 }
