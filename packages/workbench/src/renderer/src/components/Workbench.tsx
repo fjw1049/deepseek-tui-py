@@ -99,6 +99,7 @@ import { IdeChatRailHeader } from './ide/IdeChatRailHeader'
 import { RuntimeDiagnosticsDialog } from './RuntimeDiagnosticsDialog'
 import {
   RightSidebarToggleButton,
+  TerminalToggleButton,
   WorkbenchRightSidebar
 } from './right-sidebar/WorkbenchRightSidebar'
 import { IdeWorkspaceLayout } from './ide/IdeWorkspaceLayout'
@@ -520,13 +521,22 @@ export function Workbench(): ReactElement {
     activeWorkspaceRoot.trim().length > 0 &&
     !rightPanelVisible &&
     !ideModeActive
-  const showTopbarRightActions = showDefaultEditorPicker || showRightSidebarToggle
+  const showTerminalToggle =
+    route === 'chat' && activeWorkspaceRoot.trim().length > 0 && !ideModeActive
+  const showTopbarRightActions =
+    showDefaultEditorPicker || showTerminalToggle || showRightSidebarToggle
+  const topbarActionCount =
+    (showDefaultEditorPicker ? 1 : 0) +
+    (showTerminalToggle ? 1 : 0) +
+    (showRightSidebarToggle ? 1 : 0)
   const topbarRightPaddingClass = showTopbarRightActions
-    ? showDefaultEditorPicker && showRightSidebarToggle
-      ? 'pr-[9.5rem] sm:pr-[10rem]'
-      : showDefaultEditorPicker
-        ? 'pr-[5.25rem]'
-        : 'pr-9 sm:pr-10'
+    ? topbarActionCount >= 3
+      ? 'pr-[12.5rem] sm:pr-[13rem]'
+      : topbarActionCount === 2
+        ? 'pr-[8rem] sm:pr-[8.5rem]'
+        : showDefaultEditorPicker
+          ? 'pr-[5.25rem]'
+          : 'pr-9 sm:pr-10'
     : ''
   const operationColumnActive = showOperationColumn && !rightSidebarOpen
   const terminalSidebarOpen =
@@ -580,10 +590,6 @@ export function Workbench(): ReactElement {
     setRightSidebarCollapsed(false)
     setRightSidebarTab(tab)
   }, [setRightSidebarTab])
-
-  const openFilesSidebar = useCallback((): void => {
-    openRightSidebar('editor')
-  }, [openRightSidebar])
 
   const openInAppEditorSurface = useCallback(
     async (
@@ -1717,6 +1723,13 @@ export function Workbench(): ReactElement {
               {showTopbarRightActions ? (
                 <div className="ds-workbench-topbar__right-actions ds-no-drag">
                   {showDefaultEditorPicker ? <DefaultEditorPicker /> : null}
+                  {showTerminalToggle ? (
+                    <TerminalToggleButton
+                      open={bottomTerminalOpen}
+                      enabled={activeWorkspaceRoot.trim().length > 0}
+                      onClick={toggleTerminalPanel}
+                    />
+                  ) : null}
                   {showRightSidebarToggle ? (
                     <RightSidebarToggleButton
                       open={false}
@@ -1835,7 +1848,6 @@ export function Workbench(): ReactElement {
                         <OperationContextDock
                           workspaceRoot={activeWorkspaceRoot}
                           onOpenChanges={handleBranchOpenDiff}
-                          onOpenFilesSidebar={openFilesSidebar}
                           onEnterIdeMode={enterIdeMode}
                           previewActive={rightSidebarOpen && rightSidebarTab === 'preview'}
                           terminalPanelOpen={bottomTerminalOpen}
@@ -1884,7 +1896,6 @@ export function Workbench(): ReactElement {
                       <OperationContextDock
                         workspaceRoot={activeWorkspaceRoot}
                         onOpenChanges={handleBranchOpenDiff}
-                        onOpenFilesSidebar={openFilesSidebar}
                         onEnterIdeMode={enterIdeMode}
                         previewActive={rightSidebarOpen && rightSidebarTab === 'preview'}
                         terminalPanelOpen={bottomTerminalOpen}

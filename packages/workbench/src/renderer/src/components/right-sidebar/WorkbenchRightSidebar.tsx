@@ -376,3 +376,34 @@ export function RightSidebarToggleButton({
     </button>
   )
 }
+
+export function TerminalToggleButton({
+  open,
+  enabled,
+  onClick,
+  className = ''
+}: {
+  open: boolean
+  enabled: boolean
+  onClick: () => void
+  className?: string
+}): ReactElement {
+  const { t } = useTranslation('common')
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={!enabled}
+      className={`ds-terminal-toggle-button ds-sidebar-toggle-button ds-no-drag shrink-0 ${
+        open ? 'ds-terminal-toggle-button--active' : ''
+      } ${className}`.trim()}
+      aria-label={t('terminalPanelTitle')}
+      aria-pressed={open}
+      title={enabled ? t('terminalToggle') : t('terminalWorkspaceRequired')}
+    >
+      <span className="ds-terminal-toggle__glyph" aria-hidden>
+        <Terminal className="h-4 w-4" strokeWidth={1.85} />
+      </span>
+    </button>
+  )
+}

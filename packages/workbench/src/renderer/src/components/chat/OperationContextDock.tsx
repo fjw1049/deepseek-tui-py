@@ -18,7 +18,6 @@ import {
   ListTodo,
   PanelsTopLeft,
   FileEdit,
-  FolderOpen,
   Globe2,
   Terminal
 } from 'lucide-react'
@@ -57,8 +56,6 @@ type Props = {
   /** Project currently rendered by the owning Workbench. */
   workspaceRoot: string
   onOpenChanges?: () => void
-  /** Open the right-sidebar file tree (文件 tab) — chat-mode files entry. */
-  onOpenFilesSidebar: () => void
   /** Enter IDE/editor layout — EditView row entry. */
   onEnterIdeMode?: () => void
   previewActive: boolean
@@ -182,7 +179,6 @@ function SectionHeader({
 export function OperationContextDock({
   workspaceRoot,
   onOpenChanges,
-  onOpenFilesSidebar,
   onEnterIdeMode,
   previewActive,
   terminalPanelOpen,
@@ -446,54 +442,6 @@ export function OperationContextDock({
         </button>
       </div>
       <div className="ds-operation-dock-body">
-      <div
-        className="ds-operation-dock-launchers"
-        data-count={onEnterIdeMode ? '3' : '2'}
-      >
-        {onOpenFilesSidebar ? (
-          <button
-            type="button"
-            onClick={onOpenFilesSidebar}
-            className="ds-operation-dock-launcher group"
-            title={t('rightSidebarTabEditor')}
-            aria-label={t('rightSidebarTabEditor')}
-          >
-            <RowIcon icon={FolderOpen} tint="violet" />
-            <span className="ds-operation-dock-launcher__label">
-              {t('rightSidebarTabEditor')}
-            </span>
-          </button>
-        ) : null}
-
-        <button
-          type="button"
-          onClick={onTogglePreview}
-          disabled={!previewEnabled}
-          className="ds-operation-dock-launcher group"
-          aria-pressed={previewActive}
-          title={previewEnabled ? t('rightPanelBrowser') : t('terminalWorkspaceRequired')}
-        >
-          <RowIcon icon={Globe2} tint="sky" />
-          <span className="ds-operation-dock-launcher__label">
-            {t('rightPanelBrowser')}
-          </span>
-        </button>
-
-        <button
-          type="button"
-          onClick={onToggleTerminalPanel}
-          disabled={!terminalPanelEnabled}
-          className="ds-operation-dock-launcher group"
-          aria-pressed={terminalPanelOpen}
-          title={terminalPanelEnabled ? t('terminalToggle') : t('terminalWorkspaceRequired')}
-        >
-          <RowIcon icon={Terminal} tint="amber" />
-          <span className="ds-operation-dock-launcher__label">
-            {t('terminalPanelTitle')}
-          </span>
-        </button>
-      </div>
-
       <div className="ds-operation-dock-status">
       {githubRepo ? (
         <button
