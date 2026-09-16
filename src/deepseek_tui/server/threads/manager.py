@@ -572,6 +572,18 @@ class RuntimeThreadManager:
 
     async def create_thread(self, req: CreateThreadRequest) -> ThreadRecord:
         from deepseek_tui.tools.runtime import default_runtime_model
+        from deepseek_tui.workspace.managed_worktree import is_git_repo
+
+        env_mode = normalize_env_mode(req.env_mode)
+        workspace_root = Path(
+            (req.workspace or "").strip() or str(self.workspace)
+        ).expanduser().resolve()
+        if env_mode == ENV_WORKTREE and (
+            is_scratch_workspace(workspace_root) or not await is_git_repo(workspace_root)
+        ):
+            raise ValueError(
+                "env_mode 'worktree' requires a git repository workspace"
+            )
 
         now = datetime.now(timezone.utc)
         model = default_runtime_model(
@@ -590,7 +602,7 @@ class RuntimeThreadManager:
             model=model,
             provider=(req.provider or self.config.provider).strip() or self.config.provider,
             workspace=workspace,
-            env_mode=ENV_LOCAL,
+            env_mode=env_mode,
             mode=mode,
             allow_shell=allow_shell,
             trust_mode=trust_mode,
@@ -765,11 +777,47 @@ class RuntimeThreadManager:
     async def _update_thread_claimed(
         self, thread_id: str, req: UpdateThreadRequest
     ) -> ThreadRecord:
-        if req.archived is None and req.title is None:
+        if req.archived is None and req.title is None and req.env_mode is None:
             raise ValueError("At least one thread field is required")
         thread = self.store.load_thread(thread_id)
         changed = False
         changes: dict[str, Any] = {}
+        if req.env_mode is not None:
+            normalized = normalize_env_mode(req.env_mode)
+            current = normalize_env_mode(thread.env_mode)
+            if normalized != current:
+                active = self._active.get(thread_id)
+                if (
+                    thread.latest_turn_id is not None
+                    or thread.publish_pending
+                    or thread.publish_blocked
+                    or (active is not None and active.active_turn is not None)
+                ):
+                    raise ValueError(
+                        "env_mode can only be changed before the thread's first turn"
+                    )
+                if normalized == ENV_WORKTREE:
+                    root = project_root(thread)
+                    from deepseek_tui.workspace.managed_worktree import is_git_repo
+
+                    if is_scratch_workspace(root) or not await is_git_repo(root):
+                        raise ValueError(
+                            "worktree isolation requires a git repository workspace"
+                        )
+                    thread.env_mode = ENV_WORKTREE
+                else:
+                    status = await self._reclaim_owned_worktree(thread)
+                    # "kept" means the worktree still holds uncommitted work;
+                    # clearing the record would orphan the directory and the
+                    # next worktree prepare would collide with it.
+                    if status not in {"removed", "gone", "skipped"}:
+                        raise ValueError(
+                            "worktree has uncommitted changes; "
+                            "commit or discard them before switching to local"
+                        )
+                    self._clear_worktree_state(thread)
+                changed = True
+                changes["env_mode"] = normalized
         if req.archived is not None and thread.archived != req.archived:
             thread.archived = req.archived
             changed = True
@@ -1176,10 +1224,12 @@ class RuntimeThreadManager:
     ) -> ThreadRecord:
         """Put a git thread on its hidden copy and sync the current project in.
 
-        Non-git, Claw sandboxes, and nested worktrees stay on the project.
-        Blocked threads skip inbound sync, except recovery-only records and a
-        failed inbound sync with no task checkpoints: those are rechecked
-        against their durable baseline so retries can heal safely.
+        Only threads that explicitly opted into worktree isolation
+        (``env_mode == "worktree"``) are isolated; local threads run in the
+        project itself. Non-git, Claw sandboxes, and nested worktrees stay on
+        the project. Blocked threads skip inbound sync, except recovery-only
+        records and a failed inbound sync with no task checkpoints: those are
+        rechecked against their durable baseline so retries can heal safely.
         """
         from deepseek_tui.workspace.managed_worktree import (
             UnpublishedWorktreeError,
@@ -1193,6 +1243,8 @@ class RuntimeThreadManager:
             thread.worktree_path,
             thread.associated_worktree_path,
         )
+        if normalize_env_mode(thread.env_mode) != ENV_WORKTREE:
+            return thread
         root = project_root(thread)
         if is_scratch_workspace(root) or not await is_git_repo(root):
             return thread

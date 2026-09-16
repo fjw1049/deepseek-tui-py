@@ -1189,7 +1189,7 @@ samp {
 
 /* Same size as the composer input so the tucked tray doesn't read as caption. */
 .ds-workspace-context-chip--tray {
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 500;
   letter-spacing: -0.011em;
   line-height: 1.2;

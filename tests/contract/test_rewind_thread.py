@@ -91,10 +91,14 @@ def _add_turn(
         )
 
 
-async def _seed(manager, workspace: str | None = None) -> str:
+async def _seed(
+    manager, workspace: str | None = None, env_mode: str | None = None
+) -> str:
     thread = await manager.create_thread(
         CreateThreadRequest(
-            title="rewind-test", workspace=workspace or str(manager.workspace)
+            title="rewind-test",
+            workspace=workspace or str(manager.workspace),
+            env_mode=env_mode,
         )
     )
     thread_id = thread.id
@@ -460,7 +464,7 @@ async def test_restore_code_consumes_unpublished_checkpoint_and_clears_failure(
     (repo / "app.py").write_text("one\n", encoding="utf-8")
     _git(repo, "add", "app.py")
     _git(repo, "commit", "-m", "init")
-    thread_id = await _seed(manager, workspace=str(repo))
+    thread_id = await _seed(manager, workspace=str(repo), env_mode="worktree")
     prepared = await manager._prepare_isolated_workspace(
         manager.store.load_thread(thread_id)
     )
@@ -515,7 +519,7 @@ async def test_published_rollback_resyncs_isolate_before_warmup(
     (repo / "app.py").write_text("one\n", encoding="utf-8")
     _git(repo, "add", "app.py")
     _git(repo, "commit", "-m", "init")
-    thread_id = await _seed(manager, workspace=str(repo))
+    thread_id = await _seed(manager, workspace=str(repo), env_mode="worktree")
     prepared = await manager._prepare_isolated_workspace(
         manager.store.load_thread(thread_id)
     )
@@ -593,7 +597,7 @@ async def test_restore_crash_before_resync_keeps_recovery_checkpoint(
     (repo / "app.py").write_text("one\n", encoding="utf-8")
     _git(repo, "add", "app.py")
     _git(repo, "commit", "-m", "init")
-    thread_id = await _seed(manager, workspace=str(repo))
+    thread_id = await _seed(manager, workspace=str(repo), env_mode="worktree")
     prepared = await manager._prepare_isolated_workspace(
         manager.store.load_thread(thread_id)
     )

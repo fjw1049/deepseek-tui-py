@@ -380,7 +380,7 @@ export function GitBranchPicker({
         className={
           compact
             ? size === 'tray'
-              ? `ds-workspace-context-chip ds-workspace-context-chip--tray flex h-8 items-center gap-2 rounded-md px-2.5 py-1 text-left text-[15px] font-medium ${
+              ? `ds-workspace-context-chip ds-workspace-context-chip--tray flex h-7 items-center gap-1.5 rounded-md px-2 py-1 text-left text-[14px] font-medium ${
                   hideLabel ? 'shrink-0' : 'max-w-[200px] min-w-0'
                 }`
               : `ds-workspace-context-chip flex h-7 items-center gap-1.5 rounded-md px-2 py-1 text-left ${
@@ -395,7 +395,7 @@ export function GitBranchPicker({
       >
         <GitBranch className={size === 'tray' ? 'h-4 w-4 shrink-0' : 'h-3.5 w-3.5 shrink-0'} strokeWidth={1.7} />
         {!hideLabel ? (
-          <span className={`min-w-0 flex-1 truncate ${size === 'tray' ? 'text-[15px]' : ''}`}>
+          <span className={`min-w-0 flex-1 truncate ${size === 'tray' ? 'text-[14px]' : ''}`}>
             {label}
           </span>
         ) : null}

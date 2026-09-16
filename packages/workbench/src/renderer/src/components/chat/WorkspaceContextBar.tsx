@@ -1,4 +1,5 @@
 import { useCallback, useLayoutEffect, useMemo, useRef, useState, type ReactElement } from 'react'
+import { EnvironmentPicker } from './EnvironmentPicker'
 import { GitBranchPicker } from './GitBranchPicker'
 import { ProjectContextPicker } from './ProjectContextPicker'
 import { isChatsWorkspace, normalizeWorkspaceRoot } from '../../lib/workspace-path'
@@ -13,7 +14,7 @@ type Props = {
   variant?: 'tray' | 'embedded'
 }
 
-/** Project / branch row under the composer. Isolation is not a user control. */
+/** Project / env / branch row under the composer. */
 export function WorkspaceContextBar({ workspaceRoot, variant = 'tray' }: Props): ReactElement {
   const barRef = useRef<HTMLDivElement>(null)
   const [barWidth, setBarWidth] = useState<number | null>(null)
@@ -72,7 +73,7 @@ export function WorkspaceContextBar({ workspaceRoot, variant = 'tray' }: Props):
       className={
         embedded
           ? 'ds-workspace-context-bar ds-workspace-context-bar--embedded relative flex min-h-7 min-w-0 flex-nowrap items-center gap-x-0.5 overflow-hidden px-1 pb-0.5 pt-1'
-          : 'ds-workspace-context-bar relative z-0 -mt-5 flex min-h-8 min-w-0 flex-nowrap items-center gap-x-0.5 overflow-hidden rounded-b-2xl rounded-t-none px-2.5 pb-1.5 pt-6 sm:px-3.5'
+          : 'ds-workspace-context-bar relative z-0 -mt-5 flex min-h-7 min-w-0 flex-nowrap items-center gap-x-0.5 overflow-hidden rounded-b-2xl rounded-t-none px-2 pb-1 pt-6 sm:px-3'
       }
       data-workspace-context-bar="true"
       data-context-bar-variant={variant}
@@ -87,6 +88,19 @@ export function WorkspaceContextBar({ workspaceRoot, variant = 'tray' }: Props):
           size={embedded ? 'dense' : 'tray'}
         />
       </div>
+      {!isTemporary && plan.showEnv ? (
+        <>
+          <span className="ds-workspace-context-sep" aria-hidden />
+          <div className="ds-workspace-context-env min-w-0 shrink">
+            <EnvironmentPicker
+              workspaceRoot={normalizedRoot}
+              usePortal
+              menuPlacement="above"
+              size={embedded ? 'dense' : 'tray'}
+            />
+          </div>
+        </>
+      ) : null}
       {renderBranch ? (
         <>
           <span

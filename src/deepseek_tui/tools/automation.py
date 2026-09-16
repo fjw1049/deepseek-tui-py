@@ -597,6 +597,27 @@ CURRENT_RUN_SCHEMA_VERSION = 1
 # replayed one-per-tick.
 MISFIRE_GRACE_SECS = 30 * 60
 
+# Reserved automation-id under runs/ for one-shot HTTP-trigger runs. These
+# runs have no user-visible AutomationRecord; reconcile walks their runs dir
+# through a synthesized shadow record so they get status propagation and
+# delivery retries like any cron run.
+HTTP_TRIGGER_RUNS_KEY = "_http_triggers"
+
+
+def _http_trigger_shadow_automation() -> "AutomationRecord":
+    """Synthetic AutomationRecord standing in for HTTP-trigger runs."""
+    now = _utc_now_iso()
+    return AutomationRecord(
+        id=HTTP_TRIGGER_RUNS_KEY,
+        name="HTTP trigger",
+        prompt="",
+        schedule=None,
+        timezone="UTC",
+        status=AutomationStatus.ACTIVE,
+        created_at=now,
+        updated_at=now,
+    )
+
 class AutomationStatus(str, Enum):
     """Automation status (snake_case on the wire)."""
 
@@ -812,6 +833,9 @@ class AutomationRunRecord:
     error: str | None = None
     delivery_done: bool = False
     delivery_attempts: int = 0
+    # Per-run delivery config (HTTP-trigger runs carry their request's
+    # delivery here — they have no AutomationRecord to read it from).
+    delivery: dict[str, Any] | None = None
     schema_version: int = CURRENT_RUN_SCHEMA_VERSION
 
     def to_dict(self) -> dict[str, Any]:
@@ -830,6 +854,7 @@ class AutomationRunRecord:
             "error": self.error,
             "delivery_done": self.delivery_done,
             "delivery_attempts": self.delivery_attempts,
+            "delivery": self.delivery,
         }
 
     @classmethod
@@ -855,6 +880,7 @@ class AutomationRunRecord:
             error=raw.get("error"),
             delivery_done=bool(raw.get("delivery_done", False)),
             delivery_attempts=int(raw.get("delivery_attempts", 0)),
+            delivery=raw.get("delivery") or None,
         )
 
 
@@ -1345,18 +1371,46 @@ class AutomationManager:
                 automation.status = AutomationStatus.COMPLETED
             self.save_automation(automation)
 
+    def _reconcile_targets(self) -> list[AutomationRecord]:
+        """User automations, plus the HTTP-trigger shadow when trigger runs exist."""
+        targets = self.list_automations()
+        if self._runs_dir_for(HTTP_TRIGGER_RUNS_KEY).is_dir():
+            targets.append(_http_trigger_shadow_automation())
+        return targets
+
     async def reconcile_run_statuses(self, task_manager: TaskManager) -> None:
         """Walk every Queued/Running run, looks up its linked Task, and
         propagates the Task status back into the Run.
         """
         from deepseek_tui.tools.task import TaskStatus
-
-        for automation in self.list_automations():
+        for automation in self._reconcile_targets():
             for run in self.list_runs(automation.id, limit=100):
                 if run.status not in (
                     AutomationRunStatus.QUEUED,
                     AutomationRunStatus.RUNNING,
                 ):
+                    # Terminal run with a pending non-best-effort delivery:
+                    # its status already settled, but a failed delivery is
+                    # waiting for a later-tick retry (delivery_attempts > 0).
+                    # Without this branch that retry never fires — the run is
+                    # invisible to reconcile once terminal.
+                    if (
+                        run.delivery_attempts > 0
+                        and not run.delivery_done
+                        and run.status in (
+                            AutomationRunStatus.COMPLETED,
+                            AutomationRunStatus.FAILED,
+                        )
+                    ):
+                        from deepseek_tui.automation.pipeline import (
+                            try_deliver_completed_run,
+                        )
+
+                        if await try_deliver_completed_run(
+                            automation, run, task_manager,
+                            thread_manager=self.thread_manager,
+                        ):
+                            self.save_run(run)
                     continue
                 if run.task_id is None:
                     continue
@@ -1421,10 +1475,13 @@ class AutomationManager:
                         AutomationRunStatus.FAILED,
                         AutomationRunStatus.CANCELED,
                     ):
-                        latest = self.get_automation(automation.id)
-                        latest.last_run_at = run.ended_at or _utc_now_iso()
-                        latest.updated_at = _utc_now_iso()
-                        self.save_automation(latest)
+                        # The HTTP-trigger shadow has no persisted record
+                        # to update — runs are its whole story.
+                        if automation.id != HTTP_TRIGGER_RUNS_KEY:
+                            latest = self.get_automation(automation.id)
+                            latest.last_run_at = run.ended_at or _utc_now_iso()
+                            latest.updated_at = _utc_now_iso()
+                            self.save_automation(latest)
                     if run.status in (
                         AutomationRunStatus.COMPLETED,
                         AutomationRunStatus.FAILED,

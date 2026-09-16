@@ -52,7 +52,7 @@ _LOG = logging.getLogger(__name__)
 # Bound mailbox I/O previews so SSE/STATUS items stay light while still
 # giving the Workbench step-flow something useful to expand.
 _MAILBOX_INPUT_CHARS = 2_000
-_MAILBOX_OUTPUT_CHARS = 4_000
+_MAILBOX_OUTPUT_CHARS = 10_240
 # Round narration on the step rail — short enough to read as one knowledge line.
 _MAILBOX_NARRATION_CHARS = 240
 

@@ -20,6 +20,7 @@ import {
 import { applySpawnPromptsToSubagentBlocks } from '../lib/extract-subagents-from-blocks'
 import { sanitizeReasoningPlaceholders } from '../lib/reasoning-text'
 import { getProvider } from '../agent/registry'
+import { resolveWorkspaceEnvMode, useEnvironmentPreferences } from './environment-preferences'
 import i18n from '../i18n'
 import { applyTheme, applyUiFontScale, applyUiFontFamily } from '../lib/apply-theme'
 import { applyAppearance } from '../lib/apply-appearance'
@@ -2079,6 +2080,22 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
   },
 
+  updateThreadEnvMode: async (mode) => {
+    if (get().runtimeConnection !== 'ready') {
+      set({ error: i18n.t('common:runtimeActionNeedsConnection') })
+      return
+    }
+    const threadId = get().activeThreadId
+    if (!threadId) return
+    const p = getProvider(get().providerId)
+    const updated = await p.updateThread(threadId, { envMode: mode })
+    set((s) => ({
+      threads: s.threads.map((thread) =>
+        thread.id === threadId ? { ...thread, envMode: updated.envMode ?? mode } : thread
+      )
+    }))
+  },
+
   createThread: async (options = {}) => {
     if (get().runtimeConnection !== 'ready') {
       set({ error: i18n.t('common:runtimeActionNeedsConnection') })
@@ -2104,8 +2121,15 @@ export const useChatStore = create<ChatState>((set, get) => ({
         await get().chooseWorkspace({ createThreadAfter: true })
         return
       }
+      const envMode = options.chats
+        ? 'local'
+        : resolveWorkspaceEnvMode(useEnvironmentPreferences.getState().modeByWorkspace, workspaceRoot)
       const reusableThreadId = await findReusableEmptyThreadId(get(), p, workspaceRoot)
       if (reusableThreadId) {
+        const reusableThread = get().threads.find((thread) => thread.id === reusableThreadId)
+        if (envMode === 'worktree' && reusableThread?.envMode !== 'worktree') {
+          await p.updateThread(reusableThreadId, { envMode })
+        }
         if (get().activeThreadId !== reusableThreadId) {
           await get().selectThread(reusableThreadId)
         } else {
@@ -2119,6 +2143,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         workspace: workspaceRoot,
         title: getDefaultThreadTitle(),
         mode: 'agent',
+        envMode,
         ...(selectedModel.providerId ? { provider: selectedModel.providerId } : {}),
         ...(selectedModel.modelId ? { model: selectedModel.modelId } : {})
       })
@@ -2566,6 +2591,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
                 workspace: workspaceRoot,
                 title: generatedTitle,
                 mode: resolvedMode,
+                envMode: resolveWorkspaceEnvMode(
+                  useEnvironmentPreferences.getState().modeByWorkspace,
+                  workspaceRoot
+                ),
                 provider: selectedModel.providerId,
                 model: selectedModel.modelId
               })
@@ -2792,6 +2821,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
               workspace: workspaceRoot,
               title: getDefaultThreadTitle(),
               mode: engineModeForComposer(get().composerMode || 'agent') as string,
+              envMode: resolveWorkspaceEnvMode(
+                useEnvironmentPreferences.getState().modeByWorkspace,
+                workspaceRoot
+              ),
               ...(selectedModel.providerId ? { provider: selectedModel.providerId } : {}),
               ...(selectedModel.modelId ? { model: selectedModel.modelId } : {})
             })

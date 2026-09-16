@@ -618,8 +618,11 @@ _ACTION_BLURBS: dict[str, str] = {
         "a <deepseek:subagent.done> reminder (do not poll)."
     ),
     "send_input": (
-        "send_input: send a text 'input' to a running sub-agent "
-        "(requires 'agent_id' and 'input'; optional 'interrupt')."
+        "send_input: send a text 'input' to a sub-agent (requires "
+        "'agent_id' and 'input'; optional 'interrupt'). If the agent "
+        "already completed or stopped, it is resumed from its transcript "
+        "and this input becomes its next round — use this for follow-up "
+        "questions on a finished report instead of spawning a new agent."
     ),
     "wait": (
         "wait: wait for one or more sub-agents to reach a terminal state "
@@ -786,7 +789,11 @@ class AgentTool(ToolSpec):
                 },
                 "input": {
                     "type": "string",
-                    "description": "Text queued for the next agent round (action=send_input)",
+                    "description": (
+                        "Text queued for the next agent round "
+                        "(action=send_input). A terminal agent is resumed "
+                        "with this input as its next round."
+                    ),
                 },
                 "interrupt": {
                     "type": "boolean",

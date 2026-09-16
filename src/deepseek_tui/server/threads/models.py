@@ -197,6 +197,8 @@ class UpdateThreadRequest(BaseModel):
     archived: bool | None = None
     title: str | None = None
     memory_mode: str | None = None
+    # Only mutable before the first turn; enforced in the manager.
+    env_mode: str | None = None
 
 
 class ForkThreadRequest(BaseModel):

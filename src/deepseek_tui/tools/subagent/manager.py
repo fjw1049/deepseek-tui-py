@@ -264,18 +264,45 @@ class SubAgentManager:
             task.cancel()
         return snapshot
 
+    def _reopen_terminal_locked(self, agent: SubAgent) -> None:
+        """Reset a terminal agent to Running in preparation for a re-drive.
+
+        Caller must hold ``self._lock``; the caller re-spawns the driver task.
+        """
+        agent.status = SubAgentStatus.running()
+        agent.result = None
+        agent.structured_result = None
+        agent.cancel_token = asyncio.Event()
+        agent.started_at_ms = _epoch_ms()
+        self._persist_best_effort()
+
     async def send_input(
         self, agent_id: str, text: str, interrupt: bool = False
     ) -> None:
+        """Queue input for an agent's next round.
+
+        A terminal (completed/cancelled/failed/interrupted) agent is resumed
+        first — the input becomes its next round, continuing from the durable
+        transcript instead of erroring out.
+        """
+        resumed = False
         async with self._lock:
             agent = self._require_agent(agent_id)
             if agent.status.kind is not SubAgentStatusKind.RUNNING:
-                raise RuntimeError(
-                    f"Cannot send input to {agent_id}: {agent.status.kind.value}"
-                )
+                self._reopen_terminal_locked(agent)
+                resumed = True
             agent.input_queue.put_nowait((text, interrupt))
             if interrupt:
                 agent.interrupt_event.set()
+
+        if resumed:
+            if self._mailbox is not None:
+                self._mailbox.send(
+                    MailboxMessage.started(
+                        agent_id, agent.agent_type.value, prompt=agent.prompt
+                    )
+                )
+            agent.task = asyncio.create_task(self._drive_agent(agent))
 
     async def resume(self, agent_id: str) -> SubAgentResult:
         """True-resume a terminated agent from its durable transcript.
@@ -290,12 +317,7 @@ class SubAgentManager:
             agent = self._require_agent(agent_id)
             if agent.status.kind is SubAgentStatusKind.RUNNING:
                 raise RuntimeError(f"Agent {agent_id} is already running")
-            agent.status = SubAgentStatus.running()
-            agent.result = None
-            agent.structured_result = None
-            agent.cancel_token = asyncio.Event()
-            agent.started_at_ms = _epoch_ms()
-            self._persist_best_effort()
+            self._reopen_terminal_locked(agent)
             snapshot = agent.snapshot()
 
         if self._mailbox is not None:

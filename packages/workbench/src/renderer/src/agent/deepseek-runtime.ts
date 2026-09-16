@@ -170,6 +170,7 @@ type ThreadRecordJson = {
   status?: string
   archived?: boolean
   title?: string | null
+  latest_turn_id?: string | null
   goal?: import('./types').GoalSnapshotJson | null
 }
 
@@ -268,6 +269,7 @@ function threadFromJson(t: ThreadRecordJson, title?: string): NormalizedThread {
     publishIssue: publishIssueFromJson(t.publish_issue),
     status: t.status,
     archived: t.archived === true,
+    latestTurnId: t.latest_turn_id ?? null,
     goal: t.goal ?? null
   }
 }
@@ -989,6 +991,7 @@ export class DeepseekRuntimeProvider implements AgentProvider {
     mode?: string
     provider?: string
     model?: string
+    envMode?: 'local' | 'worktree'
   }): Promise<NormalizedThread> {
     const settings = await window.dsGui.getSettings()
     const flags = runtimeExecutionFlags(settings)
@@ -998,6 +1001,7 @@ export class DeepseekRuntimeProvider implements AgentProvider {
       mode: input.mode ?? 'agent',
       provider: input.provider,
       model: input.model,
+      env_mode: input.envMode,
       ...flags
     })
     const r = await window.dsGui.runtimeRequest('/v1/threads', 'POST', body)
@@ -1015,6 +1019,20 @@ export class DeepseekRuntimeProvider implements AgentProvider {
       }
     }
     return threadFromJson(t, input.title || titleFromThread(t))
+  }
+
+  async updateThread(
+    threadId: string,
+    input: { envMode?: 'local' | 'worktree' }
+  ): Promise<NormalizedThread> {
+    const r = await window.dsGui.runtimeRequest(
+      `/v1/threads/${encodeURIComponent(threadId)}`,
+      'PATCH',
+      JSON.stringify({ env_mode: input.envMode })
+    )
+    if (!r.ok) throw toRuntimeError(readRuntimeError(r.body, 'failed to update thread'))
+    const t = JSON.parse(r.body) as ThreadRecordJson
+    return threadFromJson(t)
   }
 
   async applyGoalCommand(

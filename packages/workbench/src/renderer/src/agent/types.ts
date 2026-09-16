@@ -60,6 +60,8 @@ export type NormalizedThread = {
   publishIssue?: PublishIssue
   status?: string
   archived?: boolean
+  /** Set once the thread has run a turn — env mode is locked from then on. */
+  latestTurnId?: string | null
   goal?: GoalSnapshotJson | null
 }
 
@@ -461,7 +463,9 @@ export interface AgentProvider {
   isThreadTurnActive?(threadId: string): Promise<boolean>
   warmThread?(threadId: string): Promise<void>
   listThreads(options?: { includeArchived?: boolean }): Promise<NormalizedThread[]>
-  createThread(input: { workspace?: string; title?: string; mode?: string; provider?: string; model?: string }): Promise<NormalizedThread>
+  createThread(input: { workspace?: string; title?: string; mode?: string; provider?: string; model?: string; envMode?: 'local' | 'worktree' }): Promise<NormalizedThread>
+  /** Patch thread metadata. Only env mode for now; runtime rejects changes after the first turn. */
+  updateThread(threadId: string, input: { envMode?: 'local' | 'worktree' }): Promise<NormalizedThread>
   getThreadDetail(threadId: string): Promise<{
     blocks: ChatBlock[]
     latestSeq: number

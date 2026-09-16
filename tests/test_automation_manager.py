@@ -7,6 +7,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import pytest
+from unittest.mock import AsyncMock, MagicMock
 
 from deepseek_tui.config.models import Config, FeatureConfig
 from deepseek_tui.tools.automation import (
@@ -336,3 +337,165 @@ async def test_reconcile_forwards_thread_manager_for_notify(
 def _parse(value: str | None) -> datetime:
     assert value is not None
     return datetime.fromisoformat(value)
+
+
+def _terminal_run_with_pending_delivery(
+    mgr: AutomationManager, automation_id: str, attempts: int
+) -> AutomationRunRecord:
+    from deepseek_tui.tools.automation import AutomationRunRecord as _R
+
+    run = _R(
+        id="run-retry",
+        automation_id=automation_id,
+        scheduled_for="2026-08-05T01:00:00+00:00",
+        status=AutomationRunStatus.COMPLETED,
+        created_at="2026-08-05T01:00:00+00:00",
+        task_id="task-1",
+        delivery_attempts=attempts,
+        # delivery_done stays False — a prior tick failed and left it pending.
+    )
+    mgr.save_run(run)
+    return run
+
+
+def _completed_task_manager() -> MagicMock:
+    from deepseek_tui.tools.task import TaskStatus
+
+    task = MagicMock()
+    task.status = TaskStatus.COMPLETED
+    task.result_summary = "Report body."
+    task.thread_id = None
+    task.turn_id = None
+    task.started_at = None
+    task.ended_at = None
+    task_manager = MagicMock()
+    task_manager.get_task = AsyncMock(return_value=task)
+    return task_manager
+
+
+@pytest.mark.asyncio
+async def test_reconcile_retries_pending_delivery_on_later_tick(
+    tmp_path: Path,
+) -> None:
+    """A terminal run with a failed delivery must be retried by reconcile.
+
+    Regression: the retry path in try_deliver_completed_run (best_effort=false,
+    delivery_attempts < max) relied on "a later tick" calling it again, but
+    reconcile skipped terminal runs entirely — attempts stalled at 1 and the
+    message was never delivered.
+    """
+    from unittest.mock import patch
+
+    mgr = AutomationManager.open(tmp_path / "auto")
+    created = mgr.create_automation(
+        CreateAutomationRequest(
+            name="feishu-job",
+            prompt="p",
+            schedule="0 9 * * *",
+            delivery={"mode": "feishu", "to": "oc_test", "best_effort": False},
+        )
+    )
+    _terminal_run_with_pending_delivery(mgr, created.id, attempts=1)
+
+    deliver = AsyncMock()
+    with patch("deepseek_tui.automation.pipeline._FeishuSink.deliver", deliver):
+        await mgr.reconcile_run_statuses(_completed_task_manager())
+
+    deliver.assert_awaited_once()
+    run = mgr.list_runs(created.id)[0]
+    assert run.delivery_done is True
+
+
+@pytest.mark.asyncio
+async def test_reconcile_caps_delivery_retry_attempts(tmp_path: Path) -> None:
+    """At the attempts cap the run is closed out instead of retried forever."""
+    from unittest.mock import patch
+
+    from deepseek_tui.automation.pipeline import _MAX_DELIVERY_ATTEMPTS
+
+    mgr = AutomationManager.open(tmp_path / "auto")
+    created = mgr.create_automation(
+        CreateAutomationRequest(
+            name="feishu-job",
+            prompt="p",
+            schedule="0 9 * * *",
+            delivery={"mode": "feishu", "to": "oc_test", "best_effort": False},
+        )
+    )
+    _terminal_run_with_pending_delivery(
+        mgr, created.id, attempts=_MAX_DELIVERY_ATTEMPTS
+    )
+
+    deliver = AsyncMock(side_effect=RuntimeError("feishu down"))
+    with patch("deepseek_tui.automation.pipeline._FeishuSink.deliver", deliver):
+        await mgr.reconcile_run_statuses(_completed_task_manager())
+
+    deliver.assert_awaited_once()
+    run = mgr.list_runs(created.id)[0]
+    assert run.delivery_done is True
+    assert "delivery failed" in (run.error or "")
+
+
+@pytest.mark.asyncio
+async def test_reconcile_ignores_settled_terminal_runs(tmp_path: Path) -> None:
+    """Terminal runs with nothing pending must not re-enter delivery."""
+    from unittest.mock import patch
+
+    mgr = AutomationManager.open(tmp_path / "auto")
+    created = mgr.create_automation(
+        CreateAutomationRequest(
+            name="feishu-job",
+            prompt="p",
+            schedule="0 9 * * *",
+            delivery={"mode": "feishu", "to": "oc_test", "best_effort": False},
+        )
+    )
+    run = _terminal_run_with_pending_delivery(mgr, created.id, attempts=1)
+    run.delivery_done = True
+    mgr.save_run(run)
+
+    deliver = AsyncMock()
+    with patch("deepseek_tui.automation.pipeline._FeishuSink.deliver", deliver):
+        await mgr.reconcile_run_statuses(_completed_task_manager())
+
+    deliver.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_reconcile_delivers_http_trigger_runs(tmp_path: Path) -> None:
+    """Trigger runs under HTTP_TRIGGER_RUNS_KEY get delivered by reconcile.
+
+    Regression: HTTP-trigger delivery relied on a 600 s poller coroutine that
+    silently dropped the message when the task outlived the deadline or the
+    server restarted. Persisted trigger runs now ride the reconcile loop.
+    """
+    from unittest.mock import patch
+
+    from deepseek_tui.tools.automation import (
+        HTTP_TRIGGER_RUNS_KEY,
+        AutomationRunRecord,
+    )
+
+    mgr = AutomationManager.open(tmp_path / "auto")
+    mgr.save_run(
+        AutomationRunRecord(
+            id="trig-1",
+            automation_id=HTTP_TRIGGER_RUNS_KEY,
+            scheduled_for="2026-08-05T01:00:00+00:00",
+            status=AutomationRunStatus.RUNNING,
+            created_at="2026-08-05T01:00:00+00:00",
+            task_id="task-1",
+            delivery={"mode": "feishu", "to": "oc_test", "best_effort": True},
+        )
+    )
+
+    deliver = AsyncMock()
+    with patch("deepseek_tui.automation.pipeline._FeishuSink.deliver", deliver):
+        await mgr.reconcile_run_statuses(_completed_task_manager())
+
+    deliver.assert_awaited_once()
+    run = mgr.list_runs(HTTP_TRIGGER_RUNS_KEY)[0]
+    assert run.status is AutomationRunStatus.COMPLETED
+    assert run.delivery_done is True
+    # The shadow automation must stay invisible to user listings.
+    assert all(a.id != HTTP_TRIGGER_RUNS_KEY for a in mgr.list_automations())

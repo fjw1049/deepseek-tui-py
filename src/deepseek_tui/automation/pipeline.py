@@ -250,7 +250,10 @@ async def try_deliver_completed_run(
     ):
         return False
 
-    delivery = DeliveryConfig.from_mapping(automation.delivery)
+    # HTTP-trigger runs carry their own per-request delivery config.
+    delivery = DeliveryConfig.from_mapping(
+        run.delivery if run.delivery is not None else automation.delivery
+    )
     if not delivery.is_active():
         return False
 
@@ -422,8 +425,16 @@ async def fire_http_trigger(
     workspace: str | None = None,
     triage_policy: str | None = None,
     triage_metadata: dict[str, Any] | None = None,
+    automation_manager: Any | None = None,
 ) -> dict[str, Any]:
-    """Enqueue a one-shot background task from ``POST /v1/triggers``."""
+    """Enqueue a one-shot background task from ``POST /v1/triggers``.
+
+    When an automation manager is available and delivery is configured, the
+    run is persisted under :data:`HTTP_TRIGGER_RUNS_KEY` so the scheduler's
+    reconcile loop owns delivery — surviving restarts and retrying failed
+    channels like any cron run. Without a manager the response still reports
+    delivery "scheduled" and the HTTP layer falls back to its poller.
+    """
     from deepseek_tui.tools.task import NewTaskRequest
 
     decision = apply_triage(
@@ -470,6 +481,27 @@ async def fire_http_trigger(
     }
     if delivery and DeliveryConfig.from_mapping(delivery).is_active():
         outcome["delivery"] = "scheduled"
+        if automation_manager is not None:
+            # Persist the run so reconcile (not a one-shot poller) owns
+            # delivery: restart-safe, retry-capable, same as cron runs.
+            from deepseek_tui.tools.automation import (
+                HTTP_TRIGGER_RUNS_KEY,
+                AutomationRunRecord,
+                AutomationRunStatus,
+            )
+            from deepseek_tui.utils import utc_now_iso as _utc_now_iso
+
+            automation_manager.save_run(
+                AutomationRunRecord(
+                    id=trigger_id,
+                    automation_id=HTTP_TRIGGER_RUNS_KEY,
+                    scheduled_for=_utc_now_iso(),
+                    status=AutomationRunStatus.RUNNING,
+                    created_at=_utc_now_iso(),
+                    task_id=task.id,
+                    delivery=delivery,
+                )
+            )
     return outcome
 
 

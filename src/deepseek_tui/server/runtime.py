@@ -932,6 +932,7 @@ class AppRuntime:
         outcome = await fire_http_trigger(
             prompt=prompt,
             task_manager=self._tool_runtime.task_manager,
+            automation_manager=self._tool_runtime.automation_manager,
             digest=body.get("digest") if isinstance(body.get("digest"), dict) else None,
             delivery=body.get("delivery") if isinstance(body.get("delivery"), dict) else None,
             workspace=_pick_str(body, "workspace"),

@@ -332,7 +332,16 @@ async def post_trigger(
             }
         )
     )
-    if body.delivery and payload.get("task_id") and payload.get("delivery") == "scheduled":
+    if (
+        body.delivery
+        and payload.get("task_id")
+        and payload.get("delivery") == "scheduled"
+        and runtime._tool_runtime is not None
+        and runtime._tool_runtime.automation_manager is None  # noqa: SLF001
+    ):
+        # No automation manager: reconcile can't own delivery, fall back to
+        # the one-shot poller. With a manager, fire_http_trigger persisted
+        # the run and the scheduler loop delivers it.
         tm = runtime._tool_runtime.task_manager  # noqa: SLF001
         if tm is not None:
             from deepseek_tui.automation.pipeline import deliver_when_task_completes
