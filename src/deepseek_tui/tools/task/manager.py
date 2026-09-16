@@ -195,7 +195,9 @@ class TaskManager:
             trust_mode=(
                 req.trust_mode if req.trust_mode is not None else self._cfg.trust_mode
             ),
-            auto_approve=req.auto_approve if req.auto_approve is not None else True,
+            # Default-off: callers that omit auto_approve (automation, future
+            # programmatic paths) must not silently gain approval-free runs.
+            auto_approve=req.auto_approve if req.auto_approve is not None else False,
             status=TaskStatus.QUEUED,
             created_at=now,
             thread_id=req.thread_id,
@@ -275,7 +277,15 @@ class TaskManager:
         """
         now = _utc_now_iso()
         async with self._lock:
-            task_id = _resolve_task_id(self._tasks, id_or_prefix)
+            try:
+                task_id = _resolve_task_id(self._tasks, id_or_prefix)
+            except KeyError:
+                # Evicted terminal tasks only live on disk — same fallback
+                # as get_task, otherwise resume fails while task_output works.
+                task = self._reload_task_from_disk(id_or_prefix)
+                if task is None:
+                    raise KeyError(f"Task not found: {id_or_prefix}") from None
+                task_id = task.id
             task = self._tasks[task_id]
             if task.status is TaskStatus.RUNNING or task.status is TaskStatus.QUEUED:
                 raise RuntimeError(

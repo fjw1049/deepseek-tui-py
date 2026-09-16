@@ -192,3 +192,15 @@ async def test_detached_task_can_be_reviewed_after_origin_thread_is_deleted(tmp_
     result = await runtime.resume_task(record.id, {"confirmation_key": review["confirmation_key"]})
     assert result["ok"]
     assert record.thread_id == "deleted-origin"
+
+
+async def test_resume_after_memory_eviction(tmp_path):
+    """Evicted terminal tasks only live on disk; resume must reload them."""
+    manager, record = await stopped(tmp_path)
+    manager._tasks.pop(record.id)  # simulate terminal-task eviction
+    ctx = ToolContext(working_directory=tmp_path, task_manager=manager)
+    result = await TaskCreateTool().execute({"resume": record.id}, ctx)
+    assert result.success
+    restored = await manager.get_task(record.id)
+    assert restored.id == record.id
+    assert restored.status is TaskStatus.QUEUED
