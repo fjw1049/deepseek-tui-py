@@ -661,7 +661,7 @@ export function SidebarProjectsColumn({
         onDeleteSelected={handleDeleteSelected}
         onExitSelectMode={exitSelectMode}
         onEnterSelectMode={enterSelectMode}
-        allCollapsed={projectsCollapsed || (workspacePaths.length > 0 && workspacePaths.every((path) => collapsedWorkspaces[path]))}
+        allCollapsed={projectsCollapsed || (workspacePaths.length > 0 && workspacePaths.every((path) => collapsedWorkspaces[path] !== false))}
         onExpandAll={handleExpandAll}
         onCollapseAll={handleCollapseAll}
         onClearAll={handleClearAll}
