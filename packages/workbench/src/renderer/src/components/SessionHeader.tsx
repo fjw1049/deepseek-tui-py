@@ -1,5 +1,7 @@
 import type { ReactElement } from 'react'
 import { SessionQueries } from './SessionQueries'
+import { SessionInfoPopover } from './SessionInfoPopover'
+import { ScrollText } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useChatStore } from '../store/chat-store'
@@ -60,6 +62,9 @@ export function SessionHeader({ compact = false, className = '' }: Props): React
       >
         {active ? (
           <>
+            <SessionInfoPopover className="-ml-1">
+              <ScrollText size={16} />
+            </SessionInfoPopover>
             <SessionQueries>
               <span
                 className="block min-w-0 flex-1 truncate text-[13px] font-medium leading-6 tracking-[-0.01em] text-ds-ink"
@@ -68,13 +73,6 @@ export function SessionHeader({ compact = false, className = '' }: Props): React
                 {active.title}
               </span>
             </SessionQueries>
-            <span className="ds-session-header-meta ds-no-drag inline-flex h-7 shrink-0 select-none items-center gap-1.5 text-[12px] leading-none text-ds-faint">
-              <span className="capitalize">{active.mode}</span>
-              <span className="opacity-60">·</span>
-              <span className="tabular-nums">
-                {formatRelativeTimeCompact(active.updatedAt)}
-              </span>
-            </span>
           </>
         ) : showWorkspaceMeta ? (
           <div className="flex h-7 min-w-0 items-center overflow-hidden">

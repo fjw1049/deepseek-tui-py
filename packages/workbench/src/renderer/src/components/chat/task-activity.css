@@ -150,7 +150,11 @@
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
-  scrollbar-width: thin;
+  scrollbar-width: none;
+}
+
+.ds-task-activity-list::-webkit-scrollbar {
+  display: none;
 }
 
 .ds-task-activity-list > li {
