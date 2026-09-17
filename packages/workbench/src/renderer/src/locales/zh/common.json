@@ -1048,6 +1048,7 @@
   "workspaceTreeLoading": "加载中…",
   "workspaceTreeRefresh": "刷新文件树",
   "workspaceTreeCollapseAll": "全部折叠",
+  "workspaceTreeExpandAll": "全部展开",
   "confirmDialogConfirm": "确定",
   "diffUnmodifiedLines": "{{count}} 行未修改",
   "diffExpandContext": "展开这段上下文",

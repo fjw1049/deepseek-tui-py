@@ -1052,6 +1052,7 @@
   "workspaceTreeLoading": "Loading…",
   "workspaceTreeRefresh": "Refresh file tree",
   "workspaceTreeCollapseAll": "Collapse all folders",
+  "workspaceTreeExpandAll": "Expand all folders",
   "confirmDialogConfirm": "Confirm",
   "diffUnmodifiedLines": "{{count}} unmodified lines",
   "diffExpandContext": "Expand this context",
