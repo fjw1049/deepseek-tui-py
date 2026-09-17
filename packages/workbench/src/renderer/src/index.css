@@ -1362,6 +1362,9 @@ samp {
 }
 
 .ds-workspace-file-tree__scroll {
+  /* Stop wheel scrolling from chaining into the chat timeline once the tree
+     hits its top/bottom — otherwise the chat column gets scrolled away. */
+  overscroll-behavior: contain;
   scrollbar-width: thin;
   scrollbar-color: var(--ds-scrollbar-thumb) transparent;
 }
@@ -1562,12 +1565,13 @@ samp {
 .ds-workspace-editor-tabstrip {
   height: 36px;
   gap: 0;
-  padding: 0 4px;
   background: transparent;
 }
 
 .ds-workspace-editor-tab {
-  height: 35px;
+  /* Full strip height so the active tab's inset bottom underline sits flush
+     on the tabstrip's border-b instead of floating 1px above it. */
+  height: 36px;
   border: 0;
   border-radius: 0;
   background: transparent;
