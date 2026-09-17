@@ -3604,11 +3604,13 @@ samp {
   color: var(--text-primary);
   font-weight: var(--sidebar-weight);
   border: 1px solid transparent;
-  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  /* Same grey pill as plain rows — the primary action no longer carries a
+     tinted accent fill, so its hover highlight matches every other row. */
+  background: transparent;
 }
 
 .ds-sidebar-link--action:not(:disabled):hover {
-  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  background: var(--ds-surface-hover);
 }
 
 .ds-sidebar-link--action .ds-sidebar-link__icon {
@@ -3674,11 +3676,11 @@ samp {
 }
 
 [data-theme='dark'] .ds-sidebar-link--action {
-  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  background: transparent;
 }
 
 [data-theme='dark'] .ds-sidebar-link--action:not(:disabled):hover {
-  background: color-mix(in srgb, var(--accent) 20%, transparent);
+  background: var(--ds-surface-hover);
 }
 
 [data-theme='dark'] .ds-sidebar-link-badge {
