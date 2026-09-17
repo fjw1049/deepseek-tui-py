@@ -1198,7 +1198,7 @@ samp {
 /* The empty-state prompt is guidance, not a selected project value. */
 .ds-workspace-context-chip--prompt {
   font-size: 14px;
-  font-weight: 400;
+  font-weight: 600;
   letter-spacing: 0;
   line-height: 20px;
 }
@@ -11288,7 +11288,7 @@ html[data-theme='dark'] .ds-syntax-line span { color: var(--shiki-dark) !importa
   flex: 0 1 auto;
   max-width: min(38vw, 14rem);
   font-size: 13px;
-  font-weight: 550;
+  font-weight: 650;
   letter-spacing: -0.015em;
   color: var(--ds-text);
   line-height: 1.2;
