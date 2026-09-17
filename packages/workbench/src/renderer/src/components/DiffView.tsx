@@ -421,7 +421,7 @@ export function DiffView({
                 return (
                   <tr key={row.key}>
                     <td
-                      className={`select-none px-1 text-right align-top font-mono text-[13.5px] tabular-nums text-ds-faint ${sideCls(row.leftKind)}`}
+                      className={`select-none px-1 text-right align-top font-mono text-[12px] tabular-nums text-ds-faint ${sideCls(row.leftKind)}`}
                     >
                       {row.leftNo ?? ''}
                     </td>
@@ -431,7 +431,7 @@ export function DiffView({
                       {codeLine(row.leftText ?? '', oldTokens.get(row.leftNo))}
                     </td>
                     <td
-                      className={`select-none border-l border-ds-border-muted/50 px-1 text-right align-top font-mono text-[13.5px] tabular-nums text-ds-faint ${sideCls(row.rightKind)}`}
+                      className={`select-none border-l border-ds-border-muted/50 px-1 text-right align-top font-mono text-[12px] tabular-nums text-ds-faint ${sideCls(row.rightKind)}`}
                     >
                       {row.rightNo ?? ''}
                     </td>
@@ -491,10 +491,10 @@ export function DiffView({
                 }
                 return (
                   <tr key={row.key} className={row.cls}>
-                    <td className="select-none px-1 text-right align-top font-mono text-[13.5px] tabular-nums text-ds-faint">
+                    <td className="select-none px-1 text-right align-top font-mono text-[12px] tabular-nums text-ds-faint">
                       {row.oldNo ?? ''}
                     </td>
-                    <td className="select-none border-r border-ds-border-muted/40 px-1 text-right align-top font-mono text-[13.5px] tabular-nums text-ds-faint">
+                    <td className="select-none border-r border-ds-border-muted/40 px-1 text-right align-top font-mono text-[12px] tabular-nums text-ds-faint">
                       {row.newNo ?? ''}
                     </td>
                     <td className="ds-diff-code whitespace-pre px-2 align-top font-mono text-[14px] leading-[23px]">

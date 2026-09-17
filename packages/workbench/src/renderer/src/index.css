@@ -8608,6 +8608,14 @@ html[data-theme='dark'] .ds-syntax-line span { color: var(--shiki-dark) !importa
   background-color: var(--ds-bg-sidebar) !important;
 }
 
+/* Gutter line numbers only — body code stays at the editor's 14px. Monaco has
+   no per-gutter font-size option, so shrink just the line-number layer. The
+   row height is still driven by the editor lineHeight (19px), so the smaller
+   digits stay vertically centered and aligned with their code lines. */
+.ds-workspace-editor-pane .monaco-editor .margin-view-overlays .line-numbers {
+  font-size: 12px !important;
+}
+
 /* Terminal surface must read as one continuous sheet: the xterm theme
    background is --ds-bg-canvas (see readTerminalTheme), so paint the panel
    itself the same colour. Otherwise the xterm cell-grid remainders and the

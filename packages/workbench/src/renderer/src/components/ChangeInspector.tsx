@@ -1618,12 +1618,6 @@ export function ChangeInspector({
           </div>
         </div>
       ) : null}
-      {!isDiff ? (
-        <div className="ds-change-inspector__scope shrink-0 border-b border-ds-border-muted/60 px-3 py-2 text-[12px] leading-5 text-ds-muted">
-          <span className="mr-1.5 font-medium text-ds-ink">{t('changeScopeLabel')}</span>
-          {contextHint}
-        </div>
-      ) : null}
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
         {gitLoading && fileChanges.length === 0 ? (
           isList || isDiff || isReview ? (

@@ -314,9 +314,9 @@ export const WorkspaceEditorSurface = forwardRef<WorkspaceEditorSurfaceHandle, P
             lineDecorationsWidth: 8,
             lineNumbersMinChars: 3,
             renderLineHighlight: readOnly ? 'none' : 'line',
-            // 14/21 — between the original 15/23 (oversized) and Codex's 13/20
-            // (too small for this panel). Gutter numbers still read lighter than
-            // the old 15 because of the primer line-number color, not the size.
+            // 14/19 — between the original 15/23 (oversized) and Codex's 13/20
+            // (too small for this panel). Gutter numbers are shrunk separately via
+            // CSS on .margin-view-overlays (see index.css), so the body stays 14.
             fontSize: 14,
             lineHeight: 19,
             scrollBeyondLastLine: false,
