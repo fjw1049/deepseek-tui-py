@@ -84,7 +84,7 @@ export function WorkspaceContextBar({ workspaceRoot, variant = 'tray' }: Props):
           workspaceRoot={workspaceRoot}
           usePortal
           menuPlacement="above"
-          hideChevron={!plan.showProjectChevron}
+          hideChevron
           size={embedded ? 'dense' : 'tray'}
         />
       </div>
@@ -96,6 +96,7 @@ export function WorkspaceContextBar({ workspaceRoot, variant = 'tray' }: Props):
               workspaceRoot={normalizedRoot}
               usePortal
               menuPlacement="above"
+              hideChevron
               size={embedded ? 'dense' : 'tray'}
             />
           </div>
@@ -122,7 +123,7 @@ export function WorkspaceContextBar({ workspaceRoot, variant = 'tray' }: Props):
               usePortal
               menuPlacement="above"
               hideLabel={!plan.showBranchLabel}
-              hideChevron={!plan.showBranchChevron}
+              hideChevron
               onCurrentBranchChange={handleCurrentBranchChange}
             />
           </div>

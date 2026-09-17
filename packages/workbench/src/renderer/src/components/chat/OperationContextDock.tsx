@@ -8,7 +8,6 @@ import {
 } from 'react'
 import {
   Check,
-  ChevronDown,
   ChevronRight,
   ChevronsLeftRight,
   GitBranch,
@@ -410,10 +409,6 @@ export function OperationContextDock({
               {t('operationDockEditView')}
             </span>
           </span>
-          <ChevronRight
-            className="h-3.5 w-3.5 shrink-0 text-ds-faint"
-            strokeWidth={1.85}
-          />
         </button>
       ) : null}
       <div className="ds-operation-dock-status__section">
@@ -582,19 +577,6 @@ export function OperationContextDock({
                     >
                       {item.content}
                     </span>
-                    {expanded ? (
-                      <ChevronDown
-                        className="mt-0.5 h-3.5 w-3.5 shrink-0 text-ds-faint/70"
-                        strokeWidth={2}
-                        aria-hidden
-                      />
-                    ) : (
-                      <ChevronRight
-                        className="mt-0.5 h-3.5 w-3.5 shrink-0 text-ds-faint/70"
-                        strokeWidth={2}
-                        aria-hidden
-                      />
-                    )}
                   </button>
                 </li>
               )
