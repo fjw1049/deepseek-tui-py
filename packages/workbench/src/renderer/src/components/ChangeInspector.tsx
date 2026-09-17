@@ -983,7 +983,7 @@ export function ChangeInspector({
     loading: workingTreeLoading,
     reload: reloadWorkingTreeChanges
   } = useGitWorkingChanges(needsProjectGit ? changeRoot : '', 'working-tree')
-  const { result: gitBranches, reload: reloadGitBranches } = useGitBranches(
+  const { result: gitBranches, loading: gitBranchesLoading, reload: reloadGitBranches } = useGitBranches(
     needsProjectGit ? changeRoot : ''
   )
   const [branchBase, setBranchBase] = useGitBranchCompareBase(
@@ -1585,7 +1585,7 @@ export function ChangeInspector({
                 branches={gitBranches?.ok ? gitBranches.branches : []}
                 defaultBranch={gitBranches?.ok ? gitBranches.defaultBranch : null}
                 selectedBase={selectedBranchBase}
-                loading={!gitBranches?.ok || scopedLoading}
+                loading={gitBranchesLoading || scopedLoading}
                 onChange={setBranchBase}
               />
             ) : null}
