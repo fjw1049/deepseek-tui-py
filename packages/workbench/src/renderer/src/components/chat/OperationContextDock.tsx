@@ -337,17 +337,15 @@ export function OperationContextDock({
         </button>
         <div className="ds-operation-dock-rail__rule" aria-hidden />
         <div className="ds-operation-dock-rail" role="toolbar" aria-label={t('rightSidebarTabEditor')}>
-          {onEnterIdeMode ? (
-            <button
-              type="button"
-              className="ds-operation-dock-rail__btn"
-              onClick={onEnterIdeMode}
-              title={t('operationDockEditView')}
-              aria-label={t('operationDockEditView')}
-            >
-              <PanelsTopLeft className="h-[15px] w-[15px]" strokeWidth={1.75} />
-            </button>
-          ) : null}
+          <button
+            type="button"
+            className="ds-operation-dock-rail__btn"
+            onClick={onOpenFilesSidebar}
+            title={t('rightSidebarTabEditor')}
+            aria-label={t('rightSidebarTabEditor')}
+          >
+            <FolderOpen className="h-[15px] w-[15px]" strokeWidth={1.75} />
+          </button>
           <button
             type="button"
             className="ds-operation-dock-rail__btn"
@@ -358,15 +356,6 @@ export function OperationContextDock({
             aria-label={t('rightPanelBrowser')}
           >
             <Globe2 className="h-[15px] w-[15px]" strokeWidth={1.75} />
-          </button>
-          <button
-            type="button"
-            className="ds-operation-dock-rail__btn"
-            onClick={onOpenFilesSidebar}
-            title={t('rightSidebarTabEditor')}
-            aria-label={t('rightSidebarTabEditor')}
-          >
-            <FolderOpen className="h-[15px] w-[15px]" strokeWidth={1.75} />
           </button>
           <button
             type="button"
