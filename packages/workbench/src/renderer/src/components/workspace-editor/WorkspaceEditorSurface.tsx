@@ -313,7 +313,9 @@ export const WorkspaceEditorSurface = forwardRef<WorkspaceEditorSurfaceHandle, P
             scrollBeyondLastLine: false,
             automaticLayout: false,
             wordWrap: (wrapLines ?? (languageForPath(tab.path) === 'plaintext')) ? 'on' : 'off',
-            padding: { top: 12, bottom: 12 },
+            // Top/bottom breathing matches the user message bubble (0.6rem ≈ 10px),
+            // so the editor's first/last line sits at the same rhythm as chat prose.
+            padding: { top: 10, bottom: 10 },
             scrollbar: {
               vertical: 'auto',
               horizontal: 'auto',
