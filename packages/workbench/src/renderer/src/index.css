@@ -1561,6 +1561,15 @@ samp {
   }
 }
 
+/* Hide scrollbar but keep scroll functionality */
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+
 /* Shared file chrome: one baseline across explorer, editor and changes. */
 .ds-workspace-editor-tabstrip {
   height: 36px;

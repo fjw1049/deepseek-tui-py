@@ -232,7 +232,7 @@ function EditorTabStrip({
         ref={scrollRef}
         role="tablist"
         aria-label={t('workspaceEditorTabs')}
-        className="flex min-w-0 flex-1 items-center gap-0 overflow-x-auto overflow-y-hidden"
+        className="flex min-w-0 flex-1 items-center gap-0 overflow-x-auto overflow-y-hidden scrollbar-hide"
         style={overflowMask ? { maskImage: overflowMask, WebkitMaskImage: overflowMask } : undefined}
       >
         {tabs.length === 0 ? (
