@@ -2784,9 +2784,8 @@ samp {
   width: 100%;
 }
 
-/* Simple empty home: the cluster is absolutely positioned inside
-   .ds-empty-stage-content and centered via its own flex rules (see
-   cross-fade section below). No frame-level overrides needed. */
+/* Simple empty home: no frame-level overrides needed — the cluster
+   centers itself inside the absolute content slot (see cross-fade below). */
 
 .ds-simple-empty-prompt {
   display: flex;
@@ -2826,8 +2825,9 @@ samp {
 
 /* ── Empty home layout cross-fade transition ─────────────────────────── */
 
-/* Content slot: both hero and cluster are absolutely positioned inside this,
-   so toggling between them never causes a layout jump — pure GPU fade. */
+/* Content slot: both hero and cluster are absolutely positioned inside,
+   overlapping. Toggling modes only changes opacity+transform — zero layout
+   recalculation, no jumping. The slot fills all space above the composer. */
 .ds-empty-stage-content {
   position: relative;
   flex: 1 1 auto;
@@ -2844,11 +2844,12 @@ samp {
     transform 300ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
-/* Normal mode (default): hero visible, cluster hidden */
+/* Normal mode: hero visible and scrollable, cluster hidden */
 .ds-empty-stage-hero {
+  padding-top: clamp(1.25rem, 4vh, 2.5rem);
+  overflow-y: auto;
   opacity: 1;
   transform: translateY(0) scale(1);
-  overflow-y: auto;
 }
 
 .ds-simple-empty-cluster {
@@ -2861,7 +2862,7 @@ samp {
   pointer-events: none;
 }
 
-/* Simple mode: cluster visible, hero hidden */
+/* Simple mode: cluster centered in the slot, hero faded behind */
 .ds-empty-stage--simple .ds-empty-stage-hero {
   opacity: 0;
   transform: translateY(-12px) scale(0.97);
