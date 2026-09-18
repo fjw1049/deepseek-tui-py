@@ -2774,10 +2774,8 @@ samp {
   margin-inline: 0;
 }
 
+/* Hero is absolutely positioned inside .ds-empty-stage-content (see cross-fade section). */
 .ds-empty-stage-hero {
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow-y: auto;
   padding-top: clamp(1.25rem, 4vh, 2.5rem);
 }
 
@@ -2786,22 +2784,9 @@ samp {
   width: 100%;
 }
 
-/* Simple empty home: brand + one line + composer, centered as one cluster. */
-.ds-empty-stage--simple .ds-empty-stage-frame {
-  justify-content: center;
-  align-items: center;
-  /* Optical lift so the cluster sits slightly above geometric center. */
-  padding-bottom: clamp(1.25rem, 5vh, 3.5rem);
-}
-
-.ds-simple-empty-cluster {
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  width: 100%;
-  max-width: min(100%, 52rem);
-  margin-inline: auto;
-}
+/* Simple empty home: the cluster is absolutely positioned inside
+   .ds-empty-stage-content and centered via its own flex rules (see
+   cross-fade section below). No frame-level overrides needed. */
 
 .ds-simple-empty-prompt {
   display: flex;
@@ -2837,55 +2822,57 @@ samp {
   text-wrap: balance;
 }
 
-.ds-empty-stage--simple .ds-empty-stage-composer {
-  margin-top: 0;
-  margin-bottom: 0;
-  padding-top: 0;
-  padding-bottom: 0;
-  width: 100%;
-}
+/* Composer stays in the same flow position in both modes — no overrides needed. */
 
 /* ── Empty home layout cross-fade transition ─────────────────────────── */
 
+/* Content slot: both hero and cluster are absolutely positioned inside this,
+   so toggling between them never causes a layout jump — pure GPU fade. */
+.ds-empty-stage-content {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
+}
+
 .ds-empty-stage-hero,
 .ds-simple-empty-cluster {
+  position: absolute;
+  inset: 0;
   transition:
-    opacity 280ms cubic-bezier(0.22, 1, 0.36, 1),
-    transform 280ms cubic-bezier(0.22, 1, 0.36, 1),
-    visibility 0ms 280ms;
+    opacity 300ms cubic-bezier(0.22, 1, 0.36, 1),
+    transform 300ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
-/* Normal mode (default): hero visible, simple cluster hidden */
+/* Normal mode (default): hero visible, cluster hidden */
 .ds-empty-stage-hero {
   opacity: 1;
-  transform: translateY(0);
-  visibility: visible;
+  transform: translateY(0) scale(1);
+  overflow-y: auto;
 }
 
 .ds-simple-empty-cluster {
-  position: absolute;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
   opacity: 0;
-  transform: translateY(8px);
+  transform: translateY(12px) scale(0.97);
   pointer-events: none;
-  visibility: hidden;
 }
 
 /* Simple mode: cluster visible, hero hidden */
 .ds-empty-stage--simple .ds-empty-stage-hero {
-  position: absolute;
   opacity: 0;
-  transform: translateY(-8px);
+  transform: translateY(-12px) scale(0.97);
   pointer-events: none;
-  visibility: hidden;
+  overflow: hidden;
 }
 
 .ds-empty-stage--simple .ds-simple-empty-cluster {
-  position: static;
   opacity: 1;
-  transform: translateY(0);
+  transform: translateY(0) scale(1);
   pointer-events: auto;
-  visibility: visible;
-  transition-delay: 0ms, 0ms, 0ms;
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -1754,43 +1754,41 @@ export function Workbench(): ReactElement {
                     simpleEmptyHome ? 'ds-empty-stage--simple' : ''
                   }`}
                 >
-                  <div
-                    className={`ds-empty-stage-frame relative flex min-h-0 min-w-0 flex-1 flex-col ${
-                      simpleEmptyHome ? 'justify-center' : ''
-                    }`}
-                  >
-                    {/* Normal hero — always mounted, CSS cross-fades out when simple */}
-                    <div
-                      className="ds-chat-stage ds-empty-stage-hero min-h-0 flex-1 overflow-y-auto"
-                      aria-hidden={simpleEmptyHome}
-                    >
-                      <MessageTimeline
-                        blocks={blocks}
-                        liveReasoning={liveReasoning}
-                        live={liveAssistant}
-                        activeThreadId={activeThreadId}
-                        runtimeConnection={runtimeConnection}
-                        stageCentered={stageCentered}
-                        useChatStageWidth={false}
-                        onRetryConnection={() => void probeRuntime('user')}
-                        onOpenSettings={() => openSettings('general')}
-                        onOpenDiagnostics={() => setRuntimeDiagnosticsOpen(true)}
-                        onSelectSuggestion={(text) => setInput(text)}
-                        htmlPreviewAction={htmlPreviewAction}
-                        onOpenWorkspaceFile={openFileInEditor}
-                      />
-                    </div>
+                  <div className="ds-empty-stage-frame flex min-h-0 min-w-0 flex-1 flex-col">
+                    {/* Content slot: hero + cluster overlap via absolute positioning,
+                        cross-fading on mode toggle with no layout jump. */}
+                    <div className="ds-empty-stage-content">
+                      <div
+                        className="ds-chat-stage ds-empty-stage-hero"
+                        aria-hidden={simpleEmptyHome}
+                      >
+                        <MessageTimeline
+                          blocks={blocks}
+                          liveReasoning={liveReasoning}
+                          live={liveAssistant}
+                          activeThreadId={activeThreadId}
+                          runtimeConnection={runtimeConnection}
+                          stageCentered={stageCentered}
+                          useChatStageWidth={false}
+                          onRetryConnection={() => void probeRuntime('user')}
+                          onOpenSettings={() => openSettings('general')}
+                          onOpenDiagnostics={() => setRuntimeDiagnosticsOpen(true)}
+                          onSelectSuggestion={(text) => setInput(text)}
+                          htmlPreviewAction={htmlPreviewAction}
+                          onOpenWorkspaceFile={openFileInEditor}
+                        />
+                      </div>
 
-                    {/* Simple prompt — always mounted, CSS cross-fades in when simple */}
-                    <div
-                      className="ds-simple-empty-cluster shrink-0"
-                      aria-hidden={!simpleEmptyHome}
-                    >
-                      <SimpleEmptyPrompt />
+                      <div
+                        className="ds-simple-empty-cluster"
+                        aria-hidden={!simpleEmptyHome}
+                      >
+                        <SimpleEmptyPrompt />
+                      </div>
                     </div>
 
                     {/* Composer — stable position, never remounts across toggle */}
-                    <div className="ds-chat-stage ds-empty-stage-composer mt-auto shrink-0">
+                    <div className="ds-chat-stage ds-empty-stage-composer shrink-0">
                       <ComposerStage
                         input={input}
                         setInput={setInput}
