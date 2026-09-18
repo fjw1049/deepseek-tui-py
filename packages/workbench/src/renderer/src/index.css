@@ -2845,6 +2845,56 @@ samp {
   width: 100%;
 }
 
+/* ── Empty home layout cross-fade transition ─────────────────────────── */
+
+.ds-empty-stage-hero,
+.ds-simple-empty-cluster {
+  transition:
+    opacity 280ms cubic-bezier(0.22, 1, 0.36, 1),
+    transform 280ms cubic-bezier(0.22, 1, 0.36, 1),
+    visibility 0ms 280ms;
+}
+
+/* Normal mode (default): hero visible, simple cluster hidden */
+.ds-empty-stage-hero {
+  opacity: 1;
+  transform: translateY(0);
+  visibility: visible;
+}
+
+.ds-simple-empty-cluster {
+  position: absolute;
+  opacity: 0;
+  transform: translateY(8px);
+  pointer-events: none;
+  visibility: hidden;
+}
+
+/* Simple mode: cluster visible, hero hidden */
+.ds-empty-stage--simple .ds-empty-stage-hero {
+  position: absolute;
+  opacity: 0;
+  transform: translateY(-8px);
+  pointer-events: none;
+  visibility: hidden;
+}
+
+.ds-empty-stage--simple .ds-simple-empty-cluster {
+  position: static;
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
+  visibility: visible;
+  transition-delay: 0ms, 0ms, 0ms;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ds-empty-stage-hero,
+  .ds-simple-empty-cluster {
+    transition-duration: 0ms;
+  }
+}
+
 .ds-empty-hero-panel {
   height: 28.75rem;
   max-height: 28.75rem;

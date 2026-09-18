@@ -1759,72 +1759,69 @@ export function Workbench(): ReactElement {
                       simpleEmptyHome ? 'justify-center' : ''
                     }`}
                   >
-                    {!simpleEmptyHome ? (
-                      <div className="ds-chat-stage ds-empty-stage-hero min-h-0 flex-1 overflow-y-auto">
-                        <MessageTimeline
-                          blocks={blocks}
-                          liveReasoning={liveReasoning}
-                          live={liveAssistant}
-                          activeThreadId={activeThreadId}
-                          runtimeConnection={runtimeConnection}
-                          stageCentered={stageCentered}
-                          useChatStageWidth={false}
-                          onRetryConnection={() => void probeRuntime('user')}
-                          onOpenSettings={() => openSettings('general')}
-                          onOpenDiagnostics={() => setRuntimeDiagnosticsOpen(true)}
-                          onSelectSuggestion={(text) => setInput(text)}
-                          htmlPreviewAction={htmlPreviewAction}
-                          onOpenWorkspaceFile={openFileInEditor}
-                        />
-                      </div>
-                    ) : null}
+                    {/* Normal hero — always mounted, CSS cross-fades out when simple */}
                     <div
-                      className={
-                        simpleEmptyHome
-                          ? 'ds-simple-empty-cluster shrink-0'
-                          : 'ds-chat-stage ds-empty-stage-composer mt-auto shrink-0'
-                      }
+                      className="ds-chat-stage ds-empty-stage-hero min-h-0 flex-1 overflow-y-auto"
+                      aria-hidden={simpleEmptyHome}
                     >
-                      {simpleEmptyHome ? <SimpleEmptyPrompt /> : null}
-                      <div
-                        className={
-                          simpleEmptyHome
-                            ? 'ds-chat-stage ds-empty-stage-composer'
-                            : 'contents'
-                        }
-                      >
-                        <ComposerStage
-                          input={input}
-                          setInput={setInput}
-                          mode={mode}
-                          setMode={setMode}
-                          busy={busy}
-                          runtimeReady={runtimeConnection === 'ready'}
-                          hasActiveThread={Boolean(activeThreadId)}
-                          stageCentered={stageCentered}
-                          useChatStageWidth={false}
-                          composerModel={composerModel}
-                          composerPickList={composerPickList}
-                          onComposerModelChange={(modelId) => {
-                            setComposerModel(modelId)
-                          }}
-                          onSend={handleSend}
-                          onCompact={compactActiveThread}
-                          onFork={handleComposerFork}
-                          onOpenDiff={handleComposerOpenDiff}
-                          queuedMessages={queuedMessages}
-                          onRemoveQueuedMessage={removeQueuedMessage}
-                          onWithdrawQueuedMessage={withdrawQueuedMessage}
-                          onSendQueuedMessageNow={(id) => void sendQueuedMessageNow(id)}
-                          onInterrupt={() => void interrupt()}
-                          focusRequestId={composerFocusRequestId}
-                          previewPicks={pendingPreviewPicks}
-                          onRemovePreviewPick={removePendingPreviewPick}
-                          onClearPreviewPicks={clearPendingPreviewPicks}
-                          flashNotice={previewPickNotice}
-                          flashNoticeNonce={previewPickNoticeNonce}
-                        />
-                      </div>
+                      <MessageTimeline
+                        blocks={blocks}
+                        liveReasoning={liveReasoning}
+                        live={liveAssistant}
+                        activeThreadId={activeThreadId}
+                        runtimeConnection={runtimeConnection}
+                        stageCentered={stageCentered}
+                        useChatStageWidth={false}
+                        onRetryConnection={() => void probeRuntime('user')}
+                        onOpenSettings={() => openSettings('general')}
+                        onOpenDiagnostics={() => setRuntimeDiagnosticsOpen(true)}
+                        onSelectSuggestion={(text) => setInput(text)}
+                        htmlPreviewAction={htmlPreviewAction}
+                        onOpenWorkspaceFile={openFileInEditor}
+                      />
+                    </div>
+
+                    {/* Simple prompt — always mounted, CSS cross-fades in when simple */}
+                    <div
+                      className="ds-simple-empty-cluster shrink-0"
+                      aria-hidden={!simpleEmptyHome}
+                    >
+                      <SimpleEmptyPrompt />
+                    </div>
+
+                    {/* Composer — stable position, never remounts across toggle */}
+                    <div className="ds-chat-stage ds-empty-stage-composer mt-auto shrink-0">
+                      <ComposerStage
+                        input={input}
+                        setInput={setInput}
+                        mode={mode}
+                        setMode={setMode}
+                        busy={busy}
+                        runtimeReady={runtimeConnection === 'ready'}
+                        hasActiveThread={Boolean(activeThreadId)}
+                        stageCentered={stageCentered}
+                        useChatStageWidth={false}
+                        composerModel={composerModel}
+                        composerPickList={composerPickList}
+                        onComposerModelChange={(modelId) => {
+                          setComposerModel(modelId)
+                        }}
+                        onSend={handleSend}
+                        onCompact={compactActiveThread}
+                        onFork={handleComposerFork}
+                        onOpenDiff={handleComposerOpenDiff}
+                        queuedMessages={queuedMessages}
+                        onRemoveQueuedMessage={removeQueuedMessage}
+                        onWithdrawQueuedMessage={withdrawQueuedMessage}
+                        onSendQueuedMessageNow={(id) => void sendQueuedMessageNow(id)}
+                        onInterrupt={() => void interrupt()}
+                        focusRequestId={composerFocusRequestId}
+                        previewPicks={pendingPreviewPicks}
+                        onRemovePreviewPick={removePendingPreviewPick}
+                        onClearPreviewPicks={clearPendingPreviewPicks}
+                        flashNotice={previewPickNotice}
+                        flashNoticeNonce={previewPickNoticeNonce}
+                      />
                     </div>
                   </div>
                 </div>
