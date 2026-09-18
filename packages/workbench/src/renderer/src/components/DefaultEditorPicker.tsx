@@ -1,7 +1,7 @@
 import type { ReactElement } from 'react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { EditorInfo } from '@shared/editor'
-import { Check, ChevronDown, Code2, FolderOpen, Terminal } from 'lucide-react'
+import { Check, Code2, FolderOpen, Terminal } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { useLightDismiss } from '../hooks/use-light-dismiss'
 import { readPreferredEditorId, writePreferredEditorId } from '../lib/editor-preferences'
@@ -127,7 +127,7 @@ export function DefaultEditorPicker(): ReactElement {
           onIconFailed={markEditorIconFailed}
           compact
         />
-        <ChevronDown className="ds-editor-picker-trigger__chevron h-3 w-3" strokeWidth={1.9} />
+        {/* Chevron removed — icon-only trigger */}
       </button>
 
       {editorMenuOpen ? (
