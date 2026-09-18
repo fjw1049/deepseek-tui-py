@@ -1113,10 +1113,10 @@ samp {
 /* Shared composer card (home + conversation). Compact IDE rail opts out. */
 .ds-composer-empty.ds-chat-composer {
   border-radius: 1.2rem;
-  min-height: 96px;
+  min-height: 80px;
   gap: 0.375rem;
-  padding-top: 0.625rem;
-  padding-bottom: 0.625rem;
+  padding-top: 0.5rem;
+  padding-bottom: 0.375rem;
 }
 
 /* Context tray tucked under the composer (project | branch).
