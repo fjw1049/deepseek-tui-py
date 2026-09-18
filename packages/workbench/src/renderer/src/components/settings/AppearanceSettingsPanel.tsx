@@ -75,8 +75,9 @@ export function AppearanceSettingsPanel({ form, onPatch }: Props): ReactElement 
   const appearance = form.appearance
   const defaults = useMemo(() => defaultAppearanceSettings(), [])
   const resolvedVariant = useResolvedVariant(form.theme)
-  const variantOrder: readonly ThemeVariant[] =
-    resolvedVariant === 'dark' ? (['dark', 'light'] as const) : (['light', 'dark'] as const)
+  // Fixed order: sorting the active variant first made the two cards swap
+  // positions under the cursor when the OS theme flipped in system mode.
+  const variantOrder: readonly ThemeVariant[] = ['light', 'dark']
   const onAppearancePatch = (patch: AppearancePatchV1): void => onPatch({ appearance: patch })
   const [restoreArmed, setRestoreArmed] = useState(false)
   const restoreTimer = useRef<number | null>(null)
@@ -724,6 +725,16 @@ function PxInput({
   onCommit: (value: number) => void
 }): ReactElement {
   const [draft, setDraft] = useState<string | null>(null)
+  // Commit on blur/Enter only: committing per keystroke clamped a half-typed
+  // value (typing "18" committed "1" -> min) and the whole UI jumped mid-edit.
+  const commit = (): void => {
+    if (draft === null) return
+    const parsed = Number(draft.trim())
+    setDraft(null)
+    if (Number.isFinite(parsed)) {
+      onCommit(Math.min(max, Math.max(min, Math.round(parsed))))
+    }
+  }
   return (
     <div className="flex h-10 w-full items-center gap-2">
       <input
@@ -733,17 +744,11 @@ function PxInput({
         step={1}
         value={draft ?? String(value)}
         aria-label={ariaLabel}
-        onChange={(e) => {
-          const raw = e.target.value
-          setDraft(raw)
-          const normalized = raw.trim()
-          if (!normalized) return
-          const parsed = Number(normalized)
-          if (Number.isFinite(parsed)) {
-            onCommit(Math.min(max, Math.max(min, Math.round(parsed))))
-          }
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') commit()
         }}
-        onBlur={() => setDraft(null)}
         className={`${CONTROL_FIELD_CLASS} text-center tabular-nums`}
       />
       <span className="shrink-0 text-[13px] leading-none text-ds-faint">px</span>

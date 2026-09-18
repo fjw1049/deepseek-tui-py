@@ -4,9 +4,9 @@
  * Ported from Synara's theme-pack concept: each light/dark variant stores a
  * small "chrome theme" (accent / surface / ink / contrast / translucency /
  * fonts) and the full palette is derived at runtime (see appearance-derive.ts).
- * The special preset id `default` means "use the app's built-in handcrafted
- * palette" — no CSS overrides are generated for it, so the default look stays
- * byte-identical to the pre-appearance-feature UI.
+ * Overrides are generated for EVERY theme, factory defaults included; the
+ * `default` ("Workbench") preset only carries seeds that approximate the
+ * legacy handcrafted palette — it is not byte-identical to it.
  */
 
 export type ThemeVariant = 'light' | 'dark'

@@ -1,8 +1,9 @@
 /**
  * Runtime application of appearance settings.
  *
- * - Injects/updates a <style> element with derived theme tokens for
- *   customized light/dark theme packs (none when both are default).
+ * - Injects/updates a <style> element with derived theme tokens for the
+ *   light/dark theme packs. The stylesheet is generated unconditionally —
+ *   factory defaults go through the same derivation as custom themes.
  * - Sets root-level data attributes / CSS variables for density, chat font
  *   size, terminal typography, and font smoothing.
  * - Exposes a subscribe/get store so live consumers (xterm terminal,
