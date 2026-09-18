@@ -1688,7 +1688,7 @@ export function FloatingComposer({
             className={`ds-composer-shell ds-chat-composer flex w-full flex-col transition ${
               compactChrome
                 ? 'ds-composer-shell--compact gap-0.5 px-2 py-1'
-                : 'ds-composer-empty ds-frosted relative z-10 gap-1.5 px-3 py-2 sm:px-3.5'
+                : 'ds-composer-empty ds-frosted relative z-10 gap-1.5 px-2 py-1.5 sm:px-2.5'
             } ${focused ? 'ds-chat-composer-focus' : ''}`}
         >
           {attachments.length > 0 ? (
