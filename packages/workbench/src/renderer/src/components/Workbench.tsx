@@ -1677,7 +1677,6 @@ export function Workbench(): ReactElement {
                         runtimeReady={runtimeConnection === 'ready'}
                         hasActiveThread={Boolean(activeThreadId)}
                         useChatStageWidth={false}
-                        compactChrome
                         composerModel={composerModel}
                         composerPickList={composerPickList}
                         onComposerModelChange={(modelId) => {

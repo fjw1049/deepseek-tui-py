@@ -11549,19 +11549,16 @@ html[data-theme='dark'] .ds-syntax-line span { color: var(--shiki-dark) !importa
   max-width: none;
 }
 
-/* Flatter IDE composer. */
-.ds-ide-chat-rail .ds-composer-shell,
-.ds-ide-chat-rail .ds-composer-shell--compact {
-  border-radius: 0.75rem;
-}
+/* IDE composer uses the same card style as the main chat view. */
 
 .ds-ide-chat-rail .ds-composer-input,
 .ds-ide-chat-rail .ds-chat-composer textarea {
   font-size: var(--ds-ide-font-base);
   line-height: 1.625;
   letter-spacing: normal;
-  min-height: 22px;
-  max-height: 120px;
+  /* Override inline height set by resizeTextarea (which uses non-compact defaults). */
+  min-height: 22px !important;
+  max-height: 120px !important;
 }
 
 .ds-ide-chat-rail .ds-composer-input::placeholder {
@@ -11592,10 +11589,7 @@ html[data-theme='dark'] .ds-syntax-line span { color: var(--shiki-dark) !importa
   height: 0;
 }
 
-.ds-ide-chat-rail .ds-composer-shell,
-.ds-ide-chat-rail .ds-chat-composer {
-  box-shadow: none;
-}
+/* IDE composer keeps the same elevation shadow as the main chat view. */
 
 .ds-ide-chat-rail .ds-user-bubble,
 .ds-ide-chat-rail .ds-assistant-bubble,
