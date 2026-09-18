@@ -355,7 +355,13 @@ class TaskManager:
         if token_to_cancel is not None:
             token_to_cancel.set()
         if finished is not None:
-            await finished.wait()
+            # Bounded wait: the cancel token is already set, so the task will
+            # settle to CANCELED even if the engine takes a while to notice
+            # (e.g. mid streaming call). Don't hold the caller hostage.
+            try:
+                await asyncio.wait_for(finished.wait(), timeout=10.0)
+            except asyncio.TimeoutError:
+                pass
         return result
 
     async def record_tool_metadata(

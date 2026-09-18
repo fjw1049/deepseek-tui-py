@@ -158,9 +158,15 @@ def _load_state(
     tasks: dict[str, TaskRecord] = {}
     if tasks_dir.exists():
         for path in sorted(tasks_dir.glob("*.json")):
-            with path.open("r", encoding="utf-8") as fh:
-                data = json.load(fh)
-            task = _task_record_from_dict(data)
+            try:
+                with path.open("r", encoding="utf-8") as fh:
+                    data = json.load(fh)
+                task = _task_record_from_dict(data)
+            except (OSError, json.JSONDecodeError, KeyError, TypeError, ValueError):
+                # One bad file (hand-edited, old schema, disk error) must not
+                # brick every future session — the tasks dir is user-level and
+                # shared across projects. Skip it; the record stays on disk.
+                continue
             if task.schema_version > CURRENT_TASK_SCHEMA_VERSION:
                 raise RuntimeError(
                     f"Task schema v{task.schema_version} is newer than supported"

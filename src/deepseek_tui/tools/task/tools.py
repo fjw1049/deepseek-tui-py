@@ -492,8 +492,15 @@ class TaskOutputTool(ToolSpec):
 
         # Archive the collected output on the task when one is named AND the
         # wait completed — the retired task_shell_wait behaviour. Peeks are
-        # status reports and must not append duplicate artifacts per poll.
-        if block and task_id is not None:
+        # status reports and must not append duplicate artifacts per poll;
+        # neither may a timed-out wait (wait_background_process returns a
+        # "running" snapshot, not a failure — archiving it would label a
+        # still-running process "shell_completed" on every poll).
+        if (
+            block
+            and task_id is not None
+            and wait_result.metadata.get("status") == "completed"
+        ):
             manager = _require_manager(context)
             try:
                 task = await manager.get_task(task_id)
