@@ -99,7 +99,9 @@ export const DEFAULT_CHROME_THEMES: Record<ThemeVariant, ChromeThemeV1> = {
     accent: '#88c0d0',
     surface: '#2e3440',
     ink: '#d8dee9',
-    contrast: 100,
+    // Baseline (60), not 100: above the baseline the derivation curve doubles,
+    // which crushed surfaces toward black and washed the accent 65% to white.
+    contrast: CONTRAST_BASELINE.dark,
     translucent: true,
     uiFont: '',
     codeFont: '',
@@ -486,23 +488,23 @@ export function getThemePresetSeed(presetId: string, variant: ThemeVariant): Chr
 }
 
 type ThemePresetApplyMetadata = {
-  contrast?: true
   translucent?: true
   uiFont?: true
   codeFont?: true
 }
 
 /**
- * Synara treats the catalog picker as a code-theme seed, not a full reset.
- * Core colors always follow the selected seed; optional user choices only
- * change for presets that explicitly carry an opinion about them.
+ * The catalog picker is a theme seed, not a full reset: core colors AND
+ * contrast always follow the selected seed (contrast is calibrated per preset
+ * — keeping a stale value applied an invisible "filter" over every preset);
+ * translucency/fonts only change for presets that explicitly carry an opinion.
  */
 const THEME_PRESET_APPLY_METADATA: Partial<Record<string, ThemePresetApplyMetadata>> = {
   linear: { uiFont: true, translucent: true },
   matrix: { uiFont: true, codeFont: true, translucent: true },
   notion: { uiFont: true, codeFont: true, translucent: true },
   raycast: { uiFont: true, codeFont: true, translucent: true },
-  vercel: { contrast: true, uiFont: true, codeFont: true, translucent: true }
+  vercel: { uiFont: true, codeFont: true, translucent: true }
 }
 
 export function applyThemePreset(
@@ -521,7 +523,7 @@ export function applyThemePreset(
       surface: preset.surface,
       ink: preset.ink,
       semanticColors: { ...preset.semanticColors },
-      ...(metadata?.contrast ? { contrast: preset.contrast } : {}),
+      contrast: preset.contrast,
       ...(metadata?.translucent ? { translucent: preset.translucent } : {}),
       ...(metadata?.uiFont ? { uiFont: preset.uiFont } : {}),
       ...(metadata?.codeFont ? { codeFont: preset.codeFont } : {})
