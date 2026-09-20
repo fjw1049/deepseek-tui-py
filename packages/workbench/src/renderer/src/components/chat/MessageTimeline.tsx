@@ -337,6 +337,10 @@ export function MessageTimeline({
     // right now" for the streaming auto-scroll cooldown.
     const markUserScroll = (): void => {
       userScrolledAtRef.current = performance.now()
+      // Release immediately: a tool/subagent update may arrive long after
+      // the cooldown, so the next resize cannot detect this gesture reliably.
+      tailAnchorHoldRef.current = false
+      stickToBottomRef.current = false
     }
     const onKeyDown = (event: KeyboardEvent): void => {
       if (
@@ -2036,13 +2040,14 @@ function ProcessStream({
   const interactiveToolIds = new Set(blocks
     .filter((block) => block.kind === 'tool' && hasPendingToolGate(findPendingToolGate(allBlocks, block)))
     .map((block) => block.id))
-  // The opening thought is orientation, not bulk execution detail.
+  // Keep the opening thought separate when details are visible; collapsed
+  // completed turns must not leak its heading into the answer area.
   const firstReasoning = blocks.find((block) => block.kind === 'reasoning')
   const standaloneIds = new Set(interactiveToolIds)
   if (firstReasoning) standaloneIds.add(firstReasoning.id)
   const visible = visibleExecutionBlocks(
     showExecutionDetails ? blocks : blocks.filter((block) =>
-      standaloneIds.has(block.id) || isVisibleWithoutExecutionDetails(block)),
+      interactiveToolIds.has(block.id) || isVisibleWithoutExecutionDetails(block)),
     showExecutionDetails ? todoSession : null,
     subagentSummary
   )
@@ -2065,7 +2070,7 @@ function ProcessStream({
         block={row.block}
         processing={processing}
         showThinkingIndicator={thinkingIndicatorId === row.block.id}
-        openingReasoning={row.block.id === firstReasoning?.id}
+        openingReasoning={showExecutionDetails && row.block.id === firstReasoning?.id}
         todoSession={todoSession}
         todoEvents={todoEvents}
         subagentSummary={subagentSummary}

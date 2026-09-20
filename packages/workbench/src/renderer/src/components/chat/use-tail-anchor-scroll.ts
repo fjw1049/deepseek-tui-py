@@ -82,11 +82,16 @@ export function useTailAnchorScroll(input: {
       const userBox = contentOffset(container, user, uiScale)
       const turnBox = contentOffset(container, turn, uiScale)
       const contentAfterUser = Math.max(0, turnBox.top + turnBox.height - (userBox.top + userBox.height))
-      const nextSpacer = computeTailAnchorSpacerPx({
+      const measuredSpacer = computeTailAnchorSpacerPx({
         viewportHeight: container.clientHeight,
         userHeight: userBox.height,
         contentAfterUser
       })
+
+      // Once released, collapsing execution rows must not recreate an empty
+      // viewport while stick-to-bottom is active. Existing short-turn space
+      // may shrink, but only a new send may grow it again.
+      const nextSpacer = holdRef.current ? measuredSpacer : Math.min(spacerPx, measuredSpacer)
 
       if (Math.abs(nextSpacer - spacerPx) > 1) {
         setSpacerPx(nextSpacer)

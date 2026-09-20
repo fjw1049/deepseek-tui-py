@@ -155,9 +155,9 @@ it('keeps failed subagent summaries quiet after history reload', async () => {
   expect(container.textContent).toContain('Internal orchestration failure')
 })
 
-it('retains the first thought and opening before an eight-tool batch, including completed history', async () => {
+it.each([undefined, '已核对触发条件。'])('hides the first thought in collapsed history (narration: %s)', async (narration) => {
   const blocks: ChatBlock[] = [
-    { kind: 'reasoning', id: 'first-thought', text: 'Initial analysis' },
+    { kind: 'reasoning', id: 'first-thought', text: 'Initial analysis', narration },
     { kind: 'assistant', id: 'opening', text: '我先核对重复出现的条件，再验证修复。', agentSegment: 'mid_turn_preface' },
     ...Array.from({ length: 8 }, (_, i): ChatBlock => ({
       kind: 'tool', id: `tool-${i}`, summary: 'edit_file', toolKind: 'file_change', status: 'success'
@@ -170,13 +170,11 @@ it('retains the first thought and opening before an eight-tool batch, including 
     onRetryConnection: () => {}, onOpenSettings: () => {}, onOpenDiagnostics: () => {}
   })))
   const thought = container.querySelector('.ds-process-reasoning') as HTMLElement
-  const opening = container.querySelector('.ds-process-narration') as HTMLElement
-  expect(thought).not.toBeNull()
-  expect(opening.textContent).toContain('我先核对重复出现的条件')
-  expect(thought.compareDocumentPosition(opening) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  expect(thought).toBeNull()
+  expect(container.textContent).toContain('我先核对重复出现的条件')
   expect(container.textContent).not.toContain('Initial analysis')
   await act(async () => (container.querySelector('.ds-work-meta-row') as HTMLButtonElement).click())
   expect(container.querySelectorAll('.ds-process-reasoning')).toHaveLength(1)
   expect(container.querySelectorAll('.ds-work-summary')).toHaveLength(1)
-  expect(container.querySelectorAll('.ds-process-narration')).toHaveLength(1)
+  expect(container.querySelectorAll('.ds-process-narration')).toHaveLength(narration ? 2 : 1)
 })
