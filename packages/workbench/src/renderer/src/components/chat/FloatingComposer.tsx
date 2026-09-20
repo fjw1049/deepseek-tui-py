@@ -2497,12 +2497,12 @@ export function FloatingComposer({
                   compactChrome ? 'h-7 text-[12px]' : 'h-9 gap-1.5 text-[13px]'
                 }`}
                 title={
-                  activePlugin
-                    ? t('composerPluginMounted', {
-                        name: displayPluginName(activePlugin.name),
-                        path: activePlugin.path
+                  focusPlugin
+                    ? t('composerPluginFocus', { name: displayPluginName(focusPlugin) })
+                    : t('composerPluginMounted', {
+                        name: displayPluginName(activePlugin!.name),
+                        path: activePlugin!.path
                       })
-                    : t('composerPluginFocus', { name: displayPluginName(focusPlugin) })
                 }
               >
                 <Puzzle
@@ -2512,37 +2512,37 @@ export function FloatingComposer({
                 />
                 {footerPlan.showPluginLabel ? (
                   <span className="truncate">
-                    {activePlugin
-                      ? t('composerPluginBadge', { name: displayPluginName(activePlugin.name) })
-                      : t('composerPluginPendingBadge', { name: displayPluginName(focusPlugin) })}
+                    {focusPlugin
+                      ? t('composerPluginPendingBadge', { name: displayPluginName(focusPlugin) })
+                      : t('composerPluginBadge', { name: displayPluginName(activePlugin!.name) })}
                   </span>
                 ) : null}
                 <span
                   role="button"
                   tabIndex={0}
                   aria-label={
-                    activePlugin
-                      ? t('composerPluginUnmount', { name: displayPluginName(activePlugin.name) })
-                      : t('composerPluginFocus', { name: displayPluginName(focusPlugin) })
+                    focusPlugin
+                      ? t('composerPluginFocus', { name: displayPluginName(focusPlugin) })
+                      : t('composerPluginUnmount', { name: displayPluginName(activePlugin!.name) })
                   }
                   onClick={(event) => {
                     event.stopPropagation()
-                    if (activePlugin) {
-                      void sendMessage('@plugin:off')
-                    } else {
+                    if (focusPlugin) {
                       setFocusPlugin(null)
                       focusComposer()
+                    } else if (activePlugin) {
+                      void sendMessage('@plugin:off')
                     }
                   }}
                   onKeyDown={(event) => {
                     if (event.key === 'Enter' || event.key === ' ') {
                       event.preventDefault()
                       event.stopPropagation()
-                      if (activePlugin) {
-                        void sendMessage('@plugin:off')
-                      } else {
+                      if (focusPlugin) {
                         setFocusPlugin(null)
                         focusComposer()
+                      } else if (activePlugin) {
+                        void sendMessage('@plugin:off')
                       }
                     }
                   }}

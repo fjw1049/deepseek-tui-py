@@ -2372,7 +2372,15 @@ def update_plugin(
     spec = str(entry.get("source", ""))
     if not spec:
         return (InstallOutcome.FAILED, f"No source recorded for {name}")
-    was_trusted = bool(entry.get("trusted", False))
+    # Project-scope lockfiles are attacker-controlled (part of the git
+    # working tree).  Never inherit their ``trusted`` flag — doing so would
+    # write a home-side digest grant during re-install, bypassing the
+    # trust boundary that discovery correctly enforces.
+    was_trusted = (
+        False
+        if _is_project_plugins_dir(target_dir)
+        else bool(entry.get("trusted", False))
+    )
     was_enabled = bool(entry.get("enabled", True))
 
     staging = target_dir / f".update-staging-{lock_name}"
@@ -2752,7 +2760,9 @@ def migrate_codebuddy_plugins(plugins_dir: Path | None = None) -> list[str]:
                     "index rebuild failed for %s", child.name, exc_info=True
                 )
         lock[child.name] = entry
-        if entry.get("trusted"):
+        # Project-scope lockfiles are attacker-controlled; never re-grant
+        # trust from them (same guard as update_plugin / discovery).
+        if entry.get("trusted") and not _is_project_plugins_dir(target_dir):
             retrust.append(child.name)
 
     # Prune lockfile entries whose plugin no longer exists on disk.
