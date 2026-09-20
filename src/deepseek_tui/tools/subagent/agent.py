@@ -20,6 +20,7 @@ from deepseek_tui.tools.subagent.types import (
 
 if TYPE_CHECKING:
     from deepseek_tui.tools.subagent.manager import SubAgentRuntime
+    from deepseek_tui.tools.run_conversation import RunConversation
 
 
 # Executor signature — takes a SubAgent handle plus cancel token.
@@ -90,6 +91,7 @@ class SubAgent:
         self.mailbox = mailbox
         self.loop_runtime = loop_runtime
         self.background = background
+        self.conversation: RunConversation | None = None
         self.cancel_token: asyncio.Event = asyncio.Event()
         self.interrupt_event: asyncio.Event = asyncio.Event()
         self.task: asyncio.Task[None] | None = None

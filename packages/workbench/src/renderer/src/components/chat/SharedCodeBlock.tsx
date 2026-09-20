@@ -1,3 +1,4 @@
+import { useConversationScope } from './conversation-scope'
 import {
   Check,
   ChevronDown,
@@ -299,7 +300,9 @@ export function SharedCodeBlock({
   actionsDisabled = false,
   className
 }: SharedCodeBlockProps): ReactElement {
-  const busy = useChatStore((s) => s.busy)
+  const scope = useConversationScope()
+  const mainBusy = useChatStore((s) => s.busy)
+  const busy = scope?.active ?? mainBusy
   const trimmedCode = useMemo(() => code.replace(TRAILING_NEWLINES_REGEX, ''), [code])
   const [html, setHtml] = useState(() => renderFallbackHtml(trimmedCode))
   const [isCopied, setIsCopied] = useState(false)

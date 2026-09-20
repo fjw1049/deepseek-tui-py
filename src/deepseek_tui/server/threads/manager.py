@@ -2676,6 +2676,23 @@ class RuntimeThreadManager:
         )
         return await self.get_thread_detail(thread_id)
 
+    async def get_subagent_conversation(
+        self, thread_id: str, agent_id: str
+    ) -> dict[str, Any]:
+        from deepseek_tui.tools.run_conversation import load_run_conversation
+
+        thread = self.store.load_thread(thread_id)
+        await self._ensure_engine_loaded(thread)
+        state = self._active[thread_id]
+        agent_manager = state.engine.tool_context.subagent_manager
+        if agent_manager is None:
+            raise KeyError(agent_id)
+        snapshot = await agent_manager.get_result(agent_id)
+        history = load_run_conversation("subagent", snapshot.agent_id)
+        from deepseek_tui.server.threads.items import run_conversation_response
+
+        return run_conversation_response(history, snapshot.status.kind.value)
+
     async def resume_subagent(
         self, thread_id: str, agent_id: str
     ) -> dict[str, Any]:

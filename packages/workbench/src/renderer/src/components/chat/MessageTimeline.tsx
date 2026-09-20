@@ -1,3 +1,4 @@
+import { ConversationScope, useConversationScope } from './conversation-scope'
 import { findPendingToolGate, hasPendingToolGate } from '../../lib/tool-gate'
 import type { PointerEvent as ReactPointerEvent, ReactElement, RefObject } from 'react'
 import type { LucideIcon } from 'lucide-react'
@@ -56,7 +57,6 @@ import {
   turnSummaryFromSources,
   type TurnDiffSnapshot
 } from '../../lib/turn-mutation-view'
-import { openRunPanel } from '../../store/run-panel-store'
 import {
   getEmptyHomeLayout,
   getTimestampFormat,
@@ -68,9 +68,7 @@ import { useChatStore } from '../../store/chat-store'
 import { EvolutionBubble } from './EvolutionBubble'
 import { ElevationBubble } from './ElevationBubble'
 import { InlineTodoBlock } from './InlineTodoBlock'
-import { TaskActivity } from './TaskActivity'
-import { extractTasksFromBlocks, type TaskItemView } from '../../lib/extract-tasks-from-blocks'
-import { useLiveTasks } from '../../hooks/use-thread-tasks'
+import { extractTasksFromBlocks } from '../../lib/extract-tasks-from-blocks'
 import { UserInputBubble } from './UserInputBubble'
 import { lifecycleToStepStatus, type StepFlowItem } from './StepFlow'
 import { humanizeAgentType } from '../../lib/agent-type-label'
@@ -298,8 +296,6 @@ export function MessageTimeline({
   const scrollFrameRef = useRef<number | null>(null)
   const jumpAnimRef = useRef<number | null>(null)
   const turns = useMemo(() => groupTurns(blocks), [blocks])
-  const baseTasks = useMemo(() => extractTasksFromBlocks(blocks), [blocks])
-  const liveTasks = useLiveTasks(baseTasks)
   const shouldCollapseHistory = turns.length > AUTO_COLLAPSE_THRESHOLD
   const [visibleTurnCount, setVisibleTurnCount] = useState(() =>
     shouldCollapseHistory ? TURN_PAGE_SIZE : turns.length
@@ -729,7 +725,6 @@ export function MessageTimeline({
             <MemoMessageTurn
               key={userId ?? `turn-${index}`}
               turn={turn}
-              liveTasks={liveTasks}
               isProcessing={processing}
               liveReasoning={isLatestTurn ? liveReasoning : ''}
               live={isLatestTurn ? live : ''}
@@ -948,9 +943,31 @@ function isProcessBlock(block: ChatBlock): boolean {
 
 type AssistantContentBlock = Extract<ChatBlock, { kind: 'assistant' }>
 
+export function RunMessageTimeline({ blocks, liveId, active, workspace }: {
+  blocks: ChatBlock[]
+  liveId?: string | null
+  active: boolean
+  workspace: string
+}): ReactElement {
+  const viewportRef = useRef<HTMLDivElement>(null)
+  const liveBlock = active ? blocks.find((block) => block.id === liveId && block.kind === 'assistant') : null
+  const turns = useMemo(() => groupTurns(blocks.filter((block) => block !== liveBlock)), [blocks, liveBlock])
+  return <ConversationScope.Provider value={{ blocks, workspace, active }}>
+    <div ref={viewportRef} className="flex min-w-0 flex-col gap-8" data-run-conversation>
+      {turns.map((turn, index) => <MessageTurn
+        key={turn.user?.id ?? `run-turn-${index}`}
+        turn={turn}
+        isProcessing={active && index === turns.length - 1}
+        liveReasoning=""
+        live={index === turns.length - 1 && liveBlock && 'text' in liveBlock ? liveBlock.text : ''}
+        viewportRef={viewportRef}
+      />)}
+    </div>
+  </ConversationScope.Provider>
+}
+
 function MessageTurn({
   turn,
-  liveTasks = [],
   isProcessing,
   liveReasoning,
   live,
@@ -965,7 +982,6 @@ function MessageTurn({
   turnDiffRevision = 0
 }: {
   turn: Turn
-  liveTasks?: TaskItemView[]
   isProcessing: boolean
   liveReasoning: string
   live: string
@@ -980,7 +996,9 @@ function MessageTurn({
   turnDiffTurnId?: string | null
   turnDiffRevision?: number
 }): ReactElement {
-  const workspaceRoot = useChatStore((s) => s.workspaceRoot)
+  const scope = useConversationScope()
+  const mainWorkspaceRoot = useChatStore((s) => s.workspaceRoot)
+  const workspaceRoot = scope?.workspace ?? mainWorkspaceRoot
   void turnDiffRevision
   const { think: liveThink, content: liveContent } = splitThink(live)
   const liveProcessText = [liveReasoning, liveThink].filter(Boolean).join('\n\n')
@@ -1071,7 +1089,7 @@ function MessageTurn({
   const hasProcess = !isSystemOnlyTurn && (isProcessing || processBlocks.length > 0)
   const showWorkMeta =
     hasProcess || (!isSystemOnlyTurn && !isProcessing && typeof durationMs === 'number')
-  const turnChangeSummary = !isProcessing && turnFileChanges.length > 0 ? (
+  const turnChangeSummary = !scope && !isProcessing && turnFileChanges.length > 0 ? (
     <TurnChangeSummary
       changes={turnFileChanges}
       viewportRef={viewportRef}
@@ -1146,8 +1164,6 @@ function MessageTurn({
             />
           ) : null}
 
-          <TurnTasks blocks={turn.blocks} liveTasks={liveTasks} />
-
           {assistantContentBlocks.map((block, index) => (
             <MessageBubble
               key={block.id}
@@ -1162,7 +1178,8 @@ function MessageTurn({
 
           {showLiveAssistant ? (
             <MessageBubble
-              block={{ kind: 'assistant', id: 'live-assistant', text: liveContent }}
+              block={{ kind: 'assistant', id: scope ? `${turn.user?.id ?? 'run'}:live-assistant` : 'live-assistant', text: liveContent }}
+              streamingOverride={true}
               afterContent={turnChangeSummary}
             />
           ) : null}
@@ -1178,17 +1195,8 @@ function MessageTurn({
   )
 }
 
-function TurnTasks({ blocks, liveTasks }: { blocks: ChatBlock[]; liveTasks: TaskItemView[] }): ReactElement | null {
-  const tasks = useMemo(() => {
-    const byId = new Map(liveTasks.map((task) => [task.id, task]))
-    return extractTasksFromBlocks(blocks).map((task) => byId.get(task.id) ?? task)
-  }, [blocks, liveTasks])
-  return <TaskActivity tasks={tasks} agents={[]} onOpen={openRunPanel} />
-}
-
 const MemoMessageTurn = memo(MessageTurn, (prev, next) => (
   prev.turn === next.turn &&
-  prev.liveTasks === next.liveTasks &&
   prev.isProcessing === next.isProcessing &&
   prev.liveReasoning === next.liveReasoning &&
   prev.live === next.live &&
@@ -1746,7 +1754,9 @@ function ProcessStream({
   hasSubagents?: boolean
   onOpenWorkspaceFile?: (path: string, line?: number) => void
 }): ReactElement {
-  const allBlocks = useChatStore((s) => s.blocks)
+  const scope = useConversationScope()
+  const mainBlocks = useChatStore((s) => s.blocks)
+  const allBlocks = scope?.blocks ?? mainBlocks
   const interactiveToolIds = new Set(blocks
     .filter((block) => block.kind === 'tool' && hasPendingToolGate(findPendingToolGate(allBlocks, block)))
     .map((block) => block.id))
@@ -2746,18 +2756,24 @@ function formatMessageDateTime(
 
 function MessageBubble({
   block,
-  afterContent = null
+  afterContent = null,
+  streamingOverride
 }: {
   block: ChatBlock
   afterContent?: ReactElement | null
+  streamingOverride?: boolean
 }): ReactElement | null {
   const { t, i18n } = useTranslation('common')
   const timestampFormat = useSyncExternalStore(subscribeAppearance, getTimestampFormat)
+  const scope = useConversationScope()
+  if (block.kind === 'user' && scope) {
+    return <div className="ds-user-message"><div className="ds-user-message-bubble min-w-0 whitespace-pre-wrap break-words"><UserMessageRichText text={block.text} /></div></div>
+  }
   if (block.kind === 'user') {
     return <UserMessageBubble block={block} />
   }
   if (block.kind === 'assistant') {
-    const streaming = shouldParseIncompleteAssistantMarkdown(block.id === 'live-assistant')
+    const streaming = streamingOverride ?? shouldParseIncompleteAssistantMarkdown(block.id === 'live-assistant')
     const createdAtLabel = block.createdAt
       ? formatMessageDateTime(block.createdAt, i18n.language, timestampFormat)
       : null
@@ -2773,7 +2789,7 @@ function MessageBubble({
           <div className="ds-assistant-message-meta mt-1 flex min-h-5 min-w-0 items-center justify-between gap-3 text-[11.5px] text-ds-faint opacity-0 transition duration-150 group-hover/message:opacity-100">
             <span className="min-w-0 truncate">{createdAtLabel ?? ''}</span>
             <div className="flex items-center gap-1.5">
-              <ForkFromHereButton itemId={block.id} />
+              {!scope ? <ForkFromHereButton itemId={block.id} /> : null}
               <CopyFeedbackButton text={block.text} iconOnly />
             </div>
           </div>

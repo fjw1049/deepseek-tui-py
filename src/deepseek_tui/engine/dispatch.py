@@ -643,6 +643,11 @@ async def _collect_turn_events(
     # tool_call_id -> arguments, captured at round-complete so the result
     # event (which omits arguments) can be rendered with its key parameter.
     pending_args: dict[str, dict[str, Any]] = {}
+    from deepseek_tui.engine.events import ThinkingDeltaEvent
+    from deepseek_tui.tools.run_conversation import RunConversation
+
+    history = RunConversation("task", task.id, task.prompt, Path(task.workspace)) if task else None
+    was_cancelled = False
 
     async def _emit_tool_event(
         kind: str, summary: str, detail: str | None = None
@@ -678,57 +683,88 @@ async def _collect_turn_events(
         except Exception:  # noqa: BLE001 -- streaming preview must never break the task
             pass
 
-    async for event in handle.events():
-        if cancel.is_set():
-            await handle.cancel("executor_cancelled")
-            break
+    try:
+        async for event in handle.events():
+            if cancel.is_set():
+                await handle.cancel("executor_cancelled")
+                break
 
-        if isinstance(event, ErrorEvent):
-            error_msg = event.message
-        elif isinstance(event, TextDeltaEvent):
-            if event.text:
-                live_text_parts.append(event.text)
-                await _flush_live_text()
-        elif isinstance(event, AgentRoundCompleteEvent):
-            for call in event.tool_calls:
-                pending_args[call.id] = dict(call.arguments or {})
-            if on_tool_event is not None:
-                narration = (event.preface_text or "").strip()
-                if narration:
-                    await _emit_tool_event("text", narration, narration)
-        elif isinstance(event, ToolResultEvent):
-            if on_tool_event is not None:
-                args = pending_args.pop(event.tool_call_id, {})
-                kind = "tool" if event.success else "tool_error"
-                summary = _describe_tool_call(
-                    event.tool_name, args, event.success, event.content
-                )
-                detail = summarize_text(event.content or "", 4_000) or None
-                await _emit_tool_event(kind, summary, detail)
-        elif isinstance(event, UserInputRequiredEvent):
-            if task is not None:
-                await bridge_background_user_input(
-                    event, task=task, handle=handle
-                )
-            else:
-                future = handle.pending_user_inputs.get(event.tool_call_id)
-                if future and not future.done():
-                    future.set_result(
-                        {
-                            "error": (
-                                "Background executors cannot request user input"
-                            )
-                        }
+            if isinstance(event, ErrorEvent):
+                error_msg = event.message
+            elif isinstance(event, ThinkingDeltaEvent):
+                if history:
+                    history.thinking(event.thinking)
+            elif isinstance(event, TextDeltaEvent):
+                if event.text:
+                    if history:
+                        history.delta(event.text)
+                    live_text_parts.append(event.text)
+                    await _flush_live_text()
+            elif isinstance(event, AgentRoundCompleteEvent):
+                if history:
+                    history.settle(event.preface_text or None)
+                for call in event.tool_calls:
+                    pending_args[call.id] = dict(call.arguments or {})
+                    if history:
+                        history.tool(call.id, call.name, pending_args[call.id])
+                if on_tool_event is not None:
+                    narration = (event.preface_text or "").strip()
+                    if narration:
+                        await _emit_tool_event("text", narration, narration)
+            elif isinstance(event, ToolResultEvent):
+                if history:
+                    history.tool(
+                        event.tool_call_id, event.tool_name,
+                        pending_args.get(event.tool_call_id, {}),
+                        event.content or "", event.success, event.metadata,
                     )
-        elif isinstance(event, ApprovalRequiredEvent):
-            if task is not None:
-                await bridge_background_approval(event, task=task)
-        elif isinstance(event, TurnCompleteEvent):
-            final_text = assistant_message_text(event.assistant_message)
-            break
-        elif isinstance(event, TurnCancelledEvent):
-            break
+                if on_tool_event is not None:
+                    args = pending_args.pop(event.tool_call_id, {})
+                    kind = "tool" if event.success else "tool_error"
+                    summary = _describe_tool_call(
+                        event.tool_name, args, event.success, event.content
+                    )
+                    detail = summarize_text(event.content or "", 4_000) or None
+                    await _emit_tool_event(kind, summary, detail)
+            elif isinstance(event, UserInputRequiredEvent):
+                if task is not None:
+                    await bridge_background_user_input(
+                        event, task=task, handle=handle
+                    )
+                else:
+                    future = handle.pending_user_inputs.get(event.tool_call_id)
+                    if future and not future.done():
+                        future.set_result(
+                            {
+                                "error": (
+                                    "Background executors cannot request user input"
+                                )
+                            }
+                        )
+            elif isinstance(event, ApprovalRequiredEvent):
+                if task is not None:
+                    await bridge_background_approval(event, task=task)
+            elif isinstance(event, TurnCompleteEvent):
+                final_text = assistant_message_text(event.assistant_message)
+                if history:
+                    history.settle(final_text, final=True)
+                break
+            elif isinstance(event, TurnCancelledEvent):
+                was_cancelled = True
+                break
 
+        if history:
+            status = "cancelled" if cancel.is_set() or was_cancelled else (
+                "failed" if error_msg else "completed"
+            )
+            history.finish(status, error_msg)
+    except BaseException as exc:
+        if history:
+            history.finish(
+                "cancelled" if isinstance(exc, asyncio.CancelledError) else "failed",
+                str(exc) or None,
+            )
+        raise
     return final_text, error_msg
 
 
@@ -1046,6 +1082,19 @@ async def real_subagent_executor(agent: SubAgent, cancel: asyncio.Event) -> Agen
         )
     try:
         out = await run_subagent_loop(agent, runtime, cancel)
+    except BaseException as exc:
+        if agent.conversation is not None:
+            agent.conversation.finish(
+                "cancelled" if isinstance(exc, asyncio.CancelledError) else "failed",
+                str(exc) or None,
+            )
+        raise
+    else:
+        if agent.conversation is not None:
+            agent.conversation.settle(
+                out.text if isinstance(out, AgentRunOutput) else str(out), final=True
+            )
+            agent.conversation.finish("completed")
     finally:
         if owned_client is not None:
             await owned_client.close()

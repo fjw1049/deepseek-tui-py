@@ -264,3 +264,26 @@ async def test_http_resume_requires_review_before_requeue(tasks_runtime):
     assert resumed.status_code == 200
     assert resumed.json()['id'] == task.id
     assert resumed.json()['status'] == 'queued'
+
+
+@pytest.mark.asyncio
+async def test_http_task_conversation_retains_history_and_checks_owner(tasks_runtime) -> None:
+    from deepseek_tui.tools.run_conversation import RunConversation
+
+    runtime, client = tasks_runtime
+    tm = runtime.tool_runtime.task_manager
+    task = await tm.add_task(NewTaskRequest(prompt="display history"))
+    history = RunConversation("task", task.id, task.prompt, Path(task.workspace))
+    history.delta("Answer")
+    history.settle("Answer", final=True)
+    history.finish("completed")
+    async with tm._lock:
+        tm._queue.clear()
+        tm._tasks[task.id].status = TaskStatus.COMPLETED
+    response = await client.get(f"/v1/tasks/{task.id}/conversation")
+    assert response.status_code == 200, response.text
+    payload = response.json()["conversation"]
+    assert payload["blocks"][-1]["text"] == "Answer"
+    assert payload["status"] == "completed"
+    missing = await client.get("/v1/tasks/task_missing/conversation")
+    assert missing.status_code == 404

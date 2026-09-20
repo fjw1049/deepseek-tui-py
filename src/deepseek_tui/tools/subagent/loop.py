@@ -226,6 +226,8 @@ async def _execute_subagent_tool(
             return f"Error: Tool {tool_name} denied by approval policy"
     try:
         result = await registry.execute(tool_name, tool_input, context)  # type: ignore[arg-type]
+        context.metadata.setdefault("tool_result_metadata", {})[tool_call_id] = result.metadata
+        context.metadata.setdefault("tool_result_content", {})[tool_call_id] = result.content
         if result.images:
             context.metadata.setdefault("tool_images", {})[tool_call_id] = result.images
             for image in result.images:
@@ -409,6 +411,11 @@ async def run_subagent_loop(
         StructuredOutputTool,
     )
 
+    from deepseek_tui.tools.run_conversation import RunConversation
+
+    history = RunConversation("subagent", agent.id, agent.prompt, Path(agent.workspace))
+    agent.conversation = history
+
     use_structured_output = bool(agent.output_schema)
     # Session locale (config.ui.locale) — same source and validation as the
     # parent engine's reply_locale. Children have no ## Environment block, so
@@ -562,11 +569,16 @@ async def run_subagent_loop(
     _delta_emit = getattr(runtime, "emit_event", None) if runtime else None
 
     async def _round_emit(event: object) -> None:
-        if _delta_emit is None:
-            return None
-        from deepseek_tui.engine.events import SubAgentTextDeltaEvent, TextDeltaEvent
+        from deepseek_tui.engine.events import (
+            SubAgentTextDeltaEvent, TextDeltaEvent, ThinkingDeltaEvent,
+        )
 
+        if isinstance(event, ThinkingDeltaEvent):
+            history.thinking(event.thinking)
         if isinstance(event, TextDeltaEvent) and event.text:
+            history.delta(event.text)
+            if _delta_emit is None:
+                return None
             maybe = _delta_emit(
                 SubAgentTextDeltaEvent(agent_id=agent.id, text=event.text)
             )
@@ -719,6 +731,7 @@ async def run_subagent_loop(
                     break
                 text = (text or "").strip()
                 if text:
+                    history.user(text)
                     from deepseek_tui.engine.turn import prepare_turn_for_model
 
                     prepared = prepare_turn_for_model(text, workspace=agent.workspace)
@@ -738,6 +751,7 @@ async def run_subagent_loop(
             if received_input:
                 _save_complete_checkpoint("input")
 
+            history.settle()
             steps += 1
             agent.steps_taken = steps
 
@@ -825,6 +839,7 @@ async def run_subagent_loop(
             round_text, round_thinking = _assistant_text_and_thinking(
                 result.assistant_message
             )
+            history.settle(round_text, final=not result.tool_calls)
             if round_text:
                 final_text = round_text
             if round_thinking:
@@ -925,6 +940,7 @@ async def run_subagent_loop(
                         )
                     )
                     continue
+                history.tool(tc.id, tc.name, tc.arguments)
                 input_preview = _mailbox_input_summary(tc.arguments)
                 if runtime.mailbox is not None:
                     runtime.mailbox.send(
@@ -971,6 +987,11 @@ async def run_subagent_loop(
                             output_summary=_mailbox_output_summary(output),
                         )
                     )
+                history.tool(
+                    tc.id, tc.name, tc.arguments,
+                    context.metadata.get("tool_result_content", {}).pop(tc.id, output), ok,
+                    context.metadata.get("tool_result_metadata", {}).pop(tc.id, {}),
+                )
                 tool_failures = 0 if ok else tool_failures + 1
                 messages.append(
                     Message.tool_result(

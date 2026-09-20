@@ -6,6 +6,7 @@ import { MessageTimeline } from './MessageTimeline'
 import { useChatStore } from '../../store/chat-store'
 import { useRunPanelStore } from '../../store/run-panel-store'
 import { extractSubagentsFromBlocks } from '../../lib/extract-subagents-from-blocks'
+import { extractTasksFromBlocks } from '../../lib/extract-tasks-from-blocks'
 import type { ChatBlock } from '../../agent/types'
 
 vi.mock('./StreamdownAssistant', () => ({
@@ -148,23 +149,22 @@ it('keeps completed parent narration folded while its child continues running', 
   expect(extractSubagentsFromBlocks(useChatStore.getState().blocks)[0].status).toBe('running')
 })
 
-it('refreshes task state after reload and opens the matching task in the sidebar', async () => {
-  const runtimeRequest = vi.fn().mockResolvedValue({ ok: true, body: JSON.stringify({ tasks: [
-    { id: 'task-A', status: 'completed' }, { id: 'foreign-task', status: 'running' }
-  ] }) })
-  vi.stubGlobal('dsGui', { runtimeRequest })
-  await render([
-    { kind: 'tool', id: 'create-task', toolKind: 'tool_call', summary: 'task_create', status: 'success',
-      meta: { tool_name: 'task_create', tasks: [{ id: 'task-A', prompt: '审核后台任务', status: 'queued' }] } }
-  ], false)
-  const trigger = container.querySelector('.ds-task-activity-trigger') as HTMLButtonElement
-  expect(trigger.textContent).toContain('审核后台任务')
-  expect(trigger.querySelector('[data-status="completed"]')).not.toBeNull()
-  expect(container.textContent).not.toContain('foreign-task')
-  expect(container.querySelector('#block-create-task')).toBeNull()
-  await act(async () => trigger.click())
-  expect(useRunPanelStore.getState().target).toEqual({ threadId: 'activities', kind: 'task', id: 'task-A' })
-})
+it.each(['queued', 'running', 'completed', 'failed'] as const)(
+  'keeps %s tasks available to the side card without duplicate timeline entries', async (status) => {
+    const tasks = [{ id: 'task-A', prompt: '审核后台任务', status }]
+    await render([
+      { kind: 'tool', id: 'create-task', toolKind: 'tool_call', summary: 'task_create', status: 'success',
+        meta: { tool_name: 'task_create', tasks } },
+      { kind: 'assistant', id: 'answer', text: '任务已派发。', agentSegment: 'final_answer' }
+    ], status === 'queued' || status === 'running')
+    expect(container.querySelector('.ds-task-activity')).toBeNull()
+    expect(container.querySelector('#block-create-task')).toBeNull()
+    expect(container.textContent).toContain('任务已派发。')
+    expect(extractTasksFromBlocks(useChatStore.getState().blocks)).toEqual(tasks)
+    await act(async () => (container.querySelector('.ds-work-meta-row') as HTMLButtonElement).click())
+    expect(container.querySelector('.ds-task-activity')).toBeNull()
+  }
+)
 
 it('folds historical checklist and agent failures once the plan and agents finish', async () => {
   const failures: ChatBlock[] = ['checklist', 'agent_send_input', 'agent_send_input', 'agent_spawn', 'agent_spawn'].map((name, i) => ({

@@ -144,14 +144,8 @@ svg.ds-run-state-icon.lucide-loader-circle { animation: ds-run-spin 1s linear in
 .ds-run-result { padding-top: 20px; margin-top: 10px; border-top: 1px solid var(--ds-border); }
 .ds-run-result-header { display: flex; align-items: center; gap: 7px; margin-bottom: 13px; font-size: 14px; font-weight: 550; }
 .ds-run-result-header > span { flex: 1; }
-/* Scope above the shared answer selector: main-chat font preferences must not
-   override the compact sidebar reading scale. */
-.ds-run-panel .ds-markdown.ds-markdown--answer { font-size: 12px; line-height: 1.75; max-width: none; overflow-wrap: anywhere; }
-.ds-run-panel .ds-run-result .ds-markdown.ds-markdown--answer { font-size: 13px; }
 @container (min-width: 700px) {
   .ds-run-header, .ds-run-content { --ds-run-content-width: 840px; --ds-run-content-inset: 32px; }
-  .ds-run-panel .ds-markdown.ds-markdown--answer { font-size: 14px; }
-  .ds-run-panel .ds-run-result .ds-markdown.ds-markdown--answer { font-size: 15px; }
   .ds-run-phase-label, .ds-run-result-header, .ds-run-panel .ds-run-process-toggle { font-size: 15px; }
   .ds-run-phase .ds-run-phase-label { font-size: 13px; }
 }

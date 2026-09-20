@@ -1130,6 +1130,21 @@ async def get_task(request: Request, task_id: str) -> dict[str, Any]:
     return task
 
 
+@router_tasks.get("/tasks/{task_id}/conversation")
+async def get_task_conversation(request: Request, task_id: str) -> dict[str, Any]:
+    from deepseek_tui.tools.run_conversation import load_run_conversation
+
+    runtime = runtime_from_request(request)
+    result = await runtime.get_task(task_id)
+    if not result.get("ok") and str(result.get("error", "")).startswith("task not found"):
+        raise api_error(404, f"task not found: {task_id}", error="task_not_found")
+    task = unwrap_runtime_result(result)["task"]
+    history = load_run_conversation("task", task["id"])
+    from deepseek_tui.server.threads.items import run_conversation_response
+
+    return run_conversation_response(history, task["status"])
+
+
 @router_tasks.post("/tasks/{task_id}/cancel")
 async def cancel_task(request: Request, task_id: str) -> dict[str, Any]:
     runtime = runtime_from_request(request)
@@ -1454,6 +1469,16 @@ async def resume_thread(request: Request, thread_id: str) -> dict[str, Any]:
     except FileNotFoundError as exc:
         raise api_error(404, str(exc), error="thread_not_found") from exc
     return detail.model_dump(mode="json")
+
+
+@router_threads.get("/threads/{thread_id}/agents/{agent_id}/conversation")
+async def get_agent_conversation(
+    request: Request, thread_id: str, agent_id: str
+) -> dict[str, Any]:
+    try:
+        return await manager(request).get_subagent_conversation(thread_id, agent_id)
+    except (FileNotFoundError, KeyError) as exc:
+        raise api_error(404, str(exc), error="agent_not_found") from exc
 
 
 @router_threads.post("/threads/{thread_id}/agents/{agent_id}/resume")

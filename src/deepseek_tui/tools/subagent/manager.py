@@ -269,6 +269,14 @@ class SubAgentManager:
 
         Caller must hold ``self._lock``; the caller re-spawns the driver task.
         """
+        # Registry records contain durable state only. Engine.create attaches
+        # the live runtime after loading them; bind it when a child is resumed.
+        # Keep existing runtimes so same-process spawn overrides survive.
+        if agent.loop_runtime is None and self._loop_runtime is not None:
+            agent.loop_runtime = self._loop_runtime.with_spawn_depth(agent.spawn_depth)
+        agent.mailbox = self._mailbox
+        agent.parent_cancel = self._parent_cancel
+        agent.session_boot_id = self._session_boot_id
         agent.status = SubAgentStatus.running()
         agent.result = None
         agent.structured_result = None

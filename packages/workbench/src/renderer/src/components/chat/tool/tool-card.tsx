@@ -1,3 +1,4 @@
+import { useConversationScope } from '../conversation-scope'
 import { lazy, memo, Suspense, useCallback, useMemo } from 'react'
 import type { LucideIcon } from 'lucide-react'
 import { FileCode2, Search, Terminal, Wrench } from 'lucide-react'
@@ -63,7 +64,9 @@ export const ToolCard = memo(function ToolCard({
   onOpenWorkspaceFile
 }: ToolCardProps): React.JSX.Element | null {
   const { t } = useTranslation('common')
-  const blocks = useChatStore((s) => s.blocks)
+  const scope = useConversationScope()
+  const mainBlocks = useChatStore((s) => s.blocks)
+  const blocks = scope?.blocks ?? mainBlocks
   const gate = useMemo(() => findPendingToolGate(blocks, block), [block, blocks])
   const awaitingGate = hasPendingToolGate(gate)
   const ctx = useMemo(() => {
@@ -75,7 +78,8 @@ export const ToolCard = memo(function ToolCard({
   const headerTitle = filePath || ctx.isFileChange || ctx.isCommand || SHELL_TOOL_NAMES.has(ctx.toolName)
     ? undefined
     : ctx.description || undefined
-  const workspaceRoot = useChatStore((s) => s.workspaceRoot)
+  const mainWorkspaceRoot = useChatStore((s) => s.workspaceRoot)
+  const workspaceRoot = scope?.workspace ?? mainWorkspaceRoot
   const prefetchPath = ctx.input.path
   const handlePrefetch = useCallback((): void => {
     if (prefetchPath && workspaceRoot.trim()) prefetchWorkspaceFile(prefetchPath, workspaceRoot)

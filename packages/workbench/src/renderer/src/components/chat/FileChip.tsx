@@ -1,3 +1,4 @@
+import { useConversationScope } from './conversation-scope'
 import { useEffect, useMemo, useState, type MouseEvent, type ReactElement, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
@@ -51,7 +52,9 @@ export function FileChip({
   skipValidation = false
 }: FileChipProps): ReactElement {
   const { t } = useTranslation('common')
-  const workspaceRoot = useThreadFilesystemRoot()
+  const scope = useConversationScope()
+  const mainWorkspaceRoot = useThreadFilesystemRoot()
+  const workspaceRoot = scope?.workspace ?? mainWorkspaceRoot
   const workspaceDirtyTick = useChatStore((state) => state.workspaceDirtyTick)
   const setError = useChatStore((state) => state.setError)
   const [pickerOpen, setPickerOpen] = useState(false)
