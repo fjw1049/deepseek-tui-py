@@ -1524,25 +1524,28 @@ export function Workbench(): ReactElement {
           route === 'marketplace' ? 'px-0' : ''
         }`}
       >
-        {runtimeConnection !== 'ready' && connectionError ? (
-          <div className={`${stageInsetClass} ds-no-drag shrink-0 py-2`}>
-            <FeedbackNotice
-              tone={runtimeConnection === 'checking' ? 'info' : 'warning'}
-              title={t(runtimeConnection === 'checking' ? 'feedbackReconnecting' : 'feedbackConnectionLost')}
-              message={t('feedbackConnectionImpact')}
-              details={connectionError}
-              actions={<>
-                <button type="button" disabled={runtimeConnection === 'checking'} className="min-h-8 rounded-lg bg-ds-ink px-3 py-1 text-[12px] font-medium text-ds-card disabled:opacity-50" onClick={() => void probeRuntime('user')}>{t('retryConnection')}</button>
-                <button type="button" className="min-h-8 rounded-lg px-3 py-1 text-[12px] text-ds-muted hover:bg-ds-hover" onClick={() => setRuntimeDiagnosticsOpen(true)}>{t('runtimeDiagnosticsButton')}</button>
-              </>}
-            />
-          </div>
-        ) : null}
-        {error ? (
-          <div className={`${stageInsetClass} ds-no-drag shrink-0 py-2`}>
-            <FeedbackNotice tone="error" title={t('feedbackActionFailed')} message={error} onDismiss={() => setError(null)} />
-          </div>
-        ) : null}
+        {/* Global feedback floats above the stage without resizing its content. */}
+        <div className="ds-no-drag pointer-events-none absolute right-3 top-14 z-40 flex max-h-[calc(100%-4.25rem)] w-[calc(100%-1.5rem)] max-w-[480px] flex-col gap-2 overflow-y-auto overscroll-contain">
+          {runtimeConnection !== 'ready' && connectionError ? (
+            <div className="pointer-events-auto min-h-0 shrink-0 rounded-xl shadow-lg">
+              <FeedbackNotice
+                tone={runtimeConnection === 'checking' ? 'info' : 'warning'}
+                title={t(runtimeConnection === 'checking' ? 'feedbackReconnecting' : 'feedbackConnectionLost')}
+                message={t('feedbackConnectionImpact')}
+                details={connectionError}
+                actions={<>
+                  <button type="button" disabled={runtimeConnection === 'checking'} className="min-h-8 rounded-lg bg-ds-ink px-3 py-1 text-[12px] font-medium text-ds-card disabled:opacity-50" onClick={() => void probeRuntime('user')}>{t('retryConnection')}</button>
+                  <button type="button" className="min-h-8 rounded-lg px-3 py-1 text-[12px] text-ds-muted hover:bg-ds-hover" onClick={() => setRuntimeDiagnosticsOpen(true)}>{t('runtimeDiagnosticsButton')}</button>
+                </>}
+              />
+            </div>
+          ) : null}
+          {error ? (
+            <div className="pointer-events-auto min-h-0 shrink-0 rounded-xl shadow-lg">
+              <FeedbackNotice tone="error" title={t('feedbackActionFailed')} message={error} onDismiss={() => setError(null)} />
+            </div>
+          ) : null}
+        </div>
         {route === 'settings' ? (
           <Suspense fallback={<div className="h-full bg-transparent" />}>
             <SettingsView />

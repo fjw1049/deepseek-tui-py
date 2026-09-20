@@ -2,6 +2,7 @@ import { lazy, memo, Suspense, useCallback, useMemo } from 'react'
 import type { LucideIcon } from 'lucide-react'
 import { FileCode2, Search, Terminal, Wrench } from 'lucide-react'
 import { cn } from './cn'
+import { useTranslation } from 'react-i18next'
 import { buildToolRenderContext, isPendingState } from './render-context'
 import { resolveToolRenderer } from './registry'
 import { ToolGateBar } from './tool-gate-bar'
@@ -53,17 +54,15 @@ function pickIcon(toolName: string, isFileChange: boolean, isCommand: boolean): 
  * Output/Footer inside a collapsible shell. Expand state is persisted via
  * `useDisclosure` so it survives remounts.
  *
- * Default is collapsed. File mutations auto-open while running (so the live
- * patch is visible) and collapse again on success unless the user toggled
- * the card. An explicit user toggle always wins. Status is a quiet trailing
- * cue ("…" / check / "!") — not a tinted shell — so the work trace stays a
- * calm, consistent list.
+ * Every tool defaults to collapsed, regardless of type or outcome. Only an
+ * explicit user toggle reveals output; status updates never change that choice.
  */
 export const ToolCard = memo(function ToolCard({
   block,
   className,
   onOpenWorkspaceFile
 }: ToolCardProps): React.JSX.Element | null {
+  const { t } = useTranslation('common')
   const blocks = useChatStore((s) => s.blocks)
   const gate = useMemo(() => findPendingToolGate(blocks, block), [block, blocks])
   const awaitingGate = hasPendingToolGate(gate)
@@ -72,24 +71,20 @@ export const ToolCard = memo(function ToolCard({
     return awaitingGate ? { ...built, state: 'awaiting_approval' as const } : built
   }, [awaitingGate, block])
   const filePath = ctx.input.path
-  const headerLabel = filePath
-    ? ctx.label || ctx.shortName
-    : ctx.isFileChange
-      ? ctx.description || ctx.label || ctx.shortName
-      : ctx.label || ctx.shortName
-  const headerTitle = filePath || ctx.isFileChange ? undefined : ctx.description || undefined
+  const headerLabel = ctx.label || ctx.shortName || t('toolActivity')
+  const headerTitle = filePath || ctx.isFileChange || ctx.isCommand || SHELL_TOOL_NAMES.has(ctx.toolName)
+    ? undefined
+    : ctx.description || undefined
   const workspaceRoot = useChatStore((s) => s.workspaceRoot)
   const prefetchPath = ctx.input.path
   const handlePrefetch = useCallback((): void => {
     if (prefetchPath && workspaceRoot.trim()) prefetchWorkspaceFile(prefetchPath, workspaceRoot)
   }, [prefetchPath, workspaceRoot])
   const disclosureKey = `tool:${ctx.toolCallId}`
-  const [storedOpen, setDisclosureOpen, hasStoredOpen] = useDisclosure(
+  const [storedOpen, setDisclosureOpen] = useDisclosure(
     disclosureKey,
     false
   )
-
-  const isShell = SHELL_TOOL_NAMES.has(ctx.toolName) || ctx.isCommand
 
   const setUserOpen = useCallback(
     (next: boolean) => {
@@ -105,15 +100,19 @@ export const ToolCard = memo(function ToolCard({
 
   const hasOutput = ctx.output !== undefined && ctx.output.trim().length > 0
   const canExpand =
-    hasOutput || Boolean(renderer?.Output) || ctx.state === 'running' || awaitingGate
+    Boolean(ctx.input.command) ||
+    hasOutput ||
+    Boolean(renderer?.Output) ||
+    ctx.state === 'running' ||
+    awaitingGate
   const renderOutput =
+    Boolean(ctx.input.command) ||
     ctx.errorText !== undefined ||
     hasOutput ||
     Boolean(renderer?.renderWhenPending) ||
     !isPendingState(ctx.state)
 
-  const autoOpenFile = ctx.isFileChange && ctx.state === 'running'
-  const open = canExpand && (hasStoredOpen ? storedOpen : autoOpenFile)
+  const open = canExpand && storedOpen
   const Icon = pickIcon(ctx.toolName, ctx.isFileChange, ctx.isCommand)
 
   const readOffset =
@@ -125,25 +124,23 @@ export const ToolCard = memo(function ToolCard({
       ? Math.floor(readOffset)
       : undefined
 
-  // Visual tiering (mirrors cursor/codex): only running / error / file mutations
-  // and shell commands earn a full bordered card. A successful read-only probe
-  // (read_file, grep, list_dir…) collapses to a single calm row so a turn with
-  // a dozen reads reads as one quiet thread instead of a wall of boxes.
-  const isHeavy = ctx.state !== 'success' || ctx.isFileChange || ctx.isCommand || isShell
+  // Approval controls remain actionable; all tool output uses the same disclosure.
+  const isHeavy = awaitingGate
 
   const headerElement = HeaderComp ? (
-    <HeaderComp context={ctx} />
+    <HeaderComp context={ctx} quiet={!open} />
   ) : (
     <ToolHeaderRow
       icon={Icon}
       label={headerLabel}
-      title={headerTitle}
-      filePath={filePath}
+      title={open ? headerTitle : undefined}
+      filePath={open ? filePath : undefined}
       fileLine={ctx.isFileChange ? ctx.editLine : readLine}
       state={ctx.state}
+      quiet={!awaitingGate && !open}
       expanded={open}
       canExpand={canExpand}
-      diffStats={ctx.diffStats}
+      diffStats={open ? ctx.diffStats : undefined}
       onOpenInEditor={
         onOpenWorkspaceFile && ctx.input.path && (ctx.isFileChange || ctx.shortName === 'read_file')
           ? () =>
@@ -209,6 +206,7 @@ export const ToolCard = memo(function ToolCard({
   const interactionProps = {
     onClick: handleToggle,
     role: canExpand ? ('button' as const) : undefined,
+    'aria-expanded': canExpand ? open : undefined,
     tabIndex: canExpand ? 0 : undefined,
     onKeyDown: (e: React.KeyboardEvent) => {
       if (canExpand && (e.key === 'Enter' || e.key === ' ')) {
@@ -237,6 +235,7 @@ export const ToolCard = memo(function ToolCard({
             style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 160px' }}
           >
             {copyButton}
+            {ctx.input.command ? <pre className="ds-tool-command">{ctx.input.command}</pre> : null}
             {expandedBody}
           </div>
         ) : null}
@@ -272,6 +271,7 @@ export const ToolCard = memo(function ToolCard({
           style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 180px' }}
         >
           {copyButton}
+          {ctx.input.command ? <pre className="ds-tool-command">{ctx.input.command}</pre> : null}
           {expandedBody}
         </div>
       ) : null}

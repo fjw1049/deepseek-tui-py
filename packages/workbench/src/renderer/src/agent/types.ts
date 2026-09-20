@@ -117,12 +117,12 @@ export type ToolBlock = {
 /**
  * Structured narration frame persisted by the runtime alongside a mid-turn
  * preface. Semantics come from these fields, never from parsing display text.
- * `source: 'none'` means no wording exists yet: render a neutral progress
- * state from `phase` / `toolCount` / `anchors`.
+ * `source: 'none'` keeps an invisible frame for a later wording upsert.
+ * Tool parameters must not be promoted into progress prose.
  */
 export type ProcessIntentMeta = {
   scope: 'pre_tool' | 'milestone'
-  source: 'primary_model' | 'narration_service' | 'none'
+  source: 'primary_model' | 'narration_service' | 'runtime' | 'none'
   phase?: string
   batch?: string
   toolCount?: number

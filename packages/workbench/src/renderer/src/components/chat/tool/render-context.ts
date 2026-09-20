@@ -56,7 +56,7 @@ export interface ToolInput {
  * normalised shape — the registry resolves purely off `ctx`.
  */
 export function buildToolRenderContext(block: ToolBlock): ToolRenderContext {
-  const toolName = extractToolName(block.summary)
+  const toolName = readMetaString(block.meta, 'tool_name') || extractToolName(block.summary)
   const shortName = stripToolPrefix(toolName)
   const isFileChange = block.toolKind === 'file_change'
   // Shell-detected edits arrive as file_change blocks under a non-edit tool

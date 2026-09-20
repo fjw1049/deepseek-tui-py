@@ -9,11 +9,7 @@ import type { ChatBlock } from '../../agent/types'
 import { isTodoToolBlock } from '../../lib/extract-todos-from-blocks'
 import { sanitizeReasoningPlaceholders } from '../../lib/reasoning-text'
 import {
-  addProbeCompose,
-  emptyProbeCompose,
-  isMergeableProbeTool,
-  probeToolKind,
-  type ProbeBatchCompose
+  isMergeableProbeTool
 } from '../../lib/step-flow-collapse'
 import type { StepFlowItem } from './StepFlow'
 
@@ -147,17 +143,12 @@ function commandTextFromToolBlock(block: ToolProcessBlock): string | undefined {
 
 /**
  * Whether a process block is a read-only probe that can fold into a batch.
- * Aligned with StepFlow: success / running / error probes merge (including
- * allowlisted probe shells); mutations, interactive/mutating shell, todo,
- * and subagent-orchestration stay solo.
+ * Read-only probes share a quiet batch regardless of outcome. Mutations,
+ * interactive shells, todo and subagent orchestration stay solo.
  */
 function isMergeableProbeBlock(block: ChatBlock): block is ToolProcessBlock {
   if (block.kind !== 'tool') return false
-  if (
-    block.status !== 'success' &&
-    block.status !== 'running' &&
-    block.status !== 'error'
-  ) {
+  if (block.status !== 'success' && block.status !== 'running' && block.status !== 'error') {
     return false
   }
   if (block.toolKind === 'file_change') return false
@@ -172,7 +163,7 @@ function isMergeableProbeBlock(block: ChatBlock): block is ToolProcessBlock {
  * mixed read/search/grep runs and a lone probe (“读取文件 · 1 项”).
  * Non-mergeable rows end the current run.
  */
-export function groupProcessRows(visible: ChatBlock[]): RenderRow[] {
+export function groupProcessRows(visible: ChatBlock[], interactiveToolIds: ReadonlySet<string> = new Set()): RenderRow[] {
   const rows: RenderRow[] = []
   let buffer: ToolProcessBlock[] = []
 
@@ -187,7 +178,9 @@ export function groupProcessRows(visible: ChatBlock[]): RenderRow[] {
   }
 
   for (const block of visible) {
-    if (isMergeableProbeBlock(block)) {
+    // Persist empty intent frames for later narration, but give them no visual row.
+    if (block.kind === 'assistant' && !block.text.trim()) continue
+    if (!interactiveToolIds.has(block.id) && isMergeableProbeBlock(block)) {
       buffer.push(block)
       continue
     }
@@ -216,90 +209,45 @@ export function shouldParseIncompleteAssistantMarkdown(isLiveAnswer: boolean): b
   return isLiveAnswer
 }
 
-/** Soft cap for process-rail mid-turn prefaces (one short storyline line). */
-export const MID_TURN_PREFACE_MAX_CHARS = 160
+/** Keep normal progress paragraphs intact; only unusually long updates fold. */
+export const MID_TURN_PREFACE_MAX_CHARS = 1200
 
-/** Clip a mid-turn preface for the process rail; full text stays expand-able. */
 export function clipMidTurnPrefaceText(
   text: string,
   maxChars: number = MID_TURN_PREFACE_MAX_CHARS
 ): { preview: string; clipped: boolean } {
   const trimmed = text.trim()
-  if (!trimmed) return { preview: '', clipped: false }
-
-  // Prefer the first line when the model dumps a multi-line mini-report.
-  const firstLine = trimmed.split(/\n/, 1)[0] ?? trimmed
-  const source =
-    firstLine.length > 0 && firstLine.length < trimmed.length ? firstLine : trimmed
-
-  if (source === trimmed && source.length <= maxChars) {
-    return { preview: trimmed, clipped: false }
-  }
-
-  let cut = source.length <= maxChars ? source : source.slice(0, maxChars)
-  if (cut.length < source.length) {
-    const ws = cut.lastIndexOf(' ')
-    if (ws >= Math.floor(maxChars * 0.6)) cut = cut.slice(0, ws)
-  }
+  if (trimmed.length <= maxChars) return { preview: trimmed, clipped: false }
+  const prefix = trimmed.slice(0, maxChars)
+  const paragraphEnd = prefix.lastIndexOf('\n\n')
+  const cut = paragraphEnd >= maxChars / 2 ? prefix.slice(0, paragraphEnd) : prefix
   return { preview: `${cut.trimEnd()}…`, clipped: true }
+}
+
+/** Collapsing execution details keeps the story and currently running work. */
+export function isVisibleWithoutExecutionDetails(block: ChatBlock): boolean {
+  if (block.kind === 'assistant') return !!block.text.trim()
+  if (block.kind === 'reasoning') return !!block.narration?.trim()
+  if (block.kind === 'tool') return block.status === 'running'
+  return true
 }
 
 export function processRowId(row: RenderRow): string {
   return row.type === 'tool_batch' ? `batch:${row.blocks[0]!.id}` : row.block.id
 }
 
-function isRunningWorkRow(row: RenderRow): boolean {
-  if (row.type === 'tool_batch') return row.blocks.some((block) => block.status === 'running')
-  return row.block.kind === 'tool' && row.block.status === 'running'
-}
-
-function hasErrorWorkRow(row: RenderRow): boolean {
-  if (row.type === 'tool_batch') return row.blocks.some((block) => block.status === 'error')
-  return row.block.kind === 'tool' && row.block.status === 'error'
-}
-
-function isQueuedWorkRow(row: RenderRow): boolean {
-  if (row.type === 'tool_batch') {
-    return row.blocks.some((block) => block.status === 'queued' || block.status === 'pending')
-  }
-  return (
-    row.block.kind === 'tool' && (row.block.status === 'queued' || row.block.status === 'pending')
-  )
-}
-
-/** Work rows that may fold into a mid-turn “Ran N…” summary. */
+/** Tool activity and raw reasoning share one disclosure, regardless of outcome. */
 export function isSummarizableWorkRow(row: RenderRow): boolean {
-  if (isRunningWorkRow(row) || hasErrorWorkRow(row) || isQueuedWorkRow(row)) return false
   if (row.type === 'tool_batch') return true
-  if (row.block.kind !== 'tool') return false
-  if (isTodoToolBlock(row.block)) return false
-  return !isSubagentOrchestrationToolName(toolNameFromProcessBlock(row.block))
+  if (row.block.kind === 'reasoning') return !row.block.narration?.trim()
+  return row.block.kind === 'tool' && !isTodoToolBlock(row.block)
 }
 
 function summarizableUnitCount(row: RenderRow): number {
-  return row.type === 'tool_batch' ? row.blocks.length : 1
+  return row.type === 'tool_batch' ? row.blocks.length : row.block.kind === 'tool' ? 1 : 0
 }
 
-/** Newest tool / batch row — the only work that stays expanded while the turn is live. */
-export function findLastLiveWorkRowId(
-  rows: ReadonlyArray<RenderRow>,
-  processing: boolean
-): string | null {
-  if (!processing) return null
-  for (let i = rows.length - 1; i >= 0; i -= 1) {
-    const row = rows[i]!
-    if (row.type === 'tool_batch' || row.block.kind === 'tool') {
-      return processRowId(row)
-    }
-  }
-  return null
-}
-
-export type ProcessWorkSummary = {
-  compose: ProbeBatchCompose
-  editCount: number
-  toolCount: number
-}
+export type ProcessWorkSummary = { toolCount: number }
 
 export type ProcessRenderChunk =
   | { type: 'row'; row: RenderRow }
@@ -307,61 +255,23 @@ export type ProcessRenderChunk =
 
 const MIN_COLLAPSIBLE_WORK_UNITS = 2
 
-function summarizeWorkRows(rows: ReadonlyArray<RenderRow>): ProcessWorkSummary {
-  const compose = emptyProbeCompose()
-  let editCount = 0
-  let toolCount = 0
-  for (const row of rows) {
-    if (row.type === 'tool_batch') {
-      for (const block of row.blocks) {
-        addProbeCompose(compose, probeToolKind(toolNameFromProcessBlock(block)))
-      }
-      continue
-    }
-    if (row.block.kind !== 'tool') continue
-    if (row.block.toolKind === 'file_change') {
-      editCount += 1
-      continue
-    }
-    const name = toolNameFromProcessBlock(row.block)
-    if (isMergeableProbeTool(name, { command: commandTextFromToolBlock(row.block) })) {
-      addProbeCompose(compose, probeToolKind(name))
-      continue
-    }
-    if (row.block.toolKind === 'command_execution') {
-      addProbeCompose(compose, 'command')
-      continue
-    }
-    toolCount += 1
-  }
-  return { compose, editCount, toolCount }
-}
-
-/**
- * During a live turn, fold older settled work into one summary so the process
- * rail does not keep growing. The trailing work row stays expanded. Settled
- * turns (`processing=false`) return every row unchanged — the WorkMetaRow
- * already hides the whole rail.
- */
+/** Keep the same execution groups during streaming and history replay. */
 export function planProcessRenderChunks(
   rows: ReadonlyArray<RenderRow>,
-  processing: boolean
+  interactiveToolIds: ReadonlySet<string> = new Set()
 ): ProcessRenderChunk[] {
-  if (!processing) return rows.map((row) => ({ type: 'row' as const, row }))
-
-  const lastLiveId = findLastLiveWorkRowId(rows, true)
   const chunks: ProcessRenderChunk[] = []
   let buffer: RenderRow[] = []
 
   const flush = (): void => {
     if (buffer.length === 0) return
     const units = buffer.reduce((count, row) => count + summarizableUnitCount(row), 0)
-    if (units >= MIN_COLLAPSIBLE_WORK_UNITS) {
+    if (buffer.length > 1 && units >= MIN_COLLAPSIBLE_WORK_UNITS) {
       chunks.push({
         type: 'work_summary',
         id: processRowId(buffer[0]!),
         rows: buffer,
-        summary: summarizeWorkRows(buffer)
+        summary: { toolCount: units }
       })
     } else {
       for (const row of buffer) chunks.push({ type: 'row', row })
@@ -370,7 +280,7 @@ export function planProcessRenderChunks(
   }
 
   for (const row of rows) {
-    const canFold = isSummarizableWorkRow(row) && processRowId(row) !== lastLiveId
+    const canFold = isSummarizableWorkRow(row) && !interactiveToolIds.has(processRowId(row))
     if (canFold) {
       buffer.push(row)
       continue

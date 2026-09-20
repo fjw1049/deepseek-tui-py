@@ -73,22 +73,24 @@ function subagentLabel(context: ToolRenderContext): string {
 
 export const SubagentRenderer = {
   Header: memo(function SubagentHeader({
-    context
+    context,
+    quiet = true
   }: {
     context: ToolRenderContext
+    quiet?: boolean
   }): React.JSX.Element {
     const descriptor = agentDescriptor(context)
     return (
-      <div className="flex w-full items-center gap-2">
+      <div className="ds-tool-header-row flex w-full items-center gap-2">
         <Bot
-          className="h-3.5 w-3.5 shrink-0 text-violet-500/80 dark:text-violet-300/80"
+          className="h-3.5 w-3.5 shrink-0 text-ds-faint"
           strokeWidth={1.8}
           aria-hidden
         />
-        <span className="shrink-0 font-mono text-[0.6875rem] font-medium text-ds-muted">
+        <span className="ds-tool-header-row__label shrink-0 text-ds-muted">
           {subagentLabel(context)}
         </span>
-        {descriptor ? (
+        {!quiet && descriptor ? (
           <span
             className="min-w-0 flex-1 truncate text-[13px] text-ds-faint"
             title={descriptor}
@@ -98,7 +100,7 @@ export const SubagentRenderer = {
         ) : (
           <span className="flex-1" />
         )}
-        <ToolStatusIndicator state={context.state} />
+        {!quiet ? <ToolStatusIndicator state={context.state} /> : null}
       </div>
     )
   })

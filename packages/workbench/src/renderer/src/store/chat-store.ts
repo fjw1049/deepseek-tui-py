@@ -304,7 +304,7 @@ function appendLiveAssistantBlock(
   processIntent?: ProcessIntentMeta
 ): ChatBlock[] {
   // A text-less block is still meaningful when it carries a structured
-  // narration frame (neutral progress state, possibly worded later).
+  // narration frame (invisible until useful wording arrives).
   if (!text.trim() && !processIntent) return blocks
   const now = Date.now()
   const nextBlock = {
@@ -320,8 +320,28 @@ function appendLiveAssistantBlock(
   const existing = blocks[existingIndex]
   if (existing.kind !== 'assistant') return blocks
   const next = [...blocks]
-  next[existingIndex] = { ...existing, ...nextBlock }
+  next[existingIndex] = {
+    ...existing, ...nextBlock, createdAt: createdAt ?? existing.createdAt ?? nextBlock.createdAt
+  }
   return next
+}
+
+/** Delayed narration and metadata updates must not consume a newer live reply. */
+export function completeAssistantProgress(
+  state: Pick<ChatState, 'blocks' | 'liveAssistant'>,
+  itemId?: string,
+  createdAt?: string,
+  text?: string,
+  processIntent?: ProcessIntentMeta
+): Pick<ChatState, 'blocks' | 'liveAssistant'> {
+  const upsertOnly = processIntent?.source === 'runtime' || processIntent?.source === 'none' ||
+    processIntent?.source === 'narration_service' ||
+    state.blocks.some((block) => block.kind === 'assistant' && block.id === itemId)
+  return {
+    blocks: appendLiveAssistantBlock(state.blocks, text ?? (upsertOnly ? '' : state.liveAssistant),
+      itemId, createdAt, 'mid_turn_preface', processIntent),
+    liveAssistant: upsertOnly ? state.liveAssistant : ''
+  }
 }
 
 function clearTurnCompletionProbe(): void {
@@ -1356,17 +1376,7 @@ function buildThreadEventSink(
           // its tool batch in real time. Use the real itemId so the server-side
           // copy replaces it cleanly on reload, and so the narration service's
           // later wording upserts the same block.
-          return {
-            blocks: appendLiveAssistantBlock(
-              s.blocks,
-              text?.trim() || s.liveAssistant,
-              itemId,
-              createdAt,
-              'mid_turn_preface',
-              processIntent
-            ),
-            liveAssistant: ''
-          }
+          return completeAssistantProgress(s, itemId, createdAt, text, processIntent)
         }
         return {}
       })

@@ -630,7 +630,7 @@ function readProcessIntent(it: TurnItemJson): ProcessIntentMeta | undefined {
   const scope = meta.scope
   const source = meta.source
   if (scope !== 'pre_tool' && scope !== 'milestone') return undefined
-  if (source !== 'primary_model' && source !== 'narration_service' && source !== 'none') {
+  if (source !== 'primary_model' && source !== 'narration_service' && source !== 'runtime' && source !== 'none') {
     return undefined
   }
   return {

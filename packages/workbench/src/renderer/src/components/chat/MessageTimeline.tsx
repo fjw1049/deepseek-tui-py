@@ -1,3 +1,4 @@
+import { findPendingToolGate, hasPendingToolGate } from '../../lib/tool-gate'
 import type { PointerEvent as ReactPointerEvent, ReactElement, RefObject } from 'react'
 import type { LucideIcon } from 'lucide-react'
 import {
@@ -112,6 +113,7 @@ import {
   groupProcessRows,
   isInternalSubagentHandoffSystemText,
   isSubagentOrchestrationToolName,
+  isVisibleWithoutExecutionDetails,
   placeAssistantContentBlock,
   planProcessRenderChunks,
   splitThink,
@@ -944,33 +946,6 @@ function turnHasPendingRuntimeWork(turn: Turn): boolean {
 
 type AssistantContentBlock = Extract<ChatBlock, { kind: 'assistant' }>
 
-/**
- * Neutral progress line for a narration frame without wording. Everything
- * shown here comes from structured metadata (tool anchors and count), so it is
- * language- and model-independent; i18n supplies the label.
- */
-function NeutralIntentLine({
-  intent,
-  showIndicator
-}: {
-  intent: NonNullable<AssistantContentBlock['processIntent']>
-  /** True only for the newest in-progress thinking/preface row. */
-  showIndicator: boolean
-}): ReactElement {
-  const { t } = useTranslation('common')
-  const anchors = (intent.anchors ?? []).slice(0, 3)
-  return (
-    <div className="ds-process-narration flex items-start gap-1.5 py-0.5">
-      {showIndicator ? <SquareGrid className="mt-1 text-ds-faint" /> : null}
-      <p className="text-[13.5px] leading-6 text-ds-faint">
-        {anchors.length > 0
-          ? t('processNeutralIntentTargets', { targets: anchors.join(', ') })
-          : t('processNeutralIntent', { count: intent.toolCount ?? 1 })}
-      </p>
-    </div>
-  )
-}
-
 function MessageTurn({
   turn,
   isProcessing,
@@ -1005,11 +980,8 @@ function MessageTurn({
   void turnDiffRevision
   const { think: liveThink, content: liveContent } = splitThink(live)
   const liveProcessText = [liveReasoning, liveThink].filter(Boolean).join('\n\n')
-  const [workExpanded, setWorkExpanded] = useState(isProcessing)
-
-  useEffect(() => {
-    setWorkExpanded(isProcessing)
-  }, [isProcessing])
+  const [workExpandedOverride, setWorkExpanded] = useState<boolean | null>(null)
+  const workExpanded = workExpandedOverride ?? isProcessing
 
   const todoSession = useMemo(() => buildTodoSessionForTurn(turn.blocks), [turn.blocks])
   const todoEvents = useMemo(() => buildTodoEventsForTurn(turn.blocks), [turn.blocks])
@@ -1057,10 +1029,10 @@ function MessageTurn({
 
     // Live `agent_message` text is rendered in the main answer bubble below
     // (`showLiveAssistant`) so tokens stream in the large answer style. Do NOT
-    // also push it into the process rail — MidTurnPrefaceLine clips to 160
-    // chars and made long finals look like they only appeared at turn end.
+    // also push it into the process rail, which would duplicate the text.
     // When a mid-turn preface settles, the store clears `liveAssistant` and
-    // persists a small `mid_turn_preface` row; finals land via `onFinalAnswer`.
+    // persists a `mid_turn_preface` with the same reading style; finals land
+    // via `onFinalAnswer`.
 
     // Receipt for this turn's writes only. Workspace dirt stays in Changes.
     const summary = turnSummaryFromSources(turnDiffSnapshot, turn.blocks)
@@ -1138,12 +1110,12 @@ function MessageTurn({
                 reasoningDurationMs={reasoningDurationMs}
                 collapsible={hasProcess}
                 expanded={workExpanded}
-                onToggle={() => setWorkExpanded((value) => !value)}
-                activeActionLabel={activeRunningActionLabel(processBlocks)}
+                onToggle={() => setWorkExpanded(!workExpanded)}
               />
-              {hasProcess && workExpanded ? (
+              {hasProcess ? (
                 <ProcessStream
                   blocks={processBlocks}
+                  showExecutionDetails={workExpanded}
                   processing={isProcessing}
                   todoSession={todoSession}
                   todoEvents={todoEvents}
@@ -1456,29 +1428,7 @@ function TurnChangeSummary({
   )
 }
 
-/**
- * Live one-liner for the currently-running tool, e.g. "读取文件 src/foo.ts".
- * Surfaced on the collapsed work-process header so the user knows what the
- * agent is doing right now without expanding the trace (cursor/codex pattern).
- */
-function activeRunningActionLabel(blocks: ChatBlock[]): string | undefined {
-  // Skip sub-agent orchestration tools (agent/agent_resume/…): a blocking
-  // agent action="wait" would otherwise hijack the header for minutes. Sub-agent
-  // progress is surfaced by the SubagentSummaryPanel instead.
-  const running = blocks.find(
-    (b): b is ToolBlock =>
-      b.kind === 'tool' &&
-      b.status === 'running' &&
-      !isSubagentOrchestrationToolName(toolNameFromProcessBlock(b))
-  )
-  if (!running) return undefined
-  const ctx = buildToolRenderContext(running)
-  const label = [ctx.label || ctx.shortName, ctx.description].filter(Boolean).join(' ').trim()
-  if (!label) return undefined
-  return label.length > 56 ? `${label.slice(0, 55).trimEnd()}…` : label
-}
-
-/** Turn-level work-process summary. It auto-collapses when the turn finishes. */
+/** Toggle execution details; user-facing progress remains visible. */
 function WorkMetaRow({
   processing,
   stepCount,
@@ -1487,8 +1437,7 @@ function WorkMetaRow({
   reasoningDurationMs,
   collapsible,
   expanded,
-  onToggle,
-  activeActionLabel
+  onToggle
 }: {
   processing: boolean
   stepCount: number
@@ -1498,7 +1447,6 @@ function WorkMetaRow({
   collapsible: boolean
   expanded: boolean
   onToggle: () => void
-  activeActionLabel?: string
 }): ReactElement {
   const { t } = useTranslation('common')
   const [tickNow, setTickNow] = useState(() => Date.now())
@@ -1517,13 +1465,10 @@ function WorkMetaRow({
 
   const durationText =
     typeof displayDurationMs === 'number' ? formatDuration(displayDurationMs) : undefined
-  const liveActionText = processing ? activeActionLabel : undefined
   const mainLabel = processing
-    ? liveActionText
-      ? liveActionText
-      : durationText
-        ? t('workingFor', { duration: durationText })
-        : t('working')
+    ? durationText
+      ? t('workingFor', { duration: durationText })
+      : t('working')
     : durationText
       ? t('workedFor', { duration: durationText })
       : t('processSteps', { count: stepCount })
@@ -1539,8 +1484,9 @@ function WorkMetaRow({
         type="button"
         onClick={collapsible ? onToggle : undefined}
         aria-expanded={collapsible ? expanded : undefined}
+        aria-label={collapsible ? `${mainLabel} · ${t('executionDetails')}` : mainLabel}
         disabled={!collapsible}
-        className={`ds-work-meta-row group flex w-fit max-w-full items-center gap-1.5 rounded-md py-1 text-left text-[15px] font-medium text-ds-muted transition ${collapsible ? 'hover:opacity-85' : ''}`}
+        className={`ds-work-meta-row group flex w-fit max-w-full items-center gap-1.5 rounded-md py-1 text-left text-[13px] font-medium text-ds-muted transition ${collapsible ? 'hover:opacity-85' : ''}`}
       >
         {processing ? (
           <span className="mr-0.5 flex h-5 w-5 shrink-0 items-center justify-center">
@@ -1550,9 +1496,6 @@ function WorkMetaRow({
         <span className={`min-w-0 truncate tabular-nums ${processing ? 'ds-shiny-text' : ''}`}>
           {mainLabel}
         </span>
-        {liveActionText && durationText ? (
-          <span className="shrink-0 text-ds-faint">· {durationText}</span>
-        ) : null}
         {showThoughtSuffix ? (
           <span className="text-ds-faint">
             · {t('thoughtFor', { duration: formatDuration(reasoningDurationMs!) })}
@@ -1569,7 +1512,6 @@ function WorkMetaRow({
           )
         ) : null}
       </button>
-      <div aria-hidden className="h-px w-full bg-ds-border-muted/70" />
     </div>
   )
 }
@@ -1616,6 +1558,7 @@ type SubagentTurnSummary = {
   anchorBlockId: string
   blockIds: string[]
   blocks: SubagentBlock[]
+  tools: ToolBlock[]
   total: number
   pending: number
   running: number
@@ -1662,6 +1605,9 @@ function buildSubagentSummaryForTurn(blocks: ChatBlock[]): SubagentTurnSummary |
     anchorBlockId: subagentBlocks[0]!.id,
     blockIds: subagentBlocks.map((block) => block.id),
     blocks: subagentBlocks,
+    tools: blocks.filter((block): block is ToolBlock => block.kind === 'tool' &&
+      isSubagentOrchestrationToolName(toolNameFromProcessBlock(block)) &&
+      !hasPendingToolGate(findPendingToolGate(blocks, block))),
     total,
     ...counts
   }
@@ -1676,7 +1622,7 @@ function isSubagentSummaryAnchor(block: ChatBlock, summary: SubagentTurnSummary 
 }
 
 function shouldHideSubagentToolBlock(block: ChatBlock, summary: SubagentTurnSummary | null): boolean {
-  if (!summary || block.kind !== 'tool' || block.status === 'error') return false
+  if (!summary || block.kind !== 'tool') return false
   return isSubagentOrchestrationToolName(toolNameFromProcessBlock(block))
 }
 
@@ -1686,6 +1632,7 @@ function visibleExecutionBlocks(
   subagentSummary: SubagentTurnSummary | null
 ): ChatBlock[] {
   return blocks.filter((block) => {
+    if (block.kind === 'tool' && hasPendingToolGate(findPendingToolGate(blocks, block))) return true
     if (shouldHideTodoToolBlock(block, todoSession)) return false
     if (
       shouldHideSubagentBlock(block, subagentSummary) &&
@@ -1700,7 +1647,7 @@ function visibleExecutionBlocks(
 
 function SubagentSummaryPanel({ summary }: { summary: SubagentTurnSummary }): ReactElement {
   const { t } = useTranslation('common')
-  const [expanded, setExpanded] = useState(true)
+  const [expanded, setExpanded] = useState(false)
   const active = summary.running > 0 || summary.pending > 0
   const hasFailure = summary.failed > 0
   const countParts = [
@@ -1713,15 +1660,15 @@ function SubagentSummaryPanel({ summary }: { summary: SubagentTurnSummary }): Re
   return (
     <section
       id={`block-${summary.anchorBlockId}`}
-      className="ds-subagent-summary my-2 overflow-hidden rounded-[12px] border border-ds-border-muted/70 bg-ds-card/55 shadow-[0_10px_28px_rgba(15,23,42,0.04)]"
+      className="ds-subagent-summary"
     >
       <button
         type="button"
         onClick={() => setExpanded((value) => !value)}
         aria-expanded={expanded}
-        className="ds-subagent-summary__header group flex w-full items-start gap-3 px-4 py-3 text-left transition hover:bg-ds-hover/35"
+        className="ds-subagent-summary__header ds-tool-row ds-tool-header-row group text-left"
       >
-        <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-ds-hover/80 text-ds-ink/75">
+        <span className="flex h-4 w-4 shrink-0 items-center justify-center">
           {active ? (
             <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={2} />
           ) : (
@@ -1730,10 +1677,10 @@ function SubagentSummaryPanel({ summary }: { summary: SubagentTurnSummary }): Re
         </span>
         <span className="min-w-0 flex-1">
           <span className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-            <span className="ds-subagent-summary__title text-[14px] font-semibold tracking-[-0.015em] text-ds-ink">
+            <span className="ds-subagent-summary__title">
               {t('subagentSummaryTitle', { count: summary.total })}
             </span>
-            {countParts.length > 0 ? (
+            {expanded && countParts.length > 0 ? (
               <span
                 className={[
                   'text-[13px] text-ds-muted',
@@ -1745,7 +1692,7 @@ function SubagentSummaryPanel({ summary }: { summary: SubagentTurnSummary }): Re
             ) : null}
           </span>
         </span>
-        {hasFailure ? (
+        {expanded && hasFailure ? (
           <span
             className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center text-[15px] font-semibold leading-none tracking-tight text-ds-ink/70"
             aria-hidden
@@ -1766,6 +1713,7 @@ function SubagentSummaryPanel({ summary }: { summary: SubagentTurnSummary }): Re
       {expanded ? (
         <div className="border-t border-ds-border-muted/60 px-4 py-3">
           <div className="flex flex-col gap-2">
+            {summary.tools.map((block) => <ToolCard key={block.id} block={block} />)}
             {summary.blocks.map((block) => (
               <SubagentSummaryRow
                 key={block.id}
@@ -1840,10 +1788,9 @@ function ToolBatchPanel({
   const title = mixed
     ? label
     : t('toolBatchTitle', { label, count: blocks.length })
-  const preview = meta.preview
 
   return (
-    <div className="ds-tool-batch overflow-hidden rounded-[12px] border border-ds-border-muted/50 bg-ds-card/40">
+    <div className="ds-tool-batch overflow-hidden rounded-md">
       <button
         type="button"
         onClick={() => setExpanded((value) => !value)}
@@ -1855,11 +1802,6 @@ function ToolBatchPanel({
           <span className="ds-tool-batch__title block truncate text-ds-muted">
             {title}
           </span>
-          {!expanded && preview ? (
-            <span className="ds-tool-batch__preview mt-0.5 block truncate text-ds-faint" title={preview}>
-              {preview}
-            </span>
-          ) : null}
         </span>
         <span className="ds-tool-batch__chevron" aria-hidden>
           {expanded ? (
@@ -2029,14 +1971,7 @@ function SubagentSummaryRow({
   )
 }
 
-function MidTurnPrefaceLine({
-  text,
-  showIndicator
-}: {
-  text: string
-  /** True only for the newest in-progress thinking/preface row. */
-  showIndicator: boolean
-}): ReactElement {
+function MidTurnPrefaceLine({ text }: { text: string }): ReactElement {
   const { t } = useTranslation('common')
   const [expanded, setExpanded] = useState(false)
   const { preview, clipped } = clipMidTurnPrefaceText(text)
@@ -2044,9 +1979,10 @@ function MidTurnPrefaceLine({
 
   return (
     <div className="ds-process-narration flex items-start gap-1.5 py-0.5">
-      {showIndicator ? <SquareGrid className="mt-1 text-ds-faint" /> : null}
       <div className="min-w-0 flex-1">
-        <p className="whitespace-pre-wrap text-[13.5px] leading-6 text-ds-muted">{shown}</p>
+        <div className="ds-markdown ds-markdown--answer ds-chat-answer">
+          <AssistantMarkdown text={shown} streaming={false} className="ds-progress-markdown" />
+        </div>
         {clipped ? (
           <button
             type="button"
@@ -2081,6 +2017,7 @@ function MidTurnPrefaceLine({
  */
 function ProcessStream({
   blocks,
+  showExecutionDetails,
   processing,
   todoSession = null,
   todoEvents = [],
@@ -2088,25 +2025,29 @@ function ProcessStream({
   onOpenWorkspaceFile
 }: {
   blocks: ChatBlock[]
+  showExecutionDetails: boolean
   processing: boolean
   todoSession?: TodoTurnSession | null
   todoEvents?: TodoTurnEvent[]
   subagentSummary?: SubagentTurnSummary | null
   onOpenWorkspaceFile?: (path: string, line?: number) => void
 }): ReactElement {
+  const allBlocks = useChatStore((s) => s.blocks)
+  const interactiveToolIds = new Set(blocks
+    .filter((block) => block.kind === 'tool' && hasPendingToolGate(findPendingToolGate(allBlocks, block)))
+    .map((block) => block.id))
+  // The opening thought is orientation, not bulk execution detail.
+  const firstReasoning = blocks.find((block) => block.kind === 'reasoning')
+  const standaloneIds = new Set(interactiveToolIds)
+  if (firstReasoning) standaloneIds.add(firstReasoning.id)
   const visible = visibleExecutionBlocks(
-    blocks,
-    todoSession,
+    showExecutionDetails ? blocks : blocks.filter((block) =>
+      standaloneIds.has(block.id) || isVisibleWithoutExecutionDetails(block)),
+    showExecutionDetails ? todoSession : null,
     subagentSummary
   )
-  const rows = groupProcessRows(visible)
-  const chunks = planProcessRenderChunks(rows, processing)
-  // Only the first reasoning segment of a turn earns a live preview. Once a
-  // completed reasoning item exists, later reasoning stays collapsed so the
-  // transcript remains an execution story rather than a scrolling thought log.
-  const showLiveReasoningPreview = !blocks.some(
-    (block) => block.kind === 'reasoning' && block.id !== 'live-reasoning'
-  )
+  const rows = groupProcessRows(visible, interactiveToolIds)
+  const chunks = planProcessRenderChunks(rows, standaloneIds)
   const thinkingIndicatorId = trailingThinkingIndicatorId(rows, processing)
 
   const renderRow = (row: RenderRow): ReactElement =>
@@ -2124,10 +2065,10 @@ function ProcessStream({
         block={row.block}
         processing={processing}
         showThinkingIndicator={thinkingIndicatorId === row.block.id}
+        openingReasoning={row.block.id === firstReasoning?.id}
         todoSession={todoSession}
         todoEvents={todoEvents}
         subagentSummary={subagentSummary}
-        showLiveReasoningPreview={showLiveReasoningPreview}
         onOpenWorkspaceFile={onOpenWorkspaceFile}
       />
     )
@@ -2161,20 +2102,7 @@ function SettledWorkSummaryRow({
 }): ReactElement {
   const { t } = useTranslation('common')
   const [expanded, setExpanded] = useState(false)
-  const parts = [
-    ...probeComposeSegments(summary.compose).map((seg) => t(seg.key, { count: seg.count })),
-    summary.editCount > 0
-      ? summary.editCount === 1
-        ? t('groupEditedFile')
-        : t('groupEditedFiles', { count: summary.editCount })
-      : '',
-    summary.toolCount > 0
-      ? summary.toolCount === 1
-        ? t('groupUsedTool')
-        : t('groupUsedTools', { count: summary.toolCount })
-      : ''
-  ].filter(Boolean)
-  const label = parts.join(' · ') || t('processSteps', { count: rows.length })
+  const label = t('executionActivityCount', { count: summary.toolCount })
 
   return (
     <div className="ds-work-summary">
@@ -2182,8 +2110,9 @@ function SettledWorkSummaryRow({
         type="button"
         onClick={() => setExpanded((value) => !value)}
         aria-expanded={expanded}
-        className="group flex w-fit max-w-full items-center gap-1.5 py-0.5 text-left text-[13.5px] font-medium text-ds-faint transition hover:text-ds-muted"
+        className="ds-tool-row group text-left text-[13px] text-ds-faint transition hover:text-ds-muted"
       >
+        <Wrench className="ds-tool-header-row__icon shrink-0" strokeWidth={1.8} />
         <span className="min-w-0 truncate">{label}</span>
         {expanded ? (
           <ChevronDown className="h-3.5 w-3.5 shrink-0 opacity-45" strokeWidth={1.8} />
@@ -2203,20 +2132,20 @@ function ProcessStreamEntry({
   block,
   processing,
   showThinkingIndicator = false,
+  openingReasoning = false,
   todoSession = null,
   todoEvents = [],
   subagentSummary = null,
-  showLiveReasoningPreview = false,
   onOpenWorkspaceFile
 }: {
   block: ChatBlock
   processing: boolean
   /** Pulse Square Grid only on the newest thinking/preface row. */
   showThinkingIndicator?: boolean
+  openingReasoning?: boolean
   todoSession?: TodoTurnSession | null
   todoEvents?: TodoTurnEvent[]
   subagentSummary?: SubagentTurnSummary | null
-  showLiveReasoningPreview?: boolean
   onOpenWorkspaceFile?: (path: string, line?: number) => void
 }): ReactElement | null {
   // Inline todo card at its anchor block.
@@ -2271,26 +2200,15 @@ function ProcessStreamEntry({
         block={block}
         processing={processing}
         showIndicator={showThinkingIndicator}
-        showLivePreview={showLiveReasoningPreview}
+        keepHeading={openingReasoning}
       />
     )
   }
   if (block.kind === 'assistant') {
-    // The model's 承上启下 storyline line written before a tool batch. Render
-    // it like the reasoning narration line (SquareGrid + muted text) so it reads as
-    // the throughline the user follows while tools execute. When the frame
-    // carries no wording yet (structured intent only), show a neutral
-    // progress state derived from metadata instead of fabricating prose.
-    // Long prefaces are clipped — repair plans / mini-reports belong in the
-    // final answer bubble, not the process rail.
+    // Empty intent frames acquire wording later; never manufacture progress from paths.
     if (block.agentSegment === 'mid_turn_preface' || block.agentSegment == null) {
-      if (!block.text.trim()) {
-        if (!block.processIntent) return null
-        return (
-          <NeutralIntentLine intent={block.processIntent} showIndicator={showThinkingIndicator} />
-        )
-      }
-      return <MidTurnPrefaceLine text={block.text} showIndicator={showThinkingIndicator} />
+      if (!block.text.trim()) return null
+      return <MidTurnPrefaceLine text={block.text} />
     }
     // Other assistant content that landed in the work trace (interstitial
     // final-answer segments). These are already persisted — do not keep
@@ -2333,52 +2251,30 @@ function ProcessStreamEntry({
 function ReasoningEntry({
   block,
   processing,
-  showIndicator,
-  showLivePreview
+  keepHeading = false,
+  showIndicator
 }: {
   block: Extract<ChatBlock, { kind: 'reasoning' }>
   processing: boolean
+  keepHeading?: boolean
   /** Newest thinking row only — older steps stay text-only. */
   showIndicator: boolean
-  showLivePreview: boolean
 }): ReactElement {
   const { t } = useTranslation('common')
   const [expanded, setExpanded] = useState(false)
   const narration = block.narration?.trim()
   const text = block.text.trim()
   const isLive = block.id === 'live-reasoning'
-  const showStreamingPreview = isLive && processing && showLivePreview && !!text
-
-  if (showStreamingPreview) {
-    // Keep a short trailing window so the preview stays scannable while
-    // streaming; older tokens dissolve under the top fade mask.
-    const preview = text.length > 480 ? text.slice(-480) : text
-    return (
-      <div className="ds-live-thinking py-0.5">
-        <div className="flex items-center gap-1.5 text-[12px] font-medium text-ds-faint">
-          <SquareGrid className="text-ds-faint" />
-          <span className="ds-shiny-text">{t('thinkingNow')}</span>
+  if (narration) return (
+    <>
+      {keepHeading ? (
+        <div className="ds-process-reasoning ds-process-reasoning__toggle py-0.5 text-[13px]">
+          {t('thinkingLabel')}
         </div>
-        <div className="ds-live-thinking-viewport mt-1.5">
-          <p className="whitespace-pre-wrap text-[12.5px] leading-[1.55] text-ds-faint/70">
-            {preview}
-            <span className="ds-live-thinking-caret" aria-hidden />
-          </p>
-        </div>
-      </div>
-    )
-  }
-
-  // Narration is the user-facing line — show it directly, no toggle.
-  // Indicator only on the newest step; earlier steps are text-only.
-  if (narration) {
-    return (
-      <div className="ds-process-narration flex items-start gap-1.5 py-0.5">
-        {showIndicator ? <SquareGrid className="mt-1 text-ds-faint" /> : null}
-        <p className="text-[13.5px] leading-6 text-ds-faint/85">{narration}</p>
-      </div>
-    )
-  }
+      ) : null}
+      <MidTurnPrefaceLine text={narration} />
+    </>
+  )
 
   // No narration: collapsible raw reasoning.
   if (!text) return <></>
@@ -2387,7 +2283,8 @@ function ReasoningEntry({
       <button
         type="button"
         onClick={() => setExpanded((v) => !v)}
-        className="ds-process-reasoning__toggle group flex w-fit items-center gap-1.5 py-0.5 text-left text-[14px] font-medium text-ds-muted transition hover:opacity-85"
+        aria-expanded={expanded}
+        className="ds-process-reasoning__toggle group flex w-fit items-center gap-1.5 py-0.5 text-left text-[13px] font-normal text-ds-faint transition hover:opacity-85"
       >
         {showIndicator ? <SquareGrid className="text-ds-faint" /> : null}
         <span className={showIndicator ? 'ds-shiny-text' : ''}>{t('thinkingLabel')}</span>

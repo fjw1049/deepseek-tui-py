@@ -119,6 +119,8 @@ def infer_next_phase(
 ) -> Phase:
     if has_tool_error:
         return Phase.RECOVER
+    if current == Phase.RECOVER:
+        current = Phase.EXPLORE
     if batch == BatchKind.MUTATE:
         return Phase.CHANGE
     if batch in {BatchKind.INSPECT, BatchKind.EXPLORE_READ} and current == Phase.EXPLORE:
