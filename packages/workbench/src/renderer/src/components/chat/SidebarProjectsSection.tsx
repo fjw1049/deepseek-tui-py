@@ -17,7 +17,7 @@ import {
   LayoutGrid,
   Loader2,
   MessageSquare,
-  MoreHorizontal,
+  PanelTopClose,
   Pin,
   PinOff,
   Plus,
@@ -195,7 +195,6 @@ function SidebarProjectsToolbar({
    * would clip a rightward flyout. Anchored under the ⋯ icon, opening down-right.
    */
   const [menuPos, setMenuPos] = useState<{ top: number; left: number } | null>(null)
-  const [sortSubmenuOpen, setSortSubmenuOpen] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
   const menuButtonRef = useRef<HTMLButtonElement>(null)
   const menuPanelRef = useRef<HTMLDivElement>(null)
@@ -203,7 +202,6 @@ function SidebarProjectsToolbar({
   const closeMenu = (): void => {
     setMenuOpen(false)
     setMenuPos(null)
-    setSortSubmenuOpen(false)
   }
 
   useLayoutEffect(() => {
@@ -290,18 +288,15 @@ function SidebarProjectsToolbar({
             <button
               ref={menuButtonRef}
               type="button"
-              onClick={() => {
-                setMenuOpen((open) => {
-                  if (open) setSortSubmenuOpen(false)
-                  return !open
-                })
-              }}
+              onClick={() => setMenuOpen((open) => !open)}
               title={t('sidebarProjectsMenu')}
               aria-label={t('sidebarProjectsMenu')}
               aria-expanded={menuOpen}
-              className="rounded-md p-1 text-ds-faint opacity-0 transition duration-200 hover:bg-ds-hover/70 hover:text-ds-ink group-hover:opacity-100 group-focus-within:opacity-100 aria-expanded:opacity-100"
+              className="flex h-7 w-7 items-center justify-center rounded-md text-ds-faint opacity-0 transition duration-200 hover:bg-ds-hover/70 hover:text-ds-ink group-hover:opacity-100 group-focus-within:opacity-100 aria-expanded:opacity-100"
             >
-              <MoreHorizontal className="h-4 w-4" strokeWidth={2.5} />
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+                <path d="M4 6h16M8 12h8M11 18h2" />
+              </svg>
             </button>
             {menuOpen && menuPos
               ? createPortal(
@@ -312,92 +307,22 @@ function SidebarProjectsToolbar({
                     style={{ top: menuPos.top, left: menuPos.left }}
                     onMouseDown={(event) => event.stopPropagation()}
                   >
-                    <div
-                      className="relative"
-                      onMouseEnter={() => {
-                        if (workspaceCount > 0) setSortSubmenuOpen(true)
+                    {/* 1. Collapse/Expand */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        closeMenu()
+                        allCollapsed ? onExpandAll() : onCollapseAll()
                       }}
+                      className={menuItemClass}
                     >
-                      <button
-                        type="button"
-                        disabled={workspaceCount === 0}
-                        onMouseDown={(event) => event.preventDefault()}
-                        onClick={() => {
-                          if (workspaceCount === 0) return
-                          setSortSubmenuOpen(true)
-                        }}
-                        className={[
-                          menuItemClass,
-                          sortSubmenuOpen ? 'bg-ds-hover' : ''
-                        ].join(' ')}
-                      >
-                        <ArrowUpDown className="h-3.5 w-3.5 shrink-0" strokeWidth={1.85} />
-                        <span className="min-w-0 flex-1 truncate">{t('sidebarProjectsSort')}</span>
-                        <ChevronRight
-                          className="h-3.5 w-3.5 shrink-0 text-ds-faint"
-                          strokeWidth={1.85}
-                        />
-                      </button>
-                      {sortSubmenuOpen ? (
-                        <div
-                          className="absolute top-0 left-full z-10 ml-1 w-[11.75rem] overflow-hidden rounded-xl border border-ds-border bg-ds-elevated p-1 shadow-[0_24px_70px_rgba(44,55,78,0.18)] backdrop-blur-xl before:absolute before:inset-y-0 before:-left-1 before:w-1 before:content-[''] dark:shadow-[0_30px_80px_rgba(0,0,0,0.42)]"
-                          role="menu"
-                        >
-                          {PROJECT_SORT_MODES.map((mode) => {
-                            const active = !projectSortManual && projectSortMode === mode
-                            return (
-                              <button
-                                key={mode}
-                                type="button"
-                                role="menuitemradio"
-                                aria-checked={active}
-                                onClick={() => {
-                                  onProjectSortModeChange(mode)
-                                  closeMenu()
-                                }}
-                                className={[
-                                  menuItemClass,
-                                  active ? 'bg-ds-hover/80' : ''
-                                ].join(' ')}
-                              >
-                                <span className="min-w-0 flex-1 truncate tracking-[-0.01em]">
-                                  {t(PROJECT_SORT_LABEL_KEYS[mode])}
-                                </span>
-                                <span
-                                  className="flex h-3.5 w-3.5 shrink-0 items-center justify-center"
-                                  style={{ color: 'var(--ds-accent)' }}
-                                >
-                                  {active ? (
-                                    <Check className="h-3.5 w-3.5" strokeWidth={2.4} />
-                                  ) : null}
-                                </span>
-                              </button>
-                            )
-                          })}
-                          {projectSortManual ? (
-                            <button
-                              type="button"
-                              role="menuitem"
-                              onClick={() => {
-                                onRestoreAutoProjectSort()
-                                closeMenu()
-                              }}
-                              className={[menuItemClass, 'mt-0.5 border-t border-ds-border-muted/70'].join(
-                                ' '
-                              )}
-                            >
-                              <span className="min-w-0 flex-1 truncate tracking-[-0.01em]">
-                                {t('sidebarProjectsSortRestoreAuto')}
-                              </span>
-                            </button>
-                          ) : null}
-                        </div>
-                      ) : null}
-                    </div>
+                      <PanelTopClose className="h-3.5 w-3.5 shrink-0" strokeWidth={1.85} />
+                      {t(allCollapsed ? 'sidebarProjectsExpandAll' : 'sidebarProjectsCollapseAll')}
+                    </button>
+                    {/* 2. Batch select */}
                     <button
                       type="button"
                       disabled={projectThreadCount === 0}
-                      onMouseEnter={() => setSortSubmenuOpen(false)}
                       onClick={() => {
                         closeMenu()
                         onEnterSelectMode()
@@ -407,10 +332,67 @@ function SidebarProjectsToolbar({
                       <CheckSquare className="h-3.5 w-3.5 shrink-0" strokeWidth={1.85} />
                       {t('sidebarChatsBatchSelect')}
                     </button>
+                    {/* 3. Sort */}
+                    <div className="my-1 border-t border-ds-border-muted/70" />
+                    <div className="px-2 pt-0.5 pb-0.5 text-[10px] font-semibold uppercase tracking-wider text-ds-faint">
+                      {t('sidebarProjectsSort')}
+                    </div>
+                    <div className="relative">
+                      {PROJECT_SORT_MODES.map((mode) => {
+                        const active = !projectSortManual && projectSortMode === mode
+                        return (
+                          <button
+                            key={mode}
+                            type="button"
+                            role="menuitemradio"
+                            aria-checked={active}
+                            disabled={workspaceCount === 0}
+                            onClick={() => {
+                              onProjectSortModeChange(mode)
+                              closeMenu()
+                            }}
+                            className={[
+                              menuItemClass,
+                              active ? 'bg-ds-hover/80' : ''
+                            ].join(' ')}
+                          >
+                            <span className="min-w-0 flex-1 truncate tracking-[-0.01em]">
+                              {t(PROJECT_SORT_LABEL_KEYS[mode])}
+                            </span>
+                            <span
+                              className="flex h-3.5 w-3.5 shrink-0 items-center justify-center"
+                              style={{ color: 'var(--ds-accent)' }}
+                            >
+                              {active ? (
+                                <Check className="h-3.5 w-3.5" strokeWidth={2.4} />
+                              ) : null}
+                            </span>
+                          </button>
+                        )
+                      })}
+                      {projectSortManual ? (
+                        <button
+                          type="button"
+                          role="menuitem"
+                          onClick={() => {
+                            onRestoreAutoProjectSort()
+                            closeMenu()
+                          }}
+                          className={[menuItemClass, 'mt-0.5 border-t border-ds-border-muted/70'].join(
+                            ' '
+                          )}
+                        >
+                          <span className="min-w-0 flex-1 truncate tracking-[-0.01em]">
+                            {t('sidebarProjectsSortRestoreAuto')}
+                          </span>
+                        </button>
+                      ) : null}
+                    </div>
+                    {/* 4. Clear all */}
+                    <div className="my-1 border-t border-ds-border-muted/70" />
                     <button
                       type="button"
                       disabled={projectThreadCount === 0 || batchBusy}
-                      onMouseEnter={() => setSortSubmenuOpen(false)}
                       onClick={() => {
                         closeMenu()
                         onClearAll()
@@ -436,18 +418,6 @@ function SidebarProjectsToolbar({
             className="shrink-0 rounded-md p-1 text-ds-faint transition duration-200 hover:bg-ds-hover/70 hover:text-ds-ink"
           >
             <Plus className="h-4 w-4" strokeWidth={2.25} />
-          </button>
-          <button
-            type="button"
-            onClick={allCollapsed ? onExpandAll : onCollapseAll}
-            title={t(allCollapsed ? 'sidebarProjectsExpandAll' : 'sidebarProjectsCollapseAll')}
-            aria-label={t(allCollapsed ? 'sidebarProjectsExpandAll' : 'sidebarProjectsCollapseAll')}
-            aria-expanded={!allCollapsed}
-            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-ds-faint transition-colors duration-200 hover:bg-ds-hover/70 hover:text-ds-ink"
-          >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
-              <path d="M4 6h16M8 12h8M11 18h2" />
-            </svg>
           </button>
         </>
       )}
