@@ -43,7 +43,7 @@ it.each(tools)('%s stays collapsed across running, success and failure', async (
     expect(container.querySelector('.ds-tool-card')).toBeNull()
     expect(container.textContent).not.toContain('DETAIL_MUST_STAY_HIDDEN')
     expect(container.querySelector('pre')).toBeNull()
-    expect(container.querySelector('[aria-label="error"]')).toBeNull()
+    expect(container.querySelector('[aria-label="error"]') !== null).toBe(status === 'error')
     expect(container.querySelector('[aria-label="success"]')).toBeNull()
   }
 })

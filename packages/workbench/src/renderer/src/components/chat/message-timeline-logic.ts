@@ -224,10 +224,9 @@ export function clipMidTurnPrefaceText(
   return { preview: `${cut.trimEnd()}…`, clipped: true }
 }
 
-/** Collapsing execution details keeps the story and currently running work. */
+/** Collapsed history keeps actionable work; the caller selects live progress. */
 export function isVisibleWithoutExecutionDetails(block: ChatBlock): boolean {
-  if (block.kind === 'assistant') return !!block.text.trim()
-  if (block.kind === 'reasoning') return !!block.narration?.trim()
+  if (block.kind === 'assistant' || block.kind === 'reasoning') return false
   if (block.kind === 'tool') return block.status === 'running'
   return true
 }

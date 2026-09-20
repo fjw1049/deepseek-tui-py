@@ -565,7 +565,7 @@ describe('tail-anchor math', () => {
 
 
 describe('collapsed execution details', () => {
-  it('retains progress and running work while hiding settled outcomes', () => {
+  it('retains running work while folding narration and historical errors', () => {
     const blocks: ChatBlock[] = [
       { kind: 'assistant', id: 'progress', text: '找到原因，接下来验证修复。', agentSegment: 'mid_turn_preface' },
       { kind: 'reasoning', id: 'raw', text: 'raw reasoning' },
@@ -575,6 +575,6 @@ describe('collapsed execution details', () => {
       { kind: 'tool', id: 'running', summary: 'exec_shell', status: 'running' }
     ]
     expect(blocks.filter(isVisibleWithoutExecutionDetails).map(block => block.id))
-      .toEqual(['progress', 'milestone', 'running'])
+      .toEqual(['running'])
   })
 })

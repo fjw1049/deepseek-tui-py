@@ -5,22 +5,13 @@ import { subagentListTitle, type DockSubagentItem } from '../../lib/extract-suba
 import { taskListTitle, type TaskItemView } from '../../lib/extract-tasks-from-blocks'
 import { runDisplayTitle, runStatusKey } from '../../lib/run-activity'
 import type { RunTarget } from '../../store/run-panel-store'
+import { RunStatusMark } from './RunStatusMark'
 import './task-activity.css'
 
 type Props = {
   tasks: TaskItemView[]
   agents: DockSubagentItem[]
   onOpen: (target: Omit<RunTarget, 'threadId'>) => void
-}
-
-// ponytail: status is a plain dot — green done, red failed, spinning ring while
-// running. No glyphs; the color + motion carry the whole state.
-function StatusMark({ status, animate = false }: { status?: string; animate?: boolean }): ReactElement {
-  return (
-    <span className="ds-task-activity-mark" data-status={status} data-animate={animate} aria-hidden>
-      {status === 'running' ? <span className="ds-task-activity-orbit" /> : <span className="ds-task-activity-dot" />}
-    </span>
-  )
 }
 
 export function TaskActivity({ tasks, agents, onOpen }: Props): ReactElement | null {
@@ -48,9 +39,14 @@ export function TaskActivity({ tasks, agents, onOpen }: Props): ReactElement | n
   const stopped = items.filter((item) => item.status === 'canceled' || item.status === 'cancelled').length
   const status = !multiple ? first?.status : running ? 'running' : queued ? 'queued'
     : failed ? 'failed' : stopped ? 'canceled' : 'completed'
-  const count = running || queued || failed || stopped || items.length
+  const title = multiple
+    ? t(tasks.length ? 'taskActivityTasksCount' : 'taskActivityAgentsCount', { count: items.length })
+    : first.title
   const statusText = multiple
-    ? t('taskActivityCountStatus', { count, status: t(runStatusKey(status)) })
+    ? ['running', 'queued', 'completed', 'failed', 'canceled', 'timed_out'].flatMap((value) => {
+      const count = items.filter((item) => (item.status === 'pending' ? 'queued' : item.status === 'cancelled' ? 'canceled' : item.status) === value).length
+      return count ? [t('taskActivityCountStatus', { count, status: t(runStatusKey(value)) })] : []
+    }).join(' · ')
     : first ? t(runStatusKey(status)) : ''
 
   return (
@@ -61,20 +57,21 @@ export function TaskActivity({ tasks, agents, onOpen }: Props): ReactElement | n
         disabled={!first}
         aria-expanded={multiple ? expanded : undefined}
         aria-controls={multiple ? listId : undefined}
-        title={first ? `${multiple ? t('taskActivityParallel') : first.title} · ${statusText}` : undefined}
+        title={`${title} · ${statusText}`}
+        aria-label={`${title} · ${statusText}`}
         onClick={() => {
           if (multiple) setExpanded((value) => !value)
           else if (first) onOpen({ kind: first.kind, id: first.id })
         }}
       >
-        <StatusMark status={status} animate />
+        <RunStatusMark status={status} />
         <span className="ds-task-activity-heading">
           <span className="ds-task-activity-title">
-            {multiple
-              ? t('taskActivityAgentsCount', { count: items.length })
-              : t('contextRailAgentGroupTitle')}
+            {title}
           </span>
         </span>
+        {failed > 0 && status !== 'failed' && status !== 'timed_out' ? <RunStatusMark status="failed" /> : null}
+        {stopped > 0 && status !== 'canceled' && status !== 'cancelled' ? <RunStatusMark status="canceled" /> : null}
         {first ? <ChevronRight className="ds-task-activity-chevron" aria-hidden /> : null}
       </button>
       {multiple ? (
@@ -83,13 +80,10 @@ export function TaskActivity({ tasks, agents, onOpen }: Props): ReactElement | n
             <ul className="ds-task-activity-list">
               {items.map((item) => (
                 <li key={`${item.kind}:${item.id}`}>
-                  <button type="button" className="ds-task-activity-row" title={item.title} onClick={() => onOpen({ kind: item.kind, id: item.id })}>
-                    <StatusMark status={item.status} />
+                  <button type="button" className="ds-task-activity-row" title={`${item.title} · ${t(item.kind === 'task' ? 'taskActivityBackground' : 'taskActivitySubagent')} · ${t(runStatusKey(item.status))}`} onClick={() => onOpen({ kind: item.kind, id: item.id })}>
+                    <RunStatusMark status={item.status} />
                     <span className="ds-task-activity-heading">
                       <span className="ds-task-activity-title">{item.title}</span>
-                      <span className="ds-task-activity-summary" data-status={item.status}>
-                        {t(item.kind === 'task' ? 'taskActivityBackground' : 'taskActivitySubagent')} · {t(runStatusKey(item.status))}
-                      </span>
                     </span>
                     <ChevronRight className="ds-task-activity-chevron" aria-hidden />
                   </button>

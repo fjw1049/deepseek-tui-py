@@ -1003,6 +1003,7 @@
   "contextRailProcess": "待办",
   "contextRailTasks": "任务",
   "contextRailAgentGroupTitle": "智能体",
+  "taskActivityTasksCount": "{{count}} 个任务",
   "taskActivityAgentsCount": "{{count}} 个智能体",
   "taskActivityParallel": "并行任务",
   "taskActivityBackground": "后台任务",

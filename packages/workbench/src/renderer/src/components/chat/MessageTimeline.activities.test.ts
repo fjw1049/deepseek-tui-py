@@ -1,0 +1,184 @@
+// @vitest-environment happy-dom
+import { act, createElement } from 'react'
+import { createRoot } from 'react-dom/client'
+import { afterEach, beforeEach, expect, it, vi } from 'vitest'
+import { MessageTimeline } from './MessageTimeline'
+import { useChatStore } from '../../store/chat-store'
+import { useRunPanelStore } from '../../store/run-panel-store'
+import { extractSubagentsFromBlocks } from '../../lib/extract-subagents-from-blocks'
+import type { ChatBlock } from '../../agent/types'
+
+vi.mock('./StreamdownAssistant', () => ({
+  StreamdownAssistant: ({ text }: { text: string }) => createElement('p', null, text)
+}))
+
+const initial = useChatStore.getState()
+const initialPanel = useRunPanelStore.getState()
+let container: HTMLDivElement
+let root: ReturnType<typeof createRoot>
+beforeEach(() => {
+  globalThis.IS_REACT_ACT_ENVIRONMENT = true
+  container = document.createElement('div')
+  document.body.append(container)
+  root = createRoot(container)
+})
+afterEach(() => {
+  act(() => root.unmount())
+  container.remove()
+  useChatStore.setState(initial, true)
+  useRunPanelStore.setState(initialPanel, true)
+  vi.unstubAllGlobals()
+})
+
+async function render(blocks: ChatBlock[], busy = true): Promise<void> {
+  act(() => useChatStore.setState({ busy, blocks, activeThreadId: 'activities', workspaceRoot: '' }))
+  await act(async () => root.render(createElement(MessageTimeline, {
+    blocks, live: '', liveReasoning: '', activeThreadId: 'activities', runtimeConnection: 'ready',
+    onRetryConnection: () => {}, onOpenSettings: () => {}, onOpenDiagnostics: () => {}
+  })))
+}
+
+function checklist(done: number): ChatBlock {
+  return { kind: 'tool', id: `plan-${done}`, toolKind: 'tool_call', status: 'success', summary: 'checklist',
+    meta: { tool_name: 'checklist', task_updates: { checklist: { items: Array.from({ length: 4 }, (_, i) => ({
+      id: String(i), content: `步骤 ${i + 1}`, status: i < done ? 'completed' : i === done ? 'in_progress' : 'pending'
+    })) } } } }
+}
+
+const agent = (id: string, status: 'running' | 'completed' | 'failed'): ChatBlock => ({
+  kind: 'subagent', id, cardKind: 'delegate', agentId: id, agentType: 'research',
+  prompt: `分析 ${id}`, status
+})
+
+it('keeps one checklist mounted through progress, disclosure toggles and completion', async () => {
+  const blocks: ChatBlock[] = [{ kind: 'user', id: 'user', text: 'mock four todos' }, checklist(0)]
+  await render(blocks)
+  const card = container.querySelector('.ds-inline-todo')!
+  expect(card).not.toBeNull()
+  const toggle = card.querySelector('button')!
+  await act(async () => toggle.click())
+  expect(toggle.getAttribute('aria-expanded')).toBe('false')
+  const process = container.querySelector('.ds-work-meta-row') as HTMLButtonElement
+  for (let i = 1; i <= 4; i++) {
+    blocks.push(checklist(i))
+    await render([...blocks], i < 4)
+    await act(async () => process.click())
+    expect(container.querySelectorAll('.ds-inline-todo')).toHaveLength(1)
+    expect(container.querySelector('.ds-inline-todo')).toBe(card)
+    expect(card.textContent).toContain(`${i}/4`)
+    expect(toggle.getAttribute('aria-expanded')).toBe('false')
+  }
+  await act(async () => toggle.click())
+  expect(card.querySelectorAll('li')).toHaveLength(4)
+  expect(card.querySelectorAll('[data-status="completed"]')).toHaveLength(4)
+})
+
+it('leaves subagent status in the side card without duplicate timeline entries', async () => {
+  const blocks: ChatBlock[] = [
+    agent('A', 'failed'), agent('B', 'running'),
+    { kind: 'tool', id: 'wait', summary: 'agent: wait', toolKind: 'tool_call', status: 'success',
+      detail: 'raw wait log', meta: { tool_name: 'agent' } }
+  ]
+  await render(blocks)
+  expect(container.querySelector('.ds-subagent-summary')).toBeNull()
+  expect(container.querySelector('#block-wait')).toBeNull()
+  expect(extractSubagentsFromBlocks(useChatStore.getState().blocks).map(({ agentId, status }) => ({ agentId, status })))
+    .toEqual([{ agentId: 'A', status: 'failed' }, { agentId: 'B', status: 'running' }])
+  await act(async () => (container.querySelector('.ds-work-meta-row') as HTMLButtonElement).click())
+  expect(container.querySelector('.ds-subagent-summary')).toBeNull()
+  expect(container.querySelector('.ds-subagent-bubble')).toBeNull()
+  await render([agent('A', 'completed'), agent('B', 'completed')])
+  expect(container.querySelector('.ds-subagent-summary')).toBeNull()
+  expect(useChatStore.getState().busy).toBe(true)
+})
+
+it('omits a single agent after reload and keeps failed tool logs in details', async () => {
+  await render([
+    agent('A', 'completed'),
+    { kind: 'tool', id: 'failed', summary: 'agent_resume: failed', status: 'error',
+      toolKind: 'tool_call', meta: { tool_name: 'agent_resume' } }
+  ], false)
+  expect(container.querySelector('.ds-subagent-summary')).toBeNull()
+  expect(container.querySelector('#block-failed')).toBeNull()
+  await act(async () => (container.querySelector('.ds-work-meta-row') as HTMLButtonElement).click())
+  expect(container.querySelector('#block-failed [aria-label="error"]')).not.toBeNull()
+})
+
+it('shows only latest progress while collapsed and restores all progress in details', async () => {
+  const blocks: ChatBlock[] = [
+    { kind: 'assistant', id: 'p1', text: '旧进展', agentSegment: 'mid_turn_preface' },
+    { kind: 'reasoning', id: 'r', text: 'raw reasoning', narration: '较新进展' },
+    { kind: 'assistant', id: 'p2', text: '最新进展', agentSegment: 'mid_turn_preface' }
+  ]
+  await render(blocks)
+  const details = container.querySelector('.ds-work-meta-row') as HTMLButtonElement
+  if (details.getAttribute('aria-expanded') === 'true') await act(async () => details.click())
+  expect(container.textContent).toContain('最新进展')
+  expect(container.textContent).not.toContain('旧进展')
+  expect(container.textContent).not.toContain('较新进展')
+  await render([...blocks, { kind: 'assistant', id: 'answer', text: '最终交付', agentSegment: 'final_answer' }], false)
+  expect(container.textContent).toContain('最终交付')
+  expect(container.textContent).not.toContain('最新进展')
+  await act(async () => details.click())
+  expect(container.textContent).toContain('旧进展')
+  expect(container.textContent).toContain('最新进展')
+})
+
+it('keeps a tool waiting for approval visible even when it is checklist or orchestration', async () => {
+  for (const toolName of ['checklist', 'agent']) {
+    await render([
+      checklist(0), agent('A', 'running'),
+      { kind: 'tool', id: 'waiting', summary: toolName, status: 'success', toolKind: 'tool_call', meta: { tool_name: toolName } },
+      { kind: 'approval', id: 'approval', approvalId: 'waiting', summary: 'Please approve', status: 'pending' }
+    ])
+    const details = container.querySelector('.ds-work-meta-row') as HTMLButtonElement
+    if (details.getAttribute('aria-expanded') === 'true') await act(async () => details.click())
+    expect(container.querySelector('#block-waiting')).not.toBeNull()
+  }
+})
+
+it('keeps completed parent narration folded while its child continues running', async () => {
+  await render([
+    { kind: 'assistant', id: 'p', text: '等待子代理', agentSegment: 'mid_turn_preface' },
+    agent('A', 'running'),
+    { kind: 'assistant', id: 'answer', text: '已交付当前结果', agentSegment: 'final_answer' }
+  ], false)
+  expect(container.textContent).not.toContain('等待子代理')
+  expect(container.textContent).toContain('已交付当前结果')
+  expect(extractSubagentsFromBlocks(useChatStore.getState().blocks)[0].status).toBe('running')
+})
+
+it('refreshes task state after reload and opens the matching task in the sidebar', async () => {
+  const runtimeRequest = vi.fn().mockResolvedValue({ ok: true, body: JSON.stringify({ tasks: [
+    { id: 'task-A', status: 'completed' }, { id: 'foreign-task', status: 'running' }
+  ] }) })
+  vi.stubGlobal('dsGui', { runtimeRequest })
+  await render([
+    { kind: 'tool', id: 'create-task', toolKind: 'tool_call', summary: 'task_create', status: 'success',
+      meta: { tool_name: 'task_create', tasks: [{ id: 'task-A', prompt: '审核后台任务', status: 'queued' }] } }
+  ], false)
+  const trigger = container.querySelector('.ds-task-activity-trigger') as HTMLButtonElement
+  expect(trigger.textContent).toContain('审核后台任务')
+  expect(trigger.querySelector('[data-status="completed"]')).not.toBeNull()
+  expect(container.textContent).not.toContain('foreign-task')
+  expect(container.querySelector('#block-create-task')).toBeNull()
+  await act(async () => trigger.click())
+  expect(useRunPanelStore.getState().target).toEqual({ threadId: 'activities', kind: 'task', id: 'task-A' })
+})
+
+it('folds historical checklist and agent failures once the plan and agents finish', async () => {
+  const failures: ChatBlock[] = ['checklist', 'agent_send_input', 'agent_send_input', 'agent_spawn', 'agent_spawn'].map((name, i) => ({
+    kind: 'tool', id: `historical-error-${i}`, summary: name, status: 'error', toolKind: 'tool_call',
+    detail: `Historical failure ${i}`, meta: { tool_name: name }
+  }))
+  await render([
+    ...failures, checklist(4), agent('A', 'completed'), agent('B', 'completed'),
+    { kind: 'assistant', id: 'final', text: '两个子代理已完成分析。', agentSegment: 'final_answer' }
+  ], false)
+  for (const block of failures) expect(container.querySelector(`#block-${block.id}`)).toBeNull()
+  expect(container.querySelector('.ds-inline-todo')?.textContent).toContain('4/4')
+  expect(container.querySelector('.ds-subagent-summary')).toBeNull()
+  expect(container.textContent).toContain('两个子代理已完成分析。')
+  await act(async () => (container.querySelector('.ds-work-meta-row') as HTMLButtonElement).click())
+  for (const block of failures) expect(container.querySelector(`#block-${block.id}`)).not.toBeNull()
+})

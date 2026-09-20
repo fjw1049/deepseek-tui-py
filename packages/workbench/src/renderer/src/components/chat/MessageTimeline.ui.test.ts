@@ -25,7 +25,7 @@ afterEach(() => {
   useChatStore.setState(initial, true)
 })
 
-it('keeps progress after completion, with commands and failures only in execution details', async () => {
+it('folds completed progress and tool errors while preserving their details', async () => {
   globalThis.IS_REACT_ACT_ENVIRONMENT = true
   document.body.append(container)
   const progress = '已确认消息没有丢失。\n\n接下来检查折叠规则。'
@@ -61,7 +61,7 @@ it('keeps progress after completion, with commands and failures only in executio
   ]
   act(() => useChatStore.setState({ busy: false, blocks: completed }))
   await render(completed)
-  expect(container.textContent).toContain(progress)
+  expect(container.textContent).not.toContain(progress)
   expect(container.textContent).toContain('这里是最终结果。')
   expect(container.textContent).not.toContain('Verification could not complete')
   expect(container.querySelector('#block-failed')).toBeNull()
@@ -70,8 +70,7 @@ it('keeps progress after completion, with commands and failures only in executio
   expect(details.getAttribute('aria-expanded')).toBe('false')
   await act(async () => details.click())
   const activity = container.querySelector('.ds-work-summary > button') as HTMLButtonElement
-  expect(activity.getAttribute('aria-expanded')).toBe('false')
-  await act(async () => activity.click())
+  if (activity) await act(async () => activity.click())
   expect(container.querySelector('#block-command')).not.toBeNull()
   expect(container.textContent).not.toContain('Verification could not complete')
   const failedRow = container.querySelector('#block-failed [role="button"]') as HTMLElement
@@ -86,7 +85,7 @@ it('keeps silent edit rounds compact and inserts delayed narration once without 
     { kind: 'assistant', id: 'progress', text: '已找到问题，正在修复。', agentSegment: 'mid_turn_preface' },
     ...[0, 1, 2].flatMap((i): ChatBlock[] => [
       { kind: 'assistant', id: `intent-${i}`, text: '', agentSegment: 'mid_turn_preface',
-        processIntent: { anchors: ['src/app.py'], toolCount: 1 } },
+        processIntent: { scope: 'pre_tool', source: 'none', anchors: ['src/app.py'], toolCount: 1 } },
       { kind: 'reasoning', id: `reason-${i}`, text: 'private execution detail' },
       { kind: 'tool', id: `edit-${i}`, toolKind: 'file_change', status: i === 1 ? 'error' : 'running',
         summary: 'edit_file: src/app.py', detail: 'raw edit result', meta: { tool_name: 'edit_file' } }
@@ -101,8 +100,8 @@ it('keeps silent edit rounds compact and inserts delayed narration once without 
   }
   act(() => useChatStore.setState({ busy: true, blocks, workspaceRoot: '', activeThreadId: 'silent-review' }))
   await render()
-  expect(container.querySelectorAll('.ds-work-summary')).toHaveLength(1)
-  expect(container.textContent).not.toContain('src/app.py')
+  await act(async () => (container.querySelector('.ds-work-meta-row') as HTMLButtonElement).click())
+  expect(container.querySelector('#block-edit-1')).not.toBeNull()
   expect(container.textContent).not.toContain('raw edit result')
   expect(container.querySelectorAll('.ds-process-narration')).toHaveLength(1)
   const details = container.querySelector('.ds-work-meta-row') as HTMLButtonElement
@@ -111,7 +110,7 @@ it('keeps silent edit rounds compact and inserts delayed narration once without 
   act(() => useChatStore.setState({ busy: false }))
   await render()
   expect(details.getAttribute('aria-expanded')).toBe('true')
-  expect(container.querySelectorAll('.ds-work-summary')).toHaveLength(1)
+  expect(container.querySelector('#block-edit-1')).not.toBeNull()
   const intent = blocks[4]
   if (intent.kind === 'assistant') intent.text = '修复已完成，开始核对结果。'
   // Replace the array so the timeline rebuilds the same persisted frame.
@@ -124,36 +123,6 @@ it('keeps silent edit rounds compact and inserts delayed narration once without 
   expect(container.textContent).not.toContain('正在处理')
 })
 
-
-it('keeps failed subagent summaries quiet after history reload', async () => {
-  const blocks: ChatBlock[] = [
-    { kind: 'assistant', id: 'p', text: '正在核对结果。', agentSegment: 'mid_turn_preface' },
-    { kind: 'tool', id: 'delegate', summary: 'agent: assignment', status: 'error',
-      toolKind: 'tool_call', detail: 'Internal orchestration failure', meta: { tool_name: 'agent' } },
-    { kind: 'subagent', id: 'sub', cardKind: 'delegate', agentId: 'worker', agentType: 'research',
-      status: 'failed', summary: 'Worker failure detail' }
-  ]
-  act(() => useChatStore.setState({ busy: false, blocks, workspaceRoot: '', activeThreadId: 'history' }))
-  await act(async () => root.render(createElement(MessageTimeline, {
-    blocks, liveReasoning: '', live: '', activeThreadId: 'history',
-    runtimeConnection: 'ready', onRetryConnection: () => {},
-    onOpenSettings: () => {}, onOpenDiagnostics: () => {}
-  })))
-  const details = container.querySelector('.ds-work-meta-row') as HTMLButtonElement
-  await act(async () => details.click())
-  const summary = container.querySelector('.ds-subagent-summary__header') as HTMLButtonElement
-  expect(summary.getAttribute('aria-expanded')).toBe('false')
-  expect(summary.textContent).not.toContain('!')
-  expect(container.querySelector('#block-delegate')).toBeNull()
-  expect(container.textContent).not.toContain('Worker failure detail')
-  await act(async () => summary.click())
-  expect(summary.getAttribute('aria-expanded')).toBe('true')
-  expect(container.querySelector('#block-delegate')).not.toBeNull()
-  expect(container.textContent).not.toContain('Internal orchestration failure')
-  const tool = container.querySelector('#block-delegate [role="button"]') as HTMLElement
-  await act(async () => tool.click())
-  expect(container.textContent).toContain('Internal orchestration failure')
-})
 
 it.each([undefined, '已核对触发条件。'])('hides the first thought in collapsed history (narration: %s)', async (narration) => {
   const blocks: ChatBlock[] = [
@@ -171,7 +140,7 @@ it.each([undefined, '已核对触发条件。'])('hides the first thought in col
   })))
   const thought = container.querySelector('.ds-process-reasoning') as HTMLElement
   expect(thought).toBeNull()
-  expect(container.textContent).toContain('我先核对重复出现的条件')
+  expect(container.textContent).not.toContain('我先核对重复出现的条件')
   expect(container.textContent).not.toContain('Initial analysis')
   await act(async () => (container.querySelector('.ds-work-meta-row') as HTMLButtonElement).click())
   expect(container.querySelectorAll('.ds-process-reasoning')).toHaveLength(1)

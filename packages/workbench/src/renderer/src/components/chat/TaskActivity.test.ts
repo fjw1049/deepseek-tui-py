@@ -37,13 +37,13 @@ afterEach(async () => {
 
 it('opens a single run directly and stops its activity indicator on completion', async () => {
   await render([agent('a')])
-  expect(trigger().textContent).toContain('智能体')
+  expect(trigger().textContent).toContain('检查 a 的界面布局')
   expect(trigger().getAttribute('aria-expanded')).toBeNull()
   await act(async () => trigger().click())
   expect(onOpen).toHaveBeenCalledWith({ kind: 'subagent', id: 'a' })
   await render([agent('a', 'completed')])
   expect(trigger().title).toContain('已完成')
-  expect(container.querySelector('.ds-task-activity-orbit')).toBeNull()
+  expect(container.querySelector('[data-status="running"]')).toBeNull()
   await render([], [{ id: 'task-a', prompt: '检查后台任务', status: 'queued' }])
   await act(async () => trigger().click())
   expect(onOpen).toHaveBeenLastCalledWith({ kind: 'task', id: 'task-a' })
@@ -53,13 +53,16 @@ it('counts running work separately from queued work and keeps failures visible',
   await render([agent('a'), agent('b', 'pending'), agent('c', 'failed')], [
     { id: 't', prompt: '等待执行', status: 'queued' }
   ])
-  expect(trigger().textContent).toContain('4 个智能体')
+  expect(trigger().textContent).toContain('4 个任务')
+  expect(trigger().querySelector('[data-status="failed"]')).not.toBeNull()
+  expect(trigger().querySelector('[data-status="running"]')).not.toBeNull()
   expect(trigger().getAttribute('aria-expanded')).toBe('false')
   expect(container.querySelector('.ds-task-activity-body')?.hasAttribute('inert')).toBe(true)
   await act(async () => trigger().click())
   const rows = [...container.querySelectorAll<HTMLButtonElement>('.ds-task-activity-row')]
-  expect(rows[0].textContent).toContain('排队中')
-  expect(rows[2].textContent).toContain('排队中')
+  expect(rows[0].querySelector('[aria-label="排队中"]')).not.toBeNull()
+  expect(rows[2].querySelector('[aria-label="排队中"]')).not.toBeNull()
+  expect(rows[2].textContent).not.toContain('排队中')
   await act(async () => rows[2].click())
   expect(onOpen).toHaveBeenCalledWith({ kind: 'subagent', id: 'b' })
 })

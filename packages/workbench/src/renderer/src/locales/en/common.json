@@ -1003,6 +1003,7 @@
   "contextRailProcess": "Todos",
   "contextRailTasks": "TASKS",
   "contextRailAgentGroupTitle": "Agents",
+  "taskActivityTasksCount": "{{count}} tasks",
   "taskActivityAgentsCount": "{{count}} agents",
   "taskActivityParallel": "Parallel tasks",
   "taskActivityBackground": "Background task",

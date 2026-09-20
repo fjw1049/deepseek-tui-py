@@ -128,7 +128,7 @@ export const ToolCard = memo(function ToolCard({
   const isHeavy = awaitingGate
 
   const headerElement = HeaderComp ? (
-    <HeaderComp context={ctx} quiet={!open} />
+    <HeaderComp context={ctx} quiet={!open && ctx.state !== 'error'} />
   ) : (
     <ToolHeaderRow
       icon={Icon}
@@ -137,7 +137,7 @@ export const ToolCard = memo(function ToolCard({
       filePath={open ? filePath : undefined}
       fileLine={ctx.isFileChange ? ctx.editLine : readLine}
       state={ctx.state}
-      quiet={!awaitingGate && !open}
+      quiet={!awaitingGate && !open && ctx.state !== 'error'}
       expanded={open}
       canExpand={canExpand}
       diffStats={open ? ctx.diffStats : undefined}
