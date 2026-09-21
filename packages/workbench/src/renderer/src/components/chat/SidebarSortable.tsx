@@ -50,13 +50,14 @@ export function SidebarSortableList({
     clearSplitDrag()
     if (handled) return
     if (!over || active.id === over.id) return
+    if (point && (point.x < over.rect.left || point.x > over.rect.right || point.y < over.rect.top || point.y > over.rect.bottom)) return
     const activeId = String(active.id)
     const overId = String(over.id)
     if (!items.includes(activeId) || !items.includes(overId)) return
     onReorder(moveIdBefore(items, activeId, overId))
   }
 
-  if (disabled || items.length < 2) {
+  if (disabled) {
     return <>{children}</>
   }
 
@@ -103,9 +104,7 @@ export function SidebarSortableRow({
 
   const baseTransform = CSS.Transform.toString(transform)
   const style: CSSProperties = {
-    transform: isDragging
-      ? `${baseTransform ?? ''} scale(1.02)`.trim()
-      : baseTransform || undefined,
+    transform: baseTransform || undefined,
     transition,
     zIndex: isDragging ? 20 : undefined,
     position: 'relative',

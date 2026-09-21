@@ -98,3 +98,11 @@ describe('shortcuts', () => {
     ).toBe(false)
   })
 })
+
+it('matches the split shortcut on both platforms and supports disabling it', () => {
+  expect(findMatchedShortcut(keyEvent({ key: 'N', metaKey: true, shiftKey: true }))?.id).toBe('newSplitConversation')
+  expect(findMatchedShortcut(keyEvent({ key: 'N', ctrlKey: true, shiftKey: true }))?.id).toBe('newSplitConversation')
+  const settings = mergeShortcutsSettings(defaultShortcutsSettings(), { newSplitConversation: { enabled: false } })
+  expect(isShortcutEnabled(settings, 'newSplitConversation')).toBe(false)
+  expect(normalizeShortcutsSettings({}).newSplitConversation.enabled).toBe(true)
+})

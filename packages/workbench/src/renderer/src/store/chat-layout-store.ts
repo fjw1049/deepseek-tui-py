@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { normalizeWorkspaceRoot } from '../lib/workspace-path'
 
-export const MAX_CHAT_PANES = 4
+export const MAX_CHAT_PANES = 6
 export const CHAT_THREAD_DRAG_MIME = 'application/x-deepseek-thread'
 export type ChatPane = { id: string; threadId: string | null }
 export type ChatArrangement = 'grid' | 'horizontal' | 'vertical'
@@ -51,6 +51,7 @@ type LayoutState = {
   layouts: Record<string, ChatLayout>
   add: (project: string, current: string | null, threadId?: string | null, side?: 'left' | 'right') => boolean
   bind: (project: string, paneId: string, threadId: string) => void
+  drop: (project: string, paneId: string, threadId: string) => boolean
   focus: (project: string, paneId: string) => void
   close: (project: string, paneId: string) => void
   resize: (project: string, axis: 'x' | 'y', ratio: number) => void
@@ -86,6 +87,23 @@ export const useChatLayoutStore = create<LayoutState>((set, get) => {
       const existing = layout.panes.find(p => p.threadId === threadId)
       if (existing) { update(project, { ...layout, focused: existing.id }); return }
       update(project, { ...layout, panes: layout.panes.map(p => p.id === paneId ? { ...p, threadId } : p), focused: paneId })
+    },
+    drop(project, paneId, threadId) {
+      const layout = get().layouts[chatProjectKey(project)]
+      if (!layout) return false
+      const target = layout.panes.findIndex(p => p.id === paneId)
+      if (target < 0) return false
+      const source = layout.panes.findIndex(p => p.threadId === threadId)
+      const panes = [...layout.panes]
+      if (source >= 0) {
+        const dragged = panes[source]
+        panes[source] = panes[target]
+        panes[target] = dragged
+      } else {
+        panes[target] = { ...panes[target], threadId }
+      }
+      update(project, { ...layout, panes, focused: panes[target].id })
+      return true
     },
     focus(project, paneId) {
       const layout = get().layouts[chatProjectKey(project)]

@@ -6,6 +6,7 @@ import { CSS } from '@dnd-kit/utilities'
 import { Plus } from 'lucide-react'
 import { KanbanCardView } from './KanbanCardView'
 import { KanbanStatusIcon } from './KanbanStatusIcon'
+import { readKanbanUiScale, scaleDndTransform } from './kanban-drag-coords'
 import {
   DONE_RENDER_CAP,
   kanbanColumnDropId,
@@ -46,7 +47,9 @@ function SortableKanbanCard({
         dragBind={{
           setNodeRef,
           style: {
-            transform: isDragging ? undefined : CSS.Translate.toString(transform),
+            transform: isDragging || !transform
+              ? undefined
+              : CSS.Translate.toString(scaleDndTransform(transform, readKanbanUiScale())),
             transition: isDragging ? undefined : transition
           },
           attributes: attributes as HTMLAttributes<HTMLElement>,

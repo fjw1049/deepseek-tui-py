@@ -2185,7 +2185,7 @@ const store = create<ChatState>((set, get) => ({
       const envMode = options.chats
         ? 'local'
         : resolveWorkspaceEnvMode(useEnvironmentPreferences.getState().modeByWorkspace, workspaceRoot)
-      const reusableThreadId = await findReusableEmptyThreadId(get(), p, workspaceRoot)
+      const reusableThreadId = options.forceNew ? null : await findReusableEmptyThreadId(get(), p, workspaceRoot)
       if (reusableThreadId) {
         const reusableThread = get().threads.find((thread) => thread.id === reusableThreadId)
         if (envMode === 'worktree' && reusableThread?.envMode !== 'worktree') {

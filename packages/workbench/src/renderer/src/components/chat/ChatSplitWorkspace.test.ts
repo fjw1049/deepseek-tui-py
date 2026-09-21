@@ -16,15 +16,15 @@ vi.mock('./MessageTimeline', () => ({ MessageTimeline: () => null }))
 vi.mock('./ComposerStage', () => ({ ComposerStage: (props: { input: string; setInput: (text: string) => void }) =>
   createElement('textarea', { value: props.input, onChange: (event: { target: { value: string } }) => props.setInput(event.target.value) })
 }))
-import { ChatSplitWorkspace } from './ChatSplitWorkspace'
+import { ChatSplitDropZone, ChatSplitWorkspace } from './ChatSplitWorkspace'
 import { useChatStore } from '../../store/chat-store'
 import { resolveChatLayoutKey, useChatLayoutStore } from '../../store/chat-layout-store'
-import { openThreadInSplit } from '../../lib/chat-split-navigation'
+import { CHAT_SPLIT_DRAG_EVENT, finishChatSplitDrag, openThreadInSplit } from '../../lib/chat-split-navigation'
 import { disposeChatPaneSessions, getChatPaneSession } from '../../store/chat-pane-sessions'
 
 const original = useChatStore.getState()
 let root: Root, container: HTMLDivElement
-const threads = ['a', 'b', 'c', 'd', 'e'].map(id => ({ id, title: `Task ${id}`, workspace: id === 'a' ? '/repo' : `/repo-${id}`, model: 'test', mode: 'agent', updatedAt: '' }))
+const threads = ['a', 'b', 'c', 'd', 'e', 'f', 'g'].map(id => ({ id, title: `Task ${id}`, workspace: id === 'a' ? '/repo' : `/repo-${id}`, model: 'test', mode: 'agent', updatedAt: '' }))
 beforeEach(() => {
   globalThis.IS_REACT_ACT_ENVIRONMENT = true
   container = document.createElement('div'); document.body.append(container); root = createRoot(container)
@@ -103,10 +103,12 @@ it('keeps cross-project navigation in the same layout and each session in its ow
   expect(resolveChatLayoutKey(useChatLayoutStore.getState(), '/repo-b')).toBe('/repo')
   expect(openThreadInSplit('c')).toBe(true)
   expect(openThreadInSplit('d')).toBe(true)
-  expect(openThreadInSplit('e')).toBe(false)
+  expect(openThreadInSplit('e')).toBe(true)
+  expect(openThreadInSplit('f')).toBe(true)
+  expect(openThreadInSplit('g')).toBe(false)
   await act(async () => root.render(createElement(Harness)))
-  expect(container.querySelectorAll('[data-chat-pane]')).toHaveLength(4)
-  for (const thread of threads.slice(0, 4)) {
+  expect(container.querySelectorAll('[data-chat-pane]')).toHaveLength(6)
+  for (const thread of threads.slice(0, 6)) {
     expect(getChatPaneSession(thread.id).store.getState().workspaceRoot).toBe(thread.workspace)
     expect(container.querySelector('.ds-chat-split-project')).toBeNull()
   }
@@ -114,9 +116,9 @@ it('keeps cross-project navigation in the same layout and each session in its ow
   await act(async () => { expect(openThreadInSplit('a')).toBe(true) })
   expect(useChatLayoutStore.getState().layouts['/repo'].panes).toEqual(before)
   expect(useChatStore.getState().activeThreadId).toBe('a')
-  await act(async () => { expect(openThreadInSplit('e', 'right', before[1].id)).toBe(true) })
-  expect(useChatLayoutStore.getState().layouts['/repo'].panes.map(p => p.threadId)).toEqual(['a', 'e', 'c', 'd'])
-  expect(getChatPaneSession('e').store.getState().workspaceRoot).toBe('/repo-e')
+  await act(async () => { expect(openThreadInSplit('g', 'right', before[1].id)).toBe(true) })
+  expect(useChatLayoutStore.getState().layouts['/repo'].panes.map(p => p.threadId)).toEqual(['a', 'g', 'c', 'd', 'e', 'f'])
+  expect(getChatPaneSession('g').store.getState().workspaceRoot).toBe('/repo-g')
 })
 
 it('offers tasks from other projects in an empty pane', async () => {
@@ -203,4 +205,89 @@ it('uses pane tabs when the chosen arrangement cannot fit and preserves its comp
     expect(container.querySelectorAll('.ds-chat-split-tab')).toHaveLength(0)
     expect([...container.querySelectorAll('textarea')]).toEqual(inputs)
   } finally { vi.stubGlobal('ResizeObserver', OriginalResizeObserver) }
+})
+
+
+it.each([5, 6])('lays out %i panes without overlap and preserves composers across arrangements', async count => {
+  const actions = useChatLayoutStore.getState()
+  actions.add('/repo', 'a', 'e')
+  if (count === 6) actions.add('/repo', 'a', 'f')
+  await act(async () => root.render(createElement(Harness)))
+  const inputs = [...container.querySelectorAll('textarea')]
+  expect(inputs).toHaveLength(count)
+  for (const arrangement of ['grid', 'horizontal', 'vertical'] as const) {
+    await act(async () => actions.arrange('/repo', arrangement))
+    const panes = [...container.querySelectorAll<HTMLElement>('[data-chat-pane]')]
+    const coordinate = (value: string): number => value.includes('--split-y') ? 50 : parseFloat(value) || 0
+    const boxes = panes.map(pane => ({ left: coordinate(pane.style.left), right: 100 - coordinate(pane.style.right),
+      top: coordinate(pane.style.top), bottom: 100 - coordinate(pane.style.bottom) }))
+    let area = 0
+    for (const [index, box] of boxes.entries()) {
+      expect(box.right).toBeGreaterThan(box.left)
+      expect(box.bottom).toBeGreaterThan(box.top)
+      area += (box.right - box.left) * (box.bottom - box.top)
+      for (const other of boxes.slice(index + 1)) {
+        const overlapWidth = Math.min(box.right, other.right) - Math.max(box.left, other.left)
+        const overlapHeight = Math.min(box.bottom, other.bottom) - Math.max(box.top, other.top)
+        expect(overlapWidth < .001 || overlapHeight < .001).toBe(true)
+      }
+    }
+    expect(area).toBeCloseTo(10000)
+    expect([...container.querySelectorAll('textarea')]).toEqual(inputs)
+    expect(container.querySelectorAll('[role="separator"]')).toHaveLength(arrangement === 'grid' ? 1 : 0)
+  }
+})
+
+
+it.each([2, 3, 4, 5, 6])('swaps %i-pane layouts without remounting composers or losing running state', async count => {
+  const actions = useChatLayoutStore.getState()
+  while (useChatLayoutStore.getState().layouts['/repo'].panes.length > count) {
+    actions.close('/repo', useChatLayoutStore.getState().layouts['/repo'].panes.at(-1)!.id)
+  }
+  if (count >= 5) actions.add('/repo', 'a', 'e')
+  if (count === 6) actions.add('/repo', 'a', 'f')
+  await act(async () => root.render(createElement(Harness)))
+  const before = useChatLayoutStore.getState().layouts['/repo'].panes
+  const inputs = [...container.querySelectorAll('textarea')]
+  const session = getChatPaneSession('a')
+  await act(async () => session.store.setState({ busy: true, liveAssistant: 'Still streaming' }))
+  await act(async () => openThreadInSplit('a', 'right', before.at(-1)!.id))
+  const after = [...container.querySelectorAll('textarea')]
+  expect(after.at(-1)).toBe(inputs[0])
+  expect(after[0]).toBe(inputs.at(-1))
+  expect(getChatPaneSession('a')).toBe(session)
+  expect(session.store.getState()).toMatchObject({ busy: true, liveAssistant: 'Still streaming' })
+  expect(session.draft).toBe('draft-a')
+})
+
+it('provides keyboard swapping from the drag handle', async () => {
+  await act(async () => root.render(createElement(Harness)))
+  await act(async () => container.querySelector('.ds-chat-split-grip')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true })))
+  expect(useChatLayoutStore.getState().layouts['/repo'].panes.map(p => p.threadId)).toEqual(['b', 'a', 'c', 'd'])
+})
+
+it('previews swap and replacement targets, clears cancellation, and drops into the indicated pane', async () => {
+  await act(async () => root.render(createElement(ChatSplitDropZone, { canAdd: true, children: createElement(Harness) })))
+  const zone = container.querySelector<HTMLElement>('.ds-chat-split-dropzone')!
+  vi.spyOn(zone, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 1200, 800))
+  const target = container.querySelectorAll<HTMLElement>('[data-chat-pane]')[1]
+  vi.spyOn(document, 'elementFromPoint').mockReturnValue(target)
+  const before = useChatLayoutStore.getState().layouts['/repo'].panes
+  const move = (threadId: string) => window.dispatchEvent(new CustomEvent(CHAT_SPLIT_DRAG_EVENT, { detail: { threadId, x: 700, y: 200 } }))
+  await act(async () => { move('a') })
+  expect(target.dataset.dropHint).toBe('splitDropSwap')
+  expect(document.querySelector('.ds-chat-split-drag-preview')?.textContent).toContain('Task a')
+  expect(container.querySelectorAll('.ds-chat-split-drop')).toHaveLength(0)
+  await act(async () => window.dispatchEvent(new CustomEvent(CHAT_SPLIT_DRAG_EVENT, { detail: null })))
+  expect(target.dataset.dropHint).toBeUndefined()
+  expect(useChatLayoutStore.getState().layouts['/repo'].panes).toEqual(before)
+  await act(async () => { move('g') })
+  expect(target.dataset.dropHint).toBe('splitDropReplace')
+  await act(async () => { expect(finishChatSplitDrag('g', 700, 200)).toBe(true) })
+  expect(useChatLayoutStore.getState().layouts['/repo'].panes.map(p => p.threadId)).toEqual(['a', 'g', 'c', 'd'])
+  await act(async () => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })))
+  expect(target.dataset.dropHint).toBeUndefined()
+  expect(document.querySelector('.ds-chat-split-drag-preview')).toBeNull()
+  vi.mocked(document.elementFromPoint).mockReturnValue(null)
+  expect(finishChatSplitDrag('a', -100, -100)).toBe(false)
 })

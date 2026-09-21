@@ -1,3 +1,4 @@
+import { createConversationInSplit } from '../lib/chat-split-navigation'
 import { ChatSplitToolbar } from './chat/ChatSplitToolbar'
 import { ChatSplitWorkspace, ChatSplitDropZone } from './chat/ChatSplitWorkspace'
 import { resolveChatLayoutKey, CHAT_THREAD_DRAG_MIME, MAX_CHAT_PANES, useChatLayoutStore } from '../store/chat-layout-store'
@@ -1070,6 +1071,12 @@ export function Workbench(): ReactElement {
       if (matched.id === 'saveFile') return
       if (!isShortcutEnabled(matched.id)) return
       if (matched.ignoreWhenTyping && isEditableKeyboardTarget(e.target)) return
+
+      if (matched.id === 'newSplitConversation') {
+        e.preventDefault()
+        if (!e.repeat && !e.isComposing && !ideModeActive) void createConversationInSplit()
+        return
+      }
 
       if (matched.id === 'newConversation') {
         e.preventDefault()

@@ -48,11 +48,11 @@ export function KanbanCardView({
 
   const className = `ds-no-drag group relative flex w-full flex-col gap-3 rounded-2xl border border-ds-border bg-ds-card px-3.5 py-3 text-left transition focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-sky-500/50 ${
     isOverlay
-      ? 'shadow-panel rotate-[1.5deg]'
+      ? 'pointer-events-none cursor-grabbing shadow-panel'
       : dragging
         ? 'opacity-40'
         : 'hover:bg-ds-elevated'
-  } ${draggable || dragBind ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer'}`
+  } ${isOverlay ? '' : draggable || dragBind ? 'select-none cursor-grab active:cursor-grabbing' : 'cursor-pointer'}`
 
   const content: ReactNode = (
     <>
@@ -92,12 +92,17 @@ export function KanbanCardView({
     </>
   )
 
+  if (isOverlay) {
+    return <div className={className} aria-hidden>{content}</div>
+  }
+
   // Draggable cards must be a non-<button> surface: Electron/dnd-kit both behave
   // more reliably when the activator node itself owns the pointer listeners.
   if (dragBind) {
     return (
       <div
         ref={dragBind.setNodeRef as Ref<HTMLDivElement>}
+        data-kanban-card-id={card.cardId}
         role="button"
         tabIndex={0}
         style={{ touchAction: 'none', ...dragBind.style }}

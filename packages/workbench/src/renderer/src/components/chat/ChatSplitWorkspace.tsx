@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactElement, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
+import { ChatSplitDragContext, ChatSplitDragHandle } from './ChatSplitDrag'
+import { usePaneSwapMotion } from '../../hooks/use-pane-swap-motion'
 import { X } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { ChatStoreContext, clearChatSelection, useChatStore } from '../../store/chat-store'
 import { CHAT_THREAD_DRAG_MIME, useChatLayoutStore, type ChatLayout } from '../../store/chat-layout-store'
 import { getChatPaneSession } from '../../store/chat-pane-sessions'
-import { CHAT_SPLIT_DRAG_EVENT, finishChatSplitDrag, type ChatSplitDrag } from '../../lib/chat-split-navigation'
+import { CHAT_SPLIT_DRAG_EVENT, chatSplitDropTarget, finishChatSplitDrag, type ChatSplitDrag } from '../../lib/chat-split-navigation'
 import { ChatPaneFocusContext } from './chat-pane-focus'
 import { ChatSplitTaskPicker } from './ChatSplitTaskPicker'
 import { SessionHeader } from '../SessionHeader'
@@ -82,6 +85,7 @@ export function ChatSplitWorkspace({ project, layout, getInitialDraft, onFocus, 
   const [narrow, setNarrow] = useState(false)
   const count = layout.panes.length
   const arrangement = layout.arrangement ?? 'grid'
+  usePaneSwapMotion(root, layout, narrow)
   const actions = useChatLayoutStore.getState()
   const focus = (id: string, threadId: string | null): void => {
     actions.focus(project, id)
@@ -90,8 +94,8 @@ export function ChatSplitWorkspace({ project, layout, getInitialDraft, onFocus, 
   useEffect(() => {
     if (!root.current) return
     const observer = new ResizeObserver(([entry]) => {
-      const columns = arrangement === 'vertical' ? 1 : arrangement === 'horizontal' ? count : Math.min(count, 2)
-      const rows = arrangement === 'vertical' ? count : arrangement === 'horizontal' ? 1 : Math.ceil(count / 2)
+      const columns = arrangement === 'vertical' ? 1 : arrangement === 'horizontal' ? count : Math.min(count, count > 4 ? 3 : 2)
+      const rows = arrangement === 'vertical' ? count : arrangement === 'horizontal' ? 1 : count > 2 ? 2 : 1
       setNarrow(entry.contentRect.width / columns < 360 || entry.contentRect.height / rows < 260)
     })
     observer.observe(root.current)
@@ -118,7 +122,7 @@ export function ChatSplitWorkspace({ project, layout, getInitialDraft, onFocus, 
       actions.resize(project, axis, axis === 'x' ? (event.clientX - rect.left) / rect.width : (event.clientY - rect.top) / rect.height)
     }} onPointerUp={event => event.currentTarget.releasePointerCapture(event.pointerId)} />
 
-  return <div className="ds-chat-split-shell min-h-0 min-w-0 flex-1">
+  return <ChatSplitDragContext><div className="ds-chat-split-shell min-h-0 min-w-0 flex-1">
     {narrow && count > 1 ? <div className="ds-chat-split-tabs" role="group" aria-label={t('splitPanes')}>
       {layout.panes.map((pane, index) => <button key={pane.id} aria-pressed={layout.focused === pane.id}
         className="ds-chat-split-tab" onClick={() => focus(pane.id, pane.threadId)}>
@@ -128,28 +132,35 @@ export function ChatSplitWorkspace({ project, layout, getInitialDraft, onFocus, 
     <div ref={root} className="ds-chat-split-grid" style={{ '--split-x': `${layout.x * 100}%`, '--split-y': `${layout.y * 100}%` } as CSSProperties}>
       {layout.panes.map((pane, index) => {
         const focused = layout.focused === pane.id
+        const rowColumns = index < 3 ? 3 : count - 3
         const style: CSSProperties = narrow || count === 1 ? { inset: 0 }
           : arrangement === 'vertical' ? { left: 0, right: 0, top: count === 2 ? (index === 0 ? 0 : 'var(--split-y)') : `${index * 100 / count}%`, bottom: count === 2 ? (index === 0 ? 'calc(100% - var(--split-y))' : 0) : `${(count - index - 1) * 100 / count}%` }
           : arrangement === 'horizontal' && count > 2 ? { top: 0, bottom: 0, left: `${index * 100 / count}%`, right: `${(count - index - 1) * 100 / count}%` } : count === 2
           ? { top: 0, bottom: 0, left: index === 0 ? 0 : 'var(--split-x)', right: index === 0 ? 'calc(100% - var(--split-x))' : 0 }
+          : count > 4 ? {
+              left: `${(index % 3) * 100 / rowColumns}%`,
+              right: `${(rowColumns - index % 3 - 1) * 100 / rowColumns}%`,
+              top: index < 3 ? 0 : `${layout.y * 100}%`,
+              bottom: index < 3 ? `${(1 - layout.y) * 100}%` : 0 }
           : count === 3 && index === 0 ? { inset: '0 calc(100% - var(--split-x)) 0 0' }
           : { left: count === 3 || index % 2 ? 'var(--split-x)' : 0,
               right: count === 4 && index % 2 === 0 ? 'calc(100% - var(--split-x))' : 0,
               top: (count === 3 ? index === 2 : index >= 2) ? 'var(--split-y)' : 0,
               bottom: (count === 3 ? index === 1 : index < 2) ? 'calc(100% - var(--split-y))' : 0 }
         const session = pane.threadId ? getChatPaneSession(pane.threadId, getInitialDraft(pane.threadId)) : null
-        return <section key={pane.id} data-chat-pane={pane.id} data-chat-drop="replace" data-chat-drop-pane={pane.id}
+        return <section key={pane.id} data-chat-pane={pane.id} data-chat-thread={pane.threadId ?? undefined} data-chat-drop="replace" data-chat-drop-pane={pane.id}
           className={`ds-chat-split-pane ${focused ? 'is-focused' : ''}`} aria-label={`${t('splitPane')} ${index + 1}`}
           style={{ ...style, display: narrow && !focused ? 'none' : undefined }}
           onFocusCapture={() => { if (!focused) focus(pane.id, pane.threadId) }}
           onPointerDownCapture={() => { if (!focused) focus(pane.id, pane.threadId) }}>
           <header className="ds-chat-split-title">
-            <div className="min-w-0 flex-1 cursor-grab" draggable={Boolean(pane.threadId)}
-              onDragStart={event => {
-                if (!pane.threadId) return
-                event.dataTransfer.setData(CHAT_THREAD_DRAG_MIME, pane.threadId)
-                event.dataTransfer.effectAllowed = 'move'
-              }}>
+            {pane.threadId ? <ChatSplitDragHandle threadId={pane.threadId} onMove={key => {
+              const columns = arrangement === 'vertical' ? 1 : arrangement === 'horizontal' ? count : count > 4 ? 3 : 2
+              const offset = key === 'ArrowLeft' ? -1 : key === 'ArrowRight' ? 1 : key === 'ArrowUp' ? -columns : columns
+              const target = layout.panes[index + offset]
+              if (target && pane.threadId) { actions.drop(project, target.id, pane.threadId); onFocus(pane.threadId) }
+            }} /> : null}
+            <div className="min-w-0 flex-1">
               {session ? <ChatStoreContext.Provider value={session.store}>
                 <ChatPaneHeader />
               </ChatStoreContext.Provider> : <ChatSplitTaskPicker workspace={newTaskWorkspace}
@@ -178,50 +189,87 @@ export function ChatSplitWorkspace({ project, layout, getInitialDraft, onFocus, 
           </div>}
         </section>
       })}
-      {!narrow && count > 1 && arrangement !== 'vertical' && (arrangement === 'grid' || count === 2) ? resizeHandle('x') : null}
+      {!narrow && count > 1 && arrangement !== 'vertical' && (arrangement === 'grid' && count <= 4 || count === 2) ? resizeHandle('x') : null}
       {!narrow && (arrangement === 'grid' && count > 2 || arrangement === 'vertical' && count === 2) ? resizeHandle('y') : null}
     </div>
-  </div>
+  </div></ChatSplitDragContext>
 }
 
 export function ChatSplitDropZone({ children, canAdd }: { children: ReactNode; canAdd: boolean }): ReactElement {
   const { t } = useTranslation('common')
   const root = useRef<HTMLDivElement>(null)
-  const [dragging, setDragging] = useState(false)
+  const ghost = useRef<HTMLDivElement>(null)
+  const highlighted = useRef<HTMLElement | null>(null)
+  const [drag, setDrag] = useState<{ threadId: string; title: string; hint: string; inside: boolean; canAdd: boolean } | null>(null)
   const [side, setSide] = useState<'left' | 'right' | null>(null)
-  const clear = useCallback((): void => { setDragging(false); setSide(null) }, [])
-  const update = useCallback((x: number, y: number): void => {
+  useEffect(() => () => { highlighted.current?.removeAttribute('data-drop-hint') }, [])
+  const clear = useCallback((): void => {
+    highlighted.current?.removeAttribute('data-drop-hint')
+    highlighted.current = null
+    setDrag(null); setSide(null)
+  }, [])
+  const update = useCallback((x: number, y: number, threadId: string): void => {
+    const app = useChatStore.getState()
+    const thread = app.threads.find(item => item.id === threadId && !item.archived && item.workspace)
+    if (!thread) { clear(); return }
     const rect = root.current?.getBoundingClientRect()
-    if (!rect || x < rect.left || x > rect.right || y < rect.top || y > rect.bottom) { clear(); return }
-    setDragging(true)
-    const fraction = (x - rect.left) / rect.width
-    setSide(fraction < .22 ? 'left' : fraction > .78 ? 'right' : null)
-  }, [clear])
+    if (!rect) return
+    const inside = x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom
+    const panes = [...(root.current?.querySelectorAll<HTMLElement>('[data-chat-pane]') ?? [])]
+    const source = panes.find(pane => pane.dataset.chatThread === threadId)
+    const allowAdd = canAdd && !source
+    const edge = panes.length ? 28 : rect.width * .22
+    const position = inside && allowAdd ? x < rect.left + edge ? 'left' : x > rect.right - edge ? 'right' : null : null
+    setSide(position)
+    const target = inside && !position ? chatSplitDropTarget(x, y)?.closest<HTMLElement>('[data-chat-pane]') ?? null : null
+    const hint = position ? t(position === 'left' ? 'splitLeft' : 'splitRight')
+      : target && target !== source ? t(source ? 'splitDropSwap' : 'splitDropReplace') : t('splitDragCancel')
+    const highlight = target !== source ? target : null
+    if (highlighted.current !== highlight) {
+      highlighted.current?.removeAttribute('data-drop-hint')
+      highlighted.current = highlight
+    }
+    highlight?.setAttribute('data-drop-hint', hint)
+    setDrag(previous => previous?.threadId === threadId && previous.hint === hint && previous.inside === inside && previous.canAdd === allowAdd
+      ? previous : { threadId, title: thread.title, hint, inside, canAdd: allowAdd })
+    const scale = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--ds-ui-scale')) || 1
+    // Keep the floating label on the pointer without rerendering the conversations on every move.
+    root.current?.style.setProperty('--split-drag-x', `${x / scale + 14}px`)
+    root.current?.style.setProperty('--split-drag-y', `${y / scale + 14}px`)
+    if (ghost.current) ghost.current.style.transform = `translate3d(${x / scale + 14}px, ${y / scale + 14}px, 0)`
+  }, [canAdd, clear, t])
   useEffect(() => {
     const onDrag = (event: Event): void => {
       const detail = (event as CustomEvent<ChatSplitDrag>).detail
-      if (detail) update(detail.x, detail.y)
+      if (detail) update(detail.x, detail.y, detail.threadId)
       else clear()
     }
     const onKey = (event: KeyboardEvent): void => { if (event.key === 'Escape') clear() }
     window.addEventListener(CHAT_SPLIT_DRAG_EVENT, onDrag)
     window.addEventListener('dragend', clear)
+    window.addEventListener('blur', clear)
     window.addEventListener('keydown', onKey)
-    return () => { window.removeEventListener(CHAT_SPLIT_DRAG_EVENT, onDrag); window.removeEventListener('dragend', clear); window.removeEventListener('keydown', onKey) }
+    return () => {
+      window.removeEventListener(CHAT_SPLIT_DRAG_EVENT, onDrag); window.removeEventListener('dragend', clear)
+      window.removeEventListener('blur', clear); window.removeEventListener('keydown', onKey)
+    }
   }, [update, clear])
   return <div ref={root} className="ds-chat-split-dropzone ds-no-drag" onDragOver={event => {
     if (!event.dataTransfer.types.includes(CHAT_THREAD_DRAG_MIME)) return
-    event.preventDefault(); update(event.clientX, event.clientY)
-  }} onDragLeave={event => { if (!event.currentTarget.contains(event.relatedTarget as Node)) clear() }}
-    onDrop={event => {
-      const id = event.dataTransfer.getData(CHAT_THREAD_DRAG_MIME)
-      if (!id) return
-      event.preventDefault(); finishChatSplitDrag(id, event.clientX, event.clientY); clear()
-    }}>
+    event.preventDefault()
+  }} onDrop={event => {
+    const id = event.dataTransfer.getData(CHAT_THREAD_DRAG_MIME)
+    if (!id) return
+    event.preventDefault(); finishChatSplitDrag(id, event.clientX, event.clientY); clear()
+  }}>
     {children}
-    {dragging && canAdd ? (['left', 'right'] as const).map(position => <div key={position}
+    {drag?.inside && drag.canAdd ? (['left', 'right'] as const).map(position => <div key={position}
       data-chat-drop={position} className={`ds-chat-split-drop ds-chat-split-drop--${position} ${side === position ? 'is-active' : ''}`}>
       {t(position === 'left' ? 'splitLeft' : 'splitRight')}
     </div>) : null}
+    {drag?.inside && createPortal(<div ref={ghost} className="ds-chat-split-drag-preview" aria-hidden="true"
+      style={{ transform: `translate3d(${root.current?.style.getPropertyValue('--split-drag-x') || '0px'}, ${root.current?.style.getPropertyValue('--split-drag-y') || '0px'}, 0)` }}>
+      <span className="ds-chat-split-drag-preview__title">{drag.title}</span><span>{drag.hint}</span>
+    </div>, document.body)}
   </div>
 }
