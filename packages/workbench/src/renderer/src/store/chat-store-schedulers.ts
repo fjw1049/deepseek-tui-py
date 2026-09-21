@@ -1,5 +1,6 @@
 import type { ChatState, ChatStoreGet, ChatStoreSet } from './chat-store-types'
 
+export function createChatSchedulers() {
 let startupRuntimeProbeTimer: ReturnType<typeof setTimeout> | null = null
 let busyWatchdogTimer: ReturnType<typeof setTimeout> | null = null
 let busyRecoveryAttempts = 0
@@ -33,7 +34,7 @@ type TurnCompletionPollOptions = {
   ) => void | Promise<void>
 }
 
-export function scheduleStartupRuntimeProbe(get: ChatStoreGet): void {
+function scheduleStartupRuntimeProbe(get: ChatStoreGet): void {
   if (startupRuntimeProbeTimer) {
     clearTimeout(startupRuntimeProbeTimer)
   }
@@ -43,18 +44,18 @@ export function scheduleStartupRuntimeProbe(get: ChatStoreGet): void {
   }, 0)
 }
 
-export function clearBusyWatchdog(): void {
+function clearBusyWatchdog(): void {
   if (busyWatchdogTimer) {
     clearTimeout(busyWatchdogTimer)
     busyWatchdogTimer = null
   }
 }
 
-export function resetBusyRecoveryAttempts(): void {
+function resetBusyRecoveryAttempts(): void {
   busyRecoveryAttempts = 0
 }
 
-export function armBusyWatchdog(
+function armBusyWatchdog(
   set: ChatStoreSet,
   get: ChatStoreGet,
   options: BusyWatchdogOptions
@@ -101,14 +102,14 @@ export function armBusyWatchdog(
   }, options.timeoutMs)
 }
 
-export function stopTurnCompletionPoll(): void {
+function stopTurnCompletionPoll(): void {
   if (turnCompletionPollTimer) {
     clearInterval(turnCompletionPollTimer)
     turnCompletionPollTimer = null
   }
 }
 
-export function syncTurnCompletionPoll(
+function syncTurnCompletionPoll(
   set: ChatStoreSet,
   get: ChatStoreGet,
   options: TurnCompletionPollOptions
@@ -164,4 +165,11 @@ async function pollTurnCompletionWatch(
   if (Object.keys(get().watchTurnCompletion).filter((id) => get().watchTurnCompletion[id]).length === 0) {
     stopTurnCompletionPoll()
   }
+}
+
+  return { scheduleStartupRuntimeProbe, clearBusyWatchdog, resetBusyRecoveryAttempts, armBusyWatchdog, stopTurnCompletionPoll, syncTurnCompletionPoll, dispose() {
+    clearBusyWatchdog()
+    stopTurnCompletionPoll()
+    if (startupRuntimeProbeTimer) clearTimeout(startupRuntimeProbeTimer)
+  } }
 }

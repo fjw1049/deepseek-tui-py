@@ -1996,5 +1996,18 @@
   "feedbackActionFailed": "Action not completed",
   "feedbackConnectionLost": "Connection interrupted",
   "feedbackConnectionImpact": "New messages cannot be sent right now. You can keep editing your draft.",
-  "feedbackReconnecting": "Reconnecting"
+  "feedbackReconnecting": "Reconnecting",
+  "splitAdd": "Split",
+  "splitLimit": "Maximum of 4 panes",
+  "splitOpenRight": "Open in right split",
+  "splitClose": "Close pane (task keeps running)",
+  "splitChooseTask": "Choose a task in this project",
+  "splitNewTask": "New task",
+  "splitLoading": "Loading conversation…",
+  "splitResize": "Resize panes",
+  "splitPanes": "Task panes",
+  "splitPane": "Pane",
+  "splitLeft": "Split left",
+  "splitRight": "Split right",
+  "splitDragTask": "Drag task into the conversation area to split"
 }

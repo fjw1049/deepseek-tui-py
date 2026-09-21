@@ -1,4 +1,5 @@
-import { create } from 'zustand'
+import { create, useStore, type StoreApi } from 'zustand'
+import { createContext, useContext } from 'react'
 import type {
   NormalizedThread,
   ProcessIntentMeta,
@@ -33,7 +34,7 @@ import {
   shouldAutoTitleThread
 } from '../lib/thread-title'
 import { isPluginControlOnlyMessage } from '../lib/user-focus-prefix'
-import { insertComposerSnippet, queueComposerRetryDraft } from '../lib/composer-insert'
+import { insertComposerSnippet as insertSnippet, queueComposerRetryDraft } from '../lib/composer-insert'
 import { workspaceLabelFromPath } from '../lib/workspace-label'
 import { isClawWorkspacePath, isInternalTemporaryWorkspace, normalizeWorkspaceRoot } from '../lib/workspace-path'
 import { emitPetEvent } from '../lib/pet/pet-events'
@@ -96,14 +97,7 @@ import {
   upsertFinalAnswerBlock,
   upsertUserBlock
 } from './chat-store-runtime-helpers'
-import {
-  armBusyWatchdog as armBusyWatchdogImpl,
-  clearBusyWatchdog,
-  resetBusyRecoveryAttempts,
-  scheduleStartupRuntimeProbe,
-  stopTurnCompletionPoll,
-  syncTurnCompletionPoll as syncTurnCompletionPollImpl
-} from './chat-store-schedulers'
+import { createChatSchedulers } from './chat-store-schedulers'
 
 export type { AppRoute, MarketplaceKind, SettingsRouteSection } from './chat-store-types'
 
@@ -112,6 +106,122 @@ export type { AppRoute, MarketplaceKind, SettingsRouteSection } from './chat-sto
 // workspace. Sourced from the shared single source of truth.
 const DEFAULT_CHATS_WORKSPACE_ROOT = DEFAULT_WORKSPACE_ROOT
 
+function appendLiveAssistantBlock(
+  blocks: ChatBlock[],
+  text: string,
+  itemId?: string,
+  createdAt?: string,
+  agentSegment?: 'mid_turn_preface' | 'final_answer',
+  processIntent?: ProcessIntentMeta
+): ChatBlock[] {
+  // A text-less block is still meaningful when it carries a structured
+  // narration frame (invisible until useful wording arrives).
+  if (!text.trim() && !processIntent) return blocks
+  const now = Date.now()
+  const nextBlock = {
+    kind: 'assistant' as const,
+    id: itemId ?? `a-${now}`,
+    createdAt: createdAt ?? new Date(now).toISOString(),
+    text,
+    ...(agentSegment ? { agentSegment } : {}),
+    ...(processIntent ? { processIntent } : {})
+  }
+  const existingIndex = itemId ? blocks.findIndex((block) => block.id === itemId) : -1
+  if (existingIndex < 0) return [...blocks, nextBlock]
+  const existing = blocks[existingIndex]
+  if (existing.kind !== 'assistant') return blocks
+  const next = [...blocks]
+  next[existingIndex] = {
+    ...existing, ...nextBlock, createdAt: createdAt ?? existing.createdAt ?? nextBlock.createdAt
+  }
+  return next
+}
+
+export function completeAssistantProgress(
+  state: Pick<ChatState, 'blocks' | 'liveAssistant'>,
+  itemId?: string,
+  createdAt?: string,
+  text?: string,
+  processIntent?: ProcessIntentMeta
+): Pick<ChatState, 'blocks' | 'liveAssistant'> {
+  const upsertOnly = processIntent?.source === 'runtime' || processIntent?.source === 'none' ||
+    processIntent?.source === 'narration_service' ||
+    state.blocks.some((block) => block.kind === 'assistant' && block.id === itemId)
+  return {
+    blocks: appendLiveAssistantBlock(state.blocks, text ?? (upsertOnly ? '' : state.liveAssistant),
+      itemId, createdAt, 'mid_turn_preface', processIntent),
+    liveAssistant: upsertOnly ? state.liveAssistant : ''
+  }
+}
+
+export async function resyncGoalAfterFailedCommand(
+  threadId: string,
+  provider: Pick<ReturnType<typeof getProvider>, 'getThreadDetail'>,
+  get: () => ChatState,
+  set: (partial: Partial<ChatState> | ((state: ChatState) => Partial<ChatState>)) => void
+): Promise<void> {
+  try {
+    const { goal } = await provider.getThreadDetail(threadId)
+    // Late arrival: the user switched threads while the re-read was in flight.
+    if (get().activeThreadId !== threadId) return
+    set((s) => ({
+      currentGoal: goal ?? null,
+      composerMode: composerModeFromGoal(goal, s.composerMode)
+    }))
+  } catch {
+    /* keep the displayed goal; the next thread load reconciles it */
+  }
+}
+
+function composerModeFromGoal(
+  goal: { status?: string } | null | undefined,
+  fallback: ComposerMode
+): ComposerMode {
+  if (goal?.status === 'active') return 'goal'
+  if (!goal && fallback === 'goal') return 'agent'
+  return fallback
+}
+
+const COMPLETION_NOTIFICATION_DEDUPE_LIMIT = 200
+const completionNotificationKeys: string[] = []
+const completionNotificationKeySet = new Set<string>()
+
+const sessionOwners = new Map<string, StoreApi<ChatState>>()
+const SESSION_FIELDS = [
+  'blocks', 'liveReasoning', 'liveAssistant', 'lastSeq', 'busy', 'error', 'runtimeErrorDetail',
+  'currentTurnId', 'lastCompletedTurnId', 'currentTurnUserId', 'turnStartedAtByUserId',
+  'turnDurationByUserId', 'turnReasoningFirstAtByUserId', 'turnReasoningLastAtByUserId',
+  'composerModel', 'composerMode', 'composerReasoningEffort', 'queuedMessages', 'activePlugin',
+  'currentGoal', 'turnDiffByTurnId', 'scrollToBlockId', 'activeThreadWarmup'
+] as const
+
+function sessionSnapshot(state: ChatState): Partial<ChatState> {
+  return Object.fromEntries(SESSION_FIELDS.map(key => [key, state[key]]))
+}
+
+/** The shared shell is a view of the focused session, including after unsplitting. */
+export function registerChatSessionOwner(threadId: string, owner: StoreApi<ChatState>): () => void {
+  sessionOwners.set(threadId, owner)
+  const sync = (): void => {
+    const app = defaultSession.store
+    if (app.getState().activeThreadId !== threadId) return
+    const snapshot = sessionSnapshot(owner.getState())
+    const patch = Object.fromEntries(Object.entries(snapshot).filter(([key, value]) => app.getState()[key as keyof ChatState] !== value))
+    if (Object.keys(patch).length) app.setState(patch)
+  }
+  if (defaultSession.store.getState().activeThreadId === threadId) defaultSession.detachStream()
+  sync()
+  const unsubscribe = owner.subscribe(sync)
+  return () => { unsubscribe(); if (sessionOwners.get(threadId) === owner) sessionOwners.delete(threadId) }
+}
+
+/** Each visible conversation owns its stream, queues and recovery timers. */
+export function createChatSessionStore(options: { appView?: boolean } = {}) {
+const { armBusyWatchdog: armBusyWatchdogImpl, clearBusyWatchdog,
+  resetBusyRecoveryAttempts, scheduleStartupRuntimeProbe, stopTurnCompletionPoll,
+  syncTurnCompletionPoll: syncTurnCompletionPollImpl, dispose: disposeSchedulers } = createChatSchedulers()
+let selectionVersion = 0
+let disposed = false
 let sseAbort: AbortController | null = null
 const sseAbortRef = {
   get current(): AbortController | null {
@@ -134,9 +244,7 @@ let drainingQueuedMessages = false
 const approvalSubmitInFlight = new Set<string>()
 const decisionSubmitInFlight = new Set<string>()
 let turnCompletionProbeTimer: ReturnType<typeof setTimeout> | null = null
-const COMPLETION_NOTIFICATION_DEDUPE_LIMIT = 200
-const completionNotificationKeys: string[] = []
-const completionNotificationKeySet = new Set<string>()
+
 const watchCompletionNotificationKeys = new Map<string, string>()
 
 function runtimeErrorDetail(error: unknown): string {
@@ -295,54 +403,10 @@ function appendLiveReasoningBlock(
   return next
 }
 
-function appendLiveAssistantBlock(
-  blocks: ChatBlock[],
-  text: string,
-  itemId?: string,
-  createdAt?: string,
-  agentSegment?: 'mid_turn_preface' | 'final_answer',
-  processIntent?: ProcessIntentMeta
-): ChatBlock[] {
-  // A text-less block is still meaningful when it carries a structured
-  // narration frame (invisible until useful wording arrives).
-  if (!text.trim() && !processIntent) return blocks
-  const now = Date.now()
-  const nextBlock = {
-    kind: 'assistant' as const,
-    id: itemId ?? `a-${now}`,
-    createdAt: createdAt ?? new Date(now).toISOString(),
-    text,
-    ...(agentSegment ? { agentSegment } : {}),
-    ...(processIntent ? { processIntent } : {})
-  }
-  const existingIndex = itemId ? blocks.findIndex((block) => block.id === itemId) : -1
-  if (existingIndex < 0) return [...blocks, nextBlock]
-  const existing = blocks[existingIndex]
-  if (existing.kind !== 'assistant') return blocks
-  const next = [...blocks]
-  next[existingIndex] = {
-    ...existing, ...nextBlock, createdAt: createdAt ?? existing.createdAt ?? nextBlock.createdAt
-  }
-  return next
-}
+
 
 /** Delayed narration and metadata updates must not consume a newer live reply. */
-export function completeAssistantProgress(
-  state: Pick<ChatState, 'blocks' | 'liveAssistant'>,
-  itemId?: string,
-  createdAt?: string,
-  text?: string,
-  processIntent?: ProcessIntentMeta
-): Pick<ChatState, 'blocks' | 'liveAssistant'> {
-  const upsertOnly = processIntent?.source === 'runtime' || processIntent?.source === 'none' ||
-    processIntent?.source === 'narration_service' ||
-    state.blocks.some((block) => block.kind === 'assistant' && block.id === itemId)
-  return {
-    blocks: appendLiveAssistantBlock(state.blocks, text ?? (upsertOnly ? '' : state.liveAssistant),
-      itemId, createdAt, 'mid_turn_preface', processIntent),
-    liveAssistant: upsertOnly ? state.liveAssistant : ''
-  }
-}
+
 
 function clearTurnCompletionProbe(): void {
   if (turnCompletionProbeTimer) {
@@ -510,37 +574,13 @@ async function reconcileStaleBusy(
  * started a turn opened no SSE subscription. Without this the strip keeps
  * rendering a goal the runtime already dropped.
  */
-export async function resyncGoalAfterFailedCommand(
-  threadId: string,
-  provider: Pick<ReturnType<typeof getProvider>, 'getThreadDetail'>,
-  get: () => ChatState,
-  set: (partial: Partial<ChatState> | ((state: ChatState) => Partial<ChatState>)) => void
-): Promise<void> {
-  try {
-    const { goal } = await provider.getThreadDetail(threadId)
-    // Late arrival: the user switched threads while the re-read was in flight.
-    if (get().activeThreadId !== threadId) return
-    set((s) => ({
-      currentGoal: goal ?? null,
-      composerMode: composerModeFromGoal(goal, s.composerMode)
-    }))
-  } catch {
-    /* keep the displayed goal; the next thread load reconciles it */
-  }
-}
+
 
 function engineModeForComposer(mode: string): ComposerMode | string {
   return mode === 'goal' ? 'agent' : mode
 }
 
-function composerModeFromGoal(
-  goal: { status?: string } | null | undefined,
-  fallback: ComposerMode
-): ComposerMode {
-  if (goal?.status === 'active') return 'goal'
-  if (!goal && fallback === 'goal') return 'agent'
-  return fallback
-}
+
 
 function composerModeForLoadedGoal(
   goal: { status?: string } | null | undefined,
@@ -765,7 +805,7 @@ function syncTurnCompletionPoll(
         notifyTurnComplete(
           id,
           state,
-          watchCompletionNotificationKeys.get(id) ?? `watch:${id}:${Date.now()}`,
+          detail?.latestTurnId ? `turn:${detail.latestTurnId}` : watchCompletionNotificationKeys.get(id) ?? `watch:${id}:${Date.now()}`,
           detail?.latestTurnOutcome
         )
         clearWatchedCompletionNotification(id)
@@ -788,6 +828,8 @@ function buildThreadEventSink(
   set: (partial: Partial<ChatState> | ((state: ChatState) => Partial<ChatState>)) => void,
   get: () => ChatState
 ): ThreadEventSink {
+  const threadId = get().activeThreadId
+  const signal = sseAbort?.signal
   const sink: ThreadEventSink = {
     onSeq: (seq) => {
       noteBusyStreamActivity(set, get)
@@ -1518,10 +1560,19 @@ function buildThreadEventSink(
       if (get().busy) armBusyWatchdog(set, get)
     }
   }
+  for (const key of Object.keys(sink) as (keyof ThreadEventSink)[]) {
+    const handler = sink[key] as (...args: unknown[]) => unknown
+    Object.assign(sink, { [key]: (...args: unknown[]) => {
+      if (disposed || signal?.aborted || get().activeThreadId !== threadId || (options.appView && sessionOwners.has(threadId ?? ''))) return
+      return handler(...args)
+    } })
+  }
   return sink
 }
 
-export const useChatStore = create<ChatState>((set, get) => ({
+const insertComposerSnippet = (text: string): void => insertSnippet(text, store.getState().activeThreadId ?? undefined)
+
+const store = create<ChatState>((set, get) => ({
   route: 'chat',
   marketplaceKind: loadMarketplaceKind(),
   pluginHostRoute: 'chat',
@@ -2170,6 +2221,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   recoverActiveTurn: async () => {
+    if (disposed) return false
     const state = get()
     if (!state.activeThreadId) return false
     const { activeThreadId, providerId } = state
@@ -2299,6 +2351,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   selectThread: async (id) => {
+    const version = ++selectionVersion
     if (get().runtimeConnection !== 'ready') {
       set({ error: i18n.t('common:runtimeActionNeedsConnection') })
       return
@@ -2319,6 +2372,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
     sseAbort = null
     const { providerId } = get()
     const p = getProvider(providerId)
+    const adoptOwner = (): boolean => {
+      const owner = options.appView ? sessionOwners.get(id) : undefined
+      if (!owner) return false
+      clearBusyWatchdog()
+      clearTurnCompletionProbe()
+      set({ ...sessionSnapshot(owner.getState()), activeThreadId: id,
+        watchTurnCompletion: nextWatch, unreadThreadIds: nextUnread })
+      syncTurnCompletionPoll(set, get)
+      return true
+    }
+    if (adoptOwner()) return
     try {
       resetBusyRecoveryAttempts()
       clearBusyWatchdog()
@@ -2334,12 +2398,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
         activePlugin: loadedPlugin,
         goal: loadedGoal
       } = await p.getThreadDetail(id)
+      if (disposed || version !== selectionVersion) return
       const hydrated = hydrateBlockModelLabels(id, rawBlocks)
       const blocks = threadStatusLooksActive(threadStatus)
         ? hydrated
         : finalizeOrphanSubagentBlocks(hydrated)
       const busy = threadSnapshotLooksRunning(blocks, threadStatus)
       const synced = await syncRuntimePendingApprovals(p, id, blocks, busy)
+      if (disposed || version !== selectionVersion || adoptOwner()) return
       const currentTurnUserId = busy
         ? latestUserMessageId ?? findLatestUserBlockId(synced.blocks)
         : null
@@ -2382,6 +2448,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }
       if (!busy) void get().warmActiveThread(id)
     } catch (e) {
+      if (disposed || version !== selectionVersion) return
       set({
         error: formatRuntimeError(e),
         ...(settingsSectionForRuntimeError(e)
@@ -3759,3 +3826,55 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
   }
 }))
+
+if (options.appView) {
+  const actionKeys = [
+    'sendMessage', 'interrupt', 'recoverActiveTurn', 'warmActiveThread', 'applyGoalCommand',
+    'drainQueuedMessages', 'removeQueuedMessage', 'withdrawQueuedMessage', 'sendQueuedMessageNow',
+    'rewindAndResend', 'rewindToMessage', 'restoreCodeAt', 'resolvePublishConflicts', 'compactActiveThread',
+    'resolveApproval', 'resolveEvolution', 'resolveElevation', 'resolveUserInput', 'refreshPendingUserInputs',
+    'setComposerModel', 'setComposerMode', 'setComposerReasoningEffort', 'scrollToBlock', 'clearScrollTarget'
+  ] as const
+  for (const key of actionKeys) {
+    const original = store.getState()[key] as (...args: unknown[]) => unknown
+    store.setState({ [key]: (...args: unknown[]) => {
+      const id = store.getState().activeThreadId
+      const owner = id ? sessionOwners.get(id) : undefined
+      const action = owner ? owner.getState()[key] as (...args: unknown[]) => unknown : original
+      return action(...args)
+    } })
+  }
+}
+return { store, clearSelection(workspaceRoot: string) {
+  selectionVersion++
+  sseAbort?.abort()
+  sseAbort = null
+  clearTurnCompletionProbe()
+  clearBusyWatchdog()
+  store.setState({ ...clearedThreadSelection(), currentGoal: null, error: null, workspaceRoot })
+}, detachStream() {
+  sseAbort?.abort()
+  sseAbort = null
+  clearTurnCompletionProbe()
+  clearBusyWatchdog()
+}, dispose() {
+  disposed = true
+  selectionVersion++
+  sseAbort?.abort()
+  sseAbort = null
+  clearTurnCompletionProbe()
+  disposeSchedulers()
+} }
+}
+
+const defaultSession = createChatSessionStore({ appView: true })
+export const clearChatSelection = (workspaceRoot: string): void => defaultSession.clearSelection(workspaceRoot)
+export const ChatStoreContext = createContext<StoreApi<ChatState> | null>(null)
+export function useChatStoreApi(): StoreApi<ChatState> {
+  return useContext(ChatStoreContext) ?? defaultSession.store
+}
+function useScopedChatStore<T>(selector: (state: ChatState) => T): T {
+  return useStore(useChatStoreApi(), selector)
+}
+// Static access remains the app-level store; pane components use useChatStoreApi.
+export const useChatStore = Object.assign(useScopedChatStore, defaultSession.store)

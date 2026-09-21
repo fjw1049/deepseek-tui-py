@@ -1,3 +1,4 @@
+import { useChatPaneFocused } from './chat-pane-focus'
 import {
   useCallback,
   useEffect,
@@ -37,7 +38,7 @@ import {
   X
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
-import { useChatStore } from '../../store/chat-store'
+import { useChatStore, useChatStoreApi } from '../../store/chat-store'
 import type { ComposerMode } from '../../store/chat-store-types'
 import {
   extractTasksFromBlocks,
@@ -177,7 +178,10 @@ type QueuedComposerMessage = {
   hidden?: boolean
 }
 
+const paneAttachments = new Map<string, ComposerAttachment[]>()
+
 type Props = {
+  sessionKey?: string
   input: string
   setInput: (v: string) => void
   mode: ComposerMode
@@ -246,6 +250,7 @@ function buildOutboundMessage(attachments: ComposerAttachment[], input: string):
 }
 
 export function FloatingComposer({
+  sessionKey,
   input,
   setInput,
   mode,
@@ -276,6 +281,8 @@ export function FloatingComposer({
   onRemovePreviewPick,
   onClearPreviewPicks
 }: Props): ReactElement {
+  const paneFocused = useChatPaneFocused()
+  const chatStore = useChatStoreApi()
   const { t, i18n } = useTranslation('common')
   const workspaceRoot = useChatStore((s) => s.workspaceRoot)
   const activeThreadId = useChatStore((s) => s.activeThreadId)
@@ -326,7 +333,17 @@ export function FloatingComposer({
   const [connectorsLoaded, setConnectorsLoaded] = useState(false)
   const [connectorQuery, setConnectorQuery] = useState('')
   const [attachNotice, setAttachNotice] = useState<Notice | null>(null)
-  const [attachments, setAttachments] = useState<ComposerAttachment[]>([])
+  const [attachments, setAttachments] = useState<ComposerAttachment[]>(() => sessionKey ? paneAttachments.get(sessionKey) ?? [] : [])
+  const attachmentSessionRef = useRef(sessionKey)
+  useEffect(() => {
+    if (attachmentSessionRef.current !== sessionKey) {
+      if (attachmentSessionRef.current) paneAttachments.set(attachmentSessionRef.current, attachments)
+      attachmentSessionRef.current = sessionKey
+      setAttachments(sessionKey ? paneAttachments.get(sessionKey) ?? [] : [])
+      return
+    }
+    if (sessionKey) paneAttachments.set(sessionKey, attachments.map(item => ({ ...item, status: 'done', progress: 100 })))
+  }, [sessionKey, attachments])
   // Simulated-upload interval handles keyed by attachment id, cleared on remove,
   // send, and unmount so no timer fires setState on an unmounted component.
   const attachTimersRef = useRef<Map<string, ReturnType<typeof setInterval>>>(new Map())
@@ -859,8 +876,8 @@ export function FloatingComposer({
     const draft = takeComposerRetryDraft(activeThreadId)
     if (!draft) return
     setInput(draft)
-    window.requestAnimationFrame(() => textareaRef.current?.focus())
-  }, [activeThreadId, setInput])
+    if (paneFocused) window.requestAnimationFrame(() => textareaRef.current?.focus())
+  }, [activeThreadId, setInput, paneFocused])
 
   useEffect(() => {
     if (!focusRequestId) return
@@ -869,14 +886,16 @@ export function FloatingComposer({
 
   useEffect(() => {
     const onInsert = (event: Event): void => {
-      const text = (event as CustomEvent<ComposerInsertDetail>).detail?.text
+      const detail = (event as CustomEvent<ComposerInsertDetail>).detail
+      if (detail?.threadId ? detail.threadId !== activeThreadId : !paneFocused) return
+      const text = detail?.text
       if (typeof text !== 'string' || !text.trim()) return
       setInput(appendComposerSnippet(inputRef.current, text))
       focusComposer()
     }
     window.addEventListener(COMPOSER_INSERT_EVENT, onInsert)
     return () => window.removeEventListener(COMPOSER_INSERT_EVENT, onInsert)
-  }, [setInput])
+  }, [setInput, paneFocused, activeThreadId])
 
   useEffect(() => {
     restoreRetryDraft()
@@ -1495,7 +1514,7 @@ export function FloatingComposer({
         onReview={() => {
           openChangesPanel({
             context: 'last-turn',
-            turnId: useChatStore.getState().currentTurnId ?? undefined
+            turnId: chatStore.getState().currentTurnId ?? undefined
           })
         }}
       />

@@ -1,3 +1,6 @@
+import { ChatSplitWorkspace, ChatSplitDropZone } from './chat/ChatSplitWorkspace'
+import { resolveChatLayoutKey, CHAT_THREAD_DRAG_MIME, MAX_CHAT_PANES, useChatLayoutStore } from '../store/chat-layout-store'
+import { syncChatPaneCatalog, disposeChatPaneSessions, peekChatPaneSession } from '../store/chat-pane-sessions'
 import { FeedbackNotice } from './FeedbackNotice'
 import { useRunPanelStore } from '../store/run-panel-store'
 import type {
@@ -335,7 +338,16 @@ export function Workbench(): ReactElement {
     }))
   )
   useWorkspaceFsWatch()
-  const [input, setInput] = useState('')
+  const [input, setInputState] = useState('')
+  const setInput = useCallback((value: string): void => {
+    setInputState(value)
+    const app = useChatStore.getState()
+    const project = resolveChatLayoutKey(useChatLayoutStore.getState(), resolveActiveThreadWorkspace(app.activeThreadId, app.threads, app.workspaceRoot))
+    if ((useChatLayoutStore.getState().layouts[project]?.panes.length ?? 1) < 2) {
+      const session = peekChatPaneSession(app.activeThreadId)
+      if (session) session.draft = value
+    }
+  }, [])
   // Cold start always lands on the main chat shell: left rail expanded, no IDE
   // mode, no right tool panel (editor / changes / terminal / browser). Widths
   // and the last right-sidebar tab still persist for when the user opens them.
@@ -443,6 +455,35 @@ export function Workbench(): ReactElement {
     () => resolveActiveThreadWorkspace(activeThreadId, threads, workspaceRoot),
     [activeThreadId, threads, workspaceRoot]
   )
+  const splitProject = useChatLayoutStore(s => resolveChatLayoutKey(s, activeWorkspaceRoot))
+  const chatLayout = useChatLayoutStore(s => s.layouts[splitProject])
+  const splitActive = (chatLayout?.panes.length ?? 1) > 1
+  const [splitAction, setSplitAction] = useState<{ threadId: string; kind: 'file' | 'diff'; path?: string; line?: number } | null>(null)
+  const pendingSplitFocus = useRef<string | null>(null)
+  const focusSplitThread = (id: string): void => {
+    if (useChatStore.getState().activeThreadId === id || pendingSplitFocus.current === id) return
+    pendingSplitFocus.current = id
+    void selectThread(id).finally(() => {
+      if (pendingSplitFocus.current === id) pendingSplitFocus.current = null
+    })
+  }
+  useEffect(() => {
+    const state = useChatLayoutStore.getState()
+    const layout = state.layouts[splitProject]
+    if (layout && activeThreadId) state.bind(splitProject, layout.focused, activeThreadId)
+  }, [activeThreadId, splitProject])
+  useEffect(() => {
+    if (threads.length) useChatLayoutStore.getState().reconcile(splitProject,
+      threads.filter(thread => !thread.archived).map(thread => thread.id))
+  }, [threads, splitProject])
+  useEffect(() => {
+    syncChatPaneCatalog(useChatStore.getState())
+    const off = useChatStore.subscribe((state, previous) => {
+      if (state.threads !== previous.threads || state.runtimeConnection !== previous.runtimeConnection ||
+          state.composerPickList !== previous.composerPickList || state.composerModelMeta !== previous.composerModelMeta) syncChatPaneCatalog(state)
+    })
+    return () => { off(); disposeChatPaneSessions() }
+  }, [])
   const ideProjectOptions = useMemo(() => {
     const paths = new Set<string>()
     const active = normalizeWorkspaceRoot(activeWorkspaceRoot)
@@ -559,7 +600,7 @@ export function Workbench(): ReactElement {
     await forkThread(activeThreadId)
   }
 
-  const handleComposerOpenDiff = (): void => {
+  const handleComposerOpenDiff = useCallback((): void => {
     setChangesContext('last-turn')
     setChangesTurnId(useChatStore.getState().currentTurnId)
     setChangesProjectRoot(null)
@@ -570,7 +611,7 @@ export function Workbench(): ReactElement {
     setRightSidebarOpen(true)
     setRightSidebarCollapsed(false)
     setRightSidebarTab('changes')
-  }
+  }, [layoutMode, setRightSidebarTab])
 
   const handleBranchOpenDiff = (): void => {
     setChangesContext('branch')
@@ -954,18 +995,32 @@ export function Workbench(): ReactElement {
       draftByThread.current[prev] = inputRef.current
     }
     if (activeThreadId != null && activeThreadId !== prev) {
-      setInput(draftByThread.current[activeThreadId] ?? '')
+      setInput(peekChatPaneSession(activeThreadId)?.draft ?? draftByThread.current[activeThreadId] ?? '')
     }
     if (activeThreadId == null) {
       setInput('')
     }
-  }, [activeThreadId])
+  }, [activeThreadId, setInput])
+
+  useEffect(() => {
+    if (!splitActive) {
+      const session = peekChatPaneSession(activeThreadId)
+      if (session) setInput(session.draft)
+    }
+  }, [splitActive, activeThreadId, setInput])
 
   useEffect(() => {
     setChangesContext('branch')
     setChangesTurnId(null)
     setChangesProjectRoot(null)
   }, [activeThreadId, activeWorkspaceRoot])
+
+  useEffect(() => {
+    if (!splitAction || activeThreadId !== splitAction.threadId) return
+    setSplitAction(null)
+    if (splitAction.kind === 'file' && splitAction.path) openFileInEditor(splitAction.path, splitAction.line)
+    else handleComposerOpenDiff()
+  }, [splitAction, activeThreadId, openFileInEditor, handleComposerOpenDiff])
 
   // Periodic background probe — keeps connected state fresh and
   // attempts to recover when the runtime is offline.
@@ -1654,6 +1709,7 @@ export function Workbench(): ReactElement {
                       </div>
                     ) : (
                       <MessageTimeline
+                        scrollMemory={peekChatPaneSession(activeThreadId)?.scroll}
                         blocks={blocks}
                         liveReasoning={liveReasoning}
                         live={liveAssistant}
@@ -1672,6 +1728,7 @@ export function Workbench(): ReactElement {
                     )}
                     <div className="mx-auto flex w-full shrink-0 px-[0.95rem] pl-[1.15rem] pb-3 pt-0">
                       <ComposerStage
+                        sessionKey={activeThreadId ?? undefined}
                         input={input}
                         setInput={setInput}
                         mode={mode}
@@ -1714,10 +1771,15 @@ export function Workbench(): ReactElement {
           <section className="ds-drag flex min-h-0 min-w-0 flex-1 flex-col">
             <header className="ds-workbench-topbar ds-window-drag-region ds-surface-divider relative z-10 shrink-0 bg-transparent">
               <div className="ds-workbench-topbar__inner flex w-full min-w-0 items-center justify-between gap-2">
-                <div className="flex h-7 min-w-0 flex-1 items-center overflow-hidden">
+                <div className="flex h-7 min-w-0 flex-1 items-center overflow-hidden" draggable={Boolean(activeThreadId)}
+                  onDragStart={event => { if (activeThreadId) event.dataTransfer.setData(CHAT_THREAD_DRAG_MIME, activeThreadId) }}>
                   <SessionHeader compact className="min-w-0" />
                 </div>
                 <div className={`flex h-7 shrink-0 items-center gap-1.5 ${topbarRightPaddingClass}`}>
+                  {activeThreadId && splitProject ? <button type="button" className="ds-no-drag rounded px-2 py-1 text-xs hover:bg-ds-hover disabled:opacity-40"
+                    aria-label={t('splitAdd')} title={t((chatLayout?.panes.length ?? 1) >= MAX_CHAT_PANES ? 'splitLimit' : 'splitAdd')}
+                    disabled={(chatLayout?.panes.length ?? 1) >= MAX_CHAT_PANES}
+                    onClick={() => useChatLayoutStore.getState().add(splitProject, activeThreadId)}>{t('splitAdd')}</button> : null}
                   <ConnectionStatusBar compact />
                   {busy ? (
                     <span className="inline-flex shrink-0 rounded-full bg-amber-500/16 px-1.5 py-px text-[10px] font-semibold leading-4 text-amber-950 dark:text-amber-100">
@@ -1745,13 +1807,17 @@ export function Workbench(): ReactElement {
                 </div>
               ) : null}
             </header>
+            <ChatSplitDropZone canAdd={(chatLayout?.panes.length ?? 1) < MAX_CHAT_PANES}>
             <div className="ds-chat-main-row relative flex min-h-0 min-w-0 flex-1">
               {!chatColumnHidden ? (
               <div
-                className={`ds-chat-main-track flex min-h-0 min-w-0 flex-1 flex-col ${chatColumnInsetClass}`}
+                className={`ds-chat-main-track flex min-h-0 min-w-0 flex-1 flex-col ${splitActive ? 'p-1' : chatColumnInsetClass}`}
               >
             <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-              {stageCentered ? (
+              {splitActive && chatLayout ? <ChatSplitWorkspace project={splitProject} layout={chatLayout} getInitialDraft={id => prevThreadId.current === id ? inputRef.current : draftByThread.current[id] ?? ''}
+                onFocus={focusSplitThread}
+                onOpenFile={(threadId, path, line) => { focusSplitThread(threadId); setSplitAction({ threadId, kind: 'file', path, line }) }}
+                onOpenDiff={threadId => { focusSplitThread(threadId); setSplitAction({ threadId, kind: 'diff' }) }} /> : stageCentered ? (
                 <div
                   className={`ds-empty-stage flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden ${
                     simpleEmptyHome ? 'ds-empty-stage--simple' : ''
@@ -1766,6 +1832,7 @@ export function Workbench(): ReactElement {
                         aria-hidden={simpleEmptyHome}
                       >
                         <MessageTimeline
+                        scrollMemory={peekChatPaneSession(activeThreadId)?.scroll}
                           blocks={blocks}
                           liveReasoning={liveReasoning}
                           live={liveAssistant}
@@ -1793,6 +1860,7 @@ export function Workbench(): ReactElement {
                     {/* Composer — stable position, never remounts across toggle */}
                     <div className="ds-chat-stage ds-empty-stage-composer shrink-0">
                       <ComposerStage
+                        sessionKey={activeThreadId ?? undefined}
                         input={input}
                         setInput={setInput}
                         mode={mode}
@@ -1830,6 +1898,7 @@ export function Workbench(): ReactElement {
                 <div className="ds-chat-operation-band min-h-0 min-w-0 flex-1">
                   <div className="ds-chat-operation-band__dialogue ds-dialogue-gutter flex min-h-0 min-w-0 flex-1 flex-col">
                     <MessageTimeline
+                        scrollMemory={peekChatPaneSession(activeThreadId)?.scroll}
                       blocks={blocks}
                       liveReasoning={liveReasoning}
                       live={liveAssistant}
@@ -1859,6 +1928,7 @@ export function Workbench(): ReactElement {
                     ) : null}
                     <div className="ds-chat-stage mx-auto mb-8 flex w-full shrink-0 -mt-6 pb-0 pt-0">
                       <ComposerStage
+                        sessionKey={activeThreadId ?? undefined}
                         input={input}
                         setInput={setInput}
                         mode={mode}
@@ -1907,6 +1977,7 @@ export function Workbench(): ReactElement {
               ) : (
                 <div className="ds-chat-stage ds-dialogue-gutter mx-auto flex min-h-0 w-full min-w-0 flex-1 flex-col">
                   <MessageTimeline
+                        scrollMemory={peekChatPaneSession(activeThreadId)?.scroll}
                     blocks={blocks}
                     liveReasoning={liveReasoning}
                     live={liveAssistant}
@@ -1922,6 +1993,7 @@ export function Workbench(): ReactElement {
                   />
                   <div className="mx-auto mb-8 flex w-full shrink-0 -mt-6 pb-0 pt-0">
                     <ComposerStage
+                        sessionKey={activeThreadId ?? undefined}
                       input={input}
                       setInput={setInput}
                       mode={mode}
@@ -1958,6 +2030,7 @@ export function Workbench(): ReactElement {
             </div>
               ) : null}
             </div>
+            </ChatSplitDropZone>
             {bottomTerminalOpen && activeWorkspaceRoot.trim().length > 0 ? (
               <div
                 className="ds-bottom-terminal ds-no-drag flex shrink-0 flex-col border-t-2 border-ds-border"

@@ -132,6 +132,7 @@ const LazyStreamdownAssistant = lazy(() =>
 )
 
 type Props = {
+  scrollMemory?: { top: number; atBottom: boolean }
   blocks: ChatBlock[]
   liveReasoning: string
   live: string
@@ -256,6 +257,7 @@ function BoundedReasoningMarkdown({ text }: { text: string }): ReactElement {
 }
 
 export function MessageTimeline({
+  scrollMemory,
   blocks,
   liveReasoning,
   live,
@@ -325,6 +327,7 @@ export function MessageTimeline({
     const onScroll = (): void => {
       const distanceToBottom = el.scrollHeight - el.scrollTop - el.clientHeight
       stickToBottomRef.current = distanceToBottom < 96
+      if (scrollMemory) { scrollMemory.top = el.scrollTop; scrollMemory.atBottom = stickToBottomRef.current }
       if (hiddenTurnCount > 0 && el.scrollTop <= TOP_LOAD_TRIGGER_PX) {
         loadEarlierTurns()
       }
@@ -361,7 +364,7 @@ export function MessageTimeline({
       el.removeEventListener('touchmove', markUserScroll)
       el.removeEventListener('keydown', onKeyDown)
     }
-  }, [hiddenTurnCount, loadEarlierTurns])
+  }, [hiddenTurnCount, loadEarlierTurns, scrollMemory])
 
   const { spacerPx: tailAnchorSpacerPx, holdRef: tailAnchorHoldRef } = useTailAnchorScroll({
     containerRef,
@@ -416,7 +419,7 @@ export function MessageTimeline({
   }, [blocks, live, liveReasoning, pinTimelineToBottom])
 
   useEffect(() => {
-    stickToBottomRef.current = true
+    stickToBottomRef.current = scrollMemory?.atBottom ?? true
     pendingPrependRef.current = null
     prependInFlightRef.current = false
     if (scrollFrameRef.current !== null) {
@@ -426,8 +429,8 @@ export function MessageTimeline({
     // Container-scoped jump (not scrollIntoView) to avoid repositioning
     // scrollable ancestors on thread switch.
     const el = containerRef.current
-    if (el) el.scrollTop = el.scrollHeight
-  }, [activeThreadId])
+    if (el) el.scrollTop = scrollMemory && !scrollMemory.atBottom ? scrollMemory.top : el.scrollHeight
+  }, [activeThreadId, scrollMemory])
 
   useLayoutEffect(() => {
     if (!currentTurnUserId) return

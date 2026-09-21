@@ -1996,5 +1996,18 @@
   "feedbackActionFailed": "操作未完成",
   "feedbackConnectionLost": "连接暂时中断",
   "feedbackConnectionImpact": "暂时无法发送新消息，你可以继续编辑草稿。",
-  "feedbackReconnecting": "正在恢复连接"
+  "feedbackReconnecting": "正在恢复连接",
+  "splitAdd": "分屏",
+  "splitLimit": "最多支持 4 个分屏",
+  "splitOpenRight": "在右侧分屏打开",
+  "splitClose": "关闭分屏（任务继续运行）",
+  "splitChooseTask": "选择同一项目的任务",
+  "splitNewTask": "新建任务",
+  "splitLoading": "正在加载会话…",
+  "splitResize": "调整分屏大小",
+  "splitPanes": "任务分屏",
+  "splitPane": "分屏",
+  "splitLeft": "向左分屏",
+  "splitRight": "向右分屏",
+  "splitDragTask": "拖动任务到聊天区分屏"
 }

@@ -1,3 +1,5 @@
+import { openThreadInSplit } from '../../lib/chat-split-navigation'
+import { resolveChatLayoutKey, CHAT_THREAD_DRAG_MIME, MAX_CHAT_PANES, useChatLayoutStore } from '../../store/chat-layout-store'
 import type { CSSProperties, MouseEvent as ReactMouseEvent, ReactElement } from 'react'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
@@ -1399,6 +1401,11 @@ export function ThreadRow({
   onArchive,
   onTogglePin
 }: ThreadRowProps): ReactElement {
+  const splitWorkspace = useChatStore(s => s.threads.find(th => th.id === s.activeThreadId)?.workspace ?? s.workspaceRoot)
+  const splitLayout = useChatLayoutStore(s => s.layouts[resolveChatLayoutKey(s, splitWorkspace)])
+  const canSplit = Boolean(thread.workspace && !thread.archived &&
+    ((splitLayout?.panes.length ?? 1) < MAX_CHAT_PANES ||
+     splitLayout?.panes.some(p => p.threadId === thread.id)))
   const { t } = useTranslation('common')
   const renameThread = useChatStore((s) => s.renameThread)
   const markThreadUnread = useChatStore((s) => s.markThreadUnread)
@@ -1508,6 +1515,9 @@ export function ThreadRow({
 
   const handleMenuAction = (action: ThreadContextMenuAction): void => {
     switch (action) {
+      case 'split-right':
+        openThreadInSplit(thread.id)
+        break
       case 'rename':
         // Electron's renderer has no window.prompt; edit the title inline.
         setDraftTitle(thread.title)
@@ -1600,7 +1610,9 @@ export function ThreadRow({
                   : thread.title
         }
       >
-        <span className="flex h-4 w-4 shrink-0 items-center justify-center text-ds-muted/70">
+        <span draggable={!selectionMode} onPointerDown={event => event.stopPropagation()}
+          onDragStart={event => { event.dataTransfer.setData(CHAT_THREAD_DRAG_MIME, thread.id); event.dataTransfer.effectAllowed = 'move' }}
+          title={t('splitDragTask')} className="flex h-4 w-4 shrink-0 cursor-grab items-center justify-center text-ds-muted/70">
           {selectionMode ? (
             selected ? (
               <CheckSquare className="h-3.5 w-3.5 text-accent" strokeWidth={2} aria-hidden />
@@ -1745,6 +1757,7 @@ export function ThreadRow({
       ) : null}
       {!selectionMode && menuPos ? (
         <ThreadContextMenu
+          canSplit={canSplit}
           x={menuPos.x}
           y={menuPos.y}
           openUp={variant === 'chats'}

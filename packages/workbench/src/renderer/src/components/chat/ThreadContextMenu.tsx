@@ -19,6 +19,7 @@ import { usePreferredEditorLabel } from '../../hooks/use-preferred-editor-label'
 import type { SidebarLabelColor } from '../../lib/sidebar-chrome'
 
 export type ThreadContextMenuAction =
+  | 'split-right'
   | 'rename'
   | 'toggle-pin'
   | 'archive'
@@ -36,6 +37,7 @@ type ThreadContextMenuProps = {
   y: number
   /** Grow the menu upward from (x, y) instead of downward. */
   openUp?: boolean
+  canSplit?: boolean
   pinned: boolean
   canMarkUnread: boolean
   hasPath: boolean
@@ -52,6 +54,7 @@ export function ThreadContextMenu({
   x,
   y,
   openUp = false,
+  canSplit = false,
   pinned,
   canMarkUnread,
   hasPath,
@@ -120,6 +123,9 @@ export function ThreadContextMenu({
       className="ds-no-drag overflow-hidden rounded-xl border border-ds-border bg-ds-elevated p-1 shadow-[0_24px_70px_rgba(44,55,78,0.18)] backdrop-blur-xl dark:shadow-[0_30px_80px_rgba(0,0,0,0.42)]"
       onMouseDown={(event) => event.stopPropagation()}
     >
+      <button type="button" className={itemClass} disabled={!canSplit} onClick={() => run('split-right')}>
+        <span className={iconClass}>◫</span><span>{t('splitOpenRight')}</span>
+      </button>
       <button type="button" className={itemClass} onClick={() => run('rename')}>
         <Pencil className={iconClass} strokeWidth={1.8} />
         <span className="min-w-0 truncate">{t('threadMenuRename')}</span>

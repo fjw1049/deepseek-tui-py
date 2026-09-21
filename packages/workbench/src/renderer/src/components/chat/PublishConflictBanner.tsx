@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactElement } from 'react'
 import { useTranslation } from 'react-i18next'
-import { useChatStore } from '../../store/chat-store'
+import { useChatStore, useChatStoreApi } from '../../store/chat-store'
 import { openChangesPanel } from '../../lib/change-review'
 import {
   publishAttentionState,
@@ -23,6 +23,7 @@ type RecoveryDecision = {
  * the smallest decision needed to continue.
  */
 export function PublishConflictBanner(): ReactElement | null {
+  const chatStore = useChatStoreApi()
   const { t } = useTranslation('common')
   const activeThreadId = useChatStore((s) => s.activeThreadId)
   const busy = useChatStore((s) => s.busy)
@@ -80,7 +81,7 @@ export function PublishConflictBanner(): ReactElement | null {
     setFeedback(null)
     try {
       const result = await resolvePublishConflicts(action, undefined, recoveryToken)
-      if (useChatStore.getState().activeThreadId !== requestThreadId) return
+      if (chatStore.getState().activeThreadId !== requestThreadId) return
       if (result === null) {
         setFeedback('failed')
       } else if (result.status === 'applied') {
@@ -116,7 +117,7 @@ export function PublishConflictBanner(): ReactElement | null {
       // missing state remains unchanged.
       await warmActiveThread(activeThreadId)
       await refreshThreads()
-      if (useChatStore.getState().activeThreadId !== activeThreadId) return
+      if (chatStore.getState().activeThreadId !== activeThreadId) return
       const current = useChatStore
         .getState()
         .threads.find((item) => item.id === activeThreadId)

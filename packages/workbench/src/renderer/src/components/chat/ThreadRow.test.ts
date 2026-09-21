@@ -7,7 +7,7 @@ vi.mock('../../i18n', () => ({ default: { t: (key: string) => key } }))
 vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key }) }))
 vi.mock('../../store/chat-store', () => ({
   useChatStore: (selector: (state: object) => unknown) => selector({
-    sidebarLabelColors: {}, activeThreadId: null,
+    sidebarLabelColors: {}, activeThreadId: null, threads: [], workspaceRoot: '',
     renameThread: vi.fn(), markThreadUnread: vi.fn(), setSidebarLabelColor: vi.fn()
   })
 }))

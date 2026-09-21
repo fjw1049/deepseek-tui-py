@@ -1,3 +1,5 @@
+import { useRef } from 'react'
+import { CHAT_SPLIT_DRAG_EVENT, finishChatSplitDrag } from '../../lib/chat-split-navigation'
 import type { CSSProperties, HTMLAttributes, ReactElement, ReactNode, Ref } from 'react'
 import {
   DndContext,
@@ -30,6 +32,11 @@ export function SidebarSortableList({
   onReorder,
   children
 }: SidebarSortableListProps): ReactElement {
+  const dragPoint = useRef<{ x: number; y: number } | null>(null)
+  const clearSplitDrag = (): void => {
+    dragPoint.current = null
+    window.dispatchEvent(new CustomEvent(CHAT_SPLIT_DRAG_EVENT, { detail: null }))
+  }
   const sensors = useSensors(
     useSensor(PointerSensor, {
       activationConstraint: { distance: 10 }
@@ -38,6 +45,10 @@ export function SidebarSortableList({
 
   const handleDragEnd = (event: DragEndEvent): void => {
     const { active, over } = event
+    const point = dragPoint.current
+    const handled = point && finishChatSplitDrag(String(active.id), point.x, point.y)
+    clearSplitDrag()
+    if (handled) return
     if (!over || active.id === over.id) return
     const activeId = String(active.id)
     const overId = String(over.id)
@@ -50,7 +61,13 @@ export function SidebarSortableList({
   }
 
   return (
-    <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+    <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}
+      onDragMove={event => {
+        const origin = event.activatorEvent as PointerEvent
+        if (typeof origin.clientX !== 'number') return
+        dragPoint.current = { x: origin.clientX + event.delta.x, y: origin.clientY + event.delta.y }
+        window.dispatchEvent(new CustomEvent(CHAT_SPLIT_DRAG_EVENT, { detail: { threadId: String(event.active.id), ...dragPoint.current } }))
+      }} onDragCancel={clearSplitDrag}>
       <SortableContext items={items as UniqueIdentifier[]} strategy={verticalListSortingStrategy}>
         {children}
       </SortableContext>
@@ -91,7 +108,8 @@ export function SidebarSortableRow({
       : baseTransform || undefined,
     transition,
     zIndex: isDragging ? 20 : undefined,
-    position: 'relative'
+    position: 'relative',
+    pointerEvents: isDragging ? 'none' : undefined
   }
 
   if (disabled) {
