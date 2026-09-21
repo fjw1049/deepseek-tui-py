@@ -24,27 +24,23 @@ export type PetActivityEvent =
   | { type: 'manual_wave' }
   | { type: 'manual_jump' }
 
-type LegacyPetEventKind = 'user_message' | 'turn_complete' | 'turn_error' | 'wave' | 'jump'
-
-type PetEventListener = (event: PetActivityEvent) => void
+type PetEventListener = (threadId: string | null, event: PetActivityEvent) => void
 
 const listeners = new Set<PetEventListener>()
 
-function normalizePetEvent(event: PetActivityEvent | LegacyPetEventKind): PetActivityEvent {
-  if (typeof event !== 'string') return event
-  if (event === 'wave') return { type: 'manual_wave' }
-  if (event === 'jump') return { type: 'manual_jump' }
-  return { type: event }
+export function subscribePetEvents(
+  threadId: string | null,
+  listener: (event: PetActivityEvent) => void
+): () => void {
+  const scoped: PetEventListener = (sourceThreadId, event) => {
+    if (sourceThreadId === threadId) listener(event)
+  }
+  listeners.add(scoped)
+  return () => { listeners.delete(scoped) }
 }
 
-export function subscribePetEvents(listener: PetEventListener): () => void {
-  listeners.add(listener)
-  return () => listeners.delete(listener)
-}
-
-export function emitPetEvent(event: PetActivityEvent | LegacyPetEventKind): void {
-  const normalized = normalizePetEvent(event)
+export function emitPetEvent(threadId: string | null, event: PetActivityEvent): void {
   for (const listener of listeners) {
-    listener(normalized)
+    listener(threadId, event)
   }
 }

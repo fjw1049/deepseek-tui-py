@@ -863,7 +863,7 @@ function buildThreadEventSink(
             ? Date.parse(ev.createdAt)
             : Date.now()
         armBusyWatchdog(set, get)
-        emitPetEvent({ type: 'user_message' })
+        emitPetEvent(threadId, { type: 'user_message' })
         return {
           ...flushed,
           blocks: nextBlocks,
@@ -879,7 +879,7 @@ function buildThreadEventSink(
       }),
     onDeltas: (deltas) => {
       if (deltas.some((delta) => delta.kind === 'agent_reasoning')) {
-        emitPetEvent({ type: 'agent_reasoning' })
+        emitPetEvent(threadId, { type: 'agent_reasoning' })
       }
       set((s) => {
         if (deltas.length === 0) return {}
@@ -963,7 +963,7 @@ function buildThreadEventSink(
       })
     },
     onTool: (ev) => {
-      emitPetEvent(
+      emitPetEvent(threadId,
         ev.status === 'running'
           ? {
               type: 'tool_started',
@@ -1054,7 +1054,7 @@ function buildThreadEventSink(
       })
     },
     onApproval: (req) => {
-      emitPetEvent({
+      emitPetEvent(threadId, {
         type: 'approval_waiting',
         itemId: `approval-${req.approvalId}`,
         toolName: req.toolName
@@ -1120,7 +1120,7 @@ function buildThreadEventSink(
       })
     },
     onElevation: (req) => {
-      emitPetEvent({
+      emitPetEvent(threadId, {
         type: 'elevation_waiting',
         itemId: `elevation-${req.elevationId}`,
         toolName: req.toolName
@@ -1155,7 +1155,7 @@ function buildThreadEventSink(
     onUserInput: (req) => {
       resetBusyRecoveryAttempts()
       clearBusyWatchdog()
-      emitPetEvent({ type: 'user_input_waiting', itemId: req.itemId })
+      emitPetEvent(threadId, { type: 'user_input_waiting', itemId: req.itemId })
       set((s) => {
         if (s.blocks.some((b) => b.kind === 'user_input' && b.requestId === req.requestId)) {
           return {}
@@ -1182,7 +1182,7 @@ function buildThreadEventSink(
     },
     onUserInputStatus: (ev) => {
       resetBusyRecoveryAttempts()
-      emitPetEvent({
+      emitPetEvent(threadId, {
         type: 'user_input_resolved',
         itemId: ev.itemId,
         status: ev.status
@@ -1330,7 +1330,7 @@ function buildThreadEventSink(
     onSubagentMailbox: (ev: SubagentMailboxPayload) => {
       const mailboxStatus = ev.message.status
       if (mailboxStatus === 'running' || mailboxStatus === 'pending') {
-        emitPetEvent({
+        emitPetEvent(threadId, {
           type: 'subagent_started',
           itemId: `subagent-${ev.message.agent_id}`,
           agentType: ev.message.agent_type ?? 'subagent'
@@ -1340,7 +1340,7 @@ function buildThreadEventSink(
         mailboxStatus === 'failed' ||
         mailboxStatus === 'cancelled'
       ) {
-        emitPetEvent({
+        emitPetEvent(threadId, {
           type: 'subagent_completed',
           itemId: `subagent-${ev.message.agent_id}`,
           status: mailboxStatus
@@ -1491,7 +1491,7 @@ function buildThreadEventSink(
       clearTurnCompletionProbe()
       resetBusyRecoveryAttempts()
       clearBusyWatchdog()
-      emitPetEvent({ type: 'turn_complete' })
+      emitPetEvent(threadId, { type: 'turn_complete' })
       const completedState = get()
       const completedThreadId = payload?.threadId ?? completedState.activeThreadId
       const completedTurnId = completedState.currentTurnId
@@ -1538,7 +1538,7 @@ function buildThreadEventSink(
     onError: (err) => {
       resetBusyRecoveryAttempts()
       clearBusyWatchdog()
-      emitPetEvent({ type: 'turn_error' })
+      emitPetEvent(threadId, { type: 'turn_error' })
       set((s) => {
         const wasBusy = s.busy
         const out = flushLiveBlocks(s, {
@@ -2633,7 +2633,7 @@ const store = create<ChatState>((set, get) => ({
         : {}),
       queuedMessages: queued ? s.queuedMessages.filter((message) => message.id !== queued.id) : s.queuedMessages
     }))
-    if (!hidden) emitPetEvent({ type: 'user_message' })
+    if (!hidden) emitPetEvent(activeThreadId, { type: 'user_message' })
     if (!activeThreadId) {
       try {
         const settings = await window.dsGui.getSettings()
@@ -3526,7 +3526,7 @@ const store = create<ChatState>((set, get) => ({
             : b
         )
       }))
-      emitPetEvent({
+      emitPetEvent(originThreadId, {
         type: 'approval_resolved',
         itemId: blockId,
         status: decision === 'allow' ? 'allowed' : 'denied'
@@ -3549,7 +3549,7 @@ const store = create<ChatState>((set, get) => ({
             : b
         )
       }))
-      emitPetEvent({ type: 'approval_resolved', itemId: blockId, status: 'error' })
+      emitPetEvent(originThreadId, { type: 'approval_resolved', itemId: blockId, status: 'error' })
       return true
     } finally {
       approvalSubmitInFlight.delete(blockId)
@@ -3640,7 +3640,7 @@ const store = create<ChatState>((set, get) => ({
             : b
         )
       }))
-      emitPetEvent({
+      emitPetEvent(originThreadId, {
         type: 'elevation_resolved',
         itemId: blockId,
         status: decision === 'allow' ? 'allowed' : 'denied'
@@ -3659,7 +3659,7 @@ const store = create<ChatState>((set, get) => ({
             : b
         )
       }))
-      emitPetEvent({ type: 'elevation_resolved', itemId: blockId, status: 'error' })
+      emitPetEvent(originThreadId, { type: 'elevation_resolved', itemId: blockId, status: 'error' })
     } finally {
       decisionSubmitInFlight.delete(decisionKey)
       if (get().activeThreadId === originThreadId) {
@@ -3724,7 +3724,7 @@ const store = create<ChatState>((set, get) => ({
             ? { composerMode: nextMode }
             : {})
         }))
-        emitPetEvent({ type: 'user_input_resolved', itemId: blockId, status: 'submitted' })
+        emitPetEvent(originThreadId, { type: 'user_input_resolved', itemId: blockId, status: 'submitted' })
         return
       }
 
@@ -3741,7 +3741,7 @@ const store = create<ChatState>((set, get) => ({
             : b
         )
       }))
-      emitPetEvent({ type: 'user_input_resolved', itemId: blockId, status: 'cancelled' })
+      emitPetEvent(originThreadId, { type: 'user_input_resolved', itemId: blockId, status: 'cancelled' })
     } catch (e) {
       if (get().activeThreadId !== originThreadId) return
       const msg = formatRuntimeError(e)
@@ -3760,7 +3760,7 @@ const store = create<ChatState>((set, get) => ({
             : b
         )
       }))
-      emitPetEvent({ type: 'user_input_resolved', itemId: blockId, status: 'error' })
+      emitPetEvent(originThreadId, { type: 'user_input_resolved', itemId: blockId, status: 'error' })
     } finally {
       decisionSubmitInFlight.delete(decisionKey)
       if (get().activeThreadId === originThreadId) {

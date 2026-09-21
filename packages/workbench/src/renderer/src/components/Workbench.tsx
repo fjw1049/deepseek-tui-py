@@ -1,3 +1,4 @@
+import { ChatSplitToolbar } from './chat/ChatSplitToolbar'
 import { ChatSplitWorkspace, ChatSplitDropZone } from './chat/ChatSplitWorkspace'
 import { resolveChatLayoutKey, CHAT_THREAD_DRAG_MIME, MAX_CHAT_PANES, useChatLayoutStore } from '../store/chat-layout-store'
 import { syncChatPaneCatalog, disposeChatPaneSessions, peekChatPaneSession } from '../store/chat-pane-sessions'
@@ -479,7 +480,7 @@ export function Workbench(): ReactElement {
   useEffect(() => {
     syncChatPaneCatalog(useChatStore.getState())
     const off = useChatStore.subscribe((state, previous) => {
-      if (state.threads !== previous.threads || state.runtimeConnection !== previous.runtimeConnection ||
+      if (state.pinnedThreadIds !== previous.pinnedThreadIds || state.threads !== previous.threads || state.runtimeConnection !== previous.runtimeConnection ||
           state.composerPickList !== previous.composerPickList || state.composerModelMeta !== previous.composerModelMeta) syncChatPaneCatalog(state)
     })
     return () => { off(); disposeChatPaneSessions() }
@@ -1771,17 +1772,15 @@ export function Workbench(): ReactElement {
           <section className="ds-drag flex min-h-0 min-w-0 flex-1 flex-col">
             <header className="ds-workbench-topbar ds-window-drag-region ds-surface-divider relative z-10 shrink-0 bg-transparent">
               <div className="ds-workbench-topbar__inner flex w-full min-w-0 items-center justify-between gap-2">
-                <div className="flex h-7 min-w-0 flex-1 items-center overflow-hidden" draggable={Boolean(activeThreadId)}
+                <div className="flex h-7 min-w-0 flex-1 items-center overflow-hidden" draggable={!splitActive && Boolean(activeThreadId)}
                   onDragStart={event => { if (activeThreadId) event.dataTransfer.setData(CHAT_THREAD_DRAG_MIME, activeThreadId) }}>
-                  <SessionHeader compact className="min-w-0" />
+                  {splitActive && chatLayout ? <ChatSplitToolbar layout={chatLayout}
+                    onArrange={arrangement => useChatLayoutStore.getState().arrange(splitProject, arrangement)}
+                    onAdd={() => useChatLayoutStore.getState().add(splitProject, activeThreadId)} /> : <SessionHeader compact className="min-w-0" />}
                 </div>
                 <div className={`flex h-7 shrink-0 items-center gap-1.5 ${topbarRightPaddingClass}`}>
-                  {activeThreadId && splitProject ? <button type="button" className="ds-no-drag rounded px-2 py-1 text-xs hover:bg-ds-hover disabled:opacity-40"
-                    aria-label={t('splitAdd')} title={t((chatLayout?.panes.length ?? 1) >= MAX_CHAT_PANES ? 'splitLimit' : 'splitAdd')}
-                    disabled={(chatLayout?.panes.length ?? 1) >= MAX_CHAT_PANES}
-                    onClick={() => useChatLayoutStore.getState().add(splitProject, activeThreadId)}>{t('splitAdd')}</button> : null}
                   <ConnectionStatusBar compact />
-                  {busy ? (
+                  {busy && !splitActive ? (
                     <span className="inline-flex shrink-0 rounded-full bg-amber-500/16 px-1.5 py-px text-[10px] font-semibold leading-4 text-amber-950 dark:text-amber-100">
                       {t('running')}
                     </span>

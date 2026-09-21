@@ -81,6 +81,14 @@ export function readPetFavoriteSlugs(): string[] {
   }
 }
 
+export function hasSavedPetFavorites(): boolean {
+  try {
+    return window.localStorage.getItem(FAVORITES_KEY) != null
+  } catch {
+    return false
+  }
+}
+
 export function writePetFavoriteSlugs(slugs: string[]): void {
   try {
     window.localStorage.setItem(FAVORITES_KEY, JSON.stringify(normalizeFavoriteSlugs(slugs)))

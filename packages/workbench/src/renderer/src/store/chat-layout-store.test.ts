@@ -60,3 +60,15 @@ describe('project conversation splits', () => {
     expect(useChatLayoutStore.getState().layouts['/repo'].panes.map(p => p.threadId)).toEqual(['t0', null, null, null])
   })
 })
+
+
+it('persists arrangement and restores old or invalid layouts as a grid', () => {
+  const actions = useChatLayoutStore.getState()
+  actions.add('/repo', 'a', 'b')
+  actions.arrange('/repo', 'vertical')
+  const layout = useChatLayoutStore.getState().layouts['/repo']
+  expect(layout.arrangement).toBe('vertical')
+  expect(JSON.parse(window.localStorage.getItem('deepseek.chat-layouts.v1')!)['/repo'].arrangement).toBe('vertical')
+  expect(sanitizeChatLayout({ ...layout, arrangement: undefined })?.arrangement).toBe('grid')
+  expect(sanitizeChatLayout({ ...layout, arrangement: 'invalid' })?.arrangement).toBe('grid')
+})

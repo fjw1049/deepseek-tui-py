@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactElement, type ReactNode } from 'react'
-import { Folder, PanelsTopLeft, X } from 'lucide-react'
+import { X } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { ChatStoreContext, clearChatSelection, useChatStore } from '../../store/chat-store'
-import { CHAT_THREAD_DRAG_MIME, MAX_CHAT_PANES, useChatLayoutStore, type ChatLayout } from '../../store/chat-layout-store'
+import { CHAT_THREAD_DRAG_MIME, useChatLayoutStore, type ChatLayout } from '../../store/chat-layout-store'
 import { getChatPaneSession } from '../../store/chat-pane-sessions'
 import { CHAT_SPLIT_DRAG_EVENT, finishChatSplitDrag, type ChatSplitDrag } from '../../lib/chat-split-navigation'
 import { ChatPaneFocusContext } from './chat-pane-focus'
+import { ChatSplitTaskPicker } from './ChatSplitTaskPicker'
+import { SessionHeader } from '../SessionHeader'
 import { ComposerStage } from './ComposerStage'
 import { MessageTimeline } from './MessageTimeline'
 import './chat-split.css'
@@ -14,6 +16,15 @@ type PaneProps = {
   threadId: string
   onOpenFile: (threadId: string, path: string, line?: number) => void
   onOpenDiff: (threadId: string) => void
+}
+
+function ChatPaneHeader(): ReactElement {
+  const { t } = useTranslation('common')
+  const busy = useChatStore(s => s.busy)
+  return <div className="flex min-w-0 items-center gap-2">
+    <SessionHeader compact className="ds-chat-split-session" />
+    {busy ? <span role="status" aria-label={t('running')} title={t('running')} className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500" /> : null}
+  </div>
 }
 
 function ChatPaneContent({ threadId, onOpenFile, onOpenDiff }: PaneProps): ReactElement {
@@ -70,6 +81,7 @@ export function ChatSplitWorkspace({ project, layout, getInitialDraft, onFocus, 
   const root = useRef<HTMLDivElement>(null)
   const [narrow, setNarrow] = useState(false)
   const count = layout.panes.length
+  const arrangement = layout.arrangement ?? 'grid'
   const actions = useChatLayoutStore.getState()
   const focus = (id: string, threadId: string | null): void => {
     actions.focus(project, id)
@@ -77,16 +89,20 @@ export function ChatSplitWorkspace({ project, layout, getInitialDraft, onFocus, 
   }
   useEffect(() => {
     if (!root.current) return
-    const observer = new ResizeObserver(([entry]) => setNarrow(entry.contentRect.width < 760))
+    const observer = new ResizeObserver(([entry]) => {
+      const columns = arrangement === 'vertical' ? 1 : arrangement === 'horizontal' ? count : Math.min(count, 2)
+      const rows = arrangement === 'vertical' ? count : arrangement === 'horizontal' ? 1 : Math.ceil(count / 2)
+      setNarrow(entry.contentRect.width / columns < 360 || entry.contentRect.height / rows < 260)
+    })
     observer.observe(root.current)
     return () => observer.disconnect()
-  }, [])
+  }, [arrangement, count])
   const resizeHandle = (axis: 'x' | 'y'): ReactElement => <div
     key={axis} role="separator" tabIndex={0} aria-label={t('splitResize')}
     aria-orientation={axis === 'x' ? 'vertical' : 'horizontal'} aria-valuemin={25} aria-valuemax={75}
     aria-valuenow={Math.round(layout[axis] * 100)}
     className={`ds-chat-split-resize ds-chat-split-resize--${axis}`}
-    style={axis === 'x' ? { left: `${layout.x * 100}%` } : { top: `${layout.y * 100}%`, left: count === 3 ? `${layout.x * 100}%` : 0 }}
+    style={axis === 'x' ? { left: `${layout.x * 100}%` } : { top: `${layout.y * 100}%`, left: arrangement === 'grid' && count === 3 ? `${layout.x * 100}%` : 0 }}
     onDoubleClick={() => actions.resize(project, axis, .5)}
     onKeyDown={event => {
       const previous = axis === 'x' ? 'ArrowLeft' : 'ArrowUp'
@@ -103,17 +119,18 @@ export function ChatSplitWorkspace({ project, layout, getInitialDraft, onFocus, 
     }} onPointerUp={event => event.currentTarget.releasePointerCapture(event.pointerId)} />
 
   return <div className="ds-chat-split-shell min-h-0 min-w-0 flex-1">
-    {narrow && count > 1 ? <div className="flex gap-1 overflow-x-auto p-1" role="tablist" aria-label={t('splitPanes')}>
-      {layout.panes.map((pane, index) => <button key={pane.id} role="tab" aria-selected={layout.focused === pane.id}
-        className="shrink-0 rounded px-2 py-1 text-xs hover:bg-ds-hover" onClick={() => focus(pane.id, pane.threadId)}>
+    {narrow && count > 1 ? <div className="ds-chat-split-tabs" role="group" aria-label={t('splitPanes')}>
+      {layout.panes.map((pane, index) => <button key={pane.id} aria-pressed={layout.focused === pane.id}
+        className="ds-chat-split-tab" onClick={() => focus(pane.id, pane.threadId)}>
         {index + 1}. {threads.find(th => th.id === pane.threadId)?.title ?? t('splitChooseTask')}
       </button>)}
     </div> : null}
     <div ref={root} className="ds-chat-split-grid" style={{ '--split-x': `${layout.x * 100}%`, '--split-y': `${layout.y * 100}%` } as CSSProperties}>
       {layout.panes.map((pane, index) => {
         const focused = layout.focused === pane.id
-        const thread = threads.find(th => th.id === pane.threadId)
-        const style: CSSProperties = narrow || count === 1 ? { inset: 0 } : count === 2
+        const style: CSSProperties = narrow || count === 1 ? { inset: 0 }
+          : arrangement === 'vertical' ? { left: 0, right: 0, top: count === 2 ? (index === 0 ? 0 : 'var(--split-y)') : `${index * 100 / count}%`, bottom: count === 2 ? (index === 0 ? 'calc(100% - var(--split-y))' : 0) : `${(count - index - 1) * 100 / count}%` }
+          : arrangement === 'horizontal' && count > 2 ? { top: 0, bottom: 0, left: `${index * 100 / count}%`, right: `${(count - index - 1) * 100 / count}%` } : count === 2
           ? { top: 0, bottom: 0, left: index === 0 ? 0 : 'var(--split-x)', right: index === 0 ? 'calc(100% - var(--split-x))' : 0 }
           : count === 3 && index === 0 ? { inset: '0 calc(100% - var(--split-x)) 0 0' }
           : { left: count === 3 || index % 2 ? 'var(--split-x)' : 0,
@@ -127,20 +144,24 @@ export function ChatSplitWorkspace({ project, layout, getInitialDraft, onFocus, 
           onFocusCapture={() => { if (!focused) focus(pane.id, pane.threadId) }}
           onPointerDownCapture={() => { if (!focused) focus(pane.id, pane.threadId) }}>
           <header className="ds-chat-split-title">
-            <span className="min-w-0 flex-1 truncate cursor-grab" draggable={Boolean(pane.threadId)}
+            <div className="min-w-0 flex-1 cursor-grab" draggable={Boolean(pane.threadId)}
               onDragStart={event => {
                 if (!pane.threadId) return
                 event.dataTransfer.setData(CHAT_THREAD_DRAG_MIME, pane.threadId)
                 event.dataTransfer.effectAllowed = 'move'
               }}>
-              <span className="block truncate" title={thread?.title}>{thread?.title ?? t('splitChooseTask')}</span>
-              {thread?.workspace ? <span className="ds-chat-split-project" title={thread.workspace}>
-                <Folder size={11} aria-hidden="true" /><span className="truncate">{thread.workspace.replace(/\\/g, '/').split('/').filter(Boolean).pop() || thread.workspace}</span>
-              </span> : null}
-            </span>
-            <button type="button" title={t(count >= MAX_CHAT_PANES ? 'splitLimit' : 'splitAdd')} aria-label={t('splitAdd')}
-              disabled={count >= MAX_CHAT_PANES} onClick={() => actions.add(project, pane.threadId)}><PanelsTopLeft size={14} aria-hidden="true" /></button>
-            {count > 1 ? <button type="button" title={t('splitClose')} aria-label={t('splitClose')} onClick={() => {
+              {session ? <ChatStoreContext.Provider value={session.store}>
+                <ChatPaneHeader />
+              </ChatStoreContext.Provider> : <ChatSplitTaskPicker workspace={newTaskWorkspace}
+                visibleThreadIds={layout.panes.map(p => p.threadId)}
+                onSelect={id => { actions.bind(project, pane.id, id); onFocus(id) }}
+                onCreate={async () => {
+                  focus(pane.id, null)
+                  await useChatStore.getState().createThread({ workspaceRoot: newTaskWorkspace })
+                }} />}
+
+            </div>
+            {count > 1 ? <button type="button" className="ds-chat-split-icon" title={t('splitClose')} aria-label={t('splitClose')} onClick={() => {
               actions.close(project, pane.id)
               const next = useChatLayoutStore.getState().layouts[project]
               const selected = next?.panes.find(p => p.id === next.focused)
@@ -152,22 +173,13 @@ export function ChatSplitWorkspace({ project, layout, getInitialDraft, onFocus, 
             <ChatPaneFocusContext.Provider value={focused}>
               <ChatPaneContent key={pane.threadId} threadId={pane.threadId} onOpenFile={onOpenFile} onOpenDiff={onOpenDiff} />
             </ChatPaneFocusContext.Provider>
-          </ChatStoreContext.Provider> : <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 overflow-y-auto p-6 text-sm">
-            <p className="text-ds-muted">{t('splitChooseTask')}</p>
-            <select aria-label={t('splitChooseTask')} value="" className="max-w-full rounded border border-ds-border bg-ds-elevated p-2"
-              onChange={event => { actions.bind(project, pane.id, event.target.value); onFocus(event.target.value) }}>
-              <option value="" disabled>{t('splitChooseTask')}</option>
-              {threads.filter(th => th.workspace && !th.archived).map(th => <option key={th.id} value={th.id}>{th.workspace?.replace(/\\/g, '/').split('/').filter(Boolean).pop()} · {th.title}</option>)}
-            </select>
-            <button className="rounded border border-ds-border px-3 py-2 hover:bg-ds-hover" onClick={() => {
-              focus(pane.id, null)
-              void useChatStore.getState().createThread({ workspaceRoot: newTaskWorkspace })
-            }}>{t('splitNewTask')}</button>
+          </ChatStoreContext.Provider> : <div className="ds-chat-split-empty">
+            <span>{t('splitEmptyHint')}</span>
           </div>}
         </section>
       })}
-      {!narrow && count > 1 ? resizeHandle('x') : null}
-      {!narrow && count > 2 ? resizeHandle('y') : null}
+      {!narrow && count > 1 && arrangement !== 'vertical' && (arrangement === 'grid' || count === 2) ? resizeHandle('x') : null}
+      {!narrow && (arrangement === 'grid' && count > 2 || arrangement === 'vertical' && count === 2) ? resizeHandle('y') : null}
     </div>
   </div>
 }

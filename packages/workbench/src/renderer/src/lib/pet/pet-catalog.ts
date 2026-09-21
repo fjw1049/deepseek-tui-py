@@ -40,6 +40,14 @@ export async function resolvePetSpritesheetSrc(
     throw new Error(result.message)
   }
   const src = base64ToObjectUrl(result.base64, result.mime)
+  try {
+    const image = new Image()
+    image.src = src
+    await image.decode()
+  } catch (error) {
+    URL.revokeObjectURL(src)
+    throw error
+  }
   return {
     ok: true,
     slug: result.slug,

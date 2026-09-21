@@ -35,6 +35,8 @@ export function getChatPaneSession(threadId: string, initialDraft = ''): Session
     forkThread: (id, throughItemId) => useChatStore.getState().forkThread(id, throughItemId),
     chooseWorkspace: options => useChatStore.getState().chooseWorkspace(options),
     activateWorkspace: (path, options) => useChatStore.getState().activateWorkspace(path, options),
+    pinnedThreadIds: app.pinnedThreadIds,
+    togglePin: id => useChatStore.getState().togglePin(id),
     deleteThread: id => useChatStore.getState().deleteThread(id),
     archiveThread: id => useChatStore.getState().archiveThread(id),
     openSettings: app.openSettings, setRoute: app.setRoute,
@@ -76,7 +78,7 @@ export function syncChatPaneCatalog(state: ChatState): void {
       continue
     }
     const reconnect = session.store.getState().runtimeConnection !== 'ready' && state.runtimeConnection === 'ready'
-    session.store.setState({ threads: state.threads, runtimeConnection: state.runtimeConnection,
+    session.store.setState({ threads: state.threads, pinnedThreadIds: state.pinnedThreadIds, runtimeConnection: state.runtimeConnection,
       composerPickList: state.composerPickList, composerModelMeta: state.composerModelMeta })
     if (reconnect && !session.store.getState().activeThreadId) session.loading = session.store.getState().selectThread(threadId)
   }

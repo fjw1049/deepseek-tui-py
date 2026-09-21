@@ -58,8 +58,9 @@ async function readManifestCacheFile(): Promise<ManifestCacheRecord | null> {
   try {
     const raw = await readFile(manifestCachePath(), 'utf8')
     const parsed = JSON.parse(raw) as ManifestCacheRecord
-    if (!parsed?.manifest?.pets || typeof parsed.fetchedAt !== 'number') return null
-    return parsed
+    const manifest = parseManifestBody(parsed?.manifest)
+    if (!manifest || typeof parsed.fetchedAt !== 'number') return null
+    return { fetchedAt: parsed.fetchedAt, manifest }
   } catch {
     return null
   }
@@ -166,6 +167,11 @@ export async function fetchPetManifest(force = false): Promise<PetManifestFetchR
   }
 }
 
+function isCompleteWebp(buffer: Buffer): boolean {
+  return buffer.length >= 12 && buffer.toString('ascii', 0, 4) === 'RIFF' &&
+    buffer.toString('ascii', 8, 12) === 'WEBP' && buffer.readUInt32LE(4) + 8 === buffer.length
+}
+
 async function downloadSpritesheet(url: string, slug: string): Promise<void> {
   if (!isAllowedSpritesheetUrl(url)) {
     throw new Error('Spritesheet URL is not allowlisted.')
@@ -178,8 +184,8 @@ async function downloadSpritesheet(url: string, slug: string): Promise<void> {
       throw new Error(`Spritesheet request failed (${response.status}).`)
     }
     const buffer = Buffer.from(await response.arrayBuffer())
-    if (buffer.length < 256) {
-      throw new Error('Spritesheet payload was too small.')
+    if (!isCompleteWebp(buffer)) {
+      throw new Error('Spritesheet payload was not a complete WebP image.')
     }
     await ensureCacheDir()
     await writeFile(spritesheetCachePath(slug), buffer)
@@ -195,7 +201,8 @@ function spritesheetUrlHash(url: string): string {
 async function readCachedSpritesheet(slug: string): Promise<Buffer | null> {
   try {
     await access(spritesheetCachePath(slug))
-    return await readFile(spritesheetCachePath(slug))
+    const buffer = await readFile(spritesheetCachePath(slug))
+    return isCompleteWebp(buffer) ? buffer : null
   } catch {
     return null
   }
@@ -234,24 +241,23 @@ export async function resolvePetSpritesheet(
   await ensureCacheDir()
 
   const localCached = await readCachedSpritesheet(slug)
-  if (localCached) {
+  // Consult an already known catalog before accepting a cached sprite. Do not
+  // require a network manifest request just to display an offline pet.
+  const knownManifest = memoryManifest ?? await readManifestCacheFile()
+  let entry = knownManifest?.manifest.pets.find((pet) => pet.slug === slug)
+  if (localCached && (!entry || await isSpritesheetCacheFresh(entry))) {
     return {
-      ok: true,
-      slug,
-      mime: 'image/webp',
-      base64: localCached.toString('base64'),
-      cached: true
+      ok: true, slug, mime: 'image/webp',
+      base64: localCached.toString('base64'), cached: true
     }
   }
 
-  const manifestResult = await fetchPetManifest()
-  if (!manifestResult.ok) {
-    return { ok: false, message: manifestResult.message }
+  if (!entry) {
+    const manifestResult = await fetchPetManifest()
+    if (!manifestResult.ok) return { ok: false, message: manifestResult.message }
+    entry = manifestResult.manifest.pets.find((pet) => pet.slug === slug) ??
+      manifestResult.manifest.pets.find((pet) => pet.slug === DEFAULT_PET_SLUG)
   }
-
-  const entry =
-    manifestResult.manifest.pets.find((pet) => pet.slug === slug) ??
-    manifestResult.manifest.pets.find((pet) => pet.slug === DEFAULT_PET_SLUG)
 
   if (!entry) {
     return { ok: false, message: `Pet "${slug}" was not found in manifest.` }
@@ -260,10 +266,13 @@ export async function resolvePetSpritesheet(
   try {
     await ensureSpritesheetCached(entry)
   } catch (error) {
-    return {
-      ok: false,
-      message: error instanceof Error ? error.message : String(error)
+    if (localCached) {
+      return {
+        ok: true, slug, mime: 'image/webp',
+        base64: localCached.toString('base64'), cached: true
+      }
     }
+    return { ok: false, message: error instanceof Error ? error.message : String(error) }
   }
 
   const cached = await readCachedSpritesheet(entry.slug)

@@ -2,6 +2,7 @@ import { useLayoutEffect, useRef, useState, type CSSProperties, type ReactElemen
 import { createPortal } from 'react-dom'
 import {
   Archive,
+  Columns2,
   Copy,
   ExternalLink,
   FolderOpen,
@@ -124,8 +125,12 @@ export function ThreadContextMenu({
       onMouseDown={(event) => event.stopPropagation()}
     >
       <button type="button" className={itemClass} disabled={!canSplit} onClick={() => run('split-right')}>
-        <span className={iconClass}>◫</span><span>{t('splitOpenRight')}</span>
+        <Columns2 className={iconClass} strokeWidth={1.8} />
+        <span className="min-w-0 truncate">{t('splitAdd')}</span>
       </button>
+
+      <div className="my-1 h-px bg-ds-border-muted" />
+
       <button type="button" className={itemClass} onClick={() => run('rename')}>
         <Pencil className={iconClass} strokeWidth={1.8} />
         <span className="min-w-0 truncate">{t('threadMenuRename')}</span>

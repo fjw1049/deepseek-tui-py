@@ -41,14 +41,13 @@ function Harness() {
     onFocus: () => {}, onOpenFile: () => {}, onOpenDiff: () => {} } satisfies ComponentProps<typeof ChatSplitWorkspace>)
 }
 
-it('renders exactly four independent composers, disables adding, and preserves the surviving DOM when closing', async () => {
+it('renders exactly four independent composers, and preserves the surviving DOM when closing', async () => {
   await act(async () => root.render(createElement(Harness)))
   expect(container.querySelectorAll('[data-chat-pane]')).toHaveLength(4)
   const inputs = [...container.querySelectorAll('textarea')]
   expect(inputs.map(input => input.value)).toEqual(['draft-a', 'draft-b', 'draft-c', 'draft-d'])
   const addButtons = [...container.querySelectorAll<HTMLButtonElement>('button[aria-label="splitAdd"]')]
-  expect(addButtons).toHaveLength(4)
-  expect(addButtons.every(button => button.disabled)).toBe(true)
+  expect(addButtons).toHaveLength(0)
   const firstStore = getChatPaneSession('a').store
   await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="splitClose"]')!.click())
   expect(container.querySelectorAll('[data-chat-pane]')).toHaveLength(3)
@@ -109,7 +108,7 @@ it('keeps cross-project navigation in the same layout and each session in its ow
   expect(container.querySelectorAll('[data-chat-pane]')).toHaveLength(4)
   for (const thread of threads.slice(0, 4)) {
     expect(getChatPaneSession(thread.id).store.getState().workspaceRoot).toBe(thread.workspace)
-    expect(container.querySelector(`.ds-chat-split-project[title="${thread.workspace}"]`)).not.toBeNull()
+    expect(container.querySelector('.ds-chat-split-project')).toBeNull()
   }
   const before = useChatLayoutStore.getState().layouts['/repo'].panes
   await act(async () => { expect(openThreadInSplit('a')).toBe(true) })
@@ -124,6 +123,84 @@ it('offers tasks from other projects in an empty pane', async () => {
   useChatLayoutStore.setState({ layouts: {}, activeLayoutKey: null })
   useChatLayoutStore.getState().add('/repo', 'a')
   await act(async () => root.render(createElement(Harness)))
-  const options = [...container.querySelectorAll('option')]
-  expect(options.some(option => option.value === 'b' && option.textContent?.includes('repo-b'))).toBe(true)
+  await act(async () => container.querySelector<HTMLButtonElement>('.ds-chat-split-task-trigger')!.click())
+  const options = [...document.querySelectorAll('[role="option"]')]
+  expect(options.some(option => option.textContent?.includes('Task b') && option.textContent?.includes('repo-b'))).toBe(true)
+})
+
+
+it('keeps each pane’s information and question navigation scoped to its session', async () => {
+  await act(async () => root.render(createElement(Harness)))
+  const session = getChatPaneSession('b')
+  const scrollToBlock = vi.fn()
+  await act(async () => session.store.setState({ blocks: [{ kind: 'user', id: 'question-b', text: 'Only in B' }], scrollToBlock }))
+  const panes = container.querySelectorAll('[data-chat-pane]')
+  expect(panes[0].querySelector<HTMLButtonElement>('[aria-label="sessionQueriesHint"]')!.disabled).toBe(true)
+  await act(async () => panes[1].querySelector<HTMLButtonElement>('[aria-label="sessionQueriesHint"]')!.click())
+  const jump = document.body.querySelector<HTMLButtonElement>('[aria-label="sessionQueryCopyHint: Only in B"]')!
+  expect(jump).not.toBeNull()
+  await act(async () => jump.click())
+  expect(scrollToBlock).toHaveBeenCalledWith('question-b')
+  await act(async () => panes[1].querySelector<HTMLButtonElement>('[aria-label="sessionInfoHint"]')!.click())
+  expect(document.body.textContent).toContain('/repo-b')
+})
+
+it('changes arrangement without remounting composers and places the empty picker at the top', async () => {
+  await act(async () => root.render(createElement(Harness)))
+  const inputs = [...container.querySelectorAll('textarea')]
+  for (const arrangement of ['horizontal', 'vertical', 'grid'] as const) {
+    await act(async () => useChatLayoutStore.getState().arrange('/repo', arrangement))
+    expect([...container.querySelectorAll('textarea')]).toEqual(inputs)
+    expect(container.querySelectorAll('[role="separator"]')).toHaveLength(arrangement === 'grid' ? 2 : 0)
+  }
+  await act(async () => {
+    useChatLayoutStore.setState({ layouts: {}, activeLayoutKey: null })
+    useChatLayoutStore.getState().add('/repo', 'a')
+  })
+  expect(container.querySelector('header .ds-chat-split-task-trigger')).not.toBeNull()
+  expect(container.querySelector('select')).toBeNull()
+})
+
+
+it('searches tasks by project and selects with the keyboard without creating duplicate panes', async () => {
+  useChatLayoutStore.setState({ layouts: {}, activeLayoutKey: null })
+  const actions = useChatLayoutStore.getState()
+  actions.add('/repo', 'a')
+  await act(async () => root.render(createElement(Harness)))
+  const trigger = container.querySelector<HTMLButtonElement>('.ds-chat-split-task-trigger')!
+  await act(async () => trigger.click())
+  const input = document.querySelector<HTMLInputElement>('[role="combobox"]')!
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, 'repo-b')
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+  })
+  expect(document.querySelectorAll('[role="option"]')).toHaveLength(1)
+  await act(async () => input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })))
+  expect(useChatLayoutStore.getState().layouts['/repo'].panes.map(p => p.threadId)).toEqual(['a', 'b'])
+  expect(document.querySelector('[role="dialog"]')).toBeNull()
+})
+
+
+it('uses pane tabs when the chosen arrangement cannot fit and preserves its composers', async () => {
+  let resize!: (size: { width: number; height: number }) => void
+  const OriginalResizeObserver = globalThis.ResizeObserver
+  vi.stubGlobal('ResizeObserver', class {
+    constructor(private callback: ResizeObserverCallback) {}
+    observe(target: Element) {
+      if (target.classList.contains('ds-chat-split-grid')) resize = size => this.callback([{ contentRect: size } as ResizeObserverEntry], this as unknown as ResizeObserver)
+    }
+    disconnect() {}
+  })
+  try {
+    await act(async () => root.render(createElement(Harness)))
+    const inputs = [...container.querySelectorAll('textarea')]
+    await act(async () => resize({ width: 600, height: 500 }))
+    expect(container.querySelectorAll('.ds-chat-split-tab')).toHaveLength(4)
+    expect([...container.querySelectorAll<HTMLElement>('[data-chat-pane]')].filter(p => p.style.display !== 'none')).toHaveLength(1)
+    await act(async () => container.querySelector<HTMLButtonElement>('.ds-chat-split-tab')!.click())
+    expect(container.querySelector('.ds-chat-split-tab')!.getAttribute('aria-pressed')).toBe('true')
+    await act(async () => resize({ width: 1600, height: 900 }))
+    expect(container.querySelectorAll('.ds-chat-split-tab')).toHaveLength(0)
+    expect([...container.querySelectorAll('textarea')]).toEqual(inputs)
+  } finally { vi.stubGlobal('ResizeObserver', OriginalResizeObserver) }
 })

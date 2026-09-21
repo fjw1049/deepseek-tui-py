@@ -4,7 +4,8 @@ import { normalizeWorkspaceRoot } from '../lib/workspace-path'
 export const MAX_CHAT_PANES = 4
 export const CHAT_THREAD_DRAG_MIME = 'application/x-deepseek-thread'
 export type ChatPane = { id: string; threadId: string | null }
-export type ChatLayout = { panes: ChatPane[]; focused: string; x: number; y: number }
+export type ChatArrangement = 'grid' | 'horizontal' | 'vertical'
+export type ChatLayout = { arrangement?: ChatArrangement; panes: ChatPane[]; focused: string; x: number; y: number }
 const STORAGE_KEY = 'deepseek.chat-layouts.v1'
 export const chatProjectKey = (path: string): string => normalizeWorkspaceRoot(path)
 
@@ -23,7 +24,7 @@ export function sanitizeChatLayout(value: unknown): ChatLayout | null {
   }).slice(0, MAX_CHAT_PANES).map(({ id, threadId }) => ({ id, threadId }))
   if (!panes.length) return null
   const ratio = (v: unknown): number => typeof v === 'number' && Number.isFinite(v) ? Math.max(.25, Math.min(.75, v)) : .5
-  return { panes, focused: panes.some(p => p.id === raw.focused) ? raw.focused! : panes[0].id, x: ratio(raw.x), y: ratio(raw.y) }
+  return { arrangement: raw.arrangement === 'horizontal' || raw.arrangement === 'vertical' ? raw.arrangement : 'grid', panes, focused: panes.some(p => p.id === raw.focused) ? raw.focused! : panes[0].id, x: ratio(raw.x), y: ratio(raw.y) }
 }
 
 function loadLayouts(): Record<string, ChatLayout> {
@@ -53,6 +54,7 @@ type LayoutState = {
   focus: (project: string, paneId: string) => void
   close: (project: string, paneId: string) => void
   resize: (project: string, axis: 'x' | 'y', ratio: number) => void
+  arrange: (project: string, arrangement: ChatArrangement) => void
   reconcile: (project: string, validIds: string[]) => void
 }
 
@@ -98,6 +100,10 @@ export const useChatLayoutStore = create<LayoutState>((set, get) => {
     resize(project, axis, ratio) {
       const layout = get().layouts[chatProjectKey(project)]
       if (layout) update(project, { ...layout, [axis]: ratio })
+    },
+    arrange(project, arrangement) {
+      const layout = get().layouts[chatProjectKey(project)]
+      if (layout) update(project, { ...layout, arrangement })
     },
     reconcile(project, validIds) {
       const layout = get().layouts[chatProjectKey(project)]
