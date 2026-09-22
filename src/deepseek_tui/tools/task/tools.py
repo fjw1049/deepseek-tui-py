@@ -490,19 +490,30 @@ class TaskOutputTool(ToolSpec):
         else:
             wait_result = await peek_background_process(context, process_id)
 
-        # Archive the collected output on the task when one is named — the
-        # retired task_shell_wait behaviour.
-        if task_id is not None:
+        # Archive the collected output on the task when one is named AND the
+        # wait completed — the retired task_shell_wait behaviour. Peeks are
+        # status reports and must not append duplicate artifacts per poll;
+        # neither may a timed-out wait (wait_background_process returns a
+        # "running" snapshot, not a failure — archiving it would label a
+        # still-running process "shell_completed" on every poll).
+        if (
+            block
+            and task_id is not None
+            and wait_result.metadata.get("status") == "completed"
+        ):
             manager = _require_manager(context)
             try:
                 task = await manager.get_task(task_id)
             except KeyError as exc:
                 raise ToolError(str(exc)) from exc
             now = _utc_now_iso()
+            rel_path = manager.write_task_artifact(
+                task_id, f"shell_{process_id[:8]}", wait_result.content or ""
+            )
             task.artifacts.append(
                 TaskArtifactRef(
                     label=f"shell[{process_id[:8]}]",
-                    path=f"memory://shell/{process_id}",
+                    path=str(rel_path),
                     summary=(wait_result.content or "")[:400],
                     created_at=now,
                 )

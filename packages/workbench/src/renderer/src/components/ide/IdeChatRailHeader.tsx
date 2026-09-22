@@ -6,7 +6,6 @@ import {
   MessageSquarePlus,
   Minimize2,
   Plus,
-  SquareSplitHorizontal,
   Terminal,
   X
 } from 'lucide-react'
@@ -18,15 +17,14 @@ import { useChatStore } from '../../store/chat-store'
 import {
   closeTerminalSessionById,
   createTerminalSessionForWorkspace,
-  splitTerminalSessionDown,
   useTerminalSessionStore
 } from '../../store/terminal-session-store'
+import { TerminalSplitActions } from '../TerminalSplitActions'
 import { SessionHeader } from '../SessionHeader'
 
 const HISTORY_LIMIT = 30
 
 type Props = {
-  busy?: boolean
   terminalOpen?: boolean
   terminalMaximized?: boolean
   onNewChat: () => void
@@ -40,7 +38,6 @@ type Props = {
  * session title · [+] new chat/terminal · [history] project threads.
  */
 export function IdeChatRailHeader({
-  busy = false,
   terminalOpen = false,
   terminalMaximized = false,
   onNewChat,
@@ -55,7 +52,6 @@ export function IdeChatRailHeader({
   const selectThread = useChatStore((s) => s.selectThread)
   const sessions = useTerminalSessionStore((s) => s.sessions)
   const activeSessionId = useTerminalSessionStore((s) => s.activeSessionId)
-  const splitSessionId = useTerminalSessionStore((s) => s.splitSessionId)
   const creatingSession = useTerminalSessionStore((s) => s.creatingSession)
   const setActiveSessionId = useTerminalSessionStore((s) => s.setActiveSessionId)
 
@@ -151,29 +147,10 @@ export function IdeChatRailHeader({
           </button>
         </div>
       ) : null}
-      {busy ? (
-        <span className="inline-flex shrink-0 rounded-full bg-amber-500/16 px-1.5 py-px text-[10px] font-semibold leading-4 text-amber-950 dark:text-amber-100">
-          {t('running')}
-        </span>
-      ) : null}
 
       {terminalOpen ? (
         <div className="ds-no-drag flex shrink-0 items-center gap-0.5">
-          <button
-            type="button"
-            className={`inline-flex h-7 w-7 items-center justify-center rounded-md transition ${
-              splitSessionId
-                ? 'bg-ds-hover/70 text-ds-ink'
-                : 'text-ds-muted hover:bg-ds-hover/60 hover:text-ds-ink'
-            }`}
-            title={splitSessionId ? t('terminalUnsplit') : t('terminalSplitDown')}
-            aria-label={splitSessionId ? t('terminalUnsplit') : t('terminalSplitDown')}
-            aria-pressed={Boolean(splitSessionId)}
-            disabled={creatingSession || !workspaceRoot.trim()}
-            onClick={() => void splitTerminalSessionDown(workspaceRoot)}
-          >
-            <SquareSplitHorizontal className="h-3.5 w-3.5" strokeWidth={1.85} />
-          </button>
+          <TerminalSplitActions workspaceRoot={workspaceRoot} />
           <button
             type="button"
             className={`inline-flex h-7 w-7 items-center justify-center rounded-md transition ${
@@ -192,22 +169,13 @@ export function IdeChatRailHeader({
               <Maximize2 className="h-3.5 w-3.5" strokeWidth={1.85} />
             )}
           </button>
-          <button
-            type="button"
-            className="inline-flex h-7 w-7 items-center justify-center rounded-md text-ds-muted transition hover:bg-ds-hover/60 hover:text-ds-ink"
-            title={t('terminalCloseTab')}
-            aria-label={t('terminalCloseTab')}
-            disabled={!activeSessionId}
-            onClick={() => {
-              if (activeSessionId) closeTerminalTab(activeSessionId)
-            }}
-          >
-            <X className="h-3.5 w-3.5" strokeWidth={1.85} />
-          </button>
         </div>
       ) : null}
 
       <div className="ds-no-drag flex shrink-0 items-center gap-0.5">
+        {/* In terminal mode the tab strip already has +/×; the new-menu + is
+            redundant there, so it only renders for the chat rail. */}
+        {terminalOpen ? null : (
         <div ref={newMenuRef} className="relative">
           <button
             type="button"
@@ -254,6 +222,7 @@ export function IdeChatRailHeader({
             </div>
           ) : null}
         </div>
+        )}
 
         <div ref={historyRef} className="relative">
           <button

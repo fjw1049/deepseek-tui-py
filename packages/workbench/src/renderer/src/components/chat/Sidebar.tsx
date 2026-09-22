@@ -183,8 +183,8 @@ export function Sidebar({
         <SettingsSidebarNav />
       ) : (
         <>
-          <div ref={setSectionHeaderHost} className="ds-sidebar-section-heading ds-no-drag shrink-0" />
           <div className="ds-sidebar-middle ds-no-drag min-h-0 flex-1">
+            <div ref={setSectionHeaderHost} className="ds-sidebar-section-heading ds-no-drag shrink-0" />
             <SidebarProjectsColumn
               headerHost={hasVisiblePinned ? null : sectionHeaderHost}
               threads={threads}

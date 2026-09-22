@@ -24,6 +24,8 @@ export type TaskDetail = {
   resultSummary: string | null
   error: string | null
   durationMs: number | null
+  /** Accumulated live text while the task is running (null once settled). */
+  liveText: string | null
   timeline: TaskTimelineEntry[]
 }
 
@@ -70,6 +72,7 @@ export async function fetchTaskDetail(id: string): Promise<TaskDetail | null> {
     prompt: typeof t.prompt === 'string' ? t.prompt : '',
     resultSummary: typeof t.result_summary === 'string' ? t.result_summary : null,
     error: typeof t.error === 'string' ? t.error : null,
+    liveText: typeof t.live_text === 'string' ? t.live_text : null,
     durationMs: typeof t.duration_ms === 'number' ? t.duration_ms : null,
     timeline: parseTimeline(t.timeline)
   }
@@ -89,6 +92,7 @@ export async function resumeTask(id: string): Promise<TaskDetail> {
     prompt: typeof t.prompt === 'string' ? t.prompt : '',
     resultSummary: typeof t.result_summary === 'string' ? t.result_summary : null,
     error: typeof t.error === 'string' ? t.error : null,
+    liveText: typeof t.live_text === 'string' ? t.live_text : null,
     durationMs: typeof t.duration_ms === 'number' ? t.duration_ms : null,
     timeline: parseTimeline(t.timeline)
   }

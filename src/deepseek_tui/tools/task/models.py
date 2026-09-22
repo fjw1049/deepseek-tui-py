@@ -182,6 +182,8 @@ class TaskRecord:
     ended_at: str | None = None
     duration_ms: int | None = None
     result_summary: str | None = None
+    # Accumulated live text while running (throttled updates; cleared on settle).
+    live_text: str | None = None
     result_detail_path: str | None = None
     error: str | None = None
     thread_id: str | None = None

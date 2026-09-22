@@ -8,7 +8,7 @@ import { fetchTaskDetail, type TaskDetail } from './use-thread-tasks'
 vi.mock('./use-thread-tasks', () => ({ fetchTaskDetail: vi.fn() }))
 const fetchDetail = vi.mocked(fetchTaskDetail)
 const task = (id: string, status: TaskDetail['status'] = 'running'): TaskDetail => ({
-  id, status, prompt: id, timeline: [], resultSummary: null, error: null, durationMs: null
+  id, status, prompt: id, timeline: [], resultSummary: null, error: null, durationMs: null, liveText: null
 })
 let root: Root
 let container: HTMLDivElement

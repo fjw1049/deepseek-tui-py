@@ -64,9 +64,10 @@ export function ComposerStage(props: Props): ReactElement {
   useLayoutEffect(() => {
     const root = rootRef.current
     if (!root || typeof ResizeObserver === 'undefined') return
+    const scope = root.closest<HTMLElement>('[data-chat-pane]') ?? document.documentElement
     const publish = (): void => {
       const height = Math.ceil(root.getBoundingClientRect().height)
-      document.documentElement.style.setProperty(
+      scope.style.setProperty(
         COMPOSER_CLEARANCE_VAR,
         `${Math.max(height, 0)}px`
       )
@@ -76,7 +77,7 @@ export function ComposerStage(props: Props): ReactElement {
     ro.observe(root)
     return () => {
       ro.disconnect()
-      document.documentElement.style.removeProperty(COMPOSER_CLEARANCE_VAR)
+      scope.style.removeProperty(COMPOSER_CLEARANCE_VAR)
     }
   }, [])
 

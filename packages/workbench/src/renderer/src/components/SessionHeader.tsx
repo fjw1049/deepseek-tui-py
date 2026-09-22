@@ -1,5 +1,7 @@
 import type { ReactElement } from 'react'
 import { SessionQueries } from './SessionQueries'
+import { SessionInfoPopover } from './SessionInfoPopover'
+import { Bookmark } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useChatStore } from '../store/chat-store'
@@ -15,7 +17,6 @@ export function SessionHeader({ compact = false, className = '' }: Props): React
   const { t, i18n } = useTranslation('common')
   const threads = useChatStore((s) => s.threads)
   const activeThreadId = useChatStore((s) => s.activeThreadId)
-  const busy = useChatStore((s) => s.busy)
   const workspaceLabel = useChatStore((s) => s.workspaceLabel)
   const workspaceRoot = useChatStore((s) => s.workspaceRoot)
   const showWorkspaceMeta = shouldShowWorkspaceInHeader(workspaceRoot)
@@ -56,10 +57,13 @@ export function SessionHeader({ compact = false, className = '' }: Props): React
   if (compact) {
     return (
       <div
-        className={`ds-session-header ds-window-drag-region flex h-7 min-h-0 min-w-0 flex-1 items-center gap-2 text-left ${className}`}
+        className={`ds-session-header ds-window-drag-region flex h-7 min-h-0 min-w-0 flex-1 items-center gap-1.5 text-left ${className}`}
       >
         {active ? (
           <>
+            <SessionInfoPopover className="-ml-1">
+              <Bookmark size={16} strokeWidth={1.75} />
+            </SessionInfoPopover>
             <SessionQueries>
               <span
                 className="block min-w-0 flex-1 truncate text-[13px] font-medium leading-6 tracking-[-0.01em] text-ds-ink"
@@ -68,13 +72,6 @@ export function SessionHeader({ compact = false, className = '' }: Props): React
                 {active.title}
               </span>
             </SessionQueries>
-            <span className="ds-session-header-meta ds-no-drag inline-flex h-7 shrink-0 select-none items-center gap-1.5 text-[12px] leading-none text-ds-faint">
-              <span className="capitalize">{active.mode}</span>
-              <span className="opacity-60">·</span>
-              <span className="tabular-nums">
-                {formatRelativeTimeCompact(active.updatedAt)}
-              </span>
-            </span>
           </>
         ) : showWorkspaceMeta ? (
           <div className="flex h-7 min-w-0 items-center overflow-hidden">
@@ -155,11 +152,6 @@ export function SessionHeader({ compact = false, className = '' }: Props): React
           <div className="ds-session-header-hint mt-1 text-[13.5px] text-ds-faint">{t('sessionHeaderHint')}</div>
         </div>
       )}
-      {busy ? (
-        <span className="ml-auto shrink-0 rounded-full bg-amber-500/18 px-3 py-1.5 text-[12.5px] font-semibold text-amber-950 dark:text-amber-100">
-          {t('running')}
-        </span>
-      ) : null}
     </div>
   )
 }

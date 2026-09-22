@@ -119,6 +119,14 @@ class SubAgentMailboxEvent:
 
 
 @dataclass(frozen=True, slots=True)
+class SubAgentTextDeltaEvent:
+    """Live text delta from a running sub-agent (not persisted as a turn item)."""
+
+    agent_id: str
+    text: str
+
+
+@dataclass(frozen=True, slots=True)
 class SessionActivityEvent:
     """Background work snapshot (sub-agents + durable tasks)."""
 
@@ -229,6 +237,7 @@ EngineEvent = (
     | TurnCancelledEvent
     | TurnCompleteEvent
     | SubAgentMailboxEvent
+    | SubAgentTextDeltaEvent
     | SessionActivityEvent
     | UserInputRequiredEvent
     | ModeChangedEvent

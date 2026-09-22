@@ -73,8 +73,10 @@ describe('WorkspaceContextBar branch visibility', () => {
       root.render(createElement(WorkspaceContextBar, { workspaceRoot: '/workspace/no-branch' }))
     })
 
-    expect(container.querySelector('.ds-workspace-context-sep')).toHaveProperty('hidden', true)
-    expect(container.querySelector('.ds-workspace-context-branch')).toHaveProperty('hidden', true)
+    const branch = container.querySelector('.ds-workspace-context-branch')
+    expect(branch).toHaveProperty('hidden', true)
+    // The branch separator is the element immediately before the branch control.
+    expect(branch?.previousElementSibling).toHaveProperty('hidden', true)
   })
 
   it('keeps the branch control and separator for a real branch', async () => {
@@ -82,7 +84,8 @@ describe('WorkspaceContextBar branch visibility', () => {
       root.render(createElement(WorkspaceContextBar, { workspaceRoot: '/workspace/with-branch' }))
     })
 
-    expect(container.querySelector('.ds-workspace-context-sep')).toHaveProperty('hidden', false)
-    expect(container.querySelector('.ds-workspace-context-branch')).toHaveProperty('hidden', false)
+    const branch = container.querySelector('.ds-workspace-context-branch')
+    expect(branch).toHaveProperty('hidden', false)
+    expect(branch?.previousElementSibling).toHaveProperty('hidden', false)
   })
 })

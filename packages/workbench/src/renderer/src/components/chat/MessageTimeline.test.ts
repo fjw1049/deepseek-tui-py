@@ -3,9 +3,9 @@ import { describe, expect, it } from 'vitest'
 import type { ChatBlock } from '../../agent/types'
 import {
   clipMidTurnPrefaceText,
+  isVisibleWithoutExecutionDetails,
   computeTailAnchorScrollTop,
   computeTailAnchorSpacerPx,
-  findLastLiveWorkRowId,
   shouldParseIncompleteAssistantMarkdown,
   groupProcessRows,
   isSubagentOrchestrationToolName,
@@ -117,20 +117,19 @@ describe('clipMidTurnPrefaceText', () => {
     })
   })
 
-  it('clips long prefaces and multi-line repair plans', () => {
-    const plan = [
-      '所有修复点的代码上下文已确认。现在列计划，请批准后批量执行。',
-      '',
-      '## 修复计划',
-      '',
-      '针对审核报告里的 C1、C2、C3、H1 四个 bug，做以下最小侵入修复。'
-    ].join('\n')
-    const clipped = clipMidTurnPrefaceText(plan)
-    expect(clipped.clipped).toBe(true)
-    expect(clipped.preview.endsWith('…')).toBe(true)
-    expect(clipped.preview.includes('## 修复计划')).toBe(false)
-    expect(clipped.preview.length).toBeLessThan(plan.length)
+  it('keeps the finding and next step across paragraphs', () => {
+    const text = '已确认消息没有丢失。\n\n下一步检查完成后的折叠规则。'
+    expect(clipMidTurnPrefaceText(text)).toEqual({ preview: text, clipped: false })
   })
+
+  it('folds unusually long updates without dropping their original content', () => {
+    const text = '已确认显示问题。'.repeat(180)
+    const result = clipMidTurnPrefaceText(text)
+    expect(result.clipped).toBe(true)
+    expect(result.preview.length).toBeLessThanOrEqual(1201)
+    expect(text.startsWith(result.preview.slice(0, -1))).toBe(true)
+  })
+
 })
 
 describe('placeAssistantContentBlock', () => {
@@ -323,7 +322,7 @@ describe('groupProcessRows', () => {
     expect(rows[0]!.type === 'tool_batch' && rows[0].blocks).toHaveLength(4)
   })
 
-  it('folds error and running probes into the same batch as successes', () => {
+  it('includes failures in quiet batches without separate error cards', () => {
     const blocks: ChatBlock[] = [
       toolBlock('t1', 'read_file'),
       toolBlock('t2', 'read_file'),
@@ -482,55 +481,42 @@ describe('planProcessRenderChunks', () => {
     }
   }
 
-  it('leaves every row expanded when the turn is settled', () => {
-    const rows = groupProcessRows([
-      toolBlock('t1', 'read_file'),
-      toolBlock('t2', 'read_file'),
-      { kind: 'assistant', id: 'p1', text: 'next', agentSegment: 'mid_turn_preface' },
-      toolBlock('t3', 'read_file'),
-      toolBlock('t4', 'read_file')
-    ])
-    const chunks = planProcessRenderChunks(rows, false)
-    expect(chunks.every((chunk) => chunk.type === 'row')).toBe(true)
-    expect(chunks).toHaveLength(3)
+  it('keeps an already compact probe batch as a single disclosure', () => {
+    const rows = groupProcessRows([toolBlock('t1', 'read_file'), toolBlock('t2', 'read_file')])
+    expect(planProcessRenderChunks(rows)).toEqual([{ type: 'row', row: rows[0] }])
   })
 
-  it('folds an older probe run once a later work row is the live tail', () => {
+  it.each(['success', 'running', 'error'] as const)('groups silent edits across intent frames and reasoning (%s)', (status) => {
     const rows = groupProcessRows([
-      toolBlock('t1', 'read_file'),
-      toolBlock('t2', 'read_file'),
-      { kind: 'assistant', id: 'p1', text: 'next', agentSegment: 'mid_turn_preface' },
-      toolBlock('t3', 'read_file'),
-      toolBlock('t4', 'read_file')
+      toolBlock('t1', 'write_file', { status, toolKind: 'file_change' }),
+      { kind: 'assistant', id: 'intent', text: '', agentSegment: 'mid_turn_preface' },
+      { kind: 'reasoning', id: 'r1', text: 'internal detail' },
+      toolBlock('t2', 'edit_file', { status, toolKind: 'file_change' }),
+      toolBlock('t3', 'plugin_tool', { status }),
+      toolBlock('t4', 'agent', { status })
     ])
-    expect(findLastLiveWorkRowId(rows, true)).toBe('batch:t3')
-    const chunks = planProcessRenderChunks(rows, true)
-    expect(chunks).toHaveLength(3)
-    expect(chunks[0]).toMatchObject({ type: 'work_summary', id: 'batch:t1' })
-    expect(chunks[0]!.type === 'work_summary' && chunks[0].summary.compose.reads).toBe(2)
-    expect(chunks[1]).toMatchObject({ type: 'row' })
-    expect(chunks[2]).toMatchObject({ type: 'row' })
+    expect(rows.some(row => row.type === 'block' && row.block.id === 'intent')).toBe(false)
+    expect(planProcessRenderChunks(rows)).toMatchObject([
+      { type: 'work_summary', summary: { toolCount: 4 }, rows: expect.any(Array) }
+    ])
   })
 
-  it('does not fold the live tail or a single older tool', () => {
+  it('keeps tools requiring user action outside grouped details', () => {
+    const gates = new Set(['t2'])
     const rows = groupProcessRows([
-      toolBlock('t1', 'write_file', { toolKind: 'file_change' }),
-      { kind: 'assistant', id: 'p1', text: 'next', agentSegment: 'mid_turn_preface' },
-      toolBlock('t2', 'read_file')
-    ])
-    const chunks = planProcessRenderChunks(rows, true)
-    expect(chunks.every((chunk) => chunk.type === 'row')).toBe(true)
+      toolBlock('t1', 'read_file'), toolBlock('t2', 'read_file'), toolBlock('t3', 'edit_file')
+    ], gates)
+    expect(rows[1]).toMatchObject({ type: 'block', block: { id: 't2' } })
+    expect(planProcessRenderChunks(rows, gates)[1]).toMatchObject({ type: 'row', row: { block: { id: 't2' } } })
   })
 
-  it('keeps errors and running tools out of the summary', () => {
+  it('preserves real narration as the boundary, including delayed intent wording', () => {
     const rows = groupProcessRows([
-      toolBlock('t1', 'read_file'),
-      toolBlock('t2', 'read_file', { status: 'error' }),
-      { kind: 'assistant', id: 'p1', text: 'next', agentSegment: 'mid_turn_preface' },
-      toolBlock('t3', 'read_file', { status: 'running' })
+      toolBlock('t1', 'write_file'), toolBlock('t2', 'plugin_tool'),
+      { kind: 'assistant', id: 'intent', text: '已确认问题来源，正在修复。', agentSegment: 'mid_turn_preface' },
+      toolBlock('t3', 'edit_file'), toolBlock('t4', 'plugin_tool')
     ])
-    const chunks = planProcessRenderChunks(rows, true)
-    expect(chunks.some((chunk) => chunk.type === 'work_summary')).toBe(false)
+    expect(planProcessRenderChunks(rows).map(chunk => chunk.type)).toEqual(['work_summary', 'row', 'work_summary'])
   })
 })
 
@@ -576,3 +562,19 @@ describe('tail-anchor math', () => {
   })
 })
 
+
+
+describe('collapsed execution details', () => {
+  it('retains running work while folding narration and historical errors', () => {
+    const blocks: ChatBlock[] = [
+      { kind: 'assistant', id: 'progress', text: '找到原因，接下来验证修复。', agentSegment: 'mid_turn_preface' },
+      { kind: 'reasoning', id: 'raw', text: 'raw reasoning' },
+      { kind: 'reasoning', id: 'milestone', text: '', narration: '已验证显示正常。' },
+      { kind: 'tool', id: 'read', summary: 'read_file', status: 'success' },
+      { kind: 'tool', id: 'failed', summary: 'read_file', status: 'error' },
+      { kind: 'tool', id: 'running', summary: 'exec_shell', status: 'running' }
+    ]
+    expect(blocks.filter(isVisibleWithoutExecutionDetails).map(block => block.id))
+      .toEqual(['running'])
+  })
+})

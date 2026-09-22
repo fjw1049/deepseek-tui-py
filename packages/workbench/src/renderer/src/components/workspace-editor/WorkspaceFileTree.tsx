@@ -1,6 +1,6 @@
 import type { CSSProperties, MouseEvent as ReactMouseEvent, ReactElement } from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ChevronsDownUp, ChevronRight, RefreshCw, Folder, FolderOpen, Eye } from 'lucide-react'
+import { ChevronsDownUp, ChevronsUpDown, ChevronRight, RefreshCw, Folder, FolderOpen, Eye } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import type { WorkspaceTreeEntry } from '@shared/workspace-file'
 import { FileKindIcon } from '../chat/FileKindIcon'
@@ -330,6 +330,40 @@ export function WorkspaceFileTree({
     setExpanded(next)
   }, [])
 
+  const anyExpanded = expanded.size > 0
+
+  // Recursive expand: fetch every directory level by level, mounting nodes
+  // and adding keys to the expanded set as results arrive. Only recurses into
+  // directories the tree would actually show (same filter as renderEntries).
+  // ponytail: unbounded recursion on very deep trees — cap with a max depth if
+  // huge repos make this stall.
+  const expandAll = useCallback((): void => {
+    const root = trimmedRootRef.current
+    if (!root) return
+    const collected = new Set<string>()
+    const walk = async (dirPath: string): Promise<void> => {
+      const result = await fetchDirectory(root, dirPath)
+      if (trimmedRootRef.current !== root) return
+      if (!result.ok) return
+      setNodes((prev) => ({
+        ...prev,
+        [treeKey(dirPath)]: { entries: result.entries, loading: false, loaded: true, error: null }
+      }))
+      if (dirPath) collected.add(treeKey(dirPath))
+      setExpanded(new Set(collected))
+      writeExpandedDirs(root, collected)
+      const visible = showAllFiles
+        ? result.entries
+        : result.entries.filter((entry) => !isAuxiliaryWorkspaceEntry(entry))
+      await Promise.all(
+        visible
+          .filter((entry) => entry.kind === 'directory')
+          .map((entry) => walk(entry.path))
+      )
+    }
+    void walk('')
+  }, [showAllFiles])
+
   const renderEntries = (directoryPath: string, depth: number): ReactElement[] => {
     const key = treeKey(directoryPath)
     const node = nodes[key]
@@ -514,14 +548,18 @@ export function WorkspaceFileTree({
                   />
                 </button>
               </Tooltip>
-              <Tooltip label={t('workspaceTreeCollapseAll')}>
+              <Tooltip label={anyExpanded ? t('workspaceTreeCollapseAll') : t('workspaceTreeExpandAll')}>
                 <button
                   type="button"
-                  onClick={collapseAll}
-                  aria-label={t('workspaceTreeCollapseAll')}
+                  onClick={anyExpanded ? collapseAll : expandAll}
+                  aria-label={anyExpanded ? t('workspaceTreeCollapseAll') : t('workspaceTreeExpandAll')}
                   className="inline-flex h-6 w-6 items-center justify-center rounded-md text-ds-faint transition hover:bg-ds-hover hover:text-ds-ink active:scale-[0.94]"
                 >
-                  <ChevronsDownUp className="h-3.5 w-3.5" strokeWidth={1.85} aria-hidden />
+                  {anyExpanded ? (
+                    <ChevronsDownUp className="h-3.5 w-3.5" strokeWidth={1.85} aria-hidden />
+                  ) : (
+                    <ChevronsUpDown className="h-3.5 w-3.5" strokeWidth={1.85} aria-hidden />
+                  )}
                 </button>
               </Tooltip>
             </div>

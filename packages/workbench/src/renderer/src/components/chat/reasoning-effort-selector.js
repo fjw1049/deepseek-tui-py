@@ -22,11 +22,9 @@ class ChatGPTModelSelector extends HTMLElement {
     desc: 'Left for faster responses, right for smarter responses.',
     configure: 'Configure custom models',
     dialog: 'Model settings',
-    search: 'Search models',
     empty: 'No matching models.',
   };
   #dragPos = null;     // continuous 0–1 position while dragging, else null
-  #query = '';
   #highlight = 0;
   #open = false;
   #dragging = false;
@@ -233,7 +231,7 @@ class ChatGPTModelSelector extends HTMLElement {
         gap: 5px;
         justify-content: flex-start;
         overflow: hidden;
-        font-size: var(--ds-selector-font-size, 14px);
+        font-size: var(--ds-selector-font-size, 13px);
         font-weight: 600;
         color: var(--ink);
         letter-spacing: -0.01em;
@@ -372,35 +370,6 @@ class ChatGPTModelSelector extends HTMLElement {
         white-space: nowrap;
       }
 
-      .model-search {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        min-height: 34px;
-        margin: 0 2px 4px;
-        padding: 0 10px;
-        border-radius: var(--r-row);
-        background: color-mix(in srgb, var(--ink) 4.5%, transparent);
-        color: var(--ink-2);
-      }
-      .model-search[hidden] { display: none; }
-      .model-search-icon { flex: none; opacity: 0.55; }
-      .model-search-input {
-        min-width: 0;
-        flex: 1;
-        border: 0;
-        background: transparent;
-        outline: none;
-        font: inherit;
-        font-size: var(--ds-selector-font-size, 13px);
-        font-weight: 500;
-        letter-spacing: -0.01em;
-        color: var(--ink);
-      }
-      .model-search-input::placeholder {
-        color: var(--ink-3);
-        font-weight: 400;
-      }
       .model-empty {
         padding: 12px 10px;
         font-size: var(--ds-selector-font-size, 12.5px);
@@ -740,13 +709,6 @@ class ChatGPTModelSelector extends HTMLElement {
         </div>
 
         <div class="divider" role="separator"></div>
-        <div class="model-search" hidden>
-          <svg class="model-search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-            <circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="1.75"/>
-            <path d="M16.5 16.5 21 21" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"/>
-          </svg>
-          <input class="model-search-input" type="search" autocomplete="off" spellcheck="false" />
-        </div>
         <div class="model-list"></div>
         <div class="divider" role="separator"></div>
 
@@ -782,8 +744,6 @@ class ChatGPTModelSelector extends HTMLElement {
     this.$effortV = $('.intensity-value');
     this.$modelName = $('.model-name');
     this.$modelList = $('.model-list');
-    this.$modelSearch = $('.model-search');
-    this.$modelSearchInput = $('.model-search-input');
     this.$configureBtn = $('.configure-btn');
     this.$pillIcon = $('.pill-icon');
     this.$valueLayer = $('.intensity-value-layer');
@@ -901,10 +861,6 @@ class ChatGPTModelSelector extends HTMLElement {
       if (svg) this.$configureBtn.appendChild(svg);
       this.$configureBtn.append(' ', L.configure);
     }
-    if (this.$modelSearchInput) {
-      this.$modelSearchInput.placeholder = L.search;
-      this.$modelSearchInput.setAttribute('aria-label', L.search);
-    }
   }
 
   #clampIndex(v) {
@@ -918,28 +874,12 @@ class ChatGPTModelSelector extends HTMLElement {
     return 'deepseek';
   }
 
-  #filteredModels() {
-    const q = this.#query.trim().toLowerCase();
-    if (!q) return this.#models;
-    return this.#models.filter((m) => {
-      const label = String(m.label || m.id || '').toLowerCase();
-      const id = String(m.id || '').toLowerCase();
-      return label.includes(q) || id.includes(q);
-    });
-  }
-
-  #syncSearchVisibility() {
-    if (!this.$modelSearch) return;
-    this.$modelSearch.hidden = this.#models.length < 3;
-  }
-
   #renderModelList() {
     if (!this.$modelList) return;
     this.$modelList.innerHTML = '';
-    this.#syncSearchVisibility();
     const effortKey = this.#tiers[this.#index].key;
     const isUltra = this.#index === 4;
-    const models = this.#filteredModels();
+    const models = this.#models;
     if (this.#highlight >= models.length) this.#highlight = Math.max(0, models.length - 1);
     if (models.length === 0) {
       const empty = document.createElement('div');
@@ -1070,30 +1010,6 @@ class ChatGPTModelSelector extends HTMLElement {
       }));
       this.#close();
     });
-    this.$modelSearchInput?.addEventListener('input', () => {
-      this.#query = this.$modelSearchInput.value;
-      this.#highlight = 0;
-      this.#renderModelList();
-    });
-    this.$modelSearchInput?.addEventListener('keydown', (e) => {
-      const models = this.#filteredModels();
-      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-        e.preventDefault();
-        if (!models.length) return;
-        const delta = e.key === 'ArrowDown' ? 1 : -1;
-        this.#highlight = (this.#highlight + delta + models.length) % models.length;
-        this.#renderModelList();
-        this.$modelList.querySelector('.model-item.is-highlight')?.scrollIntoView({ block: 'nearest' });
-        return;
-      }
-      if (e.key === 'Enter') {
-        const target = models[this.#highlight] ?? models[0];
-        if (!target) return;
-        e.preventDefault();
-        this.$modelList.querySelector('.model-item.is-highlight')?.click();
-      }
-    });
-
     this.addEventListener('keydown', (e) => {
       if (e.key === 'Escape' && this.#open) {
         e.stopPropagation();
@@ -1201,21 +1117,14 @@ class ChatGPTModelSelector extends HTMLElement {
     this.#layoutSlider();
     this.#sizeCanvas();
     this.#startSparkles();
-    const searchOpen = this.$modelSearch && !this.$modelSearch.hidden;
-    if (searchOpen) {
-      this.$modelSearchInput?.focus({ preventScroll: true });
-    } else {
-      const firstModel = this.$modelList.querySelector('.model-item');
-      (firstModel || this.$configureBtn).focus({ preventScroll: true });
-    }
+    const firstModel = this.$modelList.querySelector('.model-item');
+    (firstModel || this.$configureBtn).focus({ preventScroll: true });
   }
 
   #close() {
     if (!this.#open) return;
     this.#open = false;
-    this.#query = '';
     this.#highlight = 0;
-    if (this.$modelSearchInput) this.$modelSearchInput.value = '';
     this.#renderModelList();
     this.#setPickerOpen(false);
     this.$pill.setAttribute('aria-expanded', 'false');

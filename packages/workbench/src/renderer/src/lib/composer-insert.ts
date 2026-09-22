@@ -2,7 +2,7 @@ export const COMPOSER_INSERT_EVENT = 'deepseekgui:composer-insert'
 export const COMPOSER_RETRY_DRAFT_EVENT = 'deepseekgui:composer-retry-draft'
 export const WORKSPACE_PATH_DRAG_MIME = 'application/x-deepseek-workspace-path'
 
-export type ComposerInsertDetail = { text: string }
+export type ComposerInsertDetail = { text: string; threadId?: string }
 export type ComposerRetryDraftDetail = { threadId: string }
 
 const pendingRetryDrafts = new Map<string, string[]>()
@@ -32,11 +32,11 @@ export function appendComposerSnippet(current: string, snippet: string): string 
   return `${current} ${piece}`
 }
 
-export function insertComposerSnippet(text: string): void {
+export function insertComposerSnippet(text: string, threadId?: string): void {
   const snippet = text.trim()
   if (!snippet) return
   window.dispatchEvent(
-    new CustomEvent<ComposerInsertDetail>(COMPOSER_INSERT_EVENT, { detail: { text: snippet } })
+    new CustomEvent<ComposerInsertDetail>(COMPOSER_INSERT_EVENT, { detail: { text: snippet, threadId } })
   )
 }
 

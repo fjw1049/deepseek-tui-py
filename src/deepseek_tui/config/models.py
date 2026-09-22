@@ -86,7 +86,7 @@ class ProcessNarrationConfig(BaseModel):
     flash_timeout_s: float = 8.0
     turn_wait_s: float = 6.0
     include_recent_tool_results: int = 3
-    max_per_turn: int = 2
+    max_per_turn: int = 12
 
 
 class UiConfig(BaseModel):

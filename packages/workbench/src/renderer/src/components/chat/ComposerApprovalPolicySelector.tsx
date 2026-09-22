@@ -192,8 +192,8 @@ export function ComposerApprovalPolicySelector({
         type="button"
         disabled={disabled || saving}
         onClick={() => setMenuOpen(!open)}
-        className={`ds-no-drag inline-flex shrink-0 select-none items-center px-1 font-semibold transition hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-50 ${
-          dense ? 'h-7 gap-1 text-[12px]' : 'h-9 gap-1.5 text-[13px]'
+        className={`ds-no-drag inline-flex shrink-0 select-none items-center px-1 font-medium transition hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-50 ${
+          dense ? 'h-7 gap-1 text-[13px]' : 'h-9 gap-1.5 text-[13px]'
         }`}
         style={triggerAccent ? { color: triggerAccent } : undefined}
         aria-haspopup="menu"
@@ -244,7 +244,7 @@ export function ComposerApprovalPolicySelector({
                     onMouseDown={(event) => event.preventDefault()}
                     onMouseEnter={() => setHighlighted(index)}
                     onClick={() => void selectPolicy(option.id)}
-                    className={`flex w-full items-start gap-2.5 rounded-xl px-2.5 py-2.5 text-left transition ${
+                    className={`flex w-full items-start gap-2.5 rounded-xl px-2.5 py-2 text-left transition ${
                       selected || highlighted === index ? 'bg-ds-hover' : 'hover:bg-ds-hover/70'
                     }`}
                   >
@@ -256,12 +256,12 @@ export function ComposerApprovalPolicySelector({
                     />
                     <span className="min-w-0 flex-1">
                       <span
-                        className="block text-[13px] font-semibold leading-5"
+                        className="block text-[13px] font-medium leading-5"
                         style={{ color: option.accent }}
                       >
                         {option.title}
                       </span>
-                      <span className="mt-0.5 block text-[12px] leading-5 text-ds-muted">
+                      <span className="ds-composer-approval-description mt-0.5 block leading-[18px] text-ds-muted">
                         {option.description}
                       </span>
                     </span>

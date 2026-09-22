@@ -92,7 +92,7 @@ describe('theme presets', () => {
     expect(DEFAULT_CHROME_THEMES.dark.presetId).toBe('nord')
     expect(DEFAULT_CHROME_THEMES.light.contrast).toBe(62)
     expect(DEFAULT_CHROME_THEMES.light.translucent).toBe(false)
-    expect(DEFAULT_CHROME_THEMES.dark.contrast).toBe(100)
+    expect(DEFAULT_CHROME_THEMES.dark.contrast).toBe(60)
     expect(DEFAULT_CHROME_THEMES.dark.translucent).toBe(true)
     expect(DEFAULT_CHROME_THEMES.light.accent).toBe('#3183d8')
     expect(DEFAULT_CHROME_THEMES.dark.accent).toBe('#88c0d0')
@@ -133,7 +133,8 @@ describe('theme presets', () => {
       accent: '#606acc',
       surface: '#0f0f11',
       ink: '#e3e4e6',
-      contrast: 12,
+      // Contrast follows the seed (calibrated per preset), not the stale value.
+      contrast: 60,
       translucent: false,
       uiFont: 'Inter',
       codeFont: '"Current Mono"'
@@ -142,7 +143,7 @@ describe('theme presets', () => {
     const github = applyThemePreset(linear!, 'github', 'dark')
     expect(github).toMatchObject({
       presetId: 'github',
-      contrast: 12,
+      contrast: 60,
       translucent: false,
       uiFont: 'Inter',
       codeFont: '"Current Mono"'

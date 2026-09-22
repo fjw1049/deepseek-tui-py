@@ -41,6 +41,7 @@ import { applyAppearance } from '../lib/apply-appearance'
 import { applyShortcutsSettings } from '../lib/shortcuts-runtime'
 import { formatWorkspacePickerError } from '../lib/format-workspace-picker-error'
 import {
+  hasSavedPetFavorites,
   readPetEnabled,
   readPetFavoriteSlugs,
   readPetSlug,
@@ -189,6 +190,7 @@ export function SettingsView(): ReactElement {
   const [petCachedSlugs, setPetCachedSlugs] = useState<Set<string>>(() => new Set())
   const [petCatalogLoading, setPetCatalogLoading] = useState(false)
   const [petCatalogError, setPetCatalogError] = useState<string | null>(null)
+  const petCatalogRequested = useRef(false)
   const [logDirOpenError, setLogDirOpenError] = useState<string | null>(null)
   const [logDirPath, setLogDirPath] = useState('~/.deepseek/caches/logs')
   const [deepseekPaths, setDeepseekPaths] = useState({
@@ -262,6 +264,7 @@ export function SettingsView(): ReactElement {
     if (typeof window.dsGui?.fetchPetManifest !== 'function') return
     setPetCatalogLoading(true)
     setPetCatalogError(null)
+    applyFavoriteSlugs(readPetFavoriteSlugs(), petCatalogPets)
     try {
       const result = await window.dsGui.fetchPetManifest(force)
       if (!result.ok) {
@@ -271,7 +274,7 @@ export function SettingsView(): ReactElement {
       const catalog = result.manifest.pets
       setPetCatalogPets(catalog)
       let favoriteSlugs = readPetFavoriteSlugs()
-      if (favoriteSlugs.length === 0) {
+      if (!hasSavedPetFavorites()) {
         favoriteSlugs = catalog.slice(0, 15).map((pet) => pet.slug)
         writePetFavoriteSlugs(favoriteSlugs)
       }
@@ -287,20 +290,16 @@ export function SettingsView(): ReactElement {
 
   useEffect(() => {
     if (category !== 'general') return
-    if (favoritePets.length > 0 || petCatalogLoading) return
+    if (petCatalogRequested.current) return
+    petCatalogRequested.current = true
     void loadPetCatalog()
-  }, [category, favoritePets.length, loadPetCatalog, petCatalogLoading])
+  }, [category, loadPetCatalog])
 
-  const selectPetSlug = useCallback(async (pet: PetManifestEntry): Promise<void> => {
+  const selectPetSlug = useCallback((pet: PetManifestEntry): void => {
     setPetSlug(pet.slug)
     writePetSlug(pet.slug)
-    if (!petCachedSlugs.has(pet.slug) && typeof window.dsGui?.resolvePetSpritesheet === 'function') {
-      const result = await window.dsGui.resolvePetSpritesheet(pet.slug)
-      if (result.ok) {
-        setPetCachedSlugs((current) => new Set(current).add(result.slug))
-      }
-    }
-  }, [petCachedSlugs])
+    if (!petCachedSlugs.has(pet.slug)) cachePetSlugs([pet.slug])
+  }, [cachePetSlugs, petCachedSlugs])
 
   const addFavoritePet = useCallback(
     (pet: PetManifestEntry): void => {
@@ -324,13 +323,11 @@ export function SettingsView(): ReactElement {
   const petSearchResults = useMemo(() => {
     if (petCatalogPets.length === 0) return []
     const favoriteSet = new Set(petFavoriteSlugs)
-    return filterManifestPets(petCatalogPets.length ? {
+    return filterManifestPets({
       generatedAt: '',
       total: petCatalogPets.length,
-      pets: petCatalogPets
-    } : { generatedAt: '', total: 0, pets: [] }, petCatalogQuery, 10).filter(
-      (pet) => !favoriteSet.has(pet.slug)
-    )
+      pets: petCatalogPets.filter((pet) => !favoriteSet.has(pet.slug))
+    }, petCatalogQuery, 10)
   }, [petCatalogPets, petCatalogQuery, petFavoriteSlugs])
 
   useEffect(() => {

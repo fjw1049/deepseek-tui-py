@@ -126,8 +126,9 @@ export function buildChromeThemeCssVars(
   const borderStrong = rgba(ink, light ? 0.09 + c * 0.06 : 0.06 + c * 0.05)
 
   // Dark accents brighten through a focus mix (Codex behavior) so low-value
-  // accents stay legible on dark surfaces.
-  const focusBase = mixRgb(accent, WHITE, 0.3 + c * 0.15)
+  // accents stay legible on dark surfaces. Capped: past ~0.45 the accent
+  // loses its hue entirely and every dark preset washes out to the same pastel.
+  const focusBase = mixRgb(accent, WHITE, Math.min(0.45, 0.3 + c * 0.15))
   const accentDisplay = light ? accent : focusBase
 
   const diffAdded = parseHex(theme.semanticColors.diffAdded)
@@ -137,7 +138,10 @@ export function buildChromeThemeCssVars(
   // Synara-flat frosted sidebar: translucency only affects the sidebar veil;
   // everything else derives as solid flat surfaces.
   const glass = theme.translucent
-  const glassBg = glass ? rgba(sidebarBg, light ? 0.68 : 0.56) : hex(sidebarBg)
+  // Dark glass must stay mostly opaque: at 0.56 the macOS under-window
+  // material (a neutral dark grey) supplies 44% of the result, which erased
+  // every dark preset's hue and made them all read as the same black.
+  const glassBg = glass ? rgba(sidebarBg, light ? 0.68 : 0.78) : hex(sidebarBg)
   const glassBgStrong = glass ? rgba(sidebarBg, light ? 0.8 : 0.84) : hex(elevated1)
   const glassBorder = rgba(ink, light ? 0.07 : 0.05)
   const glassHighlight = 'transparent'

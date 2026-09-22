@@ -10,8 +10,7 @@ import type { ToolRenderContext } from '../render-context'
 
 /**
  * Renderer for file mutation tools (write_file / edit_file / apply_patch).
- * The ToolCard host auto-opens this while the write is running and collapses
- * it on success; Output is the expandable patch / file body.
+ * The shared ToolCard disclosure reveals the patch / file body on demand.
  */
 export const FileEditRenderer = {
   fullBleed: true,

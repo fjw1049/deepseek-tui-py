@@ -60,6 +60,8 @@ export type NormalizedThread = {
   publishIssue?: PublishIssue
   status?: string
   archived?: boolean
+  /** Set once the thread has run a turn — env mode is locked from then on. */
+  latestTurnId?: string | null
   goal?: GoalSnapshotJson | null
 }
 
@@ -115,12 +117,12 @@ export type ToolBlock = {
 /**
  * Structured narration frame persisted by the runtime alongside a mid-turn
  * preface. Semantics come from these fields, never from parsing display text.
- * `source: 'none'` means no wording exists yet: render a neutral progress
- * state from `phase` / `toolCount` / `anchors`.
+ * `source: 'none'` keeps an invisible frame for a later wording upsert.
+ * Tool parameters must not be promoted into progress prose.
  */
 export type ProcessIntentMeta = {
   scope: 'pre_tool' | 'milestone'
-  source: 'primary_model' | 'narration_service' | 'none'
+  source: 'primary_model' | 'narration_service' | 'runtime' | 'none'
   phase?: string
   batch?: string
   toolCount?: number
@@ -230,6 +232,8 @@ export type ChatBlock =
       workers?: { id: string; status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled' }[]
       /** Full step history for StepFlow (delegate cards). */
       steps?: SubagentStepBlock[]
+      /** Live streamed text while running (cleared when the card settles). */
+      liveText?: string
       /** Fanout: per-worker step history. */
       workerSteps?: Record<string, SubagentStepBlock[]>
       parentId?: string | null
@@ -435,6 +439,8 @@ export type ThreadEventSink = {
   onSystemStatus?(text: string, itemId: string, severity?: 'error'): void
   /** Optional: delegate / fanout sub-agent progress cards. */
   onSubagentMailbox?(ev: SubagentMailboxPayload): void
+  /** Optional: live streamed text from a running sub-agent. */
+  onSubagentTextDelta?(agentId: string, text: string): void
   /**
    * Optional: session-level mounted-plugin state changed. `null` means
    * explicitly unmounted; the callback is also called on thread load with
@@ -457,7 +463,9 @@ export interface AgentProvider {
   isThreadTurnActive?(threadId: string): Promise<boolean>
   warmThread?(threadId: string): Promise<void>
   listThreads(options?: { includeArchived?: boolean }): Promise<NormalizedThread[]>
-  createThread(input: { workspace?: string; title?: string; mode?: string; provider?: string; model?: string }): Promise<NormalizedThread>
+  createThread(input: { workspace?: string; title?: string; mode?: string; provider?: string; model?: string; envMode?: 'local' | 'worktree' }): Promise<NormalizedThread>
+  /** Patch thread metadata. Only env mode for now; runtime rejects changes after the first turn. */
+  updateThread(threadId: string, input: { envMode?: 'local' | 'worktree' }): Promise<NormalizedThread>
   getThreadDetail(threadId: string): Promise<{
     blocks: ChatBlock[]
     latestSeq: number

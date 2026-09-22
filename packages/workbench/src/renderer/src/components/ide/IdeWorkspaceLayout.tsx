@@ -10,10 +10,10 @@ import {
   type ReactNode
 } from 'react'
 import {
+  ArrowLeft,
   FileEdit,
   FileSearch,
   Folders,
-  MessageSquare,
   PanelRight,
   PanelRightClose
 } from 'lucide-react'
@@ -394,7 +394,7 @@ export function IdeWorkspaceLayout({
               title={t('ideSwitchToChat')}
               onClick={onExitIdeMode}
             >
-              <MessageSquare className="h-3.5 w-3.5" strokeWidth={1.85} />
+              <ArrowLeft className="h-4 w-4" strokeWidth={1.85} />
               <span>{t('returnToConversation')}</span>
             </button>
             <button

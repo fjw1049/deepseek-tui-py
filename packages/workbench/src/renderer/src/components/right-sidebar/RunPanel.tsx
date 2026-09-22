@@ -1,20 +1,20 @@
 import { useEffect, useMemo, useRef, useState, type ReactElement } from 'react'
-import { ArrowDown, ChevronRight } from 'lucide-react'
+import { ArrowDown } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import type { ChatBlock } from '../../agent/types'
 import { useChatStore } from '../../store/chat-store'
 import { useRunPanelStore, type RunTarget } from '../../store/run-panel-store'
 import { extractTasksFromBlocks, isResumableTaskStatus, taskListTitle } from '../../lib/extract-tasks-from-blocks'
 import { extractSubagentsFromBlocks, subagentListTitle } from '../../lib/extract-subagents-from-blocks'
-import { buildSubagentTreeNodes, resolveSubagentFlowItems, type SubagentBlock } from '../../lib/run-subagent-flow'
-import { groupRunActivity, isRunActive, runActionCount, runDisplayTitle, runStatusKey } from '../../lib/run-activity'
-import { timelineToFlowItems } from '../../lib/task-step-flow'
+import { buildSubagentTreeNodes, type SubagentBlock } from '../../lib/run-subagent-flow'
+import { isRunActive, runDisplayTitle, runStatusKey } from '../../lib/run-activity'
+import { legacyRunConversation } from '../../lib/run-conversation'
+import { useRunConversation } from '../../hooks/use-run-conversation'
+import { RunMessageTimeline } from '../chat/MessageTimeline'
 import { useLiveTasks, resumeTask, resumeThreadAgent } from '../../hooks/use-thread-tasks'
 import { useTaskRunDetail } from '../../hooks/use-task-run-detail'
 import { formatTaskDuration } from '../chat/task-status'
-import { StreamdownAssistant } from '../chat/StreamdownAssistant'
-import { ToolCopyButton } from '../chat/tool/primitives'
-import { RunActivity, RunStateIcon } from './RunActivity'
+import { RunStateIcon } from './RunActivity'
 import { RunSwitcher, type RunOption } from './RunSwitcher'
 import './run-panel.css'
 
@@ -67,25 +67,34 @@ function RunDetail({ target, blocks, options, onSelect }: {
   const { detail, loading, failed } = useTaskRunDetail(isTask ? target.id : null, refresh)
   const related = useMemo(() => blocks.filter((block): block is SubagentBlock => block.kind === 'subagent'), [blocks])
   const root = related.find((block) => block.agentId === target.id)
-  const [selectedId, setSelectedId] = useState(target.id)
+  const [chosenId, setSelectedId] = useState<string | null>(null)
+  const selectedId = chosenId ?? (root?.cardKind === 'fanout' ? root.workers?.[0]?.id : null) ?? target.id
+  const workspace = useChatStore((s) => s.workspaceRoot)
   const selected = related.find((block) => block.agentId === selectedId)
   const worker = related.flatMap((block) => block.workers ?? []).find((item) => item.id === selectedId)
-  const agent = selected ?? root
+  const owner = related.find((block) => block.workers?.some((item) => item.id === selectedId))
+  const agent = selected ?? (selectedId === root?.agentId ? root : undefined)
   const option = options.find((item) => item.kind === target.kind && item.id === target.id)
-  const status = isTask ? detail?.status ?? option?.status : worker?.status ?? agent?.status
+  const conversation = useRunConversation({ ...target, id: isTask ? target.id : selectedId }, refresh,
+    isRunActive(isTask ? detail?.status ?? option?.status : worker?.status ?? agent?.status))
+  const status = conversation?.status ?? (isTask ? detail?.status ?? option?.status : worker?.status ?? agent?.status)
   const active = isRunActive(status)
   const assignment = isTask ? detail?.prompt : agent?.prompt
-  const result = isTask ? detail?.resultSummary || detail?.error : selected?.summary
-  const flow = useMemo(() => isTask
-    ? timelineToFlowItems(detail?.timeline ?? [])
-    : root ? resolveSubagentFlowItems(root, related, selectedId) : [],
-  [isTask, detail?.timeline, root, related, selectedId])
+  const result = isTask
+    ? detail?.resultSummary || detail?.error || (active ? detail?.liveText : undefined)
+    : selected?.summary ?? (active ? selected?.liveText : undefined)
+  const legacy = useMemo(() => legacyRunConversation({
+    id: selectedId, prompt: assignment, task: isTask ? detail : null,
+    steps: selected?.steps ?? owner?.workerSteps?.[selectedId] ?? agent?.steps,
+    result, live: isTask ? detail?.liveText : selected?.liveText, active
+  }), [selectedId, assignment, isTask, detail, selected, owner, agent, result, active])
+  const displayBlocks = conversation?.blocks ?? legacy.blocks
   const tree = useMemo(() => root ? buildSubagentTreeNodes(root, related) : [], [root, related])
   const [resuming, setResuming] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const resumableIds = agent?.cardKind === 'fanout' && selectedId === agent.agentId
     ? (agent.workers ?? []).filter((item) => item.status === 'failed' || item.status === 'cancelled').map((item) => item.id)
-    : status === 'failed' || status === 'cancelled' ? [selectedId] : []
+    : status === 'failed' || status === 'cancelled' || status === 'interrupted' ? [selectedId] : []
   const canResume = isTask ? !!detail && isResumableTaskStatus(detail.status) : resumableIds.length > 0
   const resume = async (): Promise<void> => {
     setResuming(true)
@@ -96,6 +105,7 @@ function RunDetail({ target, blocks, options, onSelect }: {
         setRefresh((value) => value + 1)
       } else {
         for (const id of resumableIds) await resumeThreadAgent(target.threadId, id)
+        setRefresh((value) => value + 1)
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : t('taskResumeFailed'))
@@ -119,16 +129,18 @@ function RunDetail({ target, blocks, options, onSelect }: {
     observer.observe(content)
     return () => observer.disconnect()
   }, [])
+  useEffect(() => {
+    following.current = true
+    setShowLatest(false)
+    if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight
+  }, [selectedId, refresh])
   const currentOption: RunOption = option ?? {
     kind: target.kind, id: target.id, label: assignment || target.id, status
   }
-  const count = runActionCount(flow)
+  const count = displayBlocks.filter((block) => block.kind === 'tool').length
   const duration = formatTaskDuration(isTask ? detail?.durationMs ?? null
     : agent?.startedAt && agent?.finishedAt && !worker
       ? Math.max(0, Date.parse(agent.finishedAt) - Date.parse(agent.startedAt)) : null)
-  const progressCount = groupRunActivity(flow).length
-  const [processChoice, setProcessChoice] = useState<{ id: string; active: boolean; open: boolean } | null>(null)
-  const processOpen = processChoice?.id === selectedId && processChoice.active === active ? processChoice.open : active
   return (
     <>
       <header className="ds-run-header">
@@ -145,12 +157,6 @@ function RunDetail({ target, blocks, options, onSelect }: {
           setShowLatest(!following.current)
         }}>
           <div ref={contentRef} className="ds-run-content">
-            {assignment ? (
-              <details className="ds-run-context" onToggle={() => { following.current = false; setShowLatest(true) }}>
-                <summary><ChevronRight className="ds-run-chevron" /><span className="ds-run-phase-heading"><span className="ds-run-phase-label">{t('runPanelAssignment')}</span><span className="ds-run-phase-preview">{runDisplayTitle(assignment)}</span></span></summary>
-                <div className="ds-run-assignment ds-markdown ds-markdown--answer"><StreamdownAssistant text={assignment} streaming={false} /></div>
-              </details>
-            ) : null}
             {tree.length > 1 ? (
               <div className="ds-run-children" aria-label={t('subagentTreeTitle')}>
                 {tree.map((node) => (
@@ -163,26 +169,13 @@ function RunDetail({ target, blocks, options, onSelect }: {
             {error || failed ? <p role="alert" className="ds-run-error">{error || t('runPanelLoadFailed')}</p> : null}
             {isTask && loading ? <p className="ds-run-empty">{t('contextRailTaskLoading')}</p> : null}
             {!isTask && !root ? <p className="ds-run-empty">{t('runPanelUnavailable')}</p> : null}
-            <section className="ds-run-process">
-              <button type="button" className="ds-run-process-toggle" aria-expanded={processOpen} onClick={() => {
-                following.current = false
-                setShowLatest(true)
-                setProcessChoice({ id: selectedId, active, open: !processOpen })
-              }}>
-                <ChevronRight className="ds-run-chevron" />
-                <span>{t(active ? 'runPanelActions' : 'runPanelFinished')}</span>
-                <span className="ds-run-process-stats">{[duration, t('runPanelProgressCount', { count: progressCount }), t('runPanelActionCount', { count })].filter(Boolean).join(' · ')}</span>
-              </button>
-              {processOpen ? <div onClickCapture={() => { following.current = false; setShowLatest(true) }}>
-                <RunActivity key={selectedId} items={flow} active={active} followLatest={!showLatest} />
-              </div> : null}
-            </section>
-            {result ? (
-              <section className="ds-run-result">
-                <div className="ds-run-result-header"><RunStateIcon status={status} /><span>{t(status === 'failed' ? 'subagentFailureReason' : 'runPanelResult')}</span><ToolCopyButton text={result} /></div>
-                <div className="ds-markdown ds-markdown--answer"><StreamdownAssistant text={result} streaming={false} /></div>
-              </section>
-            ) : null}
+            <RunMessageTimeline
+              key={selectedId}
+              blocks={displayBlocks}
+              liveId={conversation ? conversation.liveId : legacy.liveId}
+              active={active}
+              workspace={conversation?.workspace ?? workspace}
+            />
           </div>
         </div>
         <footer className="ds-run-footer">

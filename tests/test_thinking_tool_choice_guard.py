@@ -100,10 +100,9 @@ async def test_narration_request_disables_thinking() -> None:
     bundle = IntentBundle(
         user_goal="goal",
         phase="explore",
-        confirmed_facts=(),
+        tool_observations=(),
         working_hypothesis=(),
         next_intent="read files",
-        batch_intent="read files",
         locale="zh",
     )
     plan = await compute_narration_plan(

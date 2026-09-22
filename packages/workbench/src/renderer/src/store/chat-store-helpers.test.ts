@@ -58,3 +58,34 @@ describe('readStoredComposerModel', () => {
     expect(readStoredComposerModel([])).toBe('')
   })
 })
+
+// Runtime progress upserts can arrive while the following model reply streams.
+import { completeAssistantProgress } from './chat-store'
+import type { ProcessIntentMeta } from '../agent/types'
+
+describe('completeAssistantProgress', () => {
+  it('keeps an empty frame invisible and preserves the current stream when wording arrives', () => {
+    const intent: ProcessIntentMeta = { scope: 'pre_tool', source: 'none' }
+    const first = completeAssistantProgress({ blocks: [], liveAssistant: '新的正文正在输出' },
+      'intent', undefined, '', intent)
+    expect(first.liveAssistant).toBe('新的正文正在输出')
+    expect(first.blocks[0]).toMatchObject({ id: 'intent', text: '' })
+    const filled = completeAssistantProgress(first, 'intent', undefined, '已确认原因，接下来验证修复。',
+      { ...intent, source: 'narration_service' })
+    expect(filled.blocks).toHaveLength(1)
+    expect(filled.blocks[0]).toMatchObject({ text: '已确认原因，接下来验证修复。' })
+    expect(filled.liveAssistant).toBe('新的正文正在输出')
+    const replay = completeAssistantProgress(filled, 'intent', undefined, '已确认原因，接下来验证修复。',
+      { ...intent, source: 'narration_service' })
+    expect(replay).toEqual(filled)
+  })
+
+  it('completes a primary preface once; its later metadata update preserves the next stream', () => {
+    const first = completeAssistantProgress({ blocks: [], liveAssistant: '正在核对' }, 'primary', undefined, '正在核对')
+    expect(first.liveAssistant).toBe('')
+    const tagged = completeAssistantProgress({ ...first, liveAssistant: '下一轮内容' }, 'primary', undefined,
+      '正在核对', { scope: 'pre_tool', source: 'primary_model' })
+    expect(tagged.liveAssistant).toBe('下一轮内容')
+    expect(tagged.blocks).toHaveLength(1)
+  })
+})

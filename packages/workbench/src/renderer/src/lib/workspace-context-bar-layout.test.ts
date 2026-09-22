@@ -9,24 +9,18 @@ describe('workspaceContextBarPlanForWidth', () => {
   it('keeps everything when wide or unknown', () => {
     expect(workspaceContextBarPlanForWidth(null)).toMatchObject({
       showBranch: true,
-      showProjectChevron: true
+      showBranchLabel: true,
+      showEnv: true
     })
     expect(workspaceContextBarPlanForWidth(400)).toMatchObject({
       showBranch: true,
       showBranchLabel: true,
-      showBranchChevron: true,
-      showProjectChevron: true
+      showEnv: true
     })
   })
 
   it('hides from the right as width shrinks', () => {
-    expect(workspaceContextBarTierForWidth(350)).toBe(1)
-    expect(workspaceContextBarPlanForWidth(350)).toMatchObject({
-      showBranchChevron: false,
-      showBranchLabel: true,
-      showBranch: true
-    })
-
+    expect(workspaceContextBarTierForWidth(300)).toBe(1)
     expect(workspaceContextBarPlanForWidth(300)).toMatchObject({
       showBranchLabel: false,
       showBranch: true
@@ -34,19 +28,19 @@ describe('workspaceContextBarPlanForWidth', () => {
 
     expect(workspaceContextBarPlanForWidth(200)).toMatchObject({
       showBranch: false,
-      showProjectChevron: true
+      showEnv: true
     })
 
-    expect(workspaceContextBarPlanForWidth(140)).toMatchObject({
+    expect(workspaceContextBarPlanForWidth(180)).toMatchObject({
       showBranch: false,
-      showProjectChevron: false
+      showEnv: false
     })
   })
 
   it('tier helper matches width ladder', () => {
-    for (const tier of [0, 1, 2, 3, 4] as const) {
+    for (const tier of [0, 1, 2, 3] as const) {
       expect(workspaceContextBarPlanForTier(tier)).toEqual(
-        workspaceContextBarPlanForWidth([360, 359, 309, 219, 149][tier])
+        workspaceContextBarPlanForWidth([310, 309, 219, 189][tier])
       )
     }
   })

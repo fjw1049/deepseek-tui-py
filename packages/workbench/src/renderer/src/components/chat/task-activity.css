@@ -1,6 +1,8 @@
 .ds-task-activity {
-  --task-activity-row-height: 3.25rem;
+  --task-activity-row-height: 2.25rem;
   --task-activity-running: light-dark(#27735f, #84c7b0);
+  --task-activity-done: light-dark(#1f9d57, #4ade80);
+  --task-activity-failed: light-dark(#d6453d, #f87171);
   --task-activity-attention: light-dark(#976124, #dfb87c);
   --task-activity-line: color-mix(in srgb, var(--text-primary) 13%, transparent);
 }
@@ -59,47 +61,10 @@
   font-variant-numeric: tabular-nums;
 }
 
-.ds-task-activity-mark {
-  display: grid;
-  place-items: center;
-  width: 1.5rem;
-  height: 1.5rem;
-  flex-shrink: 0;
-  color: var(--text-secondary);
-}
-
-.ds-task-activity-mark svg,
 .ds-task-activity-chevron {
   width: 0.875rem;
   height: 0.875rem;
   stroke-width: 1.75;
-}
-
-.ds-task-activity-mark[data-status='running'] {
-  color: var(--task-activity-running);
-}
-
-.ds-task-activity [data-status='failed'],
-.ds-task-activity [data-status='timed_out'],
-.ds-task-activity-summary[data-attention='true'] {
-  color: var(--task-activity-attention);
-}
-
-.ds-task-activity-orbit {
-  width: 0.3125rem;
-  height: 0.3125rem;
-  border-radius: 50%;
-  background: currentColor;
-}
-
-.ds-task-activity-mark[data-animate='true'] .ds-task-activity-orbit {
-  width: 0.875rem;
-  height: 0.875rem;
-  border: 1.5px solid var(--task-activity-line);
-  border-top-color: currentColor;
-  border-right-color: currentColor;
-  background: transparent;
-  animation: task-activity-turn 2.4s linear infinite;
 }
 
 .ds-task-activity-chevron {
@@ -137,7 +102,11 @@
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
-  scrollbar-width: thin;
+  scrollbar-width: none;
+}
+
+.ds-task-activity-list::-webkit-scrollbar {
+  display: none;
 }
 
 .ds-task-activity-list > li {
@@ -174,13 +143,10 @@
   transition: background-color 160ms ease;
 }
 
-.ds-task-activity-row .ds-task-activity-mark { width: 1rem; }
 .ds-task-activity-row .ds-task-activity-title { font-size: 0.75rem; }
 
-@keyframes task-activity-turn { to { transform: rotate(360deg); } }
 
 @media (prefers-reduced-motion: reduce) {
-  .ds-task-activity-mark[data-animate='true'] .ds-task-activity-orbit { animation: none; }
   .ds-task-activity-body,
   .ds-task-activity-chevron { transition: none; }
 }

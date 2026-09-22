@@ -177,7 +177,9 @@ export type ChatState = {
   hideWorkspace: (workspacePath: string) => Promise<void>
   setSidebarLabelColor: (key: string, color: string | null) => void
   refreshThreads: () => Promise<void>
-  createThread: (options?: { workspaceRoot?: string; chats?: boolean }) => Promise<void>
+  createThread: (options?: { workspaceRoot?: string; chats?: boolean; forceNew?: boolean }) => Promise<void>
+  /** Switch the active thread's env mode; only allowed before its first turn. */
+  updateThreadEnvMode: (mode: 'local' | 'worktree') => Promise<void>
   selectThread: (id: string) => Promise<void>
   warmActiveThread: (threadId?: string) => Promise<void>
   recoverActiveTurn: () => Promise<boolean>

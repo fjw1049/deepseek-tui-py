@@ -62,7 +62,7 @@ export function runStatusKey(status: string | undefined): string {
   if (status === 'completed' || status === 'ok') return 'contextRailTaskStatusCompleted'
   if (status === 'failed') return 'contextRailTaskStatusFailed'
   if (status === 'timed_out') return 'contextRailTaskStatusTimedOut'
-  if (status === 'canceled' || status === 'cancelled') return 'contextRailTaskStatusCanceled'
+  if (status === 'canceled' || status === 'cancelled' || status === 'interrupted') return 'contextRailTaskStatusCanceled'
   return 'contextRailTaskStatusQueued'
 }
 

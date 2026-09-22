@@ -932,6 +932,7 @@ class AppRuntime:
         outcome = await fire_http_trigger(
             prompt=prompt,
             task_manager=self._tool_runtime.task_manager,
+            automation_manager=self._tool_runtime.automation_manager,
             digest=body.get("digest") if isinstance(body.get("digest"), dict) else None,
             delivery=body.get("delivery") if isinstance(body.get("delivery"), dict) else None,
             workspace=_pick_str(body, "workspace"),
@@ -1287,6 +1288,7 @@ from deepseek_tui.engine.events import (
     ErrorEvent,
     SandboxDeniedEvent,
     StatusEvent,
+    SubAgentTextDeltaEvent,
     TextDeltaEvent,
     ThinkingDeltaEvent,
     ToolCallEvent,
@@ -1380,6 +1382,12 @@ def engine_event_to_sse(event: EngineEvent) -> dict[str, Any]:
             "event": "agent_round_complete",
             "round_idx": event.round_idx,
             "terminal": not event.tool_calls,
+        }
+    if isinstance(event, SubAgentTextDeltaEvent):
+        return {
+            "event": "subagent_text_delta",
+            "agent_id": event.agent_id,
+            "text": event.text,
         }
     # EngineEvent is a closed Union; this is only reached if a new variant
     # lands without a branch above. Raise instead of silent pass-through.

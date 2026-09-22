@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -45,6 +46,7 @@ class RuntimeThreadStore:
         self._items_dir = root / "items"
         self._events_dir = root / "events"
         self._worktree_baselines_dir = root / "worktree_baselines"
+        self._rewind_audit_dir = root / "rewind_audit"
         self._state_path = root / "state.json"
 
         for d in (
@@ -53,6 +55,7 @@ class RuntimeThreadStore:
             self._items_dir,
             self._events_dir,
             self._worktree_baselines_dir,
+            self._rewind_audit_dir,
         ):
             d.mkdir(parents=True, exist_ok=True)
 
@@ -96,6 +99,9 @@ class RuntimeThreadStore:
     def _worktree_baseline_path(self, thread_id: str) -> Path:
         return self._worktree_baselines_dir / f"{thread_id}.json"
 
+    def _rewind_audit_path(self, thread_id: str) -> Path:
+        return self._rewind_audit_dir / f"{thread_id}.jsonl"
+
     # --- CRUD ----------------------------------------------------------------
 
     def save_thread(self, thread: ThreadRecord) -> None:
@@ -116,6 +122,7 @@ class RuntimeThreadStore:
     def delete_thread(self, thread_id: str) -> None:
         self._thread_path(thread_id).unlink(missing_ok=True)
         self.delete_worktree_baseline(thread_id)
+        self.delete_rewind_audit(thread_id)
 
     def delete_events(self, thread_id: str) -> None:
         self._events_path(thread_id).unlink(missing_ok=True)
@@ -136,6 +143,43 @@ class RuntimeThreadStore:
 
     def delete_worktree_baseline(self, thread_id: str) -> None:
         self._worktree_baseline_path(thread_id).unlink(missing_ok=True)
+
+    # --- rewind audit (JSONL append) -----------------------------------------
+
+    def append_rewind_audit(self, thread_id: str, record: dict[str, Any]) -> None:
+        """Durably append one rewind audit record before any deletion happens.
+
+        A crash after the append leaves a harmless archive of turns that are
+        still on disk; deleting first would make the rewind unrecoverable.
+        """
+        path = self._rewind_audit_path(thread_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
+            f.flush()
+            os.fsync(f.fileno())
+
+    def list_rewind_audit(self, thread_id: str) -> list[dict[str, Any]]:
+        path = self._rewind_audit_path(thread_id)
+        if not path.exists():
+            return []
+        out: list[dict[str, Any]] = []
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError:
+                logger.warning(
+                    "rewind_audit_skip_corrupt_line thread_id=%s", thread_id
+                )
+                continue
+            if isinstance(record, dict):
+                out.append(record)
+        return out
+
+    def delete_rewind_audit(self, thread_id: str) -> None:
+        self._rewind_audit_path(thread_id).unlink(missing_ok=True)
 
     def iter_turns(self) -> list[TurnRecord]:
         out: list[TurnRecord] = []

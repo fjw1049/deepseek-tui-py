@@ -16,7 +16,7 @@ app.whenReady().then(async () => {
       .flex-1 { flex: 1 1 0% } .overflow-y-auto { overflow-y: auto }
       ${css}
     </style>
-    <div class="ds-sidebar-middle" style="height:800px;width:280px">
+    <div id="shell" style="width:280px;padding:0 12px"><div class="ds-sidebar-middle" style="height:800px">
       <div style="height:40px;flex-shrink:0">Projects</div>
       <div class="ds-sidebar-projects-scroll overflow-y-auto">Project rows</div>
       <div class="ds-sidebar-chats-pane">
@@ -27,7 +27,7 @@ app.whenReady().then(async () => {
           </div>
         </div>
       </div>
-    </div>`))
+    </div></div>`))
   const results = await win.webContents.executeJavaScript(`(() => {
     const middle = document.querySelector('.ds-sidebar-middle')
     const pane = document.querySelector('.ds-sidebar-chats-pane')
@@ -35,20 +35,18 @@ app.whenReady().then(async () => {
     const projects = document.querySelector('.ds-sidebar-projects-scroll')
     return [400, 800].map(height => {
       middle.style.height = height + 'px'
-      const expanded = pane.getBoundingClientRect().height
-      projects.remove()
-      const collapsed = pane.getBoundingClientRect().height
-      list.scrollTop = list.scrollHeight
-      const scrollable = list.scrollTop > 0
-      middle.insertBefore(projects, pane)
-      return { height, expanded, collapsed, scrollable, restored: pane.getBoundingClientRect().height }
+      const shell = document.querySelector('#shell')
+      const rightGap = shell.getBoundingClientRect().right - middle.getBoundingClientRect().right
+      middle.scrollTop = middle.scrollHeight
+      const scrollable = middle.scrollTop > 0
+      return { height, rightGap, scrollable, nestedScroll: list.scrollHeight > list.clientHeight }
+
     })
   })()`)
   for (const result of results) {
-    assert.equal(result.expanded, result.height * 0.38)
-    assert.equal(result.collapsed, result.height - 40)
-    assert.equal(result.restored, result.expanded)
+    assert.equal(result.rightGap, 0)
     assert.equal(result.scrollable, true)
+    assert.equal(result.nestedScroll, false)
   }
   console.log('Sidebar layout passed:', results)
   app.quit()

@@ -78,7 +78,7 @@ async def test_start_turn_never_dispatches_without_checkpoint(
     manager = runtime_app.state.thread_manager
     repo = _repo(tmp_path)
     thread = await manager.create_thread(
-        CreateThreadRequest(workspace=str(repo), model="deepseek-chat")
+        CreateThreadRequest(workspace=str(repo), model="deepseek-chat", env_mode="worktree")
     )
     handle = EngineHandle()
     engine_task = asyncio.create_task(asyncio.sleep(3600), name="test-engine-idle")
@@ -127,13 +127,13 @@ async def test_warmup_preserves_thread_recency_and_order(
     manager = runtime_app.state.thread_manager
     repo = _repo(tmp_path)
     older = await manager.create_thread(
-        CreateThreadRequest(workspace=str(repo), model="deepseek-chat")
+        CreateThreadRequest(workspace=str(repo), model="deepseek-chat", env_mode="worktree")
     )
     old_updated_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
     older.updated_at = old_updated_at
     manager.store.save_thread(older)
     newer = await manager.create_thread(
-        CreateThreadRequest(workspace=str(repo), model="deepseek-chat")
+        CreateThreadRequest(workspace=str(repo), model="deepseek-chat", env_mode="worktree")
     )
 
     async def fake_ensure_engine_loaded(_thread):
@@ -161,9 +161,9 @@ async def test_prepare_isolates_git_and_publish_writes_project(
     manager = runtime_app.state.thread_manager
     repo = _repo(tmp_path)
     thread = await manager.create_thread(
-        CreateThreadRequest(workspace=str(repo), model="deepseek-chat")
+        CreateThreadRequest(workspace=str(repo), model="deepseek-chat", env_mode="worktree")
     )
-    assert thread.env_mode == "local"
+    assert thread.env_mode == "worktree"
     prepared = await manager._prepare_isolated_workspace(thread)
     assert prepared.env_mode == "worktree"
     tree = execution_root(prepared)
@@ -202,7 +202,7 @@ async def test_publish_rejects_changed_worktree_git_state(
     manager = runtime_app.state.thread_manager
     repo = _repo(tmp_path)
     thread = await manager.create_thread(
-        CreateThreadRequest(workspace=str(repo), model="deepseek-chat")
+        CreateThreadRequest(workspace=str(repo), model="deepseek-chat", env_mode="worktree")
     )
     prepared = await manager._prepare_isolated_workspace(thread)
     tree = execution_root(prepared)
@@ -260,7 +260,7 @@ async def test_publish_conflict_leaves_project(
     manager = runtime_app.state.thread_manager
     repo = _repo(tmp_path)
     thread = await manager.create_thread(
-        CreateThreadRequest(workspace=str(repo), model="deepseek-chat")
+        CreateThreadRequest(workspace=str(repo), model="deepseek-chat", env_mode="worktree")
     )
     prepared = await manager._prepare_isolated_workspace(thread)
     tree = execution_root(prepared)
@@ -328,7 +328,7 @@ async def test_use_agent_forces_only_conflicts_the_user_saw(
     _git(repo, "add", "other.py")
     _git(repo, "commit", "-m", "add other")
     thread = await manager.create_thread(
-        CreateThreadRequest(workspace=str(repo), model="deepseek-chat")
+        CreateThreadRequest(workspace=str(repo), model="deepseek-chat", env_mode="worktree")
     )
     prepared = await manager._prepare_isolated_workspace(thread)
     tree = execution_root(prepared)
@@ -372,7 +372,7 @@ async def test_publish_requires_choice_for_task_mode_change(
     manager = runtime_app.state.thread_manager
     repo = _repo(tmp_path)
     thread = await manager.create_thread(
-        CreateThreadRequest(workspace=str(repo), model="deepseek-chat")
+        CreateThreadRequest(workspace=str(repo), model="deepseek-chat", env_mode="worktree")
     )
     prepared = await manager._prepare_isolated_workspace(thread)
     tree = execution_root(prepared)
@@ -415,7 +415,7 @@ async def test_publish_preserves_mode_of_new_checkpointed_file(
     manager = runtime_app.state.thread_manager
     repo = _repo(tmp_path)
     thread = await manager.create_thread(
-        CreateThreadRequest(workspace=str(repo), model="deepseek-chat")
+        CreateThreadRequest(workspace=str(repo), model="deepseek-chat", env_mode="worktree")
     )
     prepared = await manager._prepare_isolated_workspace(thread)
     tree = execution_root(prepared)
@@ -452,7 +452,7 @@ async def test_explicit_publish_preserves_new_symlink_identity(
     manager = runtime_app.state.thread_manager
     repo = _repo(tmp_path)
     thread = await manager.create_thread(
-        CreateThreadRequest(workspace=str(repo), model="deepseek-chat")
+        CreateThreadRequest(workspace=str(repo), model="deepseek-chat", env_mode="worktree")
     )
     prepared = await manager._prepare_isolated_workspace(thread)
     tree = execution_root(prepared)
@@ -495,7 +495,7 @@ async def test_explicit_symlink_delete_never_deletes_link_target(
     _git(repo, "add", "link.py")
     _git(repo, "commit", "-m", "add link")
     thread = await manager.create_thread(
-        CreateThreadRequest(workspace=str(repo), model="deepseek-chat")
+        CreateThreadRequest(workspace=str(repo), model="deepseek-chat", env_mode="worktree")
     )
     prepared = await manager._prepare_isolated_workspace(thread)
     tree = execution_root(prepared)
@@ -533,7 +533,7 @@ async def test_opaque_change_blocks_instead_of_being_falsely_published(
     manager = runtime_app.state.thread_manager
     repo = _repo(tmp_path)
     thread = await manager.create_thread(
-        CreateThreadRequest(workspace=str(repo), model="deepseek-chat")
+        CreateThreadRequest(workspace=str(repo), model="deepseek-chat", env_mode="worktree")
     )
     prepared = await manager._prepare_isolated_workspace(thread)
     tree = execution_root(prepared)
@@ -571,7 +571,7 @@ async def test_use_agent_explicitly_publishes_opaque_bytes(
     manager = runtime_app.state.thread_manager
     repo = _repo(tmp_path)
     thread = await manager.create_thread(
-        CreateThreadRequest(workspace=str(repo), model="deepseek-chat")
+        CreateThreadRequest(workspace=str(repo), model="deepseek-chat", env_mode="worktree")
     )
     prepared = await manager._prepare_isolated_workspace(thread)
     tree = execution_root(prepared)
@@ -611,7 +611,7 @@ async def test_safe_raw_creation_rejects_mutation_at_apply_seam(
     manager = runtime_app.state.thread_manager
     repo = _repo(tmp_path)
     thread = await manager.create_thread(
-        CreateThreadRequest(workspace=str(repo), model="deepseek-chat")
+        CreateThreadRequest(workspace=str(repo), model="deepseek-chat", env_mode="worktree")
     )
     prepared = await manager._prepare_isolated_workspace(thread)
     tree = execution_root(prepared)
@@ -670,7 +670,7 @@ async def test_safe_raw_creation_retry_accepts_only_matching_partial_publish(
     for path, payload in old_payloads.items():
         (repo / path).write_bytes(payload)
     thread = await manager.create_thread(
-        CreateThreadRequest(workspace=str(repo), model="deepseek-chat")
+        CreateThreadRequest(workspace=str(repo), model="deepseek-chat", env_mode="worktree")
     )
     prepared = await manager._prepare_isolated_workspace(thread)
     tree = execution_root(prepared)
@@ -799,7 +799,7 @@ async def test_raw_failure_rollback_preserves_late_project_text_edit(
     manager = runtime_app.state.thread_manager
     repo = _repo(tmp_path)
     thread = await manager.create_thread(
-        CreateThreadRequest(workspace=str(repo), model="deepseek-chat")
+        CreateThreadRequest(workspace=str(repo), model="deepseek-chat", env_mode="worktree")
     )
     prepared = await manager._prepare_isolated_workspace(thread)
     tree = execution_root(prepared)
@@ -858,7 +858,7 @@ async def test_archiving_reclaims_clean_owned_worktree(
     manager = runtime_app.state.thread_manager
     repo = _repo(tmp_path)
     thread = await manager.create_thread(
-        CreateThreadRequest(workspace=str(repo), model="deepseek-chat")
+        CreateThreadRequest(workspace=str(repo), model="deepseek-chat", env_mode="worktree")
     )
     prepared = await manager._prepare_isolated_workspace(thread)
     tree = execution_root(prepared)
@@ -882,7 +882,7 @@ async def test_archiving_keeps_unpublished_worktree(
     manager = runtime_app.state.thread_manager
     repo = _repo(tmp_path)
     thread = await manager.create_thread(
-        CreateThreadRequest(workspace=str(repo), model="deepseek-chat")
+        CreateThreadRequest(workspace=str(repo), model="deepseek-chat", env_mode="worktree")
     )
     prepared = await manager._prepare_isolated_workspace(thread)
     tree = execution_root(prepared)
@@ -906,7 +906,7 @@ async def test_delete_refuses_to_orphan_unpublished_worktree(
     manager = runtime_app.state.thread_manager
     repo = _repo(tmp_path)
     thread = await manager.create_thread(
-        CreateThreadRequest(workspace=str(repo), model="deepseek-chat")
+        CreateThreadRequest(workspace=str(repo), model="deepseek-chat", env_mode="worktree")
     )
     prepared = await manager._prepare_isolated_workspace(thread)
     tree = execution_root(prepared)
@@ -939,7 +939,7 @@ async def test_startup_reconciliation_clears_stale_path_and_merged_branch(
     manager = runtime_app.state.thread_manager
     repo = _repo(tmp_path)
     thread = await manager.create_thread(
-        CreateThreadRequest(workspace=str(repo), model="deepseek-chat")
+        CreateThreadRequest(workspace=str(repo), model="deepseek-chat", env_mode="worktree")
     )
     stale_path = planned_worktree_path(repo, thread.id)
     branch = f"ds/{thread.id}"
@@ -968,7 +968,7 @@ async def test_startup_reconciliation_preserves_missing_recovery_evidence(
     manager = runtime_app.state.thread_manager
     repo = _repo(tmp_path)
     thread = await manager.create_thread(
-        CreateThreadRequest(workspace=str(repo), model="deepseek-chat")
+        CreateThreadRequest(workspace=str(repo), model="deepseek-chat", env_mode="worktree")
     )
     stale_path = planned_worktree_path(repo, thread.id)
     thread.env_mode = "worktree"
@@ -1006,7 +1006,7 @@ async def test_prepare_syncs_current_project_into_isolate(
     manager = runtime_app.state.thread_manager
     repo = _repo(tmp_path)
     thread = await manager.create_thread(
-        CreateThreadRequest(workspace=str(repo), model="deepseek-chat")
+        CreateThreadRequest(workspace=str(repo), model="deepseek-chat", env_mode="worktree")
     )
     prepared = await manager._prepare_isolated_workspace(thread)
     tree = execution_root(prepared)
@@ -1024,7 +1024,7 @@ async def test_existing_inbound_sync_failure_is_visible_and_apply_retries_sync(
     manager = runtime_app.state.thread_manager
     repo = _repo(tmp_path)
     thread = await manager.create_thread(
-        CreateThreadRequest(workspace=str(repo), model="deepseek-chat")
+        CreateThreadRequest(workspace=str(repo), model="deepseek-chat", env_mode="worktree")
     )
     prepared = await manager._prepare_isolated_workspace(thread)
     tree = execution_root(prepared)
@@ -1072,7 +1072,7 @@ async def test_prepare_never_falls_back_to_project_when_isolation_fails(
     manager = runtime_app.state.thread_manager
     repo = _repo(tmp_path)
     thread = await manager.create_thread(
-        CreateThreadRequest(workspace=str(repo), model="deepseek-chat")
+        CreateThreadRequest(workspace=str(repo), model="deepseek-chat", env_mode="worktree")
     )
 
     async def fail_create(*args, **kwargs):
@@ -1085,7 +1085,8 @@ async def test_prepare_never_falls_back_to_project_when_isolation_fails(
         await manager._prepare_isolated_workspace(thread)
 
     persisted = manager.store.load_thread(thread.id)
-    assert persisted.env_mode == "local"
+    # Explicit opt-in persists; the thread stays worktree-pending for retry.
+    assert persisted.env_mode == "worktree"
     assert persisted.worktree_path is None
     assert (repo / "app.py").read_text(encoding="utf-8") == "one\n"
 
@@ -1098,7 +1099,7 @@ async def test_prepare_does_not_report_inherited_project_dirt_as_thread_labor(
     repo = _repo(tmp_path)
     (repo / "app.py").write_text("project-dirty-a\n", encoding="utf-8")
     thread = await manager.create_thread(
-        CreateThreadRequest(workspace=str(repo), model="deepseek-chat")
+        CreateThreadRequest(workspace=str(repo), model="deepseek-chat", env_mode="worktree")
     )
     prepared = await manager._prepare_isolated_workspace(thread)
     tree = execution_root(prepared)
@@ -1120,7 +1121,7 @@ async def test_publish_resyncs_unrelated_concurrent_project_change(
     manager = runtime_app.state.thread_manager
     repo = _repo(tmp_path)
     thread = await manager.create_thread(
-        CreateThreadRequest(workspace=str(repo), model="deepseek-chat")
+        CreateThreadRequest(workspace=str(repo), model="deepseek-chat", env_mode="worktree")
     )
     prepared = await manager._prepare_isolated_workspace(thread)
     tree = execution_root(prepared)
@@ -1158,7 +1159,7 @@ async def test_prepare_tracks_same_path_project_dirt_from_last_sync(
     repo = _repo(tmp_path)
     (repo / "app.py").write_text("project-dirty-a\n", encoding="utf-8")
     thread = await manager.create_thread(
-        CreateThreadRequest(workspace=str(repo), model="deepseek-chat")
+        CreateThreadRequest(workspace=str(repo), model="deepseek-chat", env_mode="worktree")
     )
     prepared = await manager._prepare_isolated_workspace(thread)
     tree = execution_root(prepared)
@@ -1179,7 +1180,7 @@ async def test_prepare_self_heals_legacy_false_recovery_marker(
     repo = _repo(tmp_path)
     (repo / "app.py").write_text("project-dirty-a\n", encoding="utf-8")
     thread = await manager.create_thread(
-        CreateThreadRequest(workspace=str(repo), model="deepseek-chat")
+        CreateThreadRequest(workspace=str(repo), model="deepseek-chat", env_mode="worktree")
     )
     prepared = await manager._prepare_isolated_workspace(thread)
     tree = execution_root(prepared)
@@ -1207,7 +1208,7 @@ async def test_legacy_ambiguous_labor_cannot_overwrite_project(
     repo = _repo(tmp_path)
     (repo / "inherited.txt").write_text("inherited-old\n", encoding="utf-8")
     thread = await manager.create_thread(
-        CreateThreadRequest(workspace=str(repo), model="deepseek-chat")
+        CreateThreadRequest(workspace=str(repo), model="deepseek-chat", env_mode="worktree")
     )
     prepared = await manager._prepare_isolated_workspace(thread)
     tree = execution_root(prepared)
@@ -1244,7 +1245,7 @@ async def test_legacy_keep_project_retires_only_paths_that_differ(
     manager = runtime_app.state.thread_manager
     repo = _repo(tmp_path)
     thread = await manager.create_thread(
-        CreateThreadRequest(workspace=str(repo), model="deepseek-chat")
+        CreateThreadRequest(workspace=str(repo), model="deepseek-chat", env_mode="worktree")
     )
     prepared = await manager._prepare_isolated_workspace(thread)
     tree = execution_root(prepared)
@@ -1302,7 +1303,7 @@ async def test_legacy_checkpoint_publish_establishes_first_baseline(
     repo = _repo(tmp_path)
     (repo / "inherited.txt").write_text("project inherited\n", encoding="utf-8")
     thread = await manager.create_thread(
-        CreateThreadRequest(workspace=str(repo), model="deepseek-chat")
+        CreateThreadRequest(workspace=str(repo), model="deepseek-chat", env_mode="worktree")
     )
     prepared = await manager._prepare_isolated_workspace(thread)
     tree = execution_root(prepared)
@@ -1342,7 +1343,7 @@ async def test_prepare_auto_reconciles_checkpointed_labor(
     manager = runtime_app.state.thread_manager
     repo = _repo(tmp_path)
     thread = await manager.create_thread(
-        CreateThreadRequest(workspace=str(repo), model="deepseek-chat")
+        CreateThreadRequest(workspace=str(repo), model="deepseek-chat", env_mode="worktree")
     )
     prepared = await manager._prepare_isolated_workspace(thread)
     tree = execution_root(prepared)
@@ -1376,7 +1377,7 @@ async def test_prepare_preserves_uncheckpointed_isolate_labor(
     manager = runtime_app.state.thread_manager
     repo = _repo(tmp_path)
     thread = await manager.create_thread(
-        CreateThreadRequest(workspace=str(repo), model="deepseek-chat")
+        CreateThreadRequest(workspace=str(repo), model="deepseek-chat", env_mode="worktree")
     )
     prepared = await manager._prepare_isolated_workspace(thread)
     tree = execution_root(prepared)
@@ -1420,7 +1421,7 @@ async def test_apply_never_chooses_agent_bytes_for_recovery(
     manager = runtime_app.state.thread_manager
     repo = _repo(tmp_path)
     thread = await manager.create_thread(
-        CreateThreadRequest(workspace=str(repo), model="deepseek-chat")
+        CreateThreadRequest(workspace=str(repo), model="deepseek-chat", env_mode="worktree")
     )
     prepared = await manager._prepare_isolated_workspace(thread)
     tree = execution_root(prepared)
@@ -1447,7 +1448,7 @@ async def test_stale_recovery_token_cannot_apply_new_snapshot(
     manager = runtime_app.state.thread_manager
     repo = _repo(tmp_path)
     thread = await manager.create_thread(
-        CreateThreadRequest(workspace=str(repo), model="deepseek-chat")
+        CreateThreadRequest(workspace=str(repo), model="deepseek-chat", env_mode="worktree")
     )
     prepared = await manager._prepare_isolated_workspace(thread)
     tree = execution_root(prepared)
@@ -1504,7 +1505,7 @@ async def test_recovery_applies_only_task_owned_delta(
     repo = _repo(tmp_path)
     (repo / "seed.txt").write_text("seed-one\n", encoding="utf-8")
     thread = await manager.create_thread(
-        CreateThreadRequest(workspace=str(repo), model="deepseek-chat")
+        CreateThreadRequest(workspace=str(repo), model="deepseek-chat", env_mode="worktree")
     )
     prepared = await manager._prepare_isolated_workspace(thread)
     tree = execution_root(prepared)
@@ -1531,7 +1532,7 @@ async def test_recovery_preserves_filename_equal_to_legacy_marker(
     manager = runtime_app.state.thread_manager
     repo = _repo(tmp_path)
     thread = await manager.create_thread(
-        CreateThreadRequest(workspace=str(repo), model="deepseek-chat")
+        CreateThreadRequest(workspace=str(repo), model="deepseek-chat", env_mode="worktree")
     )
     prepared = await manager._prepare_isolated_workspace(thread)
     tree = execution_root(prepared)
@@ -1557,7 +1558,7 @@ async def test_recovery_refreshes_changed_path_set_before_writing(
     manager = runtime_app.state.thread_manager
     repo = _repo(tmp_path)
     thread = await manager.create_thread(
-        CreateThreadRequest(workspace=str(repo), model="deepseek-chat")
+        CreateThreadRequest(workspace=str(repo), model="deepseek-chat", env_mode="worktree")
     )
     prepared = await manager._prepare_isolated_workspace(thread)
     tree = execution_root(prepared)
@@ -1593,7 +1594,7 @@ async def test_recovery_refreshes_changed_bytes_before_writing_same_path(
     manager = runtime_app.state.thread_manager
     repo = _repo(tmp_path)
     thread = await manager.create_thread(
-        CreateThreadRequest(workspace=str(repo), model="deepseek-chat")
+        CreateThreadRequest(workspace=str(repo), model="deepseek-chat", env_mode="worktree")
     )
     prepared = await manager._prepare_isolated_workspace(thread)
     tree = execution_root(prepared)
@@ -1626,7 +1627,7 @@ async def test_incomplete_inbound_sync_recovers_without_claiming_partial_copy(
     manager = runtime_app.state.thread_manager
     repo = _repo(tmp_path)
     thread = await manager.create_thread(
-        CreateThreadRequest(workspace=str(repo), model="deepseek-chat")
+        CreateThreadRequest(workspace=str(repo), model="deepseek-chat", env_mode="worktree")
     )
     prepared = await manager._prepare_isolated_workspace(thread)
     tree = execution_root(prepared)
@@ -1687,7 +1688,7 @@ async def test_incomplete_sync_never_overwrites_later_isolate_edit(
     manager = runtime_app.state.thread_manager
     repo = _repo(tmp_path)
     thread = await manager.create_thread(
-        CreateThreadRequest(workspace=str(repo), model="deepseek-chat")
+        CreateThreadRequest(workspace=str(repo), model="deepseek-chat", env_mode="worktree")
     )
     prepared = await manager._prepare_isolated_workspace(thread)
     tree = execution_root(prepared)
@@ -1732,7 +1733,7 @@ async def test_checkout_interruption_retries_without_fake_task_labor(
     manager = runtime_app.state.thread_manager
     repo = _repo(tmp_path)
     thread = await manager.create_thread(
-        CreateThreadRequest(workspace=str(repo), model="deepseek-chat")
+        CreateThreadRequest(workspace=str(repo), model="deepseek-chat", env_mode="worktree")
     )
     prepared = await manager._prepare_isolated_workspace(thread)
     tree = execution_root(prepared)
@@ -1789,7 +1790,7 @@ async def test_mixed_incomplete_sync_only_recovers_third_state_labor(
     manager = runtime_app.state.thread_manager
     repo = _repo(tmp_path)
     thread = await manager.create_thread(
-        CreateThreadRequest(workspace=str(repo), model="deepseek-chat")
+        CreateThreadRequest(workspace=str(repo), model="deepseek-chat", env_mode="worktree")
     )
     prepared = await manager._prepare_isolated_workspace(thread)
     tree = execution_root(prepared)
@@ -1858,7 +1859,7 @@ async def test_sync_post_verify_never_adopts_edit_after_overlay(
     manager = runtime_app.state.thread_manager
     repo = _repo(tmp_path)
     thread = await manager.create_thread(
-        CreateThreadRequest(workspace=str(repo), model="deepseek-chat")
+        CreateThreadRequest(workspace=str(repo), model="deepseek-chat", env_mode="worktree")
     )
     prepared = await manager._prepare_isolated_workspace(thread)
     tree = execution_root(prepared)
@@ -1896,7 +1897,7 @@ async def test_initial_inbound_sync_failure_keeps_copy_for_journal_recovery(
     (repo / "app.py").write_text("project two\n", encoding="utf-8")
     (repo / "later.py").write_text("project later\n", encoding="utf-8")
     thread = await manager.create_thread(
-        CreateThreadRequest(workspace=str(repo), model="deepseek-chat")
+        CreateThreadRequest(workspace=str(repo), model="deepseek-chat", env_mode="worktree")
     )
     real_overlay = managed_worktree.overlay_working_paths
 
@@ -1947,7 +1948,7 @@ async def test_initial_sync_journal_makes_later_edit_recoverable(
     (repo / "app.py").write_text("project two\n", encoding="utf-8")
     (repo / "later.py").write_text("project later\n", encoding="utf-8")
     thread = await manager.create_thread(
-        CreateThreadRequest(workspace=str(repo), model="deepseek-chat")
+        CreateThreadRequest(workspace=str(repo), model="deepseek-chat", env_mode="worktree")
     )
     real_overlay = managed_worktree.overlay_working_paths
 
@@ -1982,7 +1983,7 @@ async def test_orphan_checkpoint_remains_a_publish_journal(
     manager = runtime_app.state.thread_manager
     repo = _repo(tmp_path)
     thread = await manager.create_thread(
-        CreateThreadRequest(workspace=str(repo), model="deepseek-chat")
+        CreateThreadRequest(workspace=str(repo), model="deepseek-chat", env_mode="worktree")
     )
     prepared = await manager._prepare_isolated_workspace(thread)
     tree = execution_root(prepared)
@@ -2016,7 +2017,7 @@ async def test_publish_keeps_checkpoint_provenance_until_resync_is_durable(
     manager = runtime_app.state.thread_manager
     repo = _repo(tmp_path)
     thread = await manager.create_thread(
-        CreateThreadRequest(workspace=str(repo), model="deepseek-chat")
+        CreateThreadRequest(workspace=str(repo), model="deepseek-chat", env_mode="worktree")
     )
     prepared = await manager._prepare_isolated_workspace(thread)
     tree = execution_root(prepared)
@@ -2083,7 +2084,7 @@ async def test_publish_retry_does_not_replay_older_completed_checkpoint(
     manager = runtime_app.state.thread_manager
     repo = _repo(tmp_path)
     thread = await manager.create_thread(
-        CreateThreadRequest(workspace=str(repo), model="deepseek-chat")
+        CreateThreadRequest(workspace=str(repo), model="deepseek-chat", env_mode="worktree")
     )
     prepared = await manager._prepare_isolated_workspace(thread)
     tree = execution_root(prepared)
@@ -2145,7 +2146,7 @@ async def test_restart_clears_request_left_after_final_publish_sync(
     manager = runtime_app.state.thread_manager
     repo = _repo(tmp_path)
     thread = await manager.create_thread(
-        CreateThreadRequest(workspace=str(repo), model="deepseek-chat")
+        CreateThreadRequest(workspace=str(repo), model="deepseek-chat", env_mode="worktree")
     )
     prepared = await manager._prepare_isolated_workspace(thread)
     tree = execution_root(prepared)
@@ -2219,7 +2220,7 @@ async def test_restart_finishes_publish_when_checkpoint_sync_clear_was_partial(
     manager = runtime_app.state.thread_manager
     repo = _repo(tmp_path)
     thread = await manager.create_thread(
-        CreateThreadRequest(workspace=str(repo), model="deepseek-chat")
+        CreateThreadRequest(workspace=str(repo), model="deepseek-chat", env_mode="worktree")
     )
     prepared = await manager._prepare_isolated_workspace(thread)
     tree = execution_root(prepared)
@@ -2298,7 +2299,7 @@ async def test_missing_worktree_state_revalidates_when_path_returns(
     manager = runtime_app.state.thread_manager
     repo = _repo(tmp_path)
     thread = await manager.create_thread(
-        CreateThreadRequest(workspace=str(repo), model="deepseek-chat")
+        CreateThreadRequest(workspace=str(repo), model="deepseek-chat", env_mode="worktree")
     )
     prepared = await manager._prepare_isolated_workspace(thread)
     tree = execution_root(prepared)
@@ -2328,7 +2329,7 @@ async def test_prepare_preserves_association_when_worktree_disappears_at_runtime
     manager = runtime_app.state.thread_manager
     repo = _repo(tmp_path)
     thread = await manager.create_thread(
-        CreateThreadRequest(workspace=str(repo), model="deepseek-chat")
+        CreateThreadRequest(workspace=str(repo), model="deepseek-chat", env_mode="worktree")
     )
     prepared = await manager._prepare_isolated_workspace(thread)
     tree = execution_root(prepared)
@@ -2363,7 +2364,7 @@ async def test_uncheckpointed_isolate_labor_can_keep_project(
     manager = runtime_app.state.thread_manager
     repo = _repo(tmp_path)
     thread = await manager.create_thread(
-        CreateThreadRequest(workspace=str(repo), model="deepseek-chat")
+        CreateThreadRequest(workspace=str(repo), model="deepseek-chat", env_mode="worktree")
     )
     prepared = await manager._prepare_isolated_workspace(thread)
     tree = execution_root(prepared)
@@ -2390,10 +2391,10 @@ async def test_publish_waits_while_sibling_turn_is_active(
     manager = runtime_app.state.thread_manager
     repo = _repo(tmp_path)
     first = await manager.create_thread(
-        CreateThreadRequest(workspace=str(repo), model="deepseek-chat")
+        CreateThreadRequest(workspace=str(repo), model="deepseek-chat", env_mode="worktree")
     )
     second = await manager.create_thread(
-        CreateThreadRequest(workspace=str(repo), model="deepseek-chat")
+        CreateThreadRequest(workspace=str(repo), model="deepseek-chat", env_mode="worktree")
     )
     prepared = await manager._prepare_isolated_workspace(first)
     tree = execution_root(prepared)
@@ -2433,7 +2434,7 @@ async def test_completed_isolated_labor_auto_publishes(
     manager = runtime_app.state.thread_manager
     repo = _repo(tmp_path)
     thread = await manager.create_thread(
-        CreateThreadRequest(workspace=str(repo), model="deepseek-chat")
+        CreateThreadRequest(workspace=str(repo), model="deepseek-chat", env_mode="worktree")
     )
     prepared = await manager._prepare_isolated_workspace(thread)
     tree = execution_root(prepared)
@@ -2480,7 +2481,7 @@ async def test_auto_publish_recovers_labor_changed_after_checkpoint(
     manager = runtime_app.state.thread_manager
     repo = _repo(tmp_path)
     thread = await manager.create_thread(
-        CreateThreadRequest(workspace=str(repo), model="deepseek-chat")
+        CreateThreadRequest(workspace=str(repo), model="deepseek-chat", env_mode="worktree")
     )
     prepared = await manager._prepare_isolated_workspace(thread)
     tree = execution_root(prepared)
@@ -2564,7 +2565,7 @@ async def test_publish_sync_does_not_resolve_mutation_after_preflight(
     manager = runtime_app.state.thread_manager
     repo = _repo(tmp_path)
     thread = await manager.create_thread(
-        CreateThreadRequest(workspace=str(repo), model="deepseek-chat")
+        CreateThreadRequest(workspace=str(repo), model="deepseek-chat", env_mode="worktree")
     )
     prepared = await manager._prepare_isolated_workspace(thread)
     tree = execution_root(prepared)
@@ -2622,7 +2623,7 @@ async def test_legacy_checkpoint_post_image_rejects_late_edit(
     manager = runtime_app.state.thread_manager
     repo = _repo(tmp_path)
     thread = await manager.create_thread(
-        CreateThreadRequest(workspace=str(repo), model="deepseek-chat")
+        CreateThreadRequest(workspace=str(repo), model="deepseek-chat", env_mode="worktree")
     )
     prepared = await manager._prepare_isolated_workspace(thread)
     tree = execution_root(prepared)
@@ -2660,10 +2661,10 @@ async def test_auto_publish_queues_behind_active_sibling_and_retries(
     manager = runtime_app.state.thread_manager
     repo = _repo(tmp_path)
     draft_thread = await manager.create_thread(
-        CreateThreadRequest(workspace=str(repo), model="deepseek-chat")
+        CreateThreadRequest(workspace=str(repo), model="deepseek-chat", env_mode="worktree")
     )
     active_thread = await manager.create_thread(
-        CreateThreadRequest(workspace=str(repo), model="deepseek-chat")
+        CreateThreadRequest(workspace=str(repo), model="deepseek-chat", env_mode="worktree")
     )
     prepared = await manager._prepare_isolated_workspace(draft_thread)
     tree = execution_root(prepared)
@@ -2712,7 +2713,7 @@ async def test_auto_publish_failure_keeps_draft_and_can_retry(
     manager = runtime_app.state.thread_manager
     repo = _repo(tmp_path)
     thread = await manager.create_thread(
-        CreateThreadRequest(workspace=str(repo), model="deepseek-chat")
+        CreateThreadRequest(workspace=str(repo), model="deepseek-chat", env_mode="worktree")
     )
     prepared = await manager._prepare_isolated_workspace(thread)
     tree = execution_root(prepared)
@@ -2762,7 +2763,7 @@ async def test_apply_endpoint_reports_applied_and_updates_project(
     manager = runtime_app.state.thread_manager
     repo = _repo(tmp_path)
     thread = await manager.create_thread(
-        CreateThreadRequest(workspace=str(repo), model="deepseek-chat")
+        CreateThreadRequest(workspace=str(repo), model="deepseek-chat", env_mode="worktree")
     )
     prepared = await manager._prepare_isolated_workspace(thread)
     tree = execution_root(prepared)
@@ -2800,10 +2801,10 @@ async def test_apply_endpoint_queues_behind_active_sibling_and_retries(
     manager = runtime_app.state.thread_manager
     repo = _repo(tmp_path)
     draft_thread = await manager.create_thread(
-        CreateThreadRequest(workspace=str(repo), model="deepseek-chat")
+        CreateThreadRequest(workspace=str(repo), model="deepseek-chat", env_mode="worktree")
     )
     active_thread = await manager.create_thread(
-        CreateThreadRequest(workspace=str(repo), model="deepseek-chat")
+        CreateThreadRequest(workspace=str(repo), model="deepseek-chat", env_mode="worktree")
     )
     prepared = await manager._prepare_isolated_workspace(draft_thread)
     tree = execution_root(prepared)
@@ -2861,7 +2862,7 @@ async def test_idle_reclaim_removes_clean_worktree_and_keeps_thread(
     manager = runtime_app.state.thread_manager
     repo = _repo(tmp_path)
     thread = await manager.create_thread(
-        CreateThreadRequest(workspace=str(repo), model="deepseek-chat")
+        CreateThreadRequest(workspace=str(repo), model="deepseek-chat", env_mode="worktree")
     )
     prepared = await manager._prepare_isolated_workspace(thread)
     tree = execution_root(prepared)
@@ -2898,12 +2899,12 @@ async def test_idle_reclaim_keeps_recent_and_unpublished_worktrees(
     repo = _repo(tmp_path)
     recent = await manager._prepare_isolated_workspace(
         await manager.create_thread(
-            CreateThreadRequest(workspace=str(repo), model="deepseek-chat")
+            CreateThreadRequest(workspace=str(repo), model="deepseek-chat", env_mode="worktree")
         )
     )
     stale = await manager._prepare_isolated_workspace(
         await manager.create_thread(
-            CreateThreadRequest(workspace=str(repo), model="deepseek-chat")
+            CreateThreadRequest(workspace=str(repo), model="deepseek-chat", env_mode="worktree")
         )
     )
     (execution_root(stale) / "app.py").write_text(

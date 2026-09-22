@@ -32,7 +32,6 @@ export type ReasoningSelectorLabels = {
   desc: string
   configure: string
   dialog: string
-  search: string
   empty: string
 }
 
@@ -94,7 +93,6 @@ export function ReasoningEffortSelector({
       desc: t('composerReasoningDesc'),
       configure: t('composerConfigureModels'),
       dialog: t('composerModelSettingsAria'),
-      search: t('composerSearchModels'),
       empty: t('composerNoMatchingModels'),
     }),
     [t]

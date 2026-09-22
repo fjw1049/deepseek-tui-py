@@ -1113,10 +1113,10 @@ samp {
 /* Shared composer card (home + conversation). Compact IDE rail opts out. */
 .ds-composer-empty.ds-chat-composer {
   border-radius: 1.2rem;
-  min-height: 96px;
-  gap: 0.375rem;
-  padding-top: 0.625rem;
-  padding-bottom: 0.625rem;
+  min-height: 64px;
+  gap: 0.25rem;
+  padding-top: 0.375rem;
+  padding-bottom: 0.25rem;
 }
 
 /* Context tray tucked under the composer (project | branch).
@@ -1189,7 +1189,7 @@ samp {
 
 /* Same size as the composer input so the tucked tray doesn't read as caption. */
 .ds-workspace-context-chip--tray {
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 500;
   letter-spacing: -0.011em;
   line-height: 1.2;
@@ -1198,7 +1198,7 @@ samp {
 /* The empty-state prompt is guidance, not a selected project value. */
 .ds-workspace-context-chip--prompt {
   font-size: 14px;
-  font-weight: 400;
+  font-weight: 600;
   letter-spacing: 0;
   line-height: 20px;
 }
@@ -1362,6 +1362,9 @@ samp {
 }
 
 .ds-workspace-file-tree__scroll {
+  /* Stop wheel scrolling from chaining into the chat timeline once the tree
+     hits its top/bottom — otherwise the chat column gets scrolled away. */
+  overscroll-behavior: contain;
   scrollbar-width: thin;
   scrollbar-color: var(--ds-scrollbar-thumb) transparent;
 }
@@ -1558,16 +1561,26 @@ samp {
   }
 }
 
+/* Hide scrollbar but keep scroll functionality */
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+
 /* Shared file chrome: one baseline across explorer, editor and changes. */
 .ds-workspace-editor-tabstrip {
   height: 36px;
   gap: 0;
-  padding: 0 4px;
   background: transparent;
 }
 
 .ds-workspace-editor-tab {
-  height: 35px;
+  /* Full strip height so the active tab's inset bottom underline sits flush
+     on the tabstrip's border-b instead of floating 1px above it. */
+  height: 36px;
   border: 0;
   border-radius: 0;
   background: transparent;
@@ -1629,38 +1642,20 @@ samp {
   line-height: 20px;
 }
 
+.ds-workspace-file-tree__row,
+.ds-workspace-editor-tab > button {
+  font-size: 14px;
+}
+
 .ds-workspace-file-tree__row:hover {
   background: color-mix(in srgb, var(--ds-text) 5%, transparent);
   color: var(--ds-text);
 }
 
 .ds-workspace-file-tree__row:focus-visible,
-.ds-workspace-editor-tab button:focus-visible,
-.ds-workspace-document-mode button:focus-visible {
+.ds-workspace-editor-tab button:focus-visible {
   outline: 2px solid var(--ds-accent);
   outline-offset: -2px;
-}
-
-.ds-workspace-document-mode {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  min-height: 32px;
-  padding: 2px 12px;
-  border-bottom: 1px solid var(--ds-border-muted);
-}
-
-.ds-workspace-document-mode button {
-  padding: 2px 8px;
-  border-radius: 5px;
-  font-size: 12px;
-  color: var(--ds-text-muted);
-}
-
-.ds-workspace-document-mode button:hover,
-.ds-workspace-document-mode button[aria-pressed='true'] {
-  background: color-mix(in srgb, var(--ds-text) 6%, transparent);
-  color: var(--ds-text);
 }
 
 .ds-ide-workspace .ds-workspace-editor-pane .monaco-editor,
@@ -2098,41 +2093,38 @@ samp {
 
 .ds-editor-picker-trigger {
   display: inline-flex;
-  height: 28px;
+  height: 1.75rem;
+  width: 1.75rem;
   flex-shrink: 0;
   align-items: center;
   justify-content: center;
-  gap: 5px;
-  border-radius: 999px;
-  border: 1px solid transparent;
-  background: color-mix(in srgb, var(--ds-surface-elevated, #fff) 55%, transparent);
-  padding: 0 8px;
+  border-radius: 7px;
+  border: none;
+  background: transparent;
+  padding: 0;
   color: var(--ds-text-faint);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5);
+  box-shadow: none;
   transition:
     background-color 120ms ease-out,
-    border-color 120ms ease-out,
-    color 120ms ease-out,
-    transform 100ms ease-out;
+    color 120ms ease-out;
 }
 
 [data-theme='dark'] .ds-editor-picker-trigger {
-  background: rgba(255, 255, 255, 0.06);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  background: transparent;
+  box-shadow: none;
 }
 
 .ds-editor-picker-trigger:hover:not(:disabled) {
-  border-color: var(--ds-border-muted);
-  background: color-mix(in srgb, var(--ds-surface-elevated, #fff) 80%, transparent);
+  background: var(--ds-surface-hover);
   color: var(--ds-text);
 }
 
 [data-theme='dark'] .ds-editor-picker-trigger:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.07);
 }
 
 .ds-editor-picker-trigger:active:not(:disabled) {
-  transform: scale(0.97);
+  /* no scale — matches flat sidebar toggles */
 }
 
 .ds-editor-picker-trigger:disabled {
@@ -2141,13 +2133,12 @@ samp {
 }
 
 .ds-editor-picker-trigger[aria-expanded='true'] {
-  border-color: var(--ds-border-muted);
-  background: color-mix(in srgb, var(--ds-surface-elevated, #fff) 88%, transparent);
+  background: var(--ds-surface-hover);
   color: var(--ds-text);
 }
 
 [data-theme='dark'] .ds-editor-picker-trigger[aria-expanded='true'] {
-  background: rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.07);
 }
 
 .ds-editor-picker-trigger__chevron {
@@ -2346,6 +2337,10 @@ samp {
   letter-spacing: -0.011em;
 }
 
+.ds-composer-approval-description {
+  font-size: 12px;
+}
+
 .ds-composer-model-label {
   font-family: var(--font-ui);
   letter-spacing: -0.01em;
@@ -2541,58 +2536,6 @@ samp {
   }
 }
 
-/* Live thinking preview: fixed-height refreshing window. Newest tokens stay
-   visible at the bottom; older text dissolves under a top fade mask so the
-   stream never grows into a wall of reasoning. */
-.ds-live-thinking-viewport {
-  max-height: 5.75rem;
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-  justify-content: flex-end;
-  mask-image: linear-gradient(
-    to bottom,
-    transparent 0%,
-    rgba(0, 0, 0, 0.55) 18%,
-    #000 38%
-  );
-  -webkit-mask-image: linear-gradient(
-    to bottom,
-    transparent 0%,
-    rgba(0, 0, 0, 0.55) 18%,
-    #000 38%
-  );
-}
-
-.ds-live-thinking-caret {
-  display: inline-block;
-  width: 0.42em;
-  height: 0.95em;
-  margin-left: 0.12em;
-  vertical-align: -0.12em;
-  border-radius: 1px;
-  background: color-mix(in srgb, var(--ds-text-muted) 55%, transparent);
-  animation: ds-live-thinking-caret 1.05s ease-in-out infinite;
-}
-
-@keyframes ds-live-thinking-caret {
-  0%,
-  45% {
-    opacity: 0.7;
-  }
-  55%,
-  100% {
-    opacity: 0.15;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .ds-live-thinking-caret {
-    animation: none;
-    opacity: 0.45;
-  }
-}
-
 /* Work-process entry detail cards inside the lighter OpenBridge-style sections. */
 .ds-work-timeline-detail {
   margin-top: 0.35rem;
@@ -2601,29 +2544,53 @@ samp {
   padding: 0.65rem 0.85rem;
 }
 
-/* Work-process "storyline" rail: a single quiet vertical thread linking every
-   step of a turn so the trace reads as one sequence instead of a stack of
-   detached cards (cursor/codex pattern). Spine-only — no per-item dots — so it
-   never misaligns across rows of different heights. */
-.ds-process-rail {
-  position: relative;
-  padding-left: 1.1rem;
+/* Execution metadata deliberately recedes behind the conversation in both themes. */
+:root {
+  --ds-process-meta: #969696;
+}
+[data-theme='dark'] {
+  --ds-process-meta: #686868;
+}
+.ds-process-rail :is(.ds-tool-batch__header, .ds-tool-header-row, .ds-process-reasoning__toggle, .ds-work-summary > button) {
+  color: var(--ds-process-meta);
+  font-weight: 400;
+}
+.ds-process-rail :is(.ds-tool-batch__header, .ds-tool-header-row) :is(span, svg),
+.ds-process-reasoning__toggle > :is(span, svg) {
+  color: inherit;
+  font-weight: inherit;
+}
+.ds-process-rail :is(.ds-tool-batch__header, .ds-tool-row, .ds-process-reasoning__toggle, .ds-work-summary > button):hover {
+  color: var(--ds-text-muted);
+}
+.ds-process-rail :is(.ds-tool-batch__chevron, .ds-tool-header-row__chevron) {
+  opacity: 0;
+}
+.ds-process-rail :is(.ds-tool-batch__header, .ds-tool-row):is(:hover, :focus-within) :is(.ds-tool-batch__chevron, .ds-tool-header-row__chevron) {
+  opacity: 1;
 }
 
-.ds-process-rail::before {
-  content: '';
-  position: absolute;
-  left: 0.28rem;
-  top: 0.35rem;
-  bottom: 0.35rem;
-  width: 1px;
-  background: linear-gradient(
-    to bottom,
-    transparent,
-    color-mix(in srgb, var(--ds-border-muted) 90%, transparent) 8%,
-    color-mix(in srgb, var(--ds-border-muted) 90%, transparent) 92%,
-    transparent
-  );
+/* Progress prose shares the answer's reading column; execution stays secondary. */
+.ds-process-rail {
+  gap: 0.375rem;
+}
+
+.ds-process-narration {
+  padding-block: 0.25rem;
+}
+
+.ds-process-narration .ds-chat-answer {
+  margin-inline: 0;
+}
+
+.ds-tool-command {
+  padding: 0.5rem 0.75rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--ds-text-muted);
+  background: var(--ds-surface-subtle);
 }
 
 .ds-frosted {
@@ -2779,10 +2746,8 @@ samp {
   margin-inline: 0;
 }
 
+/* Hero is absolutely positioned inside .ds-empty-stage-content (see cross-fade section). */
 .ds-empty-stage-hero {
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow-y: auto;
   padding-top: clamp(1.25rem, 4vh, 2.5rem);
 }
 
@@ -2791,22 +2756,8 @@ samp {
   width: 100%;
 }
 
-/* Simple empty home: brand + one line + composer, centered as one cluster. */
-.ds-empty-stage--simple .ds-empty-stage-frame {
-  justify-content: center;
-  align-items: center;
-  /* Optical lift so the cluster sits slightly above geometric center. */
-  padding-bottom: clamp(1.25rem, 5vh, 3.5rem);
-}
-
-.ds-simple-empty-cluster {
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  width: 100%;
-  max-width: min(100%, 52rem);
-  margin-inline: auto;
-}
+/* Simple empty home: no frame-level overrides needed — the cluster
+   centers itself inside the absolute content slot (see cross-fade below). */
 
 .ds-simple-empty-prompt {
   display: flex;
@@ -2842,12 +2793,66 @@ samp {
   text-wrap: balance;
 }
 
-.ds-empty-stage--simple .ds-empty-stage-composer {
-  margin-top: 0;
-  margin-bottom: 0;
-  padding-top: 0;
-  padding-bottom: 0;
+/* Composer stays in the same flow position in both modes — no overrides needed. */
+
+/* ── Empty home layout cross-fade transition ─────────────────────────── */
+
+/* Content slot: both hero and cluster are absolutely positioned inside,
+   overlapping. Toggling modes only changes opacity+transform — zero layout
+   recalculation, no jumping. The slot fills all space above the composer. */
+.ds-empty-stage-content {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
   width: 100%;
+}
+
+.ds-empty-stage-hero,
+.ds-simple-empty-cluster {
+  position: absolute;
+  inset: 0;
+  transition:
+    opacity 300ms cubic-bezier(0.22, 1, 0.36, 1),
+    transform 300ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* Normal mode: hero visible and scrollable, cluster hidden */
+.ds-empty-stage-hero {
+  padding-top: clamp(1.25rem, 4vh, 2.5rem);
+  overflow-y: auto;
+  opacity: 1;
+  transform: translateY(0) scale(1);
+}
+
+.ds-simple-empty-cluster {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transform: translateY(12px) scale(0.97);
+  pointer-events: none;
+}
+
+/* Simple mode: cluster centered in the slot, hero faded behind */
+.ds-empty-stage--simple .ds-empty-stage-hero {
+  opacity: 0;
+  transform: translateY(-12px) scale(0.97);
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.ds-empty-stage--simple .ds-simple-empty-cluster {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  pointer-events: auto;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ds-empty-stage-hero,
+  .ds-simple-empty-cluster {
+    transition-duration: 0ms;
+  }
 }
 
 .ds-empty-hero-panel {
@@ -3167,7 +3172,7 @@ samp {
 
 .ds-sidebar-section-label {
   font-family: inherit;
-  font-size: 0.875rem; /* 14px preview — 原 var(--sidebar-text-xs) 13px */
+  font-size: var(--sidebar-text);
   font-weight: var(--sidebar-weight-strong);
   letter-spacing: 0.01em;
   color: var(--text-tertiary);
@@ -3175,7 +3180,7 @@ samp {
 
 .ds-sidebar-subsection-label {
   padding: 0.5rem 0.5rem 0.35rem;
-  font-size: var(--sidebar-text-xs);
+  font-size: var(--sidebar-text);
   font-weight: var(--sidebar-weight-strong);
   letter-spacing: 0.02em;
   text-transform: uppercase;
@@ -3259,13 +3264,13 @@ samp {
   min-height: 1.625rem;
   padding: 0.2rem 0.45rem 0.2rem 1.5rem;
   /* Align with .ds-sidebar-section-label ("项目") in this row. */
-  font-size: var(--sidebar-text-xs);
+  font-size: var(--sidebar-text);
   font-weight: var(--sidebar-weight-strong);
   letter-spacing: 0.01em;
 }
 
 .ds-sidebar-search--inline::placeholder {
-  font-size: var(--sidebar-text-xs);
+  font-size: var(--sidebar-text);
   font-weight: var(--sidebar-weight-strong);
   letter-spacing: 0.01em;
 }
@@ -3373,7 +3378,7 @@ samp {
 /* Child links inside a collapsible sidebar group. */
 .ds-sidebar-link--indent {
   padding-left: 1.625rem;
-  font-size: var(--sidebar-text-sm);
+  font-size: var(--sidebar-text);
   color: color-mix(in srgb, var(--text-primary) 78%, var(--text-secondary));
 }
 
@@ -3386,23 +3391,23 @@ samp {
 .ds-sidebar-top-nav .ds-sidebar-link:not(.ds-settings-nav-setup) {
   padding-top: calc(0.34rem * var(--ds-density, 1));
   padding-bottom: calc(0.34rem * var(--ds-density, 1));
-  font-size: calc(var(--sidebar-text) + 0.5px); /* 15.5px preview */
+  font-size: var(--sidebar-text);
   font-weight: var(--sidebar-weight); /* 400 — 苹方无中间字重, 440/460 会被取整 */
   color: color-mix(in srgb, var(--text-primary) 62%, var(--text-secondary));
 }
 
-.ds-sidebar-sticky-nav .ds-sidebar-top-nav .ds-sidebar-link,
+.ds-sidebar-sticky-nav .ds-sidebar-top-nav .ds-sidebar-link {
+  font-size: var(--sidebar-text);
+  font-weight: var(--sidebar-weight);
+}
+
 .ds-sidebar-shell .ds-settings-sidebar-nav .ds-sidebar-link {
-  font-size: calc(var(--sidebar-text) - 0.5px);
+  font-size: 15px;
   font-weight: var(--sidebar-weight);
 }
 
 .ds-sidebar-scroll {
   min-height: 0;
-}
-
-.ds-sidebar-section-heading {
-  margin-top: 0.75rem;
 }
 
 .ds-sidebar-section-heading:empty {
@@ -3415,12 +3420,23 @@ samp {
 
 /* Projects and conversations share one continuous scrolling region. */
 .ds-sidebar-middle {
+  margin-top: 0.75rem;
+  margin-right: -0.75rem;
+  padding-right: 0.75rem;
   overflow-y: auto;
   overscroll-behavior: contain;
   display: flex;
   min-height: 0;
   flex: 1 1 auto;
   flex-direction: column;
+}
+
+.ds-sidebar-middle::-webkit-scrollbar-thumb {
+  border: 0;
+}
+
+.ds-sidebar-title-fade {
+  mask-image: linear-gradient(to right, #000 calc(100% - 2em), transparent);
 }
 
 .ds-sidebar-projects-scroll {
@@ -3476,7 +3492,8 @@ samp {
 }
 
 /* The first visible group has no leading space inside the scrollport. */
-.ds-sidebar-middle > :is(.ds-sidebar-pinned-pane, .ds-sidebar-projects-toolbar--fixed):first-child {
+.ds-sidebar-middle > :is(.ds-sidebar-pinned-pane, .ds-sidebar-projects-toolbar--fixed):first-child,
+.ds-sidebar-section-heading + .ds-sidebar-pinned-pane {
   margin-top: 0;
 }
 
@@ -3561,7 +3578,7 @@ samp {
   height: 28px;
   padding-top: 0;
   padding-bottom: 0;
-  font-size: 13px;
+  font-size: var(--sidebar-text);
   font-weight: 400;
 }
 
@@ -3604,11 +3621,13 @@ samp {
   color: var(--text-primary);
   font-weight: var(--sidebar-weight);
   border: 1px solid transparent;
-  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  /* Same grey pill as plain rows — the primary action no longer carries a
+     tinted accent fill, so its hover highlight matches every other row. */
+  background: transparent;
 }
 
 .ds-sidebar-link--action:not(:disabled):hover {
-  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  background: var(--ds-surface-hover);
 }
 
 .ds-sidebar-link--action .ds-sidebar-link__icon {
@@ -3638,7 +3657,7 @@ samp {
   /* Lock type on the row so project-nested vs workspace chats can't diverge
      via button UA styles or intermediate inheritance. */
   font-family: var(--font-sidebar);
-  font-size: var(--ds-chat-font-size, 15px); /* 跟随聊天字号, 与正文同步 */
+  font-size: var(--sidebar-text);
   font-weight: var(--sidebar-weight);
   letter-spacing: 0;
   line-height: 1.4;
@@ -3674,11 +3693,11 @@ samp {
 }
 
 [data-theme='dark'] .ds-sidebar-link--action {
-  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  background: transparent;
 }
 
 [data-theme='dark'] .ds-sidebar-link--action:not(:disabled):hover {
-  background: color-mix(in srgb, var(--accent) 20%, transparent);
+  background: var(--ds-surface-hover);
 }
 
 [data-theme='dark'] .ds-sidebar-link-badge {
@@ -3752,7 +3771,7 @@ samp {
   /* Same type scale as workspace chats — nesting under a project must not
      shrink titles via em/inheritance quirks. */
   font-family: var(--font-sidebar);
-  font-size: var(--ds-chat-font-size, 15px); /* 跟随聊天字号, 与正文同步 */
+  font-size: var(--sidebar-text);
   font-weight: var(--sidebar-weight);
   letter-spacing: 0;
   line-height: 1.4;
@@ -3849,6 +3868,35 @@ samp {
 
 [data-theme='dark'] .ds-sidebar-toggle-button:hover {
   background: rgba(255, 255, 255, 0.07);
+}
+
+.ds-sidebar-toggle-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+/* Terminal topbar button stays flat to match its neighbours (editor picker,
+   sidebar toggle). The glyph wrapper carries only the active-state tint. */
+.ds-terminal-toggle__glyph {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: inherit;
+  transition: color 140ms ease;
+}
+
+.ds-terminal-toggle-button--active.ds-sidebar-toggle-button {
+  background: color-mix(in srgb, var(--ds-accent, #007aff) 12%, transparent);
+  color: var(--ds-accent, #007aff);
+}
+
+.ds-terminal-toggle-button--active.ds-sidebar-toggle-button:hover {
+  background: color-mix(in srgb, var(--ds-accent, #007aff) 18%, transparent);
+  color: var(--ds-accent, #007aff);
+}
+
+[data-theme='dark'] .ds-terminal-toggle-button--active.ds-sidebar-toggle-button {
+  background: color-mix(in srgb, var(--ds-accent, #007aff) 16%, transparent);
 }
 
 .ds-terminal-panel {
@@ -5403,11 +5451,7 @@ samp {
   line-height: 1.45;
 }
 
-.ds-tool-batch__preview {
-  font-size: var(--ds-tool-font);
-  line-height: 1.45;
-  opacity: 0.72;
-}
+
 
 .ds-tool-batch__chevron,
 .ds-tool-header-row__chevron,
@@ -6226,7 +6270,7 @@ html[data-theme='dark'] .ds-code-fullscreen .shiki span {
 .ds-markdown-doc-page {
   box-sizing: border-box;
   width: 100%;
-  max-width: 82ch;
+  max-width: 112ch;
   margin: 0 auto;
   min-height: 100%;
   padding: 24px clamp(16px, 4%, 40px) 40px;
@@ -6621,7 +6665,7 @@ html[data-theme='dark'] .ds-code-fullscreen .shiki span {
 
 .ds-chat-answer {
   font-family: var(--font-chat);
-  font-size: var(--ds-chat-font-size, 14px);
+  font-size: var(--ds-chat-font-size, 15px);
   line-height: 1.6;
 }
 
@@ -6650,7 +6694,7 @@ html[data-theme='dark'] .ds-code-fullscreen .shiki span {
   max-width: var(--ds-chat-column-width);
   width: 100%;
   margin-inline: auto;
-  font-size: var(--ds-chat-font-size, 16px);
+  font-size: var(--ds-chat-font-size, 15px);
   line-height: 1.7;
   letter-spacing: normal;
   color: color-mix(in srgb, var(--ds-text) 86%, var(--ds-text-muted));
@@ -6855,7 +6899,7 @@ html[data-theme='dark'] .ds-code-fullscreen .shiki span {
   overflow-wrap: anywhere;
   word-break: break-word;
   font-family: var(--ds-chat-code-font, var(--font-mono), ui-monospace, monospace);
-  font-size: 0.9em;
+  font-size: var(--ds-chat-code-font-size, 14px);
   font-weight: 400;
   line-height: 1.35;
   color: var(--ds-text);
@@ -6895,7 +6939,9 @@ html[data-theme='dark'] .ds-code-fullscreen .shiki span {
   padding: 0.5rem 0.6rem;
 }
 
-.ds-markdown.ds-markdown--answer .ds-code-block-html > pre {
+.ds-markdown.ds-markdown--answer .ds-code-block-html > pre,
+.ds-markdown.ds-markdown--answer pre code {
+  font-size: var(--ds-chat-code-font-size, 14px);
   line-height: 1.5;
 }
 
@@ -6959,7 +7005,7 @@ html[data-theme='dark'] .ds-code-fullscreen .shiki span {
   padding: 0.6rem 0.95rem;
   color: var(--ds-bubble-user-fg);
   font-family: var(--font-chat);
-  font-size: var(--ds-chat-font-size, 14px);
+  font-size: var(--ds-chat-font-size, 15px);
   font-weight: 400;
   line-height: 1.58;
   box-shadow: none;
@@ -7648,7 +7694,8 @@ select:focus-visible,
 /* One quiet surface; structure comes from the controls inside, not nested cards. */
 .ds-operation-dock.ds-hero-panel.ds-glass {
   background: var(--ds-card-strong);
-  border-color: rgba(0, 0, 0, 0.1);
+  border-width: 1.5px;
+  border-color: rgba(0, 0, 0, 0.16);
   box-shadow:
     0 1px 2px rgba(0, 0, 0, 0.04),
     0 8px 24px rgba(0, 0, 0, 0.07);
@@ -7656,7 +7703,8 @@ select:focus-visible,
 
 [data-theme='dark'] .ds-operation-dock.ds-hero-panel.ds-glass {
   background: color-mix(in srgb, #fff 3%, var(--ds-card-strong));
-  border-color: rgba(255, 255, 255, 0.12);
+  border-width: 1.5px;
+  border-color: rgba(255, 255, 255, 0.2);
   box-shadow:
     0 1px 2px rgba(0, 0, 0, 0.28),
     0 10px 28px rgba(0, 0, 0, 0.34);
@@ -7715,96 +7763,6 @@ select:focus-visible,
   background: transparent;
 }
 
-.ds-operation-dock-launchers {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 0.45rem;
-}
-
-.ds-operation-dock-launchers[data-count='2'] {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
-.ds-operation-dock-launcher {
-  position: relative;
-  display: flex;
-  min-width: 0;
-  min-height: 4.25rem;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 0.4rem;
-  padding: 0.55rem 0.35rem 0.5rem;
-  border: 1px solid color-mix(in srgb, var(--text-primary) 7%, transparent);
-  border-radius: 0.75rem;
-  background: color-mix(in srgb, var(--text-primary) 2.75%, transparent);
-  color: var(--text-primary);
-  cursor: pointer;
-  transition:
-    background-color 140ms ease,
-    border-color 140ms ease,
-    box-shadow 140ms ease,
-    transform 120ms cubic-bezier(0.23, 1, 0.32, 1);
-}
-
-.ds-operation-dock-launcher > span:first-child {
-  width: 1.85rem;
-  height: 1.85rem;
-  border-radius: 0.625rem;
-}
-
-.ds-operation-dock-launcher > span:first-child svg {
-  width: 0.95rem;
-  height: 0.95rem;
-}
-
-@media (hover: hover) and (pointer: fine) {
-  .ds-operation-dock-launcher:hover:not(:disabled) {
-    border-color: color-mix(in srgb, var(--text-primary) 12%, transparent);
-    background: color-mix(in srgb, var(--text-primary) 5%, transparent);
-    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.045);
-    transform: translateY(-1px);
-  }
-}
-
-.ds-operation-dock-launcher:active:not(:disabled) {
-  box-shadow: none;
-  transform: scale(0.97);
-}
-
-.ds-operation-dock-launcher:disabled {
-  cursor: default;
-  opacity: 0.42;
-}
-
-.ds-operation-dock-launcher[aria-pressed='true'] {
-  border-color: color-mix(in srgb, var(--ds-accent, #007aff) 28%, transparent);
-  background: color-mix(in srgb, var(--ds-accent, #007aff) 8%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ds-accent, #007aff) 7%, transparent);
-}
-
-.ds-operation-dock-launcher[aria-pressed='true']::after {
-  content: '';
-  position: absolute;
-  top: 0.55rem;
-  right: 0.55rem;
-  width: 0.35rem;
-  height: 0.35rem;
-  border-radius: 999px;
-  background: var(--ds-accent, #007aff);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--ds-accent, #007aff) 12%, transparent);
-}
-
-.ds-operation-dock-launcher__label {
-  max-width: 100%;
-  overflow: hidden;
-  font-size: 0.75rem;
-  font-weight: 600;
-  line-height: 1rem;
-  letter-spacing: -0.01em;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 
 .ds-operation-dock-repository {
   display: flex;
@@ -7871,7 +7829,6 @@ select:focus-visible,
 }
 
 .ds-operation-dock-status {
-  margin-top: 0.65rem;
   overflow: hidden;
   border: 1px solid color-mix(in srgb, var(--text-primary) 7%, transparent);
   border-radius: 0.8rem;
@@ -8346,20 +8303,11 @@ html[data-theme='dark'] .ds-syntax-line span { color: var(--shiki-dark) !importa
     transition: none;
   }
 
-  .ds-operation-dock-launcher {
-    transition: none;
-  }
-
   .ds-operation-dock-repository {
     transition: none;
   }
 
   .ds-operation-dock-repository:active {
-    transform: none;
-  }
-
-  .ds-operation-dock-launcher:hover:not(:disabled),
-  .ds-operation-dock-launcher:active:not(:disabled) {
     transform: none;
   }
 
@@ -8673,6 +8621,14 @@ html[data-theme='dark'] .ds-syntax-line span { color: var(--shiki-dark) !importa
 .ds-workspace-editor-pane .monaco-editor .monaco-editor-background,
 .ds-workspace-editor-pane .monaco-editor .overflow-guard {
   background-color: var(--ds-bg-sidebar) !important;
+}
+
+/* Gutter line numbers only — body code stays at the editor's 14px. Monaco has
+   no per-gutter font-size option, so shrink just the line-number layer. The
+   row height is still driven by the editor lineHeight (19px), so the smaller
+   digits stay vertically centered and aligned with their code lines. */
+.ds-workspace-editor-pane .monaco-editor .margin-view-overlays .line-numbers {
+  font-size: 12px !important;
 }
 
 /* Terminal surface must read as one continuous sheet: the xterm theme
@@ -11280,8 +11236,8 @@ html[data-theme='dark'] .ds-syntax-line span { color: var(--shiki-dark) !importa
 }
 
 .ds-ide-topbar__action--labeled {
-  padding-inline: 0.45rem 0.55rem;
-  font-size: 12px;
+  padding-inline: 0.5rem 0.6rem;
+  font-size: 13px;
   font-weight: 500;
   letter-spacing: -0.01em;
 }
@@ -11347,7 +11303,7 @@ html[data-theme='dark'] .ds-syntax-line span { color: var(--shiki-dark) !importa
   flex: 0 1 auto;
   max-width: min(38vw, 14rem);
   font-size: 13px;
-  font-weight: 550;
+  font-weight: 650;
   letter-spacing: -0.015em;
   color: var(--ds-text);
   line-height: 1.2;
@@ -11593,19 +11549,16 @@ html[data-theme='dark'] .ds-syntax-line span { color: var(--shiki-dark) !importa
   max-width: none;
 }
 
-/* Flatter IDE composer. */
-.ds-ide-chat-rail .ds-composer-shell,
-.ds-ide-chat-rail .ds-composer-shell--compact {
-  border-radius: 0.75rem;
-}
+/* IDE composer uses the same card style as the main chat view. */
 
 .ds-ide-chat-rail .ds-composer-input,
 .ds-ide-chat-rail .ds-chat-composer textarea {
   font-size: var(--ds-ide-font-base);
   line-height: 1.625;
   letter-spacing: normal;
-  min-height: 22px;
-  max-height: 120px;
+  /* Override inline height set by resizeTextarea (which uses non-compact defaults). */
+  min-height: 22px !important;
+  max-height: 120px !important;
 }
 
 .ds-ide-chat-rail .ds-composer-input::placeholder {
@@ -11636,10 +11589,7 @@ html[data-theme='dark'] .ds-syntax-line span { color: var(--shiki-dark) !importa
   height: 0;
 }
 
-.ds-ide-chat-rail .ds-composer-shell,
-.ds-ide-chat-rail .ds-chat-composer {
-  box-shadow: none;
-}
+/* IDE composer keeps the same elevation shadow as the main chat view. */
 
 .ds-ide-chat-rail .ds-user-bubble,
 .ds-ide-chat-rail .ds-assistant-bubble,
@@ -11660,19 +11610,19 @@ html[data-theme='dark'] .ds-syntax-line span { color: var(--shiki-dark) !importa
 }
 
 /*
- * IDE rail typography — 13px prose, controls, and code; proportional headings.
+ * IDE rail typography — 15px prose and 14px code; proportional headings.
  * Scoped to .ds-ide-chat-rail only; main chat follows the appearance setting.
  *
- * Controls, metadata, tables, and code share the local 13px scale.
+ * Compact titles and metadata retain the local 13px scale.
  */
 .ds-ide-chat-rail {
-  --ds-answer-font-size: 13px;
-  --ds-chat-font-size: 13px;
-  --ds-chat-code-font-size: 13px;
-  --ds-ide-font-base: 13px;
+  --ds-answer-font-size: 15px;
+  --ds-chat-font-size: 15px;
+  --ds-chat-code-font-size: 14px;
+  --ds-ide-font-base: 14px;
   --ds-ide-font-title: 13px;
   --ds-ide-font-meta: 13px;
-  --ds-ide-font-code: 13px;
+  --ds-ide-font-code: 14px;
   --ds-ide-space-block: 0.55rem;
   --ds-ide-card-pad-y: 0.5rem;
   --ds-ide-card-pad-x: 0.65rem;
@@ -11682,14 +11632,14 @@ html[data-theme='dark'] .ds-syntax-line span { color: var(--shiki-dark) !importa
 .ds-ide-chat-rail .ds-markdown,
 .ds-ide-chat-rail .ds-markdown.ds-markdown--answer,
 .ds-ide-chat-rail .ds-chat-answer {
-  font-size: var(--ds-ide-font-base);
+  font-size: var(--ds-answer-font-size, 15px);
   line-height: 1.625;
   letter-spacing: normal;
   color: var(--ds-text);
 }
 
 .ds-ide-chat-rail .ds-markdown.ds-markdown--answer {
-  font-size: var(--ds-answer-font-size, 16px);
+  font-size: var(--ds-answer-font-size, 15px);
   line-height: 1.7;
   color: color-mix(in srgb, var(--ds-text) 86%, var(--ds-text-muted));
   --ds-ide-space-block: 0.875rem;
@@ -12267,4 +12217,53 @@ body:has(.ds-workbench-shell[data-ide-mode]) :is(.ds-subagent-dialog, .ds-code-f
 body:has(.ds-workbench-shell[data-ide-mode]) :is(.ds-subagent-dialog, .ds-code-fullscreen) :is(code, .ds-code-block-language),
 body:has(.ds-workbench-shell[data-ide-mode]) .ds-project-context-menu :is(input, button, [class*="ds-project-context-menu__"]) {
   font-size: 13px;
+}
+
+/* Task plans keep each row in place as its status changes. */
+.ds-inline-todo__row {
+  transition: color 180ms ease-out;
+}
+.ds-inline-todo__mark {
+  transition: opacity 180ms ease-out;
+}
+.ds-inline-todo__chevron {
+  transition: transform 180ms ease-out;
+}
+.ds-inline-todo__body {
+  animation: ds-todo-reveal 180ms ease-out;
+}
+.ds-inline-todo__count {
+  animation: ds-todo-reveal 180ms ease-out;
+}
+.ds-inline-todo__spinner {
+  transform-origin: 12px 12px;
+  animation: ds-todo-spin 1.1s linear infinite;
+}
+@keyframes ds-todo-reveal {
+  from { opacity: 0; transform: translateY(3px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes ds-todo-spin {
+  from { transform: rotate(-90deg); }
+  to { transform: rotate(270deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ds-inline-todo__row,
+  .ds-inline-todo__mark,
+  .ds-inline-todo__chevron {
+    transition: none;
+  }
+  .ds-inline-todo__body,
+  .ds-inline-todo__count,
+  .ds-inline-todo__spinner {
+    animation: none;
+  }
+}
+
+/* Progress has its own compact rhythm; nested Markdown must not add an empty tail. */
+.ds-process-narration .ds-progress-markdown > :first-child {
+  margin-top: 0;
+}
+.ds-process-narration .ds-progress-markdown > :last-child {
+  margin-bottom: 0;
 }

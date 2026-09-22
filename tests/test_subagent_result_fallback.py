@@ -207,3 +207,58 @@ async def test_stub_visible_stop_recovers_with_tools(tmp_path: Path) -> None:
     assert client.calls == 2
     assert client.requests[0].tools
     assert client.requests[1].tools
+
+
+@pytest.mark.asyncio
+async def test_text_deltas_forwarded_to_engine_emit(tmp_path: Path) -> None:
+    """Sub-agent text deltas must reach the parent engine's event queue."""
+    from deepseek_tui.engine.events import SubAgentTextDeltaEvent
+
+    emitted: list[object] = []
+
+    async def _capture(event: object) -> None:
+        emitted.append(event)
+
+    mailbox = Mailbox()
+    manager = SubAgentManager(
+        workspace=tmp_path,
+        mailbox=mailbox,
+        executor=get_real_subagent_executor(),
+        default_model="deepseek-chat",
+    )
+    manager.attach_loop_runtime(
+        SubAgentRuntime(
+            manager=manager,
+            client=_ScriptedClient(
+                [
+                    StreamTextDelta(text=(
+                        "### SUMMARY\n流式输出正常。\n\n"
+                        "### EVIDENCE\nNone.\n\n### CHANGES\nNone.\n\n"
+                    )),
+                    StreamDone(usage=None),
+                ]
+            ),
+            model="deepseek-chat",
+            config=Config(),
+            workspace=tmp_path,
+            mailbox=mailbox,
+            auto_approve=True,
+            emit_event=_capture,
+        )
+    )
+    try:
+        spawned = await manager.spawn(
+            SpawnRequest(
+                prompt="流式转发测试",
+                agent_type=SubAgentType.EXPLORE,
+                assignment=SubAgentAssignment(objective="delta forwarding", role="qa"),
+            )
+        )
+        await manager.wait([spawned.agent_id], mode="all", timeout_ms=10_000)
+    finally:
+        await manager.shutdown()
+
+    deltas = [e for e in emitted if isinstance(e, SubAgentTextDeltaEvent)]
+    assert deltas, "no SubAgentTextDeltaEvent reached the engine emitter"
+    assert "### SUMMARY\n流式输出正常。" in "".join(d.text for d in deltas)
+    assert {d.agent_id for d in deltas} == {spawned.agent_id}

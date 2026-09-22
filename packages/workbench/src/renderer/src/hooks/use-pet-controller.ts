@@ -9,8 +9,7 @@ import {
   readPetEnabled,
   readPetSlug,
   subscribePetPreferences,
-  writePetEnabled,
-  writePetSlug
+  writePetEnabled
 } from '../lib/pet/pet-preferences'
 import {
   burstDurationMs,
@@ -68,12 +67,13 @@ function applyPetSlashAction(
 }
 
 export function usePetController() {
-  const { busy, blocks, liveReasoning, currentTurnId } = useChatStore(
+  const { busy, blocks, liveReasoning, currentTurnId, activeThreadId } = useChatStore(
     useShallow((state) => ({
       busy: state.busy,
       blocks: state.blocks,
       liveReasoning: state.liveReasoning,
-      currentTurnId: state.currentTurnId
+      currentTurnId: state.currentTurnId,
+      activeThreadId: state.activeThreadId
     }))
   )
 
@@ -92,13 +92,13 @@ export function usePetController() {
     document.addEventListener('visibilitychange', onVisibilityChange)
     return () => document.removeEventListener('visibilitychange', onVisibilityChange)
   }, [])
-  const revokeRef = useRef<(() => void) | null>(null)
   const [burst, setBurstState] = useState<PetBurst | null>(null)
   const [activityOverride, setActivityOverride] = useState<PetActivityOverride | null>(null)
   const [turnErrorActive, setTurnErrorActive] = useState(false)
-  const lastStateRef = useRef<PetStateId>('idle')
-  const lastChangeAtRef = useRef(0)
-  const previousTurnIdRef = useRef<string | null>(null)
+  const [resolvedState, setResolvedState] = useState<{ stateId: PetStateId; changedAt: number }>({
+    stateId: 'idle', changedAt: 0
+  })
+  const previousLifecycleRef = useRef({ activeThreadId, currentTurnId, busy })
   const activeToolIdRef = useRef<string | null>(null)
   const activeSubagentIdRef = useRef<string | null>(null)
 
@@ -109,46 +109,30 @@ export function usePetController() {
     []
   )
 
-  const applyFallbackSpritesheet = useCallback(() => {
-    revokeRef.current?.()
-    revokeRef.current = null
+  useEffect(() => {
+    let cancelled = false
+    let revoke: (() => void) | undefined
     setSpritesheetSrc(demoSpritesheet)
-  }, [])
-
-  const loadSpritesheet = useCallback(
-    async (slug: string) => {
-      try {
-        const resolved = await resolvePetSpritesheetSrc(slug)
-        revokeRef.current?.()
-        revokeRef.current = resolved.revoke
-        setSpritesheetSrc(resolved.src)
-        setSelectedSlug(resolved.slug)
-        writePetSlug(resolved.slug)
-      } catch {
-        applyFallbackSpritesheet()
+    void resolvePetSpritesheetSrc(selectedSlug).then((resolved) => {
+      if (cancelled || readPetSlug() !== selectedSlug) {
+        resolved.revoke()
+        return
       }
-    },
-    [applyFallbackSpritesheet]
-  )
-
-  useEffect(() => {
-    void loadSpritesheet(readPetSlug())
-    return () => revokeRef.current?.()
-  }, [loadSpritesheet])
-
-  useEffect(() => {
-    return subscribePetPreferences(() => {
-      const nextEnabled = readPetEnabled()
-      const nextSlug = readPetSlug()
-      setEnabledState(nextEnabled)
-      setSelectedSlug((current) => {
-        if (current !== nextSlug) {
-          void loadSpritesheet(nextSlug)
-        }
-        return nextSlug
-      })
+      revoke = resolved.revoke
+      setSpritesheetSrc(resolved.src)
+    }).catch(() => {
+      if (!cancelled) setSpritesheetSrc(demoSpritesheet)
     })
-  }, [loadSpritesheet])
+    return () => {
+      cancelled = true
+      revoke?.()
+    }
+  }, [selectedSlug])
+
+  useEffect(() => subscribePetPreferences(() => {
+    setEnabledState(readPetEnabled())
+    setSelectedSlug(readPetSlug())
+  }), [])
 
   useEffect(() => {
     const failFor = (durationMs = FAILED_HOLD_MS, persistent = true): void => {
@@ -171,7 +155,7 @@ export function usePetController() {
       setBurst({ stateId: 'jumping', expiresAt: Date.now() + RESOLVED_BURST_MS })
     }
 
-    return subscribePetEvents((event: PetActivityEvent) => {
+    return subscribePetEvents(activeThreadId, (event: PetActivityEvent) => {
       if (event.type === 'user_message') {
         activeToolIdRef.current = null
         activeSubagentIdRef.current = null
@@ -220,11 +204,13 @@ export function usePetController() {
           activeSubagentIdRef.current = null
           setActivityOverride(null)
         }
-      } else if (event.type === 'turn_complete' || event.type === 'manual_wave') {
+      } else if (event.type === 'turn_complete') {
         activeToolIdRef.current = null
         activeSubagentIdRef.current = null
         setTurnErrorActive(false)
         setActivityOverride(null)
+        setBurst({ stateId: 'waving', expiresAt: Date.now() + 700 })
+      } else if (event.type === 'manual_wave') {
         setBurst({ stateId: 'waving', expiresAt: Date.now() + 700 })
       } else if (event.type === 'manual_jump') {
         setBurst({ stateId: 'jumping', expiresAt: Date.now() + 840 })
@@ -232,22 +218,23 @@ export function usePetController() {
         failFor()
       }
     })
-  }, [setBurst])
+  }, [activeThreadId, setBurst])
 
   useEffect(() => {
-    if (!currentTurnId || currentTurnId === previousTurnIdRef.current) {
-      previousTurnIdRef.current = currentTurnId
-      return
-    }
-    previousTurnIdRef.current = currentTurnId
-    lastStateRef.current = 'idle'
-    lastChangeAtRef.current = 0
+    const previous = previousLifecycleRef.current
+    previousLifecycleRef.current = { activeThreadId, currentTurnId, busy }
+    const threadChanged = previous.activeThreadId !== activeThreadId
+    const turnChanged = previous.currentTurnId !== currentTurnId
+    const stopped = previous.busy && !busy
+    if (!threadChanged && !turnChanged && !stopped) return
+    setResolvedState({ stateId: 'idle', changedAt: 0 })
     setTurnErrorActive(false)
     setActivityOverride(null)
     activeToolIdRef.current = null
     activeSubagentIdRef.current = null
+    if (threadChanged) setBurstState(null)
     setRoam({ offset: 0, direction: 1 })
-  }, [currentTurnId])
+  }, [activeThreadId, currentTurnId, busy])
 
   useEffect(() => {
     if (!burst) return
@@ -267,23 +254,25 @@ export function usePetController() {
     return () => window.clearTimeout(timer)
   }, [activityOverride])
 
-  const stateId = useMemo(() => {
-    const now = Date.now()
-    const next = resolvePetState({
-      busy,
-      blocks,
-      liveReasoning,
-      turnErrorActive,
-      burst,
-      activityOverride,
-      now,
-      lastState: lastStateRef.current,
-      lastChangeAt: lastChangeAtRef.current
-    })
-    lastStateRef.current = next.stateId
-    lastChangeAtRef.current = next.changedAt
-    return next.stateId
-  }, [activityOverride, busy, blocks, burst, liveReasoning, turnErrorActive])
+  useEffect(() => {
+    const update = (): number | undefined => {
+      const next = resolvePetState({
+        busy, blocks, liveReasoning, currentTurnId, turnErrorActive, burst, activityOverride,
+        now: Date.now(), lastState: resolvedState.stateId, lastChangeAt: resolvedState.changedAt
+      })
+      setResolvedState((current) =>
+        current.stateId === next.stateId && current.changedAt === next.changedAt
+          ? current
+          : { stateId: next.stateId, changedAt: next.changedAt }
+      )
+      return next.retryAt
+    }
+    const retryAt = update()
+    if (retryAt == null) return
+    const timer = window.setTimeout(update, Math.max(0, retryAt - Date.now()))
+    return () => window.clearTimeout(timer)
+  }, [activityOverride, busy, blocks, burst, currentTurnId, liveReasoning, resolvedState, turnErrorActive])
+  const stateId = resolvedState.stateId
 
   const visibleStatus: PetMascotStatus = enabled
     ? spritesheetSrc === demoSpritesheet

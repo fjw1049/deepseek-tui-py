@@ -147,13 +147,16 @@ function InspectorGitActions({
     if (!menuOpen && !commitOpen) return
     const close = (event: MouseEvent): void => {
       if (popoverRef.current?.contains(event.target as Node)) return
-      closeMenu()
-      closeCommit()
+      // Only close a popover that is actually open — calling close on one that
+      // isn't still flips its `closing` flag, which would ghost-render its
+      // panel (with shadow) for the exit-animation window on dismiss.
+      if (menuOpen) closeMenu()
+      if (commitOpen) closeCommit()
     }
     const onKeyDown = (event: KeyboardEvent): void => {
       if (event.key !== 'Escape') return
-      closeMenu()
-      closeCommit()
+      if (menuOpen) closeMenu()
+      if (commitOpen) closeCommit()
     }
     window.addEventListener('mousedown', close)
     window.addEventListener('keydown', onKeyDown)
@@ -400,7 +403,7 @@ function InspectorGitActions({
     else setMenuOpen(true)
   }
   const menuItemClass =
-    'flex min-h-8 w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[15px] text-ds-ink transition hover:bg-ds-hover active:scale-[0.99] disabled:pointer-events-none disabled:opacity-35'
+    'flex min-h-8 w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[14px] text-ds-ink transition hover:bg-ds-hover active:scale-[0.99] disabled:pointer-events-none disabled:opacity-35'
 
   return (
     <div ref={popoverRef} className="ds-change-git-actions relative ml-auto flex shrink-0 items-center">
@@ -440,7 +443,7 @@ function InspectorGitActions({
         </button>
       </div>
 
-      {menuOpen || menuClosing ? (
+      {menuOpen && !commitOpen ? (
         <div
           role="menu"
           aria-label={t('gitActionsMenu')}
@@ -494,7 +497,7 @@ function InspectorGitActions({
         </div>
       ) : null}
 
-      {commitOpen || commitClosing ? (
+      {commitOpen && !menuOpen ? (
         <div className={`ds-pop origin-top-right absolute right-0 top-[calc(100%+6px)] z-[70] w-[min(320px,calc(100vw-24px))] rounded-xl border border-ds-border bg-ds-elevated p-3 shadow-xl ${commitClosing ? 'ds-pop-out' : ''}`}>
           <div className="mb-2 flex items-center gap-2">
             <GitCommitHorizontal className="h-4 w-4 text-ds-muted" />
@@ -983,7 +986,7 @@ export function ChangeInspector({
     loading: workingTreeLoading,
     reload: reloadWorkingTreeChanges
   } = useGitWorkingChanges(needsProjectGit ? changeRoot : '', 'working-tree')
-  const { result: gitBranches, reload: reloadGitBranches } = useGitBranches(
+  const { result: gitBranches, loading: gitBranchesLoading, reload: reloadGitBranches } = useGitBranches(
     needsProjectGit ? changeRoot : ''
   )
   const [branchBase, setBranchBase] = useGitBranchCompareBase(
@@ -1390,7 +1393,7 @@ export function ChangeInspector({
           >
             {compactList ? (
               <>
-                <span className="min-w-0 flex-1 truncate text-[12.5px]">
+                <span className="min-w-0 flex-1 truncate text-[14px]">
                   {item.filePath ? (
                     <FileTypeIcon
                       path={item.filePath}
@@ -1405,7 +1408,7 @@ export function ChangeInspector({
                     {name || t('toolActionFile')}
                   </span>
                   {parent ? (
-                    <span className="ml-1.5 text-[11.5px] text-ds-muted">{parent}</span>
+                    <span className="ml-1.5 text-[14px] text-ds-muted">{parent}</span>
                   ) : null}
                 </span>
                 {item.gitStage === 'partial' ? (
@@ -1585,7 +1588,7 @@ export function ChangeInspector({
                 branches={gitBranches?.ok ? gitBranches.branches : []}
                 defaultBranch={gitBranches?.ok ? gitBranches.defaultBranch : null}
                 selectedBase={selectedBranchBase}
-                loading={!gitBranches?.ok || scopedLoading}
+                loading={gitBranchesLoading || scopedLoading}
                 onChange={setBranchBase}
               />
             ) : null}
@@ -1616,12 +1619,6 @@ export function ChangeInspector({
               />
             ) : null}
           </div>
-        </div>
-      ) : null}
-      {!isDiff ? (
-        <div className="ds-change-inspector__scope shrink-0 border-b border-ds-border-muted/60 px-3 py-2 text-[12px] leading-5 text-ds-muted">
-          <span className="mr-1.5 font-medium text-ds-ink">{t('changeScopeLabel')}</span>
-          {contextHint}
         </div>
       ) : null}
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">

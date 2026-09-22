@@ -195,7 +195,9 @@ class TaskManager:
             trust_mode=(
                 req.trust_mode if req.trust_mode is not None else self._cfg.trust_mode
             ),
-            auto_approve=req.auto_approve if req.auto_approve is not None else True,
+            # Default-off: callers that omit auto_approve (automation, future
+            # programmatic paths) must not silently gain approval-free runs.
+            auto_approve=req.auto_approve if req.auto_approve is not None else False,
             status=TaskStatus.QUEUED,
             created_at=now,
             thread_id=req.thread_id,
@@ -275,7 +277,15 @@ class TaskManager:
         """
         now = _utc_now_iso()
         async with self._lock:
-            task_id = _resolve_task_id(self._tasks, id_or_prefix)
+            try:
+                task_id = _resolve_task_id(self._tasks, id_or_prefix)
+            except KeyError:
+                # Evicted terminal tasks only live on disk — same fallback
+                # as get_task, otherwise resume fails while task_output works.
+                task = self._reload_task_from_disk(id_or_prefix)
+                if task is None:
+                    raise KeyError(f"Task not found: {id_or_prefix}") from None
+                task_id = task.id
             task = self._tasks[task_id]
             if task.status is TaskStatus.RUNNING or task.status is TaskStatus.QUEUED:
                 raise RuntimeError(
@@ -345,7 +355,13 @@ class TaskManager:
         if token_to_cancel is not None:
             token_to_cancel.set()
         if finished is not None:
-            await finished.wait()
+            # Bounded wait: the cancel token is already set, so the task will
+            # settle to CANCELED even if the engine takes a while to notice
+            # (e.g. mid streaming call). Don't hold the caller hostage.
+            try:
+                await asyncio.wait_for(finished.wait(), timeout=10.0)
+            except asyncio.TimeoutError:
+                pass
         return result
 
     async def record_tool_metadata(
@@ -541,6 +557,17 @@ class TaskManager:
             )
             self._persist_task_locked(task)
 
+    async def record_live_text(self, task_id: str, text: str) -> None:
+        """Update the task's accumulated live text (throttled by the caller)."""
+        async with self._lock:
+            task = self._tasks.get(task_id)
+            if task is None:
+                return
+            # ponytail: hard cap keeps the task JSON bounded; full text lives
+            # in result_detail once the task settles.
+            task.live_text = text[-20_000:]
+            self._persist_task_locked(task)
+
     async def counts(self) -> TaskCounts:
         async with self._lock:
             counts = TaskCounts()
@@ -676,6 +703,7 @@ class TaskManager:
                 return
             now = _utc_now_iso()
             task.ended_at = now
+            task.live_text = None
             if task.started_at is not None:
                 task.duration_ms = _duration_ms(task.started_at, now)
             if result.timed_out:

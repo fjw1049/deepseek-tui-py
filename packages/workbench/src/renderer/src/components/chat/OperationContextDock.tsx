@@ -7,29 +7,21 @@ import {
   type ReactElement
 } from 'react'
 import {
-  ArrowUpRight,
   Check,
-  ChevronDown,
   ChevronRight,
   ChevronsLeftRight,
   GitBranch,
   GitGraph,
-  Github,
   ListTodo,
   PanelsTopLeft,
   FileEdit,
   FolderOpen,
-  Globe2,
-  Terminal
+  Globe2
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { useShallow } from 'zustand/react/shallow'
 import { ChangeDiffStatsLabel } from '../ChangeDiffStatsLabel'
 import { useGitBranches } from '../../hooks/use-git-branches'
-import type { GitRemoteProvider } from '@shared/github-repository'
-import gitlabTanukiUrl from '../../assets/brand/gitlab-tanuki.svg'
-import { useGitHubRepository } from '../../hooks/use-github-repository'
-import { openPreviewUrl } from '../../lib/open-preview-url'
 import { extractSubagentsFromBlocks } from '../../lib/extract-subagents-from-blocks'
 import { openRunPanel } from '../../store/run-panel-store'
 import { useLiveTasks } from '../../hooks/use-thread-tasks'
@@ -57,16 +49,13 @@ type Props = {
   /** Project currently rendered by the owning Workbench. */
   workspaceRoot: string
   onOpenChanges?: () => void
-  /** Open the right-sidebar file tree (文件 tab) — chat-mode files entry. */
+  /** Open the right-sidebar file tree (文件 tab) — collapsed-rail files entry. */
   onOpenFilesSidebar: () => void
   /** Enter IDE/editor layout — EditView row entry. */
   onEnterIdeMode?: () => void
   previewActive: boolean
-  terminalPanelOpen: boolean
-  terminalPanelEnabled: boolean
   previewEnabled: boolean
   onTogglePreview: () => void
-  onToggleTerminalPanel: () => void
 }
 
 const DOCK_ROW_CLASS =
@@ -98,27 +87,6 @@ function persistDockCompact(value: boolean): void {
 
 function prefersReducedMotion(): boolean {
   return window.matchMedia('(prefers-reduced-motion: reduce)').matches
-}
-
-function RemoteProviderIcon({
-  provider,
-  className
-}: {
-  provider: GitRemoteProvider
-  className: string
-}): ReactElement {
-  if (provider === 'gitlab') {
-    return (
-      <img
-        src={gitlabTanukiUrl}
-        alt=""
-        draggable={false}
-        className={`${className} rounded-full bg-white object-cover`}
-      />
-    )
-  }
-  if (provider === 'github') return <Github className={className} strokeWidth={1.75} />
-  return <GitBranch className={className} strokeWidth={1.75} />
 }
 
 const ROW_ICON_TINTS = {
@@ -185,11 +153,8 @@ export function OperationContextDock({
   onOpenFilesSidebar,
   onEnterIdeMode,
   previewActive,
-  terminalPanelOpen,
-  terminalPanelEnabled,
   previewEnabled,
-  onTogglePreview,
-  onToggleTerminalPanel
+  onTogglePreview
 }: Props): ReactElement | null {
   const { t } = useTranslation('common')
   const {
@@ -217,13 +182,10 @@ export function OperationContextDock({
     'branch',
     branchBase
   )
-  const { result: githubResult, reload: reloadGithubRepository } = useGitHubRepository(gitRoot)
-  const githubRepo = githubResult?.ok ? githubResult : null
   const refreshGitState = useCallback((): void => {
     void reloadGitBranches()
     void reloadBranchChanges()
-    void reloadGithubRepository()
-  }, [reloadBranchChanges, reloadGitBranches, reloadGithubRepository])
+  }, [reloadBranchChanges, reloadGitBranches])
   useWorkspaceDirtyGitRefresh(workspaceDirtyTick, refreshGitState)
   const todoSnapshot = useMemo(() => extractTodosFromBlocks(blocks), [blocks])
   const todos = todoSnapshot?.items ?? []
@@ -256,17 +218,13 @@ export function OperationContextDock({
     onOpenChanges?.()
   }
 
-  const openGithubRepository = (): void => {
-    if (!githubRepo) return
-    openPreviewUrl(githubRepo.url)
-  }
-
   const [collapsed, setCollapsed] = useState({ git: true, process: true })
   const [compact, setCompact] = useState(readStoredDockCompact)
   /** Drives rail width via `data-compact` — can lead the DOM swap during motion. */
   const [widthCompact, setWidthCompact] = useState(readStoredDockCompact)
   const [motion, setMotion] = useState<'idle' | 'collapsing' | 'expanding'>('idle')
   const motionTimerRef = useRef<number | null>(null)
+  const motionRafsRef = useRef<number[]>([])
   /** Which process todo row is expanded to full text (single-line by default). */
   const [expandedTodoKey, setExpandedTodoKey] = useState<string | null>(null)
   const toggle = (key: keyof typeof collapsed): void =>
@@ -277,13 +235,24 @@ export function OperationContextDock({
       window.clearTimeout(motionTimerRef.current)
       motionTimerRef.current = null
     }
+    motionRafsRef.current.forEach((id) => window.cancelAnimationFrame(id))
+    motionRafsRef.current = []
   }, [])
 
   useEffect(() => () => clearMotionTimer(), [clearMotionTimer])
 
   const setCompactMode = useCallback(
     (value: boolean): void => {
-      if (motion !== 'idle') return
+      if (motion !== 'idle') {
+        // Interrupt mid-animation: jump straight to the requested state so a
+        // click during the 220ms transition is never swallowed.
+        clearMotionTimer()
+        setCompact(value)
+        setWidthCompact(value)
+        setMotion('idle')
+        persistDockCompact(value)
+        return
+      }
       if (value === compact && value === widthCompact) return
 
       clearMotionTimer()
@@ -314,11 +283,15 @@ export function OperationContextDock({
       setMotion('expanding')
       setWidthCompact(true)
       persistDockCompact(false)
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-          setWidthCompact(false)
+      motionRafsRef.current.push(
+        window.requestAnimationFrame(() => {
+          motionRafsRef.current.push(
+            window.requestAnimationFrame(() => {
+              setWidthCompact(false)
+            })
+          )
         })
-      })
+      )
       motionTimerRef.current = window.setTimeout(() => {
         setMotion('idle')
         motionTimerRef.current = null
@@ -358,23 +331,20 @@ export function OperationContextDock({
           title={t('operationDockExpand')}
           aria-label={t('operationDockExpand')}
           aria-expanded={false}
-          disabled={motion !== 'idle'}
         >
           <ChevronsLeftRight className="h-4 w-4" strokeWidth={2.1} />
         </button>
         <div className="ds-operation-dock-rail__rule" aria-hidden />
         <div className="ds-operation-dock-rail" role="toolbar" aria-label={t('rightSidebarTabEditor')}>
-          {onEnterIdeMode ? (
-            <button
-              type="button"
-              className="ds-operation-dock-rail__btn"
-              onClick={onEnterIdeMode}
-              title={t('operationDockEditView')}
-              aria-label={t('operationDockEditView')}
-            >
-              <PanelsTopLeft className="h-[15px] w-[15px]" strokeWidth={1.75} />
-            </button>
-          ) : null}
+          <button
+            type="button"
+            className="ds-operation-dock-rail__btn"
+            onClick={onOpenFilesSidebar}
+            title={t('rightSidebarTabEditor')}
+            aria-label={t('rightSidebarTabEditor')}
+          >
+            <FolderOpen className="h-[15px] w-[15px]" strokeWidth={1.75} />
+          </button>
           <button
             type="button"
             className="ds-operation-dock-rail__btn"
@@ -385,28 +355,6 @@ export function OperationContextDock({
             aria-label={t('rightPanelBrowser')}
           >
             <Globe2 className="h-[15px] w-[15px]" strokeWidth={1.75} />
-          </button>
-          {githubRepo ? (
-            <button
-              type="button"
-              className="ds-operation-dock-rail__btn"
-              onClick={openGithubRepository}
-              title={t('operationDockOpenRepository', { repo: githubRepo.nameWithOwner })}
-              aria-label={t('operationDockOpenRepository', { repo: githubRepo.nameWithOwner })}
-            >
-              <RemoteProviderIcon provider={githubRepo.provider} className="h-[15px] w-[15px]" />
-            </button>
-          ) : null}
-          <button
-            type="button"
-            className="ds-operation-dock-rail__btn"
-            onClick={onToggleTerminalPanel}
-            disabled={!terminalPanelEnabled}
-            aria-pressed={terminalPanelOpen}
-            title={terminalPanelEnabled ? t('terminalToggle') : t('terminalWorkspaceRequired')}
-            aria-label={t('terminalPanelTitle')}
-          >
-            <Terminal className="h-[15px] w-[15px]" strokeWidth={1.75} />
           </button>
           <button
             type="button"
@@ -440,88 +388,12 @@ export function OperationContextDock({
           title={t('operationDockCollapse')}
           aria-label={t('operationDockCollapse')}
           aria-expanded={true}
-          disabled={motion !== 'idle'}
         >
           <ChevronsLeftRight className="h-4 w-4" strokeWidth={2.1} />
         </button>
       </div>
       <div className="ds-operation-dock-body">
-      <div
-        className="ds-operation-dock-launchers"
-        data-count={onEnterIdeMode ? '3' : '2'}
-      >
-        {onOpenFilesSidebar ? (
-          <button
-            type="button"
-            onClick={onOpenFilesSidebar}
-            className="ds-operation-dock-launcher group"
-            title={t('rightSidebarTabEditor')}
-            aria-label={t('rightSidebarTabEditor')}
-          >
-            <RowIcon icon={FolderOpen} tint="violet" />
-            <span className="ds-operation-dock-launcher__label">
-              {t('rightSidebarTabEditor')}
-            </span>
-          </button>
-        ) : null}
-
-        <button
-          type="button"
-          onClick={onTogglePreview}
-          disabled={!previewEnabled}
-          className="ds-operation-dock-launcher group"
-          aria-pressed={previewActive}
-          title={previewEnabled ? t('rightPanelBrowser') : t('terminalWorkspaceRequired')}
-        >
-          <RowIcon icon={Globe2} tint="sky" />
-          <span className="ds-operation-dock-launcher__label">
-            {t('rightPanelBrowser')}
-          </span>
-        </button>
-
-        <button
-          type="button"
-          onClick={onToggleTerminalPanel}
-          disabled={!terminalPanelEnabled}
-          className="ds-operation-dock-launcher group"
-          aria-pressed={terminalPanelOpen}
-          title={terminalPanelEnabled ? t('terminalToggle') : t('terminalWorkspaceRequired')}
-        >
-          <RowIcon icon={Terminal} tint="amber" />
-          <span className="ds-operation-dock-launcher__label">
-            {t('terminalPanelTitle')}
-          </span>
-        </button>
-      </div>
-
       <div className="ds-operation-dock-status">
-      {githubRepo ? (
-        <button
-          type="button"
-          onClick={openGithubRepository}
-          title={t('operationDockOpenRepository', { repo: githubRepo.nameWithOwner })}
-          className="ds-operation-dock-repository group"
-        >
-          <span className="ds-operation-dock-repository__icon" aria-hidden>
-            <RemoteProviderIcon
-              provider={githubRepo.provider}
-              className="h-[17px] w-[17px]"
-            />
-          </span>
-          <span className="min-w-0 flex-1">
-            <span className="ds-operation-dock-repository__eyebrow">
-              {t('operationDockRepository')}
-            </span>
-            <span className="ds-operation-dock-repository__name">
-              {githubRepo.nameWithOwner}
-            </span>
-          </span>
-          <ArrowUpRight
-            className="h-3.5 w-3.5 shrink-0 text-ds-faint"
-            strokeWidth={1.85}
-          />
-        </button>
-      ) : null}
       {onEnterIdeMode ? (
         <button
           type="button"
@@ -537,10 +409,6 @@ export function OperationContextDock({
               {t('operationDockEditView')}
             </span>
           </span>
-          <ChevronRight
-            className="h-3.5 w-3.5 shrink-0 text-ds-faint"
-            strokeWidth={1.85}
-          />
         </button>
       ) : null}
       <div className="ds-operation-dock-status__section">
@@ -609,6 +477,7 @@ export function OperationContextDock({
       ) : null}
       </div>
 
+      {hasTodos ? (
       <div className="ds-operation-dock-status__section">
       <button
         type="button"
@@ -708,19 +577,6 @@ export function OperationContextDock({
                     >
                       {item.content}
                     </span>
-                    {expanded ? (
-                      <ChevronDown
-                        className="mt-0.5 h-3.5 w-3.5 shrink-0 text-ds-faint/70"
-                        strokeWidth={2}
-                        aria-hidden
-                      />
-                    ) : (
-                      <ChevronRight
-                        className="mt-0.5 h-3.5 w-3.5 shrink-0 text-ds-faint/70"
-                        strokeWidth={2}
-                        aria-hidden
-                      />
-                    )}
                   </button>
                 </li>
               )
@@ -731,6 +587,7 @@ export function OperationContextDock({
         )
       ) : null}
       </div>
+      ) : null}
 
       <TaskActivity key={activeThreadId} tasks={tasks} agents={dockSubagents} onOpen={openRunPanel} />
       </div>

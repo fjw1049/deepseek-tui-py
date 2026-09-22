@@ -228,6 +228,27 @@ def tool_kind_for_name(name: str) -> TurnItemKind:
     return TurnItemKind.TOOL_CALL
 
 
+def run_conversation_response(history: dict[str, Any] | None, status: str) -> dict[str, Any]:
+    """Use the same tool classification for main turns and run display records."""
+    if history is None:
+        return {"conversation": None}
+    blocks = []
+    active = status in {"running", "queued", "pending"}
+    for raw in history["blocks"]:
+        block = dict(raw)
+        if block.get("kind") == "tool":
+            name = (block.get("meta") or {}).get("tool_name", "")
+            block["toolKind"] = tool_kind_for_name(name).value
+            if not active and block.get("status") == "running":
+                block["status"] = "error"
+                block.setdefault("detail", "Execution interrupted")
+        blocks.append(block)
+    return {"conversation": {
+        **history, "blocks": blocks, "status": status,
+        "liveId": history.get("liveId") if active else None,
+    }}
+
+
 def _parse_tool_arguments(arguments: Any) -> dict[str, Any] | None:
     args = arguments
     if isinstance(args, str):

@@ -18,6 +18,7 @@ export type PetActivityOverride = {
 
 export type PetStateMachineInput = {
   busy: boolean
+  currentTurnId: string | null
   blocks: ChatBlock[]
   liveReasoning: string
   turnErrorActive: boolean
@@ -37,10 +38,12 @@ function hasPendingInteractive(blocks: ChatBlock[]): boolean {
   )
 }
 
-function getCurrentTurnBlocks(blocks: ChatBlock[]): ChatBlock[] {
+function getCurrentTurnBlocks(blocks: ChatBlock[], turnId: string): ChatBlock[] {
   let lastUserIdx = -1
   for (let i = blocks.length - 1; i >= 0; i -= 1) {
-    if (blocks[i]?.kind === 'user') {
+    const block = blocks[i]
+    if (block?.kind === 'user') {
+      if (block.turnId && block.turnId !== turnId) return []
       lastUserIdx = i
       break
     }
@@ -49,8 +52,8 @@ function getCurrentTurnBlocks(blocks: ChatBlock[]): ChatBlock[] {
   return blocks.slice(lastUserIdx + 1)
 }
 
-function hasToolErrorInCurrentTurn(blocks: ChatBlock[]): boolean {
-  return getCurrentTurnBlocks(blocks).some(
+function hasToolErrorInCurrentTurn(blocks: ChatBlock[], turnId: string): boolean {
+  return getCurrentTurnBlocks(blocks, turnId).some(
     (block) => block.kind === 'tool' && block.status === 'error'
   )
 }
@@ -70,7 +73,8 @@ function isReadLikeTool(tool: ToolBlock): boolean {
 }
 
 function deriveCritical(input: PetStateMachineInput): PetStateId | null {
-  if (input.turnErrorActive || hasToolErrorInCurrentTurn(input.blocks)) {
+  if (input.turnErrorActive || (input.busy && input.currentTurnId &&
+    hasToolErrorInCurrentTurn(input.blocks, input.currentTurnId))) {
     return 'failed'
   }
   if (hasPendingInteractive(input.blocks)) {
@@ -130,8 +134,11 @@ function pickCriticalState(
 export function resolvePetState(input: PetStateMachineInput): {
   stateId: PetStateId
   changedAt: number
+  retryAt?: number
 } {
-  const override = activeOverride(input.activityOverride, input.now)
+  const override = !input.busy && input.activityOverride?.expiresAt == null
+    ? null
+    : activeOverride(input.activityOverride, input.now)
   const critical = pickCriticalState(deriveCritical(input), override)
   if (critical) {
     return critical === input.lastState
@@ -152,13 +159,16 @@ export function resolvePetState(input: PetStateMachineInput): {
 function applyDwell(
   next: PetStateId,
   input: PetStateMachineInput
-): { stateId: PetStateId; changedAt: number } {
+): { stateId: PetStateId; changedAt: number; retryAt?: number } {
   if (next === input.lastState) {
     return { stateId: input.lastState, changedAt: input.lastChangeAt }
   }
   const elapsed = input.now - input.lastChangeAt
-  if (input.lastState !== next && elapsed < MIN_PET_STATE_DWELL_MS) {
-    return { stateId: input.lastState, changedAt: input.lastChangeAt }
+  if (elapsed < MIN_PET_STATE_DWELL_MS) {
+    return {
+      stateId: input.lastState, changedAt: input.lastChangeAt,
+      retryAt: input.lastChangeAt + MIN_PET_STATE_DWELL_MS
+    }
   }
   return { stateId: next, changedAt: input.now }
 }

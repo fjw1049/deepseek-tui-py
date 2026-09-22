@@ -4,8 +4,7 @@ import type { ToolRenderContext } from '../render-context'
 
 /**
  * Renderer for shell/command tools. `renderWhenPending` is true so streaming
- * stdout shows live while the command runs (the ToolCard host also auto-opens
- * running shells). On completion the output stays until the user collapses.
+ * stdout updates while the user has expanded the shared ToolCard disclosure.
  */
 export const ShellRenderer = {
   renderWhenPending: true,

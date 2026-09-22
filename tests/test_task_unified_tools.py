@@ -189,6 +189,29 @@ async def test_task_output_process_branch_archives_on_task(tmp_path) -> None:
     updated = await manager.get_task(task.id)
     assert any(a.label.startswith("shell[") for a in updated.artifacts)
     assert any(e.kind == "shell_completed" for e in updated.timeline)
+    # Archived artifacts point at a real on-disk file (not a memory:// stub).
+    artifact = next(a for a in updated.artifacts if a.label.startswith("shell["))
+    assert (manager.data_dir() / artifact.path).is_file()
+
+
+async def test_task_output_process_peek_does_not_archive(tmp_path) -> None:
+    """Non-blocking peeks are status reports — no artifact spam per poll."""
+    manager = _task_manager(tmp_path)
+    task = await manager.add_task(NewTaskRequest(prompt="durable work"))
+    ctx = ToolContext(working_directory=tmp_path, task_manager=manager)
+    spawned = await ExecShellTool().execute(
+        {"command": "echo peeked-output", "background": True}, ctx
+    )
+    pid = spawned.content
+
+    for _ in range(3):
+        await TaskOutputTool().execute(
+            {"process_id": pid, "task_id": task.id}, ctx
+        )
+
+    updated = await manager.get_task(task.id)
+    assert not updated.artifacts
+    assert not any(e.kind == "shell_completed" for e in updated.timeline)
 
 
 # --- task_stop: three branches -------------------------------------------------

@@ -1,3 +1,4 @@
+import { useChatPaneFocused } from './chat-pane-focus'
 import {
   useCallback,
   useEffect,
@@ -37,7 +38,7 @@ import {
   X
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
-import { useChatStore } from '../../store/chat-store'
+import { useChatStore, useChatStoreApi } from '../../store/chat-store'
 import type { ComposerMode } from '../../store/chat-store-types'
 import {
   extractTasksFromBlocks,
@@ -177,7 +178,10 @@ type QueuedComposerMessage = {
   hidden?: boolean
 }
 
+const paneAttachments = new Map<string, ComposerAttachment[]>()
+
 type Props = {
+  sessionKey?: string
   input: string
   setInput: (v: string) => void
   mode: ComposerMode
@@ -246,6 +250,7 @@ function buildOutboundMessage(attachments: ComposerAttachment[], input: string):
 }
 
 export function FloatingComposer({
+  sessionKey,
   input,
   setInput,
   mode,
@@ -276,6 +281,8 @@ export function FloatingComposer({
   onRemovePreviewPick,
   onClearPreviewPicks
 }: Props): ReactElement {
+  const paneFocused = useChatPaneFocused()
+  const chatStore = useChatStoreApi()
   const { t, i18n } = useTranslation('common')
   const workspaceRoot = useChatStore((s) => s.workspaceRoot)
   const activeThreadId = useChatStore((s) => s.activeThreadId)
@@ -326,7 +333,17 @@ export function FloatingComposer({
   const [connectorsLoaded, setConnectorsLoaded] = useState(false)
   const [connectorQuery, setConnectorQuery] = useState('')
   const [attachNotice, setAttachNotice] = useState<Notice | null>(null)
-  const [attachments, setAttachments] = useState<ComposerAttachment[]>([])
+  const [attachments, setAttachments] = useState<ComposerAttachment[]>(() => sessionKey ? paneAttachments.get(sessionKey) ?? [] : [])
+  const attachmentSessionRef = useRef(sessionKey)
+  useEffect(() => {
+    if (attachmentSessionRef.current !== sessionKey) {
+      if (attachmentSessionRef.current) paneAttachments.set(attachmentSessionRef.current, attachments)
+      attachmentSessionRef.current = sessionKey
+      setAttachments(sessionKey ? paneAttachments.get(sessionKey) ?? [] : [])
+      return
+    }
+    if (sessionKey) paneAttachments.set(sessionKey, attachments.map(item => ({ ...item, status: 'done', progress: 100 })))
+  }, [sessionKey, attachments])
   // Simulated-upload interval handles keyed by attachment id, cleared on remove,
   // send, and unmount so no timer fires setState on an unmounted component.
   const attachTimersRef = useRef<Map<string, ReturnType<typeof setInterval>>>(new Map())
@@ -859,8 +876,8 @@ export function FloatingComposer({
     const draft = takeComposerRetryDraft(activeThreadId)
     if (!draft) return
     setInput(draft)
-    window.requestAnimationFrame(() => textareaRef.current?.focus())
-  }, [activeThreadId, setInput])
+    if (paneFocused) window.requestAnimationFrame(() => textareaRef.current?.focus())
+  }, [activeThreadId, setInput, paneFocused])
 
   useEffect(() => {
     if (!focusRequestId) return
@@ -869,14 +886,16 @@ export function FloatingComposer({
 
   useEffect(() => {
     const onInsert = (event: Event): void => {
-      const text = (event as CustomEvent<ComposerInsertDetail>).detail?.text
+      const detail = (event as CustomEvent<ComposerInsertDetail>).detail
+      if (detail?.threadId ? detail.threadId !== activeThreadId : !paneFocused) return
+      const text = detail?.text
       if (typeof text !== 'string' || !text.trim()) return
       setInput(appendComposerSnippet(inputRef.current, text))
       focusComposer()
     }
     window.addEventListener(COMPOSER_INSERT_EVENT, onInsert)
     return () => window.removeEventListener(COMPOSER_INSERT_EVENT, onInsert)
-  }, [setInput])
+  }, [setInput, paneFocused, activeThreadId])
 
   useEffect(() => {
     restoreRetryDraft()
@@ -1495,7 +1514,7 @@ export function FloatingComposer({
         onReview={() => {
           openChangesPanel({
             context: 'last-turn',
-            turnId: useChatStore.getState().currentTurnId ?? undefined
+            turnId: chatStore.getState().currentTurnId ?? undefined
           })
         }}
       />
@@ -1688,7 +1707,7 @@ export function FloatingComposer({
             className={`ds-composer-shell ds-chat-composer flex w-full flex-col transition ${
               compactChrome
                 ? 'ds-composer-shell--compact gap-0.5 px-2 py-1'
-                : 'ds-composer-empty ds-frosted relative z-10 gap-1.5 px-4 py-2.5 sm:px-5'
+                : 'ds-composer-empty ds-frosted relative z-10 gap-1.5 px-2 py-1.5 sm:px-2.5'
             } ${focused ? 'ds-chat-composer-focus' : ''}`}
         >
           {attachments.length > 0 ? (
@@ -1949,7 +1968,7 @@ export function FloatingComposer({
             data-composer-footer
             data-composer-footer-tier={footerTier}
             className={`flex flex-nowrap items-center ${
-              compactChrome ? 'gap-1 px-1' : 'gap-1.5 px-2'
+              compactChrome ? 'gap-1 px-1' : 'gap-1.5 px-1'
             }`}
           >
             {/* Left chrome: progressive hide via footerPlan (plus last-but-one). */}
@@ -2497,12 +2516,12 @@ export function FloatingComposer({
                   compactChrome ? 'h-7 text-[12px]' : 'h-9 gap-1.5 text-[13px]'
                 }`}
                 title={
-                  activePlugin
-                    ? t('composerPluginMounted', {
-                        name: displayPluginName(activePlugin.name),
-                        path: activePlugin.path
+                  focusPlugin
+                    ? t('composerPluginFocus', { name: displayPluginName(focusPlugin) })
+                    : t('composerPluginMounted', {
+                        name: displayPluginName(activePlugin!.name),
+                        path: activePlugin!.path
                       })
-                    : t('composerPluginFocus', { name: displayPluginName(focusPlugin) })
                 }
               >
                 <Puzzle
@@ -2512,37 +2531,37 @@ export function FloatingComposer({
                 />
                 {footerPlan.showPluginLabel ? (
                   <span className="truncate">
-                    {activePlugin
-                      ? t('composerPluginBadge', { name: displayPluginName(activePlugin.name) })
-                      : t('composerPluginPendingBadge', { name: displayPluginName(focusPlugin) })}
+                    {focusPlugin
+                      ? t('composerPluginPendingBadge', { name: displayPluginName(focusPlugin) })
+                      : t('composerPluginBadge', { name: displayPluginName(activePlugin!.name) })}
                   </span>
                 ) : null}
                 <span
                   role="button"
                   tabIndex={0}
                   aria-label={
-                    activePlugin
-                      ? t('composerPluginUnmount', { name: displayPluginName(activePlugin.name) })
-                      : t('composerPluginFocus', { name: displayPluginName(focusPlugin) })
+                    focusPlugin
+                      ? t('composerPluginFocus', { name: displayPluginName(focusPlugin) })
+                      : t('composerPluginUnmount', { name: displayPluginName(activePlugin!.name) })
                   }
                   onClick={(event) => {
                     event.stopPropagation()
-                    if (activePlugin) {
-                      void sendMessage('@plugin:off')
-                    } else {
+                    if (focusPlugin) {
                       setFocusPlugin(null)
                       focusComposer()
+                    } else if (activePlugin) {
+                      void sendMessage('@plugin:off')
                     }
                   }}
                   onKeyDown={(event) => {
                     if (event.key === 'Enter' || event.key === ' ') {
                       event.preventDefault()
                       event.stopPropagation()
-                      if (activePlugin) {
-                        void sendMessage('@plugin:off')
-                      } else {
+                      if (focusPlugin) {
                         setFocusPlugin(null)
                         focusComposer()
+                      } else if (activePlugin) {
+                        void sendMessage('@plugin:off')
                       }
                     }
                   }}

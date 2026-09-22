@@ -170,6 +170,7 @@ type ThreadRecordJson = {
   status?: string
   archived?: boolean
   title?: string | null
+  latest_turn_id?: string | null
   goal?: import('./types').GoalSnapshotJson | null
 }
 
@@ -268,6 +269,7 @@ function threadFromJson(t: ThreadRecordJson, title?: string): NormalizedThread {
     publishIssue: publishIssueFromJson(t.publish_issue),
     status: t.status,
     archived: t.archived === true,
+    latestTurnId: t.latest_turn_id ?? null,
     goal: t.goal ?? null
   }
 }
@@ -628,7 +630,7 @@ function readProcessIntent(it: TurnItemJson): ProcessIntentMeta | undefined {
   const scope = meta.scope
   const source = meta.source
   if (scope !== 'pre_tool' && scope !== 'milestone') return undefined
-  if (source !== 'primary_model' && source !== 'narration_service' && source !== 'none') {
+  if (source !== 'primary_model' && source !== 'narration_service' && source !== 'runtime' && source !== 'none') {
     return undefined
   }
   return {
@@ -989,6 +991,7 @@ export class DeepseekRuntimeProvider implements AgentProvider {
     mode?: string
     provider?: string
     model?: string
+    envMode?: 'local' | 'worktree'
   }): Promise<NormalizedThread> {
     const settings = await window.dsGui.getSettings()
     const flags = runtimeExecutionFlags(settings)
@@ -998,6 +1001,7 @@ export class DeepseekRuntimeProvider implements AgentProvider {
       mode: input.mode ?? 'agent',
       provider: input.provider,
       model: input.model,
+      env_mode: input.envMode,
       ...flags
     })
     const r = await window.dsGui.runtimeRequest('/v1/threads', 'POST', body)
@@ -1015,6 +1019,20 @@ export class DeepseekRuntimeProvider implements AgentProvider {
       }
     }
     return threadFromJson(t, input.title || titleFromThread(t))
+  }
+
+  async updateThread(
+    threadId: string,
+    input: { envMode?: 'local' | 'worktree' }
+  ): Promise<NormalizedThread> {
+    const r = await window.dsGui.runtimeRequest(
+      `/v1/threads/${encodeURIComponent(threadId)}`,
+      'PATCH',
+      JSON.stringify({ env_mode: input.envMode })
+    )
+    if (!r.ok) throw toRuntimeError(readRuntimeError(r.body, 'failed to update thread'))
+    const t = JSON.parse(r.body) as ThreadRecordJson
+    return threadFromJson(t)
   }
 
   async applyGoalCommand(
@@ -1724,6 +1742,15 @@ export class DeepseekRuntimeProvider implements AgentProvider {
               if (ev === 'item.delta') {
                 const delta = (payload.delta as string) || ''
                 const kind = payload.kind as string | undefined
+                if (kind === 'subagent_message' && delta) {
+                  // Synthetic per-agent item id: subagent_text_<agent_id>
+                  const itemId = (data as { item_id?: string }).item_id ?? ''
+                  const agentId = itemId.startsWith('subagent_text_')
+                    ? itemId.slice('subagent_text_'.length)
+                    : ''
+                  if (agentId) sink.onSubagentTextDelta?.(agentId, delta)
+                  return
+                }
                 if ((kind === 'agent_message' || kind === 'agent_reasoning') && delta) {
                   pendingDeltas.push({ text: delta, kind, seq: eventSeq })
                   scheduleDeltaFlush()

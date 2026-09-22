@@ -14,6 +14,7 @@ export interface ToolHeaderRowProps {
   title?: string
   subtitle?: string
   state: ToolUIState
+  quiet?: boolean
   expanded: boolean
   canExpand: boolean
   className?: string
@@ -40,6 +41,7 @@ export function ToolHeaderRow({
   title,
   subtitle,
   state,
+  quiet = false,
   expanded,
   canExpand,
   className,
@@ -101,7 +103,7 @@ export function ToolHeaderRow({
             <FileCode strokeWidth={1.85} />
           </button>
         ) : null}
-        <ToolStatusIndicator state={state} className="ds-tool-header-row__status" />
+        {!quiet ? <ToolStatusIndicator state={state} className="ds-tool-header-row__status" /> : null}
         <span className="ds-tool-header-row__chevron" aria-hidden>
           {canExpand ? (
             expanded ? (

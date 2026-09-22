@@ -43,8 +43,8 @@ function resolveDropColumn(board: KanbanProjectBoard, overId: string): KanbanCol
 }
 
 const collisionDetection: CollisionDetection = (args) => {
-  const pointerCollisions = pointerWithin(args)
-  if (pointerCollisions.length > 0) return pointerCollisions
+  // Releasing outside the board cancels; do not snap pointer drags to a distant column.
+  if (args.pointerCoordinates) return pointerWithin(args)
   return closestCorners(args)
 }
 
@@ -114,7 +114,11 @@ export function KanbanProjectBoardView({
 
   const handleDragStart = (event: DragStartEvent): void => {
     const card = findBoardCard(board, String(event.active.id))
-    const rect = event.active.rect.current.initial ?? event.active.rect.current.translated
+    // PointerSensor fires before dnd-kit publishes active.rect. Measure the
+    // actual card now so the first overlay frame is also corrected for body zoom.
+    const target = event.activatorEvent.target
+    const source = target instanceof Element ? target.closest('[data-kanban-card-id]') : null
+    const rect = source?.getBoundingClientRect() ?? event.active.rect.current.initial
     overlayBoxRef.current = rect ? overlayBoxFromRect(rect) : {}
     setActiveCard(card)
     suppressClickRef.current = true
@@ -226,7 +230,7 @@ export function KanbanProjectBoardView({
         style={activeCard ? overlayBoxRef.current : undefined}
       >
         {activeCard ? (
-          <KanbanCardView card={activeCard} showColumnLabel={false} isOverlay />
+          <KanbanCardView card={activeCard} showColumnLabel={false} draggable isOverlay />
         ) : null}
       </DragOverlay>
     </DndContext>

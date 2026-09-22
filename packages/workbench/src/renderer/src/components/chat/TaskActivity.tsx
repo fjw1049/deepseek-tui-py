@@ -1,10 +1,11 @@
-import { useId, useState, type ReactElement } from 'react'
-import { Check, ChevronRight, CircleAlert, Clock3, ListChecks, Minus } from 'lucide-react'
+import { useEffect, useId, useState, type ReactElement } from 'react'
+import { ChevronRight } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { subagentListTitle, type DockSubagentItem } from '../../lib/extract-subagents-from-blocks'
 import { taskListTitle, type TaskItemView } from '../../lib/extract-tasks-from-blocks'
-import { isRunActive, runDisplayTitle, runStatusKey } from '../../lib/run-activity'
+import { runDisplayTitle, runStatusKey } from '../../lib/run-activity'
 import type { RunTarget } from '../../store/run-panel-store'
+import { RunStatusMark } from './RunStatusMark'
 import './task-activity.css'
 
 type Props = {
@@ -13,19 +14,7 @@ type Props = {
   onOpen: (target: Omit<RunTarget, 'threadId'>) => void
 }
 
-function StatusMark({ status, animate = false }: { status?: string; animate?: boolean }): ReactElement {
-  const Icon = status === 'completed' ? Check
-    : status === 'failed' || status === 'timed_out' ? CircleAlert
-      : status === 'queued' || status === 'pending' ? Clock3
-        : status ? Minus : ListChecks
-  return (
-    <span className="ds-task-activity-mark" data-status={status} data-animate={animate} aria-hidden>
-      {status === 'running' ? <span className="ds-task-activity-orbit" /> : <Icon />}
-    </span>
-  )
-}
-
-export function TaskActivity({ tasks, agents, onOpen }: Props): ReactElement {
+export function TaskActivity({ tasks, agents, onOpen }: Props): ReactElement | null {
   const { t } = useTranslation('common')
   const [expanded, setExpanded] = useState(false)
   const listId = useId()
@@ -35,23 +24,30 @@ export function TaskActivity({ tasks, agents, onOpen }: Props): ReactElement {
   ]
   const first = items[0]
   const multiple = items.length > 1
+  // The list only renders while multiple; without this reset a stale
+  // `expanded=true` survives a 1-item dip and the next click folds a list the
+  // user never saw open ("点没反应，再点就折叠了").
+  useEffect(() => {
+    if (!multiple) setExpanded(false)
+  }, [multiple])
+  // ponytail: hide the whole section when there are no tasks/agents — an empty
+  // "暂无任务" card is noise. Reappears automatically once a task exists.
+  if (!first) return null
   const running = items.filter((item) => item.status === 'running').length
   const queued = items.filter((item) => item.status === 'queued' || item.status === 'pending').length
   const failed = items.filter((item) => item.status === 'failed' || item.status === 'timed_out').length
   const stopped = items.filter((item) => item.status === 'canceled' || item.status === 'cancelled').length
   const status = !multiple ? first?.status : running ? 'running' : queued ? 'queued'
     : failed ? 'failed' : stopped ? 'canceled' : 'completed'
-  const count = running || queued || failed || stopped || items.length
+  const title = multiple
+    ? t(tasks.length ? 'taskActivityTasksCount' : 'taskActivityAgentsCount', { count: items.length })
+    : first.title
   const statusText = multiple
-    ? t('taskActivityCountStatus', { count, status: t(runStatusKey(status)) })
+    ? ['running', 'queued', 'completed', 'failed', 'canceled', 'timed_out'].flatMap((value) => {
+      const count = items.filter((item) => (item.status === 'pending' ? 'queued' : item.status === 'cancelled' ? 'canceled' : item.status) === value).length
+      return count ? [t('taskActivityCountStatus', { count, status: t(runStatusKey(value)) })] : []
+    }).join(' · ')
     : first ? t(runStatusKey(status)) : ''
-  const activeItems = items.filter((item) => isRunActive(item.status))
-  const titles = (activeItems.length ? activeItems : items).slice(0, 2).map((item) => item.title).join(' · ')
-  const summary = !first ? t('contextRailEmptyTasks') : !multiple
-    ? t(first.kind === 'task' ? 'taskActivityBackground' : 'taskActivitySubagent')
-    : failed && (running || queued)
-      ? `${t('taskActivityCountStatus', { count: failed, status: t('contextRailTaskStatusFailed') })} · ${titles}`
-      : titles
 
   return (
     <section className="ds-operation-dock-status__section ds-task-activity" aria-label={t('contextRailTasks')}>
@@ -61,18 +57,21 @@ export function TaskActivity({ tasks, agents, onOpen }: Props): ReactElement {
         disabled={!first}
         aria-expanded={multiple ? expanded : undefined}
         aria-controls={multiple ? listId : undefined}
-        title={first ? `${multiple ? t('taskActivityParallel') : first.title} · ${statusText}` : undefined}
+        title={`${title} · ${statusText}`}
+        aria-label={`${title} · ${statusText}`}
         onClick={() => {
           if (multiple) setExpanded((value) => !value)
           else if (first) onOpen({ kind: first.kind, id: first.id })
         }}
       >
-        <StatusMark status={status} animate />
+        <RunStatusMark status={status} />
         <span className="ds-task-activity-heading">
-          <span className="ds-task-activity-title">{multiple ? t('taskActivityParallel') : first?.title || t('contextRailTasks')}</span>
-          <span className="ds-task-activity-summary" data-attention={failed > 0 && (running > 0 || queued > 0)}>{summary}</span>
+          <span className="ds-task-activity-title">
+            {title}
+          </span>
         </span>
-        <span className="ds-task-activity-status" data-status={status} role="status">{statusText}</span>
+        {failed > 0 && status !== 'failed' && status !== 'timed_out' ? <RunStatusMark status="failed" /> : null}
+        {stopped > 0 && status !== 'canceled' && status !== 'cancelled' ? <RunStatusMark status="canceled" /> : null}
         {first ? <ChevronRight className="ds-task-activity-chevron" aria-hidden /> : null}
       </button>
       {multiple ? (
@@ -81,13 +80,10 @@ export function TaskActivity({ tasks, agents, onOpen }: Props): ReactElement {
             <ul className="ds-task-activity-list">
               {items.map((item) => (
                 <li key={`${item.kind}:${item.id}`}>
-                  <button type="button" className="ds-task-activity-row" title={item.title} onClick={() => onOpen({ kind: item.kind, id: item.id })}>
-                    <StatusMark status={item.status} />
+                  <button type="button" className="ds-task-activity-row" title={`${item.title} · ${t(item.kind === 'task' ? 'taskActivityBackground' : 'taskActivitySubagent')} · ${t(runStatusKey(item.status))}`} onClick={() => onOpen({ kind: item.kind, id: item.id })}>
+                    <RunStatusMark status={item.status} />
                     <span className="ds-task-activity-heading">
                       <span className="ds-task-activity-title">{item.title}</span>
-                      <span className="ds-task-activity-summary" data-status={item.status}>
-                        {t(item.kind === 'task' ? 'taskActivityBackground' : 'taskActivitySubagent')} · {t(runStatusKey(item.status))}
-                      </span>
                     </span>
                     <ChevronRight className="ds-task-activity-chevron" aria-hidden />
                   </button>

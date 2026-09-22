@@ -8,6 +8,7 @@ function baseInput(
 ): Parameters<typeof resolvePetState>[0] {
   return {
     busy: false,
+    currentTurnId: 'turn-current',
     blocks: [],
     liveReasoning: '',
     turnErrorActive: false,
@@ -87,6 +88,21 @@ describe('resolvePetState', () => {
     ).toBe('failed')
   })
 
+  it('ignores completed and mismatched turns when inspecting tool errors', () => {
+    const blocks: ChatBlock[] = [
+      { kind: 'user', id: 'u1', text: 'old turn', turnId: 'old' },
+      { kind: 'tool', id: 't1', summary: 'Run', status: 'error' }
+    ]
+    expect(resolvePetState(baseInput({ blocks, currentTurnId: null })).stateId).toBe('idle')
+    expect(resolvePetState(baseInput({ blocks, busy: true, currentTurnId: 'new' })).stateId).toBe('running')
+  })
+
+  it('drops indefinite tool overrides after the turn stops', () => {
+    expect(resolvePetState(baseInput({
+      activityOverride: { stateId: 'review', priority: 'sustained' }
+    })).stateId).toBe('idle')
+  })
+
   it('respects min dwell time', () => {
     const first = resolvePetState(
       baseInput({
@@ -97,6 +113,7 @@ describe('resolvePetState', () => {
       })
     )
     expect(first.stateId).toBe('idle')
+    expect(first.retryAt).toBe(10_100)
 
     const second = resolvePetState(
       baseInput({

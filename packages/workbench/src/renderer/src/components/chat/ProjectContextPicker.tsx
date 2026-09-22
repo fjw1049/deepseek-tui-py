@@ -454,8 +454,8 @@ export function ProjectContextPicker({
           size === 'tray'
             ? `ds-workspace-context-chip ds-workspace-context-chip--tray flex max-w-[240px] items-center rounded-md py-1 text-left sm:max-w-[280px] ${
                 isTemporary
-                  ? 'ds-workspace-context-chip--prompt h-[30px] gap-[7px] px-2'
-                  : 'h-8 gap-2 px-2.5'
+                  ? 'ds-workspace-context-chip--prompt h-[28px] gap-[6px] px-2'
+                  : 'h-7 gap-1.5 px-2'
               }`
             : 'ds-workspace-context-chip flex h-7 max-w-[180px] items-center gap-1.5 rounded-md px-2 py-1 text-left sm:max-w-[220px]'
         }
@@ -467,7 +467,7 @@ export function ProjectContextPicker({
           <FolderOpen
             className={
               size === 'tray'
-                ? 'ds-workspace-context-chip__prompt-icon h-[15px] w-[15px] shrink-0'
+                ? 'ds-workspace-context-chip__prompt-icon h-[14px] w-[14px] shrink-0'
                 : 'h-3.5 w-3.5 shrink-0'
             }
             strokeWidth={size === 'tray' ? 1.6 : 1.7}
@@ -477,7 +477,7 @@ export function ProjectContextPicker({
         )}
         <span
           className={`min-w-0 flex-1 truncate ${
-            size === 'tray' ? (isTemporary ? 'leading-5' : 'text-[15px]') : ''
+            size === 'tray' ? (isTemporary ? 'leading-5' : 'text-[14px]') : ''
           }`}
         >
           {triggerLabel}

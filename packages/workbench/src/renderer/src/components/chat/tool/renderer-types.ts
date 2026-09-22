@@ -8,7 +8,7 @@ import type { ToolRenderContext } from './render-context'
  */
 export interface ToolRenderer {
   /** Compact header row (icon + label + status + descriptor). Always shown. */
-  Header?: React.ComponentType<{ context: ToolRenderContext }>
+  Header?: React.ComponentType<{ context: ToolRenderContext; quiet?: boolean }>
 
   /** Body shown when expanded (diff, stdout, hit list…). */
   Output?: React.ComponentType<{ context: ToolRenderContext }>

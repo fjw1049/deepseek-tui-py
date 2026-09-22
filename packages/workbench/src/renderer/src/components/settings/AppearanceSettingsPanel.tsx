@@ -1,5 +1,5 @@
 import type { ReactElement, ReactNode } from 'react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Check, ClipboardPaste, Copy, RotateCcw } from 'lucide-react'
 import type { AppSettingsV1, AppearancePatchV1 } from '@shared/app-settings'
@@ -25,6 +25,7 @@ import {
   type ThemeVariant,
   type UiDensity
 } from '@shared/appearance'
+import { useLightDismiss } from '../../hooks/use-light-dismiss'
 import { GlassSegmentedControl } from './GlassSegmentedControl'
 import { SettingsSelect } from './SettingsSelect'
 
@@ -75,8 +76,9 @@ export function AppearanceSettingsPanel({ form, onPatch }: Props): ReactElement 
   const appearance = form.appearance
   const defaults = useMemo(() => defaultAppearanceSettings(), [])
   const resolvedVariant = useResolvedVariant(form.theme)
-  const variantOrder: readonly ThemeVariant[] =
-    resolvedVariant === 'dark' ? (['dark', 'light'] as const) : (['light', 'dark'] as const)
+  // Fixed order: sorting the active variant first made the two cards swap
+  // positions under the cursor when the OS theme flipped in system mode.
+  const variantOrder: readonly ThemeVariant[] = ['light', 'dark']
   const onAppearancePatch = (patch: AppearancePatchV1): void => onPatch({ appearance: patch })
   const [restoreArmed, setRestoreArmed] = useState(false)
   const restoreTimer = useRef<number | null>(null)
@@ -260,21 +262,14 @@ export function AppearanceSettingsPanel({ form, onPatch }: Props): ReactElement 
           title={t('terminalFont')}
           description={t('terminalFontDesc')}
           control={
-            <div className="w-full min-w-0">
-              <FontInput
-                list="ds-terminal-font-suggestions"
-                value={appearance.terminalFontFamily}
-                onChange={(value) => onAppearancePatch({ terminalFontFamily: value })}
-                placeholder={t('terminalFontPlaceholder')}
-                ariaLabel={t('terminalFont')}
-                className="text-center"
-              />
-              <datalist id="ds-terminal-font-suggestions">
-                {TERMINAL_FONT_SUGGESTIONS.map((family) => (
-                  <option key={family} value={family} />
-                ))}
-              </datalist>
-            </div>
+            <FontInput
+              options={TERMINAL_FONT_SUGGESTIONS}
+              value={appearance.terminalFontFamily}
+              onChange={(value) => onAppearancePatch({ terminalFontFamily: value })}
+              placeholder={t('terminalFontPlaceholder')}
+              ariaLabel={t('terminalFont')}
+              className="text-center"
+            />
           }
         />
         {IS_MAC ? (
@@ -677,7 +672,7 @@ function FontInput({
   placeholder,
   ariaLabel,
   onChange,
-  list,
+  options,
   mono = false,
   className = ''
 }: {
@@ -685,28 +680,94 @@ function FontInput({
   placeholder: string
   ariaLabel: string
   onChange: (value: string) => void
-  list?: string
+  /** When provided, renders a custom aligned dropdown instead of native datalist. */
+  options?: readonly string[]
   mono?: boolean
   className?: string
 }): ReactElement {
   const [draft, setDraft] = useState<string | null>(null)
+  const [open, setOpen] = useState(false)
+  const containerRef = useRef<HTMLDivElement>(null)
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  useLightDismiss({ open, onDismiss: () => setOpen(false), refs: [containerRef] })
+
+  const selectOption = useCallback(
+    (opt: string) => {
+      setDraft(opt)
+      onChange(opt)
+      setOpen(false)
+      inputRef.current?.focus()
+    },
+    [onChange]
+  )
+
+  const displayValue = draft ?? value
+  const fieldClass = `${CONTROL_FIELD_CLASS} ${mono ? 'font-mono' : ''} ${className}`.trim()
+
+  if (!options) {
+    return (
+      <input
+        ref={inputRef}
+        value={displayValue}
+        onChange={(event) => {
+          const next = event.target.value
+          setDraft(next)
+          onChange(next)
+        }}
+        onBlur={() => setDraft(null)}
+        placeholder={placeholder}
+        aria-label={ariaLabel}
+        spellCheck={false}
+        autoComplete="off"
+        maxLength={256}
+        className={fieldClass}
+      />
+    )
+  }
+
+  const filtered = displayValue
+    ? options.filter((o) => o.toLowerCase().includes(displayValue.toLowerCase()))
+    : options
+
   return (
-    <input
-      list={list}
-      value={draft ?? value}
-      onChange={(event) => {
-        const next = event.target.value
-        setDraft(next)
-        onChange(next)
-      }}
-      onBlur={() => setDraft(null)}
-      placeholder={placeholder}
-      aria-label={ariaLabel}
-      spellCheck={false}
-      autoComplete="off"
-      maxLength={256}
-      className={`${CONTROL_FIELD_CLASS} ${mono ? 'font-mono' : ''} ${className}`.trim()}
-    />
+    <div ref={containerRef} className="relative w-full min-w-0">
+      <input
+        ref={inputRef}
+        value={displayValue}
+        onChange={(event) => {
+          const next = event.target.value
+          setDraft(next)
+          onChange(next)
+          if (!open) setOpen(true)
+        }}
+        onFocus={() => setOpen(true)}
+        onBlur={() => setDraft(null)}
+        placeholder={placeholder}
+        aria-label={ariaLabel}
+        spellCheck={false}
+        autoComplete="off"
+        maxLength={256}
+        className={fieldClass}
+      />
+      {open && filtered.length > 0 && (
+        <ul className="absolute left-0 right-0 top-full z-50 mt-1 max-h-48 overflow-auto rounded-xl border border-ds-border bg-ds-card py-1 shadow-lg">
+          {filtered.map((opt) => (
+            <li key={opt}>
+              <button
+                type="button"
+                onMouseDown={(e) => { e.preventDefault(); selectOption(opt) }}
+                className={`block w-full px-3 py-1.5 text-left text-[13px] transition hover:bg-ds-hover ${
+                  opt === value ? 'font-semibold text-ds-ink' : 'text-ds-muted'
+                }`}
+              >
+                {opt}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   )
 }
 
@@ -724,6 +785,16 @@ function PxInput({
   onCommit: (value: number) => void
 }): ReactElement {
   const [draft, setDraft] = useState<string | null>(null)
+  // Commit on blur/Enter only: committing per keystroke clamped a half-typed
+  // value (typing "18" committed "1" -> min) and the whole UI jumped mid-edit.
+  const commit = (): void => {
+    if (draft === null) return
+    const parsed = Number(draft.trim())
+    setDraft(null)
+    if (Number.isFinite(parsed)) {
+      onCommit(Math.min(max, Math.max(min, Math.round(parsed))))
+    }
+  }
   return (
     <div className="flex h-10 w-full items-center gap-2">
       <input
@@ -733,17 +804,11 @@ function PxInput({
         step={1}
         value={draft ?? String(value)}
         aria-label={ariaLabel}
-        onChange={(e) => {
-          const raw = e.target.value
-          setDraft(raw)
-          const normalized = raw.trim()
-          if (!normalized) return
-          const parsed = Number(normalized)
-          if (Number.isFinite(parsed)) {
-            onCommit(Math.min(max, Math.max(min, Math.round(parsed))))
-          }
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') commit()
         }}
-        onBlur={() => setDraft(null)}
         className={`${CONTROL_FIELD_CLASS} text-center tabular-nums`}
       />
       <span className="shrink-0 text-[13px] leading-none text-ds-faint">px</span>

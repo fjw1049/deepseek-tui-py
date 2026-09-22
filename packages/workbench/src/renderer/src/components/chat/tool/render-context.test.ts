@@ -118,3 +118,13 @@ describe('buildToolRenderContext label', () => {
     expect(ctx.label).toBe('执行命令')
   })
 })
+
+
+it('uses the structured tool name when the summary has no parseable prefix', () => {
+  const ctx = buildToolRenderContext({
+    kind: 'tool', id: 'structured', summary: '正在处理文件', status: 'running',
+    meta: { tool_name: 'write_file', tool_input: { path: 'example.ts' } }
+  })
+  expect(ctx.toolName).toBe('write_file')
+  expect(ctx.label).toBe('写入文件')
+})
