@@ -17,7 +17,6 @@ export function SessionHeader({ compact = false, className = '' }: Props): React
   const { t, i18n } = useTranslation('common')
   const threads = useChatStore((s) => s.threads)
   const activeThreadId = useChatStore((s) => s.activeThreadId)
-  const busy = useChatStore((s) => s.busy)
   const workspaceLabel = useChatStore((s) => s.workspaceLabel)
   const workspaceRoot = useChatStore((s) => s.workspaceRoot)
   const showWorkspaceMeta = shouldShowWorkspaceInHeader(workspaceRoot)
@@ -153,11 +152,6 @@ export function SessionHeader({ compact = false, className = '' }: Props): React
           <div className="ds-session-header-hint mt-1 text-[13.5px] text-ds-faint">{t('sessionHeaderHint')}</div>
         </div>
       )}
-      {busy ? (
-        <span className="ml-auto shrink-0 rounded-full bg-amber-500/18 px-3 py-1.5 text-[12.5px] font-semibold text-amber-950 dark:text-amber-100">
-          {t('running')}
-        </span>
-      ) : null}
     </div>
   )
 }

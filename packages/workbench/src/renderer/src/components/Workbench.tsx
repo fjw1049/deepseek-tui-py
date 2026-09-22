@@ -1671,7 +1671,6 @@ export function Workbench(): ReactElement {
               chatRail={
                 <div className="flex h-full min-h-0 min-w-0 flex-col">
                   <IdeChatRailHeader
-                    busy={busy}
                     terminalOpen={bottomTerminalOpen}
                     terminalMaximized={ideTerminalMaximized}
                     onNewChat={() => {
@@ -1788,11 +1787,6 @@ export function Workbench(): ReactElement {
                 </div>
                 <div className={`flex h-7 shrink-0 items-center gap-1.5 ${topbarRightPaddingClass}`}>
                   <ConnectionStatusBar compact />
-                  {busy && !splitActive ? (
-                    <span className="inline-flex shrink-0 rounded-full bg-amber-500/16 px-1.5 py-px text-[10px] font-semibold leading-4 text-amber-950 dark:text-amber-100">
-                      {t('running')}
-                    </span>
-                  ) : null}
                 </div>
               </div>
               {showTopbarRightActions ? (

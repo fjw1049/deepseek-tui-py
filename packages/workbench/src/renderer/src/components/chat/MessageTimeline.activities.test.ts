@@ -51,27 +51,29 @@ const agent = (id: string, status: 'running' | 'completed' | 'failed'): ChatBloc
   prompt: `分析 ${id}`, status
 })
 
-it('keeps one checklist mounted through progress, disclosure toggles and completion', async () => {
+it.each([2, 4])('shows a collapsed top summary only after the turn ends with %i completed tasks', async (done) => {
   const blocks: ChatBlock[] = [{ kind: 'user', id: 'user', text: 'mock four todos' }, checklist(0)]
   await render(blocks)
+  expect(container.querySelector('.ds-inline-todo')).toBeNull()
+  blocks.push(checklist(done))
+  await render([...blocks])
+  expect(container.querySelector('.ds-inline-todo')).toBeNull()
+  await act(async () => (container.querySelector('.ds-work-meta-row') as HTMLButtonElement).click())
+  expect(container.querySelector('.ds-inline-todo')).toBeNull()
+  await render([...blocks], false)
   const card = container.querySelector('.ds-inline-todo')!
   expect(card).not.toBeNull()
-  const toggle = card.querySelector('button')!
-  await act(async () => toggle.click())
-  expect(toggle.getAttribute('aria-expanded')).toBe('false')
-  const process = container.querySelector('.ds-work-meta-row') as HTMLButtonElement
-  for (let i = 1; i <= 4; i++) {
-    blocks.push(checklist(i))
-    await render([...blocks], i < 4)
-    await act(async () => process.click())
-    expect(container.querySelectorAll('.ds-inline-todo')).toHaveLength(1)
-    expect(container.querySelector('.ds-inline-todo')).toBe(card)
-    expect(card.textContent).toContain(`${i}/4`)
-    expect(toggle.getAttribute('aria-expanded')).toBe('false')
-  }
-  await act(async () => toggle.click())
+  expect(card.textContent).toContain(`${done}/4`)
+  expect(card.querySelector('button')?.getAttribute('aria-expanded')).toBe('false')
+  expect(card.querySelector('ul')).toBeNull()
+  const order = Array.from(container.querySelectorAll('.ds-inline-todo, .ds-work-meta-row'))
+  expect(order[0]).toBe(card)
+  await act(async () => card.querySelector('button')!.click())
   expect(card.querySelectorAll('li')).toHaveLength(4)
-  expect(card.querySelectorAll('[data-status="completed"]')).toHaveLength(4)
+  expect(card.querySelectorAll('[data-status="completed"]')).toHaveLength(done)
+  await act(async () => (container.querySelector('.ds-work-meta-row') as HTMLButtonElement).click())
+  expect(container.querySelector('.ds-inline-todo')).toBe(card)
+  expect(card.querySelector('button')?.getAttribute('aria-expanded')).toBe('true')
 })
 
 it('leaves subagent status in the side card without duplicate timeline entries', async () => {
@@ -105,18 +107,29 @@ it('omits a single agent after reload and keeps failed tool logs in details', as
   expect(container.querySelector('#block-failed [aria-label="error"]')).not.toBeNull()
 })
 
-it('shows only latest progress while collapsed and restores all progress in details', async () => {
+it('appends progress while running and preserves the full history in completed details', async () => {
   const blocks: ChatBlock[] = [
     { kind: 'assistant', id: 'p1', text: '旧进展', agentSegment: 'mid_turn_preface' },
+    { kind: 'tool', id: 'fetch', summary: 'fetch_url', toolKind: 'tool_call', status: 'success', detail: 'Fetched page content' },
     { kind: 'reasoning', id: 'r', text: 'raw reasoning', narration: '较新进展' },
+    { kind: 'tool', id: 'clone', summary: 'exec_shell', toolKind: 'command_execution', status: 'error', detail: 'Clone failed' },
     { kind: 'assistant', id: 'p2', text: '最新进展', agentSegment: 'mid_turn_preface' }
   ]
+  await render(blocks.slice(0, 1))
+  expect(container.textContent).toContain('旧进展')
   await render(blocks)
   const details = container.querySelector('.ds-work-meta-row') as HTMLButtonElement
   if (details.getAttribute('aria-expanded') === 'true') await act(async () => details.click())
   expect(container.textContent).toContain('最新进展')
-  expect(container.textContent).not.toContain('旧进展')
-  expect(container.textContent).not.toContain('较新进展')
+  expect(container.textContent).toContain('旧进展')
+  expect(container.textContent).toContain('较新进展')
+  expect(container.textContent!.indexOf('旧进展')).toBeLessThan(container.textContent!.indexOf('较新进展'))
+  expect(container.textContent!.indexOf('较新进展')).toBeLessThan(container.textContent!.indexOf('最新进展'))
+  const processRows = Array.from(container.querySelectorAll('.ds-process-narration, .ds-tool-batch, #block-clone'))
+    .map(node => node.classList.contains('ds-tool-batch') ? 'tool-batch' : node.id || node.textContent)
+  expect(processRows).toEqual(['旧进展', 'tool-batch', '较新进展', 'block-clone', '最新进展'])
+  expect(container.textContent).not.toContain('Fetched page content')
+  expect(container.textContent).not.toContain('Clone failed')
   await render([...blocks, { kind: 'assistant', id: 'answer', text: '最终交付', agentSegment: 'final_answer' }], false)
   expect(container.textContent).toContain('最终交付')
   expect(container.textContent).not.toContain('最新进展')

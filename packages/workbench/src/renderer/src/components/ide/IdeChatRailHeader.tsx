@@ -25,7 +25,6 @@ import { SessionHeader } from '../SessionHeader'
 const HISTORY_LIMIT = 30
 
 type Props = {
-  busy?: boolean
   terminalOpen?: boolean
   terminalMaximized?: boolean
   onNewChat: () => void
@@ -39,7 +38,6 @@ type Props = {
  * session title · [+] new chat/terminal · [history] project threads.
  */
 export function IdeChatRailHeader({
-  busy = false,
   terminalOpen = false,
   terminalMaximized = false,
   onNewChat,
@@ -148,11 +146,6 @@ export function IdeChatRailHeader({
             )}
           </button>
         </div>
-      ) : null}
-      {busy ? (
-        <span className="inline-flex shrink-0 rounded-full bg-amber-500/16 px-1.5 py-px text-[10px] font-semibold leading-4 text-amber-950 dark:text-amber-100">
-          {t('running')}
-        </span>
       ) : null}
 
       {terminalOpen ? (

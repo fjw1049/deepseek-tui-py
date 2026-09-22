@@ -48,7 +48,7 @@ export function InlineTodoBlock({ session, active = false, className = '' }: Pro
   }
   const listExpanded = expansion?.anchor === session.anchorBlockId && expansion.complete === session.isComplete
     ? expansion.expanded
-    : !session.isComplete
+    : false
 
   const currentItem = session.items.find((item) => item.id === session.inProgressId)
   const latestCompleted = session.items.filter((item) => item.status === 'completed').at(-1)
@@ -57,7 +57,7 @@ export function InlineTodoBlock({ session, active = false, className = '' }: Pro
   return (
     <section
       id={`todo-session-${session.anchorBlockId}`}
-      className={`ds-inline-todo my-2 overflow-hidden rounded-2xl border border-ds-border ${className}`.trim()}
+      className={`ds-inline-todo overflow-hidden rounded-xl ${listExpanded ? 'border border-ds-border' : ''} ${className}`.trim()}
     >
       <button
         id={triggerId}
@@ -65,14 +65,14 @@ export function InlineTodoBlock({ session, active = false, className = '' }: Pro
         onClick={() => setExpansion({ anchor: session.anchorBlockId, complete: session.isComplete, expanded: !listExpanded })}
         aria-expanded={listExpanded}
         aria-controls={contentId}
-        className="ds-inline-todo__header group flex min-h-11 w-full items-start gap-2.5 rounded-xl px-3.5 py-3 text-left transition-colors hover:bg-ds-hover focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent"
+        className="ds-inline-todo__header group flex w-full items-center gap-2.5 rounded-xl px-1.5 py-1.5 text-left transition-colors hover:bg-ds-hover focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent"
       >
         <span className={`flex h-5 w-5 shrink-0 items-center justify-center ${allCompleted ? 'rounded-full bg-emerald-500 text-white' : 'text-ds-muted'}`} aria-hidden="true">
           {allCompleted ? <Check className="h-3.5 w-3.5" strokeWidth={2.5} /> : <ListTodo className="h-4 w-4" />}
         </span>
         <span className="min-w-0 flex-1">
-          <span className="ds-inline-todo__title block text-[14px] font-medium leading-5 text-ds-ink">{t('todoInlineTitle')}</span>
-          {!listExpanded && !session.isComplete && previewItem ? (
+          <span className="ds-inline-todo__title block text-[14px] font-medium leading-5 text-ds-ink">{active ? t('todoInlineTitle') : t('todoInlineProgress', { done: completedCount, total: count })}</span>
+          {active && !listExpanded && !session.isComplete && previewItem ? (
             <span className="mt-1 block truncate text-[13px] text-ds-muted" title={previewItem.content}>
               {currentItem ? t('todoInlineCurrent', { item: currentItem.content }) : t('todoInlineLatestDone', { item: previewItem.content })}
             </span>
@@ -80,7 +80,7 @@ export function InlineTodoBlock({ session, active = false, className = '' }: Pro
         </span>
         <span className={`shrink-0 text-right text-[12px] leading-5 tabular-nums ${allCompleted ? 'text-emerald-600 dark:text-emerald-400' : 'text-ds-muted'}`}>
           <span className="sr-only" role="status">{t('todoInlineProgress', { done: completedCount, total: count })}{cancelledCount > 0 ? `, ${t('todoInlineCancelled', { count: cancelledCount })}` : ''}</span>
-          <span aria-hidden="true"><span key={completedCount} className="ds-inline-todo__count inline-block">{completedCount}</span>/{count}</span>
+          {active ? <span aria-hidden="true"><span key={completedCount} className="ds-inline-todo__count inline-block">{completedCount}</span>/{count}</span> : null}
           {cancelledCount > 0 ? <span aria-hidden="true" className="ml-2">{t('todoInlineCancelled', { count: cancelledCount })}</span> : null}
         </span>
         <ChevronDown aria-hidden="true" className={`ds-inline-todo__chevron mt-1 h-3 w-3 shrink-0 text-ds-faint ${listExpanded ? 'rotate-180' : ''}`} strokeWidth={1.8} />

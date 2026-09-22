@@ -1121,6 +1121,9 @@ function MessageTurn({
         </div>
       ) : (
         <>
+          {todoSession && !isProcessing ? (
+            <InlineTodoBlock session={todoSession} />
+          ) : null}
           {showWorkMeta ? (
             <div className="flex flex-col gap-1 pb-2">
               <WorkMetaRow
@@ -1157,14 +1160,6 @@ function MessageTurn({
                 </div>
               ))}
             </div>
-          ) : null}
-
-          {todoSession ? (
-            <InlineTodoBlock
-              session={todoSession}
-              active={isProcessing && !todoSession.isComplete}
-              className="pb-1"
-            />
           ) : null}
 
           {assistantContentBlocks.map((block, index) => (
@@ -1768,12 +1763,14 @@ function ProcessStream({
   const firstReasoning = blocks.find((block) => block.kind === 'reasoning')
   const standaloneIds = new Set(interactiveToolIds)
   if (firstReasoning) standaloneIds.add(firstReasoning.id)
-  const latestProgress = processing ? [...blocks].reverse().find((block) =>
-    (block.kind === 'assistant' && !!block.text.trim()) ||
-    (block.kind === 'reasoning' && !!block.narration?.trim())) : undefined
+  // Keep narration and tool summaries in order while running; only their
+  // execution details stay folded.
   const visible = visibleExecutionBlocks(
     showExecutionDetails ? blocks : blocks.filter((block) =>
-      interactiveToolIds.has(block.id) || block === latestProgress || isVisibleWithoutExecutionDetails(block)),
+      interactiveToolIds.has(block.id) ||
+      (processing && (block.kind === 'tool' || (block.kind === 'assistant' && !!block.text.trim()) ||
+        (block.kind === 'reasoning' && !!block.narration?.trim()))) ||
+      isVisibleWithoutExecutionDetails(block)),
     todoSession,
     hasSubagents,
     interactiveToolIds
