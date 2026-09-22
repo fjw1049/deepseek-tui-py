@@ -3410,10 +3410,6 @@ samp {
   min-height: 0;
 }
 
-.ds-sidebar-section-heading {
-  margin-top: 0.75rem;
-}
-
 .ds-sidebar-section-heading:empty {
   display: none;
 }
@@ -3424,6 +3420,7 @@ samp {
 
 /* Projects and conversations share one continuous scrolling region. */
 .ds-sidebar-middle {
+  margin-top: 0.75rem;
   margin-right: -0.75rem;
   padding-right: 0.75rem;
   overflow-y: auto;
@@ -3495,7 +3492,8 @@ samp {
 }
 
 /* The first visible group has no leading space inside the scrollport. */
-.ds-sidebar-middle > :is(.ds-sidebar-pinned-pane, .ds-sidebar-projects-toolbar--fixed):first-child {
+.ds-sidebar-middle > :is(.ds-sidebar-pinned-pane, .ds-sidebar-projects-toolbar--fixed):first-child,
+.ds-sidebar-section-heading + .ds-sidebar-pinned-pane {
   margin-top: 0;
 }
 
