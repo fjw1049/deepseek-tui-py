@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState, type CSSProperties, type Reac
 import { createPortal } from 'react-dom'
 import { ChatSplitDragContext, ChatSplitDragHandle } from './ChatSplitDrag'
 import { usePaneSwapMotion } from '../../hooks/use-pane-swap-motion'
-import { X } from 'lucide-react'
+import { ChevronUp, X } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { ChatStoreContext, clearChatSelection, useChatStore } from '../../store/chat-store'
 import { CHAT_THREAD_DRAG_MIME, useChatLayoutStore, type ChatLayout } from '../../store/chat-layout-store'
@@ -28,6 +28,15 @@ function ChatPaneHeader(): ReactElement {
     <SessionHeader compact className="ds-chat-split-session" />
     {busy ? <span role="status" aria-label={t('running')} title={t('running')} className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500" /> : null}
   </div>
+}
+
+function ParkedPaneStatus(): ReactElement {
+  const { t } = useTranslation('common')
+  const status = useChatStore(s => s.blocks.some(b =>
+    (b.kind === 'approval' || b.kind === 'elevation' || b.kind === 'user_input') && b.status === 'pending')
+    ? 'waiting' : s.error ? 'error' : s.busy ? 'running'
+      : s.threads.find(thread => thread.id === s.activeThreadId)?.status === 'completed' ? 'completed' : 'idle')
+  return <span role="status" className="ds-chat-split-parked-status" data-status={status}>{t(`splitParkedStatus_${status}`)}</span>
 }
 
 function ChatPaneContent({ threadId, onOpenFile, onOpenDiff }: PaneProps): ReactElement {
@@ -83,6 +92,7 @@ export function ChatSplitWorkspace({ project, layout, getInitialDraft, onFocus, 
   const newTaskWorkspace = threads.find(th => th.id === activeThreadId)?.workspace || workspaceRoot || project
   const root = useRef<HTMLDivElement>(null)
   const [narrow, setNarrow] = useState(false)
+  const [restoreTarget, setRestoreTarget] = useState<string | null>(null)
   const count = layout.panes.length
   const arrangement = layout.arrangement ?? 'grid'
   usePaneSwapMotion(root, layout, narrow)
@@ -90,6 +100,18 @@ export function ChatSplitWorkspace({ project, layout, getInitialDraft, onFocus, 
   const focus = (id: string, threadId: string | null): void => {
     actions.focus(project, id)
     if (threadId) onFocus(threadId)
+  }
+  const syncFocus = (): void => {
+    const next = useChatLayoutStore.getState().layouts[project]
+    const selected = next?.panes.find(p => p.id === next.focused)
+    if (selected?.threadId) onFocus(selected.threadId)
+    else clearChatSelection(newTaskWorkspace)
+  }
+  const restore = (paneId: string, targetId?: string): void => {
+    if (actions.restore(project, paneId, targetId)) {
+      setRestoreTarget(null)
+      syncFocus()
+    } else setRestoreTarget(paneId)
   }
   useEffect(() => {
     if (!root.current) return
@@ -123,6 +145,34 @@ export function ChatSplitWorkspace({ project, layout, getInitialDraft, onFocus, 
     }} onPointerUp={event => event.currentTarget.releasePointerCapture(event.pointerId)} />
 
   return <ChatSplitDragContext><div className="ds-chat-split-shell min-h-0 min-w-0 flex-1">
+    {layout.parked?.length ? <div className="ds-chat-split-shelf ds-no-drag">
+      <div className="ds-chat-split-shelf-items" role="group" aria-label={t('splitParked')}>
+        <span className="ds-chat-split-shelf-label">{t('splitParked')}</span>
+        {layout.parked.map(pane => {
+          const title = threads.find(th => th.id === pane.threadId)?.title || t('splitChooseTask')
+          const session = getChatPaneSession(pane.threadId!)
+          return <div key={pane.id} className="ds-chat-split-parked-item">
+            <button type="button" className="ds-chat-split-restore" title={title}
+              aria-label={t('splitRestoreNamed', { title })} onClick={() => restore(pane.id)}>
+              <span className="ds-chat-split-parked-title">{title}</span>
+              <ChatStoreContext.Provider value={session.store}><ParkedPaneStatus /></ChatStoreContext.Provider>
+            </button>
+            <button type="button" className="ds-chat-split-icon" title={t('splitDismissParked')}
+              aria-label={t('splitDismissParkedNamed', { title })} onClick={() => {
+                actions.dismissParked(project, pane.id)
+                if (restoreTarget === pane.id) setRestoreTarget(null)
+              }}><X size={12} aria-hidden="true" /></button>
+          </div>
+        })}
+      </div>
+      {restoreTarget && layout.parked.some(p => p.id === restoreTarget) ? <div className="ds-chat-split-restore-targets" role="group" aria-label={t('splitRestoreSwap')}
+        onKeyDown={event => { if (event.key === 'Escape') setRestoreTarget(null) }}>
+        <span>{t('splitRestoreSwap')}</span>
+        {layout.panes.map((pane, index) => <button key={pane.id} type="button" className="ds-chat-split-tab"
+          onClick={() => restore(restoreTarget, pane.id)}>{index + 1}. {threads.find(th => th.id === pane.threadId)?.title || t('splitChooseTask')}</button>)}
+        <button type="button" className="ds-chat-split-tab" onClick={() => setRestoreTarget(null)}>{t('cancel')}</button>
+      </div> : null}
+    </div> : null}
     {narrow && count > 1 ? <div className="ds-chat-split-tabs" role="group" aria-label={t('splitPanes')}>
       {layout.panes.map((pane, index) => <button key={pane.id} aria-pressed={layout.focused === pane.id}
         className="ds-chat-split-tab" onClick={() => focus(pane.id, pane.threadId)}>
@@ -172,12 +222,11 @@ export function ChatSplitWorkspace({ project, layout, getInitialDraft, onFocus, 
                 }} />}
 
             </div>
+            {pane.threadId ? <button type="button" className="ds-chat-split-icon" title={t('splitPark')} aria-label={t('splitPark')}
+              onClick={() => { actions.park(project, pane.id); syncFocus() }}><ChevronUp size={14} aria-hidden="true" /></button> : null}
             {count > 1 ? <button type="button" className="ds-chat-split-icon" title={t('splitClose')} aria-label={t('splitClose')} onClick={() => {
               actions.close(project, pane.id)
-              const next = useChatLayoutStore.getState().layouts[project]
-              const selected = next?.panes.find(p => p.id === next.focused)
-              if (selected?.threadId) onFocus(selected.threadId)
-              else clearChatSelection(newTaskWorkspace)
+              syncFocus()
             }}><X size={14} aria-hidden="true" /></button> : null}
           </header>
           {session && pane.threadId ? <ChatStoreContext.Provider value={session.store}>

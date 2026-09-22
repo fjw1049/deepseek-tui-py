@@ -125,11 +125,11 @@ it('shows only latest progress while collapsed and restores all progress in deta
   expect(container.textContent).toContain('最新进展')
 })
 
-it('keeps a tool waiting for approval visible even when it is checklist or orchestration', async () => {
+it.each(['success', 'error'] as const)('keeps a %s tool waiting for approval visible even when it is checklist or orchestration', async status => {
   for (const toolName of ['checklist', 'agent']) {
     await render([
       checklist(0), agent('A', 'running'),
-      { kind: 'tool', id: 'waiting', summary: toolName, status: 'success', toolKind: 'tool_call', meta: { tool_name: toolName } },
+      { kind: 'tool', id: 'waiting', summary: toolName, status, toolKind: 'tool_call', meta: { tool_name: toolName } },
       { kind: 'approval', id: 'approval', approvalId: 'waiting', summary: 'Please approve', status: 'pending' }
     ])
     const details = container.querySelector('.ds-work-meta-row') as HTMLButtonElement
@@ -180,5 +180,7 @@ it('folds historical checklist and agent failures once the plan and agents finis
   expect(container.querySelector('.ds-subagent-summary')).toBeNull()
   expect(container.textContent).toContain('两个子代理已完成分析。')
   await act(async () => (container.querySelector('.ds-work-meta-row') as HTMLButtonElement).click())
+  expect(container.querySelector('#block-historical-error-1')).toBeNull()
+  await act(async () => container.querySelector<HTMLButtonElement>('.ds-work-summary > button')!.click())
   for (const block of failures) expect(container.querySelector(`#block-${block.id}`)).not.toBeNull()
 })

@@ -291,3 +291,56 @@ it('previews swap and replacement targets, clears cancellation, and drops into t
   vi.mocked(document.elementFromPoint).mockReturnValue(null)
   expect(finishChatSplitDrag('a', -100, -100)).toBe(false)
 })
+
+
+it('stows a running pane, updates its shelf status and restores its draft and session', async () => {
+  await act(async () => root.render(createElement(Harness)))
+  const session = getChatPaneSession('a')
+  const interrupt = vi.fn(async () => {})
+  session.scroll.top = 240; session.scroll.atBottom = false
+  await act(async () => session.store.setState({ busy: true, interrupt }))
+  await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="splitPark"]')!.click())
+  expect(container.querySelectorAll('[data-chat-pane]')).toHaveLength(3)
+  expect(container.querySelector('.ds-chat-split-parked-title')?.textContent).toBe('Task a')
+  expect(container.querySelector('.ds-chat-split-parked-status')?.textContent).toBe('splitParkedStatus_running')
+  expect(interrupt).not.toHaveBeenCalled()
+  await act(async () => session.store.setState({ busy: false, threads: threads.map(t => t.id === 'a' ? { ...t, status: 'completed' } : t) }))
+  expect(container.querySelector('.ds-chat-split-parked-status')?.textContent).toBe('splitParkedStatus_completed')
+  await act(async () => session.store.setState({ busy: true }))
+  await act(async () => session.store.setState({ blocks: [{ kind: 'user_input', id: 'input', requestId: 'req', questions: [], status: 'pending' }] }))
+  expect(container.querySelector('.ds-chat-split-parked-status')?.textContent).toBe('splitParkedStatus_waiting')
+  await act(async () => container.querySelector<HTMLButtonElement>('.ds-chat-split-restore')!.click())
+  expect(container.querySelectorAll('[data-chat-pane]')).toHaveLength(4)
+  expect(container.querySelector('.ds-chat-split-shelf')).toBeNull()
+  expect(container.querySelector('textarea')?.value).toBe('draft-a')
+  expect(getChatPaneSession('a')).toBe(session)
+  expect(session.scroll).toEqual({ top: 240, atBottom: false })
+  expect(session.store.getState().busy).toBe(true)
+})
+
+it('keeps the shelf available when all panes are stowed and restores into the empty pane', async () => {
+  await act(async () => root.render(createElement(Harness)))
+  for (let i = 0; i < 4; i++) {
+    await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="splitPark"]')!.click())
+  }
+  expect(container.querySelectorAll('.ds-chat-split-restore')).toHaveLength(4)
+  expect(container.querySelectorAll('textarea')).toHaveLength(0)
+  expect(container.querySelector('.ds-chat-split-empty')).not.toBeNull()
+  await act(async () => container.querySelector<HTMLButtonElement>('.ds-chat-split-restore')!.click())
+  expect(container.querySelectorAll('[data-chat-pane]')).toHaveLength(1)
+  expect(container.querySelector('textarea')?.value).toBe('draft-a')
+})
+
+it('offers a swap at capacity instead of overwriting a visible conversation', async () => {
+  const actions = useChatLayoutStore.getState()
+  await act(async () => root.render(createElement(Harness)))
+  await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="splitPark"]')!.click())
+  await act(async () => { for (const id of ['e', 'f', 'g']) actions.add('/repo', 'b', id) })
+  await act(async () => container.querySelector<HTMLButtonElement>('.ds-chat-split-restore')!.click())
+  expect(container.querySelectorAll('[data-chat-pane]')).toHaveLength(6)
+  expect(container.querySelector('.ds-chat-split-restore-targets')).not.toBeNull()
+  await act(async () => container.querySelector<HTMLButtonElement>('.ds-chat-split-restore-targets button')!.click())
+  expect(container.querySelectorAll('[data-chat-pane]')).toHaveLength(6)
+  expect(container.querySelector('.ds-chat-split-parked-title')?.textContent).toBe('Task b')
+  expect(container.querySelector('[data-chat-thread="a"]')).not.toBeNull()
+})

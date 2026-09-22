@@ -104,3 +104,68 @@ it('replaces only the requested pane at capacity, and treats dropping onto itsel
   expect(actions.drop('/repo', before[2].id, 'new')).toBe(true)
   expect(useChatLayoutStore.getState().layouts['/repo'].panes).toEqual(layout.panes)
 })
+
+
+it('stows and restores panes in order, including the last pane, and persists the shelf', () => {
+  const actions = useChatLayoutStore.getState()
+  actions.add('/repo', 'a', 'b')
+  const original = useChatLayoutStore.getState().layouts['/repo'].panes
+  actions.park('/repo', original[0].id)
+  let layout = useChatLayoutStore.getState().layouts['/repo']
+  expect(layout.panes).toEqual([original[1]])
+  expect(layout.parked).toEqual([{ ...original[0], index: 0 }])
+  expect(sanitizeChatLayout(JSON.parse(window.localStorage.getItem('deepseek.chat-layouts.v1')!)['/repo'])).toEqual(layout)
+  expect(actions.restore('/repo', original[0].id)).toBe(true)
+  expect(useChatLayoutStore.getState().layouts['/repo'].panes).toEqual(original)
+  for (const pane of original) actions.park('/repo', pane.id)
+  layout = useChatLayoutStore.getState().layouts['/repo']
+  expect(layout.panes).toHaveLength(1)
+  expect(layout.panes[0].threadId).toBeNull()
+  expect(layout.focused).toBe(layout.panes[0].id)
+  expect(actions.restore('/repo', original[1].id)).toBe(true)
+  expect(useChatLayoutStore.getState().layouts['/repo'].panes).toEqual([original[1]])
+})
+
+it('requires an explicit swap at capacity and keeps both conversations', () => {
+  const actions = useChatLayoutStore.getState()
+  for (const id of ['b', 'c', 'd', 'e', 'f']) actions.add('/repo', 'a', id)
+  const original = useChatLayoutStore.getState().layouts['/repo'].panes
+  actions.park('/repo', original[2].id)
+  actions.add('/repo', 'a', 'g')
+  const before = useChatLayoutStore.getState().layouts['/repo']
+  expect(actions.restore('/repo', original[2].id)).toBe(false)
+  expect(actions.restore('/repo', original[2].id, 'missing')).toBe(false)
+  expect(useChatLayoutStore.getState().layouts['/repo']).toBe(before)
+  expect(actions.restore('/repo', original[2].id, original[0].id)).toBe(true)
+  const after = useChatLayoutStore.getState().layouts['/repo']
+  expect(after.panes).toHaveLength(6)
+  expect(after.panes[0]).toEqual(original[2])
+  expect(after.parked).toEqual([{ ...original[0], index: 0 }])
+})
+
+it('reopening a stowed task through add, bind or drop does not duplicate or discard it', () => {
+  const actions = useChatLayoutStore.getState()
+  actions.add('/repo', 'a', 'b')
+  const [a, b] = useChatLayoutStore.getState().layouts['/repo'].panes
+  actions.park('/repo', a.id)
+  expect(actions.add('/repo', 'b', 'a')).toBe(true)
+  expect(useChatLayoutStore.getState().layouts['/repo'].parked).toEqual([])
+  actions.park('/repo', a.id)
+  actions.bind('/repo', b.id, 'a')
+  expect(useChatLayoutStore.getState().layouts['/repo'].parked?.map(p => p.threadId)).toEqual(['b'])
+  expect(actions.drop('/repo', a.id, 'b')).toBe(true)
+  expect(useChatLayoutStore.getState().layouts['/repo'].parked?.map(p => p.threadId)).toEqual(['a'])
+  actions.dismissParked('/repo', a.id)
+  expect(useChatLayoutStore.getState().layouts['/repo'].panes).toEqual([b])
+  expect(useChatLayoutStore.getState().layouts['/repo'].parked).toEqual([])
+})
+
+it('sanitizes shelf duplicates and removes archived tasks from the shelf', () => {
+  const clean = sanitizeChatLayout({ panes: [{ id: 'a', threadId: 'a' }], parked: [null,
+    { id: 'b', threadId: 'a' }, { id: 'c', threadId: 'c', index: 99 },
+    { id: 'c', threadId: 'd' }, { id: 'e', threadId: null }] })!
+  expect(clean.parked).toEqual([{ id: 'c', threadId: 'c', index: 5 }])
+  useChatLayoutStore.setState({ layouts: { '/repo': clean } })
+  useChatLayoutStore.getState().reconcile('/repo', ['a'])
+  expect(useChatLayoutStore.getState().layouts['/repo'].parked).toEqual([])
+})

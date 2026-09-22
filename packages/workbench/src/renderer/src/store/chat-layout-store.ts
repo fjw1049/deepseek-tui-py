@@ -4,8 +4,9 @@ import { normalizeWorkspaceRoot } from '../lib/workspace-path'
 export const MAX_CHAT_PANES = 6
 export const CHAT_THREAD_DRAG_MIME = 'application/x-deepseek-thread'
 export type ChatPane = { id: string; threadId: string | null }
+export type ParkedChatPane = ChatPane & { index: number }
 export type ChatArrangement = 'grid' | 'horizontal' | 'vertical'
-export type ChatLayout = { arrangement?: ChatArrangement; panes: ChatPane[]; focused: string; x: number; y: number }
+export type ChatLayout = { arrangement?: ChatArrangement; parked?: ParkedChatPane[]; panes: ChatPane[]; focused: string; x: number; y: number }
 const STORAGE_KEY = 'deepseek.chat-layouts.v1'
 export const chatProjectKey = (path: string): string => normalizeWorkspaceRoot(path)
 
@@ -22,9 +23,15 @@ export function sanitizeChatLayout(value: unknown): ChatLayout | null {
     if (pane.threadId) threads.add(pane.threadId)
     return true
   }).slice(0, MAX_CHAT_PANES).map(({ id, threadId }) => ({ id, threadId }))
+  const parked = (Array.isArray(raw.parked) ? raw.parked : []).flatMap(pane => {
+    if (!pane || typeof pane.id !== 'string' || !pane.id || ids.has(pane.id) ||
+        typeof pane.threadId !== 'string' || !pane.threadId || threads.has(pane.threadId)) return []
+    ids.add(pane.id); threads.add(pane.threadId)
+    return [{ id: pane.id, threadId: pane.threadId, index: Number.isInteger(pane.index) ? Math.max(0, Math.min(MAX_CHAT_PANES - 1, pane.index)) : 0 }]
+  })
   if (!panes.length) return null
   const ratio = (v: unknown): number => typeof v === 'number' && Number.isFinite(v) ? Math.max(.25, Math.min(.75, v)) : .5
-  return { arrangement: raw.arrangement === 'horizontal' || raw.arrangement === 'vertical' ? raw.arrangement : 'grid', panes, focused: panes.some(p => p.id === raw.focused) ? raw.focused! : panes[0].id, x: ratio(raw.x), y: ratio(raw.y) }
+  return { parked, arrangement: raw.arrangement === 'horizontal' || raw.arrangement === 'vertical' ? raw.arrangement : 'grid', panes, focused: panes.some(p => p.id === raw.focused) ? raw.focused! : panes[0].id, x: ratio(raw.x), y: ratio(raw.y) }
 }
 
 function loadLayouts(): Record<string, ChatLayout> {
@@ -54,6 +61,9 @@ type LayoutState = {
   drop: (project: string, paneId: string, threadId: string) => boolean
   focus: (project: string, paneId: string) => void
   close: (project: string, paneId: string) => void
+  park: (project: string, paneId: string) => void
+  restore: (project: string, paneId: string, targetId?: string) => boolean
+  dismissParked: (project: string, paneId: string) => void
   resize: (project: string, axis: 'x' | 'y', ratio: number) => void
   arrange: (project: string, arrangement: ChatArrangement) => void
   reconcile: (project: string, validIds: string[]) => void
@@ -76,6 +86,8 @@ export const useChatLayoutStore = create<LayoutState>((set, get) => {
       }
       const existing = threadId && layout.panes.find(p => p.threadId === threadId)
       if (existing) { update(project, { ...layout, focused: existing.id }); return true }
+      const parked = layout.parked?.find(p => p.threadId === threadId)
+      if (parked) return get().restore(project, parked.id)
       if (layout.panes.length >= MAX_CHAT_PANES) return false
       const pane = { id: crypto.randomUUID(), threadId }
       update(project, { ...layout, panes: side === 'left' ? [pane, ...layout.panes] : [...layout.panes, pane], focused: pane.id })
@@ -86,6 +98,8 @@ export const useChatLayoutStore = create<LayoutState>((set, get) => {
       if (!layout) return
       const existing = layout.panes.find(p => p.threadId === threadId)
       if (existing) { update(project, { ...layout, focused: existing.id }); return }
+      const parked = layout.parked?.find(p => p.threadId === threadId)
+      if (parked) { get().restore(project, parked.id, paneId); return }
       update(project, { ...layout, panes: layout.panes.map(p => p.id === paneId ? { ...p, threadId } : p), focused: paneId })
     },
     drop(project, paneId, threadId) {
@@ -93,6 +107,8 @@ export const useChatLayoutStore = create<LayoutState>((set, get) => {
       if (!layout) return false
       const target = layout.panes.findIndex(p => p.id === paneId)
       if (target < 0) return false
+      const parked = layout.parked?.find(p => p.threadId === threadId)
+      if (parked) return get().restore(project, parked.id, paneId)
       const source = layout.panes.findIndex(p => p.threadId === threadId)
       const panes = [...layout.panes]
       if (source >= 0) {
@@ -115,6 +131,35 @@ export const useChatLayoutStore = create<LayoutState>((set, get) => {
       const panes = layout.panes.filter(p => p.id !== paneId)
       update(project, { ...layout, panes, focused: layout.focused === paneId ? panes[0].id : layout.focused })
     },
+    park(project, paneId) {
+      const layout = get().layouts[chatProjectKey(project)]
+      const index = layout?.panes.findIndex(p => p.id === paneId) ?? -1
+      if (!layout || index < 0 || !layout.panes[index].threadId) return
+      const panes = layout.panes.filter(p => p.id !== paneId)
+      if (!panes.length) panes.push({ id: crypto.randomUUID(), threadId: null })
+      update(project, { ...layout, panes, parked: [...(layout.parked ?? []), { ...layout.panes[index], index }],
+        focused: layout.focused === paneId ? panes[Math.min(index, panes.length - 1)].id : layout.focused })
+    },
+    restore(project, paneId, targetId) {
+      const layout = get().layouts[chatProjectKey(project)]
+      const entry = layout?.parked?.find(p => p.id === paneId)
+      if (!layout || !entry) return false
+      const panes = [...layout.panes]
+      const target = targetId ? panes.findIndex(p => p.id === targetId) : panes.findIndex(p => !p.threadId)
+      if (targetId && target < 0 || target < 0 && panes.length >= MAX_CHAT_PANES) return false
+      const parked = layout.parked!.filter(p => p.id !== paneId)
+      const pane = { id: entry.id, threadId: entry.threadId }
+      if (target >= 0) {
+        if (panes[target].threadId) parked.push({ ...panes[target], index: target })
+        panes[target] = pane
+      } else panes.splice(Math.min(entry.index, panes.length), 0, pane)
+      update(project, { ...layout, panes, parked, focused: pane.id })
+      return true
+    },
+    dismissParked(project, paneId) {
+      const layout = get().layouts[chatProjectKey(project)]
+      if (layout) update(project, { ...layout, parked: layout.parked?.filter(p => p.id !== paneId) })
+    },
     resize(project, axis, ratio) {
       const layout = get().layouts[chatProjectKey(project)]
       if (layout) update(project, { ...layout, [axis]: ratio })
@@ -127,8 +172,8 @@ export const useChatLayoutStore = create<LayoutState>((set, get) => {
       const layout = get().layouts[chatProjectKey(project)]
       if (!layout) return
       const valid = new Set(validIds)
-      if (layout.panes.some(p => p.threadId && !valid.has(p.threadId))) {
-        update(project, { ...layout, panes: layout.panes.map(p => p.threadId && !valid.has(p.threadId) ? { ...p, threadId: null } : p) })
+      if (layout.panes.some(p => p.threadId && !valid.has(p.threadId)) || layout.parked?.some(p => !valid.has(p.threadId!))) {
+        update(project, { ...layout, parked: layout.parked?.filter(p => valid.has(p.threadId!)), panes: layout.panes.map(p => p.threadId && !valid.has(p.threadId) ? { ...p, threadId: null } : p) })
       }
     }
   }

@@ -1767,9 +1767,6 @@ function ProcessStream({
   // completed turns must not leak its heading into the answer area.
   const firstReasoning = blocks.find((block) => block.kind === 'reasoning')
   const standaloneIds = new Set(interactiveToolIds)
-  for (const block of blocks) {
-    if (block.kind === 'tool' && block.status === 'error') standaloneIds.add(block.id)
-  }
   if (firstReasoning) standaloneIds.add(firstReasoning.id)
   const latestProgress = processing ? [...blocks].reverse().find((block) =>
     (block.kind === 'assistant' && !!block.text.trim()) ||

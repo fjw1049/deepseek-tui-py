@@ -345,7 +345,8 @@ export function Workbench(): ReactElement {
     setInputState(value)
     const app = useChatStore.getState()
     const project = resolveChatLayoutKey(useChatLayoutStore.getState(), resolveActiveThreadWorkspace(app.activeThreadId, app.threads, app.workspaceRoot))
-    if ((useChatLayoutStore.getState().layouts[project]?.panes.length ?? 1) < 2) {
+    const layout = useChatLayoutStore.getState().layouts[project]
+    if ((layout?.panes.length ?? 1) < 2 && !layout?.parked?.length) {
       const session = peekChatPaneSession(app.activeThreadId)
       if (session) session.draft = value
     }
@@ -459,7 +460,7 @@ export function Workbench(): ReactElement {
   )
   const splitProject = useChatLayoutStore(s => resolveChatLayoutKey(s, activeWorkspaceRoot))
   const chatLayout = useChatLayoutStore(s => s.layouts[splitProject])
-  const splitActive = (chatLayout?.panes.length ?? 1) > 1
+  const splitActive = (chatLayout?.panes.length ?? 1) > 1 || Boolean(chatLayout?.parked?.length)
   const [splitAction, setSplitAction] = useState<{ threadId: string; kind: 'file' | 'diff'; path?: string; line?: number } | null>(null)
   const pendingSplitFocus = useRef<string | null>(null)
   const focusSplitThread = (id: string): void => {
@@ -1817,7 +1818,7 @@ export function Workbench(): ReactElement {
             <div className="ds-chat-main-row relative flex min-h-0 min-w-0 flex-1">
               {!chatColumnHidden ? (
               <div
-                className={`ds-chat-main-track flex min-h-0 min-w-0 flex-1 flex-col ${splitActive ? 'p-1' : chatColumnInsetClass}`}
+                className={`ds-chat-main-track flex min-h-0 min-w-0 flex-1 flex-col ${splitActive ? 'p-0' : chatColumnInsetClass}`}
               >
             <div className="flex min-h-0 min-w-0 flex-1 flex-col">
               {splitActive && chatLayout ? <ChatSplitWorkspace project={splitProject} layout={chatLayout} getInitialDraft={id => prevThreadId.current === id ? inputRef.current : draftByThread.current[id] ?? ''}

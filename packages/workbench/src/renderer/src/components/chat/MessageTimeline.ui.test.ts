@@ -101,7 +101,7 @@ it('keeps silent edit rounds compact and inserts delayed narration once without 
   act(() => useChatStore.setState({ busy: true, blocks, workspaceRoot: '', activeThreadId: 'silent-review' }))
   await render()
   await act(async () => (container.querySelector('.ds-work-meta-row') as HTMLButtonElement).click())
-  expect(container.querySelector('#block-edit-1')).not.toBeNull()
+  expect(container.querySelector('#block-edit-1')).toBeNull()
   expect(container.textContent).not.toContain('raw edit result')
   expect(container.querySelectorAll('.ds-process-narration')).toHaveLength(1)
   const details = container.querySelector('.ds-work-meta-row') as HTMLButtonElement
@@ -110,6 +110,8 @@ it('keeps silent edit rounds compact and inserts delayed narration once without 
   act(() => useChatStore.setState({ busy: false }))
   await render()
   expect(details.getAttribute('aria-expanded')).toBe('true')
+  expect(container.querySelector('#block-edit-1')).toBeNull()
+  await act(async () => container.querySelector<HTMLButtonElement>('.ds-work-summary > button')!.click())
   expect(container.querySelector('#block-edit-1')).not.toBeNull()
   const intent = blocks[4]
   if (intent.kind === 'assistant') intent.text = '修复已完成，开始核对结果。'
@@ -146,4 +148,31 @@ it.each([undefined, '已核对触发条件。'])('hides the first thought in col
   expect(container.querySelectorAll('.ds-process-reasoning')).toHaveLength(1)
   expect(container.querySelectorAll('.ds-work-summary')).toHaveLength(1)
   expect(container.querySelectorAll('.ds-process-narration')).toHaveLength(narration ? 2 : 1)
+})
+
+it('folds failed web fetches together with successful calls during retries', async () => {
+  const blocks: ChatBlock[] = [
+    { kind: 'assistant', id: 'preface', text: '再补齐两个小型目录。', agentSegment: 'mid_turn_preface' },
+    ...(['error', 'success', 'error'] as const).map((status, i): ChatBlock => ({
+      kind: 'tool', id: `fetch-${i}`, toolKind: 'tool_call', status,
+      summary: 'fetch_url', detail: status === 'error' ? `Fetch failed ${i}` : 'Page content',
+      meta: { tool_name: 'fetch_url', tool_input: { url: `https://example.com/${i}` } }
+    })),
+    { kind: 'reasoning', id: 'retry-thought', text: 'Retry with another host.' },
+    { kind: 'assistant', id: 'retry', text: '两个文件抓取失败，换 CDN 重试。', agentSegment: 'mid_turn_preface' }
+  ]
+  act(() => useChatStore.setState({ busy: true, blocks, activeThreadId: 'retry-review', workspaceRoot: '' }))
+  await act(async () => root.render(createElement(MessageTimeline, {
+    blocks, live: '', liveReasoning: '', activeThreadId: 'retry-review', runtimeConnection: 'ready',
+    onRetryConnection: () => {}, onOpenSettings: () => {}, onOpenDiagnostics: () => {}
+  })))
+  const details = container.querySelector<HTMLButtonElement>('.ds-work-meta-row')!
+  if (details.getAttribute('aria-expanded') !== 'true') await act(async () => details.click())
+  expect(container.querySelectorAll('.ds-tool-batch')).toHaveLength(1)
+  for (let i = 0; i < 3; i++) expect(container.querySelector(`#block-fetch-${i}`)).toBeNull()
+  expect(container.textContent).toContain('两个文件抓取失败，换 CDN 重试。')
+  await act(async () => container.querySelector<HTMLButtonElement>('.ds-tool-batch__header')!.click())
+  expect(container.querySelectorAll('[aria-label="error"]')).toHaveLength(2)
+  await act(async () => container.querySelector<HTMLElement>('#block-fetch-0 [role="button"]')!.click())
+  expect(container.textContent).toContain('Fetch failed 0')
 })
