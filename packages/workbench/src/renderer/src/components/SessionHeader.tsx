@@ -1,7 +1,7 @@
 import type { ReactElement } from 'react'
 import { SessionQueries } from './SessionQueries'
 import { SessionInfoPopover } from './SessionInfoPopover'
-import { ScrollText } from 'lucide-react'
+import { Bookmark } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useChatStore } from '../store/chat-store'
@@ -57,12 +57,12 @@ export function SessionHeader({ compact = false, className = '' }: Props): React
   if (compact) {
     return (
       <div
-        className={`ds-session-header ds-window-drag-region flex h-7 min-h-0 min-w-0 flex-1 items-center gap-2 text-left ${className}`}
+        className={`ds-session-header ds-window-drag-region flex h-7 min-h-0 min-w-0 flex-1 items-center gap-1.5 text-left ${className}`}
       >
         {active ? (
           <>
             <SessionInfoPopover className="-ml-1">
-              <ScrollText size={16} />
+              <Bookmark size={16} strokeWidth={1.75} />
             </SessionInfoPopover>
             <SessionQueries>
               <span
