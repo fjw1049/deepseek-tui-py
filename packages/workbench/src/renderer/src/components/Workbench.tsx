@@ -470,7 +470,7 @@ export function Workbench(): ReactElement {
   const splitProject = useChatLayoutStore(s => resolveChatLayoutKey(s, activeWorkspaceRoot))
   const chatLayout = useChatLayoutStore(s => s.layouts[splitProject])
   const [splitPresentation, setSplitPresentation] = useState<ChatSplitPresentation>('grid')
-  const splitActive = (chatLayout?.panes.length ?? 1) > 1 || Boolean(chatLayout?.parked?.length) || chatLayout?.arrangement === 'tabs'
+  const splitActive = (chatLayout?.panes.length ?? 1) > 1 || Boolean(chatLayout?.parked?.length)
   const [splitAction, setSplitAction] = useState<{ threadId: string; kind: 'file' | 'diff'; path?: string; line?: number } | null>(null)
   const pendingSplitFocus = useRef<string | null>(null)
   const focusSplitThread = (id: string): void => {

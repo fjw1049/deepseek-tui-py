@@ -15,7 +15,9 @@ it('uses tabs only when neither layout fits and never hides a single pane', () =
   expect(resolveChatSplitPresentation(1, 'grid', 320, 200)).toBe('grid')
 })
 
-it('keeps explicitly selected tabs even in a large window or with a single task', () => {
+it('keeps explicitly selected tabs in a large window but restores a single pane with one task', () => {
   expect(resolveChatSplitPresentation(4, 'tabs', 2400, 1400)).toBe('tabs')
-  expect(resolveChatSplitPresentation(1, 'tabs', 2400, 1400)).toBe('tabs')
+  expect(resolveChatSplitPresentation(1, 'tabs', 2400, 1400)).toBe('grid')
+  expect(resolveChatSplitPresentation(1, 'tabs', 320, 200)).toBe('grid')
+  expect(resolveChatSplitPresentation(1, 'tabs', 0, 0)).toBe('grid')
 })

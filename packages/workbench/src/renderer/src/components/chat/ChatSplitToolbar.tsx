@@ -30,7 +30,7 @@ export function ChatSplitToolbar({ project, layout, onArrange, onAdd, onFocus, p
   const parked = layout.parked ?? []
   const arrangementLabel = { tabs: 'splitCompactView', grid: 'splitGrid', horizontal: 'splitHorizontal', vertical: 'splitVertical' }[layout.arrangement ?? 'grid']
   const adaptiveHint = presentation === 'tabs' && layout.arrangement !== 'tabs' ? 'splitCompactHint'
-    : presentation === 'grid' && layout.arrangement && layout.arrangement !== 'grid' ? 'splitAutoGridHint' : null
+    : layout.panes.length > 1 && presentation === 'grid' && layout.arrangement && layout.arrangement !== 'grid' ? 'splitAutoGridHint' : null
   const [open, setOpen] = useState(false)
   const [style, setStyle] = useState<CSSProperties>({})
   const [swapStyle, setSwapStyle] = useState<CSSProperties>({})

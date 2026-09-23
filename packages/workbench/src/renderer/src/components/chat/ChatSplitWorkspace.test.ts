@@ -85,7 +85,8 @@ it('adjusts split ratios by keyboard and keeps task navigation outside the scope
 })
 
 
-it('keeps the surviving session as the command owner after returning to a single conversation', async () => {
+it.each(['grid', 'horizontal', 'vertical', 'tabs'] as const)('keeps the surviving session as the command owner after returning from %s to a single conversation', async arrangement => {
+  useChatLayoutStore.getState().arrange('/repo', arrangement)
   await act(async () => root.render(createElement(Harness)))
   const session = getChatPaneSession('a')
   const interrupt = vi.fn(async () => { session.store.setState({ busy: false }) })
@@ -99,6 +100,7 @@ it('keeps the surviving session as the command owner after returning to a single
     await act(async () => actions.close('/repo', pane.id))
   }
   expect(useChatLayoutStore.getState().layouts['/repo'].panes).toHaveLength(1)
+  expect(container.querySelector('[role="tablist"]')).toBeNull()
   expect(getChatPaneSession('a')).toBe(session)
   expect(session.draft).toBe('draft-a')
   await act(async () => { await useChatStore.getState().interrupt(); await useChatStore.getState().sendMessage('single view') })
@@ -255,6 +257,24 @@ it('switches explicit tabs by arrow keys without reordering panes or interceptin
   expect(useChatLayoutStore.getState().layouts['/repo'].panes).toEqual(panes)
   expect([...container.querySelectorAll('textarea')]).toEqual(inputs)
   expect(inputs.map(input => input.value)).toEqual(['draft-a', 'draft-b', 'draft-c', 'draft-d'])
+})
+
+it('hides the lone tab while keeping parked tasks available and restores tabs with a second task', async () => {
+  const actions = useChatLayoutStore.getState()
+  actions.arrange('/repo', 'tabs')
+  await act(async () => root.render(createElement(Harness)))
+  const input = container.querySelector('textarea')
+  for (const pane of actions.layouts['/repo'].panes.filter(p => p.threadId !== 'a')) {
+    await act(async () => actions.park('/repo', pane.id))
+  }
+  expect(container.querySelector('[role="tablist"]')).toBeNull()
+  expect(container.querySelectorAll('.ds-chat-split-restore')).toHaveLength(3)
+  expect(container.querySelector('textarea')).toBe(input)
+  expect(useChatLayoutStore.getState().layouts['/repo'].arrangement).toBe('tabs')
+  await act(async () => container.querySelector<HTMLButtonElement>('.ds-chat-split-restore')!.click())
+  expect(container.querySelectorAll('[role="tab"]')).toHaveLength(2)
+  expect(container.querySelector('textarea')).toBe(input)
+  expect(input?.value).toBe('draft-a')
 })
 
 it.each([5, 6])('lays out %i panes without overlap and preserves composers across arrangements', async count => {
