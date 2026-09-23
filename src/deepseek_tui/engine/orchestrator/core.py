@@ -299,6 +299,8 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         self.reply_locale: str = "zh"
         self.compaction_config = compaction_config or CompactionConfig()
         self.session_messages: list[Message] = []
+        # The turn works on a separate list until it commits to session_messages.
+        self._active_context_messages: list[Message] | None = None
         # Last rewrite-bridge text (for iterative re-compaction). The live
         # bridge is a leading user message in session_messages — never the
         # system prompt (KV prefix cache).
@@ -1602,7 +1604,11 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
 
         return estimate_context_breakdown(
             model=target_model,
-            messages=self.session_messages or None,
+            messages=(
+                self._active_context_messages
+                if self._active_context_messages is not None
+                else self.session_messages
+            ) or None,
             skills_context=self._render_skills_context(),
             api_tools=api_tools,
             workspace=self.tool_context.working_directory,
@@ -1633,7 +1639,11 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
 
         return estimate_context_breakdown(
             model=model or self.default_model,
-            messages=self.session_messages or None,
+            messages=(
+                self._active_context_messages
+                if self._active_context_messages is not None
+                else self.session_messages
+            ) or None,
             skills_context=self._render_skills_context(),
             api_tools=api_tools,
             workspace=self.tool_context.working_directory,
@@ -2125,6 +2135,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             metadata=self.tool_context.metadata,
         )
 
+        self._active_context_messages = working_messages
         try:
             # 聚焦模式：置位 per-turn 工具白名单，``_get_tools_with_mcp`` 据此
             # 收窄 catalog。在 finally 中复位，异常/取消也不会泄漏到下一 turn。
@@ -2368,6 +2379,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             if not result.cancelled:
                 self._user_turn_index += 1
         finally:
+            self._active_context_messages = None
             if goal_deadline_task is not None:
                 goal_deadline_task.cancel()
                 with suppress(asyncio.CancelledError):

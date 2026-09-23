@@ -13,6 +13,7 @@ import {
   contextBucketTokens,
   fallbackContextBreakdown,
   formatTokenCount,
+  isContextBreakdown,
   snapshotFromContextBreakdown,
   type ContextBreakdownJson
 } from '../../lib/estimate-context-usage'
@@ -23,6 +24,7 @@ type Props = {
   model: string
   hasActiveThread: boolean
   threadId?: string | null
+  busy?: boolean
 }
 
 type BreakdownRow = {
@@ -87,12 +89,21 @@ export function ContextUsageMeter({
   blocks,
   model,
   hasActiveThread,
-  threadId = null
+  threadId = null,
+  busy = false
 }: Props): ReactElement {
   const { t } = useTranslation('common')
   const [open, setOpen] = useState(false)
-  const [breakdown, setBreakdown] = useState<ContextBreakdownJson | null>(null)
-  const [liveBreakdown, setLiveBreakdown] = useState(false)
+  const [snapshot, setSnapshot] = useState<{
+    threadId: string
+    model: string
+    data: ContextBreakdownJson
+  } | null>(null)
+  const breakdown =
+    hasActiveThread && snapshot?.threadId === threadId && snapshot.model === model
+      ? snapshot.data
+      : null
+  const liveBreakdown = breakdown !== null
   const [portalHost, setPortalHost] = useState<Element | null>(null)
   const wrapRef = useRef<HTMLDivElement | null>(null)
   const buttonRef = useRef<HTMLButtonElement | null>(null)
@@ -100,13 +111,11 @@ export function ContextUsageMeter({
 
   useEffect(() => {
     if (!hasActiveThread || !threadId) {
-      setBreakdown(null)
-      setLiveBreakdown(false)
+      setSnapshot(null)
       return
     }
-    setBreakdown(null)
-    setLiveBreakdown(false)
     let cancelled = false
+    let timer: ReturnType<typeof setTimeout> | undefined
     const fetchBreakdown = async (): Promise<void> => {
       try {
         const r = await window.dsGui.runtimeRequest(
@@ -114,23 +123,22 @@ export function ContextUsageMeter({
           'GET'
         )
         if (!r.ok || cancelled) return
-        const data = JSON.parse(r.body) as ContextBreakdownJson
-        if (!cancelled) {
-          setBreakdown(data)
-          setLiveBreakdown(true)
+        const data: unknown = JSON.parse(r.body)
+        if (isContextBreakdown(data)) {
+          setSnapshot({ threadId, model, data })
         }
       } catch {
-        if (!cancelled) {
-          setBreakdown(null)
-          setLiveBreakdown(false)
-        }
+        // Keep the last reading for this thread during transient failures.
+      } finally {
+        if (!cancelled && busy) timer = setTimeout(() => void fetchBreakdown(), 2000)
       }
     }
     void fetchBreakdown()
     return () => {
       cancelled = true
+      clearTimeout(timer)
     }
-  }, [hasActiveThread, threadId, blocks.length, model])
+  }, [hasActiveThread, threadId, blocks.length, model, busy, open])
 
   const effectiveBreakdown = useMemo(() => {
     if (breakdown) return breakdown

@@ -534,10 +534,12 @@ def estimate_context_breakdown(
     if real_input_tokens > 0:
         total = real_input_tokens
         if real_input_estimate > 0:
-            total = max(
-                0,
-                real_input_tokens + estimated_total - real_input_estimate,
-            )
+            total = real_input_tokens + estimated_total - real_input_estimate
+            # After cancellation or compaction the old additive correction
+            # can exceed the remaining context. A non-positive result is an
+            # invalid calibration, not an empty system prompt/tool catalog.
+            if total <= 0:
+                total = estimated_total
         if total >= static_total:
             conv_tokens = total - static_total
         else:

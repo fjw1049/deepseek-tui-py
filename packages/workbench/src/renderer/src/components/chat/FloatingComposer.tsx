@@ -2555,6 +2555,7 @@ export function FloatingComposer({
             <div className="flex min-w-0 flex-1 items-center justify-end gap-1.5">
               {footerPlan.showContextMeter ? (
                 <ContextUsageMeter
+                  busy={busy}
                   blocks={blocks}
                   model={activeModelId}
                   hasActiveThread={hasActiveThread}
