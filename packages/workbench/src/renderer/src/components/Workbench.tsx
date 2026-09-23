@@ -1,5 +1,6 @@
 import { createConversationInSplit } from '../lib/chat-split-navigation'
 import { ChatSplitToolbar } from './chat/ChatSplitToolbar'
+import type { ChatSplitPresentation } from '../lib/chat-split-presentation'
 import { ChatSplitWorkspace, ChatSplitDropZone } from './chat/ChatSplitWorkspace'
 import { resolveChatLayoutKey, CHAT_THREAD_DRAG_MIME, MAX_CHAT_PANES, useChatLayoutStore } from '../store/chat-layout-store'
 import { syncChatPaneCatalog, disposeChatPaneSessions, peekChatPaneSession } from '../store/chat-pane-sessions'
@@ -108,6 +109,8 @@ import {
   WorkbenchRightSidebar
 } from './right-sidebar/WorkbenchRightSidebar'
 import { IdeWorkspaceLayout } from './ide/IdeWorkspaceLayout'
+import { prefetchLazyViews } from '../lib/prefetch-lazy-views'
+import { createFrameQueue } from '../lib/frame-queue'
 
 const MarketplaceView = lazy(() =>
   import('./extensions/MarketplaceView').then((module) => ({ default: module.MarketplaceView }))
@@ -262,6 +265,7 @@ function persistBoolean(key: string, value: boolean): void {
 
 export function Workbench(): ReactElement {
   const { t } = useTranslation('common')
+  useEffect(() => prefetchLazyViews(), [])
   const {
     threads,
     activeThreadId,
@@ -402,6 +406,11 @@ export function Workbench(): ReactElement {
 
   const shellRef = useRef<HTMLDivElement | null>(null)
   const mainRowRef = useRef<HTMLDivElement | null>(null)
+  const resizeCleanupRef = useRef<(() => void) | null>(null)
+  const resizeQueueRef = useRef<ReturnType<typeof createFrameQueue> | null>(null)
+  resizeQueueRef.current ??= createFrameQueue()
+  const { queue: queueResize, flush: flushResize } = resizeQueueRef.current
+  useEffect(() => () => resizeCleanupRef.current?.(), [])
   const draftByThread = useRef<Record<string, string>>({})
   const prevThreadId = useRef<string | null>(null)
   const previewThreadId = useRef<string | null>(activeThreadId)
@@ -460,7 +469,8 @@ export function Workbench(): ReactElement {
   )
   const splitProject = useChatLayoutStore(s => resolveChatLayoutKey(s, activeWorkspaceRoot))
   const chatLayout = useChatLayoutStore(s => s.layouts[splitProject])
-  const splitActive = (chatLayout?.panes.length ?? 1) > 1 || Boolean(chatLayout?.parked?.length)
+  const [splitPresentation, setSplitPresentation] = useState<ChatSplitPresentation>('grid')
+  const splitActive = (chatLayout?.panes.length ?? 1) > 1 || Boolean(chatLayout?.parked?.length) || chatLayout?.arrangement === 'tabs'
   const [splitAction, setSplitAction] = useState<{ threadId: string; kind: 'file' | 'diff'; path?: string; line?: number } | null>(null)
   const pendingSplitFocus = useRef<string | null>(null)
   const focusSplitThread = (id: string): void => {
@@ -591,11 +601,10 @@ export function Workbench(): ReactElement {
     return conversationInsetClass
   }, [conversationInsetClass, emptyStageInsetClass, operationColumnActive, operationConversationInsetClass, stageCentered])
 
-  const handleSend = (text: string): void => {
+  const handleSend = (text: string): Promise<boolean> => {
     const v = text.trim()
-    if (!v) return
-    setInput('')
-    void sendMessage(v, mode)
+    if (!v) return Promise.resolve(false)
+    return sendMessage(v, mode)
   }
 
   const handleComposerFork = async (): Promise<void> => {
@@ -1392,7 +1401,9 @@ export function Workbench(): ReactElement {
 
   const beginLeftResize = (event: ReactPointerEvent<HTMLDivElement>): void => {
     if (leftSidebarHidden || event.button !== 0) return
+    resizeCleanupRef.current?.()
     event.preventDefault()
+    const pointerId = event.pointerId
     const startX = event.clientX
     const startLeft = leftSidebarWidth
     const startRight = rightSidebarWidth
@@ -1400,6 +1411,7 @@ export function Workbench(): ReactElement {
     const prevUserSelect = document.body.style.userSelect
     document.body.style.cursor = 'col-resize'
     document.body.style.userSelect = 'none'
+    shellRef.current?.classList.add('is-resizing')
     // Suspend the collapse transition while dragging so the width tracks the
     // pointer 1:1 instead of easing behind it.
     const wrapEl = (event.currentTarget as HTMLElement).closest('.ds-workbench-sidebar-wrap')
@@ -1407,42 +1419,53 @@ export function Workbench(): ReactElement {
     setResizeShieldCursor('col-resize')
 
     const onMove = (moveEvent: PointerEvent): void => {
-      const containerWidth = shellRef.current?.clientWidth ?? window.innerWidth
-      const measuredMain = mainRowRef.current?.clientWidth ?? null
-      const delta = moveEvent.clientX - startX
-      const next = fitWorkbenchWidths(
-        containerWidth,
-        startLeft + delta,
-        startRight,
-        {
-          leftPanelVisible: true,
-          rightPanelVisible
-        },
-        measuredMain
-      )
-      setLeftSidebarWidth(next.left)
-      if (rightPanelVisible && !chatColumnHidden) {
-        if (next.right !== rightSidebarWidth) setRightSidebarWidth(next.right)
-        setChatColumnHidden(next.chatHidden)
-      }
+      if (moveEvent.pointerId !== pointerId) return
+      const clientX = moveEvent.clientX
+      queueResize(() => {
+        const containerWidth = shellRef.current?.clientWidth ?? window.innerWidth
+        const measuredMain = mainRowRef.current?.clientWidth ?? null
+        const next = fitWorkbenchWidths(
+          containerWidth,
+          startLeft + clientX - startX,
+          startRight,
+          { leftPanelVisible: true, rightPanelVisible },
+          measuredMain
+        )
+        setLeftSidebarWidth(next.left)
+        if (rightPanelVisible && !chatColumnHidden) {
+          if (next.right !== rightSidebarWidth) setRightSidebarWidth(next.right)
+          setChatColumnHidden(next.chatHidden)
+        }
+      })
     }
 
-    const onUp = (): void => {
+    const onUp = (endEvent?: Event): void => {
+      if (endEvent instanceof PointerEvent && endEvent.pointerId !== pointerId) return
+      flushResize()
       document.body.style.cursor = prevCursor
       document.body.style.userSelect = prevUserSelect
+      shellRef.current?.classList.remove('is-resizing')
       wrapEl?.classList.remove('is-resizing')
       setResizeShieldCursor(null)
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('pointercancel', onUp)
+      window.removeEventListener('blur', onUp)
+      resizeCleanupRef.current = null
     }
 
+    resizeCleanupRef.current = onUp
     window.addEventListener('pointermove', onMove)
     window.addEventListener('pointerup', onUp)
+    window.addEventListener('pointercancel', onUp)
+    window.addEventListener('blur', onUp)
   }
 
   const beginRightResize = (event: ReactPointerEvent<HTMLDivElement>): void => {
     if (event.button !== 0 || !rightPanelVisible) return
+    resizeCleanupRef.current?.()
     event.preventDefault()
+    const pointerId = event.pointerId
     const startX = event.clientX
     const startLeft = leftSidebarWidth
     const startRight = rightSidebarWidth
@@ -1450,69 +1473,93 @@ export function Workbench(): ReactElement {
     const prevUserSelect = document.body.style.userSelect
     document.body.style.cursor = 'col-resize'
     document.body.style.userSelect = 'none'
+    shellRef.current?.classList.add('is-resizing')
     setResizeShieldCursor('col-resize')
 
     const onMove = (moveEvent: PointerEvent): void => {
-      const containerWidth = shellRef.current?.clientWidth ?? window.innerWidth
-      const measuredMain = mainRowRef.current?.clientWidth ?? null
-      const delta = moveEvent.clientX - startX
-      const next = fitWorkbenchWidths(
-        containerWidth,
-        startLeft,
-        startRight - delta,
-        {
-          leftPanelVisible: !leftSidebarHidden,
-          rightPanelVisible: true
-        },
-        measuredMain
-      )
-      if (next.left !== leftSidebarWidth) setLeftSidebarWidth(next.left)
-      setRightSidebarWidth(next.right)
-      setChatColumnHidden(next.chatHidden)
+      if (moveEvent.pointerId !== pointerId) return
+      const clientX = moveEvent.clientX
+      queueResize(() => {
+        const containerWidth = shellRef.current?.clientWidth ?? window.innerWidth
+        const measuredMain = mainRowRef.current?.clientWidth ?? null
+        const next = fitWorkbenchWidths(
+          containerWidth,
+          startLeft,
+          startRight - (clientX - startX),
+          { leftPanelVisible: !leftSidebarHidden, rightPanelVisible: true },
+          measuredMain
+        )
+        if (next.left !== leftSidebarWidth) setLeftSidebarWidth(next.left)
+        setRightSidebarWidth(next.right)
+        setChatColumnHidden(next.chatHidden)
+      })
     }
 
-    const onUp = (): void => {
+    const onUp = (endEvent?: Event): void => {
+      if (endEvent instanceof PointerEvent && endEvent.pointerId !== pointerId) return
+      flushResize()
       document.body.style.cursor = prevCursor
       document.body.style.userSelect = prevUserSelect
+      shellRef.current?.classList.remove('is-resizing')
       setResizeShieldCursor(null)
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('pointercancel', onUp)
+      window.removeEventListener('blur', onUp)
+      resizeCleanupRef.current = null
     }
 
+    resizeCleanupRef.current = onUp
     window.addEventListener('pointermove', onMove)
     window.addEventListener('pointerup', onUp)
+    window.addEventListener('pointercancel', onUp)
+    window.addEventListener('blur', onUp)
   }
 
   const beginBottomTerminalResize = (event: ReactPointerEvent<HTMLDivElement>): void => {
     if (event.button !== 0) return
+    resizeCleanupRef.current?.()
     event.preventDefault()
+    const pointerId = event.pointerId
     const startY = event.clientY
     const startHeight = bottomTerminalHeight
     const prevCursor = document.body.style.cursor
     const prevUserSelect = document.body.style.userSelect
     document.body.style.cursor = 'row-resize'
     document.body.style.userSelect = 'none'
+    shellRef.current?.classList.add('is-resizing')
     setResizeShieldCursor('row-resize')
 
     const onMove = (moveEvent: PointerEvent): void => {
-      // Handle sits on the panel's top edge, so dragging up (negative delta)
-      // grows the panel.
-      const delta = startY - moveEvent.clientY
-      setBottomTerminalHeight(
-        clampWidth(startHeight + delta, BOTTOM_TERMINAL_MIN, BOTTOM_TERMINAL_MAX)
-      )
+      if (moveEvent.pointerId !== pointerId) return
+      const clientY = moveEvent.clientY
+      queueResize(() => {
+        // Handle sits on the panel's top edge, so dragging up grows it.
+        setBottomTerminalHeight(
+          clampWidth(startHeight + startY - clientY, BOTTOM_TERMINAL_MIN, BOTTOM_TERMINAL_MAX)
+        )
+      })
     }
 
-    const onUp = (): void => {
+    const onUp = (endEvent?: Event): void => {
+      if (endEvent instanceof PointerEvent && endEvent.pointerId !== pointerId) return
+      flushResize()
       document.body.style.cursor = prevCursor
       document.body.style.userSelect = prevUserSelect
+      shellRef.current?.classList.remove('is-resizing')
       setResizeShieldCursor(null)
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('pointercancel', onUp)
+      window.removeEventListener('blur', onUp)
+      resizeCleanupRef.current = null
     }
 
+    resizeCleanupRef.current = onUp
     window.addEventListener('pointermove', onMove)
     window.addEventListener('pointerup', onUp)
+    window.addEventListener('pointercancel', onUp)
+    window.addEventListener('blur', onUp)
   }
 
   return (
@@ -1611,22 +1658,22 @@ export function Workbench(): ReactElement {
           ) : null}
         </div>
         {route === 'settings' ? (
-          <Suspense fallback={<div className="h-full bg-transparent" />}>
+          <Suspense fallback={<div className="flex h-full items-center justify-center text-ds-muted" role="status">{t('startupRenderer')}</div>}>
             <SettingsView />
           </Suspense>
         ) : route === 'marketplace' ? (
-          <Suspense fallback={<div className="h-full bg-transparent" />}>
+          <Suspense fallback={<div className="flex h-full items-center justify-center text-ds-muted" role="status">{t('startupRenderer')}</div>}>
             <MarketplaceView />
           </Suspense>
         ) : route === 'kanban' ? (
-          <Suspense fallback={<div className="h-full bg-transparent" />}>
+          <Suspense fallback={<div className="flex h-full items-center justify-center text-ds-muted" role="status">{t('startupRenderer')}</div>}>
             <KanbanView
               onOpenThread={openThread}
               onOpenThreadTerminal={openThreadTerminal}
             />
           </Suspense>
         ) : route === 'automation' ? (
-          <Suspense fallback={<div className="h-full bg-transparent" />}>
+          <Suspense fallback={<div className="flex h-full items-center justify-center text-ds-muted" role="status">{t('startupRenderer')}</div>}>
             <AutomationCenter
               runtimeReady={runtimeConnection === 'ready'}
               workspaceRoot={activeWorkspaceRoot}
@@ -1634,7 +1681,7 @@ export function Workbench(): ReactElement {
             />
           </Suspense>
         ) : route === 'channels' ? (
-          <Suspense fallback={<div className="h-full bg-transparent" />}>
+          <Suspense fallback={<div className="flex h-full items-center justify-center text-ds-muted" role="status">{t('startupRenderer')}</div>}>
             <ChannelCenter runtimeReady={runtimeConnection === 'ready'} />
           </Suspense>
         ) : (
@@ -1781,9 +1828,10 @@ export function Workbench(): ReactElement {
               <div className="ds-workbench-topbar__inner flex w-full min-w-0 items-center justify-between gap-2">
                 <div className="flex h-7 min-w-0 flex-1 items-center overflow-hidden" draggable={!splitActive && Boolean(activeThreadId)}
                   onDragStart={event => { if (activeThreadId) event.dataTransfer.setData(CHAT_THREAD_DRAG_MIME, activeThreadId) }}>
-                  {splitActive && chatLayout ? <ChatSplitToolbar layout={chatLayout}
+                  {splitActive && chatLayout ? <ChatSplitToolbar project={splitProject} layout={chatLayout} presentation={splitPresentation}
                     onArrange={arrangement => useChatLayoutStore.getState().arrange(splitProject, arrangement)}
-                    onAdd={() => useChatLayoutStore.getState().add(splitProject, activeThreadId)} /> : <SessionHeader compact className="min-w-0" />}
+                    onAdd={() => useChatLayoutStore.getState().add(splitProject, activeThreadId)}
+                    onFocus={focusSplitThread} /> : <SessionHeader compact className="min-w-0" />}
                 </div>
                 <div className={`flex h-7 shrink-0 items-center gap-1.5 ${topbarRightPaddingClass}`}>
                   <ConnectionStatusBar compact />
@@ -1816,6 +1864,7 @@ export function Workbench(): ReactElement {
               >
             <div className="flex min-h-0 min-w-0 flex-1 flex-col">
               {splitActive && chatLayout ? <ChatSplitWorkspace project={splitProject} layout={chatLayout} getInitialDraft={id => prevThreadId.current === id ? inputRef.current : draftByThread.current[id] ?? ''}
+                onPresentationChange={setSplitPresentation}
                 onFocus={focusSplitThread}
                 onOpenFile={(threadId, path, line) => { focusSplitThread(threadId); setSplitAction({ threadId, kind: 'file', path, line }) }}
                 onOpenDiff={threadId => { focusSplitThread(threadId); setSplitAction({ threadId, kind: 'diff' }) }} /> : stageCentered ? (

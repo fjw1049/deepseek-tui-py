@@ -108,6 +108,7 @@ import {
   COMPOSER_INSERT_EVENT,
   COMPOSER_RETRY_DRAFT_EVENT,
   formatComposerPathMention,
+  queueComposerRetryDraft,
   takeComposerRetryDraft,
   type ComposerInsertDetail,
   WORKSPACE_PATH_DRAG_MIME,
@@ -122,8 +123,6 @@ type ComposerAttachment = {
   path: string
   name: string
   size: number
-  status: 'uploading' | 'done'
-  progress: number
 }
 
 type FileBadge = { label: string; className: string }
@@ -196,7 +195,7 @@ type Props = {
   onRemoveQueuedMessage: (id: string) => void
   onWithdrawQueuedMessage: (id: string) => QueuedComposerMessage | null
   onSendQueuedMessageNow: (id: string) => void
-  onSend: (text: string) => void
+  onSend: (text: string) => Promise<boolean>
   onInterrupt: () => void
   onCompact: () => Promise<void>
   onFork: () => Promise<void>
@@ -306,6 +305,15 @@ export function FloatingComposer({
   const textareaRef = useRef<HTMLTextAreaElement | null>(null)
   const inputRef = useRef(input)
   inputRef.current = input
+  const activeThreadIdRef = useRef(activeThreadId)
+  activeThreadIdRef.current = activeThreadId
+  const previewPicksRef = useRef(previewPicks)
+  previewPicksRef.current = previewPicks
+  const mountedRef = useRef(true)
+  useEffect(() => {
+    mountedRef.current = true
+    return () => { mountedRef.current = false }
+  }, [])
   const shellRef = useRef<HTMLDivElement | null>(null)
   const footerRef = useRef<HTMLDivElement | null>(null)
   const plusMenuRef = useRef<HTMLDivElement | null>(null)
@@ -314,7 +322,9 @@ export function FloatingComposer({
   const pluginSearchRef = useRef<HTMLInputElement | null>(null)
   const [footerWidth, setFooterWidth] = useState<number | null>(null)
   const composingRef = useRef(false)
+  const lastSendClickAtRef = useRef(0)
   const speechBaseRef = useRef('')
+  const voiceRequestId = useRef(0)
   const [voicePhase, setVoicePhase] = useState<ComposerVoicePhase>('idle')
   const [asrConfigured, setAsrConfigured] = useState(false)
   const [focused, setFocused] = useState(false)
@@ -342,11 +352,8 @@ export function FloatingComposer({
       setAttachments(sessionKey ? paneAttachments.get(sessionKey) ?? [] : [])
       return
     }
-    if (sessionKey) paneAttachments.set(sessionKey, attachments.map(item => ({ ...item, status: 'done', progress: 100 })))
+    if (sessionKey) paneAttachments.set(sessionKey, attachments)
   }, [sessionKey, attachments])
-  // Simulated-upload interval handles keyed by attachment id, cleared on remove,
-  // send, and unmount so no timer fires setState on an unmounted component.
-  const attachTimersRef = useRef<Map<string, ReturnType<typeof setInterval>>>(new Map())
   // Focus-mode skill picked from the `/skills` panel. Held out of the input
   // text (rendered as an inline chip) and prepended as `/name ` only on send,
   // so the runtime's leading-token focus detection still works unchanged.
@@ -1089,6 +1096,7 @@ export function FloatingComposer({
   startRecordingRef.current = audioRecorder.start
 
   const resetVoiceSession = useCallback((): void => {
+    voiceRequestId.current += 1
     cancelRecordingRef.current()
     setVoicePhase('idle')
   }, [])
@@ -1100,19 +1108,33 @@ export function FloatingComposer({
       return
     }
     setVoicePhase('transcribing')
-    const buffer = await audio.blob.arrayBuffer()
-    const result = await window.dsGui.transcribeAudio({
-      audio: buffer,
-      mimeType: audio.mimeType,
-      fileName: audio.fileName
-    })
-    resetVoiceSession()
-    if (!result.ok) {
-      showAttachNotice(result.message)
-      return
+    const requestId = ++voiceRequestId.current
+    let timeout: number | undefined
+    try {
+      const buffer = await audio.blob.arrayBuffer()
+      const result = await Promise.race([
+        window.dsGui.transcribeAudio({
+          audio: buffer,
+          mimeType: audio.mimeType,
+          fileName: audio.fileName
+        }),
+        new Promise<never>((_, reject) => {
+          timeout = window.setTimeout(() => reject(new Error('transcription timeout')), 90_000)
+        })
+      ])
+      if (requestId !== voiceRequestId.current) return
+      if (!result.ok) {
+        showAttachNotice(result.message)
+        return
+      }
+      setInput(joinSpeechText(speechBaseRef.current, result.text))
+      focusComposer()
+    } catch {
+      if (requestId === voiceRequestId.current) showAttachNotice(t('composerVoiceTranscriptionFailed'))
+    } finally {
+      if (timeout !== undefined) window.clearTimeout(timeout)
+      if (requestId === voiceRequestId.current) resetVoiceSession()
     }
-    setInput(joinSpeechText(speechBaseRef.current, result.text))
-    focusComposer()
   }
 
   const handleTranscribe = (audio: RecordedAudio | null): void => {
@@ -1127,7 +1149,12 @@ export function FloatingComposer({
   handleTranscribeRef.current = handleTranscribe
 
   const handleStopAndTranscribe = (): void => {
-    void stopRecordingRef.current().then((audio) => handleTranscribeRef.current(audio))
+    void stopRecordingRef.current()
+      .then((audio) => handleTranscribeRef.current(audio))
+      .catch(() => {
+        resetVoiceSession()
+        showAttachNotice(t('composerVoiceTranscriptionFailed'))
+      })
   }
 
   useEffect(() => {
@@ -1210,52 +1237,6 @@ export function FloatingComposer({
     resetVoiceSession()
   }, [activeThreadId, resetVoiceSession])
 
-  const clearAttachTimer = (id: string): void => {
-    const timer = attachTimersRef.current.get(id)
-    if (timer !== undefined) {
-      clearInterval(timer)
-      attachTimersRef.current.delete(id)
-    }
-  }
-
-  // Drive a card from 0→100% then mark it done. There is no real network
-  // upload (attachments are `@path` mentions injected on send); this is a
-  // human-friendly progress animation over the file's real byte size. Honors
-  // reduced-motion by jumping straight to done.
-  const simulateUpload = (id: string): void => {
-    // Idempotent: if a timer for this id is already running (e.g. React
-    // StrictMode double-invokes the pickAttachments setter path), clear it
-    // before starting a new one so we never orphan an interval.
-    clearAttachTimer(id)
-    const reduceMotion =
-      typeof window.matchMedia === 'function' &&
-      window.matchMedia('(prefers-reduced-motion: reduce)').matches
-    if (reduceMotion) {
-      setAttachments((prev) =>
-        prev.map((item) =>
-          item.id === id ? { ...item, progress: 100, status: 'done' } : item
-        )
-      )
-      return
-    }
-    const stepMs = 90
-    const increment = 7
-    const timer = setInterval(() => {
-      setAttachments((prev) =>
-        prev.map((item) => {
-          if (item.id !== id || item.status === 'done') return item
-          const next = Math.min(100, item.progress + increment)
-          if (next >= 100) {
-            clearAttachTimer(id)
-            return { ...item, progress: 100, status: 'done' }
-          }
-          return { ...item, progress: next }
-        })
-      )
-    }, stepMs)
-    attachTimersRef.current.set(id, timer)
-  }
-
   const pickAttachments = async (): Promise<void> => {
     clearAttachNotice()
     if (typeof window.dsGui === 'undefined') {
@@ -1277,35 +1258,29 @@ export function FloatingComposer({
     if (result.files.length === 0) return
     // Compute new attachments OUTSIDE the setAttachments updater. Mutating an
     // outer array inside a setState updater is unsafe under React StrictMode
-    // (which double-invokes updaters) — it would duplicate ids and cause
-    // simulateUpload to register multiple intervals for the same attachment,
-    // orphaning timers. Reading `attachments` from the closure is safe here
+    // (which double-invokes updaters) — it would duplicate ids. Reading
+    // `attachments` from the closure is safe here
     // because pickAttachments awaits the modal file picker, so no other
     // attachment mutation can race this point.
     const seen = new Set(attachments.map((item) => item.path))
-    const added: string[] = []
     const next: ComposerAttachment[] = [...attachments]
     for (const file of result.files) {
       if (seen.has(file.path)) continue
       seen.add(file.path)
       const id = `att-${file.path}`
-      added.push(id)
       next.push({
         id,
         path: file.path,
         name: fileBasename(file.path),
-        size: file.size,
-        status: 'uploading',
-        progress: 0
+        size: file.size
       })
     }
-    if (added.length === 0) {
+    if (next.length === attachments.length) {
       setPlusMenuOpen(false)
       focusComposer()
       return
     }
     setAttachments(next)
-    for (const id of added) simulateUpload(id)
     setPlusMenuOpen(false)
     focusComposer()
   }
@@ -1342,7 +1317,7 @@ export function FloatingComposer({
         if (target !== imageTargetRef.current) return
         setAttachments((previous) => [...previous, {
           id: `att-${result.relativePath}`, path: result.relativePath, name: file.name || result.name,
-          size: result.size, status: 'done', progress: 100
+          size: result.size
         }])
       }
       focusComposer()
@@ -1383,18 +1358,14 @@ export function FloatingComposer({
         id,
         path: result.relativePath,
         name: result.name,
-        size: result.size,
-        status: 'uploading',
-        progress: 0
+        size: result.size
       }
     ])
-    simulateUpload(id)
     showAttachNotice(t('composerPasteSaved', { name: result.name }), 'info')
     focusComposer()
   }
 
   const removeAttachment = (id: string): void => {
-    clearAttachTimer(id)
     setAttachments((prev) => prev.filter((item) => item.id !== id))
   }
 
@@ -1406,15 +1377,7 @@ export function FloatingComposer({
     return () => onNoticeChange?.(null)
   }, [onNoticeChange])
 
-  useEffect(() => {
-    const timers = attachTimersRef.current
-    return () => {
-      timers.forEach((timer) => clearInterval(timer))
-      timers.clear()
-    }
-  }, [])
-
-  const handlePrimaryAction = (): void => {
+  const handlePrimaryAction = (fromClick = false): void => {
     if (imageImports > 0) return
     if (voiceActive) return
     if (petSlashQuery != null) {
@@ -1423,6 +1386,8 @@ export function FloatingComposer({
         if (onApplyPetSlashCommand?.(trimmed)) {
           setInput('')
           focusComposer()
+        } else {
+          showAttachNotice(t('composerCommandUnknown'))
         }
         return
       }
@@ -1433,6 +1398,8 @@ export function FloatingComposer({
       if (trimmed && onApplyPetSlashCommand?.(trimmed)) {
         setInput('')
         focusComposer()
+      } else {
+        showAttachNotice(t('composerCommandUnknown'))
       }
       return
     }
@@ -1474,15 +1441,59 @@ export function FloatingComposer({
           .trim()
       : `${focusPrefix} ${body}`.trim()
     if (!payload.trim()) return
-    attachTimersRef.current.forEach((timer) => clearInterval(timer))
-    attachTimersRef.current.clear()
+    if (fromClick) lastSendClickAtRef.current = Date.now()
+    const sentInput = input
+    const sentAttachments = attachments
+    const sentThreadId = activeThreadId
+    const sentPreviewPicks = previewPicks
+    const sentFocusSkill = focusSkill
+    const sentFocusConnector = focusConnector
+    const sentFocusPlugin = focusPlugin
     setAttachments([])
     setInput('')
+    inputRef.current = ''
     setFocusSkill(null)
     setFocusConnector(null)
     setFocusPlugin(null)
-    onClearPreviewPicks?.()
-    onSend(payload)
+    const restoreFailedSend = (): void => {
+      const currentId = chatStore.getState().activeThreadId
+      const createdId = !sentThreadId && currentId && !threads.some((thread) => thread.id === currentId)
+        ? currentId : null
+      const targetId = sentThreadId ?? createdId
+      if (mountedRef.current && activeThreadIdRef.current === currentId &&
+          (sentThreadId === currentId || createdId) && !inputRef.current.trim()) {
+        setInput(sentInput)
+        setAttachments(sentAttachments)
+        setFocusSkill((current) => current ?? sentFocusSkill)
+        setFocusConnector((current) => current ?? sentFocusConnector)
+        setFocusPlugin((current) => current ?? sentFocusPlugin)
+        focusComposer()
+      } else if (targetId) {
+        paneAttachments.set(targetId, [])
+        queueComposerRetryDraft(targetId, payload)
+      } else if (mountedRef.current && sentThreadId === null && currentId === null) {
+        setInput([sentInput, inputRef.current].filter(Boolean).join('\n'))
+        setAttachments((current) => [...sentAttachments, ...current])
+      }
+    }
+    void onSend(payload).then((started) => {
+      if (!started) return restoreFailedSend()
+      const currentId = chatStore.getState().activeThreadId
+      if (mountedRef.current && previewPicksRef.current === sentPreviewPicks &&
+          (sentThreadId === currentId || (!sentThreadId && currentId && !threads.some((thread) => thread.id === currentId)))) {
+        onClearPreviewPicks?.()
+      }
+    }).catch(restoreFailedSend)
+    focusComposer()
+  }
+
+  const handleSendClick = (): void => {
+    handlePrimaryAction(true)
+  }
+
+  const handleInterruptClick = (): void => {
+    if (Date.now() - lastSendClickAtRef.current < 400) return
+    onInterrupt()
   }
 
   return (
@@ -1714,8 +1725,6 @@ export function FloatingComposer({
             <div className="flex flex-wrap gap-2 px-1 pt-1">
               {attachments.map((item) => {
                 const badge = fileBadge(item.name)
-                const uploading = item.status === 'uploading'
-                const loaded = Math.round((item.size * item.progress) / 100)
                 return (
                   <div
                     key={item.id}
@@ -1737,57 +1746,26 @@ export function FloatingComposer({
                           className="max-w-full text-[12px] font-medium"
                         />
                         <div className="mt-0.5 flex items-center gap-1 text-[11px] text-ds-faint">
-                          {uploading ? (
-                            <span className="truncate">
-                              {t('composerAttachUploading', {
-                                percent: item.progress
-                              })}
-                              {' · '}
-                              {formatBytes(loaded)} of {formatBytes(item.size)}
-                            </span>
-                          ) : (
-                            <>
-                              <CheckCircle2
-                                className="h-3.5 w-3.5 shrink-0 text-[#10b981]"
-                                strokeWidth={2}
-                              />
-                              <span className="truncate">
-                                {t('composerAttachCompleted')}
-                                {' · '}
-                                {formatBytes(item.size)}
-                              </span>
-                            </>
-                          )}
+                          <CheckCircle2
+                            className="h-3.5 w-3.5 shrink-0 text-[#10b981]"
+                            strokeWidth={2}
+                          />
+                          <span className="truncate">
+                            {t('composerAttachCompleted')}
+                            {' · '}
+                            {formatBytes(item.size)}
+                          </span>
                         </div>
                       </div>
-                      {!uploading ? (
-                        <button
-                          type="button"
-                          onClick={() => removeAttachment(item.id)}
-                          className="shrink-0 rounded-full p-1 text-ds-faint transition hover:bg-[rgba(239,68,68,0.12)] hover:text-[#dc2626]"
-                          aria-label={t('composerAttachmentRemove')}
-                        >
-                          <Trash2 className="h-3.5 w-3.5" strokeWidth={2} />
-                        </button>
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={() => removeAttachment(item.id)}
-                          className="shrink-0 rounded-full p-1 text-ds-faint transition hover:bg-ds-hover hover:text-ds-ink"
-                          aria-label={t('composerAttachmentRemove')}
-                        >
-                          <X className="h-3.5 w-3.5" strokeWidth={2} />
-                        </button>
-                      )}
+                      <button
+                        type="button"
+                        onClick={() => removeAttachment(item.id)}
+                        className="shrink-0 rounded-full p-1 text-ds-faint transition hover:bg-[rgba(239,68,68,0.12)] hover:text-[#dc2626]"
+                        aria-label={t('composerAttachmentRemove')}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" strokeWidth={2} />
+                      </button>
                     </div>
-                    {uploading ? (
-                      <div className="h-1.5 w-full overflow-hidden rounded-full bg-ds-hover/70">
-                        <div
-                          className="h-full rounded-full bg-[linear-gradient(90deg,#6366f1,#4f7cff)] transition-[width] duration-150 ease-out"
-                          style={{ width: `${item.progress}%` }}
-                        />
-                      </div>
-                    ) : null}
                   </div>
                 )
               })}
@@ -2635,7 +2613,7 @@ export function FloatingComposer({
                 busy && !activeHighlightedSlashCommand && voicePhase === 'idle' ? (
                   <button
                     type="button"
-                    onClick={onInterrupt}
+                    onClick={handleInterruptClick}
                     className={`ds-no-drag flex shrink-0 items-center justify-center rounded-full border border-red-500/45 bg-red-500/15 text-red-600 shadow-sm transition hover:bg-red-500/25 hover:text-red-700 dark:text-red-300 dark:hover:text-red-200 ${
                       compactChrome ? 'h-7 w-7' : 'h-9 w-9'
                     }`}
@@ -2648,7 +2626,7 @@ export function FloatingComposer({
                   <button
                     type="button"
                     disabled={primaryActionDisabled}
-                    onClick={handlePrimaryAction}
+                    onClick={handleSendClick}
                     className={`ds-no-drag flex shrink-0 items-center justify-center rounded-full border border-accent/15 bg-accent text-white shadow-[0_10px_24px_rgba(79,124,255,0.28)] transition hover:brightness-110 disabled:cursor-not-allowed disabled:border-transparent disabled:bg-transparent disabled:text-ds-faint disabled:shadow-none ${
                       compactChrome ? 'h-7 w-7' : 'h-9 w-9'
                     }`}

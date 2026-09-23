@@ -279,7 +279,9 @@ class WebSearchTool(ToolSpec):
             "and return titles, URLs, and snippets. If this tool errors on a "
             "missing or rejected AnySearch/Tavily key and a Bing Search MCP "
             "tool is in this turn's list (mcp_*bing*), call it with the same "
-            "query. If none is listed, do not mention MCP."
+            "query. If none is listed, do not mention MCP. When picking "
+            "results to use, prefer reputable sources for factual claims "
+            "and skip pages that promote hate, violence, or harassment."
         )
 
     def _active_providers(self) -> list[str]:

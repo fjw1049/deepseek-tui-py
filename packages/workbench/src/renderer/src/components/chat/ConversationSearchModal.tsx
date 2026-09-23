@@ -202,10 +202,14 @@ export function ConversationSearchModal({
 
   useEffect(() => {
     if (!open) return
+    const previousFocus = document.activeElement
     setQuery('')
     setActiveIndex(0)
     const timer = window.setTimeout(() => inputRef.current?.focus(), 0)
-    return () => window.clearTimeout(timer)
+    return () => {
+      window.clearTimeout(timer)
+      if (previousFocus instanceof HTMLElement && previousFocus.isConnected) previousFocus.focus()
+    }
   }, [open])
 
   useEffect(() => {
@@ -243,6 +247,7 @@ export function ConversationSearchModal({
   )
 
   const onInputKeyDown = (event: ReactKeyboardEvent<HTMLInputElement>): void => {
+    if (event.nativeEvent.isComposing || event.keyCode === 229) return
     if (event.key === 'ArrowDown') {
       if (rowCount === 0) return
       event.preventDefault()

@@ -525,7 +525,7 @@ export function KanbanView({ onOpenThread, onOpenThreadTerminal }: Props): React
               value={rename.title}
               onChange={(event) => setRename({ ...rename, title: event.target.value })}
               onKeyDown={(event) => {
-                if (event.key === 'Enter') void commitRename()
+                if (event.key === 'Enter' && !event.nativeEvent.isComposing && event.keyCode !== 229) void commitRename()
                 if (event.key === 'Escape') setRename(null)
               }}
               className="w-full rounded-lg border border-ds-border bg-ds-card px-3 py-2 text-[13px] text-ds-ink outline-none focus:ring-1 focus:ring-sky-500/40"

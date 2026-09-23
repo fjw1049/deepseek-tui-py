@@ -707,7 +707,7 @@ function createWindow(): void {
     logError('preload', 'Failed to load preload script', { preloadPath, message })
   })
   mainWindow.webContents.on('console-message', (_event, level, message, line, sourceId) => {
-    const tag = level === 'error' ? '[renderer-error]' : `[renderer-log:${level}]`
+    const tag = level === 3 ? '[renderer-error]' : `[renderer-log:${level}]`
     console.log(`${tag} ${message} (${sourceId}:${line})`)
   })
   mainWindow.webContents.on('render-process-gone', (_event, details) => {

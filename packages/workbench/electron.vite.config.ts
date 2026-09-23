@@ -71,29 +71,36 @@ function ignoreUnchangedContentPlugin(seedRoots: string[]): Plugin {
   }
 }
 
-/** Bundle Material Icon Theme SVGs so file chips do not depend on a glob into node_modules. */
+/** Expose icon URLs without embedding every SVG in the renderer JavaScript. */
 function materialIconsPlugin(): Plugin {
   const virtualId = 'virtual:material-icons'
   const resolvedId = `\0${virtualId}`
   const iconsDir = resolve('node_modules/vscode-material-icons/generated/icons')
+  let isBuild = false
 
   return {
     name: 'workbench:material-icons',
+    configResolved(config) {
+      isBuild = config.command === 'build'
+    },
     resolveId(id) {
       if (id === virtualId) return resolvedId
     },
     load(id) {
       if (id !== resolvedId) return
       if (!existsSync(iconsDir)) {
-        return 'export const materialIconSvgByName = {}'
+        return 'export const materialIconUrlByName = {}'
       }
       const files = readdirSync(iconsDir).filter((name) => name.endsWith('.svg'))
       const entries = files.map((file) => {
         const name = file.replace(/\.svg$/i, '')
-        const svg = readFileSync(join(iconsDir, file), 'utf8')
-        return `${JSON.stringify(name)}:${JSON.stringify(svg)}`
+        const path = join(iconsDir, file)
+        const url = isBuild
+          ? `import.meta.ROLLUP_FILE_URL_${this.emitFile({ type: 'asset', name: file, source: readFileSync(path) })}`
+          : JSON.stringify(`/@fs/${path.replace(/\\/g, '/').replace(/^\//, '')}`)
+        return `${JSON.stringify(name)}:${url}`
       })
-      return `export const materialIconSvgByName = {${entries.join(',')}}`
+      return `export const materialIconUrlByName = {${entries.join(',')}}`
     }
   }
 }

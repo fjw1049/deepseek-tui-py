@@ -116,6 +116,7 @@ export function IdeQuickOpenPalette({
   }
 
   const onInputKeyDown = (event: ReactKeyboardEvent<HTMLInputElement>): void => {
+    if (event.nativeEvent.isComposing || event.keyCode === 229) return
     if (event.key === 'ArrowDown') {
       if (entries.length === 0) return
       event.preventDefault()

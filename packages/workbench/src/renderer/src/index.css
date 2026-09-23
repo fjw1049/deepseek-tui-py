@@ -3038,28 +3038,27 @@ samp {
   contain: paint;
 }
 
-/* Scroll perf: while any surface is actively scrolling (.is-scrolling flagged
-   on the shell by Workbench.tsx), drop the expensive backdrop-filter blur.
+/* During scroll or pane resize, drop the expensive backdrop-filter blur.
    Chromium re-rasterizes every blur layer per frame when content scrolls
    beneath glass — measured 25x GPU-busy and 6x main-thread frame time on long
    chat threads. Each glass surface already paints a translucent solid
    background underneath, so the only visible change is loss of blur —
-   imperceptible mid-scroll, restored ~160ms after scrolling stops. */
-.ds-workbench-shell.is-scrolling .ds-chat-composer,
-.ds-workbench-shell.is-scrolling .ds-frosted,
-.ds-workbench-shell.is-scrolling .ds-glass,
-.ds-workbench-shell.is-scrolling .ds-glass-segment-thumb,
-.ds-workbench-shell.is-scrolling .ds-topbar-surface,
-.ds-workbench-shell.is-scrolling .ds-sidebar-shell,
-.ds-workbench-shell.is-scrolling .ds-sidebar-expand-droplet,
-.ds-workbench-shell.is-scrolling .ds-composer-command-popover,
-.ds-workbench-shell.is-scrolling .ds-project-context-menu,
-.ds-workbench-shell.is-scrolling .ds-editor-picker-menu,
-.ds-workbench-shell.is-scrolling .ds-workbench-right-panel,
-.ds-workbench-shell.is-scrolling .ds-feature-page,
-.ds-workbench-shell.is-scrolling .ds-settings-page,
-.ds-workbench-shell.is-scrolling .ds-modal-backdrop,
-.ds-workbench-shell.is-scrolling .ds-modal-surface {
+   imperceptible during the gesture, restored when it stops. */
+.ds-workbench-shell:is(.is-scrolling, .is-resizing) .ds-chat-composer,
+.ds-workbench-shell:is(.is-scrolling, .is-resizing) .ds-frosted,
+.ds-workbench-shell:is(.is-scrolling, .is-resizing) .ds-glass,
+.ds-workbench-shell:is(.is-scrolling, .is-resizing) .ds-glass-segment-thumb,
+.ds-workbench-shell:is(.is-scrolling, .is-resizing) .ds-topbar-surface,
+.ds-workbench-shell:is(.is-scrolling, .is-resizing) .ds-sidebar-shell,
+.ds-workbench-shell:is(.is-scrolling, .is-resizing) .ds-sidebar-expand-droplet,
+.ds-workbench-shell:is(.is-scrolling, .is-resizing) .ds-composer-command-popover,
+.ds-workbench-shell:is(.is-scrolling, .is-resizing) .ds-project-context-menu,
+.ds-workbench-shell:is(.is-scrolling, .is-resizing) .ds-editor-picker-menu,
+.ds-workbench-shell:is(.is-scrolling, .is-resizing) .ds-workbench-right-panel,
+.ds-workbench-shell:is(.is-scrolling, .is-resizing) .ds-feature-page,
+.ds-workbench-shell:is(.is-scrolling, .is-resizing) .ds-settings-page,
+.ds-workbench-shell:is(.is-scrolling, .is-resizing) .ds-modal-backdrop,
+.ds-workbench-shell:is(.is-scrolling, .is-resizing) .ds-modal-surface {
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
 }

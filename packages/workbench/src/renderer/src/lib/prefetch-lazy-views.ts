@@ -1,58 +1,45 @@
 /**
- * Warm the app's lazily-loaded feature chunks once the shell is up, so the
- * first open of Settings / Kanban / Marketplace / Automation / Channels (and
- * the chat renderer / right-rail panels) doesn't stall on a cold chunk.
+ * Warm common lazily-loaded views once the shell is idle.
  *
  * In dev, Vite transforms those chunk sources on demand, so a cold first
- * click blanked the main area for a noticeable beat; in production the same
- * click pays a smaller fetch-and-parse cost. Prefetching while idle removes
- * both — by the time the user clicks, the modules are already in cache and
- * the `lazy()` boundary resolves synchronously.
+ * click blanked the main area for a noticeable beat. Leave rarer views on
+ * demand so opening the app does not parse every feature in the background.
  *
  * WorkspaceEditorSurface (Monaco, ~7 MB) is deliberately NOT prefetched: it
  * is only needed once a file is actually opened for editing, and eager
  * evaluation would cost real memory and idle CPU for every user.
  */
 
-const IDLE_TIMEOUT_MS = 4000
-
 type IdleWindow = Window & {
-  requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number
+  requestIdleCallback?: (cb: () => void) => number
 }
 
 function runWhenIdle(task: () => void): void {
   const candidate = window as IdleWindow
   if (typeof candidate.requestIdleCallback === 'function') {
-    candidate.requestIdleCallback(task, { timeout: IDLE_TIMEOUT_MS })
+    candidate.requestIdleCallback(task)
     return
   }
-  window.setTimeout(task, IDLE_TIMEOUT_MS)
+  window.setTimeout(task, 300)
 }
 
-/** Remounts (Fast Refresh) must not restart the prefetch waves. */
+/** Remounts (Fast Refresh) must not restart prefetching. */
 let started = false
 
 export function prefetchLazyViews(): void {
   if (started) return
   started = true
-
-  runWhenIdle(() => {
-    // Sidebar destinations first — these are the routes users open from the
-    // main interface.
-    void import('../components/SettingsView')
-    void import('../components/kanban/KanbanView')
-    void import('../components/extensions/MarketplaceView')
-    void import('../components/automation/AutomationCenter')
-    void import('../components/channels/ChannelCenter')
-
-    // Secondary surfaces once the routes are warm.
+  const loaders = [
+    () => import('../components/SettingsView'),
+    () => import('../components/kanban/KanbanView'),
+    () => import('../components/chat/StreamdownAssistant')
+  ]
+  let index = 0
+  const next = (): void => {
+    if (index >= loaders.length) return
     runWhenIdle(() => {
-      void import('../components/chat/StreamdownAssistant')
-      void import('../components/right-sidebar/RunPanel')
-      void import('../components/ChangeInspector')
-      void import('../components/DevBrowserPanel')
-      void import('../components/workspace-editor/WorkspaceEditorPanel')
-      void import('../components/chat/tool/lazy-full-output')
+      void loaders[index++]().catch(() => undefined).finally(next)
     })
-  })
+  }
+  next()
 }

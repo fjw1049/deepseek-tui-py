@@ -133,6 +133,8 @@ export function AppTerminalPanel({
   const terminalHandlesRef = useRef<Map<string, TerminalHandle>>(new Map())
   const pendingOutputRef = useRef<Map<string, string>>(new Map())
   const fitFrameRef = useRef<number | null>(null)
+  const splitFrameRef = useRef<number | null>(null)
+  const pendingSplitRef = useRef<{ id: string; ratio: number } | null>(null)
   const trimmedWorkspaceRoot = workspaceRoot.trim()
 
   const baseLabel = useMemo(() => {
@@ -150,11 +152,14 @@ export function AppTerminalPanel({
         window.cancelAnimationFrame(fitFrameRef.current)
       }
       fitFrameRef.current = window.requestAnimationFrame(() => {
+        fitFrameRef.current = null
         for (const sessionId of ids) {
           const handle = terminalHandlesRef.current.get(sessionId)
           if (!handle) continue
+          const { cols, rows } = handle.terminal
           handle.fitAddon.fit()
-          if (handle.terminal.cols > 0 && handle.terminal.rows > 0) {
+          if ((cols !== handle.terminal.cols || rows !== handle.terminal.rows) &&
+              handle.terminal.cols > 0 && handle.terminal.rows > 0) {
             void window.dsGui?.resizeTerminalSession?.({
               sessionId,
               cols: handle.terminal.cols,
@@ -383,6 +388,7 @@ export function AppTerminalPanel({
   useEffect(() => {
     return () => {
       if (fitFrameRef.current !== null) window.cancelAnimationFrame(fitFrameRef.current)
+      if (splitFrameRef.current !== null) window.cancelAnimationFrame(splitFrameRef.current)
       for (const handle of terminalHandlesRef.current.values()) {
         handle.inputDisposable.dispose()
         handle.terminal.dispose()
@@ -397,6 +403,20 @@ export function AppTerminalPanel({
     if (event.button !== 0 || !viewportRef.current) return
     event.preventDefault()
     event.currentTarget.setPointerCapture(event.pointerId)
+  }
+
+  const flushSplitResize = (): void => {
+    if (splitFrameRef.current !== null) window.cancelAnimationFrame(splitFrameRef.current)
+    splitFrameRef.current = null
+    const pending = pendingSplitRef.current
+    pendingSplitRef.current = null
+    if (pending) resizeSplit(pending.id, pending.ratio)
+  }
+
+  const queueSplitResize = (id: string, ratio: number): void => {
+    pendingSplitRef.current = { id, ratio }
+    if (splitFrameRef.current !== null) return
+    splitFrameRef.current = window.requestAnimationFrame(flushSplitResize)
   }
 
   const closeSession = (sessionId: string): void => {
@@ -543,9 +563,10 @@ export function AppTerminalPanel({
               const bounds = viewportRef.current?.getBoundingClientRect()
               if (!bounds) return
               const position = right ? (event.clientX - bounds.left) / bounds.width * 100 : (event.clientY - bounds.top) / bounds.height * 100
-              resizeSplit(split.id, (position - (right ? split.left : split.top)) / (right ? split.width : split.height))
+              queueSplitResize(split.id, (position - (right ? split.left : split.top)) / (right ? split.width : split.height))
             }}
-            onPointerUp={(event) => { if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId) }}
+            onPointerUp={(event) => { flushSplitResize(); if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId) }}
+            onPointerCancel={flushSplitResize}
             onDoubleClick={() => resizeSplit(split.id, 0.5)}
             onKeyDown={(event) => {
               const delta = event.key === (right ? 'ArrowRight' : 'ArrowDown') ? 0.05 : event.key === (right ? 'ArrowLeft' : 'ArrowUp') ? -0.05 : 0

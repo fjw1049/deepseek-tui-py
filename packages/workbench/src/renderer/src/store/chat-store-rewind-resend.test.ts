@@ -87,6 +87,30 @@ describe('rewind task ownership', () => {
     expect(useChatStore.getState().error).toBe('Task B notice')
   })
 
+  it('keeps earlier block updates that arrive while a rewind is pending', async () => {
+    let releaseRewind!: (value: null) => void
+    provider.rewindThread.mockImplementation(
+      () => new Promise<null>((resolve) => { releaseRewind = resolve })
+    )
+    useChatStore.setState({
+      activeThreadId: 'thread-a',
+      busy: false,
+      blocks: [
+        { kind: 'system', id: 'notice', text: 'old' },
+        { kind: 'user', id: 'item_a', text: 'Task A message' }
+      ]
+    })
+    const rewind = useChatStore.getState().rewindToMessage('item_a', { restoreFiles: false })
+    await vi.waitFor(() => expect(provider.rewindThread).toHaveBeenCalledOnce())
+    useChatStore.setState({ blocks: [
+      { kind: 'system', id: 'notice', text: 'updated' },
+      { kind: 'user', id: 'item_a', text: 'Task A message' }
+    ] })
+    releaseRewind(null)
+    await rewind
+    expect(useChatStore.getState().blocks).toEqual([{ kind: 'system', id: 'notice', text: 'updated' }])
+  })
+
   it('keeps a late code-restore result scoped to its originating task', async () => {
     let releaseRestore!: (value: {
       restoredFiles: string[]

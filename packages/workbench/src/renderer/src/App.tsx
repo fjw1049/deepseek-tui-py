@@ -1,6 +1,31 @@
-import { lazy, Suspense } from 'react'
+import { Component, lazy, Suspense, type ReactNode } from 'react'
+import i18n from './i18n'
 
 const AppShell = lazy(() => import('./AppShell'))
+
+class AppErrorBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
+  state = { failed: false }
+
+  static getDerivedStateFromError(): { failed: boolean } {
+    return { failed: true }
+  }
+
+  componentDidCatch(error: Error): void {
+    console.error('[Workbench] interface error:', error)
+  }
+
+  render(): ReactNode {
+    if (!this.state.failed) return this.props.children
+    return (
+      <div className="ds-app-root flex h-full min-h-0 flex-col items-center justify-center gap-4 bg-ds-main px-6 text-center text-ds-ink" role="alert">
+        <p>{i18n.t('common:appRenderError')}</p>
+        <button type="button" className="rounded-xl bg-accent px-4 py-2 text-white" onClick={() => window.location.reload()}>
+          {i18n.t('common:reloadApp')}
+        </button>
+      </div>
+    )
+  }
+}
 
 function StartupShell(): React.ReactElement {
   return (
@@ -15,8 +40,10 @@ function StartupShell(): React.ReactElement {
 
 export default function App(): React.ReactElement {
   return (
-    <Suspense fallback={<StartupShell />}>
-      <AppShell />
-    </Suspense>
+    <AppErrorBoundary>
+      <Suspense fallback={<StartupShell />}>
+        <AppShell />
+      </Suspense>
+    </AppErrorBoundary>
   )
 }

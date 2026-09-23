@@ -13,6 +13,7 @@ export function usePaneSwapMotion(root: RefObject<HTMLDivElement | null>, layout
     for (const element of motion.current.keys()) element.style.transform = ''
   }, [])
   useLayoutEffect(() => {
+    if (order === previousOrder.current && !narrow && motion.current.size) return
     const elements = [...(root.current?.querySelectorAll<HTMLElement>('[data-chat-pane]') ?? [])]
     const moved = order !== previousOrder.current && !narrow && !window.matchMedia('(prefers-reduced-motion: reduce)').matches
     previousOrder.current = order

@@ -221,6 +221,8 @@ const { armBusyWatchdog: armBusyWatchdogImpl, clearBusyWatchdog,
   resetBusyRecoveryAttempts, scheduleStartupRuntimeProbe, stopTurnCompletionPoll,
   syncTurnCompletionPoll: syncTurnCompletionPollImpl, dispose: disposeSchedulers } = createChatSchedulers()
 let selectionVersion = 0
+let pendingSelectionVersion: number | null = null
+let threadsRefreshVersion = 0
 let disposed = false
 let sseAbort: AbortController | null = null
 const sseAbortRef = {
@@ -826,9 +828,9 @@ function syncTurnCompletionPoll(
 
 function buildThreadEventSink(
   set: (partial: Partial<ChatState> | ((state: ChatState) => Partial<ChatState>)) => void,
-  get: () => ChatState
+  get: () => ChatState,
+  threadId: string
 ): ThreadEventSink {
-  const threadId = get().activeThreadId
   const signal = sseAbort?.signal
   const sink: ThreadEventSink = {
     onSeq: (seq) => {
@@ -2077,10 +2079,12 @@ const store = create<ChatState>((set, get) => ({
 
   refreshThreads: async () => {
     if (get().runtimeConnection !== 'ready') return
+    const refreshVersion = ++threadsRefreshVersion
     try {
       const { providerId } = get()
       const p = getProvider(providerId)
       const rawThreads = await p.listThreads()
+      if (disposed || refreshVersion !== threadsRefreshVersion) return
       const threads = rawThreads.map((thread) => ({
         ...thread,
         // Persist the runtime workspace verbatim. Display code that wants
@@ -2125,11 +2129,12 @@ const store = create<ChatState>((set, get) => ({
       if (
         activeId &&
         get().threads.some((thread) => thread.id === activeId) &&
-        sseAbort == null
+        sseAbort == null && pendingSelectionVersion === null
       ) {
         await get().selectThread(activeId)
       }
     } catch (e) {
+      if (disposed || refreshVersion !== threadsRefreshVersion) return
       stopTurnCompletionPoll()
       set({
         runtimeConnection: 'offline',
@@ -2225,6 +2230,8 @@ const store = create<ChatState>((set, get) => ({
     const state = get()
     if (!state.activeThreadId) return false
     const { activeThreadId, providerId } = state
+    const version = selectionVersion
+    const stale = (): boolean => disposed || version !== selectionVersion || get().activeThreadId !== activeThreadId
     const p = getProvider(providerId)
     sseAbort?.abort()
     sseAbort = null
@@ -2243,6 +2250,7 @@ const store = create<ChatState>((set, get) => ({
         activePlugin: loadedPlugin,
         goal: loadedGoal
       } = await p.getThreadDetail(activeThreadId)
+      if (stale()) return false
       // History can leave sub-agent cards stuck at "running" when interrupt
       // skipped the terminal mailbox flush — clear them when the thread itself
       // is idle so busy/queue detection is honest.
@@ -2252,6 +2260,7 @@ const store = create<ChatState>((set, get) => ({
         : finalizeOrphanSubagentBlocks(hydrated)
       const busy = threadSnapshotLooksRunning(blocks, threadStatus)
       const synced = await syncRuntimePendingApprovals(p, activeThreadId, blocks, busy)
+      if (stale()) return false
       const currentTurnUserId = busy
         ? state.currentTurnUserId ?? latestUserMessageId ?? findLatestUserBlockId(synced.blocks)
         : null
@@ -2287,7 +2296,7 @@ const store = create<ChatState>((set, get) => ({
       }))
 
       const ac = (sseAbort = new AbortController())
-      const sink = buildThreadEventSink(set, get)
+      const sink = buildThreadEventSink(set, get, activeThreadId)
       void p.subscribeThreadEvents(activeThreadId, latestSeq, sink, ac.signal)
       if (busy) {
         armBusyWatchdog(set, get)
@@ -2300,6 +2309,7 @@ const store = create<ChatState>((set, get) => ({
       }
       return busy
     } catch (e) {
+      if (stale()) return false
       set({
         error: formatRuntimeError(e),
         ...(settingsSectionForRuntimeError(e)
@@ -2352,6 +2362,7 @@ const store = create<ChatState>((set, get) => ({
 
   selectThread: async (id) => {
     const version = ++selectionVersion
+    pendingSelectionVersion = null
     if (get().runtimeConnection !== 'ready') {
       set({ error: i18n.t('common:runtimeActionNeedsConnection') })
       return
@@ -2383,6 +2394,7 @@ const store = create<ChatState>((set, get) => ({
       return true
     }
     if (adoptOwner()) return
+    pendingSelectionVersion = version
     try {
       resetBusyRecoveryAttempts()
       clearBusyWatchdog()
@@ -2440,7 +2452,7 @@ const store = create<ChatState>((set, get) => ({
       })
       syncTurnCompletionPoll(set, get)
       const ac = sseAbort = new AbortController()
-      const sink = buildThreadEventSink(set, get)
+      const sink = buildThreadEventSink(set, get, id)
       void p.subscribeThreadEvents(id, latestSeq, sink, ac.signal)
       if (busy) {
         armBusyWatchdog(set, get)
@@ -2455,6 +2467,8 @@ const store = create<ChatState>((set, get) => ({
           ? { route: 'settings' as const, settingsSection: settingsSectionForRuntimeError(e)! }
           : {})
       })
+    } finally {
+      if (pendingSelectionVersion === version) pendingSelectionVersion = null
     }
   },
 
@@ -2465,9 +2479,10 @@ const store = create<ChatState>((set, get) => ({
       while (true) {
         const state = get()
         const next = state.queuedMessages[0]
-        if (!next || state.busy) return
+        if (!next || state.busy || state.blocks.some(hasPendingRuntimeWork)) return
         const started = await get().sendMessage(next.text, next.mode, { queued: next })
         if (!started) return
+        if (get().queuedMessages[0]?.id === next.id) return
       }
     } finally {
       drainingQueuedMessages = false
@@ -2814,9 +2829,13 @@ const store = create<ChatState>((set, get) => ({
           }))
         }
       }
+      if (get().activeThreadId !== activeThreadId) {
+        await get().refreshThreads()
+        return true
+      }
       set({ currentTurnId: turnId })
       const ac = sseAbort = new AbortController()
-      const sink = buildThreadEventSink(set, get)
+      const sink = buildThreadEventSink(set, get, activeThreadId)
       void p.subscribeThreadEvents(activeThreadId, seqAtSend, sink, ac.signal)
       armBusyWatchdog(set, get)
       await get().refreshThreads()
@@ -2940,7 +2959,7 @@ const store = create<ChatState>((set, get) => ({
           void p.subscribeThreadEvents(
             threadId,
             get().lastSeq,
-            buildThreadEventSink(set, get),
+            buildThreadEventSink(set, get, threadId),
             ac.signal
           )
         }
@@ -3333,7 +3352,7 @@ const store = create<ChatState>((set, get) => ({
     }
 
     // Drop the target user block and everything after it from the UI.
-    const patch = truncateStateAtUserBlock(state, userBlockId)
+    const patch = truncateStateAtUserBlock(get(), userBlockId)
     if (!patch) return false
     set(patch)
     if (restoredOnBackend) {
@@ -3428,7 +3447,7 @@ const store = create<ChatState>((set, get) => ({
       return
     }
 
-    const patch = truncateStateAtUserBlock(state, userBlockId)
+    const patch = truncateStateAtUserBlock(get(), userBlockId)
     if (!patch) return
     set(patch)
     if (restoredOnBackend) {
@@ -3845,8 +3864,16 @@ if (options.appView) {
     } })
   }
 }
+const unsubscribeQueue = store.subscribe((state, previous) => {
+  if (state.activeThreadId !== previous.activeThreadId || state.busy || !state.queuedMessages.length) return
+  if (!previous.blocks.some(hasPendingRuntimeWork) || state.blocks.some(hasPendingRuntimeWork)) return
+  queueMicrotask(() => {
+    if (!disposed) void store.getState().drainQueuedMessages()
+  })
+})
 return { store, clearSelection(workspaceRoot: string) {
   selectionVersion++
+  pendingSelectionVersion = null
   sseAbort?.abort()
   sseAbort = null
   clearTurnCompletionProbe()
@@ -3859,7 +3886,9 @@ return { store, clearSelection(workspaceRoot: string) {
   clearBusyWatchdog()
 }, dispose() {
   disposed = true
+  unsubscribeQueue()
   selectionVersion++
+  pendingSelectionVersion = null
   sseAbort?.abort()
   sseAbort = null
   clearTurnCompletionProbe()

@@ -104,6 +104,7 @@ export function SessionHeader({ compact = false, className = '' }: Props): React
                   onChange={(e) => setDraftTitle(e.target.value)}
                   onBlur={() => commitTitle()}
                   onKeyDown={(e) => {
+                    if (e.nativeEvent.isComposing || e.keyCode === 229) return
                     if (e.key === 'Enter') {
                       e.preventDefault()
                       commitTitle()

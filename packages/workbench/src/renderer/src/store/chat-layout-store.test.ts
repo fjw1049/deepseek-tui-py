@@ -74,6 +74,9 @@ it('persists arrangement and restores old or invalid layouts as a grid', () => {
   expect(JSON.parse(window.localStorage.getItem('deepseek.chat-layouts.v1')!)['/repo'].arrangement).toBe('vertical')
   expect(sanitizeChatLayout({ ...layout, arrangement: undefined })?.arrangement).toBe('grid')
   expect(sanitizeChatLayout({ ...layout, arrangement: 'invalid' })?.arrangement).toBe('grid')
+  actions.arrange('/repo', 'tabs')
+  const saved = JSON.parse(window.localStorage.getItem('deepseek.chat-layouts.v1')!)['/repo']
+  expect(sanitizeChatLayout(saved)?.arrangement).toBe('tabs')
 })
 
 it('swaps pane identities, focuses the dragged conversation, and persists the new order', () => {

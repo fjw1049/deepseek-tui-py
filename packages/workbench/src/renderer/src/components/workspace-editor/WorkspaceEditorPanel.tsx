@@ -817,6 +817,8 @@ export function WorkspaceEditorPanel({
       document.body.style.userSelect = prevUserSelect
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('pointercancel', onUp)
+      window.removeEventListener('blur', onUp)
       endPointerDragRef.current = null
     }
 
@@ -835,6 +837,8 @@ export function WorkspaceEditorPanel({
     endPointerDragRef.current = endDrag
     window.addEventListener('pointermove', onMove)
     window.addEventListener('pointerup', onUp)
+    window.addEventListener('pointercancel', onUp)
+    window.addEventListener('blur', onUp)
   }
 
   const beginSplitResize = (event: ReactPointerEvent<HTMLDivElement>): void => {
@@ -863,6 +867,8 @@ export function WorkspaceEditorPanel({
       document.body.style.userSelect = prevUserSelect
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('pointercancel', onUp)
+      window.removeEventListener('blur', onUp)
       endPointerDragRef.current = null
     }
 
@@ -881,6 +887,8 @@ export function WorkspaceEditorPanel({
     endPointerDragRef.current = endDrag
     window.addEventListener('pointermove', onMove)
     window.addEventListener('pointerup', onUp)
+    window.addEventListener('pointercancel', onUp)
+    window.addEventListener('blur', onUp)
   }
 
   const handleCloseTab = useCallback(

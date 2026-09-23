@@ -5,7 +5,7 @@ export const MAX_CHAT_PANES = 6
 export const CHAT_THREAD_DRAG_MIME = 'application/x-deepseek-thread'
 export type ChatPane = { id: string; threadId: string | null }
 export type ParkedChatPane = ChatPane & { index: number }
-export type ChatArrangement = 'grid' | 'horizontal' | 'vertical'
+export type ChatArrangement = 'grid' | 'horizontal' | 'vertical' | 'tabs'
 export type ChatLayout = { arrangement?: ChatArrangement; parked?: ParkedChatPane[]; panes: ChatPane[]; focused: string; x: number; y: number }
 const STORAGE_KEY = 'deepseek.chat-layouts.v1'
 export const chatProjectKey = (path: string): string => normalizeWorkspaceRoot(path)
@@ -31,7 +31,7 @@ export function sanitizeChatLayout(value: unknown): ChatLayout | null {
   })
   if (!panes.length) return null
   const ratio = (v: unknown): number => typeof v === 'number' && Number.isFinite(v) ? Math.max(.25, Math.min(.75, v)) : .5
-  return { parked, arrangement: raw.arrangement === 'horizontal' || raw.arrangement === 'vertical' ? raw.arrangement : 'grid', panes, focused: panes.some(p => p.id === raw.focused) ? raw.focused! : panes[0].id, x: ratio(raw.x), y: ratio(raw.y) }
+  return { parked, arrangement: raw.arrangement === 'horizontal' || raw.arrangement === 'vertical' || raw.arrangement === 'tabs' ? raw.arrangement : 'grid', panes, focused: panes.some(p => p.id === raw.focused) ? raw.focused! : panes[0].id, x: ratio(raw.x), y: ratio(raw.y) }
 }
 
 function loadLayouts(): Record<string, ChatLayout> {

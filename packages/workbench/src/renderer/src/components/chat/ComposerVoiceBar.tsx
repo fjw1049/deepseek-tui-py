@@ -67,7 +67,6 @@ export function ComposerVoiceBar({
         <button
           type="button"
           onClick={onCancel}
-          disabled={phase === 'transcribing'}
           className="ds-no-drag flex h-8 w-8 items-center justify-center rounded-full border border-ds-border bg-ds-card text-ds-muted transition hover:bg-ds-hover hover:text-ds-ink disabled:cursor-not-allowed disabled:opacity-50"
           aria-label={labels.cancel}
           title={labels.cancel}

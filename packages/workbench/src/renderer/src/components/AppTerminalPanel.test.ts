@@ -70,3 +70,37 @@ it.each(['bottom', 'sidebar'] as const)('uses shared split controls on %s withou
     host.remove()
   }
 })
+
+it('coalesces split pointer moves and applies the final position on release', async () => {
+  state().addSession({ id: 'a', cwd: '/workspace', status: 'running' })
+  const host = document.createElement('div')
+  document.body.appendChild(host)
+  const root = createRoot(host)
+  try {
+    await act(async () => root.render(createElement(AppTerminalPanel, { workspaceRoot: '/workspace', mountActive: true, mountSurface: 'bottom' })))
+    await act(async () => (host.querySelector('[aria-label="terminalSplitRight"]') as HTMLButtonElement).click())
+    const separator = host.querySelector('[role="separator"]') as HTMLDivElement
+    vi.spyOn(separator, 'hasPointerCapture').mockReturnValue(true)
+    vi.spyOn(separator.parentElement!, 'getBoundingClientRect').mockReturnValue({ left: 0, top: 0, width: 100, height: 100 } as DOMRect)
+    const frames: FrameRequestCallback[] = []
+    const requestFrame = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+      frames.push(callback)
+      return frames.length
+    })
+    try {
+      await act(async () => {
+        separator.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, pointerId: 1, clientX: 60 }))
+        separator.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, pointerId: 1, clientX: 80 }))
+      })
+      expect(frames).toHaveLength(1)
+      expect(separator.getAttribute('aria-valuenow')).toBe('50')
+      await act(async () => separator.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 1 })))
+      expect(separator.getAttribute('aria-valuenow')).toBe('80')
+    } finally {
+      requestFrame.mockRestore()
+    }
+  } finally {
+    await act(async () => root.unmount())
+    host.remove()
+  }
+})

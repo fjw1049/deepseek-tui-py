@@ -1,5 +1,6 @@
 import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { useChatStore } from './store/chat-store'
+import i18n from './i18n'
 
 const Workbench = lazy(() =>
   import('./components/Workbench').then((module) => ({ default: module.Workbench }))
@@ -19,10 +20,8 @@ const REVEAL_MS = 580
  *  kinetic grid has faded. */
 const BLANK_EXIT_MS = 200
 
-/** Keep the startup board (and its kinetic grid) up at least this long, so the
- *  animation is seen even when the runtime settles almost immediately. */
-/** Long enough to notice cursor attraction before the veil lifts. */
-const MIN_BLANK_MS = 2800
+/** A brief entrance keeps a fast handshake from flashing the board. */
+const MIN_BLANK_MS = 300
 
 /**
  * Survives Vite Fast Refresh / HMR remounts of this module. Without this, every
@@ -156,7 +155,7 @@ export default function AppShell(): React.ReactElement {
             .filter(Boolean)
             .join(' ')}
         >
-          <Suspense fallback={null}>
+          <Suspense fallback={<div className="flex h-full items-center justify-center text-ds-muted" role="status">{i18n.t('common:startupRenderer')}</div>}>
             <Workbench />
           </Suspense>
         </div>
