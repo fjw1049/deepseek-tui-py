@@ -1,5 +1,6 @@
 import { Component, lazy, Suspense, type ReactNode } from 'react'
 import i18n from './i18n'
+import { StartupWindowDragRegions } from './components/StartupWindowDragRegions'
 
 const AppShell = lazy(() => import('./AppShell'))
 
@@ -29,7 +30,8 @@ class AppErrorBoundary extends Component<{ children: ReactNode }, { failed: bool
 
 function StartupShell(): React.ReactElement {
   return (
-    <div className="ds-app-root flex h-full min-h-0 items-center justify-center bg-transparent text-ds-muted">
+    <div className="ds-app-root ds-no-drag relative flex h-full min-h-0 items-center justify-center bg-transparent text-ds-muted">
+      <StartupWindowDragRegions />
       <div className="ds-glass flex items-center gap-2 rounded-full px-4 py-2 text-[13px]">
         <span className="h-2 w-2 animate-pulse rounded-full bg-accent" aria-hidden />
         <span>Loading DeepSeek GUI...</span>

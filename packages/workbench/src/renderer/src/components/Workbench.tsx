@@ -2,7 +2,7 @@ import { createConversationInSplit } from '../lib/chat-split-navigation'
 import { ChatSplitToolbar } from './chat/ChatSplitToolbar'
 import type { ChatSplitPresentation } from '../lib/chat-split-presentation'
 import { ChatSplitWorkspace, ChatSplitDropZone } from './chat/ChatSplitWorkspace'
-import { resolveChatLayoutKey, CHAT_THREAD_DRAG_MIME, MAX_CHAT_PANES, useChatLayoutStore } from '../store/chat-layout-store'
+import { activeChatLayout, resolveChatLayoutKey, CHAT_THREAD_DRAG_MIME, MAX_CHAT_PANES, useChatLayoutStore } from '../store/chat-layout-store'
 import { syncChatPaneCatalog, disposeChatPaneSessions, peekChatPaneSession } from '../store/chat-pane-sessions'
 import { FeedbackNotice } from './FeedbackNotice'
 import { useRunPanelStore } from '../store/run-panel-store'
@@ -13,8 +13,6 @@ import type {
   RefObject
 } from 'react'
 import {
-  lazy,
-  Suspense,
   useCallback,
   useEffect,
   useMemo,
@@ -109,24 +107,13 @@ import {
   WorkbenchRightSidebar
 } from './right-sidebar/WorkbenchRightSidebar'
 import { IdeWorkspaceLayout } from './ide/IdeWorkspaceLayout'
-import { prefetchLazyViews } from '../lib/prefetch-lazy-views'
 import { createFrameQueue } from '../lib/frame-queue'
 
-const MarketplaceView = lazy(() =>
-  import('./extensions/MarketplaceView').then((module) => ({ default: module.MarketplaceView }))
-)
-const AutomationCenter = lazy(() =>
-  import('./automation/AutomationCenter').then((module) => ({ default: module.AutomationCenter }))
-)
-const ChannelCenter = lazy(() =>
-  import('./channels/ChannelCenter').then((module) => ({ default: module.ChannelCenter }))
-)
-const KanbanView = lazy(() =>
-  import('./kanban/KanbanView').then((module) => ({ default: module.KanbanView }))
-)
-const SettingsView = lazy(() =>
-  import('./SettingsView').then((module) => ({ default: module.SettingsView }))
-)
+import { MarketplaceView } from './extensions/MarketplaceView'
+import { AutomationCenter } from './automation/AutomationCenter'
+import { ChannelCenter } from './channels/ChannelCenter'
+import { KanbanView } from './kanban/KanbanView'
+import { SettingsView } from './SettingsView'
 
 const LEFT_PANEL_WIDTH_KEY = 'deepseekgui.layout.leftSidebarWidth'
 const LEFT_PANEL_COLLAPSED_KEY = 'deepseekgui.layout.leftSidebarCollapsed'
@@ -265,7 +252,6 @@ function persistBoolean(key: string, value: boolean): void {
 
 export function Workbench(): ReactElement {
   const { t } = useTranslation('common')
-  useEffect(() => prefetchLazyViews(), [])
   const {
     threads,
     activeThreadId,
@@ -468,7 +454,7 @@ export function Workbench(): ReactElement {
     [activeThreadId, threads, workspaceRoot]
   )
   const splitProject = useChatLayoutStore(s => resolveChatLayoutKey(s, activeWorkspaceRoot))
-  const chatLayout = useChatLayoutStore(s => s.layouts[splitProject])
+  const chatLayout = useChatLayoutStore(s => activeChatLayout(s, activeWorkspaceRoot))
   const [splitPresentation, setSplitPresentation] = useState<ChatSplitPresentation>('grid')
   const splitActive = (chatLayout?.panes.length ?? 1) > 1 || Boolean(chatLayout?.parked?.length)
   const [splitAction, setSplitAction] = useState<{ threadId: string; kind: 'file' | 'diff'; path?: string; line?: number } | null>(null)
@@ -486,9 +472,9 @@ export function Workbench(): ReactElement {
     if (layout && activeThreadId) state.bind(splitProject, layout.focused, activeThreadId)
   }, [activeThreadId, splitProject])
   useEffect(() => {
-    if (threads.length) useChatLayoutStore.getState().reconcile(splitProject,
+    if (chatLayout && threads.length) useChatLayoutStore.getState().reconcile(splitProject,
       threads.filter(thread => !thread.archived).map(thread => thread.id))
-  }, [threads, splitProject])
+  }, [threads, splitProject, chatLayout])
   useEffect(() => {
     syncChatPaneCatalog(useChatStore.getState())
     const off = useChatStore.subscribe((state, previous) => {
@@ -1658,32 +1644,22 @@ export function Workbench(): ReactElement {
           ) : null}
         </div>
         {route === 'settings' ? (
-          <Suspense fallback={<div className="flex h-full items-center justify-center text-ds-muted" role="status">{t('startupRenderer')}</div>}>
-            <SettingsView />
-          </Suspense>
+          <SettingsView />
         ) : route === 'marketplace' ? (
-          <Suspense fallback={<div className="flex h-full items-center justify-center text-ds-muted" role="status">{t('startupRenderer')}</div>}>
-            <MarketplaceView />
-          </Suspense>
+          <MarketplaceView />
         ) : route === 'kanban' ? (
-          <Suspense fallback={<div className="flex h-full items-center justify-center text-ds-muted" role="status">{t('startupRenderer')}</div>}>
-            <KanbanView
-              onOpenThread={openThread}
-              onOpenThreadTerminal={openThreadTerminal}
-            />
-          </Suspense>
+          <KanbanView
+            onOpenThread={openThread}
+            onOpenThreadTerminal={openThreadTerminal}
+          />
         ) : route === 'automation' ? (
-          <Suspense fallback={<div className="flex h-full items-center justify-center text-ds-muted" role="status">{t('startupRenderer')}</div>}>
-            <AutomationCenter
-              runtimeReady={runtimeConnection === 'ready'}
-              workspaceRoot={activeWorkspaceRoot}
-              onOpenRuntimeSettings={() => openSettings('general')}
-            />
-          </Suspense>
+          <AutomationCenter
+            runtimeReady={runtimeConnection === 'ready'}
+            workspaceRoot={activeWorkspaceRoot}
+            onOpenRuntimeSettings={() => openSettings('general')}
+          />
         ) : route === 'channels' ? (
-          <Suspense fallback={<div className="flex h-full items-center justify-center text-ds-muted" role="status">{t('startupRenderer')}</div>}>
-            <ChannelCenter runtimeReady={runtimeConnection === 'ready'} />
-          </Suspense>
+          <ChannelCenter runtimeReady={runtimeConnection === 'ready'} />
         ) : (
           <>
 

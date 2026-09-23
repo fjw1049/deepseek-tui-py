@@ -49,8 +49,9 @@ export function resolveChatLayoutKey(state: Pick<LayoutState, 'activeLayoutKey' 
     ? state.activeLayoutKey : chatProjectKey(workspace)
 }
 
-function loadActiveLayoutKey(): string | null {
-  try { return window.localStorage.getItem('deepseek.chat-layout-active.v1') } catch { return null }
+/** Saved splits become visible only after a navigation action in this session. */
+export function activeChatLayout(state: Pick<LayoutState, 'activeLayoutKey' | 'layouts'>, workspace: string): ChatLayout | undefined {
+  return state.activeLayoutKey ? state.layouts[resolveChatLayoutKey(state, workspace)] : undefined
 }
 
 type LayoutState = {
@@ -75,11 +76,11 @@ export const useChatLayoutStore = create<LayoutState>((set, get) => {
     if (!clean) return
     const layouts = { ...get().layouts, [chatProjectKey(project)]: clean }
     set({ layouts, activeLayoutKey: chatProjectKey(project) })
-    try { window.localStorage.setItem(STORAGE_KEY, JSON.stringify(layouts)); window.localStorage.setItem('deepseek.chat-layout-active.v1', chatProjectKey(project)) } catch { /* storage may be unavailable */ }
+    try { window.localStorage.setItem(STORAGE_KEY, JSON.stringify(layouts)) } catch { /* storage may be unavailable */ }
   }
   return {
     layouts: loadLayouts(),
-    activeLayoutKey: loadActiveLayoutKey(),
+    activeLayoutKey: null,
     add(project, current, threadId = null, side = 'right') {
       const layout = get().layouts[chatProjectKey(project)] ?? {
         panes: [{ id: crypto.randomUUID(), threadId: current }], focused: '', x: .5, y: .5

@@ -349,6 +349,52 @@ html,
   pointer-events: none;
 }
 
+/* Keep the canvas interactive in the center. Inset native drag bands leave
+   8px for resize hit testing and the top-left traffic lights unobstructed. */
+.ds-startup-drag-regions {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+}
+
+.ds-startup-drag-region {
+  position: absolute;
+  pointer-events: auto;
+  user-select: none;
+  -webkit-app-region: drag;
+}
+
+.ds-startup-drag-region--top {
+  top: 8px;
+  left: 112px;
+  right: 8px;
+  height: 40px;
+}
+
+.ds-startup-drag-region--left,
+.ds-startup-drag-region--right {
+  top: 48px;
+  bottom: 32px;
+  width: 24px;
+}
+
+.ds-startup-drag-region--left { left: 8px; }
+.ds-startup-drag-region--right { right: 8px; }
+
+.ds-startup-drag-region--bottom {
+  bottom: 8px;
+  left: 8px;
+  right: 8px;
+  height: 24px;
+}
+
+/* Opacity/pointer-events alone do not remove Electron native drag regions. */
+.ds-startup-blank--exit .ds-startup-drag-region {
+  pointer-events: none;
+  -webkit-app-region: no-drag;
+}
+
 .ds-startup-blank--exit {
   animation: ds-startup-blank-exit 0.2s ease-out forwards;
   pointer-events: none;
