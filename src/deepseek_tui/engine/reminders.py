@@ -282,11 +282,26 @@ REGISTRY: tuple[ReminderSpec, ...] = (
 )
 
 
+class _RenderedReminder(str):
+    """Only an envelope built here may skip body neutralization on re-render."""
+
+
 def render(spec: ReminderSpec, body: str) -> str:
     """Apply the spec's ceiling, then its envelope."""
     text = body.strip()
     if not text:
         return ""
+    open_tag = f"<{spec.envelope.value}>"
+    close_tag = f"</{spec.envelope.value}>"
+    if (
+        isinstance(body, _RenderedReminder)
+        and text.startswith(open_tag)
+        and text.endswith(close_tag)
+    ):
+        return body
+    from deepseek_tui.state.context import neutralize_fake_system_reminders
+
+    text = neutralize_fake_system_reminders(text)
     if spec.max_chars is not None and len(text) > spec.max_chars:
         from deepseek_tui.engine.context import summarize_text_head_tail
 
@@ -295,10 +310,7 @@ def render(spec: ReminderSpec, body: str) -> str:
             f"{summarize_text_head_tail(text, spec.max_chars)}\n"
             f"[{spec.name}: {omitted} chars omitted from the middle]"
         )
-    open_tag = f"<{spec.envelope.value}>"
-    if text.startswith(open_tag):
-        return text
-    return f"{open_tag}\n{text}\n</{spec.envelope.value}>"
+    return _RenderedReminder(f"{open_tag}\n{text}\n{close_tag}")
 
 
 def reminder_message(spec: ReminderSpec, body: str) -> Message:

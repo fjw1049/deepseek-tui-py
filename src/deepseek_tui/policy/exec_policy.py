@@ -210,6 +210,35 @@ def pattern_matches(pattern: str, command: str) -> bool:
     return bool(regex.fullmatch(norm_command))
 
 
+def _command_segments(command: str) -> tuple[list[str], bool]:
+    """Split shell control operators for deny checks; mark non-simple commands."""
+    try:
+        lexer = shlex.shlex(
+            strip_heredoc_bodies(command).replace("\n", ";"),
+            posix=True,
+            punctuation_chars=";&|()<>",
+        )
+        lexer.whitespace_split = True
+        lexer.commenters = ""
+        tokens = list(lexer)
+    except ValueError:
+        return [], True
+    segments: list[str] = []
+    current: list[str] = []
+    compound = any(marker in command for marker in ("$(", "`", "\n"))
+    for token in tokens:
+        if token and set(token) <= set(";&|()<>"):
+            compound = True
+            if current:
+                segments.append(" ".join(current))
+                current = []
+        else:
+            current.append(token)
+    if current:
+        segments.append(" ".join(current))
+    return segments, compound
+
+
 # ---------------------------------------------------------------------------
 # TOML rule layer
 # ---------------------------------------------------------------------------
@@ -355,15 +384,18 @@ class ExecPolicyConfig:
         Deny wins over allow unconditionally; no match falls back to
         ``AskUser``.
         """
+        segments, compound = _command_segments(command)
         for group, rule_set in self.rules.items():
             for pattern in rule_set.deny:
-                if pattern_matches(pattern, command):
+                if pattern_matches(pattern, command) or any(
+                    pattern_matches(pattern, segment) for segment in segments
+                ):
                     return ExecPolicyDecision.deny(
                         f"execpolicy denied by {group}: {pattern}"
                     )
         for rule_set in self.rules.values():
             for pattern in rule_set.allow:
-                if pattern_matches(pattern, command):
+                if not compound and pattern_matches(pattern, command):
                     return ExecPolicyDecision.allow()
         return ExecPolicyDecision.ask_user(
             "execpolicy: no matching allow rule"

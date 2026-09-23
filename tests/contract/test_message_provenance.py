@@ -212,15 +212,16 @@ def test_synthetic_injections_declare_an_origin() -> None:
 
 
 def test_no_hand_rolled_reminder_envelopes() -> None:
-    """The literal tag outside the envelope helper means a site that can
-    drift out of step with neutralization and tagging."""
+    """User-role reminders must not bypass the registry's envelope helper."""
     offenders: list[str] = []
+    # Tool dedup adds notices to tool results, not synthetic user messages.
+    allowed = {"engine/context_pressure.py", "engine/tool_dedup.py"}
     for path in SRC.rglob("*.py"):
-        if path.relative_to(SRC).as_posix() == "engine/context_pressure.py":
+        if path.relative_to(SRC).as_posix() in allowed:
             continue
         for lineno, line in enumerate(
             path.read_text(encoding="utf-8").splitlines(), 1
         ):
             if re.search(r'["\']<system-reminder>', line):
                 offenders.append(f"{path.relative_to(SRC)}:{lineno}")
-    assert not offenders, "use wrap_system_reminder: " + ", ".join(offenders)
+    assert not offenders, "use reminders.render/reminder_message: " + ", ".join(offenders)

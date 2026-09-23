@@ -8,6 +8,7 @@ import os
 import socket
 import time
 from dataclasses import dataclass
+from html.parser import HTMLParser
 from urllib.parse import urljoin, urlparse
 
 import httpx
@@ -55,6 +56,7 @@ _SEARCH_KEY_FAILURE_MARKERS = (
     "is missing",
 )
 _DEFAULT_FETCH_TIMEOUT_S = 25.0
+_MAX_FETCH_RESPONSE_BYTES = 2 * 1024 * 1024
 _BROWSER_UA = (
     "Mozilla/5.0 (compatible; DeepSeekTUI/1.0; +https://github.com/deepseek-ai)"
 )
@@ -117,7 +119,7 @@ class FetchUrlTool(ToolSpec):
     async def execute(self, input_data: dict[str, object], context: ToolContext) -> ToolResult:
         url = _require_string(input_data, "url")
         _require_http_url(url)
-        _reject_private_fetch_url(url)
+        await asyncio.to_thread(_reject_private_fetch_url, url)
         max_chars = _optional_int(input_data, "max_chars") or _DEFAULT_FETCH_MAX_CHARS
         timeout = context.timeout_ms / 1000 if context.timeout_ms is not None else _DEFAULT_FETCH_TIMEOUT_S
         started = time.monotonic()
@@ -128,6 +130,7 @@ class FetchUrlTool(ToolSpec):
         status_code: int | None = None
         content_type = ""
         extract_error = ""
+        body_truncated = False
 
         try:
             async with httpx.AsyncClient(timeout=timeout) as client:
@@ -137,6 +140,7 @@ class FetchUrlTool(ToolSpec):
                     status_code = response.status_code
                     content_type = response.headers.get("content-type", "")
                     final_url = str(response.url)
+                    body_truncated = bool(response.extensions.get("body_truncated"))
                     if not response.is_success:
                         raise ToolError(
                             f"HTTP {status_code} fetching {url}: {response.text[:200]}"
@@ -161,6 +165,7 @@ class FetchUrlTool(ToolSpec):
                         status_code = response.status_code
                         content_type = response.headers.get("content-type", "")
                         final_url = str(response.url)
+                        body_truncated = bool(response.extensions.get("body_truncated"))
                         if not response.is_success:
                             detail = extract_error or f"HTTP {status_code}"
                             raise ToolError(f"fetch_url failed for {url}: {detail}")
@@ -168,8 +173,8 @@ class FetchUrlTool(ToolSpec):
                         backend = "httpx_fallback"
                         if "html" in content_type.lower():
                             content = (
-                                "[Raw HTML fallback — navigation/noise may remain. "
-                                "Prefer a direct file URL or retry later.]\n\n" + content
+                                "[HTML fallback; extracted visible text.]\n\n"
+                                + _html_to_text(content)
                             )
         except (httpx.TimeoutException, asyncio.TimeoutError) as exc:
             # Record the per-host timeout and surface an escalation hint so
@@ -193,8 +198,10 @@ class FetchUrlTool(ToolSpec):
                 f"fetch_url timed out after {timeout:.0f}s fetching {url}.{hint}"
             ) from exc
 
-        truncated = len(content) > max_chars
-        if truncated:
+        if body_truncated and len(content) <= max_chars:
+            content += "\n\n[... response limited to 2 MiB ...]"
+        truncated = body_truncated or len(content) > max_chars
+        if len(content) > max_chars:
             content = _truncate_text(content, max_chars)
 
         latency_ms = int((time.monotonic() - started) * 1000)
@@ -559,6 +566,8 @@ def _require_http_url(url: str) -> None:
         raise ToolError("URL must use http or https scheme")
     if not parsed.netloc:
         raise ToolError("URL must include a host")
+    if parsed.username is not None or parsed.password is not None:
+        raise ToolError("URL credentials are not allowed")
 
 
 _BLOCKED_FETCH_HOSTNAMES = frozenset(
@@ -612,6 +621,7 @@ def _host_is_blocked(host: str) -> bool:
 
 def _reject_private_fetch_url(url: str) -> None:
     """Refuse fetches that would hit loopback, RFC1918, or link-local hosts."""
+    _require_http_url(url)
     host = urlparse(url.strip()).hostname
     if not host or _host_is_blocked(host):
         raise ToolError(
@@ -635,6 +645,38 @@ def _truncate_text(text: str, max_chars: int) -> str:
     if len(text) <= max_chars:
         return text
     return text[:max_chars] + "\n\n[... truncated to max_chars ...]"
+
+
+def _html_to_text(source: str) -> str:
+    class VisibleText(HTMLParser):
+        def __init__(self) -> None:
+            super().__init__(convert_charrefs=True)
+            self.hidden = 0
+            self.parts: list[str] = []
+
+        def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+            if tag in ("script", "style", "noscript"):
+                self.hidden += 1
+            elif tag in ("p", "div", "br", "li", "h1", "h2", "h3"):
+                self.parts.append("\n")
+
+        def handle_endtag(self, tag: str) -> None:
+            if tag in ("script", "style", "noscript") and self.hidden:
+                self.hidden -= 1
+            elif tag in ("p", "div", "li", "h1", "h2", "h3"):
+                self.parts.append("\n")
+
+        def handle_data(self, data: str) -> None:
+            if not self.hidden:
+                self.parts.append(data)
+
+    parser = VisibleText()
+    parser.feed(source)
+    return "\n".join(
+        " ".join(line.split())
+        for line in "".join(parser.parts).splitlines()
+        if line.strip()
+    )
 
 
 def _mcp_text_content(result: dict[str, object]) -> str:
@@ -702,6 +744,7 @@ async def _http_get(
     *,
     params: dict[str, str] | None = None,
     headers: dict[str, str] | None = None,
+    max_bytes: int = _MAX_FETCH_RESPONSE_BYTES,
 ) -> httpx.Response:
     merged = {"User-Agent": _BROWSER_UA}
     if headers:
@@ -712,18 +755,31 @@ async def _http_get(
     current = url
     try:
         for _ in range(_MAX_FETCH_REDIRECTS + 1):
-            _reject_private_fetch_url(current)
-            response = await client.get(
-                current, params=params, headers=merged, follow_redirects=False
-            )
-            if not response.is_redirect:
-                return response
-            location = response.headers.get("location")
-            if not location:
-                return response
-            current = urljoin(current, location)
-            params = None  # query params belong to the first hop only
+            await asyncio.to_thread(_reject_private_fetch_url, current)
+            async with client.stream(
+                "GET", current, params=params, headers=merged, follow_redirects=False
+            ) as response:
+                location = response.headers.get("location") if response.is_redirect else None
+                if location:
+                    current = urljoin(current, location)
+                    params = None  # query params belong to the first hop only
+                    continue
+                body = bytearray()
+                truncated = False
+                async for chunk in response.aiter_bytes():
+                    remaining = max_bytes - len(body)
+                    if len(chunk) > remaining:
+                        body.extend(chunk[:remaining])
+                        truncated = True
+                        break
+                    body.extend(chunk)
+                return httpx.Response(
+                    response.status_code,
+                    headers=response.headers,
+                    content=bytes(body),
+                    request=response.request,
+                    extensions={**response.extensions, "body_truncated": truncated},
+                )
         raise ToolError(f"Too many redirects fetching {url}")
     except (httpx.HTTPError, OSError) as exc:
         raise ToolError(f"Failed to fetch URL {url}: {exc}") from exc
-

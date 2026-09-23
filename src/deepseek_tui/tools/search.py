@@ -5,9 +5,10 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import re
 from collections.abc import Iterable
 from pathlib import Path
+
+import regex
 
 from deepseek_tui.tools.registry import ToolCapability, ToolContext, ToolError, ToolResult, ToolSpec
 from deepseek_tui.tools.utils.gitignore import GitIgnoreMatcher, matches_path_glob
@@ -169,20 +170,25 @@ class GrepFilesTool(ToolSpec):
             if "-A" not in input_data:
                 context_after = context_both
         try:
-            flags = re.IGNORECASE if ignore_case else 0
-            compiled = re.compile(pattern, flags)
-        except re.error as exc:
+            flags = regex.IGNORECASE if ignore_case else 0
+            compiled = regex.compile(pattern, flags)
+        except regex.error as exc:
             logger.warning("grep_files_invalid_regex pattern=%r error=%s", pattern, exc)
             raise ToolError(f"invalid regex pattern: {exc}") from exc
-        rows, file_counts, total, skipped_large, skipped_ignored = await asyncio.to_thread(
-            _grep_files,
-            root,
-            compiled,
-            before=context_before if output_mode == "content" else 0,
-            after=context_after if output_mode == "content" else 0,
-            head_limit=head_limit,
-            glob=glob_pattern,
-        )
+        try:
+            (
+                rows, file_counts, total, skipped_large, skipped_ignored, context_limited
+            ) = await asyncio.to_thread(
+                _grep_files,
+                root,
+                compiled,
+                before=context_before if output_mode == "content" else 0,
+                after=context_after if output_mode == "content" else 0,
+                head_limit=head_limit,
+                glob=glob_pattern,
+            )
+        except TimeoutError as exc:
+            raise ToolError("regex search timed out; narrow the pattern or path") from exc
         logger.info(
             "grep_files pattern=%r root=%s ignore_case=%s mode=%s match_count=%d",
             pattern,
@@ -228,7 +234,9 @@ class GrepFilesTool(ToolSpec):
                     f"… (showing {shown_matches} of {total} matches; "
                     "refine the pattern or narrow the path)"
                 )
-            truncated = total > shown_matches
+            if context_limited:
+                content_lines.append("… (context limited by head_limit)")
+            truncated = total > shown_matches or context_limited
             shown_count = shown_matches
         if skipped_large:
             content_lines.append(
@@ -459,27 +467,26 @@ def _iter_files(
 
 def _grep_files(
     root: Path,
-    pattern: re.Pattern[str],
+    pattern: regex.Pattern[str],
     *,
     before: int = 0,
     after: int = 0,
     head_limit: int = _MAX_MATCHES,
     glob: str | None = None,
-) -> tuple[list[tuple[Path, int, str, bool]], dict[Path, int], int, int, int]:
-    """Return ``(rows, file_counts, total_matches, skipped_large, skipped_ignored)``.
+) -> tuple[list[tuple[Path, int, str, bool]], dict[Path, int], int, int, int, bool]:
+    """Return rows, counts, skips, and whether context was cut.
 
     ``rows`` are ``(path, line_number, line, is_context)`` tuples in output
-    order; matching rows are capped at ``head_limit`` (context rows ride
-    along for free). ``file_counts`` maps every file with at least one
+    order; all rows are capped at ``head_limit``. ``file_counts`` maps every file with at least one
     match to its true match count, so files/count modes can report the
     full picture even when content rows are capped.
     """
     rows: list[tuple[Path, int, str, bool]] = []
     file_counts: dict[Path, int] = {}
     total = 0
-    shown_matches = 0
     skipped = [0]
     ignored = [0]
+    context_limited = False
     for path in _iter_files(
         root,
         glob,
@@ -492,7 +499,7 @@ def _grep_files(
         except (UnicodeDecodeError, OSError):
             continue
         lines = text.splitlines()
-        match_idx = [i for i, line in enumerate(lines) if pattern.search(line)]
+        match_idx = [i for i, line in enumerate(lines) if pattern.search(line, timeout=0.05)]
         if not match_idx:
             continue
         file_counts[path] = len(match_idx)
@@ -500,12 +507,19 @@ def _grep_files(
         match_lines = set(match_idx)  # 0-based; a real match never renders as context
         last_emitted = 0  # 1-based line no. dedup for overlapping context
         for i in match_idx:
-            if shown_matches >= head_limit:
+            if len(rows) >= head_limit:
                 break
-            shown_matches += 1
-            lo = max(0, i - before)
+            # Reserve a row for the match even when -B asks for more context
+            # than the remaining output budget.
+            requested_lo = max(0, i - before)
+            lo = max(requested_lo, i - (head_limit - len(rows)) + 1)
+            if lo > requested_lo:
+                context_limited = True
             hi = min(len(lines) - 1, i + after)
             for j in range(lo, hi + 1):
+                if len(rows) >= head_limit:
+                    context_limited = True
+                    break
                 line_no = j + 1
                 if line_no <= last_emitted:
                     continue
@@ -514,7 +528,7 @@ def _grep_files(
                 if len(line) > _MAX_LINE_LEN:
                     line = line[:_MAX_LINE_LEN] + "… (line truncated)"
                 rows.append((path, line_no, line, j not in match_lines))
-    return rows, file_counts, total, skipped[0], ignored[0]
+    return rows, file_counts, total, skipped[0], ignored[0], context_limited
 
 
 def _display_rel(path: Path, root: Path) -> str:

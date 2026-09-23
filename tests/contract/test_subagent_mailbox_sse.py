@@ -227,11 +227,16 @@ async def test_cancel_orphan_subagents_cancels_only_running(runtime_app: object)
 
     manager = runtime_app.state.thread_manager  # type: ignore[attr-defined]
     cancelled: list[str] = []
-    running = SimpleNamespace(status=SimpleNamespace(kind=SubAgentStatusKind.RUNNING))
+    running = SimpleNamespace(
+        status=SimpleNamespace(kind=SubAgentStatusKind.RUNNING), background=False
+    )
+    background = SimpleNamespace(
+        status=SimpleNamespace(kind=SubAgentStatusKind.RUNNING), background=True
+    )
     done = SimpleNamespace(status=SimpleNamespace(kind=SubAgentStatusKind.COMPLETED))
 
     async def _get_result(agent_id: str) -> object:
-        return running if agent_id == "agent_running" else done
+        return {"agent_running": running, "agent_background": background}.get(agent_id, done)
 
     async def _cancel(agent_id: str) -> None:
         cancelled.append(agent_id)
@@ -245,10 +250,80 @@ async def test_cancel_orphan_subagents_cancels_only_running(runtime_app: object)
     )
 
     await manager._cancel_orphan_subagents(
-        "thread_x", "turn_x", stub_engine, {"agent_running", "agent_done"}
+        "thread_x", "turn_x", stub_engine,
+        {"agent_running", "agent_background", "agent_done"},
+        preserve_background=True,
     )
 
     assert cancelled == ["agent_running"]
+
+    await manager._cancel_orphan_subagents(
+        "thread_x", "turn_x", stub_engine, {"agent_background"}
+    )
+    assert cancelled == ["agent_running", "agent_background"]
+
+
+@pytest.mark.asyncio
+async def test_background_subagent_survives_normal_turn_close(runtime_app: object) -> None:
+    from deepseek_tui.tools.subagent import (
+        SpawnRequest,
+        SubAgentAssignment,
+        SubAgentManager,
+        SubAgentStatusKind,
+        SubAgentType,
+    )
+
+    manager = runtime_app.state.thread_manager  # type: ignore[attr-defined]
+    release = asyncio.Event()
+
+    async def _work(agent, cancel):  # noqa: ANN001
+        await release.wait()
+        return "### SUMMARY\nfinished"
+
+    subagents = SubAgentManager(workspace=manager.workspace, executor=_work)
+    snap = await subagents.spawn(SpawnRequest(
+        prompt="background work",
+        agent_type=SubAgentType.EXPLORE,
+        assignment=SubAgentAssignment(objective="background work"),
+        background=True,
+    ))
+    handle = EngineHandle()
+    thread = await manager.create_thread(CreateThreadRequest())
+    turn_id = f"turn_{uuid.uuid4().hex[:8]}"
+    now = datetime.now(timezone.utc)
+    manager.store.save_turn(TurnRecord(
+        id=turn_id, thread_id=thread.id, status=RuntimeTurnStatus.IN_PROGRESS,
+        input_summary="test", created_at=now, started_at=now,
+    ))
+    stub_engine = SimpleNamespace(tool_context=ToolContext(
+        working_directory=manager.workspace, subagent_manager=subagents,
+    ))
+    engine_task = asyncio.create_task(asyncio.sleep(3600))
+    async with manager._active_lock:
+        manager._active[thread.id] = _ActiveThreadState(handle, stub_engine, engine_task)
+
+    async def pump() -> None:
+        await handle.emit(SubAgentMailboxEvent(
+            seq=1, message=MailboxMessage.started(snap.agent_id, "explore")
+        ))
+        await handle.emit(TurnCompleteEvent(assistant_message=None))
+
+    pump_task = asyncio.create_task(pump())
+    try:
+        await manager._monitor_turn(thread.id, turn_id, handle, "agent")
+        assert (await subagents.get_result(snap.agent_id)).status.kind is SubAgentStatusKind.RUNNING
+        release.set()
+        results = await subagents.wait([snap.agent_id], mode="all", timeout_ms=1000)
+        assert results[0].status.kind is SubAgentStatusKind.COMPLETED
+    finally:
+        release.set()
+        await subagents.shutdown()
+        await pump_task
+        engine_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await engine_task
+        async with manager._active_lock:
+            manager._active.pop(thread.id, None)
 
 
 @pytest.mark.asyncio

@@ -36,6 +36,9 @@ def test_secret_suffixes_detected_case_insensitive():
         "APIKEY",
         "DEEPSEEK_APIKEY",
         "OPENAI_APIKEY",
+        "PGPASSWORD",
+        "GH_PAT",
+        "PASSWORD",
     ):
         assert is_secret_env_name(name)
 

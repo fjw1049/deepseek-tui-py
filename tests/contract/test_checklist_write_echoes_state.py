@@ -19,6 +19,30 @@ _CANONICAL_NAME = "checklist"
 
 
 @pytest.mark.asyncio
+async def test_failed_update_does_not_change_checklist(tmp_path) -> None:
+    from deepseek_tui.tools.registry import ToolError
+
+    registry = build_default_registry(mode="agent")
+    context = ToolContext(working_directory=tmp_path)
+    await registry.execute(
+        _CANONICAL_NAME,
+        {"todos": [
+            {"content": "First", "status": "in_progress"},
+            {"content": "Second", "status": "pending"},
+        ]},
+        context,
+    )
+    with pytest.raises(ToolError, match="in_progress"):
+        await registry.execute(
+            _CANONICAL_NAME,
+            {"op": "update", "id": "2", "status": "in_progress"},
+            context,
+        )
+    listed = await registry.execute(_CANONICAL_NAME, {}, context)
+    assert "[ ] 2: Second" in listed.content
+
+
+@pytest.mark.asyncio
 async def test_write_result_echoes_full_checklist(tmp_path) -> None:
     registry = build_default_registry(mode="agent")
     context = ToolContext(working_directory=tmp_path)

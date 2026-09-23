@@ -248,24 +248,37 @@ class TaskManager:
                 task_id = _resolve_task_id(self._tasks, id_or_prefix)
                 return self._tasks[task_id]
             except KeyError:
-                pass
+                if any(tid.startswith(id_or_prefix) for tid in self._tasks):
+                    raise
             task = self._reload_task_from_disk(id_or_prefix)
             if task is not None:
                 return task
             raise KeyError(f"Task not found: {id_or_prefix}")
 
     def _reload_task_from_disk(self, id_or_prefix: str) -> TaskRecord | None:
-        for path in self._tasks_dir.glob("*.json"):
-            tid = path.stem
-            if tid == id_or_prefix or tid.startswith(id_or_prefix):
-                try:
-                    data = json.loads(path.read_text(encoding="utf-8"))
-                    task = _task_record_from_dict(data)
-                    self._tasks[task.id] = task
-                    return task
-                except (OSError, json.JSONDecodeError, KeyError):
-                    continue
-        return None
+        paths = sorted(
+            path for path in self._tasks_dir.glob("*.json")
+            if path.stem.startswith(id_or_prefix)
+        )
+        paths = [path for path in paths if path.stem == id_or_prefix] or paths
+        matches: list[TaskRecord] = []
+        for path in paths:
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+                task = _task_record_from_dict(data)
+                if task.id == path.stem:
+                    matches.append(task)
+            except (OSError, json.JSONDecodeError, KeyError, TypeError, ValueError):
+                continue
+        if len(matches) > 1:
+            raise KeyError(
+                f"Ambiguous task prefix '{id_or_prefix}': matches {len(matches)} tasks"
+            )
+        if not matches:
+            return None
+        task = matches[0]
+        self._tasks[task.id] = task
+        return task
 
     async def resume_task(
         self, id_or_prefix: str, *, expected_scope: str | None = None
@@ -280,6 +293,8 @@ class TaskManager:
             try:
                 task_id = _resolve_task_id(self._tasks, id_or_prefix)
             except KeyError:
+                if any(tid.startswith(id_or_prefix) for tid in self._tasks):
+                    raise
                 # Evicted terminal tasks only live on disk — same fallback
                 # as get_task, otherwise resume fails while task_output works.
                 task = self._reload_task_from_disk(id_or_prefix)

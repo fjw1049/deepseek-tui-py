@@ -11,7 +11,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from deepseek_tui.tools.registry import ToolContext
+import pytest
+
+from deepseek_tui.tools.registry import ToolContext, ToolError
 from deepseek_tui.tools.search import _MAX_LINE_LEN, _MAX_MATCHES, GrepFilesTool
 
 
@@ -169,6 +171,30 @@ async def test_grep_head_limit_caps_matches(tmp_path: Path):
     assert result.metadata["shown"] == 3
     assert result.metadata["truncated"] is True
     assert "showing 3 of 10 matches" in result.content
+
+
+async def test_grep_head_limit_also_caps_context_rows(tmp_path: Path):
+    (tmp_path / "a.txt").write_text(
+        "\n".join(["one", "two", "three", "needle", "five", "six"]) + "\n",
+        encoding="utf-8",
+    )
+    result = await GrepFilesTool().execute(
+        {"pattern": "needle", "path": ".", "output_mode": "content", "-C": 100, "head_limit": 3},
+        ToolContext(working_directory=tmp_path),
+    )
+    assert len([line for line in result.content.splitlines() if line.startswith("a.txt")]) <= 3
+    assert "a.txt:4:needle" in result.content
+    assert result.metadata["truncated"] is True
+    assert "context limited by head_limit" in result.content
+
+
+async def test_grep_rejects_pathological_regex_promptly(tmp_path: Path):
+    (tmp_path / "a.txt").write_text("a" * 10000 + "!\n", encoding="utf-8")
+    with pytest.raises(ToolError, match="timed out"):
+        await GrepFilesTool().execute(
+            {"pattern": "(a+)+$", "path": "a.txt"},
+            ToolContext(working_directory=tmp_path),
+        )
 
 
 async def test_grep_adjacent_match_not_marked_as_context(tmp_path: Path):

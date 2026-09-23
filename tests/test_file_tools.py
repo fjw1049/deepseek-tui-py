@@ -29,6 +29,20 @@ async def test_read_file_respects_offset_and_limit(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("content,offset,total", [("", 1, 0), ("one\n", 10, 1)])
+async def test_read_file_empty_or_past_eof_is_not_scan_error(
+    tmp_path, content, offset, total
+) -> None:
+    (tmp_path / "note.txt").write_text(content, encoding="utf-8")
+    result = await ReadFileTool().execute(
+        {"path": "note.txt", "offset": offset},
+        ToolContext(working_directory=tmp_path),
+    )
+    assert result.content == ""
+    assert result.metadata["total_lines"] == total
+
+
+@pytest.mark.asyncio
 async def test_read_file_adds_line_numbers_from_offset(tmp_path) -> None:
     """cat -n style numbering starts at the requested offset."""
     target = tmp_path / "sample.txt"
@@ -148,6 +162,22 @@ async def test_edit_file_reports_first_occurrence_line(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_edit_file_rejects_noop_without_touching_file(tmp_path) -> None:
+    from deepseek_tui.tools.file import EditFileTool
+    from deepseek_tui.tools.registry import ToolError
+
+    target = tmp_path / "note.txt"
+    target.write_text("same\n", encoding="utf-8")
+    before = target.stat().st_mtime_ns
+    with pytest.raises(ToolError, match="must differ"):
+        await EditFileTool().execute(
+            {"path": "note.txt", "old_string": "same", "new_string": "same"},
+            ToolContext(working_directory=tmp_path),
+        )
+    assert target.stat().st_mtime_ns == before
+
+
+@pytest.mark.asyncio
 async def test_edit_file_rejects_non_unique_old_string(tmp_path) -> None:
     """Multiple matches without replace_all are an error naming the count."""
     from deepseek_tui.tools.file import EditFileTool
@@ -181,6 +211,32 @@ async def test_edit_file_replace_all_replaces_every_occurrence(tmp_path) -> None
     assert result.success is True
     assert target.read_text(encoding="utf-8") == "a\nMARK\nb\nMARK\nc\n"
     assert result.metadata["occurrences"] == 2
+
+
+@pytest.mark.asyncio
+async def test_edit_file_preserves_crlf_on_untouched_lines(tmp_path) -> None:
+    from deepseek_tui.tools.file import EditFileTool
+
+    target = tmp_path / "crlf.txt"
+    target.write_bytes(b"first\r\nsecond\r\n")
+    await EditFileTool().execute(
+        {"path": "crlf.txt", "old_string": "first", "new_string": "FIRST"},
+        ToolContext(working_directory=tmp_path),
+    )
+    assert target.read_bytes() == b"FIRST\r\nsecond\r\n"
+
+
+@pytest.mark.asyncio
+async def test_edit_file_matches_multiline_text_from_read_file_on_crlf(tmp_path) -> None:
+    from deepseek_tui.tools.file import EditFileTool
+
+    target = tmp_path / "crlf.txt"
+    target.write_bytes(b"first\r\nsecond\r\nthird\r\n")
+    await EditFileTool().execute(
+        {"path": "crlf.txt", "old_string": "first\nsecond", "new_string": "FIRST\nSECOND"},
+        ToolContext(working_directory=tmp_path),
+    )
+    assert target.read_bytes() == b"FIRST\r\nSECOND\r\nthird\r\n"
 
 
 @pytest.mark.asyncio

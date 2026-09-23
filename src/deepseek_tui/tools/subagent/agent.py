@@ -112,4 +112,5 @@ class SubAgent:
             from_prior_session=False,
             structured=self.structured_result,
             max_steps_reached=self.max_steps_reached,
+            background=self.background,
         )

@@ -4890,11 +4890,13 @@ class RuntimeThreadManager:
         turn_id: str,
         engine: Engine | None,
         agent_ids: set[str],
+        *,
+        preserve_background: bool = False,
     ) -> None:
-        """Cancel this turn's sub-agents that are still running at turn close.
+        """Cancel this turn's non-detached sub-agents still running at turn close.
 
-        Sub-agents are in-turn entities and must not outlive the turn that
-        spawned them. When the main agent ends the turn without awaiting them
+        Foreground sub-agents must not outlive the turn that spawned them.
+        When the main agent ends the turn without awaiting them
         (premature completion), the orphans keep running on the shared
         per-engine manager and bleed their mailbox envelopes into the next
         turn. Cancelling here scopes each turn's sub-agents to that turn: the
@@ -4917,6 +4919,8 @@ class RuntimeThreadManager:
             except Exception:  # noqa: BLE001 — unknown/evicted agent
                 continue
             if snap.status.kind is not SubAgentStatusKind.RUNNING:
+                continue
+            if preserve_background and snap.background:
                 continue
             try:
                 await manager.cancel(agent_id)
@@ -6227,7 +6231,8 @@ class RuntimeThreadManager:
                     engine = self._active.get(thread_id)
                     active_engine = engine.engine if engine is not None else None
                 await self._cancel_orphan_subagents(
-                    thread_id, turn_id, active_engine, seen_subagent_ids
+                    thread_id, turn_id, active_engine, seen_subagent_ids,
+                    preserve_background=True,
                 )
                 await self._flush_pending_subagent_mailbox(
                     thread_id, turn_id, active_engine, skip_ids=foreign_subagent_ids
