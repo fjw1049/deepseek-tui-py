@@ -1840,6 +1840,11 @@ export function Workbench(): ReactElement {
               >
             <div className="flex min-h-0 min-w-0 flex-1 flex-col">
               {splitActive && chatLayout ? <ChatSplitWorkspace project={splitProject} layout={chatLayout} getInitialDraft={id => prevThreadId.current === id ? inputRef.current : draftByThread.current[id] ?? ''}
+                renderContext={(threadId, onCollapse) => activeThreadId !== threadId ? <div role="status" className="p-3 text-sm text-ds-muted">{t('splitLoading')}</div> : <OperationContextDock onCollapse={onCollapse} workspaceRoot={threads.find(thread => thread.id === threadId)?.workspace || splitProject}
+                  onOpenChanges={handleBranchOpenDiff}
+                  onOpenFilesSidebar={openFilesSidebar} onEnterIdeMode={enterIdeMode}
+                  previewActive={rightSidebarOpen && rightSidebarTab === 'preview'}
+                  previewEnabled={Boolean(activeWorkspaceRoot)} onTogglePreview={togglePreviewPanel} />}
                 onPresentationChange={setSplitPresentation}
                 onFocus={focusSplitThread}
                 onOpenFile={(threadId, path, line) => { focusSplitThread(threadId); setSplitAction({ threadId, kind: 'file', path, line }) }}

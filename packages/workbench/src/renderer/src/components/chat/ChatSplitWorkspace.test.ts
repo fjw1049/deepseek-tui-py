@@ -18,6 +18,7 @@ vi.mock('./ComposerStage', () => ({ ComposerStage: (props: { input: string; setI
 }))
 import { ChatSplitDropZone, ChatSplitWorkspace } from './ChatSplitWorkspace'
 import { ChatSplitToolbar } from './ChatSplitToolbar'
+import { OperationContextDock } from './OperationContextDock'
 import { useChatStore } from '../../store/chat-store'
 import { resolveChatLayoutKey, useChatLayoutStore } from '../../store/chat-layout-store'
 import { CHAT_SPLIT_DRAG_EVENT, finishChatSplitDrag, openThreadInSplit } from '../../lib/chat-split-navigation'
@@ -41,8 +42,32 @@ function Harness() {
   return createElement('div', null,
     createElement(ChatSplitToolbar, { project: '/repo', layout, onArrange: () => {}, onAdd: () => {}, onFocus: () => {} }),
     createElement(ChatSplitWorkspace, { project: '/repo', layout, getInitialDraft: id => `draft-${id}`,
-      onFocus: () => {}, onOpenFile: () => {}, onOpenDiff: () => {} } satisfies ComponentProps<typeof ChatSplitWorkspace>))
+      onFocus: () => {}, onOpenFile: () => {}, onOpenDiff: () => {}, renderContext: () => createElement(ContextProbe) } satisfies ComponentProps<typeof ChatSplitWorkspace>))
 }
+
+function ContextProbe() {
+  const id = useChatStore(state => state.activeThreadId)
+  return createElement('span', { 'data-context-thread': id }, id)
+}
+
+it('opens the focused task context without replacing its composer and closes on Escape or task switch', async () => {
+  await act(async () => root.render(createElement(Harness)))
+  const inputs = [...container.querySelectorAll('textarea')]
+  const panes = [...container.querySelectorAll<HTMLElement>('[data-chat-pane]')]
+  const selected = useChatLayoutStore.getState().layouts['/repo'].focused
+  const pane = panes.find(item => item.dataset.chatPane === selected)!
+  const trigger = pane.querySelector<HTMLButtonElement>('[aria-label="splitTaskContext"]')!
+  await act(async () => trigger.click())
+  expect(pane.querySelector('[data-context-thread]')?.getAttribute('data-context-thread')).toBe(pane.dataset.chatThread)
+  expect(document.activeElement).toBe(pane.querySelector('[role="region"]'))
+  await act(async () => document.activeElement!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })))
+  expect(container.querySelector('[role="region"]')).toBeNull()
+  expect(document.activeElement).toBe(trigger)
+  await act(async () => trigger.click())
+  await act(async () => useChatLayoutStore.getState().focus('/repo', panes[0].dataset.chatPane!))
+  expect(container.querySelector('[role="region"]')).toBeNull()
+  expect([...container.querySelectorAll('textarea')]).toEqual(inputs)
+})
 
 it('renders exactly four independent composers, and preserves the surviving DOM when closing', async () => {
   await act(async () => root.render(createElement(Harness)))
@@ -414,4 +439,68 @@ it('offers a swap at capacity instead of overwriting a visible conversation', as
   expect(container.querySelectorAll('[data-chat-pane]')).toHaveLength(6)
   expect(container.querySelector('.ds-chat-split-parked-title')?.textContent).toBe('Task b')
   expect(container.querySelector('[data-chat-thread="a"]')).not.toBeNull()
+})
+
+it('places tab-mode actions beside the tab list and applies them to the selected task', async () => {
+  useChatLayoutStore.getState().arrange('/repo', 'tabs')
+  await act(async () => root.render(createElement(Harness)))
+  const tabbar = container.querySelector('.ds-chat-split-tabbar')!
+  expect(tabbar.querySelectorAll('.ds-chat-split-pane-actions button')).toHaveLength(3)
+  expect(container.querySelector('header .ds-chat-split-pane-actions')).toBeNull()
+  const tabs = [...tabbar.querySelectorAll<HTMLButtonElement>('[role="tab"]')]
+  await act(async () => tabs[1].click())
+  await act(async () => tabbar.querySelector<HTMLButtonElement>('[aria-label="splitTaskContext"]')!.click())
+  expect(container.querySelector('[data-context-thread]')?.getAttribute('data-context-thread')).toBe('b')
+  await act(async () => tabbar.querySelector<HTMLButtonElement>('[aria-label="splitPark"]')!.click())
+  expect(useChatLayoutStore.getState().layouts['/repo'].parked?.map(pane => pane.threadId)).toEqual(['b'])
+  expect(container.querySelectorAll('.ds-chat-split-tabbar [aria-label="splitClose"]')).toHaveLength(1)
+})
+
+it('uses the same workspace card in the main rail and split panel, with collapse returning to the panel trigger', async () => {
+  const props = { workspaceRoot: '/repo', onOpenFilesSidebar: () => {}, onEnterIdeMode: () => {},
+    previewActive: false, previewEnabled: true, onTogglePreview: () => {} }
+  await act(async () => root.render(createElement(OperationContextDock, props)))
+  const mainCard = container.innerHTML
+  const onCollapse = vi.fn()
+  await act(async () => root.render(createElement(OperationContextDock, { ...props, onCollapse })))
+  expect(container.innerHTML).toBe(mainCard)
+  expect(container.querySelector('.ds-operation-dock-topbar__title')?.textContent).toBe('repo')
+  await act(async () => container.querySelector<HTMLButtonElement>('.ds-operation-dock-topbar__toggle')!.click())
+  expect(onCollapse).toHaveBeenCalledOnce()
+  expect(container.querySelector('.ds-operation-dock--compact')).toBeNull()
+})
+
+it('merges session tools into the active tab without a second title row and keeps query navigation scoped', async () => {
+  useChatLayoutStore.getState().arrange('/repo', 'tabs')
+  await act(async () => root.render(createElement(Harness)))
+  const inputs = [...container.querySelectorAll('textarea')]
+  expect(container.querySelector('.ds-chat-split-title')).toBeNull()
+  const session = getChatPaneSession('b')
+  const scrollToBlock = vi.fn()
+  await act(async () => session.store.setState({ blocks: [{ kind: 'user', id: 'merged-question', text: 'Question for B' }], scrollToBlock }))
+  await act(async () => container.querySelectorAll<HTMLButtonElement>('[role="tab"]')[1].click())
+  const active = container.querySelector('.ds-chat-split-tab-group[data-active]')!
+  expect(active.querySelector('.ds-chat-split-grip')).not.toBeNull()
+  expect(active.querySelector('[aria-label="sessionInfoHint"]')).not.toBeNull()
+  expect(container.querySelectorAll('[aria-label="sessionQueriesHint"]')).toHaveLength(1)
+  await act(async () => active.querySelector<HTMLButtonElement>('[aria-label="sessionQueriesHint"]')!.click())
+  await act(async () => document.querySelector<HTMLButtonElement>('[aria-label="sessionQueryCopyHint: Question for B"]')!.click())
+  expect(scrollToBlock).toHaveBeenCalledWith('merged-question')
+  await act(async () => useChatLayoutStore.getState().arrange('/repo', 'grid'))
+  expect(container.querySelectorAll('.ds-chat-split-title')).toHaveLength(4)
+  expect([...container.querySelectorAll('textarea')]).toEqual(inputs)
+})
+
+it('keeps exactly one bookmark before the active title across repeated tab switches', async () => {
+  useChatLayoutStore.getState().arrange('/repo', 'tabs')
+  await act(async () => root.render(createElement(Harness)))
+  const tabs = [...container.querySelectorAll<HTMLButtonElement>('[role="tab"]')]
+  for (const index of [0, 1, 2, 3, 0, 3, 1, 2]) {
+    await act(async () => tabs[index].click())
+    const active = container.querySelector('.ds-chat-split-tab-group[data-active]')!
+    expect(container.querySelectorAll('.ds-chat-split-tabbar .lucide-bookmark')).toHaveLength(1)
+    expect(active.querySelectorAll('[aria-label="sessionInfoHint"]')).toHaveLength(1)
+    expect(container.querySelectorAll('.ds-chat-split-tab-group:not([data-active]) .lucide-bookmark')).toHaveLength(0)
+    expect(active.querySelector('[aria-label="sessionInfoHint"]')!.compareDocumentPosition(tabs[index]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  }
 })

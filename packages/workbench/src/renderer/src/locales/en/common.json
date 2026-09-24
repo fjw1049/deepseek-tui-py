@@ -2028,6 +2028,7 @@
   "splitArrangement": "Split layout",
   "splitAutoGrid": "Auto grid",
   "splitAutoGridHint": "The selected layout does not fit. Using a grid until more space is available.",
+  "splitTaskContext": "Task panel · Git and todos",
   "splitCompactView": "Tab layout",
   "splitCompactHint": "Not enough room to show panes together. Switch tabs or enlarge the window to restore the layout.",
   "splitGrid": "Grid",

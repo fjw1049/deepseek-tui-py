@@ -8201,14 +8201,21 @@ html[data-theme='dark'] .ds-syntax-line span { color: var(--shiki-dark) !importa
     0 8px 22px rgba(0, 0, 0, 0.38);
 }
 
+/* Main conversation and split panes share the same card sizing. */
+.ds-operation-rail,
+.ds-chat-split-context {
+  --ds-operation-rail-width: clamp(14.5rem, 32cqi, 23.5rem);
+  --ds-operation-rail-inset: clamp(0.75rem, 2cqi, 2rem);
+}
+
 .ds-operation-rail {
   position: relative;
   z-index: 2;
-  flex: 0 0 clamp(14.5rem, 32cqi, 23.5rem);
-  width: clamp(14.5rem, 32cqi, 23.5rem);
+  flex: 0 0 var(--ds-operation-rail-width);
+  width: var(--ds-operation-rail-width);
   flex-direction: column;
   background: transparent;
-  padding-right: clamp(0.75rem, 2cqi, 2rem);
+  padding-right: var(--ds-operation-rail-inset);
   transition:
     flex-basis 220ms cubic-bezier(0.32, 0.72, 0, 1),
     width 220ms cubic-bezier(0.32, 0.72, 0, 1),

@@ -29,6 +29,7 @@ export function ChatSplitToolbar({ project, layout, onArrange, onAdd, onFocus, p
   const newTaskWorkspace = threads.find(th => th.id === activeThreadId)?.workspace || workspaceRoot || project
   const parked = layout.parked ?? []
   const arrangementLabel = { tabs: 'splitCompactView', grid: 'splitGrid', horizontal: 'splitHorizontal', vertical: 'splitVertical' }[layout.arrangement ?? 'grid']
+  const ArrangementIcon = { tabs: PanelsTopLeft, grid: LayoutGrid, horizontal: Columns2, vertical: Rows2 }[presentation ?? layout.arrangement ?? 'grid']
   const adaptiveHint = presentation === 'tabs' && layout.arrangement !== 'tabs' ? 'splitCompactHint'
     : layout.panes.length > 1 && presentation === 'grid' && layout.arrangement && layout.arrangement !== 'grid' ? 'splitAutoGridHint' : null
   const [open, setOpen] = useState(false)
@@ -115,7 +116,7 @@ export function ChatSplitToolbar({ project, layout, onArrange, onAdd, onFocus, p
         setOpen(true)
         panel.current?.querySelector<HTMLButtonElement>('[aria-pressed="true"]')?.focus()
       }}>
-      <span>{t(arrangementLabel)}</span><ChevronDown size={12} aria-hidden="true" />
+      <ArrangementIcon size={15} strokeWidth={1.75} aria-hidden="true" /><span>{t(arrangementLabel)}</span><ChevronDown size={12} aria-hidden="true" />
     </button>
     {open && createPortal(<div ref={panel} id={panelId} style={style} role="dialog" aria-label={t('splitArrangement')}
       className="ds-project-context-menu ds-chat-split-arrangements ds-no-drag"

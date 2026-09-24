@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState, type CSSProperties, type Reac
 import { createPortal } from 'react-dom'
 import { ChatSplitDragContext, ChatSplitDragHandle } from './ChatSplitDrag'
 import { usePaneSwapMotion } from '../../hooks/use-pane-swap-motion'
-import { GalleryVerticalEnd, X } from 'lucide-react'
+import { Bookmark, GalleryVerticalEnd, FolderKanban, X } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { ChatStoreContext, clearChatSelection, useChatStore } from '../../store/chat-store'
 import { CHAT_THREAD_DRAG_MIME, useChatLayoutStore, type ChatLayout } from '../../store/chat-layout-store'
@@ -12,6 +12,8 @@ import { ChatPaneFocusContext } from './chat-pane-focus'
 import { resolveChatSplitPresentation, type ChatSplitPresentation } from '../../lib/chat-split-presentation'
 import { ChatSplitTaskPicker } from './ChatSplitTaskPicker'
 import { SessionHeader } from '../SessionHeader'
+import { SessionInfoPopover } from '../SessionInfoPopover'
+import { SessionQueries } from '../SessionQueries'
 import { ComposerStage } from './ComposerStage'
 import { MessageTimeline } from './MessageTimeline'
 import './chat-split.css'
@@ -29,6 +31,15 @@ function ChatPaneHeader(): ReactElement {
     <SessionHeader compact className="ds-chat-split-session" />
     {busy ? <span role="status" aria-label={t('running')} title={t('running')} className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500" /> : null}
   </div>
+}
+
+function ChatTabTools(): ReactElement {
+  const { t } = useTranslation('common')
+  const busy = useChatStore(s => s.busy)
+  return <>
+    <SessionQueries><span className="sr-only">{t('sessionQueriesHint')}</span></SessionQueries>
+    {busy ? <span role="status" aria-label={t('running')} className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500" /> : null}
+  </>
 }
 
 function ChatPaneContent({ threadId, onOpenFile, onOpenDiff }: PaneProps): ReactElement {
@@ -66,11 +77,12 @@ function ChatPaneContent({ threadId, onOpenFile, onOpenDiff }: PaneProps): React
 }
 
 /** Stable sibling pane hosts keep editors/composers mounted when the grid changes. */
-export function ChatSplitWorkspace({ project, layout, getInitialDraft, onFocus, onOpenFile, onOpenDiff, onPresentationChange }: {
+export function ChatSplitWorkspace({ project, layout, getInitialDraft, onFocus, onOpenFile, onOpenDiff, onPresentationChange, renderContext }: {
   project: string; layout: ChatLayout; getInitialDraft: (threadId: string) => string
   onFocus: (threadId: string) => void
   onOpenFile: (threadId: string, path: string, line?: number) => void
   onOpenDiff: (threadId: string) => void
+  renderContext?: (threadId: string, onCollapse: () => void) => ReactNode
   onPresentationChange?: (presentation: ChatSplitPresentation) => void
 }): ReactElement {
   const { t } = useTranslation('common')
@@ -82,6 +94,11 @@ export function ChatSplitWorkspace({ project, layout, getInitialDraft, onFocus, 
   const shell = useRef<HTMLDivElement>(null)
   const tabs = useRef<HTMLDivElement>(null)
   const [size, setSize] = useState({ width: 0, height: 0 })
+  const [contextPane, setContextPane] = useState<string | null>(null)
+  const contextTrigger = useRef<HTMLButtonElement | null>(null)
+  const contextPanel = useRef<HTMLDivElement>(null)
+  useEffect(() => { setContextPane(null) }, [layout.focused])
+  useEffect(() => { if (contextPane) contextPanel.current?.focus() }, [contextPane])
   const count = layout.panes.length
   const presentation = resolveChatSplitPresentation(count, layout.arrangement ?? 'grid', size.width, size.height)
   const narrow = presentation === 'tabs'
@@ -131,10 +148,39 @@ export function ChatSplitWorkspace({ project, layout, getInitialDraft, onFocus, 
       actions.resize(project, axis, axis === 'x' ? (event.clientX - rect.left) / rect.width : (event.clientY - rect.top) / rect.height)
     }} onPointerUp={event => event.currentTarget.releasePointerCapture(event.pointerId)} />
 
+  const paneActions = (pane: ChatLayout['panes'][number]): ReactElement => <div className="ds-chat-split-pane-actions">
+            {pane.threadId && renderContext ? <button type="button" className="ds-chat-split-icon"
+              title={t('splitTaskContext')} aria-label={t('splitTaskContext')} aria-expanded={contextPane === pane.id}
+              aria-controls={contextPane === pane.id ? `chat-context-${pane.id}` : undefined}
+              onClick={event => { contextTrigger.current = event.currentTarget; setContextPane(contextPane === pane.id ? null : pane.id) }}>
+              <FolderKanban size={15} strokeWidth={1.75} aria-hidden="true" />
+            </button> : null}
+            {pane.threadId ? <button type="button" className="ds-chat-split-icon" title={t('splitPark')} aria-label={t('splitPark')}
+              onClick={() => { actions.park(project, pane.id); syncFocus() }}><GalleryVerticalEnd size={14} aria-hidden="true" /></button> : null}
+            {count > 1 ? <button type="button" className="ds-chat-split-icon" title={t('splitClose')} aria-label={t('splitClose')} onClick={() => {
+              actions.close(project, pane.id)
+              syncFocus()
+            }}><X size={14} aria-hidden="true" /></button> : null}
+  </div>
+  const paneGrip = (pane: ChatLayout['panes'][number], index: number): ReactNode => (
+    pane.threadId ? <ChatSplitDragHandle threadId={pane.threadId} onMove={key => {
+              const columns = arrangement === 'vertical' ? 1 : arrangement === 'horizontal' ? count : count > 4 ? 3 : 2
+              const offset = key === 'ArrowLeft' ? -1 : key === 'ArrowRight' ? 1 : key === 'ArrowUp' ? -columns : columns
+              const target = layout.panes[index + offset]
+              if (target && pane.threadId) { actions.drop(project, target.id, pane.threadId); onFocus(pane.threadId) }
+            }} /> : null
+  )
+  const focusedPane = layout.panes.find(pane => pane.id === layout.focused)
+
   return <ChatSplitDragContext><div ref={shell} data-presentation={presentation} className="ds-chat-split-shell min-h-0 min-w-0 flex-1">
-    {narrow ? <div ref={tabs} className="ds-chat-split-tabs" role="tablist" aria-label={t('splitPanes')}
+    {narrow ? <div className="ds-chat-split-tabbar"><div ref={tabs} className="ds-chat-split-tabs" role="tablist" aria-label={t('splitPanes')}
       title={layout.arrangement === 'tabs' ? undefined : t('splitCompactHint')}>
-      {layout.panes.map((pane, index) => <button key={pane.id} type="button" role="tab" id={`chat-tab-${pane.id}`}
+      {layout.panes.map((pane, index) => <div key={pane.id} className="ds-chat-split-tab-group" data-active={layout.focused === pane.id ? '' : undefined}>
+        {layout.focused === pane.id ? paneGrip(pane, index) : null}
+        {layout.focused === pane.id && pane.threadId ? <ChatStoreContext.Provider key={`info-${pane.threadId}`} value={getChatPaneSession(pane.threadId, getInitialDraft(pane.threadId)).store}>
+          <SessionInfoPopover><Bookmark size={14} strokeWidth={1.75} /></SessionInfoPopover>
+        </ChatStoreContext.Provider> : null}
+        <button type="button" role="tab" id={`chat-tab-${pane.id}`}
         aria-selected={layout.focused === pane.id} aria-controls={`chat-panel-${pane.id}`} tabIndex={layout.focused === pane.id ? 0 : -1}
         title={threads.find(th => th.id === pane.threadId)?.title ?? t('splitChooseTask')}
         className="ds-chat-split-tab" onClick={() => focus(pane.id, pane.threadId)}
@@ -146,8 +192,19 @@ export function ChatSplitWorkspace({ project, layout, getInitialDraft, onFocus, 
           focus(next.id, next.threadId)
           tabs.current?.querySelectorAll<HTMLButtonElement>('[role="tab"]')[nextIndex]?.focus({ preventScroll: true })
         }}>
-        {index + 1}. {threads.find(th => th.id === pane.threadId)?.title ?? t('splitChooseTask')}
-      </button>)}
+        <span className="ds-chat-split-tab-number" aria-hidden="true">{index + 1}</span>
+        <span className="ds-chat-split-tab-title">{threads.find(th => th.id === pane.threadId)?.title ?? t('splitChooseTask')}</span>
+      </button>
+      {layout.focused === pane.id && pane.threadId ? <ChatStoreContext.Provider key={`queries-${pane.threadId}`} value={getChatPaneSession(pane.threadId, getInitialDraft(pane.threadId)).store}>
+        <ChatTabTools />
+      </ChatStoreContext.Provider> : null}
+      {layout.focused === pane.id && !pane.threadId ? <ChatSplitTaskPicker workspace={newTaskWorkspace}
+        visibleThreadIds={layout.panes.map(p => p.threadId)}
+        onSelect={id => { actions.bind(project, pane.id, id); onFocus(id) }}
+        onCreate={async () => { focus(pane.id, null); await useChatStore.getState().createThread({ workspaceRoot: newTaskWorkspace }) }} /> : null}
+      </div>)}
+    </div>
+      {focusedPane ? paneActions(focusedPane) : null}
     </div> : null}
     <div ref={root} className="ds-chat-split-grid" style={{ '--split-x': `${layout.x * 100}%`, '--split-y': `${layout.y * 100}%` } as CSSProperties}>
       {layout.panes.map((pane, index) => {
@@ -174,13 +231,8 @@ export function ChatSplitWorkspace({ project, layout, getInitialDraft, onFocus, 
           style={{ ...style, display: narrow && !focused ? 'none' : undefined }}
           onFocusCapture={() => { if (!focused) focus(pane.id, pane.threadId) }}
           onPointerDownCapture={() => { if (!focused) focus(pane.id, pane.threadId) }}>
-          <header className="ds-chat-split-title">
-            {pane.threadId ? <ChatSplitDragHandle threadId={pane.threadId} onMove={key => {
-              const columns = arrangement === 'vertical' ? 1 : arrangement === 'horizontal' ? count : count > 4 ? 3 : 2
-              const offset = key === 'ArrowLeft' ? -1 : key === 'ArrowRight' ? 1 : key === 'ArrowUp' ? -columns : columns
-              const target = layout.panes[index + offset]
-              if (target && pane.threadId) { actions.drop(project, target.id, pane.threadId); onFocus(pane.threadId) }
-            }} /> : null}
+          {!narrow ? <header className="ds-chat-split-title">
+            {paneGrip(pane, index)}
             <div className="min-w-0 flex-1">
               {session ? <ChatStoreContext.Provider value={session.store}>
                 <ChatPaneHeader />
@@ -193,20 +245,27 @@ export function ChatSplitWorkspace({ project, layout, getInitialDraft, onFocus, 
                 }} />}
 
             </div>
-            {pane.threadId ? <button type="button" className="ds-chat-split-icon" title={t('splitPark')} aria-label={t('splitPark')}
-              onClick={() => { actions.park(project, pane.id); syncFocus() }}><GalleryVerticalEnd size={14} aria-hidden="true" /></button> : null}
-            {count > 1 ? <button type="button" className="ds-chat-split-icon" title={t('splitClose')} aria-label={t('splitClose')} onClick={() => {
-              actions.close(project, pane.id)
-              syncFocus()
-            }}><X size={14} aria-hidden="true" /></button> : null}
-          </header>
-          {session && pane.threadId ? <ChatStoreContext.Provider value={session.store}>
-            <ChatPaneFocusContext.Provider value={focused}>
-              <ChatPaneContent key={pane.threadId} threadId={pane.threadId} onOpenFile={onOpenFile} onOpenDiff={onOpenDiff} />
-            </ChatPaneFocusContext.Provider>
-          </ChatStoreContext.Provider> : <div className="ds-chat-split-empty">
-            <span>{t('splitEmptyHint')}</span>
-          </div>}
+            {!narrow ? paneActions(pane) : null}
+          </header> : null}
+          <div className="ds-chat-split-body">
+            {contextPane === pane.id && focused && session && pane.threadId && renderContext ? <div
+              ref={contextPanel} id={`chat-context-${pane.id}`} role="region" aria-label={t('splitTaskContext')}
+              tabIndex={-1} className="ds-chat-split-context ds-no-drag"
+              onKeyDown={event => { if (event.key === 'Escape') { event.stopPropagation(); setContextPane(null); contextTrigger.current?.focus() } }}>
+              <ChatStoreContext.Provider value={session.store}>
+                {renderContext(pane.threadId, () => { setContextPane(null); contextTrigger.current?.focus() })}
+              </ChatStoreContext.Provider>
+            </div> : null}
+            <div className="ds-chat-split-conversation">
+            {session && pane.threadId ? <ChatStoreContext.Provider value={session.store}>
+              <ChatPaneFocusContext.Provider value={focused}>
+                <ChatPaneContent key={pane.threadId} threadId={pane.threadId} onOpenFile={onOpenFile} onOpenDiff={onOpenDiff} />
+              </ChatPaneFocusContext.Provider>
+            </ChatStoreContext.Provider> : <div className="ds-chat-split-empty">
+              <span>{t('splitEmptyHint')}</span>
+            </div>}
+            </div>
+          </div>
         </section>
       })}
       {!narrow && count > 1 && arrangement !== 'vertical' && (arrangement === 'grid' && count <= 4 || count === 2) ? resizeHandle('x') : null}

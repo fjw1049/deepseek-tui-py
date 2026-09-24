@@ -2028,6 +2028,7 @@
   "splitArrangement": "分屏方式",
   "splitAutoGrid": "自动网格",
   "splitAutoGridHint": "所选排列空间不足，暂用网格；空间足够时自动恢复。",
+  "splitTaskContext": "任务面板 · Git 与待办",
   "splitCompactView": "标签排列",
   "splitCompactHint": "空间不足以同时显示分屏，请切换标签查看；扩大窗口后自动恢复排列。",
   "splitGrid": "网格排列",
