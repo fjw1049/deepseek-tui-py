@@ -1,4 +1,6 @@
 {
+  "externalApp": "External application",
+  "externalAppDesc": "Applies when opening from the sidebar preview or double-clicking a file link in chat.",
   "title": "Settings",
   "subtitle": "Manage language, workspace, basics, and extensions.",
   "back": "Back",

@@ -97,7 +97,6 @@ import { ComposerStage } from './chat/ComposerStage'
 import { SimpleEmptyPrompt } from './chat/SimpleEmptyPrompt'
 import { getEmptyHomeLayout, subscribeAppearance } from '../lib/apply-appearance'
 import { ConnectionStatusBar } from './ConnectionStatusBar'
-import { DefaultEditorPicker } from './DefaultEditorPicker'
 import { SessionHeader } from './SessionHeader'
 import { IdeChatRailHeader } from './ide/IdeChatRailHeader'
 import { RuntimeDiagnosticsDialog } from './RuntimeDiagnosticsDialog'
@@ -537,8 +536,6 @@ export function Workbench(): ReactElement {
     threadFilesystemRoot.trim().length > 0
   const showOperationColumn =
     route === 'chat' && activeWorkspaceRoot.trim().length > 0 && !stageCentered
-  const showDefaultEditorPicker =
-    route === 'chat' && activeWorkspaceRoot.trim().length > 0
   // Panel header already owns close/maximize when the sidebar is fully open —
   // keep the topbar control only for closed / collapsed-strip (open) entry.
   const rightPanelVisible = rightSidebarOpen && !rightSidebarCollapsed
@@ -564,19 +561,14 @@ export function Workbench(): ReactElement {
   const showTerminalToggle =
     route === 'chat' && activeWorkspaceRoot.trim().length > 0 && !ideModeActive
   const showTopbarRightActions =
-    showDefaultEditorPicker || showTerminalToggle || showRightSidebarToggle
+    showTerminalToggle || showRightSidebarToggle
   const topbarActionCount =
-    (showDefaultEditorPicker ? 1 : 0) +
     (showTerminalToggle ? 1 : 0) +
     (showRightSidebarToggle ? 1 : 0)
   const topbarRightPaddingClass = showTopbarRightActions
-    ? topbarActionCount >= 3
-      ? 'pr-[12.5rem] sm:pr-[13rem]'
-      : topbarActionCount === 2
-        ? 'pr-[8rem] sm:pr-[8.5rem]'
-        : showDefaultEditorPicker
-          ? 'pr-[5.25rem]'
-          : 'pr-9 sm:pr-10'
+    ? topbarActionCount === 2
+      ? 'pr-[8rem] sm:pr-[8.5rem]'
+      : 'pr-9 sm:pr-10'
     : ''
   const operationColumnActive = showOperationColumn && !rightSidebarOpen
   const terminalSidebarOpen =
@@ -1815,7 +1807,6 @@ export function Workbench(): ReactElement {
               </div>
               {showTopbarRightActions ? (
                 <div className="ds-workbench-topbar__right-actions ds-no-drag">
-                  {showDefaultEditorPicker ? <DefaultEditorPicker /> : null}
                   {showTerminalToggle ? (
                     <TerminalToggleButton
                       open={bottomTerminalOpen}

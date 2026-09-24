@@ -56,6 +56,7 @@ import { DEFAULT_WORKSPACE_ROOT } from '@shared/workspace-defaults'
 import { normalizeWorkspaceRoot } from '../lib/workspace-path'
 import { useChatStore, type SettingsRouteSection } from '../store/chat-store'
 import { setSettingsLeaveHandler } from '../lib/settings-leave'
+import { DefaultEditorPicker } from './DefaultEditorPicker'
 import { InitialSetupPanel } from './InitialSetupDialog'
 import { AppearanceSettingsPanel } from './settings/AppearanceSettingsPanel'
 import { ArchiveSettingsPanel } from './settings/ArchiveSettingsPanel'
@@ -704,6 +705,11 @@ export function SettingsView(): ReactElement {
                       <option value="zh">简体中文</option>
                     </SettingsSelect>
                   }
+                />
+                <SettingRow
+                  title={t('externalApp')}
+                  description={t('externalAppDesc')}
+                  control={<DefaultEditorPicker />}
                 />
                 <SettingRow
                   title={t('autoStart')}
