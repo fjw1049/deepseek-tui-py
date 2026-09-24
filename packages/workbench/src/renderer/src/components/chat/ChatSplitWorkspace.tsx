@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState, type CSSProperties, type Reac
 import { createPortal } from 'react-dom'
 import { ChatSplitDragContext, ChatSplitDragHandle } from './ChatSplitDrag'
 import { usePaneSwapMotion } from '../../hooks/use-pane-swap-motion'
-import { Bookmark, GalleryVerticalEnd, FolderKanban, X } from 'lucide-react'
+import { Bookmark, GalleryVerticalEnd, PanelRightDashed, X } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { ChatStoreContext, clearChatSelection, useChatStore } from '../../store/chat-store'
 import { CHAT_THREAD_DRAG_MIME, useChatLayoutStore, type ChatLayout } from '../../store/chat-layout-store'
@@ -153,7 +153,7 @@ export function ChatSplitWorkspace({ project, layout, getInitialDraft, onFocus, 
               title={t('splitTaskContext')} aria-label={t('splitTaskContext')} aria-expanded={contextPane === pane.id}
               aria-controls={contextPane === pane.id ? `chat-context-${pane.id}` : undefined}
               onClick={event => { contextTrigger.current = event.currentTarget; setContextPane(contextPane === pane.id ? null : pane.id) }}>
-              <FolderKanban size={15} strokeWidth={1.75} aria-hidden="true" />
+              <PanelRightDashed size={15} strokeWidth={1.75} aria-hidden="true" />
             </button> : null}
             {pane.threadId ? <button type="button" className="ds-chat-split-icon" title={t('splitPark')} aria-label={t('splitPark')}
               onClick={() => { actions.park(project, pane.id); syncFocus() }}><GalleryVerticalEnd size={14} aria-hidden="true" /></button> : null}

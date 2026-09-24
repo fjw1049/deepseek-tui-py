@@ -9,7 +9,8 @@ import {
 import {
   Check,
   ChevronRight,
-  ChevronsLeftRight,
+  Minimize,
+  Maximize,
   GitBranch,
   GitGraph,
   ListTodo,
@@ -334,7 +335,7 @@ export function OperationContextDock({
           aria-label={t('operationDockExpand')}
           aria-expanded={false}
         >
-          <ChevronsLeftRight className="h-4 w-4" strokeWidth={2.1} />
+          <Maximize className="h-4 w-4" strokeWidth={1.75} />
         </button>
         <div className="ds-operation-dock-rail__rule" aria-hidden />
         <div className="ds-operation-dock-rail" role="toolbar" aria-label={t('rightSidebarTabEditor')}>
@@ -391,7 +392,7 @@ export function OperationContextDock({
           aria-label={t('operationDockCollapse')}
           aria-expanded={true}
         >
-          <ChevronsLeftRight className="h-4 w-4" strokeWidth={2.1} />
+          <Minimize className="h-4 w-4" strokeWidth={1.75} />
         </button>
       </div>
       <div className="ds-operation-dock-body">

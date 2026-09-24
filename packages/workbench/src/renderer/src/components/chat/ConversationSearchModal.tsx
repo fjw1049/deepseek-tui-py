@@ -11,7 +11,7 @@ import {
 import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
 import {
-  Columns3,
+  SquareKanban,
   Folder,
   MessageSquare,
   Plus,
@@ -129,7 +129,7 @@ export function ConversationSearchModal({
         id: 'kanban',
         label: t('kanbanNav'),
         shortcut: shortcutText({ key: 'j' }),
-        icon: Columns3,
+        icon: SquareKanban,
         run: onOpenKanban
       },
       {
