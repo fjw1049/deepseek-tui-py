@@ -220,3 +220,21 @@ async def test_live_context_breakdown_counts_native_and_mcp_tools(tmp_path):
     assert breakdown["tool_definitions"] > 0
     assert breakdown["mcp"] > 0
     assert breakdown["tools"] == breakdown["tool_definitions"] + breakdown["mcp"]
+
+
+def test_context_breakdown_falls_back_when_old_calibration_exhausts_current_context(tmp_path):
+    baseline = estimate_context_breakdown(
+        model="deepseek-chat",
+        workspace=tmp_path,
+        api_tools=[_api_tool("read_file")],
+    )
+    current = estimate_context_breakdown(
+        model="deepseek-chat",
+        workspace=tmp_path,
+        api_tools=[_api_tool("read_file")],
+        real_input_tokens=10_000,
+        real_input_estimate=baseline["total"] + 20_000,
+    )
+    assert current == baseline
+    assert current["system_prompt"] > 0
+    assert current["tools"] > 0

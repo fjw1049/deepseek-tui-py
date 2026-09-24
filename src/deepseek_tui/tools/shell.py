@@ -675,8 +675,11 @@ async def cancel_background_process(context: ToolContext, process_id: str) -> To
     """
     pty_proc = _pop_pty(context, process_id)
     if pty_proc is not None:
-        pty_proc.kill()
-        await pty_proc.wait()
+        _kill_pty_process_group(pty_proc)
+        try:
+            await asyncio.wait_for(pty_proc.wait(), timeout=5)
+        except asyncio.TimeoutError:
+            pty_proc._close_master()  # noqa: SLF001 — unblock a stuck PTY reader
         text = pty_proc.output.decode("utf-8", errors="replace")
         return ToolResult(
             success=True,
@@ -691,14 +694,17 @@ async def cancel_background_process(context: ToolContext, process_id: str) -> To
             },
         )
     process = _pop_process(context, process_id)
-    process.terminate()
+    _kill_process_group(process)
     collector = _pop_collector(context, process_id)
-    if collector is not None:
-        # A wait call already started draining the pipes — reuse it instead
-        # of a second communicate() on the same streams.
-        stdout, stderr = await collector
-    else:
-        stdout, stderr = await process.communicate()
+    try:
+        if collector is not None:
+            # A wait call already started draining the pipes — reuse it instead
+            # of a second communicate() on the same streams.
+            stdout, stderr = await asyncio.wait_for(collector, timeout=5)
+        else:
+            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=5)
+    except asyncio.TimeoutError:
+        stdout, stderr = b"", b""
     return ToolResult(
         success=True,
         content="cancelled",
@@ -1042,12 +1048,6 @@ class PtyProcess:
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, lambda: os.write(self.master_fd, data))
 
-    def kill(self) -> None:
-        try:
-            os.kill(self.pid, 15)
-        except ProcessLookupError:
-            pass
-
     @property
     def exit_code(self) -> int | None:
         return self._exit_code
@@ -1349,13 +1349,13 @@ def _kill_process_group(proc: Process) -> None:
     """Kill the child's whole process group, falling back to the child only.
 
     Pairs with ``start_new_session=True`` in :func:`_spawn_from_exec_env`: the
-    child is its own session/group leader, so ``killpg(getpgid(pid))`` reaches
+    child's pid is its session/group id, so ``killpg(pid)`` reaches
     descendants a bare ``proc.kill()`` would orphan. Best-effort - the process
     may already be reaped (ProcessLookupError), in which case there is nothing
     to kill.
     """
     try:
-        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        os.killpg(proc.pid, signal.SIGKILL)
     except (ProcessLookupError, PermissionError):
         try:
             proc.kill()
@@ -1366,13 +1366,13 @@ def _kill_process_group(proc: Process) -> None:
 def _kill_pty_process_group(proc: PtyProcess) -> None:
     """Kill the PTY child's whole process group.
 
-    The PTY child is forked with ``os.setsid()`` so it is its own session
-    leader (``getpgid(pid) == pid``); ``killpg`` reaches descendants (e.g. the
+    The PTY child is forked with ``os.setsid()`` so its pid is the group id;
+    ``killpg`` reaches descendants (e.g. the
     ``sleep`` under ``bash -c``) that a bare ``proc.kill()`` (single-process
     SIGTERM) would orphan. Best-effort against reaped processes.
     """
     try:
-        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        os.killpg(proc.pid, signal.SIGKILL)
     except (ProcessLookupError, PermissionError):
         try:
             os.kill(proc.pid, signal.SIGKILL)

@@ -1612,9 +1612,9 @@ export class DeepseekRuntimeProvider implements AgentProvider {
       const raw = JSON.parse(r.body) as Record<string, unknown>
       if (raw.ok === false) {
         throw toRuntimeError(
-          typeof raw.error === 'string' && raw.error.trim()
+          { message: typeof raw.error === 'string' && raw.error.trim()
             ? raw.error
-            : 'resume agent failed'
+            : 'resume agent failed' }
         )
       }
     } catch (err) {
@@ -2295,7 +2295,11 @@ export class DeepseekRuntimeProvider implements AgentProvider {
         }
       } catch (e) {
         if (signal.aborted) return
-        if (e instanceof Error && /aborted/i.test(e.message)) return
+        consecutiveFailures += 1
+        if (consecutiveFailures >= RECONNECT_FAILURE_LIMIT) {
+          sink.onError(e instanceof Error ? e : new Error(String(e)))
+          return
+        }
       } finally {
         void window.dsGui.stopSse(streamId)
       }

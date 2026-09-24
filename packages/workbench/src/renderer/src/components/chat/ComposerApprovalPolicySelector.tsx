@@ -172,18 +172,21 @@ export function ComposerApprovalPolicySelector({
   useEffect(() => {
     if (!open) return
     const onKey = (event: KeyboardEvent): void => {
+      if (event.isComposing || event.keyCode === 229) return
       if (event.key === 'Escape') {
         event.preventDefault()
+        event.stopPropagation()
         setMenuOpen(false)
         return
       }
-      onKeyDown(event, (index) => {
+      const handled = onKeyDown(event, (index) => {
         const option = options[index]
         if (option) void selectPolicy(option.id)
       })
+      if (handled) event.stopPropagation()
     }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
   }, [onKeyDown, open, options, setMenuOpen])
 
   return (

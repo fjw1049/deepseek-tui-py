@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import os
+import signal
 from pathlib import Path
 
 import pytest
@@ -15,6 +17,32 @@ from deepseek_tui.tools.shell import (
     running_attached_count,
     wait_background_process,
 )
+
+
+async def test_cancel_background_process_kills_pipe_holding_descendants(tmp_path: Path):
+    process = await asyncio.create_subprocess_exec(
+        "/bin/sh", "-c", "sleep 5 & echo ready; wait",
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        start_new_session=True,
+    )
+    assert process.stdout is not None
+    await process.stdout.readline()
+    ctx = ToolContext(
+        working_directory=tmp_path,
+        metadata={"shell_processes": {"probe": process}},
+    )
+    try:
+        result = await asyncio.wait_for(
+            cancel_background_process(ctx, "probe"), timeout=1,
+        )
+        assert result.metadata["status"] == "cancelled"
+    finally:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        await process.wait()
 
 
 async def test_foreground_timeout_keeps_process_and_is_collectable(tmp_path: Path):

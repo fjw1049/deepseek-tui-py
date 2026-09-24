@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useRef,
   useState,
   type PointerEvent as ReactPointerEvent,
   type ReactElement,
@@ -45,6 +46,8 @@ type Props = {
 export function ResizableRightDrawer({ onClose, children }: Props): ReactElement {
   const { t } = useTranslation('common')
   const [width, setWidth] = useState(() => loadDrawerWidth())
+  const endResizeRef = useRef<(() => void) | null>(null)
+  useEffect(() => () => endResizeRef.current?.(), [])
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
@@ -67,8 +70,11 @@ export function ResizableRightDrawer({ onClose, children }: Props): ReactElement
 
   const beginResize = useCallback((event: ReactPointerEvent<HTMLDivElement>): void => {
     if (event.button !== 0) return
+    endResizeRef.current?.()
     event.preventDefault()
-    event.currentTarget.setPointerCapture(event.pointerId)
+    const handle = event.currentTarget
+    const pointerId = event.pointerId
+    handle.setPointerCapture(pointerId)
     const startX = event.clientX
     const startWidth = width
     const prevCursor = document.body.style.cursor
@@ -80,13 +86,16 @@ export function ResizableRightDrawer({ onClose, children }: Props): ReactElement
       const next = clampDrawerWidth(startWidth + (startX - moveEvent.clientX))
       setWidth(next)
     }
-    const onUp = (upEvent: PointerEvent): void => {
+    const onUp = (): void => {
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('pointercancel', onUp)
+      window.removeEventListener('blur', onUp)
+      endResizeRef.current = null
       document.body.style.cursor = prevCursor
       document.body.style.userSelect = prevUserSelect
       try {
-        event.currentTarget.releasePointerCapture(upEvent.pointerId)
+        handle.releasePointerCapture(pointerId)
       } catch {
         /* capture may already be released */
       }
@@ -96,8 +105,11 @@ export function ResizableRightDrawer({ onClose, children }: Props): ReactElement
         return clamped
       })
     }
+    endResizeRef.current = onUp
     window.addEventListener('pointermove', onMove)
     window.addEventListener('pointerup', onUp)
+    window.addEventListener('pointercancel', onUp)
+    window.addEventListener('blur', onUp)
   }, [width])
 
   return (

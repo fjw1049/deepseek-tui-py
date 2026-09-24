@@ -11,7 +11,7 @@ import {
 import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
 import {
-  Columns3,
+  SquareKanban,
   Folder,
   MessageSquare,
   Plus,
@@ -129,7 +129,7 @@ export function ConversationSearchModal({
         id: 'kanban',
         label: t('kanbanNav'),
         shortcut: shortcutText({ key: 'j' }),
-        icon: Columns3,
+        icon: SquareKanban,
         run: onOpenKanban
       },
       {
@@ -202,10 +202,14 @@ export function ConversationSearchModal({
 
   useEffect(() => {
     if (!open) return
+    const previousFocus = document.activeElement
     setQuery('')
     setActiveIndex(0)
     const timer = window.setTimeout(() => inputRef.current?.focus(), 0)
-    return () => window.clearTimeout(timer)
+    return () => {
+      window.clearTimeout(timer)
+      if (previousFocus instanceof HTMLElement && previousFocus.isConnected) previousFocus.focus()
+    }
   }, [open])
 
   useEffect(() => {
@@ -243,6 +247,7 @@ export function ConversationSearchModal({
   )
 
   const onInputKeyDown = (event: ReactKeyboardEvent<HTMLInputElement>): void => {
+    if (event.nativeEvent.isComposing || event.keyCode === 229) return
     if (event.key === 'ArrowDown') {
       if (rowCount === 0) return
       event.preventDefault()

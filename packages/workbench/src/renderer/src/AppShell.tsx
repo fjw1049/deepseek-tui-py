@@ -1,5 +1,7 @@
 import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { useChatStore } from './store/chat-store'
+import i18n from './i18n'
+import { StartupWindowDragRegions } from './components/StartupWindowDragRegions'
 
 const Workbench = lazy(() =>
   import('./components/Workbench').then((module) => ({ default: module.Workbench }))
@@ -19,10 +21,8 @@ const REVEAL_MS = 580
  *  kinetic grid has faded. */
 const BLANK_EXIT_MS = 200
 
-/** Keep the startup board (and its kinetic grid) up at least this long, so the
- *  animation is seen even when the runtime settles almost immediately. */
-/** Long enough to notice cursor attraction before the veil lifts. */
-const MIN_BLANK_MS = 2800
+/** A brief entrance keeps a fast handshake from flashing the board. */
+const MIN_BLANK_MS = 300
 
 /**
  * Survives Vite Fast Refresh / HMR remounts of this module. Without this, every
@@ -40,6 +40,7 @@ function StartupBlank({ exiting = false }: { exiting?: boolean }): React.ReactEl
       <Suspense fallback={null}>
         <KineticGrid />
       </Suspense>
+      <StartupWindowDragRegions />
     </div>
   )
 }
@@ -52,6 +53,7 @@ export default function AppShell(): React.ReactElement {
   const [revealPhase, setRevealPhase] = useState<RevealPhase>(
     coldStartCeremonyDone ? 'live' : 'waiting'
   )
+  const [shellModulesReady, setShellModulesReady] = useState(coldStartCeremonyDone)
   const [blankGone, setBlankGone] = useState(coldStartCeremonyDone)
   /** Once true, the cold-start ceremony never runs again — reconnect/checking
    *  must not unmount Workbench or replay the kinetic grid. */
@@ -68,14 +70,21 @@ export default function AppShell(): React.ReactElement {
   // startupGateDone, runtimeConnection may go through 'checking' without
   // tearing down the shell.
   const canEnterShell =
-    initialSetupOpen ||
-    runtimeConnection === 'ready' ||
-    runtimeConnection === 'offline'
+    shellModulesReady &&
+    (initialSetupOpen || runtimeConnection === 'ready' || runtimeConnection === 'offline')
 
   useEffect(() => {
     // Prefetch shell + kinetic grid while the blank board is up so reveal isn't empty
     // and the mesh is ready before MIN_BLANK_MS elapses on a fast handshake.
-    void import('./components/Workbench')
+    let cancelled = false
+    // Workbench statically imports navigation pages: revealing it means those
+    // components are ready too, with no first-click lazy boundary.
+    void import('./components/Workbench').then(
+      () => { if (!cancelled) setShellModulesReady(true) },
+      // Let the render error boundary report a failed import instead of hanging.
+      () => { if (!cancelled) setShellModulesReady(true) }
+    )
+    void import('./components/chat/StreamdownAssistant').catch(() => undefined)
     void import('./components/KineticGrid')
     if (typeof window.dsGui?.getStartupPhase === 'function') {
       void window.dsGui.getStartupPhase().then(setStartupPhase).catch(() => undefined)
@@ -91,6 +100,7 @@ export default function AppShell(): React.ReactElement {
       })
     }, 0)
     return () => {
+      cancelled = true
       window.clearTimeout(timer)
       if (frame) window.cancelAnimationFrame(frame)
       unsubscribe?.()
@@ -156,7 +166,7 @@ export default function AppShell(): React.ReactElement {
             .filter(Boolean)
             .join(' ')}
         >
-          <Suspense fallback={null}>
+          <Suspense fallback={<div className="flex h-full items-center justify-center text-ds-muted" role="status">{i18n.t('common:startupRenderer')}</div>}>
             <Workbench />
           </Suspense>
         </div>

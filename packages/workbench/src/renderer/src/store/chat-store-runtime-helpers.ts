@@ -213,9 +213,9 @@ type ThreadDetailProviderLike = {
 
 export function hasPendingRuntimeWork(block: ChatBlock): boolean {
   if (block.kind === 'tool') return block.status === 'running'
-  if (block.kind === 'approval') return block.status === 'pending'
+  if (block.kind === 'approval') return block.status === 'pending' && !block.taskId
   if (block.kind === 'evolution') return block.status === 'pending'
-  if (block.kind === 'user_input') return block.status === 'pending'
+  if (block.kind === 'user_input') return block.status === 'pending' && !block.taskId
   if (block.kind === 'subagent') {
     return block.status === 'pending' || block.status === 'running'
   }

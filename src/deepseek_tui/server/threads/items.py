@@ -66,6 +66,7 @@ def reconstruct_messages_from_turn(
     - ``CONTEXT_COMPACTION`` items that carry a ``session_messages`` snapshot
       replace history accumulated so far (manual /compact persistence).
     """
+    from deepseek_tui.engine.context_pressure import messages_from_dicts
     from deepseek_tui.protocol.messages import (
         ImageBlock,
         Message,
@@ -88,7 +89,7 @@ def reconstruct_messages_from_turn(
         if item.kind == TurnItemKind.USER_MESSAGE:
             saved = item.metadata.get("input_message") if isinstance(item.metadata, dict) else None
             if isinstance(saved, dict):
-                messages.append(Message.model_validate(saved))
+                messages.extend(messages_from_dicts([saved]))
                 continue
             if not text:
                 continue

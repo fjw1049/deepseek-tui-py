@@ -99,6 +99,14 @@ def test_pr08_dangerous_shell_impact() -> None:
     assert any("Warning" in line or "dangerous" in line.lower() for line in req.impacts)
 
 
+def test_long_shell_command_shows_and_checks_dangerous_tail() -> None:
+    req = _req("exec_shell")
+    command = "echo " + "x" * 250 + "; rm -rf /"
+    enrich_approval_request(req, "exec_shell", {"command": command})
+    assert "rm -rf /" in req.primary_preview
+    assert any("Warning" in line for line in req.impacts)
+
+
 def test_sse_payload_backward_compatible() -> None:
     req = _req()
     enrich_approval_request(req, "write_file", {"path": "a.py", "content": "x"})

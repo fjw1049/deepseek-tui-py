@@ -743,6 +743,9 @@ function SidebarProjectsSection({
     if (!activeThreadId) return false
     return extractTasksFromBlocks(activeThreadBlocks).some((task) => activeTaskIds.has(task.id))
   }, [activeThreadId, activeThreadBlocks, activeTaskIds])
+  const activeThreadWorkspace = normalizeWorkspaceRoot(
+    threads.find((thread) => thread.id === activeThreadId)?.workspace
+  )
   const [projectMenu, setProjectMenu] = useState<{
     path: string
     x: number
@@ -750,15 +753,13 @@ function SidebarProjectsSection({
   } | null>(null)
   useEffect(() => {
     if (!activeThreadId) return
-    const activeThread = threads.find((thread) => thread.id === activeThreadId)
-    if (!activeThread) return
-    const workspacePath = normalizeWorkspaceRoot(activeThread.workspace)
+    const workspacePath = activeThreadWorkspace
     if (!workspacePath) return
     if (isWorkspaceHidden(workspacePath, hiddenWorkspacePaths)) return
     onCollapsedWorkspacesChange((current) =>
       current[workspacePath] === false ? current : { ...current, [workspacePath]: false }
     )
-  }, [activeThreadId, threads, hiddenWorkspacePaths, onCollapsedWorkspacesChange])
+  }, [activeThreadId, activeThreadWorkspace, hiddenWorkspacePaths, onCollapsedWorkspacesChange])
 
   const pinnedSet = useMemo(() => new Set(pinnedThreadIds), [pinnedThreadIds])
 
@@ -1648,6 +1649,7 @@ export function ThreadRow({
             onClick={(event) => event.stopPropagation()}
             onBlur={commitRename}
             onKeyDown={(event) => {
+              if (event.nativeEvent.isComposing || event.keyCode === 229) return
               if (event.key === 'Enter') {
                 event.preventDefault()
                 commitRename()

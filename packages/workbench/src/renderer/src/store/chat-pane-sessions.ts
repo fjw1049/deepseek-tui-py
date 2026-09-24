@@ -72,7 +72,7 @@ export function getChatPaneSession(threadId: string, initialDraft = ''): Session
 
 export function syncChatPaneCatalog(state: ChatState): void {
   for (const [threadId, session] of sessions) {
-    if (state.threads.length && !state.threads.some(thread => thread.id === threadId && !thread.archived)) {
+    if (state.runtimeConnection === 'ready' && !state.threads.some(thread => thread.id === threadId && !thread.archived)) {
       session.dispose()
       sessions.delete(threadId)
       continue

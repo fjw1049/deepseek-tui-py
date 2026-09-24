@@ -1374,7 +1374,7 @@ export function ChangeInspector({
             onClick={selectRow}
             onDoubleClick={revealRow}
             onKeyDown={(event) => {
-              if (event.key !== 'Enter') return
+              if (event.key !== 'Enter' || event.nativeEvent.isComposing || event.keyCode === 229) return
               event.preventDefault()
               if (isList) revealRow()
               else selectRow()

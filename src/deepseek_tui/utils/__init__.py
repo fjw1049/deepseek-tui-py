@@ -37,7 +37,7 @@ def write_json_atomic(path: Path, value: Any, *, sort_keys: bool = False) -> Non
         dir=path.parent, prefix=f".{path.name}.", suffix=".tmp"
     )
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as f:
             json.dump(value, f, indent=2, ensure_ascii=False, default=str, sort_keys=sort_keys)
             f.flush()
             os.fsync(f.fileno())

@@ -173,6 +173,7 @@ class SubAgentManager:
                 steps_taken=snap.steps_taken,
                 duration_ms=snap.duration_ms,
                 from_prior_session=from_prior,
+                background=snap.background,
             )
             out.append(snap)
         return out
@@ -530,9 +531,15 @@ class SubAgentManager:
                     "nickname": agent.nickname,
                     "status": agent.status.to_dict(),
                     "result": agent.result,
+                    "structured_result": agent.structured_result,
                     "steps_taken": agent.steps_taken,
+                    "max_steps_reached": agent.max_steps_reached,
                     "duration_ms": max(0, now_ms - agent.started_at_ms),
-                    "allowed_tools": agent.allowed_tools or [],
+                    "allowed_tools": agent.allowed_tools,
+                    "system_prompt": agent.system_prompt,
+                    "output_schema": agent.output_schema,
+                    "background": agent.background,
+                    "workspace": str(agent.workspace),
                     "updated_at_ms": now_ms,
                     "session_boot_id": agent.session_boot_id,
                     "spawn_depth": agent.spawn_depth,
@@ -548,7 +555,7 @@ class SubAgentManager:
         if self._state_path is None or not self._state_path.exists():
             return
         data = json.loads(self._state_path.read_text(encoding="utf-8"))
-        if data.get("schema_version") != SUBAGENT_STATE_SCHEMA_VERSION:
+        if data.get("schema_version") not in (1, SUBAGENT_STATE_SCHEMA_VERSION):
             raise RuntimeError(
                 f"Unsupported sub-agent state schema {data.get('schema_version')}"
             )
@@ -563,10 +570,17 @@ class SubAgentManager:
                 ),
                 model=raw.get("model", self.default_model),
                 nickname=raw.get("nickname"),
-                allowed_tools=raw.get("allowed_tools") or None,
+                allowed_tools=(
+                    raw.get("allowed_tools") or None
+                    if data["schema_version"] == 1
+                    else raw.get("allowed_tools")
+                ),
                 session_boot_id=raw.get("session_boot_id", ""),
-                workspace=self.workspace,
+                workspace=Path(raw.get("workspace") or self.workspace),
                 spawn_depth=int(raw.get("spawn_depth", 0) or 0),
+                system_prompt=raw.get("system_prompt"),
+                output_schema=raw.get("output_schema"),
+                background=bool(raw.get("background", False)),
             )
             # Restore id from persisted record, overwriting the freshly
             # generated one.
@@ -577,7 +591,9 @@ class SubAgentManager:
                 status = SubAgentStatus.interrupted(SUBAGENT_RESTART_REASON)
             agent.status = status
             agent.result = raw.get("result")
+            agent.structured_result = raw.get("structured_result")
             agent.steps_taken = raw.get("steps_taken", 0)
+            agent.max_steps_reached = bool(raw.get("max_steps_reached", False))
             duration_ms = raw.get("duration_ms", 0)
             agent.started_at_ms = _epoch_ms() - max(0, int(duration_ms))
             self._agents[agent.id] = agent

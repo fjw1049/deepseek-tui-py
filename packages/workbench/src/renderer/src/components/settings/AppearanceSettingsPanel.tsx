@@ -645,7 +645,7 @@ function ColorPill({
         onChange={(e) => setDraft(e.target.value)}
         onBlur={commitDraft}
         onKeyDown={(e) => {
-          if (e.key === 'Enter') commitDraft()
+          if (e.key === 'Enter' && !e.nativeEvent.isComposing && e.keyCode !== 229) commitDraft()
         }}
         spellCheck={false}
         aria-label={`${ariaLabel} · HEX`}
@@ -807,7 +807,7 @@ function PxInput({
         onChange={(e) => setDraft(e.target.value)}
         onBlur={commit}
         onKeyDown={(e) => {
-          if (e.key === 'Enter') commit()
+          if (e.key === 'Enter' && !e.nativeEvent.isComposing && e.keyCode !== 229) commit()
         }}
         className={`${CONTROL_FIELD_CLASS} text-center tabular-nums`}
       />

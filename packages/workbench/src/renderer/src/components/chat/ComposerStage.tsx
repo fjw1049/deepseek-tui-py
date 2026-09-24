@@ -1,4 +1,6 @@
 import {
+  memo,
+  useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -25,6 +27,7 @@ type Props = ComponentProps<typeof FloatingComposer> & {
 }
 
 const COMPOSER_CLEARANCE_VAR = '--ds-composer-clearance'
+const MemoFloatingComposer = memo(FloatingComposer)
 
 export function ComposerStage(props: Props): ReactElement {
   const { t } = useTranslation('common')
@@ -53,10 +56,10 @@ export function ComposerStage(props: Props): ReactElement {
     [t]
   )
 
-  const handleSend = (text: string): void => {
-    if (pet.handlePetSlash(text)) return
-    composerProps.onSend(text)
-  }
+  const handleSend = useCallback((text: string): Promise<boolean> => {
+    if (pet.handlePetSlash(text)) return Promise.resolve(true)
+    return composerProps.onSend(text)
+  }, [composerProps.onSend, pet.handlePetSlash])
 
   // Timeline spacer follows real composer height (approvals /
   // queued messages) so overlapping chrome doesn't cover the last answer or
@@ -103,7 +106,7 @@ export function ComposerStage(props: Props): ReactElement {
             motionPaused={pet.motionPaused}
           />
         </div>
-        <FloatingComposer
+        <MemoFloatingComposer
           {...composerProps}
           onNoticeChange={setComposerNotice}
           onSend={handleSend}

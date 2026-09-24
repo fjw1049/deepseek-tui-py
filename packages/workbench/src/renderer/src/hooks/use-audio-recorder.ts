@@ -135,6 +135,8 @@ export function useAudioRecorder(options?: {
   const [elapsedMs, setElapsedMs] = useState(0)
 
   const streamRef = useRef<MediaStream | null>(null)
+  const startRequestId = useRef(0)
+  const mountedRef = useRef(true)
   const audioContextRef = useRef<AudioContext | null>(null)
   const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null)
   const scriptNodeRef = useRef<ScriptProcessorNode | null>(null)
@@ -204,6 +206,7 @@ export function useAudioRecorder(options?: {
   }, [])
 
   const cancel = useCallback(() => {
+    startRequestId.current += 1
     stopResolveRef.current = null
     cleanupStream()
   }, [cleanupStream])
@@ -245,6 +248,7 @@ export function useAudioRecorder(options?: {
   const start = useCallback(async (): Promise<RecorderStartResult> => {
     if (!supported || recording) return { ok: false, reason: 'unsupported' }
     cancel()
+    const requestId = startRequestId.current
 
     let stream: MediaStream
     try {
@@ -254,6 +258,11 @@ export function useAudioRecorder(options?: {
       const reason =
         name === 'NotAllowedError' || name === 'SecurityError' ? 'denied' : 'unavailable'
       return { ok: false, reason }
+    }
+
+    if (!mountedRef.current || requestId !== startRequestId.current) {
+      for (const track of stream.getTracks()) track.stop()
+      return { ok: false, reason: 'unavailable' }
     }
 
     streamRef.current = stream
@@ -331,7 +340,13 @@ export function useAudioRecorder(options?: {
     void stop().then((audio) => onAutoStopRef.current?.(audio))
   }
 
-  useEffect(() => () => cancel(), [cancel])
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+      cancel()
+    }
+  }, [cancel])
 
   return useMemo(
     () => ({

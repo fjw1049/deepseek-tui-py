@@ -14,6 +14,18 @@ export type ContextBreakdownJson = {
   free: number
 }
 
+/** Validate the runtime boundary before values reach the SVG and bucket rows. */
+export function isContextBreakdown(value: unknown): value is ContextBreakdownJson {
+  if (!value || typeof value !== 'object') return false
+  const data = value as Record<string, unknown>
+  const validTokenCount = (count: unknown): boolean =>
+    typeof count === 'number' && Number.isFinite(count) && count >= 0
+  return ['system_prompt', 'tools', 'conversation', 'total', 'window', 'free']
+    .every((key) => validTokenCount(data[key])) &&
+    ['tool_definitions', 'mcp', 'skills', 'rules']
+      .every((key) => data[key] === undefined || validTokenCount(data[key]))
+}
+
 export type ContextUsageSnapshot = {
   usedTokens: number
   maxTokens: number

@@ -93,13 +93,15 @@ export function SettingsSelect({
   id,
   title,
   'aria-label': ariaLabel,
-  allowReselect = false
+  allowReselect = false,
+  renderIcon
 }: SelectHTMLAttributes<HTMLSelectElement> & {
   wrapperClassName?: string
   /** Extra classes on the outer shell (e.g. bg-ds-main). */
   selectClassName?: string
   /** Emit onChange for the active option too (used to reapply a modified base theme). */
   allowReselect?: boolean
+  renderIcon?: (value: string) => ReactNode
 }): ReactElement {
   const options = useMemo(() => collectOptions(children), [children])
   const selectedValue = value == null || value === '' ? '' : String(value)
@@ -256,6 +258,7 @@ export function SettingsSelect({
                       commit(option.value)
                     }}
                   >
+                    {renderIcon?.(option.value)}
                     <span className="ds-project-context-menu__row-title min-w-0 flex-1">
                       {option.label}
                     </span>
@@ -302,6 +305,11 @@ export function SettingsSelect({
           }
         }}
       >
+        {renderIcon ? (
+          <span className="mr-2 flex shrink-0 items-center" aria-hidden>
+            {renderIcon(selectedValue)}
+          </span>
+        ) : null}
         <span className="w-full truncate text-[13px] font-medium leading-none text-ds-ink">
           {label}
         </span>

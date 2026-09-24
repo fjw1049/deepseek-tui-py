@@ -246,6 +246,7 @@ describe('approval scope in cards', () => {
     expect(expired[0]).toMatchObject({ status: 'error', errorMessage: 'Expired' })
     expect(expired[1]).toMatchObject({ approvalId: 'b', status: 'pending' })
     expect(expired[2]).toMatchObject({ approvalId: 'c', status: 'pending' })
+    expect(expired[2] && hasPendingRuntimeWork(expired[2])).toBe(false)
     expect(expireTurnApprovals(hydrated, undefined, 'Expired')).toBe(hydrated)
   })
 })

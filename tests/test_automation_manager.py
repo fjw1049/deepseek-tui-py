@@ -168,6 +168,56 @@ async def test_slot_within_grace_fires_exactly_once(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("change", ["pause", "delete"])
+async def test_scheduler_does_not_restore_changed_automation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, change: str
+) -> None:
+    mgr = AutomationManager.open(tmp_path / "auto")
+    automation_id = _daily_automation_due(mgr, seconds_ago=10)
+
+    async def enqueue(self, automation, run, task_manager):
+        if change == "pause":
+            self.pause_automation(automation_id)
+        else:
+            self.delete_automation(automation_id)
+        run.status = AutomationRunStatus.QUEUED
+
+    monkeypatch.setattr(AutomationManager, "_enqueue_run_task", enqueue)
+    await mgr.scheduler_tick(task_manager=None)  # type: ignore[arg-type]
+    if change == "pause":
+        assert mgr.get_automation(automation_id).status is AutomationStatus.PAUSED
+    else:
+        with pytest.raises(KeyError):
+            mgr.get_automation(automation_id)
+        assert mgr.list_runs(automation_id) == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("change", ["pause", "delete"])
+async def test_run_now_does_not_restore_changed_automation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, change: str
+) -> None:
+    mgr = AutomationManager.open(tmp_path / "auto")
+    automation_id = _daily_automation_due(mgr, seconds_ago=10)
+
+    async def enqueue(self, automation, run, task_manager):
+        if change == "pause":
+            self.pause_automation(automation_id)
+        else:
+            self.delete_automation(automation_id)
+        run.status = AutomationRunStatus.QUEUED
+
+    monkeypatch.setattr(AutomationManager, "_enqueue_run_task", enqueue)
+    await mgr.run_now(automation_id, task_manager=None)  # type: ignore[arg-type]
+    if change == "pause":
+        assert mgr.get_automation(automation_id).status is AutomationStatus.PAUSED
+    else:
+        with pytest.raises(KeyError):
+            mgr.get_automation(automation_id)
+        assert mgr.list_runs(automation_id) == []
+
+
+@pytest.mark.asyncio
 async def test_stale_one_shot_still_fires_and_then_completes(
     tmp_path: Path, fired_slots: list[str]
 ) -> None:

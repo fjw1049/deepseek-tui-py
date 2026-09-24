@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Literal, cast
 
 _LOG = logging.getLogger(__name__)
@@ -485,13 +485,16 @@ class ChecklistTool(ToolSpec):
 
         store = _todo_store(context)
         items: list[TodoItem] = list(store["items"])
-        target = next((it for it in items if it.id == target_id), None)
-        if target is None:
+        target_idx = next((i for i, it in enumerate(items) if it.id == target_id), None)
+        if target_idx is None:
             known = ", ".join(it.id for it in items) or "(empty)"
             raise ToolError(
                 f"no checklist item with id {target_id!r} "
                 f"(known ids: {known}). Read the checklist first."
             )
+
+        target = replace(items[target_idx])
+        items[target_idx] = target
 
         if "status" in input_data:
             target.status = _coerce_status(input_data.get("status"))

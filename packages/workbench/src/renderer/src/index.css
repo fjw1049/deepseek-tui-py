@@ -349,6 +349,52 @@ html,
   pointer-events: none;
 }
 
+/* Keep the canvas interactive in the center. Inset native drag bands leave
+   8px for resize hit testing and the top-left traffic lights unobstructed. */
+.ds-startup-drag-regions {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+}
+
+.ds-startup-drag-region {
+  position: absolute;
+  pointer-events: auto;
+  user-select: none;
+  -webkit-app-region: drag;
+}
+
+.ds-startup-drag-region--top {
+  top: 8px;
+  left: 112px;
+  right: 8px;
+  height: 40px;
+}
+
+.ds-startup-drag-region--left,
+.ds-startup-drag-region--right {
+  top: 48px;
+  bottom: 32px;
+  width: 24px;
+}
+
+.ds-startup-drag-region--left { left: 8px; }
+.ds-startup-drag-region--right { right: 8px; }
+
+.ds-startup-drag-region--bottom {
+  bottom: 8px;
+  left: 8px;
+  right: 8px;
+  height: 24px;
+}
+
+/* Opacity/pointer-events alone do not remove Electron native drag regions. */
+.ds-startup-blank--exit .ds-startup-drag-region {
+  pointer-events: none;
+  -webkit-app-region: no-drag;
+}
+
 .ds-startup-blank--exit {
   animation: ds-startup-blank-exit 0.2s ease-out forwards;
   pointer-events: none;
@@ -1665,9 +1711,8 @@ samp {
   background-color: var(--ds-bg-canvas) !important;
 }
 
-/* Apple menu chrome — shared by project picker + editor picker. */
-.ds-project-context-menu,
-.ds-editor-picker-menu {
+/* Apple menu chrome — shared by project menus and settings selects. */
+.ds-project-context-menu {
   font-family: var(--font-ui);
   font-synthesis: none;
   border-radius: 14px;
@@ -1680,8 +1725,7 @@ samp {
   -webkit-backdrop-filter: blur(28px) saturate(1.35);
 }
 
-[data-theme='dark'] .ds-project-context-menu,
-[data-theme='dark'] .ds-editor-picker-menu {
+[data-theme='dark'] .ds-project-context-menu {
   border-color: rgba(255, 255, 255, 0.1);
   background: rgba(28, 28, 30, 0.88);
   box-shadow:
@@ -1699,32 +1743,13 @@ samp {
   background: color-mix(in srgb, #fff 3%, var(--ds-card-strong));
 }
 
-.ds-project-context-menu__header,
-.ds-editor-picker-menu__header {
+.ds-project-context-menu__header {
   border-bottom: 1px solid rgba(0, 0, 0, 0.06);
   padding: 12px 14px 10px;
 }
 
-[data-theme='dark'] .ds-project-context-menu__header,
-[data-theme='dark'] .ds-editor-picker-menu__header {
+[data-theme='dark'] .ds-project-context-menu__header {
   border-bottom-color: rgba(255, 255, 255, 0.08);
-}
-
-.ds-editor-picker-menu__title {
-  font-size: 12px;
-  font-weight: 650;
-  letter-spacing: -0.01em;
-  line-height: 1.25;
-  color: var(--ds-text);
-}
-
-.ds-editor-picker-menu__hint {
-  margin-top: 3px;
-  font-size: 11px;
-  font-weight: 400;
-  letter-spacing: 0.01em;
-  line-height: 1.35;
-  color: var(--ds-text-faint);
 }
 
 .ds-project-context-menu__search {
@@ -1763,8 +1788,7 @@ samp {
   font-weight: 400;
 }
 
-.ds-project-context-menu__list,
-.ds-editor-picker-menu__list {
+.ds-project-context-menu__list {
   max-height: 260px;
   overflow-y: auto;
   padding: 6px;
@@ -1787,8 +1811,7 @@ samp {
   color: var(--ds-text-faint);
 }
 
-.ds-project-context-menu__row,
-.ds-editor-picker-menu__row {
+.ds-project-context-menu__row {
   display: flex;
   width: 100%;
   align-items: center;
@@ -1807,41 +1830,34 @@ samp {
   padding-block: 4px;
 }
 
-.ds-project-context-menu__row:hover:not(:disabled),
-.ds-editor-picker-menu__row:hover:not(:disabled) {
+.ds-project-context-menu__row:hover:not(:disabled) {
   background: rgba(0, 0, 0, 0.04);
   color: var(--ds-text);
 }
 
-[data-theme='dark'] .ds-project-context-menu__row:hover:not(:disabled),
-[data-theme='dark'] .ds-editor-picker-menu__row:hover:not(:disabled) {
+[data-theme='dark'] .ds-project-context-menu__row:hover:not(:disabled) {
   background: rgba(255, 255, 255, 0.06);
 }
 
-.ds-project-context-menu__row:active:not(:disabled),
-.ds-editor-picker-menu__row:active:not(:disabled) {
+.ds-project-context-menu__row:active:not(:disabled) {
   transform: scale(0.985);
 }
 
-.ds-project-context-menu__row:disabled,
-.ds-editor-picker-menu__row:disabled {
+.ds-project-context-menu__row:disabled {
   cursor: not-allowed;
   opacity: 0.45;
 }
 
-.ds-project-context-menu__row--active,
-.ds-editor-picker-menu__row--active {
+.ds-project-context-menu__row--active {
   background: color-mix(in srgb, var(--ds-accent, #0088ff) 12%, transparent);
   color: var(--ds-text);
 }
 
-[data-theme='dark'] .ds-project-context-menu__row--active,
-[data-theme='dark'] .ds-editor-picker-menu__row--active {
+[data-theme='dark'] .ds-project-context-menu__row--active {
   background: color-mix(in srgb, var(--ds-accent, #339cff) 20%, transparent);
 }
 
-.ds-project-context-menu__icon,
-.ds-editor-picker-menu__icon {
+.ds-project-context-menu__icon {
   display: inline-flex;
   height: 28px;
   width: 28px;
@@ -1855,20 +1871,12 @@ samp {
   overflow: hidden;
 }
 
-[data-theme='dark'] .ds-project-context-menu__icon,
-[data-theme='dark'] .ds-editor-picker-menu__icon {
+[data-theme='dark'] .ds-project-context-menu__icon {
   background: rgba(255, 255, 255, 0.08);
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
 }
 
-.ds-editor-picker-menu__icon img {
-  height: 100%;
-  width: 100%;
-  object-fit: contain;
-}
-
-.ds-project-context-menu__row-title,
-.ds-editor-picker-menu__row-title {
+.ds-project-context-menu__row-title {
   display: block;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2070,87 +2078,6 @@ samp {
   }
 }
 
-.ds-editor-picker-menu {
-  width: 268px;
-  overflow: hidden;
-  transform-origin: top right;
-  animation: ds-apple-menu-materialize 220ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
-}
-
-.ds-editor-picker-menu__list {
-  max-height: 320px;
-}
-
-.ds-editor-picker-menu__check {
-  display: inline-flex;
-  height: 18px;
-  width: 18px;
-  flex-shrink: 0;
-  align-items: center;
-  justify-content: center;
-  color: var(--ds-accent, #0088ff);
-}
-
-.ds-editor-picker-trigger {
-  display: inline-flex;
-  height: 1.75rem;
-  width: 1.75rem;
-  flex-shrink: 0;
-  align-items: center;
-  justify-content: center;
-  border-radius: 7px;
-  border: none;
-  background: transparent;
-  padding: 0;
-  color: var(--ds-text-faint);
-  box-shadow: none;
-  transition:
-    background-color 120ms ease-out,
-    color 120ms ease-out;
-}
-
-[data-theme='dark'] .ds-editor-picker-trigger {
-  background: transparent;
-  box-shadow: none;
-}
-
-.ds-editor-picker-trigger:hover:not(:disabled) {
-  background: var(--ds-surface-hover);
-  color: var(--ds-text);
-}
-
-[data-theme='dark'] .ds-editor-picker-trigger:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.07);
-}
-
-.ds-editor-picker-trigger:active:not(:disabled) {
-  /* no scale — matches flat sidebar toggles */
-}
-
-.ds-editor-picker-trigger:disabled {
-  cursor: not-allowed;
-  opacity: 0.45;
-}
-
-.ds-editor-picker-trigger[aria-expanded='true'] {
-  background: var(--ds-surface-hover);
-  color: var(--ds-text);
-}
-
-[data-theme='dark'] .ds-editor-picker-trigger[aria-expanded='true'] {
-  background: rgba(255, 255, 255, 0.07);
-}
-
-.ds-editor-picker-trigger__chevron {
-  opacity: 0.55;
-  transition: transform 180ms cubic-bezier(0.2, 0.8, 0.2, 1);
-}
-
-.ds-editor-picker-trigger[aria-expanded='true'] .ds-editor-picker-trigger__chevron {
-  transform: rotate(180deg);
-  opacity: 0.75;
-}
-
 @keyframes ds-apple-menu-materialize {
   from {
     opacity: 0;
@@ -2165,24 +2092,12 @@ samp {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .ds-project-context-menu__row,
-  .ds-editor-picker-menu__row,
-  .ds-editor-picker-trigger {
+  .ds-project-context-menu__row {
     transition: background-color 100ms ease, color 100ms ease, border-color 100ms ease;
   }
 
-  .ds-project-context-menu__row:active:not(:disabled),
-  .ds-editor-picker-menu__row:active:not(:disabled),
-  .ds-editor-picker-trigger:active:not(:disabled) {
+  .ds-project-context-menu__row:active:not(:disabled) {
     transform: none;
-  }
-
-  .ds-editor-picker-menu {
-    animation: none;
-  }
-
-  .ds-editor-picker-trigger__chevron {
-    transition: none;
   }
 }
 
@@ -2259,15 +2174,13 @@ samp {
 }
 
 @media (prefers-reduced-transparency: reduce) {
-  .ds-project-context-menu,
-  .ds-editor-picker-menu {
+  .ds-project-context-menu {
     background: var(--ds-surface-elevated, #fff);
     backdrop-filter: none;
     -webkit-backdrop-filter: none;
   }
 
-  [data-theme='dark'] .ds-project-context-menu,
-  [data-theme='dark'] .ds-editor-picker-menu {
+  [data-theme='dark'] .ds-project-context-menu {
     background: #1c1c1e;
   }
 }
@@ -2640,14 +2553,6 @@ samp {
 
 [data-theme='dark'] .ds-glass-segment-thumb {
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
-}
-
-.ds-marketplace-kind-thumb {
-  background: var(--ds-accent);
-  box-shadow: 0 2px 10px color-mix(in srgb, var(--ds-accent) 42%, transparent);
-  transition:
-    left 0.32s cubic-bezier(0.4, 0, 0.2, 1),
-    width 0.32s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 /* Tiles nested inside a panel: quiet fill, hairline border. */
@@ -3038,28 +2943,13 @@ samp {
   contain: paint;
 }
 
-/* Scroll perf: while any surface is actively scrolling (.is-scrolling flagged
-   on the shell by Workbench.tsx), drop the expensive backdrop-filter blur.
+/* During scroll or pane resize, drop the expensive backdrop-filter blur.
    Chromium re-rasterizes every blur layer per frame when content scrolls
    beneath glass — measured 25x GPU-busy and 6x main-thread frame time on long
    chat threads. Each glass surface already paints a translucent solid
    background underneath, so the only visible change is loss of blur —
-   imperceptible mid-scroll, restored ~160ms after scrolling stops. */
-.ds-workbench-shell.is-scrolling .ds-chat-composer,
-.ds-workbench-shell.is-scrolling .ds-frosted,
-.ds-workbench-shell.is-scrolling .ds-glass,
-.ds-workbench-shell.is-scrolling .ds-glass-segment-thumb,
-.ds-workbench-shell.is-scrolling .ds-topbar-surface,
-.ds-workbench-shell.is-scrolling .ds-sidebar-shell,
-.ds-workbench-shell.is-scrolling .ds-sidebar-expand-droplet,
-.ds-workbench-shell.is-scrolling .ds-composer-command-popover,
-.ds-workbench-shell.is-scrolling .ds-project-context-menu,
-.ds-workbench-shell.is-scrolling .ds-editor-picker-menu,
-.ds-workbench-shell.is-scrolling .ds-workbench-right-panel,
-.ds-workbench-shell.is-scrolling .ds-feature-page,
-.ds-workbench-shell.is-scrolling .ds-settings-page,
-.ds-workbench-shell.is-scrolling .ds-modal-backdrop,
-.ds-workbench-shell.is-scrolling .ds-modal-surface {
+   imperceptible during the gesture, restored when it stops. */
+.ds-workbench-shell:is(.is-scrolling, .is-resizing) .ds-chat-composer, .ds-workbench-shell:is(.is-scrolling, .is-resizing) .ds-frosted, .ds-workbench-shell:is(.is-scrolling, .is-resizing) .ds-glass, .ds-workbench-shell:is(.is-scrolling, .is-resizing) .ds-glass-segment-thumb, .ds-workbench-shell:is(.is-scrolling, .is-resizing) .ds-topbar-surface, .ds-workbench-shell:is(.is-scrolling, .is-resizing) .ds-sidebar-shell, .ds-workbench-shell:is(.is-scrolling, .is-resizing) .ds-sidebar-expand-droplet, .ds-workbench-shell:is(.is-scrolling, .is-resizing) .ds-composer-command-popover, .ds-workbench-shell:is(.is-scrolling, .is-resizing) .ds-project-context-menu, .ds-workbench-shell:is(.is-scrolling, .is-resizing) .ds-workbench-right-panel, .ds-workbench-shell:is(.is-scrolling, .is-resizing) .ds-feature-page, .ds-workbench-shell:is(.is-scrolling, .is-resizing) .ds-settings-page, .ds-workbench-shell:is(.is-scrolling, .is-resizing) .ds-modal-backdrop, .ds-workbench-shell:is(.is-scrolling, .is-resizing) .ds-modal-surface {
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
 }
@@ -8156,14 +8046,21 @@ html[data-theme='dark'] .ds-syntax-line span { color: var(--shiki-dark) !importa
     0 8px 22px rgba(0, 0, 0, 0.38);
 }
 
+/* Main conversation and split panes share the same card sizing. */
+.ds-operation-rail,
+.ds-chat-split-context {
+  --ds-operation-rail-width: clamp(14.5rem, 32cqi, 23.5rem);
+  --ds-operation-rail-inset: clamp(0.75rem, 2cqi, 2rem);
+}
+
 .ds-operation-rail {
   position: relative;
   z-index: 2;
-  flex: 0 0 clamp(14.5rem, 32cqi, 23.5rem);
-  width: clamp(14.5rem, 32cqi, 23.5rem);
+  flex: 0 0 var(--ds-operation-rail-width);
+  width: var(--ds-operation-rail-width);
   flex-direction: column;
   background: transparent;
-  padding-right: clamp(0.75rem, 2cqi, 2rem);
+  padding-right: var(--ds-operation-rail-inset);
   transition:
     flex-basis 220ms cubic-bezier(0.32, 0.72, 0, 1),
     width 220ms cubic-bezier(0.32, 0.72, 0, 1),

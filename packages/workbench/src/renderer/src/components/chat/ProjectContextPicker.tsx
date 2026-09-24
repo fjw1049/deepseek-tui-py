@@ -15,7 +15,7 @@ import {
   ChevronDown,
   Folder,
   FolderOpen,
-  LayoutGrid,
+  BriefcaseBusiness,
   Loader2,
   Plus,
   Search
@@ -387,7 +387,7 @@ export function ProjectContextPicker({
                       onClick={() => void selectProject(item.path)}
                     >
                       <span className="ds-project-context-menu__icon" aria-hidden>
-                        <Folder className="h-3.5 w-3.5" strokeWidth={1.85} />
+                        <FolderOpen className="h-3.5 w-3.5 fill-amber-300 text-amber-600 dark:fill-amber-400 dark:text-amber-500" strokeWidth={1.5} />
                       </span>
                       <span className="min-w-0 flex-1">
                         <span className="ds-project-context-menu__row-title">{item.label}</span>
@@ -432,7 +432,7 @@ export function ProjectContextPicker({
           onClick={() => void clearProject()}
         >
           <span className="ds-project-context-menu__icon" aria-hidden>
-            <LayoutGrid className="h-3.5 w-3.5" strokeWidth={1.9} />
+            <BriefcaseBusiness className="h-3.5 w-3.5" strokeWidth={1.75} />
           </span>
           <span className="min-w-0 flex-1">
             <span className="ds-project-context-menu__row-title">{t('contextBarNoProject')}</span>
@@ -444,6 +444,8 @@ export function ProjectContextPicker({
       </div>
     </div>
   ) : null
+
+  const TriggerFolderIcon = open ? FolderOpen : Folder
 
   return (
     <div ref={wrapRef} className="ds-no-drag relative min-w-0">
@@ -464,7 +466,7 @@ export function ProjectContextPicker({
         aria-expanded={open}
       >
         {isTemporary ? (
-          <FolderOpen
+          <TriggerFolderIcon
             className={
               size === 'tray'
                 ? 'ds-workspace-context-chip__prompt-icon h-[14px] w-[14px] shrink-0'
@@ -473,7 +475,7 @@ export function ProjectContextPicker({
             strokeWidth={size === 'tray' ? 1.6 : 1.7}
           />
         ) : (
-          <Folder className={size === 'tray' ? 'h-4 w-4 shrink-0' : 'h-3.5 w-3.5 shrink-0'} strokeWidth={1.7} />
+          <TriggerFolderIcon className={`shrink-0 fill-amber-300 text-amber-600 dark:fill-amber-400 dark:text-amber-500 ${size === 'tray' ? 'h-4 w-4' : 'h-3.5 w-3.5'}`} strokeWidth={1.5} />
         )}
         <span
           className={`min-w-0 flex-1 truncate ${

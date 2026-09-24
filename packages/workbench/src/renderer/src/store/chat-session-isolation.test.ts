@@ -5,7 +5,8 @@ import type { ThreadEventSink } from '../agent/types'
 const provider = vi.hoisted(() => ({
   getThreadDetail: vi.fn(), subscribeThreadEvents: vi.fn(), interruptTurn: vi.fn(),
   fetchPendingApprovals: vi.fn(), fetchPendingUserInputs: vi.fn(), fetchPendingElevations: vi.fn(),
-  warmThread: vi.fn(), submitApprovalDecision: vi.fn()
+  warmThread: vi.fn(), submitApprovalDecision: vi.fn(), listThreads: vi.fn(),
+  sendUserMessage: vi.fn(), renameThread: vi.fn()
 }))
 vi.mock('../agent/registry', () => ({ getProvider: () => provider }))
 import { createChatSessionStore } from './chat-store'
@@ -29,6 +30,9 @@ beforeEach(() => {
   provider.fetchPendingElevations.mockResolvedValue([])
   provider.interruptTurn.mockResolvedValue(undefined)
   provider.subscribeThreadEvents.mockResolvedValue(undefined)
+  provider.listThreads.mockResolvedValue([])
+  provider.sendUserMessage.mockResolvedValue({ turnId: 'turn-a' })
+  provider.renameThread.mockResolvedValue(undefined)
 })
 afterEach(() => { sessions.splice(0).forEach(s => s.dispose()); vi.useRealTimers() })
 
@@ -67,6 +71,109 @@ it('does not let a late selection or stale stream overwrite a newer task', async
   await pane.store.getState().selectThread('next')
   staleSink.onDeltas([{ kind: 'agent_message', text: 'stale', seq: 9 }])
   expect(pane.store.getState().liveAssistant).toBe('')
+})
+
+it('does not restore an old task after recovery finishes late', async () => {
+  const pane = session()
+  await pane.store.getState().selectThread('a')
+  let resolveOld!: (value: ReturnType<typeof snapshot>) => void
+  provider.getThreadDetail.mockImplementation((id: string) => id === 'a'
+    ? new Promise(resolve => { resolveOld = resolve })
+    : Promise.resolve(snapshot(id)))
+  const recovery = pane.store.getState().recoverActiveTurn()
+  pane.store.setState({ activeThreadId: 'b', currentTurnId: 'turn-b' })
+  resolveOld(snapshot('a'))
+  await recovery
+  expect(pane.store.getState().activeThreadId).toBe('b')
+  expect(pane.store.getState().currentTurnId).toBe('turn-b')
+})
+
+it('does not attach an old send to a newly selected task after auto-title', async () => {
+  const pane = session()
+  pane.store.setState({
+    activeThreadId: 'a', activeThreadWarmup: { threadId: 'a', status: 'ready' },
+    threads: [{ id: 'a', title: '新会话' }, { id: 'b', title: 'B' }] as never,
+    blocks: []
+  })
+  provider.listThreads.mockResolvedValue([{ id: 'a', title: '新会话' }, { id: 'b', title: 'B' }])
+  let finishRename!: () => void
+  provider.renameThread.mockImplementation(() => new Promise<void>(resolve => { finishRename = resolve }))
+  const sending = pane.store.getState().sendMessage('hello')
+  await Promise.resolve()
+  await Promise.resolve()
+  expect(provider.renameThread).toHaveBeenCalledOnce()
+  pane.store.setState({ activeThreadId: 'b', currentTurnId: 'turn-b' })
+  finishRename()
+  await sending
+  expect(pane.store.getState().activeThreadId).toBe('b')
+  expect(pane.store.getState().currentTurnId).toBe('turn-b')
+  expect(provider.subscribeThreadEvents.mock.calls.filter(args => args[0] === 'a')).toHaveLength(0)
+})
+
+it('does not retry a queued message while its turn still needs approval', async () => {
+  const pane = session()
+  const sendMessage = vi.fn(async () => false)
+  pane.store.setState({
+    sendMessage,
+    blocks: [{ kind: 'approval', id: 'gate', approvalId: 'gate', summary: 'Review', status: 'pending' }],
+    queuedMessages: [{ id: 'q1', text: 'Next', mode: 'agent' }]
+  })
+  await pane.store.getState().drainQueuedMessages()
+  expect(sendMessage).not.toHaveBeenCalled()
+  expect(pane.store.getState().queuedMessages).toHaveLength(1)
+})
+
+it('stops draining if a send reports success without consuming the queue head', async () => {
+  const pane = session()
+  const sendMessage = vi.fn(async () => true)
+  pane.store.setState({
+    sendMessage,
+    queuedMessages: [{ id: 'q1', text: 'Next', mode: 'agent' }]
+  })
+  await pane.store.getState().drainQueuedMessages()
+  expect(sendMessage).toHaveBeenCalledOnce()
+  expect(pane.store.getState().queuedMessages).toHaveLength(1)
+})
+
+it('drains a waiting message when the last approval is resolved', async () => {
+  const pane = session()
+  const sendMessage = vi.fn(async () => false)
+  pane.store.setState({
+    sendMessage,
+    blocks: [{ kind: 'approval', id: 'gate', approvalId: 'gate', summary: 'Review', status: 'pending' }],
+    queuedMessages: [{ id: 'q1', text: 'Next', mode: 'agent' }]
+  })
+  pane.store.setState({ blocks: [{ kind: 'approval', id: 'gate', approvalId: 'gate', summary: 'Review', status: 'allowed' }] })
+  await Promise.resolve()
+  expect(sendMessage).toHaveBeenCalledOnce()
+})
+
+it('keeps the newest thread list when an older refresh finishes late', async () => {
+  const pane = session()
+  let finishOld!: (value: Array<{ id: string; title: string }>) => void
+  provider.listThreads.mockImplementationOnce(() => new Promise(resolve => { finishOld = resolve }))
+    .mockResolvedValueOnce([{ id: 'a', title: 'New title' }])
+  const old = pane.store.getState().refreshThreads()
+  await pane.store.getState().refreshThreads()
+  finishOld([{ id: 'a', title: 'Old title' }])
+  await old
+  expect(pane.store.getState().threads[0]?.title).toBe('New title')
+})
+
+it('does not reselect the old task while a new selection is loading', async () => {
+  const pane = session()
+  await pane.store.getState().selectThread('a')
+  let finishB!: (value: ReturnType<typeof snapshot>) => void
+  provider.getThreadDetail.mockImplementation((id: string) => id === 'b'
+    ? new Promise(resolve => { finishB = resolve })
+    : Promise.resolve(snapshot(id)))
+  provider.listThreads.mockResolvedValue([{ id: 'a', title: 'A' }, { id: 'b', title: 'B' }])
+  const selecting = pane.store.getState().selectThread('b')
+  await pane.store.getState().refreshThreads()
+  expect(provider.getThreadDetail.mock.calls.filter(args => args[0] === 'a')).toHaveLength(1)
+  finishB(snapshot('b'))
+  await selecting
+  expect(pane.store.getState().activeThreadId).toBe('b')
 })
 
 it('keeps recovery timers independent when another pane is disposed', async () => {

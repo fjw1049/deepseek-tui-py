@@ -3,6 +3,7 @@ import {
   Suspense,
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type PointerEvent as ReactPointerEvent,
@@ -34,6 +35,7 @@ import {
   type IdeCenterTab
 } from '../../lib/workbench-layout-mode'
 import { workspaceLabelFromPath } from '../../lib/workspace-label'
+import { createFrameQueue } from '../../lib/frame-queue'
 import { IDE_QUICK_OPEN_EVENT } from '../../lib/workspace-editor-events'
 import { useWorkspaceEditorStore } from '../../store/workspace-editor-store'
 import {
@@ -193,6 +195,11 @@ export function IdeWorkspaceLayout({
     startWidth: number
     pendingWidth: number
   } | null>(null)
+  const resizeCleanupRef = useRef<(() => void) | null>(null)
+  const resizeQueueRef = useRef<ReturnType<typeof createFrameQueue> | null>(null)
+  resizeQueueRef.current ??= createFrameQueue()
+  const { queue: queueResize, flush: flushResize } = resizeQueueRef.current
+  useEffect(() => () => resizeCleanupRef.current?.(), [])
   const workspaceDirtyTick = useChatStore((s) => s.workspaceDirtyTick)
   const activeThreadId = useChatStore((s) => s.activeThreadId)
   const threads = useChatStore((s) => s.threads)
@@ -212,10 +219,11 @@ export function IdeWorkspaceLayout({
     void reloadGitChanges()
   }, [reloadGitBranches, reloadGitChanges])
   useWorkspaceDirtyGitRefresh(workspaceDirtyTick, refreshGitChanges)
-  const changeBadge = collectWorkspaceChangeEntries({
-    blocks,
-    gitFiles: gitChanges?.ok ? gitChanges.files : null
-  }).length
+  const gitFiles = gitChanges?.ok ? gitChanges.files : null
+  const changeBadge = useMemo(
+    () => collectWorkspaceChangeEntries({ blocks, gitFiles }).length,
+    [blocks, gitFiles]
+  )
 
   useEffect(() => {
     persistIdeCenterTab(centerTab === 'search' ? 'files' : centerTab)
@@ -285,8 +293,13 @@ export function IdeWorkspaceLayout({
 
   const beginChangesListResize = (event: ReactPointerEvent<HTMLDivElement>): void => {
     if (event.button !== 0) return
+    resizeCleanupRef.current?.()
     event.preventDefault()
     event.stopPropagation()
+    const prevCursor = document.body.style.cursor
+    const prevUserSelect = document.body.style.userSelect
+    const shell = event.currentTarget.closest('.ds-workbench-shell')
+    shell?.classList.add('is-resizing')
     changesListResizeRef.current = {
       pointerId: event.pointerId,
       startX: event.clientX,
@@ -298,30 +311,41 @@ export function IdeWorkspaceLayout({
       if (!state || moveEvent.pointerId !== state.pointerId) return
       const next = clampChangesListWidth(state.startWidth + moveEvent.clientX - state.startX)
       state.pendingWidth = next
-      setChangesListWidth(next)
+      queueResize(() => setChangesListWidth(next))
     }
-    const onEnd = (endEvent: PointerEvent): void => {
+    const onEnd = (endEvent?: Event): void => {
       const state = changesListResizeRef.current
-      if (!state || endEvent.pointerId !== state.pointerId) return
+      if (!state || (endEvent instanceof PointerEvent && endEvent.pointerId !== state.pointerId)) return
+      flushResize()
       persistChangesListWidth(state.pendingWidth)
       changesListResizeRef.current = null
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', onEnd)
       window.removeEventListener('pointercancel', onEnd)
-      document.body.style.cursor = ''
-      document.body.style.userSelect = ''
+      window.removeEventListener('blur', onEnd)
+      document.body.style.cursor = prevCursor
+      document.body.style.userSelect = prevUserSelect
+      shell?.classList.remove('is-resizing')
+      resizeCleanupRef.current = null
     }
+    resizeCleanupRef.current = onEnd
     document.body.style.cursor = 'col-resize'
     document.body.style.userSelect = 'none'
     window.addEventListener('pointermove', onMove)
     window.addEventListener('pointerup', onEnd)
     window.addEventListener('pointercancel', onEnd)
+    window.addEventListener('blur', onEnd)
   }
 
   const beginChatRailResize = (event: ReactPointerEvent<HTMLDivElement>): void => {
     if (event.button !== 0) return
+    resizeCleanupRef.current?.()
     event.preventDefault()
     event.stopPropagation()
+    const prevCursor = document.body.style.cursor
+    const prevUserSelect = document.body.style.userSelect
+    const shell = event.currentTarget.closest('.ds-workbench-shell')
+    shell?.classList.add('is-resizing')
     resizeStateRef.current = {
       pointerId: event.pointerId,
       startX: event.clientX,
@@ -333,24 +357,30 @@ export function IdeWorkspaceLayout({
       if (!state || moveEvent.pointerId !== state.pointerId) return
       const next = clampIdeChatRailWidth(state.startWidth + state.startX - moveEvent.clientX)
       state.pendingWidth = next
-      setChatRailWidth(next)
+      queueResize(() => setChatRailWidth(next))
     }
-    const onEnd = (endEvent: PointerEvent): void => {
+    const onEnd = (endEvent?: Event): void => {
       const state = resizeStateRef.current
-      if (!state || endEvent.pointerId !== state.pointerId) return
+      if (!state || (endEvent instanceof PointerEvent && endEvent.pointerId !== state.pointerId)) return
+      flushResize()
       persistIdeChatRailWidth(state.pendingWidth)
       resizeStateRef.current = null
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', onEnd)
       window.removeEventListener('pointercancel', onEnd)
-      document.body.style.cursor = ''
-      document.body.style.userSelect = ''
+      window.removeEventListener('blur', onEnd)
+      document.body.style.cursor = prevCursor
+      document.body.style.userSelect = prevUserSelect
+      shell?.classList.remove('is-resizing')
+      resizeCleanupRef.current = null
     }
+    resizeCleanupRef.current = onEnd
     document.body.style.cursor = 'col-resize'
     document.body.style.userSelect = 'none'
     window.addEventListener('pointermove', onMove)
     window.addEventListener('pointerup', onEnd)
     window.addEventListener('pointercancel', onEnd)
+    window.addEventListener('blur', onEnd)
   }
 
   const showChangesList = centerTab === 'changes' && activitySidebarVisible

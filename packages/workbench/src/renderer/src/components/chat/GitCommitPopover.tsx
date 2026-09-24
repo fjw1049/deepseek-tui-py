@@ -57,6 +57,9 @@ function gitStageLabel(stage: GitWorkingChangeStage, t: (key: string) => string)
   return t('gitStageUnstaged')
 }
 
+const uiScale = (): number =>
+  parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--ds-ui-scale')) || 1
+
 export function GitCommitPopover({
   workspaceRoot,
   currentBranch,
@@ -141,26 +144,29 @@ export function GitCommitPopover({
     const height = el?.offsetHeight ?? 480
     const margin = 12
     const gap = 8
+    const scale = uiScale()
+    const viewWidth = window.innerWidth / scale
+    const viewHeight = window.innerHeight / scale
 
     if (!anchor) {
       setDialogPos({
-        x: Math.max(margin, (window.innerWidth - width) / 2),
-        y: Math.max(margin, (window.innerHeight - height) / 2)
+        x: Math.max(margin, (viewWidth - width) / 2),
+        y: Math.max(margin, (viewHeight - height) / 2)
       })
       return
     }
 
     const rect = anchor.getBoundingClientRect()
-    let x = rect.right - width
-    let y = rect.bottom + gap
+    let x = rect.right / scale - width
+    let y = rect.bottom / scale + gap
 
-    if (y + height > window.innerHeight - margin) {
-      const above = rect.top - height - gap
-      y = above >= margin ? above : Math.max(margin, window.innerHeight - height - margin)
+    if (y + height > viewHeight - margin) {
+      const above = rect.top / scale - height - gap
+      y = above >= margin ? above : Math.max(margin, viewHeight - height - margin)
     }
 
-    x = Math.min(Math.max(margin, x), window.innerWidth - width - margin)
-    y = Math.min(Math.max(margin, y), window.innerHeight - height - margin)
+    x = Math.min(Math.max(margin, x), Math.max(margin, viewWidth - width - margin))
+    y = Math.min(Math.max(margin, y), Math.max(margin, viewHeight - height - margin))
 
     setDialogPos({ x, y })
   }, [])
@@ -184,8 +190,8 @@ export function GitCommitPopover({
     const width = el?.offsetWidth ?? 512
     const height = el?.offsetHeight ?? 480
     return {
-      x: Math.min(Math.max(12, x), Math.max(12, window.innerWidth - width - 12)),
-      y: Math.min(Math.max(12, y), Math.max(12, window.innerHeight - height - 12))
+      x: Math.min(Math.max(12, x), Math.max(12, window.innerWidth / uiScale() - width - 12)),
+      y: Math.min(Math.max(12, y), Math.max(12, window.innerHeight / uiScale() - height - 12))
     }
   }, [])
 
@@ -199,7 +205,8 @@ export function GitCommitPopover({
 
     const startX = event.clientX
     const startY = event.clientY
-    const origin = dialogPos ?? clampDialogPos(startX, startY)
+    const scale = uiScale()
+    const origin = dialogPos ?? clampDialogPos(startX / scale, startY / scale)
     const prevCursor = document.body.style.cursor
     const prevUserSelect = document.body.style.userSelect
     document.body.style.cursor = 'grabbing'
@@ -207,7 +214,7 @@ export function GitCommitPopover({
 
     const onMove = (moveEvent: PointerEvent): void => {
       setDialogPos(
-        clampDialogPos(origin.x + (moveEvent.clientX - startX), origin.y + (moveEvent.clientY - startY))
+        clampDialogPos(origin.x + (moveEvent.clientX - startX) / scale, origin.y + (moveEvent.clientY - startY) / scale)
       )
     }
 
@@ -216,6 +223,8 @@ export function GitCommitPopover({
       document.body.style.userSelect = prevUserSelect
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('pointercancel', onUp)
+      window.removeEventListener('blur', onUp)
       endPointerDragRef.current = null
     }
 
@@ -226,6 +235,8 @@ export function GitCommitPopover({
     endPointerDragRef.current = endDrag
     window.addEventListener('pointermove', onMove)
     window.addEventListener('pointerup', onUp)
+    window.addEventListener('pointercancel', onUp)
+    window.addEventListener('blur', onUp)
   }
 
   const selectedPaths = useMemo(

@@ -29,7 +29,7 @@ _MAX_TERMINAL_AGENTS_IN_MEMORY = 30
 DEFAULT_RESULT_TIMEOUT_MS = 180_000
 MIN_WAIT_TIMEOUT_MS = 30_000
 MAX_RESULT_TIMEOUT_MS = 3_600_000
-SUBAGENT_STATE_SCHEMA_VERSION = 1
+SUBAGENT_STATE_SCHEMA_VERSION = 2
 SUBAGENT_RESTART_REASON = "Interrupted by process restart"
 
 
@@ -467,6 +467,7 @@ class SubAgentResult:
     from_prior_session: bool = False
     structured: Any | None = None
     max_steps_reached: bool = False
+    background: bool = False
 
 
 @dataclass(slots=True)

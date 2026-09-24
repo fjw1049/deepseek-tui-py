@@ -3,8 +3,8 @@ import { useTranslation } from 'react-i18next'
 import {
   CalendarClock,
   ChevronRight,
-  Wrench,
-  Columns3,
+  Blocks,
+  SquareKanban,
   Command,
   MessageCircle,
   PanelLeftClose,
@@ -124,7 +124,7 @@ export function Sidebar({
               variant="flat"
             />
             <SidebarLink
-              icon={<Columns3 className="h-4 w-4" strokeWidth={1.9} />}
+              icon={<SquareKanban className="h-4 w-4" strokeWidth={1.75} />}
               label={t('kanbanNav')}
               onClick={() => setRoute('kanban')}
               shortcut="⌘J"
@@ -139,7 +139,7 @@ export function Sidebar({
               aria-controls="sidebar-tools"
               onClick={() => setToolsExpanded(!(toolsExpanded ?? (marketplaceActive || automationActive || channelsActive)))}
             >
-              <span className="ds-sidebar-link__icon text-ds-muted"><Wrench className="h-4 w-4" strokeWidth={1.9} /></span>
+              <span className="ds-sidebar-link__icon text-ds-muted"><Blocks className="h-4 w-4" strokeWidth={1.75} /></span>
               <span className="min-w-0 flex-1 text-left">{t('sidebarTools')}</span>
               <ChevronRight className={`h-3.5 w-3.5 text-ds-faint ${toolsExpanded ?? (marketplaceActive || automationActive || channelsActive) ? 'rotate-90' : ''}`} />
             </button>

@@ -74,6 +74,9 @@ it('persists arrangement and restores old or invalid layouts as a grid', () => {
   expect(JSON.parse(window.localStorage.getItem('deepseek.chat-layouts.v1')!)['/repo'].arrangement).toBe('vertical')
   expect(sanitizeChatLayout({ ...layout, arrangement: undefined })?.arrangement).toBe('grid')
   expect(sanitizeChatLayout({ ...layout, arrangement: 'invalid' })?.arrangement).toBe('grid')
+  actions.arrange('/repo', 'tabs')
+  const saved = JSON.parse(window.localStorage.getItem('deepseek.chat-layouts.v1')!)['/repo']
+  expect(sanitizeChatLayout(saved)?.arrangement).toBe('tabs')
 })
 
 it('swaps pane identities, focuses the dragged conversation, and persists the new order', () => {
@@ -168,4 +171,18 @@ it('sanitizes shelf duplicates and removes archived tasks from the shelf', () =>
   useChatLayoutStore.setState({ layouts: { '/repo': clean } })
   useChatLayoutStore.getState().reconcile('/repo', ['a'])
   expect(useChatLayoutStore.getState().layouts['/repo'].parked).toEqual([])
+})
+
+it('cold starts on home even when the previous session saved a split workspace', async () => {
+  const { vi } = await import('vitest')
+  const actions = useChatLayoutStore.getState()
+  actions.add('/repo', 'old-a', 'old-b')
+  window.localStorage.setItem('deepseek.chat-layout-active.v1', '/repo')
+  vi.resetModules()
+  const { useChatLayoutStore: restarted, activeChatLayout } = await import('./chat-layout-store')
+  expect(restarted.getState().activeLayoutKey).toBeNull()
+  expect(activeChatLayout(restarted.getState(), '/repo')).toBeUndefined()
+  restarted.getState().focus('/repo', restarted.getState().layouts['/repo'].focused)
+  expect(activeChatLayout(restarted.getState(), '/repo')?.panes).toHaveLength(2)
+  expect(restarted.getState().layouts['/repo'].panes.map(p => p.threadId)).toEqual(['old-a', 'old-b'])
 })

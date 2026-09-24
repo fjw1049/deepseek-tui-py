@@ -9,7 +9,8 @@ import {
 import {
   Check,
   ChevronRight,
-  ChevronsLeftRight,
+  Minimize,
+  Maximize,
   GitBranch,
   GitGraph,
   ListTodo,
@@ -46,6 +47,7 @@ import { GitBranchPicker } from './GitBranchPicker'
 import { TaskActivity } from './TaskActivity'
 
 type Props = {
+  onCollapse?: () => void
   /** Project currently rendered by the owning Workbench. */
   workspaceRoot: string
   onOpenChanges?: () => void
@@ -149,6 +151,7 @@ function SectionHeader({
 
 export function OperationContextDock({
   workspaceRoot,
+  onCollapse,
   onOpenChanges,
   onOpenFilesSidebar,
   onEnterIdeMode,
@@ -317,7 +320,7 @@ export function OperationContextDock({
 
   // Keep the expanded card mounted while collapsing (fade/squeeze) and while
   // expanding (fade in from the narrow rail). Only idle-compact uses the strip.
-  if (compact && motion !== 'expanding') {
+  if (!onCollapse && compact && motion !== 'expanding') {
     return (
       <div
         className="ds-operation-dock ds-operation-dock--compact ds-no-drag relative z-10"
@@ -332,7 +335,7 @@ export function OperationContextDock({
           aria-label={t('operationDockExpand')}
           aria-expanded={false}
         >
-          <ChevronsLeftRight className="h-4 w-4" strokeWidth={2.1} />
+          <Maximize className="h-4 w-4" strokeWidth={1.75} />
         </button>
         <div className="ds-operation-dock-rail__rule" aria-hidden />
         <div className="ds-operation-dock-rail" role="toolbar" aria-label={t('rightSidebarTabEditor')}>
@@ -374,7 +377,7 @@ export function OperationContextDock({
   return (
     <div
       className="ds-operation-dock ds-hero-panel ds-glass ds-content-card--interactive ds-no-drag relative z-10 w-full overflow-hidden rounded-[18px]"
-      data-compact={widthCompact ? 'true' : 'false'}
+      data-compact={!onCollapse && widthCompact ? 'true' : 'false'}
       data-phase={motion === 'idle' ? 'expanded' : motion}
     >
       <div className="ds-operation-dock-topbar">
@@ -384,12 +387,12 @@ export function OperationContextDock({
         <button
           type="button"
           className="ds-operation-dock-topbar__toggle"
-          onClick={() => setCompactMode(true)}
+          onClick={() => onCollapse ? onCollapse() : setCompactMode(true)}
           title={t('operationDockCollapse')}
           aria-label={t('operationDockCollapse')}
           aria-expanded={true}
         >
-          <ChevronsLeftRight className="h-4 w-4" strokeWidth={2.1} />
+          <Minimize className="h-4 w-4" strokeWidth={1.75} />
         </button>
       </div>
       <div className="ds-operation-dock-body">

@@ -355,6 +355,14 @@ class EditFileTool(ToolSpec):
             display_path=rel,
             cwd=context.working_directory,
         )
+        if "\r\n" in content and "\n" in old_string and "\r" not in old_string:
+            crlf_old = old_string.replace("\n", "\r\n")
+            if crlf_old in content:
+                old_string = crlf_old
+                if "\r" not in new_string:
+                    new_string = new_string.replace("\n", "\r\n")
+        if old_string == new_string:
+            raise ToolError("edit_file new_string must differ from old_string")
         count = content.count(old_string)
         if count == 0:
             logger.warning("edit_file_no_match path=%s search_len=%d", path, len(old_string))
@@ -552,7 +560,7 @@ def _read_text_page(
     finally:
         fh.close()
 
-    if line_no <= start:
+    if line_no <= start and scan_stopped:
         raise ToolError(
             f"{label} exceeds the read scan budget before offset {start + 1} "
             "could be reached. Use exec_shell (e.g. sed) to read further."
@@ -575,8 +583,12 @@ async def _read_text(
     cwd: Path | None = None,
 ) -> str:
     """Read UTF-8 text; enrich FileNotFound with path suggestions when possible."""
+    def read() -> str:
+        with path.open("r", encoding="utf-8", newline="") as fh:
+            return fh.read()
+
     try:
-        return await asyncio.to_thread(path.read_text, encoding="utf-8")
+        return await asyncio.to_thread(read)
     except FileNotFoundError as exc:
         raise _not_found_error(path, display_path=display_path, cwd=cwd) from exc
 

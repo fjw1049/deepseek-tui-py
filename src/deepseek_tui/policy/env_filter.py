@@ -33,6 +33,8 @@ _SECRET_SUFFIXES = (
     # ``APIKEY`` (no underscore) covers ``DEEPSEEK_APIKEY`` / ``OPENAI_APIKEY``.
     # ``_API_KEY`` above does not: those names do not end in ``_KEY``.
     "APIKEY",
+    "PASSWORD",
+    "_PAT",
 )
 
 

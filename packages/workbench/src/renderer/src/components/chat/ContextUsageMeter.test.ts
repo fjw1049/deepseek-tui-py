@@ -1,7 +1,8 @@
 // @vitest-environment happy-dom
 import { act, createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import type { ChatBlock } from '../../agent/types'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ContextUsageMeter } from './ContextUsageMeter'
 
 vi.mock('react-i18next', () => ({
@@ -26,6 +27,8 @@ function renderMeter(
   props: {
     hasActiveThread: boolean
     threadId?: string | null
+    blocks?: ChatBlock[]
+    busy?: boolean
   }
 ): void {
   root.render(
@@ -41,6 +44,8 @@ describe('ContextUsageMeter', () => {
   beforeEach(() => {
     document.body.innerHTML = ''
   })
+
+  afterEach(() => vi.useRealTimers())
 
   it('shows the estimated system baseline before a thread exists', async () => {
     const container = document.createElement('div')
@@ -103,6 +108,75 @@ describe('ContextUsageMeter', () => {
     expect(segments).toHaveLength(6)
     expect(Array.from(segments).every((segment) => segment.style.minWidth === '2px')).toBe(true)
 
+    await act(async () => root.unmount())
+  })
+
+
+  it('retains the live reading while refreshing and after a failed refresh', async () => {
+    const runtimeRequest = vi.fn().mockResolvedValueOnce({
+      ok: true,
+      body: JSON.stringify({ system_prompt: 1000, tools: 1000, conversation: 98000,
+        total: 100000, window: 1000000, free: 900000 })
+    }).mockResolvedValue({ ok: false, body: '' })
+    ;(window as unknown as { dsGui: unknown }).dsGui = { runtimeRequest }
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+    await act(async () => renderMeter(root, { hasActiveThread: true, threadId: 'a' }))
+    await act(async () => renderMeter(root, { hasActiveThread: true, threadId: 'a',
+      blocks: [{ kind: 'user', id: 'u', text: 'hello' }] }))
+    expect(container.querySelector('button')?.title).toBe('context 100.0k / 1.0M (10%)')
+    await act(async () => root.unmount())
+  })
+
+  it('refreshes during a turn even when the block count is unchanged', async () => {
+    vi.useFakeTimers()
+    const payload = (total: number) => ({ ok: true, body: JSON.stringify({
+      system_prompt: 1000, tools: 1000, conversation: total - 2000,
+      total, window: 1000000, free: 1000000 - total
+    }) })
+    const runtimeRequest = vi.fn().mockResolvedValueOnce(payload(100000))
+      .mockResolvedValue(payload(200000))
+    ;(window as unknown as { dsGui: unknown }).dsGui = { runtimeRequest }
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+    await act(async () => renderMeter(root, { hasActiveThread: true, threadId: 'a', busy: true }))
+    await act(async () => vi.advanceTimersByTimeAsync(2000))
+    expect(container.querySelector('button')?.title).toBe('context 200.0k / 1.0M (20%)')
+    await act(async () => root.unmount())
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('falls back on malformed successful responses instead of rendering an empty ring', async () => {
+    ;(window as unknown as { dsGui: unknown }).dsGui = {
+      runtimeRequest: vi.fn().mockResolvedValue({ ok: true, body: '{}' })
+    }
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+    await act(async () => renderMeter(root, { hasActiveThread: true, threadId: 'a' }))
+    expect(container.querySelector('button')?.title).toBe('context 8.4k / 1.0M (1%)')
+    expect(container.querySelectorAll('circle')).toHaveLength(2)
+    await act(async () => root.unmount())
+  })
+
+  it('ignores a late response from the previous thread', async () => {
+    let resolveOld!: (value: { ok: boolean; body: string }) => void
+    const runtimeRequest = vi.fn()
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveOld = resolve }))
+      .mockResolvedValue({ ok: false, body: '' })
+    ;(window as unknown as { dsGui: unknown }).dsGui = { runtimeRequest }
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+    await act(async () => renderMeter(root, { hasActiveThread: true, threadId: 'a' }))
+    await act(async () => renderMeter(root, { hasActiveThread: true, threadId: 'b' }))
+    await act(async () => resolveOld({ ok: true, body: JSON.stringify({
+      system_prompt: 1000, tools: 1000, conversation: 98000,
+      total: 100000, window: 1000000, free: 900000
+    }) }))
+    expect(container.querySelector('button')?.title).toBe('context 8.4k / 1.0M (1%)')
     await act(async () => root.unmount())
   })
 

@@ -433,15 +433,15 @@ async def run_subagent_loop(
     if use_structured_output:
         extra_tools.append(StructuredOutputTool(agent.output_schema))
         system_prompt = f"{system_prompt}\n\n{_structured_output_contract()}"
-    # Type-level default allowlist: when the caller supplied no explicit
-    # ``allowed_tools``, fall back to the type's built-in set. Applied here
+    # Type-level allowlist caps any explicit per-call subset. Applied here
     # (not in the spawn tool) so direct ``manager.spawn`` callers get the same
     # filtering as LLM-driven ``agent`` spawn calls. None means full registry.
     effective_tools = agent.allowed_tools
-    if effective_tools is None:
-        default_set = agent.agent_type.allowed_tools()
-        if default_set is not None:
-            effective_tools = sorted(default_set)
+    default_set = agent.agent_type.allowed_tools()
+    if default_set is not None:
+        effective_tools = sorted(
+            default_set if effective_tools is None else default_set.intersection(effective_tools)
+        )
     effective_model = agent.model.split("::", 1)[-1]
     registry = build_subagent_registry(
         runtime.config,

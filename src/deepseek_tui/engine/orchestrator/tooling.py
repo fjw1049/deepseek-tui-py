@@ -697,6 +697,12 @@ class ToolExecutionMixin:
                 f"Tool '{tool_name}' is unavailable in plan mode "
                 "(read-only). Finish with exit_plan_mode when the plan is ready."
             )
+        if mode == "plan" and tool_name == "agent" and (
+            not isinstance(arguments, dict)
+            or arguments.get("action") != "wait"
+            or arguments.get("resume")
+        ):
+            raise ToolError("Agent work is unavailable in plan mode; only wait is allowed")
 
         # --- External MCP tools (mcp_<server>_<tool>) ---
         from deepseek_tui.mcp.execute import (

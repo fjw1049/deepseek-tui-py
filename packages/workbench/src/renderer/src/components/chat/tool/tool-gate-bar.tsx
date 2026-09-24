@@ -88,7 +88,7 @@ function ElevationActions({ block }: { block: ElevationGate }): ReactElement {
           onClick={() => {
             if (submitting) return
             setSubmitting(true)
-            void resolveElevation(block.id, 'allow')
+            void resolveElevation(block.id, 'allow').finally(() => setSubmitting(false))
           }}
         >
           {t('elevationAllowOnce')}
@@ -100,7 +100,7 @@ function ElevationActions({ block }: { block: ElevationGate }): ReactElement {
           onClick={() => {
             if (submitting) return
             setSubmitting(true)
-            void resolveElevation(block.id, 'deny')
+            void resolveElevation(block.id, 'deny').finally(() => setSubmitting(false))
           }}
         >
           {t('elevationDeny')}

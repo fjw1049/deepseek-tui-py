@@ -591,8 +591,8 @@ def enrich_approval_request(
     title = localized_title(cat, tool_name)
 
     if risk == "destructive" and cat == "shell":
-        cmd = _param_preview(args, ("command", "cmd"), 96)
-        if cmd:
+        cmd = args.get("command", args.get("cmd"))
+        if isinstance(cmd, str) and cmd:
             analysis = analyze_command(cmd)
             if analysis.level == SafetyLevel.DANGEROUS:
                 detail = analysis.reasons[0] if analysis.reasons else "dangerous command"
@@ -758,7 +758,13 @@ def build_primary_preview(
 ) -> str:
     if category == "shell":
         parts = []
-        if cmd := _param_preview(args, ("command", "cmd"), _LINE_MAX):
+        cmd = args.get("command", args.get("cmd"))
+        if isinstance(cmd, str) and cmd.strip():
+            cmd = cmd.strip()
+            if len(cmd) > _PREVIEW_MAX:
+                omitted = "\n... command middle omitted ...\n"
+                half = (_PREVIEW_MAX - len(omitted)) // 2
+                cmd = cmd[:half] + omitted + cmd[-half:]
             parts.append(cmd)
         if cwd := _param_preview(args, ("workdir", "cwd"), 72):
             parts.append(f"cwd: {cwd}")

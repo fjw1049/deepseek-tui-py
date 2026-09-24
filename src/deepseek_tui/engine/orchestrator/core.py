@@ -299,6 +299,8 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         self.reply_locale: str = "zh"
         self.compaction_config = compaction_config or CompactionConfig()
         self.session_messages: list[Message] = []
+        # The turn works on a separate list until it commits to session_messages.
+        self._active_context_messages: list[Message] | None = None
         # Last rewrite-bridge text (for iterative re-compaction). The live
         # bridge is a leading user message in session_messages — never the
         # system prompt (KV prefix cache).
@@ -1602,7 +1604,11 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
 
         return estimate_context_breakdown(
             model=target_model,
-            messages=self.session_messages or None,
+            messages=(
+                self._active_context_messages
+                if self._active_context_messages is not None
+                else self.session_messages
+            ) or None,
             skills_context=self._render_skills_context(),
             api_tools=api_tools,
             workspace=self.tool_context.working_directory,
@@ -1633,7 +1639,11 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
 
         return estimate_context_breakdown(
             model=model or self.default_model,
-            messages=self.session_messages or None,
+            messages=(
+                self._active_context_messages
+                if self._active_context_messages is not None
+                else self.session_messages
+            ) or None,
             skills_context=self._render_skills_context(),
             api_tools=api_tools,
             workspace=self.tool_context.working_directory,
@@ -1876,6 +1886,13 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         # 上下文。skill 聚焦用 `/` 前缀无此冲突。命中时把首个 `@<name>`
         # token 剥掉再处理，处理完再拼回用户消息，模型仍能看到连接器线索。
         raw_content = op.content or ""
+        from deepseek_tui.goal.types import GOAL_CONTINUATION_KIND
+
+        internal_turn = op.internal_kind in (
+            SUBAGENT_BACKGROUND_DONE_KIND,
+            PROCESS_BACKGROUND_DONE_KIND,
+            GOAL_CONTINUATION_KIND,
+        )
         # UserPromptSubmit（message_submit）hooks 在引擎层触发，所有 surface
         # （TUI/server/CLI）语义一致：阻断决策让 prompt 到不了模型；
         # additionalContext 作为 system reminder 注入（不改用户消息原文）。
@@ -1907,53 +1924,66 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         # 插件命令（/<plugin>:<command> [args]）：把命令 markdown 正文按
         # $ARGUMENTS 展开后替换成用户消息，随后照常走 @mention/聚焦处理。
         # 声明式文本，任何 surface（CLI/TUI/server）发进来都在此统一展开。
-        expanded_cmd = self._expand_plugin_command(raw_content)
-        if expanded_cmd is not None:
-            raw_content = expanded_cmd
+        if not internal_turn:
+            expanded_cmd = self._expand_plugin_command(raw_content)
+            if expanded_cmd is not None:
+                raw_content = expanded_cmd
         # 插件挂载（@plugin:name / @plugin:off）：必须早于 _detect_focus_mcp，
         # 否则 `@plugin:x` 会被当成聚焦名为 `plugin` 的 MCP。命中则更新会话级
         # _active_plugin、剥掉前缀，本轮起即生效（持续态）。UI 只靠
         # PluginMountEvent（composer 底部徽章），不再发带 [plugin] 前缀的
         # StatusEvent，避免时间线重复系统气泡。
-        pre_mount_raw = raw_content
-        raw_content = await self._apply_plugin_mount(raw_content)
-        if raw_content != pre_mount_raw and not (raw_content or "").strip():
-            # Mount/unmount-only turn (no remaining user text): skip the LLM.
-            await self.handle.emit(TurnStartedEvent(user_text="" if op.hidden else ""))
-            await self.handle.emit(TurnCompleteEvent(assistant_message=None, success=True))
-            return
-        focus_mcp_ahead = _detect_focus_mcp(raw_content, self.mcp_manager)
-        content_for_prepare = raw_content
-        if focus_mcp_ahead is not None:
-            content_for_prepare = _strip_focus_prefix(raw_content, "@", focus_mcp_ahead)
-        processed = prepare_turn_for_model(
-            content_for_prepare,
-            workspace=self.tool_context.working_directory,
-            session_id=self._cycle_session_id,
-            turn_id=turn_id,
-        )
-        if focus_mcp_ahead is not None:
-            # Re-prepend `@<name> ` so the model still sees the connector cue
-            # in the user message — only file-mention expansion was suppressed.
-            from dataclasses import replace as _dc_replace
+        focus_mcp_ahead = None
+        if internal_turn:
+            from deepseek_tui.state.context import ProcessedTurnInput
 
-            token_prefix = f"@{focus_mcp_ahead} "
-            display = processed.display_text or ""
-            model = processed.model_text or ""
-            processed = _dc_replace(
-                processed,
-                display_text=f"{token_prefix}{display}".rstrip()
-                if display
-                else f"@{focus_mcp_ahead}",
-                model_text=f"{token_prefix}{model}".rstrip() if model else f"@{focus_mcp_ahead}",
+            processed = ProcessedTurnInput(display_text=raw_content, model_text=raw_content)
+        else:
+            pre_mount_raw = raw_content
+            raw_content = await self._apply_plugin_mount(raw_content)
+            if raw_content != pre_mount_raw and not (raw_content or "").strip():
+                # Mount/unmount-only turn (no remaining user text): skip the LLM.
+                await self.handle.emit(TurnStartedEvent(user_text="" if op.hidden else ""))
+                await self.handle.emit(TurnCompleteEvent(assistant_message=None, success=True))
+                return
+            focus_mcp_ahead = _detect_focus_mcp(raw_content, self.mcp_manager)
+            content_for_prepare = raw_content
+            if focus_mcp_ahead is not None:
+                content_for_prepare = _strip_focus_prefix(raw_content, "@", focus_mcp_ahead)
+            processed = prepare_turn_for_model(
+                content_for_prepare,
+                workspace=self.tool_context.working_directory,
+                session_id=self._cycle_session_id,
+                turn_id=turn_id,
             )
+            if focus_mcp_ahead is not None:
+                # Re-prepend `@<name> ` so the model still sees the connector cue
+                # in the user message — only file-mention expansion was suppressed.
+                from dataclasses import replace as _dc_replace
+
+                token_prefix = f"@{focus_mcp_ahead} "
+                display = processed.display_text or ""
+                model = processed.model_text or ""
+                processed = _dc_replace(
+                    processed,
+                    display_text=f"{token_prefix}{display}".rstrip()
+                    if display
+                    else f"@{focus_mcp_ahead}",
+                    model_text=(
+                        f"{token_prefix}{model}".rstrip()
+                        if model
+                        else f"@{focus_mcp_ahead}"
+                    ),
+                )
         from deepseek_tui.engine.prompts import (
             TOOL_PROFILE_FULL,
             detect_tool_profile_from_prompt,
         )
 
-        self.tool_profile = detect_tool_profile_from_prompt(
-            processed.model_text or op.content or ""
+        self.tool_profile = (
+            None
+            if internal_turn
+            else detect_tool_profile_from_prompt(processed.model_text or op.content or "")
         )
         if self.tool_profile == TOOL_PROFILE_FULL:
             self.tool_profile = None
@@ -1968,7 +1998,9 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         # 本 turn 只列该 skill、只放最小工具集。未命中则 focus_skill 为 None，
         # 走原有全量逻辑（`/xxx` 当普通文本）。基于用户实际输入文本解析。
         focus_text = processed.display_text or op.content or ""
-        focus_skill = _detect_focus_skill(focus_text, self.skill_registry)
+        focus_skill = (
+            None if internal_turn else _detect_focus_skill(focus_text, self.skill_registry)
+        )
         # MCP 连接器聚焦：已在 prepare_turn_for_model 之前预先检测（避免与
         # 文件 mention 展开冲突），此处复用结果。与 skill 聚焦互斥：skill
         # 命中时让位（首 token 不可能同时以 `/` 和 `@` 开头，互斥由构造保证）。
@@ -1983,9 +2015,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         # body (rendered at the idle-delivery site). It must carry the
         # SYSTEM_REMINDER provenance, not REAL_USER — otherwise a harness
         # injection reads back as the human's current request (origin drives
-        # compaction, fake-reminder neutralization, and ledger classing).
-        from deepseek_tui.goal.types import GOAL_CONTINUATION_KIND
-
+        # compaction and ledger classing; render neutralizes the body).
         if op.internal_kind in (
             SUBAGENT_BACKGROUND_DONE_KIND,
             PROCESS_BACKGROUND_DONE_KIND,
@@ -1995,9 +2025,16 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             user_origin = MessageOrigin.GOAL_CONTINUATION
         else:
             user_origin = MessageOrigin.REAL_USER
-        user_message = Message.user(
-            processed.model_text, origin=user_origin, images=processed.images
-        )
+        if op.internal_kind == GOAL_CONTINUATION_KIND:
+            from deepseek_tui.engine import reminders
+
+            user_message = reminders.reminder_message(
+                reminders.GOAL_CONTINUATION, processed.model_text
+            )
+        else:
+            user_message = Message.user(
+                processed.model_text, origin=user_origin, images=processed.images
+            )
         from deepseek_tui.media import message_images
 
         self.tool_context.metadata["image_assets"] = {
@@ -2062,8 +2099,9 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                 ),
                 name="goal-wall-clock-deadline",
             )
-        self.working_set.observe_user_message(processed.display_text or "")
-        self.working_set.observe_references(processed.references)
+        if not internal_turn:
+            self.working_set.observe_user_message(processed.display_text or "")
+            self.working_set.observe_references(processed.references)
         preview = (processed.display_text or "")[:200].replace("\n", " ")
         logger.info(
             "turn_start user_text_len=%d model_text_len=%d preview=%r model=%s session_msgs=%d",
@@ -2079,7 +2117,9 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
 
         # Plan mode: detect quick-plan requests that skip codebase exploration
         # and inject a grounding hint
-        if should_force_update_plan_first(self.mode, processed.display_text or ""):
+        if not internal_turn and should_force_update_plan_first(
+            self.mode, processed.display_text or ""
+        ):
             from deepseek_tui.engine import reminders
             from deepseek_tui.engine.prompts import PLAN_GROUNDING_REMINDER
 
@@ -2095,6 +2135,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             metadata=self.tool_context.metadata,
         )
 
+        self._active_context_messages = working_messages
         try:
             # 聚焦模式：置位 per-turn 工具白名单，``_get_tools_with_mcp`` 据此
             # 收窄 catalog。在 finally 中复位，异常/取消也不会泄漏到下一 turn。
@@ -2338,6 +2379,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             if not result.cancelled:
                 self._user_turn_index += 1
         finally:
+            self._active_context_messages = None
             if goal_deadline_task is not None:
                 goal_deadline_task.cancel()
                 with suppress(asyncio.CancelledError):

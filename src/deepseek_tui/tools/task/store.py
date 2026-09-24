@@ -221,9 +221,15 @@ def _load_state(
 
     queue: deque[str] = deque()
     if queue_path.exists():
-        with queue_path.open("r", encoding="utf-8") as fh:
-            data = json.load(fh)
-        queue = deque(data.get("queue", []))
+        try:
+            with queue_path.open("r", encoding="utf-8") as fh:
+                data = json.load(fh)
+            if not isinstance(data, dict) or not isinstance(data.get("queue"), list):
+                raise ValueError("invalid queue file")
+            queue = deque(tid for tid in data["queue"] if isinstance(tid, str))
+        except (OSError, ValueError):
+            # Rebuild the queue from persisted queued tasks below.
+            pass
 
     queue = deque(
         tid for tid in queue if tid in tasks and tasks[tid].status is TaskStatus.QUEUED
@@ -237,5 +243,4 @@ def _load_state(
     for tid in missing:
         queue.append(tid)
     return tasks, queue
-
 

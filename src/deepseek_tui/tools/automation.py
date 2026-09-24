@@ -1258,6 +1258,10 @@ class AutomationManager:
             created_at=now,
         )
         await self._enqueue_run_task(automation, run, task_manager)
+        try:
+            current = self.get_automation(automation.id)
+        except KeyError:
+            return run
         self.save_run(run)
         if run.status is AutomationRunStatus.FAILED:
             from deepseek_tui.automation.pipeline import try_deliver_completed_run
@@ -1266,16 +1270,21 @@ class AutomationManager:
                 automation, run, task_manager,
                 thread_manager=self.thread_manager,
             ):
-                self.save_run(run)
+                if self._automation_path(automation.id).exists():
+                    self.save_run(run)
 
-        automation.updated_at = _utc_now_iso()
+        try:
+            current = self.get_automation(automation.id)
+        except KeyError:
+            return run
+        current.updated_at = _utc_now_iso()
         if run.status in (
             AutomationRunStatus.COMPLETED,
             AutomationRunStatus.FAILED,
             AutomationRunStatus.CANCELED,
         ):
-            automation.last_run_at = run.ended_at or _utc_now_iso()
-        self.save_automation(automation)
+            current.last_run_at = run.ended_at or _utc_now_iso()
+        self.save_automation(current)
         return run
 
     # ── scheduler ──
@@ -1353,6 +1362,10 @@ class AutomationManager:
                     created_at=now.isoformat(),
                 )
                 await self._enqueue_run_task(automation, run, task_manager)
+                try:
+                    current = self.get_automation(automation.id)
+                except KeyError:
+                    continue
                 self.save_run(run)
                 if run.status is AutomationRunStatus.FAILED:
                     from deepseek_tui.automation.pipeline import (
@@ -1363,13 +1376,24 @@ class AutomationManager:
                         automation, run, task_manager,
                         thread_manager=self.thread_manager,
                     ):
-                        self.save_run(run)
+                        if self._automation_path(automation.id).exists():
+                            self.save_run(run)
 
-            automation.updated_at = now.isoformat()
-            automation.next_run_at = upcoming
-            if automation.schedule is None:
-                automation.status = AutomationStatus.COMPLETED
-            self.save_automation(automation)
+            try:
+                current = self.get_automation(automation.id)
+            except KeyError:
+                continue
+            if current.status is not AutomationStatus.ACTIVE or (
+                current.next_run_at != automation.next_run_at
+                or current.updated_at != automation.updated_at
+            ):
+                continue
+
+            current.updated_at = now.isoformat()
+            current.next_run_at = upcoming
+            if current.schedule is None:
+                current.status = AutomationStatus.COMPLETED
+            self.save_automation(current)
 
     def _reconcile_targets(self) -> list[AutomationRecord]:
         """User automations, plus the HTTP-trigger shadow when trigger runs exist."""

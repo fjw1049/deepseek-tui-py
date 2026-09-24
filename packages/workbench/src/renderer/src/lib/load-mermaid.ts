@@ -42,7 +42,10 @@ function loadMermaidScript(): Promise<MermaidRuntime> {
 }
 
 export function loadMermaid(): Promise<MermaidRuntime> {
-  if (!loadPromise) loadPromise = loadMermaidScript()
+  if (!loadPromise) loadPromise = loadMermaidScript().catch((error) => {
+    loadPromise = null
+    throw error
+  })
   return loadPromise
 }
 
