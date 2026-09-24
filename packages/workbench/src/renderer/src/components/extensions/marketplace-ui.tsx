@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState, type ReactElement, type ReactNode } from 'react'
+import { type ReactElement, type ReactNode } from 'react'
 import { Plus, Search } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -16,7 +16,6 @@ const KIND_ITEMS: Array<{
   { value: 'plugins', labelKey: 'marketplaceKindPlugins' }
 ]
 
-/** Same pill switcher as before, with an accent thumb so the active kind reads first. */
 export function MarketplaceKindSwitch({
   value,
   onChange
@@ -25,56 +24,23 @@ export function MarketplaceKindSwitch({
   onChange: (next: MarketplaceKind) => void
 }): ReactElement {
   const { t } = useTranslation('common')
-  const containerRef = useRef<HTMLDivElement>(null)
-  const buttonRefs = useRef(new Map<MarketplaceKind, HTMLButtonElement>())
-  const [thumb, setThumb] = useState({ left: 0, width: 0 })
-
-  useLayoutEffect(() => {
-    const container = containerRef.current
-    const button = buttonRefs.current.get(value)
-    if (!container || !button) return
-    const update = (): void => {
-      setThumb({ left: button.offsetLeft, width: button.offsetWidth })
-    }
-    update()
-    const observer = new ResizeObserver(update)
-    observer.observe(container)
-    return () => observer.disconnect()
-  }, [value])
-
   return (
-    <div
-      ref={containerRef}
-      role="tablist"
-      className="relative inline-flex h-11 shrink-0 items-stretch rounded-full border border-accent/25 bg-accent/[0.06] p-0.5"
-    >
-      <div
-        aria-hidden
-        className="ds-marketplace-kind-thumb pointer-events-none absolute top-0.5 bottom-0.5 rounded-full"
-        style={{ left: thumb.left, width: thumb.width }}
-      />
-      {KIND_ITEMS.map((item) => {
-        const active = item.value === value
-        return (
-          <button
-            key={item.value}
-            ref={(node) => {
-              if (node) buttonRefs.current.set(item.value, node)
-              else buttonRefs.current.delete(item.value)
-            }}
-            type="button"
-            role="tab"
-            aria-selected={active}
-            onClick={() => onChange(item.value)}
-            className={[
-              'relative z-10 flex items-center justify-center rounded-full px-5 text-[13px] font-semibold leading-none tracking-[-0.01em] transition-colors duration-200',
-              active ? 'text-white' : 'text-ds-muted hover:text-ds-ink'
-            ].join(' ')}
-          >
-            {t(item.labelKey)}
-          </button>
-        )
-      })}
+    <div role="group" aria-label={t('extensions')} className="inline-flex shrink-0 items-center gap-1 rounded-xl bg-ds-subtle/60 p-1">
+      {KIND_ITEMS.map((item) => (
+        <button
+          key={item.value}
+          type="button"
+          aria-pressed={item.value === value}
+          onClick={() => onChange(item.value)}
+          className={`rounded-lg px-4 py-2 text-[13px] font-medium transition-colors ${
+            item.value === value
+              ? 'bg-ds-card text-ds-ink shadow-sm'
+              : 'text-ds-muted hover:bg-ds-hover hover:text-ds-ink'
+          }`}
+        >
+          {t(item.labelKey)}
+        </button>
+      ))}
     </div>
   )
 }
@@ -91,7 +57,7 @@ export function MarketplaceContentTabs<T extends string>({
   trailing?: ReactNode
 }): ReactElement {
   return (
-    <div className="flex items-end justify-between gap-3 border-b border-ds-border-muted px-5">
+    <div className="flex items-end justify-between gap-3 border-b border-ds-border-muted px-1">
       <div className="flex min-w-0 items-stretch" role="tablist">
         {items.map((item) => {
           const active = item.value === value
@@ -137,14 +103,15 @@ export function MarketplaceSearchCreate({
   createHostRef: (node: HTMLDivElement | null) => void
 }): ReactElement {
   return (
-    <div className="mt-6 flex flex-wrap items-center gap-3">
-      <label className="relative min-w-[16rem] flex-1">
+    <div className="flex min-w-0 flex-1 flex-wrap items-center justify-end gap-2">
+      <label className="relative min-w-0 flex-1 sm:max-w-xs">
         <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-ds-faint" />
         <input
           value={query}
           onChange={(event) => onQueryChange(event.target.value)}
           placeholder={placeholder}
-          className="ds-ext-search h-11 w-full rounded-2xl border border-ds-border bg-ds-card pl-11 pr-4 text-[15px] text-ds-ink shadow-sm outline-none transition focus:border-accent/40 focus:ring-1 focus:ring-accent/30"
+          aria-label={placeholder}
+          className="ds-ext-search h-10 w-full rounded-lg border border-ds-border bg-ds-card pl-11 pr-4 text-[13px] text-ds-ink outline-none transition focus:border-accent/40 focus:ring-1 focus:ring-accent/30"
         />
       </label>
       <div className="relative" ref={createHostRef}>
@@ -152,7 +119,7 @@ export function MarketplaceSearchCreate({
           type="button"
           onClick={onCreateToggle}
           aria-expanded={createOpen}
-          className="inline-flex h-11 items-center justify-center gap-1.5 rounded-2xl border border-ds-border bg-transparent px-3.5 text-[13px] font-medium leading-none text-ds-muted transition hover:bg-ds-hover hover:text-ds-ink"
+          className="inline-flex h-10 items-center justify-center gap-1.5 rounded-lg border border-ds-border bg-transparent px-3.5 text-[13px] font-medium leading-none text-ds-muted transition hover:bg-ds-hover hover:text-ds-ink"
         >
           <Plus className="h-4 w-4" strokeWidth={1.9} />
           {createLabel}

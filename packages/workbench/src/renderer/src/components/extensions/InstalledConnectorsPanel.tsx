@@ -63,7 +63,7 @@ export function InstalledConnectorsPanel({
   ]
 
   return (
-    <div className="ds-content-card overflow-hidden rounded-2xl">
+    <div className="min-w-0">
       <MarketplaceContentTabs value={tab} onChange={setTab} items={tabItems} trailing={headerRight} />
 
       {tab === 'marketplace' ? null : loading ? (
