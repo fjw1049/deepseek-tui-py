@@ -2,18 +2,20 @@ import { formatRuntimeError } from '../lib/format-runtime-error'
 import i18n from '../i18n'
 import { create } from 'zustand'
 import { isImagePreviewPath } from '@shared/image-preview'
+import { isPdfPreviewPath } from '@shared/document-preview'
 import type { WorkspaceFileReadResult } from '@shared/workspace-file'
 
 // Serialize writes to the same file so older responses cannot overwrite newer saves.
 const fileSaves = new Map<string, Promise<boolean>>()
 
-export type EditorTabKind = 'text' | 'image'
+export type EditorTabKind = 'text' | 'image' | 'pdf'
 export type EditorPaneId = 'primary' | 'secondary'
 
 export type EditorTab = {
   id: string
   path: string
   kind: EditorTabKind
+  fragment?: string
   content: string
   savedContent: string
   loading: boolean
@@ -27,6 +29,7 @@ export type EditorTab = {
 }
 
 export type OpenFileOptions = {
+  fragment?: string
   /** Open into the other pane and enable split. */
   toSide?: boolean
   pane?: EditorPaneId
@@ -239,9 +242,10 @@ export const useWorkspaceEditorStore = create<WorkspaceEditorStore>((set, get) =
     if (existing && !existing.error) {
       set((state) => ({
         tabs:
-          line !== undefined || column !== undefined
+          line !== undefined || column !== undefined || options?.fragment !== undefined
             ? upsertTab(state.tabs, {
                 ...existing,
+                fragment: options?.fragment,
                 line,
                 column,
                 revealNonce: (existing.revealNonce ?? 0) + 1
@@ -252,11 +256,12 @@ export const useWorkspaceEditorStore = create<WorkspaceEditorStore>((set, get) =
       return true
     }
 
-    const kind: EditorTabKind = isImagePreviewPath(normalizedPath) ? 'image' : 'text'
+    const kind: EditorTabKind = isImagePreviewPath(normalizedPath) ? 'image' : isPdfPreviewPath(normalizedPath) ? 'pdf' : 'text'
     const placeholder: EditorTab = {
       id,
       path: normalizedPath,
       kind,
+      fragment: options?.fragment,
       content: '',
       savedContent: '',
       loading: true,
@@ -270,7 +275,7 @@ export const useWorkspaceEditorStore = create<WorkspaceEditorStore>((set, get) =
       ...assignTabToPane(state, id, targetPane, toSide)
     }))
 
-    if (kind === 'image') {
+    if (kind !== 'text') {
       set((state) => ({
         tabs: upsertTab(state.tabs, {
           ...placeholder,
@@ -440,7 +445,7 @@ export const useWorkspaceEditorStore = create<WorkspaceEditorStore>((set, get) =
     const save = async (): Promise<boolean> => {
       if (get().workspaceKey !== workspaceKey) return false
       const tab = get().tabs.find((entry) => entry.id === tabId)
-      if (!tab || tab.loading || tab.kind === 'image') return false
+      if (!tab || tab.loading || tab.kind !== 'text') return false
       if (tab.truncated) return false
       if (!isDirty(tab)) return true
       const update = (patch: Partial<EditorTab>): void => {

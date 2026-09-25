@@ -7,6 +7,26 @@ export function isMarkdownPath(path: string): boolean {
 export function languageForPath(path: string): string {
   const fileName = path.split(/[/\\]/).pop() ?? path
   const ext = fileName.includes('.') ? fileName.split('.').pop()?.toLowerCase() : ''
+  const named: Record<string, string> = {
+    dockerfile: 'dockerfile', containerfile: 'dockerfile',
+    '.bashrc': 'shell', '.zshrc': 'shell', '.profile': 'shell',
+    '.gitignore': 'ini', '.gitattributes': 'ini', '.editorconfig': 'ini'
+  }
+  const extra: Record<string, string> = {
+    java: 'java', c: 'c', h: 'cpp', cc: 'cpp', cpp: 'cpp', cxx: 'cpp', hpp: 'cpp',
+    cs: 'csharp', sql: 'sql', rb: 'ruby', php: 'php', swift: 'swift',
+    kt: 'kotlin', kts: 'kotlin', dart: 'dart', lua: 'lua', r: 'r',
+    ps1: 'powershell', bat: 'bat', cmd: 'bat', zsh: 'shell',
+    jsonc: 'json', jsonl: 'json', ndjson: 'json', mts: 'typescript', cts: 'typescript',
+    pyi: 'python', pyw: 'python', ini: 'ini', cfg: 'ini', properties: 'ini',
+    graphql: 'graphql', gql: 'graphql', proto: 'protobuf', tf: 'hcl', hcl: 'hcl',
+    vue: 'html', svelte: 'html', mdx: 'mdx', rst: 'restructuredtext'
+  }
+  const name = fileName.toLowerCase()
+  if (named[name]) return named[name]!
+  if (/^(dockerfile|containerfile)\./.test(name)) return 'dockerfile'
+  if (/^\.env(?:\.|$)/.test(name)) return 'ini'
+  if (ext && extra[ext]) return extra[ext]!
   switch (ext) {
     case 'ts':
     case 'tsx':

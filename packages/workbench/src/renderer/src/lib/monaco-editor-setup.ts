@@ -41,6 +41,7 @@ const lightRules: monaco.editor.ITokenThemeRule[] = [
   { token: 'macro.defaultLibrary', foreground: '0550ae' },
   { token: 'decorator', foreground: '8250df' },
   { token: 'parameter', foreground: '953800' },
+  { token: 'variable.readonly', foreground: '0550ae' },
   { token: 'class', foreground: '953800' },
   { token: 'class.declaration', foreground: '953800' }
 ]
@@ -63,6 +64,7 @@ const darkRules: monaco.editor.ITokenThemeRule[] = [
   { token: 'macro.defaultLibrary', foreground: '79c0ff' },
   { token: 'decorator', foreground: 'd2a8ff' },
   { token: 'parameter', foreground: 'ffa657' },
+  { token: 'variable.readonly', foreground: '79c0ff' },
   { token: 'class', foreground: 'ffa657' },
   { token: 'class.declaration', foreground: 'ffa657' }
 ]

@@ -4,6 +4,7 @@ import { dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node
 import { realpath } from 'node:fs/promises'
 import { isHtmlPreviewPath } from '../../shared/html-preview'
 import { isImagePreviewPath } from '../../shared/image-preview'
+import { isPdfPreviewPath } from '../../shared/document-preview'
 
 type PreviewServerEntry = {
   root: string
@@ -14,6 +15,7 @@ type PreviewServerEntry = {
 const servers = new Map<string, PreviewServerEntry>()
 
 const MIME_BY_EXT: Record<string, string> = {
+  '.pdf': 'application/pdf',
   '.html': 'text/html; charset=utf-8',
   '.htm': 'text/html; charset=utf-8',
   '.xhtml': 'application/xhtml+xml; charset=utf-8',
@@ -138,8 +140,8 @@ export async function getWorkspacePreviewUrl(options: {
   const workspaceRoot = options.workspaceRoot?.trim() ?? ''
   const rawPath = options.path?.trim()
   if (!rawPath) return { ok: false, message: 'File path is required.' }
-  if (!isHtmlPreviewPath(rawPath) && !isImagePreviewPath(rawPath)) {
-    return { ok: false, message: 'Only HTML or image files can be opened in Preview.' }
+  if (!isHtmlPreviewPath(rawPath) && !isImagePreviewPath(rawPath) && !isPdfPreviewPath(rawPath)) {
+    return { ok: false, message: 'Only HTML, PDF or image files can be opened in Preview.' }
   }
 
   try {

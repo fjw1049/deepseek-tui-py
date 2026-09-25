@@ -1436,7 +1436,8 @@ samp {
 .ds-workspace-file-tree__row--active,
 .ds-workspace-file-tree__row--active:hover {
   color: var(--ds-text);
-  background: color-mix(in srgb, var(--ds-text) 8%, transparent);
+  background: color-mix(in srgb, var(--ds-accent) 10%, transparent);
+  box-shadow: inset 2px 0 0 var(--ds-accent);
   font-weight: 500;
 }
 
@@ -1641,11 +1642,33 @@ samp {
 }
 
 .ds-workspace-editor-tab--active {
-  background: color-mix(in srgb, var(--ds-text) 5%, transparent);
+  background: var(--ds-bg-canvas);
   color: var(--ds-text);
   font-weight: 500;
-  box-shadow: inset 0 -2px 0 color-mix(in srgb, var(--ds-text) 45%, transparent);
+  box-shadow: inset 0 -2px 0 var(--ds-accent);
 }
+
+.ds-workspace-editor-path {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  gap: 12px;
+  min-width: 0;
+  height: 28px;
+  padding: 0 14px;
+  background: var(--ds-bg-canvas);
+  border-bottom: 1px solid var(--ds-border-muted);
+  color: var(--ds-text-muted);
+  font-size: 11px;
+}
+.ds-workspace-editor-path > span:first-child {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ds-workspace-editor-path > span:last-child { flex-shrink: 0; font-size: 10px; }
 
 .ds-workspace-editor-tab__close {
   color: inherit;
@@ -7790,10 +7813,64 @@ select:focus-visible,
   color: var(--text-tertiary);
 }
 
+.ds-table-document {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  background: var(--ds-bg-canvas);
+  color: var(--ds-text);
+  font-size: 13px;
+}
+.ds-table-document__summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 24px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--ds-border-muted);
+  color: var(--ds-text-muted);
+  font-size: 12px;
+}
+.ds-table-document__scroll { flex: 1; min-height: 0; overflow: auto; }
+.ds-table-document table { border-spacing: 0; min-width: 100%; }
+.ds-table-document th,
+.ds-table-document td {
+  padding: 8px 14px;
+  border-right: 1px solid var(--ds-border-muted);
+  border-bottom: 1px solid var(--ds-border-muted);
+  text-align: left;
+  vertical-align: top;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  min-width: 110px;
+  max-width: 360px;
+}
+.ds-table-document th {
+  background: color-mix(in srgb, var(--ds-text) 3%, var(--ds-bg-canvas));
+  color: var(--ds-text-muted);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+.ds-table-document thead th { position: sticky; top: 0; z-index: 2; }
+.ds-table-document tr > th:first-child { position: sticky; left: 0; z-index: 1; min-width: 44px; text-align: right; }
+.ds-table-document thead th:first-child { z-index: 3; }
+.ds-table-document tbody tr:hover td { background: var(--ds-surface-hover); }
+.ds-table-document__empty { padding: 32px; text-align: center; color: var(--ds-text-muted); }
+
 .ds-change-inspector {
   font-family: var(--font-ui);
   font-synthesis: none;
   background: var(--ds-bg-sidebar);
+}
+
+/* Diff reading surfaces must not inherit the light sidebar's contrast tint.
+   Keep the alias local so file lists, headers, and expanded diffs share the
+   opaque canvas without changing navigation chrome or dark themes. */
+[data-theme='light'] .ds-change-inspector,
+[data-theme='light'] .ds-workspace-editor-pane,
+[data-theme='light'] .ds-diff-view--flush {
+  --ds-bg-sidebar: var(--ds-bg-canvas);
 }
 
 .ds-change-inspector--list,

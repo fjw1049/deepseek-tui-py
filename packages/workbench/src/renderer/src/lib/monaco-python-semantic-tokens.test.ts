@@ -60,6 +60,23 @@ const SOURCE = [
 ]
 
 describe('python semantic tokens', () => {
+  it('excludes comments and strings, including multiline and unfinished literals', () => {
+    const lines = ['# print(x)', 'text = "print(x)"', 'doc = """', 'class Fake:', 'print(x)', '"""', "text = 'unfinished print(x)"]
+    expect(decode((provideSemanticTokens(mockModel(lines)) as { data: Uint32Array }).data)).toEqual([])
+  })
+
+  it('colors type references, constants and parameters at their exact offsets', () => {
+    const lines = ['def f(value: SessionState, count: int = 1):', '    return MAX_ITEMS, value, len (value)', 'from models import SessionState']
+    const tokens = decode((provideSemanticTokens(mockModel(lines)) as { data: Uint32Array }).data)
+    expect(tokens).toContainEqual([0, 4, 1, 'function', ['declaration']])
+    const named = tokens.map(([line, col, length, type]) => [lines[line].slice(col, col + length), type])
+    expect(named).toContainEqual(['value', 'parameter'])
+    expect(named).toContainEqual(['count', 'parameter'])
+    expect(named).toContainEqual(['SessionState', 'class'])
+    expect(named).toContainEqual(['MAX_ITEMS', 'variable'])
+    expect(named).toContainEqual(['int', 'macro'])
+  })
+
   it('colors def names, calls, builtins, decorators and self/cls', () => {
     const result = provideSemanticTokens(mockModel(SOURCE))
     const toks = decode((result as { data: Uint32Array }).data)

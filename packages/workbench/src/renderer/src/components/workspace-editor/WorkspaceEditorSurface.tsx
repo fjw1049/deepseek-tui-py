@@ -314,11 +314,9 @@ export const WorkspaceEditorSurface = forwardRef<WorkspaceEditorSurfaceHandle, P
             lineDecorationsWidth: 8,
             lineNumbersMinChars: 3,
             renderLineHighlight: readOnly ? 'none' : 'line',
-            // 14/19 — between the original 15/23 (oversized) and Codex's 13/20
-            // (too small for this panel). Gutter numbers are shrunk separately via
-            // CSS on .margin-view-overlays (see index.css), so the body stays 14.
+            // Give mixed Chinese/Latin code room without enlarging the glyphs.
             fontSize: 14,
-            lineHeight: 19,
+            lineHeight: 21,
             scrollBeyondLastLine: false,
             automaticLayout: false,
             wordWrap: (wrapLines ?? (languageForPath(tab.path) === 'plaintext')) ? 'on' : 'off',

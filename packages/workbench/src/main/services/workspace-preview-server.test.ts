@@ -46,6 +46,19 @@ describe('getWorkspacePreviewUrl', () => {
     await Promise.all(dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })))
   })
 
+  it('serves PDF bytes with the native viewer content type', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'ds-pdf-preview-'))
+    dirs.push(root)
+    const bytes = Buffer.from('%PDF-1.4\n% fixture\n')
+    await writeFile(join(root, 'report.PDF'), bytes)
+    const result = await getWorkspacePreviewUrl({ path: 'report.PDF', workspaceRoot: root })
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    const response = await fetch(result.url)
+    expect(response.headers.get('content-type')).toBe('application/pdf')
+    expect(Buffer.from(await response.arrayBuffer())).toEqual(bytes)
+  })
+
   it('serves an html file inside the workspace over localhost', async () => {
     const root = await mkdtemp(join(tmpdir(), 'ds-html-preview-'))
     dirs.push(root)

@@ -13,6 +13,8 @@ import {
 import { Check, Code2, Copy, Columns2, Loader2, Pencil, Save, Search, X, WrapText, Folder, FolderOpen } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { isImagePreviewPath } from '@shared/image-preview'
+import { isPdfPreviewPath, isTablePreviewPath } from '@shared/document-preview'
+import { TableDocumentPreview } from './TableDocumentPreview'
 import { isHtmlPreviewPath } from '@shared/html-preview'
 import type { ChatBlock } from '../../agent/types'
 import { formatFilePathForDisplay } from '../../lib/diff-stats'
@@ -343,7 +345,7 @@ function PaneTabActions({
   const wrapPreference = useWorkspaceViewPreferences((s) => s.wrapLines)
   const setWrapLines = useWorkspaceViewPreferences((s) => s.setWrapLines)
   const wrapLines = wrapPreference ?? (tab ? languageForPath(tab.path) === 'plaintext' : false)
-  const canEditFile = Boolean(tab && tab.kind !== 'image')
+  const canEditFile = Boolean(tab && tab.kind === 'text')
   if (!canEditFile && !onCloseSplit) return null
 
   return (
@@ -360,7 +362,7 @@ function PaneTabActions({
           >
             <Search className="h-3.5 w-3.5" strokeWidth={1.85} />
           </button>
-          {tab && (isMarkdownPath(tab.path) || isHtmlPreviewPath(tab.path)) && !isEditing ? (
+          {tab && (isMarkdownPath(tab.path) || isHtmlPreviewPath(tab.path) || isTablePreviewPath(tab.path)) && !isEditing ? (
             <Tooltip label={sourceVisible ? t('workspaceEditorPreview') : t('workspaceEditorSource')}>
               <button
                 type="button"
@@ -375,7 +377,7 @@ function PaneTabActions({
               </button>
             </Tooltip>
           ) : null}
-          {tab && ((!isMarkdownPath(tab.path) && !isHtmlPreviewPath(tab.path)) || isEditing) ? (
+          {tab && ((!isMarkdownPath(tab.path) && !isHtmlPreviewPath(tab.path) && !isTablePreviewPath(tab.path)) || isEditing) ? (
             <Tooltip label={t('workspaceEditorWrapLines')}>
               <button
                 type="button"
@@ -489,6 +491,8 @@ const EditorPaneView = forwardRef<
   const surfaceRef = useRef<WorkspaceEditorSurfaceHandle | null>(null)
   const [sourceFindOpen, setSourceFindOpen] = useState(false)
   const isImageTab = tab?.kind === 'image'
+  const isPdfTab = tab?.kind === 'pdf'
+  const isTablePreview = Boolean(tab) && isTablePreviewPath(tab!.path) && !isEditing && !sourceVisible
   const isHtmlPreview =
     Boolean(tab) && !isImageTab && isHtmlPreviewPath(tab!.path) && !isEditing && !sourceVisible
   const isMarkdownPreview =
@@ -498,13 +502,13 @@ const EditorPaneView = forwardRef<
     isMarkdownPath(tab!.path) &&
     !isEditing &&
     !sourceVisible
-  const showMonaco = Boolean(tab) && !isImageTab && !isHtmlPreview && !isMarkdownPreview
+  const showMonaco = Boolean(tab) && !isImageTab && !isPdfTab && !isHtmlPreview && !isMarkdownPreview && !isTablePreview
 
   const openFind = useCallback((): void => {
-    if (!tab || isImageTab || tab.loading) return
+    if (!tab || isImageTab || isPdfTab || tab.loading) return
     onFocus()
     if (
-      (isMarkdownPath(tab.path) || isHtmlPreviewPath(tab.path)) &&
+      (isMarkdownPath(tab.path) || isHtmlPreviewPath(tab.path) || isTablePreviewPath(tab.path)) &&
       !isEditing &&
       !sourceVisible
     ) {
@@ -513,7 +517,7 @@ const EditorPaneView = forwardRef<
       return
     }
     surfaceRef.current?.openFind()
-  }, [tab, isImageTab, isEditing, sourceVisible, onSourceVisibleChange, onFocus])
+  }, [tab, isImageTab, isPdfTab, isEditing, sourceVisible, onSourceVisibleChange, onFocus])
 
   useImperativeHandle(
     ref,
@@ -533,7 +537,7 @@ const EditorPaneView = forwardRef<
   }, [isEditing])
 
   useEffect(() => {
-    if (!focused || !tab || isImageTab) return
+    if (!focused || !tab || isImageTab || isPdfTab) return
     const onKeyDown = (event: KeyboardEvent): void => {
       if (!(event.metaKey || event.ctrlKey) || event.altKey || event.shiftKey) return
       if (event.key.toLowerCase() !== 'f') return
@@ -551,7 +555,7 @@ const EditorPaneView = forwardRef<
     }
     window.addEventListener('keydown', onKeyDown, true)
     return () => window.removeEventListener('keydown', onKeyDown, true)
-  }, [focused, tab, isImageTab, openFind])
+  }, [focused, tab, isImageTab, isPdfTab, openFind])
 
   if (!tab) {
     return (
@@ -572,6 +576,10 @@ const EditorPaneView = forwardRef<
       } ${isEditing ? 'ds-workspace-editor-pane--editing' : ''}`}
       onMouseDown={onFocus}
     >
+      <div className="ds-workspace-editor-path">
+        <span title={tab.path}>{copyableRelativePath(tab.path, workspaceRoot) || tab.path}</span>
+        <span>{(/\.([a-z0-9]+)$/i.exec(tab.path)?.[1] || '').toUpperCase()}</span>
+      </div>
       {externalOpenError && focused ? (
         <div className="shrink-0 border-b border-amber-200/70 bg-amber-50/80 px-3 py-2 text-[12.5px] text-amber-900 dark:border-amber-700/40 dark:bg-amber-950/30 dark:text-amber-100">
           {t('workspaceEditorOpenExternalFailed', { message: externalOpenError })}
@@ -590,10 +598,19 @@ const EditorPaneView = forwardRef<
         <EditorSurfaceFallback />
       ) : isImageTab ? (
         <ImageDocumentPreview path={tab.path} workspaceRoot={workspaceRoot} />
-      ) : isHtmlPreview ? (
+      ) : isTablePreview ? (
+        <TableDocumentPreview path={tab.path} content={tab.content} />
+      ) : isHtmlPreview || isPdfTab ? (
         <HtmlDocumentPreview path={tab.path} workspaceRoot={workspaceRoot} />
       ) : isMarkdownPreview ? (
-        <MarkdownDocumentPreview content={tab.content} />
+        <MarkdownDocumentPreview
+          content={tab.content}
+          path={tab.path}
+          workspaceRoot={workspaceRoot}
+          fragment={tab.fragment}
+          revealNonce={tab.revealNonce}
+          onOpenFile={(path, fragment) => useWorkspaceEditorStore.getState().openFile(path, workspaceRoot, undefined, undefined, { fragment })}
+        />
       ) : showMonaco ? (
         <Suspense fallback={<EditorSurfaceFallback />}>
           <LazyWorkspaceEditorSurface
@@ -787,7 +804,7 @@ export function WorkspaceEditorPanel({
       const target = event.target as HTMLElement | null
       if (!target?.closest('.ds-workspace-editor-pane')) return
       const tab = focusedTab
-      if (!tab || tab.kind === 'image' || tab.truncated) return
+      if (!tab || tab.kind !== 'text' || tab.truncated) return
       event.preventDefault()
       if (editingTabId !== tab.id) setEditingTabId(tab.id)
       if (tab.content !== tab.savedContent) void runSaveWithFeedback(tab.id)
@@ -1010,7 +1027,7 @@ export function WorkspaceEditorPanel({
           })
           break
         case 'edit':
-          if (isImagePreviewPath(path) || tab?.truncated) break
+          if (isImagePreviewPath(path) || isPdfPreviewPath(path) || tab?.truncated) break
           void openFile(path, trimmedRoot).then(() => setEditingTabId(path))
           break
         case 'split-right':
@@ -1247,7 +1264,7 @@ export function WorkspaceEditorPanel({
         <WorkspaceFileContextMenu
           x={fileMenu.x}
           y={fileMenu.y}
-          canEdit={!isImagePreviewPath(normalizeEditorPathForTab(fileMenu.path))}
+          canEdit={!isImagePreviewPath(fileMenu.path) && !isPdfPreviewPath(fileMenu.path)}
           canClose={tabs.some((entry) => entry.id === normalizeEditorPathForTab(fileMenu.path))}
           canSplitRight
           canCloseSplit={splitEnabled}

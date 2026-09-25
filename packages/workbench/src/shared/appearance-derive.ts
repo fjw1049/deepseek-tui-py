@@ -26,8 +26,10 @@ const BLACK: Rgb = { r: 0, g: 0, b: 0 }
 // values above steepen so the top of the slider has visible effect.
 const CONTRAST_CURVE_BELOW_BASELINE = 0.7
 const CONTRAST_CURVE_ABOVE_BASELINE = 2
-const SURFACE_UNDER_BASE_ALPHA: Record<ThemeVariant, number> = { dark: 0.16, light: 0.04 }
-const SURFACE_UNDER_CONTRAST_STEP: Record<ThemeVariant, number> = { dark: 0.0015, light: 0.0012 }
+// Light spans 0–28% ink across the slider, including its low end; the old
+// 0–10.6% range was barely visible after compositing the translucent veil.
+const SURFACE_UNDER_BASE_ALPHA: Record<ThemeVariant, number> = { dark: 0.16, light: 0.126 }
+const SURFACE_UNDER_CONTRAST_STEP: Record<ThemeVariant, number> = { dark: 0.0015, light: 0.0028 }
 const PANEL_BASE_ALPHA: Record<ThemeVariant, number> = { dark: 0.01, light: 0.18 }
 const PANEL_CONTRAST_STEP: Record<ThemeVariant, number> = { dark: 0.03, light: 0.008 }
 
@@ -94,10 +96,10 @@ export function buildChromeThemeCssVars(
   const elevated1 = mixRgb(surface, anchor, light ? 0.08 + c * 0.08 : 0.022 + c * 0.04)
   const elevated2 = mixRgb(surface, anchor, light ? 0.16 + c * 0.12 : 0.042 + c * 0.06)
 
-  // Keep the light sidebar close to the reading surface; window gutters
-  // retain their own contrast. Dark themes keep the existing panel mix.
+  // Light sidebar and window gutters share a contrast-aware background in
+  // both material modes. The reading surface stays fixed.
   const canvasBg = surface
-  const sidebarBg = light ? mixRgb(surface, ink, 0.02) : panel
+  const sidebarBg = light ? surfaceUnder : panel
 
   // Near-black dark surfaces otherwise yield ΔL≈3 between board and canvas and
   // read as a flat slab. Nudge the board further toward black until the gap is

@@ -2041,5 +2041,10 @@
   "splitPane": "Pane",
   "splitLeft": "Split left",
   "splitRight": "Split right",
-  "splitDragTask": "Drag task into the conversation area to split"
+  "splitDragTask": "Drag task into the conversation area to split",
+  "workspaceTableDimensions": "{{rows}} rows · {{columns}} columns",
+  "workspaceTableLimited": "Showing the first {{rows}} rows and {{columns}} columns. Switch to source to see all content.",
+  "workspaceTableEmpty": "This table is empty.",
+  "workspaceMarkdownImageUnavailable": "Image unavailable: {{name}}",
+  "workspaceMarkdownLinkUnavailable": "Could not open this link. Check the target file or address."
 }

@@ -8,7 +8,7 @@ type Props = {
   workspaceRoot: string
 }
 
-/** Live HTML preview inside an IDE/editor pane — does not leave IDE mode. */
+/** Browser-rendered HTML or native PDF preview inside the editor pane. */
 export function HtmlDocumentPreview({ path, workspaceRoot }: Props): ReactElement {
   const { t } = useTranslation('common')
   const [url, setUrl] = useState<string | null>(null)

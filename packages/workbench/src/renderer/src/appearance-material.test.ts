@@ -1,13 +1,63 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { buildChromeThemeCssVars } from '@shared/appearance-derive'
-import { getThemePresetSeed } from '@shared/appearance'
+import { getThemePresetSeed, listThemePresetsForVariant } from '@shared/appearance'
 
 const stylesheet = readFileSync(new URL('./index.css', import.meta.url), 'utf8')
 const mainProcessSource = readFileSync(new URL('../../main/index.ts', import.meta.url), 'utf8')
 const workbenchSource = readFileSync(new URL('./components/Workbench.tsx', import.meta.url), 'utf8')
 
 describe('macOS translucent sidebar material', () => {
+  it('changes opaque light sidebar and window edges together with contrast', () => {
+    const brightness = (color: string): number =>
+      0.2126 * Number.parseInt(color.slice(1, 3), 16) +
+      0.7152 * Number.parseInt(color.slice(3, 5), 16) +
+      0.0722 * Number.parseInt(color.slice(5, 7), 16)
+    for (const preset of listThemePresetsForVariant('light')) {
+      const seed = getThemePresetSeed(preset.id, 'light')!
+      const palettes = [0, 25, 45, 75, 100].map((contrast) =>
+        buildChromeThemeCssVars({ ...seed, contrast, translucent: false }, 'light')
+      )
+      const levels = palettes.map((vars) => brightness(vars['--bg-sidebar']!))
+      for (let i = 1; i < levels.length; i++) {
+        expect(levels[i - 1]! - levels[i]!, preset.id).toBeGreaterThan(4)
+      }
+      expect(levels[0]! - levels[4]!, preset.id).toBeGreaterThan(34)
+      for (const vars of palettes) {
+        for (const token of ['--app-shell-background', '--app-sidebar-surface', '--app-chrome-fill', '--app-corner-surface']) {
+          expect(vars[token], `${preset.id}: ${token}`).toBe(vars['--bg-sidebar'])
+        }
+        expect(vars['--ds-material-panel']).toBe(seed.surface)
+      }
+    }
+  })
+
+  it('visibly changes light glass with contrast while keeping the reading surface fixed', () => {
+    // Composite over a white native backdrop: even without wallpaper colors,
+    // increasing contrast must visibly separate the shell from the canvas.
+    const brightnessOverWhite = (color: string): number => {
+      const [r, g, b, alpha] = color.match(/[\d.]+/g)!.map(Number)
+      return (0.2126 * r! + 0.7152 * g! + 0.0722 * b!) * alpha! + 255 * (1 - alpha!)
+    }
+    for (const preset of listThemePresetsForVariant('light')) {
+      const seed = getThemePresetSeed(preset.id, 'light')!
+      const palettes = [0, 25, 45, 75, 100].map((contrast) =>
+        buildChromeThemeCssVars({ ...seed, contrast, translucent: true }, 'light')
+      )
+      const levels = palettes.map((vars) => brightnessOverWhite(vars['--app-shell-background']!))
+      for (let i = 1; i < levels.length; i++) {
+        expect(levels[i - 1]! - levels[i]!, preset.id).toBeGreaterThan(4)
+      }
+      // Tinted presets have a smaller ink/surface gap than black on white.
+      expect(levels[0]! - levels[4]!, preset.id).toBeGreaterThan(23)
+      for (const vars of palettes) {
+        expect(vars['--ds-material-panel']).toBe(seed.surface)
+        expect(vars['--app-sidebar-surface']).toBe('transparent')
+        expect(vars['--app-corner-surface']).toBe('transparent')
+      }
+    }
+  })
+
   it('uses one continuous native material plane for the Nord sidebar and window corners', () => {
     const seed = getThemePresetSeed('nord', 'dark')!
     const translucent = buildChromeThemeCssVars({ ...seed, translucent: true }, 'dark')
@@ -98,6 +148,22 @@ describe('settings select material', () => {
       /\[data-theme='dark'\] \.ds-settings-select-menu \{(?<body>[^}]*)\}/
     )?.groups?.body
     expect(darkMenuRule).toContain('background: var(--ds-surface-elevated, #1c1c1e);')
+  })
+})
+
+describe('light change inspector reading surface', () => {
+  it('isolates diff content and nested headers from the sidebar contrast tint', () => {
+    const rule = stylesheet.match(
+      /\[data-theme='light'\] \.ds-change-inspector,\s*\[data-theme='light'\] \.ds-workspace-editor-pane,\s*\[data-theme='light'\] \.ds-diff-view--flush \{(?<body>[^}]*)\}/
+    )?.groups?.body
+    expect(rule).toContain('--ds-bg-sidebar: var(--ds-bg-canvas);')
+    // The local alias also covers the more specific right-panel background,
+    // file-list group headers, and the flush diff's own header.
+    for (const selector of ['.ds-change-inspector', '.ds-diff-view--flush', '.ds-change-inspector__pane-header', '.ds-diff-view--flush .ds-diff-view__header']) {
+      const start = stylesheet.indexOf(`\n${selector} {`)
+      const body = stylesheet.slice(start, stylesheet.indexOf('}', start))
+      expect(body, selector).toContain('background: var(--ds-bg-sidebar);')
+    }
   })
 })
 

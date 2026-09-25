@@ -2041,5 +2041,10 @@
   "splitPane": "分屏",
   "splitLeft": "向左分屏",
   "splitRight": "向右分屏",
-  "splitDragTask": "拖动任务到聊天区分屏"
+  "splitDragTask": "拖动任务到聊天区分屏",
+  "workspaceTableDimensions": "{{rows}} 行 · {{columns}} 列",
+  "workspaceTableLimited": "预览前 {{rows}} 行、{{columns}} 列；切换源码查看完整内容",
+  "workspaceTableEmpty": "这个表格还没有内容",
+  "workspaceMarkdownImageUnavailable": "无法显示图片：{{name}}",
+  "workspaceMarkdownLinkUnavailable": "无法打开此链接，请检查目标文件或地址。"
 }

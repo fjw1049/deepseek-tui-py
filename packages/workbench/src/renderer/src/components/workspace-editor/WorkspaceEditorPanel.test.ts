@@ -12,6 +12,40 @@ vi.mock('./WorkspaceEditorSurface', () => ({ WorkspaceEditorSurface: () => creat
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
 
+it('switches tables between preview and source and keeps PDFs read-only', async () => {
+  const initial = useWorkspaceEditorStore.getState()
+  const previousGui = window.dsGui
+  vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} })
+  window.dsGui = {
+    listWorkspaceDirectory: vi.fn(async () => ({ ok: true, entries: [] })),
+    readWorkspaceFile: vi.fn(async () => ({ ok: true, content: 'name,value\nexample,001', truncated: false })),
+    getWorkspaceHtmlPreviewUrl: vi.fn(async () => ({ ok: true, url: 'about:blank' }))
+  } as unknown as typeof window.dsGui
+  const host = document.createElement('div')
+  document.body.append(host)
+  const root = createRoot(host)
+  try {
+    await act(async () => root.render(createElement(WorkspaceEditorPanel, { workspaceRoot: '/workspace', blocks: [], hideTree: true })))
+    await act(async () => { await useWorkspaceEditorStore.getState().openFile('data.csv', '/workspace') })
+    expect(host.querySelector('table')?.textContent).toContain('001')
+    await act(async () => host.querySelector<HTMLButtonElement>('[aria-label="workspaceEditorSource"]')!.click())
+    expect(host.querySelector('table')).toBeNull()
+    expect(host.textContent).toContain('file contents')
+    await act(async () => host.querySelector<HTMLButtonElement>('[aria-label="workspaceEditorPreview"]')!.click())
+    expect(host.querySelector('table')).toBeTruthy()
+    await act(async () => { await useWorkspaceEditorStore.getState().openFile('report.pdf', '/workspace') })
+    expect(host.querySelector('iframe')?.getAttribute('src')).toBe('about:blank')
+    expect(host.querySelector('[aria-label="workspaceEditorEdit"]')).toBeNull()
+    expect(host.querySelector('[aria-label="workspaceEditorSource"]')).toBeNull()
+  } finally {
+    await act(async () => root.unmount())
+    useWorkspaceEditorStore.setState(initial, true)
+    host.remove()
+    vi.unstubAllGlobals()
+    window.dsGui = previousGui
+  }
+})
+
 it('shows a persistent right tree with no files open, supports selection, toggling and resizing, and honors hideTree', async () => {
   const initial = useWorkspaceEditorStore.getState()
   const writeText = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue(undefined)

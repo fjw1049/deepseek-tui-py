@@ -698,6 +698,7 @@ function createWindow(): void {
       preload: preloadPath,
       contextIsolation: true,
       sandbox: true,
+      plugins: true,
       webviewTag: true
     }
   })
