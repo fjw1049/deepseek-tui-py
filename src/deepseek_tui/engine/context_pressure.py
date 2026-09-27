@@ -7,6 +7,7 @@ tuned to a single 1M window.
 
 from __future__ import annotations
 
+import html
 import re
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -41,7 +42,7 @@ COMPACTION_BRIDGE_PREFIX = (
 COMPACTION_BRIDGE_SUFFIX = (
     "\nThese are your own notes, not proof. Where the summary says a step was "
     "done, a test passed, or a fix worked, verify it yourself before building "
-    "on it. User requests quoted below the summary are preserved verbatim; "
+    "on it. User request excerpts quoted below may be shortened; "
     "everything else is a paraphrase that drifts a little on every "
     "re-summarisation."
 )
@@ -142,6 +143,11 @@ def measure_context_pressure(
     window = max(1, int(context_window_for_model(model) or DEFAULT_CONTEXT_WINDOW_TOKENS))
     if real_input_tokens > 0:
         tokens = int(real_input_tokens)
+        if real_input_estimate <= 0:
+            # Unpaired measurements cannot calibrate growth; keep a conservative floor.
+            tokens = max(tokens, estimate_request_tokens(
+                messages, system_prompt=system_prompt, tools=tools
+            ))
         if real_input_estimate > 0:
             current_estimate = estimate_request_tokens(
                 messages, system_prompt=system_prompt, tools=tools
@@ -194,8 +200,8 @@ def extract_user_query_text(text: str) -> str:
 
 def is_compaction_bridge_message(message: Message) -> bool:
     """True when *message* is our rewrite bridge carrier."""
-    if message.origin is MessageOrigin.COMPACTION_BRIDGE:
-        return True
+    if message.origin is not None:
+        return message.origin is MessageOrigin.COMPACTION_BRIDGE
     if message.role != Role.USER:
         return False
     text = message.text_content()
@@ -325,6 +331,7 @@ def parse_user_requests_block(text: str) -> list[str]:
     if not match:
         return []
     body = match.group(1)
+    escaped = body.lstrip().startswith("[encoding: html-entities-v1]")
     out: list[str] = []
     for raw in _REQUEST_ENTRY_RE.findall(body):
         lines = raw.split("\n")
@@ -334,7 +341,7 @@ def parse_user_requests_block(text: str) -> list[str]:
         ]
         entry = "\n".join(unindented).strip()
         if entry:
-            out.append(entry)
+            out.append(html.unescape(entry) if escaped else entry)
     return out
 
 
@@ -403,7 +410,8 @@ def format_user_requests_block(
 
     lines = [
         PRIOR_REQUESTS_OPEN,
-        "Everything the user has asked for in this session, in order. Their "
+        "[encoding: html-entities-v1]",
+        "Retained user request excerpts in chronological order (may be shortened). Their "
         "wording is the only record of it — earlier items stay binding unless "
         "the user withdrew them, and the last item is the current request.",
         "",
@@ -412,7 +420,7 @@ def format_user_requests_block(
     for i, entry in enumerate(kept):
         if dropped and i == gap_at:
             lines.append(f"[... {dropped} earlier request(s) omitted for length ...]")
-        head, *tail = entry.split("\n")
+        head, *tail = html.escape(entry, quote=False).split("\n")
         lines.append(f"{i + 1}. {head}")
         # Continuation lines are indented so a numbered list inside a request
         # cannot look like the next entry when this block is parsed back.

@@ -13,9 +13,11 @@ import httpx
 from httpx_sse import aconnect_sse
 
 from deepseek_tui.client.base import LLMClient
+from deepseek_tui.tools.encoding import to_api_tool_name
 from deepseek_tui.client.normalize import drop_orphaned_tool_blocks
 from deepseek_tui.client.sanitize import sanitize_extra_body, sanitize_extra_headers
 from deepseek_tui.client.streaming import AnthropicStreamParser
+from deepseek_tui.media import media_variant_scope
 from deepseek_tui.protocol.messages import (
     ImageBlock,
     Message,
@@ -110,6 +112,7 @@ class AnthropicCompatClient(LLMClient):
             int((time.monotonic() - started) * 1000),
         )
 
+    @media_variant_scope()
     def _build_payload(self, request: MessageRequest) -> dict[str, Any]:
         from deepseek_tui.client.media import budget_media_request
 
@@ -222,7 +225,7 @@ def _build_anthropic_messages(
                     {
                         "type": "tool_use",
                         "id": block.id,
-                        "name": block.name,
+                        "name": to_api_tool_name(block.name),
                         "input": block.input,
                     }
                 )
@@ -269,7 +272,7 @@ def _map_tool_choice(choice: str | dict[str, Any]) -> dict[str, Any]:
     if choice_type in {"required", "any"}:
         return {"type": "any"}
     if choice_type == "tool":
-        return {"type": "tool", "name": choice.get("name", "")}
+        return {"type": "tool", "name": to_api_tool_name(choice.get("name", ""))}
     if choice_type == "function":
         function = choice.get("function")
         if isinstance(function, dict):

@@ -110,7 +110,7 @@ async def prepare_media_request(
     from deepseek_tui.client.factory import build_llm_client
     from deepseek_tui.config.routing import config_for_model
     from deepseek_tui.engine.usage_ledger import usage_source
-    from deepseek_tui.protocol.responses import StreamTextDelta
+    from deepseek_tui.protocol.responses import StreamDone, StreamError, StreamTextDelta
 
     cfg = config_for_model(config, config.vision.model)
     target = cfg.effective_provider_config()
@@ -161,6 +161,7 @@ async def prepare_media_request(
 
             async def collect() -> str:
                 chunks = []
+                completed = False
                 with usage_source("vision"):
                     async for event in sampled.stream_chat_completion(
                         MessageRequest(
@@ -170,8 +171,16 @@ async def prepare_media_request(
                             temperature=target.temperature,
                         )
                     ):
+                        if isinstance(event, StreamError):
+                            raise ValueError(f"Vision helper failed: {event.message}")
+                        if isinstance(event, StreamDone):
+                            if event.truncated:
+                                raise ValueError("Vision helper response was truncated")
+                            completed = True
                         if isinstance(event, StreamTextDelta):
                             chunks.append(event.text)
+                if not completed:
+                    raise ValueError("Vision helper response did not complete")
                 return "".join(chunks).strip()
 
             observation = await asyncio.wait_for(collect(), config.vision.timeout_seconds)

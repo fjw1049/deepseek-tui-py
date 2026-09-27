@@ -304,6 +304,9 @@ export type DsGuiApi = {
     baseUrl?: string
   }) => Promise<AsrTestResult>
   runtimeRequest: (path: string, method?: string, body?: string) => Promise<RuntimeRequestResult>
+  getSharedLink?: () => Promise<string | null>
+  clearSharedLink?: (url: string) => Promise<void>
+  onSharedLinkAvailable?: (handler: () => void) => () => void
   fetchUpstreamModels: () => Promise<UpstreamModelsResult>
   /** List models for a built-in vendor (DeepSeek / Kimi / GLM / 火山). */
   fetchProviderModels: (providerId: string) => Promise<UpstreamModelsResult>

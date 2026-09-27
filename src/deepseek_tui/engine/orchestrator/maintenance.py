@@ -102,7 +102,7 @@ class SessionMaintenanceMixin:
         *,
         model: str,
     ) -> None:
-        """Write ``latest.json`` before a turn — mirrors ``save_checkpoint``."""
+        """Write a workspace/session-scoped crash checkpoint before a turn."""
         try:
             from deepseek_tui.state.session import save_checkpoint
 
@@ -237,7 +237,9 @@ class SessionMaintenanceMixin:
         self._compaction_summary_prompt = text
 
     async def _run_compaction(
-        self, messages: list[Message]
+        self, messages: list[Message], *, model: str | None = None,
+        system_prompt: str | None = None, tools: list[dict[str, Any]] | None = None,
+        output_reserve: int = 0,
     ) -> CompactionResult:
         """Run compaction and return the full result (incl. success flag).
 
@@ -260,8 +262,12 @@ class SessionMaintenanceMixin:
                 workspace=self.tool_context.working_directory,
                 pinned_indices=pinned or None,
                 working_set_paths=paths or None,
-                model_override=self.default_model,
+                model_override=self.compaction_config.model or model or self.default_model,
                 previous_summary=self._compaction_summary_prompt,
+                target_model=model or self.default_model,
+                system_prompt=system_prompt,
+                tools=tools,
+                output_reserve=output_reserve,
             )
         self._record_compaction_summary(result.summary_prompt)
         if result.success:
@@ -494,7 +500,7 @@ class SessionMaintenanceMixin:
                     self.client,
                     model,
                     messages,
-                    self.cycle_config.briefing_max_for(model),
+                    self.cycle_config.briefing_max_tokens,
                 )
         except Exception as exc:  # noqa: BLE001
             logger.warning("cycle_briefing_failed error=%s", exc)
@@ -526,21 +532,11 @@ class SessionMaintenanceMixin:
             prior_requests=collect_user_requests(messages),
         )
 
-        # Convert seed dicts to Message objects and preserve recent messages.
-        # When the briefing came back empty (the model refused or timed out),
-        # preserving only 4 recent messages would silently discard the entire
-        # pre-cycle history with no replacement. Fall back to a larger verbatim
-        # window so the next cycle at least has recent context to work from,
-        # and warn so the empty briefing is observable.
-        if briefing_text:
-            keep = min(4, len(messages))
-        else:
-            keep = min(16, len(messages))
-            logger.warning(
-                "cycle_briefing_empty fallback_keep=%d/%d — preserving extra "
-                "recent messages because briefing generation produced no text",
-                keep, len(messages),
-            )
+        # A failed/empty briefing must not silently replace history with a tail.
+        if not briefing_text.strip():
+            logger.warning("cycle_briefing_empty; keeping original history")
+            return
+        keep = min(4, len(messages))
 
         # Do not start the kept window on a tool-result message — that would
         # orphan TOOL rows from their parent assistant(tool_calls) message.

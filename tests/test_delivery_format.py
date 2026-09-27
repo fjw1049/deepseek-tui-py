@@ -36,7 +36,7 @@ def test_classify_web_search_failed() -> None:
     assert "TAVILY" in msg or "tavily" in msg.lower()
 
 
-def test_sanitize_drops_process_narration() -> None:
+def test_sanitize_preserves_unmarked_narration() -> None:
     raw = (
         "我来获取微博热搜数据并整理报告。\n"
         "数据获取成功。\n\n"
@@ -45,17 +45,17 @@ def test_sanitize_drops_process_narration() -> None:
         "1️⃣ **翘楚定档**（118.9万）"
     )
     out = sanitize_delivery_text(raw)
-    assert "我来获取" not in out
+    assert "我来获取" in out
     assert "翘楚定档" in out
 
 
-def test_sanitize_strips_delivery_meta() -> None:
+def test_sanitize_preserves_unmarked_delivery_statement() -> None:
     raw = (
         "报告已生成并通过飞书发送成功。以下是本次摘要：\n\n"
         "## TOP 10\n| 1 | foo |"
     )
     out = sanitize_delivery_text(raw)
-    assert "飞书发送" not in out
+    assert "飞书发送" in out
     assert "TOP 10" in out
 
 
@@ -89,3 +89,14 @@ def test_classify_stale_restart() -> None:
     msg = classify_task_error_for_user(STALE_RESTART_ERROR)
     assert "重启" in msg
     assert "stale" not in msg.lower()
+
+
+def test_sanitize_preserves_multisection_report_and_steps():
+    raw = """## 第一部分
+收入增长
+---
+## 第二部分
+成本下降
+首先准备材料
+然后运行测试"""
+    assert sanitize_delivery_text(raw) == raw

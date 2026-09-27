@@ -1,0 +1,29 @@
+{
+  "date": "2026-09-27",
+  "scope": "上下文第二轮优化与 Goal 审核，非全仓或真实模型验收",
+  "offline": true,
+  "pytest": {
+    "command": "audit_home=$(mktemp -d /tmp/context-followup-final.XXXXXX)\nDEEPSEEK_HOME=\"$audit_home\" CLAUDE_PLUGINS_DIR=\"$audit_home/plugins\" .venv/bin/python -m pytest tests/engine tests/goal tests/contract/test_context_breakdown.py tests/contract/test_cycle_archive_is_reachable.py tests/contract/test_cycle_briefing_fidelity.py tests/contract/test_reminder_registry.py tests/contract/test_compact_thread.py tests/contract/test_pressure_counts_static_prefix.py tests/contract/test_ingress_truncation_pressure.py tests/test_context_meter_live.py tests/test_context_window_defaults.py tests/test_project_context_merge.py tests/test_prompt_model_neutral.py tests/test_subagent_context_overflow.py tests/test_subagent_context_ingress.py -q --tb=short",
+    "passed": 425,
+    "duration_seconds": 5.21,
+    "new_context_cases_included": 12,
+    "skipped": 0,
+    "deselected": 0
+  },
+  "checks": {
+    "compileall": "Engine、Goal、Server manager、TUI commands 通过",
+    "ruff_F": "主要修改 Engine 文件及新增测试/探针通过；context.py 既有导入问题未清理",
+    "diff_check": "相关路径通过"
+  },
+  "goal_probe": {
+    "command": "PYTHONPATH=src .venv/bin/python docs/audits/2026-09-27/goal_probe.py",
+    "results": "goal-probe-results.json",
+    "interpretation": "当前缺陷/边界取证，不是已修复声明。未实际执行作为合成证据的 pwd 或业务测试。"
+  },
+  "remaining_boundaries": [
+    "手动与应急旧 callback 未携带全部主请求参数，仍由 TurnLoop 完整预检兜底",
+    "本地估算不等于所有 Provider 实际 tokenizer",
+    "没有新增原始请求的独立耐久存档",
+    "Goal 本篇仅审核，未实施发现的修复"
+  ]
+}

@@ -64,6 +64,8 @@ def test_persist_roundtrip_pauses_active() -> None:
     assert loaded.objective == "Persist me"
 
 
-def test_complete_snapshot_is_not_restored() -> None:
+def test_complete_snapshot_is_restored() -> None:
     completed = apply_status(new_goal("done"), GoalStatus.COMPLETE, reason="finished")
-    assert state_from_dict(state_to_dict(completed)) is None
+    restored = state_from_dict(state_to_dict(completed))
+    assert restored.status is GoalStatus.COMPLETE
+    assert restored.terminal_reason == "finished"

@@ -242,6 +242,8 @@ class ToolExecutionMixin:
                 decision = self._tool_dedup.classify(
                     tool_call.name,
                     tool_call.arguments if isinstance(tool_call.arguments, dict) else {},
+                    allow_reuse=not any(self.hook_executor.has_hooks_for_event(event)
+                                        for event in ("tool_call_before", "tool_call_after")),
                 )
                 if decision.kind == "reuse":
                     content = self._tool_dedup.reuse_content(decision)
@@ -355,6 +357,21 @@ class ToolExecutionMixin:
         finally:
             self._tool_dedup.end_batch()
 
+    async def _publish_tool_result(self, tool_call: ToolCall, result: ToolResult) -> None:
+        """Publish completion independently of ordered context bookkeeping."""
+        await self.handle.emit(
+            ToolResultEvent(
+                tool_call_id=tool_call.id,
+                tool_name=tool_call.name,
+                content=result.content,
+                success=result.success,
+                metadata={
+                    **(result.metadata or {}),
+                    "images": [i.model_dump() for i in result.images],
+                },
+            )
+        )
+
     async def _finish_tool_result(
         self,
         tool_call: ToolCall,
@@ -362,6 +379,8 @@ class ToolExecutionMixin:
         result: ToolResult,
         model: str,
         results: list[Message],
+        *,
+        emit_result: bool = True,
     ) -> ToolResult:
         """Shared success-path post-processing for one executed tool.
 
@@ -378,6 +397,46 @@ class ToolExecutionMixin:
                 "success": result.success,
             }
         )
+        from deepseek_tui.goal.tools import capture_goal_checklist
+        from deepseek_tui.tools.registry import ToolCapability
+
+        if tool_call.name == "checklist" and result.success:
+            capture_goal_checklist(self.tool_context)
+        spec = (
+            self.tool_registry.get(tool_call.name)
+            if self.tool_registry.contains(tool_call.name) else None
+        )
+        args = tool_call.arguments if isinstance(tool_call.arguments, dict) else {}
+        mutates = bool(
+            spec is not None and ToolCapability.WRITES_FILES in spec.capabilities()
+            and not spec.is_read_only_for_input(args)
+        )
+        start = self.tool_context.metadata.get("goal_tool_starts", {}).pop(tool_call.id, None)
+        stable = False
+        if start is not None:
+            from deepseek_tui.goal.workspace import workspace_digest
+
+            digest = await asyncio.to_thread(workspace_digest, self.tool_context.working_directory)
+            current = self.goal_service.snapshot()
+            if current is not None and current.goal_id == start[0]:
+                self.goal_service.observe_workspace(digest)
+                stable = (digest is not None and digest == start[1]
+                          and self.goal_service.snapshot().work_revision == start[2])
+        # Unknown tools cannot claim verification based solely on a success flag.
+        mutates = mutates or spec is None
+        metadata = result.metadata or {}
+        finished = (
+            metadata.get("status") not in {"running", "queued", "pending", "cancelled"}
+            and not metadata.get("background")
+        )
+        goal = self.goal_service.snapshot()
+        if goal is not None and self.tool_context.metadata.get("goal_turn_id") == goal.goal_id:
+            self.goal_service.record_tool_result(
+                tool_call.id, tool_call.name, args,
+                success=result.success and metadata.get("status") not in {"failed", "error"},
+                mutates=mutates, finished=finished, verification=stable,
+                output=result.content or "",
+            )
         if result.success:
             self._mark_subagent_tool_result_consumed(
                 tool_call.name,
@@ -393,18 +452,8 @@ class ToolExecutionMixin:
             tool_call.name,
             tool_call.arguments if isinstance(tool_call.arguments, dict) else None,
         )
-        await self.handle.emit(
-            ToolResultEvent(
-                tool_call_id=tool_call.id,
-                tool_name=tool_call.name,
-                content=result.content,
-                success=result.success,
-                metadata={
-                    **(result.metadata or {}),
-                    "images": [i.model_dump() for i in result.images],
-                },
-            )
-        )
+        if emit_result:
+            await self._publish_tool_result(tool_call, result)
         if result.success:
             await self._run_post_edit_lsp_hook(tool_call.name, tool_call.arguments)
         from deepseek_tui.tools.runtime import apply_spillover
@@ -443,9 +492,27 @@ class ToolExecutionMixin:
         decision: Any,
         error_msg: str,
         results: list[Message],
+        *,
+        emit_result: bool = True,
     ) -> None:
         """Shared error-path post-processing: emit, record, append."""
-        await self._emit_tool_failure(tool_call, error_msg)
+        start = self.tool_context.metadata.get("goal_tool_starts", {}).pop(tool_call.id, None)
+        if start is not None:
+            from deepseek_tui.goal.workspace import workspace_digest
+
+            digest = await asyncio.to_thread(workspace_digest, self.tool_context.working_directory)
+            current = self.goal_service.snapshot()
+            if current is not None and current.goal_id == start[0]:
+                self.goal_service.observe_workspace(digest)
+        goal = self.goal_service.snapshot()
+        if goal is not None and self.tool_context.metadata.get("goal_turn_id") == goal.goal_id:
+            self.goal_service.record_tool_result(
+                tool_call.id, tool_call.name,
+                tool_call.arguments if isinstance(tool_call.arguments, dict) else {},
+                success=False, output=error_msg,
+            )
+        if emit_result:
+            await self._emit_tool_failure(tool_call, error_msg)
         err_content = f"Error: {error_msg}"
         self._tool_dedup.record(decision.key, err_content, is_error=True)
         err_content = self._tool_dedup.decorate_execute_content(decision, err_content)
@@ -540,12 +607,23 @@ class ToolExecutionMixin:
                     )
                     return (tool_call, None, error_msg)
 
-        outcomes = (
-            await asyncio.gather(*[_exec_one_parallel(tc) for tc in runnable]) if runnable else []
-        )
-        outcome_by_id = {tc.id: (tc, result, err) for tc, result, err in outcomes}
+        jobs = [asyncio.create_task(_exec_one_parallel(tc)) for tc in runnable]
+        outcome_by_id = {}
+        try:
+            for completed in asyncio.as_completed(jobs):
+                tc, result, err = await completed
+                outcome_by_id[tc.id] = (tc, result, err)
+                if err is not None:
+                    await self._emit_tool_failure(tc, err)
+                elif result is not None:
+                    await self._publish_tool_result(tc, result)
+        finally:
+            for job in jobs:
+                if not job.done():
+                    job.cancel()
+            await asyncio.gather(*jobs, return_exceptions=True)
 
-        # Process outcomes and emit events (sequential, to preserve order)
+        # Commit context and shared bookkeeping in the original call order.
         results: list[Message] = []
         for tool_call, decision in zip(tool_calls, decisions, strict=True):
             if decision.kind == "block":
@@ -563,7 +641,7 @@ class ToolExecutionMixin:
 
             _tc, result, error_msg = outcome_by_id[tool_call.id]
             if error_msg is not None:
-                await self._finish_tool_error(tool_call, decision, error_msg, results)
+                await self._finish_tool_error(tool_call, decision, error_msg, results, emit_result=False)
             elif result is None:
                 # Denial case (shouldn't happen)
                 denied = f"Tool {tool_call.name} denied"
@@ -577,7 +655,7 @@ class ToolExecutionMixin:
                     )
                 )
             else:
-                await self._finish_tool_result(tool_call, decision, result, model, results)
+                await self._finish_tool_result(tool_call, decision, result, model, results, emit_result=False)
 
         return results
 
@@ -588,6 +666,28 @@ class ToolExecutionMixin:
         model: str,
     ) -> ToolResult | None:
         """Execute a single tool call, handling special tools and approval."""
+        goal = self.goal_service.snapshot()
+        goal_control = tool_call.name in {"CreateGoal", "GetGoal", "SetGoalBudget", "checklist"} or (
+            tool_call.name == "UpdateGoal"
+            and isinstance(tool_call.arguments, dict)
+            and tool_call.arguments.get("status") != "complete"
+        )
+        if goal is not None and goal.status.value != "complete" and not goal_control:
+            from deepseek_tui.goal.workspace import workspace_digest
+
+            digest = await asyncio.to_thread(workspace_digest, self.tool_context.working_directory)
+            current = self.goal_service.snapshot()
+            if current is not None and current.goal_id == goal.goal_id:
+                self.goal_service.observe_workspace(digest)
+                self.tool_context.metadata.setdefault("goal_tool_starts", {})[tool_call.id] = (
+                    goal.goal_id, digest, self.goal_service.snapshot().work_revision,
+                )
+                if (tool_call.name == "UpdateGoal" and digest is None
+                        and isinstance(tool_call.arguments, dict)
+                        and tool_call.arguments.get("status") == "complete"):
+                    raise ToolError(
+                        "Cannot verify workspace contents; retry after files are readable"
+                    )
         tool_name, _arguments = _normalise_tool_call(
             tool_call.name, tool_call.arguments
         )
@@ -595,8 +695,8 @@ class ToolExecutionMixin:
             raise ToolError(missing_tool_error_message(tool_call.name, api_tools))
 
         hook_ctx = self._lifecycle_hook_context(
-            tool_name=tool_call.name,
-            tool_args=tool_call.arguments,
+            tool_name=tool_name,
+            tool_args=_arguments,
             model=model,
         )
         pre_hook_results = await self._run_lifecycle_hook("tool_call_before", hook_ctx)
@@ -650,8 +750,9 @@ class ToolExecutionMixin:
             self._accrue_child_token_cost_from_metadata(result.metadata)
             hook_ctx.tool_result = result.content
             hook_ctx.tool_success = result.success
+            hook_ctx.tool_exit_code = result.metadata.get("returncode") if isinstance(result.metadata, dict) else None
         post_hook_results = await self._run_lifecycle_hook("tool_call_after", hook_ctx)
-        if post_hook_results and result is not None:
+        if (pre_hook_results or post_hook_results) and result is not None:
             from deepseek_tui.integrations.hooks import aggregate_hook_decision
 
             decision = aggregate_hook_decision(post_hook_results)
@@ -661,6 +762,7 @@ class ToolExecutionMixin:
                 # The reason is appended so the model sees the objection.
                 feedback.append(decision.reason)
             feedback.extend(decision.additional_context)
+            feedback.extend(aggregate_hook_decision(pre_hook_results).additional_context)
             if feedback:
                 from dataclasses import replace as _dc_replace
 
@@ -786,7 +888,7 @@ class ToolExecutionMixin:
         )
         cache_status = self.approval_cache.check(cache_key)
 
-        if cache_status is ApprovalCacheStatus.APPROVED:
+        if cache_status is ApprovalCacheStatus.APPROVED and not (approval_request.reason or "").startswith(NEVER_BLOCKED_PREFIX):
             logger.info("approval_cache_hit tool=%s reason=cached_session", tool_call.name)
             await self.handle.emit(
                 ApprovalResolvedEvent(
@@ -976,33 +1078,35 @@ class ToolExecutionMixin:
         if auto_elevated:
             approved = True
         else:
-            event = ElevationRequiredEvent(
-                tool_call_id=tool_call.id,
-                tool_name=tool_call.name,
-                reason=denial_msg,
-                elevation_kind=kind,
-                command_preview=cmd_preview,
-            )
-            await self.handle.emit(event)
+            import uuid
 
+            elevation_id = uuid.uuid4().hex
             thread_id = str(self.tool_context.metadata.get("runtime_thread_id", ""))
             fut = bridge.register(
-                tool_call.id,
+                elevation_id,
                 meta=PendingElevationRecord(
                     thread_id=thread_id,
                     tool_name=tool_call.name,
                     reason=denial_msg,
                     elevation_kind=kind,
                     command_preview=cmd_preview,
+                    tool_call_id=tool_call.id,
                 ),
             )
             try:
+                await self.handle.emit(ElevationRequiredEvent(
+                    tool_call_id=tool_call.id,
+                    tool_name=tool_call.name,
+                    reason=denial_msg,
+                    elevation_kind=kind,
+                    command_preview=cmd_preview,
+                    elevation_id=elevation_id,
+                ))
                 approved = await asyncio.wait_for(fut, timeout=600.0)
             except asyncio.TimeoutError:
                 approved = False
-            except asyncio.CancelledError:
-                # Hard cancel must not be reinterpreted as "user denied elevation".
-                raise
+            finally:
+                bridge.discard(elevation_id)
 
         if not approved:
             await self.handle.emit(
@@ -1239,6 +1343,7 @@ class ToolExecutionMixin:
                 self.tool_context,
                 next_mode,
                 self.tool_context.working_directory,
+                sandbox_mode=getattr(getattr(self, "_app_config", None), "sandbox_mode", None),
             )
         except Exception:  # noqa: BLE001 — mode switch must not fail the tool
             logger.debug("sync_execution_sandbox_policy_failed", exc_info=True)

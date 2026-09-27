@@ -1,0 +1,10 @@
+{
+  "previous_scan_model": {
+    "samples": 10,
+    "median_ms": 17.693
+  },
+  "current_control_entry": {
+    "samples": 10,
+    "median_ms": 0.134
+  }
+}

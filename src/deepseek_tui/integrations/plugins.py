@@ -304,35 +304,15 @@ def _as_str_tuple(value: Any) -> tuple[str, ...]:
 
 
 def _skills_dir_has_skills(plugin_dir: Path) -> bool:
-    """True when ``skills/<name>/SKILL.md`` exists under the plugin root."""
-    skills_dir = plugin_dir / "skills"
-    if not skills_dir.is_dir():
-        return False
-    try:
-        for child in skills_dir.iterdir():
-            if child.is_dir() and (child / "SKILL.md").is_file():
-                return True
-    except OSError:
-        return False
-    return False
+    from deepseek_tui.plugins.adapters.common import markdown_files
+
+    return bool(markdown_files([plugin_dir / "skills"], skill=True))
 
 
 def _dir_has_markdown(plugin_dir: Path, subdir: str) -> bool:
-    """True when ``<subdir>/*.md`` exists under the plugin root.
+    from deepseek_tui.plugins.adapters.common import markdown_files
 
-    Used to auto-discover ``commands/`` and ``agents/`` directories laid
-    out per the Claude Code convention when the manifest omits the key.
-    """
-    target = plugin_dir / subdir
-    if not target.is_dir():
-        return False
-    try:
-        return any(
-            child.is_file() and child.suffix == ".md"
-            for child in target.iterdir()
-        )
-    except OSError:
-        return False
+    return bool(markdown_files([plugin_dir / subdir]))
 
 
 def _synthesize_single_skill_manifest(plugin_dir: Path) -> PluginManifest | None:
@@ -1007,11 +987,9 @@ def _resolve_markdown_targets(
             f"plugin {plugin.name}: {kind} path escapes plugin dir: {rel}"
         )
         return []
-    if resolved.is_file() and resolved.suffix == ".md":
-        return [resolved]
-    if resolved.is_dir():
-        return sorted(resolved.glob("*.md"))
-    return []
+    from deepseek_tui.plugins.adapters.common import markdown_files
+
+    return [p for p in markdown_files([resolved]) if _plugin_child_dir(plugin, str(p)) is not None]
 
 
 def _collect_commands(plugin: LoadedPlugin, out: PluginContributions) -> None:
@@ -1125,41 +1103,12 @@ def _is_store_backed(path: Path) -> bool:
     return "sources" in parts and "sha256" in parts
 
 
-def _store_path_digest(path: Path) -> str | None:
-    """Return ``sha256:<hex>`` encoded in a content-store symlink target."""
-    try:
-        if not path.is_symlink():
-            return None
-        parts = path.resolve().parts
-    except OSError:
-        return None
-    try:
-        idx = parts.index("sha256")
-    except ValueError:
-        return None
-    if idx + 1 >= len(parts):
-        return None
-    hexpart = parts[idx + 1]
-    if not hexpart or any(ch in hexpart for ch in "/:\\"):
-        return None
-    return f"sha256:{hexpart}"
-
-
 def _execution_digest_for_plugin(plugin: LoadedPlugin) -> str:
-    """Resolve the store ``sha256:`` digest used for grant checks.
-
-    For store-backed installs the content-addressed store path is
-    authoritative — runtime artifacts like ``__pycache__`` must not change
-    the grant key. For mutable directories the digest is always recomputed
-    from the current bytes on disk so a post-grant edit is detected.
-    """
+    """Bind grants to verified bytes, including for store-backed symlinks."""
     from deepseek_tui.plugins.identity import source_content_digest
 
-    store_digest = _store_path_digest(plugin.path)
-    if store_digest is not None:
-        return store_digest
     try:
-        return source_content_digest(plugin.path, provenance=None)
+        return source_content_digest(plugin.path)
     except Exception:  # noqa: BLE001
         return ""
 
@@ -1196,57 +1145,30 @@ def collect_light_contributions(
                 f"run `deepseek-tui plugin trust {plugin.name}`)"
             )
             continue
+        if not plugin.enabled:
+            continue
+        allow_hooks = allow_mcp = True
         if enforce_grants:
-            from deepseek_tui.plugins.grants import (
-                _any_grants,
-                execution_authorized,
-                migrate_legacy_fingerprint_grants,
-            )
+            from deepseek_tui.plugins.grants import execution_authorized
 
             digest = _execution_digest_for_plugin(plugin)
-            if digest:
-                migrate_legacy_fingerprint_grants(plugin.name, digest)
-                # User/claude scopes: heal pre-grant installs that still
-                # have lockfile trusted=true but no grant files. Never
-                # heal project scope (trust is grant-only there).
-                if (
-                    plugin.scope != "project"
-                    and not _any_grants(plugin.name)
-                ):
-                    from deepseek_tui.plugins.grants import grant_trust
-
-                    try:
-                        grant_trust(plugin.name, digest)
-                        _LOG.info(
-                            "healed missing execution grant for trusted "
-                            "plugin %s",
-                            plugin.name,
-                        )
-                    except Exception:  # noqa: BLE001
-                        _LOG.warning(
-                            "failed to heal execution grant for %s",
-                            plugin.name,
-                            exc_info=True,
-                        )
-            if not execution_authorized(
-                trusted=True,
-                plugin_id=plugin.name,
-                digest=digest,
-                capability="hooks.execute",
-            ) and not execution_authorized(
-                trusted=True,
-                plugin_id=plugin.name,
-                digest=digest,
-                capability="mcp.connect",
-            ):
+            allow_hooks = execution_authorized(
+                trusted=plugin.trusted, plugin_id=plugin.name,
+                digest=digest, capability="hooks.execute",
+            )
+            allow_mcp = execution_authorized(
+                trusted=plugin.trusted, plugin_id=plugin.name,
+                digest=digest, capability="mcp.connect",
+            )
+            if not allow_hooks or not allow_mcp:
                 out.warnings.append(
-                    f"plugin {plugin.name}: hooks/MCP skipped "
-                    f"(no execution grant for current content digest; "
-                    f"re-run `deepseek-tui plugin trust {plugin.name}`)"
+                    f"plugin {plugin.name}: no execution grant for one or more capabilities "
+                    "at the current content digest; review and explicitly re-trust the plugin"
                 )
-                continue
-        _collect_hooks(plugin, out)
-        _collect_mcp(plugin, out)
+        if allow_hooks:
+            _collect_hooks(plugin, out)
+        if allow_mcp:
+            _collect_mcp(plugin, out)
     return out
 
 
@@ -1333,25 +1255,16 @@ def _collect_skills(plugin: LoadedPlugin, out: PluginContributions) -> None:
                 f"plugin {plugin.name}: skills path escapes plugin dir: {rel}"
             )
             continue
-        if not skills_dir.is_dir():
-            continue
-        # Leaf skill dir — SKILL.md directly inside (CodeBuddy declares each
-        # skill's own dir, e.g. ``./skills/comps-analysis``).
-        leaf = skills_dir / "SKILL.md"
-        if leaf.is_file():
+        from deepseek_tui.plugins.adapters.common import markdown_files
+
+        for skill_file in markdown_files([skills_dir], skill=True):
+            if _plugin_child_dir(plugin, str(skill_file)) is None:
+                out.warnings.append(f"plugin {plugin.name}: skill resource escapes plugin dir")
+                continue
             try:
-                _add(_parse_skill_file(leaf))
-            except Exception as exc:  # noqa: BLE001 — one bad skill must not
-                # abort the rest of the plugin's contributions.
-                out.warnings.append(
-                    f"plugin {plugin.name}: failed to parse {leaf}: {exc}"
-                )
-            continue
-        # Container dir — ``<name>/SKILL.md`` (Claude Code / agents-main).
-        reg = SkillRegistry.discover(skills_dir)
-        for skill in reg.skills:
-            _add(skill)
-        out.warnings.extend(reg.warnings)
+                _add(_parse_skill_file(skill_file))
+            except Exception as exc:  # noqa: BLE001
+                out.warnings.append(f"plugin {plugin.name}: failed to parse {skill_file}: {exc}")
 
 
 # CamelCase lifecycle events used by Claude Code / CodeBuddy hooks.json,

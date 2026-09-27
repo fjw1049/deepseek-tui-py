@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import json
 import re
 import tarfile
 import tempfile
@@ -155,6 +156,19 @@ class NpmPackageSource:
         return f"https://registry.npmjs.org/{quote(self.name, safe='@/')}"
 
 
+def _bounded_get(client: httpx.Client, url: str, max_bytes: int) -> bytes:
+    data = bytearray()
+    with client.stream("GET", url, follow_redirects=False) as response:
+        if response.is_redirect:
+            raise RemoteFetchError("npm redirect was rejected")
+        response.raise_for_status()
+        for chunk in response.iter_bytes(chunk_size=64 * 1024):
+            data.extend(chunk)
+            if len(data) > max_bytes:
+                raise RemoteFetchError(f"npm response exceeds {max_bytes} bytes")
+    return bytes(data)
+
+
 @contextmanager
 def materialize_npm_package(
     source: NpmPackageSource,
@@ -165,12 +179,8 @@ def materialize_npm_package(
 ) -> Iterator[ResolvedGitSubdir]:
     """Download one npm package tarball into a temporary artifact."""
     meta_url = source.registry_url
-    with httpx.Client(timeout=30.0, follow_redirects=True) as client:
-        response = client.get(meta_url)
-        if response.status_code == 404:
-            raise RemoteFetchError(f"npm package not found: {source.name}")
-        response.raise_for_status()
-        document = response.json()
+    with httpx.Client(timeout=30.0, follow_redirects=False) as client:
+        document = json.loads(_bounded_get(client, meta_url, 5 * 1024 * 1024))
         if source.version == "latest":
             version = str(document.get("dist-tags", {}).get("latest") or "")
         else:
@@ -185,11 +195,7 @@ def materialize_npm_package(
         parsed = urlparse(tarball)
         if parsed.hostname not in {"registry.npmjs.org", "registry.npmmirror.com"}:
             raise RemoteFetchError("npm tarball host is not allowed")
-        archive = client.get(tarball)
-        archive.raise_for_status()
-        data = archive.content
-        if len(data) > max_bytes:
-            raise RemoteFetchError(f"npm tarball exceeds {max_bytes} bytes")
+        data = _bounded_get(client, tarball, max_bytes)
 
     parent = str(temp_parent) if temp_parent is not None else None
     with tempfile.TemporaryDirectory(prefix="deepseek-npm-", dir=parent) as temp:
@@ -286,7 +292,11 @@ def _extract_archive(
     except (tarfile.TarError, OSError) as exc:
         raise RemoteFetchError(f"invalid remote archive: {exc}") from exc
     with archive:
-        members = archive.getmembers()
+        members = []
+        for member in archive:
+            if len(members) >= max_files:
+                raise RemoteFetchError(f"remote archive contains more than {max_files} members")
+            members.append(member)
         if not members:
             raise RemoteFetchError("remote archive is empty")
         if len(members) > max_files:

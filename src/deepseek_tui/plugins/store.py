@@ -45,6 +45,8 @@ def publish_source_tree(
     digest = artifact.digest
     dest = source_path(digest, home=home)
     if dest.is_dir():
+        if dest.is_symlink() or LocalArtifact(dest, max_files=max_files, max_bytes=max_bytes).digest != digest:
+            raise PluginSourceError(f"existing store entry for {digest} has mismatched content")
         return digest, dest
     dest.parent.mkdir(parents=True, exist_ok=True)
     staging_parent = dest.parent

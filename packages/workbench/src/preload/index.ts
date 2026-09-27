@@ -22,6 +22,13 @@ const api = {
   testAsrEndpoint: (payload) => ipcRenderer.invoke('asr:test', payload),
   runtimeRequest: (path, method, body) =>
     ipcRenderer.invoke('runtime:request', { path, method, body }),
+  getSharedLink: () => ipcRenderer.invoke('sharing:get-link'),
+  clearSharedLink: (url) => ipcRenderer.invoke('sharing:clear-link', url),
+  onSharedLinkAvailable: (handler) => {
+    const wrapped = () => handler()
+    ipcRenderer.on('sharing:link-available', wrapped)
+    return () => ipcRenderer.removeListener('sharing:link-available', wrapped)
+  },
   fetchUpstreamModels: () => ipcRenderer.invoke('upstream:models'),
   fetchProviderModels: (providerId) =>
     ipcRenderer.invoke('upstream:provider-models', { providerId }),

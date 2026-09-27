@@ -30,6 +30,7 @@ import logging
 import os
 import re
 import time
+from contextlib import AsyncExitStack
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -85,28 +86,31 @@ class ToolRuntime:
     async def __aexit__(self, *_exc: Any) -> None:
         await self.shutdown()
 
-    async def shutdown(self) -> None:
+    async def _stop_scheduler(self) -> None:
         if self._automation_cancel is not None:
             self._automation_cancel.set()
-        if self._automation_scheduler_task is not None:
+        task = self._automation_scheduler_task
+        if task is not None:
             try:
-                await asyncio.wait_for(
-                    self._automation_scheduler_task, timeout=5.0
-                )
-            except (asyncio.TimeoutError, asyncio.CancelledError):
-                self._automation_scheduler_task.cancel()
-            except Exception:  # noqa: BLE001
-                pass
-        if self.mailbox is not None:
-            self.mailbox.close()
-        if self._owns_subagent_manager and self.subagent_manager is not None:
-            await self.subagent_manager.shutdown()
-        if self._owns_task_manager and self.task_manager is not None:
-            await self.task_manager.shutdown()
-        if self._owns_mcp_manager and self.mcp_manager is not None:
-            await self.mcp_manager.stop_all()
-        if self.lsp_manager is not None:
-            await self.lsp_manager.close_all()
+                await asyncio.wait_for(asyncio.shield(task), timeout=5.0)
+            finally:
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+
+    async def shutdown(self) -> None:
+        # ExitStack attempts every release even if an earlier one raises.
+        async with AsyncExitStack() as cleanup:
+            if self.lsp_manager is not None:
+                cleanup.push_async_callback(self.lsp_manager.close_all)
+            if self._owns_mcp_manager and self.mcp_manager is not None:
+                cleanup.push_async_callback(self.mcp_manager.stop_all)
+            if self._owns_task_manager and self.task_manager is not None:
+                cleanup.push_async_callback(self.task_manager.shutdown)
+            if self._owns_subagent_manager and self.subagent_manager is not None:
+                cleanup.push_async_callback(self.subagent_manager.shutdown)
+            if self.mailbox is not None:
+                cleanup.callback(self.mailbox.close)
+            cleanup.push_async_callback(self._stop_scheduler)
 
 
 def default_runtime_model(cfg: Config, *, override: str | None = None) -> str:
@@ -194,181 +198,200 @@ async def create_tool_runtime(
     """
     from deepseek_tui.tools.registry import build_default_registry
 
-    cfg = config or Config()
-    workspace = (working_directory or Path.cwd()).resolve()
+    async with AsyncExitStack() as cleanup:
+        cfg = config or Config()
+        workspace = (working_directory or Path.cwd()).resolve()
 
-    task_manager: TaskManager | None = None
-    subagent_manager: SubAgentManager | None = None
-    mailbox: Mailbox | None = None
-    owns_task_manager = True
+        task_manager: TaskManager | None = None
+        subagent_manager: SubAgentManager | None = None
+        mailbox: Mailbox | None = None
+        owns_task_manager = True
 
-    if shared_task_manager is not None:
-        task_manager = shared_task_manager
-        owns_task_manager = False
-    elif cfg.features.tasks:
-        data_dir = task_data_dir if task_data_dir is not None else default_tasks_dir()
-        # Automations enqueue with model=None and inherit this default.
-        task_cfg = TaskManagerConfig(
-            data_dir=data_dir,
-            default_workspace=workspace,
-            default_model=default_runtime_model(cfg),
-            config=cfg,
-            allow_shell=cfg.allow_shell,
-            trust_mode=getattr(cfg, "trust_mode", False),
-            worker_count=1,
-        )
-        task_exec = _safe_task_executor(cfg)
-        task_manager = TaskManager(task_cfg, executor=task_exec)
-        await task_manager.start()
-
-    subagent_manager, mailbox = build_subagent_manager(
-        cfg, workspace, state_path=subagent_state_path
-    )
-
-    mcp: McpManager | None = None
-    owns_mcp_manager = True
-    if mcp_manager is not None:
-        mcp = mcp_manager
-        owns_mcp_manager = False
-    elif cfg.features.mcp:
-        mcp = await _build_mcp_manager(cfg, extra_servers=extra_mcp_servers)
-    if mcp is not None and start_mcp:
-        await mcp.start_all(fail_on_required=True)
-    if task_manager is not None and mcp is not None:
-        task_manager._shared_mcp_manager = mcp  # noqa: SLF001 — executor reuse
-
-    lsp: LspManager | None = None
-    if cfg.lsp.enabled:
-        lsp = LspManager(
-            LspConfig(
-                enabled=True,
-                poll_after_edit_ms=cfg.lsp.poll_after_edit_ms,
-                max_diagnostics_per_file=cfg.lsp.max_diagnostics_per_file,
-                include_warnings=cfg.lsp.include_warnings,
-                servers=dict(cfg.lsp.servers),
+        if shared_task_manager is not None:
+            task_manager = shared_task_manager
+            owns_task_manager = False
+        elif cfg.features.tasks:
+            data_dir = task_data_dir if task_data_dir is not None else default_tasks_dir()
+            # Automations enqueue with model=None and inherit this default.
+            task_cfg = TaskManagerConfig(
+                data_dir=data_dir,
+                default_workspace=workspace,
+                default_model=default_runtime_model(cfg),
+                config=cfg,
+                allow_shell=cfg.allow_shell,
+                trust_mode=getattr(cfg, "trust_mode", False),
+                worker_count=1,
             )
+            task_exec = _safe_task_executor(cfg)
+            task_manager = TaskManager(task_cfg, executor=task_exec)
+            cleanup.push_async_callback(task_manager.shutdown)
+            await task_manager.start()
+
+        subagent_manager, mailbox = build_subagent_manager(
+            cfg, workspace, state_path=subagent_state_path
         )
+        if subagent_manager is not None:
+            cleanup.push_async_callback(subagent_manager.shutdown)
+        if mailbox is not None:
+            cleanup.callback(mailbox.close)
 
-    registry = build_default_registry(cfg, mode=mode)
-    metadata: dict[str, Any] = {}
-    if mcp is not None:
-        from deepseek_tui.tools.mcp import MCP_MANAGER_KEY
+        mcp: McpManager | None = None
+        owns_mcp_manager = True
+        if mcp_manager is not None:
+            mcp = mcp_manager
+            owns_mcp_manager = False
+        elif cfg.features.mcp:
+            mcp = await _build_mcp_manager(cfg, extra_servers=extra_mcp_servers)
+            cleanup.push_async_callback(mcp.stop_all)
+        if mcp is not None and start_mcp:
+            await mcp.start_all(fail_on_required=True)
+        if task_manager is not None and mcp is not None:
+            task_manager._shared_mcp_manager = mcp  # noqa: SLF001 — executor reuse
 
-        metadata[MCP_MANAGER_KEY] = mcp
-    if lsp is not None:
-        metadata[LSP_MANAGER_KEY] = lsp
-
-    automation_manager: AutomationManager | None = None
-    automation_cancel: asyncio.Event | None = None
-    automation_task: asyncio.Task[None] | None = None
-    if cfg.features.automations:
-        # Hard dependency: automations have no executor of their own —
-        # every fire ends up calling ``TaskManager.add_task``. Fail
-        # fast at construction time rather than letting the LLM call
-        # ``cron_create(run_now=true)`` and discover the missing
-        # dependency at runtime.
-        if not cfg.features.tasks:
-            raise ValueError(
-                "features.automations requires features.tasks=True "
-                "(automations fire by enqueueing tasks)"
+        lsp: LspManager | None = None
+        if cfg.lsp.enabled:
+            lsp = LspManager(
+                LspConfig(
+                    enabled=True,
+                    poll_after_edit_ms=cfg.lsp.poll_after_edit_ms,
+                    max_diagnostics_per_file=cfg.lsp.max_diagnostics_per_file,
+                    include_warnings=cfg.lsp.include_warnings,
+                    servers=dict(cfg.lsp.servers),
+                )
             )
-        automation_root = (
-            automation_data_dir
-            if automation_data_dir is not None
-            else default_automations_dir()
-        )
-        automation_manager = AutomationManager.open(automation_root)
-        metadata[AUTOMATION_MANAGER_KEY] = automation_manager
-        # The ``features.tasks`` guard above guarantees task_manager is
-        # not None here.
-        assert task_manager is not None
-        automation_cancel = asyncio.Event()
-        automation_task = asyncio.create_task(
-            run_scheduler_loop(
-                automation_manager,
-                task_manager,
-                automation_cancel,
-                AutomationSchedulerConfig(
-                    tick_interval_secs=automation_tick_interval_secs,
+
+        if lsp is not None:
+            cleanup.push_async_callback(lsp.close_all)
+
+        registry = build_default_registry(cfg, mode=mode)
+        metadata: dict[str, Any] = {}
+        if mcp is not None:
+            from deepseek_tui.tools.mcp import MCP_MANAGER_KEY
+
+            metadata[MCP_MANAGER_KEY] = mcp
+        if lsp is not None:
+            metadata[LSP_MANAGER_KEY] = lsp
+
+        automation_manager: AutomationManager | None = None
+        automation_cancel: asyncio.Event | None = None
+        automation_task: asyncio.Task[None] | None = None
+        if cfg.features.automations:
+            # Hard dependency: automations have no executor of their own —
+            # every fire ends up calling ``TaskManager.add_task``. Fail
+            # fast at construction time rather than letting the LLM call
+            # ``cron_create(run_now=true)`` and discover the missing
+            # dependency at runtime.
+            if not cfg.features.tasks:
+                raise ValueError(
+                    "features.automations requires features.tasks=True "
+                    "(automations fire by enqueueing tasks)"
+                )
+            automation_root = (
+                automation_data_dir
+                if automation_data_dir is not None
+                else default_automations_dir()
+            )
+            automation_manager = AutomationManager.open(automation_root)
+            metadata[AUTOMATION_MANAGER_KEY] = automation_manager
+            # The ``features.tasks`` guard above guarantees task_manager is
+            # not None here.
+            assert task_manager is not None
+            automation_cancel = asyncio.Event()
+            automation_task = asyncio.create_task(
+                run_scheduler_loop(
+                    automation_manager,
+                    task_manager,
+                    automation_cancel,
+                    AutomationSchedulerConfig(
+                        tick_interval_secs=automation_tick_interval_secs,
+                    ),
                 ),
+                name="automation-scheduler",
+            )
+
+        if automation_task is not None:
+            async def stop_scheduler():
+                automation_cancel.set()
+                automation_task.cancel()
+                await asyncio.gather(automation_task, return_exceptions=True)
+            cleanup.push_async_callback(stop_scheduler)
+
+        if task_manager is not None:
+            # CronCreateTool's run_now branch also reaches the TaskManager
+            # through this same context.metadata bag.
+            metadata["task_manager"] = task_manager
+
+        # Exec policy — user-authored rules from ~/.deepseek/execpolicy.toml
+        # gate shell commands at the tool layer (deny wins; unmatched commands
+        # defer to the engine-level approval flow).
+        if policy is None and cfg.features.exec_policy:
+            from deepseek_tui.policy.exec_policy import load_user_policy
+
+            policy = load_user_policy()
+
+        trust_mode = bool(getattr(cfg, "trust_mode", False))
+        approval_policy = getattr(cfg, "approval_policy", None)
+        sandbox_mode = getattr(cfg, "sandbox_mode", None)
+        # Three-tier dial: auto ⇒ full trust. Keep sandbox danger-full-access as a
+        # backward-compatible trust signal for older configs.
+        #
+        # NOTE (A2 deferred, pending product decision): the subagent loop no
+        # longer derives trust from auto_approve (tools/subagent/loop.py), but
+        # this main path still maps approval_policy=auto/never-ask/yolo to
+        # trust_mode=True — meaning workspace path confinement is lifted and the
+        # sandbox gets danger-full-access. Whether "auto" means "fewer prompts"
+        # or "I trust this machine" is a product call; until it is made, keep
+        # this derivation and this note in sync. See docs/SECURITY_FIX_PLAN_2026-08-14.md
+        # (A2) — project-level config can no longer set these keys (A1), so only
+        # an explicit user-level choice reaches this code.
+        if not trust_mode and isinstance(approval_policy, str):
+            if approval_policy.strip().lower() in ("auto", "never-ask", "yolo"):
+                trust_mode = True
+        if not trust_mode and isinstance(sandbox_mode, str):
+            trust_mode = sandbox_mode.strip().lower() == "danger-full-access"
+        if (
+            isinstance(approval_policy, str)
+            and (not isinstance(sandbox_mode, str) or not sandbox_mode.strip())
+        ):
+            from deepseek_tui.policy.sandbox import sandbox_mode_for_approval_tier
+
+            sandbox_mode = sandbox_mode_for_approval_tier(approval_policy)
+
+        metadata["allow_shell"] = cfg.allow_shell and cfg.features.shell_tool
+        context = ToolContext(
+            working_directory=workspace,
+            trust_mode=trust_mode,
+            metadata=metadata,
+            policy=policy,
+            task_manager=task_manager,
+            subagent_manager=subagent_manager,
+            network_policy=None,
+            execution_sandbox_policy=resolve_execution_sandbox_policy(
+                mode,
+                workspace,
+                trust_mode=trust_mode,
+                sandbox_mode=sandbox_mode if isinstance(sandbox_mode, str) else None,
+                approval_policy=approval_policy if isinstance(approval_policy, str) else None,
             ),
-            name="automation-scheduler",
         )
 
-    if task_manager is not None:
-        # CronCreateTool's run_now branch also reaches the TaskManager
-        # through this same context.metadata bag.
-        metadata["task_manager"] = task_manager
-
-    # Exec policy — user-authored rules from ~/.deepseek/execpolicy.toml
-    # gate shell commands at the tool layer (deny wins; unmatched commands
-    # defer to the engine-level approval flow).
-    if policy is None and cfg.features.exec_policy:
-        from deepseek_tui.policy.exec_policy import load_user_policy
-
-        policy = load_user_policy()
-
-    trust_mode = bool(getattr(cfg, "trust_mode", False))
-    approval_policy = getattr(cfg, "approval_policy", None)
-    sandbox_mode = getattr(cfg, "sandbox_mode", None)
-    # Three-tier dial: auto ⇒ full trust. Keep sandbox danger-full-access as a
-    # backward-compatible trust signal for older configs.
-    #
-    # NOTE (A2 deferred, pending product decision): the subagent loop no
-    # longer derives trust from auto_approve (tools/subagent/loop.py), but
-    # this main path still maps approval_policy=auto/never-ask/yolo to
-    # trust_mode=True — meaning workspace path confinement is lifted and the
-    # sandbox gets danger-full-access. Whether "auto" means "fewer prompts"
-    # or "I trust this machine" is a product call; until it is made, keep
-    # this derivation and this note in sync. See docs/SECURITY_FIX_PLAN_2026-08-14.md
-    # (A2) — project-level config can no longer set these keys (A1), so only
-    # an explicit user-level choice reaches this code.
-    if not trust_mode and isinstance(approval_policy, str):
-        if approval_policy.strip().lower() in ("auto", "never-ask", "yolo"):
-            trust_mode = True
-    if not trust_mode and isinstance(sandbox_mode, str):
-        trust_mode = sandbox_mode.strip().lower() == "danger-full-access"
-    if (
-        isinstance(approval_policy, str)
-        and (not isinstance(sandbox_mode, str) or not sandbox_mode.strip())
-    ):
-        from deepseek_tui.policy.sandbox import sandbox_mode_for_approval_tier
-
-        sandbox_mode = sandbox_mode_for_approval_tier(approval_policy)
-
-    metadata["allow_shell"] = cfg.allow_shell and cfg.features.shell_tool
-    context = ToolContext(
-        working_directory=workspace,
-        trust_mode=trust_mode,
-        metadata=metadata,
-        policy=policy,
-        task_manager=task_manager,
-        subagent_manager=subagent_manager,
-        network_policy=None,
-        execution_sandbox_policy=resolve_execution_sandbox_policy(
-            mode,
-            workspace,
-            trust_mode=trust_mode,
-            sandbox_mode=sandbox_mode if isinstance(sandbox_mode, str) else None,
-            approval_policy=approval_policy if isinstance(approval_policy, str) else None,
-        ),
-    )
-
-    return ToolRuntime(
-        context=context,
-        registry=registry,
-        task_manager=task_manager,
-        subagent_manager=subagent_manager,
-        mailbox=mailbox,
-        mcp_manager=mcp,
-        lsp_manager=lsp,
-        automation_manager=automation_manager,
-        _automation_scheduler_task=automation_task,
-        _automation_cancel=automation_cancel,
-        _owns_task_manager=owns_task_manager,
-        _owns_subagent_manager=True,
-        _owns_mcp_manager=owns_mcp_manager,
-    )
+        runtime = ToolRuntime(
+            context=context,
+            registry=registry,
+            task_manager=task_manager,
+            subagent_manager=subagent_manager,
+            mailbox=mailbox,
+            mcp_manager=mcp,
+            lsp_manager=lsp,
+            automation_manager=automation_manager,
+            _automation_scheduler_task=automation_task,
+            _automation_cancel=automation_cancel,
+            _owns_task_manager=owns_task_manager,
+            _owns_subagent_manager=True,
+            _owns_mcp_manager=owns_mcp_manager,
+        )
+        cleanup.pop_all()
+        return runtime
 
 
 def _has_api_key(cfg: Config | None = None) -> bool:

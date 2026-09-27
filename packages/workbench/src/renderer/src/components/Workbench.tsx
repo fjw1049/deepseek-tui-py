@@ -98,6 +98,7 @@ import { SimpleEmptyPrompt } from './chat/SimpleEmptyPrompt'
 import { getEmptyHomeLayout, subscribeAppearance } from '../lib/apply-appearance'
 import { ConnectionStatusBar } from './ConnectionStatusBar'
 import { SessionHeader } from './SessionHeader'
+import { SessionSharing, SharedLinkReceiver } from './SessionSharing'
 import { IdeChatRailHeader } from './ide/IdeChatRailHeader'
 import { RuntimeDiagnosticsDialog } from './RuntimeDiagnosticsDialog'
 import {
@@ -560,15 +561,20 @@ export function Workbench(): ReactElement {
     !ideModeActive
   const showTerminalToggle =
     route === 'chat' && activeWorkspaceRoot.trim().length > 0 && !ideModeActive
+  const showShareButton =
+    route === 'chat' && Boolean(activeThreadId) && blocks.some(block => block.kind === 'user')
   const showTopbarRightActions =
-    showTerminalToggle || showRightSidebarToggle
+    showShareButton || showTerminalToggle || showRightSidebarToggle
   const topbarActionCount =
+    (showShareButton ? 1 : 0) +
     (showTerminalToggle ? 1 : 0) +
     (showRightSidebarToggle ? 1 : 0)
   const topbarRightPaddingClass = showTopbarRightActions
-    ? topbarActionCount === 2
-      ? 'pr-[8rem] sm:pr-[8.5rem]'
-      : 'pr-9 sm:pr-10'
+    ? topbarActionCount === 3
+      ? 'pr-[10rem] sm:pr-[10.5rem]'
+      : topbarActionCount === 2
+        ? 'pr-[8rem] sm:pr-[8.5rem]'
+        : 'pr-9 sm:pr-10'
     : ''
   const operationColumnActive = showOperationColumn && !rightSidebarOpen
   const terminalSidebarOpen =
@@ -1552,6 +1558,7 @@ export function Workbench(): ReactElement {
       }
     >
       <div className="ds-window-drag-strip" aria-hidden />
+      <SharedLinkReceiver />
       {resizeShieldCursor !== null ? (
         <div
           aria-hidden
@@ -1807,6 +1814,7 @@ export function Workbench(): ReactElement {
               </div>
               {showTopbarRightActions ? (
                 <div className="ds-workbench-topbar__right-actions ds-no-drag">
+                  {showShareButton ? <SessionSharing /> : null}
                   {showTerminalToggle ? (
                     <TerminalToggleButton
                       open={bottomTerminalOpen}

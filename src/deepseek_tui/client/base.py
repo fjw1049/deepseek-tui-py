@@ -33,6 +33,7 @@ _media_ledger_context: ContextVar = ContextVar("media_usage_ledger", default=Non
 @dataclass(frozen=True, slots=True)
 class RetryConfig:
     max_transparent_retries: int = 2
+    # Kept for constructor compatibility; midstream resampling belongs to the caller.
     max_error_retries: int = 5
     base_delay: float = 0.2
     max_delay: float = 10.0
@@ -141,7 +142,6 @@ class LLMClient(ABC):
 
     async def stream_with_retry(self, request: MessageRequest) -> AsyncIterator[StreamEvent]:
         transparent_retries = 0
-        error_retries = 0
         content_received = False
 
         while True:
@@ -167,11 +167,10 @@ class LLMClient(ABC):
                     transparent_retries += 1
                     await asyncio.sleep(self.retry_config.delay(transparent_retries))
                     continue
-                if content_received and error_retries < self.retry_config.max_error_retries:
-                    error_retries += 1
+                if content_received:
+                    # Only the caller can discard an already-visible sample before replaying.
                     yield StreamError(message=str(exc), retryable=True)
-                    await asyncio.sleep(self.retry_config.delay(error_retries))
-                    continue
+                    return
                 raise
 
 
@@ -205,7 +204,8 @@ class MeteredLLMClient(LLMClient):
         # Captured alongside the usage: the finally block may run after the
         # caller's ``usage_source(...)`` scope has already been reset.
         source: str | None = None
-        ledger_token = _media_ledger_context.set(self._ledger)
+        ledger = self._ledger.capture()
+        ledger_token = _media_ledger_context.set(ledger)
         try:
             async for event in self._inner.stream_chat_completion(request):
                 if isinstance(event, StreamDone) and event.usage is not None:
@@ -215,7 +215,7 @@ class MeteredLLMClient(LLMClient):
         finally:
             _media_ledger_context.reset(ledger_token)
             if last_usage is not None:
-                self._ledger.add(
+                ledger.add(
                     model=request.model,
                     source=source or "unknown",
                     usage=last_usage,

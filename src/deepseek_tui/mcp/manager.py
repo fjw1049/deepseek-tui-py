@@ -13,10 +13,9 @@ Other modules in this package (outbound MCP client):
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Coroutine
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Union
@@ -215,6 +214,13 @@ class McpManager:
         self._connect_task: asyncio.Task[None] | None = None
         self._discover_inflight: asyncio.Task[list[dict[str, Any]]] | None = None
         self._discover_lock = asyncio.Lock()
+        self._reload_lock = asyncio.Lock()
+        self._close_lock = asyncio.Lock()
+        self._generation = 0
+        self._closing = False
+        self._owned_tasks: set[asyncio.Task[Any]] = set()
+        self._connection_tasks: dict[str, asyncio.Task[McpClient]] = {}
+        self._ambiguous_tools: set[str] = set()
         self._preload = McpPreloadTracker()
         self._discover_errors: dict[str, str] = {}
         # Names currently inside start_all / focus warmup (composer yellow).
@@ -238,6 +244,39 @@ class McpManager:
                     leftover.unlink()
                 except OSError:
                     pass
+
+    def _spawn(self, coroutine: Coroutine[Any, Any, Any], *, name: str) -> asyncio.Task[Any]:
+        task = asyncio.create_task(coroutine, name=name)
+        self._owned_tasks.add(task)
+        def finished(done: asyncio.Task[Any]) -> None:
+            self._owned_tasks.discard(done)
+            if not done.cancelled():
+                done.exception()  # Also observe failures when every waiter was cancelled.
+        task.add_done_callback(finished)
+        return task
+
+    def _check_generation(self, generation: int) -> None:
+        if self._closing or generation != self._generation:
+            raise McpError("MCP operation invalidated by shutdown or configuration change")
+
+    def _register_tool(self, qualified: str, server: str, raw: str) -> bool:
+        if qualified in self._ambiguous_tools:
+            return False
+        mapping = (server, raw)
+        previous = (self._tool_map.get(qualified) or self._focus_tool_map.get(qualified)
+                    or self._cached_tool_map.get(qualified))
+        if previous is not None and previous != mapping:
+            self._ambiguous_tools.add(qualified)
+            for table in (self._tool_map, self._focus_tool_map, self._cached_tool_map):
+                table.pop(qualified, None)
+            for tools in [self._discovered_tools_cache, self._stale_cache,
+                          *self._focus_api_tools.values()]:
+                if tools is not None:
+                    tools[:] = [t for t in tools if t["function"]["name"] != qualified]
+            logger.warning("MCP ambiguous tool name rejected: %s", qualified)
+            return False
+        self._tool_map[qualified] = mapping
+        return True
 
     def _enabled_server_names(self) -> list[str]:
         return [name for name, cfg in self._configs.items() if cfg.enabled]
@@ -266,7 +305,8 @@ class McpManager:
 
     def _restore_focus_into_tool_map(self) -> None:
         for qualified, mapping in self._focus_tool_map.items():
-            self._tool_map[qualified] = mapping
+            if qualified not in self._ambiguous_tools:
+                self._tool_map[qualified] = mapping
 
     def is_server_running(self, name: str) -> bool:
         """Whether ``name``'s client subprocess/connection is live right now."""
@@ -344,6 +384,8 @@ class McpManager:
            names and typically points at an unconfigured server, so
            ``call_tool`` then fails closed at ``_ensure_client``.
         """
+        if qualified in self._ambiguous_tools:
+            return None
         mapping = (
             self._tool_map.get(qualified)
             or self._focus_tool_map.get(qualified)
@@ -427,21 +469,20 @@ class McpManager:
             self._schedule_background_connect()
             return
         try:
-            loop = asyncio.get_running_loop()
+            asyncio.get_running_loop()
         except RuntimeError:
             return
         if not progressive:
             self._preload.phase = "ready"
             self._schedule_background_connect()
             return
-        self._preload._task = loop.create_task(
+        self._preload._task = self._spawn(
             self._run_startup_preload(timeout_s),
             name="mcp-preload",
         )
 
     async def _run_startup_preload(self, timeout_s: float) -> None:
-        import time
-
+        generation = self._generation
         enabled = self._progressive_enabled_server_names()
         self._preload.phase = "warming"
         self._preload.started_at_ms = int(time.time() * 1000)
@@ -467,6 +508,7 @@ class McpManager:
             if cached is not None:
                 tools = cached
 
+        self._check_generation(generation)
         connected = self._connected_server_count()
         self._preload.completed_at_ms = int(time.time() * 1000)
         if tools:
@@ -519,7 +561,7 @@ class McpManager:
         if self._connect_task is not None and not self._connect_task.done():
             return
         try:
-            loop = asyncio.get_running_loop()
+            asyncio.get_running_loop()
         except RuntimeError:
             return
 
@@ -529,7 +571,7 @@ class McpManager:
             except Exception:  # noqa: BLE001 — best-effort warm connect
                 logger.exception("mcp_background_connect_failed")
 
-        self._connect_task = loop.create_task(_connect(), name="mcp-connect")
+        self._connect_task = self._spawn(_connect(), name="mcp-connect")
 
     @property
     def server_names(self) -> list[str]:
@@ -542,6 +584,7 @@ class McpManager:
         fail_on_required: bool = False,
     ) -> McpStartupCompleteEvent:
         """Connect every configured server and return a startup summary."""
+        await self.reload_if_config_changed()
         ready: list[str] = []
         failed: list[McpStartupFailure] = []
         cancelled: list[str] = []
@@ -607,70 +650,91 @@ class McpManager:
         return summary
 
     async def stop_all(self) -> None:
-        # Cancel background work first so refresh/preload tasks don't race
-        # against teardown (and don't leak past shutdown).
-        for task in (
-            self._background_refresh_task,
-            self._connect_task,
-            getattr(self._preload, "_task", None),
-        ):
-            if task is not None and not task.done():
-                task.cancel()
+        async with self._close_lock:
+            self._closing = True
+            self._generation += 1
+            current = asyncio.current_task()
+
+            async def close_owned() -> None:
                 try:
-                    await task
-                except (asyncio.CancelledError, Exception):  # noqa: BLE001
-                    pass
-        self._background_refresh_task = None
-        self._connect_task = None
-        for client in self._clients.values():
-            await client.stop()
-        self._clients.clear()
-        self._tool_map.clear()
-        self._focus_api_tools.clear()
-        self._focus_tool_map.clear()
-        # Demote live cache to stale rather than discarding — discover_tools()
-        # can serve it immediately while reconnecting in the background.
-        if self._discovered_tools_cache is not None:
-            self._stale_cache = self._discovered_tools_cache
-        self._discovered_tools_cache = None
+                    tasks = [t for t in self._owned_tasks if t is not current and not t.done()]
+                    for task in tasks:
+                        task.cancel()
+                    await asyncio.gather(*tasks, return_exceptions=True)
+                    clients = list(self._clients.values())
+                    self._clients.clear()
+                    await asyncio.gather(*(c.stop() for c in clients), return_exceptions=True)
+                    self._connection_tasks.clear()
+                    self._discover_inflight = None
+                    self._background_refresh_task = None
+                    self._connect_task = None
+                    self._preload._task = None
+                    self._warming_servers.clear()
+                    self._tool_map.clear()
+                    self._focus_api_tools.clear()
+                    self._focus_tool_map.clear()
+                    if self._discovered_tools_cache is not None:
+                        self._stale_cache = self._discovered_tools_cache
+                    self._discovered_tools_cache = None
+                finally:
+                    self._closing = False
+
+            cleanup = asyncio.create_task(close_owned(), name="mcp-close")
+            try:
+                await asyncio.shield(cleanup)
+            except asyncio.CancelledError:
+                await cleanup
+                raise
 
     async def reload_if_config_changed(self) -> bool:
-        """Lazy reload when config file mtime/content changed."""
-        if self._config_path is None or not self._config_path.exists():
+        """Invalidate old routes before awaiting retirement of old connections."""
+        if self._config_path is None:
             return False
-        try:
-            mtime = self._config_path.stat().st_mtime
-        except OSError:
-            return False
-        if self._last_mtime is not None and mtime == self._last_mtime:
-            return False
-        try:
-            doc = load_raw_document(self._config_path)
-            configs = servers_from_document(doc)
-        except (OSError, ValueError, json.JSONDecodeError):
-            return False
-        new_hash = hash_mcp_document(doc)
-        self._last_mtime = mtime
-        if new_hash == self._config_hash:
-            return False
-        await self.stop_all()
-        self._configs = {cfg.name: cfg for cfg in configs}
-        self._config_hash = new_hash
-        return True
+        async with self._reload_lock:
+            try:
+                mtime = self._config_path.stat().st_mtime if self._config_path.exists() else None
+                if mtime == self._last_mtime:
+                    return False
+                doc = load_raw_document(self._config_path)
+                configs = servers_from_document(doc)
+            except (OSError, ValueError):
+                return False
+            new_hash = hash_mcp_document(doc)
+            self._last_mtime = mtime
+            if new_hash == self._config_hash:
+                return False
+            self._generation += 1
+            self._configs = {cfg.name: cfg for cfg in configs}
+            self._config_hash = new_hash
+            clients = list(self._clients.values())
+            tasks = list(self._connection_tasks.values())
+            self._clients.clear()
+            self._connection_tasks.clear()
+            self._discover_inflight = None
+            self._tool_map.clear()
+            self._cached_tool_map.clear()
+            self._focus_tool_map.clear()
+            self._focus_api_tools.clear()
+            self._ambiguous_tools.clear()
+            self._discovered_tools_cache = self._stale_cache = None
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            async def retire() -> None:
+                await asyncio.gather(*tasks, return_exceptions=True)
+                await asyncio.gather(*(c.stop() for c in clients), return_exceptions=True)
+
+            cleanup = asyncio.create_task(retire(), name="mcp-reload-close")
+            try:
+                await asyncio.shield(cleanup)
+            except asyncio.CancelledError:
+                await cleanup
+                raise
+            return True
 
     async def reconnect_all(self) -> McpStartupCompleteEvent:
-        """Drop connections and reconnect every enabled server."""
+        await self.reload_if_config_changed()
         await self.stop_all()
-        if self._config_path is not None and self._config_path.exists():
-            try:
-                doc = load_raw_document(self._config_path)
-                self._configs = {
-                    cfg.name: cfg for cfg in servers_from_document(doc)
-                }
-                self._config_hash = hash_mcp_document(doc)
-                self._last_mtime = self._config_path.stat().st_mtime
-            except (OSError, ValueError, json.JSONDecodeError):
-                pass
         return await self.start_all()
 
     def cached_tools(self) -> list[dict[str, Any]] | None:
@@ -748,6 +812,7 @@ class McpManager:
 
     async def _populate_focus_tools(self, name: str) -> list[dict[str, Any]]:
         """Connect + list_tools for an on_focus server; keep the client alive."""
+        generation = self._generation
         cfg = self._configs[name]
         timeout = self._focus_warm_timeout(cfg)
         try:
@@ -757,13 +822,15 @@ class McpManager:
             self._discover_errors[name] = str(exc)
             raise McpError(f"Failed to load connector '{name}': {exc}") from exc
 
+        self._check_generation(generation)
         api_tools: list[dict[str, Any]] = []
         for qualified, server_name, raw_name, api_dict in _tools_from_descriptors(
             name, cfg, descriptors
         ):
-            self._focus_tool_map[qualified] = (server_name, raw_name)
-            self._tool_map[qualified] = (server_name, raw_name)
-            api_tools.append(api_dict)
+            if self._register_tool(qualified, server_name, raw_name):
+                self._focus_tool_map[qualified] = (server_name, raw_name)
+                api_tools.append(api_dict)
+        api_tools = [t for t in api_tools if t["function"]["name"] not in self._ambiguous_tools]
         self._focus_api_tools[name] = api_tools
         self._discover_errors.pop(name, None)
         return list(api_tools)
@@ -774,6 +841,7 @@ class McpManager:
         Progressive servers fall through to normal discovery. Raises
         ``McpError`` when the server is missing, disabled, or failed warmup.
         """
+        await self.reload_if_config_changed()
         cfg = self._configs.get(name)
         if cfg is None:
             raise McpError(f"Unknown MCP server: {name}")
@@ -844,10 +912,10 @@ class McpManager:
         if task is not None and not task.done():
             return
         try:
-            loop = asyncio.get_running_loop()
+            asyncio.get_running_loop()
         except RuntimeError:
             return
-        loop.create_task(self.discover_tools(), name="mcp-discover-bg")
+        self._spawn(self.discover_tools(), name="mcp-discover-bg")
 
     async def discover_tools(self) -> list[dict[str, Any]]:
         """Discover tools from all enabled servers, returns API-format list.
@@ -862,6 +930,8 @@ class McpManager:
 
         Concurrent callers share one in-flight discovery task (singleflight).
         """
+        await self.reload_if_config_changed()
+        self._check_generation(self._generation)
         if self._discovered_tools_cache is not None:
             self._rebuild_tool_map_from_cache()
             return list(self._discovered_tools_cache)
@@ -872,7 +942,7 @@ class McpManager:
             self._discovered_tools_cache = self._stale_cache
             self._stale_cache = None
             self._rebuild_tool_map_from_cache()
-            self._background_refresh_task = asyncio.create_task(
+            self._background_refresh_task = self._spawn(
                 self._refresh_cache_in_background(), name="mcp-cache-refresh"
             )
             return list(self._discovered_tools_cache)
@@ -881,20 +951,20 @@ class McpManager:
             if self._discovered_tools_cache is not None:
                 self._rebuild_tool_map_from_cache()
                 return list(self._discovered_tools_cache)
-            if self._discover_inflight is not None:
-                return await asyncio.shield(self._discover_inflight)
-            self._discover_inflight = asyncio.create_task(
-                self._discover_tools_fresh(), name="mcp-discover"
-            )
+            if self._discover_inflight is None or self._discover_inflight.done():
+                self._discover_inflight = self._spawn(
+                    self._discover_tools_fresh(), name="mcp-discover"
+                )
             task = self._discover_inflight
         try:
             return await asyncio.shield(task)
         finally:
             async with self._discover_lock:
-                if self._discover_inflight is task:
+                if self._discover_inflight is task and task.done():
                     self._discover_inflight = None
 
     async def _discover_tools_fresh(self) -> list[dict[str, Any]]:
+        generation = self._generation
         timed_out_servers: list[tuple[str, McpServerConfig]] = []
         for name, cfg in self._configs.items():
             if cfg.enabled and not cfg.is_on_focus:
@@ -944,31 +1014,15 @@ class McpManager:
             *(_discover_one(name, cfg) for name, cfg in enabled)
         )
 
+        self._check_generation(generation)
         api_tools: list[dict[str, Any]] = []
-        api_index: dict[str, int] = {}
         self._tool_map.clear()
         for server_results in all_results:
             for qualified, server_name, raw_name, api_dict in server_results:
-                previous = self._tool_map.get(qualified)
-                if previous is not None:
-                    if previous != (server_name, raw_name):
-                        logger.warning(
-                            "MCP tool name collision: %r from server %r (%s) "
-                            "shadows %r (%s); latter registration wins",
-                            qualified,
-                            server_name,
-                            raw_name,
-                            previous[0],
-                            previous[1],
-                        )
-                    # Replace the shadowed entry in place so the model
-                    # catalog never sees duplicate function names.
-                    api_tools[api_index[qualified]] = api_dict
-                    self._tool_map[qualified] = (server_name, raw_name)
-                    continue
-                api_index[qualified] = len(api_tools)
-                self._tool_map[qualified] = (server_name, raw_name)
-                api_tools.append(api_dict)
+                if self._register_tool(qualified, server_name, raw_name):
+                    api_tools.append(api_dict)
+        api_tools = list({t["function"]["name"]: t for t in api_tools
+                          if t["function"]["name"] not in self._ambiguous_tools}.values())
         self._restore_focus_into_tool_map()
 
         self._discovered_tools_cache = sorted(
@@ -984,7 +1038,7 @@ class McpManager:
         # Schedule background retry for servers that timed out so their tools
         # become available on subsequent turns without blocking the user now.
         if timed_out_servers:
-            self._background_refresh_task = asyncio.create_task(
+            self._background_refresh_task = self._spawn(
                 self._retry_timed_out_servers(timed_out_servers),
                 name="mcp-retry-timed-out",
             )
@@ -1001,7 +1055,9 @@ class McpManager:
         this session — it will be retried on next full discover (e.g. next
         app launch or config change).
         """
+        generation = self._generation
         await asyncio.sleep(5)
+        self._check_generation(generation)
         new_tools: list[dict[str, Any]] = []
         for server_name, cfg in servers:
             timeout = (cfg.connect_timeout or DEFAULT_TIMEOUTS["connect_timeout"]) * 3
@@ -1014,14 +1070,18 @@ class McpManager:
                 )
             except (McpError, asyncio.TimeoutError, Exception):  # noqa: BLE001
                 continue
+            self._check_generation(generation)
             for qualified, srv, raw_name, api_dict in _tools_from_descriptors(
                 server_name, cfg, descriptors
             ):
-                self._tool_map[qualified] = (srv, raw_name)
-                self._cached_tool_map[qualified] = (srv, raw_name)
-                new_tools.append(api_dict)
+                if self._register_tool(qualified, srv, raw_name):
+                    self._cached_tool_map[qualified] = (srv, raw_name)
+                    new_tools.append(api_dict)
         if new_tools and self._discovered_tools_cache is not None:
-            self._discovered_tools_cache.extend(new_tools)
+            self._discovered_tools_cache = list({
+                t["function"]["name"]: t for t in [*self._discovered_tools_cache, *new_tools]
+                if t["function"]["name"] not in self._ambiguous_tools
+            }.values())
             self._discovered_tools_cache.sort(key=lambda t: t["function"]["name"])
 
     async def _refresh_cache_in_background(self) -> None:
@@ -1063,11 +1123,19 @@ class McpManager:
         self._restore_focus_into_tool_map()
 
     async def call_tool(self, qualified_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        await self.reload_if_config_changed()
+        generation = self._generation
         mapping = self._resolve_qualified(qualified_name)
         if mapping is None:
             raise McpError(f"Not an MCP tool: {qualified_name}")
         server_name, tool_name = mapping
+        cfg = self._configs.get(server_name)
+        if cfg is None or not cfg.enabled or (cfg.tool_filter and not cfg.tool_filter.accepts(tool_name)):
+            raise McpError("MCP tool is disabled by current configuration")
         client = await self._ensure_client(server_name)
+        self._check_generation(generation)
+        if self._resolve_qualified(qualified_name) != mapping:
+            raise McpError("MCP tool route changed during connection")
         return await client.call_tool(tool_name, arguments)
 
     async def list_resources(self, server: str | None = None) -> dict[str, list[dict[str, Any]]]:
@@ -1079,23 +1147,35 @@ class McpManager:
 
     async def _ensure_client(self, server_name: str) -> McpClient:
         await self.reload_if_config_changed()
-        if server_name in self._clients:
-            client = self._clients[server_name]
-            if client.is_running:
-                return client
-            # Stop the dead client before replacing it so its child process /
-            # reader task don't leak.
-            try:
-                await client.stop()
-            except Exception:  # noqa: BLE001
-                pass
+        self._check_generation(self._generation)
         cfg = self._configs.get(server_name)
-        if cfg is None:
-            raise McpError(f"Unknown MCP server: {server_name}")
+        if cfg is None or not cfg.enabled:
+            raise McpError(f"Unknown or disabled MCP server: {server_name}")
+        client = self._clients.get(server_name)
+        if client is not None and client.is_running:
+            return client
+        task = self._connection_tasks.get(server_name)
+        if task is None or task.done():
+            task = self._spawn(self._open_client(server_name, cfg, self._generation),
+                               name=f"mcp-open-{server_name}")
+            self._connection_tasks[server_name] = task
+        return await asyncio.shield(task)
+
+    async def _open_client(self, name: str, cfg: McpServerConfig, generation: int) -> McpClient:
+        previous = self._clients.pop(name, None)
+        if previous is not None:
+            await previous.stop()
         client = McpClient(cfg)
-        await client.start()
-        self._clients[server_name] = client
-        return client
+        try:
+            await client.start()
+            self._check_generation(generation)
+            if not cfg.enabled:
+                raise McpError(f"MCP server disabled during connection: {name}")
+            self._clients[name] = client
+            return client
+        except BaseException:
+            await client.stop()
+            raise
 
     async def _collect(
         self,
@@ -1110,7 +1190,8 @@ class McpManager:
         still raise when a specific ``server`` was requested; in all-servers
         mode they are logged and skipped.
         """
-        names = [server] if server is not None else list(self._configs)
+        await self.reload_if_config_changed()
+        names = [server] if server is not None else self._enabled_server_names()
         output: dict[str, list[dict[str, Any]]] = {}
         for name in names:
             try:

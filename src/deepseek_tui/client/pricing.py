@@ -144,13 +144,11 @@ def _pricing_for_model_at(model: str, now: datetime) -> _ModelPricing | None:
         # not DeepSeek Platform pricing. Showing DeepSeek $ here would
         # lie to the user — hide instead.
         return None
-    if "deepseek" not in lower:
+    if lower not in {"deepseek-chat", "deepseek-reasoner", "deepseek-v4-flash", "deepseek-v4-pro"}:
         return None
-    if "v4-pro" in lower or "v4pro" in lower:
+    if lower == "deepseek-v4-pro":
         return _V4_PRO_DISCOUNTED if now <= _V4_PRO_DISCOUNT_ENDS_AT else _V4_PRO_BASE
-    # Everything else under the DeepSeek brand follows the v4-flash
-    # rate card (covers ``deepseek-chat`` / ``deepseek-reasoner``
-    # legacy aliases as well, which DeepSeek bills at v4-flash rates).
+    # Explicitly recognised Flash/legacy aliases only; unknown models remain unpriced.
     return _V4_FLASH
 
 

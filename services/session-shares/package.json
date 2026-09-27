@@ -1,0 +1,1 @@
+{"name":"deepseek-session-shares","private":true,"type":"module","scripts":{"build":"node build.mjs","test":"node --test worker.test.mjs","db:generate":"drizzle-kit generate"},"devDependencies":{"drizzle-kit":"^0.31.0","drizzle-orm":"^0.44.0","wrangler":"^4.0.0"}}

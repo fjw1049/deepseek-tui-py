@@ -1,0 +1,32 @@
+{
+  "op_loop": {
+    "queued_cancel_blocked_by_second_send": true,
+    "orphan_op_waiters": 1,
+    "orphan_consumed_next_message": true
+  },
+  "event_delivery": {
+    "completed_lost_after_mailbox_drain": true,
+    "activity_counts_after_1_to_0": [
+      1
+    ]
+  },
+  "usage_ledger": {
+    "origin_turn_output": 0,
+    "next_turn_receives_old_child_output": 3
+  },
+  "runtime_lifecycle": {
+    "started_manager_cleanup_on_factory_failure": 0,
+    "later_manager_cleanup_after_shutdown_failure": 0
+  },
+  "dedup": {
+    "second_write_decision": "reuse",
+    "read_after_write_content": "old"
+  },
+  "round_budget": {
+    "error_events": [
+      "Tool round-trip limit exceeded"
+    ],
+    "returned_outcome": "success",
+    "returned_tool_round_count": 0
+  }
+}

@@ -439,15 +439,19 @@ class TomlBackedPolicy:
         self._config = config
 
     def check(
-        self, cmd: list[str], heuristics_fallback: HeuristicsFallback
+        self, cmd: list[str] | str, heuristics_fallback: HeuristicsFallback
     ) -> Evaluation:
-        command = " ".join(cmd)
+        command = cmd if isinstance(cmd, str) else " ".join(cmd)
+        try:
+            tokens = shlex.split(cmd) if isinstance(cmd, str) else cmd
+        except ValueError:
+            tokens = command.split()
         verdict = self._config.evaluate(command)
         if verdict.is_deny:
             decision = Decision.FORBIDDEN
         elif verdict.is_allow:
             decision = Decision.ALLOW
-        elif heuristics_fallback(list(cmd)) == Decision.FORBIDDEN:
+        elif heuristics_fallback(tokens) == Decision.FORBIDDEN:
             decision = Decision.FORBIDDEN
         else:
             decision = Decision.ALLOW

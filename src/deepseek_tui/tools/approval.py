@@ -296,18 +296,7 @@ def _cron_create_key(tool_input: Any) -> str:
     if not isinstance(tool_input, dict):
         return "<empty>"
     name = str(tool_input.get("name") or "").strip()
-    when = str(
-        tool_input.get("schedule") or tool_input.get("run_at") or ""
-    ).strip()
-    prompt = str(tool_input.get("prompt") or "")
-    delivery = tool_input.get("delivery")
-    dest = ""
-    if isinstance(delivery, dict):
-        dest = (
-            f"{delivery.get('mode') or ''}:"
-            f"{delivery.get('to') or delivery.get('chat_id') or ''}"
-        )
-    raw = f"{name}\n{when}\n{prompt}\n{dest}"
+    raw = json.dumps(tool_input, sort_keys=True, ensure_ascii=True, separators=(",", ":"))
     digest = hashlib.blake2b(raw.encode("utf-8"), digest_size=8).hexdigest()
     return f"{name or '<unnamed>'}:{digest}"
 
@@ -849,8 +838,8 @@ def elevation_request_to_sse_payload(
     event: ElevationRequiredEvent,
 ) -> dict[str, object]:
     return {
-        "elevation_id": elevation_id,
-        "tool_call_id": elevation_id,
+        "elevation_id": event.elevation_id or elevation_id,
+        "tool_call_id": event.tool_call_id,
         "tool_name": event.tool_name,
         "title": "Sandbox blocked this command",
         "description": event.reason,

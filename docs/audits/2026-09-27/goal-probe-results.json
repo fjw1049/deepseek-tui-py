@@ -1,0 +1,17 @@
+{
+  "semantic_coverage": "complete",
+  "snapshot_alias_changes_state": true,
+  "restore_completed_with_queue": {
+    "status": "complete",
+    "queued": 1,
+    "promoted": false,
+    "continues": false
+  },
+  "parser": {
+    "unicode_digit": "uncaught ValueError",
+    "long_integer": "uncaught ValueError"
+  },
+  "evidence_count_after_200_unique_failures": 200,
+  "chmod_changes_digest": false,
+  "workspace_digest_8mib_median_ms": 7.523
+}

@@ -61,11 +61,13 @@ def apply_messages_to_engine(
 
 
 def try_restore_crash_checkpoint(engine: Any) -> tuple[list[Message], dict[str, Any]] | None:
-    """Restore engine state from ``latest.json`` if a crash checkpoint exists."""
+    """Restore a crash checkpoint belonging to the engine workspace."""
     from deepseek_tui.state.session import load_checkpoint
 
     try:
-        raw = load_checkpoint()
+        context = getattr(engine, "tool_context", None)
+        workspace = getattr(context, "working_directory", None)
+        raw = load_checkpoint(workspace=workspace)
     except (OSError, ValueError) as exc:
         logger.warning("crash checkpoint load failed: %s", exc)
         return None
@@ -87,6 +89,8 @@ def try_restore_crash_checkpoint(engine: Any) -> tuple[list[Message], dict[str, 
     metadata = raw.get("metadata")
     meta: dict[str, Any] = metadata if isinstance(metadata, dict) else {}
     apply_messages_to_engine(engine, messages, meta)
+    if isinstance(meta.get("id"), str) and meta["id"]:
+        engine._cycle_session_id = meta["id"]
 
     turn_counter = raw.get("turn_counter")
     if isinstance(turn_counter, int) and turn_counter >= 0:

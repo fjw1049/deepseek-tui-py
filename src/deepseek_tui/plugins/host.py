@@ -154,7 +154,6 @@ class PluginSession:
         self._by_name = {plugin.name.lower(): plugin for plugin in loaded_plugins}
         self._activations: dict[str, PluginActivation] = {}
         self._closed = False
-        self._light_by_name: dict[str, Any] = {}
         if snapshot_id is None:
             material = "|".join(
                 f"{plugin.name}:{plugin.path}:{plugin.enabled}:{plugin.trusted}"
@@ -167,24 +166,18 @@ class PluginSession:
         return self._by_name.get(name.lower())
 
     def light_contributions(self, name: str) -> Any | None:
-        """Hooks/MCP for one frozen plugin (lazy, session-cached)."""
+        """Load Hooks/MCP with current content and capability grants."""
         if self._closed:
             return None
-        key = name.lower()
-        cached = self._light_by_name.get(key)
-        if cached is not None:
-            return cached
-        plugin = self._by_name.get(key)
+        plugin = self.refresh_plugin_trust(name)
         if plugin is None:
             return None
         from deepseek_tui.integrations.plugins import collect_light_contributions
 
         contribs = collect_light_contributions([plugin])
-        self._light_by_name[key] = contribs
         return contribs
 
     def invalidate_light(self, name: str) -> None:
-        self._light_by_name.pop(name.lower(), None)
         refreshed = self.refresh_plugin_trust(name)
         if refreshed is None:
             return
@@ -199,7 +192,7 @@ class PluginSession:
         plugin = self._by_name.get(name.lower())
         if plugin is None:
             return None
-        from deepseek_tui.integrations.plugins import LoadedPlugin, read_lockfile
+        from deepseek_tui.integrations.plugins import LoadedPlugin, read_lockfile, _project_trust_from_grants
 
         try:
             entry = read_lockfile(plugin.path.parent).get(plugin.name, {})
@@ -212,7 +205,11 @@ class PluginSession:
             path=plugin.path,
             scope=plugin.scope,
             enabled=bool(entry.get("enabled", plugin.enabled)),
-            trusted=bool(entry.get("trusted", plugin.trusted)),
+            trusted=(
+                _project_trust_from_grants(plugin.name, plugin.path, entry)
+                if plugin.scope == "project"
+                else bool(entry.get("trusted", plugin.trusted))
+            ),
             contribution_index=plugin.contribution_index,
         )
 
@@ -395,13 +392,11 @@ class PluginHost:
     def _rollback(self, operation: RollbackPlugin) -> PluginOperationResult:
         """Relink store digest and keep lockfile/grant digests in sync."""
         from deepseek_tui.integrations.plugins import (
-            _is_project_plugins_dir,
             _update_lockfile_entry,
             load_plugin_manifest,
-            read_lockfile,
             user_plugins_dir,
         )
-        from deepseek_tui.plugins.grants import _any_grants, grant_trust, revoke_grant
+        from deepseek_tui.plugins.grants import revoke_grant
         from deepseek_tui.plugins.store import _normalize_digest, rollback_plugin_link
 
         target = operation.plugins_dir or user_plugins_dir()
@@ -410,12 +405,7 @@ class PluginHost:
             sha_digest = f"sha256:{_normalize_digest(operation.digest)}"
             manifest = load_plugin_manifest(path)
             lock_name = manifest.name if manifest is not None else operation.name
-            entry = read_lockfile(target).get(lock_name, {})
-            was_trusted = bool(entry.get("trusted", False))
-            had_grants = _any_grants(lock_name)
-            persist_trusted = (
-                False if _is_project_plugins_dir(target) else was_trusted
-            )
+            persist_trusted = False
             provenance = {
                 "source": {"kind": "store", "digest": sha_digest},
                 "content_digest": sha_digest,
@@ -428,9 +418,6 @@ class PluginHost:
                 derived_provenance=provenance,
             )
             revoke_grant(lock_name)
-            # Re-bind grant when the plugin was already authorized.
-            if was_trusted or had_grants:
-                grant_trust(lock_name, sha_digest)
         except (FileNotFoundError, ValueError, OSError) as exc:
             return PluginOperationResult("failed", str(exc))
         return PluginOperationResult(

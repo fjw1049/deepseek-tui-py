@@ -188,7 +188,7 @@ export type ChatState = {
     mode?: ComposerMode | string,
     overrides?: SendMessageOverrides
   ) => Promise<boolean>
-  applyGoalCommand: (args: string, opts?: { silent?: boolean }) => Promise<boolean>
+  applyGoalCommand: (args: string, opts?: { silent?: boolean; expectedGoalId?: string; resumeAfterBudget?: boolean }) => Promise<boolean>
   drainQueuedMessages: () => Promise<void>
   removeQueuedMessage: (id: string) => void
   /** Remove a queued message and return it so the composer can restore the draft. */

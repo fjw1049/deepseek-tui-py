@@ -11,6 +11,7 @@ import {
   shell
 } from 'electron'
 import { installAppMenu } from './app-menu'
+import { parseSharedConversationLink } from '../shared/share-link'
 import { existsSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
@@ -248,6 +249,27 @@ traceStartup('app icon loaded', {
 })
 const gotSingleInstanceLock = app.requestSingleInstanceLock()
 traceStartup('single instance lock checked', { gotSingleInstanceLock })
+
+let pendingSharedLink: string | null = process.argv.map(parseSharedConversationLink).find(Boolean) ?? null
+function receiveSharedLink(raw: string): void {
+  const link = parseSharedConversationLink(raw)
+  if (!link) return
+  pendingSharedLink = link
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('sharing:link-available')
+    revealMainWindow()
+  }
+}
+app.on('open-url', (event, url) => {
+  event.preventDefault()
+  receiveSharedLink(url)
+})
+if (gotSingleInstanceLock) {
+  ipcMain.handle('sharing:get-link', () => pendingSharedLink)
+  ipcMain.handle('sharing:clear-link', (_event, url: unknown) => {
+    if (url === pendingSharedLink) pendingSharedLink = null
+  })
+}
 
 function normalizeNotificationText(raw: string | undefined, fallback: string, maxLength: number): string {
   const value = typeof raw === 'string' && raw.trim() ? raw.trim() : fallback
@@ -913,7 +935,8 @@ async function runtimeRequest(
     // Bulk archive purge / data maintenance can touch hundreds of threads.
     const longPost =
       method === 'POST' &&
-      (pathOnly === '/v1/threads/purge-archived' || pathOnly.startsWith('/v1/data/'))
+      (pathOnly === '/v1/threads/purge-archived' || pathOnly.startsWith('/v1/data/') ||
+        pathOnly.startsWith('/v1/sharing/'))
     const res = await fetch(url, {
       method,
       headers: hdrs,
@@ -959,6 +982,8 @@ app.whenReady().then(async () => {
   traceStartup('app.whenReady:start')
   emitStartupPhase('app-ready')
   if (!gotSingleInstanceLock) return
+
+  if (app.isPackaged) app.setAsDefaultProtocolClient('deepseek-gui')
 
   // Free ⌘Q for in-app shortcuts (approval policy); quit becomes ⌘⇧Q.
   installAppMenu()
@@ -1325,7 +1350,8 @@ app.whenReady().then(async () => {
     }, 1500)
   }
 
-  app.on('second-instance', () => {
+  app.on('second-instance', (_event, argv) => {
+    for (const value of argv) receiveSharedLink(value)
     if (!mainWindow) return
     if (mainWindow.isMinimized()) mainWindow.restore()
     mainWindow.show()

@@ -1,0 +1,31 @@
+{
+  "concurrent_connection_creation": {
+    "distinct_clients": 2,
+    "running_after_stop_all": 1
+  },
+  "colliding_tool_names": {
+    "raw_count": 2,
+    "catalog_count": 1,
+    "route": [
+      "fixture",
+      "do_thing"
+    ]
+  },
+  "disabled_server_after_reload": {
+    "enabled": false,
+    "call_result": "do_thing",
+    "resource_count": 1
+  },
+  "cache_published_after_stop_all": true,
+  "request_survives_20x_timeout_while_sending": true,
+  "pending_after_request_cancel": 1,
+  "http_sse_response_delivered_before_body_eof": false,
+  "pagination": {
+    "names": [
+      "first"
+    ],
+    "rpc_calls": 1
+  },
+  "stdio_70kb_frame_exception": "ValueError",
+  "servers_after_two_concurrent_adds": 1
+}

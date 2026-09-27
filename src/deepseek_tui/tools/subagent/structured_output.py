@@ -18,14 +18,7 @@ STRUCTURED_OUTPUT_TOOL_NAME = "structured_output"
 def _schema_to_tool_input(schema: dict[str, Any]) -> dict[str, object]:
     """Wrap JSON Schema as tool parameters object."""
     if schema.get("type") == "object" and "properties" in schema:
-        out: dict[str, object] = {
-            "type": "object",
-            "properties": schema.get("properties", {}),
-            "required": schema.get("required", []),
-        }
-        if "additionalProperties" in schema:
-            out["additionalProperties"] = schema["additionalProperties"]
-        return out
+        return dict(schema)
     return {
         "type": "object",
         "properties": {"output": schema},
@@ -37,7 +30,12 @@ class StructuredOutputTool(ToolSpec):
     """Capture validated params as the sub-agent final answer and stop the loop."""
 
     def __init__(self, schema: dict[str, Any]) -> None:
+        import jsonschema
+
+        validator = jsonschema.validators.validator_for(schema)
+        validator.check_schema(schema)
         self._schema = schema
+        self._validator = validator(schema)
 
     def name(self) -> str:
         return STRUCTURED_OUTPUT_TOOL_NAME
@@ -67,8 +65,8 @@ class StructuredOutputTool(ToolSpec):
         try:
             import jsonschema
 
-            jsonschema.validate(instance=value, schema=self._schema)
-        except Exception as exc:  # noqa: BLE001
+            self._validator.validate(value)
+        except jsonschema.ValidationError as exc:
             return ToolResult(
                 success=False,
                 content=f"structured_output validation failed: {exc}",

@@ -84,6 +84,7 @@ def test_context_breakdown_scales_static_buckets_when_real_undershoots(tmp_path)
             _api_tool("mcp__github__list_issues"),
         ],
         real_input_tokens=real,
+        real_input_estimate=baseline["total"],
     )
 
     assert breakdown["total"] == real

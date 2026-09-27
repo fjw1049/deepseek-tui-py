@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 import asyncio
+from collections import deque
 import logging
 from collections.abc import Callable
 
@@ -22,7 +23,6 @@ if TYPE_CHECKING:
 
 CYCLE_ARCHIVE_SCHEMA_VERSION = 1
 DEFAULT_BRIEFING_MAX_TOKENS = 3_000
-APPROX_CHARS_PER_TOKEN = 4
 
 CYCLE_HANDOFF_PROMPT_PATH = Path(__file__).parent.parent / "prompts" / "cycle.md"
 
@@ -154,13 +154,24 @@ def extract_carry_forward(raw: str) -> str:
 
 
 def enforce_briefing_cap(text: str, max_tokens: int) -> str:
-    """Defensive bound on briefing length (~4 chars/token)."""
-    max_chars = max_tokens * APPROX_CHARS_PER_TOKEN
-    if max_chars == 0:
+    """Bound the entire briefing, including its marker, with our token estimator."""
+    from deepseek_tui.engine.context import estimate_tokens
+
+    if max_tokens <= 0:
         return ""
-    if len(text) <= max_chars:
+    if estimate_tokens(text) <= max_tokens:
         return text
-    return text[:max_chars] + "\n\n[...briefing truncated to fit cap...]"
+    marker = "\n\n[...briefing truncated to fit cap...]"
+    if estimate_tokens(marker) > max_tokens:
+        return ""
+    low, high = 0, len(text)
+    while low < high:
+        mid = (low + high + 1) // 2
+        if estimate_tokens(text[:mid] + marker) <= max_tokens:
+            low = mid
+        else:
+            high = mid - 1
+    return text[:low] + marker
 
 
 async def produce_briefing(
@@ -177,7 +188,7 @@ async def produce_briefing(
 
     from deepseek_tui.protocol.messages import Message as Msg
     from deepseek_tui.protocol.messages import MessageRequest
-    from deepseek_tui.protocol.responses import StreamTextDelta
+    from deepseek_tui.protocol.responses import StreamDone, StreamError, StreamTextDelta
 
     messages = list(conversation)
     messages.append(
@@ -197,8 +208,15 @@ async def produce_briefing(
         temperature=0.2,
     )
 
+    from deepseek_tui.engine.capacity import validate_summary_request_budget
+
+    validate_summary_request_budget(request)
     result_text: list[str] = []
     async for event in client.stream_chat_completion(request):
+        if isinstance(event, StreamError):
+            raise ValueError(f"Cycle briefing stream failed: {event.message}")
+        if isinstance(event, StreamDone) and event.truncated:
+            raise ValueError("Cycle briefing stream was truncated")
         if isinstance(event, StreamTextDelta):
             result_text.append(event.text)
 
@@ -414,6 +432,7 @@ class SessionActivityCoordinator:
         self._task: asyncio.Task[None] | None = None
         self._last_subagents = -1
         self._last_tasks = -1
+        self._pending_mailbox = deque()
 
     def start(self) -> None:
         if self._task is not None and not self._task.done():
@@ -457,37 +476,40 @@ class SessionActivityCoordinator:
         tasks = self._running_tasks()
         if not force and subs == self._last_subagents and tasks == self._last_tasks:
             return
-        self._last_subagents = subs
-        self._last_tasks = tasks
-        # Skip idle snapshots — nothing useful for UI/tests, avoids queue spam.
-        if subs == 0 and tasks == 0:
+        # Suppress only the initial idle snapshot; a running→idle transition
+        # must clear the consumer's previous state. Failed sends are retried.
+        if subs == 0 and tasks == 0 and self._last_subagents == -1:
+            self._last_subagents = self._last_tasks = 0
             return
         parts: list[str] = []
         if subs:
             parts.append(f"{subs} sub-agent(s)")
         if tasks:
             parts.append(f"{tasks} task(s)")
-        detail = ", ".join(parts) + " running"
-        self._try_emit(
+        detail = ", ".join(parts) + " running" if parts else "Idle"
+        delivered = self._try_emit(
             SessionActivityEvent(
                 running_subagents=subs,
                 running_tasks=tasks,
                 message=detail,
             )
         )
+        if delivered:
+            self._last_subagents, self._last_tasks = subs, tasks
 
     async def _run(self) -> None:
         mailbox = self._mailbox()
         try:
             while not self._cancel.is_set():
-                if mailbox is not None:
-                    for envelope in await mailbox.drain_available():
-                        self._try_emit(
-                            SubAgentMailboxEvent(
-                                seq=envelope.seq,
-                                message=envelope.message,
-                            )
-                        )
+                if mailbox is not None and not self._pending_mailbox:
+                    self._pending_mailbox.extend(await mailbox.drain_available())
+                while self._pending_mailbox:
+                    envelope = self._pending_mailbox[0]
+                    if not self._try_emit(SubAgentMailboxEvent(
+                        seq=envelope.seq, message=envelope.message,
+                    )):
+                        break
+                    self._pending_mailbox.popleft()
                 self._emit_activity_snapshot()
                 try:
                     await asyncio.wait_for(

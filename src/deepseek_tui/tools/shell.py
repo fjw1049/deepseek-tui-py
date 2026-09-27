@@ -950,8 +950,10 @@ def check_command_policy(command: str, context: ToolContext) -> ToolResult | Non
             )
     if not context.policy:
         return None
+    from deepseek_tui.policy.exec_policy import TomlBackedPolicy
+
     evaluation = context.policy.check(
-        _parse_command_tokens(command),
+        command if isinstance(context.policy, TomlBackedPolicy) else _parse_command_tokens(command),
         _command_safety_heuristic,
     )
     if evaluation.decision == Decision.FORBIDDEN:

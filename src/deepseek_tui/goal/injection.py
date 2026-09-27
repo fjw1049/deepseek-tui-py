@@ -13,12 +13,16 @@ GOAL_CONTINUATION_PROMPT = (
     "do not run another goal turn. Explain briefly if useful, then call UpdateGoal with `complete` "
     "or `blocked` in the same turn. Otherwise, weigh the objective and any completion criteria "
     "against the work done so far, choose one bounded, useful slice of work, and use the existing "
-    "conversation context and your tools. Do not try to finish a broad goal in one turn unless the "
-    "whole goal is genuinely small. Most goal turns should not call UpdateGoal: after completing a "
-    "useful slice, if material work remains, end the turn normally without calling UpdateGoal so "
-    "the runtime can continue the goal in the next turn. Call UpdateGoal with `complete` only when "
-    "all required work is done, any stated validation has passed, and there is no useful next "
-    "action. Completion audit: before calling `complete`, verify the current state against the "
+    "conversation context and your tools. Keep working to a natural checkpoint; do not end a "
+    "turn just to split the work. If material work remains at a checkpoint, leave the goal active "
+    "and preserve open checklist items so the runtime can continue. Call UpdateGoal with "
+    "`complete` only when all required work is done and stated validation has passed. "
+    "Include a requirement-by-requirement audit in reason and actual verification tool call IDs "
+    "in evidence; also supply audit.checks for every GetGoal requirement. "
+    "Use UpdateGoal(status=requirements) to record all acceptance requirements from the request "
+    "before work. Resolve failed checks explicitly and explain cancelled plan steps. "
+    "Successful edits alone are not verification. "
+    "Completion audit: before calling `complete`, verify the current state against the "
     "actual objective and every explicit requirement. Treat weak or indirect evidence as not "
     "complete. Do not mark complete after only producing a plan, summary, first pass, or partial "
     "result. Do not mark complete merely because a budget is nearly exhausted or you want to stop. "
@@ -104,6 +108,18 @@ def reminder_body(snapshot: GoalSnapshot) -> str:
         return _stopped_body(snapshot, paused=False)
     if snapshot.status is GoalStatus.PAUSED:
         return _stopped_body(snapshot, paused=True)
+    if snapshot.status is GoalStatus.BUDGET_LIMITED:
+        return (
+            "The goal reached its budget. Do not continue substantive goal work. "
+            "Explain what remains and ask the user to adjust the budget before resuming.\n"
+            + _stopped_body(snapshot, paused=False)
+        )
+    if snapshot.status is GoalStatus.COMPLETE:
+        return (
+            "The previous goal is complete. Handle the current user request normally. "
+            "The user can reopen it with /goal reopen.\n"
+            f"<untrusted_objective>{escape_untrusted(snapshot.objective)}</untrusted_objective>"
+        )
     return ""
 
 
@@ -117,6 +133,9 @@ def _active_body(goal: GoalSnapshot) -> str:
         )
     budgets = _format_budgets(goal)
     budget_line = f"Budgets: {budgets}.\n" if budgets else ""
+    checklist = "\n".join(
+        f"{item['id']}: {item['status']} — {item['content']}" for item in goal.checklist
+    )
     guidance = (
         "Budget guidance: you are nearing a budget. Converge on the objective and avoid starting "
         "new discretionary work."
@@ -136,14 +155,22 @@ def _active_body(goal: GoalSnapshot) -> str:
         "</untrusted_objective>\n"
         f"{criterion}"
         f"Status: {goal.status.value}\n"
-        f"Progress: {goal.turns_used} continuation turns, {goal.tokens_used} tokens, "
+        f"Progress: {goal.turns_used} goal turns, {goal.tokens_used} output tokens, "
         f"{format_elapsed(goal.wall_clock_ms)} elapsed.\n"
         f"{budget_line}"
         f"{guidance}\n\n"
+        f"<untrusted_goal_checklist>\n{escape_untrusted(checklist)}\n</untrusted_goal_checklist>\n"
         "Goal mode is iterative. Keep the self-audit brief each turn. "
-        "Most goal turns should not call UpdateGoal. After one useful slice, if material work "
-        "remains, end the turn normally. Call UpdateGoal with `complete` only when all required "
+        "Work to natural checkpoints without artificially ending turns. Preserve unfinished "
+        "checklist items across turns; never cancel them merely to finish. "
+        "Call UpdateGoal with `complete` only when all required "
         "work is done and validation has passed. Do not mark complete after only a plan, summary, "
+        "or successful edit. Supply a completion audit in reason and cite actual verification "
+        "tool call IDs in evidence and audit.checks covering every GetGoal requirement. "
+        "Record acceptance requirements with UpdateGoal(status=requirements) before working. "
+        "Explain unsuperseded failures in audit.failure_resolutions and cancelled steps in "
+        "audit.plan_adjustments. Do not drop user requirements. Do not use evidence from before "
+        "the latest file edit. Do not mark complete after a "
         "first pass, or partial result. Use `blocked` only for a genuine impasse, and only after "
         "the same blocker repeats for at least 3 consecutive goal turns (unless the objective "
         "itself is impossible, unsafe, or contradictory)."

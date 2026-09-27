@@ -116,9 +116,13 @@ class NetworkPolicyDecider:
             self._audit_path = Path(audit_path)
 
     def evaluate(self, url: str, tool_name: str = "unknown") -> Decision:
-        """Evaluate URL and return decision. Checks cache first."""
+        """Evaluate URL; hard denials precede session approvals."""
         host = self._extract_host(url)
         if not host:
+            return Decision.DENY
+
+        if self._policy.evaluate(host) is Decision.DENY:
+            self._audit(host, tool_name, Decision.DENY, from_cache=False)
             return Decision.DENY
 
         # Check session cache

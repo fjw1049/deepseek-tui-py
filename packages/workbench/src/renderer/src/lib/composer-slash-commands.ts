@@ -44,7 +44,8 @@ export function shouldCreateGoalFromComposer(
   currentGoal: unknown
 ): boolean {
   if (isGoalComposerSlashCommand(text)) return false
-  return composerMode === 'goal' && currentGoal == null
+  return composerMode === 'goal' && (currentGoal == null ||
+    (typeof currentGoal === 'object' && 'status' in currentGoal && currentGoal.status === 'complete'))
 }
 
 export function isUnknownComposerSlashCommand(input: string): boolean {

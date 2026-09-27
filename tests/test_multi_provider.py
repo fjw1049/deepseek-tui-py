@@ -379,7 +379,7 @@ async def test_anthropic_stream_maps_text_tool_call_usage_and_headers() -> None:
                 "message_delta",
                 {"type": "message_delta", "usage": {"output_tokens": 5}},
             ),
-            sse_event("message_stop", {"type": "message_stop"}),
+            sse_event("message_stop", {"type": "message_stop"}) + "\n",
         ]
     )
 

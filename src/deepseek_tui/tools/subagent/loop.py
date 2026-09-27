@@ -163,6 +163,20 @@ async def _execute_subagent_tool(
         policy = (context.metadata or {}).get("approval_policy")  # type: ignore[union-attr]
     # Live parent-session flag (YOLO / turn auto_approve), not Engine.create snapshot.
     effective_auto = await _subagent_auto_approve_enabled(auto_approve, runtime)
+    from deepseek_tui.tools.approval import NEVER_BLOCKED_PREFIX
+
+    required = approval_request_for_tool(tool, policy, tool_input if isinstance(tool_input, dict) else None)
+    if required is not None and (required.reason or "").startswith(NEVER_BLOCKED_PREFIX):
+        return f"Error: {required.reason}"
+    from deepseek_tui.integrations.hooks import HookContext, aggregate_hook_decision
+
+    hook_executor = getattr(runtime, "hook_executor", None)
+    hook_ctx = HookContext(tool_name=tool_name, tool_args=json.dumps(tool_input),
+                           workspace=getattr(context, "working_directory", None))
+    hook_results = await hook_executor.execute("tool_call_before", hook_ctx) if hook_executor else []
+    hook_decision = aggregate_hook_decision(hook_results)
+    if hook_decision.blocked:
+        return f"Error: Tool call blocked by hook: {hook_decision.reason}"
     approval_request = (
         None
         if effective_auto
@@ -170,6 +184,10 @@ async def _execute_subagent_tool(
             tool, policy, tool_input if isinstance(tool_input, dict) else None
         )
     )
+    if hook_decision.ask:
+        from deepseek_tui.tools.approval import build_approval_request
+
+        approval_request = build_approval_request(tool_name, [], reason="Hook requested confirmation")
     if approval_request is not None:
         handler = getattr(runtime, "approval_handler", None) if runtime else None
         if handler is None:
@@ -226,6 +244,18 @@ async def _execute_subagent_tool(
             return f"Error: Tool {tool_name} denied by approval policy"
     try:
         result = await registry.execute(tool_name, tool_input, context)  # type: ignore[arg-type]
+        if hook_executor:
+            from dataclasses import replace
+
+            hook_ctx.tool_result = result.content
+            hook_ctx.tool_success = result.success
+            hook_ctx.tool_exit_code = result.metadata.get("returncode")
+            post = aggregate_hook_decision(await hook_executor.execute("tool_call_after", hook_ctx))
+            feedback = hook_decision.additional_context + post.additional_context
+            if post.blocked and post.reason:
+                feedback.append(post.reason)
+            if feedback:
+                result = replace(result, content=result.content + "\n[hook feedback]\n" + "\n".join(feedback))
         context.metadata.setdefault("tool_result_metadata", {})[tool_call_id] = result.metadata
         context.metadata.setdefault("tool_result_content", {})[tool_call_id] = result.content
         if result.images:
@@ -416,7 +446,7 @@ async def run_subagent_loop(
     history = RunConversation("subagent", agent.id, agent.prompt, Path(agent.workspace))
     agent.conversation = history
 
-    use_structured_output = bool(agent.output_schema)
+    use_structured_output = agent.output_schema is not None
     # Session locale (config.ui.locale) — same source and validation as the
     # parent engine's reply_locale. Children have no ## Environment block, so
     # the language directive in the system prompt is their only signal.
@@ -485,7 +515,10 @@ async def run_subagent_loop(
         metadata=metadata,
         on_file_mutation=_parent_mutation_sink,
         mutation_agent_id=agent.id,
+        policy=getattr(runtime, "policy", None),
+        network_policy=getattr(runtime, "network_policy", None),
     )
+    context.metadata["hook_executor"] = runtime.hook_executor
     from deepseek_tui.policy.sandbox import resolve_execution_sandbox_policy
 
     context.execution_sandbox_policy = resolve_execution_sandbox_policy(
@@ -512,7 +545,7 @@ async def run_subagent_loop(
     )
     if resuming and existing is not None:
         messages.extend(dicts_to_messages(existing.messages))
-        force_summary = existing.force_summary
+        force_summary = False  # A new attempt may use tools again.
         steps = max(0, int(existing.steps_taken))
     else:
         if agent.fork_messages:
@@ -538,7 +571,11 @@ async def run_subagent_loop(
     final_text = ""
     last_thinking = ""
     structured_value: Any | None = None
-    last_usage: object | None = None
+    usage_totals = {"input_tokens": 0, "output_tokens": 0, "reasoning_tokens": 0}
+    saw_usage = False
+    structured_received = False
+    attempt_start_steps = steps
+    agent.max_steps_reached = False
     # Consecutive bad rounds. Any round that makes progress clears them, so the
     # budgets bound a run of failures rather than a whole run's worth.
     round_failures = 0
@@ -717,7 +754,7 @@ async def run_subagent_loop(
         )
 
     try:
-        while steps < DEFAULT_MAX_STEPS:
+        while steps - attempt_start_steps < DEFAULT_MAX_STEPS:
             if _subagent_cancelled(cancel, agent):
                 _save_cancel_checkpoint()
                 raise asyncio.CancelledError
@@ -755,7 +792,12 @@ async def run_subagent_loop(
             steps += 1
             agent.steps_taken = steps
 
-            round_tools = [] if force_summary else api_tools
+            round_tools = api_tools
+            if force_summary:
+                round_tools = [
+                    tool for tool in api_tools
+                    if (tool.get("function") or tool).get("name") == STRUCTURED_OUTPUT_TOOL_NAME
+                ] if use_structured_output else []
             request = MessageRequest(
                 model=effective_model,
                 messages=messages,
@@ -783,7 +825,9 @@ async def run_subagent_loop(
                 continue
 
             if result.usage is not None:
-                last_usage = result.usage
+                saw_usage = True
+                for key in usage_totals:
+                    usage_totals[key] += getattr(result.usage, key, 0) or 0
 
             if result.cancelled:
                 _save_cancel_checkpoint()
@@ -874,7 +918,7 @@ async def run_subagent_loop(
                 # resume even in principle.
                 if (
                     not force_summary
-                    and structured_value is None
+                    and not structured_received
                     and empty_rounds < MAX_SUBAGENT_EMPTY_ROUNDS
                 ):
                     empty_rounds += 1
@@ -886,7 +930,7 @@ async def run_subagent_loop(
                     )
                     _save_complete_checkpoint("round")
                     continue
-                if not force_summary and structured_value is None:
+                if not force_summary and not structured_received:
                     force_summary = True
                     nudge = (
                         _SUBAGENT_STRUCTURED_OUTPUT_NUDGE
@@ -929,7 +973,7 @@ async def run_subagent_loop(
                 )
             )
 
-            for tc in result.tool_calls:
+            for call_index, tc in enumerate(result.tool_calls):
                 if _subagent_cancelled(cancel, agent):
                     _save_cancel_checkpoint()
                     raise asyncio.CancelledError
@@ -962,6 +1006,7 @@ async def run_subagent_loop(
                     ok = tool_result.success
                     if ok and tool_result.metadata.get("terminate_subagent"):
                         structured_value = tool_result.metadata.get("value")
+                        structured_received = True
                 else:
                     output = await _execute_subagent_tool(
                         registry,
@@ -1001,7 +1046,12 @@ async def run_subagent_loop(
                         images=context.metadata.get("tool_images", {}).pop(tc.id, []),
                     )
                 )
-                if structured_value is not None and not agent.interrupt_event.is_set():
+                if structured_received and not agent.interrupt_event.is_set():
+                    for skipped in result.tool_calls[call_index + 1:]:
+                        messages.append(Message.tool_result(
+                            skipped.id, "Not executed: structured output completed this attempt.",
+                            is_error=True,
+                        ))
                     break
 
             if tool_failures >= MAX_CONSECUTIVE_TOOL_FAILURES:
@@ -1017,9 +1067,10 @@ async def run_subagent_loop(
             _save_complete_checkpoint("round")
             if agent.interrupt_event.is_set():
                 structured_value = None
+                structured_received = False
                 force_summary = False
                 continue
-            if structured_value is not None:
+            if structured_received:
                 break
         else:
             # Reached only when the loop condition went false. Every `break`
@@ -1030,22 +1081,13 @@ async def run_subagent_loop(
     except asyncio.CancelledError:
         _save_cancel_checkpoint()
         raise
+    finally:
+        if runtime.mailbox is not None and saw_usage:
+            runtime.mailbox.send(MailboxMessage.token_usage(agent.id, effective_model, usage_totals))
 
-    if runtime.mailbox is not None and last_usage is not None:
-        runtime.mailbox.send(
-            MailboxMessage.token_usage(
-                agent.id,
-                effective_model,
-                {
-                    "input_tokens": getattr(last_usage, "input_tokens", 0),
-                    "output_tokens": getattr(last_usage, "output_tokens", 0),
-                    "reasoning_tokens": getattr(last_usage, "reasoning_tokens", 0),
-                },
-            )
-        )
 
     agent.steps_taken = steps
-    if agent.output_schema and structured_value is None:
+    if use_structured_output and not structured_received:
         raise RuntimeError("sub-agent did not return structured_output")
     if not final_text and last_thinking:
         final_text = last_thinking
@@ -1053,4 +1095,4 @@ async def run_subagent_loop(
     # Report shape is not a reason to wipe memory — Kimi leaves context
     # memory in place after distillSummary. close() is the only wipe.
     _save_complete_checkpoint("round")
-    return AgentRunOutput(text=final_text, structured=structured_value)
+    return AgentRunOutput(text=final_text, structured=structured_value, structured_received=structured_received)

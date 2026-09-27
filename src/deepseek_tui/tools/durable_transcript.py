@@ -53,7 +53,13 @@ class DurableTranscript:
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> DurableTranscript:
-        cursor = raw.get("cursor") or {}
+        if raw.get("schema_version", TRANSCRIPT_SCHEMA_VERSION) != TRANSCRIPT_SCHEMA_VERSION:
+            raise ValueError("Unsupported transcript schema version")
+        cursor = raw.get("cursor", {})
+        if not isinstance(cursor, dict) or not isinstance(raw.get("messages", []), list):
+            raise ValueError("Invalid transcript structure")
+        if not all(isinstance(message, dict) for message in raw.get("messages", [])):
+            raise ValueError("Invalid transcript message")
         return cls(
             schema_version=int(raw.get("schema_version") or TRANSCRIPT_SCHEMA_VERSION),
             owner_kind=str(raw.get("owner_kind") or ""),
@@ -88,14 +94,14 @@ def save_transcript(path: Path, transcript: DurableTranscript) -> None:
 
 
 def load_transcript(path: Path) -> DurableTranscript | None:
-    if not path.exists():
-        return None
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    except FileNotFoundError:
         return None
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Invalid transcript JSON: {path}") from exc
     if not isinstance(raw, dict):
-        return None
+        raise ValueError(f"Invalid transcript document: {path}")
     return DurableTranscript.from_dict(raw)
 
 

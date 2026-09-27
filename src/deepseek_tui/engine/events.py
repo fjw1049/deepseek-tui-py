@@ -97,6 +97,7 @@ class ElevationRequiredEvent:
     reason: str
     elevation_kind: str
     command_preview: str = ""
+    elevation_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

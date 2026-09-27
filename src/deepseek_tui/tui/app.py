@@ -1011,10 +1011,13 @@ class DeepSeekTUI(App[None]):
             self._engine.session_messages.clear()
             self._engine._user_turn_index = 0
             self._engine.turn_counter = 0
-            self._engine._cycle_session_id = uuid.uuid4().hex
-        from deepseek_tui.state.session import clear_checkpoint
+            from deepseek_tui.state.session import clear_checkpoint
 
-        clear_checkpoint()
+            clear_checkpoint(
+                workspace=self._engine.tool_context.working_directory,
+                session_id=self._engine._cycle_session_id,
+            )
+            self._engine._cycle_session_id = uuid.uuid4().hex
 
     def _cancel_active_turn(self) -> bool:
         """Request cancellation of the in-flight turn. Returns True if one was active."""

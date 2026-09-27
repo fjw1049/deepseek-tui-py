@@ -532,7 +532,7 @@ def estimate_context_breakdown(
     static_total = system_tokens + rules_tokens + skills_tokens + tools_tokens
     estimated_total = static_total + conv_tokens
     if real_input_tokens > 0:
-        total = real_input_tokens
+        total = max(real_input_tokens, estimated_total) if real_input_estimate <= 0 else real_input_tokens
         if real_input_estimate > 0:
             total = real_input_tokens + estimated_total - real_input_estimate
             # After cancellation or compaction the old additive correction
@@ -1053,9 +1053,15 @@ class WorkingSet:
             workspace: Root workspace directory
         """
         self.workspace = workspace
-        self.recent_paths: set[str] = set()
+        self.recent_paths: dict[str, None] = {}
         self.recent_tool_uses: list[str] = []
         self.message_count: int = 0
+
+    def _remember_path(self, path: str) -> None:
+        self.recent_paths.pop(path, None)
+        self.recent_paths[path] = None
+        if len(self.recent_paths) > self._MAX_RECENT_PATHS:
+            self.recent_paths.pop(next(iter(self.recent_paths)))
 
     def observe_user_message(self, text: str, workspace: Path | None = None) -> None:
         """Observe user message and extract relevant paths."""
@@ -1069,11 +1075,7 @@ class WorkingSet:
             if isinstance(target, str) and target:
                 normalized = self._normalize_path(target, self.workspace)
                 if normalized:
-                    self.recent_paths.add(normalized)
-        if len(self.recent_paths) > self._MAX_RECENT_PATHS:
-            excess = len(self.recent_paths) - self._MAX_RECENT_PATHS
-            for path in list(self.recent_paths)[:excess]:
-                self.recent_paths.discard(path)
+                    self._remember_path(normalized)
 
     def observe_tool_call(
         self,
@@ -1134,7 +1136,7 @@ class WorkingSet:
             List of paths, limited to most recent
         """
         paths = list(self.recent_paths)
-        return paths[-limit:]
+        return paths[-limit:] if limit > 0 else []
 
     def summary(self, limit: int = 24) -> str:
         """Produce a human-readable summary block for cycle carry-forward."""
@@ -1161,11 +1163,7 @@ class WorkingSet:
             if path and len(path) > 2:
                 normalized = self._normalize_path(path, workspace)
                 if normalized:
-                    self.recent_paths.add(normalized)
-        if len(self.recent_paths) > self._MAX_RECENT_PATHS:
-            excess = len(self.recent_paths) - self._MAX_RECENT_PATHS
-            for path in list(self.recent_paths)[:excess]:
-                self.recent_paths.discard(path)
+                    self._remember_path(normalized)
 
     def _extract_paths_from_dict(self, obj: dict[str, Any], workspace: Path | None = None) -> None:
         """Extract file paths from tool input dictionary."""
@@ -1178,7 +1176,7 @@ class WorkingSet:
                 path = obj[key]
                 normalized = self._normalize_path(path, workspace)
                 if normalized:
-                    self.recent_paths.add(normalized)
+                    self._remember_path(normalized)
 
         # Check list-based path keys
         for key in ["paths", "files", "targets"]:
@@ -1187,7 +1185,7 @@ class WorkingSet:
                     if isinstance(item, str):
                         normalized = self._normalize_path(item, workspace)
                         if normalized:
-                            self.recent_paths.add(normalized)
+                            self._remember_path(normalized)
 
     def _normalize_path(self, path: str, workspace: Path | None = None) -> str | None:
         """Normalize a path candidate.

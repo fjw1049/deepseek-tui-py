@@ -30,7 +30,12 @@ def load_run_conversation(kind: str, owner_id: str) -> dict[str, Any] | None:
     path = conversation_path(kind, owner_id)
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-        return data if isinstance(data, dict) and isinstance(data.get("blocks"), list) else None
+        if not isinstance(data, dict) or not isinstance(data.get("blocks"), list):
+            return None
+        if not all(isinstance(block, dict) and isinstance(block.get("id"), str) for block in data["blocks"]):
+            logger.warning("Ignoring invalid display history: %s", path)
+            return None
+        return data
     except (FileNotFoundError, OSError, json.JSONDecodeError):
         return None
 

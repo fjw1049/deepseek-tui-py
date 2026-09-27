@@ -69,10 +69,13 @@ class TestMcpLazyReload:
         time.sleep(0.01)
 
         stop_mock = AsyncMock()
-        monkeypatch.setattr(mgr, "stop_all", stop_mock)
+        retired_client = AsyncMock()
+        retired_client.stop = stop_mock
+        mgr._clients["a"] = retired_client
         changed = await mgr.reload_if_config_changed()
         assert changed is True
         stop_mock.assert_awaited_once()
+        assert not mgr._clients
         assert "b" in mgr.server_names
 
 

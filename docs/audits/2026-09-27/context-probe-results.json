@@ -1,0 +1,10 @@
+{
+  "summary_after_stream_error": "### Goal\nKeep all facts.\n### Next step\nFinish the remaining checks.",
+  "pinned_result_has_parent": false,
+  "fresh_result_after_15_synthetic_messages": "[Tool result omitted — too old]",
+  "cycle_briefing_calls": 0,
+  "cycle_advanced_despite_no_briefing": 1,
+  "request_tag_roundtrip": [
+    "Preserve"
+  ]
+}

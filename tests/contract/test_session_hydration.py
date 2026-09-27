@@ -101,6 +101,8 @@ async def test_ensure_engine_loaded_syncs_session(
     monkeypatch.setattr("deepseek_tui.engine.orchestrator.Engine.create", fake_create)
 
     manager = runtime_app.state.thread_manager  # type: ignore[attr-defined]
+    # The engine is a test double; credential resolution is outside hydration.
+    monkeypatch.setattr(manager, "_get_llm_client", lambda *_: object())
     thread = await manager.create_thread(
         CreateThreadRequest(title="hydrate", workspace=str(manager.workspace))
     )

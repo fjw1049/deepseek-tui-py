@@ -28,13 +28,16 @@ def write_paste_txt(text: str, workspace: Path) -> Path:
     dest_dir = Path(workspace) / PASTE_DIR
     dest_dir.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    dest = dest_dir / f"paste-{stamp}.txt"
-    n = 2
-    while dest.exists():
-        dest = dest_dir / f"paste-{stamp}-{n}.txt"
-        n += 1
-    dest.write_text(text, encoding="utf-8")
-    return dest
+    n = 1
+    while True:
+        suffix = "" if n == 1 else f"-{n}"
+        dest = dest_dir / f"paste-{stamp}{suffix}.txt"
+        try:
+            with dest.open("x", encoding="utf-8") as stream:
+                stream.write(text)
+            return dest
+        except FileExistsError:
+            n += 1
 
 
 def mention_for_paste(path: Path, workspace: Path) -> str:

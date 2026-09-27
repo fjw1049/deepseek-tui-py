@@ -450,6 +450,8 @@ async def test_engine_pre_tool_hook_deny_blocks_execution(
         ]
     )
     engine = Engine.__new__(Engine)
+    engine.goal_service = MagicMock()
+    engine.goal_service.snapshot.return_value = None
     engine.mode = "agent"
     engine.default_model = "deepseek-chat"
     engine.hook_executor = HookExecutor(cfg, tmp_path)
@@ -494,6 +496,8 @@ async def test_engine_post_tool_hook_feedback_appended(tmp_path: Path) -> None:
         ]
     )
     engine = Engine.__new__(Engine)
+    engine.goal_service = MagicMock()
+    engine.goal_service.snapshot.return_value = None
     engine.mode = "agent"
     engine.default_model = "deepseek-chat"
     engine.hook_executor = HookExecutor(cfg, tmp_path)

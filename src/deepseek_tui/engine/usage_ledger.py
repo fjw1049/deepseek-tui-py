@@ -5,9 +5,11 @@ from __future__ import annotations
 from contextlib import contextmanager
 from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
-from typing import Any, Iterator
+from typing import Any, Callable, Iterator
 
 from deepseek_tui.protocol.responses import Usage
+
+_active_ledger: ContextVar[tuple["TurnUsageLedger", "TurnUsageLedger"] | None] = ContextVar("active_usage_ledger", default=None)
 
 _usage_source: ContextVar[str | None] = ContextVar("usage_source", default=None)
 
@@ -31,14 +33,29 @@ class UsageLineItem:
     source: str
     usage: Usage
     round_idx: int | None = None
+    turn_id: str | None = None
 
 
 @dataclass
 class TurnUsageLedger:
     items: list[UsageLineItem] = field(default_factory=list)
 
-    def reset(self) -> None:
-        self.items.clear()
+    turn_id: str | None = None
+    on_record: Callable[[UsageLineItem], None] | None = field(default=None, repr=False)
+
+    def capture(self) -> TurnUsageLedger:
+        active = _active_ledger.get()
+        if active is not None and active[0] is self:
+            return active[1]
+        return TurnUsageLedger(items=self.items, turn_id=self.turn_id, on_record=self.on_record)
+
+    def reset(self, turn_id: str | None = None) -> None:
+        # Replace the view, never clear a list still owned by a background call.
+        self.items = []
+        self.turn_id = turn_id
+        _active_ledger.set((self, TurnUsageLedger(
+            items=self.items, turn_id=turn_id, on_record=self.on_record,
+        )))
 
     def add(
         self,
@@ -52,14 +69,13 @@ class TurnUsageLedger:
             return
         if usage.total_input_tokens <= 0 and usage.output_tokens <= 0:
             return
-        self.items.append(
-            UsageLineItem(
-                model=model.strip() or "unknown",
-                source=source,
-                usage=usage,
-                round_idx=round_idx,
-            )
+        item = UsageLineItem(
+            model=model.strip() or "unknown", source=source, usage=usage,
+            round_idx=round_idx, turn_id=self.turn_id,
         )
+        self.items.append(item)
+        if self.on_record is not None:
+            self.on_record(item)
 
     def record_metered(self, *, model: str, usage: Usage | None) -> None:
         self.add(model=model, source=current_usage_source(), usage=usage)

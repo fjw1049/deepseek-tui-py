@@ -25,6 +25,10 @@ from pathlib import Path, PurePosixPath
 import io
 import json
 import shutil
+import os
+import tempfile
+import threading
+from functools import wraps
 import tarfile
 from enum import Enum
 from typing import Any
@@ -575,6 +579,8 @@ class InstallSource:
                     subdir=subdir if separator else "",
                 )
             return cls(kind="invalid")
+        if spec.startswith("local:"):
+            spec = spec[len("local:") :]
         if Path(spec).is_dir():
             return cls(kind="local", local_path=spec)
         return cls(kind="invalid")
@@ -616,6 +622,31 @@ class RegistryDocument:
 # ── Install entrypoint ───────────────────────────────────────────────────
 
 
+_SKILL_MUTATION_LOCK = threading.RLock()
+
+
+def _serialize_skill_mutation(function):
+    @wraps(function)
+    def run(*args, **kwargs):
+        with _SKILL_MUTATION_LOCK:
+            return function(*args, **kwargs)
+    return run
+
+
+def _skill_path(root: Path, name: str) -> Path:
+    if (not name or name in {".", ".."} or Path(name).is_absolute()
+            or any(c in name for c in ("/", "\\", "\0", ":"))):
+        raise ValueError(f"Invalid skill name: {name!r}")
+    target = root / name
+    if target.is_symlink() or not target.resolve().is_relative_to(root.resolve()):
+        raise ValueError(f"Skill path escapes root or is a symlink: {name!r}")
+    for marker in (INSTALLED_FROM_MARKER, TRUSTED_MARKER):
+        if (target / marker).is_symlink():
+            raise ValueError(f"Skill marker must not be a symlink: {name!r}")
+    return target
+
+
+@_serialize_skill_mutation
 def install(
     source: InstallSource,
     skills_dir: Path | None = None,
@@ -628,30 +659,43 @@ def install(
     Returns (outcome, message).
     """
     target_dir = skills_dir or default_skills_dir()
+    name = name_override if name_override is not None else (
+        Path(source.local_path).name if source.kind == "local" else source.repo
+    )
+    try:
+        dest = _skill_path(target_dir, name)
+    except ValueError as exc:
+        return (InstallOutcome.FAILED, str(exc))
     target_dir.mkdir(parents=True, exist_ok=True)
 
     if source.kind == "local":
         src = Path(source.local_path)
+        if target_dir.resolve().is_relative_to(src.resolve()):
+            return (InstallOutcome.FAILED, "Install destination cannot be inside its source")
         skill_file = src / SKILL_FILENAME
         if not skill_file.is_file():
             return (
                 InstallOutcome.FAILED,
                 f"No {SKILL_FILENAME} found in {src}",
             )
-        name = name_override or src.name
-        dest = target_dir / name
         if dest.exists():
             return (
                 InstallOutcome.ALREADY_EXISTS,
                 f"Skill {name} already exists at {dest}",
             )
-        shutil.copytree(src, dest)
-        _write_installed_from(dest, f"local:{src}")
+        try:
+            with tempfile.TemporaryDirectory(prefix=".install-", dir=target_dir) as temp:
+                staged = Path(temp) / "tree"
+                shutil.copytree(src, staged)
+                _write_installed_from(staged, str(src.resolve()))
+                staged.rename(dest)
+        except OSError as exc:
+            return (InstallOutcome.FAILED, f"Install failed: {exc}")
         return (InstallOutcome.INSTALLED, f"Installed {name} to {dest}")
 
     if source.kind == "github":
         return _install_from_github(
-            source, target_dir, name_override, max_size_bytes=max_size_bytes
+            source, target_dir, name, max_size_bytes=max_size_bytes
         )
 
     return (InstallOutcome.FAILED, f"Invalid source: {source.kind}")
@@ -716,9 +760,7 @@ def fetch_github_archive(
     if data is None or source_url is None:
         raise GithubFetchError(f"Download failed: {last_error or 'unknown error'}")
 
-    staging = parent / f".{source.repo}.tmp"
-    if staging.exists():
-        shutil.rmtree(staging, ignore_errors=True)
+    staging = Path(tempfile.mkdtemp(prefix=f".{source.repo}-", dir=parent))
     try:
         _extract_tarball(data, staging, max_size_bytes=max_size_bytes)
     except Exception as exc:  # noqa: BLE001
@@ -741,7 +783,10 @@ def _install_from_github(
     failure leaves no half-baked ``dest/`` behind.
     """
     name = name_override or source.repo
-    dest = target_dir / name
+    try:
+        dest = _skill_path(target_dir, name)
+    except ValueError as exc:
+        return (InstallOutcome.FAILED, str(exc))
     if dest.exists():
         return (InstallOutcome.ALREADY_EXISTS, f"Skill {name} already exists at {dest}")
 
@@ -810,17 +855,29 @@ def _stream_download(url: str, max_bytes: int, *, timeout: float = 30.0) -> byte
     the caller can try the next fallback URL.
     """
     buf = bytearray()
-    with httpx.Client(timeout=timeout, follow_redirects=True) as client:
-        with client.stream("GET", url) as resp:
-            if resp.status_code == 404:
-                raise _DownloadMissing(url)
-            resp.raise_for_status()
-            for chunk in resp.iter_bytes(chunk_size=64 * 1024):
-                buf.extend(chunk)
-                if len(buf) > max_bytes:
-                    raise _DownloadTooLarge(
-                        f"{len(buf)} bytes read (max {max_bytes})"
-                    )
+    allowed = GITHUB_ALLOWED_HOSTS | REGISTRY_ALLOWED_HOSTS | {"codeload.github.com"}
+    with httpx.Client(timeout=timeout, follow_redirects=False) as client:
+        for _ in range(6):
+            parsed = urlparse(url)
+            if parsed.scheme != "https" or parsed.hostname not in allowed or parsed.username or parsed.password:
+                raise ValueError("skill download URL is not allowed")
+            with client.stream("GET", url, follow_redirects=False) as resp:
+                if resp.is_redirect:
+                    location = resp.headers.get("location")
+                    if not location:
+                        raise ValueError("redirect is missing Location")
+                    url = str(httpx.URL(url).join(location))
+                    continue
+                if resp.status_code == 404:
+                    raise _DownloadMissing(url)
+                resp.raise_for_status()
+                for chunk in resp.iter_bytes(chunk_size=64 * 1024):
+                    buf.extend(chunk)
+                    if len(buf) > max_bytes:
+                        raise _DownloadTooLarge(f"{len(buf)} bytes read (max {max_bytes})")
+                break
+        else:
+            raise ValueError("too many skill download redirects")
     return bytes(buf)
 
 
@@ -839,7 +896,11 @@ def _extract_tarball(data: bytes, dest: Path, *, max_size_bytes: int) -> None:
     dest_resolved = dest.resolve()
 
     with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as tf:
-        members = tf.getmembers()
+        members = []
+        for member in tf:
+            if len(members) >= 20_000:
+                raise _DownloadTooLarge("archive contains more than 20000 members")
+            members.append(member)
         if not members:
             raise ValueError("Empty archive")
 
@@ -947,10 +1008,14 @@ def _strip_prefix(name: str, prefix: str) -> str:
 # ── Lifecycle ───────────────────────────────────────────────────────────
 
 
+@_serialize_skill_mutation
 def uninstall(name: str, skills_dir: Path | None = None) -> str:
     """Uninstall a community skill (must have .installed-from marker)."""
     target_dir = skills_dir or default_skills_dir()
-    skill_path = target_dir / name
+    try:
+        skill_path = _skill_path(target_dir, name)
+    except ValueError as exc:
+        return str(exc)
     if not skill_path.is_dir():
         return f"Skill not found: {name}"
     marker = skill_path / INSTALLED_FROM_MARKER
@@ -963,12 +1028,16 @@ def uninstall(name: str, skills_dir: Path | None = None) -> str:
     return f"Uninstalled {name}"
 
 
+@_serialize_skill_mutation
 def update(
     name: str, skills_dir: Path | None = None
 ) -> tuple[InstallOutcome, str]:
     """Re-install a community skill from its original source spec."""
     target_dir = skills_dir or default_skills_dir()
-    skill_path = target_dir / name
+    try:
+        skill_path = _skill_path(target_dir, name)
+    except ValueError as exc:
+        return (InstallOutcome.FAILED, str(exc))
     if not skill_path.is_dir():
         return (InstallOutcome.FAILED, f"Skill not found: {name}")
     marker = skill_path / INSTALLED_FROM_MARKER
@@ -981,30 +1050,45 @@ def update(
         spec_data = json.loads(marker.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         return (InstallOutcome.FAILED, f"Failed to read marker: {exc}")
-    spec = spec_data.get("spec", "")
+    spec = spec_data.get("spec", "") if isinstance(spec_data, dict) else ""
     if not spec:
         return (InstallOutcome.FAILED, "Empty spec in installed-from marker")
-
-    trust_marker = skill_path / TRUSTED_MARKER
-    was_trusted = trust_marker.is_file()
 
     source = InstallSource.parse(spec)
     if source.kind == "invalid":
         return (InstallOutcome.FAILED, f"Cannot parse stored spec: {spec}")
 
-    shutil.rmtree(skill_path)
-    outcome, message = install(source, skills_dir=target_dir, name_override=name)
-    if outcome == InstallOutcome.INSTALLED:
-        if was_trusted:
-            (skill_path / TRUSTED_MARKER).touch()
-        return (InstallOutcome.UPDATED, f"Updated {name} from {spec}")
-    return (outcome, message)
+    with tempfile.TemporaryDirectory(prefix=".update-", dir=target_dir) as temp:
+        staging = Path(temp)
+        outcome, message = install(source, skills_dir=staging, name_override=name)
+        if outcome != InstallOutcome.INSTALLED:
+            return (outcome, message)
+        staged = staging / name
+        backup = target_dir / (staging.name + ".backup")
+        try:
+            (staged / TRUSTED_MARKER).unlink(missing_ok=True)
+            os.replace(skill_path, backup)
+            try:
+                os.replace(staged, skill_path)
+            except BaseException:
+                os.replace(backup, skill_path)
+                raise
+        except OSError as exc:
+            # A failed restore deliberately leaves its backup outside the
+            # temporary directory so recovery never deletes the old bytes.
+            return (InstallOutcome.FAILED, f"Update failed: {exc}; recovery path: {backup}")
+        shutil.rmtree(backup)
+    return (InstallOutcome.UPDATED, f"Updated {name} from {spec}; review before trusting the new content")
 
 
+@_serialize_skill_mutation
 def trust(name: str, skills_dir: Path | None = None) -> str:
     """Mark a community skill as trusted."""
     target_dir = skills_dir or default_skills_dir()
-    skill_path = target_dir / name
+    try:
+        skill_path = _skill_path(target_dir, name)
+    except ValueError as exc:
+        return str(exc)
     if not skill_path.is_dir():
         return f"Skill not found: {name}"
     marker = skill_path / INSTALLED_FROM_MARKER

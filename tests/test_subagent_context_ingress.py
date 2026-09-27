@@ -60,7 +60,7 @@ async def test_subagent_tool_output_is_compacted() -> None:
         return_value=ToolResult(success=True, content=raw, metadata={})
     )
     registry.contains = lambda name: True  # type: ignore[method-assign]
-    registry.get = lambda name: SimpleNamespace()  # type: ignore[method-assign]
+    registry.get = lambda name: FileSearchTool()  # type: ignore[method-assign]
 
     out = await _execute_subagent_tool(
         registry,

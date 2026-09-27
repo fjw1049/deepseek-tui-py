@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
+
 import time
 import uuid
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
+from typing import Any
 
 from deepseek_tui.goal.types import (
     MAX_GOAL_COMPLETION_CRITERION_LENGTH,
@@ -30,6 +33,16 @@ class GoalState:
     budget_limits: GoalBudgetLimits
     terminal_reason: str | None = None
     live_started_mono: float | None = None
+    checklist: list[dict[str, str]] = field(default_factory=list)
+    evidence: list[dict[str, Any]] = field(default_factory=list)
+    completion_evidence: tuple[str, ...] = ()
+    work_revision: int = 0
+    last_progress_signature: str = ""
+    stalled_turns: int = 0
+    requirements: list[dict[str, str]] = field(default_factory=list)
+    completion_audit: dict[str, Any] = field(default_factory=dict)
+    queue_item_id: str | None = None
+    evidence_overflow: bool = False
 
     def live_wall_clock_ms(self, now_mono: float | None = None) -> int:
         extra = 0
@@ -64,6 +77,13 @@ class GoalState:
                 wall,
             ),
             terminal_reason=self.terminal_reason,
+            checklist=tuple(dict(item) for item in self.checklist),
+            evidence=tuple(dict(item) for item in self.evidence),
+            completion_evidence=self.completion_evidence,
+            work_revision=self.work_revision,
+            requirements=tuple(dict(item) for item in self.requirements),
+            completion_audit=deepcopy(self.completion_audit),
+            evidence_overflow=self.evidence_overflow,
         )
 
 
@@ -84,7 +104,7 @@ def normalize_completion_criterion(value: str | None) -> str | None:
     if not trimmed:
         return None
     if len(trimmed) > MAX_GOAL_COMPLETION_CRITERION_LENGTH:
-        return trimmed[:MAX_GOAL_COMPLETION_CRITERION_LENGTH]
+        raise GoalError("criterion_too_long", "Completion criterion cannot exceed 4000 characters")
     return trimmed
 
 

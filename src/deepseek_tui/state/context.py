@@ -106,155 +106,178 @@ def process_turn_input(
     images: list[ImageBlock] = []
 
     for idx, (token, source) in enumerate(tokens):
-        if idx >= cfg.max_mentions:
-            warnings.append(
-                f"Only the first {cfg.max_mentions} file mentions are expanded; "
-                f"remaining @ references are left for read_file."
-            )
-            break
+        try:
+            if idx >= cfg.max_mentions:
+                warnings.append(
+                    f"Only the first {cfg.max_mentions} file mentions are expanded; "
+                    f"remaining @ references are left for read_file."
+                )
+                break
 
-        resolved = _resolve_mention(token, ws, proc_cwd)
-        if resolved is None:
+            resolved = _resolve_mention(token, ws, proc_cwd)
+            if resolved is None:
+                ref = ContextReference(
+                    kind="missing", source="at_mention", label=token, target=token,
+                    included=False, expanded=False, detail="outside workspace or invalid path",
+                )
+                references.append(ref)
+                blocks.append(_render_missing_block(token, token, "path outside workspace or invalid"))
+                continue
+
+            path, display_path = resolved
+            kind = _classify_path(path)
+
+            if kind == "missing":
+                ref = ContextReference(
+                    kind="missing", source=source, label=token, target=display_path,
+                    included=False, expanded=False, detail="not found",
+                )
+                references.append(ref)
+                blocks.append(_render_missing_block(token, display_path, "not found"))
+                continue
+
+            if kind == "directory":
+                body = _list_directory(path, cfg.max_directory_entries)
+                ref = ContextReference(
+                    kind="directory", source=source, label=token, target=str(path),
+                    included=True, expanded=True, detail="directory listing",
+                    bytes_inlined=len(body.encode("utf-8")),
+                )
+                references.append(ref)
+                total_inlined += ref.bytes_inlined
+                blocks.append(_render_directory_block(token, display_path, body))
+                continue
+
+            if kind == "media":
+                from deepseek_tui.media import IMAGE_EXTENSIONS, import_image_path
+
+                if path.suffix.lower() in IMAGE_EXTENSIONS:
+                    try:
+                        image = import_image_path(path)
+                    except ValueError:
+                        ref = ContextReference(
+                            kind="media", source=source, label=token, target=str(path),
+                            included=False, expanded=False, detail="unreadable image",
+                        )
+                        references.append(ref)
+                        blocks.append(_render_media_hint_block(token, display_path))
+                        continue
+                    images.append(image)
+                    references.append(
+                        ContextReference(
+                            kind="media",
+                            source=source,
+                            label=token,
+                            target=str(path),
+                            included=True,
+                            expanded=True,
+                            detail=f"image {image.asset_id}",
+                        )
+                    )
+                    blocks.append(
+                        f'<image-file path="{_xml_text(display_path)}" '
+                        f'asset="{image.asset_id}">Image attached. '
+                        f'Read again using read_file path="media:{image.asset_id}".</image-file>'
+                    )
+                    continue
+                ref = ContextReference(
+                    kind="media",
+                    source=source,
+                    label=token,
+                    target=str(path),
+                    included=False,
+                    expanded=False,
+                    detail="unsupported media type",
+                )
+                references.append(ref)
+                blocks.append(_render_media_hint_block(token, display_path))
+                continue
+
+            if kind == "binary":
+                ref = ContextReference(
+                    kind="binary", source=source, label=token, target=str(path),
+                    included=False, expanded=False, detail="binary or unreadable",
+                )
+                references.append(ref)
+                blocks.append(_render_unreadable_block(token, display_path, "binary file"))
+                continue
+
+            # text file
+            size = path.stat().st_size
+            mode = _text_inclusion_mode(size, cfg, total_inlined)
+
+            if mode == "reference":
+                ref = ContextReference(
+                    kind="file", source=source, label=token, target=str(path),
+                    included=True, expanded=False, detail="reference only",
+                )
+                references.append(ref)
+                blocks.append(_render_reference_block(token, display_path, str(path), size))
+                continue
+
+            try:
+                content, truncated = _read_text_budget(path, cfg.max_inline_bytes)
+            except OSError as exc:
+                ref = ContextReference(
+                    kind="binary", source=source, label=token, target=str(path),
+                    included=False, expanded=False, detail=str(exc),
+                )
+                references.append(ref)
+                blocks.append(_render_unreadable_block(token, display_path, str(exc)))
+                continue
+
+            if truncated and cfg.large_file_mode == "reference":
+                ref = ContextReference(
+                    kind="file", source=source, label=token, target=str(path),
+                    included=True, expanded=False, detail="reference only (large file)",
+                )
+                references.append(ref)
+                blocks.append(_render_reference_block(token, display_path, str(path), size))
+                continue
+
+            if total_inlined + len(content.encode("utf-8")) > cfg.max_total_inline_bytes:
+                warnings.append(f"Skipped inline content for @{token}: total context budget exceeded.")
+                ref = ContextReference(
+                    kind="file", source=source, label=token, target=str(path),
+                    included=False, expanded=False, detail="total inline budget exceeded",
+                )
+                references.append(ref)
+                blocks.append(_render_reference_block(token, display_path, str(path), size))
+                continue
+
             ref = ContextReference(
-                kind="missing", source="at_mention", label=token, target=token,
-                included=False, expanded=False, detail="outside workspace or invalid path",
-            )
-            references.append(ref)
-            blocks.append(_render_missing_block(token, token, "path outside workspace or invalid"))
-            continue
-
-        path, display_path = resolved
-        kind = _classify_path(path)
-
-        if kind == "missing":
-            ref = ContextReference(
-                kind="missing", source=source, label=token, target=display_path,
-                included=False, expanded=False, detail="not found",
-            )
-            references.append(ref)
-            blocks.append(_render_missing_block(token, display_path, "not found"))
-            continue
-
-        if kind == "directory":
-            body = _list_directory(path, cfg.max_directory_entries)
-            ref = ContextReference(
-                kind="directory", source=source, label=token, target=str(path),
-                included=True, expanded=True, detail="directory listing",
-                bytes_inlined=len(body.encode("utf-8")),
+                kind="file", source=source, label=token, target=str(path),
+                included=True, expanded=True,
+                detail="truncated" if truncated else "included",
+                bytes_inlined=len(content.encode("utf-8")),
             )
             references.append(ref)
             total_inlined += ref.bytes_inlined
-            blocks.append(_render_directory_block(token, display_path, body))
-            continue
-
-        if kind == "media":
-            from deepseek_tui.media import IMAGE_EXTENSIONS, import_image_path
-
-            if path.suffix.lower() in IMAGE_EXTENSIONS:
-                try:
-                    image = import_image_path(path)
-                except ValueError:
-                    ref = ContextReference(
-                        kind="media", source=source, label=token, target=str(path),
-                        included=False, expanded=False, detail="unreadable image",
-                    )
-                    references.append(ref)
-                    blocks.append(_render_media_hint_block(token, display_path))
-                    continue
-                images.append(image)
-                references.append(
-                    ContextReference(
-                        kind="media",
-                        source=source,
-                        label=token,
-                        target=str(path),
-                        included=True,
-                        expanded=True,
-                        detail=f"image {image.asset_id}",
-                    )
-                )
-                blocks.append(
-                    f'<image-file path="{_xml_text(display_path)}" '
-                    f'asset="{image.asset_id}">Image attached. '
-                    f'Read again using read_file path="media:{image.asset_id}".</image-file>'
-                )
-                continue
-            ref = ContextReference(
-                kind="media",
-                source=source,
-                label=token,
-                target=str(path),
-                included=False,
-                expanded=False,
-                detail="unsupported media type",
-            )
-            references.append(ref)
-            blocks.append(_render_media_hint_block(token, display_path))
-            continue
-
-        if kind == "binary":
-            ref = ContextReference(
-                kind="binary", source=source, label=token, target=str(path),
-                included=False, expanded=False, detail="binary or unreadable",
-            )
-            references.append(ref)
-            blocks.append(_render_unreadable_block(token, display_path, "binary file"))
-            continue
-
-        # text file
-        size = path.stat().st_size
-        mode = _text_inclusion_mode(size, cfg, total_inlined)
-
-        if mode == "reference":
-            ref = ContextReference(
-                kind="file", source=source, label=token, target=str(path),
-                included=True, expanded=False, detail="reference only",
-            )
-            references.append(ref)
-            blocks.append(_render_reference_block(token, display_path, str(path), size))
-            continue
-
-        try:
-            content, truncated = _read_text_budget(path, cfg.max_inline_bytes)
+            blocks.append(_render_file_block(token, display_path, content, truncated=truncated))
         except OSError as exc:
-            ref = ContextReference(
-                kind="binary", source=source, label=token, target=str(path),
+            warnings.append(f"Cannot expand @{token}: {exc}")
+            references.append(ContextReference(
+                kind="missing", source=source, label=token, target=token,
                 included=False, expanded=False, detail=str(exc),
-            )
-            references.append(ref)
-            blocks.append(_render_unreadable_block(token, display_path, str(exc)))
+            ))
+            blocks.append(_render_unreadable_block(token, token, str(exc)))
+
+    # Bound the rendered attachment envelope, including escaping and headers.
+    bounded: list[str] = []
+    for ref, block in zip(references, blocks, strict=True):
+        if len(_assemble_expansion([*bounded, block], cfg).encode("utf-8")) <= cfg.max_total_inline_bytes:
+            bounded.append(block)
+            ref.bytes_inlined = len(block.encode("utf-8")) if ref.expanded else 0
             continue
-
-        if truncated and cfg.large_file_mode == "reference":
-            ref = ContextReference(
-                kind="file", source=source, label=token, target=str(path),
-                included=True, expanded=False, detail="reference only (large file)",
-            )
-            references.append(ref)
-            blocks.append(_render_reference_block(token, display_path, str(path), size))
-            continue
-
-        if total_inlined + len(content.encode("utf-8")) > cfg.max_total_inline_bytes:
-            warnings.append(f"Skipped inline content for @{token}: total context budget exceeded.")
-            ref = ContextReference(
-                kind="file", source=source, label=token, target=str(path),
-                included=False, expanded=False, detail="total inline budget exceeded",
-            )
-            references.append(ref)
-            blocks.append(_render_reference_block(token, display_path, str(path), size))
-            continue
-
-        ref = ContextReference(
-            kind="file", source=source, label=token, target=str(path),
-            included=True, expanded=True,
-            detail="truncated" if truncated else "included",
-            bytes_inlined=len(content.encode("utf-8")),
-        )
-        references.append(ref)
-        total_inlined += ref.bytes_inlined
-        blocks.append(_render_file_block(token, display_path, content, truncated=truncated))
-
-    expansion = _assemble_expansion(blocks, cfg)
+        warnings.append(f"Skipped inline content for @{ref.label}: rendered context budget exceeded.")
+        ref.expanded = False
+        ref.bytes_inlined = 0
+        fallback = _render_reference_block(ref.label, ref.label, ref.target, None)
+        if len(_assemble_expansion([*bounded, fallback], cfg).encode("utf-8")) <= cfg.max_total_inline_bytes:
+            bounded.append(fallback)
+        elif ref.kind != "media":
+            ref.included = False
+    expansion = _assemble_expansion(bounded, cfg)
     model_text = _format_model_text(raw, expansion)
     return ProcessedTurnInput(
         display_text=display_text,
@@ -517,11 +540,12 @@ def _render_unreadable_block(token: str, display_path: str, reason: str) -> str:
 
 
 def _render_reference_block(
-    token: str, display_path: str, abs_path: str, size: int,
+    token: str, display_path: str, abs_path: str, size: int | None,
 ) -> str:
+    size_attribute = f' bytes="{size}"' if size is not None else ""
     return (
         f'<file-reference mention="@{_xml_attr(token)}" '
-        f'path="{_xml_attr(display_path)}" bytes="{size}">\n'
+        f'path="{_xml_attr(display_path)}"{size_attribute}>\n'
         f"Full path: {_xml_text(abs_path)}. Use read_file for content.\n"
         f"</file-reference>"
     )

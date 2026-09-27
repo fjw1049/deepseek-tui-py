@@ -205,9 +205,9 @@ def _imap_fetch_sync(
     mailbox = str(section.get("mailbox", "INBOX")).strip() or "INBOX"
 
     if use_ssl:
-        client = imaplib.IMAP4_SSL(host, port)
+        client = imaplib.IMAP4_SSL(host, port, timeout=20)
     else:
-        client = imaplib.IMAP4(host, port)
+        client = imaplib.IMAP4(host, port, timeout=20)
     try:
         client.login(user, password)
         client.select(mailbox)
@@ -450,10 +450,12 @@ def _load_feishu_app_credentials() -> tuple[str, str, str]:
 
 async def _feishu_tenant_token(client: httpx.AsyncClient, base: str, app_id: str, app_secret: str) -> str:
     import time
+    import hashlib
 
     now = time.time()
+    credential_key = hashlib.sha256(f"{base}\0{app_id}\0{app_secret}".encode()).hexdigest()
     if (
-        _FEISHU_TOKEN_CACHE.get("base") == base
+        _FEISHU_TOKEN_CACHE.get("credential_key") == credential_key
         and _FEISHU_TOKEN_CACHE.get("token")
         and float(_FEISHU_TOKEN_CACHE.get("expires_at", 0)) > now + 30
     ):
@@ -470,7 +472,7 @@ async def _feishu_tenant_token(client: httpx.AsyncClient, base: str, app_id: str
         raise RuntimeError(f"Feishu token error: {data.get('msg', data)}")
     token = str(data["tenant_access_token"])
     expire = now + int(data.get("expire", 7200)) - 60
-    _FEISHU_TOKEN_CACHE.update({"base": base, "token": token, "expires_at": expire})
+    _FEISHU_TOKEN_CACHE.update({"credential_key": credential_key, "token": token, "expires_at": expire})
     return token
 
 
@@ -549,9 +551,9 @@ def _smtp_send_sync(
     msg.attach(MIMEText(body, "plain", "utf-8"))
 
     if use_ssl:
-        client: smtplib.SMTP = smtplib.SMTP_SSL(host, port)
+        client: smtplib.SMTP = smtplib.SMTP_SSL(host, port, timeout=20)
     else:
-        client = smtplib.SMTP(host, port)
+        client = smtplib.SMTP(host, port, timeout=20)
     try:
         if starttls and not use_ssl:
             client.starttls()

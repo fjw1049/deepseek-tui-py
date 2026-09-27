@@ -119,6 +119,9 @@ class AppRuntime:
         self.threads = ThreadStore()
         self.hooks = hooks if hooks is not None else build_hook_dispatcher(self.config)
         self._llm_client: LLMClient | None = llm_client
+        from deepseek_tui.integrations.hooks import build_lifecycle_hook_executor
+
+        self._direct_hook_executor = build_lifecycle_hook_executor(self.config, self.working_directory)
 
     @property
     def tool_runtime(self) -> ToolRuntime | None:
@@ -201,6 +204,7 @@ class AppRuntime:
         await mcp.await_startup_preload()
 
     async def shutdown(self) -> None:
+        await self._direct_hook_executor.close()
         if self._tool_runtime is not None:
             await self._tool_runtime.shutdown()
         # Webhook sinks own httpx clients; close them if present.
@@ -424,6 +428,39 @@ class AppRuntime:
         await self.hooks.emit(ResponseEndEvent(response_id=response_id))
 
     async def handle_tool(self, payload: dict[str, Any]) -> dict[str, Any]:
+        from deepseek_tui.engine.dispatch import normalize_legacy_tool_call
+        from deepseek_tui.integrations.hooks import HookContext, aggregate_hook_decision
+
+        call = payload.get("call")
+        if not isinstance(call, dict) or not isinstance(call.get("name"), str):
+            return await self._handle_tool_impl(payload)
+        arguments = call.get("arguments") or call.get("input") or {}
+        if not isinstance(arguments, dict):
+            return await self._handle_tool_impl(payload)
+        from deepseek_tui.mcp.execute import normalize_mcp_bridge_tool_name
+
+        name, arguments = normalize_legacy_tool_call(normalize_mcp_bridge_tool_name(call["name"]), arguments)
+        context = HookContext(tool_name=name, tool_args=json.dumps(arguments), workspace=self.working_directory)
+        before = aggregate_hook_decision(await self._direct_hook_executor.execute("tool_call_before", context))
+        if before.blocked or before.ask:
+            return {"ok": False, "error": before.reason or "Hook requires approval; unavailable on direct tool transport"}
+        if self._tool_runtime is not None:
+            self._tool_runtime.context.metadata["hook_executor"] = self._direct_hook_executor
+        result = await self._handle_tool_impl(payload)
+        context.tool_result = str(result.get("content", result.get("error", "")))
+        context.tool_success = bool(result.get("ok"))
+        context.tool_exit_code = (result.get("metadata") or {}).get("returncode")
+        after = aggregate_hook_decision(await self._direct_hook_executor.execute("tool_call_after", context))
+        feedback = before.additional_context + after.additional_context
+        if after.blocked and after.reason:
+            feedback.append(after.reason)
+        if feedback:
+            result["content"] = context.tool_result + "\n[hook feedback]\n" + "\n".join(feedback)
+        if before.system_messages or after.system_messages:
+            result["hook_messages"] = before.system_messages + after.system_messages
+        return result
+
+    async def _handle_tool_impl(self, payload: dict[str, Any]) -> dict[str, Any]:
         """Execute a single tool call through the registry.
 
         Payload shape::
@@ -829,7 +866,7 @@ class AppRuntime:
             schedule=_pick_str(body, "schedule"),
             timezone=_pick_str(body, "timezone"),
             run_at=_pick_str(body, "run_at"),
-            cwds=cwds,
+            cwds=cwds or [str(self.working_directory)],
             status=status,
             delivery=body.get("delivery") if isinstance(body.get("delivery"), dict) else None,
             digest=body.get("digest") if isinstance(body.get("digest"), dict) else None,

@@ -1,0 +1,60 @@
+{
+  "P01_digest_framing": {
+    "different_trees_same_digest": true
+  },
+  "P02_store_reuse": {
+    "reused_corrupted_entry": true,
+    "actual_digest_matches_returned": false
+  },
+  "P03_capability_separation": {
+    "granted": [
+      "hooks.execute"
+    ],
+    "hooks": 1,
+    "mcp_servers": 1
+  },
+  "P04_revoke": {
+    "grant_recreated": true
+  },
+  "P02_symlink_identity": {
+    "project_trust_from_claimed_provenance": true,
+    "actual_digest_matches_grant": false,
+    "runtime_digest_matches_grant": true,
+    "collected_hooks": 1
+  },
+  "P05_local_skill_update": {
+    "outcome": "failed",
+    "message": "Cannot parse stored spec"
+  },
+  "P05_failed_skill_update": {
+    "outcome": "failed",
+    "old_install_exists": false
+  },
+  "P06_skill_name_escape": {
+    "outcome": "installed",
+    "outside_created": true
+  },
+  "P07_lsp_cancel": {
+    "pending_after_cancel": 1
+  },
+  "P08_lsp_uri": {
+    "published": 1,
+    "retrievable": 0
+  },
+  "P08_lsp_version": {
+    "obsolete_version_accepted": true
+  },
+  "P07_lsp_parallel_start": {
+    "clients_created": 2,
+    "clients_owned": 1
+  },
+  "P11_adapter_runtime_divergence": {
+    "inspection_commands": 1,
+    "runtime_commands": 0
+  },
+  "P09_composite_collision": {
+    "same_name_descriptors": 2,
+    "selected_provider": 0,
+    "second_provider_called": 0
+  }
+}

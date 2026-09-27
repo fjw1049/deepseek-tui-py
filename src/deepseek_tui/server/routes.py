@@ -1757,7 +1757,10 @@ __all__ = ["build_runtime_api_router"]
 
 def build_runtime_api_router() -> APIRouter:
     """Build the combined runtime API router."""
+    from deepseek_tui.server.share_routes import router as sharing_router
+
     router = APIRouter()
+    router.include_router(sharing_router)
     router.include_router(router_approvals)
     router.include_router(router_automation)
     router.include_router(router_elevations)

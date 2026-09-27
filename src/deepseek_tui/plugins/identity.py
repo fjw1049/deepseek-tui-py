@@ -87,23 +87,12 @@ def source_content_digest(
     max_files: int = 20_000,
     max_bytes: int = 50 * 1024 * 1024,
 ) -> str:
-    """Return the store content digest (``sha256:...``) for a plugin tree.
+    """Hash actual tree bytes; provenance is descriptive, never an authority.
 
-    Prefers ``provenance.source.digest`` / ``content_digest`` when already a
-    ``sha256:`` value (install/update lockfile). Otherwise hashes file bodies
-    via :class:`~deepseek_tui.plugins.source.LocalArtifact` — the same key
-    used by the content-addressed store. Do **not** use
-    :func:`content_fingerprint` for authorization binding.
+    Versioned tree encoding intentionally invalidates old digest grants.
+    Existing installations remain readable and may be explicitly re-trusted.
     """
-    if isinstance(provenance, dict):
-        source = provenance.get("source")
-        if isinstance(source, dict):
-            digest = source.get("digest")
-            if isinstance(digest, str) and digest.startswith("sha256:"):
-                return digest
-        content_digest = provenance.get("content_digest")
-        if isinstance(content_digest, str) and content_digest.startswith("sha256:"):
-            return content_digest
+    del provenance  # Compatibility with callers that also retain source metadata.
     from deepseek_tui.plugins.source import LocalArtifact, PluginSourceError
 
     try:

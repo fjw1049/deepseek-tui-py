@@ -1,0 +1,16 @@
+{
+  "200": {
+    "messages": 400,
+    "samples": 5,
+    "median_ms": 0.988,
+    "changed": 195,
+    "output_sha256": "7aac766ec4f80f7ea52a06a42d1bbb9f82868d4bdbee2e93278dc40ccc9c699e"
+  },
+  "800": {
+    "messages": 1600,
+    "samples": 5,
+    "median_ms": 3.726,
+    "changed": 795,
+    "output_sha256": "2843d737bc54a447f17d58e8471308d57f0ae70119f05f670e3e91f6eb2c3bc8"
+  }
+}

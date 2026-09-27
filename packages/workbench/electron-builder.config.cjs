@@ -68,6 +68,7 @@ if (releaseAppVersion && !/^\d+\.\d+\.\d+$/.test(releaseAppVersion)) {
 
 module.exports = {
   appId: 'com.xingyuzhong.deepseekgui',
+  protocols: [{ name: 'DeepSeek shared conversation', schemes: ['deepseek-gui'] }],
   productName: 'DeepSeek GUI',
   // node-pty runs spawn-helper; binaries must live outside asar to be executable.
   asar: true,

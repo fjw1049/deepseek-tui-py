@@ -33,7 +33,8 @@ from deepseek_tui.tools.registry import build_default_registry, build_subagent_r
 
 def test_agent_registry_includes_goal_tools() -> None:
     names = set(build_default_registry(Config(), mode="agent").names())
-    assert GOAL_TOOL_NAMES <= names
+    assert GOAL_TOOL_NAMES - {"SetGoalBudget"} <= names
+    assert "SetGoalBudget" not in names
 
 
 def test_plan_registry_excludes_goal_tools() -> None:
@@ -65,7 +66,7 @@ async def test_engine_keeps_goal_tool_catalog_stable(engine_ctx) -> None:
     assert "CreateGoal" in names
     assert "GetGoal" in names
     assert "UpdateGoal" in names
-    assert "SetGoalBudget" in names
+    assert "SetGoalBudget" not in names
     engine.goal_service.create("Ship it")
     after = {(t.get("function") or t).get("name") for t in await engine._get_tools_with_mcp()}
     assert after == names
@@ -114,7 +115,7 @@ async def test_token_budget_stops_before_tools_execute(engine_ctx) -> None:
     assert result.tool_calls == []
     snapshot = engine.goal_service.snapshot()
     assert snapshot is not None
-    assert snapshot.status is GoalStatus.BLOCKED
+    assert snapshot.status is GoalStatus.BUDGET_LIMITED
     assert snapshot.tokens_used == 5
 
 
@@ -169,12 +170,12 @@ async def test_runtime_failure_pauses_goal(engine_ctx) -> None:
 
 
 @pytest.mark.asyncio
-async def test_runtime_promotion_keeps_queue_until_turn_starts(engine_ctx) -> None:
+async def test_runtime_promotion_keeps_queue_until_turn_starts(engine_ctx, complete_goal) -> None:
     engine, _handle = engine_ctx
     engine.tool_context.metadata["runtime_thread_id"] = "thread-1"
     engine.goal_service.create("first")
     queued = engine.goal_service.enqueue("second")
-    engine.goal_service.mark_complete()
+    complete_goal(engine.goal_service)
 
     await engine._finish_goal_turn(
         cancelled=False,
@@ -189,6 +190,7 @@ async def test_runtime_promotion_keeps_queue_until_turn_starts(engine_ctx) -> No
         queued.item_id
     ]
     assert engine.tool_context.metadata["goal_promote_pending"] == {
+        "goal_id": engine.goal_service.snapshot().goal_id,
         "objective": "second",
         "item_id": queued.item_id,
     }
@@ -463,3 +465,126 @@ async def test_tui_goal_resume_launches_when_idle() -> None:
 
     assert result.error == ""
     assert len(launch_calls) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("atomic", [False, True])
+async def test_runtime_budget_edit_and_resume(monkeypatch, tmp_path, atomic) -> None:
+    manager, thread = await _goal_command_manager(tmp_path)
+    await manager._ensure_engine_loaded(manager.store.load_thread(thread.id))
+    state = manager._active[thread.id]
+    service = state.engine.goal_service
+    try:
+        service.create("Finish tests")
+        service.set_budget(turn_budget=1)
+        service.on_turn_started()
+        service.on_turn_ended()
+        start = AsyncMock()
+        monkeypatch.setattr(manager, "start_turn", start)
+        limited = await manager.apply_goal_command(thread.id, GoalCommandRequest(args="resume"))
+        assert not limited["started_turn"]
+        start.assert_not_awaited()
+        with pytest.raises(ValueError, match="Goal changed"):
+            await manager.apply_goal_command(thread.id, GoalCommandRequest(
+                args="budget turns 500", expected_goal_id="stale", resume_after_budget=True,
+            ))
+        assert service.snapshot().budget.turn_budget == 1
+        if atomic:
+            resumed = await manager.apply_goal_command(thread.id, GoalCommandRequest(
+                args="budget turns 2", expected_goal_id=service.snapshot().goal_id,
+                resume_after_budget=True,
+            ))
+        else:
+            await manager.apply_goal_command(thread.id, GoalCommandRequest(args="budget turns 2"))
+            resumed = await manager.apply_goal_command(thread.id, GoalCommandRequest(args="resume"))
+        assert resumed["started_turn"]
+        start.assert_awaited_once()
+        assert manager.store.load_thread(thread.id).goal["budget_limits"]["turn_budget"] == 2
+    finally:
+        state.engine_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await state.engine_task
+
+
+@pytest.mark.asyncio
+async def test_failed_reopen_launch_returns_to_paused(monkeypatch, tmp_path, complete_goal) -> None:
+    manager, thread = await _goal_command_manager(tmp_path)
+    await manager._ensure_engine_loaded(manager.store.load_thread(thread.id))
+    state = manager._active[thread.id]
+    try:
+        state.engine.goal_service.create("Finish tests")
+        complete_goal(state.engine.goal_service)
+        monkeypatch.setattr(manager, "start_turn", AsyncMock(side_effect=RuntimeError("offline")))
+        with pytest.raises(RuntimeError, match="offline"):
+            await manager.apply_goal_command(thread.id, GoalCommandRequest(args="reopen"))
+        assert state.engine.goal_service.snapshot().status is GoalStatus.PAUSED
+        assert manager.store.load_thread(thread.id).goal["status"] == "paused"
+    finally:
+        state.engine_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await state.engine_task
+
+
+@pytest.mark.asyncio
+async def test_continuation_rechecks_goal_after_async_preparation(monkeypatch, tmp_path):
+    monkeypatch.setenv("DEEPSEEK_HOME", str(tmp_path / ".deepseek"))
+    from deepseek_tui.server.threads.manager import TurnConflictError
+    from deepseek_tui.server.threads.models import StartTurnRequest
+
+    manager, thread = await _goal_command_manager(tmp_path)
+    await manager._ensure_engine_loaded(manager.store.load_thread(thread.id))
+    state = manager._active[thread.id]
+    old = state.engine.goal_service.create("Old objective")
+    preparing, release = asyncio.Event(), asyncio.Event()
+
+    async def prepare(record):
+        preparing.set()
+        await release.wait()
+        return record
+
+    monkeypatch.setattr(manager, "_prepare_isolated_workspace", prepare)
+    start = asyncio.create_task(manager.start_turn(thread.id, StartTurnRequest(
+        prompt="Continue", hidden=True, internal_kind="goal_continuation",
+        expected_goal_id=old.goal_id,
+    )))
+    try:
+        await asyncio.wait_for(preparing.wait(), 2)
+        new = state.engine.goal_service.create("New objective", replace=True)
+        release.set()
+        with pytest.raises(TurnConflictError, match="Goal changed"):
+            await start
+        assert state.active_turn is None
+        assert state.engine.goal_service.snapshot().goal_id == new.goal_id
+        assert state.engine.goal_service.snapshot().status is GoalStatus.ACTIVE
+    finally:
+        start.cancel()
+        await asyncio.gather(start, return_exceptions=True)
+        state.engine_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await state.engine_task
+
+
+@pytest.mark.asyncio
+async def test_continuation_conflict_does_not_pause_winning_user_turn(monkeypatch, tmp_path):
+    from deepseek_tui.server.threads.manager import TurnConflictError
+
+    manager, thread = await _goal_command_manager(tmp_path)
+    await manager._ensure_engine_loaded(manager.store.load_thread(thread.id))
+    state = manager._active[thread.id]
+    state.engine.goal_service.create("Keep working")
+    state.engine.tool_context.metadata["goal_continue_pending"] = True
+
+    async def user_wins(*_args, **_kwargs):
+        state.active_turn = SimpleNamespace(turn_id="user-turn")
+        raise TurnConflictError("User turn won")
+
+    monkeypatch.setattr(manager, "start_turn", user_wins)
+    try:
+        await manager._maybe_continue_goal(thread.id)
+        assert state.engine.goal_service.snapshot().status is GoalStatus.ACTIVE
+        assert state.active_turn.turn_id == "user-turn"
+    finally:
+        state.active_turn = None
+        state.engine_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await state.engine_task

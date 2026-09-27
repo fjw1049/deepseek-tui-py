@@ -1,0 +1,46 @@
+{
+  "same_window_admissions_after_limit_1_to_3": 6,
+  "DeepSeekClient_eof": {
+    "completed_arguments": [
+      {
+        "path": "x"
+      }
+    ],
+    "done_truncated": [
+      false
+    ],
+    "errors": 0
+  },
+  "AnthropicCompatClient_eof": {
+    "completed_arguments": [
+      {
+        "path": "x"
+      }
+    ],
+    "done_truncated": [
+      false
+    ],
+    "errors": 0
+  },
+  "openai_repeated_finalize_done_count": 2,
+  "vision_partial_error": {
+    "cached": true,
+    "images_left": 0
+  },
+  "vision_partial_truncated": {
+    "cached": true,
+    "images_left": 0
+  },
+  "out_of_order_history_returned_unchanged": true,
+  "anthropic_out_of_order_wire_roles": [
+    "user",
+    "assistant"
+  ],
+  "unknown_deepseek_model_has_price": true,
+  "tool_name_projection": {
+    "schema": "mcp-x00003A--x008BFB--x0053D6-",
+    "chat_history": "mcp:读取",
+    "anthropic_history": "mcp:读取"
+  },
+  "base_retry_text_if_consumer_continues_after_error": "partialcomplete"
+}

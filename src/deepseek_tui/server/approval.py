@@ -223,6 +223,7 @@ class PendingElevationRecord:
     reason: str
     elevation_kind: str
     command_preview: str = ""
+    tool_call_id: str | None = None
 
 
 @dataclass
@@ -238,11 +239,19 @@ class ElevationBridge:
         *,
         meta: PendingElevationRecord | None = None,
     ) -> asyncio.Future[bool]:
+        if elevation_id in self._pending:
+            raise ValueError(f"Duplicate elevation request: {elevation_id}")
         fut: asyncio.Future[bool] = asyncio.get_running_loop().create_future()
         self._pending[elevation_id] = fut
         if meta is not None:
             self._meta[elevation_id] = meta
         return fut
+
+    def discard(self, elevation_id: str) -> None:
+        fut = self._pending.pop(elevation_id, None)
+        self._meta.pop(elevation_id, None)
+        if fut is not None and not fut.done():
+            fut.cancel()
 
     def resolve(self, elevation_id: str, approved: bool) -> bool:
         fut = self._pending.pop(elevation_id, None)
@@ -263,7 +272,7 @@ class ElevationBridge:
             out.append(
                 {
                     "elevation_id": elevation_id,
-                    "tool_call_id": elevation_id,
+                    "tool_call_id": (meta.tool_call_id if meta else None) or elevation_id,
                     "thread_id": meta.thread_id if meta else "",
                     "tool_name": meta.tool_name if meta else "",
                     "reason": meta.reason if meta else "",
@@ -278,8 +287,7 @@ class ElevationBridge:
         to_cancel = [
             elevation_id
             for elevation_id, fut in self._pending.items()
-            if not fut.done()
-            and (meta := self._meta.get(elevation_id)) is not None
+            if (meta := self._meta.get(elevation_id)) is not None
             and meta.thread_id == thread_id
         ]
         for elevation_id in to_cancel:

@@ -9,7 +9,8 @@ import asyncio
 import logging
 import time
 import uuid
-from contextlib import suppress
+from collections import deque
+from contextlib import AsyncExitStack, suppress
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -72,7 +73,7 @@ from deepseek_tui.engine.tools import (
     PLAN_MODE_TOOL_ALLOWLIST,
     build_model_tool_catalog,
 )
-from deepseek_tui.engine.turn import TurnLoop, TurnResult, prepare_turn_for_model
+from deepseek_tui.engine.turn import TurnLoop, TurnOutcomeStatus, TurnResult, prepare_turn_for_model
 from deepseek_tui.integrations.lsp import DiagnosticBlock
 from deepseek_tui.protocol.messages import Message, MessageOrigin, MessageRequest
 from deepseek_tui.tools.approval import ApprovalCache, ExecPolicyEngine
@@ -266,7 +267,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         self.default_model = default_model
         from deepseek_tui.engine.usage_ledger import TurnUsageLedger
 
-        self.turn_usage_ledger = TurnUsageLedger()
+        self.turn_usage_ledger = TurnUsageLedger(on_record=self._record_session_usage)
         self._goal_accounted_output_tokens = 0
         # When a full runtime is supplied, it wins — unpack registry + context
         # from it so managers stay paired with the context they own.
@@ -501,6 +502,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                 content=decision.prompt,
                 hidden=True,
                 internal_kind=GOAL_CONTINUATION_KIND,
+                expected_goal_id=self.goal_service.snapshot().goal_id,
             )
         )
         return True
@@ -510,28 +512,40 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             self.tool_context.metadata["goal_promote_pending"] = {
                 "objective": objective,
                 "item_id": item_id,
+                "goal_id": self.goal_service.snapshot().goal_id,
             }
             return False
-        await self.handle.send_op(SendMessageOp(content=objective))
+        await self.handle.send_op(SendMessageOp(
+            content=objective, expected_goal_id=self.goal_service.snapshot().goal_id,
+        ))
         return True
 
-    async def _enforce_goal_wall_clock_deadline(
-        self,
-        goal_id: str,
-        remaining_ms: int,
-    ) -> None:
-        from deepseek_tui.goal.types import GoalActor
-
-        await asyncio.sleep(max(0, remaining_ms) / 1000)
-        snapshot = self.goal_service.snapshot()
-        if snapshot is None or snapshot.goal_id != goal_id or snapshot.status.value != "active":
-            return
-        reason = (
-            "Blocked after goal budget reached: "
-            f"wall-clock budget {snapshot.budget.wall_clock_budget_ms}ms"
-        )
-        self.goal_service.mark_blocked(reason, actor=GoalActor.RUNTIME)
-        await self.handle.cancel(reason="goal_wall_clock_budget_reached")
+    async def _enforce_goal_wall_clock_deadline(self) -> None:
+        """Follow live budget changes, including goals created during this turn."""
+        while True:
+            self.goal_service.changed.clear()
+            snapshot = self.goal_service.snapshot()
+            remaining = None
+            if snapshot is not None and snapshot.status.value == "active":
+                remaining = snapshot.budget.remaining_wall_clock_ms
+            if remaining is not None and remaining <= 0:
+                self.goal_service.mark_budget_limited("Wall-clock goal budget reached")
+                await self.handle.cancel(reason="goal_wall_clock_budget_reached")
+                return
+            # set_budget may have already applied the budget-limited transition.
+            if (snapshot is not None and snapshot.status.value == "budget_limited"
+                    and self.tool_context.metadata.get("goal_turn_active")
+                    and self.tool_context.metadata.get("goal_turn_id") == snapshot.goal_id):
+                await self.handle.cancel(reason="goal_budget_reached")
+                return
+            try:
+                await asyncio.wait_for(
+                    self.goal_service.changed.wait(),
+                    timeout=None if remaining is None else remaining / 1000,
+                )
+            except TimeoutError:
+                # A deadline is only a wake-up; re-read state before cancelling.
+                continue
 
     async def _finish_goal_turn(
         self,
@@ -540,6 +554,17 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         failed: bool,
         error_message: str | None,
     ) -> None:
+        snapshot = self.goal_service.snapshot()
+        metadata = self.tool_context.metadata
+        if "goal_turn_id" in metadata and (
+            metadata["goal_turn_id"] != (snapshot.goal_id if snapshot else None)
+            or metadata.get("goal_control_epoch", self.goal_service.control_epoch)
+            != self.goal_service.control_epoch
+        ):
+            # A late cancellation/error must not undo a newer user resume or replacement.
+            if self.goal_service.peek_continuation(mode=self.mode).should_continue:
+                await self.launch_goal_continuation()
+            return
         total_output_tokens = int(self.turn_usage_ledger.totals().get("output_tokens") or 0)
         output_tokens = max(
             0,
@@ -551,6 +576,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             error_message=error_message,
             output_tokens=output_tokens,
             mode=self.mode,
+            automatic=bool(self.tool_context.metadata.get("goal_automatic_turn")),
         )
         if cancelled or failed:
             self.goal_service.discard_promoted()
@@ -558,7 +584,9 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         promoted = self.goal_service.consume_promoted()
         if promoted is not None:
             try:
-                self.goal_service.create(promoted.objective, mode=self.mode)
+                self.goal_service.create(
+                    promoted.objective, mode=self.mode, queue_item_id=promoted.item_id
+                )
                 launched = await self.launch_promoted_goal(
                     promoted.objective,
                     promoted.item_id,
@@ -602,6 +630,9 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         self.client = client
         self.turn_loop.client = client
         self.default_model = model
+        self.last_real_input_tokens = 0
+        self.last_real_input_estimate = 0
+        self._context_measurement_model = None
         self._app_config = config
         pc = config.effective_provider_config()
         self.default_temperature = pc.temperature
@@ -1101,6 +1132,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         approval_handler: ApprovalHandler | None = None,
         max_tool_round_trips: int = 200,
         task_data_dir: Path | None = None,
+        subagent_session_id: str | None = None,
         tool_runtime: object | None = None,
         start_mcp: bool | None = None,
         mcp_manager: object | None = None,
@@ -1112,293 +1144,312 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         from deepseek_tui.integrations.skills import discover_in_workspace
         from deepseek_tui.tools.runtime import ToolRuntime, create_tool_runtime
 
-        # 装配 HookDispatcher + HookExecutor
-        cfg = config if isinstance(config, Config) else Config()
-        from deepseek_tui.integrations.hooks import (
-            build_hook_dispatcher,
-            build_lifecycle_hook_executor,
-        )
-
-        if handle.hooks is None:
-            handle.attach_hooks(build_hook_dispatcher(cfg))
-        ws = working_directory or Path.cwd()
-        # Open one frozen plugin session and fan its startup contributions out
-        # to the existing host subsystems. Engine does not discover package
-        # formats or know how the plugin host assembled these contributions.
-        plugin_session = None
-        plugin_contribs = None
-        plugin_skill_contribs = None
-        loaded_plugins: list[Any] = []
-        if cfg.features.plugins:
-            from deepseek_tui.plugins import PluginHost
-
-            try:
-                plugin_session = PluginHost().open_session(workspace=ws)
-                loaded_plugins = list(plugin_session.loaded_plugins)
-                plugin_contribs = plugin_session.startup
-                plugin_skill_contribs = plugin_session.startup
-            except Exception:  # noqa: BLE001 — a malformed plugin must not
-                # crash engine construction; degrade to no plugin contributions.
-                logger.warning("plugin discovery failed", exc_info=True)
-            if plugin_contribs is not None:
-                for warning in plugin_contribs.diagnostics:
-                    logger.warning("plugin: %s", warning)
-            if plugin_skill_contribs is not None:
-                for warning in plugin_skill_contribs.diagnostics:
-                    logger.warning("plugin: %s", warning)
-        hooks_cfg = cfg
-        if plugin_contribs is not None and plugin_contribs.hook_entries:
-            hooks_cfg = cfg.model_copy(
-                update={
-                    "hooks": cfg.hooks.model_copy(
-                        update={"hooks": list(cfg.hooks.hooks) + plugin_contribs.hook_entries}
-                    )
-                }
+        async with AsyncExitStack() as cleanup:
+            # 装配 HookDispatcher + HookExecutor
+            cfg = config if isinstance(config, Config) else Config()
+            from deepseek_tui.integrations.hooks import (
+                build_hook_dispatcher,
+                build_lifecycle_hook_executor,
             )
-        hook_executor = build_lifecycle_hook_executor(hooks_cfg, ws)
-        if isinstance(tool_runtime, ToolRuntime):
-            runtime = tool_runtime
-        else:
-            mcp_flag = cfg.features.mcp if start_mcp is None else start_mcp
-            # Engine的「工具运行时装配工厂」—— 把Engine跑工具需要的所有依赖(managers + registry + context + policies)
-            # 按配置组装成一个ToolRuntime对象交出去。 Engine自己不管这些manager怎么建、executor怎么注入
-            runtime = await create_tool_runtime(
-                config=cfg,
-                working_directory=working_directory,
-                mode=mode,
-                task_data_dir=task_data_dir,
-                start_mcp=mcp_flag,
-                mcp_manager=mcp_manager,  # type: ignore[arg-type]
-                extra_mcp_servers=(plugin_contribs.mcp_servers if plugin_contribs else None),
-            )
-        # Make [providers.X] context_window overrides visible to
-        # context_window_for_model() even when Config was built directly
-        # (server / tests) instead of through ConfigLoader.load.
-        from deepseek_tui.config.providers import register_provider_context_windows
 
-        register_provider_context_windows(cfg)
-        # Discover skills for system prompt injection
-        skill_reg = discover_in_workspace(workspace=working_directory)
-        if plugin_skill_contribs is not None and plugin_skill_contribs.skills:
-            from deepseek_tui.integrations.plugins import merge_plugin_skills
+            if handle.hooks is None:
+                handle.attach_hooks(build_hook_dispatcher(cfg))
+                cleanup.callback(setattr, handle, "_hooks", None)
+                cleanup.push_async_callback(handle.hooks.close)
+            ws = working_directory or Path.cwd()
+            from deepseek_tui.config.paths import user_subagents_state_path
 
-            merge_plugin_skills(skill_reg, plugin_skill_contribs)
-        # Pull sampling / reasoning defaults out of Config so the per-turn
-        # MessageRequest carries them all the way to DeepSeekClient.
-        provider_cfg = cfg.effective_provider_config()
-        # When reusing a shared runtime, create a per-engine ToolContext with
-        # the correct working_directory so system prompts reflect the thread's
-        # workspace rather than the process cwd. We branch off the runtime's
-        # context instead of constructing a bare one, otherwise the per-engine
-        # context loses task_manager/subagent_manager/network_policy/policy and
-        # registered-but-runtime-unwired tools (e.g. task_create) become
-        # guaranteed failures. metadata is shallow-copied so per-engine writes
-        # don't mutate the shared one.
-        #
-        # Sub-agents are engine-scoped: the shared runtime's single
-        # SubAgentManager + Mailbox must NOT be reused across engines. The
-        # Mailbox is a single-consumer queue, so with N engines each running
-        # a SessionActivityCoordinator, one thread's coordinator steals
-        # another thread's progress envelopes (cards never render). Sharing
-        # the manager also lets each new engine's attach_loop_runtime /
-        # attach_parent_cancel overwrite the previous engine's wiring. Give
-        # every engine its own manager + mailbox instead.
-        import dataclasses as _dc
+            subagent_state_path = user_subagents_state_path(ws, subagent_session_id)
+            # Open one frozen plugin session and fan its startup contributions out
+            # to the existing host subsystems. Engine does not discover package
+            # formats or know how the plugin host assembled these contributions.
+            plugin_session = None
+            plugin_contribs = None
+            plugin_skill_contribs = None
+            loaded_plugins: list[Any] = []
+            if cfg.features.plugins:
+                from deepseek_tui.plugins import PluginHost
 
-        per_engine_context: ToolContext | None = None
-        per_engine_subagent_manager = None
-        session_mcp_manager = None
-        owned_plugin_mcp_manager = None
-        if isinstance(tool_runtime, ToolRuntime):
-            from deepseek_tui.tools.runtime import build_subagent_manager
-
-            per_engine_subagent_manager, _ = build_subagent_manager(cfg, ws)
-            per_engine_context = _dc.replace(
-                runtime.context,
-                working_directory=ws,
-                subagent_manager=per_engine_subagent_manager,
-                metadata=dict(runtime.context.metadata),
-                # Same reason as metadata: replace() would otherwise alias the
-                # runtime's dict into every engine built from it.
-                file_reads={},
-            )
-            if cfg.features.mcp and plugin_contribs is not None and plugin_contribs.mcp_servers:
-                from deepseek_tui.mcp.manager import McpManager
-                from deepseek_tui.plugins.runtime import CompositeMcpManager
-                from deepseek_tui.tools.mcp import MCP_MANAGER_KEY
-
-                base_mcp = runtime.mcp_manager
-                base_names = set(base_mcp.server_names if base_mcp else ())
-                plugin_servers = [
-                    server
-                    for server in plugin_contribs.mcp_servers
-                    if server.name not in base_names
-                ]
-                if plugin_servers:
-                    owned_plugin_mcp_manager = McpManager(plugin_servers)
-                    session_mcp_manager = CompositeMcpManager(
-                        base_mcp,
-                        owned_plugin_mcp_manager,
-                    )
-                    per_engine_context.metadata[MCP_MANAGER_KEY] = session_mcp_manager
-        engine = cls(
-            handle=handle,
-            client=client,
-            default_model=default_model,
-            exec_policy=exec_policy,
-            approval_handler=approval_handler,
-            max_tool_round_trips=max_tool_round_trips,
-            tool_runtime=runtime,
-            tool_context=per_engine_context,
-            skill_registry=skill_reg,
-            default_reasoning_effort=cfg.reasoning_effort,
-            default_temperature=provider_cfg.temperature,
-            default_top_p=None,
-            default_extra_body=dict(provider_cfg.extra_body or {}),
-            hook_executor=hook_executor,
-        )
-        locale = getattr(getattr(cfg, "ui", None), "locale", None)
-        engine.reply_locale = locale if locale in ("zh", "en") else "zh"
-        engine.plugin_session = plugin_session
-        engine._session_mcp_manager = session_mcp_manager
-        engine._owned_plugin_mcp_manager = owned_plugin_mcp_manager
-        from deepseek_tui.client.base import MeteredLLMClient
-
-        if isinstance(client, MeteredLLMClient):
-            engine.turn_usage_ledger = client._ledger
-        else:
-            engine.client = MeteredLLMClient(client, engine.turn_usage_ledger)
-        engine.turn_loop = TurnLoop(engine.client, compact_fn=engine._emergency_compact)
-        if isinstance(tool_runtime, ToolRuntime):
-            engine._owns_tool_runtime = False
-        # Register plugin index + skill names for prompt rendering.
-        # Commands/agents/rules are deferred -- ``ensure_plugin_activated``
-        # loads them on-demand (mount, slash-command dispatch, agent spawn).
-        # The lockfile contribution index drives the prompt catalog without
-        # disk-scanning .md files, so a workspace with many plugins pays
-        # zero heavy-assembly cost at startup.
-        #
-        # Plugins whose lockfile entry predates the index (or was written by
-        # an older install) have ``contribution_index is None``. For those we
-        # fall back to eager heavy assembly so backward compatibility holds --
-        # the optimization is opt-in per plugin, not all-or-nothing.
-        if loaded_plugins:
-            engine._loaded_plugins = loaded_plugins
-            engine._session_plugin_names = {p.name.lower() for p in loaded_plugins}
-            engine.plugin_index = {
-                p.name: p.contribution_index for p in loaded_plugins if p.contribution_index
-            }
-            engine.plugin_skill_names = {
-                s.name for s in (plugin_skill_contribs.skills if plugin_skill_contribs else [])
-            }
-            # Backward-compatible eager assembly for plugins without an index.
-            unindexed = [p for p in loaded_plugins if p.contribution_index is None]
-            if unindexed:
-                for plugin in unindexed:
-                    engine.ensure_plugin_activated(plugin.name, plugin=plugin)
-            # Summary counts: skills from eager collection, commands/agents/rules
-            # from the index + eager fallback, hooks/mcp from light contributions.
-            idx = engine.plugin_index
-            engine.plugin_summary = {
-                "plugins": len(loaded_plugins),
-                "skills": len(engine.plugin_skill_names),
-                "commands": sum(len(i.get("commands", [])) for i in idx.values())
-                + len(engine.plugin_commands),
-                "agents": sum(len(i.get("agents", [])) for i in idx.values())
-                + len(_unique_plugin_agents(engine.plugin_agents)),
-                "rules": sum(len(i.get("rules", [])) for i in idx.values())
-                + len(engine.plugin_rules),
-                "hooks": len(plugin_contribs.hook_entries) if plugin_contribs else 0,
-                "mcp": len(plugin_contribs.mcp_servers) if plugin_contribs else 0,
-            }
-            engine.plugin_names = [p.name for p in loaded_plugins]
-            # Wire activation callback + agent-name index into tool context so
-            # the ``agent`` tool (action="spawn") can lazily activate a plugin
-            # when resolving a persona that hasn't been heavy-assembled yet.
-            if engine.tool_context is not None:
-                engine.tool_context.metadata["activate_plugin"] = engine.ensure_plugin_activated
-                engine.tool_context.metadata["plugin_agent_index"] = _agent_index_from_plugin_index(
-                    engine.plugin_index
+                try:
+                    plugin_session = PluginHost().open_session(workspace=ws)
+                    cleanup.push_async_callback(plugin_session.close)
+                    loaded_plugins = list(plugin_session.loaded_plugins)
+                    plugin_contribs = plugin_session.startup
+                    plugin_skill_contribs = plugin_session.startup
+                except Exception:  # noqa: BLE001 — a malformed plugin must not
+                    # crash engine construction; degrade to no plugin contributions.
+                    logger.warning("plugin discovery failed", exc_info=True)
+                if plugin_contribs is not None:
+                    for warning in plugin_contribs.diagnostics:
+                        logger.warning("plugin: %s", warning)
+                if plugin_skill_contribs is not None:
+                    for warning in plugin_skill_contribs.diagnostics:
+                        logger.warning("plugin: %s", warning)
+            hooks_cfg = cfg
+            if plugin_contribs is not None and plugin_contribs.hook_entries:
+                hooks_cfg = cfg.model_copy(
+                    update={
+                        "hooks": cfg.hooks.model_copy(
+                            update={"hooks": list(cfg.hooks.hooks) + plugin_contribs.hook_entries}
+                        )
+                    }
                 )
-                engine.tool_context.metadata["plugin_trust"] = {
-                    p.name.lower(): bool(p.trusted) for p in loaded_plugins
-                }
-        # Cycle wiring — ratios from ContextConfig; absolute token
-        # cutoffs are derived per request from the live model window.
-        ctx_cfg = getattr(cfg, "context", None)
-        engine.cycle_config = CycleConfig(
-            enabled=bool(getattr(cfg, "cycle_enabled", False)),
-            cycle_ratio=float(getattr(ctx_cfg, "cycle_ratio", 0.90) or 0.90),
-        )
-        engine.compaction_config.rewrite_ratio = float(
-            getattr(ctx_cfg, "rewrite_ratio", 0.75) or 0.75
-        )
-        engine.compaction_config.l0_prune_ratio = float(
-            getattr(ctx_cfg, "l0_prune_ratio", 0.50) or 0.50
-        )
-        engine._cycle_session_id = uuid.uuid4().hex
-        engine._cycle_started_at = int(time.time())
-        engine.mode = mode
-        engine._app_config = cfg
-        engine.tool_context.metadata["task_config"] = cfg
-        from deepseek_tui.policy.sandbox import sync_execution_sandbox_policy
+            hook_executor = build_lifecycle_hook_executor(hooks_cfg, ws)
+            cleanup.push_async_callback(hook_executor.close)
+            if isinstance(tool_runtime, ToolRuntime):
+                runtime = tool_runtime
+            else:
+                mcp_flag = cfg.features.mcp if start_mcp is None else start_mcp
+                # Engine的「工具运行时装配工厂」—— 把Engine跑工具需要的所有依赖(managers + registry + context + policies)
+                # 按配置组装成一个ToolRuntime对象交出去。 Engine自己不管这些manager怎么建、executor怎么注入
+                runtime = await create_tool_runtime(
+                    config=cfg,
+                    working_directory=working_directory,
+                    mode=mode,
+                    task_data_dir=task_data_dir,
+                    subagent_state_path=subagent_state_path,
+                    start_mcp=mcp_flag,
+                    mcp_manager=mcp_manager,  # type: ignore[arg-type]
+                    extra_mcp_servers=(plugin_contribs.mcp_servers if plugin_contribs else None),
+                )
+                cleanup.push_async_callback(runtime.shutdown)
+            # Make [providers.X] context_window overrides visible to
+            # context_window_for_model() even when Config was built directly
+            # (server / tests) instead of through ConfigLoader.load.
+            from deepseek_tui.config.providers import register_provider_context_windows
 
-        sync_execution_sandbox_policy(
-            engine.tool_context,
-            mode,
-            engine.tool_context.working_directory,
-        )
-        # Wire the engine's own manager (per-engine when the runtime is
-        # shared, the runtime's own otherwise) — never the shared one, so
-        # cancel tokens / completion sinks / loop runtimes stay engine-local.
-        engine._owns_subagent_manager = per_engine_subagent_manager is not None
-        subagent_manager = engine.tool_context.subagent_manager
-        if subagent_manager is not None:
-            subagent_manager.attach_parent_cancel(handle.cancel_event)
-            subagent_manager.attach_parent_completion_sink(engine._enqueue_subagent_completion)
-            from deepseek_tui.tools.subagent import SubAgentRuntime
+            register_provider_context_windows(cfg)
+            # Discover skills for system prompt injection
+            skill_reg = discover_in_workspace(workspace=working_directory)
+            if plugin_skill_contribs is not None and plugin_skill_contribs.skills:
+                from deepseek_tui.integrations.plugins import merge_plugin_skills
 
-            auto_approve = await engine.approval_handler.auto_approve_enabled()
-            loop_runtime = SubAgentRuntime(
-                manager=subagent_manager,
-                client=engine.client,
-                model=default_model,
-                config=cfg,
-                workspace=ws.resolve(),  # noqa: ASYNC240
-                allow_shell=getattr(cfg, "allow_shell", True),
-                auto_approve=auto_approve,
-                task_manager=runtime.task_manager,
-                cancel_token=handle.cancel_event,
-                mailbox=subagent_manager.mailbox,
-                approval_handler=engine.approval_handler,
-                emit_event=handle.emit,
-                hook_executor=engine.hook_executor,
+                merge_plugin_skills(skill_reg, plugin_skill_contribs)
+            # Pull sampling / reasoning defaults out of Config so the per-turn
+            # MessageRequest carries them all the way to DeepSeekClient.
+            provider_cfg = cfg.effective_provider_config()
+            # When reusing a shared runtime, create a per-engine ToolContext with
+            # the correct working_directory so system prompts reflect the thread's
+            # workspace rather than the process cwd. We branch off the runtime's
+            # context instead of constructing a bare one, otherwise the per-engine
+            # context loses task_manager/subagent_manager/network_policy/policy and
+            # registered-but-runtime-unwired tools (e.g. task_create) become
+            # guaranteed failures. metadata is shallow-copied so per-engine writes
+            # don't mutate the shared one.
+            #
+            # Sub-agents are engine-scoped: the shared runtime's single
+            # SubAgentManager + Mailbox must NOT be reused across engines. The
+            # Mailbox is a single-consumer queue, so with N engines each running
+            # a SessionActivityCoordinator, one thread's coordinator steals
+            # another thread's progress envelopes (cards never render). Sharing
+            # the manager also lets each new engine's attach_loop_runtime /
+            # attach_parent_cancel overwrite the previous engine's wiring. Give
+            # every engine its own manager + mailbox instead.
+            import dataclasses as _dc
+
+            per_engine_context: ToolContext | None = None
+            per_engine_subagent_manager = None
+            session_mcp_manager = None
+            owned_plugin_mcp_manager = None
+            if isinstance(tool_runtime, ToolRuntime):
+                from deepseek_tui.tools.runtime import build_subagent_manager
+
+                per_engine_subagent_manager, _ = build_subagent_manager(cfg, ws, state_path=subagent_state_path)
+                if per_engine_subagent_manager is not None:
+                    cleanup.push_async_callback(per_engine_subagent_manager.shutdown)
+                per_engine_context = _dc.replace(
+                    runtime.context,
+                    working_directory=ws,
+                    subagent_manager=per_engine_subagent_manager,
+                    metadata=dict(runtime.context.metadata),
+                    # Same reason as metadata: replace() would otherwise alias the
+                    # runtime's dict into every engine built from it.
+                    file_reads={},
+                )
+                if cfg.features.mcp and plugin_contribs is not None and plugin_contribs.mcp_servers:
+                    from deepseek_tui.mcp.manager import McpManager
+                    from deepseek_tui.plugins.runtime import CompositeMcpManager
+                    from deepseek_tui.tools.mcp import MCP_MANAGER_KEY
+
+                    base_mcp = runtime.mcp_manager
+                    base_names = set(base_mcp.server_names if base_mcp else ())
+                    plugin_servers = [
+                        server
+                        for server in plugin_contribs.mcp_servers
+                        if server.name not in base_names
+                    ]
+                    if plugin_servers:
+                        owned_plugin_mcp_manager = McpManager(plugin_servers)
+                        cleanup.push_async_callback(owned_plugin_mcp_manager.stop_all)
+                        session_mcp_manager = CompositeMcpManager(
+                            base_mcp,
+                            owned_plugin_mcp_manager,
+                        )
+                        per_engine_context.metadata[MCP_MANAGER_KEY] = session_mcp_manager
+            engine = cls(
+                handle=handle,
+                client=client,
+                default_model=default_model,
+                exec_policy=exec_policy,
+                approval_handler=approval_handler,
+                max_tool_round_trips=max_tool_round_trips,
+                tool_runtime=runtime,
+                tool_context=per_engine_context,
+                skill_registry=skill_reg,
+                default_reasoning_effort=cfg.reasoning_effort,
+                default_temperature=provider_cfg.temperature,
+                default_top_p=None,
+                default_extra_body=dict(provider_cfg.extra_body or {}),
+                hook_executor=hook_executor,
             )
-            subagent_manager.attach_loop_runtime(loop_runtime)
+            locale = getattr(getattr(cfg, "ui", None), "locale", None)
+            engine.reply_locale = locale if locale in ("zh", "en") else "zh"
+            engine.plugin_session = plugin_session
+            engine._session_mcp_manager = session_mcp_manager
+            engine._owned_plugin_mcp_manager = owned_plugin_mcp_manager
+            from deepseek_tui.client.base import MeteredLLMClient
 
-        return engine
+            if isinstance(client, MeteredLLMClient):
+                engine.turn_usage_ledger = client._ledger
+                engine.turn_usage_ledger.on_record = engine._record_session_usage
+            else:
+                engine.client = MeteredLLMClient(client, engine.turn_usage_ledger)
+            engine.turn_loop = TurnLoop(engine.client, compact_fn=engine._emergency_compact)
+            engine._owns_tool_runtime = not isinstance(tool_runtime, ToolRuntime)
+            # Register plugin index + skill names for prompt rendering.
+            # Commands/agents/rules are deferred -- ``ensure_plugin_activated``
+            # loads them on-demand (mount, slash-command dispatch, agent spawn).
+            # The lockfile contribution index drives the prompt catalog without
+            # disk-scanning .md files, so a workspace with many plugins pays
+            # zero heavy-assembly cost at startup.
+            #
+            # Plugins whose lockfile entry predates the index (or was written by
+            # an older install) have ``contribution_index is None``. For those we
+            # fall back to eager heavy assembly so backward compatibility holds --
+            # the optimization is opt-in per plugin, not all-or-nothing.
+            if loaded_plugins:
+                engine._loaded_plugins = loaded_plugins
+                engine._session_plugin_names = {p.name.lower() for p in loaded_plugins}
+                engine.plugin_index = {
+                    p.name: p.contribution_index for p in loaded_plugins if p.contribution_index
+                }
+                engine.plugin_skill_names = {
+                    s.name for s in (plugin_skill_contribs.skills if plugin_skill_contribs else [])
+                }
+                # Backward-compatible eager assembly for plugins without an index.
+                unindexed = [p for p in loaded_plugins if p.contribution_index is None]
+                if unindexed:
+                    for plugin in unindexed:
+                        engine.ensure_plugin_activated(plugin.name, plugin=plugin)
+                # Summary counts: skills from eager collection, commands/agents/rules
+                # from the index + eager fallback, hooks/mcp from light contributions.
+                idx = engine.plugin_index
+                engine.plugin_summary = {
+                    "plugins": len(loaded_plugins),
+                    "skills": len(engine.plugin_skill_names),
+                    "commands": sum(len(i.get("commands", [])) for i in idx.values())
+                    + len(engine.plugin_commands),
+                    "agents": sum(len(i.get("agents", [])) for i in idx.values())
+                    + len(_unique_plugin_agents(engine.plugin_agents)),
+                    "rules": sum(len(i.get("rules", [])) for i in idx.values())
+                    + len(engine.plugin_rules),
+                    "hooks": len(plugin_contribs.hook_entries) if plugin_contribs else 0,
+                    "mcp": len(plugin_contribs.mcp_servers) if plugin_contribs else 0,
+                }
+                engine.plugin_names = [p.name for p in loaded_plugins]
+                # Wire activation callback + agent-name index into tool context so
+                # the ``agent`` tool (action="spawn") can lazily activate a plugin
+                # when resolving a persona that hasn't been heavy-assembled yet.
+                if engine.tool_context is not None:
+                    engine.tool_context.metadata["activate_plugin"] = engine.ensure_plugin_activated
+                    engine.tool_context.metadata["plugin_agent_index"] = _agent_index_from_plugin_index(
+                        engine.plugin_index
+                    )
+                    engine.tool_context.metadata["plugin_trust"] = {
+                        p.name.lower(): bool(p.trusted) for p in loaded_plugins
+                    }
+            # Cycle wiring — ratios from ContextConfig; absolute token
+            # cutoffs are derived per request from the live model window.
+            ctx_cfg = getattr(cfg, "context", None)
+            engine.cycle_config = CycleConfig(
+                enabled=bool(getattr(cfg, "cycle_enabled", False)),
+                cycle_ratio=float(getattr(ctx_cfg, "cycle_ratio", 0.90) or 0.90),
+            )
+            engine.compaction_config.rewrite_ratio = float(
+                getattr(ctx_cfg, "rewrite_ratio", 0.75) or 0.75
+            )
+            engine.compaction_config.l0_prune_ratio = float(
+                getattr(ctx_cfg, "l0_prune_ratio", 0.50) or 0.50
+            )
+            engine._cycle_session_id = uuid.uuid4().hex
+            engine._cycle_started_at = int(time.time())
+            engine.mode = mode
+            engine._app_config = cfg
+            engine.tool_context.metadata["task_config"] = cfg
+            from deepseek_tui.policy.sandbox import sync_execution_sandbox_policy
+
+            sync_execution_sandbox_policy(
+                engine.tool_context,
+                mode,
+                engine.tool_context.working_directory,
+                sandbox_mode=cfg.sandbox_mode,
+            )
+            # Wire the engine's own manager (per-engine when the runtime is
+            # shared, the runtime's own otherwise) — never the shared one, so
+            # cancel tokens / completion sinks / loop runtimes stay engine-local.
+            engine._owns_subagent_manager = per_engine_subagent_manager is not None
+            subagent_manager = engine.tool_context.subagent_manager
+            if subagent_manager is not None:
+                subagent_manager.attach_parent_cancel(handle.cancel_event)
+                subagent_manager.attach_parent_completion_sink(engine._enqueue_subagent_completion)
+                from deepseek_tui.tools.subagent import SubAgentRuntime
+
+                auto_approve = await engine.approval_handler.auto_approve_enabled()
+                loop_runtime = SubAgentRuntime(
+                    manager=subagent_manager,
+                    client=engine.client,
+                    model=default_model,
+                    config=cfg,
+                    workspace=ws.resolve(),  # noqa: ASYNC240
+                    allow_shell=getattr(cfg, "allow_shell", True),
+                    auto_approve=auto_approve,
+                    task_manager=runtime.task_manager,
+                    cancel_token=handle.cancel_event,
+                    mailbox=subagent_manager.mailbox,
+                    approval_handler=engine.approval_handler,
+                    emit_event=handle.emit,
+                    hook_executor=engine.hook_executor,
+                    policy=engine.tool_context.policy,
+                    network_policy=engine.tool_context.network_policy,
+                )
+                subagent_manager.attach_loop_runtime(loop_runtime)
+
+            cleanup.pop_all()
+            return engine
 
     async def shutdown_session(self) -> None:
-        """Stop background coordinators and tool runtime (tests / teardown)."""
-        await self._activity_coordinator.stop()
-        if self._owns_subagent_manager:
-            manager = self.tool_context.subagent_manager
-            if manager is not None:
-                if manager.mailbox is not None:
-                    manager.mailbox.close()
-                await manager.shutdown()
-        if self._owned_plugin_mcp_manager is not None:
-            await self._owned_plugin_mcp_manager.stop_all()
-            self._owned_plugin_mcp_manager = None
-            self._session_mcp_manager = None
-        if self.plugin_session is not None:
-            try:
-                await self.plugin_session.close()
-            except Exception:  # noqa: BLE001
-                logger.warning("plugin session close failed", exc_info=True)
-            self.plugin_session = None
-        if self.tool_runtime is not None and self._owns_tool_runtime:
-            await self.tool_runtime.shutdown()
+        """Release all owned resources, even when one release fails."""
+        async with AsyncExitStack() as cleanup:
+            if self.handle.hooks is not None:
+                cleanup.push_async_callback(self.handle.hooks.close)
+            cleanup.push_async_callback(self.hook_executor.close)
+            cleanup.push_async_callback(self.run_lifecycle_hook, "session_end")
+            if self.tool_runtime is not None and self._owns_tool_runtime:
+                cleanup.push_async_callback(self.tool_runtime.shutdown)
+            if self.plugin_session is not None:
+                cleanup.push_async_callback(self.plugin_session.close)
+                self.plugin_session = None
+            if self._owned_plugin_mcp_manager is not None:
+                cleanup.push_async_callback(self._owned_plugin_mcp_manager.stop_all)
+                self._owned_plugin_mcp_manager = None
+                self._session_mcp_manager = None
+            if self._owns_subagent_manager:
+                manager = self.tool_context.subagent_manager
+                if manager is not None:
+                    cleanup.push_async_callback(manager.shutdown)
+                    if manager.mailbox is not None:
+                        cleanup.callback(manager.mailbox.close)
+            cleanup.push_async_callback(self._activity_coordinator.stop)
 
     def _is_plugin_packaged_skill(self, skill: object) -> bool:
         """True when the skill file lives inside an installed plugin.
@@ -1459,6 +1510,17 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                     warnings=list(registry.warnings),
                 )
         return render_available_skills_context(registry) or None
+
+    def _record_session_usage(self, item: Any) -> None:
+        """Account each completed request once, including late background usage."""
+        from deepseek_tui.client.pricing import calculate_turn_cost_estimate_from_usage
+
+        self.session_cache_hit_total += item.usage.cache_read_input_tokens
+        self.session_cache_miss_total += item.usage.cache_creation_input_tokens
+        estimate = calculate_turn_cost_estimate_from_usage(item.model, item.usage)
+        if estimate is not None and estimate.is_positive:
+            self.session_cost_usd += estimate.usd
+            self.session_cost_cny += estimate.cny
 
     def _accrue_child_token_cost_from_metadata(self, metadata: dict[str, Any] | None) -> None:
         """Roll child-tool token usage into session cost."""
@@ -1665,16 +1727,15 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         return tools
 
     async def shutdown(self) -> None:
-        """Drain managers owned by the tool runtime if Engine built it."""
-        await self.shutdown_session()
+        """Drain managers and close the client even when session cleanup fails."""
         try:
-            await self.handle.emit(
+            await self.shutdown_session()
+            self.handle.try_emit(
                 SessionEndedEvent(session_id=self._cycle_session_id, turns=self.turn_counter)
             )
-        except Exception:  # noqa: BLE001
-            pass
-        if hasattr(self.client, "close"):
-            await self.client.close()
+        finally:
+            if hasattr(self.client, "close"):
+                await self.client.close()
 
     async def run_single_turn(
         self,
@@ -1711,9 +1772,11 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             self._cycle_session_id,
         )
         self._activity_coordinator.start()
-        await self.handle.emit(SessionStartedEvent(session_id=self._cycle_session_id))
         turn_task: asyncio.Task[None] | None = None
+        op_wait: asyncio.Task | None = None
+        pending_messages: deque[SendMessageOp] = deque()
         try:
+            await self.handle.emit(SessionStartedEvent(session_id=self._cycle_session_id))
             while True:
                 if turn_task is not None and turn_task.done():
                     try:
@@ -1733,7 +1796,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                     turn_task = None
 
                 if turn_task is None:
-                    op = await self.handle.next_op()
+                    op = pending_messages.popleft() if pending_messages else await self.handle.next_op()
                 else:
                     op_wait = asyncio.create_task(self.handle.next_op(), name="engine-next-op")
                     done, _pending = await asyncio.wait(
@@ -1769,7 +1832,8 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
 
                 if isinstance(op, SendMessageOp):
                     if turn_task is not None:
-                        await turn_task
+                        pending_messages.append(op)
+                        continue
                     turn_task = asyncio.create_task(
                         self._handle_send_message(op),
                         name="engine-turn",
@@ -1785,12 +1849,10 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             logger.info("engine_run_cancelled")
             raise
         finally:
-            if turn_task is not None:
-                turn_task.cancel()
-                try:
-                    await turn_task
-                except asyncio.CancelledError:
-                    pass
+            tasks = [task for task in (op_wait, turn_task) if task is not None]
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
             await self._activity_coordinator.stop()
 
     async def _handle_send_message(self, op: SendMessageOp) -> None:
@@ -1873,12 +1935,23 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         把用户消息拼进会话历史并按模式(plan/中文)追加临时 hint,
         最后设置每轮工具白名单、发出 TurnStartedEvent 并存崩溃检查点,为下游真正跑 LLM 循环铺好前置状态
         """
+        from deepseek_tui.goal.types import GOAL_CONTINUATION_KIND
+
+        if op.expected_goal_id is not None or op.internal_kind == GOAL_CONTINUATION_KIND:
+            current_goal = self.goal_service.snapshot()
+            if (not self.goal_service.peek_continuation(mode=self.mode).should_continue
+                    or (op.expected_goal_id is not None and (
+                        current_goal is None or current_goal.goal_id != op.expected_goal_id
+                    ))):
+                await self.handle.emit(TurnCancelledEvent(reason="stale_goal_continuation"))
+                return
         from deepseek_tui.policy.sandbox import sync_execution_sandbox_policy
 
         sync_execution_sandbox_policy(
             self.tool_context,
             self.mode,
             self.tool_context.working_directory,
+            sandbox_mode=getattr(getattr(self, "_app_config", None), "sandbox_mode", None),
         )
         # MCP 连接器聚焦：必须在 prepare_turn_for_model 之前检测，否则
         # prepare_turn_for_model 会把开头的 `@<连接器名>` 当作文件 mention
@@ -1893,6 +1966,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             PROCESS_BACKGROUND_DONE_KIND,
             GOAL_CONTINUATION_KIND,
         )
+        await self.run_lifecycle_hook("session_start")
         # UserPromptSubmit（message_submit）hooks 在引擎层触发，所有 surface
         # （TUI/server/CLI）语义一致：阻断决策让 prompt 到不了模型；
         # additionalContext 作为 system reminder 注入（不改用户消息原文）。
@@ -2068,12 +2142,23 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                     ),
                 )
         self.tool_context.metadata["engine_mode"] = self.mode
+        self.tool_context.metadata["goal_automatic_turn"] = (
+            op.internal_kind == GOAL_CONTINUATION_KIND
+        )
+        from deepseek_tui.goal.tools import restore_goal_checklist
+
+        restore_goal_checklist(self.tool_context)
         self.tool_context.metadata["task_model"] = op.model or self.default_model
         self.goal_service.on_turn_started()
         from deepseek_tui.goal.types import GOAL_TURN_ID_KEY, GoalStatus
 
         snap = self.goal_service.snapshot()
+        self.tool_context.metadata["goal_turn_active"] = (
+            snap is not None and snap.status is GoalStatus.ACTIVE
+        )
         self.tool_context.metadata[GOAL_TURN_ID_KEY] = None if snap is None else snap.goal_id
+        self.tool_context.metadata["goal_control_epoch"] = self.goal_service.control_epoch
+        self.tool_context.metadata["goal_tool_starts"] = {}
         goal_reminder_message: Message | None = None
         goal_text = self.goal_service.reminder_text()
         if goal_text:
@@ -2082,23 +2167,15 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             spec = goal_reminders.GOAL_ACTIVE
             if snap is not None and snap.status is GoalStatus.PAUSED:
                 spec = goal_reminders.GOAL_PAUSED
-            elif snap is not None and snap.status is GoalStatus.BLOCKED:
+            elif snap is not None and snap.status in (
+                GoalStatus.BLOCKED, GoalStatus.BUDGET_LIMITED
+            ):
                 spec = goal_reminders.GOAL_BLOCKED
             goal_reminder_message = goal_reminders.reminder_message(spec, goal_text)
             working_messages.append(goal_reminder_message)
-        goal_deadline_task: asyncio.Task[None] | None = None
-        if (
-            snap is not None
-            and snap.status is GoalStatus.ACTIVE
-            and snap.budget.remaining_wall_clock_ms is not None
-        ):
-            goal_deadline_task = asyncio.create_task(
-                self._enforce_goal_wall_clock_deadline(
-                    snap.goal_id,
-                    snap.budget.remaining_wall_clock_ms,
-                ),
-                name="goal-wall-clock-deadline",
-            )
+        goal_deadline_task = asyncio.create_task(
+            self._enforce_goal_wall_clock_deadline(), name="goal-wall-clock-deadline",
+        )
         if not internal_turn:
             self.working_set.observe_user_message(processed.display_text or "")
             self.working_set.observe_references(processed.references)
@@ -2192,7 +2269,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                     input_message=None if op.hidden else user_message,
                 )
             )
-            self.turn_usage_ledger.reset()
+            self.turn_usage_ledger.reset(turn_id)
             self._goal_accounted_output_tokens = 0
             checkpoint_messages = [
                 message for message in working_messages if message is not goal_reminder_message
@@ -2270,6 +2347,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                     failed=False,
                     error_message=self.handle.cancel_reason,
                 )
+                await self._auto_persist_session()
                 return
 
             from deepseek_tui.engine.turn import TurnOutcomeStatus
@@ -2294,7 +2372,10 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             if not result.cancelled:
                 from deepseek_tui.state.session import clear_checkpoint
 
-                clear_checkpoint()
+                clear_checkpoint(
+                    workspace=self.tool_context.working_directory,
+                    session_id=self._cycle_session_id,
+                )
             usage = result.usage
             # Backstop: _run_conversation already refreshes this after every
             # round; keep the turn-end write for paths whose result.usage is
@@ -2330,25 +2411,10 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             # Hidden when pricing is unknown (off-platform providers,
             # unrecognised model) — the UI also hides the chip in that
             # case so we don't show $0.00 misleadingly.
-            cache_hit_tokens = 0
-            cache_miss_tokens = 0
-            cost_usd: float | None = None
-            cost_cny: float | None = None
-            turn_cache_hit = ledger_totals.get("cache_hit_tokens", 0)
-            turn_cache_miss = ledger_totals.get("cache_miss_tokens", 0)
-            if turn_cache_hit > 0 or turn_cache_miss > 0 or usage is not None:
-                self.session_cache_hit_total += turn_cache_hit
-                self.session_cache_miss_total += turn_cache_miss
-                cache_hit_tokens = self.session_cache_hit_total
-                cache_miss_tokens = self.session_cache_miss_total
-                turn_cost_usd = ledger_totals.get("cost_usd")
-                turn_cost_cny = ledger_totals.get("cost_cny")
-                if isinstance(turn_cost_usd, (int, float)) and turn_cost_usd > 0:
-                    self.session_cost_usd += float(turn_cost_usd)
-                    cost_usd = self.session_cost_usd
-                if isinstance(turn_cost_cny, (int, float)) and turn_cost_cny > 0:
-                    self.session_cost_cny += float(turn_cost_cny)
-                    cost_cny = self.session_cost_cny
+            cache_hit_tokens = self.session_cache_hit_total
+            cache_miss_tokens = self.session_cache_miss_total
+            cost_usd = self.session_cost_usd or None
+            cost_cny = self.session_cost_cny or None
             running_subagents = 0
             running_tasks = 0
             if self.tool_context.subagent_manager is not None:
@@ -2370,12 +2436,12 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                     running_tasks=running_tasks,
                 )
             )
-            await self._auto_persist_session()
             await self._finish_goal_turn(
                 cancelled=False,
                 failed=not turn_ok,
                 error_message=None if turn_ok else result.error_message,
             )
+            await self._auto_persist_session()
             if not result.cancelled:
                 self._user_turn_index += 1
         finally:
@@ -2759,6 +2825,14 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         """
         if self.tool_context is None:
             return
+        goal = self.goal_service.snapshot()
+        if (goal is not None and goal.status.value != "complete"
+                and (goal.status.value == "active"
+                     or self.tool_context.metadata.get("goal_turn_active"))):
+            from deepseek_tui.goal.tools import capture_goal_checklist
+
+            capture_goal_checklist(self.tool_context)
+            return
         from deepseek_tui.tools.todo import reconcile_open_checklist_items
 
         reconciled = reconcile_open_checklist_items(self.tool_context)
@@ -3004,6 +3078,10 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         每轮先做各种上下文维护(cycle 归档、drain 中途转向的 steer 消息、容量预检查、超阈值就压缩历史、刷 LSP 诊断),
         再带上工具向 LLM 发一次请求;若模型回工具调用就执行工具、把结果塞回消息列表进入下一轮,直到模型给出最终答案(或触发取消/错误上限),返回 TurnResult
         """
+        if getattr(self, "_context_measurement_model", None) != model:
+            self.last_real_input_tokens = 0
+            self.last_real_input_estimate = 0
+        self._context_measurement_model = model
         tools = await self._get_tools_with_mcp()
         # Execute calls against the exact catalog attached to their request;
         # background MCP discovery must not change eligibility after sampling.
@@ -3040,6 +3118,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         checklist_gate_fires = 0
         checklist_gate_last_open: str | None = None
         held_stop_result: TurnResult | None = None
+        result = TurnResult(assistant_message=None)
         for round_idx in range(self.max_tool_round_trips + 1):
             trace = get_turn_latency(latency_turn_id) if latency_turn_id else None
             round_trace = trace.start_round(round_idx) if trace is not None else None
@@ -3098,12 +3177,17 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                 tools=tools,
             )
             if should_trigger:
+                from deepseek_tui.config.providers import max_output_tokens_for_model
+
                 logger.info(
                     "compact_triggered before_count=%d cooldown=%d",
                     len(messages),
                     self._compact_cooldown_rounds,
                 )
-                compact_result = await self._run_compaction(messages)
+                compact_result = await self._run_compaction(
+                    messages, model=model, system_prompt=system_prompt, tools=tools,
+                    output_reserve=max_tokens or max_output_tokens_for_model(model),
+                )
                 messages[:] = compact_result.messages
                 logger.info(
                     "compact_done after_count=%d bridge_attached=%s success=%s",
@@ -3385,4 +3469,11 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                 retryable=False,
             )
         )
-        return TurnResult(assistant_message=None, usage=None, tool_calls=[])
+        return TurnResult(
+            assistant_message=result.assistant_message,
+            usage=result.usage,
+            tool_calls=[],
+            outcome=TurnOutcomeStatus.FAILED,
+            error_message="Tool round-trip limit exceeded",
+            tool_round_count=tool_round_count,
+        )

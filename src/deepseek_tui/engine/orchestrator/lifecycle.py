@@ -60,8 +60,27 @@ class LifecycleLspMixin:
         :func:`deepseek_tui.integrations.hooks.aggregate_hook_decision`;
         fire-and-forget call sites can ignore the return value.
         """
+        if event in {"session_start", "session_end"}:
+            marker = f"_hook_{event}_ran"
+            if getattr(self, marker, False):
+                return []
+            setattr(self, marker, True)
         if self.hook_executor.has_hooks_for_event(event):
-            return await self.hook_executor.execute(event, context)  # type: ignore[arg-type]
+            from deepseek_tui.engine.events import StatusEvent
+            from deepseek_tui.integrations.hooks import aggregate_hook_decision
+
+            results = await self.hook_executor.execute(event, context)  # type: ignore[arg-type]
+            decision = aggregate_hook_decision(results)
+            for message in decision.system_messages:
+                await self.handle.emit(StatusEvent(message=message))
+            if event == "session_start" and decision.additional_context:
+                from deepseek_tui.protocol.messages import Message, MessageOrigin
+
+                self.session_messages.append(Message.user(
+                    "Context from session hooks:\n" + "\n".join(decision.additional_context),
+                    origin=MessageOrigin.SYSTEM_REMINDER,
+                ))
+            return results
         return []
 
     async def run_lifecycle_hook(

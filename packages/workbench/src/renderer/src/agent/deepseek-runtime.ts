@@ -1039,6 +1039,8 @@ export class DeepseekRuntimeProvider implements AgentProvider {
     threadId: string,
     args: string,
     options?: {
+      expectedGoalId?: string
+      resumeAfterBudget?: boolean
       provider?: string
       model?: string
       reasoningEffort?: string
@@ -1054,6 +1056,8 @@ export class DeepseekRuntimeProvider implements AgentProvider {
       'POST',
       JSON.stringify({
         args,
+        expected_goal_id: options?.expectedGoalId,
+        resume_after_budget: options?.resumeAfterBudget,
         provider: options?.provider,
         model: options?.model,
         reasoning_effort: options?.reasoningEffort

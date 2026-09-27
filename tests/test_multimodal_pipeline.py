@@ -540,7 +540,7 @@ async def test_subagent_qualified_route_preserves_identity_and_closes_owned_clie
 
     monkeypatch.setattr("deepseek_tui.tools.subagent.run_subagent_loop", run)
     original = Runtime(helper_config(), VisionStub(), "deepseek-chat")
-    agent = SimpleNamespace(model="visual::image-model", loop_runtime=original)
+    agent = SimpleNamespace(model="visual::image-model", loop_runtime=original, conversation=None)
     await real_subagent_executor(agent, asyncio.Event())
     assert captured[0].model == "image-model"
     assert captured[0].config.provider == "visual"

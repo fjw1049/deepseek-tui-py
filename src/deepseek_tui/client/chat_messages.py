@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from deepseek_tui.tools.encoding import to_api_tool_name
 from deepseek_tui.client.normalize import drop_orphaned_tool_blocks
 from deepseek_tui.config.providers import normalize_model
 from deepseek_tui.protocol.messages import (
@@ -56,7 +57,7 @@ def build_chat_messages(
                         "id": block.id,
                         "type": "function",
                         "function": {
-                            "name": block.name,
+                            "name": to_api_tool_name(block.name),
                             "arguments": json.dumps(block.input, ensure_ascii=False),
                         },
                     }

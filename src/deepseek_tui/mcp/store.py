@@ -6,10 +6,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import threading
+from functools import wraps
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable, ParamSpec, TypeVar
 
 from deepseek_tui.config.models import Config
 from deepseek_tui.mcp.config import (
@@ -19,6 +21,19 @@ from deepseek_tui.mcp.config import (
     load_mcp_config,
 )
 from deepseek_tui.utils import write_json_atomic
+
+
+_WRITE_LOCK = threading.RLock()
+_P = ParamSpec("_P")
+_R = TypeVar("_R")
+
+
+def _serialized_write(function: Callable[_P, _R]) -> Callable[_P, _R]:
+    @wraps(function)
+    def run(*args: _P.args, **kwargs: _P.kwargs) -> _R:
+        with _WRITE_LOCK:
+            return function(*args, **kwargs)
+    return run
 
 
 class McpWriteStatus(str, Enum):
@@ -69,11 +84,13 @@ def _servers_table(doc: dict[str, Any]) -> dict[str, dict[str, Any]]:
     return servers
 
 
+@_serialized_write
 def save_document(path: Path, doc: dict[str, Any]) -> None:
     validate_mcp_config_path(path)
     write_json_atomic(path, doc)
 
 
+@_serialized_write
 def init_config(path: Path, *, force: bool = False) -> McpWriteStatus:
     if path.exists() and not force:
         return McpWriteStatus.SKIPPED_EXISTS
@@ -96,6 +113,7 @@ def init_config(path: Path, *, force: bool = False) -> McpWriteStatus:
     return status
 
 
+@_serialized_write
 def add_server_config(
     path: Path,
     name: str,
@@ -118,6 +136,7 @@ def add_server_config(
     save_document(path, doc)
 
 
+@_serialized_write
 def remove_server_config(path: Path, name: str) -> None:
     doc = load_raw_document(path)
     servers = _servers_table(doc)
@@ -127,6 +146,7 @@ def remove_server_config(path: Path, name: str) -> None:
     save_document(path, doc)
 
 
+@_serialized_write
 def set_server_enabled(path: Path, name: str, enabled: bool) -> None:
     doc = load_raw_document(path)
     servers = _servers_table(doc)

@@ -38,7 +38,7 @@ class LocalArtifact:
         self.digest = self._digest(max_files=max_files, max_bytes=max_bytes)
 
     def _digest(self, *, max_files: int, max_bytes: int) -> str:
-        digest = hashlib.sha256()
+        digest = hashlib.sha256(b"deepseek-plugin-tree-v2\0")
         count = 0
         total_bytes = 0
         from deepseek_tui.plugins.identity import is_ignored_plugin_path
@@ -76,17 +76,28 @@ class LocalArtifact:
             count += 1
             if count > max_files:
                 raise PluginSourceError(f"plugin source contains more than {max_files} files")
+            if not path.is_file():
+                raise PluginSourceError(f"plugin source contains a special file: {relative}")
             try:
-                total_bytes += path.stat().st_size
-            except OSError as exc:
-                raise PluginSourceError(f"cannot stat plugin file: {relative}") from exc
-            if total_bytes > max_bytes:
-                raise PluginSourceError(
-                    f"plugin source exceeds inspection limit of {max_bytes} bytes"
-                )
-            digest.update(relative.encode("utf-8"))
-            try:
-                digest.update(path.read_bytes())
+                info = path.stat()
+                total_bytes += info.st_size
+                if total_bytes > max_bytes:
+                    raise PluginSourceError(f"plugin source exceeds inspection limit of {max_bytes} bytes")
+                encoded = relative.encode("utf-8")
+                digest.update(b"L" if path.is_symlink() else b"F")
+                digest.update(len(encoded).to_bytes(8, "big"))
+                digest.update(encoded)
+                digest.update((info.st_mode & 0o111).to_bytes(2, "big"))
+                digest.update(info.st_size.to_bytes(8, "big"))
+                consumed = 0
+                with path.open("rb") as source:
+                    while chunk := source.read(64 * 1024):
+                        consumed += len(chunk)
+                        if consumed > info.st_size:
+                            raise PluginSourceError(f"plugin file changed during inspection: {relative}")
+                        digest.update(chunk)
+                if consumed != info.st_size:
+                    raise PluginSourceError(f"plugin file changed during inspection: {relative}")
             except OSError as exc:
                 raise PluginSourceError(f"cannot read plugin file: {relative}") from exc
         return f"sha256:{digest.hexdigest()}"

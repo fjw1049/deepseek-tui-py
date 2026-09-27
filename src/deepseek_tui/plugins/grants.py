@@ -98,7 +98,10 @@ def read_grant(
     if not isinstance(data, dict):
         return None
     try:
-        return PluginGrant.from_dict(data)
+        grant = PluginGrant.from_dict(data)
+        if grant.plugin_id != plugin_id or grant.digest != digest:
+            return None
+        return grant
     except (KeyError, TypeError, ValueError):
         return None
 
@@ -142,7 +145,7 @@ def grant_execution(
     capabilities: frozenset[str] | None = None,
     home: Path | None = None,
 ) -> PluginGrant:
-    caps = capabilities or EXECUTION_CAPABILITIES
+    caps = EXECUTION_CAPABILITIES if capabilities is None else capabilities
     grant = PluginGrant(
         plugin_id=validate_plugin_id(plugin_id),
         digest=digest,

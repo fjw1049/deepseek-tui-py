@@ -349,7 +349,7 @@ class CronCreateTool(ToolSpec):
         schedule = _optional_string(input_data, "schedule")
         run_at = _optional_string(input_data, "run_at")
         tz_name = _optional_string(input_data, "timezone")
-        cwds = _optional_string_list(input_data, "cwds") or []
+        cwds = _optional_string_list(input_data, "cwds") or [str(context.working_directory.resolve())]
         delivery = _resolve_delivery(_optional_object(input_data, "delivery"))
         paused = bool(input_data.get("paused", False))
         run_now = bool(input_data.get("run_now", False))
@@ -698,7 +698,7 @@ class AutomationSchedule:
         cleaned = " ".join(expr.strip().split())
         if not cleaned:
             raise ValueError("cron expression is required")
-        if not croniter.is_valid(cleaned):
+        if len(cleaned.split()) != 5 or not croniter.is_valid(cleaned):
             raise ValueError(
                 f"Invalid cron expression '{expr}'. Expected 5 fields: "
                 "minute hour day-of-month month day-of-week (e.g. '0 9 * * *')"
@@ -1009,6 +1009,7 @@ class AutomationManager:
         # types. ``None`` on the scheduler path means notify falls back to a
         # log line only (which is the pre-fix behaviour).
         self.thread_manager: Any = None
+        self._scheduler_lock = asyncio.Lock()
 
     @classmethod
     def open(cls, root: Path) -> AutomationManager:
@@ -1059,6 +1060,11 @@ class AutomationManager:
 
     def create_automation(self, req: CreateAutomationRequest) -> AutomationRecord:
         validate_name_and_prompt(req.name, req.prompt)
+        from deepseek_tui.automation.delivery import DeliveryConfig
+
+        DeliveryConfig.from_mapping(req.delivery)
+        if len(req.cwds) > 1:
+            raise ValueError("Automations support exactly one workspace")
         tz_name = _opt_str_value(req.timezone) or default_timezone()
         cron_expr = _opt_str_value(req.schedule)
         run_at = _opt_str_value(req.run_at)
@@ -1090,7 +1096,7 @@ class AutomationManager:
             prompt=req.prompt.strip(),
             schedule=cron_expr,
             timezone=tz_name,
-            cwds=list(req.cwds),
+            cwds=[str(Path(p).expanduser().resolve()) for p in (req.cwds or [str(Path.cwd())])],
             status=status,
             created_at=now.isoformat(),
             updated_at=now.isoformat(),
@@ -1136,6 +1142,12 @@ class AutomationManager:
     def update_automation(
         self, automation_id: str, req: UpdateAutomationRequest
     ) -> AutomationRecord:
+        from deepseek_tui.automation.delivery import DeliveryConfig
+
+        if req.delivery is not None:
+            DeliveryConfig.from_mapping(req.delivery)
+        if req.cwds is not None and len(req.cwds) > 1:
+            raise ValueError("Automations support exactly one workspace")
         existing = self.get_automation(automation_id)
 
         if req.name is not None:
@@ -1152,7 +1164,7 @@ class AutomationManager:
             schedule = AutomationSchedule.parse(req.schedule, existing.timezone)
             existing.schedule = schedule.expr
         if req.cwds is not None:
-            existing.cwds = list(req.cwds)
+            existing.cwds = [str(Path(p).expanduser().resolve()) for p in (req.cwds or [str(Path.cwd())])]
         if req.status is not None:
             if req.status is AutomationStatus.ACTIVE:
                 # Guard against resurrecting an exhausted one-shot into a
@@ -1290,6 +1302,10 @@ class AutomationManager:
     # ── scheduler ──
 
     async def scheduler_tick(self, task_manager: TaskManager) -> None:
+        async with self._scheduler_lock:
+            await self._scheduler_tick(task_manager)
+
+    async def _scheduler_tick(self, task_manager: TaskManager) -> None:
         """Iterate all active automations.
 
         Fires due ones (idempotent on ``scheduled_for == due_at``) and
@@ -1349,18 +1365,17 @@ class AutomationManager:
 
             # Idempotency guard: don't re-fire the same scheduled slot if
             # we already wrote a run for it.
-            already_fired = any(
-                run.scheduled_for == automation.next_run_at
-                for run in self.list_runs(automation.id, limit=25)
-            )
-            if not already_fired:
-                run = AutomationRunRecord(
-                    id=uuid.uuid4().hex,
+            prior = next((run for run in self.list_runs(automation.id)
+                          if run.scheduled_for == automation.next_run_at), None)
+            if prior is None or (prior.status is AutomationRunStatus.QUEUED and prior.task_id is None):
+                run = prior or AutomationRunRecord(
+                    id=uuid.uuid5(uuid.NAMESPACE_URL, f"{automation.id}:{automation.next_run_at}").hex,
                     automation_id=automation.id,
                     scheduled_for=automation.next_run_at,
                     status=AutomationRunStatus.QUEUED,
                     created_at=now.isoformat(),
                 )
+                self.save_run(run)  # durable dispatch intent before task enqueue
                 await self._enqueue_run_task(automation, run, task_manager)
                 try:
                     current = self.get_automation(automation.id)
@@ -1408,7 +1423,7 @@ class AutomationManager:
         """
         from deepseek_tui.tools.task import TaskStatus
         for automation in self._reconcile_targets():
-            for run in self.list_runs(automation.id, limit=100):
+            for run in self.list_runs(automation.id):
                 if run.status not in (
                     AutomationRunStatus.QUEUED,
                     AutomationRunStatus.RUNNING,
@@ -1419,8 +1434,7 @@ class AutomationManager:
                     # Without this branch that retry never fires — the run is
                     # invisible to reconcile once terminal.
                     if (
-                        run.delivery_attempts > 0
-                        and not run.delivery_done
+                        not run.delivery_done
                         and run.status in (
                             AutomationRunStatus.COMPLETED,
                             AutomationRunStatus.FAILED,
@@ -1455,7 +1469,7 @@ class AutomationManager:
                     if run.status is not AutomationRunStatus.RUNNING:
                         run.status = AutomationRunStatus.RUNNING
                         changed = True
-                    if run.started_at is None:
+                    if run.started_at != getattr(task, "started_at", None):
                         run.started_at = (
                             getattr(task, "started_at", None) or _utc_now_iso()
                         )
@@ -1564,12 +1578,9 @@ async def run_scheduler_loop(
 ) -> None:
     """Run the automation scheduler until ``cancel`` is set.
 
-    Each iteration:
-
-    1. ``manager.scheduler_tick(task_manager)`` — fire any due automations.
-    2. ``manager.reconcile_run_statuses(task_manager)`` — copy task
-       statuses back into runs.
-    3. Sleep up to ``tick_interval_secs`` or wake early on cancel.
+    Due-job scheduling and status reconciliation run in independent loops.
+    Each sleeps up to tick_interval_secs or wakes early on cancellation,
+    so slow remote delivery cannot block the scheduler loop.
 
     Exceptions in tick/reconcile are logged at warning level and
     swallowed.
@@ -1581,22 +1592,23 @@ async def run_scheduler_loop(
         "automation_scheduler_start interval_secs=%.1f", interval
     )
 
-    while not cancel.is_set():
-        try:
-            await manager.scheduler_tick(task_manager)
-        except Exception as exc:  # noqa: BLE001 — never kill the loop
-            logger.warning("automation_scheduler_tick_failed: %s", exc)
+    async def repeat(operation: Any) -> None:
+        while not cancel.is_set():
+            try:
+                await operation(task_manager)
+            except Exception:
+                logger.warning("automation scheduler operation failed", exc_info=True)
+            try:
+                await asyncio.wait_for(cancel.wait(), timeout=interval)
+            except asyncio.TimeoutError:
+                pass
 
-        try:
-            await manager.reconcile_run_statuses(task_manager)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("automation_scheduler_reconcile_failed: %s", exc)
-
-        # Sleep until the next tick OR until cancel fires, whichever is
-        # first.
-        try:
-            await asyncio.wait_for(cancel.wait(), timeout=interval)
-        except asyncio.TimeoutError:
-            continue
+    # Delivery may wait on a remote channel. It must not hold up due jobs.
+    reconcile = asyncio.create_task(repeat(manager.reconcile_run_statuses))
+    try:
+        await repeat(manager.scheduler_tick)
+    finally:
+        reconcile.cancel()
+        await asyncio.gather(reconcile, return_exceptions=True)
 
     logger.info("automation_scheduler_stop")

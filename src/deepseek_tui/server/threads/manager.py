@@ -887,10 +887,10 @@ class RuntimeThreadManager:
 
         async with self._thread_lease_guard:
             if thread_id in self._thread_leases:
-                raise ValueError("Thread already has an active operation")
+                raise TurnConflictError("Thread already has an active operation")
             lease = ThreadLease(thread_id)
             if not await lease.acquire(nonblocking=True):
-                raise ValueError("Thread is active in another runtime")
+                raise TurnConflictError("Thread is active in another runtime")
             self._thread_leases[thread_id] = lease
             self._thread_lease_depth[thread_id] = 1
             self._thread_lease_owners[thread_id] = asyncio.current_task()
@@ -928,13 +928,13 @@ class RuntimeThreadManager:
             if current is None:
                 lease = ThreadLease(thread_id)
                 if not await lease.acquire(nonblocking=True):
-                    raise ValueError("Thread is active in another runtime")
+                    raise TurnConflictError("Thread is active in another runtime")
                 self._thread_leases[thread_id] = lease
                 self._thread_lease_depth[thread_id] = 1
                 self._thread_lease_owners[thread_id] = owner
             else:
                 if self._thread_lease_owners.get(thread_id) is not owner:
-                    raise ValueError("Thread already has an active operation")
+                    raise TurnConflictError("Thread already has an active operation")
                 lease = current
                 self._thread_lease_depth[thread_id] = (
                     self._thread_lease_depth.get(thread_id, 1) + 1
@@ -3550,6 +3550,14 @@ class RuntimeThreadManager:
             if state.active_turn is not None:
                 pop_turn_latency(turn_id)
                 raise TurnConflictError("Thread already has an active turn")
+            if req.expected_goal_id is not None:
+                current_goal = state.engine.goal_service.snapshot()
+                if (current_goal is None or current_goal.goal_id != req.expected_goal_id
+                        or not state.engine.goal_service.peek_continuation(
+                            mode=effective_mode
+                        ).should_continue):
+                    pop_turn_latency(turn_id)
+                    raise TurnConflictError("Goal changed before continuation could start")
             if state.provider != provider or state.engine.default_model != model:
                 client = self._get_llm_client(provider)
                 state.engine.set_model_route(
@@ -3661,6 +3669,7 @@ class RuntimeThreadManager:
                     model=model,
                     hidden=req.hidden,
                     internal_kind=req.internal_kind,
+                    expected_goal_id=req.expected_goal_id,
                     reasoning_effort=req.reasoning_effort,
                 )
             )
@@ -3750,6 +3759,19 @@ class RuntimeThreadManager:
         parsed = parse_goal_command(req.args)
         started_turn = False
         try:
+            current = engine.goal_service.snapshot()
+            if req.expected_goal_id is not None and (
+                current is None or current.goal_id != req.expected_goal_id
+            ):
+                raise ValueError("Goal changed; refresh before applying this command")
+            if req.resume_after_budget:
+                if parsed.kind != "budget":
+                    raise ValueError("resume_after_budget requires a budget command")
+                engine.goal_service.set_budget(
+                    token_budget=parsed.token_budget, turn_budget=parsed.turn_budget,
+                    wall_clock_budget_ms=parsed.wall_clock_budget_ms, actor=GoalActor.USER,
+                )
+                parsed = parse_goal_command("resume")
             if parsed.kind == "error":
                 raise ValueError(parsed.message)
             if parsed.kind == "status":
@@ -3768,6 +3790,7 @@ class RuntimeThreadManager:
                         thread_id,
                         StartTurnRequest(
                             prompt=parsed.objective,
+                            expected_goal_id=created.goal_id,
                             input_summary=parsed.objective,
                             mode=engine.mode,
                             provider=req.provider,
@@ -3792,27 +3815,47 @@ class RuntimeThreadManager:
             elif parsed.kind == "pause":
                 engine.goal_service.pause(actor=GoalActor.USER)
                 await self._interrupt_active_turn(thread_id)
-            elif parsed.kind == "resume":
+            elif parsed.kind in {"resume", "reopen"}:
                 engine.mode = _engine_mode_for_goal(engine.mode)
-                _snapshot, decision = engine.goal_service.resume(
-                    actor=GoalActor.USER, mode=engine.mode
-                )
+                if parsed.kind == "reopen":
+                    _snapshot, decision = engine.goal_service.reopen(mode=engine.mode)
+                else:
+                    _snapshot, decision = engine.goal_service.resume(
+                        actor=GoalActor.USER, mode=engine.mode
+                    )
                 self._persist_thread_goal(thread_id)
                 if decision.should_continue and not self._thread_has_active_turn(thread_id):
-                    await self.start_turn(
-                        thread_id,
-                        StartTurnRequest(
-                            prompt=decision.prompt,
-                            hidden=True,
-                            internal_kind=GOAL_CONTINUATION_KIND,
-                            input_summary="goal continuation",
-                            mode=engine.mode,
-                            provider=req.provider,
-                            model=req.model,
-                            reasoning_effort=req.reasoning_effort,
-                        ),
-                    )
+                    try:
+                        await self.start_turn(
+                            thread_id,
+                            StartTurnRequest(
+                                prompt=decision.prompt,
+                                hidden=True,
+                                internal_kind=GOAL_CONTINUATION_KIND,
+                                expected_goal_id=_snapshot.goal_id,
+                                input_summary="goal continuation",
+                                mode=engine.mode,
+                                provider=req.provider,
+                                model=req.model,
+                                reasoning_effort=req.reasoning_effort,
+                            ),
+                        )
+                    except Exception:
+                        current = engine.goal_service.snapshot()
+                        if (not self._thread_has_active_turn(thread_id) and current is not None
+                                and current.goal_id == _snapshot.goal_id
+                                and current.status.value == "active"):
+                            engine.goal_service.pause(
+                                "Paused after goal resume could not start", actor=GoalActor.RUNTIME
+                            )
+                            self._persist_thread_goal(thread_id)
+                        raise
                     started_turn = True
+            elif parsed.kind == "budget":
+                engine.goal_service.set_budget(
+                    token_budget=parsed.token_budget, turn_budget=parsed.turn_budget,
+                    wall_clock_budget_ms=parsed.wall_clock_budget_ms, actor=GoalActor.USER,
+                )
             elif parsed.kind == "cancel":
                 engine.goal_service.cancel(actor=GoalActor.USER)
                 engine.session_messages.append(
@@ -3822,7 +3865,8 @@ class RuntimeThreadManager:
                 )
                 await self._interrupt_active_turn(thread_id)
             elif parsed.kind == "next-add":
-                if engine.goal_service.snapshot() is None:
+                current = engine.goal_service.snapshot()
+                if current is None or current.status.value == "complete":
                     engine.mode = _engine_mode_for_goal(engine.mode)
                     created = engine.goal_service.create(
                         parsed.objective, actor=GoalActor.USER, mode=engine.mode
@@ -3897,21 +3941,28 @@ class RuntimeThreadManager:
         if isinstance(promote, dict):
             objective = str(promote.get("objective") or "").strip()
             item_id = str(promote.get("item_id") or "").strip()
-            if not objective or not item_id:
+            expected_goal = engine.goal_service.snapshot()
+            if (not objective or not item_id or expected_goal is None
+                    or expected_goal.goal_id != promote.get("goal_id", expected_goal.goal_id)
+                    or expected_goal.objective != objective):
                 return
             try:
                 await self.start_turn(
                     thread_id,
                     StartTurnRequest(
                         prompt=objective,
+                        expected_goal_id=expected_goal.goal_id,
                         input_summary=objective,
                         mode=engine.mode,
                     ),
                 )
+            except TurnConflictError:
+                return
             except Exception:
                 logger.exception("goal_promoted_turn_start_failed")
                 snapshot = engine.goal_service.snapshot()
-                if snapshot is not None and snapshot.objective == objective:
+                if (not self._thread_has_active_turn(thread_id) and snapshot is not None
+                        and snapshot.goal_id == expected_goal.goal_id):
                     from deepseek_tui.goal.types import GoalActor
 
                     engine.goal_service.cancel(actor=GoalActor.RUNTIME)
@@ -3922,6 +3973,7 @@ class RuntimeThreadManager:
             return
         if not continue_pending:
             return
+        expected_goal = engine.goal_service.snapshot()
         decision = engine.goal_service.peek_continuation(mode=engine.mode)
         if not decision.should_continue:
             return
@@ -3932,14 +3984,20 @@ class RuntimeThreadManager:
                     prompt=decision.prompt,
                     hidden=True,
                     internal_kind=GOAL_CONTINUATION_KIND,
+                    expected_goal_id=expected_goal.goal_id,
                     input_summary="goal continuation",
                     mode=engine.mode,
                 ),
             )
+        except TurnConflictError:
+            # A user turn or goal control won the race. Its state is authoritative.
+            return
         except Exception:
             logger.exception("goal_continuation_turn_start_failed")
             snapshot = engine.goal_service.snapshot()
-            if snapshot is not None and snapshot.status.value == "active":
+            if (not self._thread_has_active_turn(thread_id) and snapshot is not None
+                    and expected_goal is not None and snapshot.goal_id == expected_goal.goal_id
+                    and snapshot.status.value == "active"):
                 from deepseek_tui.goal.types import GoalActor
 
                 engine.goal_service.pause(
@@ -4098,7 +4156,7 @@ class RuntimeThreadManager:
                 summary_text = (
                     f"Compaction failed after {result.retries_used} retries — "
                     f"messages unchanged ({before_count} → {len(result.messages)}). "
-                    f"See log for details; try again or run /clear."
+                    f"{getattr(result, 'failure_reason', None) or 'See log for details; try again or run /clear.'}"
                 )
 
         item_id = f"item_{uuid.uuid4().hex[:8]}"
@@ -4284,6 +4342,7 @@ class RuntimeThreadManager:
             "default_model": thread.model,
             "mode": (thread.mode or "agent").strip() or "agent",
             "task_data_dir": self.manager_cfg.task_data_dir,
+            "subagent_session_id": thread.id,
             "start_mcp": False,
             "mcp_manager": shared_mcp,
             "approval_handler": approval_handler,
@@ -4344,6 +4403,25 @@ class RuntimeThreadManager:
     def _sync_engine_session(self, engine: Engine, thread: ThreadRecord) -> None:
         """Hydrate Engine.session_messages from durable turn items."""
         messages = reconstruct_messages_from_turns(self.store, thread.id)
+        if messages and thread.source_share_id:
+            import json
+
+            from deepseek_tui.protocol.messages import Message, MessageOrigin, Role, TextBlock
+
+            messages.append(
+                Message(
+                    role=Role.USER,
+                    origin=MessageOrigin.SYSTEM_REMINDER,
+                    content=[TextBlock(text=(
+                        "This conversation was restored from a shared snapshot on another device. "
+                        f"The current workspace is {json.dumps(thread.workspace)}. "
+                        f"The historical workspace was {json.dumps(thread.source_workspace)}. "
+                        "Use the current workspace for new operations. Historical tool results "
+                        "describe the source device; verify current files before editing. "
+                        "Processes, pending approvals and background tasks were not transferred."
+                    ))],
+                )
+            )
         if messages:
             engine.sync_session(messages, model=thread.model)
 

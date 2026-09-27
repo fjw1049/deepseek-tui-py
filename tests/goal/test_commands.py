@@ -11,6 +11,17 @@ def test_status_and_controls() -> None:
     assert parse_goal_command("pause").kind == "pause"
     assert parse_goal_command("resume").kind == "resume"
     assert parse_goal_command("cancel").kind == "cancel"
+    assert parse_goal_command("reopen").kind == "reopen"
+
+
+def test_budget_command() -> None:
+    command = parse_goal_command("budget tokens 2000 turns 5 seconds 60")
+    assert command.kind == "budget"
+    assert command.token_budget == 2000
+    assert command.turn_budget == 5
+    assert command.wall_clock_budget_ms == 60000
+    for text in ("budget", "budget tokens", "budget tokens 0", "budget turns nope"):
+        assert parse_goal_command(text).kind == "error"
 
 
 def test_create_and_replace() -> None:

@@ -1,0 +1,35 @@
+{
+  "date": "2026-09-27",
+  "scope": "Goal 局部优化、状态/媒体审核，非全仓发布验收",
+  "offline": true,
+  "pytest": {
+    "command": "audit_home=$(mktemp -d /tmp/goal-audit-final.XXXXXX)\nDEEPSEEK_HOME=\"$audit_home\" CLAUDE_PLUGINS_DIR=\"$audit_home/plugins\" .venv/bin/python -m pytest tests/goal tests/engine tests/test_state_persistence.py tests/test_file_context.py tests/test_paste_file.py tests/test_multimodal_pipeline.py tests/test_audit_regressions.py tests/contract/test_compact_thread.py tests/contract/test_session_hydration.py -q --tb=short",
+    "passed": 408,
+    "skipped": 0,
+    "deselected": 0,
+    "duration_seconds": 6.29,
+    "new_goal_cases_included": 16
+  },
+  "checks": {
+    "compileall": "Goal 与 Engine orchestrator 通过",
+    "ruff_F": "Goal、相关 Engine 文件、新增测试和探针通过",
+    "diff_check": "本轮相关路径通过"
+  },
+  "benchmarks": {
+    "script": "goal_compare.py",
+    "results": "goal-compare-results.json",
+    "interpretation": "8MiB 合成文件集，10 组交替；对照为在真实当前控制入口前后补两次扫描，不是旧提交全引擎重放"
+  },
+  "state_probe": {
+    "script": "state_probe.py",
+    "results": "state-probe-results.json",
+    "interpretation": "当前缺陷取证，不是已修复；全部写入临时目录，假密钥与合成图片"
+  },
+  "limits": [
+    "G01 仅局部拒绝明显弱证据并记录输出事实，不等于通用需求语义验收",
+    "G08 三轮规则仍是模型判断指导",
+    "证据索引超限会暂停且不能继续/完成，需检查历史并替换目标",
+    "队列恢复不保证外部工具副作用恰好一次",
+    "第八篇仅审核，没有修改状态/媒体生产代码"
+  ]
+}

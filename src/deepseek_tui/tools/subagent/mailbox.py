@@ -7,7 +7,8 @@ consistent ordering even with multiple producers.
 
 from __future__ import annotations
 
-import asyncio
+from collections import deque
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any
@@ -180,9 +181,10 @@ class Mailbox:
     """
 
     def __init__(self) -> None:
-        self._queue: asyncio.Queue[MailboxEnvelope] = asyncio.Queue(
-            maxsize=MAILBOX_MAX_ENVELOPES
-        )
+        self._queue: deque[MailboxEnvelope] = deque()
+        self.snapshot_provider: Callable[[], list[MailboxMessage]] | None = None
+        self.dropped_events = 0
+        self._resync = False
         self._seq = 0
         self._closed = False
 
@@ -195,15 +197,21 @@ class Mailbox:
             return False
         self._seq += 1
         envelope = MailboxEnvelope(seq=self._seq, message=message)
-        try:
-            self._queue.put_nowait(envelope)
-        except asyncio.QueueFull:
-            # Drop oldest progress so lifecycle events can still land.
-            try:
-                self._queue.get_nowait()
-                self._queue.put_nowait(envelope)
-            except asyncio.QueueEmpty:
+        if len(self._queue) >= MAILBOX_MAX_ENVELOPES:
+            disposable = {
+                MailboxMessageKind.PROGRESS, MailboxMessageKind.TOOL_CALL_STARTED,
+                MailboxMessageKind.TOOL_CALL_COMPLETED,
+            }
+            victim = next((item for item in self._queue if item.message.kind in disposable), None)
+            self.dropped_events += 1
+            if victim is not None:
+                self._queue.remove(victim)
+            elif message.kind in disposable:
                 return False
+            else:
+                self._queue.popleft()
+                self._resync = True
+        self._queue.append(envelope)
         return True
 
     def close(self) -> None:
@@ -211,16 +219,18 @@ class Mailbox:
         self._closed = True
 
     def try_recv(self) -> MailboxEnvelope | None:
-        try:
-            return self._queue.get_nowait()
-        except asyncio.QueueEmpty:
-            return None
+        return self._queue.popleft() if self._queue else None
 
     async def drain_available(self) -> list[MailboxEnvelope]:
         """Non-blocking drain of everything already enqueued."""
-        out: list[MailboxEnvelope] = []
-        while True:
-            envelope = self.try_recv()
-            if envelope is None:
-                return out
-            out.append(envelope)
+        out = list(self._queue)
+        self._queue.clear()
+        if self._resync and self.snapshot_provider is not None:
+            self._resync = False
+            for message in self.snapshot_provider():
+                self._seq += 1
+                out.append(MailboxEnvelope(self._seq, message))
+        return out
+
+    def needs_resync(self) -> bool:
+        return self._resync

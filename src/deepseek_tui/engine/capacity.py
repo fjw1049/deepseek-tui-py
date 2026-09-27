@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from deepseek_tui.client.base import LLMClient
-from deepseek_tui.protocol.messages import Message
+from deepseek_tui.protocol.messages import Message, MessageRequest
 
 logger = logging.getLogger(__name__)
 
@@ -133,15 +133,14 @@ class CompactionResult:
     removed_messages: list[Message] = field(default_factory=list)
     retries_used: int = 0
     success: bool = False
+    failure_reason: str | None = None
 
 
 def _summary_input_limits_for_model(model: str) -> SummaryInputLimits:
     """Get summary input limits based on model context window."""
-    # Simplified: assume deepseek models have large context
-    is_large_context = "reasoner" in model or model in [
-        "deepseek-chat",
-        "deepseek-v4-pro",
-    ]
+    from deepseek_tui.config.providers import context_window_for_model
+
+    is_large_context = context_window_for_model(model) >= LARGE_CONTEXT_WINDOW_TOKENS
 
     if is_large_context:
         return SummaryInputLimits(
@@ -336,7 +335,26 @@ def plan_compaction(
     for i in range(start, len(messages)):
         plan.pinned_indices.add(i)
 
-    plan.pinned_indices.update(pinned_indices)
+    plan.pinned_indices.update(i for i in pinned_indices if 0 <= i < len(messages))
+
+    # Pin complete tool exchanges, including all siblings in one assistant row.
+    from deepseek_tui.protocol.messages import ToolResultBlock, ToolUseBlock
+
+    owners = {block.id: i for i, message in enumerate(messages)
+              for block in message.content if isinstance(block, ToolUseBlock)}
+    links: dict[int, set[int]] = {}
+    for i, message in enumerate(messages):
+        for block in message.content:
+            if isinstance(block, ToolResultBlock) and block.tool_use_id in owners:
+                owner = owners[block.tool_use_id]
+                links.setdefault(i, set()).add(owner)
+                links.setdefault(owner, set()).add(i)
+    pending = list(plan.pinned_indices)
+    while pending:
+        for linked in links.get(pending.pop(), ()):
+            if linked not in plan.pinned_indices:
+                plan.pinned_indices.add(linked)
+                pending.append(linked)
 
     for i, _ in enumerate(messages):
         if i not in plan.pinned_indices:
@@ -392,6 +410,24 @@ def should_compact(
     return False
 
 
+class CompactionBudgetError(ValueError):
+    """A deterministic capacity failure; retrying the same request cannot help."""
+
+
+def validate_summary_request_budget(request: MessageRequest) -> None:
+    from deepseek_tui.config.providers import context_window_for_model
+    from deepseek_tui.engine.context_pressure import estimate_request_tokens
+
+    total = estimate_request_tokens(
+        request.messages, system_prompt=request.system_prompt, tools=request.tools
+    ) + (request.max_tokens or 0)
+    window = context_window_for_model(request.model)
+    if total > window:
+        raise CompactionBudgetError(
+            f"Summary request exceeds estimated context budget: {total} > {window}"
+        )
+
+
 async def compact_messages_safe(
     client: LLMClient,
     messages: list[Message],
@@ -401,6 +437,10 @@ async def compact_messages_safe(
     working_set_paths: list[str] | None = None,
     model_override: str | None = None,
     previous_summary: str | None = None,
+    target_model: str | None = None,
+    system_prompt: str | None = None,
+    tools: list[dict[str, Any]] | None = None,
+    output_reserve: int = 0,
 ) -> CompactionResult:
     """Compact messages with retry and backoff for transient errors.
 
@@ -457,14 +497,18 @@ async def compact_messages_safe(
     )
 
     if not plan.summarize_indices:
-        return CompactionResult(messages=messages)
+        return CompactionResult(
+            messages=messages, failure_reason="All messages are retained by recent-history or pin rules"
+        )
 
     messages_to_summarize = [
         work_messages[i] for i in plan.summarize_indices if i < len(work_messages)
     ]
 
     if len(messages_to_summarize) < MIN_SUMMARIZE_MESSAGES:
-        return CompactionResult(messages=messages)
+        return CompactionResult(
+            messages=messages, failure_reason="Too few unpinned messages to summarize safely"
+        )
 
     effective_model = model_override or config.model or "deepseek-chat"
 
@@ -506,6 +550,20 @@ async def compact_messages_safe(
             )
 
             compacted[0].image_references = list(references.values())
+            from deepseek_tui.config.providers import context_window_for_model
+            from deepseek_tui.engine.context_pressure import estimate_request_tokens
+
+            before = estimate_request_tokens(messages, system_prompt=system_prompt, tools=tools)
+            after = estimate_request_tokens(compacted, system_prompt=system_prompt, tools=tools)
+            if after >= before:
+                raise CompactionBudgetError(
+                    f"Compaction does not reduce estimated input: {before} -> {after}"
+                )
+            window = context_window_for_model(target_model or effective_model)
+            if after + max(0, output_reserve) > window:
+                raise CompactionBudgetError(
+                    f"Retained context exceeds estimated budget: {after} + {output_reserve} > {window}"
+                )
             return CompactionResult(
                 messages=compacted,
                 summary_prompt=bridge_text,
@@ -514,6 +572,9 @@ async def compact_messages_safe(
                 success=True,
             )
 
+        except CompactionBudgetError as exc:
+            logger.warning("compact_budget_rejected: %s", exc)
+            return CompactionResult(messages=messages, failure_reason=str(exc), retries_used=attempt)
         except Exception as exc:
             logger.warning(
                 "compact_attempt_failed attempt=%d/%d error=%s",
@@ -583,7 +644,6 @@ async def _create_summary(
         conversation_text = f"{head}\n\n[... {omitted} characters omitted ...]\n\n{tail}"
 
     from deepseek_tui.engine.prompts import COMPACT_TEMPLATE
-    from deepseek_tui.protocol.messages import MessageRequest
 
     handoff_contract = COMPACT_TEMPLATE().strip()
     system_prompt = (
@@ -621,10 +681,17 @@ async def _create_summary(
         system_prompt=system_prompt,
     )
 
+    validate_summary_request_budget(request)
     response = client.stream_chat_completion(request)
+
+    from deepseek_tui.protocol.responses import StreamDone, StreamError
 
     summary = ""
     async for event in response:
+        if isinstance(event, StreamError):
+            raise ValueError(f"Compaction stream failed: {event.message}")
+        if isinstance(event, StreamDone) and event.truncated:
+            raise ValueError("Compaction stream was truncated")
         if hasattr(event, "text"):
             summary += event.text
 
@@ -632,15 +699,21 @@ async def _create_summary(
 
 
 
-def _turn_index_from_end(messages: list[Message], idx: int) -> int:
-    """Approximate turn age: how many user turns sit after *idx*."""
-    from deepseek_tui.protocol.messages import Role
+def _turn_ages(messages: list[Message]) -> list[int]:
+    """Count real user turns once, rather than scanning a suffix per result."""
+    from deepseek_tui.engine.context_pressure import is_synthetic_user_message
 
+    ages = [0] * len(messages)
     turns = 0
-    for i in range(idx + 1, len(messages)):
-        if messages[i].role == Role.USER:
+    for i in range(len(messages) - 1, -1, -1):
+        ages[i] = turns
+        if not is_synthetic_user_message(messages[i]):
             turns += 1
-    return turns
+    return ages
+
+
+def _turn_index_from_end(messages: list[Message], idx: int) -> int:
+    return _turn_ages(messages)[idx]
 
 
 def _pending_hard_clear_reclaim(
@@ -658,10 +731,11 @@ def _pending_hard_clear_reclaim(
 
     min_age = max(cfg.keep_last_n_turns, cfg.hard_clear_age_turns)
     reclaim = 0
+    ages = _turn_ages(messages)
     for i, msg in enumerate(messages):
         if i >= boundary or msg.role != Role.TOOL:
             continue
-        if _turn_index_from_end(messages, i) < min_age:
+        if ages[i] < min_age:
             continue
         for block in msg.content:
             if not isinstance(block, ToolResultBlock):
@@ -706,10 +780,11 @@ def prune_old_tool_results(
                 cfg.hard_clear_min_reclaim,
             )
     changed = 0
+    ages = _turn_ages(messages)
     for i, msg in enumerate(messages):
         if i >= boundary or msg.role != Role.TOOL:
             continue
-        age = _turn_index_from_end(messages, i)
+        age = ages[i]
         if age < cfg.keep_last_n_turns:
             continue
         new_blocks = []

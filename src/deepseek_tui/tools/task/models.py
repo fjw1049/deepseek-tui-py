@@ -257,6 +257,7 @@ class NewTaskRequest:
     auto_approve: bool | None = None
     thread_id: str | None = None
     config: Config | None = None
+    idempotency_key: str | None = None
 
 
 @dataclass(slots=True)

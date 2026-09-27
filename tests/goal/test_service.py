@@ -65,13 +65,13 @@ def test_interrupt_pauses() -> None:
     assert service.snapshot().status is GoalStatus.PAUSED
 
 
-def test_complete_clears_and_promotes_queue() -> None:
+def test_complete_is_retained_and_promotes_queue(complete_goal) -> None:
     service = GoalService()
     service.create("first")
     service.enqueue("second")
-    snapshot, promoted = service.mark_complete(reason="done")
+    snapshot, promoted = complete_goal(service)
     assert snapshot.status is GoalStatus.COMPLETE
-    assert service.snapshot() is None
+    assert service.snapshot().status is GoalStatus.COMPLETE
     assert promoted is not None
     assert promoted.objective == "second"
     assert service.consume_promoted() is promoted
@@ -103,7 +103,7 @@ def test_turn_budget_blocks() -> None:
     decision = service.on_turn_ended()
     blocked = service.snapshot()
     assert blocked is not None
-    assert blocked.status is GoalStatus.BLOCKED
+    assert blocked.status is GoalStatus.BUDGET_LIMITED
     assert not decision.should_continue
     assert not service.peek_continuation().should_continue
 
@@ -118,7 +118,7 @@ def test_turn_budget_does_not_stop_the_allowed_turn_mid_round() -> None:
     assert service.snapshot().status is GoalStatus.ACTIVE
     service.on_turn_ended()
     assert service.snapshot() is not None
-    assert service.snapshot().status is GoalStatus.BLOCKED
+    assert service.snapshot().status is GoalStatus.BUDGET_LIMITED
 
 
 def test_token_budget_blocks() -> None:
@@ -127,7 +127,7 @@ def test_token_budget_blocks() -> None:
     service.set_budget(token_budget=10)
     blocked = service.account_tokens(10)
     assert blocked is not None
-    assert blocked.status is GoalStatus.BLOCKED
+    assert blocked.status is GoalStatus.BUDGET_LIMITED
 
 
 def test_wall_clock_budget_blocks() -> None:
@@ -136,7 +136,7 @@ def test_wall_clock_budget_blocks() -> None:
     assert service._state is not None
     service._state = replace(service._state, live_started_mono=time.monotonic() - 2)
     blocked = service.set_budget(wall_clock_budget_ms=1000)
-    assert blocked.status is GoalStatus.BLOCKED
+    assert blocked.status is GoalStatus.BUDGET_LIMITED
 
 
 def test_restore_pauses_active_goal() -> None:
@@ -170,9 +170,9 @@ def test_resume_after_budget_block_can_reblock() -> None:
     service.on_turn_started()
     service.on_turn_ended()
     assert service.snapshot() is not None
-    assert service.snapshot().status is GoalStatus.BLOCKED
+    assert service.snapshot().status is GoalStatus.BUDGET_LIMITED
     snapshot, decision = service.resume()
-    assert snapshot.status is GoalStatus.BLOCKED
+    assert snapshot.status is GoalStatus.BUDGET_LIMITED
     assert not decision.should_continue
 
 
@@ -187,11 +187,11 @@ def test_mode_change_pauses_instead_of_continuing() -> None:
     assert snapshot.terminal_reason == "Paused after mode changed to plan"
 
 
-def test_cancelled_completion_does_not_consume_queued_goal() -> None:
+def test_cancelled_completion_does_not_consume_queued_goal(complete_goal) -> None:
     service = GoalService()
     service.create("first")
     service.enqueue("second")
-    _completed, promoted = service.mark_complete()
+    _completed, promoted = complete_goal(service)
     assert promoted is not None
     service.discard_promoted()
     assert service.consume_promoted() is None

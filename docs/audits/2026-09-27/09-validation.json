@@ -1,0 +1,50 @@
+{
+  "date": "2026-09-27",
+  "environment": "Existing .venv; expanded suites use isolated temporary DEEPSEEK_HOME and CLAUDE_PLUGINS_DIR",
+  "new_tests": {
+    "command": ".venv/bin/pytest -q tests/test_client_audit_fixes.py",
+    "result": "38 passed in 0.06s"
+  },
+  "expanded_suite": {
+    "command": ".venv/bin/pytest -q tests/test_client_audit_fixes.py tests/test_multi_provider.py tests/test_stream_done_single.py tests/test_rate_limit.py tests/test_multimodal_pipeline.py tests/test_client_extra_sanitization.py tests/test_thinking_tool_choice_guard.py tests/test_usage_token_semantics.py tests/test_usage_ledger.py tests/test_legacy_tool_name_forwarding.py tests/test_state_audit_fixes.py tests/test_tool_pairing_projection.py tests/test_truncated_round.py tests/engine tests/goal",
+    "result": "1 failed, 491 passed in 5.25s",
+    "exit_code": 1
+  },
+  "known_failure": {
+    "test": "tests/test_usage_token_semantics.py::test_context_breakdown_uses_full_prompt_instead_of_uncached_remainder",
+    "assertion": "naive[\"total\"] == 204 at line 133",
+    "status": "Existing failure independently reproduced with before-turn client sources; test and budget implementation left unchanged",
+    "baseline_method": "Copy src to a temporary directory, replace all client/*.py with git HEAD contents, apply only client patches from /tmp/deepseek-before-client-fixes.patch saved before this turn; pytest -o pythonpath=<temporary copy>/src runs the same failing test",
+    "baseline_result": "1 failed in 0.25s; observed total 7894 vs expected 204 (estimate varies with source/workspace context)"
+  },
+  "mcp_baseline": {
+    "command": ".venv/bin/pytest -q tests/test_mcp_streamable_http.py tests/test_mcp_schema_hints.py tests/test_mcp_tool_name_mapping.py tests/test_mcp_e2e_real.py tests/test_mcp_on_focus.py tests/test_mcp_resources_graceful.py tests/test_mcp_server_status.py tests/test_mcp_sse_origin.py tests/test_mcp_preload.py tests/test_mcp_engine_integration.py",
+    "result": "77 passed in 0.43s",
+    "scope": "Mock HTTP/SSE plus local stdio fixture; no user MCP configuration"
+  },
+  "mcp_probe": {
+    "command": "PYTHONPATH=src .venv/bin/python docs/audits/2026-09-27/mcp_probe.py",
+    "result": "mcp-probe-results.json",
+    "scope": "Eight audit findings; no MCP production code changes"
+  },
+  "static_checks": [
+    {
+      "command": ".venv/bin/ruff check --select F src/deepseek_tui/client tests/test_client_audit_fixes.py docs/audits/2026-09-27/mcp_probe.py",
+      "result": "passed"
+    },
+    {
+      "command": ".venv/bin/python -m compileall -q src/deepseek_tui/client tests/test_client_audit_fixes.py docs/audits/2026-09-27/mcp_probe.py",
+      "result": "passed"
+    },
+    {
+      "command": "git diff --check",
+      "result": "passed"
+    }
+  ],
+  "limitations": [
+    "No live model calls or user MCP connections",
+    "No full-repository or desktop build pass claim",
+    "L05 exact-name matching only; provider-aware pricing remains outside this repair",
+    "Historical client_probe.py and results retained as pre-fix evidence"
+  ]
+}

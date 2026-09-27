@@ -187,8 +187,9 @@ async def test_registry_reads_previous_schema(tmp_path, monkeypatch):
     finally:
         await first.shutdown()
     state_path = tmp_path / "registry.json"
-    state = json.loads(state_path.read_text(encoding="utf-8"))
-    state["schema_version"] = 1
+    record_path = state_path.with_suffix(".agents") / f"{spawned.agent_id}.json"
+    state = {"schema_version": 1, "agents": [json.loads(record_path.read_text(encoding="utf-8"))]}
+    record_path.unlink()  # Exercise the legacy-only migration path.
     for raw in state["agents"]:
         for key in (
             "system_prompt", "output_schema", "background",

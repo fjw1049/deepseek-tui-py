@@ -1,0 +1,45 @@
+{
+  "date": "2026-09-27",
+  "scope": "audit 10 M01-M08 repair; audit 11 read-only characterization",
+  "new_mcp_regression_cases": 29,
+  "related_suite": {
+    "passed": 517,
+    "failed": 0,
+    "command": "DEEPSEEK_HOME=/tmp/deepseek-audit11-tests3 CLAUDE_PLUGINS_DIR=/tmp/deepseek-audit11-claude .venv/bin/pytest -q tests/test_mcp*.py tests/test_plugin*.py tests/test_skill_frontmatter.py tests/test_bundled_skills.py tests/contract/test_lsp_diagnostics.py tests/contract/test_skills.py tests/engine tests/parity/phase_d/test_mcp_hooks_p1.py -m 'not live and not live_mcp'"
+  },
+  "first_expanded_run": {
+    "passed": 525,
+    "failed": 3,
+    "failures": [
+      "test_reload_if_config_changed: old internal stop_all expectation updated to observable resource retirement",
+      "test_handle_tool_denies_mcp_tool_requiring_approval: shared Task scheduler lock",
+      "test_handle_tool_denies_builtin_requiring_approval: shared Task scheduler lock"
+    ]
+  },
+  "isolated_p0_reruns": {
+    "passed": 2,
+    "failed": 0,
+    "note": "one test per process, separate DEEPSEEK_HOME; not counted in 517"
+  },
+  "checks": [
+    "ruff check --select F on MCP sources and changed tests",
+    "compileall MCP and new regression module",
+    "git diff --check on changed tracked source/test paths"
+  ],
+  "full_project_suite_run": false,
+  "live_network_tests_run": false,
+  "known_unresolved_test": "Prior audit 09 test_usage_token_semantics.py::test_context_breakdown_uses_full_prompt_instead_of_uncached_remainder; not run or fixed this turn",
+  "next_audit": {
+    "report": "11-plugins-skills-lsp.md",
+    "probe": "plugins_probe.py",
+    "results": "plugins-probe-results.json",
+    "production_fixes": false
+  },
+  "limitations": [
+    "configuration RMW lock is process-local",
+    "mtime-based reload; malformed config retains last valid configuration",
+    "single-manager name collision handling; composite collision remains P09 in audit 11",
+    "remote cancellation/rollback is not implied",
+    "legacy SSE and server-initiated RPC not expanded"
+  ]
+}

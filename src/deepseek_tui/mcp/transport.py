@@ -21,8 +21,10 @@ import asyncio
 import json
 import logging
 import os
+import re
 import shutil
 from abc import ABC, abstractmethod
+from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
 
@@ -32,6 +34,9 @@ from httpx_sse import aconnect_sse
 from deepseek_tui.policy.env_filter import build_child_env
 
 logger = logging.getLogger(__name__)
+
+# Large enough for a 32 MiB image encoded as base64, still bounded per frame.
+MAX_MCP_MESSAGE_BYTES = 64 * 1024 * 1024
 
 # GUI-launched runtimes often inherit a stripped PATH (no Homebrew / nvm).
 # MCP stdio commands like ``npx`` / ``uvx`` then fail in <1s with ENOENT.
@@ -149,6 +154,7 @@ class StdioTransport(McpTransport):
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 env=merged_env,
+                limit=MAX_MCP_MESSAGE_BYTES,
             )
         except FileNotFoundError as exc:
             raise McpTransportError(
@@ -176,18 +182,20 @@ class StdioTransport(McpTransport):
         process = self._process
         if process is None or process.stderr is None:
             return
+        pending = ""
         try:
             while True:
-                raw = await process.stderr.readline()
+                raw = await process.stderr.read(4096)
                 if not raw:
+                    if pending:
+                        self._note_stderr_line(pending)
                     break
-                text = raw.decode("utf-8", errors="replace")
-                self._note_stderr_line(text)
-                logger.debug(
-                    "mcp_stderr command=%s line=%s",
-                    self.command,
-                    text.rstrip(),
-                )
+                parts = (pending + raw.decode("utf-8", errors="replace")).split("\n")
+                pending = parts.pop()[-_MCP_STDERR_LINE_MAX:]
+                for text in parts:
+                    self._note_stderr_line(text[-_MCP_STDERR_LINE_MAX:])
+                    logger.debug("mcp_stderr command=%s line=%s", self.command,
+                                 text[:_MCP_STDERR_LINE_MAX])
         except (asyncio.CancelledError, Exception):  # noqa: BLE001
             pass
 
@@ -222,9 +230,14 @@ class StdioTransport(McpTransport):
         try:
             self._process.terminate()
             await asyncio.wait_for(self._process.wait(), timeout=5.0)
-        except (asyncio.TimeoutError, ProcessLookupError):
-            if self._process is not None:
+        except asyncio.TimeoutError:
+            try:
                 self._process.kill()
+            except ProcessLookupError:
+                pass
+            await self._process.wait()
+        except ProcessLookupError:
+            pass
         self._process = None
 
     async def send(self, message: dict[str, Any]) -> None:
@@ -238,7 +251,12 @@ class StdioTransport(McpTransport):
         if self._process is None or self._process.stdout is None:
             raise McpTransportError("stdio transport not started")
         while True:
-            raw = await self._process.stdout.readline()
+            try:
+                raw = await self._process.stdout.readline()
+            except ValueError as exc:
+                raise McpTransportError("MCP stdio frame exceeds size limit") from exc
+            if len(raw) > MAX_MCP_MESSAGE_BYTES:
+                raise McpTransportError("MCP stdio frame exceeds size limit")
             if not raw:
                 if self._process.returncode is None:
                     try:
@@ -451,7 +469,7 @@ class StreamableHttpTransport(McpTransport):
         self.connect_timeout = connect_timeout
         self._owns_client = client is None
         self._client = client or httpx.AsyncClient(timeout=httpx.Timeout(connect_timeout))
-        self._queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+        self._queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=128)
         self._session_id: str | None = None
         self._started = False
 
@@ -476,45 +494,78 @@ class StreamableHttpTransport(McpTransport):
     async def send(self, message: dict[str, Any]) -> None:
         if not self._started:
             raise McpTransportError("streamable HTTP transport not started")
-        response = await self._client.post(
-            self.url, json=message, headers=self._request_headers()
-        )
-        session = response.headers.get("mcp-session-id") or response.headers.get(
-            "Mcp-Session-Id"
-        )
-        if session:
-            self._session_id = session
-        # Notifications / acks may return 202 with an empty body.
-        if response.status_code == 202 or not response.content:
-            if response.status_code >= 300:
-                raise McpTransportError(
-                    f"Streamable HTTP rejected: {response.status_code} "
-                    f"{response.text[:200]}"
-                )
-            return
-        if response.status_code >= 300:
-            raise McpTransportError(
-                f"Streamable HTTP rejected: {response.status_code} "
-                f"{response.text[:200]}"
-            )
-        content_type = (response.headers.get("content-type") or "").lower()
-        if "text/event-stream" in content_type:
-            for item in _iter_sse_json_objects(response.text):
-                await self._queue.put(item)
-            return
         try:
-            data = response.json()
-        except Exception as exc:  # noqa: BLE001
-            raise McpTransportError(
-                f"Streamable HTTP non-JSON body from {_mask_url(self.url)}"
-            ) from exc
-        if isinstance(data, dict):
-            await self._queue.put(data)
+            async with self._client.stream(
+                "POST", self.url, json=message, headers=self._request_headers(),
+                follow_redirects=False,
+            ) as response:
+                if response.status_code >= 300:
+                    raise McpTransportError(f"Streamable HTTP rejected: {response.status_code}")
+                session = response.headers.get("mcp-session-id")
+                if session:
+                    self._session_id = session
+                if response.status_code == 202:
+                    return
+                content_type = response.headers.get("content-type", "").lower()
+                if "text/event-stream" in content_type:
+                    async for item in _stream_sse_json_objects(response):
+                        self._queue.put_nowait(item)
+                        if ("id" in message and item.get("id") == message["id"]
+                                and ("result" in item or "error" in item)):
+                            # The RPC owns this response. Do not wait for a long-lived body EOF.
+                            return
+                    if "id" in message:
+                        raise McpTransportError("MCP HTTP stream ended without a matching response")
+                    return
+                body = bytearray()
+                async for chunk in response.aiter_bytes():
+                    body.extend(chunk)
+                    if len(body) > MAX_MCP_MESSAGE_BYTES:
+                        raise McpTransportError("MCP HTTP body exceeds size limit")
+                if not body:
+                    return
+                data = json.loads(body)
+                if not isinstance(data, dict):
+                    raise McpTransportError("MCP HTTP response must be an object")
+                self._queue.put_nowait(data)
+        except (httpx.HTTPError, ValueError, asyncio.QueueFull) as exc:
+            raise McpTransportError("MCP HTTP response failed or exceeded queue capacity") from exc
 
     async def recv(self) -> dict[str, Any]:
         if not self._started:
             raise McpTransportError("streamable HTTP transport not started")
         return await self._queue.get()
+
+
+async def _stream_sse_json_objects(response: httpx.Response) -> AsyncIterator[dict[str, Any]]:
+    """Incremental, bounded SSE framing; support LF, CRLF and CR line endings."""
+    line = bytearray()
+    frame = bytearray()
+    after_cr = False
+    async for chunk in response.aiter_bytes():
+        if not chunk:
+            continue
+        if after_cr and chunk.startswith(b"\n"):
+            chunk = chunk[1:]
+        after_cr = chunk.endswith(b"\r")
+        start = 0
+        for separator in re.finditer(rb"\r\n|\r|\n", chunk):
+            line.extend(chunk[start:separator.start()])
+            start = separator.end()
+            if len(line) + len(frame) + 1 > MAX_MCP_MESSAGE_BYTES:
+                raise McpTransportError("MCP SSE frame exceeds size limit")
+            if line:
+                frame.extend(line)
+                frame.append(10)
+                line.clear()
+            elif frame:
+                for item in _iter_sse_json_objects(frame.decode("utf-8")):
+                    yield item
+                frame.clear()
+        line.extend(chunk[start:])
+        if len(line) + len(frame) > MAX_MCP_MESSAGE_BYTES:
+            raise McpTransportError("MCP SSE frame exceeds size limit")
+    # An unterminated event is incomplete; it must not satisfy the RPC.
 
 
 def _iter_sse_json_objects(body: str) -> list[dict[str, Any]]:

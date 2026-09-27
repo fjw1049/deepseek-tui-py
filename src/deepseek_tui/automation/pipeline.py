@@ -162,7 +162,9 @@ def _sink_for_mode(
         return _WecomSink()
     if key in ("notify", "proactive"):
         return _LogSink(thread_manager)
-    return _SilentSink()
+    if key in ("silent", "none", ""):
+        return _SilentSink()
+    raise ValueError(f"Unknown delivery mode: {mode}")
 
 
 def trigger_prompt_prefix(trigger_id: str) -> str:
@@ -177,14 +179,14 @@ async def build_trigger_prompt(
 ) -> str:
     tid = trigger_id or uuid.uuid4().hex[:12]
     digest_cfg = DigestConfig.from_mapping(digest)
-    block = await build_digest_block(digest_cfg)
+    block = await asyncio.wait_for(build_digest_block(digest_cfg), timeout=30)
     return trigger_prompt_prefix(tid) + block + prompt.strip()
 
 
 async def build_final_prompt(automation: AutomationRecord) -> str:
     digest = DigestConfig.from_mapping(automation.digest)
     prefix = cron_execution_prefix(automation.id, automation.name)
-    block = await build_digest_block(digest)
+    block = await asyncio.wait_for(build_digest_block(digest), timeout=30)
     return prefix + block + automation.prompt.strip()
 
 
@@ -209,6 +211,7 @@ async def enqueue_automation_task(
 
     workspace = automation.cwds[0] if automation.cwds else None
     new_task = NewTaskRequest(
+        idempotency_key=f"automation:{automation.id}:{run.id}",
         prompt=await build_final_prompt(automation),
         model=None,
         workspace=str(workspace) if workspace else None,
@@ -219,8 +222,8 @@ async def enqueue_automation_task(
     )
     try:
         task = await task_manager.add_task(new_task)
-        run.status = AutomationRunStatus.RUNNING
-        run.started_at = _utc_now_iso()
+        run.status = AutomationRunStatus.QUEUED
+        run.started_at = getattr(task, "started_at", None)
         run.task_id = task.id
         run.thread_id = getattr(task, "thread_id", None)
         run.turn_id = getattr(task, "turn_id", None)
@@ -273,7 +276,7 @@ async def try_deliver_completed_run(
                     run.task_id,
                 )
                 return False
-            if task.status is not TaskStatus.FAILED:
+            if task.status not in (TaskStatus.FAILED, TaskStatus.TIMED_OUT):
                 return False
         failure_error = run.error or (task.error if task is not None else None)
         if _skip_internal_failure_delivery(
@@ -313,12 +316,12 @@ async def try_deliver_completed_run(
 
     sink = _sink_for_mode(delivery.mode, thread_manager=thread_manager)
     try:
-        await sink.deliver(
+        await asyncio.wait_for(sink.deliver(
             config=delivery,
             automation_name=automation.name,
             automation_id=automation.id,
             summary=summary,
-        )
+        ), timeout=30)
     except Exception as exc:
         logger.warning(
             "[automation][delivery] failed automation=%s mode=%s: %s",
@@ -542,21 +545,23 @@ async def wait_thread_turn_text(
     mgr: RuntimeThreadManager,
     *,
     thread_id: str,
+    turn_id: str | None = None,
     timeout_s: float = 300.0,
     poll_s: float = 1.0,
 ) -> str:
     """Poll until the active turn finishes; return last agent message text."""
     from deepseek_tui.server.threads import RuntimeTurnStatus
 
-    deadline = asyncio.get_event_loop().time() + timeout_s
-    while asyncio.get_event_loop().time() < deadline:
-        if not await mgr.is_thread_turn_active(thread_id):
-            break
-        await asyncio.sleep(poll_s)
-    thread = await mgr.get_thread(thread_id)
-    turn_id = thread.latest_turn_id
+    if turn_id is None:
+        turn_id = (await mgr.get_thread(thread_id)).latest_turn_id
     if not turn_id:
         return ""
+    deadline = asyncio.get_event_loop().time() + timeout_s
+    while asyncio.get_event_loop().time() < deadline:
+        turn = mgr.store.load_turn(turn_id)
+        if turn.status in (RuntimeTurnStatus.COMPLETED, RuntimeTurnStatus.FAILED, RuntimeTurnStatus.INTERRUPTED):
+            break
+        await asyncio.sleep(poll_s)
     turn = mgr.store.load_turn(turn_id)
     if turn.status not in (
         RuntimeTurnStatus.COMPLETED,
@@ -616,6 +621,7 @@ async def run_feishu_inbound_agent(
     summary = await wait_thread_turn_text(
         thread_manager,
         thread_id=thread.id,
+        turn_id=turn.id,
         timeout_s=timeout_s,
     )
     receive_id = (reply_chat_id or chat_id or sender_id).strip()

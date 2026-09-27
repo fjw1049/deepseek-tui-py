@@ -8,6 +8,9 @@ import io
 import os
 import tempfile
 import warnings
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path
 
 from PIL import Image, ImageOps, UnidentifiedImageError
@@ -81,7 +84,33 @@ def import_image_path(path: Path) -> ImageBlock:
         return import_image(stream.read(MAX_IMAGE_BYTES + 1))
 
 
+_wire_variants: ContextVar[
+    dict[tuple[str, tuple[int, int, int, int] | None, int], str] | None
+] = ContextVar("media_wire_variants", default=None)
+
+
+@contextmanager
+def media_variant_scope() -> Iterator[None]:
+    """Reuse immutable variants only within one synchronous payload build."""
+    token = _wire_variants.set({})
+    try:
+        yield
+    finally:
+        _wire_variants.reset(token)
+
+
 def image_data_url(block: ImageBlock, *, max_side: int = 2048) -> str:
+    cache = _wire_variants.get()
+    key = (block.asset_id, block.crop, max_side)
+    if cache is not None and key in cache:
+        return cache[key]
+    result = _encode_image_data_url(block, max_side=max_side)
+    if cache is not None:
+        cache[key] = result
+    return result
+
+
+def _encode_image_data_url(block: ImageBlock, *, max_side: int = 2048) -> str:
     """PNG preserves screenshot text; large photos fall back to bounded JPEG."""
     data = (user_media_dir() / block.asset_id).read_bytes()
     if hashlib.sha256(data).hexdigest() != block.asset_id:

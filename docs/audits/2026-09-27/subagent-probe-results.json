@@ -1,0 +1,33 @@
+{
+  "resume_running_vs_cap": [
+    2,
+    1
+  ],
+  "cancel_resume_race": {
+    "status": "cancelled",
+    "new_driver_alive": true
+  },
+  "resume_exhausted_budget": {
+    "new_llm_calls": 0,
+    "text": "",
+    "max_steps_reached": true
+  },
+  "shared_registry_lost_record": true,
+  "eviction": {
+    "retained": 30,
+    "first_lost": true
+  },
+  "structured_delivery": {
+    "get_result": {
+      "finding": 1
+    },
+    "list_result": null,
+    "tool_json_has_structured": false
+  },
+  "valid_json_null_rejected": true,
+  "structured_output_unmatched_calls": [
+    "skipped"
+  ],
+  "mailbox_terminal_lost": true,
+  "malformed_record_breaks_manager": true
+}

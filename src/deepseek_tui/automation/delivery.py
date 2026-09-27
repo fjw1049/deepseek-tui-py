@@ -20,21 +20,6 @@ _SKIP_DELIVERY_MARKERS = (
     "task interrupted (stale",
 )
 
-# Process narration — not for end users.
-_PROCESS_LINE = re.compile(
-    r"^\s*(?:"
-    r"我来|让我|现在我来|好的[，,]|首先|接下来|然后|"
-    r"I(?:'ll|\s+will|\s+am going to)\s|Let me\s|Now let me\s|"
-    r"I need to (?:find|check|get|ask)|"
-    r"(?:报告|消息|摘要)(?:已生成|已通过|已经).*(?:发送|推送|投递)|"
-    r"(?:Feishu|飞书|Lark).*(?:sent|发送|推送).*(?:success|成功)|"
-    r"Do NOT|Please (?:provide|tell me)|"
-    r"如果你(?:希望|想)|请问你(?:希望|想)|"
-    r"以下(?:是)?本次摘要"
-    r")",
-    re.IGNORECASE | re.MULTILINE,
-)
-
 _CRON_PREFIX = re.compile(r"^\[cron:[^\]]+\]\s*", re.MULTILINE)
 _PLAYBOOK_HEADER = re.compile(
     r"\[Cron execution playbook\][\s\S]*?(?=\n\n|\Z)",
@@ -120,38 +105,9 @@ def _strip_internal_markup(text: str) -> str:
     return out.strip()
 
 
-def _drop_process_lines(text: str) -> str:
-    kept: list[str] = []
-    for line in text.splitlines():
-        if _PROCESS_LINE.match(line):
-            continue
-        if line.strip().lower().startswith("[cron execution playbook]"):
-            continue
-        kept.append(line)
-    return "\n".join(kept).strip()
-
-
-def _pick_report_section(text: str) -> str:
-    """Prefer the last markdown-heavy block when preamble looks like narration."""
-    if not text:
-        return text
-    sections = re.split(r"\n-{3,}\n", text)
-    if len(sections) <= 1:
-        return text
-    for candidate in reversed(sections):
-        stripped = candidate.strip()
-        if not stripped:
-            continue
-        if re.search(r"(?:^|\n)(?:#+\s|\*\*|📱|TOP\s*\d|热搜|简报)", stripped, re.I):
-            return stripped
-    return sections[-1].strip() or text.strip()
-
-
 def sanitize_delivery_text(raw: str) -> str:
     """Light cleanup of agent final reply before channel send."""
     text = _strip_internal_markup(raw)
-    text = _drop_process_lines(text)
-    text = _pick_report_section(text)
     text = re.sub(r"\n{3,}", "\n\n", text).strip()
     if len(text) > _DELIVERY_MAX_CHARS:
         text = text[: _DELIVERY_MAX_CHARS - 3].rstrip() + "..."
@@ -220,6 +176,13 @@ class DeliveryConfig:
         if not raw:
             return cls()
         mode = str(raw.get("mode", "silent")).strip().lower() or "silent"
+        aliases = {"none": "silent", "mail": "email", "smtp": "email", "announce": "feishu",
+                   "wecom_webhook": "wecom", "wework": "wecom", "proactive": "notify"}
+        mode = aliases.get(mode, mode)
+        if mode not in {"silent", "email", "feishu", "wecom", "notify"}:
+            raise ValueError(f"Unknown delivery mode: {mode}")
+        if not isinstance(raw.get("best_effort", True), bool):
+            raise ValueError("delivery.best_effort must be a boolean")
         return cls(
             mode=mode,
             chat_id=_opt_str(raw.get("chat_id")),

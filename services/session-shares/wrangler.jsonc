@@ -1,0 +1,7 @@
+{
+  "name": "deepseek-session-shares",
+  "main": "worker.mjs",
+  "compatibility_date": "2026-01-01",
+  "d1_databases": [{"binding":"DB", "database_name":"session-shares", "database_id":"local-only", "migrations_dir":"drizzle"}],
+  "r2_buckets": [{"binding":"BUCKET", "bucket_name":"session-shares"}]
+}

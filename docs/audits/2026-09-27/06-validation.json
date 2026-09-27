@@ -1,0 +1,31 @@
+{
+  "date": "2026-09-27",
+  "scope": "第六篇 Engine 调度修复及上下文优化；包含工作区已有改动，非全仓验收",
+  "offline": true,
+  "pytest": {
+    "command": "audit_root=$(mktemp -d /tmp/deepseek-e06-final.XXXXXX)\nDEEPSEEK_HOME=\"$audit_root\" CLAUDE_PLUGINS_DIR=\"$audit_root/plugins\" .venv/bin/python -m pytest tests/engine tests/test_usage_ledger.py tests/test_usage_token_semantics.py tests/test_live_session_activity.py tests/test_session_activity_integration.py tests/test_workbench_usage_ledger.py tests/test_session_model_usage.py tests/test_subagent_*.py tests/test_durable_resume.py tests/test_task_stop_cleanup.py tests/test_audit_regressions.py tests/test_project_context_merge.py tests/test_context_window_defaults.py tests/test_context_meter_live.py tests/contract/test_context_breakdown.py tests/contract/test_cycle_archive_is_reachable.py tests/contract/test_cycle_briefing_fidelity.py tests/contract/test_reminder_registry.py tests/contract/test_compact_thread.py tests/contract/test_turn_approval_integration.py --deselect='tests/test_subagent_stage_a_fixes.py::test_hidden_internal_turn_carries_its_own_provenance[goal_continuation]' -q --tb=short",
+    "passed": 458,
+    "skipped": 3,
+    "deselected": 1,
+    "duration_seconds": 7.72,
+    "new_cases_included": {
+      "engine": 14,
+      "context": 16
+    },
+    "skip_reason": "三项 live API 测试未显式启用；未调用真实模型",
+    "deselect_reason": "既有 Goal 隐藏续跑契约差异：无活跃 Goal 时是否继续执行，本轮未修改 Goal 行为"
+  },
+  "checks": {
+    "compileall": "engine、tools/runtime.py、client/base.py 通过",
+    "diff_check": "本轮相关路径通过",
+    "ruff": "主要修改文件 F 类检查通过；context.py 原有 re 未使用/重复导入未清理，非全仓 lint 通过"
+  },
+  "benchmarks": {
+    "parallel_results": "engine-compare-after-results.json",
+    "pruning_before": "context-prune-before.json",
+    "pruning_after": "context-prune-after.json",
+    "pruning_output_hashes_equal": true,
+    "limitations": "离线固定负载；并行指标是结果可见延迟，非吞吐。裁剪哈希比较使用普通用户消息，合成提醒的语义变化由回归测试单独验证。"
+  },
+  "historical_probes": "engine_probe.py、context_probe.py 及 before 结果保留为修复前反例；当前正确性由正向 pytest 验证。"
+}

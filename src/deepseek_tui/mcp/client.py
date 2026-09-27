@@ -14,6 +14,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
+import httpx
+
 from deepseek_tui.mcp.config import McpServerConfig
 from deepseek_tui.mcp.transport import (
     McpTransport,
@@ -218,8 +220,7 @@ class McpClient:
     # --- high-level RPC methods ------------------------------------------
 
     async def list_tools(self) -> list[McpToolDescriptor]:
-        result = await self._send_request("tools/list", {})
-        tools_raw = result.get("tools", [])
+        tools_raw = await self._list_pages("tools/list", "tools")
         descriptors: list[McpToolDescriptor] = []
         for t in tools_raw:
             if not isinstance(t, dict):
@@ -246,13 +247,39 @@ class McpClient:
         if self.supports_capability("resources") is False:
             return []
         try:
-            result = await self._send_request("resources/list", {})
+            resources = await self._list_pages("resources/list", "resources")
         except McpError as exc:
             if is_method_not_found(exc):
                 return []
             raise
-        resources = result.get("resources", [])
         return [item for item in resources if isinstance(item, dict)]
+
+    async def _list_pages(self, method: str, field: str) -> list[dict[str, Any]]:
+        async def collect() -> list[dict[str, Any]]:
+            items: list[dict[str, Any]] = []
+            seen: set[str] = set()
+            params: dict[str, Any] = {}
+            for _ in range(100):
+                result = await self._send_request(method, params)
+                page = result.get(field, [])
+                if not isinstance(page, list):
+                    raise McpError(f"Invalid {field} page")
+                items.extend(item for item in page if isinstance(item, dict))
+                if len(items) > 10_000:
+                    raise McpError(f"MCP {method} exceeds catalog item limit")
+                cursor = result.get("nextCursor")
+                if cursor is None:
+                    return items
+                if not isinstance(cursor, str) or not cursor or cursor in seen:
+                    raise McpError(f"Invalid or repeated cursor for {method}")
+                seen.add(cursor)
+                params = {"cursor": cursor}
+            raise McpError(f"MCP {method} exceeds pagination limit")
+
+        try:
+            return await asyncio.wait_for(collect(), timeout=self.config.read_timeout)
+        except asyncio.TimeoutError as exc:
+            raise McpError(f"MCP {method} pagination timed out") from exc
 
     async def read_resource(self, uri: str) -> dict[str, Any]:
         if self.supports_capability("resources") is False:
@@ -330,22 +357,28 @@ class McpClient:
         loop = asyncio.get_running_loop()
         fut: asyncio.Future[dict[str, Any]] = loop.create_future()
         self._pending[req_id] = fut
-        try:
-            await self._transport.send(request)
-        except McpTransportError as exc:
-            self._pending.pop(req_id, None)
-            raise McpError(str(exc)) from exc
+        transport = self._transport
+        effective_timeout = timeout if timeout is not None else self.config.read_timeout
+
+        async def exchange() -> dict[str, Any]:
+            await transport.send(request)
+            return await fut
 
         try:
-            effective_timeout = (
-                timeout if timeout is not None else self.config.read_timeout
-            )
-            response = await asyncio.wait_for(fut, timeout=effective_timeout)
+            response = await asyncio.wait_for(exchange(), timeout=effective_timeout)
         except asyncio.TimeoutError as exc:
-            self._pending.pop(req_id, None)
             raise McpError(
                 f"MCP request {method} timed out after {effective_timeout}s"
             ) from exc
+        except (McpTransportError, httpx.HTTPError, OSError) as exc:
+            raise McpError(str(exc)) from exc
+        finally:
+            self._pending.pop(req_id, None)
+            if not fut.done():
+                fut.cancel()
+            elif not fut.cancelled():
+                # A reader may fail while send itself is raising; consume that exception too.
+                fut.exception()
 
         if "error" in response:
             err = response["error"]
@@ -357,7 +390,9 @@ class McpClient:
                 msg = str(err)
                 code = None
             raise McpError(f"MCP error: {msg}", code=code)
-        result: dict[str, Any] = response.get("result", {})
+        result = response.get("result", {})
+        if not isinstance(result, dict):
+            raise McpError("MCP result must be an object")
         return result
 
     async def _send_notification(
@@ -371,7 +406,9 @@ class McpClient:
             "params": params,
         }
         try:
-            await self._transport.send(notification)
-        except McpTransportError as exc:
+            await asyncio.wait_for(
+                self._transport.send(notification), timeout=self.config.read_timeout
+            )
+        except (McpTransportError, httpx.HTTPError, OSError, asyncio.TimeoutError) as exc:
             raise McpError(str(exc)) from exc
 

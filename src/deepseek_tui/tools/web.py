@@ -119,6 +119,7 @@ class FetchUrlTool(ToolSpec):
     async def execute(self, input_data: dict[str, object], context: ToolContext) -> ToolResult:
         url = _require_string(input_data, "url")
         _require_http_url(url)
+        _check_network_policy(url, "fetch_url", context)
         await asyncio.to_thread(_reject_private_fetch_url, url)
         max_chars = _optional_int(input_data, "max_chars") or _DEFAULT_FETCH_MAX_CHARS
         timeout = context.timeout_ms / 1000 if context.timeout_ms is not None else _DEFAULT_FETCH_TIMEOUT_S
@@ -136,7 +137,7 @@ class FetchUrlTool(ToolSpec):
             async with httpx.AsyncClient(timeout=timeout) as client:
                 if _is_direct_resource_url(url):
                     _check_network_policy(url, "fetch_url", context)
-                    response = await _http_get(client, url)
+                    response = await _http_get(client, url, context=context)
                     status_code = response.status_code
                     content_type = response.headers.get("content-type", "")
                     final_url = str(response.url)
@@ -161,7 +162,7 @@ class FetchUrlTool(ToolSpec):
 
                     if not content.strip():
                         _check_network_policy(url, "fetch_url", context)
-                        response = await _http_get(client, url)
+                        response = await _http_get(client, url, context=context)
                         status_code = response.status_code
                         content_type = response.headers.get("content-type", "")
                         final_url = str(response.url)
@@ -699,6 +700,7 @@ async def _anysearch_extract(
     context: ToolContext,
 ) -> str:
     _check_network_policy(_ANYSEARCH_MCP_URL, "fetch_url", context)
+    _check_network_policy(url, "fetch_url", context)
     headers = {"Content-Type": "application/json"}
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
@@ -747,6 +749,7 @@ async def _http_get(
     params: dict[str, str] | None = None,
     headers: dict[str, str] | None = None,
     max_bytes: int = _MAX_FETCH_RESPONSE_BYTES,
+    context: ToolContext | None = None,
 ) -> httpx.Response:
     merged = {"User-Agent": _BROWSER_UA}
     if headers:
@@ -757,6 +760,8 @@ async def _http_get(
     current = url
     try:
         for _ in range(_MAX_FETCH_REDIRECTS + 1):
+            if context is not None:
+                _check_network_policy(current, "fetch_url", context)
             await asyncio.to_thread(_reject_private_fetch_url, current)
             async with client.stream(
                 "GET", current, params=params, headers=merged, follow_redirects=False

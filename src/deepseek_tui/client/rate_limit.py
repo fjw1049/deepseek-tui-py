@@ -51,7 +51,7 @@ class RateLimitRegistry:
             now = self._clock()
             window = self._windows.get(fingerprint)
             if window is None:
-                window = deque(maxlen=limit)
+                window = deque()
                 self._windows[fingerprint] = window
             cutoff = now - WINDOW_SECONDS
             while window and window[0] <= cutoff:

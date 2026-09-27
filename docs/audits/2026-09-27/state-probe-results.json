@@ -1,0 +1,10 @@
+{
+  "caller_can_override_checkpoint_version": 999,
+  "malformed_checkpoint_restore_exception": "AttributeError",
+  "other_workspace_restored": true,
+  "directory_inline_bytes_with_20_budget": 221,
+  "valid_spaced_toml_header_after_write": false,
+  "concurrent_paste_distinct_paths": 1,
+  "image_disappears_during_expansion": "FileNotFoundError",
+  "image_encodes_per_budget_and_serialize": 2
+}

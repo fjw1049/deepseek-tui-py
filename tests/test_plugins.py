@@ -220,6 +220,7 @@ def test_manifest_omitting_hooks_key_discovers_hooks_json(
     (tmp_path / "installed_plugins.json").write_text(
         json.dumps(lock), encoding="utf-8"
     )
+    set_plugin_trusted("demo", True, plugins_dir=tmp_path)
     contribs = collect_contributions(discover_plugins(plugins_dir=tmp_path))
     assert [h.event for h in contribs.hook_entries] == ["session_start"]
 
@@ -240,6 +241,7 @@ def test_manifest_omitting_mcp_key_discovers_mcp_json(
     (tmp_path / "installed_plugins.json").write_text(
         json.dumps(lock), encoding="utf-8"
     )
+    set_plugin_trusted("demo", True, plugins_dir=tmp_path)
     contribs = collect_contributions(discover_plugins(plugins_dir=tmp_path))
     assert [s.name for s in contribs.mcp_servers] == ["demo-srv"]
     assert contribs.mcp_servers[0].command == f"{plugin}/bin/x"

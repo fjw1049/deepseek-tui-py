@@ -178,7 +178,7 @@ function composerModeFromGoal(
   fallback: ComposerMode
 ): ComposerMode {
   if (goal?.status === 'active') return 'goal'
-  if (!goal && fallback === 'goal') return 'agent'
+  if ((!goal || goal.status === 'complete') && fallback === 'goal') return 'agent'
   return fallback
 }
 
@@ -2890,13 +2890,16 @@ const store = create<ChatState>((set, get) => ({
       set({ error: i18n.t('common:runtimeActionNeedsConnection') })
       return false
     }
-    const p = getProvider(get().providerId)
+    const providerId = get().providerId
+    const p = getProvider(providerId)
     if (typeof p.applyGoalCommand !== 'function') {
       set({ error: i18n.t('common:goalCommandUnsupported') })
       return false
     }
     const selectedModel = decodeModelRef(get().composerModel.trim())
     const modelOptions = {
+      expectedGoalId: opts?.expectedGoalId,
+      resumeAfterBudget: opts?.resumeAfterBudget,
       ...(selectedModel.providerId ? { provider: selectedModel.providerId } : {}),
       ...(selectedModel.modelId ? { model: selectedModel.modelId } : {}),
       reasoningEffort: get().composerReasoningEffort
@@ -2943,6 +2946,10 @@ const store = create<ChatState>((set, get) => ({
     }
     try {
       const result = await p.applyGoalCommand(threadId, args, modelOptions)
+      if (get().activeThreadId !== threadId || get().providerId !== providerId) {
+        await get().refreshThreads()
+        return true
+      }
       set({
         currentGoal: result.goal,
         composerMode: composerModeFromGoal(result.goal, get().composerMode),
@@ -2968,6 +2975,7 @@ const store = create<ChatState>((set, get) => ({
       await get().refreshThreads()
       return true
     } catch (e) {
+      if (get().activeThreadId !== threadId || get().providerId !== providerId) return false
       // Stay on the chat. Goal pause/resume/create must not hijack Settings → Models.
       set({ error: formatRuntimeError(e) })
       if (!opts?.silent) {

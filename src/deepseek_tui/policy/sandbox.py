@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import logging
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum
 from pathlib import Path
 from typing import Any
@@ -90,8 +90,6 @@ class ExecutionSandboxPolicy:
     def has_network_access(self) -> bool:
         if self.kind == "danger-full-access":
             return True
-        if self.kind == "read-only":
-            return False
         return self.network_access
 
     def should_sandbox(self) -> bool:
@@ -340,12 +338,7 @@ def suggest_elevation_policy(
     ws = workspace.resolve()
     roots = current.writable_roots or (ws,)
     if "network" in msg and not current.has_network_access():
-        return ExecutionSandboxPolicy.workspace_write(
-            writable_roots=roots,
-            network_access=True,
-            exclude_tmpdir=current.exclude_tmpdir,
-            exclude_slash_tmp=current.exclude_slash_tmp,
-        )
+        return replace(current, network_access=True)
     if any(token in msg for token in ("file-write", "write access", "protected location")):
         if current.kind == "read-only":
             return sandbox_policy_for_mode("agent", ws)

@@ -1,0 +1,12 @@
+{
+  "current_gather_then_publish": {
+    "samples": 20,
+    "fast_result_visible_median_ms": 41.179,
+    "batch_finished_median_ms": 41.181
+  },
+  "prototype_publish_on_completion": {
+    "samples": 20,
+    "fast_result_visible_median_ms": 3.474,
+    "batch_finished_median_ms": 41.133
+  }
+}

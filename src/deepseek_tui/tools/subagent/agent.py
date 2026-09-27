@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -24,8 +24,7 @@ if TYPE_CHECKING:
 
 
 # Executor signature — takes a SubAgent handle plus cancel token.
-# Forward reference — AgentRunOutput defined later in this file
-SubAgentExecutor = Callable  # type: ignore[assignment]
+SubAgentExecutor = Callable[["SubAgent", asyncio.Event], Awaitable[AgentRunOutput]]
 
 
 async def _stub_executor(agent: SubAgent, cancel: asyncio.Event) -> AgentRunOutput:
@@ -78,10 +77,13 @@ class SubAgent:
         self.status: SubAgentStatus = SubAgentStatus.running()
         self.result: str | None = None
         self.structured_result: Any | None = None
+        self.structured_received = False
         self.output_schema = output_schema
         self.steps_taken: int = 0
         self.max_steps_reached: bool = False
         self.started_at_ms: int = _epoch_ms()
+        self.ended_at_ms: int | None = None
+        self.closing = False
         self.allowed_tools = allowed_tools
         self.session_boot_id = session_boot_id
         self.workspace = workspace or Path.cwd()
@@ -98,7 +100,7 @@ class SubAgent:
         self.input_queue: asyncio.Queue[tuple[str, bool]] = asyncio.Queue()
 
     def snapshot(self) -> SubAgentResult:
-        duration_ms = max(0, _epoch_ms() - self.started_at_ms)
+        duration_ms = max(0, (self.ended_at_ms if self.ended_at_ms is not None else _epoch_ms()) - self.started_at_ms)
         return SubAgentResult(
             agent_id=self.id,
             agent_type=self.agent_type,
@@ -113,4 +115,5 @@ class SubAgent:
             structured=self.structured_result,
             max_steps_reached=self.max_steps_reached,
             background=self.background,
+            structured_received=self.structured_received,
         )

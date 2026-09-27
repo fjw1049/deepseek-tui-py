@@ -10,44 +10,56 @@ means the Anthropic projection — and any provider added later — cannot miss 
 
 from __future__ import annotations
 
-from deepseek_tui.protocol.messages import Message, ToolResultBlock, ToolUseBlock
+import logging
+from collections import Counter
+
+from deepseek_tui.protocol.messages import Message, Role, ToolResultBlock, ToolUseBlock
+
+logger = logging.getLogger(__name__)
 
 
 def drop_orphaned_tool_blocks(messages: list[Message]) -> list[Message]:
-    """Drop tool_use / tool_result blocks whose counterpart is missing.
+    """Retain unambiguous adjacent tool pairs without reordering history.
 
-    A message left with no blocks at all is dropped; one that still has text
-    keeps it, which is how an assistant turn survives losing its tool call.
-    Order is preserved, inputs are never mutated, and a fully paired history
-    (the normal case) is returned unchanged.
+    Invalid pairs are dropped together; ordinary text is preserved. A healthy
+    history is returned unchanged. Internal tool results belong to Role.TOOL.
     """
-    use_ids: set[str] = set()
-    result_ids: set[str] = set()
-    for message in messages:
-        for block in message.content:
-            if isinstance(block, ToolUseBlock):
-                use_ids.add(block.id)
-            elif isinstance(block, ToolResultBlock):
-                result_ids.add(block.tool_use_id)
-
-    if use_ids == result_ids:
-        return messages
-
-    output: list[Message] = []
-    for message in messages:
-        kept = [
-            block
-            for block in message.content
-            if not (
-                (isinstance(block, ToolUseBlock) and block.id not in result_ids)
-                or (
-                    isinstance(block, ToolResultBlock)
-                    and block.tool_use_id not in use_ids
-                )
+    uses = Counter(b.id for m in messages for b in m.content if isinstance(b, ToolUseBlock))
+    keep: set[tuple[int, int]] = set()
+    for index, message in enumerate(messages):
+        calls = [(i, b) for i, b in enumerate(message.content) if isinstance(b, ToolUseBlock)]
+        if message.role is not Role.ASSISTANT or not calls:
+            continue
+        ids = {b.id for _, b in calls}
+        results = []
+        for next_index in range(index + 1, len(messages)):
+            following = messages[next_index]
+            if following.role is not Role.TOOL:
+                break
+            results.extend(
+                (next_index, i, b)
+                for i, b in enumerate(following.content)
+                if isinstance(b, ToolResultBlock)
             )
+        counts = Counter(b.tool_use_id for _, _, b in results)
+        ids = {identity for identity in ids if uses[identity] == 1 and counts[identity] == 1}
+        keep.update((index, i) for i, b in calls if b.id in ids)
+        keep.update((mi, bi) for mi, bi, b in results if b.tool_use_id in ids)
+
+    output = []
+    dropped = 0
+    for index, message in enumerate(messages):
+        kept = [
+            b
+            for i, b in enumerate(message.content)
+            if not isinstance(b, (ToolUseBlock, ToolResultBlock)) or (index, i) in keep
         ]
+        dropped += len(message.content) - len(kept)
         if len(kept) == len(message.content):
             output.append(message)
         elif kept:
             output.append(message.model_copy(update={"content": kept}))
+    if not dropped:
+        return messages
+    logger.warning("Dropped %d unpaired or ambiguous tool history blocks", dropped)
     return output

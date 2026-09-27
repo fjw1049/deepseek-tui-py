@@ -62,6 +62,7 @@ import { AppearanceSettingsPanel } from './settings/AppearanceSettingsPanel'
 import { ArchiveSettingsPanel } from './settings/ArchiveSettingsPanel'
 import { WebSearchSettingsPanel } from './settings/WebSearchSettingsPanel'
 import { DataSettingsPanel } from './settings/DataSettingsPanel'
+import { SharingSettingsPanel } from './settings/SharingSettingsPanel'
 import { LlmProvidersPanel } from './settings/LlmProvidersPanel'
 import { ModelUsagePanel } from './settings/ModelUsagePanel'
 import { settingsBlockButtonClass } from './settings/SettingsActionToolbar'
@@ -1069,7 +1070,7 @@ export function SettingsView(): ReactElement {
             </SettingsCard>
           )}
 
-          {category === 'data' && <DataSettingsPanel />}
+          {category === 'data' && <><DataSettingsPanel /><SharingSettingsPanel /></>}
           {category === 'archive' && <ArchiveSettingsPanel />}
 
       </div>

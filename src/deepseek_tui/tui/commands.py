@@ -1462,10 +1462,13 @@ def cmd_goal(args: str, app: DeepSeekTUI) -> CommandResult:
 
                 asyncio.create_task(app.handle.cancel(reason="goal_paused"))
             return CommandResult(output=service.format_status())
-        if parsed.kind == "resume":
+        if parsed.kind in {"resume", "reopen"}:
             if engine.mode not in ALLOWED_GOAL_MODES:
                 _switch_mode(app, "agent")
-            _snapshot, decision = service.resume(actor=GoalActor.USER, mode=engine.mode)
+            if parsed.kind == "reopen":
+                _snapshot, decision = service.reopen(mode=engine.mode)
+            else:
+                _snapshot, decision = service.resume(actor=GoalActor.USER, mode=engine.mode)
             if decision.should_continue and not app.handle.is_turn_active():
                 # Match the Workbench guard: a live turn's natural end chains
                 # the next goal turn via _finish_goal_turn. Queueing an extra
@@ -1474,6 +1477,14 @@ def cmd_goal(args: str, app: DeepSeekTUI) -> CommandResult:
                 import asyncio
 
                 asyncio.create_task(engine.launch_goal_continuation())
+            return CommandResult(output=service.format_status())
+        if parsed.kind == "budget":
+            service.set_budget(
+                token_budget=parsed.token_budget,
+                turn_budget=parsed.turn_budget,
+                wall_clock_budget_ms=parsed.wall_clock_budget_ms,
+                actor=GoalActor.USER,
+            )
             return CommandResult(output=service.format_status())
         if parsed.kind == "cancel":
             service.cancel(actor=GoalActor.USER)
@@ -1486,7 +1497,8 @@ def cmd_goal(args: str, app: DeepSeekTUI) -> CommandResult:
                 asyncio.create_task(app.handle.cancel(reason="goal_cancelled"))
             return CommandResult(output="Goal cancelled.")
         if parsed.kind == "next-add":
-            if service.snapshot() is None:
+            current = service.snapshot()
+            if current is None or current.status.value == "complete":
                 if engine.mode not in ALLOWED_GOAL_MODES:
                     _switch_mode(app, "agent")
                 service.create(parsed.objective, actor=GoalActor.USER, mode=engine.mode)
@@ -1538,7 +1550,7 @@ def cmd_compact(args: str, app: DeepSeekTUI) -> CommandResult:
             transcript.add_notice(
                 f"Compaction failed after {result.retries_used} retries — "
                 f"messages unchanged ({before} → {len(result.messages)}). "
-                f"See log for details; try again or run /clear.",
+                f"{getattr(result, 'failure_reason', None) or 'See log for details; try again or run /clear.'}",
                 severity="error",
             )
 

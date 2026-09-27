@@ -12,10 +12,12 @@ from typing import Any
 import httpx
 from httpx_sse import aconnect_sse
 
+from deepseek_tui.tools.encoding import to_api_tool_name
 from deepseek_tui.client.base import LLMClient
 from deepseek_tui.client.chat_messages import build_chat_messages
 from deepseek_tui.client.sanitize import sanitize_extra_body, sanitize_extra_headers
 from deepseek_tui.client.streaming import OpenAIStreamParser
+from deepseek_tui.media import media_variant_scope
 from deepseek_tui.protocol.messages import MessageRequest
 from deepseek_tui.protocol.responses import StreamEvent
 
@@ -50,7 +52,7 @@ def _map_tool_choice_for_chat(
     if choice_type == "tool":
         name = choice.get("name")
         if isinstance(name, str):
-            return {"type": "function", "function": {"name": name}}
+            return {"type": "function", "function": {"name": to_api_tool_name(name)}}
     return choice
 
 
@@ -276,6 +278,7 @@ class DeepSeekClient(LLMClient):
                     f"connection error after {attempt} retries: {exc}"
                 ) from exc
 
+    @media_variant_scope()
     def _build_payload(self, request: MessageRequest) -> dict[str, Any]:
         from deepseek_tui.client.factory import _infer_thinking_supported
         from deepseek_tui.client.media import budget_media_request

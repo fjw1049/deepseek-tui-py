@@ -44,5 +44,6 @@ describe('composer slash commands', () => {
       false
     )
     expect(shouldCreateGoalFromComposer('/goal pause', 'goal', null)).toBe(false)
+    expect(shouldCreateGoalFromComposer('New task', 'goal', { status: 'complete' })).toBe(true)
   })
 })

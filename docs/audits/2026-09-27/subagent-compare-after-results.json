@@ -1,0 +1,12 @@
+{
+  "event_wait": {
+    "samples": 20,
+    "median_ms": 3.854,
+    "max_ms": 3.91
+  },
+  "join_single_driver": {
+    "samples": 20,
+    "median_ms": 3.862,
+    "max_ms": 3.884
+  }
+}

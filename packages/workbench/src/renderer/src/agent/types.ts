@@ -26,7 +26,16 @@ export type GoalSnapshotJson = {
   goal_id?: string
   objective: string
   completion_criterion?: string | null
-  status: 'active' | 'paused' | 'blocked' | 'complete'
+  status: 'active' | 'paused' | 'blocked' | 'complete' | 'budget_limited'
+  checklist?: { id: string; content: string; status: string }[]
+  evidence?: { tool_call_id: string; tool: string; description: string; success: boolean }[]
+  completion_evidence?: string[]
+  requirements?: { id: string; content: string }[]
+  completion_audit?: {
+    checks?: { requirement_id: string; explanation: string; evidence: string[] }[]
+    failure_resolutions?: { tool_call_id: string; reason: string; evidence: string[] }[]
+    plan_adjustments?: { item_id: string; reason: string }[]
+  }
   turns_used?: number
   tokens_used?: number
   wall_clock_ms?: number
@@ -552,6 +561,8 @@ export interface AgentProvider {
     threadId: string,
     args: string,
     options?: {
+      expectedGoalId?: string
+      resumeAfterBudget?: boolean
       provider?: string
       model?: string
       reasoningEffort?: string

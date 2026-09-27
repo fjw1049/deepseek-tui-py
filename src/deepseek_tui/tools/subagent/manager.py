@@ -9,17 +9,15 @@ decision 2026-05-07). Persistence under
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import time
 import uuid
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
 from deepseek_tui.config.models import Config
-from deepseek_tui.utils import write_json_atomic
 from deepseek_tui.tools.subagent.agent import SubAgent, SubAgentExecutor, _stub_executor
 from deepseek_tui.tools.subagent.completion import (
     AgentRunOutput,
@@ -30,15 +28,11 @@ from deepseek_tui.tools.subagent.mailbox import Mailbox, MailboxMessage
 from deepseek_tui.tools.subagent.types import (
     DEFAULT_MAX_AGENTS,
     DEFAULT_MAX_SPAWN_DEPTH,
-    SUBAGENT_RESTART_REASON,
-    SUBAGENT_STATE_SCHEMA_VERSION,
     _MAX_TERMINAL_AGENTS_IN_MEMORY,
     SpawnRequest,
-    SubAgentAssignment,
     SubAgentResult,
     SubAgentStatus,
     SubAgentStatusKind,
-    SubAgentType,
     _epoch_ms,
     whale_nickname_for_index,
 )
@@ -81,6 +75,16 @@ class SubAgentManager:
             if llm_max_concurrent > 0
             else None
         )
+        from .store import AgentStore
+
+        self._store = AgentStore(state_path) if state_path is not None else None
+        self._records: dict[str, dict[str, Any]] = {}
+        self._persisted: dict[str, dict[str, Any]] = {}
+        self._owned_ids: set[str] = set()
+        self._claims: dict[str, Any] = {}
+        self.storage_error: str | None = None
+        self._closed = False
+        self._changed = asyncio.Event()
         self._agents: dict[str, SubAgent] = {}
         self._lock = asyncio.Lock()
         self._session_boot_id: str = f"boot_{uuid.uuid4().hex[:12]}"
@@ -93,6 +97,20 @@ class SubAgentManager:
         self.on_file_mutation: Callable[[dict[str, Any]], None] | None = None
         if state_path is not None:
             self._load_state()
+        if mailbox is not None:
+            mailbox.snapshot_provider = self._mailbox_snapshot
+
+    def _mailbox_snapshot(self) -> list[MailboxMessage]:
+        messages = []
+        for snap in self.list_agents():
+            messages.append(MailboxMessage.started(snap.agent_id, snap.agent_type.value))
+            if snap.status.kind is SubAgentStatusKind.COMPLETED:
+                messages.append(MailboxMessage.completed(snap.agent_id, snap.result or ""))
+            elif snap.status.kind is SubAgentStatusKind.FAILED:
+                messages.append(MailboxMessage.failed(snap.agent_id, snap.status.message or ""))
+            elif snap.status.kind is not SubAgentStatusKind.RUNNING:
+                messages.append(MailboxMessage.cancelled(snap.agent_id))
+        return messages
 
     def attach_parent_completion_sink(
         self, sink: Callable[[SubAgentCompletion], None]
@@ -156,25 +174,17 @@ class SubAgentManager:
 
     def list_filtered(self, include_archived: bool = False) -> list[SubAgentResult]:
         out: list[SubAgentResult] = []
-        for agent in self._agents.values():
+        from .store import restore_agent
+
+        for agent_id in self._records.keys() | self._agents.keys():
+            agent = self._agents.get(agent_id)
+            if agent is None:
+                agent = restore_agent(self._records[agent_id], self.workspace, self.default_model)
             from_prior = self._is_from_prior_session(agent)
             if from_prior and not include_archived:
                 continue
             snap = agent.snapshot()
-            # Synthesize the from_prior_session flag manager-side.
-            snap = SubAgentResult(
-                agent_id=snap.agent_id,
-                agent_type=snap.agent_type,
-                assignment=snap.assignment,
-                model=snap.model,
-                nickname=snap.nickname,
-                status=snap.status,
-                result=snap.result,
-                steps_taken=snap.steps_taken,
-                duration_ms=snap.duration_ms,
-                from_prior_session=from_prior,
-                background=snap.background,
-            )
+            snap = replace(snap, from_prior_session=from_prior)
             out.append(snap)
         return out
 
@@ -195,10 +205,7 @@ class SubAgentManager:
 
     async def spawn(self, request: SpawnRequest) -> SubAgentResult:
         async with self._lock:
-            if self.running_count() >= self.max_agents:
-                raise RuntimeError(
-                    f"Too many sub-agents running ({self.max_agents} cap)"
-                )
+            self._check_admission()
             child_depth = request.parent_depth + 1
             if child_depth > DEFAULT_MAX_SPAWN_DEPTH:
                 raise RuntimeError(
@@ -225,9 +232,11 @@ class SubAgentManager:
                 system_prompt=request.system_prompt,
                 background=request.background,
             )
+            self._claim_agent(agent)
             self._agents[agent.id] = agent
             snapshot = agent.snapshot()
             self._persist_best_effort()
+            agent.task = asyncio.create_task(self._drive_agent(agent))
 
         if self._mailbox is not None:
             parent_id = (request.parent_agent_id or "").strip()
@@ -240,36 +249,74 @@ class SubAgentManager:
                     agent.id, request.agent_type.value, prompt=request.prompt
                 )
             )
-        agent.task = asyncio.create_task(self._drive_agent(agent))
         return snapshot
 
     async def get_result(self, agent_id: str) -> SubAgentResult:
         async with self._lock:
             agent = self._require_agent(agent_id)
-            return agent.snapshot()
+            snapshot = agent.snapshot()
+            self._trim_cache()
+            return snapshot
 
     async def cancel(self, agent_id: str) -> SubAgentResult:
-        task: asyncio.Task[None] | None = None
         async with self._lock:
             agent = self._require_agent(agent_id)
-            agent.cancel_token.set()
             task = agent.task
-            if agent.status.kind is SubAgentStatusKind.RUNNING:
+            if agent.status.kind is SubAgentStatusKind.RUNNING and not agent.cancel_token.is_set():
+                agent.cancel_token.set()
+                if task is not None and not task.done():
+                    task.cancel()
+        # Join outside the manager lock: finalization needs the same lock.
+        if task is not None:
+            await asyncio.gather(asyncio.shield(task), return_exceptions=True)
+        async with self._lock:
+            # Cancellation before the coroutine's first instruction cannot run
+            # its finally block, so finalize that case here.
+            if agent.status.kind is SubAgentStatusKind.RUNNING and agent.cancel_token.is_set():
                 agent.status = SubAgentStatus.cancelled()
-            self._persist_best_effort()
-            snapshot = agent.snapshot()
+                agent.ended_at_ms = _epoch_ms()
+                self._persist_best_effort()
+                if not agent.closing:
+                    self._release_claim(agent.id)
+                self._changed.set()
+                self._changed = asyncio.Event()
+                if self._mailbox is not None:
+                    self._mailbox.send(MailboxMessage.cancelled(agent.id))
+                self._notify_parent_completion(agent)
+            return agent.snapshot()
 
-        if self._mailbox is not None:
-            self._mailbox.send(MailboxMessage.cancelled(agent_id))
-        if task is not None and not task.done():
-            task.cancel()
-        return snapshot
+    def _check_admission(self) -> None:
+        if self._closed:
+            raise RuntimeError("Sub-agent manager is shut down")
+        if self.running_count() >= self.max_agents:
+            raise RuntimeError(f"Too many sub-agents running ({self.max_agents} cap)")
+
+    def _claim_agent(self, agent: SubAgent) -> None:
+        if self._store is not None:
+            from deepseek_tui.tools.task.store import TaskStoreLock
+
+            try:
+                self._claims[agent.id] = TaskStoreLock(self._store.directory / ".claims" / agent.id)
+            except RuntimeError as exc:
+                raise RuntimeError(f"Agent {agent.id} already has an active executor") from exc
+        self._owned_ids.add(agent.id)
+
+    def _release_claim(self, agent_id: str) -> None:
+        claim = self._claims.pop(agent_id, None)
+        if claim is not None:
+            claim.close()
 
     def _reopen_terminal_locked(self, agent: SubAgent) -> None:
         """Reset a terminal agent to Running in preparation for a re-drive.
 
         Caller must hold ``self._lock``; the caller re-spawns the driver task.
         """
+        self._check_admission()
+        if agent.closing:
+            raise RuntimeError(f"Agent {agent.id} is closing")
+        if agent.task is not None and not agent.task.done():
+            raise RuntimeError(f"Agent {agent.id} is still stopping")
+        self._claim_agent(agent)
         # Registry records contain durable state only. Engine.create attaches
         # the live runtime after loading them; bind it when a child is resumed.
         # Keep existing runtimes so same-process spawn overrides survive.
@@ -281,6 +328,9 @@ class SubAgentManager:
         agent.status = SubAgentStatus.running()
         agent.result = None
         agent.structured_result = None
+        agent.structured_received = False
+        agent.max_steps_reached = False
+        agent.ended_at_ms = None
         agent.cancel_token = asyncio.Event()
         agent.started_at_ms = _epoch_ms()
         self._persist_best_effort()
@@ -303,6 +353,8 @@ class SubAgentManager:
             agent.input_queue.put_nowait((text, interrupt))
             if interrupt:
                 agent.interrupt_event.set()
+            if resumed:
+                agent.task = asyncio.create_task(self._drive_agent(agent))
 
         if resumed:
             if self._mailbox is not None:
@@ -311,7 +363,6 @@ class SubAgentManager:
                         agent_id, agent.agent_type.value, prompt=agent.prompt
                     )
                 )
-            agent.task = asyncio.create_task(self._drive_agent(agent))
 
     async def resume(self, agent_id: str) -> SubAgentResult:
         """True-resume a terminated agent from its durable transcript.
@@ -327,6 +378,7 @@ class SubAgentManager:
             if agent.status.kind is SubAgentStatusKind.RUNNING:
                 raise RuntimeError(f"Agent {agent_id} is already running")
             self._reopen_terminal_locked(agent)
+            agent.task = asyncio.create_task(self._drive_agent(agent))
             snapshot = agent.snapshot()
 
         if self._mailbox is not None:
@@ -335,18 +387,32 @@ class SubAgentManager:
                     agent_id, agent.agent_type.value, prompt=agent.prompt
                 )
             )
-        agent.task = asyncio.create_task(self._drive_agent(agent))
         return snapshot
 
     async def close(self, agent_id: str) -> SubAgentResult:
         """Terminate and remove an agent from the active map."""
+        async with self._lock:
+            agent = self._require_agent(agent_id)
+            if agent_id not in self._claims:
+                self._claim_agent(agent)
+            agent.closing = True
         snapshot = await self.cancel(agent_id)
         workspace: Path | None = None
         async with self._lock:
+            try:
+                if self._store is not None:
+                    self._store.remove(agent_id)
+            except OSError:
+                self._require_agent(agent_id).closing = False
+                raise
+            finally:
+                self._release_claim(agent_id)
             agent = self._agents.pop(agent_id, None)
             if agent is not None:
                 workspace = Path(agent.workspace)
-            self._persist_best_effort()
+            self._records.pop(agent_id, None)
+            self._persisted.pop(agent_id, None)
+            self._owned_ids.discard(agent_id)
         if workspace is not None:
             from deepseek_tui.tools.durable_transcript import (
                 clear_transcript,
@@ -372,6 +438,7 @@ class SubAgentManager:
                 snapshots = [
                     self._require_agent(aid).snapshot() for aid in agent_ids
                 ]
+                changed = self._changed
             terminals = [s for s in snapshots if s.status.kind is not SubAgentStatusKind.RUNNING]
             if mode in ("any", "first"):
                 if terminals:
@@ -382,7 +449,10 @@ class SubAgentManager:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 return snapshots
-            await asyncio.sleep(min(0.05, remaining))
+            try:
+                await asyncio.wait_for(changed.wait(), remaining)
+            except asyncio.TimeoutError:
+                pass
 
     def known_agent_ids(self) -> set[str]:
         """Snapshot the ids of every agent currently tracked.
@@ -392,28 +462,28 @@ class SubAgentManager:
         when a turn begins was spawned by an earlier turn and must not have
         its mailbox events re-attributed to the new turn.
         """
-        return set(self._agents)
+        return set(self._records) | set(self._agents)
 
     async def shutdown(self) -> None:
-        """Cancel and join every running agent."""
+        """Stop admission, cancel and join all owned executions."""
         async with self._lock:
-            agents = list(self._agents.values())
-        for agent in agents:
-            agent.cancel_token.set()
-        for agent in agents:
-            if agent.task is not None and not agent.task.done():
-                agent.task.cancel()
-                try:
-                    await agent.task
-                except (asyncio.CancelledError, BaseException):  # noqa: BLE001
-                    pass
-
-    # --- internal ------------------------------------------------------
+            self._closed = True
+            ids = [aid for aid, agent in self._agents.items()
+                   if agent.task is not None and not agent.task.done()]
+        await asyncio.gather(*(self.cancel(aid) for aid in ids), return_exceptions=True)
+        for agent_id in list(self._claims):
+            self._release_claim(agent_id)
 
     def _require_agent(self, agent_id: str) -> SubAgent:
         agent = self._agents.get(agent_id)
         if agent is None:
-            raise KeyError(f"Unknown agent: {agent_id}")
+            raw = self._records.get(agent_id)
+            if raw is None:
+                raise KeyError(f"Unknown agent: {agent_id}")
+            from .store import restore_agent
+
+            agent = restore_agent(raw, self.workspace, self.default_model)
+            self._agents[agent_id] = agent
         return agent
 
     def _is_from_prior_session(self, agent: SubAgent) -> bool:
@@ -436,167 +506,96 @@ class SubAgentManager:
             pass
 
     async def _drive_agent(self, agent: SubAgent) -> None:
-        logger.info("subagent_drive_start id=%s type=%s depth=%d", agent.id, agent.agent_type.value, agent.spawn_depth)
         if self._parent_cancel is not None and self._parent_cancel.is_set():
             agent.cancel_token.set()
+        result = None
         try:
-            result = await self._executor(agent, agent.cancel_token)
-        except asyncio.CancelledError:
-            logger.info("subagent_drive_cancelled id=%s", agent.id)
-            async with self._lock:
-                if agent.status.kind is SubAgentStatusKind.RUNNING:
-                    agent.status = SubAgentStatus.cancelled()
-                self._persist_best_effort()
-            if self._mailbox is not None:
-                self._mailbox.send(MailboxMessage.cancelled(agent.id))
-            self._notify_parent_completion(agent)
-            return
-        except Exception as exc:  # noqa: BLE001 — translate to Failed status
-            logger.error("subagent_drive_failed id=%s error=%s", agent.id, exc)
-            async with self._lock:
-                agent.status = SubAgentStatus.failed(str(exc))
-                self._persist_best_effort()
-            if self._mailbox is not None:
-                self._mailbox.send(MailboxMessage.failed(agent.id, str(exc)))
-            self._notify_parent_completion(agent)
-            return
-
-        async with self._lock:
             if agent.cancel_token.is_set():
-                if agent.status.kind is SubAgentStatusKind.RUNNING:
-                    agent.status = SubAgentStatus.cancelled()
-            else:
-                agent.status = SubAgentStatus.completed()
+                raise asyncio.CancelledError
+            result = await self._executor(agent, agent.cancel_token)
+            status = SubAgentStatus.cancelled() if agent.cancel_token.is_set() else SubAgentStatus.completed()
+        except asyncio.CancelledError:
+            status = SubAgentStatus.cancelled()
+        except Exception as exc:
+            logger.exception("subagent failed id=%s", agent.id)
+            status = SubAgentStatus.failed(str(exc))
+        async with self._lock:
+            agent.status = status
+            agent.ended_at_ms = _epoch_ms()
+            if status.kind is SubAgentStatusKind.COMPLETED:
                 if isinstance(result, AgentRunOutput):
                     agent.result = result.text
                     agent.structured_result = result.structured
+                    agent.structured_received = result.structured_received or result.structured is not None
                 else:
                     agent.result = str(result) if result is not None else None
-                    agent.structured_result = None
             self._persist_best_effort()
-
-        logger.info(
-            "subagent_drive_done id=%s status=%s steps=%d",
-            agent.id, agent.status.kind.value, agent.steps_taken,
-        )
+            if not agent.closing:
+                self._release_claim(agent.id)
+            self._changed.set()
+            self._changed = asyncio.Event()
         if self._mailbox is not None:
-            if agent.status.kind is SubAgentStatusKind.CANCELLED:
+            if status.kind is SubAgentStatusKind.CANCELLED:
                 self._mailbox.send(MailboxMessage.cancelled(agent.id))
+            elif status.kind is SubAgentStatusKind.FAILED:
+                self._mailbox.send(MailboxMessage.failed(agent.id, status.message or ""))
             else:
-                summary = agent.result or ""
-                self._mailbox.send(MailboxMessage.completed(agent.id, summary))
-
+                self._mailbox.send(MailboxMessage.completed(agent.id, agent.result or ""))
         self._notify_parent_completion(agent)
         await self._evict_terminal_agents()
 
     async def _evict_terminal_agents(self) -> None:
         async with self._lock:
-            terminal = [
-                (aid, a) for aid, a in self._agents.items()
-                if a.status.kind is not SubAgentStatusKind.RUNNING
-            ]
-            if len(terminal) <= _MAX_TERMINAL_AGENTS_IN_MEMORY:
-                return
-            terminal.sort(key=lambda x: x[1].started_at_ms or 0)
-            to_remove = len(terminal) - _MAX_TERMINAL_AGENTS_IN_MEMORY
-            for aid, _ in terminal[:to_remove]:
-                del self._agents[aid]
-            self._persist_best_effort()
+            self._trim_cache()
+
+    def _trim_cache(self) -> None:
+        terminal = [
+            (aid, agent) for aid, agent in self._agents.items()
+            if agent.status.kind is not SubAgentStatusKind.RUNNING and aid in self._records
+            and (agent.task is None or agent.task.done() or agent.task is asyncio.current_task())
+        ]
+        terminal.sort(key=lambda pair: pair[1].started_at_ms)
+        for aid, _ in terminal[:max(0, len(terminal) - _MAX_TERMINAL_AGENTS_IN_MEMORY)]:
+            del self._agents[aid]
+            self._persisted.pop(aid, None)
+            self._owned_ids.discard(aid)
 
     def _persist_best_effort(self) -> None:
-        if self._state_path is None:
-            return
         try:
             self._persist_state()
-        except Exception as exc:  # noqa: BLE001
-            # Best-effort logging.
-            print(f"Failed to persist sub-agent state: {exc}")
+            self.storage_error = None
+        except OSError as exc:
+            self.storage_error = str(exc)
+            logger.warning("Sub-agent persistence failed: %s", exc)
 
     def _persist_state(self) -> None:
-        if self._state_path is None:
-            return
-        now_ms = _epoch_ms()
-        agents_payload = []
-        for agent in sorted(self._agents.values(), key=lambda a: a.id):
-            agents_payload.append(
-                {
-                    "id": agent.id,
-                    "agent_type": agent.agent_type.value,
-                    "prompt": agent.prompt,
-                    "assignment": {
-                        "objective": agent.assignment.objective,
-                        "role": agent.assignment.role,
-                    },
-                    "model": agent.model,
-                    "nickname": agent.nickname,
-                    "status": agent.status.to_dict(),
-                    "result": agent.result,
-                    "structured_result": agent.structured_result,
-                    "steps_taken": agent.steps_taken,
-                    "max_steps_reached": agent.max_steps_reached,
-                    "duration_ms": max(0, now_ms - agent.started_at_ms),
-                    "allowed_tools": agent.allowed_tools,
-                    "system_prompt": agent.system_prompt,
-                    "output_schema": agent.output_schema,
-                    "background": agent.background,
-                    "workspace": str(agent.workspace),
-                    "updated_at_ms": now_ms,
-                    "session_boot_id": agent.session_boot_id,
-                    "spawn_depth": agent.spawn_depth,
-                }
-            )
-        payload = {
-            "schema_version": SUBAGENT_STATE_SCHEMA_VERSION,
-            "agents": agents_payload,
-        }
-        write_json_atomic(self._state_path, payload)
+        from .store import agent_record
+
+        for agent_id in self._owned_ids & self._agents.keys():
+            raw = agent_record(self._agents[agent_id])
+            if self._persisted.get(agent_id) == raw:
+                continue
+            if self._store is not None:
+                self._store.save(raw)
+            self._records[agent_id] = raw
+            self._persisted[agent_id] = raw
 
     def _load_state(self) -> None:
-        if self._state_path is None or not self._state_path.exists():
+        from .store import restore_agent
+
+        if self._store is None:
             return
-        data = json.loads(self._state_path.read_text(encoding="utf-8"))
-        if data.get("schema_version") not in (1, SUBAGENT_STATE_SCHEMA_VERSION):
-            raise RuntimeError(
-                f"Unsupported sub-agent state schema {data.get('schema_version')}"
-            )
-        self._agents.clear()
-        for raw in data.get("agents", []):
-            agent = SubAgent(
-                agent_type=SubAgentType(raw["agent_type"]),
-                prompt=raw["prompt"],
-                assignment=SubAgentAssignment(
-                    objective=raw["assignment"]["objective"],
-                    role=raw["assignment"].get("role"),
-                ),
-                model=raw.get("model", self.default_model),
-                nickname=raw.get("nickname"),
-                allowed_tools=(
-                    raw.get("allowed_tools") or None
-                    if data["schema_version"] == 1
-                    else raw.get("allowed_tools")
-                ),
-                session_boot_id=raw.get("session_boot_id", ""),
-                workspace=Path(raw.get("workspace") or self.workspace),
-                spawn_depth=int(raw.get("spawn_depth", 0) or 0),
-                system_prompt=raw.get("system_prompt"),
-                output_schema=raw.get("output_schema"),
-                background=bool(raw.get("background", False)),
-            )
-            # Restore id from persisted record, overwriting the freshly
-            # generated one.
-            agent.id = raw["id"]
-            # Running on disk → Interrupted on load.
-            status = SubAgentStatus.from_dict(raw["status"])
-            if status.kind is SubAgentStatusKind.RUNNING:
-                status = SubAgentStatus.interrupted(SUBAGENT_RESTART_REASON)
-            agent.status = status
-            agent.result = raw.get("result")
-            agent.structured_result = raw.get("structured_result")
-            agent.steps_taken = raw.get("steps_taken", 0)
-            agent.max_steps_reached = bool(raw.get("max_steps_reached", False))
-            duration_ms = raw.get("duration_ms", 0)
-            agent.started_at_ms = _epoch_ms() - max(0, int(duration_ms))
-            self._agents[agent.id] = agent
+        for agent_id, raw in self._store.load().items():
+            try:
+                agent = restore_agent(raw, self.workspace, self.default_model)
+            except (ValueError, TypeError, KeyError, AttributeError) as exc:
+                logger.warning("Skipping invalid sub-agent %s: %s", agent_id, exc)
+                self.storage_error = str(exc)
+                continue
+            self._records[agent_id] = raw
+            self._agents[agent_id] = agent
+        self.storage_error = self.storage_error or self._store.error
+        self._trim_cache()
 
 
 @dataclass(slots=True)
@@ -638,6 +637,9 @@ class SubAgentRuntime:
     # workspace-confinement bypass / danger-full-access sandbox.
     trust_mode: bool = False
 
+    policy: Any | None = None
+    network_policy: Any | None = None
+
     def with_spawn_depth(self, depth: int) -> SubAgentRuntime:
         return SubAgentRuntime(
             manager=self.manager,
@@ -657,4 +659,6 @@ class SubAgentRuntime:
             approval_handler=self.approval_handler,
             emit_event=self.emit_event,
             trust_mode=self.trust_mode,
+            policy=self.policy,
+            network_policy=self.network_policy,
         )

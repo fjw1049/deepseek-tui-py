@@ -203,16 +203,16 @@ def workspace_storage_key(workspace: Path | None = None) -> str:
     return hashlib.sha256(str(root).encode("utf-8")).hexdigest()[:16]
 
 
-def user_subagents_state_path(workspace: Path | None = None) -> Path:
+def user_subagents_state_path(workspace: Path | None = None, session_id: str | None = None) -> Path:
     """``~/.deepseek/agents/registries/<workspace_key>.json`` — SubAgentManager registry.
 
     One file per workspace so concurrent engines on different checkouts do not
     clobber each other. Storage stays under the user home, not the git tree.
     """
-    return (
-        user_subagents_registries_dir()
-        / f"{workspace_storage_key(workspace)}.json"
-    )
+    key = workspace_storage_key(workspace)
+    if session_id:
+        key += "-" + hashlib.sha256(session_id.encode()).hexdigest()[:16]
+    return user_subagents_registries_dir() / f"{key}.json"
 
 
 def user_automations_dir() -> Path:

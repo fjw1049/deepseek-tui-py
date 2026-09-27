@@ -98,6 +98,9 @@ def _result_to_json(result: SubAgentResult) -> dict[str, Any]:
         "duration_ms": result.duration_ms,
         "from_prior_session": result.from_prior_session,
         "max_steps_reached": result.max_steps_reached,
+        "structured": result.structured,
+        "structured_received": result.structured_received,
+        "background": result.background,
     }
 
 
@@ -266,7 +269,7 @@ async def _execute_spawn(input_data: dict[str, Any], context: ToolContext) -> To
     # Map Claude/CodeBuddy names (Read/Grep/…) onto DeepSeek tool ids.
     if (
         plugin_trusted
-        and not allowed_tools
+        and allowed_tools is None
         and plugin_persona is not None
         and getattr(plugin_persona, "tools", None)
     ):
@@ -284,7 +287,7 @@ async def _execute_spawn(input_data: dict[str, Any], context: ToolContext) -> To
     if (
         plugin_persona is not None
         and not plugin_trusted
-        and not allowed_tools
+        and allowed_tools is None
     ):
         from deepseek_tui.engine.orchestrator.helpers import FOCUS_PLUGIN_BASE
 

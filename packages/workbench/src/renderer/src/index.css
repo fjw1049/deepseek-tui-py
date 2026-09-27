@@ -1010,6 +1010,21 @@ samp {
   flex: 1 1 auto;
 }
 
+.ds-goal-details, .ds-goal-budget-editor {
+  padding: 0.35rem 0.7rem;
+  font-size: 0.78rem;
+  color: var(--ds-fg-muted);
+  overflow-wrap: anywhere;
+}
+
+.ds-goal-details summary { cursor: pointer; }
+.ds-goal-details ul { margin: 0.4rem 0; padding-left: 1rem; }
+.ds-goal-budget-editor { display: flex; flex-wrap: wrap; gap: 0.6rem; align-items: center; }
+.ds-goal-budget-editor p { flex-basis: 100%; }
+.ds-goal-budget-editor label { display: flex; gap: 0.3rem; align-items: center; }
+.ds-goal-budget-editor input { width: 7rem; padding: 0.25rem; background: var(--ds-card-strong);
+  border: 1px solid var(--ds-border-strong); border-radius: 0.3rem; color: var(--ds-fg); }
+
 .ds-goal-strip__status {
   flex: 0 0 auto;
   font-size: 0.68rem;

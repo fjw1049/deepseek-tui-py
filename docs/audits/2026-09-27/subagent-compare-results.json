@@ -1,0 +1,12 @@
+{
+  "poll_50ms": {
+    "samples": 20,
+    "median_ms": 51.115,
+    "max_ms": 51.172
+  },
+  "join_single_driver": {
+    "samples": 20,
+    "median_ms": 3.56,
+    "max_ms": 3.685
+  }
+}

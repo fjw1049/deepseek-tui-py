@@ -67,3 +67,7 @@ rm -rf node_modules && npm ci
 ## API 契约
 
 `contracts/runtime-api.openapi.yaml` · 实现：`src/deepseek_tui/server/`
+
+## 会话分享与跨设备恢复
+
+对话顶部点击「分享 → 复制链接」，另一台电脑打开链接并点击「在应用中继续」。接收方无需配置服务器或密钥，普通对话也无需选择目录。可选携带项目修改。创建链接所需服务由维护者一次性部署，详见 [会话分享部署与使用说明](../../docs/session-sharing.md)。

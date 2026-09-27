@@ -53,19 +53,9 @@ def _deepseek_version() -> str:
         return "unknown"
 
 
-# Calendar date frozen at process start (first render). Survives the whole
-# server lifetime so the Environment block stays KV-prefix-stable; refresh
-# only happens on process restart. Year-month-day is enough for as-of /
-# "latest" reasoning; finer precision is available via ``exec_shell date``.
-_PROCESS_TODAY: str | None = None
-
-
 def process_today() -> str:
-    """Return ``YYYY-MM-DD`` for this process (local date at first call)."""
-    global _PROCESS_TODAY
-    if _PROCESS_TODAY is None:
-        _PROCESS_TODAY = datetime.now().strftime("%Y-%m-%d")
-    return _PROCESS_TODAY
+    """Return the current local date; the prompt prefix changes only at midnight."""
+    return datetime.now().strftime("%Y-%m-%d")
 
 
 def render_environment_block(

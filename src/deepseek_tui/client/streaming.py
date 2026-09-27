@@ -64,11 +64,23 @@ class _ToolCallBuilder:
 class OpenAIStreamParser:
     def __init__(self) -> None:
         self._tool_calls: dict[int, _ToolCallBuilder] = {}
+        self._done = False
         self._usage: Usage | None = None
         self._truncated = False
+        self._finished = False
+        self._failed = False
 
     def parse_chunk(self, payload: dict[str, Any]) -> list[StreamEvent]:
+        if self._done or self._failed:
+            return []
         events: list[StreamEvent] = []
+        if payload.get("error"):
+            self._failed = self._done = True
+            self._tool_calls.clear()
+            return [
+                StreamDone(usage=self._usage, truncated=True),
+                StreamError(message=str(payload["error"])),
+            ]
         usage_payload = payload.get("usage")
         if isinstance(usage_payload, dict):
             self._usage = Usage.model_validate(usage_payload)
@@ -139,27 +151,29 @@ class OpenAIStreamParser:
             # follows is a fragment — a half sentence, or tool-call arguments
             # that will not parse — not an answer.
             self._truncated = True
-        if finish_reason == "tool_calls":
-            for index in sorted(self._tool_calls):
-                events.append(StreamToolCallComplete(tool_call=self._tool_calls[index].build()))
-            self._tool_calls.clear()
-        # finish_reason == "stop" intentionally emits nothing here. StreamDone
-        # is emitted exactly once, in finalize(): some providers attach usage
-        # to the finish chunk, others send a trailing usage-only chunk, and
-        # emitting on both paths double-counted usage downstream
-        # (MeteredLLMClient records every usage-bearing StreamDone).
+        if finish_reason in {"stop", "tool_calls", "length", "content_filter"}:
+            self._finished = True
+        if finish_reason == "content_filter":
+            self._truncated = True
+        if self._tool_calls and finish_reason == "stop":
+            self._failed = True
+        # Hold tool calls until message completion; usage may arrive in a trailing frame.
 
         return events
 
     def finalize(self) -> list[StreamEvent]:
+        if self._done:
+            return []
+        self._done = True
         events: list[StreamEvent] = []
-        if self._tool_calls:
+        incomplete = not self._finished or self._failed
+        if not incomplete and not self._truncated:
             for index in sorted(self._tool_calls):
                 events.append(StreamToolCallComplete(tool_call=self._tool_calls[index].build()))
-            self._tool_calls.clear()
-        # The single StreamDone for this request, carrying the final usage
-        # (updated by whichever chunk delivered it last).
-        events.append(StreamDone(usage=self._usage, truncated=self._truncated))
+        self._tool_calls.clear()
+        events.append(StreamDone(usage=self._usage, truncated=self._truncated or incomplete))
+        if incomplete:
+            events.append(StreamError(message="Incomplete or failed OpenAI response"))
         return events
 
 
@@ -168,14 +182,19 @@ class AnthropicStreamParser:
 
     def __init__(self) -> None:
         self._tool_calls: dict[int, _ToolCallBuilder] = {}
+        self._closed_calls: dict[int, _ToolCallBuilder] = {}
         self._usage = Usage()
         self._done = False
         self._truncated = False
+        self._finished = False
+        self._failed = False
 
     def parse_event(
         self, event_name: str, payload: dict[str, Any]
     ) -> list[StreamEvent]:
         events: list[StreamEvent] = []
+        if self._done or self._failed:
+            return events
         event_type = str(payload.get("type") or event_name)
 
         if event_type == "message_start":
@@ -230,7 +249,7 @@ class AnthropicStreamParser:
             if isinstance(index, int):
                 builder = self._tool_calls.pop(index, None)
                 if builder is not None:
-                    events.append(StreamToolCallComplete(tool_call=builder.build()))
+                    self._closed_calls[index] = builder
             return events
 
         if event_type == "message_delta":
@@ -245,12 +264,17 @@ class AnthropicStreamParser:
             return events
 
         if event_type == "error":
+            self._failed = self._done = True
+            self._tool_calls.clear()
+            self._closed_calls.clear()
+            events.append(StreamDone(usage=self._usage, truncated=True))
             error = payload.get("error")
             message = error.get("message") if isinstance(error, dict) else error
             events.append(StreamError(message=str(message or "Anthropic API error")))
             return events
 
         if event_type == "message_stop":
+            self._finished = True
             events.extend(self.finalize())
         return events
 
@@ -258,9 +282,14 @@ class AnthropicStreamParser:
         if self._done:
             return []
         events: list[StreamEvent] = []
-        for index in sorted(self._tool_calls):
-            events.append(StreamToolCallComplete(tool_call=self._tool_calls[index].build()))
+        incomplete = not self._finished or self._failed or bool(self._tool_calls)
+        if not incomplete and not self._truncated:
+            for index in sorted(self._closed_calls):
+                events.append(StreamToolCallComplete(tool_call=self._closed_calls[index].build()))
         self._tool_calls.clear()
+        self._closed_calls.clear()
         self._done = True
-        events.append(StreamDone(usage=self._usage, truncated=self._truncated))
+        events.append(StreamDone(usage=self._usage, truncated=self._truncated or incomplete))
+        if incomplete:
+            events.append(StreamError(message="Incomplete or failed Anthropic response"))
         return events

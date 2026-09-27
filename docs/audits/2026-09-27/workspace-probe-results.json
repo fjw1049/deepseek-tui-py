@@ -1,0 +1,64 @@
+{
+  "diff": {
+    "hidden_path_changed": true,
+    "no_newline_lines_joined": true,
+    "stats": {
+      "additions": 0,
+      "deletions": 1
+    }
+  },
+  "hunk_prefix_stats": {
+    "additions": 0,
+    "deletions": 0
+  },
+  "failed_mutation_in_net": true,
+  "fold_cost": {
+    "10": {
+      "current_diff_calls": 55,
+      "incremental_target_calls": 10
+    },
+    "100": {
+      "current_diff_calls": 5050,
+      "incremental_target_calls": 100
+    }
+  },
+  "checkpoint_id_escape": true,
+  "guard_dotdot_allowed": true,
+  "binary_conflict": {
+    "report": {
+      "applied": [
+        "raw.bin"
+      ],
+      "merged": [],
+      "conflicted": [],
+      "skipped": []
+    },
+    "destination_overwritten": true
+  },
+  "partial_move": {
+    "report": {
+      "applied": [
+        "a.txt"
+      ],
+      "merged": [],
+      "conflicted": [],
+      "skipped": [
+        "b.txt"
+      ]
+    },
+    "failed_source_erased": true,
+    "destination_missing_change": true
+  },
+  "quoted_paths": {
+    "baseline": [
+      "ä¸­æ.txt"
+    ],
+    "incorrectly_attributed": [
+      "\"b//344/270/255/346/226/207.txt\""
+    ]
+  },
+  "head_moved": {
+    "recorded_paths": []
+  },
+  "symlink_read": true
+}

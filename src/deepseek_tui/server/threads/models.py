@@ -104,6 +104,8 @@ class ThreadRecord(BaseModel):
     title: str | None = None
     source_session_id: str | None = None
     source_session_path: str | None = None
+    source_share_id: str | None = None
+    source_workspace: str | None = None
     memory_mode: str | None = None
     approved_plan: bool = False
     goal: dict[str, Any] | None = None
@@ -259,6 +261,7 @@ class StartTurnRequest(BaseModel):
     main_runtime_request_start_ms: int | None = None
     hidden: bool = False
     internal_kind: str | None = None
+    expected_goal_id: str | None = None
 
 
 class SteerTurnRequest(BaseModel):
@@ -271,6 +274,8 @@ class CompactThreadRequest(BaseModel):
 
 class GoalCommandRequest(BaseModel):
     args: str = ""
+    expected_goal_id: str | None = None
+    resume_after_budget: bool = False
     provider: str | None = None
     model: str | None = None
     reasoning_effort: str | None = None

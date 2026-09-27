@@ -3,7 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import copy
+from dataclasses import fields
 import json
+import hashlib
+import logging
 import uuid
 from collections import deque
 from pathlib import Path
@@ -41,7 +45,10 @@ from deepseek_tui.tools.task.store import (
     _resolve_task_id,
     _task_record_from_dict,
     _task_record_to_dict,
+    TaskStoreLock,
 )
+
+logger = logging.getLogger(__name__)
 
 
 async def _stub_executor(
@@ -93,6 +100,9 @@ class TaskManager:
         self._notify = asyncio.Event()
         self._shutdown = asyncio.Event()
         self._worker_tasks: list[asyncio.Task[None]] = []
+        self._store_lock: TaskStoreLock | None = None
+        self._persisted: dict[str, dict[str, Any]] = {}
+        self.storage_error: str | None = None
         # Injected by the HTTP runtime so detached tasks can surface plan /
         # tool approvals on the origin thread (see server/app.py).
         self.thread_manager: Any | None = None
@@ -101,15 +111,26 @@ class TaskManager:
 
     async def start(self) -> None:
         """Initialize directories, load prior state, spawn workers."""
-        self._tasks_dir.mkdir(parents=True, exist_ok=True)
-        self._artifacts_dir.mkdir(parents=True, exist_ok=True)
+        if self._worker_tasks:
+            return
+        if self.is_shutdown():
+            raise RuntimeError("Cannot restart a shut down TaskManager")
+        self._ensure_store_owner()
+        try:
+            self._tasks_dir.mkdir(parents=True, exist_ok=True)
+            self._artifacts_dir.mkdir(parents=True, exist_ok=True)
 
-        tasks, queue = _load_state(self._tasks_dir, self._queue_path)
-        self._tasks = tasks
-        self._queue = queue
+            tasks, queue = _load_state(self._tasks_dir, self._queue_path)
+            self._tasks = tasks
+            self._queue = queue
 
-        async with self._lock:
-            self._persist_all_locked()
+            async with self._lock:
+                self._persist_all_locked()
+
+        except BaseException:
+            self._store_lock.close()
+            self._store_lock = None
+            raise
 
         workers = max(1, min(self._cfg.worker_count, MAX_WORKERS))
         for _ in range(workers):
@@ -125,9 +146,18 @@ class TaskManager:
         for task in self._worker_tasks:
             try:
                 await task
-            except asyncio.CancelledError:
-                pass
+            except (asyncio.CancelledError, Exception):
+                logger.debug("Task worker stopped", exc_info=True)
         self._worker_tasks.clear()
+        if self._store_lock is not None:
+            self._store_lock.close()
+            self._store_lock = None
+
+    def _ensure_store_owner(self) -> None:
+        if self.is_shutdown():
+            raise RuntimeError("TaskManager is shut down")
+        if self._store_lock is None:
+            self._store_lock = TaskStoreLock(self._cfg.data_dir)
 
     def is_shutdown(self) -> bool:
         return self._shutdown.is_set()
@@ -173,11 +203,16 @@ class TaskManager:
         if not prompt:
             raise ValueError("Task prompt cannot be empty")
 
+        self._ensure_store_owner()
+        task_id = (
+            "task_" + hashlib.sha256(req.idempotency_key.encode()).hexdigest()[:32]
+            if req.idempotency_key else f"task_{uuid.uuid4().hex[:8]}"
+        )
         config = req.config or self._cfg.config
         now = _utc_now_iso()
         task = TaskRecord(
             schema_version=CURRENT_TASK_SCHEMA_VERSION,
-            id=f"task_{uuid.uuid4().hex[:8]}",
+            id=task_id,
             prompt=prompt,
             model=(
                 req.model
@@ -208,13 +243,19 @@ class TaskManager:
             ],
         )
 
-        if config is not None:
-            self._execution_configs[task.id] = config.model_copy(deep=True)
-
         async with self._lock:
+            if req.idempotency_key:
+                existing = self._tasks.get(task_id) or self._reload_task_from_disk(task_id)
+                if existing is not None:
+                    return existing
+            # The record is the commit point. A failed write must not publish
+            # runnable memory state. queue.json is an advisory ordering index.
+            self._persist_task_locked(task)
             self._queue.append(task.id)
             self._tasks[task.id] = task
-            self._persist_all_locked()
+            if config is not None:
+                self._execution_configs[task.id] = config.model_copy(deep=True)
+            self._persist_queue_best_effort()
         self._notify.set()
         return task
 
@@ -234,7 +275,7 @@ class TaskManager:
         with last week's pytest-failed tasks).
         """
         async with self._lock:
-            items = [record.summary() for record in self._tasks.values()]
+            items = [record.summary() for record in self._catalog().values()]
         if since is not None:
             items = [s for s in items if s.created_at >= since]
         items.sort(key=lambda s: s.created_at, reverse=True)
@@ -244,16 +285,28 @@ class TaskManager:
 
     async def get_task(self, id_or_prefix: str) -> TaskRecord:
         async with self._lock:
+            if id_or_prefix in self._tasks:
+                return self._tasks[id_or_prefix]
+            task_id = _resolve_task_id(self._catalog(), id_or_prefix)
+            if task_id not in self._tasks:
+                task = self._reload_task_from_disk(task_id)
+                if task is not None:
+                    self._evict_terminal_tasks_locked()
+                    return task
+            return self._tasks[task_id]
+
+    def _catalog(self) -> dict[str, TaskRecord]:
+        """Disk is the history index; live records override persisted versions."""
+        records: dict[str, TaskRecord] = {}
+        for path in self._tasks_dir.glob("*.json"):
             try:
-                task_id = _resolve_task_id(self._tasks, id_or_prefix)
-                return self._tasks[task_id]
-            except KeyError:
-                if any(tid.startswith(id_or_prefix) for tid in self._tasks):
-                    raise
-            task = self._reload_task_from_disk(id_or_prefix)
-            if task is not None:
-                return task
-            raise KeyError(f"Task not found: {id_or_prefix}")
+                task = _task_record_from_dict(json.loads(path.read_text(encoding="utf-8")))
+                if task.id == path.stem:
+                    records[task.id] = task
+            except (OSError, ValueError, TypeError, KeyError, AttributeError):
+                logger.warning("Skipping invalid task record: %s", path)
+        records.update(self._tasks)
+        return records
 
     def _reload_task_from_disk(self, id_or_prefix: str) -> TaskRecord | None:
         paths = sorted(
@@ -268,7 +321,7 @@ class TaskManager:
                 task = _task_record_from_dict(data)
                 if task.id == path.stem:
                     matches.append(task)
-            except (OSError, json.JSONDecodeError, KeyError, TypeError, ValueError):
+            except (OSError, json.JSONDecodeError, KeyError, TypeError, ValueError, AttributeError):
                 continue
         if len(matches) > 1:
             raise KeyError(
@@ -288,8 +341,10 @@ class TaskManager:
         Clears sticky error and appends a timeline entry. Detach jobs keep
         their own checkpoints; plain tasks hydrate transcripts in the executor.
         """
+        self._ensure_store_owner()
         now = _utc_now_iso()
         async with self._lock:
+            id_or_prefix = _resolve_task_id(self._catalog(), id_or_prefix)
             try:
                 task_id = _resolve_task_id(self._tasks, id_or_prefix)
             except KeyError:
@@ -315,13 +370,12 @@ class TaskManager:
 
                 if scope_key(task_scope(task)) != expected_scope:
                     raise RuntimeError("Task permissions changed; review the task again")
+            previous = copy.deepcopy(task)
             task.status = TaskStatus.QUEUED
             task.error = None
             task.ended_at = None
             task.duration_ms = None
             task.result_summary = None
-            if task_id not in self._queue:
-                self._queue.append(task_id)
             task.timeline.append(
                 TaskTimelineEntry(
                     timestamp=now,
@@ -329,18 +383,30 @@ class TaskManager:
                     summary="Task re-queued for resume from checkpoint",
                 )
             )
-            self._persist_all_locked()
+            try:
+                self._persist_task_locked(task)
+            except OSError:
+                for item in fields(task):
+                    setattr(task, item.name, getattr(previous, item.name))
+                raise
+            if task_id not in self._queue:
+                self._queue.append(task_id)
+            self._persist_queue_best_effort()
             result = task
         self._notify.set()
         return result
 
     async def cancel_task(self, id_or_prefix: str) -> TaskRecord:
+        self._ensure_store_owner()
         now = _utc_now_iso()
         token_to_cancel: asyncio.Event | None = None
         finished: asyncio.Event | None = None
         async with self._lock:
-            task_id = _resolve_task_id(self._tasks, id_or_prefix)
+            task_id = _resolve_task_id(self._catalog(), id_or_prefix)
+            if task_id not in self._tasks:
+                self._reload_task_from_disk(task_id)
             task = self._tasks[task_id]
+            previous = copy.deepcopy(task)
             if task.status is TaskStatus.QUEUED:
                 task.status = TaskStatus.CANCELED
                 task.ended_at = now
@@ -352,7 +418,6 @@ class TaskManager:
                         summary="Task canceled before execution",
                     )
                 )
-                self._queue = deque(q for q in self._queue if q != task_id)
             elif task.status is TaskStatus.RUNNING:
                 task.timeline.append(
                     TaskTimelineEntry(
@@ -364,7 +429,15 @@ class TaskManager:
                 token_to_cancel = self._running_cancel.get(task_id)
                 finished = self._running_done.get(task_id)
 
-            self._persist_all_locked()
+            try:
+                self._persist_task_locked(task)
+            except OSError:
+                for item in fields(task):
+                    setattr(task, item.name, getattr(previous, item.name))
+                raise
+            if task.status is TaskStatus.CANCELED:
+                self._queue = deque(q for q in self._queue if q != task_id)
+            self._persist_queue_best_effort()
             result = self._tasks[task_id]
 
         if token_to_cancel is not None:
@@ -586,7 +659,7 @@ class TaskManager:
     async def counts(self) -> TaskCounts:
         async with self._lock:
             counts = TaskCounts()
-            for task in self._tasks.values():
+            for task in self._catalog().values():
                 if task.status is TaskStatus.QUEUED:
                     counts.queued += 1
                 elif task.status is TaskStatus.RUNNING:
@@ -611,7 +684,30 @@ class TaskManager:
 
     async def _worker_loop(self) -> None:
         while not self._shutdown.is_set():
-            next_run = await self._pop_next_task()
+            worker = asyncio.current_task()
+            if worker is not None and worker.cancelling():
+                return
+            try:
+                next_run = await self._pop_next_task()
+                if next_run is not None:
+                    await self._run_task(*next_run)
+                self.storage_error = None
+            except OSError as exc:
+                self.storage_error = str(exc)
+                logger.exception("Task persistence failed; pausing worker")
+                try:
+                    await asyncio.wait_for(self._shutdown.wait(), timeout=5.0)
+                except asyncio.TimeoutError:
+                    pass
+                # Retry persistence, not the executor or its side effects.
+                while not self._shutdown.is_set():
+                    try:
+                        async with self._lock:
+                            self._persist_all_locked()
+                        break
+                    except OSError:
+                        await asyncio.sleep(1.0)
+                continue
             if next_run is None:
                 try:
                     await asyncio.wait_for(self._notify.wait(), timeout=0.5)
@@ -620,9 +716,9 @@ class TaskManager:
                 finally:
                     self._notify.clear()
                 continue
-            await self._run_task(*next_run)
 
     async def _pop_next_task(self) -> tuple[str, ExecutionTask, asyncio.Event] | None:
+        self._ensure_store_owner()
         async with self._lock:
             attempts = len(self._queue)
             while attempts > 0 and self._queue:
@@ -667,7 +763,16 @@ class TaskManager:
                 cancel = asyncio.Event()
                 self._running_cancel[task_id] = cancel
                 self._running_done[task_id] = asyncio.Event()
-                self._persist_all_locked()
+                try:
+                    self._persist_all_locked()
+                except OSError:
+                    task.status = TaskStatus.QUEUED
+                    task.started_at = None
+                    task.timeline.pop()
+                    self._queue.appendleft(task_id)
+                    self._running_cancel.pop(task_id, None)
+                    self._running_done.pop(task_id, None)
+                    raise
                 return task_id, request, cancel
         return None
 
@@ -755,6 +860,10 @@ class TaskManager:
             else:
                 task.status = TaskStatus.COMPLETED
                 task.result_summary = result.summary
+                if result.detail:
+                    task.result_detail_path = str(
+                        self.write_task_artifact(task.id, "result", result.detail)
+                    )
                 task.timeline.append(
                     TaskTimelineEntry(
                         timestamp=now,
@@ -763,6 +872,14 @@ class TaskManager:
                     )
                 )
             self._persist_all_locked()
+            if task.status is TaskStatus.COMPLETED:
+                from deepseek_tui.tools.durable_transcript import clear_transcript, task_transcript_path
+
+                clear_transcript(task_transcript_path(self._cfg.data_dir, task.id))
+                try:
+                    (self._cfg.data_dir / "completions" / f"{task.id}.json").unlink(missing_ok=True)
+                except OSError:
+                    logger.warning("Could not remove committed task receipt: %s", task.id)
             self._evict_terminal_tasks_locked()
 
     def _evict_terminal_tasks_locked(self) -> None:
@@ -776,18 +893,19 @@ class TaskManager:
         for tid, _ in terminal[:to_remove]:
             del self._tasks[tid]
             self._execution_configs.pop(tid, None)
+            self._persisted.pop(tid, None)
 
     def _persist_all_locked(self) -> None:
-        """全量落盘：先写队列，再逐个写入所有任务记录。
-
-        调用方必须已持有 ``self._lock``（``_locked`` 约定）。用于队列
-        结构性变化的场合（新增/取消/出队/收尾/启动），此时 queue 与多个
-        任务状态可能同时变动，一次全写保证多文件间一致。高频的单任务
-        更新应改用 :meth:`_persist_task_locked` 以避免全量写放大。
-        """
-        self._persist_queue_locked()
+        """Commit dirty records, then the rebuildable queue ordering index."""
         for task in self._tasks.values():
             self._persist_task_locked(task)
+        self._persist_queue_best_effort()
+
+    def _persist_queue_best_effort(self) -> None:
+        try:
+            self._persist_queue_locked()
+        except OSError:
+            logger.warning("Task queue index write failed; recover from task records", exc_info=True)
 
     def _persist_queue_locked(self) -> None:
         """原子写入队列顺序到 ``queue.json``（调用方须持有 ``self._lock``）。"""
@@ -796,4 +914,7 @@ class TaskManager:
     def _persist_task_locked(self, task: TaskRecord) -> None:
         """原子写入单个任务到 ``tasks/{id}.json``（调用方须持有 ``self._lock``）。"""
         path = self._tasks_dir / f"{task.id}.json"
-        write_json_atomic(path, _task_record_to_dict(task))
+        data = _task_record_to_dict(task)
+        if self._persisted.get(task.id) != data:
+            write_json_atomic(path, data)
+            self._persisted[task.id] = data

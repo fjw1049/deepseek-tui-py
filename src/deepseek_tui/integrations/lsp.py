@@ -11,6 +11,9 @@ from pathlib import Path
 import asyncio
 import json
 import logging
+import os
+from urllib.parse import urlsplit
+from urllib.request import url2pathname
 from abc import ABC, abstractmethod
 from typing import Any
 
@@ -226,8 +229,8 @@ class StdioLspTransport(LspTransport):
                         key, _, value = line_str.partition(":")
                         headers[key.strip().lower()] = value.strip()
                 content_length = int(headers.get("content-length", "0"))
-                if content_length == 0:
-                    return None
+                if not 0 < content_length <= 16 * 1024 * 1024:
+                    raise ValueError("LSP Content-Length out of bounds")
                 payload = await self._process.stdout.readexactly(content_length)
                 result: dict[str, Any] = json.loads(payload.decode("utf-8"))
                 return result
@@ -245,12 +248,31 @@ class StdioLspTransport(LspTransport):
                 await self._process.wait()
 
 
+def _document_key(path: Path) -> str:
+    return Path(os.path.abspath(path)).as_posix()
+
+
+def _path_from_uri(uri: str) -> str | None:
+    parsed = urlsplit(uri)
+    if parsed.scheme != "file" or parsed.query or parsed.fragment:
+        return None
+    path = url2pathname(parsed.path)
+    if parsed.netloc and parsed.netloc != "localhost":
+        if os.name != "nt":
+            return None
+        path = f"//{parsed.netloc}{path}"
+    return _document_key(Path(path))
+
+
 class LspClient:
     """LSP client for a single language server."""
 
-    def __init__(self, transport: LspTransport, language: Language) -> None:
+    def __init__(self, transport: LspTransport, language: Language, *, request_timeout: float = 10.0) -> None:
         self.transport = transport
         self.language = language
+        self.request_timeout = request_timeout
+        self._closed = False
+        self._document_locks: dict[str, asyncio.Lock] = {}
         self._next_id = 1
         self._pending: dict[int, asyncio.Future[Any]] = {}
         self._diagnostics: dict[str, list[Diagnostic]] = {}
@@ -264,11 +286,21 @@ class LspClient:
         # the answer instead of sleeping for however long it might take.
         self._published: dict[str, asyncio.Event] = {}
 
+    @property
+    def is_running(self) -> bool:
+        return not self._closed and self._receive_task is not None and not self._receive_task.done()
+
     async def start(self) -> None:
-        """Start the client and initialize the server."""
-        await self.transport.start()
-        self._receive_task = asyncio.create_task(self._receive_loop())
-        await self._initialize()
+        async def initialize() -> None:
+            await self.transport.start()
+            self._receive_task = asyncio.create_task(self._receive_loop())
+            await self._initialize()
+
+        try:
+            await asyncio.wait_for(initialize(), self.request_timeout)
+        except BaseException:
+            await self.close()
+            raise
 
     async def _initialize(self) -> None:
         """Send initialize request."""
@@ -288,25 +320,25 @@ class LspClient:
         self._next_id += 1
         future: asyncio.Future[Any] = asyncio.Future()
         self._pending[msg_id] = future
-        await self.transport.send(
-            {
-                "jsonrpc": "2.0",
-                "id": msg_id,
-                "method": method,
-                "params": params,
-            }
-        )
-        return await future
+        async def exchange() -> Any:
+            await self.transport.send({
+                "jsonrpc": "2.0", "id": msg_id, "method": method, "params": params,
+            })
+            return await future
+
+        try:
+            return await asyncio.wait_for(exchange(), self.request_timeout)
+        finally:
+            self._pending.pop(msg_id, None)
+            if not future.done():
+                future.cancel()
+            elif not future.cancelled():
+                future.exception()
 
     async def _notify(self, method: str, params: Any) -> None:
-        """Send a notification (no response expected)."""
-        await self.transport.send(
-            {
-                "jsonrpc": "2.0",
-                "method": method,
-                "params": params,
-            }
-        )
+        await asyncio.wait_for(self.transport.send({
+            "jsonrpc": "2.0", "method": method, "params": params,
+        }), self.request_timeout)
 
     async def _receive_loop(self) -> None:
         """Receive loop for handling server messages."""
@@ -325,7 +357,12 @@ class LspClient:
                         future.set_exception(RuntimeError(msg["error"].get("message", "LSP error")))
                 elif msg.get("method") == "textDocument/publishDiagnostics":
                     self._handle_diagnostics(msg["params"])
+        except Exception:  # noqa: BLE001 — fail the connection and all its waiters.
+            logging.getLogger(__name__).warning("LSP receive failed", exc_info=True)
         finally:
+            self._closed = True
+            for event in self._published.values():
+                event.set()
             # Server died or stream hit EOF: fail every in-flight request so
             # _request() callers don't await a future that can never resolve.
             pending, self._pending = self._pending, {}
@@ -338,10 +375,15 @@ class LspClient:
     def _handle_diagnostics(self, params: dict[str, Any]) -> None:
         """Handle publishDiagnostics notification."""
         uri = params.get("uri", "")
-        if uri.startswith("file://"):
-            path = uri[7:]
-        else:
-            path = uri
+        if not isinstance(uri, str):
+            return
+        path = _path_from_uri(uri)
+        if path is None:
+            return
+        version = params.get("version")
+        expected = self._versions.get(path)
+        if version is not None and expected is not None and version != expected:
+            return
         diagnostics = []
         for diag in params.get("diagnostics", []):
             severity = Severity(diag.get("severity", 1))
@@ -369,20 +411,32 @@ class LspClient:
         an empty list rather than silence — so the timeout is a bound on
         pathological cases, not the price of every edit.
         """
-        key = path.as_posix()
-        event = self._publication_event(key)
-        event.clear()
-        if key in self._versions:
-            self._versions[key] += 1
-            await self.did_change(path, content, self._versions[key])
-        else:
-            self._versions[key] = 1
-            await self.did_open(path, content)
+        key = _document_key(path)
+        lock = self._document_locks.setdefault(key, asyncio.Lock())
+
+        async def sync() -> list[Diagnostic]:
+            async with lock:
+                event = self._publication_event(key)
+                event.clear()
+                previous = self._versions.get(key, 0)
+                self._versions[key] = previous + 1
+                try:
+                    if previous:
+                        await self.did_change(path, content, previous + 1)
+                    else:
+                        await self.did_open(path, content)
+                except BaseException:
+                    # A partial send has unknown document state. Reconnect
+                    # rather than issuing a later didChange to an unopened file.
+                    await self.close()
+                    raise
+                await event.wait()
+                return self.get_diagnostics(path) if not self._closed else []
+
         try:
-            await asyncio.wait_for(event.wait(), timeout=timeout_s)
+            return await asyncio.wait_for(sync(), timeout_s)
         except asyncio.TimeoutError:
             return []
-        return self.get_diagnostics(path)
 
     async def did_open(self, path: Path, content: str) -> None:
         """Send didOpen notification."""
@@ -390,7 +444,7 @@ class LspClient:
             "textDocument/didOpen",
             {
                 "textDocument": {
-                    "uri": f"file://{path.as_posix()}",
+                    "uri": Path(_document_key(path)).as_uri(),
                     "languageId": self.language.language_id(),
                     "version": 1,
                     "text": content,
@@ -404,7 +458,7 @@ class LspClient:
             "textDocument/didChange",
             {
                 "textDocument": {
-                    "uri": f"file://{path.as_posix()}",
+                    "uri": Path(_document_key(path)).as_uri(),
                     "version": version,
                 },
                 "contentChanges": [{"text": content}],
@@ -413,17 +467,18 @@ class LspClient:
 
     def get_diagnostics(self, path: Path) -> list[Diagnostic]:
         """Get diagnostics for a file."""
-        return self._diagnostics.get(path.as_posix(), [])
+        return self._diagnostics.get(_document_key(path), [])
 
     async def close(self) -> None:
         """Close the client."""
-        if self._receive_task:
-            self._receive_task.cancel()
-            try:
-                await self._receive_task
-            except asyncio.CancelledError:
-                pass
-        await self.transport.close()
+        self._closed = True
+        task, self._receive_task = self._receive_task, None
+        try:
+            if task is not None:
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+        finally:
+            await self.transport.close()
 
 
 # ======================================================================
@@ -461,6 +516,9 @@ class LspManager:
         self.config = config
         self._clients: dict[Language, LspClient] = {}
         self._unavailable: set[Language] = set()
+        self._starting: dict[Language, asyncio.Task[LspClient | None]] = {}
+        self._closed = False
+        self._close_task: asyncio.Task[None] | None = None
 
     async def diagnostics_for(self, path: Path, content: str) -> list[DiagnosticBlock]:
         """Get diagnostics for a file after an edit."""
@@ -489,13 +547,22 @@ class LspManager:
 
     async def _get_or_spawn_client(self, lang: Language) -> LspClient | None:
         """Get or spawn an LSP client for a language."""
-        if lang in self._clients:
-            return self._clients[lang]
-        # Without this, a machine with no language server installed re-forks
-        # a doomed subprocess on every single edit for the whole session.
-        if lang in self._unavailable:
+        if self._closed or lang in self._unavailable:
             return None
+        client = self._clients.get(lang)
+        if client is not None and client.is_running:
+            return client
+        task = self._starting.get(lang)
+        if task is None or task.done():
+            task = asyncio.create_task(self._spawn_client(lang), name=f"lsp-start-{lang.value}")
+            self._starting[lang] = task
+            task.add_done_callback(lambda done: None if done.cancelled() else done.exception())
+        return await asyncio.shield(task)
 
+    async def _spawn_client(self, lang: Language) -> LspClient | None:
+        previous = self._clients.pop(lang, None)
+        if previous is not None:
+            await previous.close()
         server_cmd = self.config.servers.get(lang.as_key())
         if server_cmd:
             command = server_cmd[0]
@@ -511,9 +578,16 @@ class LspManager:
             transport = StdioLspTransport(command, args)
             client = LspClient(transport, lang)
             await client.start()
+            if self._closed:
+                await client.close()
+                return None
             self._clients[lang] = client
             return client
+        except asyncio.CancelledError:
+            await client.close()
+            raise
         except Exception:
+            await client.close()
             self._unavailable.add(lang)
             logging.getLogger(__name__).warning(
                 "lsp_server_unavailable language=%s command=%s — diagnostics "
@@ -538,9 +612,24 @@ class LspManager:
 
     async def close_all(self) -> None:
         """Close all LSP clients."""
-        for client in self._clients.values():
-            await client.close()
-        self._clients.clear()
+        self._closed = True
+        if self._close_task is None:
+            async def drain() -> None:
+                tasks = list(self._starting.values())
+                for task in tasks:
+                    task.cancel()
+                await asyncio.gather(*tasks, return_exceptions=True)
+                self._starting.clear()
+                clients = list(self._clients.values())
+                self._clients.clear()
+                await asyncio.gather(*(c.close() for c in clients), return_exceptions=True)
+
+            self._close_task = asyncio.create_task(drain(), name="lsp-close")
+        try:
+            await asyncio.shield(self._close_task)
+        except asyncio.CancelledError:
+            await self._close_task
+            raise
 
 
 # ======================================================================

@@ -290,26 +290,59 @@ async def _run_shell(
     ``devnull_output``. Raises ``asyncio.TimeoutError`` (child killed and
     reaped) or ``OSError``.
     """
+    import os
+    import signal
+
+    limit = 256 * 1024
     pipe = asyncio.subprocess.DEVNULL if devnull_output else asyncio.subprocess.PIPE
     proc = await asyncio.create_subprocess_shell(
-        command,
-        cwd=cwd,
-        env=env,
-        stdin=asyncio.subprocess.PIPE,
-        stdout=pipe,
-        stderr=pipe,
+        command, cwd=cwd, env=env, stdin=asyncio.subprocess.PIPE,
+        stdout=pipe, stderr=pipe, start_new_session=os.name == "posix",
     )
-    try:
-        stdout_b, stderr_b = await asyncio.wait_for(
-            proc.communicate(input=stdin_data), timeout=timeout
-        )
-    except asyncio.TimeoutError:
-        proc.kill()
-        # Reap the killed child; otherwise it lingers as a zombie.
+
+    async def read(stream: asyncio.StreamReader | None) -> bytes | None:
+        if stream is None:
+            return None
+        output = bytearray()
+        while chunk := await stream.read(65536):
+            output.extend(chunk)
+            if len(output) > limit:
+                raise ValueError("Hook output exceeded 256 KiB per stream")
+        return bytes(output)
+
+    async def feed() -> None:
+        assert proc.stdin is not None
         try:
-            await proc.wait()
-        except (OSError, ProcessLookupError):
+            proc.stdin.write(stdin_data)
+            await proc.stdin.drain()
+        except (BrokenPipeError, ConnectionResetError):
             pass
+        finally:
+            proc.stdin.close()
+
+    io = [asyncio.create_task(feed()), asyncio.create_task(read(proc.stdout)),
+          asyncio.create_task(read(proc.stderr))]
+    try:
+        async def collect() -> tuple[bytes | None, bytes | None]:
+            _, stdout, stderr = await asyncio.gather(*io)
+            await proc.wait()
+            return stdout, stderr
+
+        stdout_b, stderr_b = await asyncio.wait_for(collect(), timeout=timeout)
+    except BaseException:
+        try:
+            if os.name == "posix":
+                os.killpg(proc.pid, signal.SIGKILL)
+            else:
+                proc.kill()
+        except ProcessLookupError:
+            pass
+        for task in io:
+            task.cancel()
+        await asyncio.gather(*io, return_exceptions=True)
+        # Drain pipes after termination; waiting alone can deadlock while a
+        # StreamReader is paused at its buffer limit.
+        await proc.communicate()
         raise
     return proc.returncode or 0, stdout_b, stderr_b
 
@@ -337,7 +370,7 @@ class ShellHookSink(HookSink):
             await _run_shell(
                 self.command, timeout=self.timeout, stdin_data=stdin_data
             )
-        except (asyncio.TimeoutError, OSError):
+        except (asyncio.TimeoutError, OSError, ValueError):
             pass
 
 
@@ -363,9 +396,15 @@ class HookDispatcher:
         """Register a sink."""
         self.sinks.append(sink)
 
+    async def close(self) -> None:
+        for sink in self.sinks:
+            close = getattr(sink, "close", None)
+            if close is not None:
+                await close()
+
     async def emit(self, event: HookEvent) -> None:
         """Emit event to all sinks (best-effort)."""
-        for sink in self.sinks:
+        async def emit_one(sink: HookSink) -> None:
             try:
                 await sink.emit(event)
             except Exception:
@@ -375,6 +414,7 @@ class HookDispatcher:
                     type(event).__name__,
                     exc_info=True,
                 )
+        await asyncio.gather(*(emit_one(sink) for sink in self.sinks))
 
 
 # ======================================================================
@@ -467,6 +507,11 @@ class HookContext:
             except (ValueError, TypeError):
                 tool_input = self.tool_args
             payload["tool_input"] = tool_input
+            if claude and isinstance(tool_input, dict) and self.tool_name in ("read_file", "write_file", "edit_file"):
+                payload["tool_input"] = {
+                    ("file_path" if key == "path" else key): value
+                    for key, value in tool_input.items()
+                }
         if event == "tool_call_after":
             if self.tool_result is not None:
                 payload["tool_response"] = _truncate(self.tool_result, 10_000)
@@ -482,8 +527,10 @@ class HookContext:
         env: dict[str, str] = {}
         if self.tool_name:
             env["DEEPSEEK_TOOL_NAME"] = self.tool_name
-        if self.tool_args:
+        if self.tool_args and len(self.tool_args.encode()) <= 16_384:
             env["DEEPSEEK_TOOL_ARGS"] = self.tool_args
+        elif self.tool_args:
+            env["DEEPSEEK_TOOL_ARGS_ON_STDIN"] = "true"
         if self.tool_result is not None:
             env["DEEPSEEK_TOOL_RESULT"] = _truncate(self.tool_result, 10_000)
         if self.tool_exit_code is not None:
@@ -694,6 +741,14 @@ class HookExecutor:
         # hooks run alongside user/config hooks (names without a ``plugin:``
         # prefix). Other plugins' hooks are skipped until the scenario exits.
         self.scenario_plugin: str | None = None
+        self._background_tasks: set[asyncio.Task[None]] = set()
+
+    async def close(self) -> None:
+        tasks = list(self._background_tasks)
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        self._background_tasks.clear()
 
     @classmethod
     def from_config(cls, config: HooksConfig, workspace: Path) -> HookExecutor:
@@ -769,6 +824,10 @@ class HookExecutor:
                 elif "DEEPSEEK_WORKSPACE" in hook_env:
                     hook_env["CLAUDE_PROJECT_DIR"] = hook_env["DEEPSEEK_WORKSPACE"]
             if hook.background:
+                if event in {"tool_call_before", "message_submit", "shell_env", "turn_end", "subagent_stop"}:
+                    results.append(HookResult(name=hook.name, success=False, blocked=True,
+                                              block_reason="Decision hooks cannot run in background"))
+                    continue
                 result = await self._execute_background(hook, hook_env, stdin_data)
             else:
                 result = await self._execute_sync(hook, hook_env, stdin_data)
@@ -791,6 +850,9 @@ class HookExecutor:
                 )
             results.append(result)
             if not result.success and not result.blocked and not hook.continue_on_error:
+                if event in {"tool_call_before", "message_submit"}:
+                    result.blocked = True
+                    result.block_reason = result.error or result.stderr or "Required hook failed"
                 break
         return results
 
@@ -808,7 +870,7 @@ class HookExecutor:
         return self.default_working_dir
 
     def _timeout(self, hook: LifecycleHookEntry) -> float:
-        if self.config.default_timeout_secs is not None:
+        if self.config.default_timeout_secs is not None and "timeout_secs" not in hook.model_fields_set:
             return float(self.config.default_timeout_secs)
         return float(hook.timeout_secs)
 
@@ -833,7 +895,7 @@ class HookExecutor:
                 success=False,
                 error=f"Hook timed out after {timeout}s",
             )
-        except OSError as exc:
+        except (OSError, ValueError) as exc:
             return HookResult(
                 name=hook.name,
                 success=False,
@@ -853,10 +915,14 @@ class HookExecutor:
         env_vars: dict[str, str],
         stdin_data: bytes = b"",
     ) -> HookResult:
-        asyncio.create_task(
+        if len(self._background_tasks) >= 16:
+            return HookResult(name=hook.name, success=False, error="Background hook limit reached")
+        task = asyncio.create_task(
             self._run_background_hook(hook, env_vars, stdin_data),
             name=f"hook-bg-{hook.name or hook.event}",
         )
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
         return HookResult(name=hook.name, success=True)
 
     async def _run_background_hook(
@@ -865,9 +931,8 @@ class HookExecutor:
         env_vars: dict[str, str],
         stdin_data: bytes = b"",
     ) -> None:
-        # 这个 task 没人持有引用，后续在优化
         try:
-            await _run_shell(
+            code, _, _ = await _run_shell(
                 hook.command,
                 timeout=self._timeout(hook),
                 stdin_data=stdin_data,
@@ -875,6 +940,8 @@ class HookExecutor:
                 env={**_base_env(), **env_vars},
                 devnull_output=True,
             )
+            if code:
+                logger.warning("Background hook exited with status %s: %s", code, hook.name)
         except Exception:
             logger.warning(
                 "background lifecycle hook failed hook=%s event=%s",
@@ -921,7 +988,7 @@ class HookExecutor:
                 for n in nested
                 if isinstance(n, dict)
             )
-        return True
+        raise ValueError(f"Unknown hook condition type: {ctype}")
 
 
 def _base_env() -> dict[str, str]:
@@ -961,6 +1028,8 @@ def build_hook_dispatcher(config: Config) -> HookDispatcher:
     """Wire stdout / JSONL / webhook / shell sinks from ``config.hooks``."""
     dispatcher = HookDispatcher()
     hooks_cfg = config.hooks
+    if not hooks_cfg.enabled:
+        return dispatcher
     if hooks_cfg.stdout:
         dispatcher.add_sink(StdoutHookSink())
     if hooks_cfg.jsonl_path is not None:

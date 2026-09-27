@@ -778,6 +778,42 @@ async def _run_task_engine_turn(
     from deepseek_tui.tools.runtime import create_tool_runtime
     from deepseek_tui.tools.task import TaskExecutionResult
 
+    from deepseek_tui.tools.durable_transcript import (
+        CONTINUE_NUDGE,
+        DurableTranscript,
+        dicts_to_messages,
+        load_transcript,
+        messages_to_dicts,
+        save_transcript,
+        task_transcript_path,
+    )
+
+    manager = getattr(task, "task_manager", None)
+    # Go through TaskManager's public accessor rather than reaching into its
+    # private ``_cfg`` — keeps this decoupled from TaskManager's internals.
+    data_dir_fn = getattr(manager, "data_dir", None)
+    data_dir = data_dir_fn() if callable(data_dir_fn) else None
+    transcript_path = (
+        task_transcript_path(Path(data_dir), task.id)
+        if data_dir is not None
+        else None
+    )
+    completion_path = Path(data_dir) / "completions" / f"{task.id}.json" if data_dir else None
+    if completion_path is not None and completion_path.exists():
+        import json
+
+        completed = json.loads(completion_path.read_text(encoding="utf-8"))
+        if not isinstance(completed, dict) or completed.get("task_id") != task.id or not isinstance(completed.get("summary"), str):
+            raise ValueError("Invalid task completion receipt")
+        return TaskExecutionResult(summary=completed["summary"])
+    existing = load_transcript(transcript_path) if transcript_path else None
+    resuming = bool(
+        existing
+        and existing.messages
+        and existing.round_complete
+        and existing.owner_id == task.id
+    )
+
     cfg = (task.config or ConfigLoader().load()).model_copy(deep=True)
     if task.provider and task.provider != cfg.provider:
         cfg.provider = task.provider
@@ -831,6 +867,7 @@ async def _run_task_engine_turn(
             max_tool_round_trips=max_rounds,
             approval_handler=approval_handler,
             tool_runtime=runtime,
+            subagent_session_id=task.id,
         )
     except BaseException:
         # A stop can arrive during initialization, before the turn's finally block.
@@ -849,34 +886,6 @@ async def _run_task_engine_turn(
     if sub_mgr is not None and hasattr(sub_mgr, "bind_active_task_id"):
         sub_mgr.bind_active_task_id(task.id)
 
-    from deepseek_tui.tools.durable_transcript import (
-        CONTINUE_NUDGE,
-        DurableTranscript,
-        clear_transcript,
-        dicts_to_messages,
-        load_transcript,
-        messages_to_dicts,
-        save_transcript,
-        task_transcript_path,
-    )
-
-    manager = getattr(task, "task_manager", None)
-    # Go through TaskManager's public accessor rather than reaching into its
-    # private ``_cfg`` — keeps this decoupled from TaskManager's internals.
-    data_dir_fn = getattr(manager, "data_dir", None)
-    data_dir = data_dir_fn() if callable(data_dir_fn) else None
-    transcript_path = (
-        task_transcript_path(Path(data_dir), task.id)
-        if data_dir is not None
-        else None
-    )
-    existing = load_transcript(transcript_path) if transcript_path else None
-    resuming = bool(
-        existing
-        and existing.messages
-        and existing.round_complete
-        and existing.owner_id == task.id
-    )
     if resuming and existing is not None:
         engine.session_messages = dicts_to_messages(existing.messages)
 
@@ -946,6 +955,14 @@ async def _run_task_engine_turn(
             if cancel.is_set():
                 handle._cancel_reason = "executor_cancelled"
                 handle.cancel_event.set()
+            done, _ = await asyncio.wait(
+                (turn_task, collect_task), return_when=asyncio.FIRST_COMPLETED
+            )
+            if collect_task in done:
+                # A failed consumer must stop the producer before its bounded
+                # event queue fills. Normal terminal consumption may precede
+                # the last few instructions of the turn.
+                collect_task.result()
             await turn_task
         except BaseException:
             if not turn_task.done():
@@ -997,8 +1014,11 @@ async def _run_task_engine_turn(
             )
         if cancel.is_set():
             return TaskExecutionResult(summary=result_text, error="canceled")
-        if transcript_path is not None:
-            clear_transcript(transcript_path)
+        if completion_path is not None:
+            from deepseek_tui.utils import write_json_atomic
+
+            await asyncio.to_thread(write_json_atomic, completion_path,
+                                    {"task_id": task.id, "summary": result_text})
         return TaskExecutionResult(summary=result_text, detail=None, error=None)
     finally:
         bridge_task.cancel()

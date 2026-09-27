@@ -48,7 +48,7 @@ def classify_handoff(snap: SubAgentResult) -> HandoffOutcome:
     # parent can resume it instead of summarising over the gap.
     if snap.max_steps_reached:
         return HandoffOutcome.MAX_STEPS
-    if snap.structured is not None:
+    if snap.structured_received or snap.structured is not None:
         return HandoffOutcome.COMPLETED
     if has_summary_section(snap.result):
         return HandoffOutcome.COMPLETED

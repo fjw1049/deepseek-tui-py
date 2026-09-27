@@ -151,6 +151,8 @@ def _report_block(snap: SubAgentResult, budget: int) -> str | None:
     is the conclusion. An elided tail is recoverable — the pointer says how.
     """
     body = (snap.result or "").strip()
+    if snap.structured_received or snap.structured is not None:
+        body = json.dumps(snap.structured, ensure_ascii=False)
     if not body or budget <= 0:
         return None
     if len(body) <= budget:
@@ -191,4 +193,5 @@ class AgentRunOutput:
     """Result of one sub-agent loop execution."""
 
     text: str
-    structured: dict[str, Any] | list[Any] | None = None
+    structured: Any = None
+    structured_received: bool = False

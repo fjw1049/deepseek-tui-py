@@ -5,8 +5,16 @@ from __future__ import annotations
 import json
 import os
 import re
+import threading
+from copy import deepcopy
+from functools import wraps
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Callable, ParamSpec, TypeVar
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python 3.10
+    import tomli as tomllib
 
 from deepseek_tui.utils import write_text_atomic
 
@@ -52,16 +60,65 @@ def credential_providers(config: Config) -> list[str]:
     return sorted(set(PROVIDER_DEFAULTS) | set(config.providers) | {config.provider})
 
 
+_CONFIG_WRITE_LOCK = threading.RLock()
+_P = ParamSpec("_P")
+_R = TypeVar("_R")
+
+
+def _serialized_write(function: Callable[_P, _R]) -> Callable[_P, _R]:
+    @wraps(function)
+    def run(*args: _P.args, **kwargs: _P.kwargs) -> _R:
+        with _CONFIG_WRITE_LOCK:
+            return function(*args, **kwargs)
+
+    return run
+
+
+def _section_parts(section: str) -> tuple[str, ...]:
+    node = tomllib.loads(f"[{section}]\n")
+    parts = []
+    while isinstance(node, dict) and len(node) == 1:
+        key, node = next(iter(node.items()))
+        parts.append(key)
+    return tuple(parts)
+
+
+def _assign(document: dict[str, Any], keys: tuple[str, ...], value: object) -> None:
+    node = document
+    for key in keys[:-1]:
+        if value is None and key not in node:
+            return
+        child = node.setdefault(key, {})
+        if not isinstance(child, dict):
+            raise ValueError("Config update conflicts with an existing scalar")
+        node = child
+    if value is None:
+        node.pop(keys[-1], None)
+    else:
+        node[keys[-1]] = value
+
+
+def _checked_write(path: Path, original: str, updated: str, expected: dict[str, Any]) -> None:
+    if tomllib.loads(updated) != expected:
+        raise ValueError(
+            "Cannot safely preserve TOML structure for this update; original file unchanged"
+        )
+    if updated != original:
+        write_text_atomic(path, updated)
+
+
+@_serialized_write
 def write_active_api_key(value: str | None, *, path: Path | None = None) -> Path:
     """Set or clear the key for the provider selected by config.toml."""
     from deepseek_tui.config.paths import user_config_path
 
     config_path = path or user_config_path()
     content = config_path.read_text(encoding="utf-8") if config_path.exists() else ""
-    provider = _read_top_level_string(content.splitlines(), "provider") or "deepseek"
+    provider = tomllib.loads(content).get("provider") or "deepseek"
     return write_api_key(provider, value, path=config_path)
 
 
+@_serialized_write
 def write_api_key(
     provider: str,
     value: str | None,
@@ -83,7 +140,11 @@ def write_api_key(
     config_path = path or user_config_path()
     original = config_path.read_text(encoding="utf-8") if config_path.exists() else ""
     lines = original.splitlines()
-    active_provider = _read_top_level_string(lines, "provider") or "deepseek"
+    expected = deepcopy(tomllib.loads(original))
+    active_provider = expected.get("provider") or "deepseek"
+    _assign(expected, ("providers", provider, "api_key"), value)
+    if provider == active_provider:
+        _assign(expected, ("api_key",), value)
 
     lines = _update_section_value(
         lines,
@@ -98,8 +159,7 @@ def write_api_key(
     updated = "\n".join(lines)
     if updated:
         updated += "\n"
-    if updated != original:
-        write_text_atomic(config_path, updated)
+    _checked_write(config_path, original, updated, expected)
     return config_path
 
 
@@ -120,17 +180,6 @@ def _format_scalar(value: object) -> str:
 
 def _is_key_assignment(line: str, key: str) -> bool:
     return re.match(rf"^\s*{re.escape(key)}\s*=", line) is not None
-
-
-def _read_top_level_string(lines: list[str], key: str) -> str | None:
-    pattern = re.compile(rf"^\s*{re.escape(key)}\s*=\s*(?:\"([^\"]*)\"|'([^']*)')")
-    for line in lines:
-        if _SECTION_RE.match(line):
-            break
-        match = pattern.match(line)
-        if match:
-            return (match.group(1) or match.group(2) or "").strip()
-    return None
 
 
 def _update_top_level_value(lines: list[str], key: str, value: str | None) -> list[str]:
@@ -178,7 +227,7 @@ def _update_section_value(
         if header:
             if in_section and value is not None and not found_key:
                 updated.append(f"{key} = {_format_scalar(value)}")
-            in_section = header.group(1).strip() == section
+            in_section = _section_parts(header.group(1)) == _section_parts(section)
             found_section = found_section or in_section
             updated.append(line)
             continue
@@ -200,6 +249,7 @@ def _update_section_value(
     return updated
 
 
+@_serialized_write
 def write_config_value(key: str, value: str | None, *, path: Path | None = None) -> Path:
     """Set or clear a config.toml value by dotted key (``a`` or ``section.a``).
 
@@ -209,13 +259,13 @@ def write_config_value(key: str, value: str | None, *, path: Path | None = None)
     from deepseek_tui.config.paths import user_config_path
 
     if not key or any(not _BARE_KEY_RE.fullmatch(part) for part in key.split(".")):
-        raise ValueError(
-            f"invalid config key: {key!r} (letters, digits, '_', '-', '.' only)"
-        )
+        raise ValueError(f"invalid config key: {key!r} (letters, digits, '_', '-', '.' only)")
 
     config_path = path or user_config_path()
     original = config_path.read_text(encoding="utf-8") if config_path.exists() else ""
     lines = original.splitlines()
+    expected = deepcopy(tomllib.loads(original))
+    _assign(expected, tuple(key.split(".")), _format_value(value))
 
     if "." in key:
         section, leaf = key.rsplit(".", 1)
@@ -226,8 +276,7 @@ def write_config_value(key: str, value: str | None, *, path: Path | None = None)
     updated = "\n".join(lines)
     if updated:
         updated += "\n"
-    if updated != original:
-        write_text_atomic(config_path, updated)
+    _checked_write(config_path, original, updated, expected)
     return config_path
 
 

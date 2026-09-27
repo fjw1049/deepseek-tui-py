@@ -3,8 +3,8 @@
 Two behaviours, deliberately thin so they fit the existing
 ``tool_use → execute → tool_result`` path:
 
-- Same batch: identical ``(name, canonical args)`` reuses the first result
-  instead of executing again.
+- Same batch: stable workspace reads may reuse a successful result until
+  a potentially mutating/dynamic call invalidates it.
 - Cross-round streak: consecutive identical calls escalate a
   ``<system-reminder>`` on the model-facing result; at a hard streak the
   call is blocked (error result, no execute).
@@ -131,10 +131,14 @@ class ToolCallDeduplicator:
             seen.add(key)
         return False
 
-    def classify(self, tool_name: str, args: Any) -> DedupDecision:
+    def classify(self, tool_name: str, args: Any, *, allow_reuse: bool = True) -> DedupDecision:
+        # Reuse only stable workspace reads between potential state changes.
+        # Read-only status/network tools are deliberately not cacheable.
+        if not allow_reuse or tool_name not in {"read_file", "grep_files", "file_search"}:
+            self._batch_results.clear()
         key = make_tool_call_key(tool_name, args)
         prior = self._batch_results.get(key)
-        if prior is not None:
+        if prior is not None and not prior[1]:
             content, is_error = prior
             return DedupDecision(
                 kind="reuse",
@@ -164,8 +168,8 @@ class ToolCallDeduplicator:
     ) -> None:
         """Remember a batch result so later same-key calls can reuse it.
 
-        Only the first record for a key advances the batch key list (and thus
-        the cross-round streak). Later same-batch reuses must not call this
+        Only the first record for a key in a cache interval advances the key
+        list. Later same-batch reuses must not call this
         with a decorated copy, or reminders would stack and streaks double.
         """
         if key not in self._batch_results:

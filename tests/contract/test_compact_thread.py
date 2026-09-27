@@ -23,6 +23,8 @@ async def test_compact_thread_emits_context_compaction_item(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     manager = runtime_app.state.thread_manager  # type: ignore[attr-defined]
+    # Engine is replaced below; resolving real credentials is outside this contract.
+    monkeypatch.setattr(manager, "_get_llm_client", lambda *_: AsyncMock())
 
     async def fake_create(**kwargs: object) -> SimpleNamespace:
         from deepseek_tui.tools.registry import ToolContext

@@ -57,12 +57,10 @@ class ClaudePluginAdapter:
         diagnostics: list[Diagnostic] = []
         contributions: list[ContributionSpec] = []
 
-        skills = sorted((candidate.root / "skills").glob("*/SKILL.md"))
-        skills.extend(
-            markdown_files(
-                declared_paths(artifact, candidate, manifest.get("skills", [])),
-                skill=True,
-            )
+        skills = markdown_files(
+            declared_paths(artifact, candidate, manifest["skills"])
+            if manifest.get("skills") else [candidate.root / "skills"],
+            skill=True,
         )
         self._append_markdown(
             contributions, candidate, sorted(set(skills)), "prompt.skill", base_status
@@ -71,6 +69,7 @@ class ClaudePluginAdapter:
         for key, folder, kind in (
             ("commands", "commands", "prompt.command"),
             ("agents", "agents", "agent.persona"),
+            ("rules", "rules", "prompt.rule"),
         ):
             paths = (
                 declared_paths(artifact, candidate, manifest[key])
@@ -184,7 +183,10 @@ class ClaudePluginAdapter:
     ) -> None:
         for path in files:
             metadata, _ = markdown_metadata(path)
-            name = str(metadata.get("name") or path.stem)
+            name = (
+                path.stem if kind in {"prompt.command", "prompt.rule"}
+                else str(metadata.get("name") or (path.parent.name if kind == "prompt.skill" else path.stem))
+            )
             out.append(
                 ContributionSpec(
                     kind,

@@ -1,0 +1,46 @@
+{
+  "DeepSeekClient": {
+    "uncached": {
+      "median_ms": 22.039,
+      "encode_counts": [
+        2,
+        2,
+        2,
+        2,
+        2
+      ]
+    },
+    "request_cache": {
+      "median_ms": 11.289,
+      "encode_counts": [
+        1,
+        1,
+        1,
+        1,
+        1
+      ]
+    }
+  },
+  "AnthropicCompatClient": {
+    "uncached": {
+      "median_ms": 22.025,
+      "encode_counts": [
+        2,
+        2,
+        2,
+        2,
+        2
+      ]
+    },
+    "request_cache": {
+      "median_ms": 11.034,
+      "encode_counts": [
+        1,
+        1,
+        1,
+        1,
+        1
+      ]
+    }
+  }
+}

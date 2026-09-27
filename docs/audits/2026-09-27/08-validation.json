@@ -1,0 +1,35 @@
+{
+  "date": "2026-09-27",
+  "scope": "Audit 08 repairs and audit 09 offline characterization",
+  "environment": "Existing .venv; DEEPSEEK_HOME and CLAUDE_PLUGINS_DIR set to isolated temporary directories for related suite",
+  "related_suite": {
+    "command": ".venv/bin/pytest -q tests/test_state_audit_fixes.py tests/test_file_context.py tests/test_paste_file.py tests/test_state_persistence.py tests/test_multimodal_pipeline.py tests/test_provider_access.py tests/test_multi_provider.py tests/test_client_extra_sanitization.py tests/test_rate_limit.py tests/test_stream_done_single.py tests/engine tests/goal",
+    "result": "441 passed in 5.20s"
+  },
+  "new_regressions": {
+    "path": "tests/test_state_audit_fixes.py",
+    "count": 20,
+    "result": "20 passed"
+  },
+  "static_checks": {
+    "ruff": "ruff check --select F on state/, media.py, client/anthropic.py, client/deepseek.py, tui/session_restore.py, new regression test and both new probes: passed",
+    "compile": "compileall on state/, media.py, client/, modified TUI and orchestrator entry points, new regression test: passed",
+    "whitespace": "git diff --check: passed"
+  },
+  "probes": [
+    {
+      "command": "PYTHONPATH=src .venv/bin/python docs/audits/2026-09-27/state_media_compare.py",
+      "result": "state-media-compare-results.json; equal payloads, encoding count 2 to 1 on both protocols"
+    },
+    {
+      "command": "PYTHONPATH=src .venv/bin/python docs/audits/2026-09-27/client_probe.py",
+      "result": "client-probe-results.json; seven audit findings characterized; no production fix for audit09"
+    }
+  ],
+  "limitations": [
+    "No live HTTP/model calls or real credentials",
+    "No full desktop build or whole-repository test claim",
+    "Historical state_probe.py/results intentionally retained as pre-fix evidence",
+    "Process-local configuration lock; no cross-process transaction guarantee"
+  ]
+}

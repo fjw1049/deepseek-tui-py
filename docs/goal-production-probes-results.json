@@ -1,0 +1,44 @@
+{
+  "failed_tests_plus_unrelated_success": {
+    "completion_accepted": true,
+    "status": "complete"
+  },
+  "delete_unfinished_checklist": {
+    "completion_accepted": true
+  },
+  "cancel_unfinished_checklist": {
+    "completion_accepted": true
+  },
+  "model_resume_without_user_authorization_record": {
+    "accepted": true,
+    "status": "active"
+  },
+  "model_budget_increase_without_user_authorization_record": {
+    "accepted": true,
+    "limit": 1000000
+  },
+  "extended_deadline_uses_old_timer": {
+    "status": "budget_limited",
+    "remaining_ms": 60000,
+    "cancel_calls": 1
+  },
+  "identical_noop_in_five_automatic_turns": {
+    "continues": [
+      true,
+      true,
+      true,
+      true,
+      true
+    ]
+  },
+  "malformed_persisted_evidence": {
+    "exception": "KeyError"
+  },
+  "malformed_persisted_checklist": {
+    "exception": "TypeError"
+  },
+  "direct_service_completion_bypasses_gate": {
+    "status": "complete",
+    "evidence": []
+  }
+}

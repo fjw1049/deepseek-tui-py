@@ -468,6 +468,7 @@ class SubAgentResult:
     structured: Any | None = None
     max_steps_reached: bool = False
     background: bool = False
+    structured_received: bool = False
 
 
 @dataclass(slots=True)

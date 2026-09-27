@@ -7,11 +7,42 @@ queue in ``queue.json`` so tasks survive process restarts.
 from __future__ import annotations
 
 import json
+import logging
+import os
 from collections import deque
 from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
+
+
+class TaskStoreLock:
+    """One scheduler owns a local task directory until shutdown."""
+
+    def __init__(self, directory: Path) -> None:
+        directory.mkdir(parents=True, exist_ok=True)
+        self.file = (directory / ".scheduler.lock").open("a+b")
+        try:
+            if os.name == "nt":
+                import msvcrt
+
+                if self.file.tell() == 0:
+                    self.file.write(b"0")
+                    self.file.flush()
+                self.file.seek(0)
+                msvcrt.locking(self.file.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(self.file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError as exc:
+            self.file.close()
+            raise RuntimeError(f"Task storage already has an active scheduler: {directory}") from exc
+
+    def close(self) -> None:
+        self.file.close()
 
 from deepseek_tui.utils import utc_now_iso as _utc_now_iso
 
@@ -162,10 +193,11 @@ def _load_state(
                 with path.open("r", encoding="utf-8") as fh:
                     data = json.load(fh)
                 task = _task_record_from_dict(data)
-            except (OSError, json.JSONDecodeError, KeyError, TypeError, ValueError):
+            except (OSError, json.JSONDecodeError, KeyError, TypeError, ValueError, AttributeError):
                 # One bad file (hand-edited, old schema, disk error) must not
                 # brick every future session — the tasks dir is user-level and
                 # shared across projects. Skip it; the record stays on disk.
+                logger.warning("Skipping invalid task record: %s", path, exc_info=True)
                 continue
             if task.schema_version > CURRENT_TASK_SCHEMA_VERSION:
                 raise RuntimeError(
@@ -243,4 +275,3 @@ def _load_state(
     for tid in missing:
         queue.append(tid)
     return tasks, queue
-

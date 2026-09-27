@@ -1,0 +1,12 @@
+{
+  "former_gather_barrier": {
+    "samples": 20,
+    "fast_visible_median_ms": 41.138,
+    "batch_finished_median_ms": 41.139
+  },
+  "current_completion_publication": {
+    "samples": 20,
+    "fast_visible_median_ms": 3.576,
+    "batch_finished_median_ms": 41.201
+  }
+}
