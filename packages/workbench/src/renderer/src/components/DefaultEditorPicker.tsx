@@ -1,12 +1,15 @@
 import type { ReactElement } from 'react'
 import { useEffect, useState } from 'react'
 import type { EditorInfo } from '@shared/editor'
-import { Code2, FolderOpen, Terminal } from 'lucide-react'
+import { Code2, ExternalLink, FolderOpen, Terminal } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { SettingsSelect } from './settings/SettingsSelect'
-import { readPreferredEditorId, writePreferredEditorId } from '../lib/editor-preferences'
+import { PREFERRED_EDITOR_CHANGED_EVENT, readPreferredEditorId, writePreferredEditorId } from '../lib/editor-preferences'
 
-export function DefaultEditorPicker(): ReactElement {
+export function DefaultEditorPicker({ onOpen, targetLabel }: {
+  onOpen?: (editorId: string) => void
+  targetLabel?: string
+}): ReactElement {
   const { t } = useTranslation('common')
   const [editors, setEditors] = useState<EditorInfo[]>([])
   const [selectedEditorId, setSelectedEditorId] = useState(() => readPreferredEditorId() ?? '')
@@ -32,6 +35,8 @@ export function DefaultEditorPicker(): ReactElement {
       setEditors(available)
       setSelectedEditorId(nextId)
       if (nextId) writePreferredEditorId(nextId)
+    }).catch(() => {
+      if (!cancelled) setEditors([])
     })
 
     return () => {
@@ -39,8 +44,15 @@ export function DefaultEditorPicker(): ReactElement {
     }
   }, [])
 
-  return (
+  useEffect(() => {
+    const sync = (): void => setSelectedEditorId(readPreferredEditorId() ?? '')
+    window.addEventListener(PREFERRED_EDITOR_CHANGED_EVENT, sync)
+    return () => window.removeEventListener(PREFERRED_EDITOR_CHANGED_EVENT, sync)
+  }, [])
+
+  const picker = (
     <SettingsSelect
+      className={onOpen ? 'h-7 w-32 shrink-0' : ''}
       value={selectedEditorId}
       disabled={editors.length === 0}
       aria-label={t('editorPickerTitle')}
@@ -71,5 +83,19 @@ export function DefaultEditorPicker(): ReactElement {
         </option>
       ))}
     </SettingsSelect>
+  )
+
+  if (!onOpen) return picker
+  const label = t('workspaceEditorOpenExternal', { editor: editors.find((editor) => editor.id === selectedEditorId)?.label ?? '' })
+  return (
+    <div className="ml-auto flex shrink-0 items-center gap-1">
+      {picker}
+      <button type="button" disabled={!editors.some((editor) => editor.id === selectedEditorId)}
+        onClick={() => onOpen(selectedEditorId)} aria-label={label}
+        title={targetLabel ? `${label}: ${targetLabel}` : label}
+        className="inline-flex h-7 w-7 items-center justify-center rounded-md text-ds-muted hover:bg-ds-hover hover:text-ds-ink disabled:opacity-40">
+        <ExternalLink className="h-4 w-4" aria-hidden />
+      </button>
+    </div>
   )
 }

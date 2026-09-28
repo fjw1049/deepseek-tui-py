@@ -53,6 +53,8 @@ it('shows a persistent right tree with no files open, supports selection, toggli
   const previousGui = window.dsGui
   window.dsGui = {
     listWorkspaceDirectory: vi.fn(async () => ({ ok: true, entries: [{ name: 'demo.txt', path: 'demo.txt', kind: 'file' }] })),
+    listEditors: vi.fn(async () => ({ defaultEditorId: 'cursor', editors: [{ id: 'cursor', label: 'Cursor', available: true, kind: 'editor' }] })),
+    openEditorPath: vi.fn(async () => ({ ok: true })),
     readWorkspaceFile: vi.fn(async () => ({ ok: true, content: 'hello', truncated: false }))
   } as unknown as typeof window.dsGui
   const host = document.createElement('div')
@@ -65,6 +67,8 @@ it('shows a persistent right tree with no files open, supports selection, toggli
   }
   try {
     await act(async () => root.render(createElement(WorkspaceEditorPanel, { workspaceRoot: '/workspace', blocks: [], collapsibleTree: true })))
+    await click('[aria-label="workspaceEditorOpenExternal"]')
+    expect(window.dsGui!.openEditorPath).toHaveBeenLastCalledWith(expect.objectContaining({ path: '/workspace', editorId: 'cursor', workspaceRoot: '/workspace' }))
     const copyButton = host.querySelector<HTMLButtonElement>('[aria-label="filePreviewCopyPath: /workspace"]')!
     expect(copyButton.title).toBe('/workspace')
     expect(copyButton.textContent).toContain('/workspace')
@@ -89,6 +93,8 @@ it('shows a persistent right tree with no files open, supports selection, toggli
     expect(parseFloat(tree.parentElement!.style.width)).toBe(width + 20)
     await click('.ds-workspace-file-tree__row')
     expect(useWorkspaceEditorStore.getState().activeTabId).toBe('demo.txt')
+    await click('[aria-label="workspaceEditorOpenExternal"]')
+    expect(window.dsGui!.openEditorPath).toHaveBeenLastCalledWith(expect.objectContaining({ path: 'demo.txt', editorId: 'cursor', workspaceRoot: '/workspace' }))
     expect(host.querySelector('.ds-workspace-file-tree')).toBe(tree)
     await act(async () => useWorkspaceEditorStore.getState().closeTab('demo.txt'))
     expect(host.textContent).toContain('workspaceEditorOpenFile')
@@ -96,12 +102,12 @@ it('shows a persistent right tree with no files open, supports selection, toggli
     const toggle = host.querySelector<HTMLButtonElement>('[aria-label="workspaceEditorHideFiles"]')!
     expect(toggle.textContent).toBe('')
     expect(toggle.querySelector('.lucide-folder-open')).toBeTruthy()
-    await click('[aria-expanded="true"]')
+    await click('[aria-label="workspaceEditorHideFiles"]')
     expect(host.querySelector('.ds-workspace-file-tree')).toBeNull()
     expect(toggle.getAttribute('aria-label')).toBe('workspaceEditorBrowseFiles')
     expect(toggle.querySelector('.lucide-folder')).toBeTruthy()
     expect(toggle.textContent).toBe('')
-    await click('[aria-expanded="false"]')
+    await click('[aria-label="workspaceEditorBrowseFiles"]')
     expect(host.querySelector('.ds-workspace-file-tree')).toBeTruthy()
     const restoredWidth = host.querySelector('.ds-workspace-file-tree')!.parentElement!.style.width
     await act(async () => host.querySelector('[role="separator"]')!.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, clientX: 300 })))

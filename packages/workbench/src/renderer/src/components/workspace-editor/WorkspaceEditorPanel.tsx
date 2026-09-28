@@ -58,6 +58,7 @@ import {
   type WorkspaceFileContextMenuAction
 } from './WorkspaceFileContextMenu'
 import { WorkspaceFileTree } from './WorkspaceFileTree'
+import { DefaultEditorPicker } from '../DefaultEditorPicker'
 import type { WorkspaceEditorSurfaceHandle } from './WorkspaceEditorSurface'
 
 const LazyWorkspaceEditorSurface = lazy(() =>
@@ -1114,16 +1115,32 @@ export function WorkspaceEditorPanel({
               <span role="status" className="shrink-0">{pathCopyStatus ? t(pathCopyStatus) : ''}</span>
             </button>
           ) : null}
+          {trimmedRoot ? (
+            <DefaultEditorPicker
+              targetLabel={focusedTab?.path ?? trimmedRoot}
+              onOpen={(editorId) => {
+                setExternalOpenError(null)
+                void openWorkspacePathInEditor({ path: focusedTab?.path ?? trimmedRoot }, trimmedRoot, { editorId })
+                  .then((result) => { if (!result.ok) setExternalOpenError(result.message) })
+                  .catch((error: unknown) => setExternalOpenError(error instanceof Error ? error.message : String(error)))
+              }}
+            />
+          ) : null}
           <button
             type="button"
             onClick={() => setTreeOpen(!treeOpen)}
             aria-expanded={treeOpen}
             aria-label={t(treeOpen ? 'workspaceEditorHideFiles' : 'workspaceEditorBrowseFiles')}
             title={t(treeOpen ? 'workspaceEditorHideFiles' : 'workspaceEditorBrowseFiles')}
-            className={`ml-auto inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md hover:bg-ds-hover ${treeOpen ? 'bg-ds-hover text-ds-ink' : 'text-ds-muted'}`}
+            className={`inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md hover:bg-ds-hover ${treeOpen ? 'bg-ds-hover text-ds-ink' : 'text-ds-muted'}`}
           >
             {treeOpen ? <FolderOpen className="h-4 w-4" aria-hidden /> : <Folder className="h-4 w-4" aria-hidden />}
           </button>
+        </div>
+      ) : null}
+      {externalOpenError && !focusedTab ? (
+        <div role="alert" className="px-3 py-2 text-[12.5px] text-ds-muted">
+          {t('workspaceEditorOpenExternalFailed', { message: externalOpenError })}
         </div>
       ) : null}
       <div className="relative flex h-full min-h-0 flex-1 bg-ds-sidebar">

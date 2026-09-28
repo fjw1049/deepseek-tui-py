@@ -8,6 +8,7 @@ export type WorkspacePathTarget = {
 }
 
 export type OpenWorkspacePathOptions = {
+  editorId?: string
   allowOutsideWorkspace?: boolean
   searchRoots?: string[]
 }
@@ -28,7 +29,7 @@ export async function openWorkspacePathInEditor(
     workspaceRoot,
     searchRoots: options?.searchRoots,
     allowOutsideWorkspace: options?.allowOutsideWorkspace,
-    editorId: readPreferredEditorId()
+    editorId: options?.editorId ?? readPreferredEditorId()
   })
 }
 

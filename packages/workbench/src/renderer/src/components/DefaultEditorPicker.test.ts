@@ -7,6 +7,7 @@ import { readPreferredEditorId, writePreferredEditorId } from '../lib/editor-pre
 
 vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key }) }))
 vi.mock('../lib/editor-preferences', () => ({
+  PREFERRED_EDITOR_CHANGED_EVENT: 'deepseekgui:preferred-editor-changed',
   readPreferredEditorId: vi.fn(() => 'vscode'),
   writePreferredEditorId: vi.fn()
 }))
@@ -51,6 +52,17 @@ it('uses the settings dropdown and saves the selected application', async () => 
     expect(trigger.querySelector('svg')).not.toBeNull()
     expect(document.body.querySelector('[role="listbox"]')).toBeNull()
     expect(readPreferredEditorId).toHaveBeenCalled()
+    const onOpen = vi.fn()
+    await act(async () => root.render(createElement(DefaultEditorPicker, { onOpen, targetLabel: 'demo.html' })))
+    const openButton = container.querySelector<HTMLButtonElement>('[aria-label="workspaceEditorOpenExternal"]')!
+    expect(openButton.title).toContain('demo.html')
+    await act(async () => openButton.click())
+    expect(onOpen).toHaveBeenLastCalledWith('cursor')
+    vi.mocked(readPreferredEditorId).mockReturnValueOnce('vscode')
+    await act(async () => window.dispatchEvent(new Event('deepseekgui:preferred-editor-changed')))
+    expect(container.querySelector('[role="combobox"]')!.textContent).toBe('VS Code')
+    await act(async () => openButton.click())
+    expect(onOpen).toHaveBeenLastCalledWith('vscode')
   } finally {
     await act(async () => root.unmount())
     container.remove()
