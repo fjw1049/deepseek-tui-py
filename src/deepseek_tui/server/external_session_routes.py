@@ -38,7 +38,7 @@ async def scan(request: Request, payload: ScanRequest) -> dict:
 @router.post("/import")
 async def import_one(request: Request, payload: ImportRequest) -> dict:
     from deepseek_tui.server.routes import manager
-    from deepseek_tui.server.threads import TurnConflictError
+    from deepseek_tui.server.threads.errors import TurnConflictError
     from deepseek_tui.tools.runtime import default_runtime_model
 
     mgr = manager(request)

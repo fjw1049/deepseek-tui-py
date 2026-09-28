@@ -659,7 +659,7 @@ class InfoSidebar(Widget):
 # live state it has at the time.
 #
 
-from deepseek_tui.config.providers import context_window_for_model
+from deepseek_tui.config.providers import configured_context_window
 from deepseek_tui.engine.context import (
     estimate_input_tokens_conservative,
     estimate_tokens,
@@ -701,6 +701,7 @@ class InspectorSnapshot:
 
     model: str
     workspace: Path
+    model_config: object | None = None
     session_id: str | None = None
     history_cells: int = 0
     api_messages: list[Message] = field(default_factory=list)
@@ -751,7 +752,7 @@ def build_context_inspector_text(snapshot: InspectorSnapshot) -> str:
 
 
 def _context_usage(snapshot: InspectorSnapshot) -> tuple[int, int, float]:
-    max_window = context_window_for_model(snapshot.model)
+    max_window = configured_context_window(snapshot.model, snapshot.model_config)
     estimated = estimate_input_tokens_conservative(
         snapshot.api_messages, snapshot.system_prompt
     )

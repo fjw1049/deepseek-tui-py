@@ -263,14 +263,16 @@ async def _restore_downloaded(req, request, token, snapshot):
         thread = import_snapshot(
             request.app.state.thread_manager.store, snapshot, destination or workspace, token
         )
-    except (ValueError, OSError) as exc:
+    except BaseException as exc:
+        if scratch:
+            scratch.rmdir()
         if destination and destination.exists():
             await asyncio.to_thread(
                 git, workspace, "worktree", "remove", "--force", str(destination)
             )
-        if scratch:
-            scratch.rmdir()
-        raise HTTPException(400, str(exc)) from exc
+        if isinstance(exc, (ValueError, OSError)):
+            raise HTTPException(400, str(exc)) from exc
+        raise
     return thread.model_dump(mode="json")
 
 

@@ -310,6 +310,9 @@ async def test_two_engines_keep_budget_snapshots(config_env):
             )
         configs[0].providers["custom"].context_window = 1000000
         assert [e.context_breakdown()["window"] for e in engines] == [8192, 65536]
+        assert [
+            (await e.context_breakdown_live())["window"] for e in engines
+        ] == [8192, 65536]
         assert context_input_budget("same", 1024, engines[0].turn_loop.model_config) < 8192
         engines[0].set_model_route(AsyncMock(), configs[1], "same")
         assert engines[0].context_breakdown()["window"] == 65536

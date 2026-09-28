@@ -271,7 +271,9 @@ async def _execute_subagent_tool(
         # context and degraded every following round.
         from deepseek_tui.engine.context import compact_tool_result_for_context
 
-        return compact_tool_result_for_context(model, tool_name, result)
+        return compact_tool_result_for_context(
+            model, tool_name, result, model_config=getattr(runtime, "config", None)
+        )
     except ToolError as exc:
         return f"Error: {exc}"
     except Exception as exc:  # noqa: BLE001

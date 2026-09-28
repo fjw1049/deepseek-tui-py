@@ -35,3 +35,16 @@ def test_register_replaces_previous_config_overrides() -> None:
 
     register_provider_context_windows(Config())
     assert context_window_for_model("workspace-model") == DEFAULT_CONTEXT_WINDOW_TOKENS
+
+
+def test_context_inspector_uses_its_configured_window(tmp_path) -> None:
+    from deepseek_tui.tui.sidebar import InspectorSnapshot, _context_usage
+
+    config = Config(
+        provider="custom",
+        providers={"custom": ProviderConfig(model="workspace-model", context_window=8192)},
+    )
+    _, window, _ = _context_usage(
+        InspectorSnapshot(model="workspace-model", workspace=tmp_path, model_config=config)
+    )
+    assert window == 8192

@@ -1701,6 +1701,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
 
         return estimate_context_breakdown(
             model=model or self.default_model,
+            model_config=getattr(self, "_app_config", None),
             messages=(
                 self._active_context_messages
                 if self._active_context_messages is not None

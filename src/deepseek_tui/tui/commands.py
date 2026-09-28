@@ -845,6 +845,7 @@ def cmd_context(args: str, app: DeepSeekTUI) -> CommandResult:
         snapshot = InspectorSnapshot(
             model=model,
             workspace=workspace,
+            model_config=config,
             history_cells=0,
         )
         return CommandResult(output=build_context_inspector_text(snapshot))

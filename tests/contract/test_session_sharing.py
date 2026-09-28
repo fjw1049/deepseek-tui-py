@@ -5,6 +5,7 @@ import io
 import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -34,6 +35,22 @@ from deepseek_tui.server.threads import (
     TurnItemRecord,
     reconstruct_messages_from_turns,
 )
+
+
+async def test_restore_unexpected_failure_removes_scratch(tmp_path, monkeypatch):
+    monkeypatch.setattr(share_routes, "user_deepseek_dir", lambda: tmp_path)
+
+    def fail_import(*_):
+        raise RuntimeError("invalid snapshot")
+
+    monkeypatch.setattr(share_routes, "import_snapshot", fail_import)
+    req = SimpleNamespace(workspace=None, restore_project=False)
+    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(
+        thread_manager=SimpleNamespace(store=object())
+    )))
+    with pytest.raises(RuntimeError, match="invalid snapshot"):
+        await share_routes._restore_downloaded(req, request, "token", SimpleNamespace(project=None))
+    assert not list((tmp_path / "workspace").glob("shared-*"))
 
 
 async def seed(manager):
