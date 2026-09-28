@@ -11,6 +11,7 @@ import {
   shell
 } from 'electron'
 import { installAppMenu } from './app-menu'
+import { registerStartupWindowDrag } from './startup-window-drag'
 import { parseSharedConversationLink } from '../shared/share-link'
 import { existsSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
@@ -1183,6 +1184,7 @@ app.whenReady().then(async () => {
     logError
   })
   ipcMain.handle('startup:phase:get', async () => currentStartupPhase)
+  registerStartupWindowDrag(() => mainWindow)
   // Renderer signals that the persisted theme/appearance has been applied to
   // the DOM — safe to reveal the window without a light-palette flash.
   ipcMain.handle('window:appearance-applied', async () => {

@@ -332,6 +332,8 @@ html,
 }
 
 .ds-startup-kinetic {
+  cursor: crosshair;
+  user-select: none;
   position: absolute;
   inset: 0;
   /* Must receive pointer events so OriginKit attraction / trail work. */
@@ -349,8 +351,8 @@ html,
   pointer-events: none;
 }
 
-/* Keep the canvas interactive in the center. Inset native drag bands leave
-   8px for resize hit testing and the top-left traffic lights unobstructed. */
+/* Keep a direct titlebar drag target, clear of resize edges and traffic lights.
+   The rest of the board uses dwell-to-drag without native event interception. */
 .ds-startup-drag-regions {
   position: absolute;
   inset: 0;
@@ -372,22 +374,8 @@ html,
   height: 40px;
 }
 
-.ds-startup-drag-region--left,
-.ds-startup-drag-region--right {
-  top: 48px;
-  bottom: 32px;
-  width: 24px;
-}
-
-.ds-startup-drag-region--left { left: 8px; }
-.ds-startup-drag-region--right { right: 8px; }
-
-.ds-startup-drag-region--bottom {
-  bottom: 8px;
-  left: 8px;
-  right: 8px;
-  height: 24px;
-}
+.ds-startup-kinetic[data-window-drag='ready'] { cursor: grab; }
+.ds-startup-kinetic[data-window-drag='dragging'] { cursor: grabbing; }
 
 /* Opacity/pointer-events alone do not remove Electron native drag regions. */
 .ds-startup-blank--exit .ds-startup-drag-region {

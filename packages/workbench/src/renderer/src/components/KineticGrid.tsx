@@ -1,4 +1,5 @@
 import { useEffect, useRef, type CSSProperties } from 'react'
+import { useStartupWindowDrag } from '../lib/use-startup-window-drag'
 
 /**
  * KineticGrid — interactive mesh background that reacts to cursor movement.
@@ -12,6 +13,7 @@ import { useEffect, useRef, type CSSProperties } from 'react'
  */
 
 export type KineticGridProps = {
+  draggable?: boolean
   background?: string
   dotColor?: string
   lineColor?: string
@@ -92,6 +94,7 @@ function resolvePalette(overrides: Partial<Palette>): Palette {
 }
 
 export function KineticGrid({
+  draggable = true,
   background: backgroundProp,
   dotColor: dotColorProp,
   lineColor: lineColorProp,
@@ -107,6 +110,7 @@ export function KineticGrid({
   const cursorRef = useRef<Cursor>({ x: -9999, y: -9999, active: false })
   const trailRef = useRef<TrailPoint[]>([])
   const paletteRef = useRef<Palette>(DARK_PALETTE)
+  useStartupWindowDrag(containerRef, draggable)
 
   useEffect(() => {
     const container = containerRef.current
@@ -244,6 +248,7 @@ export function KineticGrid({
 
     /** Map viewport client coords → canvas/layout coords (undo body zoom). */
     const setCursor = (clientX: number, clientY: number): void => {
+      if (container.dataset.windowDrag) return
       const scale = readUiScale()
       const rect = container.getBoundingClientRect()
       const x = (clientX - rect.left) / scale
@@ -279,13 +284,14 @@ export function KineticGrid({
     let rafId = 0
     const loop = (): void => {
       const cursor = cursorRef.current
+      const interacting = cursor.active && !container.dataset.windowDrag
       const { dotColor, lineColor, trailColor } = paletteRef.current
       ctx.clearRect(0, 0, width, height)
 
       for (const p of points) {
         let ax = (p.hx - p.x) * 0.08
         let ay = (p.hy - p.y) * 0.08
-        if (cursor.active) {
+        if (interacting) {
           const dx = cursor.x - p.x
           const dy = cursor.y - p.y
           const dist = Math.sqrt(dx * dx + dy * dy)
@@ -306,7 +312,7 @@ export function KineticGrid({
           const p = grid[col][row]
           const right = grid[col + 1]?.[row]
           const down = grid[col]?.[row + 1]
-          const proximity = cursor.active
+          const proximity = interacting
             ? Math.max(
                 0,
                 1 - Math.sqrt((cursor.x - p.x) ** 2 + (cursor.y - p.y) ** 2) / interactRadius
@@ -334,7 +340,7 @@ export function KineticGrid({
       }
 
       for (const p of points) {
-        const proximity = cursor.active
+        const proximity = interacting
           ? Math.max(
               0,
               1 - Math.sqrt((cursor.x - p.x) ** 2 + (cursor.y - p.y) ** 2) / interactRadius
@@ -403,7 +409,6 @@ export function KineticGrid({
         width: '100%',
         height: '100%',
         overflow: 'hidden',
-        cursor: 'crosshair',
         ...style
       }}
     >

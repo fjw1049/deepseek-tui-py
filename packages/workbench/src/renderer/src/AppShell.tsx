@@ -38,7 +38,7 @@ function StartupBlank({ exiting = false }: { exiting?: boolean }): React.ReactEl
       aria-hidden
     >
       <Suspense fallback={null}>
-        <KineticGrid />
+        <KineticGrid draggable={!exiting} />
       </Suspense>
       <StartupWindowDragRegions />
     </div>
