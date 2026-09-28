@@ -26,8 +26,8 @@ const BLACK: Rgb = { r: 0, g: 0, b: 0 }
 // values above steepen so the top of the slider has visible effect.
 const CONTRAST_CURVE_BELOW_BASELINE = 0.7
 const CONTRAST_CURVE_ABOVE_BASELINE = 2
-// Light spans 0–28% ink across the slider, including its low end; the old
-// 0–10.6% range was barely visible after compositing the translucent veil.
+// Opaque light chrome spans 0–28% ink. Glass uses a lighter tint below because
+// the native material already contributes its own shading.
 const SURFACE_UNDER_BASE_ALPHA: Record<ThemeVariant, number> = { dark: 0.16, light: 0.126 }
 const SURFACE_UNDER_CONTRAST_STEP: Record<ThemeVariant, number> = { dark: 0.0015, light: 0.0028 }
 const PANEL_BASE_ALPHA: Record<ThemeVariant, number> = { dark: 0.01, light: 0.18 }
@@ -96,10 +96,17 @@ export function buildChromeThemeCssVars(
   const elevated1 = mixRgb(surface, anchor, light ? 0.08 + c * 0.08 : 0.022 + c * 0.04)
   const elevated2 = mixRgb(surface, anchor, light ? 0.16 + c * 0.12 : 0.042 + c * 0.06)
 
-  // Light sidebar and window gutters share a contrast-aware background in
-  // both material modes. The reading surface stays fixed.
+  // Light glass starts near the theme surface, not the ink-darkened opaque
+  // board. A curved 0–10% tint keeps the default bright but gives high contrast
+  // visible separation, independently of the material's transmission.
+  // Keep the same tint across the sidebar and chrome, and the canvas fixed.
   const canvasBg = surface
-  const sidebarBg = light ? surfaceUnder : panel
+  let sidebarBg = light ? surfaceUnder : panel
+  if (theme.translucent) {
+    // Dark glass needs a wider lightening range than nested panels: native
+    // compositing otherwise hides contrast changes in muted presets like One.
+    sidebarBg = mixRgb(surface, ink, (light ? 0.1 : 0.15) * (theme.contrast / 100) ** 2)
+  }
 
   // Near-black dark surfaces otherwise yield ΔL≈3 between board and canvas and
   // read as a flat slab. Nudge the board further toward black until the gap is
@@ -140,11 +147,10 @@ export function buildChromeThemeCssVars(
   // Synara-flat frosted sidebar: translucency only affects the sidebar veil;
   // everything else derives as solid flat surfaces.
   const glass = theme.translucent
-  // Dark glass must stay mostly opaque: at 0.56 the macOS under-window
-  // material (a neutral dark grey) supplies 44% of the result, which erased
-  // every dark preset's hue and made them all read as the same black.
-  const glassBg = glass ? rgba(sidebarBg, light ? 0.68 : 0.78) : hex(sidebarBg)
-  const glassBgStrong = glass ? rgba(sidebarBg, light ? 0.8 : 0.84) : hex(elevated1)
+  // Keep enough theme color to preserve dark preset hues, while transmitting
+  // wallpaper color in both modes. Contrast changes tint, never this opacity.
+  const glassBg = glass ? rgba(sidebarBg, 0.74) : hex(sidebarBg)
+  const glassBgStrong = glass ? rgba(sidebarBg, light ? 0.86 : 0.84) : hex(elevated1)
   const glassBorder = rgba(ink, light ? 0.07 : 0.05)
   const glassHighlight = 'transparent'
 

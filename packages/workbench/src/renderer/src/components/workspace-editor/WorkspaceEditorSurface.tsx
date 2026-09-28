@@ -312,7 +312,9 @@ export const WorkspaceEditorSurface = forwardRef<WorkspaceEditorSurfaceHandle, P
             overviewRulerBorder: false,
             glyphMargin: false,
             lineDecorationsWidth: 8,
-            lineNumbersMinChars: 3,
+            // Leave a stable inset for three/four-digit numbers instead of
+            // pressing them against the pane edge as the file grows.
+            lineNumbersMinChars: 5,
             renderLineHighlight: readOnly ? 'none' : 'line',
             // Give mixed Chinese/Latin code room without enlarging the glyphs.
             fontSize: 14,

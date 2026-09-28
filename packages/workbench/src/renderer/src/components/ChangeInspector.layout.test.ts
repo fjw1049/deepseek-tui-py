@@ -90,7 +90,7 @@ it('snaps at the top on release, restores the previous height, and does not expa
   expect(pane.style.height).toBe(height)
 })
 
-it('resizes the fullscreen directory, leaves a rail when collapsed, and restores the last width', () => {
+it('resizes the fullscreen directory to zero width and restores the last width', () => {
   expect(container.querySelector('[aria-label="inspectorResizeFileList"]')).toBeNull()
   act(() => button('inspectorExpandDiff').click())
   const pane = listPane()
@@ -106,24 +106,39 @@ it('resizes the fullscreen directory, leaves a rail when collapsed, and restores
   drag('pointerup', 460)
   expect(pane.style.width).toBe('320px')
   drag('pointerdown', 500)
-  drag('pointermove', 800)
-  drag('pointerup', 800)
-  expect(pane.style.width).toBe('32px')
+  drag('pointermove', 700)
+  expect(pane.style.width).toBe('120px')
+  drag('pointermove', 760)
+  expect(pane.style.width).toBe('60px')
+  expect(parseFloat(container.querySelector<HTMLElement>('[data-change-file-list]')!.style.opacity)).toBeLessThan(1)
+  expect(parseFloat(button('inspectorExpandFileList').style.opacity)).toBeGreaterThan(0)
+  drag('pointermove', 840)
+  drag('pointerup', 840)
+  expect(pane.style.width).toBe('0px')
+  expect(pane.classList.contains('border-l')).toBe(false)
+  expect(pane.contains(button('inspectorExpandFileList'))).toBe(false)
+  expect(handle.querySelector('span')?.classList.contains('opacity-0')).toBe(true)
   expect(container.querySelector('ul')!.closest('.hidden')).not.toBeNull()
   act(() => button('inspectorExpandFileList').click())
   expect(pane.style.width).toBe('320px')
   expect(container.querySelector('ul')!.closest('.hidden')).toBeNull()
   drag('pointerdown', 500)
-  drag('pointermove', 800)
-  drag('pointerup', 800)
+  drag('pointermove', 760)
+  drag('pointerup', 760)
+  expect(pane.style.width).toBe('60px')
+  act(() => button('inspectorExpandFileList').click())
+  expect(pane.style.width).toBe('320px')
+  drag('pointerdown', 500)
+  drag('pointermove', 840)
+  drag('pointerup', 840)
   drag('pointerdown', 500)
   drag('pointermove', 300)
   drag('pointerup', 300)
-  expect(pane.style.width).toBe('232px')
+  expect(pane.style.width).toBe('200px')
   drag('pointerdown', 500)
   drag('pointermove', 800)
   drag('pointercancel', 800)
-  expect(pane.style.width).toBe('232px')
+  expect(pane.style.width).toBe('200px')
   act(() => button('inspectorRestoreDiff').click())
   expect(pane.style.height).toBe('220px')
   expect(container.querySelector('[aria-label="inspectorResizeFileList"]')).toBeNull()
@@ -138,9 +153,66 @@ it('supports keyboard resizing and toggling the fullscreen directory', () => {
   key('ArrowLeft')
   expect(handle.getAttribute('aria-valuenow')).toBe('312')
   key('Enter')
-  expect(handle.getAttribute('aria-valuenow')).toBe('32')
-  key('ArrowLeft')
+  expect(handle.getAttribute('aria-valuenow')).toBe('0')
+  act(() => button('inspectorExpandFileList').click())
   expect(handle.getAttribute('aria-valuenow')).toBe('312')
-  for (let i = 0; i < 6; i++) key('ArrowRight')
-  expect(handle.getAttribute('aria-valuenow')).toBe('32')
+  key('ArrowRight')
+  expect(handle.getAttribute('aria-valuenow')).toBe('280')
+  for (let i = 0; i < 9; i++) key('ArrowRight')
+  expect(handle.getAttribute('aria-valuenow')).toBe('0')
+  act(() => button('inspectorExpandFileList').click())
+  expect(handle.getAttribute('aria-valuenow')).toBe('184')
+})
+
+it('uses the file pane width when dragging again beside the expand icon', () => {
+  act(() => button('inspectorExpandDiff').click())
+  const pane = listPane()
+  const handle = container.querySelector<HTMLDivElement>('[aria-label="inspectorResizeFileList"]')!
+  handle.setPointerCapture = vi.fn()
+  handle.releasePointerCapture = vi.fn()
+  vi.spyOn(pane, 'getBoundingClientRect').mockImplementation(() => ({ width: parseFloat(pane.style.width) }) as DOMRect)
+  const drag = (type: string, clientX: number): void => {
+    act(() => { handle.dispatchEvent(new PointerEvent(type, { bubbles: true, pointerId: 1, clientX })) })
+  }
+
+  drag('pointerdown', 500)
+  drag('pointermove', 720)
+  drag('pointerup', 720)
+  expect(pane.style.width).toBe('60px')
+  vi.spyOn(button('inspectorExpandFileList'), 'getBoundingClientRect').mockReturnValue({ width: 28 } as DOMRect)
+
+  drag('pointerdown', 500)
+  drag('pointermove', 480)
+  expect(pane.style.width).toBe('80px')
+  drag('pointerup', 480)
+  drag('pointermove', 440)
+  expect(pane.style.width).toBe('80px')
+})
+
+it.each([
+  { name: 'pointer capture is lost', loseCapture: true },
+  { name: 'pointer-up is missed', loseCapture: false }
+])('does not keep dragging after $name and the list reopens', ({ loseCapture }) => {
+  act(() => button('inspectorExpandDiff').click())
+  const pane = listPane()
+  const handle = container.querySelector<HTMLDivElement>('[aria-label="inspectorResizeFileList"]')!
+  handle.setPointerCapture = vi.fn()
+  handle.releasePointerCapture = vi.fn()
+  vi.spyOn(pane, 'getBoundingClientRect').mockImplementation(() => ({ width: parseFloat(pane.style.width) }) as DOMRect)
+  const pointer = (type: string, clientX: number, buttons: number): void => {
+    act(() => {
+      handle.dispatchEvent(new PointerEvent(type, {
+        bubbles: true, pointerId: 1, pointerType: 'mouse', clientX, buttons
+      }))
+    })
+  }
+
+  pointer('pointerdown', 500, 1)
+  pointer('pointermove', 800, 1)
+  expect(pane.style.width).toBe('0px')
+  if (loseCapture) pointer('lostpointercapture', 800, 0)
+  act(() => button('inspectorExpandFileList').click())
+  expect(pane.style.width).toBe('280px')
+  pointer('pointermove', 490, 0)
+  expect(pane.style.width).toBe('280px')
 })

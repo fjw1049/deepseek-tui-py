@@ -1655,28 +1655,6 @@ samp {
   box-shadow: inset 0 -2px 0 var(--ds-accent);
 }
 
-.ds-workspace-editor-path {
-  display: flex;
-  align-items: center;
-  flex-shrink: 0;
-  gap: 12px;
-  min-width: 0;
-  height: 28px;
-  padding: 0 14px;
-  background: var(--ds-bg-canvas);
-  border-bottom: 1px solid var(--ds-border-muted);
-  color: var(--ds-text-muted);
-  font-size: 11px;
-}
-.ds-workspace-editor-path > span:first-child {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.ds-workspace-editor-path > span:last-child { flex-shrink: 0; font-size: 10px; }
-
 .ds-workspace-editor-tab__close {
   color: inherit;
   opacity: 0;
@@ -7372,7 +7350,7 @@ select:focus-visible,
 }
 
 .ds-workbench-main {
-  --seam-line: rgba(0, 0, 0, 0.16);
+  --seam-line: rgba(0, 0, 0, 0.08);
   --seam-shadow-color: rgba(0, 0, 0, 0.14);
   /* 1px hard ring — a line, not a fill band and not a blur halo. */
   --card-float-shadow: 0 0 0 1px var(--seam-line);
@@ -7994,6 +7972,10 @@ select:focus-visible,
   background: var(--ds-bg-sidebar);
 }
 
+.ds-change-inspector__file-list-collapsed .ds-change-inspector__pane-header {
+  padding-right: 40px;
+}
+
 .ds-change-source__group + .ds-change-source__group {
   margin-top: 0.25rem;
   padding-top: 0.25rem;
@@ -8606,7 +8588,7 @@ html[data-theme='dark'] .ds-syntax-line span { color: var(--shiki-dark) !importa
 
 /* Gutter line numbers only — body code stays at the editor's 14px. Monaco has
    no per-gutter font-size option, so shrink just the line-number layer. The
-   row height is still driven by the editor lineHeight (19px), so the smaller
+   row height is still driven by the editor lineHeight (21px), so the smaller
    digits stay vertically centered and aligned with their code lines. */
 .ds-workspace-editor-pane .monaco-editor .margin-view-overlays .line-numbers {
   font-size: 12px !important;

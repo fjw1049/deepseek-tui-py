@@ -881,8 +881,7 @@ function BranchComparisonPicker({
   )
 }
 
-const FILE_LIST_RAIL = 32
-const FILE_LIST_SNAP = 100
+const FILE_LIST_COLLAPSED = 0
 const FILE_LIST_DEFAULT = 280
 const FILE_LIST_MIN = 180
 const FILE_LIST_MAX = 480
@@ -1077,21 +1076,22 @@ export function ChangeInspector({
   const [diffExpanded, setDiffExpanded] = useState(false)
   const [sideListWidth, setSideListWidth] = useState(FILE_LIST_DEFAULT)
   const lastSideListWidth = useRef(FILE_LIST_DEFAULT)
-  const sideListDrag = useRef<{ start: number; width: number; previousWidth: number } | null>(null)
-  const sideListCollapsed = sideListWidth === FILE_LIST_RAIL
+  const sideListPaneRef = useRef<HTMLDivElement | null>(null)
+  const sideListDrag = useRef<{ pointerId: number; start: number; width: number; previousWidth: number } | null>(null)
+  const sideListCollapsed = sideListWidth === FILE_LIST_COLLAPSED
 
   const resizeSideList = (width: number): number =>
-    width <= FILE_LIST_SNAP ? FILE_LIST_RAIL : Math.min(FILE_LIST_MAX, Math.max(FILE_LIST_MIN, width))
+    Math.min(FILE_LIST_MAX, Math.max(FILE_LIST_COLLAPSED, width))
 
   const finishSideListResize = (event: ReactPointerEvent<HTMLDivElement>): void => {
     const drag = sideListDrag.current
-    if (!drag) return
+    if (!drag || drag.pointerId !== event.pointerId) return
     sideListDrag.current = null
     const width = event.type === 'pointercancel'
       ? drag.previousWidth
       : resizeSideList(drag.width + drag.start - event.clientX)
     setSideListWidth(width)
-    if (event.type !== 'pointercancel' && width !== FILE_LIST_RAIL) lastSideListWidth.current = width
+    if (event.type !== 'pointercancel' && width >= FILE_LIST_MIN) lastSideListWidth.current = width
     event.currentTarget.releasePointerCapture(event.pointerId)
   }
   const compactList = isReview || isList || (isStack && diffExpanded)
@@ -1486,7 +1486,14 @@ export function ChangeInspector({
   }
 
   const fileList = (
-    <div className={`${isStack && diffExpanded && sideListCollapsed ? 'hidden' : 'flex'} min-h-0 min-w-0 flex-1 flex-col overflow-hidden`}>
+    <div
+      data-change-file-list=""
+      className={`${isStack && diffExpanded && sideListCollapsed ? 'hidden' : 'flex'} min-h-0 min-w-0 flex-1 flex-col overflow-hidden`}
+      style={isStack && diffExpanded ? {
+        opacity: Math.min(1, Math.max(0, sideListWidth / 96)),
+        pointerEvents: sideListWidth <= 72 ? 'none' : 'auto'
+      } : undefined}
+    >
       {pathActionError ? (
         <div role="alert" className="border-b border-ds-border-muted px-2 py-1.5 text-[13.5px] text-amber-700 dark:text-amber-200">
           {pathActionError}
@@ -1664,67 +1671,78 @@ export function ChangeInspector({
             {diffViewport}
           </div>
         ) : (
-          <div className={`relative flex min-h-0 flex-1 overflow-hidden ${diffExpanded ? 'flex-row' : 'flex-col'}`}>
+          <div className={`relative flex min-h-0 flex-1 overflow-hidden ${diffExpanded ? 'flex-row' : 'flex-col'} ${diffExpanded && sideListCollapsed ? 'ds-change-inspector__file-list-collapsed' : ''}`}>
             <div
-              className={`flex min-h-0 flex-col overflow-hidden ${diffExpanded ? 'order-2 shrink-0 border-l border-ds-border-muted' : diffCollapsed ? 'flex-1' : 'shrink-0'}`}
+              ref={sideListPaneRef}
+              className={`relative flex min-h-0 flex-col overflow-hidden ${diffExpanded ? `order-2 shrink-0 ${sideListCollapsed ? '' : 'border-l border-ds-border-muted'}` : diffCollapsed ? 'flex-1' : 'shrink-0'}`}
               style={diffExpanded ? { width: sideListWidth, maxWidth: '60%' } : diffCollapsed ? undefined : { height: listSize }}
             >
-              {diffExpanded && sideListCollapsed ? (
-                <button
-                  type="button"
-                  onClick={() => setSideListWidth(lastSideListWidth.current)}
-                  aria-label={t('inspectorExpandFileList')}
-                  title={t('inspectorExpandFileList')}
-                  className="mx-auto mt-1 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-ds-muted transition hover:bg-ds-hover hover:text-ds-ink"
-                >
-                  <FolderTree className="h-4 w-4" strokeWidth={1.8} />
-                </button>
-              ) : null}
               {fileList}
             </div>
+            {diffExpanded && sideListWidth < 96 ? (
+              <button
+                type="button"
+                onClick={() => setSideListWidth(lastSideListWidth.current)}
+                aria-label={t('inspectorExpandFileList')}
+                title={t('inspectorExpandFileList')}
+                tabIndex={sideListWidth <= 72 ? 0 : -1}
+                aria-hidden={sideListWidth > 72}
+                className="absolute right-1 top-1 z-20 inline-flex h-7 w-7 items-center justify-center rounded-md text-ds-muted hover:bg-ds-hover hover:text-ds-ink"
+                style={{
+                  opacity: Math.min(1, (96 - sideListWidth) / 96),
+                  pointerEvents: sideListWidth <= 72 ? 'auto' : 'none'
+                }}
+              >
+                <FolderTree className="h-4 w-4" strokeWidth={1.8} />
+              </button>
+            ) : null}
             {diffExpanded ? (
               <div
                 role="separator"
-                tabIndex={0}
+                tabIndex={sideListCollapsed ? -1 : 0}
                 aria-orientation="vertical"
                 aria-label={t('inspectorResizeFileList')}
-                aria-valuemin={FILE_LIST_RAIL}
+                aria-valuemin={FILE_LIST_COLLAPSED}
                 aria-valuemax={FILE_LIST_MAX}
                 aria-valuenow={sideListWidth}
                 title={t('inspectorResizeFileList')}
-                className={`group ds-no-drag z-10 flex shrink-0 cursor-col-resize touch-none items-center justify-center outline-none hover:bg-ds-hover focus-visible:bg-ds-hover ${sideListCollapsed ? 'absolute bottom-0 right-0 top-9 w-8' : 'relative order-1 w-2'}`}
+                className={`group ds-no-drag z-10 flex shrink-0 cursor-col-resize touch-none items-center justify-center outline-none ${sideListCollapsed ? 'absolute bottom-0 right-0 top-9 w-8' : 'relative order-1 w-2 hover:bg-ds-hover focus-visible:bg-ds-hover'}`}
                 onPointerDown={(event) => {
                   event.preventDefault()
                   event.stopPropagation()
                   event.currentTarget.setPointerCapture(event.pointerId)
-                  const pane = event.currentTarget.previousElementSibling as HTMLDivElement
                   sideListDrag.current = {
+                    pointerId: event.pointerId,
                     start: event.clientX,
-                    width: pane.getBoundingClientRect().width,
+                    width: sideListPaneRef.current?.getBoundingClientRect().width ?? sideListWidth,
                     previousWidth: sideListWidth
                   }
                 }}
                 onPointerMove={(event) => {
                   const drag = sideListDrag.current
-                  if (drag) setSideListWidth(resizeSideList(drag.width + drag.start - event.clientX))
+                  if (!drag || drag.pointerId !== event.pointerId) return
+                  if (event.pointerType && event.buttons === 0) {
+                    sideListDrag.current = null
+                    return
+                  }
+                  setSideListWidth(resizeSideList(drag.width + drag.start - event.clientX))
                 }}
                 onPointerUp={finishSideListResize}
                 onPointerCancel={finishSideListResize}
+                onLostPointerCapture={(event) => {
+                  if (sideListDrag.current?.pointerId === event.pointerId) sideListDrag.current = null
+                }}
                 onKeyDown={(event) => {
                   if (!['ArrowLeft', 'ArrowRight', 'Enter'].includes(event.key)) return
                   event.preventDefault()
                   const width = event.key === 'Enter'
-                    ? sideListCollapsed ? lastSideListWidth.current : FILE_LIST_RAIL
-                    : sideListCollapsed && event.key === 'ArrowLeft'
-                      ? lastSideListWidth.current
-                      : event.key === 'ArrowRight' && sideListWidth <= FILE_LIST_MIN
-                        ? FILE_LIST_RAIL
-                        : resizeSideList(sideListWidth + (event.key === 'ArrowLeft' ? 32 : -32))
+                    ? sideListCollapsed ? lastSideListWidth.current : FILE_LIST_COLLAPSED
+                    : resizeSideList(sideListWidth + (event.key === 'ArrowLeft' ? 32 : -32))
                   setSideListWidth(width)
-                  if (width !== FILE_LIST_RAIL) lastSideListWidth.current = width
+                  if (width >= FILE_LIST_MIN) lastSideListWidth.current = width
                 }}
               >
-                <span className="pointer-events-none h-8 w-0.5 rounded-full bg-ds-faint/40 transition-colors group-hover:bg-ds-muted group-focus-visible:bg-ds-muted" />
+                <span className={`pointer-events-none h-8 w-0.5 rounded-full bg-ds-faint/40 transition-colors group-hover:bg-ds-muted group-focus-visible:bg-ds-muted ${sideListCollapsed ? 'opacity-0' : ''}`} />
               </div>
             ) : null}
             {!diffCollapsed ? (

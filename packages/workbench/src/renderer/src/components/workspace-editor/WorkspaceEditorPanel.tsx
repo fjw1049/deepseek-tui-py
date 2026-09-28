@@ -578,10 +578,6 @@ const EditorPaneView = forwardRef<
       } ${isEditing ? 'ds-workspace-editor-pane--editing' : ''}`}
       onMouseDown={onFocus}
     >
-      <div className="ds-workspace-editor-path">
-        <span title={tab.path}>{copyableRelativePath(tab.path, workspaceRoot) || tab.path}</span>
-        <span>{(/\.([a-z0-9]+)$/i.exec(tab.path)?.[1] || '').toUpperCase()}</span>
-      </div>
       {externalOpenError && focused ? (
         <div className="shrink-0 border-b border-amber-200/70 bg-amber-50/80 px-3 py-2 text-[12.5px] text-amber-900 dark:border-amber-700/40 dark:bg-amber-950/30 dark:text-amber-100">
           {t('workspaceEditorOpenExternalFailed', { message: externalOpenError })}

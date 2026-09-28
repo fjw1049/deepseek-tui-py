@@ -32,9 +32,8 @@ describe('macOS translucent sidebar material', () => {
     }
   })
 
-  it('visibly changes light glass with contrast while keeping the reading surface fixed', () => {
-    // Composite over a white native backdrop: even without wallpaper colors,
-    // increasing contrast must visibly separate the shell from the canvas.
+  it('visibly separates light glass with contrast while keeping the reading surface fixed', () => {
+    // Contrast should distinguish the rail without turning it into a gray board.
     const brightnessOverWhite = (color: string): number => {
       const [r, g, b, alpha] = color.match(/[\d.]+/g)!.map(Number)
       return (0.2126 * r! + 0.7152 * g! + 0.0722 * b!) * alpha! + 255 * (1 - alpha!)
@@ -46,14 +45,59 @@ describe('macOS translucent sidebar material', () => {
       )
       const levels = palettes.map((vars) => brightnessOverWhite(vars['--app-shell-background']!))
       for (let i = 1; i < levels.length; i++) {
-        expect(levels[i - 1]! - levels[i]!, preset.id).toBeGreaterThan(4)
+        expect(levels[i - 1]! - levels[i]!, preset.id).toBeGreaterThan(0)
       }
-      // Tinted presets have a smaller ink/surface gap than black on white.
-      expect(levels[0]! - levels[4]!, preset.id).toBeGreaterThan(23)
+      expect(levels[0]! - levels[4]!, preset.id).toBeGreaterThan(6)
+      expect(levels[0]! - levels[4]!, preset.id).toBeLessThan(25)
       for (const vars of palettes) {
         expect(vars['--ds-material-panel']).toBe(seed.surface)
         expect(vars['--app-sidebar-surface']).toBe('transparent')
         expect(vars['--app-corner-surface']).toBe('transparent')
+      }
+    }
+  })
+
+  it('balances light Codex and One brightness with visible wallpaper color', () => {
+    // Simulate neutral inactive material and warm/cool wallpaper material.
+    // These are compositing fixtures, not exact macOS material colors.
+    const backdrops = [[180, 180, 180], [235, 205, 200], [200, 225, 205]]
+    for (const id of ['codex', 'one']) {
+      const seed = getThemePresetSeed(id, 'light')!
+      const vars = buildChromeThemeCssVars({ ...seed, translucent: true }, 'light')
+      const [r, g, b, alpha] = vars['--app-shell-background']!.match(/[\d.]+/g)!.map(Number)
+      for (const backdrop of backdrops) {
+        const composite = [r!, g!, b!].map((channel, i) => channel * alpha! + backdrop[i]! * (1 - alpha!))
+        expect(Math.min(...composite), id).toBeGreaterThan(226)
+        expect(Math.max(...composite) - Math.min(...composite), id).toBeLessThan(12)
+      }
+      // Still transmit environmental color rather than becoming an opaque fill.
+      expect(alpha).toBeLessThan(1)
+      expect((235 - 200) * (1 - alpha!)).toBeGreaterThan(8)
+    }
+  })
+
+  it('keeps glass transmission steady while contrast changes light and dark separation', () => {
+    for (const variant of ['light', 'dark'] as const) {
+      for (const id of variant === 'light' ? ['codex', 'one'] : ['codex', 'one', 'nord']) {
+        const seed = getThemePresetSeed(id, variant)!
+        const levels: number[] = []
+        const alphas: number[] = []
+        for (const contrast of [0, 25, 50, 75, 100]) {
+          const vars = buildChromeThemeCssVars({ ...seed, translucent: true, contrast }, variant)
+          const [r, g, b, alpha] = vars['--app-shell-background']!.match(/[\d.]+/g)!.map(Number)
+          const backdrop = variant === 'light' ? 210 : 45
+          levels.push((0.2126 * r! + 0.7152 * g! + 0.0722 * b!) * alpha! + backdrop * (1 - alpha!))
+          alphas.push(alpha!)
+          expect((235 - 200) * (1 - alpha!), `${id}/${variant}`).toBeGreaterThan(8)
+          expect(vars['--ds-material-panel']).toBe(seed.surface)
+          expect(vars['--app-sidebar-surface']).toBe('transparent')
+        }
+        expect(new Set(alphas).size).toBe(1)
+        for (let i = 1; i < levels.length; i++) {
+          const change = variant === 'light' ? levels[i - 1]! - levels[i]! : levels[i]! - levels[i - 1]!
+          expect(change, `${id}/${variant}`).toBeGreaterThan(0)
+        }
+        expect(Math.abs(levels[4]! - levels[0]!), `${id}/${variant}`).toBeGreaterThan(12)
       }
     }
   })

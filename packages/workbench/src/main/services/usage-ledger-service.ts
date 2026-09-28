@@ -56,14 +56,13 @@ export class UsageLedgerService {
   }
 
   async query(range: UsageRange, locale = 'en'): Promise<UsageQueryResult> {
-    return withUsageLedgerLock(this.path, async () => {
-      if (isUsageMockEnabled()) {
-        return queryUsageLedger(buildMockUsageLedger(), range, locale)
-      }
-      const { ledger, readable } = await readLedger(this.path)
-      const base = readable ? ledger : emptyUsageLedger()
-      return queryUsageLedger(base, range, locale)
-    })
+    if (isUsageMockEnabled()) {
+      return queryUsageLedger(buildMockUsageLedger(), range, locale)
+    }
+    // Writers replace the ledger atomically, so reads do not need the lock file.
+    const { ledger, readable } = await readLedger(this.path)
+    const base = readable ? ledger : emptyUsageLedger()
+    return queryUsageLedger(base, range, locale)
   }
 
   async pruneProvider(providerId: string): Promise<void> {
