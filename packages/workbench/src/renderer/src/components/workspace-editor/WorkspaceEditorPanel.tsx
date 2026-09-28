@@ -79,6 +79,7 @@ const SPLIT_RATIO_KEY = 'deepseekgui.layout.workspaceEditorSplitRatio'
 /** Fixed-ish explorer: wide enough for CJK names, still secondary to the editor. */
 const TREE_DEFAULT = 232
 const TREE_MIN = 168
+const TREE_COLLAPSE_THRESHOLD = 24
 const TREE_MAX = 420
 const TREE_LEGACY_DEFAULT = 176
 const SPLIT_DEFAULT = 0.5
@@ -102,7 +103,7 @@ type PendingConfirmState =
     }
   | { kind: 'discard-edit'; tabId: string }
 
-function readStoredTreeWidth(): number {
+function readStoredTreeWidth(collapsible: boolean): number {
   try {
     const raw = window.localStorage.getItem(TREE_WIDTH_KEY)
     if (!raw) return TREE_DEFAULT
@@ -110,7 +111,7 @@ function readStoredTreeWidth(): number {
     if (!Number.isFinite(parsed)) return TREE_DEFAULT
     // Previous default was too tight — treat it as unset.
     if (Math.round(parsed) === TREE_LEGACY_DEFAULT) return TREE_DEFAULT
-    return clampTreeWidth(parsed)
+    return clampTreeWidth(parsed, collapsible ? TREE_COLLAPSE_THRESHOLD : TREE_MIN)
   } catch {
     return TREE_DEFAULT
   }
@@ -128,8 +129,8 @@ function readStoredSplitRatio(): number {
   }
 }
 
-function clampTreeWidth(value: number): number {
-  return Math.min(TREE_MAX, Math.max(TREE_MIN, value))
+function clampTreeWidth(value: number, minimum = TREE_MIN): number {
+  return Math.min(TREE_MAX, Math.max(minimum, value))
 }
 
 function fileNameFromPath(path: string): string {
@@ -694,7 +695,8 @@ export function WorkspaceEditorPanel({
   )
   useWorkspaceDirtyGitRefresh(workspaceDirtyTick, reloadCleanEditorTabs)
 
-  const [treeWidth, setTreeWidth] = useState(readStoredTreeWidth)
+  const [treeWidth, setTreeWidth] = useState(() => readStoredTreeWidth(collapsibleTree === true))
+  const [resizing, setResizing] = useState(false)
   const [splitRatio, setSplitRatio] = useState(readStoredSplitRatio)
   const [paneSourceVisible, setPaneSourceVisible] = useState<Record<EditorPaneId, boolean>>({
     primary: false,
@@ -819,17 +821,23 @@ export function WorkspaceEditorPanel({
     endPointerDragRef.current?.()
 
     const startX = event.clientX
-    const startWidth = treeWidth
+    const startWidth = event.currentTarget.parentElement?.getBoundingClientRect().width || treeWidth
+    let collapseOnRelease = false
     const prevCursor = document.body.style.cursor
     const prevUserSelect = document.body.style.userSelect
     document.body.style.cursor = 'col-resize'
     document.body.style.userSelect = 'none'
+    setResizing(true)
 
     const onMove = (moveEvent: PointerEvent): void => {
-      setTreeWidth(clampTreeWidth(startWidth + (moveEvent.clientX - startX) * (collapsibleTree ? -1 : 1)))
+      const width = startWidth + (moveEvent.clientX - startX) * (collapsibleTree ? -1 : 1)
+      collapseOnRelease = collapsibleTree === true && width < TREE_COLLAPSE_THRESHOLD
+      // Follow the pointer all the way to the edge instead of stalling at TREE_MIN.
+      setTreeWidth(clampTreeWidth(width, collapsibleTree ? 0 : TREE_MIN))
     }
 
     const endDrag = (): void => {
+      setResizing(false)
       document.body.style.cursor = prevCursor
       document.body.style.userSelect = prevUserSelect
       window.removeEventListener('pointermove', onMove)
@@ -841,6 +849,11 @@ export function WorkspaceEditorPanel({
 
     const onUp = (): void => {
       endDrag()
+      if (collapseOnRelease) {
+        setTreeOpen(false)
+        setTreeWidth(treeWidth)
+        return
+      }
       setTreeWidth((current) => {
         try {
           window.localStorage.setItem(TREE_WIDTH_KEY, String(current))
@@ -872,6 +885,7 @@ export function WorkspaceEditorPanel({
     const prevUserSelect = document.body.style.userSelect
     document.body.style.cursor = 'col-resize'
     document.body.style.userSelect = 'none'
+    setResizing(true)
 
     const onMove = (moveEvent: PointerEvent): void => {
       if (hostWidth <= 0) return
@@ -880,6 +894,7 @@ export function WorkspaceEditorPanel({
     }
 
     const endDrag = (): void => {
+      setResizing(false)
       document.body.style.cursor = prevCursor
       document.body.style.userSelect = prevUserSelect
       window.removeEventListener('pointermove', onMove)
@@ -1078,6 +1093,8 @@ export function WorkspaceEditorPanel({
 
   return (
     <div className="ds-workspace-editor-pane ds-no-drag flex h-full min-h-0 flex-col">
+      {/* Keep drag events in the workbench when crossing HTML/PDF iframes. */}
+      {resizing ? <div aria-hidden className="fixed inset-0 z-[100] cursor-col-resize" /> : null}
       {collapsibleTree && !hideTree ? (
         <div className="flex h-9 min-w-0 shrink-0 items-center gap-2 border-b border-ds-border-muted px-2">
           {trimmedRoot ? (

@@ -82,8 +82,10 @@ it('shows a persistent right tree with no files open, supports selection, toggli
     expect(host.textContent).not.toContain('workspaceEditorEmpty')
     const width = parseFloat(tree.parentElement!.style.width)
     await act(async () => host.querySelector('[role="separator"]')!.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, clientX: 300 })))
+    expect(host.querySelector('.fixed.cursor-col-resize')).toBeTruthy()
     await act(async () => window.dispatchEvent(new PointerEvent('pointermove', { clientX: 280 })))
     await act(async () => window.dispatchEvent(new PointerEvent('pointerup')))
+    expect(host.querySelector('.fixed.cursor-col-resize')).toBeNull()
     expect(parseFloat(tree.parentElement!.style.width)).toBe(width + 20)
     await click('.ds-workspace-file-tree__row')
     expect(useWorkspaceEditorStore.getState().activeTabId).toBe('demo.txt')
@@ -101,6 +103,27 @@ it('shows a persistent right tree with no files open, supports selection, toggli
     expect(toggle.textContent).toBe('')
     await click('[aria-expanded="false"]')
     expect(host.querySelector('.ds-workspace-file-tree')).toBeTruthy()
+    const restoredWidth = host.querySelector('.ds-workspace-file-tree')!.parentElement!.style.width
+    await act(async () => host.querySelector('[role="separator"]')!.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, clientX: 300 })))
+    const moveToWidth = async (nextWidth: number) => {
+      await act(async () => window.dispatchEvent(new PointerEvent('pointermove', { clientX: 300 + parseFloat(restoredWidth) - nextWidth })))
+      expect(host.querySelector('.ds-workspace-file-tree')!.parentElement!.style.width).toBe(`${nextWidth}px`)
+    }
+    await moveToWidth(140)
+    await moveToWidth(60)
+    await moveToWidth(12)
+    // Reversing before release cancels collapse and keeps the chosen narrow width.
+    await moveToWidth(100)
+    await act(async () => window.dispatchEvent(new PointerEvent('pointerup')))
+    expect(host.querySelector('.ds-workspace-file-tree')!.parentElement!.style.width).toBe('100px')
+    await act(async () => host.querySelector('[role="separator"]')!.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, clientX: 300 })))
+    await act(async () => window.dispatchEvent(new PointerEvent('pointermove', { clientX: 1000 })))
+    expect(host.querySelector('.ds-workspace-file-tree')!.parentElement!.style.width).toBe('0px')
+    await act(async () => window.dispatchEvent(new PointerEvent('pointerup')))
+    expect(host.querySelector('.ds-workspace-file-tree')).toBeNull()
+    expect(host.querySelector('.fixed.cursor-col-resize')).toBeNull()
+    await click('[aria-label="workspaceEditorBrowseFiles"]')
+    expect(host.querySelector('.ds-workspace-file-tree')!.parentElement!.style.width).toBe('100px')
     await act(async () => root.render(createElement(WorkspaceEditorPanel, { workspaceRoot: '/workspace', blocks: [], hideTree: true })))
     expect(host.querySelector('.ds-workspace-file-tree')).toBeNull()
   } finally {
