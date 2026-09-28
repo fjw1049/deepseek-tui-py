@@ -7,6 +7,32 @@ vi.mock('./chat/FileChip', () => ({ FileChip: () => null }))
 vi.mock('../lib/use-code-highlights', () => ({ useCodeHighlights: () => null }))
 vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string, values?: { count: number }) => values ? `${key}:${values.count}` : key }) }))
 
+it('wraps by default when switching into split view and preserves an explicit no-wrap choice', async () => {
+  globalThis.IS_REACT_ACT_ENVIRONMENT = true
+  const container = document.createElement('div')
+  document.body.append(container)
+  const root = createRoot(container)
+  const patch = '@@ -1 +1 @@\n-old\n+new'
+  try {
+    await act(async () => root.render(createElement(DiffView, { patch, showStyleToggle: true })))
+    expect(container.querySelector('[data-wrap]')).not.toBeNull()
+    act(() => container.querySelector<HTMLButtonElement>('[aria-label="Split diff"]')!.click())
+    expect(container.querySelector('[data-wrap]')).not.toBeNull()
+    expect(container.querySelectorAll('col')).toHaveLength(4)
+    act(() => container.querySelector<HTMLButtonElement>('[aria-label="diffWrapLines"]')!.click())
+    expect(container.querySelector('[data-wrap]')).toBeNull()
+    act(() => container.querySelector<HTMLButtonElement>('[aria-label="Unified diff"]')!.click())
+    expect(container.querySelector('[data-wrap]')).toBeNull()
+    act(() => container.querySelector<HTMLButtonElement>('[aria-label="diffWrapLines"]')!.click())
+    expect(container.querySelector('[data-wrap]')).not.toBeNull()
+    await act(async () => root.render(createElement(DiffView, { patch, diffStyle: 'split' })))
+    expect(container.querySelector('[data-wrap]')).not.toBeNull()
+  } finally {
+    act(() => root.unmount())
+    container.remove()
+  }
+})
+
 it('marks only the changed range without losing syntax colors or interpreting source as HTML', () => {
   const html = highlightChangedText('return next()', '<span style="color:red">return</span> next()', 'return first()')
   expect(html).toContain('<span style="color:red">return</span> ')

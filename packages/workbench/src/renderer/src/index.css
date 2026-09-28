@@ -12286,7 +12286,7 @@ body:has(.ds-workbench-shell[data-ide-mode]) .ds-project-context-menu :is(input,
 .ds-diff-review-bar {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: 12px;
   min-height: 32px;
   padding: 3px 10px;
@@ -12296,18 +12296,24 @@ body:has(.ds-workbench-shell[data-ide-mode]) .ds-project-context-menu :is(input,
   font-size: 11px;
   flex-shrink: 0;
 }
-.ds-diff-review-legend, .ds-diff-review-legend > span, .ds-diff-navigation {
+.ds-diff-navigation {
   display: flex;
   align-items: center;
   gap: 6px;
 }
-.ds-diff-review-legend { gap: 16px; }
-.ds-diff-legend-dot { width: 6px; height: 6px; border-radius: 2px; }
-.ds-diff-legend-dot--added { background: var(--ds-diff-added); }
-.ds-diff-legend-dot--removed { background: var(--ds-diff-removed); }
 .ds-diff-navigation { font-variant-numeric: tabular-nums; white-space: nowrap; }
-.ds-diff-navigation button { padding: 4px; border-radius: 5px; }
-.ds-diff-navigation button:hover { background: var(--ds-surface-hover); }
+.ds-diff-navigation button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--ds-border);
+  border-radius: 6px;
+  background: var(--ds-surface-subtle);
+  color: var(--ds-text);
+}
+.ds-diff-navigation button:hover { border-color: var(--ds-border-strong); background: var(--ds-surface-hover); }
 .ds-diff-navigation button:disabled { opacity: 0.35; }
 .ds-diff-fold { background: color-mix(in srgb, var(--ds-text) 3%, transparent); }
 .ds-diff-fold button {
@@ -12320,6 +12326,5 @@ body:has(.ds-workbench-shell[data-ide-mode]) .ds-project-context-menu :is(input,
 }
 .ds-diff-fold button:hover { color: var(--ds-text); background: var(--ds-surface-hover); }
 @container (max-width: 320px) {
-  .ds-diff-review-legend { gap: 8px; }
   .ds-diff-review-bar { gap: 4px; padding-inline: 6px; }
 }

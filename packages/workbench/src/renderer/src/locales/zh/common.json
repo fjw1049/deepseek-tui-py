@@ -1053,8 +1053,6 @@
   "workspaceTreeExpandAll": "全部展开",
   "confirmDialogConfirm": "确定",
   "diffUnmodifiedLines": "{{count}} 行未修改",
-  "diffBefore": "更改前",
-  "diffAfter": "更改后",
   "diffHunkPosition": "变更段 {{current}} / {{total}}",
   "diffPreviousChange": "上一处更改",
   "diffNextChange": "下一处更改",

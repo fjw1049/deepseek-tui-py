@@ -1057,8 +1057,6 @@
   "workspaceTreeExpandAll": "Expand all folders",
   "confirmDialogConfirm": "Confirm",
   "diffUnmodifiedLines": "{{count}} unmodified lines",
-  "diffBefore": "Before",
-  "diffAfter": "After",
   "diffHunkPosition": "Change {{current}} / {{total}}",
   "diffPreviousChange": "Previous change",
   "diffNextChange": "Next change",

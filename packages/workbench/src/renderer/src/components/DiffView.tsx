@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactElement } from 'react'
-import { Check, ChevronDown, ChevronUp, Minimize2, Columns2, Copy, MessageSquarePlus, Rows3, WrapText } from 'lucide-react'
+import { ArrowDown, ArrowUp, Check, ChevronDown, ChevronUp, Minimize2, Columns2, Copy, MessageSquarePlus, Rows3, WrapText } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { countDiffStats, extractDiffFilePath } from '../lib/diff-stats'
 import { FileChip } from './chat/FileChip'
@@ -334,7 +334,7 @@ export function DiffView({
   const [copied, setCopied] = useState(false)
   const [localStyle, setLocalStyle] = useState<DiffRenderStyle>(controlledStyle ?? 'unified')
   const diffStyle = controlledStyle ?? localStyle
-  const [wrapLines, setWrapLines] = useState(controlledStyle === 'split')
+  const [wrapLines, setWrapLines] = useState(true)
 
   const fileLabel = parsed.filePath ?? filePath ?? null
   const displayName = fileLabel ? fileLabel.split(/[/\\]/).pop() ?? fileLabel : null
@@ -476,14 +476,10 @@ export function DiffView({
     <div className={shellClass} data-wrap={wrapLines ? '' : undefined}>
       {header}
       {showHeader ? <div className="ds-diff-review-bar">
-        <div className="ds-diff-review-legend">
-          <span><i className="ds-diff-legend-dot ds-diff-legend-dot--removed" />{t('diffBefore')}</span>
-          <span><i className="ds-diff-legend-dot ds-diff-legend-dot--added" />{t('diffAfter')}</span>
-        </div>
         <div className="ds-diff-navigation">
           <span aria-live="polite">{t('diffHunkPosition', { current: hunkCount ? activeHunk + 1 : 0, total: hunkCount })}</span>
-          <button type="button" disabled={!hunkCount} aria-label={t('diffPreviousChange')} title={t('diffPreviousChange')} onClick={() => navigateHunk(-1)}><ChevronUp size={14} /></button>
-          <button type="button" disabled={!hunkCount} aria-label={t('diffNextChange')} title={t('diffNextChange')} onClick={() => navigateHunk(1)}><ChevronDown size={14} /></button>
+          <button type="button" disabled={!hunkCount} aria-label={t('diffPreviousChange')} title={t('diffPreviousChange')} onClick={() => navigateHunk(-1)}><ArrowUp size={17} strokeWidth={2.2} /></button>
+          <button type="button" disabled={!hunkCount} aria-label={t('diffNextChange')} title={t('diffNextChange')} onClick={() => navigateHunk(1)}><ArrowDown size={17} strokeWidth={2.2} /></button>
         </div>
       </div> : null}
       <div ref={(node) => { bodyRef.current = node }} className={bodyClass} style={fillParent || flush ? undefined : { maxHeight }}>
