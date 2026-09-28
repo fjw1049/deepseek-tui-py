@@ -620,6 +620,9 @@ function readPhaseBridgeAfterReasoningId(it: TurnItemJson): string | undefined {
 function readAgentSegment(it: TurnItemJson): 'mid_turn_preface' | 'final_answer' | undefined {
   const segment = it.metadata?.agent_segment
   if (segment === 'mid_turn_preface' || segment === 'final_answer') return segment
+  // Earlier importers omitted source phases. Keep imported prose readable rather
+  // than hiding the whole conversation in the work trace. Native legacy routing stays unchanged.
+  if (it.metadata?.external_history === true) return 'final_answer'
   return undefined
 }
 
@@ -1169,9 +1172,9 @@ export class DeepseekRuntimeProvider implements AgentProvider {
           ...(turnId ? { turnId } : {})
         })
       } else if (it.kind === 'agent_message') {
-        // Route purely on persisted metadata: the runtime tags every
-        // agent_message with its segment. Untagged legacy items stay in the
-        // process trace; nothing is promoted by position or turn status.
+        // Source phases use the same persisted segment contract as native replies.
+        // Old imports without phases keep their prose visible; native legacy items
+        // retain their existing routing. No text or positional heuristics.
         const text = it.detail ?? it.summary
         const agentSegment = readAgentSegment(it)
         const processIntent = readProcessIntent(it)

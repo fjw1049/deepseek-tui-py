@@ -1,65 +1,86 @@
 # Importing Codex and Claude Code sessions
 
-Settings → Import scans local logs and copies selected conversations into the native thread store.
-No Codex/Claude process or model API is invoked. Source logs and project files are never written.
+Settings → Import copies selected conversations into the native thread store. No model turn,
+source resume, fork, or tool execution is requested. Source transcripts and project files are
+not modified. Reading local Codex history starts its installed app-server, which can maintain
+its own operational metadata; this is not a filesystem-wide read-only guarantee.
 
-## User flow
+## Reading the source of truth
 
-1. Select Codex and/or Claude Code and scan. Defaults respect `CODEX_HOME` and
-   `CLAUDE_CONFIG_DIR`, falling back to `~/.codex` and `~/.claude`.
-2. Optionally choose a copied source directory. Codex home, sessions and archived_sessions
-   directories and Claude home/projects/project directories are supported.
-3. Search projects or titles, optionally include archived sessions, and select projects or
-   individual sessions. Selection applies to visible sessions only.
-4. Keep the existing project folder or select its new location. Missing folders do not block
-   history import: those conversations are read-only until linked in Settings → Import.
-5. Import sequentially with progress. A failed session does not stop the batch. Retry failed
-   sessions or stop after the current one. Leaving the page also stops after the current session.
+For the current local Codex home, prefer the installed desktop runtime (then the PATH CLI).
+Use only `initialize`, `thread/read`, and `thread/turns/list`. Request `itemsView: full`, follow
+all cursors in ascending order, and retain native turn/item IDs. Reject partial views, repeated
+cursors, duplicate turns, active conversations, and metadata changes during pagination. Calls
+have a 30-second timeout; a conversation has a 120-second pagination deadline. No partial page
+sequence is committed. If the runtime explicitly reports an unsupported pagination method,
+use the offline reader and display a warning. Other runtime failures are reported, not hidden.
+Protocol reference: https://learn.chatgpt.com/docs/app-server
 
-Imported conversations use this application's configured provider/model. The source model,
-source identity and historical workspace are retained separately. They do not restore source
-credentials, permissions, background processes, pending approvals, or file rollback checkpoints.
+For offline Codex directories, or when no runtime is installed:
 
-## Format and continuation rules
+- Use the state database's `rollout_path` to identify the current history. Copied directories
+  can relocate that exact file by its filename. Without an index, require one unambiguous head.
+- Follow `history_base.thread_id` to the referenced rollout storage UUID. Recursively inherit
+  only records before `end_ordinal_exclusive`, validating `end_byte_offset` as well.
+- Never concatenate files by logical session ID or modification time. Unselected branches and
+  excluded ancestor tails are not part of the current conversation. Exact duplicate files may
+  represent the same source; conflicting candidates, missing ancestors, cycles, and inconsistent
+  boundaries fail the session instead of producing a partial success.
+- Use completed UI items per turn, falling back to response items for legacy turns. Source
+  files changing during the read are rejected. Subagent-only and empty sessions are skipped.
 
-- Codex: use completed UI items when available; use response items for older logs. Never append
-  both representations. Optional read-only SQLite/session-index metadata supplies titles and
-  archive state. Subagent-only logs and empty sessions are skipped.
-- Claude Code: follow the current leaf's parent chain, including logical parents across
-  compaction. Keep distinct block UUIDs even when their API message IDs match. Tool results in
-  user-role records remain tool output, not new user turns. Sidechains/subagent files are excluded.
-- Text, readable reasoning, and available tool details are copied. Attachments are represented
-  by placeholders, not copied. Encrypted reasoning, alternate branches and proprietary records
-  are not reconstructed; conversion warnings are shown for each session.
-- For continuation, external tool entries become bounded historical text, not foreign tool-call
-  messages. A reminder tells the model to use current tools and verify current project files.
-- Source timestamps are preserved on items. Turn sort timestamps advance by microseconds only
-  when necessary to retain source ordering for equal or regressing timestamps.
+For Claude Code, follow the selected leaf's `parentUuid` / `logicalParentUuid` chain. A final
+`last-prompt` leaf selects its branch; subsequent messages continue it. Missing ancestors and
+cycles fail instead of silently importing a suffix. Preserve block order and distinct block
+UUIDs. Pair tool results with their calls; retain unmatched results as inert historical records
+with a warning. Sidechains and subagent files are excluded.
 
-## Persistence and failure handling
+## User flow and limitations
 
-`POST /v1/external-sessions/scan` accepts `source` (`codex` or `claude`) and optional `root`.
-It returns grouped-UI metadata, conversion warnings, skipped auxiliary-log count, and file errors.
-It never creates threads or invokes a model.
+1. Select sources and scan. Defaults respect `CODEX_HOME` and `CLAUDE_CONFIG_DIR`, otherwise
+   `~/.codex` and `~/.claude`. Custom source directories use offline reading.
+2. Search, filter archived conversations, and select visible sessions. Sessions with changed or
+   older imported snapshots are marked as available for an update/correction.
+3. Keep the project folder or link its current location. Missing project directories allow
+   history-only import; link a valid directory before continuing work.
+4. Import sequentially. A session failure does not stop other sessions. Retry failures or stop
+   after the current session. Leaving settings stops after the current request completes.
 
-`POST /v1/external-sessions/import` additionally accepts `path`, `session_id`, and optional
-`workspace`. One request commits one session; responses distinguish `imported`, `linked`, and
-`skipped`. Existing imports are snapshots: reimport does not overwrite later native conversation
-history or append source updates. A deterministic source/session identity prevents duplicate
-imports, including after a disconnected request or restart. Deleted native imports can be
-imported again. History-only imports remain linkable even after their source logs are deleted.
+Copy text, readable reasoning and available tool records. Attachments remain placeholders.
+Encrypted reasoning, unrelated branches, source approvals, credentials, background jobs and
+file rollback checkpoints are not restored. Continue with this application's model and tools;
+historical tool records remain inert evidence. Source usage is not counted as local model usage.
+Native Codex turn boundaries are preserved, including multiple user items within one turn.
+Offline timestamps retain source order, using microsecond adjustments where necessary.
 
-The importer validates that new sessions are under the scanned source root. Reads freeze the
-file's initial byte length, tolerate an incomplete final record, and reject corrupt middle records.
-Limits are 256 MB per source file and 16 MB per JSONL record. Mutations use the native thread lease
-and store lock; items and turns are written before the discoverable thread, with rollback on
-failure. Source timestamps/model usage do not count as new local model usage.
+## Snapshot updates and recovery
 
-## Checks
+`POST /v1/external-sessions/scan` accepts `source` and optional `root`.
+`POST /v1/external-sessions/import` also accepts `path`, `session_id`, and optional `workspace`.
+Results distinguish `imported`, `updated`, `linked`, and `skipped`.
 
-- `pytest tests/contract/test_external_sessions.py`
+A source/session identity maps to one native thread. An unchanged, intact snapshot is skipped.
+Updating first backs up the existing imported thread/turn/item records under
+`threads/import_backups/<thread-id>/<timestamp>/`. The response includes `backup_path`.
+
+Write new items and turns into a distinct generation, then atomically publish that generation
+in the thread record. Unpublished and superseded generations are excluded from thread history
+and sidebar counts, including after a crash. Failed writes leave the prior snapshot visible.
+Cleanup of superseded records happens after commit; the backup remains available. Native
+follow-up turns, project association and user settings are preserved. This supports correcting
+older import bugs and source rewinds, not just appending a matching prefix.
+
+Mutations use the native thread lease and store lock. Source paths are confined to the chosen
+root. Offline limits are 256 MB per file and 16 MB per record; native response pages are capped
+at 64 MB. History-only records remain linkable after their source files are removed.
+
+## Verification
+
+- `pytest tests/contract/test_external_sessions.py tests/contract/test_codex_history.py tests/contract/test_thread_store_fault_tolerance.py`
 - Workbench: `npm test -- src/renderer/src/components/settings/SessionImportPanel.test.ts`
 
-These cover duplicate representations, Claude branches and blocks, inert tool history,
-repeat imports, rollback/retry, active-file tails, archive filtering, directory relinking,
-source-order preservation, batch failure recovery, and stopping after an in-flight session.
+Regression coverage includes ancestry cutoffs, index-selected branches, ambiguous histories,
+missing ancestors, Claude block order/cycles, full pagination, source changes, snapshot backups,
+failed-write recovery, invisible staged generations, repeat import, native follow-up retention,
+directory relinking and batch retry/stop. Real-source validation compares the offline reader's
+messages against the native API, rather than comparing a parser only against its own output.

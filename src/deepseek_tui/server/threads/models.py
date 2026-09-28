@@ -109,6 +109,8 @@ class ThreadRecord(BaseModel):
     import_source: str | None = None
     import_source_model: str | None = None
     import_history_only: bool = False
+    import_generation: str | None = None
+    import_fingerprint: str | None = None
     memory_mode: str | None = None
     approved_plan: bool = False
     goal: dict[str, Any] | None = None
@@ -136,6 +138,7 @@ class TurnRecord(BaseModel):
     usage: dict[str, Any] | None = None
     error: str | None = None
     item_ids: list[str] = Field(default_factory=list)
+    import_generation: str | None = None
     steer_count: int = 0
     # Authoritative per-turn file delta. Persisted so historical receipts do
     # not fall back to lossy per-tool reconstruction after reload.

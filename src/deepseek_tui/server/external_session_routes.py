@@ -53,7 +53,7 @@ async def import_one(request: Request, payload: ImportRequest) -> dict:
                 model=default_runtime_model(mgr.config),
                 provider=mgr.config.provider,
             )
-            if result["status"] == "linked":
+            if result["status"] in {"linked", "updated"}:
                 await mgr._evict_active_thread(result["thread_id"])
             return result
 

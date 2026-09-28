@@ -1,6 +1,6 @@
 import { openThreadInSplit } from '../../lib/chat-split-navigation'
 import { resolveChatLayoutKey, CHAT_THREAD_DRAG_MIME, MAX_CHAT_PANES, useChatLayoutStore } from '../../store/chat-layout-store'
-import type { CSSProperties, MouseEvent as ReactMouseEvent, ReactElement } from 'react'
+import type { MouseEvent as ReactMouseEvent, ReactElement } from 'react'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
@@ -69,7 +69,7 @@ import {
 import { ProjectContextMenu, type ProjectContextMenuAction } from './ProjectContextMenu'
 import { ThreadContextMenu, type ThreadContextMenuAction } from './ThreadContextMenu'
 import { HoverInfoCard } from './ThreadHoverCard'
-import { threadMarqueeDurationMs } from '../../lib/thread-marquee'
+import { HoverMarqueeText } from '../HoverMarqueeText'
 
 type SidebarProjectsSectionProps = {
   threads: NormalizedThread[]
@@ -1076,7 +1076,7 @@ function SidebarProjectsSection({
                   />
                 )}
                 <span
-                  className="ds-sidebar-project-label min-w-0 flex-1 truncate"
+                  className="ds-sidebar-project-label ds-sidebar-title-fade min-w-0 flex-1 overflow-hidden whitespace-nowrap"
                   style={labelSwatch ? { color: labelSwatch } : undefined}
                 >
                   {folderName}
@@ -1235,153 +1235,6 @@ type ThreadRowProps = {
   onTogglePin: () => void
 }
 
-type ThreadQueryMarqueeProps = {
-  active: boolean
-  className: string
-  style?: CSSProperties
-  text: string
-  title: string
-}
-
-const MARQUEE_DWELL_MS = 320
-
-function ThreadQueryMarquee({
-  active,
-  className,
-  style,
-  text,
-  title
-}: ThreadQueryMarqueeProps): ReactElement {
-  const viewportRef = useRef<HTMLSpanElement>(null)
-  const textRef = useRef<HTMLSpanElement>(null)
-  const animationRef = useRef<Animation | null>(null)
-  const dwellTimerRef = useRef<number | null>(null)
-  const frameRef = useRef<number | null>(null)
-  const previousTextRef = useRef(text)
-  const [expanded, setExpanded] = useState(false)
-  const [overflowing, setOverflowing] = useState(false)
-  const expandedRef = useRef(false)
-
-  useEffect(() => {
-    const viewport = viewportRef.current
-    const inner = textRef.current
-    if (!viewport || !inner) return
-    const measure = (): void => setOverflowing(inner.scrollWidth > viewport.clientWidth + 1)
-    const observer = new ResizeObserver(measure)
-    observer.observe(viewport)
-    observer.observe(inner)
-    measure()
-    return () => observer.disconnect()
-  }, [text])
-
-  const updateExpanded = (next: boolean): void => {
-    expandedRef.current = next
-    setExpanded(next)
-  }
-
-  const clearSchedule = (): void => {
-    if (dwellTimerRef.current != null) {
-      window.clearTimeout(dwellTimerRef.current)
-      dwellTimerRef.current = null
-    }
-    if (frameRef.current != null) {
-      window.cancelAnimationFrame(frameRef.current)
-      frameRef.current = null
-    }
-  }
-
-  useEffect(() => {
-    const inner = textRef.current
-    const viewport = viewportRef.current
-    if (!inner || !viewport) return
-
-    clearSchedule()
-    const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true
-    if (previousTextRef.current !== text) {
-      previousTextRef.current = text
-      animationRef.current?.cancel()
-      animationRef.current = null
-      updateExpanded(false)
-    }
-
-    if (!active || reduceMotion) {
-      const currentTransform = window.getComputedStyle(inner).transform
-      animationRef.current?.cancel()
-      animationRef.current = null
-      if (!expandedRef.current || reduceMotion || currentTransform === 'none') {
-        updateExpanded(false)
-        return
-      }
-      const reset = inner.animate(
-        [
-          { transform: currentTransform },
-          { transform: 'translateX(0)' }
-        ],
-        { duration: 180, easing: 'ease-out' }
-      )
-      animationRef.current = reset
-      reset.onfinish = () => {
-        if (animationRef.current !== reset) return
-        reset.cancel()
-        animationRef.current = null
-        updateExpanded(false)
-      }
-      return
-    }
-
-    dwellTimerRef.current = window.setTimeout(() => {
-      updateExpanded(true)
-      frameRef.current = window.requestAnimationFrame(() => {
-        frameRef.current = null
-        const overflow = Math.ceil(inner.scrollWidth - viewport.clientWidth)
-        if (overflow <= 1) {
-          updateExpanded(false)
-          return
-        }
-        const currentTransform = window.getComputedStyle(inner).transform
-        const previousAnimation = animationRef.current
-        if (previousAnimation) previousAnimation.onfinish = null
-        previousAnimation?.cancel()
-        const marquee = inner.animate(
-          [
-            { transform: currentTransform === 'none' ? 'translateX(0)' : currentTransform },
-            { transform: `translateX(-${overflow}px)` }
-          ],
-          {
-            duration: threadMarqueeDurationMs(overflow),
-            easing: 'linear',
-            fill: 'forwards'
-          }
-        )
-        animationRef.current = marquee
-      })
-    }, MARQUEE_DWELL_MS)
-  }, [active, text])
-
-  useEffect(
-    () => () => {
-      clearSchedule()
-      animationRef.current?.cancel()
-    },
-    []
-  )
-
-  return (
-    <span
-      ref={viewportRef}
-      className={`${className} overflow-hidden whitespace-nowrap ${overflowing && !expanded ? 'ds-sidebar-title-fade' : ''}`}
-      style={style}
-      title={title}
-    >
-      <span
-        ref={textRef}
-        className="inline-block w-max max-w-none whitespace-nowrap"
-      >
-        {text}
-      </span>
-    </span>
-  )
-}
 
 export function ThreadRow({
   thread,
@@ -1663,7 +1516,7 @@ export function ThreadRow({
             className="ds-sidebar-thread min-w-0 flex-1 truncate border-0 bg-transparent p-0 text-ds-ink caret-accent outline-none"
           />
         ) : (
-          <ThreadQueryMarquee
+          <HoverMarqueeText
             active={rowHovered}
             className={[
               'ds-sidebar-thread min-w-0 flex-1',

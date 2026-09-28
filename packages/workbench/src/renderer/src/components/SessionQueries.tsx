@@ -4,7 +4,8 @@ import { Check, ChevronDown, Copy } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { useChatStore } from '../store/chat-store'
 import { useLightDismiss } from '../hooks/use-light-dismiss'
-import { deriveQueryTrailItems } from './chat/queryTrail.logic'
+import { queryDisplayText } from './chat/queryTrail.logic'
+import { HoverMarqueeText } from './HoverMarqueeText'
 
 export function SessionQueries({ children }: { children: ReactNode }): React.ReactElement {
   const { t } = useTranslation('common')
@@ -13,9 +14,8 @@ export function SessionQueries({ children }: { children: ReactNode }): React.Rea
   const scrollToBlock = useChatStore((s) => s.scrollToBlock)
   const queries = useMemo(() => {
     const users = blocks.filter((block) => block.kind === 'user')
-    const previews = deriveQueryTrailItems(users)
-    return users.map((block, index) => ({
-      id: block.id, text: block.text, preview: previews[index]!.preview
+    return users.map((block) => ({
+      id: block.id, text: block.text, preview: queryDisplayText(block.text)
     })).reverse()
   }, [blocks])
   const [open, setOpen] = useState(false)
@@ -116,7 +116,7 @@ export function SessionQueries({ children }: { children: ReactNode }): React.Rea
     <span role="status" className="sr-only">{notice}</span>
     {open && createPortal(
       <div ref={panelRef} onPointerEnter={enter} onPointerLeave={leave} className="ds-no-drag fixed z-[100] overflow-hidden rounded-2xl border border-ds-border bg-[color:var(--ds-card-strong)] p-1 shadow-[0_8px_28px_rgba(0,0,0,0.14)]" style={{ left: position.left, top: position.top, width: 'max-content', minWidth: Math.min(position.width, position.maxWidth), maxWidth: position.maxWidth }}>
-        <div className="overflow-y-auto overscroll-contain [scrollbar-width:thin]" style={{ maxHeight: position.maxHeight }}>
+        <div className="ds-session-queries-scroll overflow-y-auto overscroll-contain" style={{ maxHeight: position.maxHeight }}>
           {queries.map((query) => <div
             key={query.id}
             className="group flex h-9 w-full select-none items-center rounded-xl px-2.5 font-ui text-[13px] font-medium leading-6 tracking-[-0.01em] text-ds-ink transition-colors hover:bg-ds-hover focus-within:bg-ds-hover"
@@ -142,7 +142,7 @@ export function SessionQueries({ children }: { children: ReactNode }): React.Rea
               }}
             >
               <span aria-hidden="true" className={`h-1 w-1 shrink-0 rounded-full bg-current ${query === queries[0] ? 'text-ds-muted' : 'text-ds-faint opacity-40'}`} />
-              <span className="min-w-0 flex-1 truncate">{query.preview}</span>
+              <HoverMarqueeText className="min-w-0 flex-1" text={query.preview} title={query.preview} />
             </button>
             <button
               type="button"

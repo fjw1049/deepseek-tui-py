@@ -2093,6 +2093,7 @@ function PreviewPickChip({
 }
 
 const REWIND_CONFIRM_FILE_LIMIT = 8
+const USER_MESSAGE_MAX_HEIGHT = 360
 
 /**
  * User message bubble: pencil enters edit mode. A single Resend action rewinds
@@ -2120,6 +2121,8 @@ function UserMessageBubble({
       : block.text
   const previewChipLabels = previewPick?.chipLabels ?? []
   const [editing, setEditing] = useState(false)
+  const [expanded, setExpanded] = useState(false)
+  const [overLimit, setOverLimit] = useState(false)
   const [draft, setDraft] = useState(displayBody)
   const [editPicks, setEditPicks] = useState(() => previewPick?.picks ?? [])
   const [submitting, setSubmitting] = useState(false)
@@ -2140,6 +2143,19 @@ function UserMessageBubble({
   const hasMissingRoots = (confirm?.missingRoots.length ?? 0) > 0
   const hasNoCheckpoint = (confirm?.noCheckpoint ?? 0) > 0
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const contentRef = useRef<HTMLDivElement>(null)
+
+  useLayoutEffect(() => {
+    if (editing || !contentRef.current) return
+    const content = contentRef.current
+    const measure = (): void => setOverLimit(content.scrollHeight > USER_MESSAGE_MAX_HEIGHT)
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(content)
+    return () => observer.disconnect()
+  }, [editing, displayBody, previewChipLabels.length])
+
+  useEffect(() => setExpanded(false), [displayBody])
 
   useEffect(() => {
     if (!editing || confirm) return
@@ -2149,7 +2165,7 @@ function UserMessageBubble({
     const len = el.value.length
     el.setSelectionRange(len, len)
     el.style.height = 'auto'
-    el.style.height = `${Math.min(el.scrollHeight, 360)}px`
+    el.style.height = `${Math.min(el.scrollHeight, USER_MESSAGE_MAX_HEIGHT)}px`
   }, [editing, confirm])
 
   useEffect(() => {
@@ -2312,7 +2328,7 @@ function UserMessageBubble({
               setDraft(e.target.value)
               const el = e.currentTarget
               el.style.height = 'auto'
-              el.style.height = `${Math.min(el.scrollHeight, 360)}px`
+              el.style.height = `${Math.min(el.scrollHeight, USER_MESSAGE_MAX_HEIGHT)}px`
             }}
             onKeyDown={(e) => {
               if (e.key === 'Escape') {
@@ -2498,7 +2514,12 @@ function UserMessageBubble({
     <div id={`block-${block.id}`} className="ds-user-message group relative">
       <div className="ds-user-message-bubble min-w-0">
         {previewChipLabels.length > 0 || focus || displayBody ? (
-          <div className="whitespace-pre-wrap break-words text-start [overflow-wrap:anywhere]">
+          <div
+            ref={contentRef}
+            id={`user-message-content-${block.id}`}
+            className="whitespace-pre-wrap break-words text-start [overflow-wrap:anywhere]"
+            style={expanded ? undefined : { maxHeight: USER_MESSAGE_MAX_HEIGHT, overflow: 'hidden' }}
+          >
             {[
               ...previewChipLabels.map((label, index) => (
                 <PreviewPickChip key={`${label}:${index}`} label={label} />
@@ -2509,6 +2530,18 @@ function UserMessageBubble({
               displayBody ? <UserMessageRichText key="body" text={displayBody} /> : null
             ]}
           </div>
+        ) : null}
+        {overLimit ? (
+          <button
+            type="button"
+            aria-controls={`user-message-content-${block.id}`}
+            aria-expanded={expanded}
+            onClick={() => setExpanded((value) => !value)}
+            className="mt-2 inline-flex items-center gap-1 text-[13px] text-[color:var(--ds-bubble-user-fg)] opacity-70 hover:opacity-100"
+          >
+            {t(expanded ? 'inlineTextCollapse' : 'userMessageShowMore')}
+            <ChevronDown className={`h-3.5 w-3.5 transition-transform ${expanded ? 'rotate-180' : ''}`} aria-hidden="true" />
+          </button>
         ) : null}
       </div>
       <div className="mt-2 flex min-w-0 items-center justify-between gap-3 text-ds-faint opacity-90 transition group-hover:opacity-100">

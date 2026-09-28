@@ -381,12 +381,12 @@ export function OperationContextDock({
       data-phase={motion === 'idle' ? 'expanded' : motion}
     >
       <div className="ds-operation-dock-topbar">
-        <span className="ds-operation-dock-topbar__title min-w-0 flex-1 truncate" title={workspaceLabel}>
+        <span className="ds-operation-dock-topbar__title min-w-0 max-w-[66.666%] flex-1 truncate" title={workspaceLabel}>
           {workspaceLabel}
         </span>
         <button
           type="button"
-          className="ds-operation-dock-topbar__toggle"
+          className="ds-operation-dock-topbar__toggle ml-auto"
           onClick={() => onCollapse ? onCollapse() : setCompactMode(true)}
           title={t('operationDockCollapse')}
           aria-label={t('operationDockCollapse')}

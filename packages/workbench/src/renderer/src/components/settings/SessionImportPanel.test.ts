@@ -72,3 +72,33 @@ it('relinks a history-only import after choosing a replacement folder', async ()
   await click('sessionImport.browse'); await click('sessionImport.selectAll'); await click('sessionImport.importSelected')
   expect(JSON.parse(imports()[0][2]).workspace).toBe('/projects/moved')
 })
+it('allows filling an incomplete import and disables it after success', async () => {
+  rows = [session('a', { imported_thread_id: 'imported-a', update_available: true })]
+  const standard = request.getMockImplementation()!
+  request.mockImplementation(async (...args: [string, string, string]) => args[0].endsWith('/import')
+    ? response({ status: 'updated', thread_id: 'imported-a', warnings: [] }) : standard(...args))
+  await prepare()
+  expect(container.textContent).toContain('sessionImport.updateAvailable')
+  expect(button('sessionImport.importSelected').disabled).toBe(false)
+  await click('sessionImport.importSelected'); await click('sessionImport.selectAll')
+  expect(imports()).toHaveLength(1)
+  expect(button('sessionImport.importSelected').disabled).toBe(true)
+})
+it('labels mixed-source sessions, current progress and failures even with identical titles and IDs', async () => {
+  rows = [session('same', { title: 'Shared title' }), session('same', { source: 'claude', title: 'Shared title' })]
+  let finish!: (value: unknown) => void
+  request.mockImplementation((path: string, _method: string, body: string) => {
+    const payload = JSON.parse(body)
+    if (path.endsWith('/scan')) return Promise.resolve(response({ root: '/source', available: true, sessions: rows.filter(s => s.source === payload.source), errors: [] }))
+    return new Promise(resolve => { finish = resolve })
+  })
+  await prepare()
+  expect([...container.querySelectorAll('.session-import-session .session-import-source-badge')].map(el => el.textContent)).toEqual(['Codex', 'Claude Code'])
+  await click('sessionImport.importSelected')
+  expect(container.querySelector('[role="status"] .session-import-source-badge')?.textContent).toBe('Codex')
+  await act(async () => finish(response({ status: 'imported', thread_id: 'codex-same', warnings: [] })))
+  expect(container.querySelector('[role="status"] .session-import-source-badge')?.textContent).toBe('Claude Code')
+  await act(async () => finish(response({ detail: 'Read failed' }, false)))
+  expect(container.querySelector('[role="alert"] .session-import-source-badge')?.textContent).toBe('Claude Code')
+  expect(imports().map(call => JSON.parse(call[2]).source)).toEqual(['codex', 'claude'])
+})

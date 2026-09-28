@@ -248,9 +248,12 @@ class RuntimeThreadStore:
         out: list[TurnRecord] = []
         if not self._turns_dir.exists():
             return out
+        threads = {t.id: t for t in self.list_threads()}
         for path in self._turns_dir.glob("*.json"):
             record = self._load_listing_record(path, TurnRecord)
-            if record is not None:
+            if record is not None and self._visible_import_turn(
+                record, threads.get(record.thread_id)
+            ):
                 out.append(record)
         return out
 
@@ -393,12 +396,24 @@ class RuntimeThreadStore:
         out.sort(key=lambda t: t.updated_at, reverse=True)
         return out
 
+    @staticmethod
+    def _visible_import_turn(turn: TurnRecord, thread: ThreadRecord | None) -> bool:
+        # A thread's atomic generation pointer publishes an entire imported snapshot.
+        if turn.import_generation is not None:
+            return thread is not None and turn.import_generation == thread.import_generation
+        if thread and thread.import_generation and turn.id.startswith(f"{thread.id}_turn_"):
+            return False  # Superseded imports written before generation support.
+        return True
+
     def count_turns_by_thread(self) -> dict[str, int]:
         """Aggregate sidebar counts in one scan rather than one scan per thread."""
         counts: dict[str, int] = {}
+        threads = {t.id: t for t in self.list_threads()}
         for path in self._turns_dir.glob("*.json"):
             record = self._load_listing_record(path, TurnRecord)
-            if record is not None:
+            if record is not None and self._visible_import_turn(
+                record, threads.get(record.thread_id)
+            ):
                 counts[record.thread_id] = counts.get(record.thread_id, 0) + 1
         return counts
 
@@ -406,9 +421,17 @@ class RuntimeThreadStore:
         out: list[TurnRecord] = []
         if not self._turns_dir.exists():
             return out
+        try:
+            thread = self.load_thread(thread_id)
+        except FileNotFoundError:
+            thread = None
         for path in self._turns_dir.glob("*.json"):
             record = self._load_listing_record(path, TurnRecord)
-            if record is not None and record.thread_id == thread_id:
+            if (
+                record is not None
+                and record.thread_id == thread_id
+                and self._visible_import_turn(record, thread)
+            ):
                 out.append(record)
         out.sort(key=lambda t: t.created_at)
         return out

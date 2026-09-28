@@ -176,3 +176,83 @@ it('folds failed web fetches together with successful calls during retries', asy
   await act(async () => container.querySelector<HTMLElement>('#block-fetch-0 [role="button"]')!.click())
   expect(container.textContent).toContain('Fetch failed 0')
 })
+
+it('renders imported replies outside collapsed work details through the runtime adapter', async () => {
+  const { DeepseekRuntimeProvider } = await import('../../agent/deepseek-runtime')
+  const item = (id: string, kind: string, text: string, metadata = {}) => ({
+    id, turn_id: 'imported-turn', kind, summary: text, detail: text, status: 'completed', metadata
+  })
+  const originalBridge = window.dsGui
+  Object.defineProperty(window, 'dsGui', { configurable: true, value: {
+    runtimeRequest: vi.fn().mockResolvedValue({ ok: true, body: JSON.stringify({
+      thread: { id: 'imported', title: 'Imported conversation' },
+      turns: [{ id: 'imported-turn', status: 'completed' }],
+      items: [
+        item('imported-user', 'user_message', '请审核结果'),
+        item('imported-progress', 'agent_message', '正在核对数据', { external_history: true, agent_segment: 'mid_turn_preface' }),
+        item('imported-tool', 'tool_call', 'Historical read', { external_history: true, tool_name: 'Read' }),
+        item('imported-answer', 'agent_message', '这是最终审核结论', { external_history: true, agent_segment: 'final_answer' }),
+        item('older-import-answer', 'agent_message', '旧版导入的回复也必须可见', { external_history: true }),
+        item('native-legacy', 'agent_message', '原生未分类过程保持折叠')
+      ]
+    }) })
+  } })
+  try {
+    const { blocks } = await new DeepseekRuntimeProvider().getThreadDetail('imported')
+    act(() => useChatStore.setState({ busy: false, blocks, workspaceRoot: '', activeThreadId: 'imported' }))
+    await act(async () => root.render(createElement(MessageTimeline, {
+      blocks, liveReasoning: '', live: '', activeThreadId: 'imported',
+      runtimeConnection: 'ready', onRetryConnection: () => {},
+      onOpenSettings: () => {}, onOpenDiagnostics: () => {}
+    })))
+    expect(container.querySelector('#block-imported-answer')?.textContent).toContain('这是最终审核结论')
+    expect(container.querySelector('#block-older-import-answer')?.textContent).toContain('旧版导入的回复也必须可见')
+    expect(container.textContent).not.toContain('正在核对数据')
+    expect(container.textContent).not.toContain('原生未分类过程保持折叠')
+    const toggle = container.querySelector<HTMLButtonElement>('.ds-work-meta-row')!
+    expect(toggle.getAttribute('aria-expanded')).toBe('false')
+    await act(async () => toggle.click())
+    expect(container.textContent).toContain('正在核对数据')
+    expect(container.textContent).toContain('这是最终审核结论')
+  } finally {
+    Object.defineProperty(window, 'dsGui', { configurable: true, value: originalBridge })
+  }
+})
+
+it('folds long user messages and keeps the full text when editing', async () => {
+  const longText = '这是一条很长的提问。'.repeat(300)
+  const scrollHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'scrollHeight')
+  Object.defineProperty(HTMLElement.prototype, 'scrollHeight', {
+    configurable: true,
+    get(this: HTMLElement) { return this.id === 'user-message-content-long' || this.tagName === 'TEXTAREA' ? 720 : 80 }
+  })
+  try {
+    const blocks: ChatBlock[] = [
+      { kind: 'user', id: 'short', text: '简短提问' },
+      { kind: 'user', id: 'long', text: longText }
+    ]
+    act(() => useChatStore.setState({ busy: false, blocks, workspaceRoot: '', activeThreadId: 'long-query' }))
+    await act(async () => root.render(createElement(MessageTimeline, {
+      blocks, liveReasoning: '', live: '', activeThreadId: 'long-query',
+      runtimeConnection: 'ready', onRetryConnection: () => {},
+      onOpenSettings: () => {}, onOpenDiagnostics: () => {}
+    })))
+    expect(container.querySelector('#block-short [aria-expanded]')).toBeNull()
+    const content = container.querySelector<HTMLElement>('#user-message-content-long')!
+    const toggle = container.querySelector<HTMLButtonElement>('#block-long [aria-expanded]')!
+    expect(content.style.maxHeight).toBe('360px')
+    expect(toggle.getAttribute('aria-expanded')).toBe('false')
+    await act(async () => toggle.click())
+    expect(content.style.maxHeight).toBe('')
+    expect(toggle.getAttribute('aria-expanded')).toBe('true')
+    await act(async () => toggle.click())
+    expect(content.style.maxHeight).toBe('360px')
+    await act(async () => container.querySelector<HTMLButtonElement>('#block-long .ds-rewind-trigger')!.click())
+    const textarea = container.querySelector<HTMLTextAreaElement>('#block-long textarea')!
+    expect(textarea.value).toBe(longText)
+    expect(textarea.style.height).toBe('360px')
+  } finally {
+    if (scrollHeight) Object.defineProperty(HTMLElement.prototype, 'scrollHeight', scrollHeight)
+    else Reflect.deleteProperty(HTMLElement.prototype, 'scrollHeight')
+  }
+})

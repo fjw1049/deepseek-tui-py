@@ -81,6 +81,17 @@ function normalizePreview(text: string): string {
     : collapsed
 }
 
+export function queryDisplayText(text: string): string {
+  const previewPick = parsePreviewPickWireMessage(text)
+  const focus = previewPick ? null : parseUserFocusPrefix(text)
+  const source = previewPick
+    ? previewPick.userRequest || previewPick.chipLabels[0] || ''
+    : focus
+      ? focus.body || focus.name
+      : text
+  return source.replace(/\s+/g, ' ').trim()
+}
+
 /**
  * Project the chat blocks into one trail item per user query, in transcript
  * order. Each item also carries the start of its turn's *final* assistant
@@ -93,17 +104,10 @@ export function deriveQueryTrailItems(blocks: readonly ChatBlock[]): QueryTrailI
   let currentTurnIndex = -1
   for (const block of blocks) {
     if (block.kind === 'user') {
-      const previewPick = parsePreviewPickWireMessage(block.text)
-      const focus = previewPick ? null : parseUserFocusPrefix(block.text)
-      const previewSource = previewPick
-        ? previewPick.userRequest || previewPick.chipLabels[0] || ''
-        : focus
-          ? focus.body || focus.name
-          : block.text
       items.push({
         id: block.id,
         ordinal: items.length + 1,
-        preview: normalizePreview(previewSource),
+        preview: normalizePreview(queryDisplayText(block.text)),
         responsePreview: ''
       })
       currentTurnIndex = items.length - 1

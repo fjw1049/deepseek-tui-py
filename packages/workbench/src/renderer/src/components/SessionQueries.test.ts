@@ -38,6 +38,8 @@ it('lists all queries newest first, bridges hover between title and list, copies
   expect(rows[0]!.textContent).toMatch(/^Query 11 /)
   expect(rows[11]!.textContent).toMatch(/^Query 0 /)
   expect(rows[0]!.textContent!.length).toBeLessThan(state.blocks[11]!.text.length)
+  expect(rows[0]!.textContent!.length).toBeGreaterThan(280)
+  expect(rows[0]!.textContent).not.toContain('…')
   expect((rows[0]!.parentElement!.parentElement as HTMLElement).style.maxHeight).toBe('360px')
   await act(async () => {
     rows[5]!.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1 }))

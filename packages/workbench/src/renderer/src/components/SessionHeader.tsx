@@ -1,5 +1,6 @@
 import type { ReactElement } from 'react'
 import { SessionQueries } from './SessionQueries'
+import { HoverMarqueeText } from './HoverMarqueeText'
 import { SessionInfoPopover } from './SessionInfoPopover'
 import { Bookmark } from 'lucide-react'
 import { useEffect, useState } from 'react'
@@ -65,12 +66,11 @@ export function SessionHeader({ compact = false, className = '' }: Props): React
               <Bookmark size={16} strokeWidth={1.75} />
             </SessionInfoPopover>
             <SessionQueries>
-              <span
-                className="block min-w-0 flex-1 truncate text-[13px] font-medium leading-6 tracking-[-0.01em] text-ds-ink"
+              <HoverMarqueeText
+                className="block min-w-0 flex-1 text-[13px] font-medium leading-6 tracking-[-0.01em] text-ds-ink"
                 title={active.title}
-              >
-                {active.title}
-              </span>
+                text={active.title}
+              />
             </SessionQueries>
           </>
         ) : showWorkspaceMeta ? (

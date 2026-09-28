@@ -733,6 +733,7 @@
   "toolDetailExpandFull": "Show full output",
   "inlineTextShowFull": "Show full (+{{count}} more chars)",
   "inlineTextCollapse": "Collapse",
+  "userMessageShowMore": "Show more",
   "processNeutralIntent": "Running {{count}} operation(s)",
   "processNeutralIntentTargets": "Working on {{targets}}",
   "toolOutputTruncatedNotice": "Output too large to display in full — showing the first {{shown}} of {{total}} characters.",

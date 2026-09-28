@@ -733,6 +733,7 @@
   "toolDetailExpandFull": "展开全文",
   "inlineTextShowFull": "展开剩余 {{count}} 字符",
   "inlineTextCollapse": "收起",
+  "userMessageShowMore": "显示更多",
   "processNeutralIntent": "正在执行 {{count}} 个操作",
   "processNeutralIntentTargets": "正在处理 {{targets}}",
   "toolOutputTruncatedNotice": "输出过大，无法完整显示——仅显示前 {{shown}} / 共 {{total}} 字符。",

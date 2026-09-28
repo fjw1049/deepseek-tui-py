@@ -966,6 +966,10 @@ samp {
   background-clip: padding-box;
 }
 
+.ds-session-queries-scroll::-webkit-scrollbar-track {
+  background: var(--ds-card-strong);
+}
+
 /* Slimmer scrollbar inside the "/" composer command popover. */
 .ds-composer-command-popover ::-webkit-scrollbar,
 .ds-composer-command-popover::-webkit-scrollbar {
