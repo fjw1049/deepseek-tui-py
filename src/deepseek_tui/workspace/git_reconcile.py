@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import subprocess
 import uuid
 from collections.abc import Collection
@@ -31,11 +32,11 @@ async def capture_baseline(workspace: Path) -> GitTurnBaseline:
     if not await _is_git_repo(root):
         return GitTurnBaseline(workspace=root, is_git=False)
     head = await _run_git(root, ["rev-parse", "HEAD"])
-    porcelain = await _run_git(root, ["status", "--porcelain", "-uall"]) or ""
+    porcelain = await _run_git(root, ["status", "--porcelain", "-z", "-uall"]) or ""
     dirty = _paths_from_porcelain(porcelain)
     # Also treat currently-untracked files as pre-existing dirt.
     for path in await _list_untracked(root):
-        dirty.add(path.replace("\\", "/"))
+        dirty.add((path.replace("\\", "/") if os.name == "nt" else path))
     return GitTurnBaseline(
         workspace=root,
         is_git=True,
@@ -67,19 +68,26 @@ async def reconcile_to_ledger(
     if not baseline.is_git:
         return []
     root = baseline.workspace
-    patch = await _run_git(root, ["diff", "--no-ext-diff", "--no-color", "HEAD"])
+    # Pin comparison to the turn-start commit even if HEAD moved meanwhile.
+    # Attribution remains best-effort; caller-provided exclusions still apply.
+    revision = baseline.head
+    diff_args = ["diff", "--no-ext-diff", "--no-textconv", "--no-color", "--no-renames"]
+    if revision:
+        diff_args.append(revision)
+    else:
+        diff_args.append("--cached")
+    changed = await _run_git(root, [*diff_args, "--name-only", "-z"])
     untracked = await _list_untracked(root)
     covered = ledger.covered_paths()
-    pre_dirty = {p.replace("\\", "/") for p in baseline.dirty_at_start}
-    excluded = {p.replace("\\", "/") for p in exclude_paths}
+    pre_dirty = set(baseline.dirty_at_start)
+    excluded = {p.replace("\\", "/") if os.name == "nt" else p for p in exclude_paths}
     added: list[FileMutation] = []
 
-    file_patches = _split_unified_diff_by_file(patch or "")
-    for path, unified in file_patches.items():
-        norm = path.replace("\\", "/")
-        if norm in pre_dirty or norm in excluded:
+    for norm in (changed or "").split("\0"):
+        if not norm or norm in pre_dirty or norm in excluded or norm in covered:
             continue
-        if norm in covered:
+        unified = await _run_git(root, [*diff_args, "--", f":(literal){norm}"])
+        if not unified:
             continue
         stats = count_diff_stats(unified)
         op = "create" if "--- /dev/null" in unified else "update"
@@ -101,14 +109,15 @@ async def reconcile_to_ledger(
         covered.add(norm)
 
     for path in untracked:
-        norm = path.replace("\\", "/")
+        norm = (path.replace("\\", "/") if os.name == "nt" else path)
         if norm in pre_dirty or norm in excluded:
             continue
         if norm in covered:
             continue
-        try:
-            content = (root / norm).read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
+        from deepseek_tui.workspace.shell_mutation_watch import _read_file
+
+        content = await asyncio.to_thread(_read_file, root, norm)
+        if not isinstance(content, str):
             continue
         unified, stats, op = synthesize_unified_diff(norm, "", content)
         mut = FileMutation(
@@ -130,67 +139,18 @@ async def reconcile_to_ledger(
 
 
 def _paths_from_porcelain(porcelain: str) -> set[str]:
+    """Parse porcelain v1 -z; rename/copy stores destination then source."""
     paths: set[str] = set()
-    for line in porcelain.splitlines():
-        if len(line) < 4:
+    entries = iter(porcelain.split("\0"))
+    for entry in entries:
+        if len(entry) < 4:
             continue
-        entry = line[3:].strip()
-        if " -> " in entry:
-            # rename: include both sides so neither is attributed to this turn
-            left, right = entry.split(" -> ", 1)
-            if left.strip():
-                paths.add(left.strip().replace("\\", "/"))
-            entry = right
-        if entry:
-            # git quotes paths with spaces: "my file.py"
-            if entry.startswith('"') and entry.endswith('"'):
-                entry = entry[1:-1].encode("utf-8").decode("unicode_escape")
-            paths.add(entry.replace("\\", "/"))
+        paths.add(entry[3:])
+        if "R" in entry[:2] or "C" in entry[:2]:
+            previous = next(entries, "")
+            if previous:
+                paths.add(previous)
     return paths
-
-
-def _split_unified_diff_by_file(patch: str) -> dict[str, str]:
-    if not patch.strip():
-        return {}
-    chunks = re_split_diff(patch)
-    out: dict[str, str] = {}
-    for chunk in chunks:
-        path = _path_from_diff_chunk(chunk)
-        if path:
-            out[path] = chunk if chunk.endswith("\n") else chunk + "\n"
-    return out
-
-
-def re_split_diff(patch: str) -> list[str]:
-    lines = patch.splitlines(keepends=True)
-    chunks: list[str] = []
-    current: list[str] = []
-    for line in lines:
-        if line.startswith("diff --git ") and current:
-            chunks.append("".join(current))
-            current = [line]
-        else:
-            current.append(line)
-    if current:
-        chunks.append("".join(current))
-    return chunks
-
-
-def _path_from_diff_chunk(chunk: str) -> str | None:
-    for line in chunk.splitlines():
-        if line.startswith("+++ b/"):
-            return line[6:].strip()
-        if line.startswith("+++ "):
-            p = line[4:].strip()
-            if p != "/dev/null":
-                return p[2:] if p.startswith("b/") else p
-        if line.startswith("diff --git "):
-            # Prefer the b/ side; handle spaces via `b/<path>` after the a/ token.
-            marker = " b/"
-            idx = line.find(marker)
-            if idx >= 0:
-                return line[idx + len(marker) :].strip()
-    return None
 
 
 async def _is_git_repo(root: Path) -> bool:
@@ -204,7 +164,7 @@ async def _list_untracked(root: Path) -> list[str]:
     )
     if not out:
         return []
-    return [p.replace("\\", "/") for p in out.split("\0") if p.strip()]
+    return [p for p in out.split("\0") if p]
 
 
 async def _run_git(root: Path, args: list[str]) -> str | None:
@@ -214,7 +174,6 @@ async def _run_git(root: Path, args: list[str]) -> str | None:
                 ["git", *args],
                 cwd=str(root),
                 capture_output=True,
-                text=True,
                 timeout=30,
                 check=False,
             )
@@ -223,6 +182,6 @@ async def _run_git(root: Path, args: list[str]) -> str | None:
             return None
         if proc.returncode != 0:
             return None
-        return proc.stdout
+        return proc.stdout.decode("utf-8")
 
     return await asyncio.to_thread(_run)

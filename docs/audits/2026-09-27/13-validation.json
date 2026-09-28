@@ -1,0 +1,12 @@
+{
+  "date": "2026-09-28",
+  "modules": 27,
+  "scope": "core paths, per-module recommendations; not exhaustive line-by-line verification",
+  "findings": 10,
+  "probe": "server_probe.py",
+  "results": "server-probe-results.json",
+  "production_code_changed": false,
+  "network_used": false,
+  "real_user_data_imported": false,
+  "regression_context": "12-fixes-validation.json"
+}

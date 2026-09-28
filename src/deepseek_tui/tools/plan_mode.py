@@ -192,10 +192,6 @@ def parse_enter_plan_response(response: dict[str, Any]) -> bool | None:
             "留在",
         }:
             return False
-        if ("enter" in token and "plan" in token) or "进入" in token:
-            return True
-        if "stay" in token or "agent" in token or "留在" in token or "代理" in token:
-            return False
     return None
 
 
@@ -210,36 +206,20 @@ def parse_exit_plan_response(response: dict[str, Any]) -> str | None:
         qid = str(answer.get("question_id") or answer.get("id") or "")
         if qid and qid != EXIT_QUESTION_ID:
             continue
-        raw = _answer_token(answer)
-        token = raw.lower().replace(" ", "_")
-        compact = token.replace("(", "").replace(")", "")
-        if raw in {
-            EXIT_ACCEPT_AGENT,
-            EXIT_ACCEPT_YOLO,
-            EXIT_REVISE,
-            EXIT_LEAVE,
-        }:
-            return raw
-        if token in {EXIT_ACCEPT_AGENT, "accept_agent"} or (
-            "accept" in compact
-            and "yolo" not in compact
-            and ("agent" in compact or "代理" in raw)
-        ):
-            return EXIT_ACCEPT_AGENT
-        if token in {EXIT_ACCEPT_YOLO, "accept_yolo"} or (
-            ("accept" in compact or "接受" in raw) and "yolo" in compact
-        ):
-            return EXIT_ACCEPT_YOLO
-        if token in {EXIT_REVISE, "revise"} or "revise" in compact or "修改" in raw:
-            return EXIT_REVISE
-        if token in {EXIT_LEAVE, "exit_plan", "exit"} or (
-            "without implementing" in token.replace("_", " ")
-            or "不实现" in raw
-            or ("退出" in raw and "接受" not in raw)
-        ):
-            return EXIT_LEAVE
-        if "接受" in raw and "yolo" not in compact:
-            return EXIT_ACCEPT_AGENT
+        token = _answer_token(answer).strip().lower()
+        labels = {
+            EXIT_ACCEPT_AGENT: EXIT_ACCEPT_AGENT,
+            "accept plan (agent)": EXIT_ACCEPT_AGENT,
+            "接受计划（代理）": EXIT_ACCEPT_AGENT,
+            EXIT_ACCEPT_YOLO: EXIT_ACCEPT_YOLO,
+            "accept plan (yolo)": EXIT_ACCEPT_YOLO,
+            "接受计划（yolo）": EXIT_ACCEPT_YOLO,
+            EXIT_REVISE: EXIT_REVISE, "revise plan": EXIT_REVISE,
+            "修改计划": EXIT_REVISE,
+            EXIT_LEAVE: EXIT_LEAVE, "exit without implementing": EXIT_LEAVE,
+            "退出且不实现": EXIT_LEAVE,
+        }
+        return labels.get(token)
     return None
 
 
@@ -263,7 +243,7 @@ def runtime_thread_id(metadata: dict[str, Any] | None) -> str | None:
 def resolve_plan_file_path(
     working_directory: Any, metadata: dict[str, Any] | None
 ) -> Path | None:
-    """Workbench: ``~/.deepseek/threads/plans/{id}.md``. TUI: workspace plan.md.
+    """Thread-bound runtimes use ``~/.deepseek/threads/plans/{id}.md``.
 
     A present-but-invalid thread id does not fall back to the workspace file.
     """
@@ -282,8 +262,11 @@ def plan_file_has_content(path: Path | None) -> bool:
     if path is None:
         return False
     try:
-        return path.is_file() and bool(path.read_text(encoding="utf-8").strip())
-    except OSError:
+        if not path.is_file() or path.stat().st_size > 1024 * 1024:
+            return False
+        with path.open(encoding="utf-8") as source:
+            return bool(source.read(1024 * 1024 + 1).strip())
+    except (OSError, UnicodeError):
         return False
 
 
@@ -312,6 +295,10 @@ def build_approved_plan_reminder_body(plan_path: Path) -> str:
 
 
 def is_approved_plan_reminder(message: Any) -> bool:
+    from deepseek_tui.protocol.messages import MessageOrigin
+
+    if getattr(message, "origin", None) != MessageOrigin.SYSTEM_REMINDER:
+        return False
     text = message.text_content() if hasattr(message, "text_content") else ""
     return APPROVED_PLAN_MARKER in (text or "")
 

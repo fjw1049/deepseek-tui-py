@@ -22,6 +22,7 @@ from __future__ import annotations
 import enum
 from dataclasses import dataclass, field
 
+from rich.markup import escape
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
@@ -108,12 +109,12 @@ class DelegateCard:
         if self.truncated:
             lines.append("  [dim]…[/]")
         for action in self.actions:
-            lines.append(f"  [dim]│[/] {_truncate(action, 200)}")
+            lines.append(f"  [dim]│[/] {escape(_truncate(action, 200))}")
         if self.status.is_terminal() and self.summary:
             display = _summary_for_display(self.summary) or self.summary
             lines.append(
                 f"  [dim]╰[/] [{self.status.color()}]"
-                f"{_truncate(display, 200)}[/]"
+                f"{escape(_truncate(display, 200))}[/]"
             )
         return lines
 
@@ -132,6 +133,8 @@ def apply_to_delegate(card: DelegateCard, msg: MailboxMessage) -> bool:
     Returns True if the card state changed.
     """
     if msg.agent_id != card.agent_id:
+        return False
+    if card.status.is_terminal():
         return False
     kind = msg.kind
     if kind == MailboxMessageKind.STARTED:
@@ -173,9 +176,9 @@ def _card_header(family: str, status: AgentLifecycle, role: str, detail: str) ->
     color = status.color()
     return (
         f"[{color} bold]{glyph}  {family}[/] "
-        f"[white]{role}[/] "
+        f"[white]{escape(role)}[/] "
         f"[{color}][{status.label()}][/] "
-        f"[dim]{detail}[/]"
+        f"[dim]{escape(detail)}[/]"
     )
 
 

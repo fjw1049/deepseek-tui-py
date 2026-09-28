@@ -11,8 +11,8 @@ from deepseek_tui.tools.web import (
 )
 
 
-def test_normalize_url_strips_www_and_trailing_slash() -> None:
-    assert _normalize_url("https://WWW.Example.com/path/") == "example.com/path"
+def test_normalize_url_preserves_www_and_trailing_slash() -> None:
+    assert _normalize_url("https://WWW.Example.com/path/") == "https://www.example.com/path/"
 
 
 def test_merge_hits_dedupes_by_url_and_caps() -> None:

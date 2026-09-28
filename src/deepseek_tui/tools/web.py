@@ -9,7 +9,7 @@ import socket
 import time
 from dataclasses import dataclass
 from html.parser import HTMLParser
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urljoin, urlparse, urlunparse
 
 import httpx
 
@@ -121,7 +121,8 @@ class FetchUrlTool(ToolSpec):
         _require_http_url(url)
         _check_network_policy(url, "fetch_url", context)
         await asyncio.to_thread(_reject_private_fetch_url, url)
-        max_chars = _optional_int(input_data, "max_chars") or _DEFAULT_FETCH_MAX_CHARS
+        max_chars = _bounded_int(input_data, "max_chars",
+                                 default=_DEFAULT_FETCH_MAX_CHARS, maximum=2 * 1024 * 1024)
         timeout = context.timeout_ms / 1000 if context.timeout_ms is not None else _DEFAULT_FETCH_TIMEOUT_S
         started = time.monotonic()
 
@@ -320,7 +321,7 @@ class WebSearchTool(ToolSpec):
 
     async def execute(self, input_data: dict[str, object], context: ToolContext) -> ToolResult:
         query = _require_string(input_data, "query")
-        max_results = _optional_int(input_data, "max_results") or 8
+        max_results = _bounded_int(input_data, "max_results", default=8, maximum=100)
         # getattr: tests (and embedders) may pass duck-typed contexts.
         timeout_ms = getattr(context, "timeout_ms", None)
         timeout = timeout_ms / 1000 if timeout_ms is not None else 30.0
@@ -439,7 +440,7 @@ async def _search_anysearch(
         headers["Authorization"] = f"Bearer {api_key}"
     payload = {"query": query, "max_results": max_results}
     try:
-        resp = await client.post(_ANYSEARCH_SEARCH_URL, json=payload, headers=headers)
+        resp = await _post_bounded(client, _ANYSEARCH_SEARCH_URL, json=payload, headers=headers)
     except (httpx.HTTPError, OSError) as exc:
         raise ToolError(f"AnySearch request failed: {exc}") from exc
 
@@ -448,7 +449,10 @@ async def _search_anysearch(
             f"AnySearch API returned {resp.status_code}: {resp.text[:200]}"
         )
 
-    data = resp.json()
+    try:
+        data = resp.json()
+    except ValueError as exc:
+        raise ToolError("Provider returned invalid JSON") from exc
     if not isinstance(data, dict):
         raise ToolError("AnySearch API returned non-object JSON")
 
@@ -491,7 +495,7 @@ async def _search_tavily(
         "include_answer": True,
     }
     try:
-        resp = await client.post(
+        resp = await _post_bounded(client,
             _TAVILY_SEARCH_URL,
             json=payload,
             headers={
@@ -505,7 +509,10 @@ async def _search_tavily(
     if not resp.is_success:
         raise ToolError(f"Tavily API returned {resp.status_code}: {resp.text[:200]}")
 
-    data = resp.json()
+    try:
+        data = resp.json()
+    except ValueError as exc:
+        raise ToolError("Provider returned invalid JSON") from exc
     hits = [
         _SearchHit(
             title=str(item.get("title", "")),
@@ -519,11 +526,32 @@ async def _search_tavily(
     return hits, str(data.get("answer", "") or "")
 
 
+def _bounded_int(data: dict[str, object], key: str, *, default: int, maximum: int) -> int:
+    value = _optional_int(data, key)
+    if value is None:
+        return default
+    if not 1 <= value <= maximum:
+        raise ToolError(f"{key} must be between 1 and {maximum}")
+    return value
+
+
+async def _post_bounded(client: httpx.AsyncClient, url: str, **kwargs) -> httpx.Response:
+    """Cap decoded provider responses before JSON parsing, including compressed bodies."""
+    async with client.stream("POST", url, **kwargs) as response:
+        body = bytearray()
+        async for chunk in response.aiter_bytes(chunk_size=65536):
+            if len(body) + len(chunk) > 2 * 1024 * 1024:
+                raise ToolError("Provider response exceeds 2 MiB")
+            body.extend(chunk)
+        return httpx.Response(response.status_code, content=bytes(body),
+                              request=response.request)
+
+
 def _normalize_url(url: str) -> str:
-    parsed = urlparse(url.strip().lower())
-    host = parsed.netloc.removeprefix("www.")
-    path = parsed.path.rstrip("/") or ""
-    return f"{host}{path}"
+    parsed = urlparse(url.strip())
+    return urlunparse(parsed._replace(
+        scheme=parsed.scheme.lower(), netloc=parsed.netloc.lower(), fragment=""
+    ))
 
 
 def _merge_hits(hits: list[_SearchHit], max_results: int) -> list[_SearchHit]:
@@ -711,7 +739,7 @@ async def _anysearch_extract(
         "params": {"name": "extract", "arguments": {"url": url}},
     }
     try:
-        resp = await client.post(_ANYSEARCH_MCP_URL, json=payload, headers=headers)
+        resp = await _post_bounded(client, _ANYSEARCH_MCP_URL, json=payload, headers=headers)
     except (httpx.HTTPError, OSError) as exc:
         raise ToolError(f"AnySearch extract request failed: {exc}") from exc
 
@@ -720,7 +748,10 @@ async def _anysearch_extract(
             f"AnySearch extract HTTP {resp.status_code}: {resp.text[:200]}"
         )
 
-    data = resp.json()
+    try:
+        data = resp.json()
+    except ValueError as exc:
+        raise ToolError("Provider returned invalid JSON") from exc
     if not isinstance(data, dict):
         raise ToolError("AnySearch extract returned non-object JSON")
 

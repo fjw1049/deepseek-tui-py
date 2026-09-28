@@ -136,11 +136,11 @@ class CompactionResult:
     failure_reason: str | None = None
 
 
-def _summary_input_limits_for_model(model: str) -> SummaryInputLimits:
+def _summary_input_limits_for_model(model: str, model_config: object | None = None) -> SummaryInputLimits:
     """Get summary input limits based on model context window."""
-    from deepseek_tui.config.providers import context_window_for_model
+    from deepseek_tui.config.providers import configured_context_window
 
-    is_large_context = context_window_for_model(model) >= LARGE_CONTEXT_WINDOW_TOKENS
+    is_large_context = configured_context_window(model, model_config) >= LARGE_CONTEXT_WINDOW_TOKENS
 
     if is_large_context:
         return SummaryInputLimits(
@@ -373,6 +373,7 @@ def should_compact(
     model: str | None = None,
     system_prompt: str | None = None,
     tools: list[dict[str, Any]] | None = None,
+    model_config: object | None = None,
 ) -> bool:
     """Determine if messages should be rewrite-compacted.
 
@@ -396,6 +397,7 @@ def should_compact(
         real_input_estimate=real_input_estimate,
         system_prompt=system_prompt,
         tools=tools,
+        model_config=model_config,
     )
     if pressure.ratio < config.auto_floor_ratio:
         return False
@@ -414,14 +416,16 @@ class CompactionBudgetError(ValueError):
     """A deterministic capacity failure; retrying the same request cannot help."""
 
 
-def validate_summary_request_budget(request: MessageRequest) -> None:
-    from deepseek_tui.config.providers import context_window_for_model
+def validate_summary_request_budget(
+    request: MessageRequest, model_config: object | None = None
+) -> None:
+    from deepseek_tui.config.providers import configured_context_window
     from deepseek_tui.engine.context_pressure import estimate_request_tokens
 
     total = estimate_request_tokens(
         request.messages, system_prompt=request.system_prompt, tools=request.tools
     ) + (request.max_tokens or 0)
-    window = context_window_for_model(request.model)
+    window = configured_context_window(request.model, model_config)
     if total > window:
         raise CompactionBudgetError(
             f"Summary request exceeds estimated context budget: {total} > {window}"
@@ -441,6 +445,7 @@ async def compact_messages_safe(
     system_prompt: str | None = None,
     tools: list[dict[str, Any]] | None = None,
     output_reserve: int = 0,
+    model_config: object | None = None,
 ) -> CompactionResult:
     """Compact messages with retry and backoff for transient errors.
 
@@ -520,6 +525,7 @@ async def compact_messages_safe(
                 messages_to_summarize,
                 effective_model,
                 previous_summary=prev,
+                model_config=model_config,
             )
             validation_error = validate_compaction_summary(summary)
             if validation_error:
@@ -550,7 +556,7 @@ async def compact_messages_safe(
             )
 
             compacted[0].image_references = list(references.values())
-            from deepseek_tui.config.providers import context_window_for_model
+            from deepseek_tui.config.providers import configured_context_window
             from deepseek_tui.engine.context_pressure import estimate_request_tokens
 
             before = estimate_request_tokens(messages, system_prompt=system_prompt, tools=tools)
@@ -559,7 +565,7 @@ async def compact_messages_safe(
                 raise CompactionBudgetError(
                     f"Compaction does not reduce estimated input: {before} -> {after}"
                 )
-            window = context_window_for_model(target_model or effective_model)
+            window = configured_context_window(target_model or effective_model, model_config)
             if after + max(0, output_reserve) > window:
                 raise CompactionBudgetError(
                     f"Retained context exceeds estimated budget: {after} + {output_reserve} > {window}"
@@ -601,11 +607,12 @@ async def _create_summary(
     model: str,
     *,
     previous_summary: str | None = None,
+    model_config: object | None = None,
 ) -> str:
     """Create a structured compaction handoff using the compact.md contract."""
     from deepseek_tui.engine.context_pressure import is_synthetic_user_message
 
-    limits = _summary_input_limits_for_model(model)
+    limits = _summary_input_limits_for_model(model, model_config)
 
     # Format conversation for summarization
     conversation_text = ""
@@ -681,7 +688,7 @@ async def _create_summary(
         system_prompt=system_prompt,
     )
 
-    validate_summary_request_budget(request)
+    validate_summary_request_budget(request, model_config)
     response = client.stream_chat_completion(request)
 
     from deepseek_tui.protocol.responses import StreamDone, StreamError
@@ -849,6 +856,7 @@ def should_l0_prune(
     system_prompt: str | None = None,
     tools: list[dict[str, Any]] | None = None,
     pressure: Any | None = None,
+    model_config: object | None = None,
 ) -> bool:
     """True when context ratio warrants mid-session tool pruning.
 
@@ -869,5 +877,6 @@ def should_l0_prune(
             real_input_estimate=real_input_estimate,
             system_prompt=system_prompt,
             tools=tools,
+            model_config=model_config,
         )
     return pressure.ratio >= cfg.l0_prune_ratio

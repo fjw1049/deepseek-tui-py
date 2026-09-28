@@ -118,9 +118,9 @@ class ToolExecutionMixin:
         """
         if self.last_real_input_tokens <= 0:
             return None
-        from deepseek_tui.config.providers import context_window_for_model
+        from deepseek_tui.config.providers import configured_context_window
 
-        window = context_window_for_model(model)
+        window = configured_context_window(model, getattr(self, "_app_config", None))
         if window <= 0:
             return None
         return self.last_real_input_tokens / window
@@ -464,6 +464,7 @@ class ToolExecutionMixin:
             tool_call.name,
             result,
             pressure_ratio=self._ingress_pressure_ratio(model),
+            model_config=getattr(self, "_app_config", None),
         )
         if not result.images:
             self._tool_dedup.record(

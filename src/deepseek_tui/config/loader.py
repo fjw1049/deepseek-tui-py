@@ -97,6 +97,7 @@ _PROJECT_SENSITIVE_KEYS = (
     "api_key",
     "base_url",
     "hooks",
+    "automation",
     "profile",
     "managed_config_path",
     "mcp_config_path",
@@ -213,19 +214,23 @@ class ConfigLoader:
         model: str | None = None,
         workspace: Path | None = None,
         no_project_config: bool = False,
+        overrides: Mapping[str, Any] | None = None,
     ) -> Config:
-        dotenv_values = load_dotenv_file(
+        workspace = (workspace or Path.cwd()).resolve()
+        dotenv_values = {} if no_project_config else load_dotenv_file(
             dotenv_path(workspace), blocked_keys=_PROJECT_SENSITIVE_ENV_KEYS
         )
+        env_overrides = read_env_overrides({**dotenv_values, **os.environ})
         config = Config()
-        discovered_path = self._discover_config_file(config_path)
+        discovered_path = self._discover_config_file(config_path, workspace, no_project_config)
         if discovered_path is not None:
-            if self._is_project_level(discovered_path):
+            if self._is_project_level(discovered_path, workspace):
                 config = self._load_project_overlay(discovered_path)
             else:
                 config = self._load_file(discovered_path)
 
-        active_profile = profile_name or config.profile
+        env_profile = env_overrides.pop("profile", None)
+        active_profile = profile_name or env_profile or config.profile
         if active_profile:
             config = self._merge_profile(config, active_profile)
             config.profile = active_profile
@@ -238,43 +243,56 @@ class ConfigLoader:
                 )
                 config = Config.merge_dict(config, project_raw)
 
-        env_overrides = read_env_overrides({**dotenv_values, **os.environ})
         if env_overrides:
             config = Config.merge_dict(config, env_overrides)
 
-        cli_overrides: dict[str, str] = {}
+        cli_overrides: dict[str, Any] = dict(overrides or {})
         if provider is not None:
             cli_overrides["provider"] = provider
         if model is not None:
             cli_overrides["model"] = model
         if cli_overrides:
             config = Config.merge_dict(config, cli_overrides)
+        credential_provider = config.provider
+        credential_override = cli_overrides.get("api_key")
 
         managed_path = config.managed_config_path or DEFAULT_MANAGED_CONFIG_PATH
         managed_path = expand_path(managed_path)
         if managed_path.exists():
-            config = Config.merge_dict(config, self._load_dict(managed_path))
+            managed = self._load_dict(managed_path)
+            config = Config.merge_dict(config, managed)
+            if config.provider != credential_provider:
+                credential_override = None
+            managed_provider = (managed.get("providers") or {}).get(config.provider, {})
+            managed_key = managed.get("api_key")
+            if managed_key is None:
+                managed_key = managed_provider.get("api_key")
+            if managed_key is not None:
+                credential_override = managed_key
+                config = Config.merge_dict(config, {"api_key": managed_key})
 
         requirements_path = config.requirements_path or DEFAULT_REQUIREMENTS_PATH
         requirements_path = expand_path(requirements_path)
         if requirements_path.exists():
             self._validate_requirements(config, requirements_path)
 
-        # Make [providers.X] context_window (and the 500K custom-model
-        # default) visible to context_window_for_model() everywhere.
-        from deepseek_tui.config.providers import register_provider_context_windows
-
-        register_provider_context_windows(config)
+        if isinstance(credential_override, str):
+            config._api_key_override = (config.provider, credential_override)
 
         return config
 
-    def _discover_config_file(self, config_path: Path | None) -> Path | None:
+    def _discover_config_file(
+        self, config_path: Path | None, workspace: Path | None = None,
+        no_project_config: bool = False,
+    ) -> Path | None:
         if config_path is not None:
             return expand_path(config_path)
 
-        candidates = [
-            Path.cwd() / "deepseek-tui.toml",
-            Path.cwd() / ".deepseek-tui.toml",
+        workspace = workspace or Path.cwd()
+        candidates = [] if no_project_config else [
+            workspace / "deepseek-tui.toml", workspace / ".deepseek-tui.toml"
+        ]
+        candidates += [
             Path.home() / ".config" / "deepseek-tui" / "config.toml",
             user_config_path(),
         ]
@@ -283,18 +301,18 @@ class ConfigLoader:
                 return candidate
         return None
 
-    def _is_project_level(self, path: Path) -> bool:
+    def _is_project_level(self, path: Path, workspace: Path | None = None) -> bool:
         """Whether ``path`` should be treated as an untrusted project file.
 
-        True for the two cwd candidates and for any file inside the cwd
+        True for the two workspace candidates and for any file inside the workspace
         (e.g. an explicit relative ``--config ./deepseek-tui.toml``), except
-        the user-level candidates, which stay trusted even when the cwd is
+        the user-level candidates, which stay trusted even when the workspace is
         the user's home. Classify the discovered path before resolving links;
         a project link to an outside file must remain a project source.
         """
         discovered = Path(os.path.abspath(path))
         resolved = path.resolve()
-        cwd = Path.cwd().resolve()
+        cwd = (workspace or Path.cwd()).resolve()
         if discovered in (
             cwd / "deepseek-tui.toml",
             cwd / ".deepseek-tui.toml",
@@ -355,7 +373,7 @@ class ConfigLoader:
         profile = config.profiles.get(profile_name)
         if profile is None:
             raise UnknownProfileError(f"Unknown profile: {profile_name}")
-        return Config.merge_dict(config, profile.model_dump(mode="python", exclude_none=True))
+        return Config.merge_dict(config, profile.model_dump(mode="python", exclude_none=True, exclude_unset=True))
 
     def _validate_requirements(self, config: Config, requirements_path: Path) -> None:
         try:

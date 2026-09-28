@@ -14,7 +14,7 @@ import math
 import re
 from typing import Any
 
-from deepseek_tui.config.providers import context_window_for_model
+from deepseek_tui.config.providers import configured_context_window
 from deepseek_tui.protocol.messages import Message
 from deepseek_tui.utils import split_frontmatter
 from deepseek_tui.tools.registry import ToolResult
@@ -218,10 +218,10 @@ def _pressure_scale(pressure_ratio: float | None) -> float:
 
 
 def _tool_result_context_limits(
-    model: str, pressure_ratio: float | None = None
+    model: str, pressure_ratio: float | None = None, model_config: object | None = None
 ) -> tuple[int, int, int]:
     """Return (hard_limit, noisy_soft_limit, snippet) for the model."""
-    window = context_window_for_model(model)
+    window = configured_context_window(model, model_config)
     if window >= LARGE_CONTEXT_WINDOW_TOKENS:
         limits = (
             LARGE_CONTEXT_TOOL_RESULT_HARD_LIMIT_CHARS,
@@ -246,6 +246,7 @@ def compact_tool_result_for_context(
     output: ToolResult,
     *,
     pressure_ratio: float | None = None,
+    model_config: object | None = None,
 ) -> str:
     """Compact a tool result before inserting into the model transcript."""
     raw = output.content.strip()
@@ -256,7 +257,7 @@ def compact_tool_result_for_context(
     if subagent is not None:
         return subagent
 
-    hard_limit, noisy_soft, snippet_chars = _tool_result_context_limits(model, pressure_ratio)
+    hard_limit, noisy_soft, snippet_chars = _tool_result_context_limits(model, pressure_ratio, model_config)
     raw_len = len(raw)
     should_compact = raw_len > hard_limit or (
         _tool_result_is_noisy(tool_name) and raw_len > noisy_soft
@@ -363,7 +364,9 @@ def estimate_input_tokens_conservative(
     return message_tokens + system_tokens + framing_overhead + visual_tokens
 
 
-def context_input_budget(model: str, requested_output_tokens: int) -> int | None:
+def context_input_budget(
+    model: str, requested_output_tokens: int, model_config: object | None = None
+) -> int | None:
     """Calculate usable input token budget after reserving output + headroom.
 
     The output reservation is clamped to a quarter of the window.
@@ -371,7 +374,7 @@ def context_input_budget(model: str, requested_output_tokens: int) -> int | None
     output reservation (e.g. 128K window vs 262K reservation) computed a
     negative budget and silently skipped overflow prechecks entirely.
     """
-    window = context_window_for_model(model)
+    window = configured_context_window(model, model_config)
     reserve = min(requested_output_tokens, window // 4)
     budget = window - reserve - CONTEXT_HEADROOM_TOKENS
     return budget if budget > 0 else None
@@ -458,6 +461,7 @@ def estimate_context_breakdown(
     real_input_tokens: int = 0,
     real_input_estimate: int = 0,
     auto_approve: bool | None = None,
+    model_config: object | None = None,
 ) -> dict[str, int]:
     """Estimate token occupancy by category for the next request.
 
@@ -561,7 +565,7 @@ def estimate_context_breakdown(
             tools_tokens = tool_definitions_tokens + mcp_tokens
     else:
         total = estimated_total
-    window = context_window_for_model(target_model) or 0
+    window = configured_context_window(target_model, model_config) or 0
     free = max(0, window - total) if window else 0
 
     return {

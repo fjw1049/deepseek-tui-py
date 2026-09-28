@@ -158,6 +158,7 @@ class SessionMaintenanceMixin:
             real_input_estimate=getattr(self, "last_real_input_estimate", 0),
             system_prompt=system_prompt,
             tools=tools,
+            model_config=getattr(self, "_app_config", None),
         )
         if pressure.tokens < int(pressure.window * self._DRIFT_REMINDER_FIRST_RATIO):
             return
@@ -268,6 +269,7 @@ class SessionMaintenanceMixin:
                 system_prompt=system_prompt,
                 tools=tools,
                 output_reserve=output_reserve,
+                model_config=getattr(self, "_app_config", None),
             )
         self._record_compaction_summary(result.summary_prompt)
         if result.success:
@@ -310,6 +312,7 @@ class SessionMaintenanceMixin:
             real_input_estimate=getattr(self, "last_real_input_estimate", 0),
             system_prompt=system_prompt,
             tools=tools,
+            model_config=getattr(self, "_app_config", None),
         )
         if not should_l0_prune(
             model=model,
@@ -450,6 +453,7 @@ class SessionMaintenanceMixin:
                 real_input_estimate=getattr(self, "last_real_input_estimate", 0),
                 system_prompt=system_prompt,
                 tools=tools,
+                model_config=getattr(self, "_app_config", None),
             ).tokens
         except Exception:  # noqa: BLE001 — token estimation is best-effort
             return
@@ -458,6 +462,7 @@ class SessionMaintenanceMixin:
             model=model,
             config=self.cycle_config,
             in_flight=False,
+            model_config=getattr(self, "_app_config", None),
         ):
             return
         logger.info(
@@ -501,6 +506,7 @@ class SessionMaintenanceMixin:
                     model,
                     messages,
                     self.cycle_config.briefing_max_tokens,
+                    model_config=getattr(self, "_app_config", None),
                 )
         except Exception as exc:  # noqa: BLE001
             logger.warning("cycle_briefing_failed error=%s", exc)

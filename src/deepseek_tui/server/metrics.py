@@ -3,16 +3,15 @@
 
 from __future__ import annotations
 
-
+import asyncio
 
 # Per-turn latency trace for Workbench / HTTP runtime diagnostics.
 import json
 import logging
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass, field
 from typing import Any
-import asyncio
-from collections.abc import Awaitable, Callable
 
 logger = logging.getLogger(__name__)
 
@@ -270,9 +269,18 @@ class TurnDeltaBatcher:
             # awaiting the current task from inside itself raises
             # ``RuntimeError: await wasn't used with future``.
             self._flush_task = None
-        await self.flush()
+        try:
+            await self.flush()
+        except Exception:
+            # A later append/final flush retries the retained buffer.
+            logging.getLogger(__name__).exception("delta_flush_failed")
 
     async def flush(self) -> int:
+        from deepseek_tui.server.lifecycle import complete_before_cancel
+
+        return await complete_before_cancel(self._flush())
+
+    async def _flush(self) -> int:
         async with self._flush_lock:
             task = self._flush_task
             current = asyncio.current_task()
@@ -287,15 +295,21 @@ class TurnDeltaBatcher:
             emitted = 0
             pending = self._buffers
             self._buffers = {}
-            for (item_id, kind), text in pending.items():
+            entries = list(pending.items())
+            for index, ((item_id, kind), text) in enumerate(entries):
                 if not text:
                     continue
-                await self._emit(
-                    self._thread_id,
-                    self._turn_id,
-                    item_id,
-                    kind,
-                    {"delta": text, "kind": kind},
-                )
+                try:
+                    await self._emit(
+                        self._thread_id, self._turn_id, item_id, kind,
+                        {"delta": text, "kind": kind},
+                    )
+                except BaseException:
+                    # Keep unacknowledged text ahead of deltas appended during I/O.
+                    restored = dict(entries[index:])
+                    for key, value in self._buffers.items():
+                        restored[key] = restored.get(key, "") + value
+                    self._buffers = restored
+                    raise
                 emitted += 1
             return emitted

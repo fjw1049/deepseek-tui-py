@@ -71,7 +71,7 @@ class McpStartupStatus(RootModel[_StatusVariants]):
         if isinstance(data, dict) and "failed" in data and "type" not in data:
             payload = data["failed"]
             if isinstance(payload, dict):
-                return {"type": "failed", **payload}
+                return {**payload, "type": "failed"}
         return data
 
 

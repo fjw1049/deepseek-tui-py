@@ -90,6 +90,17 @@ class ApprovalDialog(ModalScreen[bool]):
         self.input_summary = preview
         self.risk_level = risk_level
         self._pending_confirm = False
+        self._expired = False
+
+    def expire(self) -> None:
+        self._expired = True
+        self.disabled = True
+        if self.app.screen is self:
+            self.dismiss(False)
+
+    def on_screen_resume(self) -> None:
+        if self._expired and self.app.screen is self:
+            self.dismiss(False)
 
     def _is_destructive(self) -> bool:
         return self.presentation_risk == "destructive"
@@ -135,6 +146,8 @@ class ApprovalDialog(ModalScreen[bool]):
             banner.update("")
 
     def _try_approve(self) -> None:
+        if self._expired:
+            return
         if self._is_destructive() and not self._pending_confirm:
             self._pending_confirm = True
             self._sync_confirm_banner()
@@ -259,7 +272,7 @@ class _PickerItem(ListItem):
         self._label = label
 
     def compose(self):  # type: ignore[override]
-        yield Static(self._label)
+        yield Static(self._label, markup=False)
 
 
 # ===========================================================================
@@ -346,8 +359,15 @@ class FilePicker(_FilterablePickerScreen):
             "build",
             ".egg-info",
         }
-        items = _collect_files(ws, max_files, glob_pattern, excludes)
-        super().__init__("Select File", items)
+        self._file_query = (ws, max_files, glob_pattern, excludes)
+        super().__init__("Select File", [])
+
+    async def on_mount(self) -> None:
+        from deepseek_tui.tui.lifecycle import run_io
+
+        self._items = await run_io(_collect_files, *self._file_query)
+        self._filtered = list(self._items)
+        super().on_mount()
 
 
 def _collect_files(
@@ -358,17 +378,23 @@ def _collect_files(
 ) -> list[tuple[str, str]]:
     """Collect files for the picker, respecting exclusions."""
     items: list[tuple[str, str]] = []
+    if max_files <= 0:
+        return items
     try:
-        for path in sorted(workspace.rglob("*")):
-            if len(items) >= max_files:
-                break
-            if not path.is_file():
-                continue
-            parts = path.relative_to(workspace).parts
-            if any(p in excludes for p in parts):
-                continue
-            rel = str(path.relative_to(workspace))
-            items.append((rel, rel))
+        for directory, dirs, files in os.walk(workspace):
+            dirs[:] = sorted(d for d in dirs if d not in excludes)
+            for name in sorted(files):
+                path = Path(directory) / name
+                relative = path.relative_to(workspace)
+                if not (relative.match(glob_pattern) or (
+                    glob_pattern.startswith("**/") and relative.match(glob_pattern[3:])
+                )):
+                    continue
+                if path.is_file():
+                    rel = str(relative)
+                    items.append((rel, rel))
+                    if len(items) >= max_files:
+                        return items
     except (OSError, ValueError):
         pass
     return items

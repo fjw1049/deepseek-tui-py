@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 import json
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 
 if TYPE_CHECKING:
@@ -227,7 +227,7 @@ def get_completions(
     return results
 
 
-def dispatch(raw_input: str, app: DeepSeekTUI) -> CommandResult:
+def dispatch(raw_input: str, app: DeepSeekTUI) -> CommandResult | Awaitable[CommandResult]:
     """Parse and dispatch a slash command."""
     parts = raw_input.strip().split(maxsplit=1)
     if not parts:
@@ -275,7 +275,7 @@ from deepseek_tui.tui.transcript import Transcript
 if TYPE_CHECKING:
     from deepseek_tui.tui.app import DeepSeekTUI
 
-Handler = Callable[[str, "DeepSeekTUI"], CommandResult]
+Handler = Callable[[str, "DeepSeekTUI"], CommandResult | Awaitable[CommandResult]]
 
 _HANDLERS: dict[str, Handler] = {}
 
@@ -285,6 +285,26 @@ def _register(name: str) -> Callable[[Handler], Handler]:
         _HANDLERS[name] = fn
         return fn
     return decorator
+
+
+async def dispatch_async(raw_input: str, app: DeepSeekTUI) -> CommandResult:
+    """Await asynchronous commands and keep blocking filesystem work off the UI loop."""
+    import inspect
+
+    name = raw_input.strip().split(maxsplit=1)[0] if raw_input.strip() else ""
+    entry = resolve(name.lower())
+    name = entry.name if entry is not None else name.lower()
+    try:
+        if name in {"/skills", "/skill", "/plugins", "/diff", "/config", "/export", "/log"}:
+            from deepseek_tui.tui.lifecycle import run_io
+
+            result = await run_io(dispatch, raw_input, app)
+        else:
+            result = dispatch(raw_input, app)
+        return await result if inspect.isawaitable(result) else result
+    except Exception as exc:
+        _LOG.exception("slash command failed")
+        return CommandResult(error=f"Command failed: {exc}")
 
 
 def get_handler(name: str) -> Handler | None:
@@ -306,9 +326,10 @@ def cmd_help(args: str, app: DeepSeekTUI) -> CommandResult:
 # ── /clear ───────────────────────────────────────────────────────────────
 
 @_register("/clear")
-def cmd_clear(args: str, app: DeepSeekTUI) -> CommandResult:
-    """Clear transcript and engine session — delegates to Ctrl+N action."""
-    app.action_new_session()
+async def cmd_clear(args: str, app: DeepSeekTUI) -> CommandResult:
+    """Clear only after the session transition has completed."""
+    if not await app.action_new_session():
+        return CommandResult(error="Session is busy; wait before clearing.")
     return CommandResult(output="Conversation cleared.")
 
 
@@ -462,6 +483,9 @@ def cmd_provider(args: str, app: DeepSeekTUI) -> CommandResult:
             )
         )
 
+    guard = getattr(app, "_session_busy_reason", None)
+    if guard is not None and (reason := guard()):
+        return CommandResult(error=reason)
     previous_provider = cfg.provider
     previous_model = cfg.model
     cfg.provider = requested
@@ -482,7 +506,11 @@ def cmd_provider(args: str, app: DeepSeekTUI) -> CommandResult:
             )
         )
 
-    new_client = app._build_client()
+    try:
+        new_client = app._build_client()
+    except BaseException:
+        cfg.provider, cfg.model = previous_provider, previous_model
+        raise
     if new_client is None:
         cfg.provider = previous_provider
         cfg.model = previous_model
@@ -494,25 +522,21 @@ def cmd_provider(args: str, app: DeepSeekTUI) -> CommandResult:
             )
         )
 
-    old_client = app._engine.client
-    app._engine.client = new_client
-    app._engine.turn_loop.client = new_client
-    _apply_model_to_app(app, new_model)
-    close = getattr(old_client, "close", None)
-    if close is not None:
-        import asyncio
+    _apply_client_route(app, new_client, new_model)
+    return CommandResult(output=f"Provider switched to: {requested} (model: {new_model}).")
 
-        try:
-            asyncio.get_running_loop()
-            asyncio.ensure_future(close())
-        except RuntimeError:
-            pass
-    return CommandResult(
-        output=(
-            f"Provider switched to: {requested} (model: {new_model}). "
-            "Note: running subagents keep the previous client until restart."
-        )
-    )
+
+def _apply_client_route(app: DeepSeekTUI, client: object, model: str) -> None:
+    engine = app._engine
+    old_client = engine.client
+    if hasattr(engine, "set_model_route"):
+        engine.set_model_route(client, app.config, model)
+    else:
+        # Legacy lightweight adapters used by embedders.
+        engine.client = engine.turn_loop.client = client
+    _apply_model_to_app(app, model)
+    if old_client is not client and hasattr(old_client, "close"):
+        app.start_task(old_client.close(), cancel_on_close=False)
 
 
 # ── /endpoint ──────────────────────────────────────────────────────────
@@ -527,8 +551,6 @@ def _run_endpoint_test_async(
     protocol: str = "openai",
 ) -> None:
     """Fire-and-forget async endpoint test, writes result to transcript."""
-    import asyncio
-
     async def _test() -> None:
         from deepseek_tui.client.factory import test_endpoint
         from deepseek_tui.tui.transcript import Transcript
@@ -546,10 +568,7 @@ def _run_endpoint_test_async(
                 f"[{label}] ✗ {result.message}", severity="error"
             )
 
-    try:
-        asyncio.ensure_future(_test())
-    except RuntimeError:
-        pass
+    app.start_task(_test())
 
 
 @_register("/endpoint")
@@ -620,38 +639,27 @@ def cmd_endpoint(args: str, app: DeepSeekTUI) -> CommandResult:
                 )
             )
 
-        # Register in config
-        cfg.providers[name] = ProviderConfig(
-            base_url=base_url,
-            model=model,
-            protocol=protocol,
-        )
-
-        # Auto-switch to the new endpoint
-        cfg.provider = name
-        cfg.model = model
-
-        if app._engine is not None:
-            new_client = app._build_client()
-            if new_client is not None:
-                old_client = app._engine.client
-                app._engine.client = new_client
-                app._engine.turn_loop.client = new_client
-                _apply_model_to_app(app, model)
-                close = getattr(old_client, "close", None)
-                if close is not None:
-                    import asyncio
-                    try:
-                        asyncio.get_running_loop()
-                        asyncio.ensure_future(close())
-                    except RuntimeError:
-                        pass
+        reason = app._session_busy_reason()
+        if reason:
+            return CommandResult(error=reason)
+        previous = cfg.model_copy(deep=True)
+        cfg.providers[name] = ProviderConfig(base_url=base_url, model=model, protocol=protocol)
+        cfg.provider, cfg.model = name, model
+        try:
+            if app._engine is not None:
+                new_client = app._build_client()
+                if new_client is None:
+                    raise ValueError(f"Failed to build client for {name}")
+                _apply_client_route(app, new_client, model)
             else:
-                return CommandResult(
-                    error=f"Endpoint registered but failed to build client for {name}"
-                )
-        else:
-            _apply_model_to_app(app, model)
+                _apply_model_to_app(app, model)
+        except BaseException:
+            cfg.providers, cfg.provider, cfg.model = (
+                previous.providers,
+                previous.provider,
+                previous.model,
+            )
+            raise
 
         # Auto-test connectivity
         _run_endpoint_test_async(
@@ -900,16 +908,27 @@ def _format_context_breakdown(b: dict[str, int], model: str) -> str:
 
 @_register("/export")
 def cmd_export(args: str, app: DeepSeekTUI) -> CommandResult:
+    if app._engine is None:
+        return CommandResult(error="Engine not started")
+    from deepseek_tui.tui.session_restore import visible_message_text
+
     filename = args.strip() or f"deepseek-export-{int(time.time())}.md"
     path = Path(filename)
-    if path.exists():
+    lines = [
+        "# DeepSeek TUI Export",
+        "",
+        "Images/tools use text placeholders; thinking is omitted.",
+        "",
+    ]
+    for message in list(app._engine.session_messages):
+        text = visible_message_text(message)
+        if text:
+            lines.extend([f"## {message.role.value}", "", text, ""])
+    try:
+        with path.open("x", encoding="utf-8") as output:
+            output.write("\n".join(lines))
+    except FileExistsError:
         return CommandResult(error=f"File already exists: {path}")
-    path.write_text(
-        f"# DeepSeek TUI Export\n\n"
-        f"Exported at {time.strftime('%Y-%m-%d %H:%M:%S')}\n\n"
-        f"(Conversation history will be included once Engine is wired.)\n",
-        encoding="utf-8",
-    )
     return CommandResult(output=f"Exported to {path}")
 
 
@@ -936,51 +955,13 @@ def cmd_config(args: str, app: DeepSeekTUI) -> CommandResult:
 
 def _config_write(key: str, value: str | None) -> CommandResult:
     """Set or unset a key in ~/.deepseek/config.toml."""
-    from deepseek_tui.config.paths import user_config_path
+    from deepseek_tui.state.secrets import write_active_api_key, write_config_value
 
-    config_path = user_config_path()
-    config_path.parent.mkdir(parents=True, exist_ok=True)
-
-    lines: list[str] = []
-    if config_path.exists():
-        lines = config_path.read_text(encoding="utf-8").splitlines()
-
-    found = False
-    new_lines: list[str] = []
-    for line in lines:
-        stripped = line.split("#", 1)[0].strip()
-        if stripped.startswith(f"{key} ") or stripped.startswith(f"{key}="):
-            found = True
-            if value is not None:
-                new_lines.append(f"{key} = {_toml_value(value)}")
-        else:
-            new_lines.append(line)
-
-    if not found and value is not None:
-        new_lines.append(f"{key} = {_toml_value(value)}")
-
-    config_path.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
-
-    if value is None:
-        return CommandResult(output=f"Unset {key}" if found else f"Key {key} not found")
-    return CommandResult(output=f"Set {key} = {_toml_value(value)}")
-
-
-def _toml_value(raw: str) -> str:
-    """Wrap as TOML string unless it looks like a bool/int/float."""
-    if raw.lower() in ("true", "false"):
-        return raw.lower()
-    try:
-        int(raw)
-        return raw
-    except ValueError:
-        pass
-    try:
-        float(raw)
-        return raw
-    except ValueError:
-        pass
-    return f'"{raw}"'
+    if key == "api_key":
+        write_active_api_key(value)
+    else:
+        write_config_value(key, value)
+    return CommandResult(output=f"{'Unset' if value is None else 'Set'} {key}")
 
 
 # ── /agent ───────────────────────────────────────────────────────────────
@@ -1524,42 +1505,27 @@ def cmd_goal(args: str, app: DeepSeekTUI) -> CommandResult:
 # ── /compact ─────────────────────────────────────────────────────────────
 
 @_register("/compact")
-def cmd_compact(args: str, app: DeepSeekTUI) -> CommandResult:
-    if app._engine is None:
+async def cmd_compact(args: str, app: DeepSeekTUI) -> CommandResult:
+    engine = app._engine
+    if engine is None:
         return CommandResult(error="Engine not started")
-    import asyncio
-
-    async def _do_compact() -> None:
-        from deepseek_tui.tui.transcript import Transcript
-
-        engine = app._engine
-        before = len(engine.session_messages)
-        if before == 0:
-            transcript = app.query_one(Transcript)
-            transcript.add_notice("Nothing to compact — session is empty.", severity="info")
-            return
-        result = await engine._run_compaction(list(engine.session_messages))
-        engine.session_messages[:] = result.messages
-        transcript = app.query_one(Transcript)
-        if result.success:
-            transcript.add_notice(
-                f"Context compacted: {before} → {len(result.messages)} messages.",
-                severity="info",
-            )
-        else:
-            transcript.add_notice(
-                f"Compaction failed after {result.retries_used} retries — "
-                f"messages unchanged ({before} → {len(result.messages)}). "
-                f"{getattr(result, 'failure_reason', None) or 'See log for details; try again or run /clear.'}",
-                severity="error",
-            )
-
-    try:
-        asyncio.get_running_loop()
-        asyncio.ensure_future(_do_compact())
-        return CommandResult(output="Context compaction triggered (async).")
-    except RuntimeError:
-        return CommandResult(output="Context compaction triggered.")
+    reason = app._session_busy_reason()
+    if reason:
+        return CommandResult(error=reason)
+    before = list(engine.session_messages)
+    session_id = engine._cycle_session_id
+    if not before:
+        return CommandResult(output="Nothing to compact — session is empty.")
+    result = await engine._run_compaction(before)
+    if (app._engine is not engine or engine._cycle_session_id != session_id
+            or engine.session_messages != before or app._session_busy_reason()):
+        return CommandResult(error="Session changed during compaction; result discarded.")
+    if not result.success:
+        return CommandResult(error="Compaction failed; messages unchanged.")
+    engine.session_messages[:] = result.messages
+    return CommandResult(
+        output=f"Context compacted: {len(before)} → {len(result.messages)} messages."
+    )
 
 
 # ── /diff ────────────────────────────────────────────────────────────────
@@ -1572,6 +1538,7 @@ def cmd_diff(args: str, app: DeepSeekTUI) -> CommandResult:
         result = subprocess.run(
             ["git", "diff", "--stat"],
             capture_output=True, text=True, timeout=10,
+            cwd=app._engine.tool_context.working_directory if app._engine else Path.cwd(),
         )
         if result.returncode != 0:
             return CommandResult(error="Not a git repository or git not available.")

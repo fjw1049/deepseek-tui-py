@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+from rich.markup import escape
+
 
 
 # Status footer.
@@ -145,16 +147,16 @@ class StatusBar(Static):
         if self._spinning:
             frame = self._SPINNER_FRAMES[self._spin_frame]
             label = self._spin_phase or "working"
-            parts.append(f"[bold bright_cyan]{frame}[/] [bright_cyan]{label}[/]")
+            parts.append(f"[bold bright_cyan]{frame}[/] [bright_cyan]{escape(label)}[/]")
         if self._mode:
-            parts.append(f"[dim cyan]{self._mode}[/]")
+            parts.append(f"[dim cyan]{escape(self._mode)}[/]")
         if self._model:
-            parts.append(f"[bold grey74]{self._model}[/]")
+            parts.append(f"[bold grey74]{escape(self._model)}[/]")
         cost_chip = self._cost_chip()
         if cost_chip:
             parts.append(cost_chip)
         if not self._spinning and self._status and self._status != "ready":
-            parts.append(f"[dim]{self._status}[/]")
+            parts.append(f"[dim]{escape(self._status)}[/]")
         if not parts:
             return Text("")
         return Text.from_markup("  [dim bright_black]·[/]  ".join(parts))
@@ -166,7 +168,7 @@ class StatusBar(Static):
         return f"[dim]{format_cost_amount(amount, self._currency)}[/]"
 
     def _mid_markup(self) -> Text:
-        chips = [f"[b grey62]{key}[/] [dim]{label}[/]" for key, label in self._MIDDLE_CHORDS]
+        chips = [f"[b grey62]{key}[/] [dim]{escape(label)}[/]" for key, label in self._MIDDLE_CHORDS]
         return Text.from_markup("[dim bright_black]  ·  [/]".join(chips))
 
     def _right_markup(self) -> Text:

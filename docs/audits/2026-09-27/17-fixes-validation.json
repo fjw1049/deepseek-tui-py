@@ -1,0 +1,45 @@
+{
+  "date": "2026-09-28",
+  "scope": "Q01-Q12 minimal fixes and round closure",
+  "new_audit_cases": 51,
+  "broad_regression": {
+    "total": 1448,
+    "failed": 0,
+    "errors": 0,
+    "skipped": 0,
+    "command": "DEEPSEEK_HOME=/tmp/audit17-final CLAUDE_PLUGINS_DIR=/tmp/audit17-empty .venv/bin/pytest -q tests/test_audit_17.py tests/test_audit_16.py tests/test_audit_15.py tests/test_audit_14.py tests/workspace tests/engine tests/goal tests/test_project_config_security.py tests/test_config_warnings.py tests/test_multi_provider.py tests/test_provider_access.py tests/test_context_window_defaults.py tests/test_context_meter_live.py tests/test_user_runtime_paths.py tests/test_file_tools.py tests/test_search_tool.py tests/test_gitignore.py tests/test_web_search.py tests/test_plan_mode_tools.py tests/test_checklist_tool_aliasing.py tests/test_checklist_gate.py tests/test_background_job_tools.py tests/test_info_sidebar_filters.py tests/test_plugin*.py tests/test_lsp_audit_fixes.py tests/test_mcp*.py tests/test_task_user_input_bridge.py tests/test_agent_merge_approval.py tests/test_tui_smoke.py tests/test_worktree_process_cleanup.py tests/contract/test_audit_13.py tests/contract/test_data_inventory.py tests/contract/test_pressure_counts_static_prefix.py tests/contract/test_cycle_briefing_fidelity.py tests/contract/test_context_breakdown.py tests/contract/test_lsp_diagnostics.py tests/contract/test_skills.py tests/contract/test_checklist_write_echoes_state.py tests/contract/test_todo_tool_metadata.py --tb=short --junitxml=/tmp/audit17-final.xml",
+    "stage": "Before final CLI credential precedence follow-up"
+  },
+  "credential_followup_regression": {
+    "total": 143,
+    "failed": 0,
+    "errors": 0,
+    "skipped": 0,
+    "command": "DEEPSEEK_HOME=/tmp/audit17-key .venv/bin/pytest -q tests/test_audit_17.py tests/test_provider_access.py tests/test_client_audit_fixes.py tests/test_multi_provider.py tests/test_project_config_security.py --tb=short --junitxml=/tmp/audit17-key.xml",
+    "stage": "After final credential follow-up; overlaps broad suite"
+  },
+  "checks": {
+    "new_tests_full_ruff": "passed",
+    "affected_production_F_E9": "passed except pre-existing engine/context.py F401/F811; identical findings reproduced on HEAD",
+    "compileall": "passed",
+    "git_diff_check": "passed"
+  },
+  "behavioral_evidence": [
+    "Two real engines retain different provider/model budgets after another config loads",
+    "Two real Python subprocesses serialize home migration",
+    "Active thread lease blocks CLI metadata updates",
+    "One-shot initialization/error/completion/task crash cleanup",
+    "CLI key wins over environment and stored provider key; managed config overrides/clears it",
+    "Atomic writer descriptor closes on chmod failure",
+    "Log tail cannot use unbounded read_text"
+  ],
+  "limitations": [
+    "Not a full repository test run",
+    "No live model/SMTP/external MCP service tests",
+    "No Windows or power-loss validation",
+    "Home lease coordinates participating Python writers, not arbitrary external writers",
+    "Legacy standalone global context override API retained, configured Engine paths isolated",
+    "Earlier audits retain explicit deferred architecture/product work"
+  ],
+  "initial_test_note": "Initial run included two incorrect event fixtures; initial failure count is not reported as a defect count."
+}

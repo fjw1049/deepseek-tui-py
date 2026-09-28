@@ -46,6 +46,10 @@ def sse_frame(event_name: str, payload: dict[str, object]) -> str:
     return f"event: {event_name}\ndata: {data}\n\n"
 
 
+class _ReplayUnavailable(Exception):
+    """Legacy lossy logs require a fresh thread snapshot."""
+
+
 async def stream_thread_events(
     mgr: Any,
     thread_id: str,
@@ -57,13 +61,12 @@ async def stream_thread_events(
 ) -> AsyncIterator[str]:
     """Replay backlog then live events from ``event_bus``."""
     queue = mgr.subscribe_events()
+    queue.predicate = lambda record: record.thread_id == thread_id
     try:
-        backlog = mgr.events_since(thread_id, since_seq)
         last_seq = since_seq or 0
-        for record in backlog:
+        async for record in _replay_events(mgr, thread_id, since_seq):
             last_seq = max(last_seq, record.seq)
-            payload = runtime_event_payload(record)
-            yield sse_frame(record.event, payload)
+            yield sse_frame(record.event, runtime_event_payload(record))
 
         while True:
             if is_disconnected is not None and await is_disconnected():
@@ -73,6 +76,29 @@ async def stream_thread_events(
             except asyncio.TimeoutError:
                 yield ": keepalive\n\n"
                 continue
+            if queue.lagged:
+                # Subscribe before replay; queued duplicates are discarded below.
+                dropped = queue.first_dropped
+                queue.first_dropped = None
+                queue.lagged = False
+                recovered_drop = dropped is None or dropped.seq <= last_seq
+                async for missed in _replay_events(mgr, thread_id, last_seq):
+                    if not recovered_drop:
+                        if missed.seq == dropped.seq:
+                            recovered_drop = True
+                        elif missed.seq > dropped.seq:
+                            break
+                    if missed.seq > last_seq:
+                        last_seq = missed.seq
+                        yield sse_frame(missed.event, runtime_event_payload(missed))
+                if not recovered_drop:
+                    yield sse_frame("stream.resync_required", {
+                        "thread_id": thread_id, "since_seq": last_seq,
+                        "reason": "event_history_unavailable",
+                    })
+                    return
+                if queue.lagged:
+                    continue
             if record.thread_id != thread_id:
                 continue
             if record.seq <= last_seq:
@@ -80,8 +106,32 @@ async def stream_thread_events(
             last_seq = record.seq
             payload = runtime_event_payload(record)
             yield sse_frame(record.event, payload)
+    except _ReplayUnavailable:
+        yield sse_frame("stream.resync_required", {
+            "thread_id": thread_id, "since_seq": last_seq,
+            "reason": "legacy_truncated_payload",
+        })
     finally:
         mgr.event_bus.unsubscribe(queue)
+
+
+async def _replay_events(mgr, thread_id, since_seq):
+    from deepseek_tui.server.lifecycle import complete_before_cancel
+
+    pages = mgr.store.event_pages(thread_id, since_seq)
+    try:
+        while True:
+            page = await complete_before_cancel(asyncio.to_thread(next, pages, None))
+            if page is None:
+                return
+            for record in page:
+                from deepseek_tui.server.data_inventory import is_noisy_event_name
+
+                if record.payload.get("_truncated") and is_noisy_event_name(record.event):
+                    raise _ReplayUnavailable
+                yield record
+    finally:
+        pages.close()
 
 
 def unwrap_runtime_result(result: dict[str, Any]) -> Any:

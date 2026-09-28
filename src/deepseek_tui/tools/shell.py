@@ -14,6 +14,7 @@ from asyncio.subprocess import Process
 from pathlib import Path
 from typing import Any, NoReturn
 
+from deepseek_tui.tools.output_capture import OutputCapture, collect_process
 from deepseek_tui.tools.approval import Decision
 from deepseek_tui.policy.command_safety import SafetyLevel, analyze_command
 from deepseek_tui.policy.env_filter import build_child_env
@@ -234,7 +235,7 @@ class ExecShellTool(ToolSpec):
         # Shield the communicate() task so a foreground timeout can
         # re-home it as the background collector. wait_for() would
         # otherwise cancel communicate() and leave the pipes unusable.
-        collector = asyncio.ensure_future(process.communicate())
+        collector = asyncio.ensure_future(collect_process(process))
         try:
             stdout, stderr = await asyncio.wait_for(
                 asyncio.shield(collector), timeout=timeout_ms / 1000.0
@@ -249,6 +250,7 @@ class ExecShellTool(ToolSpec):
             _kill_process_group(process)
             if not collector.done():
                 collector.cancel()
+            await asyncio.gather(collector, return_exceptions=True)
             try:
                 await asyncio.wait_for(process.wait(), timeout=1.0)
             except (asyncio.TimeoutError, asyncio.CancelledError, ProcessLookupError):
@@ -702,7 +704,7 @@ async def cancel_background_process(context: ToolContext, process_id: str) -> To
             # of a second communicate() on the same streams.
             stdout, stderr = await asyncio.wait_for(collector, timeout=5)
         else:
-            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=5)
+            stdout, stderr = await asyncio.wait_for(collect_process(process), timeout=5)
     except asyncio.TimeoutError:
         stdout, stderr = b"", b""
     return ToolResult(
@@ -816,7 +818,7 @@ def _ensure_collector(
     store = _collector_store(context)
     collector = store.get(process_id)
     if collector is None:
-        collector = asyncio.ensure_future(process.communicate())
+        collector = asyncio.ensure_future(collect_process(process))
         store[process_id] = collector
     return collector
 
@@ -1001,7 +1003,7 @@ class PtyProcess:
         self.master_fd = master_fd
         self._exit_code: int | None = None
         self._done = asyncio.Event()
-        self._output = bytearray()
+        self._output = OutputCapture()
         self._reader_task: asyncio.Task[None] | None = None
 
     def start_reader(self) -> None:
@@ -1010,36 +1012,42 @@ class PtyProcess:
 
     async def _reader_loop(self) -> None:
         loop = asyncio.get_running_loop()
-        while True:
-            try:
-                data = await loop.run_in_executor(
-                    None, lambda: _safe_read(self.master_fd, 4096)
-                )
-            except OSError:
-                break
-            if not data:
-                break
-            self._output.extend(data)
-        self._close_master()
-        # Wait for process exit to record status.
         try:
-            pid, status = await loop.run_in_executor(
-                None, lambda: os.waitpid(self.pid, 0)
-            )
-        except ChildProcessError:
-            self._exit_code = None
-        else:
-            if os.WIFEXITED(status):
-                self._exit_code = os.WEXITSTATUS(status)
-            elif os.WIFSIGNALED(status):
-                self._exit_code = -os.WTERMSIG(status)
-            else:
+            while True:
+                try:
+                    data = await loop.run_in_executor(
+                        None, lambda: _safe_read(self.master_fd, 4096)
+                    )
+                except OSError:
+                    break
+                if not data:
+                    break
+                self._output.append(data)
+            self._output.close()
+            self._close_master()
+            # Wait for process exit to record status.
+            try:
+                pid, status = await loop.run_in_executor(
+                    None, lambda: os.waitpid(self.pid, 0)
+                )
+            except ChildProcessError:
                 self._exit_code = None
-        self._done.set()
+            else:
+                if os.WIFEXITED(status):
+                    self._exit_code = os.WEXITSTATUS(status)
+                elif os.WIFSIGNALED(status):
+                    self._exit_code = -os.WTERMSIG(status)
+                else:
+                    self._exit_code = None
+        finally:
+            self._output.close()
+            self._close_master()
+            self._done.set()
 
     def _close_master(self) -> None:
+        descriptor, self.master_fd = self.master_fd, -1
         try:
-            os.close(self.master_fd)
+            os.close(descriptor)
         except OSError:
             pass
 
@@ -1056,7 +1064,7 @@ class PtyProcess:
 
     @property
     def output(self) -> bytes:
-        return bytes(self._output)
+        return self._output.preview()
 
     @property
     def done(self) -> bool:

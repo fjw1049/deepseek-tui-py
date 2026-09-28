@@ -7,6 +7,7 @@ from __future__ import annotations
 
 # Input composer widget.
 import os
+import shlex
 import subprocess
 import tempfile
 import time
@@ -168,7 +169,10 @@ class Composer(TextArea):
         if event.key == "ctrl+e":
             event.stop()
             event.prevent_default()
-            edited = _open_external_editor(self.text)
+            from deepseek_tui.tui.lifecycle import run_io
+
+            with self.app.suspend():
+                edited = await run_io(_open_external_editor, self.text)
             if edited is not None:
                 self.clear()
                 self.insert(edited)
@@ -219,7 +223,7 @@ def _open_external_editor(initial_content: str) -> str | None:
         ) as tmp:
             tmp.write(initial_content)
             tmp_path = Path(tmp.name)
-        subprocess.run([*editor.split(), str(tmp_path)], check=False)  # noqa: S603,ASYNC221
+        subprocess.run([*shlex.split(editor), str(tmp_path)], check=False)  # noqa: S603,ASYNC221
         return tmp_path.read_text(encoding="utf-8")
     except OSError:
         return None
@@ -271,7 +275,7 @@ class SlashMenu(Vertical):
         yield Static("[bold]Commands[/]")
         completions = get_completions("/", getattr(self, "app", None))
         options = [
-            Option(f"{cmd}  [dim]{desc}[/]", id=cmd)
+            Option(f"{escape(cmd)}  [dim]{escape(desc)}[/]", id=cmd)
             for cmd, desc in completions
         ]
         yield OptionList(*options)
@@ -283,7 +287,7 @@ class SlashMenu(Vertical):
             option_list = self.query_one(OptionList)
             option_list.clear_options()
             for cmd, desc in completions:
-                option_list.add_option(Option(f"{cmd}  [dim]{desc}[/]", id=cmd))
+                option_list.add_option(Option(f"{escape(cmd)}  [dim]{escape(desc)}[/]", id=cmd))
         except Exception:
             pass
         self.add_class("visible")
@@ -335,7 +339,7 @@ class CommandPalette(ModalScreen[str | None]):
             yield Input(placeholder="Type a command...", id="palette-input")
             completions = get_completions("/", getattr(self, "app", None))
             options = [
-                Option(f"{cmd}  [dim]{desc}[/]", id=cmd)
+                Option(f"{escape(cmd)}  [dim]{escape(desc)}[/]", id=cmd)
                 for cmd, desc in completions
             ]
             yield OptionList(*options, id="palette-list")
@@ -351,7 +355,7 @@ class CommandPalette(ModalScreen[str | None]):
             option_list = self.query_one("#palette-list", OptionList)
             option_list.clear_options()
             for cmd, desc in completions:
-                option_list.add_option(Option(f"{cmd}  [dim]{desc}[/]", id=cmd))
+                option_list.add_option(Option(f"{escape(cmd)}  [dim]{escape(desc)}[/]", id=cmd))
         except Exception:
             pass
 

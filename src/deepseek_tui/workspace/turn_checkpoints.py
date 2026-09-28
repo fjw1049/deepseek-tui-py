@@ -304,10 +304,18 @@ class TurnCheckpointStore:
         # calls; serialize the load-modify-save cycle.
         self._lock = threading.Lock()
 
+    @staticmethod
+    def _validate_id(turn_id: str) -> str:
+        if not turn_id or turn_id in {".", ".."} or any(c in turn_id for c in "/\\\0:"):
+            raise ValueError("invalid checkpoint ID")
+        return turn_id
+
     def _path(self, turn_id: str) -> Path:
+        self._validate_id(turn_id)
         return self._root / f"{turn_id}.json"
 
     def _raw_sidecar_dir(self, turn_id: str) -> Path:
+        self._validate_id(turn_id)
         return self._root / f"{turn_id}.raw"
 
     def _raw_sidecar_path(self, turn_id: str, path: str, phase: str) -> Path:
@@ -322,7 +330,10 @@ class TurnCheckpointStore:
             return None
         try:
             raw = json.loads(path.read_text(encoding="utf-8"))
-            return TurnCheckpoint.from_dict(raw)
+            checkpoint = TurnCheckpoint.from_dict(raw)
+            if checkpoint.turn_id != turn_id:
+                return None
+            return checkpoint
         except Exception:
             logger.warning("Skipping unreadable turn checkpoint: %s", path)
             return None
@@ -854,6 +865,34 @@ class TurnCheckpointStore:
         )
 
     async def restore(
+        self,
+        turn_ids_newest_first: list[str],
+        workspace: Path,
+        *,
+        force: bool = False,
+    ) -> RestoreReport:
+        """Finish the restore transaction before propagating caller cancellation."""
+        worker = asyncio.create_task(
+            self._restore(turn_ids_newest_first, workspace, force=force)
+        )
+        try:
+            return await asyncio.shield(worker)
+        except asyncio.CancelledError:
+            while not worker.done():
+                try:
+                    await asyncio.shield(worker)
+                except asyncio.CancelledError:
+                    continue
+                except Exception:
+                    break
+            if not worker.cancelled():
+                try:
+                    worker.result()
+                except Exception:
+                    logger.exception("cancelled checkpoint restore failed")
+            raise
+
+    async def _restore(
         self,
         turn_ids_newest_first: list[str],
         workspace: Path,

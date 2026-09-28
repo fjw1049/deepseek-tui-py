@@ -19,6 +19,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from deepseek_tui.server.lifecycle import complete_before_cancel
 from deepseek_tui.server.metrics import TurnDeltaBatcher
 from deepseek_tui.server.metrics import (
     TurnLatencyTrace,
@@ -319,6 +320,9 @@ class RuntimeThreadManager:
         )
         self._cancel_event = asyncio.Event()
         self._mcp_warmup_task: asyncio.Task[None] | None = None
+        self._close_task: asyncio.Task[None] | None = None
+        self._monitor_tasks: set[asyncio.Task] = set()
+        self._mutation_tasks: set[asyncio.Task] = set()
 
         self._recover_interrupted_state()
         self._reconcile_missing_worktrees_on_boot()
@@ -542,21 +546,69 @@ class RuntimeThreadManager:
     # --- public lifecycle ----------------------------------------------------
 
     def shutdown(self) -> None:
+        """Request shutdown; async owners must await :meth:`aclose`."""
         self._cancel_event.set()
-        for client in self._provider_clients.values():
+        if self._close_task is None:
+            self._close_task = asyncio.get_running_loop().create_task(self._close())
+
+    async def aclose(self) -> None:
+        self.shutdown()
+        await complete_before_cancel(self._close_task)
+
+    async def _complete_mutation(self, operation):
+        if self.is_shutdown:
+            operation.close()
+            raise RuntimeError("Runtime is shutting down")
+        task = asyncio.create_task(operation)
+        self._mutation_tasks.add(task)
+        try:
+            return await complete_before_cancel(task)
+        finally:
+            self._mutation_tasks.discard(task)
+
+    async def _close(self) -> None:
+        for bridge in (self._approval_bridge, self._elevation_bridge, self._user_input_bridge):
+            if bridge is not None:
+                bridge.cancel_all()
+        # Restore/import operations own filesystem mutations through their final bookkeeping.
+        if self._mutation_tasks:
+            await asyncio.gather(*tuple(self._mutation_tasks), return_exceptions=True)
+        loads = list(self._engine_load_tasks.values())
+        if self._mcp_warmup_task is not None:
+            loads.append(self._mcp_warmup_task)
+        for task in loads:
+            task.cancel()
+        await asyncio.gather(*loads, return_exceptions=True)
+        states = tuple(self._active.items())
+        for _thread_id, state in states:
+            await state.handle.cancel(reason="runtime_shutdown")
+            state.engine_task.cancel()
+        await asyncio.gather(*(state.engine_task for _, state in states), return_exceptions=True)
+        # Wake idle event consumers and let normal turn finalization capture
+        # post-images, flush deltas, persist interrupted status and release leases.
+        for _thread_id, state in states:
+            await state.handle.inject_event(TurnCancelledEvent(reason="runtime_shutdown"))
+        await asyncio.gather(*tuple(self._monitor_tasks), return_exceptions=True)
+        for thread_id, _state in states:
+            try:
+                await self._evict_active_thread(thread_id)
+            except Exception:
+                logger.exception("engine_close_failed thread=%s", thread_id)
+        await self.store.flush_event_checkpoint()
+        for lease in self._thread_leases.values():
+            lease.release()
+        self._thread_leases.clear()
+        self._thread_lease_depth.clear()
+        self._thread_lease_owners.clear()
+        clients = tuple(self._provider_clients.values())
+        self._provider_clients.clear()
+        for client in clients:
             close = getattr(client, "close", None)
             if close is not None:
                 try:
-                    asyncio.get_running_loop().create_task(close())
-                except RuntimeError:
-                    pass
-        self._provider_clients.clear()
-        if self._approval_bridge is not None:
-            self._approval_bridge.cancel_all()
-        if self._elevation_bridge is not None:
-            self._elevation_bridge.cancel_all()
-        if self._user_input_bridge is not None:
-            self._user_input_bridge.cancel_all()
+                    await close()
+                except Exception:
+                    logger.exception("provider_close_failed")
 
     @property
     def is_shutdown(self) -> bool:
@@ -568,6 +620,8 @@ class RuntimeThreadManager:
     # --- thread CRUD ---------------------------------------------------------
 
     async def create_thread(self, req: CreateThreadRequest) -> ThreadRecord:
+        if self.is_shutdown:
+            raise RuntimeError("Runtime is shutting down")
         from deepseek_tui.tools.runtime import default_runtime_model
         from deepseek_tui.workspace.managed_worktree import is_git_repo
 
@@ -885,6 +939,8 @@ class RuntimeThreadManager:
         """Take exclusive cross-process ownership for a new active turn."""
         from deepseek_tui.workspace.project_lease import ThreadLease
 
+        if self.is_shutdown:
+            raise RuntimeError("Runtime is shutting down")
         async with self._thread_lease_guard:
             if thread_id in self._thread_leases:
                 raise TurnConflictError("Thread already has an active operation")
@@ -923,6 +979,8 @@ class RuntimeThreadManager:
 
         lease: Any
         owner = asyncio.current_task()
+        if self.is_shutdown and owner not in self._mutation_tasks:
+            raise RuntimeError("Runtime is shutting down")
         async with self._thread_lease_guard:
             current = self._thread_leases.get(thread_id)
             if current is None:
@@ -2752,7 +2810,7 @@ class RuntimeThreadManager:
     async def data_inventory(self) -> dict[str, Any]:
         from deepseek_tui.server.data_inventory import collect_inventory
 
-        return collect_inventory(threads_dir=self.manager_cfg.data_dir)
+        return await asyncio.to_thread(collect_inventory, threads_dir=self.manager_cfg.data_dir)
 
     async def optimize_storage(self) -> dict[str, Any]:
         from deepseek_tui.server.data_inventory import (
@@ -2818,11 +2876,11 @@ class RuntimeThreadManager:
     async def export_data_bundle(self, path: str, *, scope: str = "conversations") -> dict[str, Any]:
         from deepseek_tui.server.data_bundle import export_bundle
 
-        return export_bundle(
-            Path(path),
+        return await self._complete_mutation(asyncio.to_thread(
+            export_bundle, Path(path),
             scope=scope,  # type: ignore[arg-type]
             threads_dir=self.manager_cfg.data_dir,
-        )
+        ))
 
     async def import_data_bundle(
         self, path: str, *, mode: str = "merge"
@@ -2834,11 +2892,11 @@ class RuntimeThreadManager:
                 active_ids = list(self._active.keys())
             for thread_id in active_ids:
                 await self._evict_active_thread(thread_id)
-        return import_bundle(
-            Path(path),
+        return await self._complete_mutation(asyncio.to_thread(
+            import_bundle, Path(path),
             mode=mode,  # type: ignore[arg-type]
             threads_dir=self.manager_cfg.data_dir,
-        )
+        ))
 
     async def backup_status(self) -> dict[str, Any]:
         from deepseek_tui.server.data_bundle import read_backup_meta
@@ -2855,10 +2913,9 @@ class RuntimeThreadManager:
     async def create_data_backup(self, directory: str | None = None) -> dict[str, Any]:
         from deepseek_tui.server.data_bundle import create_backup
 
-        return create_backup(
-            directory=directory,
-            threads_dir=self.manager_cfg.data_dir,
-        )
+        return await self._complete_mutation(asyncio.to_thread(
+            create_backup, directory=directory, threads_dir=self.manager_cfg.data_dir,
+        ))
 
     async def _evict_active_thread(self, thread_id: str) -> None:
         """Cancel and drop an in-memory engine for a thread being deleted."""
@@ -2868,6 +2925,7 @@ class RuntimeThreadManager:
             load_task = self._engine_load_tasks.pop(thread_id, None)
         if load_task is not None and not load_task.done():
             load_task.cancel()
+            await asyncio.gather(load_task, return_exceptions=True)
         if self._approval_bridge is not None:
             self._approval_bridge.cancel_for_thread(thread_id)
         if state is None:
@@ -2881,6 +2939,7 @@ class RuntimeThreadManager:
             await state.engine_task
         except (asyncio.CancelledError, Exception):  # noqa: BLE001
             pass
+        await state.engine.shutdown_session()
 
     async def fork_thread(
         self, thread_id: str, *, through_item_id: str | None = None
@@ -3193,7 +3252,10 @@ class RuntimeThreadManager:
             force_conflicts=force_conflicts,
         )
 
-    async def _rewind_thread_with_result(
+    async def _rewind_thread_with_result(self, thread_id: str, **kwargs):
+        return await self._complete_mutation(self._do_rewind_thread_with_result(thread_id, **kwargs))
+
+    async def _do_rewind_thread_with_result(
         self,
         thread_id: str,
         *,
@@ -3352,7 +3414,12 @@ class RuntimeThreadManager:
             "missing_roots": missing_roots,
         }
 
-    async def restore_code(
+    async def restore_code(self, thread_id: str, *, before_item_id: str, force_conflicts: bool = False):
+        return await self._complete_mutation(self._restore_code(
+            thread_id, before_item_id=before_item_id, force_conflicts=force_conflicts
+        ))
+
+    async def _restore_code(
         self, thread_id: str, *, before_item_id: str, force_conflicts: bool = False
     ) -> dict[str, Any]:
         """Roll workspace files back to ``before_item_id``, conversation intact.
@@ -3650,9 +3717,13 @@ class RuntimeThreadManager:
             ),
             name=f"monitor-{turn_id}",
         )
+        self._monitor_tasks.add(monitor_task)
+        monitor_task.add_done_callback(self._monitor_tasks.discard)
         # The monitor owns the turn from this point through checkpoint
         # finalization and publication. Transfer re-entrant lease ownership so
         # no second process can enter between those phases.
+        if self.is_shutdown:
+            raise RuntimeError("Runtime is shutting down")
         async with self._thread_lease_guard:
             if thread_id in self._thread_leases:
                 self._thread_lease_owners[thread_id] = monitor_task
@@ -3683,7 +3754,7 @@ class RuntimeThreadManager:
             await self._fail_turn_before_dispatch(thread_id, turn_id, exc)
             raise
         # Monitor runs concurrently; ensure task is referenced until turn ends.
-        del monitor_task
+        # _monitor_tasks owns it until its finalizer completes.
 
         return turn
 
@@ -4280,6 +4351,8 @@ class RuntimeThreadManager:
     async def _ensure_engine_loaded(
         self, thread: ThreadRecord, *, trace: TurnLatencyTrace | None = None
     ) -> tuple[EngineHandle, asyncio.Task[None]]:
+        if self.is_shutdown:
+            raise RuntimeError("Runtime is shutting down")
         if trace is not None:
             trace.engine_load_start_ms = now_ms()
         load_task: asyncio.Task[tuple[EngineHandle, asyncio.Task[None]]] | None = None
@@ -4321,7 +4394,10 @@ class RuntimeThreadManager:
             trace.engine_load_end_ms = now_ms()
         return handle, engine_task
 
-    async def _load_engine_for_thread(
+    async def _load_engine_for_thread(self, thread: ThreadRecord):
+        return await complete_before_cancel(self._build_engine_for_thread(thread))
+
+    async def _build_engine_for_thread(
         self, thread: ThreadRecord
     ) -> tuple[EngineHandle, asyncio.Task[None]]:
         from deepseek_tui.engine.orchestrator import Engine
@@ -4397,6 +4473,8 @@ class RuntimeThreadManager:
                 self._approval_bridge.cancel_for_thread(evicted_tid, include_tasks=False)
             await evicted_state.handle.cancel(reason="lru_eviction")
             evicted_state.engine_task.cancel()
+            await asyncio.gather(evicted_state.engine_task, return_exceptions=True)
+            await evicted_state.engine.shutdown_session()
 
         return handle, engine_task
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 from enum import Enum
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 # ============================================================================
 # Content blocks & Message
@@ -63,6 +63,18 @@ class ImageBlock(BaseModel):
     byte_size: int = Field(gt=0)
     detail: Literal["auto", "low", "high"] = "auto"
     crop: tuple[int, int, int, int] | None = None
+
+    @field_validator("crop")
+    @classmethod
+    def _validate_crop(
+        cls, value: tuple[int, int, int, int] | None
+    ) -> tuple[int, int, int, int] | None:
+        if value is not None:
+            x, y, width, height = value
+            if x < 0 or y < 0 or width <= 0 or height <= 0:
+                raise ValueError("crop requires nonnegative coordinates and positive dimensions")
+        # Actual image bounds (including EXIF orientation) are checked by the encoder.
+        return value
 
 
 class ToolUseBlock(BaseModel):
@@ -150,14 +162,14 @@ class Message(BaseModel):
 
 
 class MessageRequest(BaseModel):
-    model: str
+    model: str = Field(min_length=1, pattern=r"\S")
     messages: list[Message] = Field(default_factory=list)
     system_prompt: str | None = None
     tools: list[dict[str, Any]] = Field(default_factory=list)
     tool_choice: str | dict[str, Any] | None = None
-    max_tokens: int | None = None
-    temperature: float | None = None
-    top_p: float | None = None
+    max_tokens: int | None = Field(default=None, gt=0)
+    temperature: float | None = Field(default=None, allow_inf_nan=False)
+    top_p: float | None = Field(default=None, allow_inf_nan=False)
     reasoning_effort: str | None = None
     extra_body: dict[str, Any] = Field(default_factory=dict)
     stream: bool = True

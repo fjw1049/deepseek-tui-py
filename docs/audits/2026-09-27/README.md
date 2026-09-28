@@ -1,8 +1,8 @@
 # src/deepseek_tui 系统化审核索引
 
-基线：2026-09-27当前工作区，含未提交改动。204个Python源文件、约8.7万行；文件清单不等于完成审核。非Python提示词、内置Skill等资源随所属调用链审查。
+历史基线：2026-09-27 工作区，204 个 Python 源文件、约 8.7 万行。2026-09-28 当前工作区含未提交改动及新增辅助模块，共 210 个 Python 源文件。非 Python 提示词、内置 Skill 等资源随所属调用链审查。
 
-按业务体系分篇，每篇给出优点、问题位置、触发条件、证据等级、方案比较和验收建议。当前第01—11篇已交付；第01—10篇有对应修复/局部优化记录，第06篇下篇另有第二轮优化记录，第11篇当前仅审核取证。其他体系及各篇注明的跨模块边界仍待审。不得把整体目录盘点或跨模块追踪视为逐模块审核完成。
+按业务体系分篇，每篇给出优点、问题位置、触发条件、证据等级、方案比较和验收建议。当前第 01—17 体系的首轮核心审核已交付（第 06 篇分上下篇）；第 01—17 体系均有修复/局部优化记录，本轮按用户要求结束。下方清单覆盖当前 210 个 Python 源文件；这不是分支测试覆盖率，也不表示所有建议均已实施。剩余工作及范围说明见 [进度台账](progress.md)。
 
 [01 · 自动化任务审核](/Users/fjw/Desktop/deepseek-tui-py-main/docs/audits/2026-09-27/01-automation.md)
 
@@ -44,7 +44,29 @@
 
 [11 · 插件、Skill 与 LSP 审核](/Users/fjw/Desktop/deepseek-tui-py-main/docs/audits/2026-09-27/11-plugins-skills-lsp.md)
 
-后续顺序：工作区 → Server → 协议/展示 → TUI → 内置工具 → 配置/CLI/基础设施。
+[11 · 插件、Skill 与 LSP 修复记录](/Users/fjw/Desktop/deepseek-tui-py-main/docs/audits/2026-09-27/11-implemented-fixes.md)
+
+[12 · 工作区、Git 与变更记录审核](/Users/fjw/Desktop/deepseek-tui-py-main/docs/audits/2026-09-27/12-workspace-git.md)
+
+[12 · 工作区修复记录](/Users/fjw/Desktop/deepseek-tui-py-main/docs/audits/2026-09-27/12-implemented-fixes.md)
+
+[13 · HTTP 服务、会话、线程与事件流审核](/Users/fjw/Desktop/deepseek-tui-py-main/docs/audits/2026-09-27/13-server-threads.md)
+
+[13 · HTTP 服务与线程修复记录](/Users/fjw/Desktop/deepseek-tui-py-main/docs/audits/2026-09-27/13-implemented-fixes.md)
+
+[14 · 协议、事件模型与展示归约审核](/Users/fjw/Desktop/deepseek-tui-py-main/docs/audits/2026-09-27/14-protocol-presentation.md)
+
+[14 · 协议与展示修复记录](/Users/fjw/Desktop/deepseek-tui-py-main/docs/audits/2026-09-27/14-implemented-fixes.md)
+
+[15 · TUI 生命周期与交互审核](/Users/fjw/Desktop/deepseek-tui-py-main/docs/audits/2026-09-27/15-tui.md)
+
+[15 · TUI 修复记录](15-implemented-fixes.md)
+
+[16 · 内置工具审核](16-builtin-tools.md) · [修复记录](16-implemented-fixes.md)
+
+[17 · 配置、CLI 与基础设施审核](17-config-cli.md) · [修复与收尾记录](17-implemented-fixes.md)
+
+本轮已收尾：第十七篇修复完成；累计回归 1448 项通过，最终凭据补丁定向回归 143 项通过（两批有重叠）。历史保留项详见进度台账，不继续开启新审核。
 
 ## 覆盖台账
 
@@ -60,13 +82,13 @@
 | 08 状态、上下文与媒体 | 6 | 核心审核与已复现缺陷修复完成；见08-implemented-fixes.md 的剩余边界 |
 | 09 模型客户端与流式协议 | 12 | 核心审核与修复完成；见09-implemented-fixes.md 的局部修复边界与已知旧测试失败 |
 | 10 MCP连接与工具发现 | 10 | 核心审核与 M01–M08 修复完成；见10-implemented-fixes.md 的剩余边界 |
-| 11 插件、Skill与LSP | 19 | 核心审核完成；11-plugins-skills-lsp.md，当前仅审核取证 |
-| 12 工作区、Git与变更记录 | 10 | 待审 |
-| 13 HTTP服务、会话与线程 | 26 | 待审；本篇只追踪自动化接口 |
-| 14 协议与展示模型 | 8 | 待审 |
-| 15 TUI与交互 | 16 | 待审 |
-| 16 内置工具 | 16 | 待审 |
-| 17 配置、CLI与基础设施 | 14 | 待审 |
+| 11 插件、Skill与LSP | 19 | 核心审核与边界修复完成；见11-implemented-fixes.md |
+| 12 工作区、Git与变更记录 | 10 | 核心审核与边界修复完成；见12-implemented-fixes.md |
+| 13 HTTP服务、会话与线程 | 27 + 新增 lifecycle | 核心审核与本轮修复完成；剩余边界见13-implemented-fixes.md |
+| 14 协议与展示模型 | 8 | 核心审核及局部修复完成；见14-implemented-fixes.md |
+| 15 TUI与交互 | 16 + 新增 lifecycle | 核心审核及局部修复完成；见15-implemented-fixes.md |
+| 16 内置工具 | 16 + 新增 output_capture、plan_state | N01—N11 最小修复完成；389 项扩展回归通过，保留边界见16-implemented-fixes.md |
+| 17 配置、CLI与基础设施 | 14 | 核心审核及最小修复完成；见17-implemented-fixes.md |
 
 ## 01 自动化任务
 
@@ -218,7 +240,7 @@
 
 ## 11 插件、Skill与LSP
 
-核心审核完成；见11-plugins-skills-lsp.md。当前仅审核取证，尚未修复。
+核心审核与边界修复完成；见11-plugins-skills-lsp.md、11-implemented-fixes.md。
 
 - [integrations/__init__.py](/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/integrations/__init__.py)
 - [integrations/lsp.py](/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/integrations/lsp.py)
@@ -242,7 +264,7 @@
 
 ## 12 工作区、Git与变更记录
 
-待审
+核心审核与边界修复完成；见12-workspace-git.md、12-implemented-fixes.md。
 
 - [workspace/__init__.py](/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/workspace/__init__.py)
 - [workspace/diff_synth.py](/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/workspace/diff_synth.py)
@@ -257,11 +279,12 @@
 
 ## 13 HTTP服务、会话与线程
 
-待审；本篇只追踪自动化接口
+核心路径审核与本轮修复完成；历史证据见13-server-threads.md，实施与剩余边界见13-implemented-fixes.md。新增 server/lifecycle.py 承担取消时的任务收拢。
 
 - [server/__init__.py](/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/server/__init__.py)
 - [server/agent_segments.py](/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/server/agent_segments.py)
 - [server/app.py](/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/server/app.py)
+- [server/lifecycle.py](/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/server/lifecycle.py)
 - [server/auth.py](/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/server/auth.py)
 - [server/data_bundle.py](/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/server/data_bundle.py)
 - [server/data_inventory.py](/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/server/data_inventory.py)
@@ -288,7 +311,7 @@
 
 ## 14 协议与展示模型
 
-待审
+审核与 P01–P07 修复完成；见14-protocol-presentation.md、14-implemented-fixes.md。8个模块逐个给出建议，修复后新增37项测试，并保留前后性能证据。
 
 - [presentation/__init__.py](/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/presentation/__init__.py)
 - [presentation/models.py](/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/presentation/models.py)
@@ -301,10 +324,11 @@
 
 ## 15 TUI与交互
 
-待审
+核心路径审核及最小修复完成；见 [原审核](15-tui.md)、[修复记录](15-implemented-fixes.md)、[验证记录](15-fixes-validation.json)。T01—T12 已处理，308 项扩展回归通过。完整 rewind、增量过滤等保留边界详见修复记录。
 
 - [tui/__init__.py](/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/tui/__init__.py)
 - [tui/app.py](/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/tui/app.py)
+- [tui/lifecycle.py](/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/tui/lifecycle.py)
 - [tui/cards.py](/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/tui/cards.py)
 - [tui/commands.py](/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/tui/commands.py)
 - [tui/dialogs.py](/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/tui/dialogs.py)
@@ -322,15 +346,17 @@
 
 ## 16 内置工具
 
-待审
+核心路径审核与 N01—N11 最小修复完成；见 [原审核](16-builtin-tools.md)、[修复记录](16-implemented-fixes.md)、[修复验证](16-fixes-validation.json)。扩展回归 389 项通过。旧探针只保留历史缺陷证据，不能直接作为当前验收。
 
 - [tools/__init__.py](/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/tools/__init__.py)
 - [tools/encoding.py](/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/tools/encoding.py)
 - [tools/file.py](/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/tools/file.py)
 - [tools/knowledge.py](/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/tools/knowledge.py)
 - [tools/plan_mode.py](/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/tools/plan_mode.py)
+- [tools/plan_state.py](/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/tools/plan_state.py)
 - [tools/search.py](/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/tools/search.py)
 - [tools/shell.py](/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/tools/shell.py)
+- [tools/output_capture.py](/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/tools/output_capture.py)
 - [tools/todo.py](/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/tools/todo.py)
 - [tools/user_input.py](/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/tools/user_input.py)
 - [tools/utils/__init__.py](/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/tools/utils/__init__.py)
@@ -343,7 +369,7 @@
 
 ## 17 配置、CLI与基础设施
 
-待审
+核心审核和 Q01—Q12 最小修复完成；[原审核](17-config-cli.md) 保留历史证据，当前结果见 [修复记录](17-implemented-fixes.md)、[验证记录](17-fixes-validation.json)。本轮结束。
 
 - [__init__.py](/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/__init__.py)
 - [__main__.py](/Users/fjw/Desktop/deepseek-tui-py-main/src/deepseek_tui/__main__.py)

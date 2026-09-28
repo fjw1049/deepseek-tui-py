@@ -238,6 +238,12 @@ async def preview(req: ShareLink):
 @router.post("/restore", status_code=201)
 async def restore(req: RestoreShare, request: Request):
     token, snapshot = await download(req.url)
+    return await request.app.state.thread_manager._complete_mutation(
+        _restore_downloaded(req, request, token, snapshot)
+    )
+
+
+async def _restore_downloaded(req, request, token, snapshot):
     scratch = None
     if not (req.workspace or "").strip():
         if req.restore_project and snapshot.project:

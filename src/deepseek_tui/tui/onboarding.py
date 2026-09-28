@@ -151,7 +151,7 @@ class OnboardingScreen(ModalScreen[str | None]):
                 "  - Write tasks in plain language. Use /help or Ctrl+K.\n"
                 "  - Composer is multi-line: Enter sends; Ctrl+J / Ctrl+Enter inserts a newline.\n"
                 "  - Modes: [bold]/agent[/] / [bold]/plan[/] / [bold]/yolo[/].\n"
-                "  - Esc backs out of overlays. Press it twice to backtrack a turn.\n\n"
+                "  - Esc closes overlays or cancels a turn. /undo reverts the last tool edit.\n\n"
                 "[dim]Press Enter to start.[/]"
             )
             input_widget.display = False

@@ -21,11 +21,9 @@ _MUTATE_TOOLS = frozenset(
         "write_file",
         "edit_file",
         "search_replace",
-        "exec_shell",
-        "exec_shell_interact",
-        "run_terminal_cmd",
     }
 )
+_COMMAND_TOOLS = frozenset({"exec_shell", "exec_shell_interact", "run_terminal_cmd"})
 _SEARCH_TOOLS = frozenset(
     {"grep_files", "grep", "search_files", "glob_file_search", "codebase_search"}
 )
@@ -39,6 +37,7 @@ class BatchKind(str, Enum):
     SEARCH = "search"
     INSPECT = "inspect"
     MUTATE = "mutate"
+    COMMAND = "command"
     MIXED = "mixed"
 
 
@@ -88,6 +87,8 @@ def classify_batch(tool_calls: Sequence[ToolCall]) -> BatchKind:
     names = [tc.name.lower() for tc in tool_calls]
     if any(name in _MUTATE_TOOLS for name in names):
         return BatchKind.MUTATE
+    if all(name in _COMMAND_TOOLS for name in names):
+        return BatchKind.COMMAND
     read_count = sum(1 for name in names if name in _READ_TOOLS)
     dir_count = sum(1 for name in names if name in _DIR_TOOLS)
     search_count = sum(1 for name in names if name in _SEARCH_TOOLS)
@@ -106,8 +107,7 @@ def batch_root(tool_calls: Sequence[ToolCall]) -> str | None:
     for tool_call in tool_calls:
         path = tool_path(dict(tool_call.arguments) if tool_call.arguments else None)
         if path:
-            parts = path.replace("\\", "/").strip("/").split("/")
-            return parts[0] if parts else path
+            return truncate_text(path.replace("\\", "/"), 64)
     return None
 
 
@@ -136,6 +136,10 @@ def batch_intent_text(
     *,
     locale: str = "zh",
 ) -> str:
+    if batch == BatchKind.INSPECT and not tool_calls:
+        raise ValueError("INSPECT requires a tool call")
+    if batch == BatchKind.COMMAND:
+        return "Run commands" if locale == "en" else "执行命令"
     if locale == "en":
         if batch == BatchKind.EXPLORE_DIR:
             return f"Survey structure under {batch_root(tool_calls) or 'project root'}"

@@ -527,8 +527,11 @@ def build_fastapi_app(
 
     @asynccontextmanager
     async def _lifespan(app: Any) -> Any:
-        await app.state.thread_manager.reclaim_idle_worktrees()
-        yield
+        try:
+            await app.state.thread_manager.reclaim_idle_worktrees()
+            yield
+        finally:
+            await app.state.thread_manager.aclose()
 
     app = FastAPI(
         title="deepseek-runtime-api" if http_mode else "deepseek-app-server",
@@ -666,88 +669,98 @@ async def run_http(
     runtime = await AppRuntime.create(
         config=config, working_directory=options.working_directory
     )
-    await runtime.warmup_default_connectors()
-    # Built in a worker thread: RuntimeThreadManager's __init__ runs a full
-    # on-disk recovery scan that would otherwise block the event loop.
-    app = await asyncio.to_thread(
-        build_fastapi_app,
-        runtime,
-        http_mode=options.http_mode,
-        auth_token=options.auth_token,
-        insecure_no_auth=options.insecure_no_auth,
-        cors_origins=options.cors_origins,
-    )
-    # Manager was built in a worker thread without an event loop; start the
-    # deferred MCP warmup now that we're back on the loop.
-    thread_manager = getattr(app.state, "thread_manager", None)
-    if thread_manager is not None:
-        thread_manager.schedule_mcp_warmup()
-    # Both modes resolve the same bearer auth now, so the token-file
-    # bookkeeping applies to the legacy app-server too.
-    from deepseek_tui.server.auth import (
-        runtime_token_file,
-        write_runtime_token_file,
-    )
-
-    auth = getattr(app.state, "runtime_auth", None)
-    if auth is not None and auth.generated and auth.token:
-        token_path = write_runtime_token_file(auth.token)
-        logger.info(
-            "runtime_api_auth generated bearer token written to %s", token_path
-        )
-        print(
-            "Runtime API auth: generated bearer token (written to "
-            f"{token_path}, mode 0600)."
-        )
-        print("  Read the file or set DEEPSEEK_RUNTIME_TOKEN for a stable token.")
-    elif auth is not None and auth.token:
-        # Only seed the cache when missing — never overwrite an existing
-        # non-empty file. Two concurrent spawn attempts (e.g., CLI + GUI)
-        # would otherwise race and clobber each other's tokens.
-        token_path = runtime_token_file()
-        try:
-            if not token_path.exists() or not token_path.read_text(
-                encoding="utf-8"
-            ).strip():
-                token_path = write_runtime_token_file(auth.token)
-                logger.info(
-                    "runtime_api_auth bearer token written to %s", token_path
-                )
-        except OSError as exc:  # noqa: BLE001
-            logger.warning("runtime_api_auth token file write failed: %s", exc)
-        print(
-            "Runtime API auth: bearer token required for /v1/* routes "
-            f"(cached at {token_path})."
-        )
-    else:
-        logger.warning("runtime_api_auth disabled (--insecure)")
-        print("Runtime API auth: disabled by explicit insecure mode.")
-        # Surface that any cached token file is being ignored so users
-        # don't assume the file's presence implies the runtime is secured.
-        cached_path = runtime_token_file()
-        if cached_path.exists():
-            print(
-                f"  Note: ignoring cached token at {cached_path} while "
-                "--insecure is in effect."
-            )
-    if options.http_mode:
-        print(f"Runtime API listening on http://{options.host}:{options.port}")
-    server_cfg = uvicorn.Config(
-        app,
-        host=options.host,
-        port=options.port,
-        log_level="info",
-        # Our ``_access_log`` middleware is the single source of truth and
-        # strips query strings (SSE ?token=). Disable uvicorn's default access
-        # log so bearer tokens never land in stderr.
-        access_log=not options.http_mode,
-    )
-    server = uvicorn.Server(server_cfg)
+    app = None
     try:
+        await runtime.warmup_default_connectors()
+        # Built in a worker thread: RuntimeThreadManager's __init__ runs a full
+        # on-disk recovery scan that would otherwise block the event loop.
+        from deepseek_tui.server.lifecycle import complete_before_cancel
+
+        async def build_owned_app():
+            nonlocal app
+            app = await asyncio.to_thread(
+                build_fastapi_app,
+                runtime,
+                http_mode=options.http_mode,
+                auth_token=options.auth_token,
+                insecure_no_auth=options.insecure_no_auth,
+                cors_origins=options.cors_origins,
+            )
+        await complete_before_cancel(build_owned_app())
+        # Manager was built in a worker thread without an event loop; start the
+        # deferred MCP warmup now that we're back on the loop.
+        thread_manager = getattr(app.state, "thread_manager", None)
+        if thread_manager is not None:
+            thread_manager.schedule_mcp_warmup()
+        # Both modes resolve the same bearer auth now, so the token-file
+        # bookkeeping applies to the legacy app-server too.
+        from deepseek_tui.server.auth import (
+            runtime_token_file,
+            write_runtime_token_file,
+        )
+
+        auth = getattr(app.state, "runtime_auth", None)
+        if auth is not None and auth.generated and auth.token:
+            token_path = write_runtime_token_file(auth.token)
+            logger.info(
+                "runtime_api_auth generated bearer token written to %s", token_path
+            )
+            print(
+                "Runtime API auth: generated bearer token (written to "
+                f"{token_path}, mode 0600)."
+            )
+            print("  Read the file or set DEEPSEEK_RUNTIME_TOKEN for a stable token.")
+        elif auth is not None and auth.token:
+            # Only seed the cache when missing — never overwrite an existing
+            # non-empty file. Two concurrent spawn attempts (e.g., CLI + GUI)
+            # would otherwise race and clobber each other's tokens.
+            token_path = runtime_token_file()
+            try:
+                if not token_path.exists() or not token_path.read_text(
+                    encoding="utf-8"
+                ).strip():
+                    token_path = write_runtime_token_file(auth.token)
+                    logger.info(
+                        "runtime_api_auth bearer token written to %s", token_path
+                    )
+            except OSError as exc:  # noqa: BLE001
+                logger.warning("runtime_api_auth token file write failed: %s", exc)
+            print(
+                "Runtime API auth: bearer token required for /v1/* routes "
+                f"(cached at {token_path})."
+            )
+        else:
+            logger.warning("runtime_api_auth disabled (--insecure)")
+            print("Runtime API auth: disabled by explicit insecure mode.")
+            # Surface that any cached token file is being ignored so users
+            # don't assume the file's presence implies the runtime is secured.
+            cached_path = runtime_token_file()
+            if cached_path.exists():
+                print(
+                    f"  Note: ignoring cached token at {cached_path} while "
+                    "--insecure is in effect."
+                )
+        if options.http_mode:
+            print(f"Runtime API listening on http://{options.host}:{options.port}")
+        server_cfg = uvicorn.Config(
+            app,
+            host=options.host,
+            port=options.port,
+            log_level="info",
+            # Our ``_access_log`` middleware is the single source of truth and
+            # strips query strings (SSE ?token=). Disable uvicorn's default access
+            # log so bearer tokens never land in stderr.
+            access_log=not options.http_mode,
+        )
+        server = uvicorn.Server(server_cfg)
         await server.serve()
     finally:
         logger.info("app_server_stop")
-        await runtime.shutdown()
+        try:
+            if app is not None:
+                await app.state.thread_manager.aclose()
+        finally:
+            await runtime.shutdown()
 
 
 async def run_stdio(

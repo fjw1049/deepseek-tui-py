@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -170,7 +171,7 @@ class ReadFileTool(ToolSpec):
                     f"... (showing lines {start_display}-{end_display}; "
                     "use offset to continue)"
                 )
-        context.note_file_content(path)
+        context.file_reads[path] = page.stamp
         metadata: dict[str, object] = {
             "path": str(path),
             "line_offset": offset or 0,
@@ -241,19 +242,19 @@ class WriteFileTool(ToolSpec):
             )
         if context.changed_since_last_seen(path):
             raise ToolError(_stale_write_message(path))
-        existed = path.exists()
+        expected = _file_stamp(path)
+        existed = expected is not None
         old_text = ""
         if existed:
             try:
                 old_text = await _read_text(path)
-            except (OSError, ToolError):
-                # Race: vanished between exists() and read — treat as empty.
-                old_text = ""
+            except (OSError, ToolError) as exc:
+                raise ToolError(f"Cannot capture existing content for {path}: {exc}") from exc
         context.capture_pre_write(
             _workspace_rel(path, context.working_directory, rel),
             old_text if existed else None,
         )
-        await _write_text(path, content)
+        await _write_text(path, content, expected=expected)
         context.note_file_content(path)
         logger.info("write_file path=%s bytes=%d", path, len(content))
         display_path = _workspace_rel(path, context.working_directory, rel)
@@ -350,6 +351,7 @@ class EditFileTool(ToolSpec):
         # would rewrite the entire file — reject before touching disk.
         if old_string == "":
             raise ToolError("edit_file old_string must not be empty")
+        expected = _file_stamp(path)
         content = await _read_text(
             path,
             display_path=rel,
@@ -384,7 +386,7 @@ class EditFileTool(ToolSpec):
         context.capture_pre_write(
             _workspace_rel(path, context.working_directory, rel), content
         )
-        await _write_text(path, updated)
+        await _write_text(path, updated, expected=expected)
         context.note_file_content(path)
         display_path = _workspace_rel(path, context.working_directory, rel)
         summary = f"Replaced {count} occurrence(s) in {display_path}"
@@ -467,6 +469,7 @@ class _ReadPage:
     total_lines: int | None
     has_more: bool
     bytes_scanned: int
+    stamp: tuple[int, int]
 
 
 def _not_found_error(
@@ -507,6 +510,8 @@ def _read_text_page(
     except OSError as exc:
         raise ToolError(f"Error reading {label}: {exc}") from exc
 
+    initial_stat = os.fstat(fh.fileno())
+    stamp = (initial_stat.st_mtime_ns, initial_stat.st_size)
     page: list[tuple[int, str]] = []
     line_no = 0
     bytes_scanned = 0
@@ -545,6 +550,8 @@ def _read_text_page(
                 raise ToolError(f"{label} is not a UTF-8 text file.")
             bytes_scanned += len(chunk)
             buf += chunk
+            if len(buf) > _MAX_READ_FILE_BYTES and b"\n" not in buf:
+                raise ToolError(f"{label} has a line exceeding the byte read limit")
             while True:
                 nl = buf.find(b"\n")
                 if nl < 0:
@@ -554,9 +561,15 @@ def _read_text_page(
                 _take_line(raw)
             if page_oversize:
                 break
+            if line_no >= start + limit and bytes_scanned < initial_stat.st_size:
+                scan_stopped = True
+                break
             if bytes_scanned > _MAX_READ_SCAN_BYTES:
                 scan_stopped = True
                 break
+        final_stat = os.fstat(fh.fileno())
+        if (final_stat.st_mtime_ns, final_stat.st_size) != stamp:
+            raise ToolError(_stale_write_message(path))
     finally:
         fh.close()
 
@@ -573,7 +586,7 @@ def _read_text_page(
         )
     has_more = line_no > start + len(page) or scan_stopped
     total = None if scan_stopped else line_no
-    return _ReadPage(page, total, has_more, bytes_scanned)
+    return _ReadPage(page, total, has_more, bytes_scanned, stamp)
 
 
 async def _read_text(
@@ -593,5 +606,31 @@ async def _read_text(
         raise _not_found_error(path, display_path=display_path, cwd=cwd) from exc
 
 
-async def _write_text(path: Path, content: str) -> None:
-    await asyncio.to_thread(write_text_atomic, path, content)
+def _file_stamp(path: Path) -> tuple[int, int] | None:
+    try:
+        stat = path.stat()
+    except FileNotFoundError:
+        return None
+    return stat.st_mtime_ns, stat.st_size
+
+
+async def _write_text(
+    path: Path, content: str, *, expected: tuple[int, int] | None
+) -> None:
+    def write() -> None:
+        if _file_stamp(path) != expected:
+            raise ToolError(_stale_write_message(path))
+        write_text_atomic(path, content)
+
+    # Once publishing begins, settle it before cancellation escapes the tool.
+    pending = asyncio.create_task(asyncio.to_thread(write))
+    try:
+        await asyncio.shield(pending)
+    except asyncio.CancelledError:
+        while not pending.done():
+            try:
+                await asyncio.shield(pending)
+            except asyncio.CancelledError:
+                continue
+        pending.result()
+        raise

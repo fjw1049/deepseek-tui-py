@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -230,7 +229,7 @@ async def test_clear_history_keeps_skills_and_config(
 
 
 @pytest.mark.asyncio
-async def test_append_event_truncates_noisy_delta_payload(
+async def test_append_event_preserves_noisy_delta_payload(
     runtime_app, runtime_data_dir: Path
 ) -> None:
     mgr = runtime_app.state.thread_manager
@@ -244,6 +243,5 @@ async def test_append_event_truncates_noisy_delta_payload(
         "response.delta",
         {"text": "z" * 10_000},
     )
-    assert record.payload.get("_truncated") is True
-    raw = json.dumps(record.payload)
-    assert len(raw) < 10_000
+    assert record.payload == {"text": "z" * 10_000}
+    assert mgr.store.events_since(thread.id)[-1].payload == record.payload

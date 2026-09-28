@@ -210,7 +210,7 @@ class InlineToolCell(Static):
 
     def _refresh(self) -> None:
         icon = self._display.icon
-        verb = self._display.verb
+        verb = escape(self._display.verb)
         summary = self._format_summary()
         elapsed = _elapsed_str(self._started_at, self._finished_at)
         color = _state_color(self._status)
@@ -317,7 +317,7 @@ class BlockToolCell(Static):
 
     def _header_markup(self) -> str:
         icon = self._display.icon
-        verb = self._display.verb
+        verb = escape(self._display.verb)
         summary = _summarize_args(self._arguments) or self.tool_name
         summary = escape(summary)
         color = _state_color(self._status)
@@ -470,8 +470,13 @@ def parse_unified_diff(diff_text: str) -> list[DiffFile]:
     new_line = 0
 
     for raw_line in diff_text.splitlines():
+        in_body = current_hunk is not None and (
+            old_line < current_hunk.old_start + current_hunk.old_count
+            or new_line < current_hunk.new_start + current_hunk.new_count
+        )
         old_match = _DIFF_FILE_OLD_RE.match(raw_line)
-        if old_match:
+        if old_match and not in_body:
+            current_hunk = None
             old_path = old_match.group(1)
             if old_path.startswith("a/"):
                 old_path = old_path[2:]
@@ -479,7 +484,7 @@ def parse_unified_diff(diff_text: str) -> list[DiffFile]:
             continue
 
         new_match = _DIFF_FILE_NEW_RE.match(raw_line)
-        if new_match and current_file is not None:
+        if new_match and not in_body and current_file is not None:
             new_path = new_match.group(1)
             if new_path.startswith("b/"):
                 new_path = new_path[2:]

@@ -25,13 +25,13 @@ from deepseek_tui.tools.utils.validation import (
 
 
 class NoteTool(ToolSpec):
-    """Append a quick note to the session notes file."""
+    """Append a quick note to the user notes file."""
 
     def name(self) -> str:
         return "note"
 
     def description(self) -> str:
-        return "Append a short note to the session notes file for later reference."
+        return "Append a short note to the shared user notes file for later reference."
 
     def input_schema(self) -> dict[str, object]:
         return {
@@ -122,7 +122,7 @@ class PlanUpdateTool(ToolSpec):
         return [ToolCapability.WRITES_FILES]
 
     async def execute(self, input_data: dict[str, object], context: ToolContext) -> ToolResult:
-        from deepseek_tui.tui.sidebar import (
+        from deepseek_tui.tools.plan_state import (
             parse_plan_markdown,
             parse_structured_plan_steps,
             sync_plan_store,
@@ -158,7 +158,9 @@ class PlanUpdateTool(ToolSpec):
         if plan_path is None:
             raise ToolError("Cannot resolve plan file path")
         plan_path.parent.mkdir(parents=True, exist_ok=True)
-        plan_path.write_text(plan_text, encoding="utf-8")
+        from deepseek_tui.utils import write_text_atomic
+
+        write_text_atomic(plan_path, plan_text)
         sync_plan_store(
             context.metadata,
             explanation=explanation,
@@ -251,7 +253,7 @@ class SkillLoadTool(ToolSpec):
                 )
             try:
                 content = await asyncio.to_thread(
-                    skill_path.read_text, encoding="utf-8"
+                    _read_skill_text, skill_path
                 )
             except FileNotFoundError as exc:
                 raise ToolError(f"Skill file not found: {skill_path}") from exc
@@ -304,8 +306,8 @@ class SkillLoadTool(ToolSpec):
                     )
             raise ToolError(hint)
 
-        body = _format_skill_body(skill)
         companions = _collect_companion_files(skill)
+        body = _format_skill_body(skill, companions=companions)
         return ToolResult(
             success=True,
             content=body,
@@ -317,7 +319,18 @@ class SkillLoadTool(ToolSpec):
         )
 
 
-def _format_skill_body(skill: Any) -> str:
+def _read_skill_text(path: Path) -> str:
+    with path.open("rb") as stream:
+        content = stream.read(1024 * 1024 + 1)
+    if len(content) > 1024 * 1024:
+        raise ToolError("Skill text exceeds 1 MiB")
+    try:
+        return content.decode("utf-8")
+    except UnicodeError as exc:
+        raise ToolError("Skill text must be UTF-8") from exc
+
+
+def _format_skill_body(skill: Any, *, companions: list[Path] | None = None) -> str:
     """Render the tool-result body model will see.
 
     The description rides up top so a single tool result is self-contained
@@ -325,6 +338,8 @@ def _format_skill_body(skill: Any) -> str:
     companion-file paths land under a clearly-named heading so the
     model can open them with ``read_file`` when relevant.
     """
+    if len(skill.body.encode("utf-8")) > 1024 * 1024:
+        raise ToolError("Skill text exceeds 1 MiB")
     out: list[str] = [f"# Skill: {skill.name}", ""]
     if skill.description.strip():
         out.append(f"> {skill.description.strip()}")
@@ -336,7 +351,8 @@ def _format_skill_body(skill: Any) -> str:
     out.append(skill.body.strip())
     out.append("")
 
-    companions = _collect_companion_files(skill)
+    if companions is None:
+        companions = _collect_companion_files(skill)
     if companions:
         out.append("")
         out.append("## Companion files")
@@ -360,10 +376,16 @@ def _collect_companion_files(skill: Any) -> list[Path]:
     parent = skill.path.parent if isinstance(skill.path, Path) else Path(skill.path).parent
     if not parent.is_dir():
         return []
-    return sorted(
-        p for p in parent.iterdir()
-        if p.is_file() and p.name != "SKILL.md"
-    )
+    paths = []
+    for index, path in enumerate(parent.iterdir()):
+        if index >= 10000:
+            raise ToolError("Skill directory exceeds 10000 entries; narrow its contents")
+        if path.is_file() and path.name != "SKILL.md":
+            paths.append(path)
+        if len(paths) > 1000:
+            raise ToolError("Skill has more than 1000 companion files")
+    return sorted(paths)
+
 
 
 # ===========================================================================

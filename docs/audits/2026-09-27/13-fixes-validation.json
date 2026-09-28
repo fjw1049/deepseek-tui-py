@@ -1,0 +1,33 @@
+{
+  "date": "2026-09-28",
+  "scope": "audit 13 fixes; existing workspace changes preserved",
+  "expanded": {
+    "passed": 456,
+    "skipped": 1,
+    "deselected": 2,
+    "seconds": 55.57,
+    "command": "DEEPSEEK_HOME=/tmp/audit13-final .venv/bin/pytest -q tests/contract/test_audit_13.py tests/contract/test_events_sse.py tests/contract/test_thread_store_fault_tolerance.py tests/contract/test_data_bundle.py tests/contract/test_data_inventory.py tests/contract/test_session_sharing.py tests/contract/test_rewind_thread.py tests/contract/test_threads_crud.py tests/contract/test_thread_environment.py tests/contract/test_thread_resume.py tests/contract/test_auto_publish.py tests/contract/test_app_server_auth.py tests/test_workbench_usage_ledger.py tests/test_turn_latency_and_delta_batch.py tests/workspace -k 'not test_start_turn_never_dispatches_without_checkpoint and not test_resume_thread_returns_detail' --tb=short"
+  },
+  "final_targeted": {
+    "passed": 56,
+    "seconds": 1.22,
+    "command": "DEEPSEEK_HOME=/tmp/audit13-tests .venv/bin/pytest -q tests/contract/test_audit_13.py tests/contract/test_events_sse.py tests/contract/test_data_bundle.py tests/contract/test_data_inventory.py tests/test_turn_latency_and_delta_batch.py --tb=short"
+  },
+  "excluded_baseline_failures": [
+    "test_start_turn_never_dispatches_without_checkpoint: fixture engine lacks default_model",
+    "test_resume_thread_returns_detail: DeepSeek API key missing"
+  ],
+  "checks": {
+    "compileall": "passed",
+    "diff_check": "passed",
+    "targeted_ruff": "passed",
+    "whole_server_lint": "existing failures; not claimed clean"
+  },
+  "remaining": [
+    "Client handling of stream.resync_required",
+    "Full log-generation/gap protocol during concurrent compaction",
+    "Crash-durable cross-directory import/restore journal",
+    "Thread-turn index and remaining synchronous maintenance paths",
+    "Cross-platform and real process kill/shutdown testing"
+  ]
+}

@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
-from deepseek_tui.engine.events import AgentRoundCompleteEvent
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from deepseek_tui.engine.events import AgentRoundCompleteEvent
+    from deepseek_tui.protocol.responses import ToolCall
 from deepseek_tui.presentation.models import ActionBatchView, TerminalActionStatus
 from deepseek_tui.presentation.semantics import (
     BatchKind,
@@ -31,13 +35,28 @@ class TurnPresentationReducer:
         self.round_count = 0
         self._active_batch: ActionBatchView | None = None
         self._batch_by_tool_id: dict[str, ActionBatchView] = {}
+        self._rounds: dict[int, tuple[tuple[ToolCall, ...], ActionBatchView]] = {}
+        self._cancelled = False
 
     def on_round_complete(
         self, event: AgentRoundCompleteEvent
     ) -> ActionBatchView | None:
         """Declare a batch after the model round and before tool execution."""
+        previous = self._rounds.get(event.round_idx)
+        if previous is not None:
+            tools, batch = previous
+            if tools != event.tool_calls:
+                raise ValueError("Conflicting declaration for existing round")
+            return batch
+        if self._cancelled:
+            raise ValueError("Reset the reducer before starting another turn")
         if not event.tool_calls:
             return None
+        if self._active_batch is not None:
+            raise ValueError("Previous batch is still running")
+        ids = tuple(tool.id for tool in event.tool_calls)
+        if len(set(ids)) != len(ids):
+            raise ValueError("Duplicate tool IDs in batch")
         batch_kind = classify_batch(event.tool_calls)
         self.phase = infer_next_phase(
             self.phase, batch_kind, has_tool_error=False
@@ -60,6 +79,9 @@ class TurnPresentationReducer:
             intent_text=intent,
             batch_summary=summary,
             batch_kind=batch_kind.value,
+        )
+        self._rounds[event.round_idx] = (
+            tuple(tool.model_copy(deep=True) for tool in event.tool_calls), batch
         )
         self._active_batch = batch
         for tool_call_id in batch.expected_tool_ids:
@@ -89,6 +111,7 @@ class TurnPresentationReducer:
             batch.mark_non_collapsible(tool_call_id)
 
     def on_turn_cancelled(self) -> ActionBatchView | None:
+        self._cancelled = True
         batch = self._active_batch
         if batch is not None and batch.status == "running":
             batch.status = "cancelled"
@@ -100,6 +123,8 @@ class TurnPresentationReducer:
         self.round_count = 0
         self._active_batch = None
         self._batch_by_tool_id.clear()
+        self._rounds.clear()
+        self._cancelled = False
 
     def _record_terminal(
         self,

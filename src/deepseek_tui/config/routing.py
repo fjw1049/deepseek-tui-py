@@ -22,6 +22,7 @@ def config_for_model(
     ):
         raise ValueError(f"Unknown model provider: {target}")
     if target != config.provider:
+        resolved._api_key_override = None
         resolved.api_key = None
         resolved.base_url = None
         resolved.model = None

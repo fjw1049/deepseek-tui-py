@@ -633,7 +633,9 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         self.last_real_input_tokens = 0
         self.last_real_input_estimate = 0
         self._context_measurement_model = None
+        config = config.model_copy(deep=True)
         self._app_config = config
+        self.turn_loop.model_config = config
         pc = config.effective_provider_config()
         self.default_temperature = pc.temperature
         self.default_reasoning_effort = config.reasoning_effort
@@ -1146,7 +1148,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
 
         async with AsyncExitStack() as cleanup:
             # 装配 HookDispatcher + HookExecutor
-            cfg = config if isinstance(config, Config) else Config()
+            cfg = config.model_copy(deep=True) if isinstance(config, Config) else Config()
             from deepseek_tui.integrations.hooks import (
                 build_hook_dispatcher,
                 build_lifecycle_hook_executor,
@@ -1213,12 +1215,6 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                     extra_mcp_servers=(plugin_contribs.mcp_servers if plugin_contribs else None),
                 )
                 cleanup.push_async_callback(runtime.shutdown)
-            # Make [providers.X] context_window overrides visible to
-            # context_window_for_model() even when Config was built directly
-            # (server / tests) instead of through ConfigLoader.load.
-            from deepseek_tui.config.providers import register_provider_context_windows
-
-            register_provider_context_windows(cfg)
             # Discover skills for system prompt injection
             skill_reg = discover_in_workspace(workspace=working_directory)
             if plugin_skill_contribs is not None and plugin_skill_contribs.skills:
@@ -1314,7 +1310,9 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                 engine.turn_usage_ledger.on_record = engine._record_session_usage
             else:
                 engine.client = MeteredLLMClient(client, engine.turn_usage_ledger)
-            engine.turn_loop = TurnLoop(engine.client, compact_fn=engine._emergency_compact)
+            engine.turn_loop = TurnLoop(
+                engine.client, compact_fn=engine._emergency_compact, model_config=cfg
+            )
             engine._owns_tool_runtime = not isinstance(tool_runtime, ToolRuntime)
             # Register plugin index + skill names for prompt rendering.
             # Commands/agents/rules are deferred -- ``ensure_plugin_activated``
@@ -1666,6 +1664,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
 
         return estimate_context_breakdown(
             model=target_model,
+            model_config=getattr(self, "_app_config", None),
             messages=(
                 self._active_context_messages
                 if self._active_context_messages is not None
@@ -2833,12 +2832,15 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
 
             capture_goal_checklist(self.tool_context)
             return
-        from deepseek_tui.tools.todo import reconcile_open_checklist_items
+        from deepseek_tui.tools.todo import (
+            _forward_to_task_manager, reconcile_open_checklist_items,
+        )
 
         reconciled = reconcile_open_checklist_items(self.tool_context)
         if reconciled is None:
             return
         content, metadata = reconciled
+        await _forward_to_task_manager(self.tool_context, metadata)
         tool_call_id = f"checklist_reconcile_{uuid.uuid4().hex[:8]}"
         await self.handle.emit(
             ToolCallEvent(
@@ -3175,6 +3177,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                 model=model,
                 system_prompt=system_prompt,
                 tools=tools,
+                model_config=getattr(self, "_app_config", None),
             )
             if should_trigger:
                 from deepseek_tui.config.providers import max_output_tokens_for_model

@@ -1,0 +1,48 @@
+{
+  "date": "2026-09-28",
+  "scope": "audit 15 TUI minimal fixes T01-T12",
+  "before": {
+    "initial_new_tests": 68,
+    "passed": 36,
+    "failed": 32
+  },
+  "after": {
+    "passed": 308,
+    "failed": 0,
+    "new_audit_tests": 82,
+    "command": "DEEPSEEK_HOME=/tmp/audit15-fixes .venv/bin/pytest -q tests/test_audit_15.py tests/test_presentation_tui.py tests/test_subagent_display.py tests/test_tui_smoke.py tests/test_delegate_ui.py tests/test_approval_system.py tests/test_info_sidebar_filters.py tests/test_state_persistence.py tests/test_session_restore.py tests/test_multi_provider.py tests/test_audit_14.py tests/goal --tb=short"
+  },
+  "checks": [
+    {
+      "command": ".venv/bin/ruff check tests/test_audit_15.py src/deepseek_tui/tui/lifecycle.py docs/audits/2026-09-27/builtin_tools_probe.py",
+      "result": "passed"
+    },
+    {
+      "command": ".venv/bin/ruff check --select F,E9 --ignore F541 src/deepseek_tui/tui src/deepseek_tui/engine/handle.py",
+      "result": "passed",
+      "limitation": "Existing F541 in tool_cell.py is also present in HEAD; whole legacy TUI lint is not claimed clean."
+    },
+    {
+      "command": ".venv/bin/python -m compileall -q src/deepseek_tui/tui src/deepseek_tui/engine/handle.py src/deepseek_tui/server/threads/store.py",
+      "result": "passed"
+    },
+    {
+      "command": "git diff --check",
+      "result": "passed"
+    }
+  ],
+  "comparison": {
+    "fixture": "3 threads, 9 TurnRecords",
+    "same_counts": true,
+    "previous_record_reads": 27,
+    "aggregate_record_reads": 9,
+    "test": "test_turn_count_aggregation_reads_each_record_once"
+  },
+  "limitations": [
+    "No full repository test run",
+    "No live model or real terminal end-to-end run",
+    "Full rewind, incremental sanitizer and cross-workspace Engine rebuild deferred",
+    "Some filesystem I/O remains synchronous",
+    "Worker I/O cleanup can wait on a slow external operation"
+  ]
+}

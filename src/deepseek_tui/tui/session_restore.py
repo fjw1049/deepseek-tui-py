@@ -18,6 +18,30 @@ from typing import TYPE_CHECKING
 logger = logging.getLogger(__name__)
 
 
+def visible_message_text(message: Message) -> str | None:
+    """Project durable messages for transcript restore and text export."""
+    from deepseek_tui.protocol.messages import MessageOrigin
+    from deepseek_tui.tui.sanitize import strip_subagent_sentinels
+
+    if message.origin not in {None, MessageOrigin.REAL_USER}:
+        return None
+    if message.role not in {"user", "assistant", "tool"}:
+        return None
+    parts = []
+    for block in message.content:
+        if block.type == "text":
+            parts.append(strip_subagent_sentinels(block.text))
+        elif block.type == "image":
+            parts.append(f"[Image: {block.asset_id}, {block.width}×{block.height}]")
+        elif block.type == "tool_use":
+            parts.append(f"[Tool: {block.name}]")
+        elif block.type == "tool_result":
+            parts.append(f"[Tool result: {block.tool_use_id}] {block.content}")
+        elif block.type == "thinking":
+            parts.append("[Thinking omitted]")
+    return "\n".join(parts).strip() or None
+
+
 def parse_session_messages(session_data: dict[str, Any], *, path: Path | None = None) -> list[Message]:
     """Validate session JSON and return restored messages."""
     from deepseek_tui.engine.context_pressure import messages_from_dicts
@@ -44,7 +68,11 @@ def apply_messages_to_engine(
     messages: list[Message],
     metadata: dict[str, Any] | None = None,
 ) -> None:
-    engine.session_messages = list(messages)
+    if hasattr(engine, "sync_session"):
+        engine.sync_session(list(messages))
+    else:
+        engine.session_messages = list(messages)
+    engine._compaction_summary_prompt = None
     # Bridge lives in messages; seed iterative re-compaction memory if present.
     try:
         from deepseek_tui.engine.context_pressure import extract_compaction_bridge_text
@@ -54,10 +82,9 @@ def apply_messages_to_engine(
             engine._compaction_summary_prompt = bridge
     except Exception:  # noqa: BLE001
         pass
-    if metadata:
-        from deepseek_tui.goal.persist import apply_goal_to_engine
+    from deepseek_tui.goal.persist import apply_goal_to_engine
 
-        apply_goal_to_engine(engine, metadata)
+    apply_goal_to_engine(engine, metadata or {})
 
 
 def try_restore_crash_checkpoint(engine: Any) -> tuple[list[Message], dict[str, Any]] | None:
@@ -179,7 +206,13 @@ class TUIApprovalHandler(ApprovalHandler):
         )
         self._app.push_screen(dialog, _on_dismiss)
 
-        approved = await future
+        try:
+            approved = await future
+        except asyncio.CancelledError:
+            # Only this dialog expires; overlays above it remain in place.
+            if dialog in self._app.screen_stack:
+                dialog.expire()
+            raise
         if approved:
             return ApprovalDecision.APPROVED
         return ApprovalDecision.DENIED

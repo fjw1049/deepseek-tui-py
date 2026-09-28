@@ -1,0 +1,26 @@
+{
+  "date": "2026-09-28",
+  "scope": {
+    "modules": 16,
+    "lines": 9121,
+    "coverage": "Core paths per module and adjacent calls, not exhaustive dynamic branch coverage"
+  },
+  "production_changes": false,
+  "tests": {
+    "passed": 39,
+    "seconds": 0.44,
+    "command": "DEEPSEEK_HOME=/tmp/audit15-tests .venv/bin/pytest -q tests/test_presentation_tui.py tests/test_subagent_display.py tests/test_tui_smoke.py tests/test_delegate_ui.py tests/test_approval_system.py tests/test_info_sidebar_filters.py tests/test_state_persistence.py tests/test_session_restore.py --tb=short"
+  },
+  "probe": {
+    "command": "PYTHONPATH=src .venv/bin/python docs/audits/2026-09-27/tui_probe.py",
+    "results": "tui-probe-results.json",
+    "observations": 15
+  },
+  "probe_limits": "Temporary files, controlled UI and Engine mocks, actual queue and parsing methods; no full interactive terminal E2E; fake Engine.shutdown models verified real shutdown_session hook call. Some existing smoke tests only inspect source.",
+  "live_model_calls": false,
+  "network_calls": false,
+  "real_terminal_notification": false,
+  "probe_lint_passed": true,
+  "probe_compile_passed": true,
+  "source_line_counts_verified": true
+}

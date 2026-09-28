@@ -1,0 +1,31 @@
+{
+  "date": "2026-09-28",
+  "scope": "W01-W11 boundary fixes; no server production changes",
+  "initial_new_regressions": {
+    "failed": 36
+  },
+  "new_regressions_final": {
+    "passed": 43
+  },
+  "expanded_run": {
+    "passed": 448,
+    "skipped": 1,
+    "failed": 2
+  },
+  "baseline_failures_reproduced_against": "0eeaeb8c workspace modules in temporary source fixture",
+  "baseline_failure_tests": [
+    "tests/contract/test_auto_publish.py::test_start_turn_never_dispatches_without_checkpoint",
+    "tests/contract/test_thread_resume.py::test_resume_thread_returns_detail"
+  ],
+  "final_run": {
+    "passed": 448,
+    "skipped": 1,
+    "deselected_known_baseline_failures": 2,
+    "seconds": 44.54
+  },
+  "ruff_F": "passed",
+  "git_diff_check": "passed",
+  "benchmark": "workspace-benchmark-results.json",
+  "historical_workspace_probe_preserved": true,
+  "native_windows_verified": false
+}

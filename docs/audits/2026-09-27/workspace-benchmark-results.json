@@ -1,0 +1,42 @@
+{
+  "baseline": "0eeaeb8c",
+  "runs_per_case": 1,
+  "results": [
+    {
+      "commits": 1,
+      "before": {
+        "seconds": 5.7e-05,
+        "diff_calls": 1
+      },
+      "after": {
+        "seconds": 3.4e-05,
+        "diff_calls": 1
+      },
+      "same_snapshot": true
+    },
+    {
+      "commits": 100,
+      "before": {
+        "seconds": 0.038292,
+        "diff_calls": 5050
+      },
+      "after": {
+        "seconds": 0.001562,
+        "diff_calls": 100
+      },
+      "same_snapshot": true
+    },
+    {
+      "commits": 1000,
+      "before": {
+        "seconds": 3.978155,
+        "diff_calls": 500500
+      },
+      "after": {
+        "seconds": 0.055538,
+        "diff_calls": 1000
+      },
+      "same_snapshot": true
+    }
+  ]
+}

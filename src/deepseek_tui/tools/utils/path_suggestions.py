@@ -82,15 +82,15 @@ def _find_similar(path: Path, deadline: float) -> list[str]:
     try:
         if not parent.is_dir():
             return []
-        entries = list(parent.iterdir())
+        entries = parent.iterdir()
     except OSError:
         return []
 
     leaf_l = leaf.lower()
     stem_l = path.stem.lower()
     scored: list[tuple[int, str]] = []
-    for entry in entries:
-        if time.monotonic() > deadline:
+    for index, entry in enumerate(entries):
+        if index >= 1000 or time.monotonic() > deadline:
             break
         name = entry.name
         name_l = name.lower()

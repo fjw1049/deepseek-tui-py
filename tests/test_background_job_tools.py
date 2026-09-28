@@ -108,7 +108,14 @@ async def test_task_output_block_collects_large_output_within_timeout(tmp_path) 
 
     assert result.metadata["status"] == "completed"
     assert result.metadata["returncode"] == 0
-    assert len(result.metadata["stdout"]) > 300_000
+    from pathlib import Path
+    import re
+
+    stdout = result.metadata["stdout"]
+    assert len(stdout) < 70_000
+    match = re.search(r"Full output saved to (.+?\.txt)\.", stdout)
+    assert match is not None
+    assert Path(match.group(1)).stat().st_size > 300_000
 
 
 async def test_task_output_timeout_then_recollect_preserves_output(tmp_path) -> None:

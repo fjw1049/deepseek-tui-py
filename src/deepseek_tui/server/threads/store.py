@@ -5,13 +5,17 @@ Pure I/O — no engine logic lives here.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
-import time
+import threading
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from datetime import datetime, timezone
+from functools import wraps
 from pathlib import Path
-from typing import Any, Protocol, TypeVar
+from typing import Any, Protocol, TypeVar, cast
 
 from deepseek_tui.server.threads.models import (
     CURRENT_RUNTIME_SCHEMA_VERSION,
@@ -36,10 +40,30 @@ class _VersionedRecord(Protocol):
 _T = TypeVar("_T", bound=_VersionedRecord)
 
 
+def validate_record_id(value: str) -> str:
+    if not isinstance(value, str) or not value or value in {".", ".."} or any(
+        char in value for char in "/\\\0:"
+    ):
+        raise ValueError("Invalid record ID")
+    return value
+
+
+_F = TypeVar("_F", bound=Callable[..., Any])
+
+
+def _serialized(method: _F) -> _F:
+    @wraps(method)
+    def guarded(self: RuntimeThreadStore, *args: Any, **kwargs: Any) -> Any:
+        with self.event_lock():
+            return method(self, *args, **kwargs)
+    return cast(_F, guarded)
+
+
 class RuntimeThreadStore:
     """File-based store: threads/turns/items as individual JSON, events as JSONL."""
 
     def __init__(self, root: Path) -> None:
+        self._lock_state = threading.local()
         self._root = root
         self._threads_dir = root / "threads"
         self._turns_dir = root / "turns"
@@ -57,79 +81,116 @@ class RuntimeThreadStore:
             self._worktree_baselines_dir,
             self._rewind_audit_dir,
         ):
+            if d.is_symlink():
+                raise ValueError(f"Symlink store directory: {d}")
             d.mkdir(parents=True, exist_ok=True)
 
-        if self._state_path.exists():
-            raw = json.loads(self._state_path.read_text(encoding="utf-8"))
-            self._state = RuntimeStoreState.model_validate(raw)
-        else:
-            self._state = RuntimeStoreState()
-            write_json_atomic(self._state_path, self._state.model_dump())
-
-        import asyncio
-
-        self._seq_lock = asyncio.Lock()
-        # Per-thread locks so seq allocation + JSONL append happen atomically
-        # for a given events file (concurrent writers would interleave lines).
         self._event_write_locks: dict[str, asyncio.Lock] = {}
-        self._events_since_checkpoint = 0
-        self._last_checkpoint_at = time.monotonic()
+        # The lock lives outside the replaceable store tree.
+        with self.event_lock():
+            self._state = self._read_state()
+            # Recover the high-water mark written by older batched-checkpoint stores.
+            for path in self._events_dir.glob("*.jsonl"):
+                for record in self.iter_events(path.stem):
+                    self._state.next_seq = max(self._state.next_seq, record.seq + 1)
+            write_json_atomic(self._state_path, self._state.model_dump())
 
     @property
     def root(self) -> Path:
         return self._root
 
-    CHECKPOINT_EVENT_INTERVAL = 16
-    CHECKPOINT_MAX_INTERVAL_S = 0.5
+    @contextmanager
+    def event_lock(self) -> Iterator[None]:
+        from deepseek_tui.workspace.project_lease import FileLease
+
+        if getattr(self._lock_state, "held", False):
+            yield
+            return
+        lease = FileLease(self._root.parent / f".{self._root.name}.events.lock")
+        lease.acquire_blocking()
+        self._lock_state.held = True
+        try:
+            yield
+        finally:
+            self._lock_state.held = False
+            lease.release()
+
+    @_serialized
+    def _read_state(self) -> RuntimeStoreState:
+        if not self._state_path.exists():
+            return RuntimeStoreState()
+        return RuntimeStoreState.model_validate_json(self._state_path.read_text(encoding="utf-8"))
 
     # --- paths ---------------------------------------------------------------
 
+    def _record_path(self, directory: Path, record_id: str, suffix: str) -> Path:
+        path = directory / f"{validate_record_id(record_id)}.{suffix}"
+        if directory.is_symlink() or path.is_symlink():
+            raise ValueError("Symlink store path")
+        return path
+
+
     def _thread_path(self, thread_id: str) -> Path:
-        return self._threads_dir / f"{thread_id}.json"
+        return self._record_path(self._threads_dir, thread_id, "json")
 
     def _turn_path(self, turn_id: str) -> Path:
-        return self._turns_dir / f"{turn_id}.json"
+        return self._record_path(self._turns_dir, turn_id, "json")
 
     def _item_path(self, item_id: str) -> Path:
-        return self._items_dir / f"{item_id}.json"
+        return self._record_path(self._items_dir, item_id, "json")
 
     def _events_path(self, thread_id: str) -> Path:
-        return self._events_dir / f"{thread_id}.jsonl"
+        return self._record_path(self._events_dir, thread_id, "jsonl")
 
     def _worktree_baseline_path(self, thread_id: str) -> Path:
-        return self._worktree_baselines_dir / f"{thread_id}.json"
+        return self._record_path(self._worktree_baselines_dir, thread_id, "json")
 
     def _rewind_audit_path(self, thread_id: str) -> Path:
-        return self._rewind_audit_dir / f"{thread_id}.jsonl"
+        return self._record_path(self._rewind_audit_dir, thread_id, "jsonl")
 
     # --- CRUD ----------------------------------------------------------------
 
+    @_serialized
     def save_thread(self, thread: ThreadRecord) -> None:
+        if thread.latest_turn_id is not None:
+            validate_record_id(thread.latest_turn_id)
         write_json_atomic(self._thread_path(thread.id), thread.model_dump(mode="json"))
 
+    @_serialized
     def save_turn(self, turn: TurnRecord) -> None:
+        validate_record_id(turn.thread_id)
+        for item_id in turn.item_ids:
+            validate_record_id(item_id)
         write_json_atomic(self._turn_path(turn.id), turn.model_dump(mode="json"))
 
+    @_serialized
     def save_item(self, item: TurnItemRecord) -> None:
+        validate_record_id(item.turn_id)
         write_json_atomic(self._item_path(item.id), item.model_dump(mode="json"))
 
+    @_serialized
     def delete_turn(self, turn_id: str) -> None:
         self._turn_path(turn_id).unlink(missing_ok=True)
 
+    @_serialized
     def delete_item(self, item_id: str) -> None:
         self._item_path(item_id).unlink(missing_ok=True)
 
+    @_serialized
     def delete_thread(self, thread_id: str) -> None:
         self._thread_path(thread_id).unlink(missing_ok=True)
         self.delete_worktree_baseline(thread_id)
         self.delete_rewind_audit(thread_id)
 
+    @_serialized
     def delete_events(self, thread_id: str) -> None:
         self._events_path(thread_id).unlink(missing_ok=True)
 
+    @_serialized
     def save_worktree_baseline(self, thread_id: str, baseline: dict[str, Any]) -> None:
         write_json_atomic(self._worktree_baseline_path(thread_id), baseline)
 
+    @_serialized
     def load_worktree_baseline(self, thread_id: str) -> dict[str, Any] | None:
         path = self._worktree_baseline_path(thread_id)
         if not path.is_file():
@@ -141,11 +202,13 @@ class RuntimeThreadStore:
             return None
         return raw if isinstance(raw, dict) else None
 
+    @_serialized
     def delete_worktree_baseline(self, thread_id: str) -> None:
         self._worktree_baseline_path(thread_id).unlink(missing_ok=True)
 
     # --- rewind audit (JSONL append) -----------------------------------------
 
+    @_serialized
     def append_rewind_audit(self, thread_id: str, record: dict[str, Any]) -> None:
         """Durably append one rewind audit record before any deletion happens.
 
@@ -159,6 +222,7 @@ class RuntimeThreadStore:
             f.flush()
             os.fsync(f.fileno())
 
+    @_serialized
     def list_rewind_audit(self, thread_id: str) -> list[dict[str, Any]]:
         path = self._rewind_audit_path(thread_id)
         if not path.exists():
@@ -178,9 +242,11 @@ class RuntimeThreadStore:
                 out.append(record)
         return out
 
+    @_serialized
     def delete_rewind_audit(self, thread_id: str) -> None:
         self._rewind_audit_path(thread_id).unlink(missing_ok=True)
 
+    @_serialized
     def iter_turns(self) -> list[TurnRecord]:
         out: list[TurnRecord] = []
         if not self._turns_dir.exists():
@@ -191,6 +257,7 @@ class RuntimeThreadStore:
                 out.append(record)
         return out
 
+    @_serialized
     def iter_items(self) -> list[TurnItemRecord]:
         out: list[TurnItemRecord] = []
         if not self._items_dir.exists():
@@ -202,6 +269,10 @@ class RuntimeThreadStore:
         return out
 
     def compact_events(self, thread_id: str, *, drop_noisy: bool = True) -> int:
+        with self.event_lock():
+            return self._compact_events(thread_id, drop_noisy=drop_noisy)
+
+    def _compact_events(self, thread_id: str, *, drop_noisy: bool = True) -> int:
         """Rewrite a thread's event log, dropping noisy delta events.
 
         Returns the number of events removed. Conversation items are untouched.
@@ -237,11 +308,16 @@ class RuntimeThreadStore:
         tmp.replace(path)
         return removed
 
+    @_serialized
     def load_thread(self, thread_id: str) -> ThreadRecord:
         path = self._thread_path(thread_id)
         if not path.exists():
             raise FileNotFoundError(f"Thread not found: {thread_id}")
+        if path.is_symlink():
+            raise ValueError(f"Symlink record: {path.name}")
         raw = json.loads(path.read_text(encoding="utf-8"))
+        if raw.get("id") != path.stem:
+            raise ValueError(f"Record ID does not match filename: {path.name}")
         record = ThreadRecord.model_validate(raw)
         if record.schema_version > CURRENT_RUNTIME_SCHEMA_VERSION:
             raise ValueError(
@@ -250,11 +326,16 @@ class RuntimeThreadStore:
             )
         return record
 
+    @_serialized
     def load_turn(self, turn_id: str) -> TurnRecord:
         path = self._turn_path(turn_id)
         if not path.exists():
             raise FileNotFoundError(f"Turn not found: {turn_id}")
+        if path.is_symlink():
+            raise ValueError(f"Symlink record: {path.name}")
         raw = json.loads(path.read_text(encoding="utf-8"))
+        if raw.get("id") != path.stem:
+            raise ValueError(f"Record ID does not match filename: {path.name}")
         record = TurnRecord.model_validate(raw)
         if record.schema_version > CURRENT_RUNTIME_SCHEMA_VERSION:
             raise ValueError(
@@ -263,11 +344,16 @@ class RuntimeThreadStore:
             )
         return record
 
+    @_serialized
     def load_item(self, item_id: str) -> TurnItemRecord:
         path = self._item_path(item_id)
         if not path.exists():
             raise FileNotFoundError(f"Item not found: {item_id}")
+        if path.is_symlink():
+            raise ValueError(f"Symlink record: {path.name}")
         raw = json.loads(path.read_text(encoding="utf-8"))
+        if raw.get("id") != path.stem:
+            raise ValueError(f"Record ID does not match filename: {path.name}")
         record = TurnItemRecord.model_validate(raw)
         if record.schema_version > CURRENT_RUNTIME_SCHEMA_VERSION:
             raise ValueError(
@@ -283,7 +369,12 @@ class RuntimeThreadStore:
         whole listing (and with it server startup recovery) — skip it and warn.
         """
         try:
+            if path.is_symlink():
+                raise ValueError("Symlink record")
             raw = json.loads(path.read_text(encoding="utf-8"))
+            if raw.get("id") != path.stem:
+                raise ValueError("Record ID does not match filename")
+            validate_record_id(path.stem)
             record: _T = model.model_validate(raw)
         except Exception:
             logger.warning("Skipping unreadable record file: %s", path, exc_info=True)
@@ -298,6 +389,7 @@ class RuntimeThreadStore:
             return None
         return record
 
+    @_serialized
     def list_threads(self) -> list[ThreadRecord]:
         out: list[ThreadRecord] = []
         if not self._threads_dir.exists():
@@ -309,6 +401,17 @@ class RuntimeThreadStore:
         out.sort(key=lambda t: t.updated_at, reverse=True)
         return out
 
+    @_serialized
+    def count_turns_by_thread(self) -> dict[str, int]:
+        """Aggregate sidebar counts in one scan rather than one scan per thread."""
+        counts: dict[str, int] = {}
+        for path in self._turns_dir.glob("*.json"):
+            record = self._load_listing_record(path, TurnRecord)
+            if record is not None:
+                counts[record.thread_id] = counts.get(record.thread_id, 0) + 1
+        return counts
+
+    @_serialized
     def list_turns_for_thread(self, thread_id: str) -> list[TurnRecord]:
         out: list[TurnRecord] = []
         if not self._turns_dir.exists():
@@ -320,6 +423,7 @@ class RuntimeThreadStore:
         out.sort(key=lambda t: t.created_at)
         return out
 
+    @_serialized
     def list_items_for_turn(self, turn_id: str) -> list[TurnItemRecord]:
         out: list[TurnItemRecord] = []
         if not self._items_dir.exists():
@@ -356,36 +460,29 @@ class RuntimeThreadStore:
     ) -> RuntimeEventRecord:
         import asyncio
 
-        write_lock = self._event_write_locks.setdefault(thread_id, asyncio.Lock())
-        # Hold the per-thread lock across seq allocation AND the JSONL append
-        # so concurrent writers cannot interleave lines in the events file.
-        async with write_lock:
-            async with self._seq_lock:
-                seq = self._state.next_seq
-                self._state.next_seq += 1
-                self._events_since_checkpoint += 1
-                now = time.monotonic()
-                checkpoint_due = force_checkpoint or (
-                    self._events_since_checkpoint >= self.CHECKPOINT_EVENT_INTERVAL
-                    or (now - self._last_checkpoint_at) >= self.CHECKPOINT_MAX_INTERVAL_S
-                )
-                if checkpoint_due:
-                    write_json_atomic(self._state_path, self._state.model_dump())
-                    self._events_since_checkpoint = 0
-                    self._last_checkpoint_at = now
+        from deepseek_tui.server.lifecycle import complete_before_cancel
 
-            stored_payload = payload
-            from deepseek_tui.server.data_inventory import (
-                EVENT_DELTA_PAYLOAD_MAX_CHARS,
-                is_noisy_event_name,
-                truncate_event_payload,
-            )
+        validate_record_id(thread_id)
+        for related_id in (turn_id, item_id):
+            if related_id is not None:
+                validate_record_id(related_id)
+        lock = self._event_write_locks.setdefault(thread_id, asyncio.Lock())
+        async with lock:
+            return await complete_before_cancel(asyncio.to_thread(
+                self._append_event, thread_id, turn_id, item_id, event, payload
+            ))
 
-            if is_noisy_event_name(event):
-                stored_payload = truncate_event_payload(
-                    payload, max_chars=EVENT_DELTA_PAYLOAD_MAX_CHARS
-                )
-
+    def _append_event(
+        self, thread_id: str, turn_id: str | None, item_id: str | None,
+        event: str, payload: dict[str, Any],
+    ) -> RuntimeEventRecord:
+        with self.event_lock():
+            state = self._read_state()
+            seq = state.next_seq
+            state.next_seq += 1
+            # Reserve durably before appending: failures may leave gaps, never reuse IDs.
+            write_json_atomic(self._state_path, state.model_dump())
+            self._state = state
             record = RuntimeEventRecord(
                 schema_version=CURRENT_RUNTIME_SCHEMA_VERSION,
                 seq=seq,
@@ -394,52 +491,61 @@ class RuntimeThreadStore:
                 turn_id=turn_id,
                 item_id=item_id,
                 event=event,
-                payload=stored_payload,
+                payload=payload,
             )
-
             path = self._events_path(thread_id)
-            path.parent.mkdir(parents=True, exist_ok=True)
-            line = record.model_dump_json()
-            with path.open("a", encoding="utf-8") as f:
-                f.write(line + "\n")
-                if checkpoint_due:
-                    f.flush()
-
-        return record
+            # Separate a crash-torn final line so it cannot swallow the next record.
+            if path.exists() and path.stat().st_size:
+                with path.open("rb+") as stream:
+                    stream.seek(-1, os.SEEK_END)
+                    if stream.read(1) != b"\n":
+                        stream.write(b"\n")
+            with path.open("a", encoding="utf-8") as stream:
+                stream.write(record.model_dump_json() + "\n")
+                stream.flush()
+                os.fsync(stream.fileno())
+            return record
 
     async def flush_event_checkpoint(self) -> None:
-        """Persist ``state.next_seq`` after a batched delta flush."""
-        async with self._seq_lock:
-            if self._events_since_checkpoint <= 0:
-                return
-            write_json_atomic(self._state_path, self._state.model_dump())
-            self._events_since_checkpoint = 0
-            self._last_checkpoint_at = time.monotonic()
+        """Every append now persists its reservation before writing the event."""
+
+    def iter_events(
+        self, thread_id: str, since_seq: int | None = None
+    ) -> Iterator[RuntimeEventRecord]:
+        path = self._events_path(thread_id)
+        if not path.exists():
+            return
+        with path.open(encoding="utf-8") as stream:
+            for line in stream:
+                if not line.strip():
+                    continue
+                try:
+                    record = RuntimeEventRecord.model_validate_json(line)
+                except Exception:
+                    logger.warning("events_since_skip_corrupt_line thread_id=%s", thread_id)
+                    continue
+                if record.thread_id == thread_id and (since_seq is None or record.seq > since_seq):
+                    yield record
+
+    def event_pages(
+        self, thread_id: str, since_seq: int | None = None, *, page_size: int = 256
+    ) -> Iterator[list[RuntimeEventRecord]]:
+        if page_size < 1:
+            raise ValueError("page_size must be positive")
+        page = []
+        for record in self.iter_events(thread_id, since_seq):
+            page.append(record)
+            if len(page) == page_size:
+                yield page
+                page = []
+        if page:
+            yield page
 
     def events_since(
         self, thread_id: str, since_seq: int | None = None
     ) -> list[RuntimeEventRecord]:
-        path = self._events_path(thread_id)
-        if not path.exists():
-            return []
-        out: list[RuntimeEventRecord] = []
-        for line in path.read_text(encoding="utf-8").splitlines():
-            if not line.strip():
-                continue
-            try:
-                record = RuntimeEventRecord.model_validate_json(line)
-            except Exception:  # noqa: BLE001 — skip corrupt lines, keep the rest
-                logger.warning(
-                    "events_since_skip_corrupt_line thread_id=%s line=%.120s",
-                    thread_id,
-                    line,
-                )
-                continue
-            if since_seq is not None and record.seq <= since_seq:
-                continue
-            out.append(record)
-        return out
+        return list(self.iter_events(thread_id, since_seq))
 
     async def current_seq(self) -> int:
-        async with self._seq_lock:
-            return self._state.next_seq - 1
+        import asyncio
+        return await asyncio.to_thread(lambda: self._read_state().next_seq - 1)

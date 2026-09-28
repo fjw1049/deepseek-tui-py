@@ -8,9 +8,7 @@ rather than spawning a sibling binary.
 
 from __future__ import annotations
 
-
 import asyncio
-import contextlib
 import ipaddress
 import json
 import sys
@@ -19,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 import typer
+from click import get_current_context
 
 from deepseek_tui.config.loader import ConfigLoader
 from deepseek_tui.config.models import Config
@@ -58,12 +57,28 @@ def _load_config(
     provider: str | None = None,
     model: str | None = None,
 ) -> Config:
+    options = _global_options()
+    overrides = {key: options[key] for key in (
+        "api_key", "base_url", "approval_policy", "sandbox_mode"
+    ) if options.get(key) is not None}
+    logging_options = {key: options[source] for key, source in (
+        ("level", "log_level"), ("dir", "log_dir"), ("console", "log_console")
+    ) if options.get(source) is not None}
+    if logging_options:
+        overrides["logging"] = logging_options
     return ConfigLoader().load(
-        config_path=config,
-        profile_name=profile,
-        provider=provider,
-        model=model,
+        config_path=config or options.get("config"),
+        profile_name=profile or options.get("profile"),
+        provider=provider or options.get("provider"),
+        model=model or options.get("model"),
+        overrides=overrides,
     )
+
+
+def _global_options() -> dict[str, Any]:
+    ctx = get_current_context(silent=True)
+    return (ctx.find_root().obj or {}) if ctx is not None else {}
+
 
 
 # ── @app.callback: default action (no subcommand → launch TUI) ──────────
@@ -92,6 +107,14 @@ def main_callback(
         typer.echo("deepseek-tui-py 0.1.0")
         raise typer.Exit()
 
+    if output_mode not in (None, "text"):
+        raise typer.BadParameter("Only --output-mode text is supported")
+    ctx.obj = {
+        "config": config, "profile": profile, "provider": provider, "model": model,
+        "api_key": api_key, "base_url": base_url, "approval_policy": approval_policy,
+        "sandbox_mode": sandbox_mode, "log_level": log_level, "log_dir": log_dir,
+        "log_console": True if log_console else None,
+    }
     if ctx.invoked_subcommand is not None:
         return
 
@@ -145,7 +168,6 @@ def _run_one_shot(config: Config, prompt: str) -> None:
 async def _run_one_shot_async(config: Config, prompt: str) -> None:
     """Async implementation of one-shot mode."""
     from deepseek_tui.client.factory import build_llm_client
-    from deepseek_tui.engine.orchestrator import Engine
     from deepseek_tui.engine.events import (
         ErrorEvent,
         TextDeltaEvent,
@@ -154,48 +176,61 @@ async def _run_one_shot_async(config: Config, prompt: str) -> None:
         TurnCompleteEvent,
     )
     from deepseek_tui.engine.handle import EngineHandle
+    from deepseek_tui.engine.orchestrator import Engine
 
     client = build_llm_client(config)
-    if not client.api_key:
-        typer.echo(
-            "No API key configured. Run `deepseek-tui auth set --provider <name>` first.",
-            err=True,
-        )
-        raise typer.Exit(1)
-
-    # 引擎↔调用方的双向管道：op 队列收输入、event 队列吐输出
     handle = EngineHandle()
     from deepseek_tui.tools.runtime import default_runtime_model
 
-    # 优先用显式指定的 model，否则跟当前 provider 有效主模型
-    model = default_runtime_model(config)
-    # async 工厂：装配工具运行时/技能/MCP，返回已就绪但未运行的引擎
-    engine = await Engine.create(handle, client, config=config, default_model=model)
-    # 把引擎主循环丢到后台并发跑（长驻 while 循环，靠 cancel 才停）
+    try:
+        engine = await Engine.create(
+            handle, client, config=config, default_model=default_runtime_model(config)
+        )
+    except BaseException:
+        await client.close()
+        raise
     engine_task = asyncio.create_task(engine.run())
-
+    next_event = None
     try:
         await handle.send_message(prompt)
-        async for event in handle.events():
+        events = handle.events().__aiter__()
+        while True:
+            next_event = asyncio.create_task(events.__anext__())
+            done, _ = await asyncio.wait(
+                (next_event, engine_task), return_when=asyncio.FIRST_COMPLETED
+            )
+            if engine_task in done:
+                engine_task.result()  # Propagate a crash even if an event raced with it.
+                if next_event not in done:
+                    raise RuntimeError("Engine stopped before completing the turn")
+            try:
+                event = next_event.result()
+            except StopAsyncIteration as exc:
+                raise RuntimeError("Event stream closed before completing the turn") from exc
             if isinstance(event, TextDeltaEvent):
                 print(event.text, end="", flush=True)
             elif isinstance(event, ToolCallEvent):
-                tc = event.tool_call
-                typer.echo(f"\n[tool: {tc.name}]", err=True)
+                typer.echo(f"\n[tool: {event.tool_call.name}]", err=True)
             elif isinstance(event, ToolResultEvent):
                 status = "ok" if event.success else "error"
                 typer.echo(f"[tool result: {status}]", err=True)
             elif isinstance(event, ErrorEvent):
                 typer.echo(f"\nError: {event.message}", err=True)
-                break
+                raise typer.Exit(1)
             elif isinstance(event, TurnCompleteEvent):
+                if not event.success:
+                    typer.echo(event.error_message or "Turn failed", err=True)
+                    raise typer.Exit(1)
                 print()
-                break
+                return
     finally:
-        engine_task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await engine_task
-        await engine.shutdown()
+        tasks = [engine_task] + ([next_event] if next_event is not None else [])
+        for task in tasks:
+            task.cancel()
+        try:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        finally:
+            await engine.shutdown()  # Engine owns the client after successful construction.
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -434,7 +469,8 @@ def auth_list(
 ) -> None:
     """List all known providers with their auth state."""
     loaded = _load_config(config, profile)
-    from deepseek_tui.state.secrets import credential_providers, env_for as _env_for
+    from deepseek_tui.state.secrets import credential_providers
+    from deepseek_tui.state.secrets import env_for as _env_for
 
     typer.echo("provider     env  config")
     for prov in credential_providers(loaded):
@@ -456,10 +492,11 @@ def config_get(
     key: str = typer.Argument(..., help="Config key to read."),
     config: Path | None = CONFIG_OPTION,
     profile: str | None = PROFILE_OPTION,
+    show_secrets: bool = typer.Option(False, "--show-secrets", help="Reveal this value explicitly."),
 ) -> None:
     """Get a single config value."""
     loaded = _load_config(config, profile)
-    value = _config_get_value(loaded, key)
+    value = _config_get_value(loaded, key, show_secrets=show_secrets)
     if value is not None:
         typer.echo(value)
     else:
@@ -477,6 +514,13 @@ def config_set(
     """Set a single config value (writes to config.toml)."""
     from deepseek_tui.state.secrets import write_config_value
 
+    options = _global_options()
+    config = config or options.get("config")
+    profile = profile or options.get("profile")
+    if profile:
+        if not profile.replace("_", "").replace("-", "").isalnum():
+            raise typer.BadParameter("Profile name must contain letters, digits, '_' or '-'")
+        key = f"profiles.{profile}.{key}"
     if key == "api_key":
         from deepseek_tui.state.secrets import write_active_api_key
 
@@ -488,7 +532,7 @@ def config_set(
     except ValueError as exc:
         typer.echo(f"error: {exc}", err=True)
         raise typer.Exit(1) from exc
-    typer.echo(f"set {key} = {value} in {path}")
+    typer.echo(f"set {key} in {path}")
 
 
 @config_app.command("unset")
@@ -500,6 +544,13 @@ def config_unset(
     """Remove a config key (writes to config.toml)."""
     from deepseek_tui.state.secrets import write_config_value
 
+    options = _global_options()
+    config = config or options.get("config")
+    profile = profile or options.get("profile")
+    if profile:
+        if not profile.replace("_", "").replace("-", "").isalnum():
+            raise typer.BadParameter("Profile name must contain letters, digits, '_' or '-'")
+        key = f"profiles.{profile}.{key}"
     if key == "api_key":
         from deepseek_tui.state.secrets import write_active_api_key
 
@@ -521,7 +572,7 @@ def config_list(
 ) -> None:
     """List all config key-value pairs."""
     loaded = _load_config(config, profile)
-    for key, val in sorted(loaded.model_dump(exclude_none=True).items()):
+    for key, val in sorted(_redacted_config(loaded).items()):
         if isinstance(val, dict):
             for k2, v2 in sorted(val.items()):
                 typer.echo(f"{key}.{k2} = {v2}")
@@ -545,25 +596,33 @@ def config_show(
 ) -> None:
     """Show the fully resolved config as JSON."""
     loaded = _load_config(config, profile, provider, model)
-    typer.echo(loaded.model_dump_json(indent=2))
+    typer.echo(json.dumps(_redacted_config(loaded), indent=2))
 
 
-def _config_get_value(config: Config, key: str) -> str | None:
-    """Retrieve a config value by dotted key path."""
-    parts = key.split(".")
-    obj: object = config
-    for part in parts:
-        if hasattr(obj, part):
-            obj = getattr(obj, part)
-        elif isinstance(obj, dict):
-            obj = obj.get(part)
-            if obj is None:
-                return None
-        else:
+def _redacted_config(config: Config, *, show_secrets: bool = False) -> dict[str, Any]:
+    def redact(value: Any, key: str = "") -> Any:
+        sensitive = key.lower() in {
+            "extra_headers", "extra_body", "webhook_urls", "password", "secret", "token"
+        } or key.lower().endswith(("_key", "_password", "_secret", "_token"))
+        if sensitive and value not in (None, "", {}, []):
+            return "[REDACTED]"
+        if isinstance(value, dict):
+            return {k: redact(v, k) for k, v in value.items()}
+        if isinstance(value, list):
+            return [redact(item) for item in value]
+        return value
+
+    values = config.model_dump(mode="json", exclude_none=True)
+    return values if show_secrets else redact(values)
+
+
+def _config_get_value(config: Config, key: str, *, show_secrets: bool = False) -> str | None:
+    obj: Any = _redacted_config(config, show_secrets=show_secrets)
+    for part in key.split("."):
+        if not isinstance(obj, dict) or part not in obj:
             return None
-    if obj is None:
-        return None
-    return str(obj)
+        obj = obj[part]
+    return None if obj is None else str(obj)
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -596,39 +655,20 @@ def model_resolve(
 ) -> None:
     """Resolve a model name to its canonical provider + model."""
     from deepseek_tui.config.providers import PROVIDER_DEFAULTS
+    from deepseek_tui.config.routing import config_for_model
 
-    requested = model_name or ""
-    resolved_model = requested
-    resolved_provider = provider or "deepseek"
-    used_fallback = False
-
-    if provider:
-        defaults = PROVIDER_DEFAULTS.get(provider)
-        if defaults:
-            known = {defaults.model}
-            if defaults.flash_model:
-                known.add(defaults.flash_model)
-            if requested in known:
-                resolved_model = requested
-            else:
-                resolved_model = defaults.model
-                used_fallback = True
-    else:
-        for prov_name, defaults in PROVIDER_DEFAULTS.items():
-            known = {defaults.model}
-            if defaults.flash_model:
-                known.add(defaults.flash_model)
-            if requested in known:
-                resolved_provider = prov_name
-                resolved_model = requested
+    loaded = _load_config(provider=provider)
+    selected_provider = provider
+    if model_name and "::" not in model_name and not provider:
+        for name, defaults in PROVIDER_DEFAULTS.items():
+            if model_name in {defaults.model, defaults.flash_model}:
+                selected_provider = name
                 break
-        else:
-            used_fallback = True
-
-    typer.echo(f"requested: {requested}")
-    typer.echo(f"resolved: {resolved_model}")
-    typer.echo(f"provider: {resolved_provider}")
-    typer.echo(f"used_fallback: {used_fallback}")
+    resolved = config_for_model(loaded, model_name, provider=selected_provider)
+    typer.echo(f"requested: {model_name or ''}")
+    typer.echo(f"resolved: {resolved.effective_provider_config().model}")
+    typer.echo(f"provider: {resolved.provider}")
+    typer.echo(f"used_fallback: {model_name is None}")
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -681,16 +721,34 @@ def thread_read(
     typer.echo(json.dumps(thread.model_dump(mode="json"), indent=2))
 
 
+def _update_thread_metadata(thread_id: str, **changes: Any) -> None:
+    from deepseek_tui.workspace.project_lease import ThreadLease
+
+    lease = ThreadLease(thread_id)
+    if not lease.acquire_blocking(nonblocking=True):
+        typer.echo("Thread is in use; retry after its runtime releases it", err=True)
+        raise typer.Exit(1)
+    try:
+        store = _thread_store()
+        try:
+            thread = store.load_thread(thread_id)
+        except FileNotFoundError as exc:
+            typer.echo(f"Thread not found: {thread_id}", err=True)
+            raise typer.Exit(1) from exc
+        for name, value in changes.items():
+            setattr(thread, name, value)
+        thread.updated_at = datetime.now(timezone.utc)
+        store.save_thread(thread)
+    finally:
+        lease.release()
+
+
 @thread_app.command("archive")
 def thread_archive(
     thread_id: str = typer.Argument(..., help="Thread ID to archive."),
 ) -> None:
     """Archive a thread."""
-    store = _thread_store()
-    thread = _load_thread_or_exit(thread_id)
-    thread.archived = True
-    thread.updated_at = datetime.now(timezone.utc)
-    store.save_thread(thread)
+    _update_thread_metadata(thread_id, archived=True)
     typer.echo(f"Archived {thread_id}")
 
 
@@ -699,11 +757,7 @@ def thread_unarchive(
     thread_id: str = typer.Argument(..., help="Thread ID to unarchive."),
 ) -> None:
     """Unarchive a thread."""
-    store = _thread_store()
-    thread = _load_thread_or_exit(thread_id)
-    thread.archived = False
-    thread.updated_at = datetime.now(timezone.utc)
-    store.save_thread(thread)
+    _update_thread_metadata(thread_id, archived=False)
     typer.echo(f"Unarchived {thread_id}")
 
 
@@ -713,11 +767,7 @@ def thread_set_name(
     name: str = typer.Argument(..., help="New thread name."),
 ) -> None:
     """Rename a thread."""
-    store = _thread_store()
-    thread = _load_thread_or_exit(thread_id)
-    thread.title = name
-    thread.updated_at = datetime.now(timezone.utc)
-    store.save_thread(thread)
+    _update_thread_metadata(thread_id, title=name)
     typer.echo(f"Renamed {thread_id} to {name!r}")
 
 
@@ -732,18 +782,20 @@ app.add_typer(sandbox_app, name="sandbox")
 @sandbox_app.command("check")
 def sandbox_check(
     command: str = typer.Argument(..., help="Shell command to check."),
-    ask: str = typer.Option("on-request", "--ask", help="Approval mode."),
+    ask: str | None = typer.Option(None, "--ask", help="Unsupported: this is a safety heuristic."),
 ) -> None:
-    """Check a command against the exec policy."""
+    """Inspect command safety heuristics, without evaluating runtime approval policy."""
     from deepseek_tui.policy.command_safety import analyze_command
 
+    if ask is not None:
+        raise typer.BadParameter("--ask is unsupported; this command only checks safety heuristics")
     result = analyze_command(command)
     typer.echo(json.dumps({
         "command": command,
         "safety_level": result.level.value,
         "reasons": result.reasons,
         "suggestions": result.suggestions,
-        "ask": ask,
+        "scope": "command-safety-heuristic",
     }, indent=2))
 
 
@@ -1081,13 +1133,15 @@ def mcp_connect_cmd(
 
     async def _run() -> None:
         manager = McpManager(configs, config_path=path)
-        summary = await manager.start_all()
-        errors = {item.server_name: item.error for item in summary.failed}
-        snapshot = snapshot_from_configs(path, configs, connection_errors=errors)
-        typer.echo(format_manager_snapshot(snapshot))
-        await manager.stop_all()
-        if summary.failed:
-            raise SystemExit(1)
+        try:
+            summary = await manager.start_all()
+            errors = {item.server_name: item.error for item in summary.failed}
+            snapshot = snapshot_from_configs(path, configs, connection_errors=errors)
+            typer.echo(format_manager_snapshot(snapshot))
+            if summary.failed:
+                raise typer.Exit(1)
+        finally:
+            await manager.stop_all()
 
     asyncio.run(_run())
 
@@ -1368,6 +1422,8 @@ def plugin_remove_cmd(
 
     result = PluginHost().apply(RemovePlugin(name, _plugins_dir(project)))
     typer.echo(result.message)
+    if result.outcome == "failed":
+        raise typer.Exit(1)
 
 
 @plugin_app.command("update")
@@ -1393,6 +1449,8 @@ def plugin_enable_cmd(
 
     result = PluginHost().apply(EnablePlugin(name, True, _plugins_dir(project)))
     typer.echo(result.message)
+    if result.outcome == "failed":
+        raise typer.Exit(1)
 
 
 @plugin_app.command("disable")
@@ -1404,6 +1462,8 @@ def plugin_disable_cmd(
 
     result = PluginHost().apply(EnablePlugin(name, False, _plugins_dir(project)))
     typer.echo(result.message)
+    if result.outcome == "failed":
+        raise typer.Exit(1)
 
 
 @plugin_app.command("trust")
@@ -1420,6 +1480,8 @@ def plugin_trust_cmd(
 
     result = PluginHost().apply(TrustPlugin(name, True, _plugins_dir(project)))
     typer.echo(result.message)
+    if result.outcome == "failed":
+        raise typer.Exit(1)
 
 
 @plugin_app.command("untrust")
@@ -1432,6 +1494,8 @@ def plugin_untrust_cmd(
 
     result = PluginHost().apply(TrustPlugin(name, False, _plugins_dir(project)))
     typer.echo(result.message)
+    if result.outcome == "failed":
+        raise typer.Exit(1)
 
 
 @plugin_app.command("grant")
@@ -1459,6 +1523,8 @@ def plugin_grant_cmd(
         bound = source_content_digest(resolved)
     result = PluginHost().apply(GrantPlugin(name, bound, plugins_dir))
     typer.echo(result.message)
+    if result.outcome == "failed":
+        raise typer.Exit(1)
 
 
 @plugin_app.command("revoke")
@@ -1478,6 +1544,8 @@ def plugin_revoke_cmd(
         RevokePlugin(name, digest.strip() or None, _plugins_dir(project))
     )
     typer.echo(result.message)
+    if result.outcome == "failed":
+        raise typer.Exit(1)
 
 
 @plugin_app.command("gc")
@@ -1669,6 +1737,9 @@ def plugin_install_all_cmd(
         f"Installed {installed}, skipped {skipped} (already present), "
         f"failed {failed} of {len(entries)} plugins into {dest}."
     )
+
+    if failed:
+        raise typer.Exit(1)
 
 
 @app.command()

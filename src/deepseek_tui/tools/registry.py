@@ -195,7 +195,7 @@ class ToolContext:
         try:
             stat = path.stat()
         except OSError:
-            return False
+            return True
         return (stat.st_mtime_ns, stat.st_size) != seen
 
     def report_shell_process_done(self, payload: dict[str, Any]) -> None:
@@ -610,7 +610,9 @@ class ToolRegistry:
         # echoes it back. See client.streaming for the decode side.
         from deepseek_tui.tools.encoding import sanitize, to_api_tool_name
 
-        params = tool.input_schema()
+        from copy import deepcopy
+
+        params = deepcopy(tool.input_schema())
         if isinstance(params, dict):
             params = sanitize(params)
 

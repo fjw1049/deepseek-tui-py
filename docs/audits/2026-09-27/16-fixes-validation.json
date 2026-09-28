@@ -1,0 +1,47 @@
+{
+  "date": "2026-09-28",
+  "scope": "N01-N11 minimal fixes with stated remaining boundaries",
+  "initial_new_regressions": {
+    "failed": 13,
+    "passed": 2
+  },
+  "after": {
+    "passed": 389,
+    "failed": 0,
+    "skipped": 0,
+    "new_audit_tests": 28,
+    "command": "DEEPSEEK_HOME=/tmp/audit16-fixes .venv/bin/pytest -q tests/test_audit_16.py tests/test_file_tools.py tests/test_search_tool.py tests/test_gitignore.py tests/test_web_search.py tests/test_plan_mode_tools.py tests/test_checklist_tool_aliasing.py tests/contract/test_checklist_write_echoes_state.py tests/contract/test_todo_tool_metadata.py tests/test_checklist_gate.py tests/test_background_job_tools.py tests/test_info_sidebar_filters.py tests/test_audit_15.py tests/test_plugins.py tests/test_task_user_input_bridge.py tests/test_agent_merge_approval.py tests/engine/test_shell_timeout_background.py --tb=short --junitxml=/tmp/audit16-final.xml"
+  },
+  "checks": {
+    "new_files_full_ruff": "passed",
+    "affected_tools_and_call_boundaries_ruff_F_E9": "passed",
+    "compileall": "passed",
+    "git_diff_check": "passed"
+  },
+  "comparison": {
+    "read_page": {
+      "after_bytes": 65536,
+      "method": "test_page_stops_before_full_file; historical before probe scans approximately 2 MiB",
+      "latency_claim": false
+    },
+    "pty": {
+      "input_bytes": 1048576,
+      "retained_payload_max_bytes": 65536,
+      "preview_includes_additional_marker": true,
+      "spill_bytes": 1048576
+    },
+    "pipe_process": {
+      "stdout_bytes": 200000,
+      "stderr_bytes": 200000,
+      "each_preview_less_than_bytes": 70000
+    }
+  },
+  "limitations": [
+    "Not a full repository test run",
+    "No live model/network/real terminal end-to-end test",
+    "Resolve/open and check/replace races with external writers remain",
+    "Per-stream disk limit, not a global disk budget",
+    "Synchronous small spill writes remain",
+    "No Windows or process-crash recovery validation"
+  ]
+}

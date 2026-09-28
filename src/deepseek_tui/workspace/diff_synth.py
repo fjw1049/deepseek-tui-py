@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import difflib
+import json
+import os
 from dataclasses import dataclass
 
 
@@ -15,8 +17,14 @@ class DiffStats:
 def count_diff_stats(unified_diff: str) -> DiffStats:
     additions = 0
     deletions = 0
-    for line in unified_diff.splitlines():
-        if line.startswith("+++") or line.startswith("---"):
+    in_hunk = False
+    for line in unified_diff.split("\n"):
+        if line.startswith("diff --git "):
+            in_hunk = False
+        if line.startswith("@@"):
+            in_hunk = True
+            continue
+        if not in_hunk:
             continue
         if line.startswith("+"):
             additions += 1
@@ -36,7 +44,9 @@ def synthesize_unified_diff(
 
     ``op`` is inferred when omitted: create / update / delete.
     """
-    rel = path.replace("\\", "/").lstrip("./")
+    rel = path.replace("\\", "/") if os.name == "nt" else path
+    while rel.startswith("./"):
+        rel = rel[2:]
     if op is None:
         if old_text == "" and new_text == "":
             op = "create"
@@ -47,26 +57,33 @@ def synthesize_unified_diff(
         else:
             op = "update"
 
-    old_lines = old_text.splitlines(keepends=True)
-    new_lines = new_text.splitlines(keepends=True)
+    def lines(text: str) -> list[str]:
+        parts = text.split("\n")
+        return [part + "\n" for part in parts[:-1]] + ([parts[-1]] if parts[-1] else [])
 
-    from_file = "/dev/null" if op == "create" else f"a/{rel}"
-    to_file = "/dev/null" if op == "delete" else f"b/{rel}"
+    def quoted(name: str) -> str:
+        if any(c in name for c in '\\"\t\n\r'):
+            return json.dumps(name, ensure_ascii=False)
+        return name
 
-    body = "".join(
-        difflib.unified_diff(
-            old_lines,
-            new_lines,
-            fromfile=from_file,
-            tofile=to_file,
-        )
+    old_lines = lines(old_text)
+    new_lines = lines(new_text)
+
+    from_file = "/dev/null" if op == "create" else quoted(f"a/{rel}")
+    to_file = "/dev/null" if op == "delete" else quoted(f"b/{rel}")
+    records = difflib.unified_diff(
+        old_lines, new_lines, fromfile=from_file, tofile=to_file
     )
-    if not body.strip():
-        unified = f"diff --git a/{rel} b/{rel}\n--- {from_file}\n+++ {to_file}\n"
-    else:
-        unified = f"diff --git a/{rel} b/{rel}\n{body}"
-        if not unified.endswith("\n"):
-            unified += "\n"
+    body = "".join(
+        line if line.endswith("\n") else line + "\n\\ No newline at end of file\n"
+        for line in records
+    )
+    unified = f"diff --git {quoted(f'a/{rel}')} {quoted(f'b/{rel}')}\n"
+    if op == "create":
+        unified += "new file mode 100644\n"
+    elif op == "delete":
+        unified += "deleted file mode 100644\n"
+    unified += body or f"--- {from_file}\n+++ {to_file}\n"
 
     stats = count_diff_stats(unified)
     return unified, stats, op

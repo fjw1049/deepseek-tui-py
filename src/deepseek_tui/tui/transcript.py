@@ -143,6 +143,10 @@ class _AssistantCell(Static):
             self._limiter.mark_emitted(now)
             self._refresh(force=False)
 
+    def replace_content(self, text: str) -> None:
+        self._buffer = text
+        self._refresh(force=True)
+
     def finalize(self) -> None:
         self._finalized = True
         self._refresh(force=True)
@@ -615,6 +619,11 @@ class Transcript(VerticalScroll):
         ):
             visible = new_display[len(self._display_buffer):]
         else:
+            if self._current_assistant is not None:
+                self._current_assistant.replace_content(new_display)
+                self._display_buffer = new_display
+                self._scroll_end_safe()
+                return
             visible = new_display
         self._display_buffer = new_display
         if not visible:
@@ -863,8 +872,6 @@ class Transcript(VerticalScroll):
         self._thinking_buffer = ""
         self._in_assistant = False
         self._tool_cells.clear()
-        self._subagent_cards.clear()
-        self._subagent_card_state.clear()
         self._evict_old_cells()
 
     def _evict_old_cells(self) -> None:
@@ -875,6 +882,10 @@ class Transcript(VerticalScroll):
         overflow = len(children) - self.MAX_CELLS
         if overflow > 0:
             for child in children[:overflow]:
+                for agent_id, widget in list(self._subagent_cards.items()):
+                    if widget is child:
+                        self._subagent_cards.pop(agent_id, None)
+                        self._subagent_card_state.pop(agent_id, None)
                 try:
                     child.remove()
                 except Exception:
@@ -911,16 +922,15 @@ class Transcript(VerticalScroll):
         for msg in messages:
             if not isinstance(msg, Message):
                 continue
-            text_parts = [
-                getattr(block, "text", "")
-                for block in msg.content
-                if getattr(block, "type", None) == "text"
-            ]
-            text = " ".join(part for part in text_parts if part)
+            from deepseek_tui.tui.session_restore import visible_message_text
+
+            text = visible_message_text(msg)
             if not text:
                 continue
             if msg.role == "user":
                 self.add_user_message(text)
+            elif msg.role == "tool":
+                self.add_notice(text, severity="info")
             elif msg.role == "assistant":
                 self.start_assistant_message()
                 self.append_delta(text)

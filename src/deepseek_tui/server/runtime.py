@@ -23,7 +23,9 @@ from __future__ import annotations
 # (Response*, ToolLifecycle, ApprovalLifecycle, JobLifecycle) to any
 # sinks configured via ``config.hooks`` (stdout / JSONL file / webhooks).
 #
+import asyncio
 import json
+from contextlib import AsyncExitStack
 import uuid
 from collections.abc import AsyncIterator
 from dataclasses import asdict, dataclass, field, is_dataclass
@@ -113,6 +115,7 @@ class AppRuntime:
         hooks: HookDispatcher | None = None,
         llm_client: LLMClient | None = None,
     ) -> None:
+        self._shutdown_task: asyncio.Task[None] | None = None
         self.config = config or Config()
         self.working_directory = (working_directory or Path.cwd()).resolve()
         self._tool_runtime: ToolRuntime | None = tool_runtime
@@ -204,17 +207,21 @@ class AppRuntime:
         await mcp.await_startup_preload()
 
     async def shutdown(self) -> None:
-        await self._direct_hook_executor.close()
-        if self._tool_runtime is not None:
-            await self._tool_runtime.shutdown()
-        # Webhook sinks own httpx clients; close them if present.
-        for sink in self.hooks.sinks:
-            close = getattr(sink, "close", None)
-            if callable(close):
-                try:
-                    await close()
-                except Exception:  # noqa: BLE001
-                    pass
+        from deepseek_tui.server.lifecycle import complete_before_cancel
+
+        if self._shutdown_task is None:
+            self._shutdown_task = asyncio.create_task(self._shutdown())
+        await complete_before_cancel(self._shutdown_task)
+
+    async def _shutdown(self) -> None:
+        async with AsyncExitStack() as cleanup:
+            for sink in self.hooks.sinks:
+                close = getattr(sink, "close", None)
+                if callable(close):
+                    cleanup.push_async_callback(close)
+            if self._tool_runtime is not None:
+                cleanup.push_async_callback(self._tool_runtime.shutdown)
+            cleanup.push_async_callback(self._direct_hook_executor.close)
 
     # --- handlers ----------------------------------------------------------
 

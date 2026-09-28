@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import time
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
@@ -73,35 +72,18 @@ def _lock_path(path: Path) -> Path:
 
 @contextmanager
 def _ledger_file_lock(path: Path, *, timeout: float = LOCK_TIMEOUT_SECONDS) -> Iterator[None]:
-    lock_path = _lock_path(path)
-    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    from deepseek_tui.workspace.project_lease import FileLease
+
+    lease = FileLease(_lock_path(path))
     deadline = time.monotonic() + timeout
-    acquired = False
-    while time.monotonic() < deadline:
-        try:
-            fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
-            with os.fdopen(fd, "w", encoding="utf-8") as handle:
-                handle.write(f"{os.getpid()}\n")
-            acquired = True
-            break
-        except FileExistsError:
-            # A crashed holder leaves the lock file behind; treat a lock
-            # older than the timeout as stale and take it over.
-            try:
-                if time.time() - lock_path.stat().st_mtime > timeout:
-                    lock_path.unlink(missing_ok=True)
-            except OSError:
-                pass
-            time.sleep(LOCK_RETRY_SECONDS)
-    if not acquired:
-        raise TimeoutError(f"timed out acquiring usage ledger lock: {lock_path}")
+    while not lease.acquire_blocking(nonblocking=True):
+        if time.monotonic() >= deadline:
+            raise TimeoutError(f"timed out acquiring usage ledger lock: {lease.path}")
+        time.sleep(min(LOCK_RETRY_SECONDS, max(0, deadline - time.monotonic())))
     try:
         yield
     finally:
-        try:
-            lock_path.unlink()
-        except FileNotFoundError:
-            pass
+        lease.release()
 
 
 def _normalize_ledger(parsed: dict[str, Any]) -> dict[str, Any]:

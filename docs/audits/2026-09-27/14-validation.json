@@ -1,0 +1,21 @@
+{
+  "date": "2026-09-28",
+  "scope": "8 protocol/presentation modules, 953 lines, read-only audit",
+  "initial_tests": {
+    "passed": 50,
+    "failed": 1,
+    "failure": "test_context_breakdown_uses_full_prompt_instead_of_uncached_remainder: expected 204, actual 7821"
+  },
+  "selected_tests": {
+    "passed": 50,
+    "deselected": 1,
+    "seconds": 0.48,
+    "command": "DEEPSEEK_HOME=/tmp/audit14-tests .venv/bin/pytest -q tests/test_presentation_reducer.py tests/test_presentation_edge_cases.py tests/test_presentation_tui.py tests/test_usage_token_semantics.py tests/test_truncated_round.py tests/test_stream_done_single.py -k 'not test_context_breakdown_uses_full_prompt_instead_of_uncached_remainder' --tb=short"
+  },
+  "baseline_evidence": "git diff --exit-code for protocol/, presentation/, engine/context.py and tests/test_usage_token_semantics.py returned 0; no fixes to this failure in this turn",
+  "probe": "PYTHONPATH=src .venv/bin/python docs/audits/2026-09-27/presentation_probe.py",
+  "results": "presentation-probe-results.json",
+  "benchmark": "7 repetitions, median, membership/completion only; not end-to-end; synthetic 2048-tool case",
+  "production_changes": false,
+  "live_model_calls": false
+}

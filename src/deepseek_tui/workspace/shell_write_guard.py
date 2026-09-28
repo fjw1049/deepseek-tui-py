@@ -127,17 +127,17 @@ def is_allowlisted_path(path: str, *, workspace: Path | None = None) -> bool:
     raw = path.strip().strip("'\"")
     if not raw:
         return False
-    if raw.startswith("/tmp/") or raw == "/tmp" or raw.startswith("/var/tmp/"):
-        return True
-    rel = raw
-    if workspace is not None:
-        try:
-            abs_path = Path(raw).expanduser()
-            if abs_path.is_absolute():
-                rel = str(abs_path.resolve().relative_to(workspace.resolve()))
-        except (OSError, ValueError):
-            rel = raw
-    rel = rel.replace("\\", "/").lstrip("./")
+    root = (workspace or Path.cwd()).expanduser().resolve()
+    candidate = Path(raw).expanduser()
+    target = (candidate if candidate.is_absolute() else root / candidate).resolve()
+    try:
+        rel = target.relative_to(root).as_posix()
+    except ValueError:
+        # External temporary output is allowed, but a project located in /tmp
+        # still gets the same source-file policy as any other project.
+        if any(target.is_relative_to(Path(base).resolve()) for base in ("/tmp", "/var/tmp")):
+            return True
+        return False
     lower = rel.lower()
     if any(lower.startswith(p) for p in _ALLOWLIST_PREFIXES):
         return True

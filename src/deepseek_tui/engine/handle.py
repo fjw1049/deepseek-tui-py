@@ -286,6 +286,11 @@ class EngineHandle:
         """Inject a user message mid-turn."""
         await self._steer_queue.put(text)
 
+    def has_pending_work(self, *, include_events: bool = True) -> bool:
+        """Whether operations, steers or unconsumed events belong to this session."""
+        return (not self._op_queue.empty() or not self._steer_queue.empty()
+                or (include_events and not self._event_queue.empty()))
+
     def is_turn_active(self) -> bool:
         """True between SendMessageOp pickup and TurnComplete/TurnCancelled.
 

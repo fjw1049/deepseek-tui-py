@@ -20,21 +20,25 @@ class Usage(BaseModel):
 
     input_tokens: int = Field(
         default=0,
+        ge=0,
         validation_alias=AliasChoices("input_tokens", "prompt_tokens"),
     )
     output_tokens: int = Field(
         default=0,
+        ge=0,
         validation_alias=AliasChoices("output_tokens", "completion_tokens"),
     )
     cache_creation_input_tokens: int = Field(
         default=0,
+        ge=0,
         validation_alias=AliasChoices("cache_creation_input_tokens", "prompt_cache_miss_tokens"),
     )
     cache_read_input_tokens: int = Field(
         default=0,
+        ge=0,
         validation_alias=AliasChoices("cache_read_input_tokens", "prompt_cache_hit_tokens"),
     )
-    reasoning_tokens: int = 0
+    reasoning_tokens: int = Field(default=0, ge=0)
     # Provider wire formats disagree about ``input_tokens``: OpenAI/DeepSeek
     # include cached tokens, while Anthropic excludes cache reads/writes. Keep
     # that fact beside the parsed value instead of guessing from magnitudes.
@@ -90,7 +94,7 @@ class Usage(BaseModel):
         prompt_tokens = data.get("prompt_tokens")
         if isinstance(prompt_details, dict) and isinstance(prompt_tokens, int):
             cached = prompt_details.get("cached_tokens")
-            if isinstance(cached, int) and cached >= 0:
+            if isinstance(cached, int):
                 if not any(
                     key in data for key in ("cache_read_input_tokens", "prompt_cache_hit_tokens")
                 ):

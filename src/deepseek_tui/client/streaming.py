@@ -127,8 +127,7 @@ class OpenAIStreamParser:
                             # so the rest of the engine sees the original
                             # in-memory tool name (possibly with `.`, `:`,
                             # CJK, emoji, etc.). Bare hex fallback in
-                            # from_api_tool_name also handles models that
-                            # mangle the `-x...-` delimiters.
+                            # Decode explicit escapes without guessing legal names.
                             from deepseek_tui.tools.encoding import (
                                 from_api_tool_name,
                             )

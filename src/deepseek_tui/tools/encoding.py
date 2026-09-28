@@ -16,27 +16,10 @@ from __future__ import annotations
 # * any other non-``[A-Za-z0-9_]`` char ``c`` →
 #   ``-x{codepoint:06X}-`` (six upper-case hex digits, dash-delimited)
 #
-# Decoding is split into two passes:
-#
-# 1. **Delimiter-based pass** (`-x000041-` form): handles correctly
-#    formed escapes and ``--`` → ``-``.
-# 2. **Bare hex pass**: real DeepSeek models occasionally mangle the
-#    delimiter form, e.g. ``-x00002E-`` → ``.x00002E-`` or ``x00002E``.
-#    This pass scans for bare ``x[0-9A-Fa-f]{6}-?`` sequences and decodes
-#    only those whose target character is one ``to_api_tool_name`` would
-#    have encoded (i.e. NOT alphanumeric, ``_`` or ``-``). This avoids
-#    accidentally rewriting innocent strings like ``foox000041bar``
-#    (where ``x000041`` would map back to ``A``).
-#
-import re
+# Decode only explicit escapes; guessing bare hex can change legal tool names.
 from typing import Any
 
 __all__ = ["from_api_tool_name", "to_api_tool_name"]
-
-
-# Regex for the bare-hex fallback pass. Group 1 is the 6-hex-digit body.
-# Trailing dash, if present, is consumed by the regex itself.
-_BARE_HEX_RE = re.compile(r"x([0-9A-Fa-f]{6})-?")
 
 
 def _is_passthrough(ch: str) -> bool:
@@ -59,7 +42,7 @@ def to_api_tool_name(name: str) -> str:
 
 def from_api_tool_name(name: str) -> str:
     """Decode a provider-emitted tool name back to its original form."""
-    return _decode_bare_hex_escapes(_decode_delimited(name))
+    return _decode_delimited(name)
 
 
 def _decode_delimited(name: str) -> str:
@@ -105,30 +88,6 @@ def _decode_delimited(name: str) -> str:
         out.append("-")
         i += 1
     return "".join(out)
-
-
-def _decode_bare_hex_escapes(text: str) -> str:
-    """Pass 2: decode bare ``xHHHHHH-?`` sequences.
-
-    Only decode if the resulting character would itself have been
-    escaped by `to_api_tool_name` (i.e. it is NOT ASCII alnum, ``_`` or
-    ``-``). Otherwise leave the match untouched.
-    """
-
-    def _replace(match: re.Match[str]) -> str:
-        hex_body = match.group(1)
-        decoded = _safe_hex_to_char(hex_body)
-        if decoded is None:
-            return match.group(0)
-        # Only decode if `decoded` is a character that `to_api_tool_name`
-        # would itself have encoded.
-        if decoded.isascii() and (decoded.isalnum() or decoded == "_"):
-            return match.group(0)
-        if decoded == "-":
-            return match.group(0)
-        return decoded
-
-    return _BARE_HEX_RE.sub(_replace, text)
 
 
 def _safe_hex_to_char(hex_str: str) -> str | None:

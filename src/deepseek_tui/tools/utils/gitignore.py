@@ -50,7 +50,10 @@ class GitIgnoreMatcher:
         except (OSError, UnicodeDecodeError):
             return
         for raw in text.splitlines():
-            rule = _parse_rule(raw, directory.resolve())
+            try:
+                rule = _parse_rule(raw, directory.resolve())
+            except re.error:
+                continue
             if rule is not None:
                 self._rules.append(rule)
 

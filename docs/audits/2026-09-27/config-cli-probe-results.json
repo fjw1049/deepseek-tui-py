@@ -1,0 +1,46 @@
+{
+  "env_profile": {
+    "selected": "fast",
+    "actual_model": "base"
+  },
+  "no_project_config": {
+    "project_still_applied": true
+  },
+  "workspace_discovery": {
+    "cwd_project_used_for_other_workspace": true
+  },
+  "provider_key_scope": {
+    "provider_changed": true,
+    "old_key_carried": true
+  },
+  "partial_profile": {
+    "base_locale": "en",
+    "merged_locale": "zh"
+  },
+  "project_delivery_config": {
+    "smtp_host_and_recipient_survive_filter": true
+  },
+  "global_context_map": {
+    "before": 8192,
+    "after_other_config": 65536
+  },
+  "cli_overrides": {
+    "api_key_ignored": true,
+    "approval_policy_ignored": true
+  },
+  "config_display": {
+    "fixture_key_printed": true
+  },
+  "one_shot": {
+    "startup_failure_client_close_count": 0,
+    "error_event_returns_normally": true
+  },
+  "atomic_writer": {
+    "descriptor_open_after_fchmod_error": true
+  },
+  "summary_limit": {
+    "input_length": 4,
+    "limit": 5,
+    "output": "ab..."
+  }
+}

@@ -1,0 +1,43 @@
+{
+  "date": "2026-09-28",
+  "production_files_modified": 6,
+  "new_regression_tests": 37,
+  "initial_defect_tests": {
+    "failed_before_fix": 28,
+    "passed_after_fix": 28
+  },
+  "expanded_before_excluding_existing_bundle_failure": {
+    "passed": 281,
+    "failed": 1,
+    "deselected": 1,
+    "seconds": 1.68
+  },
+  "final_expanded": {
+    "passed": 290,
+    "deselected": 2,
+    "seconds": 1.57,
+    "command": "DEEPSEEK_HOME=/tmp/audit14-expanded .venv/bin/pytest -q tests/test_audit_14.py tests/test_presentation_reducer.py tests/test_presentation_edge_cases.py tests/test_presentation_tui.py tests/test_usage_token_semantics.py tests/test_multimodal_pipeline.py tests/test_usage_ledger.py tests/test_stream_done_single.py tests/test_truncated_round.py tests/test_first_batch_regressions.py tests/test_session_restore.py tests/test_approval_presentation.py tests/test_info_sidebar_filters.py tests/test_tui_smoke.py tests/goal -k 'not test_context_breakdown_uses_full_prompt_instead_of_uncached_remainder and not test_conversation_bundle_restores_original_images' --tb=short"
+  },
+  "existing_failures": [
+    {
+      "test": "test_context_breakdown_uses_full_prompt_instead_of_uncached_remainder",
+      "evidence": "Audit 14 original baseline: expected 204, actual 7821; unchanged test and context implementation."
+    },
+    {
+      "test": "test_conversation_bundle_restores_original_images",
+      "evidence": "Copied current src to a temporary directory and replaced the six protocol/presentation modified files with git show HEAD:<file>. Ran pytest with -o pythonpath=<temporary src>. Same ThreadRecord missing id/created_at/updated_at/model/workspace error; Message fixture is stored as a thread record."
+    }
+  ],
+  "benchmark": {
+    "command": "PYTHONPATH=src .venv/bin/python docs/audits/2026-09-27/presentation_fixed_probe.py",
+    "results": "presentation-fixed-probe-results.json",
+    "scope": "7-run median; excludes construction, deep-copy, rendering, provider I/O"
+  },
+  "lint_command": ".venv/bin/ruff check src/deepseek_tui/protocol src/deepseek_tui/presentation tests/test_audit_14.py",
+  "lint_passed": true,
+  "live_model_calls": false,
+  "network_calls": false,
+  "compileall_passed": true,
+  "git_diff_check_passed": true,
+  "new_probe_lint_passed": true
+}

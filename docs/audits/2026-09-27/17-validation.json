@@ -1,0 +1,98 @@
+{
+  "date": "2026-09-28",
+  "scope": "Config, CLI and infrastructure; audit only",
+  "production_changes": false,
+  "files": [
+    {
+      "path": "src/deepseek_tui/__init__.py",
+      "lines": 3,
+      "sha256": "e2dfdcaf386b2ee9befa8ca8c14331b63053cd4b56a7ba114c5db67b012f246e"
+    },
+    {
+      "path": "src/deepseek_tui/__main__.py",
+      "lines": 9,
+      "sha256": "d3daef23ca0673ca9ce9b64ae5517c5887ddda99826f0f9b521b2528216c741a"
+    },
+    {
+      "path": "src/deepseek_tui/cli/__init__.py",
+      "lines": 3,
+      "sha256": "8c0af1566b3f652e9eba0fe1de34ade296cda54d1714002467fa9bac0f57ae4f"
+    },
+    {
+      "path": "src/deepseek_tui/cli/app.py",
+      "lines": 1686,
+      "sha256": "23e4b70c68a4ad79f3e71e4676b90c3cdb15bd5e02ac02b6c61fd013afc1aa17"
+    },
+    {
+      "path": "src/deepseek_tui/config/__init__.py",
+      "lines": 11,
+      "sha256": "3a65f6b4e6bfb529a21d3219da946cb7e31f4af1e8d1516b17630b0f84f21434"
+    },
+    {
+      "path": "src/deepseek_tui/config/image_capabilities.py",
+      "lines": 54,
+      "sha256": "6fb57fd639a7d1ab63cf30f1e5aa17f47364bf8665e070775b56b570d06b5c25"
+    },
+    {
+      "path": "src/deepseek_tui/config/layout.py",
+      "lines": 361,
+      "sha256": "e8f6d23542efd9e6033756929b339c584aa23d94e868da0fde1647a068a67a7f"
+    },
+    {
+      "path": "src/deepseek_tui/config/loader.py",
+      "lines": 376,
+      "sha256": "e3731301238b5651464013e648acdad1caabb48f9ea6c01cc31633a424e4da50"
+    },
+    {
+      "path": "src/deepseek_tui/config/models.py",
+      "lines": 424,
+      "sha256": "829cabf88ba4f3532a7fef0f48754586c037bd416fa6e96d188df74f5991cfd7"
+    },
+    {
+      "path": "src/deepseek_tui/config/paths.py",
+      "lines": 307,
+      "sha256": "378005e0230906106a67c5bcf499e3158e825a31341c693cc379e241b2e351c6"
+    },
+    {
+      "path": "src/deepseek_tui/config/providers.py",
+      "lines": 312,
+      "sha256": "b04efebe6d2054f29ae7fdf215086bb3a186a77b4ee38ca3e484f72a38bba88e"
+    },
+    {
+      "path": "src/deepseek_tui/config/routing.py",
+      "lines": 31,
+      "sha256": "17f7ece15bd9dbfd041974f081c86d4947fa800424301070226cd8d0caa0752f"
+    },
+    {
+      "path": "src/deepseek_tui/prompts/__init__.py",
+      "lines": 2,
+      "sha256": "68a888438ca3cbe8c5aa1b9ff1d19975dff1441b15e596d314aa652e2a0c0dda"
+    },
+    {
+      "path": "src/deepseek_tui/utils/__init__.py",
+      "lines": 453,
+      "sha256": "99407aad1ce0fcbe152d1f44ef0b9ce35769442b60f9e0c44807493d9a41cf15"
+    }
+  ],
+  "file_count": 14,
+  "line_count": 4032,
+  "existing_tests": {
+    "passed": 69,
+    "failed": 0,
+    "skipped": 0,
+    "command": "DEEPSEEK_HOME=/tmp/audit17-tests .venv/bin/pytest -q tests/test_project_config_security.py tests/test_config_warnings.py tests/test_multi_provider.py tests/test_plugin_cli.py tests/test_provider_access.py --tb=short --junitxml=/tmp/audit17-tests.xml"
+  },
+  "probe": {
+    "command": "PYTHONPATH=src .venv/bin/python docs/audits/2026-09-27/config_cli_probe.py",
+    "groups": 12,
+    "result": "All assertions reproduced audited behavior",
+    "result_file": "config-cli-probe-results.json",
+    "warning": "Defect assertions, not expected fixed behavior"
+  },
+  "limitations": [
+    "Temporary directories, fake keys and mocks only; no live network",
+    "Migration/thread races are static findings, not reproduced data loss",
+    "No full repository test run",
+    "No current external model capability/specification validation"
+  ]
+}

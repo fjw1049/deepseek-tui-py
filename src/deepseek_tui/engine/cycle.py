@@ -121,16 +121,17 @@ def should_advance_cycle(
     model: str,
     config: CycleConfig,
     in_flight: bool,
+    model_config: object | None = None,
 ) -> bool:
     """Determine if a cycle boundary should fire (ratio ≥ cycle_ratio)."""
     if not config.enabled or in_flight:
         return False
     from deepseek_tui.config.providers import (
         DEFAULT_CONTEXT_WINDOW_TOKENS,
-        context_window_for_model,
+        configured_context_window,
     )
 
-    window = max(1, int(context_window_for_model(model) or DEFAULT_CONTEXT_WINDOW_TOKENS))
+    window = max(1, int(configured_context_window(model, model_config) or DEFAULT_CONTEXT_WINDOW_TOKENS))
     ratio = active_input_tokens / window
     return ratio >= float(config.cycle_ratio or 0.90)
 
@@ -179,6 +180,7 @@ async def produce_briefing(
     model: str,
     conversation: list[Message],
     max_briefing_tokens: int,
+    model_config: object | None = None,
 ) -> str:
     """Run the briefing turn to produce a <carry_forward> block."""
     if not conversation:
@@ -210,7 +212,7 @@ async def produce_briefing(
 
     from deepseek_tui.engine.capacity import validate_summary_request_budget
 
-    validate_summary_request_budget(request)
+    validate_summary_request_budget(request, model_config)
     result_text: list[str] = []
     async for event in client.stream_chat_completion(request):
         if isinstance(event, StreamError):

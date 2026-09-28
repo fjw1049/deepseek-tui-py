@@ -198,8 +198,10 @@ class TurnLoop:
         self,
         client: LLMClient,
         compact_fn: CompactFn | None = None,
+        model_config: object | None = None,
     ) -> None:
         self.client = client
+        self.model_config = model_config
         self._compact_fn = compact_fn
 
     async def run(
@@ -288,7 +290,7 @@ class TurnLoop:
                 request.model
             )
             if request.messages:
-                input_budget = context_input_budget(request.model, output_token_limit)
+                input_budget = context_input_budget(request.model, output_token_limit, self.model_config)
                 if input_budget is not None:
                     # Estimate the full payload, not just messages: the
                     # system prompt (rules/skills/handoff) and tool schemas

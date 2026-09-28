@@ -1,0 +1,1068 @@
+{
+  "date": "2026-09-28",
+  "scope": "src/deepseek_tui Python sources; non-Python resources reviewed with owning call chains",
+  "python_files": 210,
+  "indexed_files": 210,
+  "missing_files": [],
+  "planned_systems": 17,
+  "systems_with_first_pass_audit": 17,
+  "systems_with_fix_or_partial_optimization_records": 17,
+  "next_fix_system": null,
+  "all_findings_resolved": false,
+  "full_repository_tested": false,
+  "files": [
+    {
+      "path": "src/deepseek_tui/__init__.py",
+      "lines": 3,
+      "sha256": "e2dfdcaf386b2ee9befa8ca8c14331b63053cd4b56a7ba114c5db67b012f246e"
+    },
+    {
+      "path": "src/deepseek_tui/__main__.py",
+      "lines": 9,
+      "sha256": "d3daef23ca0673ca9ce9b64ae5517c5887ddda99826f0f9b521b2528216c741a"
+    },
+    {
+      "path": "src/deepseek_tui/automation/__init__.py",
+      "lines": 31,
+      "sha256": "fe85d2efc6737c10d40ec01324044f63b872c1cc39b64f5428f2c24df86fb055"
+    },
+    {
+      "path": "src/deepseek_tui/automation/delivery.py",
+      "lines": 245,
+      "sha256": "20e912ef39e23ecc33d2bf0fe09c811591f9d9169076b57e1ab837499b0a1be1"
+    },
+    {
+      "path": "src/deepseek_tui/automation/inbox.py",
+      "lines": 671,
+      "sha256": "85fb4e63cd6e093beaf6663def34d0565b844b1da8cbd4b56d1fcb1532d041b4"
+    },
+    {
+      "path": "src/deepseek_tui/automation/pipeline.py",
+      "lines": 695,
+      "sha256": "170d23f5d3f03e47e0606e20a275995de5f3e6fafda6d097705c6d0781e33bbe"
+    },
+    {
+      "path": "src/deepseek_tui/cli/__init__.py",
+      "lines": 3,
+      "sha256": "8c0af1566b3f652e9eba0fe1de34ade296cda54d1714002467fa9bac0f57ae4f"
+    },
+    {
+      "path": "src/deepseek_tui/cli/app.py",
+      "lines": 1757,
+      "sha256": "12baed4b339dc8710bdb0ce2553652524847fe301b3943fbe515b9d3a3885c61"
+    },
+    {
+      "path": "src/deepseek_tui/client/__init__.py",
+      "lines": 15,
+      "sha256": "02005fc9176a4fd2b332dfe1c1cd67760a3ef822ce795d7b0f0f883c4195cde3"
+    },
+    {
+      "path": "src/deepseek_tui/client/anthropic.py",
+      "lines": 280,
+      "sha256": "e2ae12aec07cf1081958c206c732616be6521778a355664154f3864027bfa8b1"
+    },
+    {
+      "path": "src/deepseek_tui/client/base.py",
+      "lines": 222,
+      "sha256": "50caa757b82b6fd7f5d8926938183ee8c542a822f1bf4c83a3357406e7f90619"
+    },
+    {
+      "path": "src/deepseek_tui/client/chat_messages.py",
+      "lines": 244,
+      "sha256": "aa39fcbe56b0d5b0c1c9775a5b49eeaa3de0bd55dea9070aacc0e8edda6367e9"
+    },
+    {
+      "path": "src/deepseek_tui/client/deepseek.py",
+      "lines": 360,
+      "sha256": "db43cfbe89119ece44ad50e46ec758107cc0a8558e06bfb8186fdd211de6a91a"
+    },
+    {
+      "path": "src/deepseek_tui/client/factory.py",
+      "lines": 232,
+      "sha256": "346e88b6f4f7ecba7c034e09615757daf232e6d7ef31f6fe4bba526c233918a0"
+    },
+    {
+      "path": "src/deepseek_tui/client/media.py",
+      "lines": 241,
+      "sha256": "375f30970ee16029494364ea37265be3df657ae5acc84d5a9f94ea91f01d0cd2"
+    },
+    {
+      "path": "src/deepseek_tui/client/normalize.py",
+      "lines": 65,
+      "sha256": "13ab19e1cbeb8522bea28bbc30796ae37c2e45556caff278789548588c1a267b"
+    },
+    {
+      "path": "src/deepseek_tui/client/pricing.py",
+      "lines": 208,
+      "sha256": "ebd4848b1a8ff32a392006203abe9b7e4325e04bc19b95322eb4078ea357a602"
+    },
+    {
+      "path": "src/deepseek_tui/client/rate_limit.py",
+      "lines": 122,
+      "sha256": "4b41e3e3fd0185c8faf1f0cae29ab4104c9955d62be452215ee066754e68b3af"
+    },
+    {
+      "path": "src/deepseek_tui/client/sanitize.py",
+      "lines": 45,
+      "sha256": "6489499f8c6ea01ee6d8e80771c7afc159c9cce43d96a605f625596108730a6d"
+    },
+    {
+      "path": "src/deepseek_tui/client/streaming.py",
+      "lines": 294,
+      "sha256": "0841c3909dd0850d3e71c5387805baabc8dfaf678c3513c95efa74c1d8af567f"
+    },
+    {
+      "path": "src/deepseek_tui/config/__init__.py",
+      "lines": 11,
+      "sha256": "3a65f6b4e6bfb529a21d3219da946cb7e31f4af1e8d1516b17630b0f84f21434"
+    },
+    {
+      "path": "src/deepseek_tui/config/image_capabilities.py",
+      "lines": 54,
+      "sha256": "6fb57fd639a7d1ab63cf30f1e5aa17f47364bf8665e070775b56b570d06b5c25"
+    },
+    {
+      "path": "src/deepseek_tui/config/layout.py",
+      "lines": 382,
+      "sha256": "7503172493472b7ae9bdc2856f48d40027bfa7a12c7012b8e2adda6ceaaa9e5f"
+    },
+    {
+      "path": "src/deepseek_tui/config/loader.py",
+      "lines": 394,
+      "sha256": "c30ba6fc2271ef9ed92da46fb7f62c68575ac468283c319e0a4849172191d941"
+    },
+    {
+      "path": "src/deepseek_tui/config/models.py",
+      "lines": 438,
+      "sha256": "331d556f3f02d8ee3d4cf96e39839b53962eda27c8e51ec6de680bee334bbb52"
+    },
+    {
+      "path": "src/deepseek_tui/config/paths.py",
+      "lines": 307,
+      "sha256": "378005e0230906106a67c5bcf499e3158e825a31341c693cc379e241b2e351c6"
+    },
+    {
+      "path": "src/deepseek_tui/config/providers.py",
+      "lines": 330,
+      "sha256": "76f83bac9f5911bb5beab29cdc2eaaa068a7bf56a9c4050adaa413b2cdc7f9d1"
+    },
+    {
+      "path": "src/deepseek_tui/config/routing.py",
+      "lines": 32,
+      "sha256": "3619111fcf59e2274767de1c78f5d88126cb4b5514f61c96e10c8005ad8c1b01"
+    },
+    {
+      "path": "src/deepseek_tui/engine/__init__.py",
+      "lines": 38,
+      "sha256": "01d0018644f2ca5c052197ae65e5125c8b6ae4dbe383a737d69a0829f8093ac3"
+    },
+    {
+      "path": "src/deepseek_tui/engine/capacity.py",
+      "lines": 882,
+      "sha256": "ccb9acde473e1a594dc91e21a771b3bb67e665b92c46a5f994526b0c50cf7072"
+    },
+    {
+      "path": "src/deepseek_tui/engine/completion_requirement.py",
+      "lines": 31,
+      "sha256": "47805f4409d00c100da25dc4f28081768ed95fd732596f551e1b1dc7dd99f047"
+    },
+    {
+      "path": "src/deepseek_tui/engine/context.py",
+      "lines": 1227,
+      "sha256": "b9342bf5b7cbf531c221f95ad7d68ed51c82e2eb5480d416a1e1604ec7c37331"
+    },
+    {
+      "path": "src/deepseek_tui/engine/context_pressure.py",
+      "lines": 533,
+      "sha256": "cc2b9e04ba0066e8b403d7a30e34844b90403b6b982ab0134ca352015dbc103b"
+    },
+    {
+      "path": "src/deepseek_tui/engine/cycle.py",
+      "lines": 525,
+      "sha256": "a4b77ec5b7e47339125d24021a8f9fbeecbfe64d3a3118c1e6b0539dd465a03d"
+    },
+    {
+      "path": "src/deepseek_tui/engine/dispatch.py",
+      "lines": 1297,
+      "sha256": "9b16415bf884b859d8346a65440e60822345584fb5d5572043f3f3d6d1524491"
+    },
+    {
+      "path": "src/deepseek_tui/engine/events.py",
+      "lines": 353,
+      "sha256": "200104e6fcbcddd8fb2956640ac5cb412ba6b4d016f92d0f3bb1815714d2d928"
+    },
+    {
+      "path": "src/deepseek_tui/engine/handle.py",
+      "lines": 339,
+      "sha256": "2ce6f054c0203e3cb4ffb0c52bb9772b43b3dca0402d6dddf7faa107e730867d"
+    },
+    {
+      "path": "src/deepseek_tui/engine/orchestrator/__init__.py",
+      "lines": 19,
+      "sha256": "b77bf1e067f0f707dc56d042df727a0975663c9ee90d572f630780c4c57ff7d1"
+    },
+    {
+      "path": "src/deepseek_tui/engine/orchestrator/core.py",
+      "lines": 3482,
+      "sha256": "50941570d08d867a0f2616a090e131c4d60c169c200b4606ee6a5eb939e6d579"
+    },
+    {
+      "path": "src/deepseek_tui/engine/orchestrator/helpers.py",
+      "lines": 265,
+      "sha256": "46925dd41cc168bffa567c3e476f5d8a991b9ff07a706ae9cccdb4707e3d0671"
+    },
+    {
+      "path": "src/deepseek_tui/engine/orchestrator/lifecycle.py",
+      "lines": 171,
+      "sha256": "bda5f7e502e946c069dd5745dc57e915156c47d2b2e8142a73b54e81230272e6"
+    },
+    {
+      "path": "src/deepseek_tui/engine/orchestrator/maintenance.py",
+      "lines": 588,
+      "sha256": "25f0b7eed8bab4cd01f456c2e9e6dcb3a90456e11d9b5a71ece5e9bc5666e604"
+    },
+    {
+      "path": "src/deepseek_tui/engine/orchestrator/tooling.py",
+      "lines": 1381,
+      "sha256": "3de37e60234f5396d56e90a8dab48c2c74aa416efdd1aa45ab83d6573cd09f2f"
+    },
+    {
+      "path": "src/deepseek_tui/engine/prefix_probe.py",
+      "lines": 120,
+      "sha256": "a672608cc02b37dbba1590369aca2894571e39b604e3a852d864e811d421e70f"
+    },
+    {
+      "path": "src/deepseek_tui/engine/prompts.py",
+      "lines": 894,
+      "sha256": "d1f1d69f721166659e2a65f0b27ad199e7d3ca2d924ca8fdd13f3c365ba126c2"
+    },
+    {
+      "path": "src/deepseek_tui/engine/reminders.py",
+      "lines": 323,
+      "sha256": "361e9a726fffdf8ebf8d66247671cf1e7413890690496b6c51af1522e88c87da"
+    },
+    {
+      "path": "src/deepseek_tui/engine/tool_dedup.py",
+      "lines": 198,
+      "sha256": "c34c7344d7c5af236fb3775a42f377763ad06b968bdd803659ad4119697cc217"
+    },
+    {
+      "path": "src/deepseek_tui/engine/tools.py",
+      "lines": 528,
+      "sha256": "9342962e568d5c463b9f49dd185ae736a244d389e316767d0319c8f440fe3d2d"
+    },
+    {
+      "path": "src/deepseek_tui/engine/turn.py",
+      "lines": 756,
+      "sha256": "0e57e631cd13e4024e4e073919db21eab2564c3b3cd9321aca77313349892680"
+    },
+    {
+      "path": "src/deepseek_tui/engine/usage_ledger.py",
+      "lines": 169,
+      "sha256": "c032668d8b6d08e6ec8ab09b4ab638554cf31fef1bcc57387965d6de622b3b67"
+    },
+    {
+      "path": "src/deepseek_tui/goal/__init__.py",
+      "lines": 24,
+      "sha256": "4bc40a97dd1a3a1184c7b9580393d32bf98fa31788f5e8f795bd2b5993207bfc"
+    },
+    {
+      "path": "src/deepseek_tui/goal/commands.py",
+      "lines": 127,
+      "sha256": "10ae6a99fdbfa816c75bd36d1fba4271bdd8df04529041b818cc3973ce56edc1"
+    },
+    {
+      "path": "src/deepseek_tui/goal/injection.py",
+      "lines": 212,
+      "sha256": "5fd0b6e87bfb6ebf85c920e097b6123fc6c0f8bc9e5c92951096127eb6748651"
+    },
+    {
+      "path": "src/deepseek_tui/goal/persist.py",
+      "lines": 180,
+      "sha256": "f2e7d37b5ba97d3f444d84628de6875e40d334a3cbc652243aa95839b66c94f5"
+    },
+    {
+      "path": "src/deepseek_tui/goal/queue.py",
+      "lines": 52,
+      "sha256": "43ec3101e372cb5d5b35236b904cc826f10253076f5c8c572d0ce0bd649b3efb"
+    },
+    {
+      "path": "src/deepseek_tui/goal/service.py",
+      "lines": 830,
+      "sha256": "d7606a49fcf1a10bc94adf9d0c070b17e5062fd18b83cc0678962f0d92537206"
+    },
+    {
+      "path": "src/deepseek_tui/goal/state.py",
+      "lines": 195,
+      "sha256": "3f5b3ec6950866eb843be2c099165d79ff51fde919aac191941777e4ec31d132"
+    },
+    {
+      "path": "src/deepseek_tui/goal/tools.py",
+      "lines": 370,
+      "sha256": "58319ff71a4686cdf827050fb9c4e61fe3c29f5877d2c7134408d20ef0f5a73b"
+    },
+    {
+      "path": "src/deepseek_tui/goal/types.py",
+      "lines": 218,
+      "sha256": "20ca1415421255d510667e5958a7509e6e91a33490565ab4ad3d83fc348ad3e0"
+    },
+    {
+      "path": "src/deepseek_tui/goal/workspace.py",
+      "lines": 84,
+      "sha256": "569275b4b652bff57796f02f7b0e856cd76309bf2dffd086505c3b75cee665ca"
+    },
+    {
+      "path": "src/deepseek_tui/integrations/__init__.py",
+      "lines": 1,
+      "sha256": "6083fc0796e244cb37c187899f284e75eca934b0ecb75c5eb23ebb3f30d51c86"
+    },
+    {
+      "path": "src/deepseek_tui/integrations/hooks.py",
+      "lines": 1054,
+      "sha256": "278eaa7d15b05a490c950c77029e48b21b9d366f2042aaadcfb6cce91a9f6c54"
+    },
+    {
+      "path": "src/deepseek_tui/integrations/lsp.py",
+      "lines": 665,
+      "sha256": "6d66d43971e5714be2afbdb5499a3f23afc833620f7430181a03c98913a5780d"
+    },
+    {
+      "path": "src/deepseek_tui/integrations/plugin_compat.py",
+      "lines": 122,
+      "sha256": "aba58ef385fd8119109a1daf8cf6df2ae825424a9f3f061d1813ac7f00778e1a"
+    },
+    {
+      "path": "src/deepseek_tui/integrations/plugins.py",
+      "lines": 3140,
+      "sha256": "7fff6a8bce4610d9470caae128a3d87966032c351d1c15c91f17b33fc996a3fd"
+    },
+    {
+      "path": "src/deepseek_tui/integrations/skills.py",
+      "lines": 1144,
+      "sha256": "8459e6bd288069a3cde1884948b5091a5dfea5bc188bdfcf19603eea72c4f8f1"
+    },
+    {
+      "path": "src/deepseek_tui/mcp/__init__.py",
+      "lines": 19,
+      "sha256": "e3d9e86b3a614643808fada3183d08c5f6363b6bcead443c665f000dbf1cc0c8"
+    },
+    {
+      "path": "src/deepseek_tui/mcp/actions.py",
+      "lines": 114,
+      "sha256": "d932b2de05ff7ca16244d584983899fadc6b68ca4ce0f17466ec16c2461936ff"
+    },
+    {
+      "path": "src/deepseek_tui/mcp/client.py",
+      "lines": 414,
+      "sha256": "192d9a0372f24dd5e545769a80f2487c37d78c4b5aa84feceeccadfc62b2dee0"
+    },
+    {
+      "path": "src/deepseek_tui/mcp/config.py",
+      "lines": 237,
+      "sha256": "f50a4972a3e50e98534670fc1eeb2f6e2bfd673e3fea74fc1b8cb091bea65ba2"
+    },
+    {
+      "path": "src/deepseek_tui/mcp/execute.py",
+      "lines": 97,
+      "sha256": "f3d3e7ac3d44bd0f68ccd43b9bcd028c65b1e046365bc2a516b738bb29b4aa66"
+    },
+    {
+      "path": "src/deepseek_tui/mcp/manager.py",
+      "lines": 1239,
+      "sha256": "74fec3b9e95b87b87f2a058283313a9acec706eb13af7939b55025c4df1b16c2"
+    },
+    {
+      "path": "src/deepseek_tui/mcp/schema_hints.py",
+      "lines": 92,
+      "sha256": "0836c200fa2347403d0651e2735134ba5307f9f62e8ce045a43fdff271b38f48"
+    },
+    {
+      "path": "src/deepseek_tui/mcp/store.py",
+      "lines": 310,
+      "sha256": "a9ae4d55daca42950ded198bcf4b4129344a8b1b2378f56d0f5375164768afac"
+    },
+    {
+      "path": "src/deepseek_tui/mcp/transport.py",
+      "lines": 607,
+      "sha256": "9bacbe7a63dd827e008f309c3d224437487d870ae70bf0f203c1cddf4605c12a"
+    },
+    {
+      "path": "src/deepseek_tui/media.py",
+      "lines": 167,
+      "sha256": "bc446a0d0b10d25978e0d7863a48423f2ad265478a1c630eb59a465781eace5b"
+    },
+    {
+      "path": "src/deepseek_tui/plugins/__init__.py",
+      "lines": 36,
+      "sha256": "53967e0fdde06900e2f84b832f971adc27f867ab305bc56c43ae1eb8a78375c3"
+    },
+    {
+      "path": "src/deepseek_tui/plugins/adapters/__init__.py",
+      "lines": 3,
+      "sha256": "f9af427f692b5272bbfcac032ab6358dfd76d10bcd31abf177b77f673e2bd2b5"
+    },
+    {
+      "path": "src/deepseek_tui/plugins/adapters/bare_skill.py",
+      "lines": 50,
+      "sha256": "bdf35af294fcbf8ff8dbde5ad31d513601a8a8d00f9a6a9f88d356793bdd3dd4"
+    },
+    {
+      "path": "src/deepseek_tui/plugins/adapters/claude.py",
+      "lines": 205,
+      "sha256": "7f7598dc50deda3030a4271c1653583427332f9cff34faebd712636bbfff39aa"
+    },
+    {
+      "path": "src/deepseek_tui/plugins/adapters/common.py",
+      "lines": 74,
+      "sha256": "d5723982a72fe8b47aa3d3a8cfc78cd68078cbd047bb388e186e13212d273764"
+    },
+    {
+      "path": "src/deepseek_tui/plugins/adapters/registry.py",
+      "lines": 115,
+      "sha256": "a856bed9da32a89a4929600b60783f27bda3ba95e73f64ade460062d2da15833"
+    },
+    {
+      "path": "src/deepseek_tui/plugins/fetch.py",
+      "lines": 395,
+      "sha256": "daae037cb0d648bdf43f2cf4849b291e7ea68ccf34431c9e2e5a49eccd5efb25"
+    },
+    {
+      "path": "src/deepseek_tui/plugins/grants.py",
+      "lines": 248,
+      "sha256": "1698412695ad845034a869f2c3eb0e796e4fdc4aa58ba4ba774d22f2b7725097"
+    },
+    {
+      "path": "src/deepseek_tui/plugins/host.py",
+      "lines": 619,
+      "sha256": "fddca42fcd5dbdba8c3ddcf687c7497ce7b49ed89f213742687ed9ba01c8cf41"
+    },
+    {
+      "path": "src/deepseek_tui/plugins/identity.py",
+      "lines": 101,
+      "sha256": "2c216f10b11b85eafb3818d7a61f452d51b3a251fc2c7e92c6b9184d9897e3db"
+    },
+    {
+      "path": "src/deepseek_tui/plugins/model.py",
+      "lines": 144,
+      "sha256": "cca09368a97c0b32ced07d3c1d2601a109d5a5a9aa5a273d12ba7152b1780d20"
+    },
+    {
+      "path": "src/deepseek_tui/plugins/runtime.py",
+      "lines": 154,
+      "sha256": "0e61540d543da3c90aabc5a8f6788042225a2feba1a76a00cd8cefd987c8e906"
+    },
+    {
+      "path": "src/deepseek_tui/plugins/source.py",
+      "lines": 232,
+      "sha256": "d1df610e2757409ff03132d0920d9653b92ae34fe278ce96e3d4efeab2b956f8"
+    },
+    {
+      "path": "src/deepseek_tui/plugins/store.py",
+      "lines": 235,
+      "sha256": "d294db3f24365a87567d05995e2bf2472e6425d04574082c6445923938716455"
+    },
+    {
+      "path": "src/deepseek_tui/policy/__init__.py",
+      "lines": 1,
+      "sha256": "17e0ad5d9e4d9e5ed6feabb18afb60716093821bd2965d87b364328ef8b03044"
+    },
+    {
+      "path": "src/deepseek_tui/policy/command_safety.py",
+      "lines": 362,
+      "sha256": "cbae5c97c7ee71b9d2cca5214b021e9cfb828dc944e498f35ebbb263583d847a"
+    },
+    {
+      "path": "src/deepseek_tui/policy/env_filter.py",
+      "lines": 67,
+      "sha256": "de664c26c4c6586f538818bda171a9ab3fc6816c94df1ed799ef5beacab55a87"
+    },
+    {
+      "path": "src/deepseek_tui/policy/exec_policy.py",
+      "lines": 481,
+      "sha256": "eea74ae7f5dc5c22d4ebba058db4a803f4ee8526293808612d1e0de0e9dae1fc"
+    },
+    {
+      "path": "src/deepseek_tui/policy/network.py",
+      "lines": 174,
+      "sha256": "a2999e92c030ddf07d6900a8fb6e051fdd812e4f9601dc2142da3c01f284696c"
+    },
+    {
+      "path": "src/deepseek_tui/policy/sandbox.py",
+      "lines": 752,
+      "sha256": "dfc3fe271b754427fea80cd27cebe76583592bbcf1a8390e68bbd5b5aed4ab12"
+    },
+    {
+      "path": "src/deepseek_tui/presentation/__init__.py",
+      "lines": 2,
+      "sha256": "f28335b155ad0a1b402aa3a9ac263b4cc01ec8e84b386ae348252399418ab4b5"
+    },
+    {
+      "path": "src/deepseek_tui/presentation/models.py",
+      "lines": 104,
+      "sha256": "e75d40f1d97628b0f68c8a21afffb061c5e96e0c1c4b2d258288851cf413785f"
+    },
+    {
+      "path": "src/deepseek_tui/presentation/reducer.py",
+      "lines": 168,
+      "sha256": "803eedcf8c1bc73f84ebb3b506c0ff54d340a99307db262ed484ae676a3c49c4"
+    },
+    {
+      "path": "src/deepseek_tui/presentation/semantics.py",
+      "lines": 229,
+      "sha256": "286cff678e57d8ba6448daad0ef0ead25245af810b1ff58b46d691b1b17e83aa"
+    },
+    {
+      "path": "src/deepseek_tui/prompts/__init__.py",
+      "lines": 2,
+      "sha256": "68a888438ca3cbe8c5aa1b9ff1d19975dff1441b15e596d314aa652e2a0c0dda"
+    },
+    {
+      "path": "src/deepseek_tui/protocol/__init__.py",
+      "lines": 59,
+      "sha256": "77f81314c1575322606e8fe358bd6217a870f0fe9a331e8cdfd42e6cc3b32251"
+    },
+    {
+      "path": "src/deepseek_tui/protocol/events.py",
+      "lines": 105,
+      "sha256": "589ab4a21860e302655f741d50c0b7271c7f079f98f57e4ac28d2019f38668ab"
+    },
+    {
+      "path": "src/deepseek_tui/protocol/messages.py",
+      "lines": 175,
+      "sha256": "cd0029831b2786001964e9b128ea598075a027f21fee163fe8ee1500e7674db9"
+    },
+    {
+      "path": "src/deepseek_tui/protocol/responses.py",
+      "lines": 173,
+      "sha256": "562cb40b2ae7c0a3fe1b51bbe25c60125efb010ebc9a10e8fd88a22df28ef558"
+    },
+    {
+      "path": "src/deepseek_tui/server/__init__.py",
+      "lines": 5,
+      "sha256": "cde135f98f942dd151328948fe648b85ac068e98bdbaf7c4b2dfeaa67b893bbf"
+    },
+    {
+      "path": "src/deepseek_tui/server/agent_segments.py",
+      "lines": 35,
+      "sha256": "60ab6f037e845c3b5de076cefa1a643d3f3e270363b0c5af3ab24f84927935c5"
+    },
+    {
+      "path": "src/deepseek_tui/server/app.py",
+      "lines": 904,
+      "sha256": "1c9a8671859027f6a6a71eb3af232bb8a79c480f7f0044727abb43be1cbb1a22"
+    },
+    {
+      "path": "src/deepseek_tui/server/approval.py",
+      "lines": 404,
+      "sha256": "8b633b68a79829eff3b3c57430bfacaf950fcf2dda647457cc5860ecc84b4310"
+    },
+    {
+      "path": "src/deepseek_tui/server/auth.py",
+      "lines": 139,
+      "sha256": "9543f02fa2efb23c179f218c684b60db4297aaab25bf188f39bf64ff76a39004"
+    },
+    {
+      "path": "src/deepseek_tui/server/data_bundle.py",
+      "lines": 776,
+      "sha256": "66681adafbeaa62371943be7426831c4c1c73b00b710e4749f5f377d0f02e57d"
+    },
+    {
+      "path": "src/deepseek_tui/server/data_inventory.py",
+      "lines": 418,
+      "sha256": "dc47ca812acaa068a0a3a36153ab35c55e273a673db6581d88dbb0ecd28c0682"
+    },
+    {
+      "path": "src/deepseek_tui/server/lifecycle.py",
+      "lines": 27,
+      "sha256": "0f792ef081750bec08c03ad70414ee080d378dc54de4c8a50ec140d77f98dcd0"
+    },
+    {
+      "path": "src/deepseek_tui/server/metrics.py",
+      "lines": 315,
+      "sha256": "b903f708646cbfae9f162b6f5b888a7c67d16ea22e40753471d22a74f676cd69"
+    },
+    {
+      "path": "src/deepseek_tui/server/phase_bridge.py",
+      "lines": 618,
+      "sha256": "dc097fc1c36056ddc6edd65783bae2fd43195e684721e69a6e5526410e9475f0"
+    },
+    {
+      "path": "src/deepseek_tui/server/routes.py",
+      "lines": 1831,
+      "sha256": "b3ec526f1744d8289207b006f5b824fe5a0c886eefb9760356f3af34ee30d471"
+    },
+    {
+      "path": "src/deepseek_tui/server/runtime.py",
+      "lines": 1480,
+      "sha256": "e6767beff7e12386a3c3501e0678139479c2f0faf752fb0d195747652d10bcee"
+    },
+    {
+      "path": "src/deepseek_tui/server/session_snapshot.py",
+      "lines": 286,
+      "sha256": "d705ee12946c416c77eb9175393ea0491e1db216fa65616cd8dc50b7c479d5a3"
+    },
+    {
+      "path": "src/deepseek_tui/server/sessions.py",
+      "lines": 469,
+      "sha256": "307bf22841964fffff094e7056cd7ea3b7c091c89b7fc3d15d23e8e6f458f00d"
+    },
+    {
+      "path": "src/deepseek_tui/server/share_routes.py",
+      "lines": 293,
+      "sha256": "bdfd675a732e3e341a6849b74759546ecab01b629faa4680904c2fb83f4521e3"
+    },
+    {
+      "path": "src/deepseek_tui/server/share_service.py",
+      "lines": 156,
+      "sha256": "b6249aa3a2e0a5ad6c4f5152c1b472468db5ee239b711971dde4e0a789fe3a11"
+    },
+    {
+      "path": "src/deepseek_tui/server/threads/__init__.py",
+      "lines": 119,
+      "sha256": "00859475a6ebc61f5d9a554437f6996eef0ed2d1ca739db8dd35551dc4d886bc"
+    },
+    {
+      "path": "src/deepseek_tui/server/threads/broadcast.py",
+      "lines": 49,
+      "sha256": "9ceac9c5a72525f3128315e53b71640870326fa41184e81be642eea2b394fc49"
+    },
+    {
+      "path": "src/deepseek_tui/server/threads/errors.py",
+      "lines": 27,
+      "sha256": "5bf3dd85cef508dbe88bc381f2496a031003f5fb2e1bd8d445f707f4d4b24f7d"
+    },
+    {
+      "path": "src/deepseek_tui/server/threads/items.py",
+      "lines": 608,
+      "sha256": "6040019f17c5f8cb033391ae1e9fdebd1fbcb80e7a48ab31ddc4ea4d9a5144d1"
+    },
+    {
+      "path": "src/deepseek_tui/server/threads/manager.py",
+      "lines": 6906,
+      "sha256": "549be780b893e14ee35744f89e03e18e352c9f2dea5e1fd56300016d8e0bf8e2"
+    },
+    {
+      "path": "src/deepseek_tui/server/threads/models.py",
+      "lines": 310,
+      "sha256": "c44e057f6b90ff7d222a2cedbf6e47a635624eacc186b43872d9e32f3e31d886"
+    },
+    {
+      "path": "src/deepseek_tui/server/threads/rewind_audit.py",
+      "lines": 75,
+      "sha256": "5aed88ef6f081a3e684d32d636352507f514c6b7f88aa0ca59b93991ca8d0aa3"
+    },
+    {
+      "path": "src/deepseek_tui/server/threads/soft_resume.py",
+      "lines": 121,
+      "sha256": "763f51caa612dc6bb1eb4e06dfce4114601bfd46ec1169294d4fac44fa4da1e4"
+    },
+    {
+      "path": "src/deepseek_tui/server/threads/store.py",
+      "lines": 551,
+      "sha256": "a15b4f588762ab307a5c73d1297bb4a9bc165430dc6e5ed1767ef6cdc96c76a5"
+    },
+    {
+      "path": "src/deepseek_tui/server/threads/titles.py",
+      "lines": 88,
+      "sha256": "31da1f025c9adcb594f781a83cec60eef45379100e49fe4aa452282937aa69df"
+    },
+    {
+      "path": "src/deepseek_tui/server/threads/usage.py",
+      "lines": 278,
+      "sha256": "940bc04d532c92bc336f457f0cce3baba2932472883e93fb51b34ea1ab937812"
+    },
+    {
+      "path": "src/deepseek_tui/server/workbench_usage_ledger.py",
+      "lines": 256,
+      "sha256": "7e2b0401f6072055020b5cc1a2d2514826979ab7dfd863a6a13fffa5441ed33e"
+    },
+    {
+      "path": "src/deepseek_tui/state/__init__.py",
+      "lines": 8,
+      "sha256": "9482cc81efc991e9ae04a81030bbb1344fcdcafd7e17cc54ce9ef058897becbb"
+    },
+    {
+      "path": "src/deepseek_tui/state/context.py",
+      "lines": 576,
+      "sha256": "ab783a1e7a28f7941e23c3f13cf11518cf1729397eb9237ac8684b87fe379d13"
+    },
+    {
+      "path": "src/deepseek_tui/state/paste_file.py",
+      "lines": 50,
+      "sha256": "c05c54f8afd7512a6675df5f8d2917f7cbe0e65b8fd9f9c4fb19c8d17953b2d5"
+    },
+    {
+      "path": "src/deepseek_tui/state/secrets.py",
+      "lines": 320,
+      "sha256": "3ebdbab0067f91082150747bb3e16449d7e0d6a8dacd5a4c52a3826e0c38817a"
+    },
+    {
+      "path": "src/deepseek_tui/state/session.py",
+      "lines": 111,
+      "sha256": "9bdfaed50aa42f42e9fbd30987a2357be398677ae69768730c452f0d4d36543b"
+    },
+    {
+      "path": "src/deepseek_tui/tools/__init__.py",
+      "lines": 1,
+      "sha256": "fbb08660446eacc00130d5e1b015f80dc8c9a737bceeec4762eae33ba6153e6e"
+    },
+    {
+      "path": "src/deepseek_tui/tools/approval.py",
+      "lines": 851,
+      "sha256": "5a755f88004ad06960204dd600bbc7b3fa0b3a3a88b6cce4b7aedd534fbd2ab1"
+    },
+    {
+      "path": "src/deepseek_tui/tools/automation.py",
+      "lines": 1614,
+      "sha256": "6016030f0b92e35ad7a636449aa53c963aa3a26225994a02c12a640ca64dc681"
+    },
+    {
+      "path": "src/deepseek_tui/tools/durable_transcript.py",
+      "lines": 144,
+      "sha256": "a18c4dabad0bae676dbb08be43c973a6739702b0a8497cd463cc4baa38c3447f"
+    },
+    {
+      "path": "src/deepseek_tui/tools/encoding.py",
+      "lines": 221,
+      "sha256": "8cdd07b672953f038f7599d38615cac084061654069024700893a9588a39176f"
+    },
+    {
+      "path": "src/deepseek_tui/tools/file.py",
+      "lines": 636,
+      "sha256": "bcedaa3159546428b9d9733459197124e2a8b6930535093324ffb2ab70107f08"
+    },
+    {
+      "path": "src/deepseek_tui/tools/knowledge.py",
+      "lines": 409,
+      "sha256": "5a77937d6307c4d688b7c6e4a9cba3dc68a7c8cc29a44c33eebda7cfe412b465"
+    },
+    {
+      "path": "src/deepseek_tui/tools/mcp.py",
+      "lines": 98,
+      "sha256": "a822d51e200e8aad5330a86d3b138ef16a6b4e79ad19ed8cb3ecad93220c92e0"
+    },
+    {
+      "path": "src/deepseek_tui/tools/output_capture.py",
+      "lines": 102,
+      "sha256": "62dea35a49a7df52c0f7b1ecff3defc4783d36d79b9fc1576d69edc122e318ca"
+    },
+    {
+      "path": "src/deepseek_tui/tools/plan_mode.py",
+      "lines": 392,
+      "sha256": "bea74e513fa5596ae78fd5314ca56b4497b7591e0e3aeb566949476ce028af22"
+    },
+    {
+      "path": "src/deepseek_tui/tools/plan_state.py",
+      "lines": 70,
+      "sha256": "de357fef86b5537aead94a1cda72f31df6c85c0044c6b75cb92908bfe31f1836"
+    },
+    {
+      "path": "src/deepseek_tui/tools/registry.py",
+      "lines": 806,
+      "sha256": "361dbc59f8f65c44947931878ce786ed9a1220f219f6ea1ba0c271f10b36681c"
+    },
+    {
+      "path": "src/deepseek_tui/tools/run_conversation.py",
+      "lines": 158,
+      "sha256": "f4e25e664b4ed4b7345808e2cde6e33d0ac25aa75947d1ffa55d0ce6772c2d67"
+    },
+    {
+      "path": "src/deepseek_tui/tools/runtime.py",
+      "lines": 647,
+      "sha256": "54c373dc06a8f9e45bc0be4f59dad4187d929620841ad0f8bf9e4aa4df4a7f91"
+    },
+    {
+      "path": "src/deepseek_tui/tools/search.py",
+      "lines": 619,
+      "sha256": "18d750474a4a5cfe035f061c031e8b32fd4254d5643e1ff683fa3dcdc293a232"
+    },
+    {
+      "path": "src/deepseek_tui/tools/shell.py",
+      "lines": 1490,
+      "sha256": "617c4c69c39230bd73bb562f15278ec27c6cc9f41923038fb59d60797ae2f438"
+    },
+    {
+      "path": "src/deepseek_tui/tools/subagent/__init__.py",
+      "lines": 106,
+      "sha256": "509c2c6b0186b6d2d177b96558d7101c26e8e1946ad581034c8af67df931e1e7"
+    },
+    {
+      "path": "src/deepseek_tui/tools/subagent/agent.py",
+      "lines": 119,
+      "sha256": "d1b33e49a2df13a6d14e06ada8b1b249cc5c45d77c8da49d7c800170255e0736"
+    },
+    {
+      "path": "src/deepseek_tui/tools/subagent/completion.py",
+      "lines": 197,
+      "sha256": "ebce1004e5032f5b56c6b5ec709cf776451777687ef81d12e9997c1fc7bc0cb6"
+    },
+    {
+      "path": "src/deepseek_tui/tools/subagent/handoff_ledger.py",
+      "lines": 105,
+      "sha256": "4bded068b367837f7e7bb2a1098370dfddce7f06c7a965cb7b44fcb5095683d4"
+    },
+    {
+      "path": "src/deepseek_tui/tools/subagent/loop.py",
+      "lines": 1098,
+      "sha256": "c0f47adbf7ad213f0fcf2b236617d2cd5860770f92326d8296df1a0f1c15224d"
+    },
+    {
+      "path": "src/deepseek_tui/tools/subagent/mailbox.py",
+      "lines": 236,
+      "sha256": "50e16d521a21bb7055f0c26f8cb44ba4c8c67aff58dd4298764cf832ca36ec18"
+    },
+    {
+      "path": "src/deepseek_tui/tools/subagent/manager.py",
+      "lines": 664,
+      "sha256": "053d150b2f7e093428f62d339e44c84ae2142236a1a91ab9ee995306b2e50c91"
+    },
+    {
+      "path": "src/deepseek_tui/tools/subagent/store.py",
+      "lines": 138,
+      "sha256": "b518cc3ad45e71c305095bf5d40701373964a49974c254e8776ca9f09c358fdc"
+    },
+    {
+      "path": "src/deepseek_tui/tools/subagent/structured_output.py",
+      "lines": 81,
+      "sha256": "82a49cfff9a162e82c86ee1b4bdd1d110091ac0a342d8d1127c85d508f1495c2"
+    },
+    {
+      "path": "src/deepseek_tui/tools/subagent/tools.py",
+      "lines": 912,
+      "sha256": "06824f9d92f08873ac3163e05bbdd63167a80967b456b45b47f50537c602ccee"
+    },
+    {
+      "path": "src/deepseek_tui/tools/subagent/types.py",
+      "lines": 498,
+      "sha256": "8d7d697b0b113893633f7efdc76a3deddd7e1c82760ceef00115e6e27c500bc7"
+    },
+    {
+      "path": "src/deepseek_tui/tools/task/__init__.py",
+      "lines": 78,
+      "sha256": "12506b2bc070e02e82de20899819011332c056320d26e674eca1e36aa3114cae"
+    },
+    {
+      "path": "src/deepseek_tui/tools/task/helpers.py",
+      "lines": 255,
+      "sha256": "c822bf3fc92b0c112172dd660c7a636193cfa7e0d71650ff16a965e50aafa94d"
+    },
+    {
+      "path": "src/deepseek_tui/tools/task/manager.py",
+      "lines": 920,
+      "sha256": "24ed3acf5ae20a755ee0eae02724474204d899c3652137dbd1010c5b95667e21"
+    },
+    {
+      "path": "src/deepseek_tui/tools/task/models.py",
+      "lines": 320,
+      "sha256": "b2dd3e3fd020649df787907555319222f564b276f97b115abd95e7114e4d26ec"
+    },
+    {
+      "path": "src/deepseek_tui/tools/task/resume.py",
+      "lines": 38,
+      "sha256": "ef45eb5150c147a798a1cd2e0b6c20b2e6065fa91a84cdd69651415bf4b9625b"
+    },
+    {
+      "path": "src/deepseek_tui/tools/task/store.py",
+      "lines": 277,
+      "sha256": "c78aaaee372abd03aa6d42e6f3b718b7f438715c862bee0f5ce3d20f13a72782"
+    },
+    {
+      "path": "src/deepseek_tui/tools/task/tools.py",
+      "lines": 607,
+      "sha256": "27859af74ebe41387e314fdc840a810e3aaf702a06dd33b6b9d1855d6bfbb356"
+    },
+    {
+      "path": "src/deepseek_tui/tools/todo.py",
+      "lines": 538,
+      "sha256": "346ba283c8954ebea9e83792cf9ae329058bd8ffa04abe8dbd461ceefb7a4915"
+    },
+    {
+      "path": "src/deepseek_tui/tools/user_input.py",
+      "lines": 172,
+      "sha256": "10f84b42879db29cb91afeaa076383c5679f134ecd3625b3988b44e56b0dbd3e"
+    },
+    {
+      "path": "src/deepseek_tui/tools/utils/__init__.py",
+      "lines": 32,
+      "sha256": "080ef3db4824333cff6792e09dacb22a4e577e7f7fdee39a19cf73d2865fef22"
+    },
+    {
+      "path": "src/deepseek_tui/tools/utils/edit_diagnostics.py",
+      "lines": 163,
+      "sha256": "9fef92f3ff65d5d2e0ee8c55f50c8e8d996c9d5fd0928d0b8caceeed2d4a44ad"
+    },
+    {
+      "path": "src/deepseek_tui/tools/utils/gitignore.py",
+      "lines": 205,
+      "sha256": "8c5bb14d00856635d29fe93891d67ca710b8bfd11ef079ab16014c0b4b003797"
+    },
+    {
+      "path": "src/deepseek_tui/tools/utils/path_suggestions.py",
+      "lines": 124,
+      "sha256": "9c4956cc4648a38fc5f2a04458c62be8492236fc8ed758f470b4eb47c7fb7d3a"
+    },
+    {
+      "path": "src/deepseek_tui/tools/utils/sensitive.py",
+      "lines": 60,
+      "sha256": "be13d2df9b39248d37e5194934f502436d3a488886b5bea94880578bde6ab6f8"
+    },
+    {
+      "path": "src/deepseek_tui/tools/utils/validation.py",
+      "lines": 111,
+      "sha256": "ef2064480b1ac16809f1a619226711f5d028c0c497bde2a6afa8bf92ee71d25b"
+    },
+    {
+      "path": "src/deepseek_tui/tools/web.py",
+      "lines": 823,
+      "sha256": "2efd0710033fd4df335c9e4b43ca6891a120d1f936c6659b513c38a45c3bffd9"
+    },
+    {
+      "path": "src/deepseek_tui/tui/__init__.py",
+      "lines": 1,
+      "sha256": "ad28c64c82e2567a850f0f5d419a74b95e4fdddf93284d853f6ae0f9ffd91a6c"
+    },
+    {
+      "path": "src/deepseek_tui/tui/app.py",
+      "lines": 1666,
+      "sha256": "640c6050d302c5a7f378fb2f7c675d8d19b31e50628f6c25c1e5294c5ee2913c"
+    },
+    {
+      "path": "src/deepseek_tui/tui/cards.py",
+      "lines": 567,
+      "sha256": "e5d1eeff81e00905004f638913c8c76fbbc9f78574aebb1aa68c6395d6ff5cf8"
+    },
+    {
+      "path": "src/deepseek_tui/tui/commands.py",
+      "lines": 2014,
+      "sha256": "508056f4f1a68612660d22caea3674b910454ab27c6f1d0d2834913a5c5a10cd"
+    },
+    {
+      "path": "src/deepseek_tui/tui/dialogs.py",
+      "lines": 853,
+      "sha256": "15e98117773a4b88ac3e6e5efc9d3b2bbb1612f933d1978e3936c192986567a6"
+    },
+    {
+      "path": "src/deepseek_tui/tui/input.py",
+      "lines": 379,
+      "sha256": "dc2bc42b88b2c63cf7df166c337bed9c22f871569ade45c3ff3e8c958f573241"
+    },
+    {
+      "path": "src/deepseek_tui/tui/lifecycle.py",
+      "lines": 25,
+      "sha256": "d254497351790567d387d61d1965ef1be2e9251dbed88d8795d004eacf57dba5"
+    },
+    {
+      "path": "src/deepseek_tui/tui/notifications.py",
+      "lines": 132,
+      "sha256": "6ee0ded5693132bffecd23e6ca0ce1e72a895032ab446105f5e499e622b791c2"
+    },
+    {
+      "path": "src/deepseek_tui/tui/onboarding.py",
+      "lines": 186,
+      "sha256": "b5cf9ac042509f18fa06f77525d937180d40286e2ad7cb3450b873edc0bb930d"
+    },
+    {
+      "path": "src/deepseek_tui/tui/plan.py",
+      "lines": 350,
+      "sha256": "5a6c859a5e8d9a30e7f40919fb76c3820995d36dcd9ed57a3ef46dd8b65ccef9"
+    },
+    {
+      "path": "src/deepseek_tui/tui/sanitize.py",
+      "lines": 20,
+      "sha256": "59628f4dfe242ccbe70c27b9e16f8adc3dfab7d6ea0c9a7ce33a8077441596cc"
+    },
+    {
+      "path": "src/deepseek_tui/tui/session_restore.py",
+      "lines": 218,
+      "sha256": "5893ad4f14140a3b3502b5897878fda2139eac3c9993d1cad6f94e3164fecef5"
+    },
+    {
+      "path": "src/deepseek_tui/tui/sidebar.py",
+      "lines": 889,
+      "sha256": "0223711283e834042e8c8adc692e38ab67738e7c78777994866119d1563d695d"
+    },
+    {
+      "path": "src/deepseek_tui/tui/status.py",
+      "lines": 349,
+      "sha256": "9902ac67cb8bd406c7a678fe3c01cf7f703a8323eb044ac3ee0b0fa3f8a5eb42"
+    },
+    {
+      "path": "src/deepseek_tui/tui/tool_cell.py",
+      "lines": 603,
+      "sha256": "39682e3a8c854ed2e62dda35f7afb168b5e31ab42b66e1ff20bf01086d72f90a"
+    },
+    {
+      "path": "src/deepseek_tui/tui/tool_classify.py",
+      "lines": 139,
+      "sha256": "dbbecb91a255b462b8c201a5db0f92ad8efd1559850df0f84d7416237740bc8a"
+    },
+    {
+      "path": "src/deepseek_tui/tui/transcript.py",
+      "lines": 973,
+      "sha256": "c026098441d5a1e2edd4b401c848e7df73955a4ba36cf57bd23da7cfcac80cd9"
+    },
+    {
+      "path": "src/deepseek_tui/utils/__init__.py",
+      "lines": 479,
+      "sha256": "be0b8f574c648bd001711d00d46d044aee13afc02fce5bfa7ea1eeb8dc576323"
+    },
+    {
+      "path": "src/deepseek_tui/utils/network_escalation.py",
+      "lines": 111,
+      "sha256": "680aefba4fb9be40f15f1573fcae786815c6a1651e9b9978a67f2d8262ea5838"
+    },
+    {
+      "path": "src/deepseek_tui/workspace/__init__.py",
+      "lines": 23,
+      "sha256": "7f4ef33d47d9d6e07e249d5b042773dbc51d83d70bd4d3ec586b6574484e5775"
+    },
+    {
+      "path": "src/deepseek_tui/workspace/diff_synth.py",
+      "lines": 96,
+      "sha256": "53f903853a727b291439caaffcb17fa100d39320419ed0edd355b8bd34b44128"
+    },
+    {
+      "path": "src/deepseek_tui/workspace/execution.py",
+      "lines": 75,
+      "sha256": "a0219c02410de1f36278947a11120044d25145453a046b922769b627b71105e3"
+    },
+    {
+      "path": "src/deepseek_tui/workspace/git_reconcile.py",
+      "lines": 187,
+      "sha256": "d00a1eb8c5ca9fb3b9b8d20f10053abf35a668bdab8f755ff79cd10d3edb6dd2"
+    },
+    {
+      "path": "src/deepseek_tui/workspace/managed_worktree.py",
+      "lines": 2630,
+      "sha256": "004eeb166bcdc684e23cc97171578c40621d448d414b24c06dea3ef084a40fae"
+    },
+    {
+      "path": "src/deepseek_tui/workspace/mutation_ledger.py",
+      "lines": 425,
+      "sha256": "c3ab50c1a7faf92e28e1316f6968fec74fca7092678123b86c7a41e24c0898c3"
+    },
+    {
+      "path": "src/deepseek_tui/workspace/project_lease.py",
+      "lines": 201,
+      "sha256": "33730bd3a97f5589beeae2e64013e976600f3d5ec7f53da2dedc2d7ea31cbbe9"
+    },
+    {
+      "path": "src/deepseek_tui/workspace/shell_mutation_watch.py",
+      "lines": 261,
+      "sha256": "fa3c2a27abd118bd50c16d6567d88807ad35fecceb46d1319c2fe8a358edce43"
+    },
+    {
+      "path": "src/deepseek_tui/workspace/shell_write_guard.py",
+      "lines": 556,
+      "sha256": "0426fe37244105717062d4bd1dfc346853dca8fcc07bcbfdb86aa76bd890f743"
+    },
+    {
+      "path": "src/deepseek_tui/workspace/turn_checkpoints.py",
+      "lines": 1848,
+      "sha256": "5defe93607e006441469308531e74787c355cca9a46608e2e0d31e56fbfa9a5f"
+    }
+  ],
+  "round_status": "closed_per_user_request",
+  "target_branch": "build_0928",
+  "latest_validation": "17-fixes-validation.json"
+}

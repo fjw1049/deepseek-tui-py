@@ -298,6 +298,10 @@ class SecretsManager:
     def resolve_api_key(self, config: Config, provider_name: str | None = None) -> str | None:
         provider = provider_name or config.provider
 
+        override = config._api_key_override
+        if override is not None and override[0] == provider:
+            return override[1] or None
+
         env_value = env_for(provider)
         if env_value is not None and env_value.strip():
             return env_value

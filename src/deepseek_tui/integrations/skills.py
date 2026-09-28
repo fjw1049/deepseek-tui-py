@@ -726,7 +726,7 @@ def fetch_github_archive(
     """Shared GitHub repo download+extract prologue (K-1..K-5 hardened).
 
     Downloads the first working candidate archive and extracts it into a
-    sibling staging dir ``.<repo>.tmp`` under *parent*. Returns
+    unique staging directory under *parent*. Returns
     ``(staging, source_url)``; raises :class:`GithubFetchError` on failure.
     The caller validates layout and publishes the staging dir by rename.
     """

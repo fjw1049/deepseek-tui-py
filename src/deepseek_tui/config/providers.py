@@ -11,6 +11,7 @@ __all__ = [
     "ProviderDefaults",
     "canonical_model_name",
     "context_window_for_model",
+    "configured_context_window",
     "context_window_override",
     "max_output_tokens_for_model",
     "normalize_model",
@@ -100,9 +101,8 @@ def _deepseek_context_window_hint(model_lower: str) -> int | None:
     return None
 
 
-# Config-driven per-model context windows. Populated from
-# ``[providers.X]`` tables at config load / engine creation so custom
-# provider models (unknown to the static table below) get a usable window.
+# Legacy explicit overrides for standalone callers. ConfigLoader and Engine
+# never register here; configured runtime calls use configured_context_window.
 _context_window_overrides: dict[str, int] = {}
 
 
@@ -118,15 +118,15 @@ def context_window_override(model: str) -> int | None:
 
 
 def register_provider_context_windows(config: object) -> None:
-    """Replace context windows with those from the current ``config``.
+    """Legacy standalone override API; configured runtimes do not consult this map.
 
     - ``[providers.X.context_windows]`` (model id → tokens, written by the
       Workbench custom-endpoint UI) wins for the models it names.
     - ``context_window`` on the provider table applies to its default model.
     - A custom model the static table doesn't recognize defaults to
       :data:`CUSTOM_MODEL_CONTEXT_WINDOW_TOKENS` (500K).
-    Idempotent; safe to call on every config load / engine creation. Replacing
-    the map prevents values from a prior workspace leaking into this one.
+    Retained for callers explicitly managing standalone defaults. ConfigLoader
+    and Engine use configured_context_window instead of mutating this registry.
     """
     overrides: dict[str, int] = {}
     providers = getattr(config, "providers", None) or {}
@@ -154,6 +154,24 @@ def register_provider_context_windows(config: object) -> None:
             overrides[model.lower()] = CUSTOM_MODEL_CONTEXT_WINDOW_TOKENS
     _context_window_overrides.clear()
     _context_window_overrides.update(overrides)
+
+
+def configured_context_window(model: str, config: object | None = None) -> int:
+    """Resolve one route's window without modifying process-wide defaults."""
+    from deepseek_tui.config.models import Config
+    from deepseek_tui.config.routing import config_for_model
+
+    if not isinstance(config, Config):
+        return context_window_for_model(model)
+    route = config_for_model(config, model) if "::" in model else config
+    model_id = model.split("::", 1)[-1]
+    pc = route.effective_provider_config()
+    if model_id in pc.context_windows:
+        return pc.context_windows[model_id]
+    if pc.context_window is not None and model_id == pc.model:
+        return pc.context_window
+    resolved = _context_window_for_model_optional(model_id)
+    return resolved if resolved is not None else DEFAULT_CONTEXT_WINDOW_TOKENS
 
 
 def context_window_for_model(model: str) -> int:

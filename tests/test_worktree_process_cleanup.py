@@ -75,23 +75,15 @@ async def test_terminate_processes_under_without_processes_is_noop(
 
 
 @pytest.mark.asyncio
-async def test_remove_managed_worktree_terminates_strays(
+async def test_remove_managed_worktree_preserves_occupied_directory(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     from deepseek_tui.workspace import managed_worktree as mw
 
-    called: list[Path] = []
-
-    async def fake_terminate(directory: Path, **_kwargs: object) -> int:
-        called.append(Path(directory))
-        return 0
-
-    monkeypatch.setattr(mw, "terminate_processes_under", fake_terminate)
+    monkeypatch.setattr(mw, "_pids_with_cwd_under_sync", lambda directory: [12345])
     monkeypatch.setattr(mw, "user_worktrees_dir", lambda: tmp_path / "worktrees")
     dest = tmp_path / "worktrees" / "repo-x" / "thr_1"
     dest.mkdir(parents=True)
-
-    await mw.remove_managed_worktree(tmp_path / "project", dest)
-
-    assert called == [dest.resolve()]
-    assert not dest.exists()
+    with pytest.raises(mw.WorktreeError, match="occupied"):
+        await mw.remove_managed_worktree(tmp_path / "project", dest)
+    assert dest.is_dir()

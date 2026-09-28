@@ -7,7 +7,9 @@ structure documented in ``MANIFEST.toml`` / :mod:`deepseek_tui.config.paths`.
 from __future__ import annotations
 
 import logging
+from contextlib import contextmanager
 import shutil
+from collections.abc import Iterator
 from pathlib import Path
 
 from deepseek_tui.config.paths import user_deepseek_dir
@@ -23,7 +25,26 @@ def ensure_user_home_layout(home: Path | None = None) -> list[str]:
 
     Returns a list of human-readable migration actions performed.
     """
-    root = home or user_deepseek_dir()
+    with user_home_lease(home) as root:
+        return _ensure_user_home_layout(root)
+
+
+@contextmanager
+def user_home_lease(home: Path | None = None) -> Iterator[Path]:
+    """Coordinate migration and Python settings updates for this home."""
+    from deepseek_tui.workspace.project_lease import FileLease
+
+    root = (home or user_deepseek_dir()).resolve()
+    lease = FileLease(root / "locks" / "home-layout.lock")
+    if not lease.acquire_blocking():
+        raise RuntimeError("Could not acquire user home lease")
+    try:
+        yield root
+    finally:
+        lease.release()
+
+
+def _ensure_user_home_layout(root: Path) -> list[str]:
     root.mkdir(parents=True, exist_ok=True)
     actions: list[str] = []
 

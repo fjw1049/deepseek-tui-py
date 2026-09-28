@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import os
 import time
 import uuid
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from typing import Any, Callable, Literal
 
 from deepseek_tui.workspace.diff_synth import (
@@ -23,7 +24,7 @@ MutationSource = Literal[
 MutationOp = Literal["create", "update", "delete", "rename"]
 MutationStatus = Literal["pending", "applied", "failed"]
 
-# Cap SSE/item detail size; full text remains available via item fetch when truncated.
+# Cap snapshot detail size; history retains the full input patch.
 DEFAULT_DIFF_MAX_CHARS = 48_000
 
 
@@ -148,7 +149,7 @@ def _one_mutation_from_dict(
     path = entry.get("path") or path_fallback
     if not isinstance(path, str) or not path.strip():
         return None
-    path = path.replace("\\", "/").strip()
+    path = path.replace("\\", "/") if os.name == "nt" else path
     unified = entry.get("unified_diff")
     if not isinstance(unified, str):
         unified = ""
@@ -227,6 +228,9 @@ class TurnMutationLedger:
         self._throttle_ms = max(0, throttle_ms)
         self._history: list[FileMutation] = []
         self._net_by_path: dict[str, _NetFileState] = {}
+        self._latest: dict[str, FileMutation] = {}
+        self._fold_cache: dict[str, TurnFileFold] = {}
+        self._dirty_paths: set[str] = set()
         self._revision = 0
         self._complete = False
         self._last_emit_ms = 0
@@ -245,11 +249,7 @@ class TurnMutationLedger:
         return tuple(self._history)
 
     def covered_paths(self) -> set[str]:
-        return {
-            m.path.replace("\\", "/")
-            for m in self._history
-            if m.status == "applied"
-        }
+        return set(self._latest)
 
     def commit(
         self,
@@ -259,27 +259,21 @@ class TurnMutationLedger:
         before_content: str | None | object = _CONTENT_UNKNOWN,
         after_content: str | None | object = _CONTENT_UNKNOWN,
     ) -> TurnDiffSnapshot:
-        if mutation.turn_id != self.turn_id:
-            mutation.turn_id = self.turn_id
+        mutation = replace(mutation, turn_id=self.turn_id)
         # Preserve authentic +/− even when the stored patch body is truncated.
         if mutation.additions == 0 and mutation.deletions == 0 and mutation.unified_diff:
             stats = count_diff_stats(mutation.unified_diff)
             mutation.additions = stats.additions
             mutation.deletions = stats.deletions
-        diff, truncated = truncate_unified_diff(
-            mutation.unified_diff, self._diff_max_chars
-        )
-        if truncated:
-            mutation.unified_diff = diff
-            mutation.detail_truncated = True
         self._history.append(mutation)
         if (
-            before_content is not _CONTENT_UNKNOWN
+            mutation.status == "applied"
+            and before_content is not _CONTENT_UNKNOWN
             and after_content is not _CONTENT_UNKNOWN
             and (before_content is None or isinstance(before_content, str))
             and (after_content is None or isinstance(after_content, str))
         ):
-            key = mutation.path.replace("\\", "/")
+            key = (mutation.path.replace("\\", "/") if os.name == "nt" else mutation.path)
             previous = self._net_by_path.get(key)
             self._net_by_path[key] = _NetFileState(
                 before_content=(
@@ -289,6 +283,10 @@ class TurnMutationLedger:
                 ),
                 after_content=after_content,
             )
+        if mutation.status == "applied":
+            key = mutation.path.replace("\\", "/") if os.name == "nt" else mutation.path
+            self._latest[key] = mutation
+            self._dirty_paths.add(key)
         self._revision += 1
         snap = self.snapshot()
         if emit:
@@ -332,15 +330,10 @@ class TurnMutationLedger:
         return snap
 
     def _fold_by_path(self) -> list[TurnFileFold]:
-        latest: dict[str, FileMutation] = {}
-        for m in self._history:
-            if m.status != "applied":
-                continue
-            key = m.path.replace("\\", "/")
-            latest[key] = m
         folds: list[TurnFileFold] = []
-        for path in sorted(latest):
-            m = latest[path]
+        for path in sorted(self._dirty_paths):
+            self._fold_cache.pop(path, None)
+            m = self._latest[path]
             net = self._net_by_path.get(path)
             if net is not None:
                 if net.before_content == net.after_content:
@@ -372,18 +365,21 @@ class TurnMutationLedger:
                     )
                 )
                 continue
+            detail, truncated = truncate_unified_diff(m.unified_diff, self._diff_max_chars)
             folds.append(
                 TurnFileFold(
                     path=path,
                     op=m.op,
                     additions=m.additions,
                     deletions=m.deletions,
-                    unified_diff=m.unified_diff,
-                    detail_truncated=m.detail_truncated,
+                    unified_diff=detail,
+                    detail_truncated=truncated or m.detail_truncated,
                     line_start=m.line_start,
                 )
             )
-        return folds
+        self._fold_cache.update((fold.path, fold) for fold in folds)
+        self._dirty_paths.clear()
+        return [self._fold_cache[path] for path in sorted(self._fold_cache)]
 
     def _emit(self, snap: TurnDiffSnapshot, *, force: bool) -> None:
         if self._on_snapshot is None:
@@ -413,7 +409,7 @@ def build_mutation_metadata(
 ) -> dict[str, Any]:
     """Compact mutation dict for ToolResult.metadata."""
     mutation: dict[str, Any] = {
-        "path": path.replace("\\", "/"),
+        "path": (path.replace("\\", "/") if os.name == "nt" else path),
         "op": op,
         "unified_diff": unified_diff,
         "additions": additions,
@@ -424,6 +420,6 @@ def build_mutation_metadata(
     if line_start is not None:
         mutation["line_start"] = line_start
     return {
-        "path": path.replace("\\", "/"),
+        "path": (path.replace("\\", "/") if os.name == "nt" else path),
         "mutation": mutation,
     }

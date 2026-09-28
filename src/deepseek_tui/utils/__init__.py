@@ -76,11 +76,13 @@ def write_text_atomic(path: Path, content: str) -> None:
     fd, tmp_path = tempfile.mkstemp(
         dir=path.parent, prefix=f".{path.name}.", suffix=".tmp"
     )
+    file = None
     try:
-        fchmod = getattr(os, "fchmod", None)
-        if existing_mode is not None and fchmod is not None:
-            fchmod(fd, existing_mode)
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
+        file = os.fdopen(fd, "w", encoding="utf-8", newline="")
+        with file as f:
+            fchmod = getattr(os, "fchmod", None)
+            if existing_mode is not None and fchmod is not None:
+                fchmod(f.fileno(), existing_mode)
             f.write(content)
             f.flush()
             os.fsync(f.fileno())
@@ -93,6 +95,9 @@ def write_text_atomic(path: Path, content: str) -> None:
         except OSError:
             pass
         raise
+    finally:
+        if file is None:
+            os.close(fd)
 
 
 def utc_now_iso() -> str:
@@ -158,17 +163,16 @@ def parse_md_frontmatter(
 
 
 def summarize_text(text: str, limit: int = 280) -> str:
-    """Truncate *text* to *limit* chars, appending '...' if needed."""
-    take = max(limit - 3, 0)
-    count = 0
+    """Return printable text within limit, adding an ellipsis only if needed."""
+    if limit <= 0:
+        return ""
     out: list[str] = []
     for ch in text:
-        if count >= take:
-            out.append("...")
-            return "".join(out)
         if ch.isspace() or not (ch < " " or ch == "\x7f"):
             out.append(ch)
-            count += 1
+            if len(out) > limit:
+                suffix = "." * min(3, limit)
+                return "".join(out[:limit - len(suffix)]) + suffix
     return "".join(out)
 
 
@@ -242,6 +246,7 @@ class TraceFilter(logging.Filter):
 # ============================================================================
 
 _INIT_MARKER = "_deepseek_log_setup_done"
+_previous_logger_levels: dict[str, int] = {}
 
 _NOISY_LOGGERS: tuple[str, ...] = (
     "httpx",
@@ -297,6 +302,9 @@ def setup_logging(
 
     root = logging.getLogger()
     _strip_previous_handlers(root)
+    for name, level in _previous_logger_levels.items():
+        logging.getLogger(name).setLevel(level)
+    _previous_logger_levels.clear()
 
     if not enabled:
         setattr(root, _INIT_MARKER, True)
@@ -331,6 +339,8 @@ def setup_logging(
         console._deepseek_owned = True  # type: ignore[attr-defined]
         root.addHandler(console)
 
+    for name in ("", *cfg_logging.per_logger, *_NOISY_LOGGERS):
+        _previous_logger_levels.setdefault(name, logging.getLogger(name).level)
     root.setLevel(cfg_logging.level)
     setattr(root, _INIT_MARKER, True)
 
@@ -365,16 +375,32 @@ def current_log_path() -> Path | None:
 
 
 def tail_log(n_lines: int = 50) -> list[str]:
-    """Return the last ``n_lines`` from the current log file."""
+    """Read at most 1 MiB from the tail; non-positive counts return no lines."""
+    if n_lines <= 0:
+        return []
     path = current_log_path()
-    if path is None or not path.exists():
+    if path is None:
         return []
     try:
-        text = path.read_text(encoding="utf-8", errors="replace")
+        with path.open("rb") as stream:
+            position = stream.seek(0, os.SEEK_END)
+            chunks: list[bytes] = []
+            size = newlines = 0
+            while position and size < 1024 * 1024 and newlines <= n_lines:
+                count = min(position, 65536, 1024 * 1024 - size)
+                position -= count
+                stream.seek(position)
+                chunk = stream.read(count)
+                chunks.append(chunk)
+                size += len(chunk)
+                newlines += chunk.count(b"\n")
+            raw = b"".join(reversed(chunks))
+            if position:
+                # The first partial line may start mid UTF-8 codepoint.
+                raw = raw.partition(b"\n")[2]
     except OSError:
         return []
-    lines = text.splitlines()
-    return lines[-n_lines:] if n_lines > 0 else lines
+    return raw.decode("utf-8", errors="replace").splitlines()[-n_lines:]
 
 
 def _rotated_namer(default_name: str) -> str:

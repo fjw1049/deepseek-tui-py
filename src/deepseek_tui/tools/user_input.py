@@ -45,15 +45,20 @@ def validate_user_input_request(input_data: dict[str, Any]) -> list[UserInputQue
         raise ToolError("questions must be an array of 1-3 items")
 
     questions: list[UserInputQuestion] = []
+    seen_ids: set[str] = set()
     for item in tool_uses:
         if not isinstance(item, dict):
             raise ToolError("each question must be an object")
         header = item.get("header", "")
         qid = item.get("id", "")
         question_text = item.get("question", "")
-        if not header or not qid or not question_text:
+        if any(not isinstance(v, str) or not v.strip()
+               for v in (header, qid, question_text)):
             raise ToolError("header, id, and question are required and must be non-empty")
 
+        if qid in seen_ids:
+            raise ToolError("question ids must be unique")
+        seen_ids.add(qid)
         options = item.get("options")
         if not isinstance(options, list) or not (2 <= len(options) <= 4):
             raise ToolError("each question must have 2-4 options")
@@ -63,14 +68,14 @@ def validate_user_input_request(input_data: dict[str, Any]) -> list[UserInputQue
                 raise ToolError("each option must be an object")
             label = opt.get("label", "")
             description = opt.get("description", "")
-            if not label or not description:
+            if any(not isinstance(v, str) or not v.strip() for v in (label, description)):
                 raise ToolError("option label and description are required and must be non-empty")
 
         questions.append(UserInputQuestion(
             header=header,
             id=qid,
             question=question_text,
-            options=options,
+            options=[dict(opt) for opt in options],
         ))
 
     return questions

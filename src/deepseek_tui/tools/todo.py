@@ -25,7 +25,7 @@ snapshot to :class:`TaskManager` which persists it to the on-disk
 from __future__ import annotations
 
 
-import asyncio
+from copy import deepcopy
 import logging
 from dataclasses import dataclass, replace
 from typing import Any, Literal, cast
@@ -209,7 +209,6 @@ def reconcile_open_checklist_items(
         return None
     store["items"] = items
     metadata = _build_result_metadata(store, tool_name="checklist")
-    _forward_to_task_manager(context, metadata)
     body = _render_items(list(items))
     header = (
         "reconciled open items at turn end: still open when the turn ended, "
@@ -219,29 +218,13 @@ def reconcile_open_checklist_items(
     return content, metadata
 
 
-def _forward_to_task_manager(
-    context: ToolContext, metadata: dict[str, Any]
-) -> None:
-    """Forward ``task_updates`` metadata to TaskManager when running in a Task.
-
-    The Task executor stashes ``task_id`` + ``task_manager`` on the
-    spawned Engine's ``ToolContext.metadata`` (see
-    :mod:`deepseek_tui.engine.dispatch`). When both are present, we
-    fire-and-forget a coroutine that persists the snapshot to the
-    on-disk ``TaskRecord.checklist`` field. Missing keys (= we're not
-    inside a task) is the normal case and silently skipped.
-    """
+async def _forward_to_task_manager(context: ToolContext, metadata: dict[str, Any]) -> None:
+    """Finish persistence before the tool reports success."""
     task_id = context.metadata.get(_TASK_ID_KEY)
     manager = context.metadata.get(_TASK_MANAGER_KEY)
-    if not isinstance(task_id, str) or manager is None:
-        return
-    if not hasattr(manager, "record_tool_metadata"):
-        return
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        return
-    loop.create_task(manager.record_tool_metadata(task_id, metadata))
+    if (isinstance(task_id, str) and manager is not None
+            and hasattr(manager, "record_tool_metadata") and "task_updates" in metadata):
+        await manager.record_tool_metadata(task_id, metadata)
 
 
 # ---------------------------------------------------------------------------
@@ -391,8 +374,23 @@ class ChecklistTool(ToolSpec):
     async def execute(
         self, input_data: dict[str, object], context: ToolContext
     ) -> ToolResult:
+        previous = deepcopy(context.metadata.get(_TODO_STORE_KEY))
+        try:
+            return await self._execute_and_persist(input_data, context)
+        except BaseException:
+            if previous is None:
+                context.metadata.pop(_TODO_STORE_KEY, None)
+            else:
+                context.metadata[_TODO_STORE_KEY] = previous
+            raise
+
+    async def _execute_and_persist(
+        self, input_data: dict[str, object], context: ToolContext
+    ) -> ToolResult:
         if input_data.get("op") == "update":
-            return self._update(input_data, context)
+            result = self._update(input_data, context)
+            await _forward_to_task_manager(context, result.metadata)
+            return result
         todos = input_data.get("todos")
         if todos is None:
             items = input_data.get("items")
@@ -403,7 +401,9 @@ class ChecklistTool(ToolSpec):
                 todos = items
         if todos is None:
             return self._read(context)
-        return self._write(todos, context)
+        result = self._write(todos, context)
+        await _forward_to_task_manager(context, result.metadata)
+        return result
 
     def _write(self, todos: object, context: ToolContext) -> ToolResult:
         if not isinstance(todos, list):
@@ -454,7 +454,6 @@ class ChecklistTool(ToolSpec):
         store["next_id"] = next_id
 
         metadata = _build_result_metadata(store, tool_name=self.name())
-        _forward_to_task_manager(context, metadata)
         # Echo the whole list back, not just a count: the model's only other
         # view of the checklist is its own earlier tool_call arguments, which
         # L0 prune blanks at 50% and rewrite compaction drops at 75%. The
@@ -508,7 +507,6 @@ class ChecklistTool(ToolSpec):
         store["items"] = items
 
         metadata = _build_result_metadata(store, tool_name=self.name())
-        _forward_to_task_manager(context, metadata)
         header = f"updated item {target_id}"
         body = _render_items(items)
         return ToolResult(

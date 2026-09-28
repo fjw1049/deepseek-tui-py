@@ -1,0 +1,36 @@
+{
+  "restart_sequence": {
+    "first": 1,
+    "after_reopen": 1,
+    "visible_since_first": 0
+  },
+  "live_delta_payload_keys": [
+    "_truncated",
+    "_original_chars",
+    "preview"
+  ],
+  "store_id_escape": true,
+  "sse_overflow": {
+    "lost_own_event": true,
+    "next_frame": "event: item.created\ndata: {\"seq\": 14, \"timestamp\": \"2026-09-28T03:08:30.366274+00:00\", \"thread_id\": \"thread\", \"turn_id\": null, \"item_id\": null, \"event\": \"item.created\", \"payload\": {}}",
+    "explicit_gap_notice": false
+  },
+  "subscriber_cleanup": 0,
+  "failed_delta_flush": {
+    "attempts": 1,
+    "retry_emitted": 0
+  },
+  "incomplete_replace_bundle": {
+    "old_thread_deleted": true,
+    "reported_success": {
+      "mode": "replace",
+      "scope": null,
+      "threads_imported": 0,
+      "threads_skipped": 0,
+      "sessions_restored": false,
+      "settings_restored": []
+    }
+  },
+  "export_follows_symlink": true,
+  "live_usage_lock_stolen": true
+}

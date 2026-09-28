@@ -348,8 +348,8 @@ async def remove_managed_worktree(project_root: Path, worktree_path: Path) -> No
     dest = worktree_path.expanduser().resolve()
     if not is_managed_path(dest):
         raise WorktreeError("refusing to remove a worktree outside ~/.deepseek/worktrees")
-    if dest.is_dir():
-        await terminate_processes_under(dest)
+    if dest.is_dir() and await asyncio.to_thread(_pids_with_cwd_under_sync, dest):
+        raise WorktreeError("worktree is occupied by running processes; keeping it")
     branch = await current_worktree_branch(dest) if dest.is_dir() else ""
     if await is_git_repo(root):
         try:
@@ -386,11 +386,16 @@ async def handoff_changes(
     paths = await _changed_paths(src, "HEAD")
     planned: list[tuple[str, str | None, str]] = []
     report = ApplyReport()
+    source_signatures = _path_signatures(src, paths)
     for rel in paths:
         theirs = _read_text(src, rel)
         ours = _read_text(dst, rel)
         if theirs is _UNREADABLE or ours is _UNREADABLE:
-            if force or ours is None or ours == theirs:
+            signature = source_signatures[rel]
+            if not signature.startswith(("file:", "symlink:", "missing")) or signature.endswith(":unreadable"):
+                report.skipped.append(rel)
+                continue
+            if force or ours is None or _raw_same(src, dst, rel):
                 planned.append((rel, None if theirs is _UNREADABLE else theirs, "applied"))
                 continue
             report.conflicted.append(rel)
@@ -420,6 +425,9 @@ async def handoff_changes(
         report.conflicted.sort()
         return report
     for rel, next_text, status in planned:
+        if _path_signature(src / rel) != source_signatures[rel]:
+            report.skipped.append(rel)
+            continue
         theirs = _read_text(src, rel)
         try:
             if theirs is _UNREADABLE:
@@ -435,7 +443,9 @@ async def handoff_changes(
         else:
             report.applied.append(rel)
     if move and (report.applied or report.merged):
-        await _restore_to_head(src, [rel for rel, _text, _status in planned])
+        for rel in report.applied + report.merged:
+            if _path_signature(src / rel) == source_signatures[rel]:
+                await _restore_to_head(src, [rel])
     report.applied.sort()
     report.merged.sort()
     report.conflicted.sort()
@@ -2318,7 +2328,8 @@ def _detached_head_is_unreachable_sync(path: Path) -> bool:
 def _remove_clean_worktree_sync(path: Path) -> bool:
     if _has_labor_sync(path) or not is_managed_path(path):
         return False
-    _terminate_processes_under_sync(path)
+    if _pids_with_cwd_under_sync(path):
+        return False
     project = _project_from_worktree_sync(path)
     if project is not None:
         branch = _current_branch_sync(path)

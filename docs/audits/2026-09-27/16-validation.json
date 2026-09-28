@@ -1,0 +1,135 @@
+{
+  "date": "2026-09-28",
+  "scope": "audit 16 builtin tools",
+  "production_changes": false,
+  "module_count": 16,
+  "line_count": 5884,
+  "modules": [
+    {
+      "path": "src/deepseek_tui/tools/__init__.py",
+      "lines": 1,
+      "sha256": "fbb08660446eacc00130d5e1b015f80dc8c9a737bceeec4762eae33ba6153e6e"
+    },
+    {
+      "path": "src/deepseek_tui/tools/encoding.py",
+      "lines": 262,
+      "sha256": "82db68b8d6ab9a2a018a4da580c631f7e99bedaa2749dbf725d131c1834f6924"
+    },
+    {
+      "path": "src/deepseek_tui/tools/file.py",
+      "lines": 597,
+      "sha256": "32a8e79c9de7ff6a4d45f6272aeee30322600d16788e0fed3751fdca8b70846e"
+    },
+    {
+      "path": "src/deepseek_tui/tools/knowledge.py",
+      "lines": 387,
+      "sha256": "d6c3fe548f5e1e4fc24f80952bbea999b3b0eb1a324d6a8f6387a0b1199c4ac8"
+    },
+    {
+      "path": "src/deepseek_tui/tools/plan_mode.py",
+      "lines": 405,
+      "sha256": "d4b607c6be9ee9de349c50ee7e2da65fb760c78ded3dafcb7311c18dc699b467"
+    },
+    {
+      "path": "src/deepseek_tui/tools/search.py",
+      "lines": 559,
+      "sha256": "dd104621d95b11b0ba3169b5dd64e1f66e6ad5a482f228285b24821981280422"
+    },
+    {
+      "path": "src/deepseek_tui/tools/shell.py",
+      "lines": 1482,
+      "sha256": "a456cf7fe861979b6fe3d5b306b4b78c1e9c5c2692343521fde340321e548997"
+    },
+    {
+      "path": "src/deepseek_tui/tools/todo.py",
+      "lines": 540,
+      "sha256": "4d70335a4c9beae7ba9a3b233b0e07bfa6e9c52468c3b89b4e0cddcece7c4de0"
+    },
+    {
+      "path": "src/deepseek_tui/tools/user_input.py",
+      "lines": 167,
+      "sha256": "6c5c1a4d8dfae572cda64d1f9aa3f76916a76ec3535ca90cf5ebb1d88975e379"
+    },
+    {
+      "path": "src/deepseek_tui/tools/web.py",
+      "lines": 792,
+      "sha256": "a14f7b892e3ecf19b571e4db9d8c75bdb8b79ebb278dbfbc11a47f4164658476"
+    },
+    {
+      "path": "src/deepseek_tui/tools/utils/__init__.py",
+      "lines": 32,
+      "sha256": "080ef3db4824333cff6792e09dacb22a4e577e7f7fdee39a19cf73d2865fef22"
+    },
+    {
+      "path": "src/deepseek_tui/tools/utils/edit_diagnostics.py",
+      "lines": 163,
+      "sha256": "9fef92f3ff65d5d2e0ee8c55f50c8e8d996c9d5fd0928d0b8caceeed2d4a44ad"
+    },
+    {
+      "path": "src/deepseek_tui/tools/utils/gitignore.py",
+      "lines": 202,
+      "sha256": "f3a7602a1f5077c68388849a0d80a0e2578a0ac07c4065a76de8890bb61d5f90"
+    },
+    {
+      "path": "src/deepseek_tui/tools/utils/path_suggestions.py",
+      "lines": 124,
+      "sha256": "d9885a6a4b9cf19aa825ca56db69c1e496c83fba5fffdd1a47a8d68ec6233f84"
+    },
+    {
+      "path": "src/deepseek_tui/tools/utils/sensitive.py",
+      "lines": 60,
+      "sha256": "be13d2df9b39248d37e5194934f502436d3a488886b5bea94880578bde6ab6f8"
+    },
+    {
+      "path": "src/deepseek_tui/tools/utils/validation.py",
+      "lines": 111,
+      "sha256": "ef2064480b1ac16809f1a619226711f5d028c0c497bde2a6afa8bf92ee71d25b"
+    }
+  ],
+  "existing_tests": {
+    "passed": 109,
+    "failed": 0,
+    "command": "DEEPSEEK_HOME=/tmp/audit16-tests .venv/bin/pytest -q tests/test_file_tools.py tests/test_search_tool.py tests/test_gitignore.py tests/test_web_search.py tests/test_plan_mode_tools.py tests/test_checklist_tool_aliasing.py tests/contract/test_checklist_write_echoes_state.py tests/contract/test_todo_tool_metadata.py tests/test_task_user_input_bridge.py --tb=short"
+  },
+  "probe": {
+    "command": "PYTHONPATH=src DEEPSEEK_HOME=/tmp/audit16-probe .venv/bin/python docs/audits/2026-09-27/builtin_tools_probe.py",
+    "groups": 9,
+    "result": "all assertions reproduced audited defects",
+    "result_file": "builtin-tools-probe-results.json",
+    "regression_warning": "Assertions describe current defects, not desired fixed behavior."
+  },
+  "evidence": {
+    "A": [
+      "N01",
+      "N02 read/stamp race",
+      "N03 page bytes comparison",
+      "N04 synthetic PTY retention",
+      "N05",
+      "N06",
+      "N07 validator",
+      "N08 URL identity",
+      "N09 user message deletion"
+    ],
+    "B": [
+      "N02 cancellation and before-image boundaries",
+      "N03 global work budget",
+      "N04 communicate collection",
+      "N07 Engine interception",
+      "N08 extraction JSON fallback and limits",
+      "N10",
+      "N11"
+    ],
+    "C": [
+      "N05 cached schema ownership",
+      "N08 connection-time DNS identity",
+      "N09 broad answer parsing extension risk",
+      "N10 note scope and parser placement"
+    ]
+  },
+  "limitations": [
+    "No real network/API/credentials used",
+    "No OOM or malicious symlink-swap stress test",
+    "Operation counts are not latency benchmarks",
+    "Adjacent registry/Engine/task modules traced only at call boundaries"
+  ]
+}

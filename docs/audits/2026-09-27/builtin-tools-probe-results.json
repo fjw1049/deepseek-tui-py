@@ -1,0 +1,40 @@
+{
+  "search_symlink": {
+    "outside_read": true,
+    "sensitive_alias_read": true
+  },
+  "read_stamp_race": {
+    "stale_detected": false,
+    "concurrent_edit_overwritten": true
+  },
+  "read_page_comparison": {
+    "same_first_line": true,
+    "current_bytes_read": 2097163,
+    "bounded_prefix_prototype_bytes_read": 65536,
+    "prototype_omits_exact_total_lines": true
+  },
+  "codec": {
+    "input": "toolx00002E",
+    "roundtrip": "tool."
+  },
+  "invalid_ignore": {
+    "exception": "error",
+    "message": "bad character range z-a at position 1"
+  },
+  "question_validation": {
+    "wrong_types_accepted": true,
+    "duplicate_ids_accepted": true
+  },
+  "url_identity": {
+    "distinct_urls": 3,
+    "returned_urls": 1
+  },
+  "plan_reminder_identity": {
+    "real_user_message_removed": true
+  },
+  "pty_capture": {
+    "synthetic_input_bytes": 1048576,
+    "retained_bytes": 1048576,
+    "all_bytes_retained": true
+  }
+}

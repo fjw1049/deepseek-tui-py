@@ -1,0 +1,16 @@
+{
+  "date": "2026-09-28",
+  "scope": "audit11 fixes; offline related tests only",
+  "related_regression": {
+    "passed": 564,
+    "seconds": 6.03,
+    "log": "/tmp/audit11-final.log"
+  },
+  "ruff_F": {
+    "new_findings": 0,
+    "preexisting_F401": 4
+  },
+  "historical_probe_results_preserved": true,
+  "live_remote_plugins_tested": false,
+  "compatibility": "v2 content digest requires explicit trust again; no automatic old grant migration"
+}

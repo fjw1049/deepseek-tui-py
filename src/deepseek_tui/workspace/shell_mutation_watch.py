@@ -163,12 +163,26 @@ async def _candidate_paths(root: Path) -> set[str]:
     return paths
 
 
-async def _head_content(root: Path, rel: str) -> str | None:
-    """File text at HEAD; None when the path is not tracked there."""
-    try:
-        return await _run_git(root, ["show", f"HEAD:{rel}"])
-    except UnicodeDecodeError:  # binary blob at HEAD
+async def _head_content(root: Path, rel: str) -> str | None | _Unreadable:
+    """Distinguish a missing tree entry from an unreadable blob."""
+    listing = await _run_git(root, ["ls-tree", "-z", "HEAD", "--", f":(literal){rel}"])
+    if listing is None:
+        return _UNREADABLE
+    if not listing:
         return None
+    entry = listing.split("\t", 1)[0].split()
+    if len(entry) != 3 or entry[0] not in {"100644", "100755"}:
+        return _UNREADABLE
+    size = await _run_git(root, ["cat-file", "-s", entry[2]])
+    if size is None or not size.strip().isdigit() or int(size) > _MAX_FILE_BYTES:
+        return _UNREADABLE
+    try:
+        content = await _run_git(root, ["cat-file", "blob", entry[2]])
+    except UnicodeDecodeError:
+        return _UNREADABLE
+    if content is None or "\0" in content[:_BINARY_SNIFF_BYTES]:
+        return _UNREADABLE
+    return content
 
 
 async def _head_mode(root: Path, rel: str) -> int | None | object:
@@ -190,15 +204,24 @@ def _read_file(root: Path, rel: str) -> str | None | _Unreadable:
     """File text; None when absent; _UNREADABLE when not safely diffable."""
     path = root / rel
     try:
+        if Path(rel).is_absolute() or ".." in Path(rel).parts or not path.parent.resolve().is_relative_to(root.resolve()):
+            return _UNREADABLE
         info = path.lstat()
         if not stat.S_ISREG(info.st_mode) or info.st_size > _MAX_FILE_BYTES:
             return _UNREADABLE
-        data = path.read_bytes()
+        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+        fd = os.open(path, flags)
+        with os.fdopen(fd, "rb") as stream:
+            opened = os.fstat(stream.fileno())
+            if not stat.S_ISREG(opened.st_mode) or (info.st_dev, info.st_ino) != (opened.st_dev, opened.st_ino):
+                return _UNREADABLE
+            data = stream.read(_MAX_FILE_BYTES + 1)
+            closed = os.fstat(stream.fileno())
+        if len(data) > _MAX_FILE_BYTES or (opened.st_size, opened.st_mtime_ns) != (closed.st_size, closed.st_mtime_ns):
+            return _UNREADABLE
     except FileNotFoundError:
         return None
     except OSError:
-        # Permission / IO failure is not absence — a later successful read
-        # must not be reported as a fresh "create".
         return _UNREADABLE
     if b"\0" in data[:_BINARY_SNIFF_BYTES]:
         return _UNREADABLE

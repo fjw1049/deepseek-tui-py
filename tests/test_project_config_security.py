@@ -151,7 +151,7 @@ def test_cwd_dotenv_strips_security_keys(
 
     with caplog.at_level("WARNING"):
         config = ConfigLoader().load(
-            config_path=user_cfg, no_project_config=True
+            config_path=user_cfg, no_project_config=False
         )
 
     # Sensitive env keys from the project .env never reach os.environ/config.
@@ -286,7 +286,7 @@ def test_cwd_dotenv_pointer_keys_blocked(
     )
 
     with caplog.at_level("WARNING"):
-        config = ConfigLoader().load(no_project_config=True)
+        config = ConfigLoader().load(no_project_config=False)
 
     for key in (
         "DEEPSEEK_MANAGED_CONFIG_PATH",
@@ -317,8 +317,8 @@ def test_dotenv_values_do_not_leak_between_workspaces(tmp_path: Path) -> None:
     )
 
     loader = ConfigLoader()
-    assert loader.load(workspace=workspace_a, no_project_config=True).model == "workspace-a"
-    assert loader.load(workspace=workspace_b, no_project_config=True).model == "workspace-b"
+    assert loader.load(workspace=workspace_a, no_project_config=False).model == "workspace-a"
+    assert loader.load(workspace=workspace_b, no_project_config=False).model == "workspace-b"
     assert "DEEPSEEK_MODEL" not in os.environ
 
 
@@ -384,7 +384,7 @@ def test_cwd_project_file_overlays_user_base(
         encoding="utf-8",
     )
 
-    config = ConfigLoader().load(no_project_config=True)
+    config = ConfigLoader().load(no_project_config=False)
 
     # Project non-sensitive keys overlay the base...
     assert config.model == "project-model"
@@ -418,7 +418,7 @@ def test_project_cannot_activate_user_privileged_profile(
         encoding="utf-8",
     )
 
-    config = ConfigLoader().load(no_project_config=True)
+    config = ConfigLoader().load(no_project_config=False)
 
     assert config.model == "project-model"
     assert config.profile is None
@@ -459,7 +459,7 @@ def test_cwd_dotenv_cannot_redirect_trust_root(
 
     try:
         with caplog.at_level("WARNING"):
-            config = ConfigLoader().load(no_project_config=True)
+            config = ConfigLoader().load(no_project_config=False)
     finally:
         os.environ.pop("DEEPSEEK_MODEL", None)
 

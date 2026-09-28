@@ -1,0 +1,12 @@
+{
+  "date": "2026-09-28",
+  "scope": "audit12 characterization; no production changes",
+  "existing_workspace_tests": {
+    "passed": 224,
+    "seconds": 11.49
+  },
+  "probe": "workspace_probe.py",
+  "results": "workspace-probe-results.json",
+  "alternative_performance_implementation_benchmarked": false,
+  "real_process_termination_tested": false
+}

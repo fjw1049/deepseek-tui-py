@@ -1,0 +1,76 @@
+{
+  "duplicate_round": {
+    "same_batch": false,
+    "round_count": 2,
+    "status": "running",
+    "completed_ids": [
+      "b"
+    ]
+  },
+  "overlap_cancel": {
+    "older_status": "running",
+    "current_status": "cancelled",
+    "retained_tool_ids": [
+      "old"
+    ]
+  },
+  "cancel_terminal": {
+    "status": "cancelled",
+    "is_terminal": false
+  },
+  "shell_read": {
+    "kind": "mutate",
+    "narration": "实施修改并准备验证"
+  },
+  "shell_verify": {
+    "kind": "mutate",
+    "narration": "实施修改并准备验证"
+  },
+  "shell_write": {
+    "kind": "mutate",
+    "narration": "实施修改并准备验证"
+  },
+  "absolute_root": "Users",
+  "zero_crop": "ZeroDivisionError",
+  "invalid_request_accepted": {
+    "model": "",
+    "messages": [],
+    "system_prompt": null,
+    "tools": [],
+    "tool_choice": null,
+    "max_tokens": -1,
+    "temperature": "NaN (accepted float)",
+    "top_p": null,
+    "reasoning_effort": null,
+    "extra_body": {},
+    "stream": true
+  },
+  "negative_usage": {
+    "input_tokens": -10,
+    "output_tokens": -2,
+    "cache_creation_input_tokens": 0,
+    "cache_read_input_tokens": 0,
+    "reasoning_tokens": 0,
+    "input_tokens_include_cache": null
+  },
+  "failed_status_override": "ready",
+  "status_roundtrips": true,
+  "batch_benchmark": [
+    {
+      "tools": 16,
+      "current_median_ms": 0.0069,
+      "set_prototype_median_ms": 0.0012
+    },
+    {
+      "tools": 256,
+      "current_median_ms": 0.9562,
+      "set_prototype_median_ms": 0.0164
+    },
+    {
+      "tools": 2048,
+      "current_median_ms": 73.6606,
+      "set_prototype_median_ms": 0.1247
+    }
+  ],
+  "prototype_scope": "Membership/completion only; excludes UI, schema, approval and rendering; no production replacement."
+}

@@ -1,0 +1,78 @@
+{
+  "clear": {
+    "actions_executed": 0,
+    "output": "Conversation cleared.",
+    "unawaited_warning": true
+  },
+  "restore_stale_summary": "old session summary",
+  "config_multiple_tables": {
+    "model": "changed",
+    "providers": {
+      "demo": {
+        "model": "changed"
+      }
+    }
+  },
+  "config_new_key_in_wrong_table": {
+    "model": "changed",
+    "providers": {
+      "demo": {
+        "model": "changed",
+        "locale": "en"
+      }
+    }
+  },
+  "config_quote_invalid": true,
+  "export_contains_conversation": false,
+  "picker_ignores_glob": [
+    [
+      "a.txt",
+      "a.txt"
+    ],
+    [
+      "b.py",
+      "b.py"
+    ],
+    [
+      "chat.md",
+      "chat.md"
+    ],
+    [
+      "config.toml",
+      "config.toml"
+    ]
+  ],
+  "picker_limit": {
+    "rows": 1,
+    "paths_traversed": 1000
+  },
+  "split_sentinel": {
+    "cell": "hi <deepseek:subhi bye",
+    "normalized": "hi bye"
+  },
+  "card_markup": "MarkupError",
+  "card_late_progress": "running",
+  "diff_header_in_body": [
+    {
+      "old": "file",
+      "new": "file",
+      "additions": 0,
+      "deletions": 0
+    },
+    {
+      "old": "old",
+      "new": "new",
+      "additions": 0,
+      "deletions": 0
+    }
+  ],
+  "compact_loses_concurrent_message": true,
+  "listener_leaves_background_event": "SessionActivityEvent",
+  "quit_order_mocked_engine": [
+    "session_end",
+    "session_end",
+    "resources closed",
+    "producer stopped",
+    "exit"
+  ]
+}

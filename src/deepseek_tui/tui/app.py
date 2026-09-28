@@ -42,7 +42,7 @@ from deepseek_tui.engine.handle import EngineHandle, SendMessageOp
 from deepseek_tui.presentation.reducer import TurnPresentationReducer
 from deepseek_tui.presentation.semantics import resolve_narration_locale
 from deepseek_tui.tools.subagent import MailboxMessageKind
-from deepseek_tui.tui.commands import dispatch
+from deepseek_tui.tui.commands import dispatch_async
 from deepseek_tui.tui.dialogs import FileMention, HelpPanel, UserInputDialog
 from deepseek_tui.tui.input import (
     PASTE_ENTER_SUPPRESS_WINDOW_SECS,
@@ -51,7 +51,7 @@ from deepseek_tui.tui.input import (
     ComposerHint,
     SlashMenu,
 )
-from deepseek_tui.tui.plan import BacktrackState, EscEffect
+from deepseek_tui.tui.plan import BacktrackState
 from deepseek_tui.tui.session_restore import (
     apply_messages_to_engine,
     parse_session_messages,
@@ -165,6 +165,15 @@ class DeepSeekTUI(App[None]):
         self._session_started_at_iso: str | None = None
         self._info_sidebar_refresh_task: asyncio.Task[None] | None = None
         self._engine_starting = False
+        self._startup_owner = None
+        self._closing = False
+        self._close_task = None
+        self._owned_tasks: dict[asyncio.Task, bool] = {}
+        self._command_busy = False
+        self._command_owner = None
+        self._thread_lease = None
+        self._thread_lease_id = None
+        self._thread_store = None
         self._pending_messages: list[str] = []
         # Agent ids spawned during the current user turn — sidebar only
         # shows running agents plus this set so completed agents from
@@ -210,7 +219,7 @@ class DeepSeekTUI(App[None]):
         # becomes interactive immediately. Engine.create can take several
         # seconds (MCP servers, skill discovery, tool runtime wiring); we
         # don't want keystrokes to queue up behind it.
-        self.run_worker(self._start_engine(), exclusive=True, name="engine-start")
+        self.start_task(self._start_engine())
 
     async def _start_engine(self) -> None:
         """Build LLM client + Engine from config and start the engine loop.
@@ -229,6 +238,9 @@ class DeepSeekTUI(App[None]):
         )
 
         self._engine_starting = True
+        self._startup_owner = asyncio.current_task()
+        client = None
+        created_engine = None
         try:
             # Stamp the session start before any engine work — the info
             # sidebar filters tasks against this so historical failures
@@ -242,17 +254,22 @@ class DeepSeekTUI(App[None]):
                 self.query_one(StatusBar).set_status(
                     "no API key — run `deepseek-tui setup` or `deepseek-tui auth set`"
                 )
-                if not is_onboarded():
-                    def _on_onboarding(api_key: str | None) -> None:
-                        if api_key:
-                            self.config.api_key = api_key
-                            try:
-                                mark_onboarded()
-                            except OSError:
-                                pass
-                            self.run_worker(self._start_engine(), exclusive=True)
+                def _on_onboarding(api_key: str | None) -> None:
+                    if api_key:
+                        from deepseek_tui.state.secrets import write_api_key
 
-                    self.push_screen(OnboardingScreen(), _on_onboarding)
+                        try:
+                            write_api_key(self.config.provider, api_key)
+                            mark_onboarded()
+                        except (OSError, ValueError):
+                            self.query_one(StatusBar).set_status(
+                                "Could not save API key; retry setup"
+                            )
+                            return
+                        self.config.api_key = api_key
+                        self.start_task(self._start_engine())
+
+                self.push_screen(OnboardingScreen(), _on_onboarding)
                 return
 
             from deepseek_tui.tools.runtime import default_runtime_model
@@ -262,7 +279,7 @@ class DeepSeekTUI(App[None]):
             logger.info("tui_engine_create model=%s", model)
             from deepseek_tui.tools.approval import exec_policy_for_config
 
-            self._engine = await Engine.create(
+            created_engine = await Engine.create(
                 self.handle,
                 client,
                 config=self.config,
@@ -270,7 +287,9 @@ class DeepSeekTUI(App[None]):
                 exec_policy=exec_policy_for_config(self.config),
                 approval_handler=approval_handler,
             )
+            self._engine = created_engine
             self._engine_task = asyncio.create_task(self._engine.run())
+            self._engine_task.add_done_callback(self._engine_finished)
             logger.info("tui_engine_started")
             status = self.query_one(StatusBar)
             status.set_model(model)
@@ -289,8 +308,16 @@ class DeepSeekTUI(App[None]):
                 status.set_status(applied)
             self._engine.mode = self._interaction_mode
             self._announce_plugins()
+            self._adopt_session(self._engine._cycle_session_id)
             await self._engine.run_lifecycle_hook("session_start")
+            self.start_task(self._listen_events())
             await self._flush_pending_messages()
+        except asyncio.CancelledError:
+            if created_engine is not None:
+                await self._stop_engine()
+            elif client is not None:
+                await client.close()
+            raise
         except Exception:  # noqa: BLE001 — surface startup failure in UI
             logger.exception("tui_engine_start_failed")
             status = self.query_one(StatusBar)
@@ -302,10 +329,158 @@ class DeepSeekTUI(App[None]):
                     severity="error",
                 )
                 self._pending_messages.clear()
-            self._engine = None
-            self._engine_task = None
+            if created_engine is not None:
+                await self._stop_engine()
+            elif client is not None:
+                await client.close()
         finally:
             self._engine_starting = False
+            self._startup_owner = None
+
+    def start_task(self, coroutine, *, cancel_on_close: bool = True):
+        """Own work until completion, including observing failure and shutdown."""
+        task = asyncio.create_task(coroutine)
+        self._owned_tasks[task] = cancel_on_close
+        def done(completed):
+            self._owned_tasks.pop(completed, None)
+            if not completed.cancelled():
+                error = completed.exception()
+                if error is not None:
+                    logger.error(
+                        "tui_background_failed", exc_info=(type(error), error, error.__traceback__)
+                    )
+
+        task.add_done_callback(done)
+        return task
+
+    def _session_busy_reason(self) -> str | None:
+        if self._closing:
+            return "Application is closing"
+        if self._engine_starting and asyncio.current_task() is not self._startup_owner:
+            return "Engine is still starting; wait before changing the session"
+        if self._command_busy and asyncio.current_task() is not self._command_owner:
+            return "A session command is still running"
+        if self.handle.is_turn_active() or self.handle.has_pending_work(
+            include_events=not self._engine_starting
+        ):
+            return "Session has running or queued work; wait before changing it"
+        if self._engine is not None:
+            context = getattr(self._engine, "tool_context", None)
+            if context is not None and hasattr(context, "metadata"):
+                from deepseek_tui.tools.shell import list_background_processes
+
+                if any(p["status"] == "running" for p in list_background_processes(context)):
+                    return "Background shell processes are still running"
+            for name in ("subagent_manager", "task_manager"):
+                manager = getattr(context, name, None)
+                if manager is not None and manager.running_count():
+                    return "Background work is still running"
+        return None
+
+    def _adopt_session(self, session_id: str) -> None:
+        from deepseek_tui.workspace.project_lease import ThreadLease
+
+        if self._thread_lease_id == session_id:
+            return
+        lease = ThreadLease(session_id)
+        if not lease.acquire_blocking(nonblocking=True):
+            raise ValueError("Thread is already in use by another runtime")
+        previous = self._thread_lease
+        self._thread_lease, self._thread_lease_id = lease, session_id
+        if self._engine is not None:
+            self._engine.tool_context.metadata["runtime_thread_id"] = session_id
+        if previous is not None:
+            previous.release()
+
+    def _get_thread_store(self):
+        from deepseek_tui.config.paths import user_threads_dir
+        from deepseek_tui.server.threads import RuntimeThreadStore
+
+        if self._thread_store is None:
+            self._thread_store = RuntimeThreadStore(user_threads_dir())
+        return self._thread_store
+
+    def _check_session_workspace(self, workspace: str | None) -> None:
+        from pathlib import Path
+
+        if workspace and Path(workspace).expanduser().resolve() != (
+            self._engine.tool_context.working_directory.resolve()
+        ):
+            raise ValueError(f"Open this session from its workspace: {workspace}")
+
+    def _reset_session_view(self) -> None:
+        from datetime import datetime, timezone
+
+        self._session_started_at_iso = datetime.now(timezone.utc).isoformat()
+        self._presentation.reset()
+        self._backtrack.reset()
+        self._turn_agent_ids.clear()
+        self._turn_started_at = None
+        if self._engine is not None:
+            self._engine.session_cost_usd = self._engine.session_cost_cny = 0.0
+            reset_turn_sidebar_sources(self._engine.tool_context.metadata)
+            for key in ("approved_plan", "plan_text", "plan_steps"):
+                self._engine.tool_context.metadata.pop(key, None)
+            self._engine.tool_snapshots.clear()
+            self._engine.tool_context.file_reads.clear()
+            self._engine._compaction_summary_prompt = None
+            self._engine._context_measurement_model = None
+            self._engine.set_active_plugin(None)
+        status = self.query_one(StatusBar)
+        status.set_finished()
+        status.set_tokens(0)
+        status.set_cost(0)
+        self.query_one(ComposerHint).set_progress("", "")
+
+    def _engine_finished(self, task) -> None:
+        if not task.cancelled():
+            error = task.exception()
+            if error is not None:
+                logger.error(
+                    "tui_engine_failed", exc_info=(type(error), error, error.__traceback__)
+                )
+        if not self._closing:
+            self.handle.try_emit(StatusEvent("engine stopped"))
+
+    async def _stop_engine(self) -> None:
+        engine, task = self._engine, self._engine_task
+        self._engine = self._engine_task = None
+        try:
+            if task is not None:
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+            if engine is not None:
+                await engine.shutdown()
+        finally:
+            if self._thread_lease is not None:
+                self._thread_lease.release()
+                self._thread_lease = self._thread_lease_id = None
+
+    async def _close_resources(self) -> None:
+        self._closing = True
+        owned = list(self._owned_tasks.items())
+        for task, cancel in owned:
+            if cancel:
+                task.cancel()
+        await asyncio.gather(*(task for task, _ in owned), return_exceptions=True)
+        if self._info_sidebar_refresh_task is not None:
+            self._info_sidebar_refresh_task.cancel()
+            await asyncio.gather(self._info_sidebar_refresh_task, return_exceptions=True)
+        await self._stop_engine()
+
+    async def _shutdown_runtime(self) -> None:
+        if self._close_task is None:
+            self._close_task = asyncio.create_task(self._close_resources())
+        # Repeated UI cancellation must not strand resource teardown.
+        while not self._close_task.done():
+            try:
+                await asyncio.shield(self._close_task)
+            except asyncio.CancelledError:
+                continue
+        self._close_task.result()
+
+    async def on_unmount(self) -> None:
+        await self._shutdown_runtime()
 
     def _announce_plugins(self) -> None:
         """Surface a one-line banner of loaded plugins in the transcript.
@@ -361,6 +536,8 @@ class DeepSeekTUI(App[None]):
                 )
             except FileNotFoundError:
                 pass
+            except ValueError as exc:
+                return f"failed to load session: {exc}"
         path = self._resolve_session_path(target_id)
         if path is None or not path.exists():
             return f"resume target not found: {target_id}"
@@ -374,33 +551,46 @@ class DeepSeekTUI(App[None]):
         """Load one canonical thread into the live engine and transcript."""
         if self._engine is None:
             return "engine not started — cannot load thread"
+        reason = self._session_busy_reason()
+        if reason:
+            return reason
         import uuid
 
-        from deepseek_tui.config.paths import user_threads_dir
         from deepseek_tui.server.threads import (
-            RuntimeThreadStore,
             reconstruct_messages_from_turns,
         )
 
-        store = RuntimeThreadStore(user_threads_dir())
+        store = self._get_thread_store()
         thread = store.load_thread(thread_id)
+        self._check_session_workspace(thread.worktree_path or thread.workspace)
+        if thread.provider != self.config.provider:
+            raise ValueError(f"Switch to provider {thread.provider} before loading this session")
         restored = reconstruct_messages_from_turns(store, thread_id)
         metadata = {
             "id": thread.id,
             "goal": None if fork else thread.goal,
             "goal_queue": [] if fork else thread.goal_queue,
         }
-        apply_messages_to_engine(self._engine, restored, metadata)
         turns = store.list_turns_for_thread(thread_id)
-        self._engine._cycle_session_id = uuid.uuid4().hex if fork else thread.id
+        session_id = uuid.uuid4().hex if fork else thread.id
+        self._adopt_session(session_id)
+        self._reset_session_view()
+        apply_messages_to_engine(self._engine, restored, metadata)
+        self._engine.tool_context.metadata["approved_plan"] = (
+            bool(thread.approved_plan) and not fork
+        )
+        self._engine._cycle_session_id = session_id
         self._engine.turn_counter = len(turns)
         self._engine._user_turn_index = len(turns)
         self._engine.default_model = thread.model
         self._interaction_mode = thread.mode
         self._engine.mode = thread.mode
         self.query_one(Transcript).hydrate_from_messages(restored)
+        self.config.model = thread.model
         self.query_one(StatusBar).set_model(thread.model)
+        self.query_one(StatusBar).set_mode(thread.mode)
         self.query_one(ComposerHint).set_model(thread.model)
+        self.query_one(ComposerHint).set_mode(thread.mode)
         self._session_started_at_iso = thread.created_at.isoformat()
         verb = "forked from" if fork else "resumed"
         return f"{verb} {thread_id[:8]} ({len(restored)} messages)"
@@ -412,6 +602,9 @@ class DeepSeekTUI(App[None]):
         """Load an explicit legacy session snapshot for recovery/migration."""
         if self._engine is None:
             return "engine not started — cannot load session"
+        reason = self._session_busy_reason()
+        if reason:
+            return reason
         try:
             import json as _json
 
@@ -423,14 +616,19 @@ class DeepSeekTUI(App[None]):
             metadata = session_metadata(data, path=path)
         except Exception as exc:  # noqa: BLE001 — pydantic validation errors
             return f"session file invalid: {exc}"
-        apply_messages_to_engine(self._engine, restored, metadata)
         import uuid
+
+        self._check_session_workspace(metadata.get("workspace"))
+        new_id = uuid.uuid4().hex
+        self._adopt_session(new_id)
+        self._reset_session_view()
+        apply_messages_to_engine(self._engine, restored, metadata)
 
         legacy_id = str(metadata.get("id", path.stem)).strip() or path.stem
         # A legacy snapshot is an import, never an alternate writable store.
         # Give it a fresh canonical id so an old export cannot overwrite an
         # unrelated thread that happens to carry the same metadata id.
-        self._engine._cycle_session_id = uuid.uuid4().hex
+        self._engine._cycle_session_id = new_id
         self._engine.turn_counter = sum(message.role == "user" for message in restored)
         self._engine._user_turn_index = self._engine.turn_counter
         model = data.get("model") or metadata.get("model")
@@ -461,26 +659,26 @@ class DeepSeekTUI(App[None]):
         return f"recovered crash checkpoint {session_id} ({len(messages)} messages)"
 
     def _refresh_sidebar_sessions(self) -> None:
-        """Populate the left sidebar from canonical runtime threads."""
-        from deepseek_tui.config.paths import user_threads_dir
-        from deepseek_tui.server.threads import RuntimeThreadStore
+        pending = getattr(self, "_sidebar_refresh_task", None)
+        if pending is not None and not pending.done():
+            return
+        self._sidebar_refresh_task = self.start_task(self._load_sidebar_entries())
 
-        store = RuntimeThreadStore(user_threads_dir())
-        entries: list[SidebarEntry] = []
-        for thread in store.list_threads()[:50]:
-            if thread.archived:
-                continue
-            count = len(store.list_turns_for_thread(thread.id))
-            entries.append(
-                SidebarEntry(
-                    id=thread.id,
-                    name=thread.title or thread.id[:8],
-                    preview=f"{count} turns",
-                    updated_at=int(thread.updated_at.timestamp()),
-                    model=thread.model,
-                )
-            )
-        self.query_one(Sidebar).set_entries(entries)
+    async def _load_sidebar_entries(self) -> None:
+        from deepseek_tui.tui.lifecycle import run_io
+
+        def read_entries():
+            store = self._get_thread_store()
+            counts = store.count_turns_by_thread()
+            return [SidebarEntry(
+                id=thread.id, name=thread.title or thread.id[:8],
+                preview=f"{counts.get(thread.id, 0)} turns",
+                updated_at=int(thread.updated_at.timestamp()), model=thread.model,
+            ) for thread in store.list_threads() if not thread.archived][:50]
+
+        entries = await run_io(read_entries)
+        if not self._closing:
+            self.query_one(Sidebar).set_entries(entries)
 
     @staticmethod
     def _resolve_session_path(session_id: str):  # type: ignore[no-untyped-def]
@@ -499,12 +697,12 @@ class DeepSeekTUI(App[None]):
 
     def _build_client(self) -> LLMClient | None:
         """Construct an LLM client from config + secrets."""
-        from deepseek_tui.client.factory import build_llm_client
+        from deepseek_tui.client.factory import MissingApiKeyError, build_llm_client
 
-        client = build_llm_client(self.config)
-        if not client.api_key:
+        try:
+            return build_llm_client(self.config)
+        except MissingApiKeyError:
             return None
-        return client
 
     # ── message submission ────────────────────────────────────────────
 
@@ -522,6 +720,11 @@ class DeepSeekTUI(App[None]):
         self, text: str, *, show_in_transcript: bool = True
     ) -> None:
         if self._engine is None:
+            return
+        if self._closing or self._command_busy:
+            self.query_one(Transcript).add_notice(
+                "Wait for the current command to finish", severity="warning"
+            )
             return
         preview = text[:200].replace("\n", " ")
         # UserPromptSubmit (message_submit) hooks fire inside the engine's
@@ -555,7 +758,6 @@ class DeepSeekTUI(App[None]):
         if show_in_transcript:
             transcript.add_user_message(text)
         await self.handle.send_op(SendMessageOp(content=content))
-        self.run_worker(self._listen_events(), exclusive=True, name="event-listener")
 
     async def on_composer_submitted(self, event: Composer.Submitted) -> None:
         text = event.text or ""
@@ -585,25 +787,34 @@ class DeepSeekTUI(App[None]):
     # ── slash command handling ────────────────────────────────────────
 
     def on_composer_slash_input(self, event: Composer.SlashInput) -> None:
-        """Dispatch a slash command and display the result."""
+        """Run commands without blocking UI event and approval processing."""
         self.query_one(SlashMenu).hide()
-        result = dispatch(event.raw_input, self)
-        transcript = self.query_one(Transcript)
-        if result.submit_message is not None:
-            # Plugin prompt command — submit as a user turn; the engine
-            # expands the /<plugin>:<command> template into the message.
-            self.run_worker(
-                self._submit_user_message(result.submit_message),
-                exclusive=False,
-                name="plugin-command-submit",
+        self.start_task(self._run_command(event.raw_input))
+
+    async def _run_command(self, raw_input: str) -> None:
+        if self._closing or self._command_busy:
+            self.query_one(Transcript).add_notice(
+                "Wait for the current command to finish", severity="warning"
             )
             return
+        self._command_busy = True
+        self._command_owner = asyncio.current_task()
+        try:
+            result = await dispatch_async(raw_input, self)
+        finally:
+            self._command_busy = False
+            self._command_owner = None
+        transcript = self.query_one(Transcript)
+        if result.submit_message is not None:
+            await self._submit_user_message(result.submit_message)
         if result.output:
             transcript.add_notice(result.output, severity="info")
         if result.error:
             transcript.add_notice(result.error, severity="error")
         if result.exit_app:
-            self.exit()
+            # Detach this owner before awaiting shutdown (avoid self-join).
+            self._owned_tasks.pop(asyncio.current_task(), None)
+            await self.action_quit()
 
     def on_composer_text_changed(self, event: Composer.TextChanged) -> None:
         """Show/hide slash menu or file mention based on input prefix."""
@@ -794,7 +1005,8 @@ class DeepSeekTUI(App[None]):
                 status.set_status("cancelled")
                 status.set_finished()
                 transcript.finalize_message()
-                break
+                self._turn_started_at = None
+                continue
             elif isinstance(event, TurnCompleteEvent):
                 bg = event.running_subagents + event.running_tasks
                 if bg:
@@ -844,8 +1056,13 @@ class DeepSeekTUI(App[None]):
                     cost=event.session_cost_usd,
                 )
                 self._schedule_info_sidebar_refresh()
-                self._maybe_notify_turn_done()
-                break
+                if event.success:
+                    self._maybe_notify_turn_done()
+                else:
+                    status.set_status("failed")
+                    if event.error_message:
+                        transcript.add_notice(event.error_message, severity="error")
+                    self._turn_started_at = None
             elif isinstance(event, SubAgentMailboxEvent):
                 self._schedule_info_sidebar_refresh()
                 if event.message.kind is MailboxMessageKind.STARTED:
@@ -863,6 +1080,7 @@ class DeepSeekTUI(App[None]):
             elif isinstance(event, SessionActivityEvent):
                 self._schedule_info_sidebar_refresh()
                 if event.message:
+                    transcript.add_notice(event.message, severity="info")
                     status.set_phase(f"background: {event.message[:50]}")
             elif isinstance(event, StatusEvent):
                 status.set_status(event.message)
@@ -991,33 +1209,38 @@ class DeepSeekTUI(App[None]):
 
         def _on_result(result: str | None) -> None:
             if result:
-                cmd_result = dispatch(result, self)
-                transcript = self.query_one(Transcript)
-                if cmd_result.output:
-                    transcript.add_notice(cmd_result.output, severity="info")
-                if cmd_result.error:
-                    transcript.add_notice(cmd_result.error, severity="error")
-                if cmd_result.exit_app:
-                    self.exit()
+                self.start_task(self._run_command(result))
 
         self.push_screen(CommandPalette(), _on_result)
 
-    async def action_new_session(self) -> None:
+    async def action_new_session(self) -> bool:
         import uuid
 
-        transcript = self.query_one(Transcript)
-        transcript.clear_messages()
+        reason = self._session_busy_reason()
+        if reason:
+            self.query_one(StatusBar).set_status(reason)
+            return False
+        new_id = uuid.uuid4().hex
+        try:
+            if self._engine is not None:
+                from deepseek_tui.state.session import clear_checkpoint
+
+                clear_checkpoint(
+                    workspace=self._engine.tool_context.working_directory,
+                    session_id=self._engine._cycle_session_id,
+                )
+            self._adopt_session(new_id)
+        except (OSError, ValueError) as exc:
+            self.query_one(StatusBar).set_status(f"Could not start a new session: {exc}")
+            return False
+        self._reset_session_view()
+        self.query_one(Transcript).clear_messages()
         if self._engine is not None:
-            self._engine.session_messages.clear()
+            apply_messages_to_engine(self._engine, [], {})
             self._engine._user_turn_index = 0
             self._engine.turn_counter = 0
-            from deepseek_tui.state.session import clear_checkpoint
-
-            clear_checkpoint(
-                workspace=self._engine.tool_context.working_directory,
-                session_id=self._engine._cycle_session_id,
-            )
-            self._engine._cycle_session_id = uuid.uuid4().hex
+            self._engine._cycle_session_id = new_id
+        return True
 
     def _cancel_active_turn(self) -> bool:
         """Request cancellation of the in-flight turn. Returns True if one was active."""
@@ -1035,16 +1258,10 @@ class DeepSeekTUI(App[None]):
 
     async def action_quit(self) -> None:
         logger.info("tui_quit")
-        if self._engine is not None:
-            await self._engine.run_lifecycle_hook("session_end")
-            await self._engine.shutdown()
-        if self._engine_task is not None:
-            self._engine_task.cancel()
-            try:
-                await self._engine_task
-            except asyncio.CancelledError:
-                pass
-        self.exit()
+        try:
+            await self._shutdown_runtime()
+        finally:
+            self.exit()
 
     def action_toggle_sidebar(self) -> None:
         sidebar = self.query_one(Sidebar)
@@ -1065,6 +1282,9 @@ class DeepSeekTUI(App[None]):
     # ── Action stubs (subset) ────────────────────────────
 
     def action_open_session_picker(self) -> None:
+        self.start_task(self._open_session_picker())
+
+    async def _open_session_picker(self) -> None:
         """Open the session picker (Ctrl+R).
 
         Threads are loaded from the canonical ``~/.deepseek/threads`` store;
@@ -1072,7 +1292,9 @@ class DeepSeekTUI(App[None]):
         """
         from deepseek_tui.tui.dialogs import SessionPicker
 
-        sessions = self._discover_session_picks()
+        from deepseek_tui.tui.lifecycle import run_io
+
+        sessions = await run_io(lambda: self._discover_session_picks(self._get_thread_store()))
         if not sessions:
             self.query_one(StatusBar).set_status(
                 "no saved threads in ~/.deepseek/threads/"
@@ -1095,6 +1317,10 @@ class DeepSeekTUI(App[None]):
 
         def _on_pick(picked: str | None) -> None:
             if not picked or self._engine is None:
+                return
+            reason = self._session_busy_reason()
+            if reason:
+                self.query_one(StatusBar).set_status(reason)
                 return
             self._engine.default_model = picked
             self.config.model = picked
@@ -1120,7 +1346,8 @@ class DeepSeekTUI(App[None]):
             composer.insert(f"{current}@{picked} ".lstrip())
             composer.focus()
 
-        self.push_screen(FilePicker(), _on_pick)
+        workspace = self._engine.tool_context.working_directory if self._engine else None
+        self.push_screen(FilePicker(workspace=workspace), _on_pick)
 
     def action_cycle_mode(self) -> None:
         """Cycle agent/plan/yolo/ask modes (Tab)."""
@@ -1177,16 +1404,13 @@ class DeepSeekTUI(App[None]):
         self.query_one(StatusBar).set_status(f"tool details {state}")
 
     @staticmethod
-    def _discover_session_picks() -> list[tuple[str, str]]:
-        """Read canonical, non-archived threads into picker tuples."""
+    def _discover_session_picks(store=None) -> list[tuple[str, str]]:
         from deepseek_tui.config.paths import user_threads_dir
         from deepseek_tui.server.threads import RuntimeThreadStore
 
-        return [
-            (thread.id, thread.title or thread.id[:8])
-            for thread in RuntimeThreadStore(user_threads_dir()).list_threads()
-            if not thread.archived
-        ]
+        store = store or RuntimeThreadStore(user_threads_dir())
+        return [(thread.id, thread.title or thread.id[:8])
+                for thread in store.list_threads() if not thread.archived]
 
     def action_esc_press(self) -> None:
         """Esc-Esc backtrack chord.
@@ -1200,22 +1424,10 @@ class DeepSeekTUI(App[None]):
         """
         if self._cancel_active_turn():
             return
-        engine = self._engine
-        total = (
-            len([m for m in engine.session_messages if getattr(m, "role", None) == "user"])
-            if engine is not None
-            else 0
+        self._backtrack.reset()
+        self.query_one(StatusBar).set_status(
+            "Conversation backtrack is not available; /undo only reverts the last tool edit"
         )
-        effect = self._backtrack.handle_esc(total)
-        status = self.query_one(StatusBar)
-        if effect == EscEffect.PRIME:
-            status.set_status("Esc again to backtrack")
-        elif effect == EscEffect.CANCEL:
-            status.set_status("backtrack cancelled")
-        elif effect == EscEffect.OPEN_OVERLAY:
-            status.set_status(
-                f"backtrack: {total} turn(s); depth={self._backtrack.selected_idx}"
-            )
 
     def on_sidebar_session_selected(self, event: Sidebar.SessionSelected) -> None:
         """Handle canonical thread selection from sidebar."""
@@ -1229,19 +1441,26 @@ class DeepSeekTUI(App[None]):
     def on_sidebar_session_deleted(self, event: Sidebar.SessionDeleted) -> None:
         from deepseek_tui.config.paths import user_threads_dir
         from deepseek_tui.server.data_inventory import delete_thread_tree
-        from deepseek_tui.server.threads import RuntimeThreadStore
         from deepseek_tui.workspace.turn_checkpoints import TurnCheckpointStore
 
         status = self.query_one(StatusBar)
         try:
+            if event.session_id == self._thread_lease_id:
+                raise ValueError("Cannot delete the current session")
             root = user_threads_dir()
-            store = RuntimeThreadStore(root)
+            store = self._get_thread_store()
             store.load_thread(event.session_id)
-            delete_thread_tree(
-                store,
-                TurnCheckpointStore(root / "checkpoints"),
-                event.session_id,
-            )
+            from deepseek_tui.workspace.project_lease import ThreadLease
+
+            lease = ThreadLease(event.session_id)
+            if not lease.acquire_blocking(nonblocking=True):
+                raise ValueError("Thread is in use")
+            try:
+                delete_thread_tree(
+                    store, TurnCheckpointStore(root / "checkpoints"), event.session_id
+                )
+            finally:
+                lease.release()
             self._refresh_sidebar_sessions()
             status.set_status(f"deleted {event.session_id[:8]}")
         except (FileNotFoundError, OSError, ValueError) as exc:
@@ -1250,16 +1469,24 @@ class DeepSeekTUI(App[None]):
     def on_sidebar_session_archived(self, event: Sidebar.SessionArchived) -> None:
         from datetime import datetime, timezone
 
-        from deepseek_tui.config.paths import user_threads_dir
-        from deepseek_tui.server.threads import RuntimeThreadStore
 
         status = self.query_one(StatusBar)
         try:
-            store = RuntimeThreadStore(user_threads_dir())
-            thread = store.load_thread(event.session_id)
-            thread.archived = True
-            thread.updated_at = datetime.now(timezone.utc)
-            store.save_thread(thread)
+            from deepseek_tui.workspace.project_lease import ThreadLease
+
+            if event.session_id == self._thread_lease_id:
+                raise ValueError("Cannot archive the current session")
+            lease = ThreadLease(event.session_id)
+            if not lease.acquire_blocking(nonblocking=True):
+                raise ValueError("Thread is in use")
+            try:
+                store = self._get_thread_store()
+                thread = store.load_thread(event.session_id)
+                thread.archived = event.archived
+                thread.updated_at = datetime.now(timezone.utc)
+                store.save_thread(thread)
+            finally:
+                lease.release()
             self._refresh_sidebar_sessions()
             status.set_status(f"archived {event.session_id[:8]}")
         except (FileNotFoundError, OSError, ValueError) as exc:

@@ -5,7 +5,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-from collections.abc import Iterable
+import re
+import time
+from collections.abc import Callable, Iterable
 from pathlib import Path
 
 import regex
@@ -175,6 +177,7 @@ class GrepFilesTool(ToolSpec):
         except regex.error as exc:
             logger.warning("grep_files_invalid_regex pattern=%r error=%s", pattern, exc)
             raise ToolError(f"invalid regex pattern: {exc}") from exc
+        denied = [0]
         try:
             (
                 rows, file_counts, total, skipped_large, skipped_ignored, context_limited
@@ -186,7 +189,10 @@ class GrepFilesTool(ToolSpec):
                 after=context_after if output_mode == "content" else 0,
                 head_limit=head_limit,
                 glob=glob_pattern,
+                authorize=_path_authorizer(context, denied),
             )
+        except (ValueError, re.error) as exc:
+            raise ToolError(f"invalid glob: {exc}") from exc
         except TimeoutError as exc:
             raise ToolError("regex search timed out; narrow the pattern or path") from exc
         logger.info(
@@ -238,6 +244,8 @@ class GrepFilesTool(ToolSpec):
                 content_lines.append("… (context limited by head_limit)")
             truncated = total > shown_matches or context_limited
             shown_count = shown_matches
+        if denied[0]:
+            content_lines.append(f"… (skipped {denied[0]} unauthorized path(s))")
         if skipped_large:
             content_lines.append(
                 f"… (skipped {skipped_large} file(s) over {_MAX_SEARCH_FILE_BYTES} bytes)"
@@ -255,6 +263,7 @@ class GrepFilesTool(ToolSpec):
                 "shown": shown_count,
                 "truncated": truncated,
                 "skipped_large": skipped_large,
+                "skipped_unauthorized": denied[0],
                 "skipped_ignored": skipped_ignored,
             },
         )
@@ -317,9 +326,14 @@ class FileSearchTool(ToolSpec):
         max_depth = _optional_non_negative_int(input_data, "max_depth")
         if max_depth == 0:
             raise ToolError("max_depth must be >= 1")
-        matches, skipped_ignored = await asyncio.to_thread(
-            _file_search, root, pattern, max_depth
-        )
+        denied = [0]
+        try:
+            matches, skipped_ignored = await asyncio.to_thread(
+                _file_search, root, pattern, max_depth,
+                authorize=_path_authorizer(context, denied),
+            )
+        except (ValueError, re.error) as exc:
+            raise ToolError(f"invalid glob: {exc}") from exc
         logger.info(
             "file_search pattern=%r root=%s match_count=%d",
             pattern,
@@ -330,7 +344,7 @@ class FileSearchTool(ToolSpec):
         lines = list(shown)
         if len(matches) > len(shown):
             lines.append(
-                f"… (showing {len(shown)} of {len(matches)} files; "
+                f"… (showing {len(shown)} of at least {len(matches)} files; "
                 "narrow the path or use a more specific pattern)"
             )
         note = _gitignore_skip_note(skipped_ignored)
@@ -342,6 +356,8 @@ class FileSearchTool(ToolSpec):
             metadata={
                 "path": str(root),
                 "count": len(matches),
+                "count_is_exact": len(matches) <= _MAX_FILE_RESULTS,
+                "skipped_unauthorized": denied[0],
                 "skipped_ignored": skipped_ignored,
             },
         )
@@ -397,6 +413,19 @@ def _walk_depth(dirpath: str, root: Path) -> int:
         return 0
 
 
+def _path_authorizer(context: ToolContext, denied: list[int]) -> Callable[[Path], bool]:
+    def allowed(path: Path) -> bool:
+        try:
+            resolved = context.resolve_path(str(path), allow_read_roots=True)
+            if not is_sensitive_path(resolved):
+                return True
+        except (OSError, RuntimeError, ValueError, ToolError):
+            pass
+        denied[0] += 1
+        return False
+    return allowed
+
+
 def _iter_files(
     root: Path,
     glob: str | None = None,
@@ -405,9 +434,14 @@ def _iter_files(
     skip_over_bytes: int | None = None,
     skipped_large: list[int] | None = None,
     skipped_ignored: list[int] | None = None,
+    authorize: Callable[[Path], bool] | None = None,
 ) -> Iterable[Path]:
     ignore = GitIgnoreMatcher(root if root.is_dir() else root.parent)
+    deadline = time.monotonic() + 5.0
+    visited = 0
     if root.is_file():
+        if authorize is not None and not authorize(root):
+            return
         if ignore.ignored(root, is_dir=False):
             if skipped_ignored is not None:
                 skipped_ignored[0] += 1
@@ -426,6 +460,9 @@ def _iter_files(
             yield root
         return
     for dirpath, dirnames, filenames in os.walk(root):
+        visited += len(dirnames) + len(filenames) + 1
+        if visited > 100000 or time.monotonic() > deadline:
+            raise ToolError("Search traversal budget exceeded; narrow the path")
         current = Path(dirpath)
         ignore.add_dir(current)
         depth = _walk_depth(dirpath, root)
@@ -446,6 +483,8 @@ def _iter_files(
             dirnames[:] = sorted(kept_dirs)
         for name in sorted(filenames):
             path = current / name
+            if authorize is not None and not authorize(path):
+                continue
             if is_sensitive_path(path):
                 continue
             if ignore.ignored(path, is_dir=False):
@@ -473,6 +512,7 @@ def _grep_files(
     after: int = 0,
     head_limit: int = _MAX_MATCHES,
     glob: str | None = None,
+    authorize: Callable[[Path], bool] | None = None,
 ) -> tuple[list[tuple[Path, int, str, bool]], dict[Path, int], int, int, int, bool]:
     """Return rows, counts, skips, and whether context was cut.
 
@@ -487,19 +527,36 @@ def _grep_files(
     skipped = [0]
     ignored = [0]
     context_limited = False
+    deadline = time.monotonic() + 5.0
+    bytes_read = 0
     for path in _iter_files(
         root,
         glob,
         skip_over_bytes=_MAX_SEARCH_FILE_BYTES,
         skipped_large=skipped,
         skipped_ignored=ignored,
+        authorize=authorize,
     ):
         try:
-            text = path.read_text(encoding="utf-8")
+            with path.open("rb") as stream:
+                raw = stream.read(_MAX_SEARCH_FILE_BYTES + 1)
+            bytes_read += len(raw)
+            if bytes_read > 64 * 1024 * 1024 or time.monotonic() > deadline:
+                raise ToolError("Search work budget exceeded; narrow the path")
+            if len(raw) > _MAX_SEARCH_FILE_BYTES:
+                skipped[0] += 1
+                continue
+            text = raw.decode("utf-8")
         except (UnicodeDecodeError, OSError):
             continue
         lines = text.splitlines()
-        match_idx = [i for i, line in enumerate(lines) if pattern.search(line, timeout=0.05)]
+        match_idx = []
+        for i, line in enumerate(lines):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise ToolError("Search work budget exceeded; narrow the path")
+            if pattern.search(line, timeout=min(0.05, remaining)):
+                match_idx.append(i)
         if not match_idx:
             continue
         file_counts[path] = len(match_idx)
@@ -548,12 +605,15 @@ def _file_matches_pattern(path: Path, root: Path, pattern: str) -> bool:
 
 
 def _file_search(
-    root: Path, pattern: str, max_depth: int | None
+    root: Path, pattern: str, max_depth: int | None,
+    *, authorize: Callable[[Path], bool] | None = None,
 ) -> tuple[list[str], int]:
     ignored = [0]
-    matches = [
-        _display_rel(path, root)
-        for path in _iter_files(root, max_depth=max_depth, skipped_ignored=ignored)
-        if _file_matches_pattern(path, root, pattern)
-    ]
+    matches = []
+    for path in _iter_files(root, max_depth=max_depth, skipped_ignored=ignored,
+                            authorize=authorize):
+        if _file_matches_pattern(path, root, pattern):
+            matches.append(_display_rel(path, root))
+            if len(matches) > _MAX_FILE_RESULTS:
+                break
     return matches, ignored[0]

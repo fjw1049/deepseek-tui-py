@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_validator, model_validator
 
 from deepseek_tui.config.paths import (
     user_logs_dir,
@@ -46,24 +46,24 @@ class ProviderConfig(BaseModel):
     api_key: str | None = None
     base_url: str | None = None
     model: str | None = None
-    timeout: int = 120
+    timeout: int = Field(default=120, gt=0)
     # Max outbound LLM calls per minute for this provider's API key, shared
     # process-wide across all callers (main turn, sub-agents,
     # automations). 0 / unset = unlimited. Enforced client-side in
     # ``client.rate_limit`` before any request leaves the process.
-    rate_limit: int | None = None
-    max_tokens: int | None = None
+    rate_limit: int | None = Field(default=None, ge=0)
+    max_tokens: int | None = Field(default=None, gt=0)
     temperature: float | None = None
     # Context window (tokens) for this provider's model. Custom models the
     # built-in table doesn't recognize default to 500_000; set this to the
     # real window (e.g. 1_000_000) to override. See
-    # ``config.providers.register_provider_context_windows``.
-    context_window: int | None = None
+    # ``config.providers.configured_context_window``.
+    context_window: int | None = Field(default=None, gt=0)
     # Per-model context windows for multi-model endpoints, written by the
     # Workbench custom-endpoint settings UI as ``[providers.X.context_windows]``
     # (model id → tokens). Takes precedence over ``context_window`` for the
     # models it names.
-    context_windows: dict[str, int] = Field(default_factory=dict)
+    context_windows: dict[str, Annotated[int, Field(gt=0)]] = Field(default_factory=dict)
     extra_headers: dict[str, str] = Field(default_factory=dict)
     extra_body: dict[str, Any] = Field(default_factory=dict)
     image_input: bool | None = None
@@ -184,11 +184,11 @@ class ContextConfig(BaseModel):
 
 
 class SubagentConfig(BaseModel):
-    max_concurrent: int = 10
+    max_concurrent: int = Field(default=10, gt=0)
     # Max sub-agent LLM streams in flight at once (per engine). Keeps
     # parallel children from tripping provider rate limits (429 storms)
     # alongside the parent's own request. 0 disables the gate.
-    llm_max_concurrent: int = 2
+    llm_max_concurrent: int = Field(default=2, ge=0)
     default_model: str | None = None
     worker_model: str | None = None
     explorer_model: str | None = None
@@ -197,7 +197,7 @@ class SubagentConfig(BaseModel):
     models: dict[str, str] = Field(default_factory=dict)
     # Max seconds the parent turn blocks waiting for direct (non-background)
     # sub-agents to complete before timing out the handoff (#756).
-    handoff_timeout_secs: float = 600.0
+    handoff_timeout_secs: float = Field(default=600.0, gt=0)
 
 
 class ShellHookConfig(BaseModel):
@@ -277,7 +277,7 @@ class LoggingConfig(BaseModel):
     level: str = "INFO"
     dir: Path = Field(default_factory=user_logs_dir)
     console: bool = False
-    keep_hours: int = 168
+    keep_hours: int = Field(default=168, ge=0)
     # Optional per-logger level overrides — useful when the user wants
     # ``deepseek_tui.engine.turn = "DEBUG"`` while leaving the rest
     # at INFO. Keys are full logger names; values are level strings.
@@ -319,6 +319,9 @@ class ProfileConfig(BaseModel):
 
 
 class Config(BaseModel):
+    # Runtime-only explicit credential selection; never serialized or persisted.
+    _api_key_override: tuple[str, str] | None = PrivateAttr(default=None)
+
     provider: str = "deepseek"
     default_text_model: str = "deepseek-v4-pro"
     model: str | None = None
@@ -342,7 +345,7 @@ class Config(BaseModel):
     skills_dir: Path = Field(default_factory=user_skills_dir)
     mcp_config_path: Path = Field(default_factory=user_mcp_config_path)
     notes_path: Path = Field(default_factory=user_notes_path)
-    max_subagents: int = 10
+    max_subagents: int = Field(default=10, gt=0)
     instructions: list[Path] = Field(default_factory=list)
     providers: dict[str, ProviderConfig] = Field(default_factory=dict)
     profiles: dict[str, ProfileConfig] = Field(default_factory=dict)
@@ -420,5 +423,16 @@ class Config(BaseModel):
 
     @classmethod
     def merge_dict(cls, base: Config, override: dict[str, Any]) -> Config:
-        merged = _deep_merge(base.model_dump(mode="python"), override)
+        values = base.model_dump(mode="python")
+        # Preserve partial profile fields through later overlays.
+        values["profiles"] = {
+            name: profile.model_dump(mode="python", exclude_unset=True)
+            for name, profile in base.profiles.items()
+        }
+        if override.get("provider") not in (None, base.provider):
+            # Same credential scope as config_for_model: a provider switch
+            # must not carry the previous endpoint/key or model defaults.
+            for key in ("api_key", "base_url", "model"):
+                values[key] = None
+        merged = _deep_merge(values, override)
         return cls.model_validate(merged)

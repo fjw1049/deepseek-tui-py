@@ -15,7 +15,7 @@ from typing import Any, Literal
 
 from deepseek_tui.config.providers import (
     DEFAULT_CONTEXT_WINDOW_TOKENS,
-    context_window_for_model,
+    configured_context_window,
 )
 from deepseek_tui.protocol.messages import Message, MessageOrigin, Role
 from deepseek_tui.state.context import (  # noqa: F401 — compatibility re-export
@@ -132,6 +132,7 @@ def measure_context_pressure(
     real_input_estimate: int = 0,
     system_prompt: str | None = None,
     tools: list[dict[str, Any]] | None = None,
+    model_config: object | None = None,
 ) -> ContextPressure:
     """Calibrate the current estimate against the last provider measurement.
 
@@ -140,7 +141,7 @@ def measure_context_pressure(
     bias while the signed estimate delta accounts for content added or removed
     since that request.
     """
-    window = max(1, int(context_window_for_model(model) or DEFAULT_CONTEXT_WINDOW_TOKENS))
+    window = max(1, int(configured_context_window(model, model_config) or DEFAULT_CONTEXT_WINDOW_TOKENS))
     if real_input_tokens > 0:
         tokens = int(real_input_tokens)
         if real_input_estimate <= 0:

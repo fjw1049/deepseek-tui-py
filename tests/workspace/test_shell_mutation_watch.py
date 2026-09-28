@@ -267,7 +267,8 @@ def test_read_file_distinguishes_absence_from_permission_error(
 
     (tmp_path / "gone.py").write_text("x")
     monkeypatch.setattr(
-        Path, "read_bytes", lambda self: (_ for _ in ()).throw(PermissionError(13))
+        "deepseek_tui.workspace.shell_mutation_watch.os.open",
+        lambda *args, **kwargs: (_ for _ in ()).throw(PermissionError(13))
     )
     assert _read_file(tmp_path, "missing.py") is None
     assert isinstance(_read_file(tmp_path, "gone.py"), _Unreadable)

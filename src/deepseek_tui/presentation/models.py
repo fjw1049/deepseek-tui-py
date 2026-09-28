@@ -38,15 +38,25 @@ class ActionBatchView:
     approval_ids: set[str] = field(default_factory=set)
     non_collapsible_ids: set[str] = field(default_factory=set)
 
+    _expected_ids: frozenset[str] = field(init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        # IDs are fixed for the lifetime of a batch; consumers only read this view.
+        self._expected_ids = frozenset(self.expected_tool_ids)
+        if len(self._expected_ids) != len(self.expected_tool_ids):
+            raise ValueError("Duplicate tool IDs in batch")
+
     @property
     def terminal_ids(self) -> set[str]:
         return self.completed_ids | self.failed_ids | self.denied_ids
 
     @property
     def is_terminal(self) -> bool:
-        return bool(self.expected_tool_ids) and self.terminal_ids >= set(
-            self.expected_tool_ids
-        )
+        return self.status != "running"
+
+    @property
+    def all_results_received(self) -> bool:
+        return bool(self._expected_ids) and self.terminal_ids >= self._expected_ids
 
     @property
     def has_approval(self) -> bool:
@@ -57,11 +67,11 @@ class ActionBatchView:
         return not self.has_approval and not self.non_collapsible_ids
 
     def mark_approval_required(self, tool_call_id: str) -> None:
-        if tool_call_id in self.expected_tool_ids:
+        if tool_call_id in self._expected_ids:
             self.approval_ids.add(tool_call_id)
 
     def mark_non_collapsible(self, tool_call_id: str) -> None:
-        if tool_call_id in self.expected_tool_ids:
+        if tool_call_id in self._expected_ids:
             self.non_collapsible_ids.add(tool_call_id)
 
     def receive_terminal(
@@ -71,7 +81,12 @@ class ActionBatchView:
         status: TerminalActionStatus,
     ) -> bool:
         """Record one terminal action idempotently and report batch completion."""
-        if tool_call_id not in self.expected_tool_ids or tool_call_id in self.terminal_ids:
+        if (
+            self.is_terminal or tool_call_id not in self._expected_ids
+            or tool_call_id in self.completed_ids
+            or tool_call_id in self.failed_ids
+            or tool_call_id in self.denied_ids
+        ):
             return False
         if status == "done":
             self.completed_ids.add(tool_call_id)
@@ -81,7 +96,9 @@ class ActionBatchView:
         else:
             self.failed_ids.add(tool_call_id)
             self.has_error = True
-        if not self.is_terminal:
+        # The three sets are disjoint; avoid rebuilding their union per result.
+        received = len(self.completed_ids) + len(self.failed_ids) + len(self.denied_ids)
+        if received < len(self._expected_ids):
             return False
         self.status = "partial_fail" if self.has_error else "done"
         return True
