@@ -138,9 +138,10 @@ def test_valid_crop_request_and_usage_aliases():
     assert Usage.model_validate_json(usage.model_dump_json()) == usage
 
 
-def test_nested_negative_usage_rejected():
-    with pytest.raises(ValidationError):
-        Usage.model_validate({"prompt_tokens": 10, "prompt_tokens_details": {"cached_tokens": -1}})
+def test_nested_negative_cache_count_is_ignored():
+    usage = Usage.model_validate({"prompt_tokens": 10, "prompt_tokens_details": {"cached_tokens": -1}})
+    assert usage.cache_read_input_tokens == 0
+    assert usage.cache_creation_input_tokens == 10
 
 
 def test_duplicate_ids_rejected_before_reducer_mutation():

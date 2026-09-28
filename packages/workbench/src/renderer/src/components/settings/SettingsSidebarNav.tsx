@@ -7,6 +7,7 @@ import {
   ChevronLeft,
   Globe,
   HardDrive,
+  Download,
   Keyboard,
   Palette,
   Search,
@@ -32,6 +33,7 @@ const NAV_ITEMS: NavItem[] = [
   { id: 'search', labelKey: 'search', icon: <Search className="h-4 w-4" strokeWidth={1.75} /> },
   { id: 'hooks', labelKey: 'hooks', icon: <Anchor className="h-4 w-4" strokeWidth={1.75} /> },
   { id: 'permissions', labelKey: 'permissions', icon: <Shield className="h-4 w-4" strokeWidth={1.75} /> },
+  { id: 'import', labelKey: 'sessionImport.nav', icon: <Download className="h-4 w-4" strokeWidth={1.75} /> },
   { id: 'data', labelKey: 'data', icon: <HardDrive className="h-4 w-4" strokeWidth={1.75} /> },
   { id: 'archive', labelKey: 'archive', icon: <Archive className="h-4 w-4" strokeWidth={1.75} /> },
   {

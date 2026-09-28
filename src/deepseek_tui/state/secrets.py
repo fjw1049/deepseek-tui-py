@@ -124,6 +124,7 @@ def write_api_key(
     value: str | None,
     *,
     path: Path | None = None,
+    profile: str | None = None,
 ) -> Path:
     """Set or clear a provider key in config.toml using an atomic write."""
     from deepseek_tui.config.paths import user_config_path
@@ -131,6 +132,8 @@ def write_api_key(
     provider = provider.strip()
     if not _PROVIDER_NAME_RE.fullmatch(provider):
         raise ValueError("provider name may contain only letters, numbers, '.', '_' and '-'")
+    if profile is not None and not _BARE_KEY_RE.fullmatch(profile):
+        raise ValueError("invalid profile name")
 
     if value is not None:
         value = value.strip()
@@ -142,17 +145,27 @@ def write_api_key(
     lines = original.splitlines()
     expected = deepcopy(tomllib.loads(original))
     active_provider = expected.get("provider") or "deepseek"
-    _assign(expected, ("providers", provider, "api_key"), value)
-    if provider == active_provider:
+    prefix = ("profiles", profile) if profile is not None else ()
+    _assign(expected, (*prefix, "providers", provider, "api_key"), value)
+    if profile is not None:
+        _assign(expected, (*prefix, "api_key"), None)
+    elif provider == active_provider:
         _assign(expected, ("api_key",), value)
 
+    section = f"providers.{_format_key(provider)}"
+    if profile is not None:
+        section = f"profiles.{profile}.{section}"
     lines = _update_section_value(
         lines,
-        section=f"providers.{_format_key(provider)}",
+        section=section,
         key="api_key",
         value=value,
     )
-    if provider == active_provider:
+    if profile is not None:
+        lines = _update_section_value(
+            lines, section=f"profiles.{profile}", key="api_key", value=None
+        )
+    elif provider == active_provider:
         # Workbench still reads the top-level api_key for the active provider.
         lines = _update_top_level_value(lines, "api_key", value)
 
@@ -161,6 +174,18 @@ def write_api_key(
         updated += "\n"
     _checked_write(config_path, original, updated, expected)
     return config_path
+
+
+@_serialized_write
+def write_profile_api_key(profile: str, value: str | None, *, path: Path | None = None) -> Path:
+    from deepseek_tui.config.paths import user_config_path
+
+    config_path = path or user_config_path()
+    content = config_path.read_text(encoding="utf-8") if config_path.exists() else ""
+    data = tomllib.loads(content)
+    selected = data.get("profiles", {}).get(profile, {})
+    provider = selected.get("provider") or data.get("provider") or "deepseek"
+    return write_api_key(provider, value, path=config_path, profile=profile)
 
 
 def _format_key(value: str) -> str:

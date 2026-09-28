@@ -21,5 +21,6 @@ async def run_io(function: Callable[_P, _R], *args: _P.args, **kwargs: _P.kwargs
                 await asyncio.shield(task)
             except asyncio.CancelledError:
                 continue
-        task.result()
+        if not task.cancelled():
+            task.exception()
         raise

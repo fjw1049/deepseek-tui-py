@@ -190,7 +190,6 @@ class RuntimeThreadStore:
     def save_worktree_baseline(self, thread_id: str, baseline: dict[str, Any]) -> None:
         write_json_atomic(self._worktree_baseline_path(thread_id), baseline)
 
-    @_serialized
     def load_worktree_baseline(self, thread_id: str) -> dict[str, Any] | None:
         path = self._worktree_baseline_path(thread_id)
         if not path.is_file():
@@ -222,7 +221,6 @@ class RuntimeThreadStore:
             f.flush()
             os.fsync(f.fileno())
 
-    @_serialized
     def list_rewind_audit(self, thread_id: str) -> list[dict[str, Any]]:
         path = self._rewind_audit_path(thread_id)
         if not path.exists():
@@ -246,7 +244,6 @@ class RuntimeThreadStore:
     def delete_rewind_audit(self, thread_id: str) -> None:
         self._rewind_audit_path(thread_id).unlink(missing_ok=True)
 
-    @_serialized
     def iter_turns(self) -> list[TurnRecord]:
         out: list[TurnRecord] = []
         if not self._turns_dir.exists():
@@ -257,7 +254,6 @@ class RuntimeThreadStore:
                 out.append(record)
         return out
 
-    @_serialized
     def iter_items(self) -> list[TurnItemRecord]:
         out: list[TurnItemRecord] = []
         if not self._items_dir.exists():
@@ -308,7 +304,6 @@ class RuntimeThreadStore:
         tmp.replace(path)
         return removed
 
-    @_serialized
     def load_thread(self, thread_id: str) -> ThreadRecord:
         path = self._thread_path(thread_id)
         if not path.exists():
@@ -326,7 +321,6 @@ class RuntimeThreadStore:
             )
         return record
 
-    @_serialized
     def load_turn(self, turn_id: str) -> TurnRecord:
         path = self._turn_path(turn_id)
         if not path.exists():
@@ -344,7 +338,6 @@ class RuntimeThreadStore:
             )
         return record
 
-    @_serialized
     def load_item(self, item_id: str) -> TurnItemRecord:
         path = self._item_path(item_id)
         if not path.exists():
@@ -389,7 +382,6 @@ class RuntimeThreadStore:
             return None
         return record
 
-    @_serialized
     def list_threads(self) -> list[ThreadRecord]:
         out: list[ThreadRecord] = []
         if not self._threads_dir.exists():
@@ -401,7 +393,6 @@ class RuntimeThreadStore:
         out.sort(key=lambda t: t.updated_at, reverse=True)
         return out
 
-    @_serialized
     def count_turns_by_thread(self) -> dict[str, int]:
         """Aggregate sidebar counts in one scan rather than one scan per thread."""
         counts: dict[str, int] = {}
@@ -411,7 +402,6 @@ class RuntimeThreadStore:
                 counts[record.thread_id] = counts.get(record.thread_id, 0) + 1
         return counts
 
-    @_serialized
     def list_turns_for_thread(self, thread_id: str) -> list[TurnRecord]:
         out: list[TurnRecord] = []
         if not self._turns_dir.exists():
@@ -423,7 +413,6 @@ class RuntimeThreadStore:
         out.sort(key=lambda t: t.created_at)
         return out
 
-    @_serialized
     def list_items_for_turn(self, turn_id: str) -> list[TurnItemRecord]:
         out: list[TurnItemRecord] = []
         if not self._items_dir.exists():

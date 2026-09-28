@@ -936,7 +936,7 @@ async function runtimeRequest(
     const longPost =
       method === 'POST' &&
       (pathOnly === '/v1/threads/purge-archived' || pathOnly.startsWith('/v1/data/') ||
-        pathOnly.startsWith('/v1/sharing/'))
+        pathOnly.startsWith('/v1/sharing/') || pathOnly.startsWith('/v1/external-sessions/'))
     const res = await fetch(url, {
       method,
       headers: hdrs,

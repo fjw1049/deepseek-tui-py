@@ -106,6 +106,9 @@ class ThreadRecord(BaseModel):
     source_session_path: str | None = None
     source_share_id: str | None = None
     source_workspace: str | None = None
+    import_source: str | None = None
+    import_source_model: str | None = None
+    import_history_only: bool = False
     memory_mode: str | None = None
     approved_plan: bool = False
     goal: dict[str, Any] | None = None

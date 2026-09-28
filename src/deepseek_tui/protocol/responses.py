@@ -95,6 +95,8 @@ class Usage(BaseModel):
         if isinstance(prompt_details, dict) and isinstance(prompt_tokens, int):
             cached = prompt_details.get("cached_tokens")
             if isinstance(cached, int):
+                # Some compatible gateways use -1 for an unavailable count.
+                cached = max(0, cached)
                 if not any(
                     key in data for key in ("cache_read_input_tokens", "prompt_cache_hit_tokens")
                 ):

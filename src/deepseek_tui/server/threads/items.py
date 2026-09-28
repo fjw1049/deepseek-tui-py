@@ -132,6 +132,14 @@ def reconstruct_messages_from_turn(
             if not text:
                 continue
             meta = item.metadata if isinstance(item.metadata, dict) else {}
+            if meta.get("external_history"):
+                # External tool names/schemas belong to another harness. Keep their
+                # evidence in context without emitting executable tool-call messages.
+                messages.append(Message.assistant(
+                    f"Historical tool record ({meta.get('tool_name') or item.summary}):\n"
+                    + _compact_persisted_tool_detail("external_history", text)
+                ))
+                continue
             tool_use_id = str(meta.get("tool_use_id") or item.id)
             tool_name = str(meta.get("tool_name") or item.summary or "tool")
             arguments = meta.get("arguments")

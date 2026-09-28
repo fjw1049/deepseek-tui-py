@@ -8,6 +8,7 @@ used to crash the whole server.
 from __future__ import annotations
 
 import json
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -18,6 +19,7 @@ from deepseek_tui.server.threads.models import (
     TurnRecord,
 )
 from deepseek_tui.server.threads.store import RuntimeThreadStore
+from deepseek_tui.workspace.project_lease import FileLease
 
 
 def _thread_record(thread_id: str) -> ThreadRecord:
@@ -93,3 +95,17 @@ def test_list_items_skips_corrupt_file(tmp_path: Path) -> None:
     items = store.list_items_for_turn("turn-1")
 
     assert [i.id for i in items] == ["good-item"]
+
+
+def test_read_paths_do_not_wait_for_import_lock(tmp_path: Path) -> None:
+    store = RuntimeThreadStore(tmp_path / "runtime")
+    store.save_thread(_thread_record("ready"))
+    lease = FileLease(tmp_path / ".runtime.events.lock")
+    lease.acquire_blocking()
+    pool = ThreadPoolExecutor(max_workers=1)
+    try:
+        assert pool.submit(store.load_thread, "ready").result(timeout=1).id == "ready"
+        assert [t.id for t in pool.submit(store.list_threads).result(timeout=1)] == ["ready"]
+    finally:
+        lease.release()
+        pool.shutdown(wait=True)

@@ -189,7 +189,7 @@ class GrepFilesTool(ToolSpec):
                 after=context_after if output_mode == "content" else 0,
                 head_limit=head_limit,
                 glob=glob_pattern,
-                authorize=_path_authorizer(context, denied),
+                authorize=_path_authorizer(denied),
             )
         except (ValueError, re.error) as exc:
             raise ToolError(f"invalid glob: {exc}") from exc
@@ -330,7 +330,7 @@ class FileSearchTool(ToolSpec):
         try:
             matches, skipped_ignored = await asyncio.to_thread(
                 _file_search, root, pattern, max_depth,
-                authorize=_path_authorizer(context, denied),
+                authorize=_path_authorizer(denied),
             )
         except (ValueError, re.error) as exc:
             raise ToolError(f"invalid glob: {exc}") from exc
@@ -413,11 +413,12 @@ def _walk_depth(dirpath: str, root: Path) -> int:
         return 0
 
 
-def _path_authorizer(context: ToolContext, denied: list[int]) -> Callable[[Path], bool]:
+def _path_authorizer(denied: list[int]) -> Callable[[Path], bool]:
     def allowed(path: Path) -> bool:
         try:
-            resolved = context.resolve_path(str(path), allow_read_roots=True)
-            if not is_sensitive_path(resolved):
+            # The search root was already resolved and authorized. os.walk
+            # does not descend into symlink dirs; reject symlink files too.
+            if not path.is_symlink() and not is_sensitive_path(path):
                 return True
         except (OSError, RuntimeError, ValueError, ToolError):
             pass

@@ -12256,3 +12256,66 @@ body:has(.ds-workbench-shell[data-ide-mode]) .ds-project-context-menu :is(input,
 .ds-process-narration .ds-progress-markdown > :last-child {
   margin-bottom: 0;
 }
+
+/* Review detail: quiet line tint, stronger changed text, and empty-side hatching. */
+.ds-diff-inline-change {
+  color: inherit;
+  background: var(--ds-diff-added-soft);
+  border-radius: 3px;
+  padding: 1px 0;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+.ds-diff-row-removed .ds-diff-inline-change { background: var(--ds-diff-removed-soft); }
+.ds-diff-empty {
+  background: repeating-linear-gradient(135deg, transparent 0 5px, color-mix(in srgb, var(--ds-text) 6%, transparent) 5px 6px);
+}
+.ds-diff-code { tab-size: 4; }
+.ds-diff-table td:first-child.ds-diff-row-removed {
+  box-shadow: inset 3px 0 var(--ds-diff-removed);
+  color: var(--ds-diff-removed);
+}
+.ds-diff-table td:nth-child(3).ds-diff-row-added {
+  box-shadow: inset 3px 0 var(--ds-diff-added);
+  color: var(--ds-diff-added);
+}
+.ds-diff-review-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 32px;
+  padding: 3px 10px;
+  border-bottom: 1px solid var(--ds-border-muted);
+  color: var(--ds-text-muted);
+  background: var(--ds-bg-sidebar);
+  font-size: 11px;
+  flex-shrink: 0;
+}
+.ds-diff-review-legend, .ds-diff-review-legend > span, .ds-diff-navigation {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.ds-diff-review-legend { gap: 16px; }
+.ds-diff-legend-dot { width: 6px; height: 6px; border-radius: 2px; }
+.ds-diff-legend-dot--added { background: var(--ds-diff-added); }
+.ds-diff-legend-dot--removed { background: var(--ds-diff-removed); }
+.ds-diff-navigation { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.ds-diff-navigation button { padding: 4px; border-radius: 5px; }
+.ds-diff-navigation button:hover { background: var(--ds-surface-hover); }
+.ds-diff-navigation button:disabled { opacity: 0.35; }
+.ds-diff-fold { background: color-mix(in srgb, var(--ds-text) 3%, transparent); }
+.ds-diff-fold button {
+  display: block;
+  width: 100%;
+  padding: 7px 12px;
+  text-align: left;
+  color: var(--ds-text-muted);
+  font-size: 12px;
+}
+.ds-diff-fold button:hover { color: var(--ds-text); background: var(--ds-surface-hover); }
+@container (max-width: 320px) {
+  .ds-diff-review-legend { gap: 8px; }
+  .ds-diff-review-bar { gap: 4px; padding-inline: 6px; }
+}

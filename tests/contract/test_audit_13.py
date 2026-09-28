@@ -257,6 +257,61 @@ async def test_shutdown_waits_for_mutation_and_client_close(runtime_app):
     assert not mgr._thread_leases
 
 
+async def test_shutdown_rejects_load_waiting_for_active_lock(runtime_app):
+    from types import SimpleNamespace
+
+    mgr = runtime_app.state.thread_manager
+    async with mgr._active_lock:
+        pending = asyncio.create_task(mgr._ensure_engine_loaded(SimpleNamespace(id="late")))
+        await asyncio.sleep(0)
+        mgr.shutdown()
+    with pytest.raises(RuntimeError, match="shutting down"):
+        await pending
+    await mgr.aclose()
+    assert "late" not in mgr._engine_load_tasks
+    assert "late" not in mgr._active
+
+
+async def test_shutdown_drains_shielded_engine_load(runtime_app, monkeypatch):
+    from types import SimpleNamespace
+
+    from deepseek_tui.engine.handle import EngineHandle
+    from deepseek_tui.server.threads.manager import _ActiveThreadState
+
+    mgr = runtime_app.state.thread_manager
+    started, finish = asyncio.Event(), asyncio.Event()
+    closed = []
+    handle = EngineHandle()
+
+    async def engine_run():
+        await asyncio.Event().wait()
+
+    async def shutdown_session():
+        closed.append(True)
+
+    async def build(thread):
+        started.set()
+        await finish.wait()
+        task = asyncio.create_task(engine_run())
+        mgr._active[thread.id] = _ActiveThreadState(
+            handle, SimpleNamespace(shutdown_session=shutdown_session), task
+        )
+        return handle, task
+
+    monkeypatch.setattr(mgr, "_build_engine_for_thread", build)
+    pending = asyncio.create_task(mgr._ensure_engine_loaded(SimpleNamespace(id="loading")))
+    await started.wait()
+    closing = asyncio.create_task(mgr.aclose())
+    await asyncio.sleep(0)
+    assert not closing.done()
+    finish.set()
+    await closing
+    assert closed == [True]
+    assert not mgr._active
+    assert not mgr._engine_load_tasks
+    assert pending.done()
+
+
 async def test_restore_service_finishes_bookkeeping_on_cancel(runtime_app, monkeypatch):
     mgr = runtime_app.state.thread_manager
     restored, proceed = asyncio.Event(), asyncio.Event()

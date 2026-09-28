@@ -132,3 +132,12 @@ async def test_reconcile_picks_up_untracked_and_modified(git_repo: Path) -> None
     assert "brand_new.py" in by_path
     assert by_path["brand_new.py"].op == "create"
     assert "+n" in by_path["brand_new.py"].unified_diff
+
+
+@pytest.mark.asyncio
+async def test_reconcile_does_not_treat_added_dev_null_text_as_create(git_repo: Path) -> None:
+    baseline = await capture_baseline(git_repo)
+    (git_repo / "tracked.py").write_text("v1\n--- /dev/null\n", encoding="utf-8")
+    added = await reconcile_to_ledger(TurnMutationLedger("turn_null", throttle_ms=0), baseline)
+    assert len(added) == 1
+    assert added[0].op == "update"

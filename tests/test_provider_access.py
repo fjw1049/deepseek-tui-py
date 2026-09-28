@@ -18,7 +18,7 @@ from deepseek_tui.client.deepseek import DeepSeekClient
 from deepseek_tui.config.models import Config, ProviderConfig
 from deepseek_tui.protocol.messages import MessageRequest
 from deepseek_tui.protocol.responses import StreamTextDelta
-from deepseek_tui.state.secrets import SecretsManager, write_active_api_key, write_api_key
+from deepseek_tui.state.secrets import SecretsManager, write_active_api_key, write_api_key, write_profile_api_key
 
 # ── SecretsManager.resolve_api_key ────────────────────────────────────────
 
@@ -118,6 +118,19 @@ def test_write_api_key_clear_removes_active_provider_copies(tmp_path: Path) -> N
     assert "api_key" not in config
     assert "api_key" not in config["providers"]["deepseek"]  # type: ignore[index]
     assert config["providers"]["deepseek"]["base_url"] == "https://api.deepseek.com"  # type: ignore[index]
+
+
+def test_profile_key_is_bound_to_its_provider_and_validated(tmp_path: Path) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text('provider = "deepseek"\n[profiles.fast]\nprovider = "openai"\n')
+    with pytest.raises(ValueError, match="cannot be empty"):
+        write_profile_api_key("fast", "  ", path=path)
+    write_profile_api_key("fast", "sk-openai", path=path)
+    data = _read_toml(path)
+    assert data["profiles"]["fast"]["providers"]["openai"]["api_key"] == "sk-openai"
+    assert "api_key" not in data["profiles"]["fast"]
+    write_profile_api_key("fast", None, path=path)
+    assert "api_key" not in _read_toml(path)["profiles"]["fast"]["providers"]["openai"]
 
 
 def test_write_api_key_quotes_custom_provider_name(tmp_path: Path) -> None:

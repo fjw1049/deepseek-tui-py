@@ -290,3 +290,18 @@ async def test_reconcile_cancels_open_items_only() -> None:
     assert engine._open_checklist_summary() == ""
     # Second call is a no-op once everything is closed.
     assert reconcile_open_checklist_items(ctx) is None
+
+
+async def test_turn_end_reconcile_persist_failure_restores_checklist() -> None:
+    from types import SimpleNamespace
+
+    engine, ctx = _engine_with_context()
+    await _write(ctx, [{"content": "unfinished", "status": "in_progress"}])
+    ctx.metadata["task_id"] = "task"
+    ctx.metadata["task_manager"] = SimpleNamespace(
+        record_tool_metadata=AsyncMock(side_effect=OSError("disk full"))
+    )
+    engine.handle.emit = AsyncMock()
+    await engine._emit_checklist_turn_end_reconcile()
+    assert ctx.metadata["todos"]["items"][0].status == "in_progress"
+    engine.handle.emit.assert_not_awaited()

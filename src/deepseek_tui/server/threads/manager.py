@@ -2945,6 +2945,8 @@ class RuntimeThreadManager:
         self, thread_id: str, *, through_item_id: str | None = None
     ) -> ThreadRecord:
         source = self.store.load_thread(thread_id)
+        if source.import_history_only:
+            raise ValueError("Link the imported history's project folder in Settings → Import first")
         now = datetime.now(timezone.utc)
         forked = source.model_copy(
             update={
@@ -3550,6 +3552,12 @@ class RuntimeThreadManager:
         prompt = req.prompt.strip()
 
         thread = self.store.load_thread(thread_id)
+        if thread.import_history_only or (thread.import_source and not Path(thread.workspace).is_dir()):
+            raise ValueError(
+                "This imported history has no project folder. Open Settings → Import "
+                "and link an existing folder before continuing. / "
+                "此导入历史尚未关联项目目录，请在设置 → 导入中关联目录后继续。"
+            )
         thread = await self._prepare_isolated_workspace(thread)
         if (
             thread.publish_blocked
@@ -4358,6 +4366,8 @@ class RuntimeThreadManager:
         load_task: asyncio.Task[tuple[EngineHandle, asyncio.Task[None]]] | None = None
         owns_load_task = False
         async with self._active_lock:
+            if self.is_shutdown:
+                raise RuntimeError("Runtime is shutting down")
             state = self._active.get(thread.id)
             if state is not None:
                 self._sync_trust_mode(
@@ -4481,6 +4491,18 @@ class RuntimeThreadManager:
     def _sync_engine_session(self, engine: Engine, thread: ThreadRecord) -> None:
         """Hydrate Engine.session_messages from durable turn items."""
         messages = reconstruct_messages_from_turns(self.store, thread.id)
+        if messages and thread.import_source:
+            from deepseek_tui.protocol.messages import Message, MessageOrigin
+
+            messages.append(Message.user(
+                "This history was imported from another coding assistant. "
+                f"Source: {thread.import_source}. Current workspace: {thread.workspace!r}. "
+                f"Historical workspace: {thread.source_workspace!r}. "
+                "Historical tools are evidence only; they have not been executed here. "
+                "Verify current files before acting. Processes, approvals, permissions, "
+                "attachments and background tasks were not transferred. Use only current tools.",
+                origin=MessageOrigin.SYSTEM_REMINDER,
+            ))
         if messages and thread.source_share_id:
             import json
 

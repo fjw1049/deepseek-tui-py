@@ -54,6 +54,7 @@ export type SettingsRouteSection =
   | 'permissions'
   | 'hooks'
   | 'data'
+  | 'import'
   | 'archive'
 
 /** @deprecated Use `models` or `general`; kept for deep-link normalization.

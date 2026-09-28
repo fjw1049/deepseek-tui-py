@@ -1,4 +1,4 @@
-import { useLayoutEffect, useMemo, useRef, useState, type ReactElement } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactElement } from 'react'
 import { Check, ChevronDown, ChevronUp, Minimize2, Columns2, Copy, MessageSquarePlus, Rows3, WrapText } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { countDiffStats, extractDiffFilePath } from '../lib/diff-stats'
@@ -74,11 +74,13 @@ function parseDiff(patch: string, override?: string): ParsedDiff {
 }
 
 function filterBodyLines(lines: string[]): Array<{ line: string; i: number }> {
+  let inHunk = !lines.some((line) => line.startsWith('@@'))
   return lines.map((line, i) => ({ line, i })).filter(({ line }) => {
-    if (line.startsWith('--- ') || line.startsWith('+++ ')) return false
-    if (line.startsWith('diff --git ')) return false
-    if (line.startsWith('index ')) return false
-    return true
+    if (line.startsWith('diff --git ')) inHunk = false
+    if (line.startsWith('@@')) { inHunk = true; return true }
+    // Patch metadata and the final newline are not source lines. In a hunk,
+    // however, `--- text` and `+++ text` can be actual changed source.
+    return inHunk && /^[ +-]/.test(line)
   })
 }
 
@@ -267,8 +269,40 @@ function buildSplitRows(bodyLines: Array<{ line: string; i: number }>): SplitRow
 function sideCls(kind: 'empty' | 'context' | 'del' | 'add'): string {
   if (kind === 'del') return 'ds-diff-row-removed text-ds-ink'
   if (kind === 'add') return 'ds-diff-row-added text-ds-ink'
-  if (kind === 'empty') return 'bg-[color-mix(in_srgb,var(--ds-text)_3%,transparent)] text-ds-faint'
+  if (kind === 'empty') return 'ds-diff-empty text-ds-faint'
   return 'text-ds-ink'
+}
+
+/** Preserve syntax token markup while marking the changed part of a paired line. */
+export function highlightChangedText(text: string, html: string | undefined, counterpart?: string | null): string {
+  const escaped = html ?? text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  if (counterpart === undefined || text === counterpart) return escaped || '&nbsp;'
+  let start = 0
+  let end = text.length
+  if (counterpart !== null) {
+    while (start < Math.min(text.length, counterpart.length) && text[start] === counterpart[start]) start++
+    let otherEnd = counterpart.length
+    while (end > start && otherEnd > start && text[end - 1] === counterpart[otherEnd - 1]) { end--; otherEnd-- }
+  }
+  if (start === end) return escaped || '&nbsp;'
+  const doc = new DOMParser().parseFromString(`<span>${escaped}</span>`, 'text/html')
+  const container = doc.body.firstElementChild!
+  const walker = doc.createTreeWalker(container, 4 /* SHOW_TEXT */)
+  const nodes: Text[] = []
+  while (walker.nextNode()) nodes.push(walker.currentNode as Text)
+  let offset = 0
+  for (const node of nodes) {
+    const value = node.data
+    const from = Math.max(0, start - offset)
+    const to = Math.min(value.length, end - offset)
+    offset += value.length
+    if (from >= to) continue
+    const mark = doc.createElement('mark')
+    mark.className = 'ds-diff-inline-change'
+    mark.textContent = value.slice(from, to)
+    node.replaceWith(doc.createTextNode(value.slice(0, from)), mark, doc.createTextNode(value.slice(to)))
+  }
+  return container.innerHTML
 }
 
 /**
@@ -300,7 +334,7 @@ export function DiffView({
   const [copied, setCopied] = useState(false)
   const [localStyle, setLocalStyle] = useState<DiffRenderStyle>(controlledStyle ?? 'unified')
   const diffStyle = controlledStyle ?? localStyle
-  const [wrapLines, setWrapLines] = useState(false)
+  const [wrapLines, setWrapLines] = useState(controlledStyle === 'split')
 
   const fileLabel = parsed.filePath ?? filePath ?? null
   const displayName = fileLabel ? fileLabel.split(/[/\\]/).pop() ?? fileLabel : null
@@ -315,15 +349,41 @@ export function DiffView({
   const newHighlights = useCodeHighlights(newSource.map((row) => stripPrefix(row.text)).join('\n'), language)
   const oldTokens = new Map(oldSource.map((row, index) => [row.oldNo, oldHighlights?.[index]]))
   const newTokens = new Map(newSource.map((row, index) => [row.newNo, newHighlights?.[index]]))
-  const codeLine = (text: string, html: string | undefined): ReactElement => html === undefined
-    ? <span>{text || '\u00a0'}</span>
-    : <span className="ds-syntax-line" dangerouslySetInnerHTML={{ __html: html }} />
+  const codeLine = (text: string, html: string | undefined, counterpart?: string | null): ReactElement => {
+    const content = highlightChangedText(text, html, counterpart)
+    return <span className="ds-syntax-line" dangerouslySetInnerHTML={{ __html: content }} />
+  }
   const splitRows = useMemo(() => buildSplitRows(bodyLines), [bodyLines])
+  const oldPairs = new Map(splitRows.filter((row) => row.leftKind === 'del').map((row) => [row.leftNo, row.rightText]))
+  const newPairs = new Map(splitRows.filter((row) => row.rightKind === 'add').map((row) => [row.rightNo, row.leftText]))
   const [unfoldedContext, setUnfoldedContext] = useState<Set<number>>(new Set())
   const displayRows = useMemo(
     () => buildFoldedRows(unifiedRows, unfoldedContext),
     [unifiedRows, unfoldedContext]
   )
+  useEffect(() => { setUnfoldedContext(new Set()) }, [patch, diffStyle])
+  const splitDisplayRows = useMemo(() => {
+    const result: Array<SplitRow | { kind: 'fold'; key: number; count: number }> = []
+    for (let i = 0; i < splitRows.length;) {
+      const row = splitRows[i]!
+      let end = i
+      while (end < splitRows.length && splitRows[end]!.leftKind === 'context') end++
+      const length = end - i
+      if (length >= CONTEXT_FOLD_THRESHOLD && !unfoldedContext.has(row.key)) {
+        result.push(...splitRows.slice(i, i + CONTEXT_FOLD_KEEP))
+        result.push({ kind: 'fold', key: row.key, count: length - CONTEXT_FOLD_KEEP * 2 })
+        result.push(...splitRows.slice(end - CONTEXT_FOLD_KEEP, end))
+        i = end
+      } else if (length > 0) {
+        result.push(...splitRows.slice(i, end))
+        i = end
+      } else {
+        result.push(row)
+        i++
+      }
+    }
+    return result
+  }, [splitRows, unfoldedContext])
   const bodyRef = useRef<HTMLDivElement | HTMLPreElement>(null)
 
   useLayoutEffect(() => {
@@ -332,6 +392,23 @@ export function DiffView({
     if (!viewport || viewport.scrollHeight <= viewport.clientHeight) return
     viewport.scrollTo({ top: viewport.scrollHeight, behavior: 'smooth' })
   }, [follow, patch])
+
+  const [activeHunk, setActiveHunk] = useState(0)
+  const hunkCount = unifiedRows.filter((row) => row.kind === 'meta').length
+  useEffect(() => {
+    setActiveHunk(0)
+    if (!follow) bodyRef.current?.scrollTo?.({ top: 0, left: 0 })
+  }, [patch, follow])
+  const navigateHunk = (direction: number): void => {
+    const hunks = bodyRef.current?.querySelectorAll<HTMLElement>('[data-diff-hunk]')
+    if (!hunks?.length) return
+    const next = (activeHunk + direction + hunks.length) % hunks.length
+    hunks[next]?.scrollIntoView({ block: 'start' })
+    setActiveHunk(next)
+  }
+  const expandContext = (key: number): void => {
+    setUnfoldedContext((previous) => new Set([...previous, key]))
+  }
 
   const setStyle = (next: DiffRenderStyle): void => {
     if (controlledStyle == null) setLocalStyle(next)
@@ -398,6 +475,17 @@ export function DiffView({
   return (
     <div className={shellClass} data-wrap={wrapLines ? '' : undefined}>
       {header}
+      {showHeader ? <div className="ds-diff-review-bar">
+        <div className="ds-diff-review-legend">
+          <span><i className="ds-diff-legend-dot ds-diff-legend-dot--removed" />{t('diffBefore')}</span>
+          <span><i className="ds-diff-legend-dot ds-diff-legend-dot--added" />{t('diffAfter')}</span>
+        </div>
+        <div className="ds-diff-navigation">
+          <span aria-live="polite">{t('diffHunkPosition', { current: hunkCount ? activeHunk + 1 : 0, total: hunkCount })}</span>
+          <button type="button" disabled={!hunkCount} aria-label={t('diffPreviousChange')} title={t('diffPreviousChange')} onClick={() => navigateHunk(-1)}><ChevronUp size={14} /></button>
+          <button type="button" disabled={!hunkCount} aria-label={t('diffNextChange')} title={t('diffNextChange')} onClick={() => navigateHunk(1)}><ChevronDown size={14} /></button>
+        </div>
+      </div> : null}
       <div ref={(node) => { bodyRef.current = node }} className={bodyClass} style={fillParent || flush ? undefined : { maxHeight }}>
         {diffStyle === 'split' ? (
           <table className="ds-diff-table border-collapse">
@@ -408,10 +496,17 @@ export function DiffView({
               <col />
             </colgroup>
             <tbody>
-              {splitRows.map((row) => {
+              {splitDisplayRows.map((row) => {
+                if (row.kind === 'fold') return (
+                  <tr key={`fold-${row.key}`} className="ds-diff-fold"><td colSpan={4}>
+                    <button type="button" onClick={() => expandContext(row.key)} title={t('diffExpandContext')}>
+                      ⋯ {t('diffUnmodifiedLines', { count: row.count })}
+                    </button>
+                  </td></tr>
+                )
                 if (row.kind === 'meta') {
                   return (
-                    <tr key={row.key} className="bg-accent-soft/60 text-ds-muted">
+                    <tr key={row.key} data-diff-hunk className="text-ds-muted">
                       <td colSpan={4} className="ds-diff-meta-sticky break-all px-2 py-0.5 font-mono text-[13.5px]">
                         {row.meta}
                       </td>
@@ -428,7 +523,7 @@ export function DiffView({
                     <td
                       className={`ds-diff-code whitespace-pre ${cellPad} align-top font-mono text-[14px] leading-[23px] ${sideCls(row.leftKind)}`}
                     >
-                      {codeLine(row.leftText ?? '', oldTokens.get(row.leftNo))}
+                      {codeLine(row.leftText ?? '', oldTokens.get(row.leftNo), row.leftKind === 'del' ? row.rightText : undefined)}
                     </td>
                     <td
                       className={`select-none border-l border-ds-border-muted/50 px-1 text-right align-top font-mono text-[12px] tabular-nums text-ds-faint ${sideCls(row.rightKind)}`}
@@ -438,7 +533,7 @@ export function DiffView({
                     <td
                       className={`ds-diff-code whitespace-pre ${cellPad} align-top font-mono text-[14px] leading-[23px] ${sideCls(row.rightKind)}`}
                     >
-                      {codeLine(row.rightText ?? '', newTokens.get(row.rightNo))}
+                      {codeLine(row.rightText ?? '', newTokens.get(row.rightNo), row.rightKind === 'add' ? row.leftText : undefined)}
                     </td>
                   </tr>
                 )
@@ -480,7 +575,7 @@ export function DiffView({
                 const row = entry.row
                 if (row.kind === 'meta') {
                   return (
-                    <tr key={row.key}>
+                    <tr key={row.key} data-diff-hunk>
                       <td className="ds-diff-meta-sticky select-none px-1 text-right align-top font-mono text-[13.5px]" />
                       <td className="ds-diff-meta-sticky select-none px-1 text-right align-top font-mono text-[13.5px]" />
                       <td className="ds-diff-meta-sticky max-w-0 truncate px-2 align-top font-mono text-[13.5px] text-ds-muted">
@@ -499,7 +594,7 @@ export function DiffView({
                     </td>
                     <td className="ds-diff-code whitespace-pre px-2 align-top font-mono text-[14px] leading-[23px]">
                       <span className={`ds-diff-sign ds-diff-sign--${row.kind}`} aria-hidden>{row.kind === 'add' ? '+' : row.kind === 'del' ? '−' : ' '}</span>
-                      {codeLine(stripPrefix(row.text), row.kind === 'del' ? oldTokens.get(row.oldNo) : newTokens.get(row.newNo))}
+                      {codeLine(stripPrefix(row.text), row.kind === 'del' ? oldTokens.get(row.oldNo) : newTokens.get(row.newNo), row.kind === 'del' ? oldPairs.get(row.oldNo) : row.kind === 'add' ? newPairs.get(row.newNo) : undefined)}
                     </td>
                   </tr>
                 )

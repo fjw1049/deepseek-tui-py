@@ -90,8 +90,9 @@ async def reconcile_to_ledger(
         if not unified:
             continue
         stats = count_diff_stats(unified)
-        op = "create" if "--- /dev/null" in unified else "update"
-        if "\n+++ /dev/null" in unified or unified.rstrip().endswith("+++ /dev/null"):
+        header = unified.split("\n@@", 1)[0].splitlines()
+        op = "create" if "--- /dev/null" in header else "update"
+        if "+++ /dev/null" in header:
             op = "delete"
         mut = FileMutation(
             mutation_id=f"mut_git_{uuid.uuid4().hex[:12]}",
@@ -182,6 +183,6 @@ async def _run_git(root: Path, args: list[str]) -> str | None:
             return None
         if proc.returncode != 0:
             return None
-        return proc.stdout.decode("utf-8")
+        return proc.stdout.decode("utf-8", errors="surrogateescape")
 
     return await asyncio.to_thread(_run)

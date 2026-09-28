@@ -11,6 +11,7 @@ import time
 import uuid
 from collections import deque
 from contextlib import AsyncExitStack, suppress
+from copy import deepcopy
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -2833,14 +2834,25 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             capture_goal_checklist(self.tool_context)
             return
         from deepseek_tui.tools.todo import (
-            _forward_to_task_manager, reconcile_open_checklist_items,
+            _TODO_STORE_KEY,
+            _forward_to_task_manager,
+            reconcile_open_checklist_items,
         )
 
+        previous = deepcopy(self.tool_context.metadata.get(_TODO_STORE_KEY))
         reconciled = reconcile_open_checklist_items(self.tool_context)
         if reconciled is None:
             return
         content, metadata = reconciled
-        await _forward_to_task_manager(self.tool_context, metadata)
+        try:
+            await _forward_to_task_manager(self.tool_context, metadata)
+        except Exception:
+            if previous is None:
+                self.tool_context.metadata.pop(_TODO_STORE_KEY, None)
+            else:
+                self.tool_context.metadata[_TODO_STORE_KEY] = previous
+            logger.exception("checklist_turn_end_reconcile_persist_failed")
+            return
         tool_call_id = f"checklist_reconcile_{uuid.uuid4().hex[:8]}"
         await self.handle.emit(
             ToolCallEvent(

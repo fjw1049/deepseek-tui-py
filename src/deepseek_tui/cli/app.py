@@ -520,13 +520,19 @@ def config_set(
     if profile:
         if not profile.replace("_", "").replace("-", "").isalnum():
             raise typer.BadParameter("Profile name must contain letters, digits, '_' or '-'")
-        key = f"profiles.{profile}.{key}"
     if key == "api_key":
-        from deepseek_tui.state.secrets import write_active_api_key
+        from deepseek_tui.state.secrets import write_active_api_key, write_profile_api_key
 
-        path = write_active_api_key(value, path=config)
+        try:
+            path = (write_profile_api_key(profile, value, path=config) if profile
+                    else write_active_api_key(value, path=config))
+        except ValueError as exc:
+            typer.echo(f"error: {exc}", err=True)
+            raise typer.Exit(1) from exc
         typer.echo(f"set api_key in {path}")
         return
+    if profile:
+        key = f"profiles.{profile}.{key}"
     try:
         path = write_config_value(key, value, path=config)
     except ValueError as exc:
@@ -550,13 +556,15 @@ def config_unset(
     if profile:
         if not profile.replace("_", "").replace("-", "").isalnum():
             raise typer.BadParameter("Profile name must contain letters, digits, '_' or '-'")
-        key = f"profiles.{profile}.{key}"
     if key == "api_key":
-        from deepseek_tui.state.secrets import write_active_api_key
+        from deepseek_tui.state.secrets import write_active_api_key, write_profile_api_key
 
-        path = write_active_api_key(None, path=config)
+        path = (write_profile_api_key(profile, None, path=config) if profile
+                else write_active_api_key(None, path=config))
         typer.echo(f"unset api_key from {path}")
         return
+    if profile:
+        key = f"profiles.{profile}.{key}"
     try:
         path = write_config_value(key, None, path=config)
     except ValueError as exc:

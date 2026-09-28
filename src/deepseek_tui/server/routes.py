@@ -1810,6 +1810,9 @@ def build_runtime_api_router() -> APIRouter:
     from deepseek_tui.server.share_routes import router as sharing_router
 
     router = APIRouter()
+    from deepseek_tui.server.external_session_routes import router as external_sessions_router
+
+    router.include_router(external_sessions_router)
     router.include_router(sharing_router)
     router.include_router(router_approvals)
     router.include_router(router_automation)

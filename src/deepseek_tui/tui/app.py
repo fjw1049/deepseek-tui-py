@@ -547,7 +547,21 @@ class DeepSeekTUI(App[None]):
             return message.replace("loaded session", verb, 1)
         return message
 
-    def _load_runtime_thread(self, thread_id: str, *, fork: bool = False) -> str:
+    def _read_runtime_thread(self, thread_id: str):
+        from deepseek_tui.server.threads import reconstruct_messages_from_turns
+
+        store = self._get_thread_store()
+        thread = store.load_thread(thread_id)
+        self._check_session_workspace(thread.worktree_path or thread.workspace)
+        if thread.provider != self.config.provider:
+            raise ValueError(f"Switch to provider {thread.provider} before loading this session")
+        return (
+            thread,
+            reconstruct_messages_from_turns(store, thread_id),
+            store.list_turns_for_thread(thread_id),
+        )
+
+    def _load_runtime_thread(self, thread_id: str, *, fork: bool = False, loaded=None) -> str:
         """Load one canonical thread into the live engine and transcript."""
         if self._engine is None:
             return "engine not started — cannot load thread"
@@ -556,22 +570,17 @@ class DeepSeekTUI(App[None]):
             return reason
         import uuid
 
-        from deepseek_tui.server.threads import (
-            reconstruct_messages_from_turns,
+        thread, restored, turns = (
+            loaded if loaded is not None else self._read_runtime_thread(thread_id)
         )
-
-        store = self._get_thread_store()
-        thread = store.load_thread(thread_id)
         self._check_session_workspace(thread.worktree_path or thread.workspace)
         if thread.provider != self.config.provider:
             raise ValueError(f"Switch to provider {thread.provider} before loading this session")
-        restored = reconstruct_messages_from_turns(store, thread_id)
         metadata = {
             "id": thread.id,
             "goal": None if fork else thread.goal,
             "goal_queue": [] if fork else thread.goal_queue,
         }
-        turns = store.list_turns_for_thread(thread_id)
         session_id = uuid.uuid4().hex if fork else thread.id
         self._adopt_session(session_id)
         self._reset_session_view()
@@ -1429,10 +1438,11 @@ class DeepSeekTUI(App[None]):
             "Conversation backtrack is not available; /undo only reverts the last tool edit"
         )
 
-    def on_sidebar_session_selected(self, event: Sidebar.SessionSelected) -> None:
+    async def on_sidebar_session_selected(self, event: Sidebar.SessionSelected) -> None:
         """Handle canonical thread selection from sidebar."""
         try:
-            message = self._load_runtime_thread(event.session_id)
+            loaded = await asyncio.to_thread(self._read_runtime_thread, event.session_id)
+            message = self._load_runtime_thread(event.session_id, loaded=loaded)
         except (FileNotFoundError, OSError, ValueError) as exc:
             message = f"load failed: {exc}"
         self.query_one(StatusBar).set_status(message)

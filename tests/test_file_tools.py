@@ -361,6 +361,19 @@ async def test_read_file_rejects_oversize_unpageable_file(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_read_file_skips_oversize_line_before_offset(tmp_path) -> None:
+    from deepseek_tui.tools.file import _MAX_READ_FILE_BYTES
+
+    target = tmp_path / "long.log"
+    target.write_bytes(b"x" * (_MAX_READ_FILE_BYTES + 10) + b"\nnext\n")
+    result = await ReadFileTool().execute(
+        {"path": "long.log", "offset": 2, "limit": 1},
+        ToolContext(working_directory=tmp_path),
+    )
+    assert "2\tnext" in result.content
+
+
+@pytest.mark.asyncio
 async def test_read_file_pages_past_the_byte_budget(tmp_path) -> None:
     """The byte budget bounds what a page returns, not how far it may reach.
 

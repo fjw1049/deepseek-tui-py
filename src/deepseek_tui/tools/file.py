@@ -519,6 +519,7 @@ def _read_text_page(
     scan_stopped = False
     page_oversize = False
     buf = b""
+    skip_oversize_line = False
 
     def _decode_line(raw: bytes) -> str:
         if b"\x00" in raw:
@@ -549,9 +550,23 @@ def _read_text_page(
             if b"\x00" in chunk:
                 raise ToolError(f"{label} is not a UTF-8 text file.")
             bytes_scanned += len(chunk)
+            if skip_oversize_line:
+                nl = chunk.find(b"\n")
+                if nl < 0:
+                    if bytes_scanned > _MAX_READ_SCAN_BYTES:
+                        scan_stopped = True
+                        break
+                    continue
+                line_no += 1
+                chunk = chunk[nl + 1 :]
+                skip_oversize_line = False
             buf += chunk
             if len(buf) > _MAX_READ_FILE_BYTES and b"\n" not in buf:
-                raise ToolError(f"{label} has a line exceeding the byte read limit")
+                if line_no >= start:
+                    raise ToolError(f"{label} has a line exceeding the byte read limit")
+                buf = b""
+                skip_oversize_line = True
+                continue
             while True:
                 nl = buf.find(b"\n")
                 if nl < 0:

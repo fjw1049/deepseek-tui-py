@@ -61,6 +61,7 @@ import { InitialSetupPanel } from './InitialSetupDialog'
 import { AppearanceSettingsPanel } from './settings/AppearanceSettingsPanel'
 import { ArchiveSettingsPanel } from './settings/ArchiveSettingsPanel'
 import { WebSearchSettingsPanel } from './settings/WebSearchSettingsPanel'
+import { SessionImportPanel } from './settings/SessionImportPanel'
 import { DataSettingsPanel } from './settings/DataSettingsPanel'
 import { SharingSettingsPanel } from './settings/SharingSettingsPanel'
 import { LlmProvidersPanel } from './settings/LlmProvidersPanel'
@@ -609,7 +610,7 @@ export function SettingsView(): ReactElement {
           <div className="mb-8 flex items-start justify-between gap-4">
             <div>
               <h1 className="text-2xl font-semibold tracking-tight text-ds-ink">
-                {category === 'models'
+                {category === 'import' ? t('sessionImport.title') : category === 'models'
                   ? t('models')
                   : category === 'search'
                     ? t('search')
@@ -624,7 +625,7 @@ export function SettingsView(): ReactElement {
                             : t('title')}
               </h1>
               <p className="mt-1 text-[14px] text-ds-muted">
-                {category === 'data'
+                {category === 'import' ? t('sessionImport.subtitle') : category === 'data'
                   ? t('dataSubtitle')
                   : category === 'archive'
                     ? t('archiveSubtitle')
@@ -635,7 +636,7 @@ export function SettingsView(): ReactElement {
                         : t('subtitle')}
               </p>
             </div>
-            {category !== 'data' && category !== 'archive' ? (
+            {category !== 'data' && category !== 'archive' && category !== 'import' ? (
               <span
                 title={saveStatus === 'error' && saveError ? saveError : undefined}
                 className={`shrink-0 rounded-full px-3 py-1 text-[12px] font-medium ${
@@ -1072,6 +1073,7 @@ export function SettingsView(): ReactElement {
 
           {category === 'data' && <><DataSettingsPanel /><SharingSettingsPanel /></>}
           {category === 'archive' && <ArchiveSettingsPanel />}
+          {category === 'import' && <SessionImportPanel />}
 
       </div>
     </div>

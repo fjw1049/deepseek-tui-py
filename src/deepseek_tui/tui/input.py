@@ -169,10 +169,16 @@ class Composer(TextArea):
         if event.key == "ctrl+e":
             event.stop()
             event.prevent_default()
+            from textual.app import SuspendNotSupported
+
             from deepseek_tui.tui.lifecycle import run_io
 
-            with self.app.suspend():
-                edited = await run_io(_open_external_editor, self.text)
+            try:
+                with self.app.suspend():
+                    edited = await run_io(_open_external_editor, self.text)
+            except SuspendNotSupported:
+                self.app.notify("External editor is unavailable in web mode", severity="warning")
+                return
             if edited is not None:
                 self.clear()
                 self.insert(edited)
