@@ -1159,7 +1159,14 @@ class McpManager:
             task = self._spawn(self._open_client(server_name, cfg, self._generation),
                                name=f"mcp-open-{server_name}")
             self._connection_tasks[server_name] = task
-        return await asyncio.shield(task)
+        try:
+            return await asyncio.shield(task)
+        except asyncio.CancelledError:
+            caller = asyncio.current_task()
+            if (task.cancelled() and self._configs.get(server_name) is not cfg
+                    and not (caller and caller.cancelling())):
+                raise McpError("MCP server connection invalidated by config reload") from None
+            raise
 
     async def _open_client(self, name: str, cfg: McpServerConfig, generation: int) -> McpClient:
         previous = self._clients.pop(name, None)

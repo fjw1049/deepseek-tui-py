@@ -100,6 +100,48 @@ async def test_stop_cancels_connection_before_it_can_publish(fake_client):
     assert not mgr._owned_tasks
 
 
+async def test_stdio_stop_bounds_wait_after_kill(monkeypatch):
+    class StuckProcess:
+        killed = False
+
+        def terminate(self):
+            pass
+
+        def kill(self):
+            self.killed = True
+
+        async def wait(self):
+            await asyncio.Event().wait()
+
+    transport = StdioTransport("not-executed", [])
+    process = StuckProcess()
+    transport._process = process
+    real_wait_for = asyncio.wait_for
+
+    async def short_wait(awaitable, timeout):
+        return await real_wait_for(awaitable, timeout=0.01)
+
+    monkeypatch.setattr("deepseek_tui.mcp.transport.asyncio.wait_for", short_wait)
+    with pytest.raises(asyncio.TimeoutError):
+        await transport.stop()
+    assert process.killed
+
+
+async def test_reload_reports_invalidated_connection_as_error(tmp_path, fake_client):
+    path = tmp_path / "mcp.json"
+    store.add_server_config(path, "fixture", command="not-executed")
+    fake_client.gate = asyncio.Event()
+    fake_client.entered = asyncio.Event()
+    mgr = McpManager([McpServerConfig(name="fixture", command="not-executed")], config_path=path)
+    pending = asyncio.create_task(mgr._ensure_client("fixture"))
+    await fake_client.entered.wait()
+    store.set_server_enabled(path, "fixture", False)
+    await mgr.reload_if_config_changed()
+    with pytest.raises(McpError, match="invalidated by config reload"):
+        await pending
+    await mgr.stop_all()
+
+
 async def test_stop_cancels_shared_discovery(fake_client):
     mgr = manager()
     entered = asyncio.Event()

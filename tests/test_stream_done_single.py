@@ -97,3 +97,34 @@ def test_tool_call_round_still_flushes_before_done() -> None:
     assert completes[0].tool_call.name == "read_file"
     assert len(dones) == 1
     assert events.index(completes[0]) < events.index(dones[0])
+
+
+def test_compatible_finish_reasons_and_tool_call_stop() -> None:
+    for reason in ("eos", "stop"):
+        events = _stream(OpenAIStreamParser(), [
+            {"choices": [{"delta": {"tool_calls": [{
+                "index": 0, "id": "call_1", "function": {"name": "read_file", "arguments": "{}"}
+            }]}}]},
+            {"choices": [{"delta": {}, "finish_reason": reason}]},
+        ])
+        assert len([e for e in events if isinstance(e, StreamToolCallComplete)]) == 1
+        assert not [e for e in events if isinstance(e, StreamDone) and e.truncated]
+
+
+def test_legacy_function_call_is_preserved() -> None:
+    events = _stream(OpenAIStreamParser(), [
+        {"choices": [{"delta": {"function_call": {"name": "read_file", "arguments": '{"path":'}}}]},
+        {"choices": [{"delta": {"function_call": {"arguments": '"a.py"}'}},
+                       "finish_reason": "function_call"}]},
+    ])
+    calls = [e.tool_call for e in events if isinstance(e, StreamToolCallComplete)]
+    assert len(calls) == 1
+    assert calls[0].arguments == {"path": "a.py"}
+
+
+def test_sensitive_finish_is_terminal_but_truncated() -> None:
+    events = _stream(OpenAIStreamParser(), [
+        {"choices": [{"delta": {}, "finish_reason": "sensitive"}]},
+    ])
+    assert len([e for e in events if isinstance(e, StreamDone)]) == 1
+    assert [e for e in events if isinstance(e, StreamDone)][0].truncated

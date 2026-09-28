@@ -807,7 +807,20 @@ class HookExecutor:
         env_vars = ctx.to_env_vars()
         results: list[HookResult] = []
         for hook in hooks:
-            if not self._matches_condition(hook, ctx):
+            try:
+                matches = self._matches_condition(hook, ctx)
+            except ValueError as exc:
+                logger.warning("invalid hook condition hook=%s: %s", hook.name or "(unnamed)", exc)
+                result = HookResult(name=hook.name, success=False, error=str(exc))
+                if not hook.continue_on_error:
+                    if event in {"tool_call_before", "message_submit"}:
+                        result.blocked = True
+                        result.block_reason = str(exc)
+                results.append(result)
+                if not hook.continue_on_error:
+                    break
+                continue
+            if not matches:
                 continue
             dialect = getattr(hook, "io_dialect", "native") or "native"
             stdin_data = json.dumps(

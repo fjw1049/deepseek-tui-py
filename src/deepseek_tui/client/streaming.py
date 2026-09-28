@@ -144,18 +144,31 @@ class OpenAIStreamParser:
                                 )
                             )
 
+            legacy_call = delta.get("function_call")
+            if isinstance(legacy_call, dict) and not isinstance(tool_calls, list):
+                builder = self._tool_calls.setdefault(
+                    0, _ToolCallBuilder(id="legacy-function-call")
+                )
+                name = legacy_call.get("name")
+                if isinstance(name, str):
+                    from deepseek_tui.tools.encoding import from_api_tool_name
+
+                    builder.name = from_api_tool_name(name)
+                fragment = legacy_call.get("arguments")
+                if isinstance(fragment, str):
+                    builder.append(fragment)
+                    events.append(StreamToolCallDelta(
+                        tool_call_id=builder.id,
+                        name=builder.name,
+                        arguments_fragment=fragment,
+                    ))
+
         finish_reason = choice.get("finish_reason")
-        if finish_reason == "length":
-            # Carried to finalize(): the cap cut this sample short, so what
-            # follows is a fragment — a half sentence, or tool-call arguments
-            # that will not parse — not an answer.
+        if finish_reason in {"length", "content_filter", "sensitive"}:
+            # An output cap or provider filter leaves no usable full answer.
             self._truncated = True
-        if finish_reason in {"stop", "tool_calls", "length", "content_filter"}:
+        if isinstance(finish_reason, str) and finish_reason:
             self._finished = True
-        if finish_reason == "content_filter":
-            self._truncated = True
-        if self._tool_calls and finish_reason == "stop":
-            self._failed = True
         # Hold tool calls until message completion; usage may arrive in a trailing frame.
 
         return events

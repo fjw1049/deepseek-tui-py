@@ -235,7 +235,7 @@ class StdioTransport(McpTransport):
                 self._process.kill()
             except ProcessLookupError:
                 pass
-            await self._process.wait()
+            await asyncio.wait_for(self._process.wait(), timeout=2.0)
         except ProcessLookupError:
             pass
         self._process = None

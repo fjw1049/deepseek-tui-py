@@ -175,6 +175,27 @@ async def test_required_hook_error_blocks_guard_chain(tmp_path):
     assert aggregate_hook_decision(await executor.execute("tool_call_before")).blocked
 
 
+@pytest.mark.parametrize("required", [False, True])
+async def test_unknown_hook_condition_is_isolated(tmp_path, required):
+    executor = HookExecutor(
+        HooksConfig(hooks=[
+            LifecycleHookEntry(
+                event="tool_call_before", command="exit 1", name="invalid",
+                condition={"type": "typo"}, continue_on_error=not required,
+            ),
+            LifecycleHookEntry(event="tool_call_before", command="printf valid", name="valid"),
+        ]),
+        tmp_path,
+    )
+    results = await executor.execute("tool_call_before")
+    assert not results[0].success
+    assert results[0].blocked is required
+    expected = ["invalid"] if required else ["invalid", "valid"]
+    assert [result.name for result in results] == expected
+    if not required:
+        assert results[1].stdout == "valid"
+
+
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX process groups")
 @pytest.mark.parametrize("cancel", [False, True])
 async def test_hook_cancellation_and_timeout_stop_descendants(tmp_path, cancel):
