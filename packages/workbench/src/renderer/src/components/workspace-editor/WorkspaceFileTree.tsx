@@ -483,6 +483,16 @@ export function WorkspaceFileTree({
           }}
           onDragStart={(event) => {
             setWorkspacePathDragData(event.dataTransfer, entry.path)
+            // Drag ghost: same gray pill as the selected state (icon + name),
+            // not the platform's full-row snapshot.
+            const label = event.currentTarget.querySelector('.ds-workspace-file-tree__row-label')
+            if (!label) return
+            const ghost = document.createElement('div')
+            ghost.className = 'ds-workspace-file-tree__drag-ghost'
+            ghost.appendChild(label.cloneNode(true))
+            document.body.appendChild(ghost)
+            event.dataTransfer.setDragImage(ghost, 8, 14)
+            event.currentTarget.addEventListener('dragend', () => ghost.remove(), { once: true })
           }}
           onContextMenu={(event) => {
             if (!onFileContextMenu) return
@@ -505,9 +515,11 @@ export function WorkspaceFileTree({
           style={{ paddingLeft: `${indentPx(depth) + 14}px` }}
           title={formatFilePathForDisplay(entry.path, trimmedRoot) ?? entry.path}
         >
-          <FileKindIcon path={entry.path} className="ds-file-kind-icon--chrome" />
-          <span className="min-w-0 truncate">{entry.name}</span>
-          {isDirty ? <span className="ds-tree-dirty-dot" aria-hidden /> : isChanged ? <span className="ml-auto shrink-0 text-[11px] text-ds-muted" title={t('workspaceEditorChanged')}>•</span> : null}
+          <span className="ds-workspace-file-tree__row-label flex min-w-0 items-center gap-1.5">
+            <FileKindIcon path={entry.path} className="ds-file-kind-icon--chrome" />
+            <span className="min-w-0 truncate">{entry.name}</span>
+            {isDirty ? <span className="ds-tree-dirty-dot" aria-hidden /> : isChanged ? <span className="shrink-0 text-[11px] text-ds-muted" title={t('workspaceEditorChanged')}>•</span> : null}
+          </span>
         </button>
       ]
     })

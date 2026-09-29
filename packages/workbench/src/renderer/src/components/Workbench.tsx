@@ -1756,7 +1756,7 @@ export function Workbench(): ReactElement {
                         onOpenWorkspaceFile={openFileInEditor}
                       />
                     )}
-                    <div className="mx-auto flex w-full shrink-0 px-[0.95rem] pl-[1.15rem] pb-3 pt-0">
+                    <div className="mx-auto -mt-6 flex w-full shrink-0 px-[0.95rem] pl-[1.15rem] pb-3 pt-0">
                       <ComposerStage
                         sessionKey={activeThreadId ?? undefined}
                         input={input}

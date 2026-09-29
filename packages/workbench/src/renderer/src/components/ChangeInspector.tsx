@@ -1343,11 +1343,11 @@ export function ChangeInspector({
     const { name, parent } = splitFileNameAndParent(displayPath ?? item.filePath ?? '')
     const isSelected = selectedId === item.id
     const rowClass = compactList
-      ? `flex min-h-7 w-full items-center gap-1.5 px-2 transition ${
-          isSelected ? 'bg-ds-hover text-ds-ink' : 'text-ds-ink hover:bg-ds-hover/70'
+      ? `ds-change-file-row flex min-h-7 items-center gap-1.5 px-2 transition ${
+          isSelected ? 'text-ds-ink' : 'text-ds-ink hover:bg-ds-hover/70'
         }`
-      : `flex w-full items-start gap-2 px-2 py-1.5 transition ${
-          isSelected ? 'bg-ds-hover text-ds-ink' : 'text-ds-ink hover:bg-ds-hover/70'
+      : `ds-change-file-row flex items-start gap-2 px-2 py-1.5 transition ${
+          isSelected ? 'text-ds-ink' : 'text-ds-ink hover:bg-ds-hover/70'
         }`
     const selectRow = (): void => {
       onRequestedPathConsumed?.()
@@ -1365,7 +1365,7 @@ export function ChangeInspector({
 
     return (
       <li key={item.id} className="group/row">
-        <div className={rowClass}>
+        <div className={rowClass} data-selected={isSelected ? '' : undefined}>
           <button
             type="button"
             onClick={selectRow}

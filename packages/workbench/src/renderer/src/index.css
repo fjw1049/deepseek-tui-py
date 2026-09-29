@@ -1443,12 +1443,55 @@ samp {
   height: 7px;
 }
 
+/* Selected file, Codex-style: the whole row becomes a rounded bar with a
+   quiet gray fill and a crisp accent ring — unmistakable but not loud.
+   Rows float with a small side inset so the ring clears the tree edges. */
+.ds-workspace-file-tree .ds-workspace-file-tree__row {
+  width: calc(100% - 8px);
+  margin: 0 4px;
+  border-radius: 8px;
+}
+
 .ds-workspace-file-tree__row--active,
 .ds-workspace-file-tree__row--active:hover {
+  background: color-mix(in srgb, var(--ds-text) 5%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ds-accent) 55%, transparent);
   color: var(--ds-text);
-  background: color-mix(in srgb, var(--ds-accent) 10%, transparent);
-  box-shadow: inset 2px 0 0 var(--ds-accent);
-  font-weight: 500;
+}
+
+/* Changed-file rows (ChangeInspector) share the file tree's rounded-bar form:
+   inset sides, radius, and the same gray fill + accent ring when selected. */
+.ds-change-file-row {
+  width: calc(100% - 8px);
+  margin: 0 4px;
+  border-radius: 8px;
+}
+
+.ds-change-file-row[data-selected] {
+  background: color-mix(in srgb, var(--ds-text) 5%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ds-accent) 55%, transparent);
+}
+
+/* Drag ghost: the same pill, lifted onto a solid chip so it stays legible
+   while floating over arbitrary content. Must stay INSIDE the viewport —
+   Chromium ignores off-screen setDragImage elements and falls back to the
+   default snapshot (which body zoom renders at wrong coordinates). */
+.ds-workspace-file-tree__drag-ghost {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: -1;
+  pointer-events: none;
+}
+.ds-workspace-file-tree__drag-ghost .ds-workspace-file-tree__row-label {
+  background: var(--ds-card-strong);
+  border: 1px solid color-mix(in srgb, var(--ds-text) 10%, transparent);
+  border-radius: 0.5rem;
+  padding: 0.1875rem 0.5rem;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.12);
+  color: var(--ds-text);
+  font-size: 12.5px;
+  line-height: 20px;
 }
 
 /* Folder branches: height-animated expand/collapse via the grid 0fr -> 1fr trick.
@@ -1635,27 +1678,29 @@ samp {
 }
 
 .ds-workspace-editor-tab {
-  /* Full strip height so the active tab's inset bottom underline sits flush
-     on the tabstrip's border-b instead of floating 1px above it. */
-  height: 36px;
+  /* Inset pill inside the 36px strip — same quiet form as the dock tabs
+     (ds-dock-tab), not a full-height flush block. */
+  height: 30px;
+  margin: 0 1px;
   border: 0;
-  border-radius: 0;
+  border-radius: 8px;
   background: transparent;
   color: var(--ds-text-muted);
   transition: background-color 120ms ease, color 120ms ease;
 }
 
-.ds-workspace-editor-tab:hover,
-.ds-workspace-editor-tab--open {
+.ds-workspace-editor-tab:hover {
   background: color-mix(in srgb, var(--ds-text) 4%, transparent);
   color: var(--ds-text);
 }
 
-.ds-workspace-editor-tab--active {
-  background: var(--ds-bg-canvas);
+/* The file being viewed keeps a gray pill, like the active dock tab. */
+.ds-workspace-editor-tab--open,
+.ds-workspace-editor-tab--active,
+.ds-workspace-editor-tab--open:hover,
+.ds-workspace-editor-tab--active:hover {
+  background: var(--ds-surface-hover);
   color: var(--ds-text);
-  font-weight: 500;
-  box-shadow: inset 0 -2px 0 var(--ds-accent);
 }
 
 .ds-workspace-editor-tab__close {
@@ -11478,9 +11523,12 @@ html[data-theme='dark'] .ds-syntax-line span { color: var(--shiki-dark) !importa
 }
 
 /* Keep a small floor gap so the 12px-rounded composer doesn't sit on the
-   window edge. Timeline spacer stays collapsed — the wrapper padding is enough. */
+   window edge. Timeline spacer stays collapsed — the wrapper padding is enough.
+   The composer wrapper overlaps the timeline by 1.5rem (-mt-6, same as the main
+   session), so the clearance must absorb that overlap and still leave the
+   original 0.75rem gap at scroll bottom. */
 .ds-ide-chat-rail .ds-timeline-composer-clearance {
-  padding-bottom: 0.75rem;
+  padding-bottom: 2.25rem;
 }
 .ds-ide-chat-rail .ds-timeline-composer-clearance-spacer {
   height: 0;

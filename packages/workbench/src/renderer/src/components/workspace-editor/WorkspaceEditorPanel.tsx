@@ -651,9 +651,9 @@ export function WorkspaceEditorPanel({
     return () => window.clearTimeout(timer)
   }, [pathCopyStatus])
 
-  const copyWorkspacePath = async (): Promise<void> => {
+  const copyWorkspacePath = async (path: string): Promise<void> => {
     try {
-      await navigator.clipboard.writeText(trimmedRoot)
+      await navigator.clipboard.writeText(path)
       setPathCopyStatus('copySuccess')
     } catch {
       setPathCopyStatus('copyFailed')
@@ -754,6 +754,8 @@ export function WorkspaceEditorPanel({
   const secondaryTab = tabs.find((tab) => tab.id === secondaryTabId) ?? null
   const focusedTab =
     splitEnabled && focusedPane === 'secondary' ? secondaryTab : primaryTab
+  // Address bar: show the focused file's full path, root when nothing is open.
+  const displayedPath = focusedTab?.path ?? trimmedRoot
 
   const dirtyPaths = useMemo(
     () =>
@@ -1105,12 +1107,12 @@ export function WorkspaceEditorPanel({
           {trimmedRoot ? (
             <button
               type="button"
-              onClick={() => void copyWorkspacePath()}
-              title={trimmedRoot}
-              aria-label={`${t('filePreviewCopyPath')}: ${trimmedRoot}`}
+              onClick={() => void copyWorkspacePath(displayedPath)}
+              title={displayedPath}
+              aria-label={`${t('filePreviewCopyPath')}: ${displayedPath}`}
               className="group inline-flex h-7 min-w-0 items-center gap-2 rounded-md px-2 text-[12.5px] text-ds-muted hover:bg-ds-hover hover:text-ds-ink"
             >
-              <span className="truncate">{trimmedRoot}</span>
+              <span className="truncate">{displayedPath}</span>
               {pathCopyStatus === 'copySuccess' ? (
                 <Check className="h-3.5 w-3.5 shrink-0" aria-hidden />
               ) : (
