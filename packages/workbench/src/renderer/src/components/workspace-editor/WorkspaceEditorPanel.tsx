@@ -699,6 +699,11 @@ export function WorkspaceEditorPanel({
   // Either tree can be dragged shut; only the right-sidebar one owns `treeOpen`.
   const treeCollapsible = collapsibleTree || onTreeCollapse != null
   const [treeWidth, setTreeWidth] = useState(() => readStoredTreeWidth(treeCollapsible))
+  // The IDE changes-list sidebar writes the same storage key; re-read when the
+  // tree comes back so 文件/更改 always open at the same width (no editor shift).
+  useEffect(() => {
+    if (!hideTree) setTreeWidth(readStoredTreeWidth(treeCollapsible))
+  }, [hideTree, treeCollapsible])
   const [resizing, setResizing] = useState(false)
   const [splitRatio, setSplitRatio] = useState(readStoredSplitRatio)
   const [paneSourceVisible, setPaneSourceVisible] = useState<Record<EditorPaneId, boolean>>({
@@ -1151,7 +1156,7 @@ export function WorkspaceEditorPanel({
       ) : null}
       <div className="relative flex h-full min-h-0 flex-1 bg-ds-sidebar">
         {hideTree || (collapsibleTree && !treeOpen) ? null : (
-          <div className={`relative h-full min-h-0 shrink-0 ${collapsibleTree ? 'order-last border-l-[1.5px] border-l-ds-border-strong ds-editor-tree-rail' : ''}`} style={{ width: treeWidth, maxWidth: collapsibleTree ? '50%' : undefined }}>
+          <div className={`relative h-full min-h-0 shrink-0 ${collapsibleTree ? 'order-last border-l-[1.5px] border-l-ds-border-strong ds-editor-tree-rail' : 'border-r-[1.5px] border-r-ds-border-strong ds-editor-tree-rail'}`} style={{ width: treeWidth, maxWidth: collapsibleTree ? '50%' : undefined }}>
             {/* Expand state is cached per workspace root inside WorkspaceFileTree
                 so switching IDE center tabs (changes/search) does not reset folds. */}
             <WorkspaceFileTree

@@ -84,7 +84,11 @@ type Props = {
 }
 
 const CHANGES_LIST_WIDTH_KEY = 'deepseekgui.layout.ideChangesListWidth'
-const CHANGES_LIST_DEFAULT = 240
+/** Same storage key as the file tree (WorkspaceEditorPanel TREE_WIDTH_KEY):
+    the two sidebars never render at the same time, so sharing one width means
+    switching 文件/更改 never shifts the editor column. */
+const SHARED_SIDEBAR_WIDTH_KEY = 'deepseekgui.layout.workspaceEditorTreeWidth'
+const CHANGES_LIST_DEFAULT = 232
 const CHANGES_LIST_MIN = 180
 const CHANGES_LIST_MAX = 420
 /** Released below this, the list collapses instead of resting at CHANGES_LIST_MIN. */
@@ -96,7 +100,9 @@ function clampChangesListWidth(width: number, minimum = CHANGES_LIST_MIN): numbe
 
 function readStoredChangesListWidth(): number {
   try {
-    const raw = window.localStorage.getItem(CHANGES_LIST_WIDTH_KEY)
+    const raw =
+      window.localStorage.getItem(SHARED_SIDEBAR_WIDTH_KEY) ??
+      window.localStorage.getItem(CHANGES_LIST_WIDTH_KEY)
     if (!raw) return CHANGES_LIST_DEFAULT
     const parsed = Number(raw)
     if (!Number.isFinite(parsed)) return CHANGES_LIST_DEFAULT
@@ -108,7 +114,11 @@ function readStoredChangesListWidth(): number {
 
 function persistChangesListWidth(width: number): void {
   try {
-    window.localStorage.setItem(CHANGES_LIST_WIDTH_KEY, String(clampChangesListWidth(width)))
+    // Write the shared key so the file tree follows; keep the old key in sync
+    // for builds that still read it.
+    const value = String(clampChangesListWidth(width))
+    window.localStorage.setItem(SHARED_SIDEBAR_WIDTH_KEY, value)
+    window.localStorage.setItem(CHANGES_LIST_WIDTH_KEY, value)
   } catch {
     /* ignore */
   }
@@ -271,6 +281,11 @@ export function IdeWorkspaceLayout({
         setChangesDiffVisible(true)
       }
       const next = nextIdeActivitySelection(centerTab, activitySidebarVisible, item)
+      // Re-read the shared sidebar width so the changes list opens at whatever
+      // the file tree was last dragged to (and vice versa via shared storage).
+      if (next.tab === 'changes' && next.sidebarVisible) {
+        setChangesListWidth(readStoredChangesListWidth())
+      }
       setCenterTab(next.tab)
       setActivitySidebarVisible(next.sidebarVisible)
     },

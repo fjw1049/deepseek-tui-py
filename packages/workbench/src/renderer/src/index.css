@@ -1370,7 +1370,12 @@ samp {
 }
 
 .ds-ide-changes-list {
-  border-right: 1px solid color-mix(in srgb, var(--ds-text) 14%, transparent);
+  border-right: 1.5px solid color-mix(in srgb, var(--ds-text) 14%, transparent);
+}
+
+/* Match .ds-editor-tree-rail: seams read as module boundaries in dark too. */
+[data-theme='dark'] .ds-ide-changes-list {
+  border-right-color: rgba(255, 255, 255, 0.18);
 }
 
 .ds-workspace-file-tree__header {
@@ -8381,7 +8386,11 @@ html[data-theme='dark'] .ds-syntax-line span { color: var(--shiki-dark) !importa
    border-l utility. Colour matches .ds-surface-divider so the vertical and
    horizontal rules read as one weight. */
 .ds-tool-panel.ds-right-panel-surface {
-  border-left: 1px solid color-mix(in srgb, var(--ds-text) 14%, transparent);
+  border-left: 1.5px solid color-mix(in srgb, var(--ds-text) 14%, transparent);
+}
+
+[data-theme='dark'] .ds-tool-panel.ds-right-panel-surface {
+  border-left-color: rgba(255, 255, 255, 0.18);
 }
 
 /* Right dock chrome uses theme tokens directly: Tailwind alpha modifiers do
@@ -11401,7 +11410,8 @@ html[data-theme='dark'] .ds-syntax-line span { color: var(--shiki-dark) !importa
 
 /* Editor↔file-tree seam: --ds-border-strong is near-invisible in dark (9% white). */
 [data-theme='dark'] .ds-editor-tree-rail {
-  border-left-color: rgba(255, 255, 255, 0.18) !important;
+  border-left-color: rgba(255, 255, 255, 0.18);
+  border-right-color: rgba(255, 255, 255, 0.18);
 }
 
 .ds-ide-workspace .ds-workspace-editor-pane .monaco-editor,
@@ -11472,10 +11482,14 @@ html[data-theme='dark'] .ds-syntax-line span { color: var(--shiki-dark) !importa
   background-clip: padding-box;
 }
 
-/* One continuous vertical seam (same weight/color as .ds-surface-divider /
-   right-panel border) — do not also paint a resize-handle hairline. */
+/* One continuous vertical seam (matches .ds-editor-tree-rail /
+   .ds-ide-changes-list) — do not also paint a resize-handle hairline. */
 .ds-ide-chat-rail__surface {
-  border-left: 1px solid color-mix(in srgb, var(--ds-text) 14%, transparent);
+  border-left: 1.5px solid color-mix(in srgb, var(--ds-text) 14%, transparent);
+}
+
+[data-theme='dark'] .ds-ide-chat-rail__surface {
+  border-left-color: rgba(255, 255, 255, 0.18);
 }
 
 .ds-ide-chat-rail .ds-terminal-panel {
