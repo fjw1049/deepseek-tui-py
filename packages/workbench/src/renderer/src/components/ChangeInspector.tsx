@@ -13,6 +13,7 @@ import {
   Check,
   CheckCircle2,
   ChevronDown,
+  CloudUpload,
   Download,
   FileEdit,
   FolderTree,
@@ -27,7 +28,6 @@ import {
   Search,
   Sparkles,
   TriangleAlert,
-  Upload,
   X
 } from 'lucide-react'
 import { FileTypeIcon } from './chat/FileChip'
@@ -347,13 +347,14 @@ function InspectorGitActions({
     setCommitPushPreferred(pushAfterCommit)
     setFeedback(null)
   }
+  // "Create PR" lives in the dropdown only: the chip stays on commit/pull/sync/push so its
+  // icon never reads as a PR page next to the source picker's nearby compare glyph.
   const primaryAction:
     | 'commit'
     | 'pull'
     | 'publish'
     | 'push'
     | 'sync'
-    | 'pull-request'
     | 'menu' =
     stagedPaths.length > 0
       ? 'commit'
@@ -363,41 +364,35 @@ function InspectorGitActions({
         ? 'pull'
         : !upstream && hasRemote && branch
           ? 'publish'
-          : ahead > 0 && behind === 0
+          : upstream && hasRemote
             ? 'push'
-            : supportsPullRequest && featureBranch && upstream
-              ? 'pull-request'
-              : 'menu'
+            : 'menu'
   const primaryDisabled =
     busyAction !== null ||
-    (primaryAction === 'publish' && hasLocalChanges)
+    (primaryAction === 'publish' && hasLocalChanges) ||
+    (primaryAction === 'push' && ahead === 0)
   const primaryLabel = (() => {
     if (primaryAction === 'commit') return t('gitCommitStagedCount', { count: stagedPaths.length })
     if (primaryAction === 'pull') return t('gitPullCommits', { count: behind })
     if (primaryAction === 'publish') return t('gitPublishBranch')
-    if (primaryAction === 'push') return t('gitPushCommits', { count: ahead })
-    if (primaryAction === 'sync') return t('gitSyncChanges')
-    if (primaryAction === 'pull-request') {
-      return remoteRepository?.provider === 'gitlab'
-        ? t('gitCreateMergeRequest')
-        : t('gitCreatePullRequest')
+    if (primaryAction === 'push') {
+      return ahead > 0 ? t('gitPushCommits', { count: ahead }) : t('gitPushUpToDate')
     }
+    if (primaryAction === 'sync') return t('gitSyncChanges')
     return t('gitActionsMenu')
   })()
   const primaryIcon = (() => {
     if (busyAction !== null) return <Loader2 className="h-4 w-4 animate-spin" />
     if (primaryAction === 'commit') return <GitCommitHorizontal className="h-4 w-4" />
     if (primaryAction === 'pull') return <Download className="h-4 w-4" />
-    if (primaryAction === 'publish' || primaryAction === 'push') return <Upload className="h-4 w-4" />
+    if (primaryAction === 'publish' || primaryAction === 'push') return <CloudUpload className="h-4 w-4" />
     if (primaryAction === 'sync') return <RefreshCw className="h-4 w-4" />
-    if (primaryAction === 'pull-request') return <GitPullRequest className="h-4 w-4" />
     return <CheckCircle2 className="h-4 w-4" />
   })()
   const runPrimaryAction = (): void => {
     if (primaryAction === 'commit') openCommit(false)
     else if (primaryAction === 'pull' || primaryAction === 'sync') void sync()
     else if (primaryAction === 'publish' || primaryAction === 'push') void push()
-    else if (primaryAction === 'pull-request') void createPullRequest()
     else if (menuOpen) closeMenu()
     else setMenuOpen(true)
   }
@@ -406,24 +401,27 @@ function InspectorGitActions({
 
   return (
     <div ref={popoverRef} className="ds-change-git-actions relative ml-auto flex shrink-0 items-center">
-      <div className="inline-flex h-7 overflow-hidden rounded-md border border-ds-border bg-ds-elevated">
+      {/* Ghost split-button, matching the source/branch pickers beside it: the chip
+          is hover-only so a narrowly-resized toolbar (which keeps just the chevron)
+          no longer leaves an orphan frame behind. */}
+      <div className="inline-flex h-7 items-center rounded-md">
         <button
           type="button"
           disabled={primaryDisabled}
           onClick={runPrimaryAction}
           title={
-            primaryDisabled && hasLocalChanges
+            primaryDisabled && hasLocalChanges && primaryAction !== 'push'
               ? primaryAction === 'publish'
                 ? t('gitPublishNeedsClean')
                 : t('gitPullNeedsClean')
               : primaryLabel
           }
           aria-label={primaryLabel}
-          className="ds-change-git-actions__primary inline-flex w-10 items-center justify-center text-ds-ink transition hover:bg-ds-hover active:scale-[0.96] disabled:opacity-40"
+          className="ds-change-git-actions__primary inline-flex h-7 w-10 items-center justify-center rounded-md text-ds-ink transition hover:bg-ds-hover active:scale-[0.96] disabled:opacity-40"
         >
           {primaryIcon}
         </button>
-        <span className="ds-change-git-actions__divider w-px bg-ds-border" aria-hidden />
+        <span className="ds-change-git-actions__divider mx-0.5 h-4 w-px bg-ds-border" aria-hidden />
         <button
           type="button"
           disabled={busyAction !== null}
@@ -436,7 +434,7 @@ function InspectorGitActions({
           }}
           title={t('gitActionsMenu')}
           aria-label={t('gitActionsMenu')}
-          className="inline-flex w-8 items-center justify-center text-ds-muted transition hover:bg-ds-hover hover:text-ds-ink active:scale-[0.96] disabled:opacity-40"
+          className="inline-flex h-7 w-8 items-center justify-center rounded-md text-ds-muted transition hover:bg-ds-hover hover:text-ds-ink active:scale-[0.96] disabled:opacity-40"
         >
           <ChevronDown className={`h-3.5 w-3.5 transition-transform ${menuOpen ? 'rotate-180' : ''}`} />
         </button>
@@ -466,7 +464,7 @@ function InspectorGitActions({
             <span>{t('gitCommitLocal')}</span>
           </button>
           <button type="button" role="menuitem" disabled={stagedPaths.length === 0 || !hasRemote} className={menuItemClass} onClick={() => openCommit(true)}>
-            <RefreshCw className="h-3.5 w-3.5" />
+            <CloudUpload className="h-3.5 w-3.5" />
             <span>{t('gitCommitAndPush')}</span>
           </button>
           {upstream ? (
@@ -483,7 +481,7 @@ function InspectorGitActions({
               className={menuItemClass}
               onClick={() => void push()}
             >
-              <Upload className="h-3.5 w-3.5" />
+              <CloudUpload className="h-3.5 w-3.5" />
               <span>{upstream ? t('gitPushCommits', { count: ahead }) : t('gitPublishBranch')}</span>
             </button>
           ) : null}
@@ -525,7 +523,7 @@ function InspectorGitActions({
               {t('gitCommitLocal')}
             </button>
             <button type="button" disabled={busyAction !== null || !message.trim() || !hasRemote} onClick={() => void submit(true)} className={`inline-flex h-8 items-center justify-center gap-1 rounded-lg px-2 text-[13.5px] font-medium active:scale-[0.98] disabled:opacity-40 ${commitPushPreferred ? 'bg-accent text-white' : 'bg-ds-hover text-ds-ink'}`}>
-              <RefreshCw className="h-3.5 w-3.5" />
+              <CloudUpload className="h-3.5 w-3.5" />
               {t('gitCommitAndPush')}
             </button>
           </div>

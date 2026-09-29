@@ -71,6 +71,8 @@
   --ds-diff-added-soft: rgba(18, 138, 74, 0.22);
   --ds-diff-removed: #c92a2a;
   --ds-diff-removed-soft: rgba(201, 42, 42, 0.18);
+  /* Mirrors the `changed` slot in lib/code-palette.ts so hunk headers match chat code blocks. */
+  --ds-diff-hunk: #0969da;
   --ds-skill: #7c3aed;
   --ds-skill-soft: rgba(124, 58, 237, 0.12);
   --ds-success-soft: rgba(17, 185, 129, 0.14);
@@ -193,6 +195,7 @@
   --ds-diff-added-soft: rgba(64, 201, 119, 0.28);
   --ds-diff-removed: #fa423e;
   --ds-diff-removed-soft: rgba(250, 66, 62, 0.24);
+  --ds-diff-hunk: #339cff;
   --ds-skill: #ad7bf9;
   --ds-skill-soft: rgba(173, 123, 249, 0.16);
   --ds-success-soft: rgba(64, 201, 119, 0.18);
@@ -7799,6 +7802,14 @@ select:focus-visible,
     transform 220ms cubic-bezier(0.32, 0.72, 0, 1);
 }
 
+/* Dragged shut, the panel gets narrower than its own toolbar: the leftover
+   shrink-0 chips (branch picker, git actions) then paint past the panel edge,
+   right beside the diff header. Clip for the duration of the drag only, so the
+   toolbar's anchored popovers keep working the rest of the time. */
+.ds-workbench-shell.is-resizing .ds-change-inspector {
+  overflow: clip;
+}
+
 @container change-inspector (max-width: 480px) {
   .ds-change-inspector__summary {
     max-width: 0;
@@ -7873,8 +7884,8 @@ select:focus-visible,
   position: sticky;
   top: 0;
   z-index: 5;
-  /* Opaque backdrop so scrolled rows do not show through. */
-  background-color: var(--ds-bg-canvas);
+  /* Opaque backdrop so scrolled rows do not show through — same surface the diff panel paints on. */
+  background-color: var(--ds-bg-sidebar);
   box-shadow: inset 0 -1px 0 color-mix(in srgb, var(--ds-accent) 16%, transparent);
 }
 

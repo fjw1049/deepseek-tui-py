@@ -73,6 +73,9 @@ type Props = {
   /** When true, hide the embedded file tree (IDE layout owns its own explorer/search). */
   hideTree?: boolean
   collapsibleTree?: boolean
+  /** Drag-to-collapse owner for a left-side tree that has no in-panel toggle
+      (IDE mode hides its explorer via the activity bar instead). */
+  onTreeCollapse?: () => void
 }
 
 const TREE_WIDTH_KEY = 'deepseekgui.layout.workspaceEditorTreeWidth'
@@ -634,7 +637,8 @@ export function WorkspaceEditorPanel({
   workspaceRoot,
   blocks,
   hideTree = false,
-  collapsibleTree = false
+  collapsibleTree = false,
+  onTreeCollapse
 }: Props): ReactElement {
   const { t } = useTranslation('common')
   const [treeOpen, setTreeOpen] = useState(true)
@@ -692,7 +696,9 @@ export function WorkspaceEditorPanel({
   )
   useWorkspaceDirtyGitRefresh(workspaceDirtyTick, reloadCleanEditorTabs)
 
-  const [treeWidth, setTreeWidth] = useState(() => readStoredTreeWidth(collapsibleTree === true))
+  // Either tree can be dragged shut; only the right-sidebar one owns `treeOpen`.
+  const treeCollapsible = collapsibleTree || onTreeCollapse != null
+  const [treeWidth, setTreeWidth] = useState(() => readStoredTreeWidth(treeCollapsible))
   const [resizing, setResizing] = useState(false)
   const [splitRatio, setSplitRatio] = useState(readStoredSplitRatio)
   const [paneSourceVisible, setPaneSourceVisible] = useState<Record<EditorPaneId, boolean>>({
@@ -828,9 +834,9 @@ export function WorkspaceEditorPanel({
 
     const onMove = (moveEvent: PointerEvent): void => {
       const width = startWidth + (moveEvent.clientX - startX) * (collapsibleTree ? -1 : 1)
-      collapseOnRelease = collapsibleTree === true && width < TREE_COLLAPSE_THRESHOLD
+      collapseOnRelease = treeCollapsible && width < TREE_COLLAPSE_THRESHOLD
       // Follow the pointer all the way to the edge instead of stalling at TREE_MIN.
-      setTreeWidth(clampTreeWidth(width, collapsibleTree ? 0 : TREE_MIN))
+      setTreeWidth(clampTreeWidth(width, treeCollapsible ? 0 : TREE_MIN))
     }
 
     const endDrag = (): void => {
@@ -847,7 +853,9 @@ export function WorkspaceEditorPanel({
     const onUp = (): void => {
       endDrag()
       if (collapseOnRelease) {
-        setTreeOpen(false)
+        if (collapsibleTree) setTreeOpen(false)
+        else onTreeCollapse?.()
+        // Reopen at the width the drag started from, not the pinched one.
         setTreeWidth(treeWidth)
         return
       }

@@ -14,6 +14,7 @@ import {
   ArrowLeft,
   FileEdit,
   FileSearch,
+  FolderOpen,
   Folders,
   PanelRight,
   PanelRightClose
@@ -86,9 +87,11 @@ const CHANGES_LIST_WIDTH_KEY = 'deepseekgui.layout.ideChangesListWidth'
 const CHANGES_LIST_DEFAULT = 240
 const CHANGES_LIST_MIN = 180
 const CHANGES_LIST_MAX = 420
+/** Released below this, the list collapses instead of resting at CHANGES_LIST_MIN. */
+const CHANGES_LIST_COLLAPSE_THRESHOLD = 24
 
-function clampChangesListWidth(width: number): number {
-  return Math.min(CHANGES_LIST_MAX, Math.max(CHANGES_LIST_MIN, Math.round(width)))
+function clampChangesListWidth(width: number, minimum = CHANGES_LIST_MIN): number {
+  return Math.min(CHANGES_LIST_MAX, Math.max(minimum, Math.round(width)))
 }
 
 function readStoredChangesListWidth(): number {
@@ -309,16 +312,24 @@ export function IdeWorkspaceLayout({
     const onMove = (moveEvent: PointerEvent): void => {
       const state = changesListResizeRef.current
       if (!state || moveEvent.pointerId !== state.pointerId) return
-      const next = clampChangesListWidth(state.startWidth + moveEvent.clientX - state.startX)
+      // Follow the pointer past CHANGES_LIST_MIN so the list can be dragged shut.
+      const next = clampChangesListWidth(state.startWidth + moveEvent.clientX - state.startX, 0)
       state.pendingWidth = next
       queueResize(() => setChangesListWidth(next))
     }
     const onEnd = (endEvent?: Event): void => {
       const state = changesListResizeRef.current
       if (!state || (endEvent instanceof PointerEvent && endEvent.pointerId !== state.pointerId)) return
+      const collapsed = state.pendingWidth < CHANGES_LIST_COLLAPSE_THRESHOLD
       flushResize()
-      persistChangesListWidth(state.pendingWidth)
       changesListResizeRef.current = null
+      if (collapsed) {
+        // Changes activity icon reopens it at the width the drag started from.
+        setChangesListWidth(state.startWidth)
+        setActivitySidebarVisible(false)
+      } else {
+        persistChangesListWidth(state.pendingWidth)
+      }
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', onEnd)
       window.removeEventListener('pointercancel', onEnd)
@@ -386,6 +397,7 @@ export function IdeWorkspaceLayout({
   const showChangesList = centerTab === 'changes' && activitySidebarVisible
   const showChangesDiff = centerTab === 'changes' && changesDiffVisible
   const editorHideTree = !activitySidebarVisible || centerTab === 'changes'
+  const filesActivityActive = centerTab === 'files' && activitySidebarVisible
 
   const projectName =
     projectLabel?.trim() ||
@@ -453,11 +465,15 @@ export function IdeWorkspaceLayout({
           aria-label={t('ideActivityBarLabel')}
         >
           <ActivityButton
-            active={centerTab === 'files' && activitySidebarVisible}
+            active={filesActivityActive}
             label={t('ideActivityFiles')}
             onClick={() => selectActivity('files')}
           >
-            <Folders className="h-[18px] w-[18px]" strokeWidth={1.85} />
+            {filesActivityActive ? (
+              <FolderOpen className="h-[18px] w-[18px]" strokeWidth={1.85} />
+            ) : (
+              <Folders className="h-[18px] w-[18px]" strokeWidth={1.85} />
+            )}
           </ActivityButton>
           <ActivityButton
             active={centerTab === 'changes' && activitySidebarVisible}
@@ -524,6 +540,7 @@ export function IdeWorkspaceLayout({
                     workspaceRoot={workspaceRoot}
                     blocks={blocks}
                     hideTree={editorHideTree}
+                    onTreeCollapse={() => setActivitySidebarVisible(false)}
                   />
                 </Suspense>
               </div>

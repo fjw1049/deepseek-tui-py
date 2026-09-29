@@ -498,7 +498,7 @@ export function DiffView({
                 )
                 if (row.kind === 'meta') {
                   return (
-                    <tr key={row.key} data-diff-hunk className="text-ds-muted">
+                    <tr key={row.key} data-diff-hunk className="text-[color:var(--ds-diff-hunk)]">
                       <td colSpan={4} className="ds-diff-meta-sticky break-all px-2 py-0.5 font-mono text-[13.5px]">
                         {row.meta}
                       </td>
@@ -570,7 +570,7 @@ export function DiffView({
                     <tr key={row.key} data-diff-hunk>
                       <td className="ds-diff-meta-sticky select-none px-1 text-right align-top font-mono text-[13.5px]" />
                       <td className="ds-diff-meta-sticky select-none px-1 text-right align-top font-mono text-[13.5px]" />
-                      <td className="ds-diff-meta-sticky max-w-0 truncate px-2 align-top font-mono text-[13.5px] text-ds-muted">
+                      <td className="ds-diff-meta-sticky max-w-0 truncate px-2 align-top font-mono text-[13.5px] text-[color:var(--ds-diff-hunk)]">
                         {row.text || '\u00a0'}
                       </td>
                     </tr>

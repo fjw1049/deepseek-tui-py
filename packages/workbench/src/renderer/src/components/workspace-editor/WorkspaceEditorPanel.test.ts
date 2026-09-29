@@ -46,6 +46,57 @@ it('switches tables between preview and source and keeps PDFs read-only', async 
   }
 })
 
+it('lets a left-side tree drag shut and hands the collapse to its owner', async () => {
+  const initial = useWorkspaceEditorStore.getState()
+  const previousGui = window.dsGui
+  vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} })
+  window.dsGui = {
+    listWorkspaceDirectory: vi.fn(async () => ({ ok: true, entries: [{ name: 'demo.txt', path: 'demo.txt', kind: 'file' }] }))
+  } as unknown as typeof window.dsGui
+  const host = document.createElement('div')
+  document.body.append(host)
+  const root = createRoot(host)
+  const onTreeCollapse = vi.fn()
+  const dragTo = async (target: number, startWidth: number) => {
+    await act(async () => window.dispatchEvent(new PointerEvent('pointermove', { clientX: 300 + target - startWidth })))
+  }
+  const press = async () => {
+    await act(async () => host.querySelector('[role="separator"]')!.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, clientX: 300 })))
+  }
+  const release = async () => {
+    await act(async () => window.dispatchEvent(new PointerEvent('pointerup')))
+  }
+  try {
+    await act(async () => root.render(createElement(WorkspaceEditorPanel, { workspaceRoot: '/workspace', blocks: [], onTreeCollapse })))
+    const tree = host.querySelector('.ds-workspace-file-tree')!
+    const width = () => parseFloat(tree.parentElement!.style.width)
+    expect(tree.parentElement!.classList.contains('order-last')).toBe(false)
+    const startWidth = width()
+    await press()
+    await dragTo(12, startWidth)
+    expect(width()).toBe(12)
+    await dragTo(100, startWidth)
+    await release()
+    expect(onTreeCollapse).not.toHaveBeenCalled()
+    expect(width()).toBe(100)
+    await press()
+    await dragTo(0, 100)
+    expect(width()).toBe(0)
+    await release()
+    expect(onTreeCollapse).toHaveBeenCalledTimes(1)
+    // The owner hides it (IDE activity bar); the panel keeps its own width for the reopen.
+    expect(host.querySelector('.ds-workspace-file-tree')).toBe(tree)
+    expect(width()).toBe(100)
+  } finally {
+    await act(async () => root.unmount())
+    useWorkspaceEditorStore.setState(initial, true)
+    host.remove()
+    window.localStorage?.clear()
+    vi.unstubAllGlobals()
+    window.dsGui = previousGui
+  }
+})
+
 it('shows a persistent right tree with no files open, supports selection, toggling and resizing, and honors hideTree', async () => {
   const initial = useWorkspaceEditorStore.getState()
   const writeText = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue(undefined)

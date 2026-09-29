@@ -105,6 +105,8 @@ describe('IdeWorkspaceLayout', () => {
     expect(markup).toContain('ds-ide-project-picker__name')
     expect(markup).toContain('ds-ide-activity-bar')
     expect(markup).toContain('bg-ds-canvas')
+    // Explorer visible by default → open-folder glyph.
+    expect(markup).toContain('lucide-folder-open')
   })
 
   it('keeps the editor mounted when the Changes activity is selected', () => {
@@ -122,5 +124,7 @@ describe('IdeWorkspaceLayout', () => {
     expect(markup).toContain('editor-panel')
     expect(markup).toContain('ds-ide-changes-stage')
     expect(markup).toContain('ds-ide-changes-list')
+    // Tree hidden on the Changes tab → closed-folder glyph.
+    expect(markup).toContain('lucide-folders')
   })
 })
