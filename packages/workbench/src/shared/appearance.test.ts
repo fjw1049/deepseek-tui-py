@@ -221,19 +221,13 @@ describe('theme share strings', () => {
 })
 
 describe('appearance-derive', () => {
-  it('keeps code surfaces visibly darker than the canvas in light presets', () => {
-    const brightness = (color: string): number =>
-      0.2126 * Number.parseInt(color.slice(1, 3), 16) +
-      0.7152 * Number.parseInt(color.slice(3, 5), 16) +
-      0.0722 * Number.parseInt(color.slice(5, 7), 16)
-
+  it('keeps light code surfaces flat on the canvas (border-separated like tables)', () => {
     for (const preset of listThemePresetsForVariant('light')) {
       for (const contrast of [0, 62, 100]) {
         const theme = { ...getThemePresetSeed(preset.id, 'light')!, contrast }
         const vars = buildChromeThemeCssVars(theme, 'light')
-        const canvas = brightness(vars['--bg-canvas']!)
         for (const token of ['--ds-code-bg', '--ds-pre-bg']) {
-          expect(canvas - brightness(vars[token]!), `${preset.id}: ${token}`).toBeGreaterThanOrEqual(6)
+          expect(vars[token], `${preset.id}: ${token}`).toBe(vars['--bg-canvas'])
         }
       }
     }

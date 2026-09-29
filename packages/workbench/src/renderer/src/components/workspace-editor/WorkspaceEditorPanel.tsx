@@ -1151,7 +1151,7 @@ export function WorkspaceEditorPanel({
       ) : null}
       <div className="relative flex h-full min-h-0 flex-1 bg-ds-sidebar">
         {hideTree || (collapsibleTree && !treeOpen) ? null : (
-          <div className={`relative h-full min-h-0 shrink-0 ${collapsibleTree ? 'order-last border-l border-ds-border-muted' : ''}`} style={{ width: treeWidth, maxWidth: collapsibleTree ? '50%' : undefined }}>
+          <div className={`relative h-full min-h-0 shrink-0 ${collapsibleTree ? 'order-last border-l-[1.5px] border-l-ds-border-strong ds-editor-tree-rail' : ''}`} style={{ width: treeWidth, maxWidth: collapsibleTree ? '50%' : undefined }}>
             {/* Expand state is cached per workspace root inside WorkspaceFileTree
                 so switching IDE center tabs (changes/search) does not reset folds. */}
             <WorkspaceFileTree

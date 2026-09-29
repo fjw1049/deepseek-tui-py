@@ -91,7 +91,7 @@
   --ds-card-soft: #ffffff;
   --ds-card-strong: #ffffff;
   --ds-card-muted: rgba(0, 0, 0, 0.03);
-  --ds-card-ghost: rgba(0, 0, 0, 0.02);
+  --ds-card-ghost: rgba(0, 0, 0, 0.012);
   --ds-card-hover: rgba(0, 0, 0, 0.03);
   --ds-chip-bg: #ffffff;
   --ds-chip-muted-bg: rgba(0, 0, 0, 0.04);
@@ -99,8 +99,8 @@
   --ds-chip-border: rgba(0, 0, 0, 0.08);
   --ds-chip-active: rgba(0, 0, 0, 0.06);
   --ds-kbd-bg: rgba(0, 0, 0, 0.04);
-  --ds-code-bg: rgba(0, 0, 0, 0.04);
-  --ds-pre-bg: #f6f6f6;
+  --ds-code-bg: transparent;
+  --ds-pre-bg: #ffffff;
   --ds-table-head-bg: rgba(0, 0, 0, 0.03);
   --ds-scrollbar-thumb: rgba(0, 0, 0, 0.2);
   --ds-scrollbar-thumb-hover: rgba(0, 0, 0, 0.3);
@@ -6089,6 +6089,16 @@ html[data-theme='dark'] .ds-code-fullscreen .shiki span {
   text-decoration: var(--shiki-dark-text-decoration) !important;
 }
 
+/* The Shiki theme's dark bg is a hardcoded near-black (#181818) baked into the
+   pre's inline style; re-point the variable at the derived --ds-pre-bg so the
+   block follows the theme preset instead of punching a black hole in the
+   canvas. pre-only: diff-token spans carry their own inline --shiki-dark-bg
+   and must keep it. */
+html[data-theme='dark'] .ds-markdown .ds-code-block-html pre.shiki,
+html[data-theme='dark'] .ds-code-fullscreen pre.shiki {
+  --shiki-dark-bg: var(--ds-pre-bg) !important;
+}
+
 .ds-markdown table {
   width: 100%;
   border-collapse: collapse;
@@ -7642,6 +7652,7 @@ select:focus-visible,
   align-items: center;
   gap: 0.625rem;
   border: 0;
+  border-radius: 0.625rem;
   background: transparent;
   color: var(--text-primary);
   text-align: left;
@@ -11388,6 +11399,11 @@ html[data-theme='dark'] .ds-syntax-line span { color: var(--shiki-dark) !importa
   background-color: var(--ds-bg-canvas) !important;
 }
 
+/* Editor↔file-tree seam: --ds-border-strong is near-invisible in dark (9% white). */
+[data-theme='dark'] .ds-editor-tree-rail {
+  border-left-color: rgba(255, 255, 255, 0.18) !important;
+}
+
 .ds-ide-workspace .ds-workspace-editor-pane .monaco-editor,
 .ds-ide-workspace .ds-workspace-editor-pane .monaco-editor .margin,
 .ds-ide-workspace .ds-workspace-editor-pane .monaco-editor .monaco-editor-background,
@@ -11806,7 +11822,7 @@ html[data-theme='dark'] .ds-syntax-line span { color: var(--shiki-dark) !importa
 
 .ds-turn-change-summary__header,
 .ds-turn-change-summary__footer {
-  background: color-mix(in srgb, var(--ds-text) 5%, var(--ds-card-strong));
+  background: var(--ds-card-ghost);
 }
 
 .ds-turn-change-summary__icon {

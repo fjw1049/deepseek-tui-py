@@ -203,7 +203,11 @@ export function buildChromeThemeCssVars(
     '--ds-card-soft': rgba(elevated1, light ? 0.82 : 0.9),
     '--ds-card-strong': rgba(elevated2, 0.96),
     '--ds-card-muted': rgba(elevated1, light ? 0.9 : 0.86),
-    '--ds-card-ghost': rgba(surfaceUnder, light ? 0.62 : 0.72),
+    // Ghost tint for card headers/footers. Light: a whisper of ink so headers
+    // read against the flat body. Dark: lifted toward elevated2 — surfaceUnder
+    // is pushed toward black for the app gutter, and reused inside a card it
+    // rendered as an inverted black slab.
+    '--ds-card-ghost': light ? hex(mixRgb(canvasBg, ink, 0.03)) : rgba(elevated2, 0.72),
     '--ds-card-hover': rgba(elevated2, 0.98),
     '--ds-chip-bg': rgba(elevated1, light ? 0.92 : 0.94),
     '--ds-chip-muted-bg': hex(elevated1),
@@ -211,10 +215,10 @@ export function buildChromeThemeCssVars(
     '--ds-chip-border': borderSoft,
     '--ds-chip-active': `linear-gradient(180deg, ${rgba(accentDisplay, light ? 0.16 : 0.18)}, ${rgba(accentDisplay, light ? 0.08 : 0.1)})`,
     '--ds-kbd-bg': rgba(elevated1, light ? 0.9 : 0.94),
-    // Light code surfaces need an ink tint: mixing a white canvas toward
-    // white erases the block's separation from the surrounding answer.
-    '--ds-code-bg': hex(mixRgb(canvasBg, ink, light ? 0.065 : 0.033)),
-    '--ds-pre-bg': hex(mixRgb(canvasBg, ink, light ? 0.05 : 0.03)),
+    // Light code surfaces sit flat on the canvas: separation comes from the
+    // 1px border, matching tables. Dark keeps an ink tint (flat reads muddy).
+    '--ds-code-bg': light ? hex(canvasBg) : hex(mixRgb(canvasBg, ink, 0.033)),
+    '--ds-pre-bg': light ? hex(canvasBg) : hex(mixRgb(canvasBg, ink, 0.03)),
     '--ds-table-head-bg': rgba(elevated1, light ? 0.96 : 0.94),
     '--ds-scrollbar-thumb': rgba(ink, light ? 0.2 : 0.14),
     '--ds-scrollbar-thumb-hover': rgba(ink, light ? 0.3 : 0.24),
