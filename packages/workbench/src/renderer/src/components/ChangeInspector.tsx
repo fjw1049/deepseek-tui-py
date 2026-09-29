@@ -667,10 +667,6 @@ function ChangeSourcePicker({
           <GitCompareArrows className="h-3.5 w-3.5 shrink-0 text-ds-muted" strokeWidth={1.9} />
         ) : null}
         <span className="ds-change-source__label min-w-0 flex-1 truncate">{selected.label}</span>
-        <ChevronDown
-          className={`h-3.5 w-3.5 shrink-0 text-ds-faint transition-transform ${open ? 'rotate-180' : ''}`}
-          strokeWidth={1.9}
-        />
       </button>
       {open || closing ? (
         <div
@@ -808,12 +804,7 @@ function BranchComparisonPicker({
         <span className="truncate">{baseLabel}</span>
         {loading ? (
           <Loader2 className="h-3 w-3 shrink-0 animate-spin text-ds-faint" />
-        ) : (
-          <ChevronDown
-            className={`h-3 w-3 shrink-0 text-ds-faint transition-transform ${open ? 'rotate-180' : ''}`}
-            strokeWidth={2}
-          />
-        )}
+        ) : null}
       </button>
       {open || closing ? (
         <div
