@@ -24,7 +24,7 @@
 .session-import-source.is-disabled { opacity: .65; cursor: default; }
 .session-import-brand { display: grid; place-items: center; flex-shrink: 0; width: 42px; height: 42px; border-radius: 11px; background: var(--ds-surface-card); border: 1px solid var(--ds-border-muted); }
 .session-import-brand img { width: 26px; height: 26px; object-fit: contain; }
-[data-theme='dark'] .session-import-brand img { filter: invert(1); }
+[data-theme='dark'] .session-import-brand.codex img { filter: invert(1); }
 .session-import-source-name { display: block; font-size: 15px; font-weight: 600; letter-spacing: -.02em; }
 .session-import-source-path { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 5px; font-size: 11px; color: var(--ds-text-faint); }
 .session-import-source-check { display: grid; place-items: center; flex-shrink: 0; width: 18px; height: 18px; border-radius: 50%; border: 1px solid var(--ds-border-strong); color: white; }
@@ -104,4 +104,4 @@
 @media (prefers-reduced-transparency: reduce) { .session-import-footer { background: var(--ds-surface-card); backdrop-filter: none; } }
 
 .session-import-source-badge img { width: 12px; height: 12px; object-fit: contain; }
-[data-theme='dark'] .session-import-source-badge img { filter: invert(1); }
+[data-theme='dark'] .session-import-source-badge.codex img { filter: invert(1); }

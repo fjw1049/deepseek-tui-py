@@ -56,7 +56,6 @@ import {
   workspaceChangeEntryStats,
   type WorkspaceChangeEntry
 } from '../lib/workspace-change-stats'
-import { formatComposerPathMention, insertComposerSnippet } from '../lib/composer-insert'
 import { splitFileNameAndParent } from '../lib/editor-breadcrumb'
 import {
   resolveThreadFilesystemRoot,
@@ -1547,16 +1546,6 @@ export function ChangeInspector({
               setDiffExpanded(false)
               setDiffCollapsed(true)
             } : onCollapse}
-            onAddToChat={
-              selectedItem.filePath
-                ? () => {
-                    const relative =
-                      formatFilePathForDisplay(selectedItem.filePath, changeRoot || workspaceRoot) ||
-                      selectedItem.filePath
-                    if (relative) insertComposerSnippet(formatComposerPathMention(relative))
-                  }
-                : undefined
-            }
           />
         ) : (
           <div className="flex flex-1 items-center justify-center text-[13.5px] text-ds-faint">

@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactElement } from 'react'
-import { ArrowDown, ArrowUp, Check, ChevronDown, ChevronUp, Minimize2, Columns2, Copy, MessageSquarePlus, Rows3, WrapText } from 'lucide-react'
+import { ArrowDown, ArrowUp, Check, ArrowDownToLine, ArrowUpToLine, Minimize2, Columns2, Copy, Rows3, WrapText } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { countDiffStats, extractDiffFilePath } from '../lib/diff-stats'
 import { FileChip } from './chat/FileChip'
@@ -26,7 +26,6 @@ type Props = {
    * `flush` — edge-to-edge in the change inspector (no padding card chrome).
    */
   chrome?: 'card' | 'flush'
-  onAddToChat?: () => void
   /** Change inspector: replace copy with a control that collapses the diff pane. */
   onCollapse?: () => void
   onToggleExpand?: () => void
@@ -318,7 +317,6 @@ export function DiffView({
   showStyleToggle = false,
   onDiffStyleChange,
   chrome = 'card',
-  onAddToChat,
   onCollapse,
   onToggleExpand,
   expanded = false,
@@ -450,7 +448,12 @@ export function DiffView({
       wrapLines={wrapLines}
       onToggleWrap={looksLikePatch ? () => setWrapLines((value) => !value) : undefined}
       flush={flush}
-      onAddToChat={onAddToChat}
+      navigation={looksLikePatch ? (
+        <div className="ds-diff-navigation">
+          <button type="button" disabled={!hunkCount} aria-label={t('diffPreviousChange')} title={t('diffPreviousChange')} onClick={() => navigateHunk(-1)}><ArrowUp size={17} strokeWidth={2.2} /></button>
+          <button type="button" disabled={!hunkCount} aria-label={t('diffNextChange')} title={t('diffNextChange')} onClick={() => navigateHunk(1)}><ArrowDown size={17} strokeWidth={2.2} /></button>
+        </div>
+      ) : undefined}
       onCollapse={onCollapse}
       onToggleExpand={onToggleExpand}
       expanded={expanded}
@@ -475,13 +478,6 @@ export function DiffView({
   return (
     <div className={shellClass} data-wrap={wrapLines ? '' : undefined}>
       {header}
-      {showHeader ? <div className="ds-diff-review-bar">
-        <div className="ds-diff-navigation">
-          <span aria-live="polite">{t('diffHunkPosition', { current: hunkCount ? activeHunk + 1 : 0, total: hunkCount })}</span>
-          <button type="button" disabled={!hunkCount} aria-label={t('diffPreviousChange')} title={t('diffPreviousChange')} onClick={() => navigateHunk(-1)}><ArrowUp size={17} strokeWidth={2.2} /></button>
-          <button type="button" disabled={!hunkCount} aria-label={t('diffNextChange')} title={t('diffNextChange')} onClick={() => navigateHunk(1)}><ArrowDown size={17} strokeWidth={2.2} /></button>
-        </div>
-      </div> : null}
       <div ref={(node) => { bodyRef.current = node }} className={bodyClass} style={fillParent || flush ? undefined : { maxHeight }}>
         {diffStyle === 'split' ? (
           <table className="ds-diff-table border-collapse">
@@ -643,7 +639,7 @@ function DiffHeader({
   wrapLines,
   onToggleWrap,
   flush = false,
-  onAddToChat,
+  navigation,
   onCollapse,
   onToggleExpand,
   expanded = false
@@ -660,7 +656,7 @@ function DiffHeader({
   wrapLines: boolean
   onToggleWrap?: () => void
   flush?: boolean
-  onAddToChat?: () => void
+  navigation?: ReactElement
   onCollapse?: () => void
   onToggleExpand?: () => void
   expanded?: boolean
@@ -743,18 +739,7 @@ function DiffHeader({
           </Tooltip>
         </div>
       ) : null}
-      {onAddToChat ? (
-        <Tooltip label={t('workspaceEditorAddToChat')}>
-          <button
-            type="button"
-            onClick={onAddToChat}
-            className="inline-flex h-7 w-7 items-center justify-center rounded text-ds-faint transition hover:bg-ds-hover hover:text-ds-ink"
-            aria-label={t('workspaceEditorAddToChat')}
-          >
-            <MessageSquarePlus className="h-3.5 w-3.5" strokeWidth={1.85} />
-          </button>
-        </Tooltip>
-      ) : null}
+      {navigation}
       {onToggleExpand ? (
         <Tooltip label={t(expanded ? 'inspectorRestoreDiff' : 'inspectorExpandDiff')}>
           <button
@@ -764,7 +749,7 @@ function DiffHeader({
             aria-label={t(expanded ? 'inspectorRestoreDiff' : 'inspectorExpandDiff')}
             aria-pressed={expanded}
           >
-            {expanded ? <Minimize2 className="h-3.5 w-3.5" strokeWidth={1.9} /> : <ChevronUp className="h-3.5 w-3.5" strokeWidth={1.9} />}
+            {expanded ? <Minimize2 className="h-3.5 w-3.5" strokeWidth={1.9} /> : <ArrowUpToLine className="h-3.5 w-3.5" strokeWidth={1.9} />}
           </button>
         </Tooltip>
       ) : null}
@@ -776,7 +761,7 @@ function DiffHeader({
             className="inline-flex h-7 w-7 items-center justify-center rounded text-ds-faint transition hover:bg-ds-hover hover:text-ds-ink active:scale-[0.96]"
             aria-label={t('inspectorCollapseDiff')}
           >
-            <ChevronDown className="h-3.5 w-3.5" strokeWidth={1.9} />
+            <ArrowDownToLine className="h-3.5 w-3.5" strokeWidth={1.9} />
           </button>
         </Tooltip>
       ) : (

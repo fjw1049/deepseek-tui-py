@@ -12253,23 +12253,13 @@ body:has(.ds-workbench-shell[data-ide-mode]) .ds-project-context-menu :is(input,
   box-shadow: inset 3px 0 var(--ds-diff-added);
   color: var(--ds-diff-added);
 }
-.ds-diff-review-bar {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 12px;
-  min-height: 32px;
-  padding: 3px 10px;
-  border-bottom: 1px solid var(--ds-border-muted);
-  color: var(--ds-text-muted);
-  background: var(--ds-bg-sidebar);
-  font-size: 11px;
-  flex-shrink: 0;
-}
 .ds-diff-navigation {
   display: flex;
   align-items: center;
   gap: 6px;
+  flex-shrink: 0;
+  color: var(--ds-text-muted);
+  font-size: 11px;
 }
 .ds-diff-navigation { font-variant-numeric: tabular-nums; white-space: nowrap; }
 .ds-diff-navigation button {
@@ -12295,6 +12285,3 @@ body:has(.ds-workbench-shell[data-ide-mode]) .ds-project-context-menu :is(input,
   font-size: 12px;
 }
 .ds-diff-fold button:hover { color: var(--ds-text); background: var(--ds-surface-hover); }
-@container (max-width: 320px) {
-  .ds-diff-review-bar { gap: 4px; padding-inline: 6px; }
-}

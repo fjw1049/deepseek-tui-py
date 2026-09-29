@@ -4,7 +4,7 @@ import { createRoot } from 'react-dom/client'
 import { expect, it, vi } from 'vitest'
 import { useStartupWindowDrag } from './use-startup-window-drag'
 
-it('arms after 1s, tolerates jitter, locks the gesture, and cleans up on exit', async () => {
+it('arms after 0.5s, tolerates jitter, locks the gesture, and cleans up on exit', async () => {
   globalThis.IS_REACT_ACT_ENVIRONMENT = true
   vi.useFakeTimers()
   const drag = vi.fn()
@@ -30,11 +30,11 @@ it('arms after 1s, tolerates jitter, locks the gesture, and cleans up on exit', 
     }
     const ready = (): void => {
       send('pointermove')
-      vi.advanceTimersByTime(1000)
+      vi.advanceTimersByTime(500)
       expect(board.dataset.windowDrag).toBe('ready')
     }
     send('pointermove')
-    vi.advanceTimersByTime(999)
+    vi.advanceTimersByTime(499)
     expect(board.dataset.windowDrag).toBeUndefined()
     send('pointermove', 303, 252)
     vi.advanceTimersByTime(1)
@@ -63,10 +63,10 @@ it('arms after 1s, tolerates jitter, locks the gesture, and cleans up on exit', 
     expect(board.dataset.windowDrag).toBeUndefined()
     // Native resize edges and traffic lights are excluded.
     send('pointermove', 4)
-    vi.advanceTimersByTime(1000)
+    vi.advanceTimersByTime(500)
     expect(board.dataset.windowDrag).toBeUndefined()
     send('pointermove', 60, 25)
-    vi.advanceTimersByTime(1000)
+    vi.advanceTimersByTime(500)
     expect(board.dataset.windowDrag).toBeUndefined()
     ready()
     send('pointerdown', 300, 250, 2, 2)
@@ -78,14 +78,14 @@ it('arms after 1s, tolerates jitter, locks the gesture, and cleans up on exit', 
     expect(board.dataset.windowDrag).toBeUndefined()
     send('pointermove')
     send('pointerleave')
-    vi.advanceTimersByTime(1000)
+    vi.advanceTimersByTime(500)
     expect(board.dataset.windowDrag).toBeUndefined()
     ready()
     send('pointerdown', 300, 250, 1)
     await act(async () => root.render(createElement(Board, { enabled: false })))
     expect(drag).toHaveBeenLastCalledWith('end')
     send('pointermove')
-    vi.advanceTimersByTime(1000)
+    vi.advanceTimersByTime(500)
     expect(board.dataset.windowDrag).toBeUndefined()
   } finally {
     await act(async () => root.unmount())

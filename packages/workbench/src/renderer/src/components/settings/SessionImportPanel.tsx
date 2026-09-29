@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowDownToLine, Check, CheckCircle2, ChevronRight, Folder, FolderOpen, History, Info, Loader2, RefreshCw, Search } from 'lucide-react'
 import codexIcon from '../../assets/provider-icons/openai.svg'
-import claudeIcon from '../../assets/provider-icons/claude.svg'
+import claudeSvg from '../../assets/provider-icons/claude.svg?raw'
 import './session-import.css'
 import { useTranslation } from 'react-i18next'
 import { useChatStore } from '../../store/chat-store'
@@ -16,6 +16,7 @@ type Session = {
 type Scan = { root: string; available: boolean; sessions: Session[]; errors: { path: string; message: string }[] }
 type Result = { status: 'imported' | 'updated' | 'skipped' | 'linked'; thread_id: string; history_only?: boolean; warnings: string[] }
 const sources: Source[] = ['codex', 'claude']
+const claudeIcon = `data:image/svg+xml,${encodeURIComponent(claudeSvg.replace('currentColor', '#d97757'))}`
 const sourceName = (source: Source) => source === 'codex' ? 'Codex' : 'Claude Code'
 const keyOf = (s: Session) => `${s.source}:${s.id}`
 const groupOf = (s: Session) => `${s.source}:${s.workspace}`

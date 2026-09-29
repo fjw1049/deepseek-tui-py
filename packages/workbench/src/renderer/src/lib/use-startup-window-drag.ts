@@ -39,7 +39,7 @@ export function useStartupWindowDrag(ref: RefObject<HTMLDivElement | null>, enab
       if (anchor && Math.hypot(e.clientX - anchor.x, e.clientY - anchor.y) <= 5) return
       reset()
       anchor = { x: e.clientX, y: e.clientY }
-      timer = setTimeout(() => { board.dataset.windowDrag = 'ready' }, 1000)
+      timer = setTimeout(() => { board.dataset.windowDrag = 'ready' }, 500)
     }
     const down = (e: PointerEvent): void => {
       if (board.dataset.windowDrag !== 'ready' || !eligible(e) || e.button !== 0 || e.buttons !== 1) {
