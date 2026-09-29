@@ -119,7 +119,7 @@ export function SessionQueries({ children }: { children: ReactNode }): React.Rea
         <div className="ds-session-queries-scroll overflow-y-auto overscroll-contain" style={{ maxHeight: position.maxHeight }}>
           {queries.map((query) => <div
             key={query.id}
-            className="group flex h-9 w-full select-none items-center rounded-xl px-2.5 font-ui text-[13px] font-medium leading-6 tracking-[-0.01em] text-ds-ink transition-colors hover:bg-ds-hover focus-within:bg-ds-hover"
+            className="group relative flex h-9 w-full select-none items-center rounded-xl px-2.5 font-ui text-[13px] font-medium leading-6 tracking-[-0.01em] text-ds-ink transition-colors hover:bg-ds-hover focus-within:bg-ds-hover"
           >
             <button
               type="button"
@@ -146,7 +146,7 @@ export function SessionQueries({ children }: { children: ReactNode }): React.Rea
             </button>
             <button
               type="button"
-              className={`ml-1 flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-ds-faint transition-opacity hover:text-ds-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent ${copiedId === query.id ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 group-focus-within:opacity-100'}`}
+              className={`absolute right-1 top-1/2 flex h-6 w-6 shrink-0 -translate-y-1/2 items-center justify-center rounded-md text-ds-muted transition-opacity hover:text-ds-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent ${copiedId === query.id ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 group-focus-within:opacity-100'}`}
               title={t(copiedId === query.id ? 'copySuccess' : 'copyMessage')}
               aria-label={`${t('copyMessage')}: ${query.preview}`}
               onClick={(event) => {
