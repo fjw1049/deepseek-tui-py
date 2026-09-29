@@ -5456,26 +5456,6 @@ samp {
   border-color: var(--ds-border-strong);
 }
 
-.ds-markdown .ds-mermaid-block-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.5rem;
-  border-bottom: 1px solid var(--ds-border-muted);
-  background: color-mix(in srgb, var(--ds-code-bg) 88%, var(--ds-card-muted));
-  padding: 0.42rem 0.6rem;
-}
-
-.ds-markdown .ds-mermaid-block-label {
-  min-width: 0;
-  font-family: var(--font-mono);
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: lowercase;
-  color: var(--ds-text-faint);
-}
-
 .ds-markdown .ds-mermaid-block-actions {
   display: flex;
   align-items: center;
@@ -5953,55 +5933,8 @@ samp {
   white-space: pre-wrap;
 }
 
-.ds-markdown .ds-structure-block {
-  margin: 0 0 0.48rem;
-  width: 100%;
-  min-width: 0;
-  overflow: hidden;
-  border: 1px solid var(--ds-border);
-  border-radius: 14px;
-  background: color-mix(in srgb, var(--ds-card-muted) 72%, var(--ds-pre-bg));
-  box-sizing: border-box;
-}
-
-.ds-markdown .ds-structure-block-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.5rem;
-  border-bottom: 1px solid var(--ds-border-muted);
-  background: color-mix(in srgb, var(--ds-code-bg) 70%, var(--ds-card-muted));
-  padding: 0.42rem 0.6rem;
-}
-
-.ds-markdown .ds-structure-block-label {
-  min-width: 0;
-  font-family: var(--font-ui);
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  color: var(--ds-text-muted);
-}
-
-.ds-markdown .ds-structure-block-actions {
-  display: flex;
-  align-items: center;
-  gap: 0.18rem;
-}
-
-.ds-markdown .ds-structure-block-body {
-  margin: 0;
-  padding: 0.7rem 0.85rem 0.85rem;
-  overflow: auto;
-  font-family: var(--font-mono);
-  font-size: 12.5px;
-  line-height: 1.55;
-  color: var(--ds-text);
-  white-space: pre;
-  tab-size: 2;
-}
-
-.ds-markdown .ds-code-block-header {
+.ds-markdown .ds-code-block-header,
+.ds-markdown .ds-mermaid-block-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -6011,7 +5944,8 @@ samp {
   padding: 0.42rem 0.6rem;
 }
 
-.ds-markdown .ds-code-block-language {
+.ds-markdown .ds-code-block-language,
+.ds-markdown .ds-mermaid-block-label {
   min-width: 0;
   font-family: var(--font-ui);
   font-size: 10px;
@@ -6060,8 +5994,8 @@ samp {
 }
 
 .ds-markdown .ds-code-block-body.is-collapsed {
-  max-height: 200px;
-  overflow: hidden;
+  max-height: 480px;
+  overflow: auto;
 }
 
 .ds-markdown .ds-code-block-html {
@@ -6084,16 +6018,14 @@ samp {
 }
 
 .ds-markdown .ds-code-block-html > pre code {
+  font-family: inherit;
+  white-space: pre;
+  tab-size: 2;
   border: 0;
   background: transparent;
   padding: 0;
   font-size: inherit;
   line-height: inherit;
-}
-
-.ds-markdown .ds-code-block-html .line {
-  display: block;
-  min-height: 1.25em;
 }
 
 /* Shiki dual-theme: default inline `color` is the light theme; flip tokens
@@ -6107,21 +6039,6 @@ html[data-theme='dark'] .ds-code-fullscreen .shiki span {
   font-style: var(--shiki-dark-font-style) !important;
   font-weight: var(--shiki-dark-font-weight) !important;
   text-decoration: var(--shiki-dark-text-decoration) !important;
-}
-
-.ds-markdown .ds-code-block-fade {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  height: 2.6rem;
-  border: 0;
-  background: linear-gradient(
-    to bottom,
-    color-mix(in srgb, var(--ds-pre-bg) 0%, transparent) 0%,
-    color-mix(in srgb, var(--ds-pre-bg) 84%, transparent) 68%,
-    var(--ds-pre-bg) 100%
-  );
 }
 
 .ds-markdown table {
@@ -6809,23 +6726,27 @@ html[data-theme='dark'] .ds-code-fullscreen .shiki span {
   background: var(--ds-accent-soft);
 }
 
-.ds-markdown.ds-markdown--answer .ds-code-block {
+.ds-markdown.ds-markdown--answer .ds-code-block,
+.ds-markdown.ds-markdown--answer .ds-mermaid-block {
   margin: 0.65rem 0;
   border: 0;
   border-radius: 0.65rem;
 }
 
-.ds-markdown.ds-markdown--answer .ds-code-block-header {
+.ds-markdown.ds-markdown--answer .ds-code-block-header,
+.ds-markdown.ds-markdown--answer .ds-mermaid-block-header {
   border-bottom: 0;
   background: transparent;
   padding: 0.1rem 0.4rem 0.1rem 0.6rem;
 }
 
-:root:not([data-theme='dark']) .ds-markdown.ds-markdown--answer .ds-code-block {
+:root:not([data-theme='dark']) .ds-markdown.ds-markdown--answer .ds-code-block,
+:root:not([data-theme='dark']) .ds-markdown.ds-markdown--answer .ds-mermaid-block {
   border: 1px solid var(--ds-border-muted);
 }
 
-:root:not([data-theme='dark']) .ds-markdown.ds-markdown--answer .ds-code-block-header {
+:root:not([data-theme='dark']) .ds-markdown.ds-markdown--answer .ds-code-block-header,
+:root:not([data-theme='dark']) .ds-markdown.ds-markdown--answer .ds-mermaid-block-header {
   border-bottom: 1px solid var(--ds-border-muted);
   background: var(--ds-code-bg);
 }
@@ -7626,8 +7547,7 @@ select:focus-visible,
 }
 
 /* Toggle collapses the full card to a compact icon rail (and back).
-   Kept a step above tool icons: always-on chip + fuller ink, never the
-   ghosted secondary treatment the gear used to wear. */
+   Ghost treatment: no resting chip, the background only appears on hover. */
 .ds-operation-dock-topbar__toggle {
   display: inline-flex;
   height: 1.65rem;
@@ -7637,7 +7557,7 @@ select:focus-visible,
   justify-content: center;
   border-radius: 0.55rem;
   border: none;
-  background: color-mix(in srgb, var(--text-primary) 8%, transparent);
+  background: transparent;
   color: var(--text-primary);
   opacity: 1;
   pointer-events: auto;
@@ -7657,21 +7577,24 @@ select:focus-visible,
 }
 
 .ds-operation-dock-body {
-  padding: 0.7rem;
+  /* Kept just above the concentric limit: card radius 18px − panel radius
+     12.8px = 5.2px, so a smaller pad starts colliding with the card corner. */
+  padding: 0.4rem;
   background: transparent;
 }
 
 
+/* Lives in a `.ds-operation-dock-status__section` like the Git and Process
+   headers, so the section padding + first-child row metrics give all three
+   rows one size; background stays flat to the container like theirs. */
 .ds-operation-dock-repository {
   display: flex;
   width: 100%;
   min-width: 0;
   align-items: center;
   gap: 0.625rem;
-  padding: 0.65rem 0.7rem 0.6rem;
   border: 0;
-  border-bottom: 1px solid color-mix(in srgb, var(--text-primary) 7%, transparent);
-  background: color-mix(in srgb, var(--text-primary) 2.5%, transparent);
+  background: transparent;
   color: var(--text-primary);
   text-align: left;
   cursor: pointer;
@@ -7692,13 +7615,13 @@ select:focus-visible,
 
 .ds-operation-dock-repository__icon {
   display: inline-flex;
-  width: 2rem;
-  height: 2rem;
+  width: 1.5rem;
+  height: 1.5rem;
   flex-shrink: 0;
   align-items: center;
   justify-content: center;
-  border-radius: 0.625rem;
-  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
+  border-radius: 0.5rem;
+  background: transparent;
   color: var(--text-secondary);
 }
 

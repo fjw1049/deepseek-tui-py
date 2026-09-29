@@ -7,7 +7,13 @@ it.each([
   ['C:\\project\\App.CS', 'csharp'], ['.env.local', 'ini'], ['.zshrc', 'shell'],
   ['types.pyi', 'python'], ['config.jsonc', 'json'], ['main.tf', 'hcl'],
   ['App.vue', 'html'], ['README.md', 'markdown'], ['main.tsx', 'typescript'],
-  ['notes.unknown', 'plaintext']
+  ['notes.unknown', 'plaintext'],
+  // `protobuf` is only an alias in Monaco — the id itself is `proto`.
+  ['api/service.proto', 'proto'],
+  ['Main.scala', 'scala'], ['core.cljc', 'clojure'], ['mix.exs', 'elixir'],
+  ['deploy.pl', 'perl'], ['sim.jl', 'julia'], ['Program.fs', 'fsharp'],
+  ['Token.sol', 'sol'], ['tb.sv', 'systemverilog'], ['view.hbs', 'handlebars'],
+  ['Gemfile', 'ruby'], ['.dockerignore', 'ini'], ['.bash_profile', 'shell']
 ])('recognizes %s as %s', (path, expected) => {
   expect(languageForPath(path)).toBe(expected)
 })

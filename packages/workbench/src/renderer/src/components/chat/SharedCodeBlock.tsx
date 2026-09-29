@@ -17,129 +17,65 @@ import {
   type ReactElement,
   type ReactNode
 } from 'react'
-import type { ThemeRegistration } from 'shiki'
+import type { ThemeRegistration, ThemeRegistrationRaw } from 'shiki'
 import { useChatStore } from '../../store/chat-store'
 import { basenameOfPath, formatFileLineRange } from '../../lib/file-chip'
+import { CODE_CHROME, CODE_PALETTE, SHIKI_SCOPE_SLOTS, type CodeAppearance } from '../../lib/code-palette'
 import { normalizeLanguage } from './code-language'
 import { FileChip } from './FileChip'
 import { ResizableFullscreenDialog } from './ResizableFullscreenDialog'
 
 const TRAILING_NEWLINES_REGEX = /\n+$/
-const COLLAPSE_HEIGHT = 200
+const COLLAPSE_HEIGHT = 480
 const COPY_RESET_MS = 2000
 
-const CODEX_CODE_THEME = {
-  name: 'codex',
-  displayName: 'Codex',
-  type: 'dark',
-  fg: '#ffffff',
-  bg: '#181818',
-  colors: {
-    'editor.background': '#181818',
-    'editor.foreground': '#ffffff',
-    'editor.selectionBackground': '#339cff44',
-    'editor.inactiveSelectionBackground': '#339cff22',
-    'editor.lineHighlightBackground': '#ffffff08',
-    'editorCursor.foreground': '#ffffff',
-    'editorGutter.addedBackground': '#40c977',
-    'editorGutter.deletedBackground': '#fa423e',
-    'editorGutter.modifiedBackground': '#339cff',
-    'diffEditor.insertedTextBackground': '#40c97724',
-    'diffEditor.removedTextBackground': '#fa423e24',
-    'terminal.ansiGreen': '#40c977',
-    'terminal.ansiRed': '#fa423e',
-    'terminal.ansiBlue': '#339cff',
-    'terminal.ansiMagenta': '#ad7bf9'
-  },
-  settings: [
-    {
-      settings: {
-        foreground: '#ffffff',
-        background: '#181818'
-      }
+/**
+ * Both chat themes come from lib/code-palette.ts — the same slots the Monaco
+ * editor consumes — so a file keeps its colors as it moves between the editor
+ * and a chat block. The built-in `github-light` this replaces was the light
+ * half of that drift.
+ */
+function shikiTheme(appearance: CodeAppearance, name: string): ThemeRegistration {
+  const slots = CODE_PALETTE[appearance]
+  const background = appearance === 'dark' ? '#181818' : '#ffffff'
+  // One TextMate settings entry per distinct style, scopes grouped under it.
+  const groups = new Map<string, { scope: string[]; settings: Record<string, string> }>()
+  for (const [scope, slot, fontStyle] of SHIKI_SCOPE_SLOTS) {
+    const style = slots[slot]
+    const font = fontStyle ?? style.fontStyle ?? ''
+    const settings: Record<string, string> = { foreground: style.color }
+    if (font) settings.fontStyle = font
+    if (style.background) settings.background = style.background
+    const key = JSON.stringify(settings)
+    const group = groups.get(key)
+    if (group) group.scope.push(scope)
+    else groups.set(key, { scope: [scope], settings })
+  }
+  return {
+    name,
+    displayName: name,
+    type: appearance,
+    fg: slots.ink.color,
+    bg: background,
+    colors: {
+      ...CODE_CHROME[appearance],
+      'editor.background': background,
+      'terminal.ansiGreen': slots.added.color,
+      'terminal.ansiRed': slots.removed.color,
+      'terminal.ansiBlue': slots.changed.color,
+      'terminal.ansiMagenta': slots.function.color
     },
-    {
-      scope: ['comment', 'punctuation.definition.comment', 'string.comment'],
-      settings: {
-        foreground: '#858585',
-        fontStyle: 'italic'
-      }
-    },
-    {
-      scope: ['keyword', 'storage', 'storage.type', 'storage.modifier'],
-      settings: {
-        foreground: '#fa423e'
-      }
-    },
-    {
-      scope: ['string', 'punctuation.definition.string'],
-      settings: {
-        foreground: '#40c977'
-      }
-    },
-    {
-      scope: ['constant', 'constant.numeric', 'variable.language', 'support.constant'],
-      settings: {
-        foreground: '#7bbcff'
-      }
-    },
-    {
-      scope: [
-        'entity.name.function',
-        'support.function',
-        'meta.function-call',
-        'entity.name.type',
-        'entity.other.inherited-class'
-      ],
-      settings: {
-        foreground: '#ad7bf9'
-      }
-    },
-    {
-      scope: ['variable.parameter', 'variable.other', 'meta.property-name', 'support.type.property-name'],
-      settings: {
-        foreground: '#c7c7c7'
-      }
-    },
-    {
-      scope: ['entity.name.tag', 'entity.other.attribute-name'],
-      settings: {
-        foreground: '#339cff'
-      }
-    },
-    {
-      scope: ['punctuation', 'meta.brace'],
-      settings: {
-        foreground: '#c7c7c7'
-      }
-    },
-    {
-      scope: ['markup.inserted', 'meta.diff.header.to-file', 'punctuation.definition.inserted'],
-      settings: {
-        foreground: '#40c977',
-        background: '#173222'
-      }
-    },
-    {
-      scope: ['markup.deleted', 'meta.diff.header.from-file', 'punctuation.definition.deleted'],
-      settings: {
-        foreground: '#fa423e',
-        background: '#351b1b'
-      }
-    },
-    {
-      scope: ['markup.changed', 'punctuation.definition.changed', 'meta.diff.range'],
-      settings: {
-        foreground: '#339cff'
-      }
-    }
-  ]
-} satisfies ThemeRegistration
+    settings: [
+      { settings: { foreground: slots.ink.color, background } },
+      ...groups.values()
+    ]
+  } satisfies ThemeRegistration as ThemeRegistrationRaw as ThemeRegistration
+}
 
 const SHIKI_THEMES = {
-  light: 'github-light',
-  dark: CODEX_CODE_THEME
-} as const
+  light: shikiTheme('light', 'ds-light'),
+  dark: shikiTheme('dark', 'codex')
+}
 
 const DOWNLOAD_EXTENSIONS: Record<string, string> = {
   bash: 'sh',
@@ -205,7 +141,7 @@ function escapeHtml(text: string): string {
 function renderFallbackHtml(code: string): string {
   const lines = code.split('\n')
   return `<pre class="shiki shiki-themes"><code>${lines
-    .map((line) => `<span class="line">${line ? escapeHtml(line) : ' '}</span>`)
+    .map((line) => `<span class="line">${escapeHtml(line)}</span>`)
     .join('\n')}</code></pre>`
 }
 
@@ -451,14 +387,6 @@ export function SharedCodeBlock({
         className="ds-code-block-html"
         dangerouslySetInnerHTML={{ __html: html }}
       />
-      {opts.collapsed ? (
-        <button
-          type="button"
-          className="ds-code-block-fade"
-          aria-label="Expand code"
-          onClick={() => setExpanded(true)}
-        />
-      ) : null}
     </div>
   )
 

@@ -10,7 +10,11 @@ export function languageForPath(path: string): string {
   const named: Record<string, string> = {
     dockerfile: 'dockerfile', containerfile: 'dockerfile',
     '.bashrc': 'shell', '.zshrc': 'shell', '.profile': 'shell',
-    '.gitignore': 'ini', '.gitattributes': 'ini', '.editorconfig': 'ini'
+    '.bash_profile': 'shell', '.bash_login': 'shell', '.zprofile': 'shell',
+    '.zshenv': 'shell', '.bash_aliases': 'shell',
+    '.gitignore': 'ini', '.gitattributes': 'ini', '.editorconfig': 'ini',
+    '.dockerignore': 'ini',
+    gemfile: 'ruby', rakefile: 'ruby', vagrantfile: 'ruby', brewfile: 'ruby'
   }
   const extra: Record<string, string> = {
     java: 'java', c: 'c', h: 'cpp', cc: 'cpp', cpp: 'cpp', cxx: 'cpp', hpp: 'cpp',
@@ -19,8 +23,22 @@ export function languageForPath(path: string): string {
     ps1: 'powershell', bat: 'bat', cmd: 'bat', zsh: 'shell',
     jsonc: 'json', jsonl: 'json', ndjson: 'json', mts: 'typescript', cts: 'typescript',
     pyi: 'python', pyw: 'python', ini: 'ini', cfg: 'ini', properties: 'ini',
-    graphql: 'graphql', gql: 'graphql', proto: 'protobuf', tf: 'hcl', hcl: 'hcl',
-    vue: 'html', svelte: 'html', mdx: 'mdx', rst: 'restructuredtext'
+    graphql: 'graphql', gql: 'graphql', tf: 'hcl', hcl: 'hcl',
+    vue: 'html', svelte: 'html', mdx: 'mdx', rst: 'restructuredtext',
+    // Monaco's language id is `proto`; `protobuf` is only an alias, and an
+    // unknown id makes the editor fall back to plaintext without a word.
+    proto: 'proto',
+    scala: 'scala', sc: 'scala',
+    clj: 'clojure', cljs: 'clojure', cljc: 'clojure', edn: 'clojure',
+    ex: 'elixir', exs: 'elixir',
+    pl: 'perl', pm: 'perl',
+    jl: 'julia',
+    fs: 'fsharp', fsi: 'fsharp', fsx: 'fsharp',
+    sol: 'sol',
+    sv: 'systemverilog', svh: 'systemverilog', v: 'verilog', vh: 'verilog',
+    hbs: 'handlebars',
+    tcl: 'tcl', pas: 'pascal',
+    coffee: 'coffeescript', vb: 'vb'
   }
   const name = fileName.toLowerCase()
   if (named[name]) return named[name]!

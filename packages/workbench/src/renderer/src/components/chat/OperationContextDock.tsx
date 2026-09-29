@@ -398,6 +398,7 @@ export function OperationContextDock({
       <div className="ds-operation-dock-body">
       <div className="ds-operation-dock-status">
       {onEnterIdeMode ? (
+        <div className="ds-operation-dock-status__section">
         <button
           type="button"
           onClick={onEnterIdeMode}
@@ -405,7 +406,7 @@ export function OperationContextDock({
           className="ds-operation-dock-repository group"
         >
           <span className="ds-operation-dock-repository__icon" aria-hidden>
-            <PanelsTopLeft className="h-[17px] w-[17px]" strokeWidth={1.75} />
+            <PanelsTopLeft className="h-[14px] w-[14px]" strokeWidth={1.75} />
           </span>
           <span className="min-w-0 flex-1">
             <span className="ds-operation-dock-repository__name">
@@ -413,6 +414,7 @@ export function OperationContextDock({
             </span>
           </span>
         </button>
+        </div>
       ) : null}
       <div className="ds-operation-dock-status__section">
       <SectionHeader
