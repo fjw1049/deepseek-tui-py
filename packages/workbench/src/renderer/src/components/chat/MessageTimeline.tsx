@@ -418,7 +418,7 @@ export function MessageTimeline({
     pinTimelineToBottom()
   }, [blocks, live, liveReasoning, pinTimelineToBottom])
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     stickToBottomRef.current = scrollMemory?.atBottom ?? true
     pendingPrependRef.current = null
     prependInFlightRef.current = false

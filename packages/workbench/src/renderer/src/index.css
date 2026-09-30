@@ -11408,6 +11408,14 @@ html[data-theme='dark'] .ds-syntax-line span { color: var(--shiki-dark) !importa
   padding-top: 0.2rem;
 }
 
+/* Keep the stage entrance and projects-rail movement on the same curve. */
+.ds-workbench-shell.is-layout-switching :is(.ds-workbench-sidebar-wrap, .ds-workbench-sidebar-slide, .ds-workbench-main),
+.ds-workbench-shell.is-layout-switching .ds-workbench-sidebar-wrap::after,
+.ds-workbench-shell.is-layout-switching .ds-workbench-main::before {
+  transition-duration: 280ms;
+  transition-timing-function: cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
 /* IDE = same floating-card shell as chat (projects rail collapsed).
    Chrome gutters share --bg-sidebar with the chat rail so card corners match. */
 .ds-workbench-shell[data-ide-mode] {

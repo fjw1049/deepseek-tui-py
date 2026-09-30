@@ -103,3 +103,24 @@ it.each(['wheel', 'touchmove', 'keydown'])('respects %s scrolling when an update
   await resize()
   expect(viewport().scrollTop).toBe(20)
 })
+
+it('restores the saved reading position after the timeline is remounted in another layout', async () => {
+  useChatStore.setState({ busy: false, currentTurnUserId: null })
+  turnHeight = 1800
+  const scrollMemory = { top: 260, atBottom: false }
+  const props = {
+    blocks, liveReasoning: '', live: '', activeThreadId: 'scroll-review',
+    runtimeConnection: 'ready' as const, scrollMemory,
+    onRetryConnection: () => {}, onOpenSettings: () => {}, onOpenDiagnostics: () => {}
+  }
+  await act(async () => root.render(createElement(MessageTimeline, props)))
+  expect(viewport().scrollTop).toBe(260)
+  viewport().scrollTop = 440
+  viewport().dispatchEvent(new Event('scroll'))
+  await act(async () => root.unmount())
+  root = createRoot(container)
+  await act(async () => root.render(createElement(MessageTimeline, props)))
+  expect(viewport().scrollTop).toBe(440)
+  await resize()
+  expect(viewport().scrollTop).toBe(440)
+})

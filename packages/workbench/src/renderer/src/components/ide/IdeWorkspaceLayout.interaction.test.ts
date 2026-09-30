@@ -3,6 +3,7 @@ import { act, createElement } from 'react'
 import { createRoot } from 'react-dom/client'
 import { expect, it, vi } from 'vitest'
 import { IdeWorkspaceLayout } from './IdeWorkspaceLayout'
+import { IDE_QUICK_OPEN_EVENT } from '../../lib/workspace-editor-events'
 
 vi.mock('react-i18next', async (importOriginal) => ({ ...await importOriginal<typeof import('react-i18next')>(), useTranslation: () => ({ t: (key: string) => key }) }))
 vi.mock('../../hooks/use-git-working-changes', () => {
@@ -44,11 +45,12 @@ it('keeps file, change and chat contents when switching activities and toggling 
     await act(async () => host.querySelector<HTMLButtonElement>(`[aria-label="${activity}"]`)!.click())
   }
   try {
-    await act(async () => root.render(createElement(IdeWorkspaceLayout, {
+    const props = {
       workspaceRoot: '/workspace', blocks: [],
       chatRail: createElement('textarea', { 'data-chat': '', defaultValue: 'chat draft' }),
       onExitIdeMode: vi.fn(), onOpenFileInEditor: vi.fn()
-    })))
+    }
+    await act(async () => root.render(createElement(IdeWorkspaceLayout, props)))
     const editor = host.querySelector<HTMLTextAreaElement>('[data-editor]')!
     expect(host.querySelector('[data-inspector]')).toBeNull()
     await click('ideActivityChanges')
@@ -87,6 +89,19 @@ it('keeps file, change and chat contents when switching activities and toggling 
     expect(chat.value).toBe('chat draft')
     expect(host.querySelector('[data-editor]')).toBe(editor)
     expect(host.querySelector('[data-inspector="diff"]')).toBe(diff)
+    editor.value = 'unsaved edit after entering IDE'
+    await act(async () => root.render(createElement(IdeWorkspaceLayout, { ...props, active: false })))
+    expect(host.querySelector('.ds-ide-workspace')!.hasAttribute('inert')).toBe(true)
+    expect(list.getAttribute('data-active')).toBe('false')
+    await act(async () => window.dispatchEvent(new Event(IDE_QUICK_OPEN_EVENT)))
+    expect(host.querySelector('[role="dialog"]')).toBeNull()
+    await act(async () => root.render(createElement(IdeWorkspaceLayout, { ...props, active: true })))
+    expect(host.querySelector('.ds-ide-workspace')!.hasAttribute('inert')).toBe(false)
+    expect(list.getAttribute('data-active')).toBe('true')
+    expect(host.querySelector('[data-editor]')).toBe(editor)
+    expect(editor.value).toBe('unsaved edit after entering IDE')
+    expect(host.querySelector('[data-inspector="diff"]')).toBe(diff)
+    expect(diff.scrollTop).toBe(170)
   } finally {
     await act(async () => root.unmount())
     host.remove()

@@ -52,16 +52,19 @@ import { useChatStore } from '../../store/chat-store'
 import { IdeProjectPicker, type IdeProjectOption } from './IdeProjectPicker'
 import { IdeQuickOpenPalette } from './IdeQuickOpenPalette'
 
-const WorkspaceEditorPanel = lazy(() =>
-  import('../workspace-editor/WorkspaceEditorPanel').then((module) => ({
-    default: module.WorkspaceEditorPanel
-  }))
-)
-const ChangeInspector = lazy(() =>
+const loadWorkspaceEditor = () =>
+  import('../workspace-editor/WorkspaceEditorPanel').then((module) => ({ default: module.WorkspaceEditorPanel }))
+const loadChangeInspector = () =>
   import('../ChangeInspector').then((module) => ({ default: module.ChangeInspector }))
-)
+const WorkspaceEditorPanel = lazy(loadWorkspaceEditor)
+const ChangeInspector = lazy(loadChangeInspector)
+
+export function preloadIdeWorkspace(): void {
+  void Promise.all([loadWorkspaceEditor(), loadChangeInspector()]).catch(() => {})
+}
 
 type Props = {
+  active?: boolean
   workspaceRoot: string
   blocks: ChatBlock[]
   /** Display name for the active project (basename); path is shown separately. */
@@ -125,7 +128,12 @@ function persistChangesListWidth(width: number): void {
 }
 
 function PanelFallback(): ReactElement {
-  return <div className="h-full w-full bg-ds-canvas" />
+  const { t } = useTranslation('common')
+  return (
+    <div role="status" className="flex h-full w-full items-center justify-center bg-ds-canvas text-sm text-ds-faint">
+      {t('workspaceTreeLoading')}
+    </div>
+  )
 }
 
 function ActivityButton({
@@ -165,6 +173,7 @@ function ActivityButton({
 }
 
 export function IdeWorkspaceLayout({
+  active = true,
   workspaceRoot,
   blocks,
   projectLabel = null,
@@ -234,6 +243,12 @@ export function IdeWorkspaceLayout({
     void reloadGitChanges()
   }, [reloadGitBranches, reloadGitChanges])
   useWorkspaceDirtyGitRefresh(workspaceDirtyTick, refreshGitChanges)
+  const wasActive = useRef(active)
+  useEffect(() => {
+    const reactivated = active && !wasActive.current
+    wasActive.current = active
+    if (reactivated) refreshGitChanges()
+  }, [active, refreshGitChanges])
   const gitFiles = gitChanges?.ok ? gitChanges.files : null
   const changeBadge = useMemo(
     () => collectWorkspaceChangeEntries({ blocks, gitFiles }).length,
@@ -249,7 +264,7 @@ export function IdeWorkspaceLayout({
   }, [activitySidebarVisible])
 
   useEffect(() => {
-    if (!requestedCenterTab) return
+    if (!active || !requestedCenterTab) return
     if (requestedCenterTab === 'search') {
       setQuickOpenOpen(true)
       onRequestedCenterTabConsumed?.()
@@ -259,9 +274,13 @@ export function IdeWorkspaceLayout({
     setActivitySidebarVisible(true)
     if (requestedCenterTab === 'changes') setChangesDiffVisible(true)
     onRequestedCenterTabConsumed?.()
-  }, [onRequestedCenterTabConsumed, requestedCenterTab])
+  }, [active, onRequestedCenterTabConsumed, requestedCenterTab])
 
   useEffect(() => {
+    if (!active) {
+      setQuickOpenOpen(false)
+      return
+    }
     const onOpenChanges = (event: Event): void => {
       const path = (event as CustomEvent<{ path?: string }>).detail?.path
       if (typeof path === 'string' && path.trim()) setChangesFocusPath(path.trim())
@@ -274,7 +293,7 @@ export function IdeWorkspaceLayout({
       window.removeEventListener('deepseekgui:open-changes-panel', onOpenChanges)
       window.removeEventListener(IDE_QUICK_OPEN_EVENT, onQuickOpen)
     }
-  }, [])
+  }, [active])
 
   const selectActivity = useCallback(
     (item: IdeCenterTab) => {
@@ -424,7 +443,11 @@ export function IdeWorkspaceLayout({
   const showProjectPicker = Boolean(onSelectProject)
 
   return (
-    <div className="ds-ide-workspace relative flex h-full min-h-0 min-w-0 flex-1 flex-col bg-ds-canvas text-ds-ink">
+    <div
+      className="ds-ide-workspace relative flex h-full min-h-0 min-w-0 flex-1 flex-col bg-ds-canvas text-ds-ink"
+      aria-hidden={!active}
+      inert={!active}
+    >
       <header className="ds-workbench-topbar ds-window-drag-region ds-surface-divider relative z-10 shrink-0">
         <div className="ds-ide-topbar__inner">
           <div className="ds-ide-topbar__leading min-w-0">
@@ -520,7 +543,7 @@ export function IdeWorkspaceLayout({
                 <Suspense fallback={<PanelFallback />}>
                   <ChangeInspector
                     variant="list"
-                    active={centerTab === 'changes' && !terminalMaximized}
+                    active={active && centerTab === 'changes' && !terminalMaximized}
                     context={changesContext}
                     turnId={changesTurnId}
                     projectRootOverride={changesProjectRoot}
@@ -648,7 +671,7 @@ export function IdeWorkspaceLayout({
             </aside>
         </div>
       </div>
-      {quickOpenOpen ? (
+      {active && quickOpenOpen ? (
         <IdeQuickOpenPalette
           workspaceRoot={workspaceRoot}
           onSelectFile={handleQuickOpenFile}

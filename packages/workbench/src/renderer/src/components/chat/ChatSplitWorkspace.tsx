@@ -333,14 +333,29 @@ export function ChatSplitDropZone({ children, canAdd }: { children: ReactNode; c
       window.removeEventListener('blur', clear); window.removeEventListener('keydown', onKey)
     }
   }, [update, clear])
-  return <div ref={root} className="ds-chat-split-dropzone ds-no-drag" onDragOver={event => {
-    if (!event.dataTransfer.types.includes(CHAT_THREAD_DRAG_MIME)) return
-    event.preventDefault()
-  }} onDrop={event => {
-    const id = event.dataTransfer.getData(CHAT_THREAD_DRAG_MIME)
-    if (!id) return
-    event.preventDefault(); finishChatSplitDrag(id, event.clientX, event.clientY); clear()
-  }}>
+  // Native listeners also receive drags from a conversation rendered through
+  // a portal: React events follow the portal owner rather than this DOM parent.
+  useEffect(() => {
+    const element = root.current
+    if (!element) return
+    const onDragOver = (event: DragEvent): void => {
+      if (event.dataTransfer?.types.includes(CHAT_THREAD_DRAG_MIME)) event.preventDefault()
+    }
+    const onDrop = (event: DragEvent): void => {
+      const id = event.dataTransfer?.getData(CHAT_THREAD_DRAG_MIME)
+      if (!id) return
+      event.preventDefault()
+      finishChatSplitDrag(id, event.clientX, event.clientY)
+      clear()
+    }
+    element.addEventListener('dragover', onDragOver)
+    element.addEventListener('drop', onDrop)
+    return () => {
+      element.removeEventListener('dragover', onDragOver)
+      element.removeEventListener('drop', onDrop)
+    }
+  }, [clear])
+  return <div ref={root} className="ds-chat-split-dropzone ds-no-drag">
     {children}
     {drag?.inside && drag.canAdd ? (['left', 'right'] as const).map(position => <div key={position}
       data-chat-drop={position} className={`ds-chat-split-drop ds-chat-split-drop--${position} ${side === position ? 'is-active' : ''}`}>

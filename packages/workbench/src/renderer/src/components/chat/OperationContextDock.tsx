@@ -1,3 +1,4 @@
+import { preloadIdeWorkspace } from '../ide/IdeWorkspaceLayout'
 import {
   useCallback,
   useMemo,
@@ -402,6 +403,8 @@ export function OperationContextDock({
         <button
           type="button"
           onClick={onEnterIdeMode}
+          onPointerEnter={preloadIdeWorkspace}
+          onFocus={preloadIdeWorkspace}
           title={t('operationDockEditView')}
           className="ds-operation-dock-repository group"
         >

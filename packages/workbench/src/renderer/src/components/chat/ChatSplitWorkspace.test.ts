@@ -1,5 +1,6 @@
 // @vitest-environment happy-dom
-import { act, createElement } from 'react'
+import { act, createElement, Fragment } from 'react'
+import { createPortal } from 'react-dom'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import type { ComponentProps } from 'react'
@@ -20,7 +21,7 @@ import { ChatSplitDropZone, ChatSplitWorkspace } from './ChatSplitWorkspace'
 import { ChatSplitToolbar } from './ChatSplitToolbar'
 import { OperationContextDock } from './OperationContextDock'
 import { useChatStore } from '../../store/chat-store'
-import { resolveChatLayoutKey, useChatLayoutStore } from '../../store/chat-layout-store'
+import { CHAT_THREAD_DRAG_MIME, resolveChatLayoutKey, useChatLayoutStore } from '../../store/chat-layout-store'
 import { CHAT_SPLIT_DRAG_EVENT, finishChatSplitDrag, openThreadInSplit } from '../../lib/chat-split-navigation'
 import { disposeChatPaneSessions, getChatPaneSession, peekChatPaneSession, syncChatPaneCatalog } from '../../store/chat-pane-sessions'
 
@@ -503,4 +504,32 @@ it('keeps exactly one bookmark before the active title across repeated tab switc
     expect(container.querySelectorAll('.ds-chat-split-tab-group:not([data-active]) .lucide-bookmark')).toHaveLength(0)
     expect(active.querySelector('[aria-label="sessionInfoHint"]')!.compareDocumentPosition(tabs[index]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   }
+})
+
+it('accepts a task dropped over conversation content whose portal owner is outside the drop zone', async () => {
+  const host = document.createElement('div')
+  await act(async () => root.render(createElement(Fragment, null,
+    createElement(ChatSplitDropZone, { canAdd: true, children: createElement('div', {
+      ref: (slot: HTMLDivElement | null) => { if (slot) slot.appendChild(host) }
+    }, createElement(Harness)) }),
+    createPortal(createElement('span', { 'data-portal-conversation': '' }, 'Conversation'), host)
+  )))
+  const target = container.querySelectorAll<HTMLElement>('[data-chat-pane]')[1]
+  vi.spyOn(document, 'elementFromPoint').mockReturnValue(target)
+  const content = container.querySelector('[data-portal-conversation]')!
+  const drag = (type: string): Event => {
+    const event = new Event(type, { bubbles: true, cancelable: true })
+    Object.defineProperties(event, {
+      dataTransfer: { value: { types: [CHAT_THREAD_DRAG_MIME], getData: () => 'g' } },
+      clientX: { value: 700 }, clientY: { value: 200 }
+    })
+    return event
+  }
+  const over = drag('dragover')
+  await act(async () => content.dispatchEvent(over))
+  expect(over.defaultPrevented).toBe(true)
+  const drop = drag('drop')
+  await act(async () => content.dispatchEvent(drop))
+  expect(drop.defaultPrevented).toBe(true)
+  expect(useChatLayoutStore.getState().layouts['/repo'].panes.map(p => p.threadId)).toEqual(['a', 'g', 'c', 'd'])
 })

@@ -15,11 +15,13 @@ import type {
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
   useSyncExternalStore
 } from 'react'
+import { createPortal, flushSync } from 'react-dom'
 import { useTranslation } from 'react-i18next'
 import { useShallow } from 'zustand/react/shallow'
 import type { ChatBlock } from '../agent/types'
@@ -375,6 +377,27 @@ export function Workbench(): ReactElement {
   const [runtimeDiagnosticsOpen, setRuntimeDiagnosticsOpen] = useState(false)
   const [chatColumnHidden, setChatColumnHidden] = useState(false)
   const [layoutMode, setLayoutMode] = useState<WorkbenchLayoutMode>('chat')
+  const [ideVisited, setIdeVisited] = useState(false)
+  const layoutAnimationRef = useRef<Animation | null>(null)
+  const layoutScrollRef = useRef<number | null>(null)
+  // Move the same conversation into either layout without remounting messages
+  // or the composer. Portal containers stay stable; only their slots change.
+  const [timelineHost] = useState(() => {
+    const host = document.createElement('div')
+    host.className = 'ds-shared-timeline flex min-h-0 min-w-0 w-full flex-1 flex-col'
+    return host
+  })
+  const [composerHost] = useState(() => {
+    const host = document.createElement('div')
+    host.className = 'ds-shared-composer flex min-w-0 w-full flex-col'
+    return host
+  })
+  const attachTimeline = useCallback((slot: HTMLDivElement | null): void => {
+    if (slot && timelineHost.parentNode !== slot) slot.appendChild(timelineHost)
+  }, [timelineHost])
+  const attachComposer = useCallback((slot: HTMLDivElement | null): void => {
+    if (slot && composerHost.parentNode !== slot) slot.appendChild(composerHost)
+  }, [composerHost])
   const [requestedIdeCenterTab, setRequestedIdeCenterTab] = useState<IdeCenterTab | null>(null)
   const [changesFocusPath, setChangesFocusPath] = useState<string | null>(null)
   const [changesContext, setChangesContext] =
@@ -552,6 +575,9 @@ export function Workbench(): ReactElement {
     blocks.length === 0 &&
     !liveAssistant &&
     !liveReasoning
+  const sharedConversationVisible = route === 'chat' && (
+    ideModeActive ? !bottomTerminalOpen : !splitActive && !chatColumnHidden
+  )
   // IDE mode is editor-first: hide the projects/threads rail entirely (Synara
   // Editor view does the same). Keep the user's chat-mode collapse preference
   // in `leftSidebarCollapsed` so exiting IDE restores it.
@@ -671,22 +697,62 @@ export function Workbench(): ReactElement {
     [activeWorkspaceRoot, layoutMode, openInAppEditorSurface, setError, t, threadFilesystemRoot]
   )
 
+  useLayoutEffect(() => {
+    const viewport = timelineHost.querySelector<HTMLElement>('.ds-scroll-surface')
+    if (viewport && layoutScrollRef.current !== null) viewport.scrollTop = layoutScrollRef.current
+    layoutScrollRef.current = null
+  }, [layoutMode, timelineHost])
+
+  const switchLayoutMode = useCallback((next: WorkbenchLayoutMode): void => {
+    const apply = (): void => {
+      layoutScrollRef.current = timelineHost.querySelector<HTMLElement>('.ds-scroll-surface')?.scrollTop ?? null
+      if (next === 'ide') {
+        setChatColumnHidden(false)
+        setIdeVisited(true)
+      }
+      setLayoutMode(next)
+      persistLayoutMode(next)
+    }
+    const shell = shellRef.current
+    const main = shell?.querySelector<HTMLElement>('.ds-workbench-main')
+    const previous = layoutAnimationRef.current
+    const currentStyle = previous && main ? getComputedStyle(main) : null
+    const from = {
+      opacity: currentStyle?.opacity ?? '0.65',
+      transform: currentStyle?.transform ?? 'translateY(4px)'
+    }
+    layoutAnimationRef.current = null
+    previous?.cancel()
+    shell?.classList.remove('is-layout-switching')
+    const animate = main && typeof main.animate === 'function' &&
+      !window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    if (animate) shell?.classList.add('is-layout-switching')
+    flushSync(apply)
+    if (!animate || !main) return
+    const animation = main.animate([from, { opacity: '1', transform: 'none' }], {
+      duration: 280, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)'
+    })
+    layoutAnimationRef.current = animation
+    void animation.finished.finally(() => {
+      if (layoutAnimationRef.current !== animation) return
+      shell?.classList.remove('is-layout-switching')
+      layoutAnimationRef.current = null
+    }).catch(() => {})
+  }, [timelineHost])
+
+  useEffect(() => () => layoutAnimationRef.current?.cancel(), [])
+
   const enterIdeMode = useCallback((): void => {
     if (!activeWorkspaceRoot.trim()) {
       setError(t('ideNeedsWorkspace'))
       return
     }
-    // IDE mode owns the center stage; clear chat-mode maximize so the two
-    // layout systems never fight over chatColumnHidden.
-    setChatColumnHidden(false)
-    setLayoutMode('ide')
-    persistLayoutMode('ide')
-  }, [activeWorkspaceRoot, setError, t])
+    switchLayoutMode('ide')
+  }, [activeWorkspaceRoot, setError, switchLayoutMode, t])
 
   const exitIdeMode = useCallback((): void => {
-    setLayoutMode('chat')
-    persistLayoutMode('chat')
-  }, [])
+    switchLayoutMode('chat')
+  }, [switchLayoutMode])
 
   useEffect(() => {
     if (runTarget?.threadId !== useChatStore.getState().activeThreadId) return
@@ -1643,9 +1709,16 @@ export function Workbench(): ReactElement {
           <>
 
 
-        {ideModeActive ? (
-          <div ref={mainRowRef} className="flex min-h-0 min-w-0 flex-1 flex-col">
+        {ideVisited ? (
+          <div
+            ref={ideModeActive ? mainRowRef : undefined}
+            className="min-h-0 min-w-0 flex-1 flex-col"
+            style={{ display: ideModeActive ? 'flex' : 'none' }}
+            aria-hidden={!ideModeActive}
+            inert={!ideModeActive}
+          >
             <IdeWorkspaceLayout
+              active={ideModeActive}
               workspaceRoot={activeWorkspaceRoot}
               blocks={blocks}
               projectLabel={workspaceLabelFromPath(activeWorkspaceRoot)}
@@ -1670,7 +1743,7 @@ export function Workbench(): ReactElement {
               requestedCenterTab={requestedIdeCenterTab}
               onRequestedCenterTabConsumed={() => setRequestedIdeCenterTab(null)}
               terminalMaximized={bottomTerminalOpen && ideTerminalMaximized}
-              chatRail={
+              chatRail={ideModeActive ? (
                 <div className="flex h-full min-h-0 min-w-0 flex-col">
                   <IdeChatRailHeader
                     terminalOpen={bottomTerminalOpen}
@@ -1718,64 +1791,19 @@ export function Workbench(): ReactElement {
                         <SimpleEmptyPrompt />
                       </div>
                     ) : (
-                      <MessageTimeline
-                        scrollMemory={peekChatPaneSession(activeThreadId)?.scroll}
-                        blocks={blocks}
-                        liveReasoning={liveReasoning}
-                        live={liveAssistant}
-                        activeThreadId={activeThreadId}
-                        runtimeConnection={runtimeConnection}
-                        stageCentered={false}
-                        useChatStageWidth={false}
-                        forceSimpleEmptyHome
-                        onRetryConnection={() => void probeRuntime('user')}
-                        onOpenSettings={() => openSettings('general')}
-                        onOpenDiagnostics={() => setRuntimeDiagnosticsOpen(true)}
-                        onSelectSuggestion={(text) => setInput(text)}
-                        htmlPreviewAction={htmlPreviewAction}
-                        onOpenWorkspaceFile={openFileInEditor}
-                      />
+                      <div ref={attachTimeline} className="flex min-h-0 min-w-0 w-full flex-1 flex-col" />
                     )}
                     <div className="mx-auto -mt-6 flex w-full shrink-0 px-[0.95rem] pl-[1.15rem] pb-3 pt-0">
-                      <ComposerStage
-                        sessionKey={activeThreadId ?? undefined}
-                        input={input}
-                        setInput={setInput}
-                        mode={mode}
-                        setMode={setMode}
-                        busy={busy}
-                        runtimeReady={runtimeConnection === 'ready'}
-                        hasActiveThread={Boolean(activeThreadId)}
-                        useChatStageWidth={false}
-                        composerModel={composerModel}
-                        composerPickList={composerPickList}
-                        onComposerModelChange={(modelId) => {
-                          setComposerModel(modelId)
-                        }}
-                        onSend={handleSend}
-                        onCompact={compactActiveThread}
-                        onFork={handleComposerFork}
-                        onOpenDiff={handleComposerOpenDiff}
-                        queuedMessages={queuedMessages}
-                        onRemoveQueuedMessage={removeQueuedMessage}
-                        onWithdrawQueuedMessage={withdrawQueuedMessage}
-                        onSendQueuedMessageNow={(id) => void sendQueuedMessageNow(id)}
-                        onInterrupt={() => void interrupt()}
-                        focusRequestId={composerFocusRequestId}
-                        previewPicks={pendingPreviewPicks}
-                        onRemovePreviewPick={removePendingPreviewPick}
-                        onClearPreviewPicks={clearPendingPreviewPicks}
-                        flashNotice={previewPickNotice}
-                        flashNoticeNonce={previewPickNoticeNonce}
-                      />
+                      <div ref={attachComposer} className="flex min-w-0 w-full flex-col" />
                     </div>
                   </div>
                   )}
                 </div>
-              }
+              ) : null}
             />
           </div>
-        ) : (
+        ) : null}
+        {!ideModeActive ? (
         <div ref={mainRowRef} className="flex min-h-0 flex-1">
           <div className={`min-h-0 min-w-0 flex-1 flex-col ${chatColumnHidden ? 'hidden' : 'flex'}`}>
           <section className="ds-drag flex min-h-0 min-w-0 flex-1 flex-col">
@@ -1841,22 +1869,7 @@ export function Workbench(): ReactElement {
                         className="ds-chat-stage ds-empty-stage-hero"
                         aria-hidden={simpleEmptyHome}
                       >
-                        <MessageTimeline
-                        scrollMemory={peekChatPaneSession(activeThreadId)?.scroll}
-                          blocks={blocks}
-                          liveReasoning={liveReasoning}
-                          live={liveAssistant}
-                          activeThreadId={activeThreadId}
-                          runtimeConnection={runtimeConnection}
-                          stageCentered={stageCentered}
-                          useChatStageWidth={false}
-                          onRetryConnection={() => void probeRuntime('user')}
-                          onOpenSettings={() => openSettings('general')}
-                          onOpenDiagnostics={() => setRuntimeDiagnosticsOpen(true)}
-                          onSelectSuggestion={(text) => setInput(text)}
-                          htmlPreviewAction={htmlPreviewAction}
-                          onOpenWorkspaceFile={openFileInEditor}
-                        />
+                        <div ref={attachTimeline} className="flex min-h-0 min-w-0 w-full flex-1 flex-col" />
                       </div>
 
                       <div
@@ -1869,38 +1882,7 @@ export function Workbench(): ReactElement {
 
                     {/* Composer — stable position, never remounts across toggle */}
                     <div className="ds-chat-stage ds-empty-stage-composer shrink-0">
-                      <ComposerStage
-                        sessionKey={activeThreadId ?? undefined}
-                        input={input}
-                        setInput={setInput}
-                        mode={mode}
-                        setMode={setMode}
-                        busy={busy}
-                        runtimeReady={runtimeConnection === 'ready'}
-                        hasActiveThread={Boolean(activeThreadId)}
-                        stageCentered={stageCentered}
-                        useChatStageWidth={false}
-                        composerModel={composerModel}
-                        composerPickList={composerPickList}
-                        onComposerModelChange={(modelId) => {
-                          setComposerModel(modelId)
-                        }}
-                        onSend={handleSend}
-                        onCompact={compactActiveThread}
-                        onFork={handleComposerFork}
-                        onOpenDiff={handleComposerOpenDiff}
-                        queuedMessages={queuedMessages}
-                        onRemoveQueuedMessage={removeQueuedMessage}
-                        onWithdrawQueuedMessage={withdrawQueuedMessage}
-                        onSendQueuedMessageNow={(id) => void sendQueuedMessageNow(id)}
-                        onInterrupt={() => void interrupt()}
-                        focusRequestId={composerFocusRequestId}
-                        previewPicks={pendingPreviewPicks}
-                        onRemovePreviewPick={removePendingPreviewPick}
-                        onClearPreviewPicks={clearPendingPreviewPicks}
-                        flashNotice={previewPickNotice}
-                        flashNoticeNonce={previewPickNoticeNonce}
-                      />
+                      <div ref={attachComposer} className="flex min-w-0 w-full flex-col" />
                     </div>
                   </div>
                 </div>
@@ -1909,22 +1891,7 @@ export function Workbench(): ReactElement {
                   <div className={operationColumnActive
                     ? 'ds-chat-operation-band__dialogue ds-dialogue-gutter flex min-h-0 min-w-0 flex-1 flex-col'
                     : 'ds-chat-stage ds-dialogue-gutter mx-auto flex min-h-0 w-full min-w-0 flex-1 flex-col'}>
-                    <MessageTimeline
-                        scrollMemory={peekChatPaneSession(activeThreadId)?.scroll}
-                      blocks={blocks}
-                      liveReasoning={liveReasoning}
-                      live={liveAssistant}
-                      activeThreadId={activeThreadId}
-                      runtimeConnection={runtimeConnection}
-                      stageCentered={stageCentered}
-                      withOperationColumn={operationColumnActive}
-                      onRetryConnection={() => void probeRuntime('user')}
-                      onOpenSettings={() => openSettings('general')}
-                      onOpenDiagnostics={() => setRuntimeDiagnosticsOpen(true)}
-                      onSelectSuggestion={(text) => setInput(text)}
-                      htmlPreviewAction={htmlPreviewAction}
-                      onOpenWorkspaceFile={openFileInEditor}
-                    />
+                    <div ref={attachTimeline} className="flex min-h-0 min-w-0 w-full flex-1 flex-col" />
                     {operationColumnActive ? (
                       <div className="ds-dialogue-gutter shrink-0 pb-2 md:hidden">
                         <OperationContextDock
@@ -1939,37 +1906,7 @@ export function Workbench(): ReactElement {
                       </div>
                     ) : null}
                     <div key="composer" className={`${operationColumnActive ? 'ds-chat-stage ' : ''}mx-auto mb-8 flex w-full shrink-0 -mt-6 pb-0 pt-0`}>
-                      <ComposerStage
-                        sessionKey={activeThreadId ?? undefined}
-                        input={input}
-                        setInput={setInput}
-                        mode={mode}
-                        setMode={setMode}
-                        busy={busy}
-                        runtimeReady={runtimeConnection === 'ready'}
-                        hasActiveThread={Boolean(activeThreadId)}
-                        useChatStageWidth={false}
-                        composerModel={composerModel}
-                        composerPickList={composerPickList}
-                        onComposerModelChange={(modelId) => {
-                          setComposerModel(modelId)
-                        }}
-                        onSend={handleSend}
-                        onCompact={compactActiveThread}
-                        onFork={handleComposerFork}
-                        onOpenDiff={handleComposerOpenDiff}
-                        queuedMessages={queuedMessages}
-                        onRemoveQueuedMessage={removeQueuedMessage}
-                        onWithdrawQueuedMessage={withdrawQueuedMessage}
-                        onSendQueuedMessageNow={(id) => void sendQueuedMessageNow(id)}
-                        onInterrupt={() => void interrupt()}
-                        focusRequestId={composerFocusRequestId}
-                        previewPicks={pendingPreviewPicks}
-                        onRemovePreviewPick={removePendingPreviewPick}
-                        onClearPreviewPicks={clearPendingPreviewPicks}
-                        flashNotice={previewPickNotice}
-                        flashNoticeNonce={previewPickNoticeNonce}
-                      />
+                      <div ref={attachComposer} className="flex min-w-0 w-full flex-col" />
                     </div>
                   </div>
                   {operationColumnActive ? (
@@ -2071,9 +2008,65 @@ export function Workbench(): ReactElement {
             terminalMountActive={!bottomTerminalOpen}
           />
         </div>
-        )}
+        ) : null}
           </>
         )}
+      {sharedConversationVisible ? createPortal(
+        <MessageTimeline
+          scrollMemory={peekChatPaneSession(activeThreadId)?.scroll}
+          blocks={blocks}
+          liveReasoning={liveReasoning}
+          live={liveAssistant}
+          activeThreadId={activeThreadId}
+          runtimeConnection={runtimeConnection}
+          stageCentered={!ideModeActive && stageCentered}
+          useChatStageWidth={!ideModeActive && !stageCentered}
+          withOperationColumn={!ideModeActive && !stageCentered && operationColumnActive}
+          forceSimpleEmptyHome={ideModeActive}
+          onRetryConnection={() => void probeRuntime('user')}
+          onOpenSettings={() => openSettings('general')}
+          onOpenDiagnostics={() => setRuntimeDiagnosticsOpen(true)}
+          onSelectSuggestion={(text) => setInput(text)}
+          htmlPreviewAction={htmlPreviewAction}
+          onOpenWorkspaceFile={openFileInEditor}
+        />,
+        timelineHost,
+        'workbench-timeline'
+      ) : null}
+      {sharedConversationVisible ? createPortal(
+        <ComposerStage
+          sessionKey={activeThreadId ?? undefined}
+          input={input}
+          setInput={setInput}
+          mode={mode}
+          setMode={setMode}
+          busy={busy}
+          runtimeReady={runtimeConnection === 'ready'}
+          hasActiveThread={Boolean(activeThreadId)}
+          stageCentered={!ideModeActive && stageCentered}
+          useChatStageWidth={false}
+          composerModel={composerModel}
+          composerPickList={composerPickList}
+          onComposerModelChange={setComposerModel}
+          onSend={handleSend}
+          onCompact={compactActiveThread}
+          onFork={handleComposerFork}
+          onOpenDiff={handleComposerOpenDiff}
+          queuedMessages={queuedMessages}
+          onRemoveQueuedMessage={removeQueuedMessage}
+          onWithdrawQueuedMessage={withdrawQueuedMessage}
+          onSendQueuedMessageNow={(id) => void sendQueuedMessageNow(id)}
+          onInterrupt={() => void interrupt()}
+          focusRequestId={composerFocusRequestId}
+          previewPicks={pendingPreviewPicks}
+          onRemovePreviewPick={removePendingPreviewPick}
+          onClearPreviewPicks={clearPendingPreviewPicks}
+          flashNotice={previewPickNotice}
+          flashNoticeNonce={previewPickNoticeNonce}
+        />,
+        composerHost,
+        'workbench-composer'
+      ) : null}
       </main>
       <RuntimeDiagnosticsDialog
         open={runtimeDiagnosticsOpen}
