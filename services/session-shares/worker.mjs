@@ -19,6 +19,7 @@ async function allowance(env, key, limit, now) {
 async function cleanup(env, now) {
   const expired = await query(env, 'SELECT token FROM shares WHERE expires_at <= ? LIMIT 100', now).all()
   for (const {token} of expired.results) {
+    await env.BUCKET.delete(token)
     await query(env, 'DELETE FROM shares WHERE token = ? AND expires_at <= ?', token, now).run()
   }
   await query(env, 'DELETE FROM quotas WHERE expires_at <= ?', now).run()
@@ -58,7 +59,7 @@ export default {
     try {
       if (request.method === 'GET' && url.pathname === '/health') {
         await query(env, 'SELECT count(*) AS count FROM shares').first()
-        await env.SHARES.list({limit:1})
+        await env.BUCKET.list({limit:1})
         return json({ok:true, protocol:1, max_bytes:MAX_BYTES})
       }
       if (request.method === 'GET' && url.pathname === '/') return page('<h1>让对话接着进行</h1><p>在 DeepSeek Workbench 的会话右上角点击「分享」，复制链接。</p><p>换一台电脑打开链接，再点击「在应用中继续」。</p><p class="hint">拿到完整链接的人可以查看。默认 7 天后失效，也可由分享者提前撤销。</p>')
@@ -69,9 +70,9 @@ export default {
         await allowance(env, `ip:${day}:${await hash(ip)}`, 30, now)
         const {data, days} = await body(request)
         const token = random(), deletion = random(), expires = now + days * 86400
-        await env.SHARES.put(token, data, {expiration:expires})
+        await env.BUCKET.put(token, data)
         try { await query(env,'INSERT INTO shares (token,delete_hash,expires_at) VALUES (?,?,?)',token,await hash(deletion),expires).run() }
-        catch (error) { await env.SHARES.delete(token); throw error }
+        catch (error) { await env.BUCKET.delete(token); throw error }
         ctx.waitUntil(cleanup(env, now).catch(error => console.error('share cleanup failed', error.message)))
         return json({token, delete_key:deletion, expires_at:new Date(expires*1000).toISOString()},201)
       }
@@ -88,15 +89,15 @@ export default {
       if (request.method === 'DELETE' && route === 'v1/shares') {
         const key = request.headers.get('Authorization')?.replace(/^Bearer /,'') || ''
         if (!TOKEN.test(key) || await hash(key) !== row.delete_hash) fail(403,'只有分享者可以撤销链接')
-        await env.SHARES.delete(token)
+        await env.BUCKET.delete(token)
         await query(env,'DELETE FROM shares WHERE token = ?',token).run()
         return new Response(null,{status:204,headers})
       }
       if (request.method !== 'GET') fail(405, '不支持此操作')
-      const object = await env.SHARES.get(token, 'arrayBuffer')
+      const object = await env.BUCKET.get(token)
       if (!object) fail(503,'分享内容正在同步，请稍后重试')
-      if (route === 'v1/shares') return new Response(object,{headers:{...headers,'Content-Type':'application/json'}})
-      const {snapshot:s} = JSON.parse(new TextDecoder().decode(object))
+      if (route === 'v1/shares') return new Response(object.body,{headers:{...headers,'Content-Type':'application/json'}})
+      const {snapshot:s} = await object.json()
       const link = 'deepseek-gui://share?url=' + encodeURIComponent(url.origin + url.pathname)
       const messages = s.items.filter(i => ['user_message','agent_message'].includes(i.kind)).map(i => `<article><b>${i.kind === 'user_message' ? '你' : 'AI'}</b><div class="message">${escape(i.detail || i.summary || '')}</div></article>`).join('')
       const images = Object.values(s.media || {}).filter(v => typeof v === 'string' && /^[A-Za-z0-9+/=]+$/.test(v)).map(v => `<img alt="对话附件" src="data:image/png;base64,${v}">`).join('')

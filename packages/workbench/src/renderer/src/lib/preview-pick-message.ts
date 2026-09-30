@@ -157,7 +157,8 @@ export function parsePreviewPickWireMessage(text: string): ParsedPreviewPickWire
       .filter((item): item is PreviewElementPick => item != null)
     if (picks.length === 0) return null
 
-    const reqIdx = trimmed.lastIndexOf(USER_REQUEST_MARKER)
+    const reqIdx = trimmed.indexOf(USER_REQUEST_MARKER, jsonMatch.index + jsonMatch[0].length)
+    if (reqIdx < 0) return null
     const rawRequest = trimmed.slice(reqIdx + USER_REQUEST_MARKER.length).replace(/^\n/, '').trim()
     const userRequest = rawRequest === EMPTY_REQUEST_FALLBACK ? '' : rawRequest
 

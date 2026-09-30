@@ -54,7 +54,7 @@ import {
 import { readAsrConfigFile, writeAsrConfigFile } from './asr-config'
 import { readWebSearchConfigFile, writeWebSearchConfigFile } from './web-search-config'
 import type { StartupPhase, StartupPhasePayload } from '../shared/ds-gui-api'
-import { isBrowsableUrl } from '../shared/dev-preview-url'
+import { installDevPreviewWebviewGuards } from './services/dev-browser-guards'
 import { fetchBuiltinProviderModelIds, fetchUpstreamModelIds } from './upstream-models'
 import {
   deepseekTuiConfigChanged,
@@ -134,44 +134,6 @@ function resolvePreloadPath(): string {
   const cjsPath = join(mainDir, '../preload/index.cjs')
   if (existsSync(cjsPath)) return cjsPath
   return join(mainDir, '../preload/index.mjs')
-}
-
-function installDevPreviewWebviewGuards(): void {
-  app.on('web-contents-created', (_, contents) => {
-    contents.on('will-attach-webview', (event, webPreferences, params) => {
-      const src = typeof params.src === 'string' ? params.src : ''
-      // Address bar + in-page navigation may open public https; auto-follow
-      // stays local-only in the renderer.
-      if (!isBrowsableUrl(src)) {
-        event.preventDefault()
-        return
-      }
-
-      delete webPreferences.preload
-      delete (webPreferences as { preloadURL?: string }).preloadURL
-      webPreferences.nodeIntegration = false
-      webPreferences.contextIsolation = true
-      webPreferences.sandbox = true
-      webPreferences.webSecurity = true
-      webPreferences.allowRunningInsecureContent = false
-    })
-
-    contents.on('will-navigate', (event, navigationUrl) => {
-      if (contents.getType() !== 'webview') return
-      if (!isBrowsableUrl(navigationUrl)) event.preventDefault()
-    })
-
-    contents.setWindowOpenHandler(({ url }) => {
-      if (contents.getType() !== 'webview') return { action: 'allow' }
-      // Never pop a bare native window for webview guests (target=_blank):
-      // navigate the same guest instead, so the back button works exactly
-      // like a normal browser tab.
-      if (isBrowsableUrl(url)) {
-        void contents.loadURL(url)
-      }
-      return { action: 'deny' }
-    })
-  })
 }
 
 function installDevBrowserDownloadHandler(): void {

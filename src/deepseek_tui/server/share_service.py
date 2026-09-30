@@ -61,6 +61,10 @@ def create_app(*, storage: Path | None = None, upload_key: str | None = None) ->
             raise HTTPException(404, "Share not found")
         return root / f"{token}.json"
 
+    @app.get("/health")
+    async def health():
+        return {"ok": True, "protocol": 1, "max_bytes": MAX_SNAPSHOT_BYTES}
+
     @app.post("/v1/shares", status_code=201)
     async def create(request: Request):
         authorize(request)

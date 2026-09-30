@@ -1,5 +1,3 @@
-import type { TFunction } from 'i18next'
-
 const SCREENSHOT_ERROR_I18N_KEYS: Record<string, string> = {
   'Main window unavailable.': 'browserScreenshotFailed',
   'Screenshot request came from an unexpected window.': 'browserScreenshotFailed',
@@ -15,7 +13,7 @@ const SCREENSHOT_ERROR_I18N_KEYS: Record<string, string> = {
 
 export function localizeDevBrowserScreenshotError(
   message: string | undefined,
-  t: TFunction<'common'>
+  t: (key: string) => string
 ): string {
   const trimmed = message?.trim()
   if (!trimmed) return t('browserScreenshotFailed')

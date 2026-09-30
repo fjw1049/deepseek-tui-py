@@ -28,6 +28,7 @@ export type PreviewPickWireMessage =
   | { type: 'cancel' }
 
 export function parsePreviewPickConsoleMessage(message: string): PreviewPickWireMessage | null {
+  if (message.length > 16_384) return null
   const trimmed = message.trim()
   if (!trimmed.startsWith(PREVIEW_PICK_CONSOLE_PREFIX)) return null
   const raw = trimmed.slice(PREVIEW_PICK_CONSOLE_PREFIX.length)
@@ -75,9 +76,11 @@ function sanitizePickPayload(raw: PreviewElementPickPayload): PreviewElementPick
   if (!selector || !tagName) return null
   const classes = Array.isArray(raw.classes)
     ? raw.classes.filter((item): item is string => typeof item === 'string').slice(0, 8)
+        .map((item) => item.slice(0, 128))
     : []
   const ancestry = Array.isArray(raw.ancestry)
     ? raw.ancestry.filter((item): item is string => typeof item === 'string').slice(0, PREVIEW_PICK_ANCESTRY_MAX)
+        .map((item) => item.slice(0, 500))
     : []
   const id = asString(raw.id).trim() || undefined
   return {
@@ -97,11 +100,13 @@ export function buildPreviewPickerCleanupScript(): string {
   // Flip the arm flag first so any orphaned capture listeners become no-ops
   // even if dispose() is missing / fails (host tracking can get out of sync).
   try { window.__dsPreviewPickActive = false; } catch {}
-  try { window.__dsPreviewPick?.dispose?.(); } catch {}
+  try {
+    if (window.__dsPreviewPick?.dispose) window.__dsPreviewPick.dispose();
+    else document.documentElement.style.cursor = '';
+  } catch {}
   try { delete window.__dsPreviewPick; } catch {}
   try { document.getElementById('__ds_preview_pick_overlay__')?.remove(); } catch {}
   try { document.getElementById('__ds_preview_pick_menu__')?.remove(); } catch {}
-  try { document.documentElement.style.cursor = ''; } catch {}
 })();`
 }
 

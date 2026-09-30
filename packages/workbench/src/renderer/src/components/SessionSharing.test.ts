@@ -4,7 +4,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { SessionSharing, SharedLinkReceiver } from './SessionSharing'
 
-const state = { activeThreadId: 'company-thread', busy: false, refreshThreads: vi.fn(), selectThread: vi.fn() }
+const state = { activeThreadId: 'company-thread' as string | null, workspaceRoot: '', threads: [] as { id: string; workspace: string }[], busy: false, refreshThreads: vi.fn(), selectThread: vi.fn() }
 vi.mock('../store/chat-store', () => ({ useChatStore: (select: (s: typeof state) => unknown) => select(state) }))
 vi.mock('react-i18next', () => {
   const t = (key: string) => key
@@ -20,6 +20,7 @@ const preview = { title: 'Company work', created_at: '2026-09-01T00:00:00Z', tur
 
 beforeEach(async () => {
   vi.clearAllMocks()
+  state.activeThreadId = 'company-thread'; state.workspaceRoot = ''; state.threads = []
   state.busy = false
   vi.stubGlobal('dsGui', { runtimeRequest: request, pickWorkspaceDirectory: picker })
   Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: clipboard } })
@@ -64,6 +65,56 @@ it('continues a conversation with only a link, without settings or a directory',
   expect(request.mock.calls.some(call => call[1] === 'PUT')).toBe(false)
   expect(picker).not.toHaveBeenCalled()
   expect(state.selectThread).toHaveBeenCalledWith('home-thread')
+})
+it('restores under the current thread project instead of creating a temporary folder', async () => {
+  state.workspaceRoot = '/home/previous-project'
+  state.threads = [{ id: 'company-thread', workspace: '/home/current-project' }]
+  await act(async () => root.render(createElement(SessionSharing, { key: 'incoming', incomingUrl: 'https://shares.test/s/example' })))
+  await click('sharing.continueSimple')
+  expect(request).toHaveBeenCalledWith('/v1/sharing/restore', 'POST', JSON.stringify({ url: 'https://shares.test/s/example', workspace: '/home/current-project', restore_project: true }))
+  expect(picker).not.toHaveBeenCalled()
+})
+it('uses the selected project when no conversation is active', async () => {
+  state.activeThreadId = null; state.workspaceRoot = '/home/selected-project'
+  await act(async () => root.render(createElement(SessionSharing, { key: 'incoming', incomingUrl: 'https://shares.test/s/example' })))
+  await click('sharing.continueSimple')
+  expect(request).toHaveBeenCalledWith('/v1/sharing/restore', 'POST', JSON.stringify({ url: 'https://shares.test/s/example', workspace: '/home/selected-project', restore_project: true }))
+})
+it('lets an explicitly selected folder override the current project', async () => {
+  state.threads = [{ id: 'company-thread', workspace: '/home/current-project' }]
+  picker.mockResolvedValue({ path: '/home/chosen-project', canceled: false })
+  await act(async () => root.render(createElement(SessionSharing, { key: 'incoming', incomingUrl: 'https://shares.test/s/example' })))
+  await click('sharing.choose'); await click('sharing.continueSimple')
+  expect(request).toHaveBeenCalledWith('/v1/sharing/restore', 'POST', JSON.stringify({ url: 'https://shares.test/s/example', workspace: '/home/chosen-project', restore_project: true }))
+})
+it('keeps the temporary fallback when the current conversation has no project', async () => {
+  state.workspaceRoot = '/home/previous-project'
+  state.threads = [{ id: 'company-thread', workspace: '/home/me/.deepseek/workspace' }]
+  await act(async () => root.render(createElement(SessionSharing, { key: 'incoming', incomingUrl: 'https://shares.test/s/example' })))
+  await click('sharing.continueSimple')
+  expect(request).toHaveBeenCalledWith('/v1/sharing/restore', 'POST', JSON.stringify({ url: 'https://shares.test/s/example', restore_project: true }))
+})
+it('uses the current project for shared file restoration without opening another picker', async () => {
+  state.threads = [{ id: 'company-thread', workspace: '/home/current-project' }]
+  request.mockImplementation(async (path: string) => ({ ok: true, status: 200, body: JSON.stringify(
+    path.endsWith('preview') ? { ...preview, project_commit: 'a'.repeat(40) } : { id: 'home-thread' }
+  ) }))
+  await act(async () => root.render(createElement(SessionSharing, { key: 'incoming', incomingUrl: 'https://shares.test/s/example' })))
+  await click('sharing.continueSimple')
+  expect(picker).not.toHaveBeenCalled()
+  expect(request).toHaveBeenCalledWith('/v1/sharing/restore', 'POST', JSON.stringify({ url: 'https://shares.test/s/example', workspace: '/home/current-project', restore_project: true }))
+})
+it('creates a fresh snapshot when reopening sharing after continuing the conversation', async () => {
+  await click('sharing.open'); await click('sharing.copy'); await click('sharing.close')
+  state.busy = true; await act(async () => root.render(createElement(SessionSharing)))
+  state.busy = false; await act(async () => root.render(createElement(SessionSharing)))
+  await click('sharing.open'); await click('sharing.copy')
+  expect(request.mock.calls.filter(call => call[0].endsWith('/shares'))).toHaveLength(2)
+})
+it('refreshes project changes when reopening sharing without a new chat turn', async () => {
+  await click('sharing.open'); await click('sharing.copy'); await click('sharing.close')
+  await click('sharing.open'); await click('sharing.copy')
+  expect(request.mock.calls.filter(call => call[0].endsWith('/shares'))).toHaveLength(2)
 })
 it('asks for a folder only when restoring file changes', async () => {
   request.mockImplementation(async (path: string) => ({ ok: true, status: 200, body: JSON.stringify(

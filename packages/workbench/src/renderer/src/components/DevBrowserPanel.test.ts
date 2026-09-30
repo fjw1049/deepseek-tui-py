@@ -39,6 +39,92 @@ describe('DevBrowserPanel', () => {
   beforeEach(() => {
     installDsGuiMock()
     document.body.innerHTML = ''
+    window.localStorage.clear?.()
+  })
+
+  it('keeps loaded guests mounted when opening and closing a blank tab', async () => {
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+    await act(async () => root.render(createElement(DevBrowserPanel, {
+      blocks: [], preferredUrl: 'http://localhost:5173/'
+    })))
+    const original = lastWebview()
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[aria-label="browserNewTab"]')!.click()
+    })
+    expect(document.querySelectorAll('webview')).toHaveLength(1)
+    expect(lastWebview()).toBe(original)
+    await act(async () => {
+      container.querySelectorAll<HTMLButtonElement>('.ds-dev-browser__tab-main')[0]!.click()
+    })
+    expect(lastWebview()).toBe(original)
+    await act(async () => root.unmount())
+  })
+
+  it('restores a loaded tab status and retains background load errors', async () => {
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+    const render = (url: string): void => root.render(createElement(DevBrowserPanel, {
+      blocks: [], preferredUrl: url
+    }))
+    await act(async () => render('http://localhost:5173/'))
+    const first = lastWebview()
+    Object.assign(first, {
+      isLoading: () => false,
+      canGoBack: () => true,
+      canGoForward: () => false,
+      getURL: () => 'http://localhost:5173/'
+    })
+    await act(async () => fire(first, 'did-stop-loading'))
+    await act(async () => render('https://example.com/'))
+    await act(async () => {
+      fire(first, 'did-fail-load', { isMainFrame: true, errorCode: -105, errorDescription: 'DNS failed' })
+      container.querySelectorAll<HTMLButtonElement>('.ds-dev-browser__tab-main')[0]!.click()
+    })
+    expect(container.querySelector('[aria-label="browserStop"]')).toBeNull()
+    expect(container.querySelector<HTMLButtonElement>('[aria-label="browserBack"]')!.disabled).toBe(false)
+    expect(container.textContent).toContain('DNS failed')
+    await act(async () => root.unmount())
+  })
+
+  it('ignores subframe navigation and clears Inspect source after leaving its HTML page', async () => {
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+    await act(async () => root.render(createElement(DevBrowserPanel, {
+      blocks: [], preferredUrl: 'http://localhost:5173/demo.html', preferredFilePath: '/tmp/demo.html'
+    })))
+    const view = lastWebview()
+    expect(container.querySelector('[aria-label="browserInspect"]')).toBeTruthy()
+    await act(async () => fire(view, 'did-navigate-in-page', {
+      url: 'https://example.com/frame#top', isMainFrame: false
+    }))
+    expect(container.querySelector<HTMLInputElement>('input')!.value).toBe('localhost:5173/demo.html')
+    await act(async () => fire(view, 'did-navigate', { url: 'https://example.com/' }))
+    expect(container.querySelector('[aria-label="browserInspect"]')).toBeNull()
+    await act(async () => root.unmount())
+  })
+
+  it('reloads when submitting the address of the current page', async () => {
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+    await act(async () => root.render(createElement(DevBrowserPanel, {
+      blocks: [], preferredUrl: 'http://localhost:5173/'
+    })))
+    const view = lastWebview()
+    const reloadIgnoringCache = vi.fn()
+    Object.assign(view, { reloadIgnoringCache })
+    await act(async () => {
+      fire(view, 'did-stop-loading')
+      container.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+    })
+    expect(reloadIgnoringCache).toHaveBeenCalledOnce()
+    await act(async () => fire(view, 'did-stop-loading'))
+    expect(container.querySelector('[aria-label="browserStop"]')).toBeNull()
+    await act(async () => root.unmount())
   })
 
   it('mounts with preferredUrl without update-depth loop', async () => {

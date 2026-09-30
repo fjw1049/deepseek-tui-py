@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { Window } from 'happy-dom'
 import {
   PREVIEW_PICK_CONSOLE_PREFIX,
   buildPreviewPickerCleanupScript,
@@ -64,17 +65,17 @@ describe('parsePreviewPickConsoleMessage', () => {
   })
 
   it('truncates oversized fields', () => {
-    const huge = 'x'.repeat(5000)
+    const huge = 'x'.repeat(3000)
     const parsed = parsePreviewPickConsoleMessage(
       `${PREVIEW_PICK_CONSOLE_PREFIX}${JSON.stringify({
         type: 'pick',
         payload: {
           selector: 'div',
           tagName: 'div',
-          classes: [],
+          classes: [huge],
           textPreview: huge,
           htmlSnippet: huge,
-          ancestry: ['a', 'b', 'c', 'd', 'e']
+          ancestry: [huge, 'b', 'c', 'd', 'e']
         }
       })}`
     )
@@ -83,6 +84,12 @@ describe('parsePreviewPickConsoleMessage', () => {
     expect(parsed.payload.textPreview.length).toBe(200)
     expect(parsed.payload.htmlSnippet.length).toBe(1200)
     expect(parsed.payload.ancestry).toHaveLength(3)
+    expect(parsed.payload.classes[0]).toHaveLength(128)
+    expect(parsed.payload.ancestry[0]).toHaveLength(500)
+  })
+
+  it('rejects oversized console messages before parsing JSON', () => {
+    expect(parsePreviewPickConsoleMessage(`${PREVIEW_PICK_CONSOLE_PREFIX}${'x'.repeat(20_000)}`)).toBeNull()
   })
 })
 
@@ -99,6 +106,15 @@ describe('extractWebviewConsoleMessage', () => {
 })
 
 describe('preview picker arm/disarm scripts', () => {
+  it('restores the page cursor when Inspect is disabled', () => {
+    const guest = new Window()
+    guest.document.documentElement.style.cursor = 'pointer'
+    new Function('window', 'document', buildPreviewPickerInjectScript())(guest, guest.document)
+    expect(guest.document.documentElement.style.cursor).toBe('crosshair')
+    new Function('window', 'document', buildPreviewPickerCleanupScript())(guest, guest.document)
+    expect(guest.document.documentElement.style.cursor).toBe('pointer')
+    expect(guest.document.getElementById('__ds_preview_pick_overlay__')).toBeNull()
+  })
   it('cleanup clears the arm flag before dispose so orphaned listeners no-op', () => {
     const cleanup = buildPreviewPickerCleanupScript()
     const armIdx = cleanup.indexOf('__dsPreviewPickActive = false')
@@ -245,6 +261,12 @@ describe('preview pick composer helpers', () => {
     expect(raw).toEqual(
       expect.arrayContaining([expect.objectContaining({ selector: 'h1.title' })])
     )
+  })
+
+  it('preserves request text that contains the wire request marker', () => {
+    const request = '增加说明“用户要求：请先登录”，并调整样式'
+    const parsed = parsePreviewPickWireMessage(formatPreviewPickWireMessage(samplePick, request))
+    expect(parsed?.userRequest).toBe(request)
   })
 
   it('parses the legacy unmarked single-object wire form', () => {

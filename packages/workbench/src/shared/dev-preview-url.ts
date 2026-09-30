@@ -54,6 +54,14 @@ function ensurePathname(url: URL): void {
   if (!url.pathname) url.pathname = '/'
 }
 
+function hasUnsupportedScheme(value: string): boolean {
+  if (!/^[a-z][a-z0-9+.-]*:/i.test(value) || /^[a-z][a-z0-9+.-]*:\/\//i.test(value)) return false
+  // A bare host:port is an address; other scheme-shaped inputs must not be
+  // reinterpreted as HTTPS hosts (e.g. javascript:123).
+  const match = /^([^:]+):\d+(?:[/?#]|$)/.exec(value)
+  return !match || !(match[1]!.includes('.') || isAllowedDevPreviewHostname(match[1]!))
+}
+
 /**
  * Normalize a local/LAN preview URL. Used by auto-follow and agent URL detection.
  * Port-only shorthand (`5173`) maps to http://127.0.0.1:5173.
@@ -61,6 +69,7 @@ function ensurePathname(url: URL): void {
 export function normalizeDevPreviewUrlInput(input: string): string | null {
   let value = input.trim()
   if (!value) return null
+  if (hasUnsupportedScheme(value)) return null
 
   if (/^\d{2,5}$/.test(value)) {
     value = `http://127.0.0.1:${value}`
@@ -90,8 +99,8 @@ export function isLocalPreviewUrl(value: string): boolean {
 
 function hostHintFromBareInput(value: string): string {
   const withoutPath = value.split(/[/?#]/, 1)[0] ?? value
-  const withoutPort = withoutPath.includes(']')
-    ? withoutPath
+  const withoutPort = withoutPath.startsWith('[') && withoutPath.includes(']')
+    ? withoutPath.slice(0, withoutPath.indexOf(']') + 1)
     : (withoutPath.split(':', 1)[0] ?? withoutPath)
   return withoutPort
 }
@@ -105,6 +114,7 @@ function hostHintFromBareInput(value: string): string {
 export function normalizeBrowseUrlInput(input: string): string | null {
   let value = input.trim()
   if (!value) return null
+  if (hasUnsupportedScheme(value)) return null
 
   if (/^\d{2,5}$/.test(value)) {
     value = `http://127.0.0.1:${value}`
@@ -137,5 +147,11 @@ export function normalizeBrowseUrlInput(input: string): string | null {
 }
 
 export function isBrowsableUrl(value: string): boolean {
-  return normalizeBrowseUrlInput(value) !== null
+  try {
+    const url = new URL(value)
+    return url.protocol === 'https:' ||
+      (url.protocol === 'http:' && isAllowedDevPreviewHostname(url.hostname))
+  } catch {
+    return false
+  }
 }

@@ -54,6 +54,7 @@ type DevWebviewTag = HTMLElement & {
   canGoForward(): boolean
   getURL(): string
   getWebContentsId(): number
+  isLoading(): boolean
   goBack(): void
   goForward(): void
   loadURL(url: string): Promise<void>
@@ -107,6 +108,7 @@ function pauseGuestMedia(webview: DevWebviewTag): void {
 
 type WebviewNavigateEvent = Event & {
   url: string
+  isMainFrame?: boolean
 }
 
 type WebviewFailLoadEvent = Event & {
@@ -143,7 +145,7 @@ type DevBrowserWebviewProps = {
   tabId: string
   url: string
   registerWebview: (tabId: string, webview: DevWebviewTag | null) => void
-  onNavigate: (tabId: string, url: string) => void
+  onNavigate: (tabId: string, url: string, inPage: boolean) => void
   onTitle: (tabId: string, title: string) => void
   onLoadingChange: (tabId: string, loading: boolean) => void
   onFailLoad: (tabId: string, description: string) => void
@@ -173,6 +175,10 @@ function DevBrowserWebview({
   // URL the guest is at or loading toward; navigation events keep it in sync
   // so the load effect below never re-loads what the page already navigated to.
   const loadedUrlRef = useRef<string | null>(url)
+  const attachWebview = useCallback((element: HTMLElement | null): void => {
+    webviewRef.current = element as DevWebviewTag | null
+    registerWebview(tabId, element as DevWebviewTag | null)
+  }, [registerWebview, tabId])
 
   useEffect(() => {
     const webview = webviewRef.current
@@ -196,7 +202,11 @@ function DevBrowserWebview({
     const webview = webviewRef.current
     if (!webview) return
 
+    let disposed = false
+    let navigationStarted = false
+
     const handleStartLoading = (): void => {
+      navigationStarted = true
       onDomReadyChange(tabId, false)
       onLoadingChange(tabId, true)
     }
@@ -208,10 +218,11 @@ function DevBrowserWebview({
     }
     const handleDomReady = (): void => onDomReadyChange(tabId, true)
     const handleNavigate: EventListener = (event): void => {
+      if ((event as WebviewNavigateEvent).isMainFrame === false) return
       const currentUrl = normalizeBrowseUrlInput((event as WebviewNavigateEvent).url)
       if (!currentUrl) return
       loadedUrlRef.current = currentUrl
-      onNavigate(tabId, currentUrl)
+      onNavigate(tabId, currentUrl, event.type === 'did-navigate-in-page')
     }
     const handleFailLoad: EventListener = (event): void => {
       const failEvent = event as WebviewFailLoadEvent
@@ -242,7 +253,9 @@ function DevBrowserWebview({
       const probe = webview.executeJavaScript('true')
       if (probe && typeof probe.then === 'function') {
         void probe
-          .then(() => onDomReadyChange(tabId, true))
+          .then(() => {
+            if (!disposed && !navigationStarted) onDomReadyChange(tabId, true)
+          })
           .catch(() => {
             /* still loading — wait for dom-ready / did-stop-loading */
           })
@@ -252,6 +265,7 @@ function DevBrowserWebview({
     }
 
     return () => {
+      disposed = true
       // Do NOT clear ready here: Strict Mode remount would drop the flag after
       // the only dom-ready already fired, leaving magic-pen inject stuck.
       webview.removeEventListener('did-start-loading', handleStartLoading)
@@ -275,10 +289,7 @@ function DevBrowserWebview({
 
   return (
     <webview
-      ref={(element) => {
-        webviewRef.current = element as DevWebviewTag | null
-        registerWebview(tabId, element as DevWebviewTag | null)
-      }}
+      ref={attachWebview}
       src={initialUrlRef.current}
       // React 19 refuses to write BOOLEAN attributes on non-standard elements
       // (runtime warning, attribute dropped), while its built-in webview JSX
@@ -314,6 +325,7 @@ export function DevBrowserPanel({
 }): ReactElement {
   const { t } = useTranslation('common')
   const webviewRefs = useRef(new Map<string, DevWebviewTag>())
+  const tabLoadStateRef = useRef(new Map<string, { loading: boolean; error: string | null }>())
   const iframeLoadedUrlRef = useRef<string | null>(null)
   const preferredUrlRef = useRef<string | null>(null)
   const dismissedPreferredUrlRef = useRef<string | null>(null)
@@ -398,6 +410,7 @@ export function DevBrowserPanel({
       webviewRefs.current.delete(tabId)
       pickerInjectedTabsRef.current.delete(tabId)
       webviewDomReadyRef.current.delete(tabId)
+      tabLoadStateRef.current.delete(tabId)
     }
   }, [])
 
@@ -415,12 +428,10 @@ export function DevBrowserPanel({
   const runGuestScript = useCallback((tabId: string, code: string): boolean => {
     const webview = webviewRefs.current.get(tabId)
     if (!webview) return false
-    // Soft gate: prefer the ready set, but still attempt executeJavaScript —
-    // missing a one-shot dom-ready must not permanently disable magic pen.
-    // Sync throws are caught; success marks the tab ready.
+    // Cleanup also runs during navigation; synchronous throws and rejected
+    // promises must not interrupt the host UI.
     try {
       const pending = webview.executeJavaScript(code)
-      webviewDomReadyRef.current.add(tabId)
       if (pending && typeof (pending as Promise<unknown>).catch === 'function') {
         void (pending as Promise<unknown>).catch(() => {
           /* guest may be mid-navigation */
@@ -448,6 +459,8 @@ export function DevBrowserPanel({
       // Hard gate: never re-arm after Inspect was turned off (stop-loading /
       // dom-ready can race past a stale inspectModeRef).
       if (!inspectModeRef.current) return
+      if (tabId !== activeTabIdRef.current || !webviewDomReadyRef.current.has(tabId)) return
+      if (!tabsRef.current.find((tab) => tab.id === tabId)?.filePath) return
       if (!runGuestScript(tabId, buildPreviewPickerInjectScript())) return
       if (!inspectModeRef.current) {
         // Toggled off while executeJavaScript was queued — disarm immediately.
@@ -464,6 +477,11 @@ export function DevBrowserPanel({
     (tabId: string, ready: boolean): void => {
       if (ready) {
         webviewDomReadyRef.current.add(tabId)
+        const webview = webviewRefs.current.get(tabId)
+        if (webview && tabId !== activeTabIdRef.current) {
+          try { webview.setAudioMuted(true) } catch { /* guest may be detached */ }
+          pauseGuestMedia(webview)
+        }
         // Magic pen may have been toggled before the guest finished loading.
         if (inspectModeRef.current && tabId === activeTabIdRef.current) {
           injectPickerOnTab(tabId)
@@ -491,18 +509,29 @@ export function DevBrowserPanel({
   )
 
   const handleWebviewNavigate = useCallback(
-    (tabId: string, url: string): void => {
+    (tabId: string, url: string, inPage: boolean): void => {
       // Full navigations drop the injected picker. Keep Inspect armed and
       // re-inject on the next dom-ready / stop-loading instead of forcing off
       // (initial did-navigate used to cancel magic pen immediately).
-      if (inspectModeRef.current) cleanupPickerOnTab(tabId)
-      setTabs((current) => updateTabById(current, tabId, { url }))
+      const tab = tabsRef.current.find((candidate) => candidate.id === tabId)
+      let filePath = tab?.filePath ?? null
+      if (filePath && tab?.url) {
+        const previous = new URL(tab.url)
+        const next = new URL(url)
+        if (previous.origin !== next.origin || previous.pathname !== next.pathname) filePath = null
+      }
+      if (inspectModeRef.current && !inPage) cleanupPickerOnTab(tabId)
+      if (!filePath && tabId === activeTabIdRef.current && inspectModeRef.current) stopInspectMode(tabId)
+      const nextTabs = updateTabById(tabsRef.current, tabId, { url, filePath })
+      tabsRef.current = nextTabs
+      setTabs(nextTabs)
+      tabLoadStateRef.current.delete(tabId)
       if (tabId !== activeTabIdRef.current) return
       setDraftUrl(formatAddressInput(url))
       setLoadError(null)
       syncActiveNavigationState(tabId)
     },
-    [cleanupPickerOnTab, syncActiveNavigationState]
+    [cleanupPickerOnTab, stopInspectMode, syncActiveNavigationState]
   )
 
   const handleWebviewTitle = useCallback((tabId: string, title: string): void => {
@@ -511,6 +540,10 @@ export function DevBrowserPanel({
 
   const handleWebviewLoadingChange = useCallback(
     (tabId: string, nextLoading: boolean): void => {
+      const previous = tabLoadStateRef.current.get(tabId)
+      tabLoadStateRef.current.set(tabId, {
+        loading: nextLoading, error: nextLoading ? null : (previous?.error ?? null)
+      })
       if (tabId !== activeTabIdRef.current) return
       setLoading(nextLoading)
       if (nextLoading) setLoadError(null)
@@ -525,9 +558,11 @@ export function DevBrowserPanel({
 
   const handleWebviewFailLoad = useCallback(
     (tabId: string, description: string): void => {
+      const message = description || t('browserLoadFailed')
+      tabLoadStateRef.current.set(tabId, { loading: false, error: message })
       if (tabId !== activeTabIdRef.current) return
       setLoading(false)
-      setLoadError(description || t('browserLoadFailed'))
+      setLoadError(message)
       syncActiveNavigationState(tabId)
     },
     [syncActiveNavigationState, t]
@@ -537,13 +572,12 @@ export function DevBrowserPanel({
     (tabId: string, message: string): void => {
       const parsed = parsePreviewPickConsoleMessage(message)
       if (!parsed) return
+      if (!inspectModeRef.current || tabId !== activeTabIdRef.current) return
       if (parsed.type === 'cancel') {
         stopInspectMode(tabId)
         return
       }
       // Inspect off: ignore stale guest picks (orphaned listeners / late console).
-      if (!inspectModeRef.current) return
-      if (tabId !== activeTabIdRef.current) return
       const filePath =
         tabsRef.current.find((tab) => tab.id === tabId)?.filePath?.trim() || ''
       // Keep Inspect armed so the user can append more chips; Esc / toggle
@@ -574,9 +608,12 @@ export function DevBrowserPanel({
       )
       if (next.tabs !== current) setTabs(next.tabs)
       if (next.activeTabId !== activeTabIdRef.current) setActiveTabId(next.activeTabId)
+      tabsRef.current = next.tabs
+      activeTabIdRef.current = next.activeTabId
       if (options.select !== false) {
-        setLoadError(null)
-        setLoading(true)
+        const status = tabLoadStateRef.current.get(next.activeTabId)
+        setLoadError(status?.error ?? null)
+        setLoading(status?.loading ?? !webviewDomReadyRef.current.has(next.activeTabId))
         setDraftUrl(formatAddressInput(normalized))
         stopInspectMode()
       }
@@ -600,12 +637,13 @@ export function DevBrowserPanel({
     const tab = tabsRef.current.find((candidate) => candidate.id === tabId)
     const url = tab?.url ?? null
     setDraftUrl(formatAddressInput(url))
-    setLoadError(null)
+    const status = tabLoadStateRef.current.get(tabId)
+    setLoadError(status?.error ?? null)
     setCanGoBack(false)
     setCanGoForward(false)
     setIframeBackStack([])
     setIframeForwardStack([])
-    setLoading(Boolean(url))
+    setLoading(Boolean(url) && (status?.loading ?? !webviewDomReadyRef.current.has(tabId)))
     // The newly focused tab's webview kept its own history while hidden —
     // restore the real nav state from it.
     const webview = webviewRefs.current.get(tabId)
@@ -613,6 +651,7 @@ export function DevBrowserPanel({
       try {
         setCanGoBack(webview.canGoBack())
         setCanGoForward(webview.canGoForward())
+        setLoading(webview.isLoading())
         const currentUrl = normalizeBrowseUrlInput(webview.getURL())
         if (currentUrl) setDraftUrl(formatAddressInput(currentUrl))
       } catch {
@@ -777,6 +816,22 @@ export function DevBrowserPanel({
     stopInspectMode()
     setLoadError(null)
     setLoading(true)
+    tabLoadStateRef.current.set(activeTabIdRef.current, { loading: true, error: null })
+    if (normalized === activeUrl) {
+      // A same-URL submission does not change the URL prop, so explicitly
+      // reload instead of leaving the loading indicator waiting for an event.
+      if (!useElectronWebview) setIframeReloadNonce((nonce) => nonce + 1)
+      else {
+        try {
+          webviewRefs.current.get(activeTabIdRef.current)?.reloadIgnoringCache()
+        } catch {
+          setLoading(false)
+          setLoadError(t('browserLoadFailed'))
+        }
+      }
+      setDraftUrl(formatAddressInput(normalized))
+      return
+    }
     if (!useElectronWebview && activeUrl && normalized !== activeUrl) {
       setIframeBackStack((stack) => [...stack, activeUrl].slice(-30))
       setIframeForwardStack([])
@@ -792,6 +847,7 @@ export function DevBrowserPanel({
       stopInspectMode()
       return
     }
+    inspectModeRef.current = true
     setInspectMode(true)
   }
 
@@ -1222,28 +1278,10 @@ export function DevBrowserPanel({
       ) : null}
 
       <div className="relative min-h-0 flex-1 bg-white dark:bg-ds-canvas">
-        {view === 'empty' ? (
-          <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
-            <Globe2 className="h-8 w-8 text-ds-faint" strokeWidth={1.5} />
-            <div className="text-[14px] font-medium text-ds-ink">{t('browserEmptyTitle')}</div>
-            <div className="max-w-sm text-[12.5px] leading-5 text-ds-muted">
-              {t('browserEmptyBody')}
-            </div>
-            <button
-              type="button"
-              onClick={() => loadUrl(DEFAULT_DEV_PREVIEW_URL)}
-              className="mt-1 rounded-full bg-accent px-4 py-2 text-[12.5px] font-semibold text-white"
-            >
-              {t('browserOpenDefault')}
-            </button>
-          </div>
-        ) : view === 'webview' ? (
-          // Every tab keeps its webview mounted (inactive tabs stay in the
-          // layout tree with full size — visibility/pointer only) so page
-          // state, scroll and history survive switches. Avoid `display:none`:
-          // it zero-sizes the guest compositor and aggravates Chromium media
-          // decode noise (ffmpeg "Unsupported pixel format: -1").
-          <div className="relative h-full w-full">
+        {useElectronWebview ? (
+          // Keep guests mounted even when the active tab is blank, preserving
+          // page state, scroll and history while the empty state is visible.
+          <div className="absolute inset-0 h-full w-full">
             {tabs.map((tab) =>
               tab.url ? (
                 <div
@@ -1270,7 +1308,23 @@ export function DevBrowserPanel({
               ) : null
             )}
           </div>
-        ) : view === 'iframe' && activeUrl ? (
+        ) : null}
+        {view === 'empty' ? (
+          <div className="relative flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
+            <Globe2 className="h-8 w-8 text-ds-faint" strokeWidth={1.5} />
+            <div className="text-[14px] font-medium text-ds-ink">{t('browserEmptyTitle')}</div>
+            <div className="max-w-sm text-[12.5px] leading-5 text-ds-muted">
+              {t('browserEmptyBody')}
+            </div>
+            <button
+              type="button"
+              onClick={() => loadUrl(DEFAULT_DEV_PREVIEW_URL)}
+              className="mt-1 rounded-full bg-accent px-4 py-2 text-[12.5px] font-semibold text-white"
+            >
+              {t('browserOpenDefault')}
+            </button>
+          </div>
+        ) : view === 'webview' ? null : view === 'iframe' && activeUrl ? (
           <iframe
             key={`${activeTabId}:${activeUrl}:${iframeReloadNonce}`}
             src={activeUrl}

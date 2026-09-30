@@ -3,6 +3,22 @@ import type { ChatBlock } from '../agent/types'
 import { extractLatestTurnDevPreviewUrls } from './dev-preview-detection'
 
 describe('extractLatestTurnDevPreviewUrls', () => {
+  it('does not extract localhost prefixes or paths from remote URLs', () => {
+    const blocks: ChatBlock[] = [
+      { kind: 'user', id: 'u1', text: 'show preview' },
+      { kind: 'assistant', id: 'a1', text: '预览地址 http://localhost:3000.evil.example/ ' +
+        'https://localhost:3000@evil.example/ https://evil.example/localhost:3000/' }
+    ]
+    expect(extractLatestTurnDevPreviewUrls(blocks)).toEqual([])
+  })
+
+  it('detects bare IPv6 loopback URLs with a port', () => {
+    const blocks: ChatBlock[] = [
+      { kind: 'user', id: 'u1', text: 'show preview' },
+      { kind: 'assistant', id: 'a1', text: '预览地址 [::1]:3000/demo' }
+    ]
+    expect(extractLatestTurnDevPreviewUrls(blocks)).toEqual(['http://[::1]:3000/demo'])
+  })
   it('does not treat a localhost mention plus 打开/运行 as a preview', () => {
     const blocks: ChatBlock[] = [
       { kind: 'user', id: 'u1', text: 'review this' },

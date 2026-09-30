@@ -1,7 +1,7 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
-import { createReadStream, existsSync, statSync } from 'node:fs'
+import { createReadStream } from 'node:fs'
 import { dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path'
-import { realpath } from 'node:fs/promises'
+import { realpath, stat } from 'node:fs/promises'
 import { isHtmlPreviewPath } from '../../shared/html-preview'
 import { isImagePreviewPath } from '../../shared/image-preview'
 import { isPdfPreviewPath } from '../../shared/document-preview'
@@ -13,6 +13,7 @@ type PreviewServerEntry = {
 }
 
 const servers = new Map<string, PreviewServerEntry>()
+const startingServers = new Map<string, Promise<PreviewServerEntry>>()
 
 const MIME_BY_EXT: Record<string, string> = {
   '.pdf': 'application/pdf',
@@ -58,7 +59,7 @@ async function canonicalPath(targetPath: string): Promise<string> {
 
 function isWithinRoot(root: string, targetPath: string): boolean {
   const rel = relative(root, targetPath)
-  return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel))
+  return rel === '' || (rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel))
 }
 
 function contentTypeFor(filePath: string): string {
@@ -73,23 +74,46 @@ function sendError(res: ServerResponse, status: number, message: string): void {
   res.end(message)
 }
 
-function serveFile(root: string, req: IncomingMessage, res: ServerResponse): void {
+async function serveFile(root: string, req: IncomingMessage, res: ServerResponse): Promise<void> {
+  if (req.headers.host !== `127.0.0.1:${req.socket.localPort}`) {
+    sendError(res, 403, 'Forbidden host')
+    return
+  }
+  if (req.method !== 'GET' && req.method !== 'HEAD') {
+    res.setHeader('Allow', 'GET, HEAD')
+    sendError(res, 405, 'Method not allowed')
+    return
+  }
+  let pathname: string
   try {
-    const rawUrl = req.url ?? '/'
-    const parsed = new URL(rawUrl, 'http://127.0.0.1')
-    let pathname = decodeURIComponent(parsed.pathname)
-    if (pathname.includes('\0')) {
-      sendError(res, 400, 'Invalid path')
-      return
-    }
+    pathname = decodeURIComponent(new URL(req.url ?? '/', 'http://127.0.0.1').pathname)
+  } catch {
+    sendError(res, 400, 'Invalid path')
+    return
+  }
+  if (pathname.includes('\0')) {
+    sendError(res, 400, 'Invalid path')
+    return
+  }
+  try {
     if (pathname.endsWith('/')) pathname = `${pathname}index.html`
     const relativePath = pathname.replace(/^\/+/, '')
     const candidate = resolve(root, relativePath)
-    if (!isWithinRoot(root, candidate) || !existsSync(candidate)) {
+    if (!isWithinRoot(root, candidate)) {
       sendError(res, 404, 'Not found')
       return
     }
-    const st = statSync(candidate)
+    // Resolve symlinks before reading: a lexical path check alone permits
+    // links inside the workspace to expose files outside it.
+    const target = await realpath(candidate)
+    if (!isWithinRoot(root, target) ||
+      [relative(root, candidate), relative(root, target)].some((path) =>
+        path.split(sep).some((segment) => segment.startsWith('.'))
+      )) {
+      sendError(res, 404, 'Not found')
+      return
+    }
+    const st = await stat(target)
     if (!st.isFile()) {
       sendError(res, 404, 'Not found')
       return
@@ -98,21 +122,31 @@ function serveFile(root: string, req: IncomingMessage, res: ServerResponse): voi
       'Content-Type': contentTypeFor(candidate),
       'Content-Length': st.size,
       'Cache-Control': 'no-store',
-      // Keep preview pages from being framed by untrusted origins; the
-      // Workbench webview/iframe loads 127.0.0.1 which is same-site enough.
       'X-Content-Type-Options': 'nosniff'
     })
-    createReadStream(candidate).pipe(res)
-  } catch {
-    sendError(res, 500, 'Preview server error')
+    if (req.method === 'HEAD') {
+      res.end()
+      return
+    }
+    const stream = createReadStream(target)
+    stream.on('error', () => res.destroy())
+    res.on('close', () => stream.destroy())
+    stream.pipe(res)
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code
+    sendError(res, code === 'ENOENT' || code === 'ENOTDIR' ? 404 : 500,
+      code === 'ENOENT' || code === 'ENOTDIR' ? 'Not found' : 'Preview server error')
   }
 }
 
 async function startServer(root: string): Promise<PreviewServerEntry> {
-  const server = createServer((req, res) => serveFile(root, req, res))
+  const server = createServer((req, res) => { void serveFile(root, req, res) })
   await new Promise<void>((resolvePromise, rejectPromise) => {
     server.once('error', rejectPromise)
-    server.listen(0, '127.0.0.1', () => resolvePromise())
+    server.listen(0, '127.0.0.1', () => {
+      server.removeListener('error', rejectPromise)
+      resolvePromise()
+    })
   })
   const address = server.address()
   if (!address || typeof address === 'string') {
@@ -128,9 +162,18 @@ export async function ensureWorkspacePreviewServer(
   const root = await canonicalPath(resolve(expandHomePath(workspaceRoot.trim())))
   const existing = servers.get(root)
   if (existing) return existing
-  const entry = await startServer(root)
-  servers.set(root, entry)
-  return entry
+  const starting = startingServers.get(root)
+  if (starting) return starting
+  const pending = startServer(root).then((entry) => {
+    servers.set(root, entry)
+    return entry
+  })
+  startingServers.set(root, pending)
+  try {
+    return await pending
+  } finally {
+    startingServers.delete(root)
+  }
 }
 
 export async function getWorkspacePreviewUrl(options: {
@@ -150,7 +193,7 @@ export async function getWorkspacePreviewUrl(options: {
       ? resolve(expandHomePath(workspaceRoot))
       : process.cwd()
     const absolute = isAbsolute(expanded) ? resolve(expanded) : resolve(absoluteHint, expanded)
-    if (!existsSync(absolute) || !statSync(absolute).isFile()) {
+    if (!(await stat(absolute).catch(() => null))?.isFile()) {
       return { ok: false, message: `File not found: ${rawPath}` }
     }
     const target = await canonicalPath(absolute)
@@ -191,6 +234,7 @@ export async function getWorkspacePreviewUrl(options: {
 }
 
 export async function shutdownWorkspacePreviewServers(): Promise<void> {
+  await Promise.allSettled([...startingServers.values()])
   const entries = [...servers.values()]
   servers.clear()
   await Promise.all(
@@ -198,6 +242,7 @@ export async function shutdownWorkspacePreviewServers(): Promise<void> {
       (entry) =>
         new Promise<void>((resolvePromise) => {
           entry.server.close(() => resolvePromise())
+          entry.server.closeAllConnections()
         })
     )
   )

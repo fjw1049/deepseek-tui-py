@@ -97,6 +97,35 @@ async def test_snapshot_roundtrip_retains_context_and_isolates_ids(runtime_app, 
     )
 
 
+@pytest.mark.parametrize("source", ["codex", "claude"])
+async def test_shared_imported_history_and_native_followup_remain_visible(
+    runtime_app, tmp_path, source
+):
+    manager = runtime_app.state.thread_manager
+    thread = await seed(manager)
+    thread.import_source = source
+    thread.import_generation = "source-generation"
+    manager.store.save_thread(thread)
+    for turn in manager.store.list_turns_for_thread(thread.id):
+        turn.import_generation = thread.import_generation
+        manager.store.save_turn(turn)
+    import_messages_into_store(
+        manager.store,
+        thread_id=thread.id,
+        messages=[Message.user("Continue locally"), Message.assistant("Local followup")],
+    )
+    snapshot = build_snapshot(manager.store, thread)
+    target = RuntimeThreadStore(tmp_path / "recipient")
+    restored = import_snapshot(target, snapshot, tmp_path, "share-token")
+
+    assert len(target.list_turns_for_thread(restored.id)) == len(snapshot.turns)
+    assert target.count_turns_by_thread()[restored.id] == len(snapshot.turns)
+    assert [m.model_dump() for m in reconstruct_messages_from_turns(target, restored.id)] == [
+        m.model_dump() for m in reconstruct_messages_from_turns(manager.store, thread.id)
+    ]
+    assert len(build_snapshot(target, restored).turns) == len(snapshot.turns)
+
+
 async def test_compaction_and_image_survive_snapshot(runtime_app, tmp_path, monkeypatch):
     manager = runtime_app.state.thread_manager
     thread = await seed(manager)
@@ -227,6 +256,15 @@ async def test_link_service_and_local_runtime_end_to_end(
     assert Path(restored.json()["workspace"]).is_dir()
     assert restored.json()["workspace"] != thread.workspace
     assert len(reconstruct_messages_from_turns(manager.store, restored.json()["id"])) == 4
+    project = tmp_path / "selected-project"
+    project.mkdir()
+    payload = {"url": url, "workspace": str(project)}
+    first = await client.post("/v1/sharing/restore", json=payload)
+    second = await client.post("/v1/sharing/restore", json=payload)
+    assert first.status_code == second.status_code == 201
+    assert first.json()["workspace"] == second.json()["workspace"] == str(project)
+    assert first.json()["id"] != second.json()["id"]
+    assert len(list((share_routes.settings_path().parent / "workspace").glob("shared-*"))) == 1
     rejected = await client.post(
         "/v1/sharing/preview", json={"url": url.replace("shares.example.com", "other.example.com")}
     )
@@ -434,22 +472,59 @@ def test_project_file_directory_replacements(tmp_path):
     assert (target / "login.py" / "child.txt").read_text() == "now a directory"
 
 
+@pytest.mark.parametrize("include_project", [False, True])
 async def test_real_http_share_between_independent_homes(
-    client, runtime_app, tmp_path, monkeypatch
+    client, runtime_app, tmp_path, monkeypatch, include_project
 ):
-    """Opt-in acceptance against local Worker or the deployed service; synthetic data only."""
+    """Opt-in acceptance against Docker, local Worker or a server; synthetic data only."""
     import os
     from types import SimpleNamespace
 
     origin = os.environ.get("DEEPSEEK_SHARE_TEST_ORIGIN")
     if not origin:
         pytest.skip("Set DEEPSEEK_SHARE_TEST_ORIGIN to run real HTTP acceptance")
-    monkeypatch.setattr(share_routes, "DEFAULT_SERVICE_URL", origin.rstrip("/"))
+    upload_key = os.environ.get("DEEPSEEK_SHARE_TEST_UPLOAD_KEY")
+    if not upload_key:
+        monkeypatch.setattr(share_routes, "DEFAULT_SERVICE_URL", origin.rstrip("/"))
     manager = runtime_app.state.thread_manager
     source = await seed(manager)
     company_home = tmp_path / "company-home"
     monkeypatch.setenv("DEEPSEEK_HOME", str(company_home))
-    created = await client.post("/v1/sharing/shares", json={"thread_id": source.id})
+    if upload_key:
+        configured = await client.put(
+            "/v1/sharing/settings", json={"service_url": origin, "upload_key": upload_key}
+        )
+        assert configured.status_code == 200, configured.text
+    recipient_repo = tmp_path / "recipient-project"
+    if include_project:
+        source_repo = tmp_path / "source-project"
+        init_repo(source_repo)
+        git(tmp_path, "clone", str(source_repo), str(recipient_repo))
+        (source_repo / "login.py").write_text("shared change\n")
+        (source_repo / "new.bin").write_bytes(b"\x00\xff")
+        source.workspace = str(source_repo)
+        manager.store.save_thread(source)
+    buffer = io.BytesIO()
+    Image.new("RGB", (4, 4), "red").save(buffer, format="PNG")
+    image = import_image(buffer.getvalue())
+    image_message = Message.user("Screenshot from the source computer")
+    image_message.content.append(image)
+    import_messages_into_store(
+        manager.store, thread_id=source.id,
+        messages=[image_message, Message.assistant("Continue with this screenshot")],
+    )
+    image_turn = manager.store.list_turns_for_thread(source.id)[-1]
+    image_item = next(
+        item for item in manager.store.list_items_for_turn(image_turn.id)
+        if item.kind == TurnItemKind.USER_MESSAGE
+    )
+    image_item.metadata = {"input_message": image_message.model_dump(mode="json")}
+    manager.store.save_item(image_item)
+    original = reconstruct_messages_from_turns(manager.store, source.id)
+    created = await client.post(
+        "/v1/sharing/shares",
+        json={"thread_id": source.id, "include_project": include_project},
+    )
     assert created.status_code == 201, created.text
     link = created.json()["url"]
     try:
@@ -458,7 +533,10 @@ async def test_real_http_share_between_independent_homes(
         assert not share_routes.settings_path().exists()
         preview = await client.post("/v1/sharing/preview", json={"url": link})
         assert preview.status_code == 200, preview.text
-        restored = await client.post("/v1/sharing/restore", json={"url": link})
+        payload = {"url": link}
+        if include_project:
+            payload["workspace"] = str(recipient_repo)
+        restored = await client.post("/v1/sharing/restore", json=payload)
         assert restored.status_code == 201, restored.text
         target = manager.store.load_thread(restored.json()["id"])
         captured = {}
@@ -466,10 +544,22 @@ async def test_real_http_share_between_independent_homes(
             SimpleNamespace(sync_session=lambda messages, **kw: captured.update(messages=messages)),
             target,
         )
-        assert captured["messages"][0].content[0].text == "Fix login"
-        assert captured["messages"][-2].content[0].text == "Next: add tests"
+        assert [m.model_dump() for m in captured["messages"][:-1]] == [
+            m.model_dump() for m in original
+        ]
+        from deepseek_tui.config.paths import user_media_dir
+
+        assert (user_media_dir() / image.asset_id).read_bytes() == buffer.getvalue()
+        if include_project:
+            destination = Path(target.workspace)
+            assert destination != recipient_repo
+            assert (destination / "login.py").read_text() == "shared change\n"
+            assert (destination / "new.bin").read_bytes() == b"\x00\xff"
+            assert (recipient_repo / "login.py").read_text() == "before\n"
         assert not target.allow_shell and not target.auto_approve
-        assert (await client.post("/v1/sharing/revoke", json={"url": link})).status_code == 403
+        assert (await client.post("/v1/sharing/revoke", json={"url": link})).status_code == (
+            400 if upload_key else 403
+        )
     finally:
         monkeypatch.setenv("DEEPSEEK_HOME", str(company_home))
         result = await client.post("/v1/sharing/revoke", json={"url": link})

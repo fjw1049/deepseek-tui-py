@@ -271,6 +271,7 @@ def import_snapshot(
                         "id": turn_ids[turn.id],
                         "thread_id": thread.id,
                         "item_ids": [item_ids[key] for key in turn.item_ids],
+                        "import_generation": None,
                     }
                 )
             )

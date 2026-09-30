@@ -29,6 +29,9 @@ export function resolveDevBrowserGuestWebContents(
   if (guest.id === mainWindow.webContents.id) {
     return { ok: false, message: 'Invalid browser target.' }
   }
+  if (guest.getType() !== 'webview') {
+    return { ok: false, message: 'Invalid browser target.' }
+  }
 
   const host = guest.hostWebContents
   if (host && !host.isDestroyed()) {
@@ -38,17 +41,12 @@ export function resolveDevBrowserGuestWebContents(
     return { ok: true, guest }
   }
 
-  // Some Electron builds omit hostWebContents on webview guests. Allow capture
-  // when the IPC sender is the main renderer window.
-  if (typeof senderWebContentsId === 'number') {
-    return { ok: true, guest }
-  }
-
   return { ok: false, message: 'Browser tab is not attached.' }
 }
 
 async function captureGuestImage(
-  guest: Electron.WebContents
+  guest: Electron.WebContents,
+  signal: AbortSignal
 ): Promise<Electron.NativeImage> {
   try {
     const image = await guest.capturePage()
@@ -58,6 +56,7 @@ async function captureGuestImage(
   } catch {
     /* fall through to CDP */
   }
+  signal.throwIfAborted()
 
   const debuggerSession = guest.debugger
   const wasAttached = debuggerSession.isAttached()
@@ -65,11 +64,19 @@ async function captureGuestImage(
     debuggerSession.attach('1.3')
   }
 
+  const detachOwnedDebugger = (): void => {
+    if (!wasAttached && !guest.isDestroyed() && debuggerSession.isAttached()) {
+      debuggerSession.detach()
+    }
+  }
+  signal.addEventListener('abort', detachOwnedDebugger, { once: true })
+
   try {
     const response = (await debuggerSession.sendCommand('Page.captureScreenshot', {
       format: 'png',
       fromSurface: true
     })) as { data?: string }
+    signal.throwIfAborted()
     if (typeof response.data !== 'string' || response.data.length === 0) {
       throw new Error('Screenshot capture returned no image data.')
     }
@@ -79,9 +86,8 @@ async function captureGuestImage(
     }
     return image
   } finally {
-    if (!wasAttached && debuggerSession.isAttached()) {
-      debuggerSession.detach()
-    }
+    signal.removeEventListener('abort', detachOwnedDebugger)
+    detachOwnedDebugger()
   }
 }
 
@@ -98,11 +104,17 @@ export async function copyDevBrowserScreenshotToClipboard(
   if (!resolved.ok) return resolved
 
   const captureTimeoutMs = 12_000
+  const controller = new AbortController()
+  let timeout: ReturnType<typeof setTimeout> | undefined
   try {
     const image = await Promise.race([
-      captureGuestImage(resolved.guest),
+      captureGuestImage(resolved.guest, controller.signal),
       new Promise<never>((_, reject) => {
-        setTimeout(() => reject(new Error('Screenshot timed out.')), captureTimeoutMs)
+        timeout = setTimeout(() => {
+          const error = new Error('Screenshot timed out.')
+          reject(error)
+          controller.abort(error)
+        }, captureTimeoutMs)
       })
     ])
     if (image.isEmpty()) {
@@ -115,5 +127,7 @@ export async function copyDevBrowserScreenshotToClipboard(
       ok: false,
       message: error instanceof Error ? error.message : String(error)
     }
+  } finally {
+    clearTimeout(timeout)
   }
 }

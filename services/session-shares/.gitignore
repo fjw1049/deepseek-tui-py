@@ -3,3 +3,4 @@ dist/
 .wrangler/
 .sites-runtime/
 .env*
+!.env.example

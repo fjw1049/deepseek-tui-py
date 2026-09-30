@@ -45,6 +45,21 @@ describe('normalizeBrowseUrlInput / isBrowsableUrl', () => {
     )
   })
 
+  it('defaults IPv6 loopback addresses with a port to http', () => {
+    expect(normalizeBrowseUrlInput('[::1]:3000/demo')).toBe('http://[::1]:3000/demo')
+    expect(normalizeBrowseUrlInput('[::]:3000')).toBe('http://127.0.0.1:3000/')
+  })
+
+  it('does not reinterpret unsupported schemes as web addresses', () => {
+    for (const url of ['javascript:123', 'javascript:123?next=https://example.com', 'data:123', 'file:123', 'about:123']) {
+      expect(normalizeBrowseUrlInput(url), url).toBeNull()
+      expect(isBrowsableUrl(url), url).toBe(false)
+    }
+    // Navigation guards require a URL; shorthand belongs to the address bar.
+    expect(isBrowsableUrl('example.com')).toBe(false)
+    expect(isBrowsableUrl('5173')).toBe(false)
+  })
+
   it('rejects public http and non-http(s) schemes', () => {
     expect(normalizeBrowseUrlInput('http://www.baidu.com')).toBeNull()
     expect(normalizeBrowseUrlInput('file:///tmp/x.html')).toBeNull()

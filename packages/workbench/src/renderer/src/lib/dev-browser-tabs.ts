@@ -32,6 +32,9 @@ export function formatAddressInput(url: string | null): string {
   if (!url) return ''
   try {
     const parsed = new URL(url)
+    // Bare local addresses default to HTTP. Preserve explicit local HTTPS
+    // so the displayed address can be submitted without changing protocol.
+    if (parsed.protocol === 'https:' && isLocalPreviewUrl(url)) return parsed.toString()
     const path = parsed.pathname === '/' ? '' : parsed.pathname
     return `${parsed.host}${path}${parsed.search}${parsed.hash}`
   } catch {

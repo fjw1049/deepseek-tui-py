@@ -34,12 +34,56 @@ python -m uvicorn deepseek_tui.server.share_service:create_app \
 
 这是一套适合个人或可信团队的独立服务：持链接者可读取该快照，持上传密钥者可以创建分享，并撤销已知链接。当前没有账号隔离、私有账号链接或端到端加密。快照在服务端以 JSON 保存。过期访问返回 410 并清理文件；未再次访问的过期文件可由服务器维护任务清理。
 
+## 本地 Docker 测试与后续服务器部署
+
+本地 Docker 使用上述自建 FastAPI 服务，不依赖 Cloudflare。在仓库根目录运行：
+
+```sh
+cp -n services/session-shares/.env.example services/session-shares/.env
+python3 - <<'PY'
+from pathlib import Path
+import secrets
+path = Path('services/session-shares/.env')
+text = path.read_text().replace('DEEPSEEK_SHARE_UPLOAD_KEY=\n',
+    'DEEPSEEK_SHARE_UPLOAD_KEY=' + secrets.token_urlsafe(32) + '\n')
+path.write_text(text)
+path.chmod(0o600)
+PY
+docker compose -f services/session-shares/compose.yaml up -d --build --wait
+curl http://127.0.0.1:8787/health
+```
+
+如果 `.env` 已经存在，保留原文件，不必重复复制或更换密钥。此文件已被 Git 忽略。容器默认只监听本机 `127.0.0.1:8787`，以非 root 用户运行，快照存放在命名数据卷 `session-shares_share-data`。
+
+在应用「设置 → 数据 → 高级：自行部署分享服务」中，将地址设为 `http://127.0.0.1:8787`，上传密钥填写 `.env` 中的 `DEEPSEEK_SHARE_UPLOAD_KEY` 值。之后使用正常的「分享 → 复制链接」和「分享 → 打开分享」流程测试。每次重新打开分享弹窗都会生成当前快照；同一弹窗内重复复制会复用刚生成的链接。
+
+`127.0.0.1` 链接只适合同一台电脑上的测试。跨电脑测试和后续部署时，在服务器运行相同的 Compose 服务，通过 HTTPS 反向代理暴露端口，再把应用里的服务地址改成服务器的 HTTPS 域名。接收方无需保存服务地址或上传密钥。切换地址仅影响新链接，旧链接仍依赖原服务；迁移同一域名的已有链接时需要同时保留数据卷及上传密钥。服务器域名和 HTTPS 代理可在选定服务器后配置。
+
+```sh
+# 停止服务，保留分享数据
+docker compose -f services/session-shares/compose.yaml down
+# 再次启动
+docker compose -f services/session-shares/compose.yaml up -d --wait
+```
+
+Docker 真实 HTTP 验收使用临时生成的会话和 Git 项目，覆盖图片、聊天上下文、项目修改、新工作目录及撤销，不上传用户的真实会话：
+
+```sh
+set -a
+. services/session-shares/.env
+set +a
+DEEPSEEK_API_KEY=test-only-not-a-real-key \
+DEEPSEEK_SHARE_TEST_ORIGIN="http://127.0.0.1:${DEEPSEEK_SHARE_PORT:-8787}" \
+DEEPSEEK_SHARE_TEST_UPLOAD_KEY="$DEEPSEEK_SHARE_UPLOAD_KEY" \
+.venv/bin/pytest -q tests/contract/test_session_sharing.py -k real_http_share
+```
+
 ## 使用
 
 1. 公司电脑：结束当前轮执行，点击「分享 → 复制链接」。自动生成有效期 7 天的链接并复制。
 2. 家里电脑：打开网页链接，点击「在应用中继续」。应用显示预览，点击「继续此对话」。
-3. 仅继续聊天时，应用自动创建独立的空工作目录，无需选择项目。
-4. 需要操作已有本地项目，可展开「需要操作本地项目？」选择文件夹。
+3. 仅继续聊天时，恢复的会话默认归入当前项目目录。没有当前会话但已选择项目时，使用该项目目录。
+4. 可展开「指定恢复目录」选择其他文件夹，手动指定优先于当前项目。预览会显示实际使用的目录；两者都没有时，才自动创建 `shared-*` 临时目录。当前处于默认的临时聊天目录时，不会沿用之前选择的其他项目。
 5. 需要携带代码修改，分享前在「更多选项」里勾选。恢复时会在确有需要时弹出项目选择器。
 6. 当前链接可在分享弹窗内撤销；关闭客户端后，已知链接仍可通过撤销 API 管理。撤销不能收回已导入的副本。
 

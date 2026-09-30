@@ -1,0 +1,21 @@
+services:
+  shares:
+    build:
+      context: ../..
+      dockerfile: services/session-shares/Dockerfile
+    ports:
+      - "${DEEPSEEK_SHARE_BIND_HOST:-127.0.0.1}:${DEEPSEEK_SHARE_PORT:-8787}:8787"
+    environment:
+      DEEPSEEK_SHARE_UPLOAD_KEY: "${DEEPSEEK_SHARE_UPLOAD_KEY:?Set an upload key in .env}"
+    volumes:
+      - share-data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8787/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+volumes:
+  share-data:

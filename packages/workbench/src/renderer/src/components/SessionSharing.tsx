@@ -4,10 +4,12 @@ import { Share, X } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { useChatStore } from '../store/chat-store'
 import { SharingError, sharingRequest, type SharePreview, type ShareSettings } from '../lib/session-sharing'
+import { isChatsWorkspace, resolveActiveThreadWorkspace } from '../lib/workspace-path'
 
 export function SessionSharing({ incomingUrl, onDismiss }: { incomingUrl?: string; onDismiss?: () => void }) {
   const { t } = useTranslation('common')
   const threadId = useChatStore(s => s.activeThreadId)
+  const currentWorkspace = useChatStore(s => resolveActiveThreadWorkspace(s.activeThreadId, s.threads, s.workspaceRoot))
   const busy = useChatStore(s => s.busy)
   const refreshThreads = useChatStore(s => s.refreshThreads)
   const selectThread = useChatStore(s => s.selectThread)
@@ -18,6 +20,7 @@ export function SessionSharing({ incomingUrl, onDismiss }: { incomingUrl?: strin
   const [url, setUrl] = useState(incomingUrl ?? '')
   const [createdUrl, setCreatedUrl] = useState('')
   const [workspace, setWorkspace] = useState('')
+  const targetWorkspace = workspace || (isChatsWorkspace(currentWorkspace) ? '' : currentWorkspace)
   const [restoreProject, setRestoreProject] = useState(true)
   const [preview, setPreview] = useState<SharePreview | null>(null)
   const [pending, setPending] = useState(false)
@@ -52,7 +55,7 @@ export function SessionSharing({ incomingUrl, onDismiss }: { incomingUrl?: strin
     }
     return () => { live = false }
   }, [open, tab])
-  useEffect(() => { setCreatedUrl('') }, [threadId])
+  useEffect(() => { setCreatedUrl('') }, [threadId, open, busy])
   useEffect(() => {
     if (!incomingUrl) return
     let live = true
@@ -83,7 +86,7 @@ export function SessionSharing({ incomingUrl, onDismiss }: { incomingUrl?: strin
   return <>
     {!incomingUrl && <button ref={trigger} type="button" className="ds-sidebar-toggle-button ds-no-drag shrink-0"
       title={t('sharing.open')} aria-label={t('sharing.open')}
-      onClick={() => { setTab(threadId ? 'share' : 'restore'); setError(''); setNotice(''); setOpen(true) }}>
+      onClick={() => { setTab(threadId ? 'share' : 'restore'); setWorkspace(''); setError(''); setNotice(''); setOpen(true) }}>
       <Share className="h-4 w-4" strokeWidth={1.85} />
     </button>}
     {open && createPortal(<dialog ref={dialog} aria-labelledby="session-sharing-title"
@@ -133,13 +136,13 @@ export function SessionSharing({ incomingUrl, onDismiss }: { incomingUrl?: strin
             <label className="flex gap-2 text-sm"><input type="checkbox" checked={restoreProject} disabled={pending} onChange={e => setRestoreProject(e.target.checked)} />{t('sharing.bringFiles')}</label>
             {restoreProject && <p className="text-xs text-ds-muted">{t('sharing.pickProjectHint')}</p>}
           </> : <p className="text-sm text-ds-muted">{t('sharing.continueHint')}</p>}
+          <p className="text-sm text-ds-muted">{t('sharing.workspace')}: <span className="break-all">{targetWorkspace || t('sharing.temporaryWorkspace')}</span></p>
           <details className="text-sm text-ds-muted"><summary className="cursor-pointer">{t('sharing.useProject')}</summary>
             <button className={`${button} mt-2`} disabled={pending} onClick={() => void run(async () => { const picked = await window.dsGui.pickWorkspaceDirectory(); if (picked.path) setWorkspace(picked.path) })}>{t('sharing.choose')}</button>
-            {workspace && <p className="mt-1 break-all text-xs">{workspace}</p>}
           </details>
           {busy && <p className="text-sm text-ds-muted">{t('sharing.waitRestore')}</p>}
           <button className={primary} disabled={pending || busy} onClick={() => void run(async () => {
-            let target = workspace
+            let target = targetWorkspace
             if (preview.project_commit && restoreProject && !target) {
               const picked = await window.dsGui.pickWorkspaceDirectory()
               if (!picked.path) return

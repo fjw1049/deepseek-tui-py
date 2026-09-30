@@ -185,6 +185,10 @@ describe('formatAddressInput', () => {
     )
     expect(formatAddressInput(null)).toBe('')
   })
+
+  it('preserves local https so submitting the address does not downgrade it', () => {
+    expect(formatAddressInput('https://localhost:3000/demo')).toBe('https://localhost:3000/demo')
+  })
 })
 
 describe('createTab', () => {
