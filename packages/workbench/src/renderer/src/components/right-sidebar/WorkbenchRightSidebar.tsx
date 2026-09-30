@@ -128,6 +128,8 @@ export function WorkbenchRightSidebar({
   const runTarget = useRunPanelStore((state) => state.target)
   const activeThreadId = useChatStore((state) => state.activeThreadId)
   const hasRunSelection = !!runTarget && runTarget.threadId === activeThreadId
+  const [hasOpened, setHasOpened] = useState(open)
+  useEffect(() => { if (open) setHasOpened(true) }, [open])
   const [menuOpen, setMenuOpen] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
   const addButtonRef = useRef<HTMLButtonElement>(null)
@@ -147,12 +149,11 @@ export function WorkbenchRightSidebar({
   }
   const launcherItems = TAB_ITEMS.filter((item) => item.id !== 'runs' || hasRunSelection)
 
-  if (!open) return null
-
-  if (collapsed) {
+  if (open && collapsed) {
     return (
       <aside
         className="ds-workbench-right-panel ds-no-drag relative h-full min-h-0 shrink-0"
+        data-open=""
         style={{ width: 52 }}
       >
         <RightSidebarCollapsedStrip workspaceRoot={workspaceRoot} onExpand={onToggleCollapsed} activeTab={tab} />
@@ -201,18 +202,21 @@ export function WorkbenchRightSidebar({
     )
   }
 
-  const terminalVisible = tab === 'terminal'
+  const terminalVisible = open && tab === 'terminal'
   const visibleTabItems = tabs.flatMap((id) => TAB_ITEMS.filter((item) => item.id === id))
 
   return (
     <aside
       className={`ds-workbench-right-panel ds-no-drag relative h-full min-h-0 ${
-        fillWidth ? 'min-w-0 w-full flex-1' : 'shrink-0'
+        open && fillWidth ? 'min-w-0 w-full flex-1' : 'shrink-0'
       }`}
-      data-fill-width={fillWidth ? '' : undefined}
-      style={fillWidth ? undefined : { width }}
+      data-fill-width={open && fillWidth ? '' : undefined}
+      data-open={open ? '' : undefined}
+      aria-hidden={!open}
+      inert={!open}
+      style={{ width: open ? width : 0 }}
     >
-      <div
+      {open ? <div
         role="separator"
         aria-orientation="vertical"
         aria-label={t('rightPanelResize')}
@@ -220,9 +224,13 @@ export function WorkbenchRightSidebar({
         onPointerDown={onBeginResize}
       >
         {/* Panel's own border-l is the divider; the handle stays invisible. */}
-      </div>
+      </div> : null}
 
-      <div className="ds-tool-panel ds-right-panel-surface flex h-full min-h-0 flex-col overflow-hidden bg-ds-sidebar">
+      {open || hasOpened ? (
+      <div
+        className="ds-tool-panel ds-right-panel-surface absolute inset-y-0 right-0 flex h-full min-h-0 flex-col overflow-hidden bg-ds-sidebar"
+        style={{ width: open && fillWidth ? '100%' : width }}
+      >
         {/* Same height + divider treatment as the workbench topbar so the two
             header lines read as one continuous rule across the card. */}
         <div className="ds-no-drag ds-surface-divider ds-right-panel-tabbar ds-dock-header">
@@ -345,6 +353,7 @@ export function WorkbenchRightSidebar({
           ) : null}
         </div>
       </div>
+      ) : null}
     </aside>
   )
 }

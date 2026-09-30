@@ -63,3 +63,38 @@ it('opens from launcher, adds and reselects via menu, keeps terminal mounted, an
     host.remove()
   }
 })
+
+it('loads on first open and preserves the panel across closing and reopening', async () => {
+  const host = document.createElement('div')
+  document.body.append(host)
+  const root = createRoot(host)
+  const noop = vi.fn()
+  const render = (open: boolean) => act(async () => root.render(createElement(WorkbenchRightSidebar, {
+    open, collapsed: false, tab: 'terminal', tabs: ['terminal'], width: 420,
+    workspaceRoot: '', blocks: [], changesContext: 'branch', devPreviewBlocks: [],
+    latestDevPreviewUrl: null, onCloseTab: noop, onTabChange: noop,
+    onChangesContextChange: noop, onToggleCollapsed: noop, onClose: noop,
+    onToggleMaximize: noop, onBeginResize: noop, onOpenFileInEditor: noop
+  })))
+  try {
+    await render(false)
+    const frame = host.querySelector('aside')!
+    expect(host.querySelector('[data-terminal]')).toBeNull()
+    await render(true)
+    const terminal = host.querySelector('[data-terminal]')
+    expect(terminal).not.toBeNull()
+    await render(false)
+    expect(host.querySelector('aside')).toBe(frame)
+    expect(frame.style.width).toBe('0px')
+    expect(frame.getAttribute('aria-hidden')).toBe('true')
+    expect(frame.hasAttribute('inert')).toBe(true)
+    expect(host.querySelector('[data-terminal]')).toBe(terminal)
+    await render(true)
+    expect(frame.style.width).toBe('420px')
+    expect(frame.hasAttribute('inert')).toBe(false)
+    expect(host.querySelector('[data-terminal]')).toBe(terminal)
+  } finally {
+    await act(async () => root.unmount())
+    host.remove()
+  }
+})

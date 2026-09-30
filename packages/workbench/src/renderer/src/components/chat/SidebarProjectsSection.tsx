@@ -720,6 +720,7 @@ function SidebarProjectsSection({
 }: SidebarProjectsSectionProps): ReactElement {
   const [deletingThreadIds, setDeletingThreadIds] = useState<Record<string, boolean>>({})
   const [folderHover, setFolderHover] = useState<{ path: string; anchor: DOMRect } | null>(null)
+  const [hoveredWorkspacePath, setHoveredWorkspacePath] = useState<string | null>(null)
   const folderHoverTimerRef = useRef<number | null>(null)
   // Folder card self-dismisses after a few seconds of cursor inactivity, same as
   // the thread hover card — it is auxiliary info and should not linger.
@@ -1028,7 +1029,14 @@ function SidebarProjectsSection({
                       setProjectMenu({ path: workspacePath, x: event.clientX, y: event.clientY })
                     }
               }
+              onFocusCapture={() => setHoveredWorkspacePath(workspacePath)}
+              onBlurCapture={(event) => {
+                if (!event.currentTarget.contains(event.relatedTarget)) {
+                  setHoveredWorkspacePath((current) => current === workspacePath ? null : current)
+                }
+              }}
               onMouseEnter={(event) => {
+                setHoveredWorkspacePath(workspacePath)
                 const rect = event.currentTarget.getBoundingClientRect()
                 clearFolderHoverTimer()
                 folderHoverTimerRef.current = window.setTimeout(() => {
@@ -1040,6 +1048,7 @@ function SidebarProjectsSection({
                 if (folderHover?.path === workspacePath) armFolderAutoHide()
               }}
               onMouseLeave={() => {
+                setHoveredWorkspacePath((current) => current === workspacePath ? null : current)
                 clearFolderHoverTimer()
                 clearFolderAutoHide()
                 setFolderHover((current) => (current?.path === workspacePath ? null : current))
@@ -1075,15 +1084,16 @@ function SidebarProjectsSection({
                     aria-hidden
                   />
                 )}
-                <span
-                  className="ds-sidebar-project-label ds-sidebar-title-fade min-w-0 flex-1 overflow-hidden whitespace-nowrap"
+                <HoverMarqueeText
+                  active={hoveredWorkspacePath === workspacePath}
+                  className="ds-sidebar-project-label min-w-0 flex-1"
                   style={labelSwatch ? { color: labelSwatch } : undefined}
-                >
-                  {folderName}
-                </span>
+                  text={folderName}
+                  title={folderName}
+                />
               </button>
               {selectionMode ? null : (
-                <div className="flex shrink-0 items-center gap-1 pr-1">
+                <div className="hidden shrink-0 items-center gap-1 pr-1 group-hover:flex group-focus-within:flex">
                   <button
                     type="button"
                     onClick={(event) => {

@@ -50,7 +50,11 @@ async function runGitStdout(
   const timeout = options?.timeout ?? 10_000
   const maxBuffer = options?.maxBuffer ?? 1024 * 1024
   try {
-    const { stdout } = await execFileAsync('git', args, { cwd, timeout, maxBuffer })
+    const { stdout } = await execFileAsync('git', ['-c', 'core.quotepath=false', ...args], {
+      cwd,
+      timeout,
+      maxBuffer
+    })
     return String(stdout)
   } catch (error) {
     if (options?.allowNonZero && error && typeof error === 'object' && 'stdout' in error) {
@@ -113,16 +117,6 @@ function gitWorkingChangesFailure(error: unknown): GitWorkingChangesResult {
   return { ok: false, reason: 'error', message }
 }
 
-function unquoteGitPath(raw: string): string {
-  const trimmed = raw.trim()
-  if (trimmed.startsWith('"') && trimmed.endsWith('"')) {
-    return trimmed
-      .slice(1, -1)
-      .replace(/\\(["\\])/g, '$1')
-  }
-  return trimmed
-}
-
 function resolveGitStage(indexStatus: string, workTreeStatus: string): GitWorkingChangeStage {
   const indexDirty = indexStatus !== ' ' && indexStatus !== '?'
   const workTreeDirty = workTreeStatus !== ' ' && workTreeStatus !== '?'
@@ -144,13 +138,8 @@ function parsePorcelainEntry(
 
   const indexStatus = line[0] ?? ' '
   const workTreeStatus = line[1] ?? ' '
-  let pathPart = unquoteGitPath(line.slice(3))
+  const pathPart = line.slice(3)
   if (!pathPart) return null
-
-  if (pathPart.includes(' -> ')) {
-    const parts = pathPart.split(' -> ')
-    pathPart = unquoteGitPath(parts[parts.length - 1] ?? pathPart)
-  }
 
   const statusKey = `${indexStatus}${workTreeStatus}`
   let status: GitWorkingChangeStatus = 'modified'
@@ -650,11 +639,12 @@ async function resolveBranchBase(
 
 function parseNameStatus(raw: string): Array<{ path: string; status: GitWorkingChangeStatus }> {
   const out: Array<{ path: string; status: GitWorkingChangeStatus }> = []
-  for (const line of raw.split('\n')) {
-    const parts = line.split('\t').filter(Boolean)
-    const code = parts[0]?.[0] ?? ''
-    const path = parts[parts.length - 1]?.trim() ?? ''
-    if (!path) continue
+  const records = raw.split('\0')
+  for (let index = 0; index < records.length;) {
+    const code = records[index++]?.[0] ?? ''
+    let path = records[index++] ?? ''
+    if (code === 'R' || code === 'C') path = records[index++] ?? ''
+    if (!code || !path) continue
     out.push({ path, status: gitStatusFromCode(code, 'modified') })
   }
   return out
@@ -671,7 +661,7 @@ async function buildBranchFiles(
       maxBuffer: DIFF_MAX_BUFFER,
       allowNonZero: true
     }),
-    runGitStdout(cwd, ['diff', '--name-status', '--find-renames', baseCommit, '--'], {
+    runGitStdout(cwd, ['diff', '--name-status', '-z', '--find-renames', baseCommit, '--'], {
       timeout: 30_000,
       maxBuffer: DIFF_MAX_BUFFER,
       allowNonZero: true
@@ -721,18 +711,17 @@ export async function getGitWorkingChanges(
 
   try {
     const repositoryRoot = (await runGit(cwd, ['rev-parse', '--show-toplevel'])).stdout.trim()
-    const porcelainLines = (await runGit(cwd, ['status', '--porcelain=v1'])).stdout
-      .split('\n')
-      .map((line) => line.trimEnd())
-      .filter((line) => line.trim().length > 0)
-
-    const entries = porcelainLines
-      .map((line) => parsePorcelainEntry(line))
-      .filter(
-        (
-          entry
-        ): entry is ParsedPorcelainEntry => entry !== null
-      )
+    const porcelainLines = (
+      await runGit(cwd, ['status', '--porcelain=v1', '-z', '--untracked-files=all'])
+    ).stdout.split('\0')
+    const entries: ParsedPorcelainEntry[] = []
+    for (let index = 0; index < porcelainLines.length; index++) {
+      const entry = parsePorcelainEntry(porcelainLines[index]!)
+      if (!entry) continue
+      entries.push(entry)
+      // In -z output a rename/copy has the destination first, then the old path.
+      if (/[RC]/.test(`${entry.indexStatus}${entry.workTreeStatus}`)) index++
+    }
 
     const branchBase = scope === 'branch' ? await resolveBranchBase(cwd, baseRef) : null
 

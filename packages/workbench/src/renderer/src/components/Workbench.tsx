@@ -347,6 +347,8 @@ export function Workbench(): ReactElement {
   const runTarget = useRunPanelStore((state) => state.target)
   const runRequest = useRunPanelStore((state) => state.request)
   const [rightSidebarOpen, setRightSidebarOpen] = useState(false)
+  const rightSidebarOpenRef = useRef(false)
+  useEffect(() => { rightSidebarOpenRef.current = rightSidebarOpen }, [rightSidebarOpen])
   const [rightSidebarCollapsed, setRightSidebarCollapsed] = useState(false)
   const [rightSidebarPanels, setRightSidebarPanels] = useState(readStoredRightSidebarPanels)
   const rightSidebarTab = rightSidebarPanels.activeTab
@@ -596,6 +598,17 @@ export function Workbench(): ReactElement {
     await forkThread(activeThreadId)
   }
 
+  const openRightSidebar = useCallback((tab?: RightSidebarTab): void => {
+    if (!rightSidebarOpenRef.current) {
+      const mainWidth = mainRowRef.current?.clientWidth
+      if (mainWidth) setRightSidebarWidth(resolveHalfRightWidth(mainWidth))
+      setChatColumnHidden(false)
+    }
+    setRightSidebarOpen(true)
+    setRightSidebarCollapsed(false)
+    if (tab) setRightSidebarTab(tab)
+  }, [setRightSidebarTab])
+
   const handleComposerOpenDiff = useCallback((): void => {
     setChangesContext('last-turn')
     setChangesTurnId(useChatStore.getState().currentTurnId)
@@ -604,10 +617,8 @@ export function Workbench(): ReactElement {
       setRequestedIdeCenterTab('changes')
       return
     }
-    setRightSidebarOpen(true)
-    setRightSidebarCollapsed(false)
-    setRightSidebarTab('changes')
-  }, [layoutMode, setRightSidebarTab])
+    openRightSidebar('changes')
+  }, [layoutMode, openRightSidebar])
 
   const handleBranchOpenDiff = (): void => {
     setChangesContext('branch')
@@ -617,16 +628,8 @@ export function Workbench(): ReactElement {
       setRequestedIdeCenterTab('changes')
       return
     }
-    setRightSidebarOpen(true)
-    setRightSidebarCollapsed(false)
-    setRightSidebarTab('changes')
+    openRightSidebar('changes')
   }
-
-  const openRightSidebar = useCallback((tab: RightSidebarTab): void => {
-    setRightSidebarOpen(true)
-    setRightSidebarCollapsed(false)
-    setRightSidebarTab(tab)
-  }, [setRightSidebarTab])
 
   const openFilesSidebar = useCallback((): void => {
     openRightSidebar('editor')
@@ -687,10 +690,8 @@ export function Workbench(): ReactElement {
 
   useEffect(() => {
     if (runTarget?.threadId !== useChatStore.getState().activeThreadId) return
-    setRightSidebarOpen(true)
-    setRightSidebarCollapsed(false)
-    setRightSidebarTab('runs')
-  }, [runRequest, runTarget, setRightSidebarTab])
+    openRightSidebar('runs')
+  }, [runRequest, runTarget, openRightSidebar])
 
   useEffect(() => {
     if (runTarget?.threadId !== activeThreadId) {
@@ -705,18 +706,13 @@ export function Workbench(): ReactElement {
   }, [])
 
   const toggleRightSidebar = useCallback((): void => {
-    if (!rightSidebarOpen) {
-      setRightSidebarOpen(true)
-      setRightSidebarCollapsed(false)
-      return
-    }
-    if (rightSidebarCollapsed) {
-      setRightSidebarCollapsed(false)
+    if (!rightSidebarOpen || rightSidebarCollapsed) {
+      openRightSidebar()
       return
     }
     setRightSidebarOpen(false)
     setChatColumnHidden(false)
-  }, [rightSidebarCollapsed, rightSidebarOpen])
+  }, [openRightSidebar, rightSidebarCollapsed, rightSidebarOpen])
 
   const toggleTerminalPanel = useCallback((): void => {
     if (!activeWorkspaceRoot.trim()) return
@@ -825,22 +821,6 @@ export function Workbench(): ReactElement {
       setBottomTerminalOpen(false)
     }
   }, [activeWorkspaceRoot, terminalSidebarOpen])
-
-  const prevRightSidebarOpenRef = useRef(rightSidebarOpen)
-  useEffect(() => {
-    const prev = prevRightSidebarOpenRef.current
-    prevRightSidebarOpenRef.current = rightSidebarOpen
-    if (!prev && rightSidebarOpen && !rightSidebarCollapsed) {
-      const mainWidth = readMainRowWidth(
-        shellRef,
-        mainRowRef,
-        !leftSidebarHidden,
-        leftSidebarWidth
-      )
-      setRightSidebarWidth(resolveHalfRightWidth(mainWidth))
-      setChatColumnHidden(false)
-    }
-  }, [leftSidebarHidden, leftSidebarWidth, rightSidebarCollapsed, rightSidebarOpen])
 
   useEffect(() => {
     const openEditorTarget = (
@@ -1924,9 +1904,11 @@ export function Workbench(): ReactElement {
                     </div>
                   </div>
                 </div>
-              ) : operationColumnActive ? (
+              ) : (
                 <div className="ds-chat-operation-band min-h-0 min-w-0 flex-1">
-                  <div className="ds-chat-operation-band__dialogue ds-dialogue-gutter flex min-h-0 min-w-0 flex-1 flex-col">
+                  <div className={operationColumnActive
+                    ? 'ds-chat-operation-band__dialogue ds-dialogue-gutter flex min-h-0 min-w-0 flex-1 flex-col'
+                    : 'ds-chat-stage ds-dialogue-gutter mx-auto flex min-h-0 w-full min-w-0 flex-1 flex-col'}>
                     <MessageTimeline
                         scrollMemory={peekChatPaneSession(activeThreadId)?.scroll}
                       blocks={blocks}
@@ -1935,7 +1917,7 @@ export function Workbench(): ReactElement {
                       activeThreadId={activeThreadId}
                       runtimeConnection={runtimeConnection}
                       stageCentered={stageCentered}
-                      withOperationColumn
+                      withOperationColumn={operationColumnActive}
                       onRetryConnection={() => void probeRuntime('user')}
                       onOpenSettings={() => openSettings('general')}
                       onOpenDiagnostics={() => setRuntimeDiagnosticsOpen(true)}
@@ -1943,7 +1925,7 @@ export function Workbench(): ReactElement {
                       htmlPreviewAction={htmlPreviewAction}
                       onOpenWorkspaceFile={openFileInEditor}
                     />
-                    {showOperationColumn ? (
+                    {operationColumnActive ? (
                       <div className="ds-dialogue-gutter shrink-0 pb-2 md:hidden">
                         <OperationContextDock
                           workspaceRoot={activeWorkspaceRoot}
@@ -1956,7 +1938,7 @@ export function Workbench(): ReactElement {
                         />
                       </div>
                     ) : null}
-                    <div className="ds-chat-stage mx-auto mb-8 flex w-full shrink-0 -mt-6 pb-0 pt-0">
+                    <div key="composer" className={`${operationColumnActive ? 'ds-chat-stage ' : ''}mx-auto mb-8 flex w-full shrink-0 -mt-6 pb-0 pt-0`}>
                       <ComposerStage
                         sessionKey={activeThreadId ?? undefined}
                         input={input}
@@ -1990,6 +1972,7 @@ export function Workbench(): ReactElement {
                       />
                     </div>
                   </div>
+                  {operationColumnActive ? (
                   <aside className="ds-operation-rail ds-no-drag hidden h-full min-h-0 shrink-0 md:flex">
                     <div className="ds-operation-rail__scroll min-h-0 flex-1 overflow-y-auto pb-4 pl-0 pr-0 pt-[var(--ds-operation-stack-offset)]">
                       <OperationContextDock
@@ -2003,57 +1986,7 @@ export function Workbench(): ReactElement {
                       />
                     </div>
                   </aside>
-                </div>
-              ) : (
-                <div className="ds-chat-stage ds-dialogue-gutter mx-auto flex min-h-0 w-full min-w-0 flex-1 flex-col">
-                  <MessageTimeline
-                        scrollMemory={peekChatPaneSession(activeThreadId)?.scroll}
-                    blocks={blocks}
-                    liveReasoning={liveReasoning}
-                    live={liveAssistant}
-                    activeThreadId={activeThreadId}
-                    runtimeConnection={runtimeConnection}
-                    stageCentered={stageCentered}
-                    onRetryConnection={() => void probeRuntime('user')}
-                    onOpenSettings={() => openSettings('general')}
-                    onOpenDiagnostics={() => setRuntimeDiagnosticsOpen(true)}
-                    onSelectSuggestion={(text) => setInput(text)}
-                    htmlPreviewAction={htmlPreviewAction}
-                    onOpenWorkspaceFile={openFileInEditor}
-                  />
-                  <div className="mx-auto mb-8 flex w-full shrink-0 -mt-6 pb-0 pt-0">
-                    <ComposerStage
-                        sessionKey={activeThreadId ?? undefined}
-                      input={input}
-                      setInput={setInput}
-                      mode={mode}
-                      setMode={setMode}
-                      busy={busy}
-                      runtimeReady={runtimeConnection === 'ready'}
-                      hasActiveThread={Boolean(activeThreadId)}
-                      useChatStageWidth={false}
-                      composerModel={composerModel}
-                      composerPickList={composerPickList}
-                      onComposerModelChange={(modelId) => {
-                        setComposerModel(modelId)
-                      }}
-                      onSend={handleSend}
-                      onCompact={compactActiveThread}
-                      onFork={handleComposerFork}
-                      onOpenDiff={handleComposerOpenDiff}
-                      queuedMessages={queuedMessages}
-                      onRemoveQueuedMessage={removeQueuedMessage}
-                      onWithdrawQueuedMessage={withdrawQueuedMessage}
-                      onSendQueuedMessageNow={(id) => void sendQueuedMessageNow(id)}
-                      onInterrupt={() => void interrupt()}
-                      focusRequestId={composerFocusRequestId}
-                      previewPicks={pendingPreviewPicks}
-                      onRemovePreviewPick={removePendingPreviewPick}
-                      onClearPreviewPicks={clearPendingPreviewPicks}
-                      flashNotice={previewPickNotice}
-                      flashNoticeNonce={previewPickNoticeNonce}
-                    />
-                  </div>
+                  ) : null}
                 </div>
               )}
             </div>

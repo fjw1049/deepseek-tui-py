@@ -165,6 +165,87 @@ describe('git-service integration', () => {
     }
   })
 
+  it('lists individual untracked files with real Unicode paths and refreshes their patches', async () => {
+    const repo = mkdtempSync(join(tmpdir(), 'deepseek-git-untracked-paths-'))
+    const git = (...args: string[]): string =>
+      execFileSync('git', args, { cwd: repo, encoding: 'utf8' }).trim()
+    const paths = ['新增.md', '新目录/报告.md', 'plain/nested/new.txt']
+    try {
+      git('init')
+      git('config', 'user.name', 'Workbench Test')
+      git('config', 'user.email', 'workbench@example.test')
+      git('branch', '-M', 'main')
+      git('commit', '--allow-empty', '-m', 'initial')
+      mkdirSync(join(repo, '新目录'))
+      mkdirSync(join(repo, 'plain/nested'), { recursive: true })
+      for (const path of paths) writeFileSync(join(repo, path), `content of ${path}\n`)
+
+      for (const scope of ['working-tree', 'unstaged', 'branch'] as const) {
+        const result = await getGitWorkingChanges(repo, scope)
+        expect(result.ok).toBe(true)
+        if (!result.ok) continue
+        expect(result.files.map((file) => file.path).sort()).toEqual([...paths].sort())
+        for (const file of result.files) {
+          expect(file.status).toBe('untracked')
+          expect(file.patch).toContain(`+content of ${file.path}`)
+        }
+        if (scope === 'working-tree') {
+          expect(result.stagedFiles).toEqual([])
+          expect(result.unstagedFiles).toEqual(result.files)
+        }
+      }
+
+      writeFileSync(join(repo, paths[1]!), 'updated nested content\n')
+      const refreshed = await getGitWorkingChanges(repo)
+      expect(refreshed.ok).toBe(true)
+      if (refreshed.ok) {
+        expect(refreshed.files.find((file) => file.path === paths[1])?.patch).toContain(
+          '+updated nested content'
+        )
+      }
+    } finally {
+      rmSync(repo, { recursive: true, force: true })
+    }
+  })
+
+  it('preserves Unicode and special characters in staged, renamed, and branch paths', async () => {
+    const repo = mkdtempSync(join(tmpdir(), 'deepseek-git-staged-paths-'))
+    const git = (...args: string[]): string =>
+      execFileSync('git', args, { cwd: repo, encoding: 'utf8' }).trim()
+    const renamedPath = '新 -> 名称.txt'
+    const addedPath = '新增\t报告\n文件.md'
+    try {
+      git('init')
+      git('config', 'user.name', 'Workbench Test')
+      git('config', 'user.email', 'workbench@example.test')
+      git('branch', '-M', 'main')
+      writeFileSync(join(repo, '旧名称.txt'), 'rename content\n')
+      git('add', '.')
+      git('commit', '-m', 'initial')
+      git('mv', '旧名称.txt', renamedPath)
+      writeFileSync(join(repo, addedPath), 'new staged content\n')
+      git('add', '.')
+
+      for (const scope of ['working-tree', 'staged', 'branch'] as const) {
+        const result = await getGitWorkingChanges(repo, scope)
+        expect(result.ok).toBe(true)
+        if (!result.ok) continue
+        expect(result.files.map((file) => file.path).sort()).toEqual(
+          [renamedPath, addedPath].sort()
+        )
+        expect(result.files.find((file) => file.path === renamedPath)).toMatchObject({
+          status: 'renamed',
+          patch: expect.stringContaining('rename to')
+        })
+        expect(result.files.find((file) => file.path === addedPath)?.patch).toContain(
+          '+new staged content'
+        )
+      }
+    } finally {
+      rmSync(repo, { recursive: true, force: true })
+    }
+  })
+
   it('commits the existing index when no explicit paths are supplied', async () => {
     const repo = mkdtempSync(join(tmpdir(), 'deepseek-git-index-commit-'))
     const git = (...args: string[]): string =>
