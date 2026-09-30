@@ -2873,6 +2873,10 @@ samp {
   );
 }
 
+.ds-right-panel-tabbar {
+  transition: padding-left 300ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+
 /* Maximized right panel hides the chat topbar, so the editor/changes/terminal/
    preview chips become the left-edge chrome. Reuse the same droplet clearance
    only in that case — half-width right panel stays untouched. */
@@ -2881,7 +2885,6 @@ samp {
   .ds-workbench-right-panel[data-fill-width]
   .ds-right-panel-tabbar {
   padding-left: calc(16px + 1.75rem + 0.35rem - var(--ds-window-inset, 8px));
-  transition: padding-left 300ms cubic-bezier(0.32, 0.72, 0, 1);
 }
 
 :root[data-platform='darwin']
@@ -7276,6 +7279,8 @@ select:focus-visible,
   /* Pad the content card via shell padding (reliable in flex). Left stays 0 so
      the sidebar can sit flush; collapsed sidebar restores left inset below. */
   padding: var(--ds-window-inset) var(--ds-window-inset) var(--ds-window-inset) 0;
+  /* The inset follows the rail so its first frame cannot nudge the card. */
+  transition: padding-left 300ms cubic-bezier(0.32, 0.72, 0, 1);
   /* One chrome color with the left rail: gutters around the floating card
      (top/right/bottom, and left when collapsed) must match --bg-sidebar.
      Using --bg-app here made the four card corners a darker second board tone. */
@@ -7364,9 +7369,9 @@ select:focus-visible,
   transition: width 300ms cubic-bezier(0.32, 0.72, 0, 1);
 }
 
-/* Bleed the open sidebar through the shell's vertical padding so it stays
-   flush with the window while the content card keeps its inset gutters. */
-.ds-workbench-sidebar-wrap:not([data-collapsed]) {
+/* Keep the rail flush with the window throughout its horizontal slide;
+   changing its vertical inset on collapse would nudge the departing content. */
+.ds-workbench-sidebar-wrap {
   margin-block: calc(-1 * var(--ds-window-inset));
   min-height: calc(100% + 2 * var(--ds-window-inset));
 }
@@ -7375,6 +7380,7 @@ select:focus-visible,
   transition: transform 300ms cubic-bezier(0.32, 0.72, 0, 1);
 }
 
+.ds-workbench-shell.is-resizing,
 .ds-workbench-sidebar-wrap.is-resizing,
 .ds-workbench-sidebar-wrap.is-resizing .ds-workbench-sidebar-slide {
   transition: none;
@@ -7386,7 +7392,10 @@ select:focus-visible,
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .ds-workbench-shell,
   .ds-workbench-shell::before,
+  .ds-workbench-topbar__inner,
+  .ds-right-panel-tabbar,
   .ds-workbench-sidebar-wrap,
   .ds-workbench-sidebar-slide,
   .ds-workbench-sidebar-wrap::after,
@@ -7465,6 +7474,11 @@ select:focus-visible,
   background-position: left bottom;
 }
 
+.ds-chat-column > section {
+  width: var(--ds-chat-rest-width, 100%);
+  transition: width 280ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
 .ds-workbench-right-panel {
   overflow: hidden;
   border: none;
@@ -7477,7 +7491,7 @@ select:focus-visible,
 .ds-workbench-right-panel .ds-right-panel-surface {
   opacity: 0;
   transform: translateX(12px);
-  transition: opacity 160ms ease-out, transform 280ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  transition: width 280ms cubic-bezier(0.2, 0.8, 0.2, 1), opacity 160ms ease-out, transform 280ms cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
 .ds-workbench-right-panel[data-open] .ds-right-panel-surface {
@@ -7485,12 +7499,14 @@ select:focus-visible,
   transform: translateX(0);
 }
 
+.ds-workbench-shell.is-resizing .ds-chat-column > section,
 .ds-workbench-shell.is-resizing .ds-workbench-right-panel,
 .ds-workbench-shell.is-resizing .ds-workbench-right-panel .ds-right-panel-surface {
   transition: none;
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .ds-chat-column > section,
   .ds-workbench-right-panel,
   .ds-workbench-right-panel .ds-right-panel-surface {
     transition: none;
@@ -8099,19 +8115,71 @@ html[data-theme='dark'] .ds-syntax-line span { color: var(--shiki-dark) !importa
   touch-action: none;
 }
 
-/* Full-width hairline between the file list (above) and the compare pane (below). */
+/* Keep the drag target generous while the visible track stays slim. */
+.ds-change-inspector__split-handle--horizontal {
+  height: 12px;
+  padding-block: 3px;
+  background-color: color-mix(in srgb, var(--ds-text) 2%, var(--ds-bg-sidebar));
+  background-clip: content-box;
+  outline: none;
+  user-select: none;
+  transition: background-color 120ms ease;
+}
+
 .ds-change-inspector__split-handle--horizontal::before {
   content: '';
   position: absolute;
-  left: 0;
-  right: 0;
+  inset-inline: 0;
   top: 50%;
   height: 1px;
   background: color-mix(in srgb, var(--ds-text) 14%, transparent);
+  transform: translateY(-50%);
+  pointer-events: none;
+  transition: background-color 120ms ease;
 }
 
-.ds-change-inspector__split-handle--horizontal:hover::before {
-  background: color-mix(in srgb, var(--ds-text) 28%, transparent);
+.ds-change-inspector__split-handle--horizontal::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 28px;
+  height: 2px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--ds-text) 58%, var(--ds-bg-sidebar));
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  transition: background-color 120ms ease;
+}
+
+.ds-change-inspector__split-handle--horizontal:is(:hover, :focus-visible, [data-resizing]) {
+  background-color: color-mix(in srgb, var(--ds-accent) 5%, var(--ds-bg-sidebar));
+}
+
+.ds-change-inspector__split-handle--horizontal:is(:hover, :focus-visible, [data-resizing])::before {
+  background: color-mix(in srgb, var(--ds-accent) 40%, transparent);
+}
+
+.ds-change-inspector__split-handle--horizontal:is(:hover, :focus-visible, [data-resizing])::after {
+  background: var(--ds-accent);
+}
+
+.ds-change-inspector__split-handle--horizontal:focus-visible {
+  box-shadow: inset 0 0 0 1px var(--ds-accent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ds-change-inspector__split-handle--horizontal,
+  .ds-change-inspector__split-handle--horizontal::before,
+  .ds-change-inspector__split-handle--horizontal::after {
+    transition: none;
+  }
+}
+
+@media (forced-colors: active) {
+  .ds-change-inspector__split-handle--horizontal::before { background: ButtonText; }
+  .ds-change-inspector__split-handle--horizontal::after { background: ButtonText; }
+  .ds-change-inspector__split-handle--horizontal:focus-visible { outline: 2px solid Highlight; }
 }
 
 .ds-change-inspector__code {
@@ -11409,7 +11477,8 @@ html[data-theme='dark'] .ds-syntax-line span { color: var(--shiki-dark) !importa
 }
 
 /* Keep the stage entrance and projects-rail movement on the same curve. */
-.ds-workbench-shell.is-layout-switching :is(.ds-workbench-sidebar-wrap, .ds-workbench-sidebar-slide, .ds-workbench-main),
+.ds-workbench-shell.is-layout-switching,
+.ds-workbench-shell.is-layout-switching :is(.ds-workbench-sidebar-wrap, .ds-workbench-sidebar-slide, .ds-workbench-main, .ds-workbench-topbar__inner, .ds-right-panel-tabbar),
 .ds-workbench-shell.is-layout-switching .ds-workbench-sidebar-wrap::after,
 .ds-workbench-shell.is-layout-switching .ds-workbench-main::before {
   transition-duration: 280ms;

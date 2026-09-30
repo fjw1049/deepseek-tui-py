@@ -116,6 +116,7 @@ const api = {
     ipcRenderer.invoke('git:github-repository', workspaceRoot),
   getGitWorkingChanges: (workspaceRoot, scope, baseRef) =>
     ipcRenderer.invoke('git:working-changes', { workspaceRoot, scope, baseRef }),
+  getGitFileDiff: (target) => ipcRenderer.invoke('git:file-diff', target),
   switchGitBranch: (workspaceRoot, branch) =>
     ipcRenderer.invoke('git:switch-branch', { workspaceRoot, branch }),
   stashAndSwitchGitBranch: (workspaceRoot, branch) =>

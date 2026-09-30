@@ -35,6 +35,7 @@ import {
   gitCommitPayloadSchema,
   gitCommitPathsPayloadSchema,
   gitLogPayloadSchema,
+  gitFileDiffPayloadSchema,
   gitWorkingChangesPayloadSchema,
   logErrorPayloadSchema,
   notificationPayloadSchema,
@@ -88,6 +89,7 @@ import {
   getGitBranches,
   getGitHubRepository,
   getGitLog,
+  getGitFileDiff,
   getGitWorkingChanges,
   pullGitBranch,
   pushGitBranch,
@@ -1321,6 +1323,9 @@ export function registerAppIpcHandlers(options: RegisterAppIpcHandlersOptions): 
     }
     return payload
   })
+  ipcMain.handle('git:file-diff', (_, input: unknown) =>
+    getGitFileDiff(parseIpcPayload('git:file-diff', gitFileDiffPayloadSchema, input))
+  )
   ipcMain.handle(
     'git:switch-branch',
     async (_, payload: unknown) => {

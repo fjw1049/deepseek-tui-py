@@ -207,14 +207,12 @@ export function WorkbenchRightSidebar({
 
   return (
     <aside
-      className={`ds-workbench-right-panel ds-no-drag relative h-full min-h-0 ${
-        open && fillWidth ? 'min-w-0 w-full flex-1' : 'shrink-0'
-      }`}
+      className="ds-workbench-right-panel ds-no-drag relative h-full min-h-0 shrink-0"
       data-fill-width={open && fillWidth ? '' : undefined}
       data-open={open ? '' : undefined}
       aria-hidden={!open}
       inert={!open}
-      style={{ width: open ? width : 0 }}
+      style={{ width: open ? (fillWidth ? '100%' : width) : 0 }}
     >
       {open ? <div
         role="separator"
@@ -229,7 +227,11 @@ export function WorkbenchRightSidebar({
       {open || hasOpened ? (
       <div
         className="ds-tool-panel ds-right-panel-surface absolute inset-y-0 right-0 flex h-full min-h-0 flex-col overflow-hidden bg-ds-sidebar"
-        style={{ width: open && fillWidth ? '100%' : width }}
+        style={{
+          width,
+          minWidth: open && fillWidth ? '100%' : undefined,
+          maxWidth: open && fillWidth ? '100%' : undefined
+        }}
       >
         {/* Same height + divider treatment as the workbench topbar so the two
             header lines read as one continuous rule across the card. */}

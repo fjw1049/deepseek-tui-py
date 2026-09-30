@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { act, createElement } from 'react'
+import { act, createElement, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { expect, it, vi } from 'vitest'
 import { DiffView, highlightChangedText } from './DiffView'
@@ -89,6 +89,55 @@ it('navigates between hunks and keeps bare patches readable', async () => {
     expect(container.textContent).toContain('old')
     expect(container.textContent).toContain('new')
     expect(container.querySelector<HTMLButtonElement>('[aria-label="diffNextChange"]')!.disabled).toBe(true)
+  } finally {
+    act(() => root.unmount())
+    container.remove()
+  }
+})
+
+it('toggles full context beside expand/collapse and navigates changes in both layouts', async () => {
+  globalThis.IS_REACT_ACT_ENVIRONMENT = true
+  const container = document.createElement('div')
+  document.body.append(container)
+  const root = createRoot(container)
+  const patch = '@@ -12 +12 @@\n-old\n+new\n@@ -29 +29 @@\n-end\n+finish'
+  const fullFilePatch = ['@@ -1,40 +1,40 @@', ...Array.from({ length: 11 }, (_, i) => ` leading${i}`),
+    '-old', '+new', ...Array.from({ length: 16 }, (_, i) => ` middle${i}`), '-end', '+finish',
+    ...Array.from({ length: 11 }, (_, i) => ` trailing${i}`)].join('\n')
+  function Harness() {
+    const [showFullFile, setShowFullFile] = useState(true)
+    return createElement(DiffView, {
+      patch, fullFilePatch, showFullFile, showStyleToggle: true,
+      onToggleFullFile: () => setShowFullFile((value) => !value),
+      onToggleExpand: vi.fn(), onCollapse: vi.fn()
+    })
+  }
+  const click = async (label: string) => act(async () => container.querySelector<HTMLButtonElement>(`[aria-label="${label}"]`)!.click())
+  try {
+    await act(async () => root.render(createElement(Harness)))
+    for (const style of ['Unified diff', 'Split diff']) {
+      await click(style)
+      expect(container.textContent).toContain('leading0')
+      expect(container.textContent).toContain('middle8')
+      expect(container.textContent).toContain('trailing10')
+      expect(container.querySelector('[title="diffExpandContext"]')).toBeNull()
+      expect(container.querySelectorAll('mark').length).toBeGreaterThan(0)
+      const hunks = container.querySelectorAll<HTMLElement>('[data-diff-hunk]')
+      expect(hunks).toHaveLength(2)
+      const second = hunks[1]!.scrollIntoView = vi.fn()
+      await click('diffNextChange')
+      expect(second).toHaveBeenCalledWith({ block: 'start' })
+      const toggle = container.querySelector('[aria-label="diffShowChangesOnly"]')!
+      expect(toggle.getAttribute('aria-pressed')).toBe('false')
+      expect(toggle.parentElement?.nextElementSibling?.querySelector('button')?.getAttribute('aria-label')).toBe('inspectorExpandDiff')
+      await click('diffShowChangesOnly')
+      expect(container.textContent).not.toContain('leading0')
+      expect(container.textContent).not.toContain('middle8')
+      expect(container.textContent).not.toContain('trailing10')
+      expect(container.textContent).toContain('finish')
+      expect(container.querySelector('[aria-label="diffShowFullFile"]')?.getAttribute('aria-pressed')).toBe('true')
+      await click('diffShowFullFile')
+    }
   } finally {
     act(() => root.unmount())
     container.remove()

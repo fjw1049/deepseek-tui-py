@@ -69,6 +69,7 @@ import {
 import { resolveInspectorSelectionUpdate } from '../lib/change-inspector-selection'
 import { toolBlocksFromTurnSummary, turnSummaryFromSources } from '../lib/turn-mutation-view'
 import { useChatStore } from '../store/chat-store'
+import { expandDiffContext } from '../lib/expand-diff-context'
 
 function normalizeChangePath(path: string | undefined): string {
   return (path ?? '').replace(/\\/g, '/').trim().toLowerCase()
@@ -876,6 +877,8 @@ const FILE_LIST_MAX = 480
 const STACK_LIST_DEFAULT = 220
 const STACK_LIST_MIN = 120
 const STACK_LIST_MAX = 420
+const STACK_DIFF_MIN = 140
+const STACK_SPLIT_SIZE = 12
 
 /**
  * Change review panel.
@@ -1092,55 +1095,82 @@ export function ChangeInspector({
   }
   const compactList = isReview || isList || (isStack && diffExpanded)
   const [listSize, setListSize] = useState(isReview ? FILE_LIST_DEFAULT : STACK_LIST_DEFAULT)
+  const stackViewportRef = useRef<HTMLDivElement | null>(null)
+  const [stackListMax, setStackListMax] = useState(STACK_LIST_MAX)
+  const stackListMin = Math.min(STACK_LIST_MIN, stackListMax)
+  const stackListSize = Math.min(listSize, stackListMax)
   const [diffCollapsed, setDiffCollapsed] = useState(false)
   // Unified by default — denser, no empty half-pane on new/deleted files.
   const [diffStyle, setDiffStyle] = useState<DiffRenderStyle>('unified')
-  const resizeDrag = useRef<{ start: number; startSize: number } | null>(null)
+  const [listResizing, setListResizing] = useState(false)
+  const resizeDrag = useRef<{
+    pointerId: number; start: number; startSize: number; previousSize: number; scale: number
+  } | null>(null)
+
+  useEffect(() => {
+    if (!isStack || !stackViewportRef.current) return
+    const observer = new ResizeObserver(([entry]) => {
+      if (entry.contentRect.height <= 0) return
+      setStackListMax(Math.min(STACK_LIST_MAX, Math.max(0, Math.floor(entry.contentRect.height) - STACK_DIFF_MIN - STACK_SPLIT_SIZE)))
+    })
+    observer.observe(stackViewportRef.current)
+    return () => observer.disconnect()
+  }, [isStack])
 
   const onListResizePointerDown = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>) => {
+      if (event.button !== 0 || resizeDrag.current) return
       event.preventDefault()
       event.stopPropagation()
+      event.currentTarget.focus({ preventScroll: true })
       event.currentTarget.setPointerCapture(event.pointerId)
       resizeDrag.current = {
+        pointerId: event.pointerId,
         start: isReview ? event.clientX : event.clientY,
-        startSize: listSize
+        startSize: isReview ? listSize : stackListSize,
+        previousSize: listSize,
+        scale: parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--ds-ui-scale')) || 1
       }
+      setListResizing(true)
     },
-    [isReview, listSize]
-  )
-
-  const onListResizePointerMove = useCallback(
-    (event: ReactPointerEvent<HTMLDivElement>) => {
-      const drag = resizeDrag.current
-      if (!drag) return
-      const delta = (isReview ? event.clientX : event.clientY) - drag.start
-      const min = isReview ? FILE_LIST_MIN : 0
-      const max = isReview ? FILE_LIST_MAX : STACK_LIST_MAX
-      setListSize(Math.min(max, Math.max(min, drag.startSize + delta)))
-    },
-    [isReview]
+    [isReview, listSize, stackListSize]
   )
 
   const onListResizePointerUp = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
     const drag = resizeDrag.current
-    if (!drag) return
+    if (!drag || drag.pointerId !== event.pointerId) return
     resizeDrag.current = null
-    if (!isReview) {
-      const size = drag.startSize + event.clientY - drag.start
-      if (event.type === 'pointercancel' || size <= 32) {
-        setListSize(drag.startSize)
-        if (event.type !== 'pointercancel') setDiffExpanded(true)
-      } else {
-        setListSize(Math.min(STACK_LIST_MAX, Math.max(STACK_LIST_MIN, size)))
-      }
+    setListResizing(false)
+    const size = drag.startSize + ((isReview ? event.clientX : event.clientY) - drag.start) / drag.scale
+    const expandDiff = !isReview && size <= 32 && size < drag.startSize
+    if (event.type !== 'pointerup' || expandDiff) {
+      setListSize(drag.previousSize)
+      if (event.type === 'pointerup' && expandDiff) setDiffExpanded(true)
+    } else {
+      const min = isReview ? FILE_LIST_MIN : stackListMin
+      const max = isReview ? FILE_LIST_MAX : stackListMax
+      setListSize(Math.min(max, Math.max(min, size)))
     }
-    try {
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId)
-    } catch {
-      /* already released */
     }
-  }, [isReview])
+  }, [isReview, stackListMax, stackListMin])
+
+  const onListResizePointerMove = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      const drag = resizeDrag.current
+      if (!drag || drag.pointerId !== event.pointerId) return
+      if (event.pointerType === 'mouse' && event.buttons === 0) {
+        onListResizePointerUp(event)
+        return
+      }
+      const delta = ((isReview ? event.clientX : event.clientY) - drag.start) / drag.scale
+      const min = isReview ? FILE_LIST_MIN : 0
+      const max = isReview ? FILE_LIST_MAX : stackListMax
+      setListSize(Math.min(max, Math.max(min, drag.startSize + delta)))
+    },
+    [isReview, onListResizePointerUp, stackListMax]
+  )
 
   const fileChanges = useMemo(() => {
     if (scopedGitFiles) {
@@ -1236,6 +1266,53 @@ export function ChangeInspector({
     () => fileChanges.find((item) => item.id === selectedId) ?? null,
     [fileChanges, selectedId]
   )
+
+  const [showFullFile, setShowFullFile] = useState(true)
+  useEffect(() => { setShowFullFile(true) }, [selectedId, changeRoot, context])
+  const selectedPatch = selectedItem?.detail ?? ''
+  const selectedPath = selectedItem?.filePath
+  const selectedStage = selectedItem?.gitStage
+  const selectedStatus = selectedItem?.gitStatus
+  const fullFileKey = `${changeRoot}\u0000${context}\u0000${selectedId}\u0000${branchBase}\u0000${workspaceDirtyTick}`
+  const [fullFileResult, setFullFileResult] = useState<{
+    key: string; detail: string; patch?: string; error?: boolean
+  } | null>(null)
+  const currentFullFile = fullFileResult?.key === fullFileKey && fullFileResult.detail === selectedPatch
+    ? fullFileResult : null
+
+  useEffect(() => {
+    if (isList || !showFullFile || !selectedPatch.trim()) return
+    let cancelled = false
+    setFullFileResult({ key: fullFileKey, detail: selectedPatch })
+    const load = async (): Promise<string | null> => {
+      if (!selectedPath) return null
+      if (isGitContext || context === 'conflicts') {
+        if (typeof window.dsGui?.getGitFileDiff !== 'function') return null
+        const scope = context === 'conflicts' ? 'working-tree'
+          : context === 'working-tree' ? (selectedStage === 'staged' ? 'staged' : 'unstaged')
+            : gitScope
+        const result = await window.dsGui.getGitFileDiff({
+          workspaceRoot: changeRoot, path: selectedPath, scope,
+          baseRef: context === 'branch' ? branchBase : undefined,
+          oldPath: selectedPatch.match(/^rename from (.+)$/m)?.[1],
+          untracked: selectedStatus === 'untracked'
+        })
+        return result.ok && result.patch.trim() ? result.patch : null
+      }
+      // A deleted-file patch already contains every line of the old file.
+      if (/^\+\+\+ \/dev\/null$/m.test(selectedPatch)) return selectedPatch
+      if (typeof window.dsGui?.readWorkspaceFile !== 'function') return null
+      const result = await window.dsGui.readWorkspaceFile({ path: selectedPath, workspaceRoot: changeRoot })
+      return result.ok && !result.truncated ? expandDiffContext(selectedPatch, result.content) : null
+    }
+    void load().catch(() => null).then((patch) => {
+      if (!cancelled) setFullFileResult({
+        key: fullFileKey, detail: selectedPatch,
+        ...(patch === null ? { error: true } : { patch })
+      })
+    })
+    return () => { cancelled = true }
+  }, [isList, showFullFile, selectedPatch, selectedPath, selectedStage, selectedStatus, fullFileKey, isGitContext, context, gitScope, changeRoot, branchBase])
 
   const gitStageLabel = (stage: GitWorkingChangeStage): string => {
     if (stage === 'staged') return t('gitStageStaged')
@@ -1525,6 +1602,11 @@ export function ChangeInspector({
         (selectedItem.detail ?? '').trim() ? (
           <DiffView
             patch={selectedItem.detail}
+            fullFilePatch={currentFullFile?.patch}
+            showFullFile={showFullFile}
+            onToggleFullFile={() => setShowFullFile((value) => !value)}
+            fullFilePending={showFullFile && !currentFullFile?.patch && !currentFullFile?.error}
+            fullFileUnavailable={showFullFile && currentFullFile?.error}
             filePath={selectedItem.filePath}
             maxHeight={9000}
             diffStyle={diffStyle}
@@ -1609,7 +1691,7 @@ export function ChangeInspector({
           </div>
         </div>
       ) : null}
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+      <div ref={stackViewportRef} className="flex min-h-0 flex-1 flex-col overflow-hidden">
         {gitLoading && fileChanges.length === 0 ? (
           isList || isDiff || isReview ? (
             <EditorListSkeleton rows={isDiff ? 12 : 8} />
@@ -1648,6 +1730,7 @@ export function ChangeInspector({
               onPointerMove={onListResizePointerMove}
               onPointerUp={onListResizePointerUp}
               onPointerCancel={onListResizePointerUp}
+              onLostPointerCapture={onListResizePointerUp}
             />
             {diffViewport}
           </div>
@@ -1656,7 +1739,7 @@ export function ChangeInspector({
             <div
               ref={sideListPaneRef}
               className={`relative flex min-h-0 flex-col overflow-hidden ${diffExpanded ? `order-2 shrink-0 ${sideListCollapsed ? '' : 'border-l border-ds-border-muted'}` : diffCollapsed ? 'flex-1' : 'shrink-0'}`}
-              style={diffExpanded ? { width: sideListWidth, maxWidth: '60%' } : diffCollapsed ? undefined : { height: listSize }}
+              style={diffExpanded ? { width: sideListWidth, maxWidth: '60%' } : diffCollapsed ? undefined : { height: stackListSize }}
             >
               {fileList}
             </div>
@@ -1731,13 +1814,30 @@ export function ChangeInspector({
                 <div
                   hidden={diffExpanded}
                   role="separator"
+                  tabIndex={diffExpanded ? -1 : 0}
                   aria-orientation="horizontal"
                   aria-label={t('inspectorResizeSplit')}
-                  className="ds-change-inspector__split-handle ds-change-inspector__split-handle--horizontal ds-no-drag relative z-10 h-2 shrink-0 cursor-row-resize touch-none"
+                  aria-valuemin={listResizing ? 0 : stackListMin}
+                  aria-valuemax={stackListMax}
+                  aria-valuenow={Math.round(stackListSize)}
+                  title={t('inspectorResizeSplitHint')}
+                  data-resizing={listResizing || undefined}
+                  className="ds-change-inspector__split-handle ds-change-inspector__split-handle--horizontal ds-no-drag relative z-10 shrink-0 cursor-row-resize touch-none"
                   onPointerDown={onListResizePointerDown}
                   onPointerMove={onListResizePointerMove}
                   onPointerUp={onListResizePointerUp}
                   onPointerCancel={onListResizePointerUp}
+                  onLostPointerCapture={onListResizePointerUp}
+                  onDoubleClick={() => setListSize(STACK_LIST_DEFAULT)}
+                  onKeyDown={(event) => {
+                    if (resizeDrag.current || !['ArrowUp', 'ArrowDown', 'Home', 'End', 'Enter'].includes(event.key)) return
+                    event.preventDefault()
+                    const size = event.key === 'Enter' ? STACK_LIST_DEFAULT
+                      : event.key === 'Home' ? stackListMin
+                        : event.key === 'End' ? stackListMax
+                          : stackListSize + (event.key === 'ArrowUp' ? -1 : 1) * (event.shiftKey ? 32 : 16)
+                    setListSize(Math.min(stackListMax, Math.max(stackListMin, size)))
+                  }}
                 />
                 {diffViewport}
               </>

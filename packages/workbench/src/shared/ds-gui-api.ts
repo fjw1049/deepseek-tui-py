@@ -10,7 +10,7 @@ import type {
 import type { GitCommitMessageSuggestionResult, GitCommitResult } from './git-commit'
 import type { GitHubRepositoryResult } from './github-repository'
 import type { GitLogResult } from './git-log'
-import type { GitChangeScope, GitWorkingChangesResult } from './git-working-changes'
+import type { GitChangeScope, GitFileDiffResult, GitFileDiffTarget, GitWorkingChangesResult } from './git-working-changes'
 import type {
   PetManifestFetchResult,
   PetSpritesheetResolveResult
@@ -407,6 +407,7 @@ export type DsGuiApi = {
     scope?: GitChangeScope,
     baseRef?: string
   ) => Promise<GitWorkingChangesResult>
+  getGitFileDiff: (target: GitFileDiffTarget) => Promise<GitFileDiffResult>
   switchGitBranch: (workspaceRoot: string, branch: string) => Promise<GitBranchesResult>
   stashAndSwitchGitBranch: (workspaceRoot: string, branch: string) => Promise<GitBranchesResult>
   createAndSwitchGitBranch: (workspaceRoot: string, branch: string) => Promise<GitBranchesResult>

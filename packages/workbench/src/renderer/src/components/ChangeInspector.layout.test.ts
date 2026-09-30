@@ -5,6 +5,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { useChatStore } from '../store/chat-store'
 import { ChangeInspector } from './ChangeInspector'
 import { useGitWorkingChanges } from '../hooks/use-git-working-changes'
+import type { GitFileDiffResult, GitFileDiffTarget } from '@shared/git-working-changes'
 
 vi.mock('./chat/FileChip', () => ({ FileChip: () => null, FileTypeIcon: () => null }))
 vi.mock('react-i18next', async (importOriginal) => ({ ...await importOriginal<typeof import('react-i18next')>(), useTranslation: () => ({ t: (key: string) => key }) }))
@@ -68,6 +69,42 @@ it('expands with files on the right, preserves selection, and restores height an
   expect(container.querySelector('[aria-orientation="horizontal"]')).toBeNull()
 })
 
+it('defaults to full files, ignores stale responses, resets on selection and keeps changes accessible after a load failure', async () => {
+  let resolveFirst!: (result: GitFileDiffResult) => void
+  const first = new Promise<GitFileDiffResult>((resolve) => { resolveFirst = resolve })
+  const getGitFileDiff = vi.fn((target: GitFileDiffTarget) => target.path === 'src/a.ts'
+    ? first : Promise.resolve({ ok: true as const, patch: '@@ -1,2 +1,2 @@\n-old\n+next\n second-tail' }))
+  vi.stubGlobal('dsGui', { getGitFileDiff })
+  try {
+    await act(async () => {
+      useChatStore.getState().selectInspectorItem('git:branch:unstaged:src/a.ts')
+      root.render(createElement(ChangeInspector, { key: 'full-context' }))
+    })
+    expect(container.textContent).toContain('diffLoadingFullFile')
+    expect(getGitFileDiff).toHaveBeenCalledWith(expect.objectContaining({
+      workspaceRoot: '/repo', path: 'src/a.ts', scope: 'branch', baseRef: 'main'
+    }))
+    await act(async () => container.querySelector<HTMLButtonElement>('ul button[title]:not([aria-current="true"])')!.click())
+    expect(container.textContent).toContain('second-tail')
+    await act(async () => resolveFirst({ ok: true, patch: '@@ -1,2 +1,2 @@\n-old\n+new\n first-tail' }))
+    expect(container.textContent).not.toContain('first-tail')
+    await act(async () => button('diffShowChangesOnly').click())
+    expect(container.textContent).not.toContain('second-tail')
+    expect(button('diffShowFullFile').getAttribute('aria-pressed')).toBe('true')
+    await act(async () => container.querySelector<HTMLButtonElement>('ul button[title]:not([aria-current="true"])')!.click())
+    expect(button('diffShowChangesOnly').getAttribute('aria-pressed')).toBe('false')
+    expect(container.textContent).toContain('first-tail')
+    getGitFileDiff.mockRejectedValueOnce(new Error('unavailable'))
+    await act(async () => container.querySelector<HTMLButtonElement>('ul button[title]:not([aria-current="true"])')!.click())
+    expect(container.textContent).toContain('diffFullFileUnavailable')
+    expect(container.textContent).toContain('next')
+    await act(async () => button('diffShowChangesOnly').click())
+    expect(container.textContent).not.toContain('diffFullFileUnavailable')
+  } finally {
+    vi.unstubAllGlobals()
+  }
+})
+
 it('snaps at the top on release, restores the previous height, and does not expand on cancellation', () => {
   const pane = listPane()
   const height = pane.style.height
@@ -89,6 +126,107 @@ it('snaps at the top on release, restores the previous height, and does not expa
   expect(button('inspectorRestoreDiff')).not.toBeNull()
   act(() => button('inspectorRestoreDiff').click())
   expect(pane.style.height).toBe(height)
+})
+
+it('supports keyboard resizing within bounds and resetting the horizontal split', () => {
+  const handle = separator()
+  const pane = listPane()
+  expect(handle.tabIndex).toBe(0)
+  expect(handle.title).toBe('inspectorResizeSplitHint')
+  const key = (value: string, shiftKey = false): void => {
+    act(() => { handle.dispatchEvent(new KeyboardEvent('keydown', { key: value, shiftKey, bubbles: true })) })
+  }
+  key('ArrowDown')
+  expect(pane.style.height).toBe('236px')
+  key('ArrowUp', true)
+  expect(pane.style.height).toBe('204px')
+  key('Home')
+  key('ArrowUp')
+  expect(handle.getAttribute('aria-valuenow')).toBe('120')
+  key('End')
+  key('ArrowDown')
+  expect(handle.getAttribute('aria-valuenow')).toBe('420')
+  key('Enter')
+  expect(pane.style.height).toBe('220px')
+  key('ArrowDown')
+  act(() => { handle.dispatchEvent(new MouseEvent('dblclick', { bubbles: true })) })
+  expect(pane.style.height).toBe('220px')
+  expect(button('inspectorRestoreDiff')).toBeNull()
+})
+
+it.each(['lostpointercapture', 'pointermove'])('cancels horizontal dragging after %s without continuing to follow the mouse', (interruption) => {
+  const handle = separator()
+  const pane = listPane()
+  handle.setPointerCapture = vi.fn()
+  const pointer = (type: string, clientY: number, buttons: number, pointerId = 1, button = 0): void => {
+    act(() => { handle.dispatchEvent(new PointerEvent(type, {
+      bubbles: true, pointerType: 'mouse', pointerId, button, clientY, buttons
+    })) })
+  }
+  pointer('pointerdown', 220, 2, 1, 2)
+  expect(handle.hasAttribute('data-resizing')).toBe(false)
+  pointer('pointerdown', 220, 1)
+  expect(handle.hasAttribute('data-resizing')).toBe(true)
+  pointer('pointermove', 400, 1, 2)
+  expect(pane.style.height).toBe('220px')
+  pointer('pointerup', 400, 0, 2)
+  expect(handle.hasAttribute('data-resizing')).toBe(true)
+  pointer('pointermove', 10, 1)
+  expect(pane.style.height).toBe('10px')
+  pointer(interruption, 10, 0)
+  expect(pane.style.height).toBe('220px')
+  expect(handle.hasAttribute('data-resizing')).toBe(false)
+  pointer('pointermove', 300, 1)
+  expect(pane.style.height).toBe('220px')
+  expect(button('inspectorRestoreDiff')).toBeNull()
+})
+
+it('tracks horizontal dragging in layout pixels at a larger UI scale', () => {
+  const handle = separator()
+  handle.setPointerCapture = vi.fn()
+  document.documentElement.style.setProperty('--ds-ui-scale', '1.5')
+  try {
+    for (const [type, clientY] of [['pointerdown', 330], ['pointermove', 390], ['pointerup', 390]] as const) {
+      act(() => { handle.dispatchEvent(new PointerEvent(type, { bubbles: true, pointerId: 1, clientY })) })
+    }
+    expect(listPane().style.height).toBe('260px')
+    expect(handle.hasAttribute('data-resizing')).toBe(false)
+  } finally {
+    document.documentElement.style.removeProperty('--ds-ui-scale')
+  }
+})
+
+it('keeps the diff visible in short panels and restores the preferred height when space returns', async () => {
+  let resize!: (height: number) => void
+  const disconnect = vi.fn()
+  vi.stubGlobal('ResizeObserver', class {
+    constructor(private callback: ResizeObserverCallback) {}
+    observe(): void {
+      resize = height => this.callback([{ contentRect: { height } } as ResizeObserverEntry], this as unknown as ResizeObserver)
+    }
+    disconnect = disconnect
+  })
+  try {
+    await act(async () => root.render(createElement(ChangeInspector, { key: 'short-panel' })))
+    const handle = separator()
+    act(() => resize(320))
+    expect(listPane().style.height).toBe('168px')
+    expect(handle.getAttribute('aria-valuemax')).toBe('168')
+    act(() => resize(240))
+    expect(listPane().style.height).toBe('88px')
+    expect(handle.getAttribute('aria-valuemin')).toBe('88')
+    act(() => { handle.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true })) })
+    expect(listPane().style.height).toBe('88px')
+    act(() => { handle.dispatchEvent(new MouseEvent('dblclick', { bubbles: true })) })
+    act(() => resize(700))
+    expect(listPane().style.height).toBe('220px')
+    act(() => resize(0))
+    expect(listPane().style.height).toBe('220px')
+    await act(async () => root.render(createElement(ChangeInspector, { variant: 'list', key: 'short-panel' })))
+    expect(disconnect).toHaveBeenCalledOnce()
+  } finally {
+    vi.unstubAllGlobals()
+  }
 })
 
 it('resizes the fullscreen directory to zero width and restores the last width', () => {

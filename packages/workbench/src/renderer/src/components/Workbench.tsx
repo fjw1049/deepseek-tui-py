@@ -417,6 +417,7 @@ export function Workbench(): ReactElement {
 
   const shellRef = useRef<HTMLDivElement | null>(null)
   const mainRowRef = useRef<HTMLDivElement | null>(null)
+  const chatColumnRef = useRef<HTMLDivElement | null>(null)
   const resizeCleanupRef = useRef<(() => void) | null>(null)
   const resizeQueueRef = useRef<ReturnType<typeof createFrameQueue> | null>(null)
   resizeQueueRef.current ??= createFrameQueue()
@@ -576,7 +577,7 @@ export function Workbench(): ReactElement {
     !liveAssistant &&
     !liveReasoning
   const sharedConversationVisible = route === 'chat' && (
-    ideModeActive ? !bottomTerminalOpen : !splitActive && !chatColumnHidden
+    ideModeActive ? !bottomTerminalOpen : !splitActive
   )
   // IDE mode is editor-first: hide the projects/threads rail entirely (Synara
   // Editor view does the same). Keep the user's chat-mode collapse preference
@@ -766,6 +767,10 @@ export function Workbench(): ReactElement {
   }, [activeThreadId, rightSidebarTab, runTarget])
 
   const closeRightSidebar = useCallback((): void => {
+    const chatColumn = chatColumnRef.current
+    if (chatColumn?.style.getPropertyValue('--ds-chat-rest-width')) {
+      chatColumn.style.setProperty('--ds-chat-rest-width', `${mainRowRef.current?.clientWidth ?? chatColumn.clientWidth}px`)
+    }
     setRightSidebarOpen(false)
     setRightSidebarCollapsed(false)
     setChatColumnHidden(false)
@@ -776,9 +781,8 @@ export function Workbench(): ReactElement {
       openRightSidebar()
       return
     }
-    setRightSidebarOpen(false)
-    setChatColumnHidden(false)
-  }, [openRightSidebar, rightSidebarCollapsed, rightSidebarOpen])
+    closeRightSidebar()
+  }, [closeRightSidebar, openRightSidebar, rightSidebarCollapsed, rightSidebarOpen])
 
   const toggleTerminalPanel = useCallback((): void => {
     if (!activeWorkspaceRoot.trim()) return
@@ -801,14 +805,27 @@ export function Workbench(): ReactElement {
       !leftSidebarHidden,
       leftSidebarWidth
     )
+    const chatColumn = chatColumnRef.current
+    const halfWidth = resolveHalfRightWidth(mainWidth)
+    // Keep the covered conversation readable instead of reflowing it down to
+    // zero width. Restore its final width along the panel's return path.
+    chatColumn?.style.setProperty('--ds-chat-rest-width', `${
+      chatColumnHidden ? mainWidth - halfWidth : (chatColumn.firstElementChild?.clientWidth ?? chatColumn.clientWidth)
+    }px`)
     if (chatColumnHidden) {
-      setRightSidebarWidth(resolveHalfRightWidth(mainWidth))
+      setRightSidebarWidth(halfWidth)
       setChatColumnHidden(false)
       return
     }
     setRightSidebarWidth(mainWidth)
     setChatColumnHidden(true)
   }, [chatColumnHidden, leftSidebarHidden, leftSidebarWidth])
+
+  useEffect(() => {
+    if (!chatColumnHidden && window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      chatColumnRef.current?.style.removeProperty('--ds-chat-rest-width')
+    }
+  }, [chatColumnHidden])
 
   useEffect(() => {
     inputRef.current = input
@@ -1231,7 +1248,12 @@ export function Workbench(): ReactElement {
       // the stored right width — that would un-hide a white chat sliver
       // beside the editor. Keep fill-width while the right panel is still
       // filling; if it closes or collapses, fall through so chat returns.
-      if (chatColumnHidden && rightPanelVisible) return
+      if (chatColumnHidden && rightPanelVisible) {
+        if (measuredMain != null && measuredMain !== rightSidebarWidth) {
+          setRightSidebarWidth(measuredMain)
+        }
+        return
+      }
       if (rightPanelVisible && next.right !== rightSidebarWidth) {
         setRightSidebarWidth(next.right)
       }
@@ -1239,8 +1261,13 @@ export function Workbench(): ReactElement {
       if (!ideModeActive) setChatColumnHidden(next.chatHidden)
     }
     sync()
+    const observer = new ResizeObserver(sync)
+    if (mainRowRef.current) observer.observe(mainRowRef.current)
     window.addEventListener('resize', sync)
-    return () => window.removeEventListener('resize', sync)
+    return () => {
+      observer.disconnect()
+      window.removeEventListener('resize', sync)
+    }
   }, [
     chatColumnHidden,
     ideModeActive,
@@ -1520,6 +1547,7 @@ export function Workbench(): ReactElement {
           measuredMain
         )
         if (next.left !== leftSidebarWidth) setLeftSidebarWidth(next.left)
+        if (!next.chatHidden) chatColumnRef.current?.style.removeProperty('--ds-chat-rest-width')
         setRightSidebarWidth(next.right)
         setChatColumnHidden(next.chatHidden)
       })
@@ -1804,8 +1832,15 @@ export function Workbench(): ReactElement {
           </div>
         ) : null}
         {!ideModeActive ? (
-        <div ref={mainRowRef} className="flex min-h-0 flex-1">
-          <div className={`min-h-0 min-w-0 flex-1 flex-col ${chatColumnHidden ? 'hidden' : 'flex'}`}>
+        <div ref={mainRowRef} className="flex min-h-0 min-w-0 flex-1"
+          onTransitionEnd={event => {
+            if (!chatColumnHidden && event.propertyName === 'width' &&
+                (event.target as HTMLElement).classList.contains('ds-workbench-right-panel')) {
+              chatColumnRef.current?.style.removeProperty('--ds-chat-rest-width')
+            }
+          }}>
+          <div ref={chatColumnRef} className="ds-chat-column flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
+            aria-hidden={chatColumnHidden} inert={chatColumnHidden}>
           <section className="ds-drag flex min-h-0 min-w-0 flex-1 flex-col">
             <header className="ds-workbench-topbar ds-window-drag-region ds-surface-divider relative z-10 shrink-0 bg-transparent">
               <div className="ds-workbench-topbar__inner flex w-full min-w-0 items-center justify-between gap-2">
@@ -1841,7 +1876,6 @@ export function Workbench(): ReactElement {
             </header>
             <ChatSplitDropZone canAdd={(chatLayout?.panes.length ?? 1) < MAX_CHAT_PANES}>
             <div className="ds-chat-main-row relative flex min-h-0 min-w-0 flex-1">
-              {!chatColumnHidden ? (
               <div
                 className={`ds-chat-main-track flex min-h-0 min-w-0 flex-1 flex-col ${splitActive ? 'p-0' : chatColumnInsetClass}`}
               >
@@ -1928,7 +1962,6 @@ export function Workbench(): ReactElement {
               )}
             </div>
             </div>
-              ) : null}
             </div>
             </ChatSplitDropZone>
             {bottomTerminalOpen && activeWorkspaceRoot.trim().length > 0 ? (

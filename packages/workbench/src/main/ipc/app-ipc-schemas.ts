@@ -168,6 +168,13 @@ export const gitBranchPayloadSchema = z
   })
   .strict()
 
+export const gitFileDiffPayloadSchema = gitWorkingChangesPayloadSchema.extend({
+  path: trimmedString(MAX_PATH_LENGTH),
+  oldPath: optionalTrimmedString(MAX_PATH_LENGTH),
+  untracked: z.boolean().optional(),
+  scope: z.enum(['working-tree', 'staged', 'unstaged', 'branch'])
+})
+
 export const gitCommitPayloadSchema = z
   .object({
     workspaceRoot: workspaceRootSchema,

@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactElement } from 'react'
-import { ArrowDown, ArrowUp, Check, ArrowDownToLine, ArrowUpToLine, Minimize2, Columns2, Copy, Rows3, WrapText } from 'lucide-react'
+import { ArrowDown, ArrowUp, Check, ArrowDownToLine, ArrowUpToLine, Minimize2, Columns2, Copy, FileDiff, Loader2, Rows3, WrapText } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { countDiffStats, extractDiffFilePath } from '../lib/diff-stats'
 import { FileChip } from './chat/FileChip'
@@ -30,6 +30,11 @@ type Props = {
   onCollapse?: () => void
   onToggleExpand?: () => void
   expanded?: boolean
+  fullFilePatch?: string
+  showFullFile?: boolean
+  onToggleFullFile?: () => void
+  fullFilePending?: boolean
+  fullFileUnavailable?: boolean
   /** Hide the file/stats header when a parent card already shows it. */
   showHeader?: boolean
   /** Keep the viewport pinned to the latest row (live file writes). */
@@ -320,13 +325,20 @@ export function DiffView({
   onCollapse,
   onToggleExpand,
   expanded = false,
+  fullFilePatch,
+  showFullFile = false,
+  onToggleFullFile,
+  fullFilePending = false,
+  fullFileUnavailable = false,
   showHeader = true,
   follow = false
 }: Props): ReactElement {
   const { t } = useTranslation('common')
+  const fullContext = showFullFile && fullFilePatch !== undefined
+  const visiblePatch = fullContext ? fullFilePatch : patch
   const looksLikePatch = useMemo(
-    () => patch.split('\n').some((l) => /^[+-]/.test(l) || l.startsWith('@@')),
-    [patch]
+    () => visiblePatch.split('\n').some((l) => /^[+-]/.test(l) || l.startsWith('@@')),
+    [visiblePatch]
   )
   const parsed = useMemo(() => parseDiff(patch, filePath), [patch, filePath])
   const [copied, setCopied] = useState(false)
@@ -338,7 +350,7 @@ export function DiffView({
   const displayName = fileLabel ? fileLabel.split(/[/\\]/).pop() ?? fileLabel : null
   const fillParent = maxHeight >= 9000
 
-  const bodyLines = useMemo(() => filterBodyLines(patch.split('\n')), [patch])
+  const bodyLines = useMemo(() => filterBodyLines(visiblePatch.split('\n')), [visiblePatch])
   const unifiedRows = useMemo(() => buildUnifiedRows(bodyLines), [bodyLines])
   const oldSource = useMemo(() => unifiedRows.filter((row) => row.kind !== 'meta' && row.kind !== 'add'), [unifiedRows])
   const newSource = useMemo(() => unifiedRows.filter((row) => row.kind !== 'meta' && row.kind !== 'del'), [unifiedRows])
@@ -356,11 +368,13 @@ export function DiffView({
   const newPairs = new Map(splitRows.filter((row) => row.rightKind === 'add').map((row) => [row.rightNo, row.leftText]))
   const [unfoldedContext, setUnfoldedContext] = useState<Set<number>>(new Set())
   const displayRows = useMemo(
-    () => buildFoldedRows(unifiedRows, unfoldedContext),
-    [unifiedRows, unfoldedContext]
+    () => fullContext ? unifiedRows.map((row): UnifiedDisplayRow => ({ type: 'row', row }))
+      : buildFoldedRows(unifiedRows, unfoldedContext),
+    [unifiedRows, unfoldedContext, fullContext]
   )
-  useEffect(() => { setUnfoldedContext(new Set()) }, [patch, diffStyle])
+  useEffect(() => { setUnfoldedContext(new Set()) }, [visiblePatch, diffStyle])
   const splitDisplayRows = useMemo(() => {
+    if (fullContext) return splitRows
     const result: Array<SplitRow | { kind: 'fold'; key: number; count: number }> = []
     for (let i = 0; i < splitRows.length;) {
       const row = splitRows[i]!
@@ -381,7 +395,7 @@ export function DiffView({
       }
     }
     return result
-  }, [splitRows, unfoldedContext])
+  }, [splitRows, unfoldedContext, fullContext])
   const bodyRef = useRef<HTMLDivElement | HTMLPreElement>(null)
 
   useLayoutEffect(() => {
@@ -392,11 +406,18 @@ export function DiffView({
   }, [follow, patch])
 
   const [activeHunk, setActiveHunk] = useState(0)
-  const hunkCount = unifiedRows.filter((row) => row.kind === 'meta').length
+  const unifiedHunks = new Set(unifiedRows.filter((row, index) => fullContext
+    ? (row.kind === 'add' || row.kind === 'del') && !['add', 'del'].includes(unifiedRows[index - 1]?.kind ?? '')
+    : row.kind === 'meta').map((row) => row.key))
+  const splitHunks = new Set(splitRows.filter((row, index) => fullContext
+    ? (row.leftKind === 'del' || row.rightKind === 'add') &&
+      splitRows[index - 1]?.leftKind !== 'del' && splitRows[index - 1]?.rightKind !== 'add'
+    : row.kind === 'meta').map((row) => row.key))
+  const hunkCount = fullFilePending ? 0 : diffStyle === 'split' ? splitHunks.size : unifiedHunks.size
   useEffect(() => {
     setActiveHunk(0)
     if (!follow) bodyRef.current?.scrollTo?.({ top: 0, left: 0 })
-  }, [patch, follow])
+  }, [visiblePatch, diffStyle, follow])
   const navigateHunk = (direction: number): void => {
     const hunks = bodyRef.current?.querySelectorAll<HTMLElement>('[data-diff-hunk]')
     if (!hunks?.length) return
@@ -457,8 +478,19 @@ export function DiffView({
       onCollapse={onCollapse}
       onToggleExpand={onToggleExpand}
       expanded={expanded}
+      showFullFile={showFullFile}
+      onToggleFullFile={onToggleFullFile}
     />
   ) : null
+
+  if (fullFilePending) {
+    return <div className={shellClass}>
+      {header}
+      <div role="status" className="flex min-h-0 flex-1 items-center justify-center gap-2 text-[13.5px] text-ds-faint">
+        <Loader2 className="h-4 w-4 animate-spin" aria-hidden />{t('diffLoadingFullFile')}
+      </div>
+    </div>
+  }
 
   if (!looksLikePatch) {
     return (
@@ -469,7 +501,7 @@ export function DiffView({
           className={`${bodyClass} whitespace-pre text-ds-ink ${flush ? 'px-2 py-1' : 'p-3'}`}
           style={fillParent || flush ? undefined : { maxHeight }}
         >
-          {patch}
+          {visiblePatch}
         </pre>
       </div>
     )
@@ -478,6 +510,9 @@ export function DiffView({
   return (
     <div className={shellClass} data-wrap={wrapLines ? '' : undefined}>
       {header}
+      {fullFileUnavailable ? <div role="status" className="shrink-0 px-2 py-1 text-[12.5px] text-ds-muted">
+        {t('diffFullFileUnavailable')}
+      </div> : null}
       <div ref={(node) => { bodyRef.current = node }} className={bodyClass} style={fillParent || flush ? undefined : { maxHeight }}>
         {diffStyle === 'split' ? (
           <table className="ds-diff-table border-collapse">
@@ -498,7 +533,7 @@ export function DiffView({
                 )
                 if (row.kind === 'meta') {
                   return (
-                    <tr key={row.key} data-diff-hunk className="text-[color:var(--ds-diff-hunk)]">
+                    <tr key={row.key} data-diff-hunk={splitHunks.has(row.key) ? '' : undefined} className="text-[color:var(--ds-diff-hunk)]">
                       <td colSpan={4} className="ds-diff-meta-sticky break-all px-2 py-0.5 font-mono text-[13.5px]">
                         {row.meta}
                       </td>
@@ -506,7 +541,7 @@ export function DiffView({
                   )
                 }
                 return (
-                  <tr key={row.key}>
+                  <tr key={row.key} data-diff-hunk={splitHunks.has(row.key) ? '' : undefined}>
                     <td
                       className={`select-none px-1 text-right align-top font-mono text-[12px] tabular-nums text-ds-faint ${sideCls(row.leftKind)}`}
                     >
@@ -567,7 +602,7 @@ export function DiffView({
                 const row = entry.row
                 if (row.kind === 'meta') {
                   return (
-                    <tr key={row.key} data-diff-hunk>
+                    <tr key={row.key} data-diff-hunk={unifiedHunks.has(row.key) ? '' : undefined}>
                       <td className="ds-diff-meta-sticky select-none px-1 text-right align-top font-mono text-[13.5px]" />
                       <td className="ds-diff-meta-sticky select-none px-1 text-right align-top font-mono text-[13.5px]" />
                       <td className="ds-diff-meta-sticky max-w-0 truncate px-2 align-top font-mono text-[13.5px] text-[color:var(--ds-diff-hunk)]">
@@ -577,7 +612,7 @@ export function DiffView({
                   )
                 }
                 return (
-                  <tr key={row.key} className={row.cls}>
+                  <tr key={row.key} data-diff-hunk={unifiedHunks.has(row.key) ? '' : undefined} className={row.cls}>
                     <td className="select-none px-1 text-right align-top font-mono text-[12px] tabular-nums text-ds-faint">
                       {row.oldNo ?? ''}
                     </td>
@@ -642,7 +677,9 @@ function DiffHeader({
   navigation,
   onCollapse,
   onToggleExpand,
-  expanded = false
+  expanded = false,
+  showFullFile,
+  onToggleFullFile
 }: {
   name: string | null
   filePath?: string | null
@@ -660,6 +697,8 @@ function DiffHeader({
   onCollapse?: () => void
   onToggleExpand?: () => void
   expanded?: boolean
+  showFullFile?: boolean
+  onToggleFullFile?: () => void
 }): ReactElement {
   const { t } = useTranslation('common')
   return (
@@ -740,16 +779,27 @@ function DiffHeader({
         </div>
       ) : null}
       {navigation}
+      {onToggleFullFile ? (
+        <Tooltip label={t(showFullFile ? 'diffShowChangesOnly' : 'diffShowFullFile')}>
+          <button
+            type="button"
+            onClick={onToggleFullFile}
+            className={`inline-flex h-7 w-7 shrink-0 items-center justify-center rounded text-ds-ink transition hover:bg-ds-hover active:scale-[0.96] ${showFullFile ? '' : 'bg-ds-hover'}`}
+            aria-label={t(showFullFile ? 'diffShowChangesOnly' : 'diffShowFullFile')}
+            aria-pressed={!showFullFile}
+          ><FileDiff size={17} strokeWidth={2.2} /></button>
+        </Tooltip>
+      ) : null}
       {onToggleExpand ? (
         <Tooltip label={t(expanded ? 'inspectorRestoreDiff' : 'inspectorExpandDiff')}>
           <button
             type="button"
             onClick={onToggleExpand}
-            className="inline-flex h-7 w-7 items-center justify-center rounded text-ds-faint transition hover:bg-ds-hover hover:text-ds-ink active:scale-[0.96]"
+            className="inline-flex h-7 w-7 items-center justify-center rounded text-ds-ink transition hover:bg-ds-hover active:scale-[0.96]"
             aria-label={t(expanded ? 'inspectorRestoreDiff' : 'inspectorExpandDiff')}
             aria-pressed={expanded}
           >
-            {expanded ? <Minimize2 className="h-3.5 w-3.5" strokeWidth={1.9} /> : <ArrowUpToLine className="h-3.5 w-3.5" strokeWidth={1.9} />}
+            {expanded ? <Minimize2 size={17} strokeWidth={2.2} /> : <ArrowUpToLine size={17} strokeWidth={2.2} />}
           </button>
         </Tooltip>
       ) : null}
@@ -758,10 +808,10 @@ function DiffHeader({
           <button
             type="button"
             onClick={onCollapse}
-            className="inline-flex h-7 w-7 items-center justify-center rounded text-ds-faint transition hover:bg-ds-hover hover:text-ds-ink active:scale-[0.96]"
+            className="inline-flex h-7 w-7 items-center justify-center rounded text-ds-ink transition hover:bg-ds-hover active:scale-[0.96]"
             aria-label={t('inspectorCollapseDiff')}
           >
-            <ArrowDownToLine className="h-3.5 w-3.5" strokeWidth={1.9} />
+            <ArrowDownToLine size={17} strokeWidth={2.2} />
           </button>
         </Tooltip>
       ) : (

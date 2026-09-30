@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { realpath, stat } from 'node:fs/promises'
+import { lstat, readFile, readlink, realpath, stat } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { promisify } from 'node:util'
 import type { GitCommitMessageSuggestionResult, GitCommitResult } from '../../shared/git-commit'
@@ -13,6 +13,8 @@ import type {
 } from '../../shared/git-actions'
 import type {
   GitChangeScope,
+  GitFileDiffResult,
+  GitFileDiffTarget,
   GitWorkingChangeFile,
   GitWorkingChangeStage,
   GitWorkingChangeStatus,
@@ -790,6 +792,49 @@ export async function createAndSwitchGitBranch(
     return getGitBranches(cwd)
   } catch (error) {
     return gitFailure(error)
+  }
+}
+
+/** Read full context only for the selected file; the shared change list stays compact. */
+export async function getGitFileDiff(target: GitFileDiffTarget): Promise<GitFileDiffResult> {
+  const cwd = target.workspaceRoot.trim()
+  if (!cwd) return { ok: false, message: 'No working directory selected.' }
+  const paths = [...new Set([target.oldPath, target.path].filter((path): path is string => Boolean(path)))]
+  if (!isSafeGitPath(target.path) || paths.some((path) => !isSafeGitPath(path) || /^[a-z]:/i.test(path))) {
+    return { ok: false, message: 'Select a safe repository file path.' }
+  }
+  try {
+    const repositoryRoot = (await runGit(cwd, ['rev-parse', '--show-toplevel'])).stdout.trim()
+    if (target.untracked && target.scope !== 'staged') {
+      return { ok: true, patch: await untrackedPatch(repositoryRoot, target.path) }
+    }
+    const args = ['--literal-pathspecs', 'diff', '--no-color', '--no-ext-diff', '--no-textconv', '--unified=2147483647']
+    if (target.scope === 'staged') args.push('--cached')
+    else if (target.scope === 'working-tree') args.push('HEAD')
+    else if (target.scope === 'branch') args.push((await resolveBranchBase(repositoryRoot, target.baseRef)).baseCommit)
+    let patch = await runGitStdout(repositoryRoot, [...args, '--', ...paths], {
+      timeout: 20_000,
+      maxBuffer: DIFF_MAX_BUFFER
+    })
+    // Pure renames/mode changes have no hunk, but the full-file view still needs source.
+    if (patch && !/^@@ /m.test(patch) && !/Binary files|GIT binary patch/.test(patch)) {
+      let bytes: Buffer
+      if (target.scope === 'staged') {
+        bytes = Buffer.from(await runGitStdout(repositoryRoot, ['show', `:${target.path}`], { maxBuffer: DIFF_MAX_BUFFER }))
+      } else {
+        const filePath = join(repositoryRoot, target.path)
+        const info = await lstat(filePath)
+        if (info.size > DIFF_MAX_BUFFER) return { ok: false, message: 'File is too large to preview.' }
+        bytes = info.isSymbolicLink() ? Buffer.from(await readlink(filePath)) : await readFile(filePath)
+      }
+      if (bytes.length > DIFF_MAX_BUFFER || bytes.includes(0)) return { ok: true, patch }
+      const lines = bytes.toString('utf8').split('\n')
+      if (lines.at(-1) === '') lines.pop()
+      patch += `\n@@ -${lines.length ? 1 : 0},${lines.length} +${lines.length ? 1 : 0},${lines.length} @@\n${lines.map((line) => ` ${line}`).join('\n')}`
+    }
+    return { ok: true, patch }
+  } catch (error) {
+    return { ok: false, message: error instanceof Error ? error.message : String(error) }
   }
 }
 

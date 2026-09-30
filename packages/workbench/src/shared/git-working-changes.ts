@@ -17,6 +17,19 @@ export type GitWorkingChangeFile = {
   patch: string
 }
 
+export type GitFileDiffTarget = {
+  workspaceRoot: string
+  path: string
+  scope: GitChangeScope
+  baseRef?: string
+  oldPath?: string
+  untracked?: boolean
+}
+
+export type GitFileDiffResult =
+  | { ok: true; patch: string }
+  | { ok: false; message: string }
+
 export type GitWorkingChangesResult =
   | {
       ok: true
