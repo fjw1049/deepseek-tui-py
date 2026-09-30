@@ -887,6 +887,7 @@ const STACK_LIST_MAX = 420
 export function ChangeInspector({
   className,
   variant = 'stack',
+  active = true,
   onOpenFile,
   onRevealInEditor,
   onSelectFile,
@@ -900,6 +901,8 @@ export function ChangeInspector({
 }: {
   className?: string
   variant?: 'review' | 'stack' | 'list' | 'diff'
+  /** Revalidate when a retained view becomes active again. */
+  active?: boolean
   /** Chat / review: open the file (IDE keep-alive editor). */
   onOpenFile?: (path: string, line?: number) => void
   /** IDE list: double-click / Enter jumps to source in the Files editor. */
@@ -1011,6 +1014,11 @@ export function ChangeInspector({
       reloadGitBranches()
     ])
   }, [reloadGitBranches, reloadScopedChanges, reloadWorkingTreeChanges])
+  const wasActive = useRef(active)
+  useEffect(() => {
+    if (active && !wasActive.current) void refreshGit()
+    wasActive.current = active
+  }, [active, refreshGit])
   useWorkspaceDirtyGitRefresh(workspaceDirtyTick, refreshGit)
 
   const reviewTurnId = turnId || currentTurnId || lastCompletedTurnId
@@ -1089,11 +1097,6 @@ export function ChangeInspector({
   const [diffStyle, setDiffStyle] = useState<DiffRenderStyle>('unified')
   const resizeDrag = useRef<{ start: number; startSize: number } | null>(null)
 
-  useEffect(() => {
-    if (!isGitContext || isDiff || !changeRoot) return
-    void reloadGitBranches(true)
-  }, [changeRoot, isDiff, isGitContext, reloadGitBranches])
-
   const onListResizePointerDown = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>) => {
       event.preventDefault()
@@ -1141,14 +1144,14 @@ export function ChangeInspector({
 
   const fileChanges = useMemo(() => {
     if (scopedGitFiles) {
-      return scopedGitFiles.flatMap((file, index) =>
+      return scopedGitFiles.flatMap((file) =>
         collectWorkspaceChangeEntries({
           blocks: [],
           turnDiffByTurnId: {},
           gitFiles: [file]
         }).map((entry) => ({
           ...entry,
-          id: `git:${context}:${file.stage}:${index}:${file.path}`,
+          id: `git:${context}:${file.stage}:${file.path}`,
           committable: isMutableGitContext && canMutateGit && entry.committable
         }))
       )

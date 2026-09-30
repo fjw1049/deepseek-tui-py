@@ -62,6 +62,26 @@ describe('ContextUsageMeter', () => {
     await act(async () => root.unmount())
   })
 
+  it('closes from the panel and restores focus to the meter', async () => {
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+
+    await act(async () => renderMeter(root, { hasActiveThread: false }))
+    const button = container.querySelector('button')!
+    await act(async () => button.click())
+
+    const panel = document.body.querySelector('[role="dialog"]')
+    expect(panel).not.toBeNull()
+    await act(async () => panel?.querySelector('button')?.click())
+
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull()
+    expect(button.getAttribute('aria-expanded')).toBe('false')
+    expect(document.activeElement).toBe(button)
+
+    await act(async () => root.unmount())
+  })
+
   it('keeps every non-zero category visible at very low usage', async () => {
     ;(window as unknown as { dsGui: unknown }).dsGui = {
       runtimeRequest: vi.fn().mockResolvedValue({

@@ -7,6 +7,7 @@ import {
   type ReactElement
 } from 'react'
 import { createPortal } from 'react-dom'
+import { X } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import type { ChatBlock } from '../../agent/types'
 import {
@@ -207,23 +208,43 @@ export function ContextUsageMeter({
             ref={panelRef}
             role="dialog"
             aria-label={t('contextBreakdownTitle')}
-            className={`overflow-hidden rounded-[12px] border border-ds-border bg-ds-elevated px-5 py-4 text-[12px] leading-[1.5] text-ds-muted shadow-[0_24px_70px_rgba(44,55,78,0.18)] backdrop-blur-xl dark:shadow-[0_30px_80px_rgba(0,0,0,0.42)] ${
+            className={`max-h-[calc(100vh-80px)] overflow-y-auto rounded-[12px] border border-ds-border bg-ds-elevated px-5 py-4 text-[13px] leading-[1.5] text-ds-ink shadow-[0_12px_36px_rgba(0,0,0,0.12)] dark:shadow-[0_16px_48px_rgba(0,0,0,0.32)] ${
               anchoredToComposer
                 ? 'absolute inset-x-0 bottom-full z-[120] mb-1.5 w-full'
                 : 'fixed bottom-12 left-3 z-[120] w-[min(520px,calc(100vw-24px))]'
             }`}
             onMouseDown={(event) => event.stopPropagation()}
           >
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <div className="text-[13px] font-medium tracking-[-0.005em] text-ds-ink">
-                  {t('contextBreakdownTitle')}
-                </div>
-                <div className="mt-1 text-[11.5px] tabular-nums text-ds-faint">
-                  {t('contextBreakdownFull', { percent: Math.round(usage.percent) })}
-                </div>
+            <div className="flex items-center justify-between gap-4">
+              <div className="text-[13px] font-medium text-ds-muted">
+                {t('contextBreakdownTitle')}
               </div>
-              <div className="shrink-0 pt-0.5 text-right text-[11.5px] tabular-nums text-ds-faint">
+              <button
+                type="button"
+                aria-label={t('close')}
+                className="ds-no-drag -mr-1 flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-ds-faint transition-colors hover:bg-ds-hover hover:text-ds-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                onClick={() => {
+                  setOpen(false)
+                  buttonRef.current?.focus()
+                }}
+              >
+                <X aria-hidden="true" className="h-3.5 w-3.5" strokeWidth={1.5} />
+              </button>
+            </div>
+
+            <div className="mt-3 flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+              <div
+                className={`text-[16px] font-semibold tabular-nums tracking-[-0.02em] ${
+                  tone === 'critical'
+                    ? 'text-ds-danger'
+                    : tone === 'high'
+                      ? 'text-amber-600 dark:text-amber-400'
+                      : 'text-ds-ink'
+                }`}
+              >
+                {t('contextBreakdownFull', { percent: Math.round(usage.percent) })}
+              </div>
+              <div className="text-[12px] tabular-nums text-ds-muted">
                 {t('contextBreakdownTokenSummary', {
                   used: formatTokenCount(usage.usedTokens),
                   max: formatTokenCount(usage.maxTokens)
@@ -234,7 +255,7 @@ export function ContextUsageMeter({
             {/* Preserve real proportions; the small visual floor only prevents bucket clipping. */}
             <div
               aria-hidden="true"
-              className="ds-context-usage-bar relative mt-3.5 h-[5px] w-full overflow-hidden rounded-full"
+              className="ds-context-usage-bar relative mt-2.5 h-[6px] w-full overflow-hidden rounded-full"
               style={{ backgroundColor: USAGE_TRACK_GREY }}
             >
               {barSegments.length > 0 && barUsedPct > 0 ? (
@@ -246,45 +267,32 @@ export function ContextUsageMeter({
                     gap: `${USAGE_SEGMENT_GAP}px`
                   }}
                 >
-                  {barSegments.map((row, index) => {
-                    const isFirst = index === 0
-                    const isLast = index === barSegments.length - 1
-                    const radius =
-                      isFirst && isLast
-                        ? 'rounded-full'
-                        : isFirst
-                          ? 'rounded-l-full'
-                          : isLast
-                            ? 'rounded-r-full'
-                            : 'rounded-none'
-                    return (
-                      <span
-                        key={row.key}
-                        className={`ds-context-usage-bar__segment ${radius}`}
-                        style={{
-                          minWidth: `${USAGE_SEGMENT_MIN_WIDTH}px`,
-                          flexGrow: row.tokens,
-                          flexBasis: 0,
-                          backgroundColor: row.color
-                        }}
-                      />
-                    )
-                  })}
+                  {barSegments.map((row) => (
+                    <span
+                      key={row.key}
+                      className="ds-context-usage-bar__segment"
+                      style={{
+                        minWidth: `${USAGE_SEGMENT_MIN_WIDTH}px`,
+                        flexGrow: row.tokens,
+                        flexBasis: 0,
+                        backgroundColor: row.color
+                      }}
+                    />
+                  ))}
                 </div>
               ) : null}
             </div>
 
-            <ul className="mt-3.5 divide-y divide-ds-border-muted/30">
+            <ul className="mt-4 space-y-0.5">
               {rows.map((row) => (
-                <li key={row.key} className="flex items-center gap-3 py-2.5">
+                <li key={row.key} className="flex items-center gap-2.5 py-1.5">
                   <span
-                    className="h-2.5 w-2.5 shrink-0 rounded-[3px]"
+                    aria-hidden="true"
+                    className="h-2.5 w-2.5 shrink-0 rounded-[2px]"
                     style={{ backgroundColor: row.color }}
                   />
-                  <span className="min-w-0 flex-1 truncate text-ds-muted">
-                    {row.label}
-                  </span>
-                  <span className="shrink-0 tabular-nums text-ds-ink">
+                  <span className="min-w-0 flex-1">{row.label}</span>
+                  <span className="shrink-0 text-[12px] font-medium tabular-nums text-ds-muted">
                     {formatTokenCount(row.tokens)}
                   </span>
                 </li>
@@ -292,7 +300,7 @@ export function ContextUsageMeter({
             </ul>
 
             {!liveBreakdown ? (
-              <p className="mt-3 border-t border-ds-border-muted/40 pt-2.5 text-[10.5px] leading-4 text-ds-faint">
+              <p className="mt-3 border-t border-ds-border-muted pt-2.5 text-[11px] leading-4 text-ds-muted">
                 {t('contextBreakdownEstimateNote')}
               </p>
             ) : null}

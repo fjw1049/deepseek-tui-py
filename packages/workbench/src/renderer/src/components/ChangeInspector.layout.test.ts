@@ -4,6 +4,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { useChatStore } from '../store/chat-store'
 import { ChangeInspector } from './ChangeInspector'
+import { useGitWorkingChanges } from '../hooks/use-git-working-changes'
 
 vi.mock('./chat/FileChip', () => ({ FileChip: () => null, FileTypeIcon: () => null }))
 vi.mock('react-i18next', async (importOriginal) => ({ ...await importOriginal<typeof import('react-i18next')>(), useTranslation: () => ({ t: (key: string) => key }) }))
@@ -14,7 +15,7 @@ vi.mock('../hooks/use-git-working-changes', () => {
     { path: 'src/b.ts', stage: 'unstaged', status: 'modified', patch: '@@ -1 +1 @@\n-old\n+next', additions: 1, deletions: 1 }
   ] }
   return {
-    useGitWorkingChanges: () => ({ result, loading: false, reload }),
+    useGitWorkingChanges: vi.fn(() => ({ result, loading: false, reload })),
     useGitBranchCompareBase: () => ['main', reload]
   }
 })
@@ -215,4 +216,39 @@ it.each([
   expect(pane.style.width).toBe('280px')
   pointer('pointermove', 490, 0)
   expect(pane.style.width).toBe('280px')
+})
+
+
+it('revalidates a retained view on activation without remounting its content', async () => {
+  const reload = vi.mocked(useGitWorkingChanges('/repo').reload)
+  reload.mockClear()
+  const frame = container.querySelector('.ds-change-inspector')
+  await act(async () => root.render(createElement(ChangeInspector, { active: false })))
+  expect(reload).not.toHaveBeenCalled()
+  await act(async () => root.render(createElement(ChangeInspector, { active: true })))
+  expect(reload).toHaveBeenCalledTimes(2)
+  expect(container.querySelector('.ds-change-inspector')).toBe(frame)
+})
+
+it('preserves the selected file when refresh inserts a file earlier in the list', async () => {
+  const hook = vi.mocked(useGitWorkingChanges)
+  const snapshot = hook('/repo')
+  if (!snapshot.result?.ok) throw new Error('Expected change fixture')
+  act(() => container.querySelector<HTMLButtonElement>('ul button[title]:not([aria-current="true"])')!.click())
+  const selected = useChatStore.getState().inspectorSelectedId
+  const selectedText = container.querySelector('[aria-current="true"]')?.textContent
+  hook.mockReturnValue({
+    ...snapshot,
+    result: {
+      ...snapshot.result,
+      files: [{ ...snapshot.result.files[0]!, path: 'src/0.ts' }, ...snapshot.result.files]
+    }
+  })
+  try {
+    await act(async () => root.render(createElement(ChangeInspector)))
+    expect(useChatStore.getState().inspectorSelectedId).toBe(selected)
+    expect(container.querySelector('[aria-current="true"]')?.textContent).toBe(selectedText)
+  } finally {
+    hook.mockReturnValue(snapshot)
+  }
 })

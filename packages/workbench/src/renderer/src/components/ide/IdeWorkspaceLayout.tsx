@@ -186,6 +186,8 @@ export function IdeWorkspaceLayout({
   const openEditorFile = useWorkspaceEditorStore((s) => s.openFile)
 
   const [centerTab, setCenterTab] = useState<IdeCenterTab>(readStoredIdeCenterTab)
+  const [changesMounted, setChangesMounted] = useState(centerTab === 'changes')
+  useEffect(() => { if (centerTab === 'changes') setChangesMounted(true) }, [centerTab])
   /** VS Code-style: click the active activity icon again to collapse the side panel. */
   const [activitySidebarVisible, setActivitySidebarVisible] = useState(
     readStoredIdeActivitySidebarVisible
@@ -508,14 +510,17 @@ export function IdeWorkspaceLayout({
         </nav>
 
           <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
-            {terminalMaximized ? null : showChangesList ? (
+            {changesMounted || centerTab === 'changes' ? (
               <div
                 className="ds-ide-changes-list relative flex h-full min-h-0 shrink-0 flex-col"
-                style={{ width: changesListWidth }}
+                style={{ width: changesListWidth, display: showChangesList && !terminalMaximized ? 'flex' : 'none' }}
+                aria-hidden={!showChangesList || terminalMaximized}
+                inert={!showChangesList || terminalMaximized}
               >
                 <Suspense fallback={<PanelFallback />}>
                   <ChangeInspector
                     variant="list"
+                    active={centerTab === 'changes' && !terminalMaximized}
                     context={changesContext}
                     turnId={changesTurnId}
                     projectRootOverride={changesProjectRoot}
@@ -559,8 +564,13 @@ export function IdeWorkspaceLayout({
                   />
                 </Suspense>
               </div>
-              {showChangesDiff ? (
-                <div className="ds-ide-changes-stage flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+              {changesMounted || centerTab === 'changes' ? (
+                <div
+                  className="ds-ide-changes-stage flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
+                  style={{ display: showChangesDiff ? 'flex' : 'none' }}
+                  aria-hidden={!showChangesDiff}
+                  inert={!showChangesDiff}
+                >
                   <Suspense fallback={<PanelFallback />}>
                     <ChangeInspector
                       variant="diff"
@@ -580,50 +590,62 @@ export function IdeWorkspaceLayout({
               ) : null}
             </div>
 
-          {chatRailVisible ? (
             <aside
               className={`ds-ide-chat-rail relative flex h-full min-h-0 flex-col bg-ds-canvas ${
-                terminalMaximized ? 'min-w-0 flex-1' : 'shrink-0'
+                chatRailVisible && terminalMaximized ? 'min-w-0 flex-1' : 'shrink-0'
               }`}
-              style={terminalMaximized ? undefined : { width: chatRailWidth }}
+              data-open={chatRailVisible ? '' : undefined}
+              aria-hidden={!chatRailVisible}
+              inert={!chatRailVisible}
+              style={
+                chatRailVisible && terminalMaximized
+                  ? undefined
+                  : { width: chatRailVisible ? chatRailWidth : 0 }
+              }
             >
               {/* Same seam pattern as WorkbenchRightSidebar: the panel border is
                   the only visible divider; the resize hit-target stays invisible
                   so we never get a double/offset vertical rule. */}
-              {terminalMaximized ? null : (
-              <div
-                role="separator"
-                aria-orientation="vertical"
-                aria-label={t('ideChatRailResize')}
-                aria-valuemin={IDE_CHAT_RAIL_MIN_WIDTH}
-                aria-valuemax={IDE_CHAT_RAIL_MAX_WIDTH}
-                aria-valuenow={chatRailWidth}
-                tabIndex={0}
-                className="ds-ide-chat-rail-handle ds-no-drag absolute inset-y-0 left-0 z-30 w-2 -translate-x-1/2 cursor-col-resize touch-none"
-                onPointerDown={beginChatRailResize}
-                onDoubleClick={() => {
-                  setChatRailWidth(IDE_CHAT_RAIL_DEFAULT_WIDTH)
-                  persistIdeChatRailWidth(IDE_CHAT_RAIL_DEFAULT_WIDTH)
-                }}
-                onKeyDown={(event) => {
-                  let next: number | null = null
-                  if (event.key === 'ArrowLeft') next = chatRailWidth + 24
-                  if (event.key === 'ArrowRight') next = chatRailWidth - 24
-                  if (event.key === 'Home') next = IDE_CHAT_RAIL_MIN_WIDTH
-                  if (event.key === 'End') next = IDE_CHAT_RAIL_MAX_WIDTH
-                  if (next === null) return
-                  event.preventDefault()
-                  const clamped = clampIdeChatRailWidth(next)
-                  setChatRailWidth(clamped)
-                  persistIdeChatRailWidth(clamped)
-                }}
-              />
+              {!chatRailVisible || terminalMaximized ? null : (
+                <div
+                  role="separator"
+                  aria-orientation="vertical"
+                  aria-label={t('ideChatRailResize')}
+                  aria-valuemin={IDE_CHAT_RAIL_MIN_WIDTH}
+                  aria-valuemax={IDE_CHAT_RAIL_MAX_WIDTH}
+                  aria-valuenow={chatRailWidth}
+                  tabIndex={0}
+                  className="ds-ide-chat-rail-handle ds-no-drag absolute inset-y-0 left-0 z-30 w-2 -translate-x-1/2 cursor-col-resize touch-none"
+                  onPointerDown={beginChatRailResize}
+                  onDoubleClick={() => {
+                    setChatRailWidth(IDE_CHAT_RAIL_DEFAULT_WIDTH)
+                    persistIdeChatRailWidth(IDE_CHAT_RAIL_DEFAULT_WIDTH)
+                  }}
+                  onKeyDown={(event) => {
+                    let next: number | null = null
+                    if (event.key === 'ArrowLeft') next = chatRailWidth + 24
+                    if (event.key === 'ArrowRight') next = chatRailWidth - 24
+                    if (event.key === 'Home') next = IDE_CHAT_RAIL_MIN_WIDTH
+                    if (event.key === 'End') next = IDE_CHAT_RAIL_MAX_WIDTH
+                    if (next === null) return
+                    event.preventDefault()
+                    const clamped = clampIdeChatRailWidth(next)
+                    setChatRailWidth(clamped)
+                    persistIdeChatRailWidth(clamped)
+                  }}
+                />
               )}
-              <div className="ds-ide-chat-rail__surface flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-                {chatRail}
+              {/* Keep chat at its resting width while the frame reveals it;
+                  clipping here leaves the resize handle's full hit area usable. */}
+              <div className="absolute inset-0 overflow-hidden">
+                <div
+                  className="ds-ide-chat-rail__surface absolute inset-y-0 right-0 flex h-full min-h-0 min-w-0 flex-col overflow-hidden"
+                  style={{ width: terminalMaximized ? '100%' : chatRailWidth }}
+                >
+                  {chatRail}
+                </div>
               </div>
             </aside>
-          ) : null}
         </div>
       </div>
       {quickOpenOpen ? (
