@@ -120,6 +120,9 @@ it('toggles full context beside expand/collapse and navigates changes in both la
       expect(container.textContent).toContain('leading0')
       expect(container.textContent).toContain('middle8')
       expect(container.textContent).toContain('trailing10')
+      expect(container.textContent).not.toContain('@@')
+      expect(container.querySelector('.ds-diff-meta-sticky')).toBeNull()
+      expect(container.querySelector('tbody tr td')?.textContent).toBe('1')
       expect(container.querySelector('[title="diffExpandContext"]')).toBeNull()
       expect(container.querySelectorAll('mark').length).toBeGreaterThan(0)
       const hunks = container.querySelectorAll<HTMLElement>('[data-diff-hunk]')
@@ -135,6 +138,7 @@ it('toggles full context beside expand/collapse and navigates changes in both la
       expect(container.textContent).not.toContain('middle8')
       expect(container.textContent).not.toContain('trailing10')
       expect(container.textContent).toContain('finish')
+      expect(container.textContent).toContain('@@ -12 +12 @@')
       expect(container.querySelector('[aria-label="diffShowFullFile"]')?.getAttribute('aria-pressed')).toBe('true')
       await click('diffShowFullFile')
     }

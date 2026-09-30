@@ -532,6 +532,7 @@ export function DiffView({
                   </td></tr>
                 )
                 if (row.kind === 'meta') {
+                  if (fullContext) return null
                   return (
                     <tr key={row.key} data-diff-hunk={splitHunks.has(row.key) ? '' : undefined} className="text-[color:var(--ds-diff-hunk)]">
                       <td colSpan={4} className="ds-diff-meta-sticky break-all px-2 py-0.5 font-mono text-[13.5px]">
@@ -601,6 +602,7 @@ export function DiffView({
                 }
                 const row = entry.row
                 if (row.kind === 'meta') {
+                  if (fullContext) return null
                   return (
                     <tr key={row.key} data-diff-hunk={unifiedHunks.has(row.key) ? '' : undefined}>
                       <td className="ds-diff-meta-sticky select-none px-1 text-right align-top font-mono text-[13.5px]" />
