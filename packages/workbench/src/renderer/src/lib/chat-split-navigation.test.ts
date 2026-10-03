@@ -16,7 +16,7 @@ beforeEach(() => {
 it('preserves the current pane and forces a new conversation in its project', async () => {
   const createThread = vi.fn(async () => {
     expect(useChatLayoutStore.getState().layouts['/repo'].panes.map(p => p.threadId)).toEqual(['a', null])
-    useChatStore.setState({ activeThreadId: 'new' })
+    useChatStore.setState({ activeThreadId: 'new' }); return 'new'
   })
   useChatStore.setState({ createThread })
   await createConversationInSplit()
@@ -28,7 +28,7 @@ it('preserves the current pane and forces a new conversation in its project', as
 
 it('adds to an existing mixed-project layout using the active conversation’s project', async () => {
   useChatLayoutStore.getState().add('/other-project', 'b', 'a')
-  const createThread = vi.fn(async () => { useChatStore.setState({ activeThreadId: 'new' }) })
+  const createThread = vi.fn(async () => { useChatStore.setState({ activeThreadId: 'new' }); return 'new' })
   useChatStore.setState({ createThread })
   await createConversationInSplit()
   expect(createThread).toHaveBeenCalledWith({ workspaceRoot: '/repo', forceNew: true })
@@ -46,7 +46,7 @@ it('does not create a conversation when six panes are already open', async () =>
 
 it('ignores repeated requests during creation and removes the reservation on failure', async () => {
   let finish!: () => void
-  const createThread = vi.fn(() => new Promise<void>(resolve => { finish = resolve }))
+  const createThread = vi.fn(() => new Promise<null>(resolve => { finish = () => resolve(null) }))
   useChatLayoutStore.getState().add('/repo', 'a', 'b')
   const before = useChatLayoutStore.getState().layouts['/repo']
   useChatStore.setState({ createThread })

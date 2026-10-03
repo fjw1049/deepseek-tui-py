@@ -144,7 +144,7 @@ function bucketToSummaryBucket(model: string, bucket: UsageLedgerBucket): ModelU
   }
 }
 
-function mergeSummaryBucket(target: UsageLedgerBucket, source: UsageLedgerBucket): void {
+function mergeSummaryBucket(target: Omit<UsageLedgerBucket, 'model'>, source: Omit<UsageLedgerBucket, 'model'>): void {
   target.input_tokens += source.input_tokens
   target.output_tokens += source.output_tokens
   target.total_tokens += source.total_tokens

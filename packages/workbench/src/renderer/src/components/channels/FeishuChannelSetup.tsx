@@ -1,3 +1,4 @@
+import { GlobalErrorNotice } from '../GlobalFeedback'
 import { formatRuntimeError } from '../../lib/format-runtime-error'
 import { useCallback, useEffect, useState, type ReactElement } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -143,7 +144,7 @@ export function FeishuChannelSetup({ runtimeReady, onConfigured }: Props): React
 
   return (
     <div className="flex flex-col gap-4">
-      {notice ? <div role={notice.tone === 'error' ? 'alert' : 'status'} className={channelNoticeClass(notice.tone)}>{notice.message}</div> : null}
+      {notice?.tone === 'error' ? <GlobalErrorNotice occurrence={notice} message={notice.message} onDismiss={() => setNotice(null)} /> : notice ? <div role="status" className={channelNoticeClass(notice.tone)}>{notice.message}</div> : null}
 
       <p className={CHANNEL_HINT}>{t('channelFeishuSimpleDesc')}</p>
 

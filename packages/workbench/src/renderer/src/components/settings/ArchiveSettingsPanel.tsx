@@ -1,3 +1,4 @@
+import { reportActionError } from '../../store/feedback-store'
 import {
   useCallback,
   useEffect,
@@ -257,7 +258,7 @@ export function ArchiveSettingsPanel(): ReactElement {
     } catch (error) {
       const message =
         error instanceof Error && error.message.trim() ? error.message : t('archiveActionFailed')
-      setLoadError(message)
+      reportActionError(message)
     } finally {
       setBusyIds((prev) => {
         const next = { ...prev }
@@ -270,7 +271,7 @@ export function ArchiveSettingsPanel(): ReactElement {
   const handleUnarchive = (thread: NormalizedThread): void => {
     const provider = getProvider(providerId)
     if (typeof provider.setThreadArchived !== 'function') {
-      setLoadError(t('archiveActionFailed'))
+      reportActionError(t('archiveActionFailed'))
       return
     }
     void runOnThread(thread.id, () => provider.setThreadArchived!(thread.id, false))
@@ -281,7 +282,7 @@ export function ArchiveSettingsPanel(): ReactElement {
     if (!ok) return
     const provider = getProvider(providerId)
     if (typeof provider.purgeThread !== 'function') {
-      setLoadError(t('archiveActionFailed'))
+      reportActionError(t('archiveActionFailed'))
       return
     }
     void runOnThread(thread.id, () => provider.purgeThread!(thread.id))
@@ -293,7 +294,7 @@ export function ArchiveSettingsPanel(): ReactElement {
     if (!ok) return
     const provider = getProvider(providerId)
     if (typeof provider.purgeThread !== 'function') {
-      setLoadError(t('archiveActionFailed'))
+      reportActionError(t('archiveActionFailed'))
       return
     }
     setBatchBusy(true)
@@ -309,7 +310,7 @@ export function ArchiveSettingsPanel(): ReactElement {
       } catch (error) {
         const message =
           error instanceof Error && error.message.trim() ? error.message : t('archiveActionFailed')
-        setLoadError(message)
+        reportActionError(message)
         await refresh()
       } finally {
         setBatchBusy(false)
@@ -340,7 +341,7 @@ export function ArchiveSettingsPanel(): ReactElement {
       } catch (error) {
         const message =
           error instanceof Error && error.message.trim() ? error.message : t('archiveActionFailed')
-        setLoadError(message)
+        reportActionError(message)
         await refresh()
       } finally {
         setBatchBusy(false)

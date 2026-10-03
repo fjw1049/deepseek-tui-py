@@ -1,3 +1,4 @@
+import { copyText } from '../../lib/copy-text'
 import { openThreadInSplit } from '../../lib/chat-split-navigation'
 import { resolveChatLayoutKey, CHAT_THREAD_DRAG_MIME, MAX_CHAT_PANES, useChatLayoutStore } from '../../store/chat-layout-store'
 import type { MouseEvent as ReactMouseEvent, ReactElement } from 'react'
@@ -866,10 +867,10 @@ function SidebarProjectsSection({
   ): void => {
     switch (action) {
       case 'copy-path':
-        void navigator.clipboard?.writeText(workspacePath)
+        void copyText(workspacePath)
         break
       case 'copy-relative-path':
-        void navigator.clipboard?.writeText(copyableRelativePath(workspacePath, workspacePath))
+        void copyText(copyableRelativePath(workspacePath, workspacePath))
         break
       case 'new-session':
         onCreateThreadInWorkspace(workspacePath)
@@ -1397,11 +1398,11 @@ export function ThreadRow({
         markThreadUnread(thread.id)
         break
       case 'copy-path':
-        if (threadPath) void navigator.clipboard?.writeText(threadPath)
+        if (threadPath) void copyText(threadPath)
         break
       case 'copy-relative-path':
         if (threadPath) {
-          void navigator.clipboard?.writeText(copyableRelativePath(threadPath, threadPath))
+          void copyText(copyableRelativePath(threadPath, threadPath))
         }
         break
       case 'open-with-editor':
@@ -1416,7 +1417,7 @@ export function ThreadRow({
         onOpenTerminal()
         break
       case 'copy-thread-id':
-        void navigator.clipboard?.writeText(thread.id)
+        void copyText(thread.id)
         break
       case 'delete':
         onDelete()

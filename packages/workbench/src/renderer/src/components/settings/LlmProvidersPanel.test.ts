@@ -128,6 +128,7 @@ describe('LlmProvidersPanel', () => {
     await act(async () => providerButton.click())
 
     expect(document.body.textContent).not.toContain('glm-5.1')
-    expect(window.dsGui.fetchProviderModels).toHaveBeenCalledWith('volcengine-ark')
+    expect(window.dsGui.fetchProviderModels).toHaveBeenCalledWith('volcengine-ark', expect.any(String))
+    expect(window.dsGui.setSettings).not.toHaveBeenCalled()
   })
 })

@@ -1,3 +1,4 @@
+import { GlobalErrorNotice } from './GlobalFeedback'
 import type { PointerEvent as ReactPointerEvent, ReactElement } from 'react'
 import { useCallback, useEffect, useMemo, useRef } from 'react'
 import { Loader2, Plus, X } from 'lucide-react'
@@ -12,6 +13,8 @@ import { terminalPaneIds, terminalLayoutRects } from '../lib/terminal-layout'
 import { terminalLabelFromPath } from '../lib/workspace-label'
 import {
   closeTerminalSessionById,
+  readTerminalOutput,
+  subscribeTerminalEvents,
   createTerminalSessionForWorkspace,
   useTerminalSessionStore,
   type TerminalXtermMount
@@ -119,7 +122,6 @@ export function AppTerminalPanel({
   const createError = useTerminalSessionStore((s) => s.createError)
   const hasStartedInitialSession = useTerminalSessionStore((s) => s.hasStartedInitialSession)
   const setActiveSessionId = useTerminalSessionStore((s) => s.setActiveSessionId)
-  const updateSession = useTerminalSessionStore((s) => s.updateSession)
   const markInitialSessionStarted = useTerminalSessionStore((s) => s.markInitialSessionStarted)
   const setXtermMount = useTerminalSessionStore((s) => s.setXtermMount)
   const geometry = useMemo(
@@ -131,7 +133,6 @@ export function AppTerminalPanel({
   const viewportRef = useRef<HTMLDivElement | null>(null)
   const sessionNodeRefs = useRef<Record<string, HTMLDivElement | null>>({})
   const terminalHandlesRef = useRef<Map<string, TerminalHandle>>(new Map())
-  const pendingOutputRef = useRef<Map<string, string>>(new Map())
   const fitFrameRef = useRef<number | null>(null)
   const splitFrameRef = useRef<number | null>(null)
   const pendingSplitRef = useRef<{ id: string; ratio: number } | null>(null)
@@ -225,34 +226,10 @@ export function AppTerminalPanel({
     visible
   ])
 
-  useEffect(() => {
-    if (typeof window.dsGui?.onTerminalData !== 'function' || typeof window.dsGui?.onTerminalExit !== 'function') {
-      return
-    }
-
-    const offData = window.dsGui.onTerminalData(({ sessionId, data }) => {
-      const handle = terminalHandlesRef.current.get(sessionId)
-      if (handle) {
-        handle.terminal.write(data)
-        return
-      }
-      // PTY often emits the first prompt before React mounts xterm; keep it.
-      const pending = pendingOutputRef.current.get(sessionId) ?? ''
-      pendingOutputRef.current.set(sessionId, pending + data)
-    })
-
-    const offExit = window.dsGui.onTerminalExit(({ sessionId, exitCode }) => {
-      const handle = terminalHandlesRef.current.get(sessionId)
-      handle?.terminal.write(`\r\n${t('terminalExited', { code: exitCode })}\r\n`)
-      updateSession(sessionId, { status: 'exited', exitCode })
-      pendingOutputRef.current.delete(sessionId)
-    })
-
-    return () => {
-      offData()
-      offExit()
-    }
-  }, [t, updateSession])
+  useEffect(() => subscribeTerminalEvents(
+    ({ sessionId, data }) => terminalHandlesRef.current.get(sessionId)?.terminal.write(data),
+    ({ sessionId, exitCode }) => terminalHandlesRef.current.get(sessionId)?.terminal.write(`\r\n${t('terminalExited', { code: exitCode })}\r\n`)
+  ), [t])
 
   useEffect(() => {
     if (!mountActive) return
@@ -295,11 +272,9 @@ export function AppTerminalPanel({
         inputDisposable
       })
 
-      const pending = pendingOutputRef.current.get(session.id)
-      if (pending) {
-        pendingOutputRef.current.delete(session.id)
-        terminal.write(pending)
-      }
+      const history = readTerminalOutput(session.id)
+      if (history) terminal.write(history)
+      if (session.status === 'exited') terminal.write(`\r\n${t('terminalExited', { code: session.exitCode })}\r\n`)
 
       scheduleFit(session.id)
     }
@@ -310,9 +285,8 @@ export function AppTerminalPanel({
       handle.terminal.dispose()
       terminalHandlesRef.current.delete(sessionId)
       delete sessionNodeRefs.current[sessionId]
-      pendingOutputRef.current.delete(sessionId)
     }
-  }, [mountActive, scheduleFit, sessions])
+  }, [mountActive, scheduleFit, sessions, t])
 
   useEffect(() => {
     fitVisiblePanes()
@@ -372,7 +346,6 @@ export function AppTerminalPanel({
     }
     terminalHandlesRef.current.clear()
     sessionNodeRefs.current = {}
-    pendingOutputRef.current.clear()
   }, [mountActive])
 
   // Unmount cleanup: the bottom terminal is conditionally rendered
@@ -395,7 +368,6 @@ export function AppTerminalPanel({
       }
       terminalHandlesRef.current.clear()
       sessionNodeRefs.current = {}
-      pendingOutputRef.current.clear()
     }
   }, [])
 
@@ -427,7 +399,6 @@ export function AppTerminalPanel({
       terminalHandlesRef.current.delete(sessionId)
     }
     delete sessionNodeRefs.current[sessionId]
-    pendingOutputRef.current.delete(sessionId)
     closeTerminalSessionById(sessionId)
   }
 
@@ -510,11 +481,7 @@ export function AppTerminalPanel({
       </div>
       )}
 
-      {createError ? (
-        <div className="shrink-0 border-b border-red-200/70 bg-red-50/80 px-3 py-2 text-[12.5px] text-red-700 dark:border-red-500/20 dark:bg-red-500/8 dark:text-red-200">
-          {t('terminalCreateFailed', { message: createError })}
-        </div>
-      ) : null}
+      {createError ? <GlobalErrorNotice message={t('terminalCreateFailed', { message: createError })} /> : null}
 
       <div ref={viewportRef} className="relative min-h-0 flex-1 overflow-hidden">
         {sessions.length === 0 ? (

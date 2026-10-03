@@ -1,3 +1,4 @@
+import { copyText } from '../../lib/copy-text'
 import type { MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent, ReactElement } from 'react'
 import {
   forwardRef,
@@ -653,7 +654,7 @@ export function WorkspaceEditorPanel({
 
   const copyWorkspacePath = async (path: string): Promise<void> => {
     try {
-      await navigator.clipboard.writeText(path)
+      if (!await copyText(path)) { setPathCopyStatus('copyFailed'); return }
       setPathCopyStatus('copySuccess')
     } catch {
       setPathCopyStatus('copyFailed')
@@ -1070,10 +1071,10 @@ export function WorkspaceEditorPanel({
           void revealWorkspacePathInFolder(path)
           break
         case 'copy-path':
-          void navigator.clipboard?.writeText(path)
+          void copyText(path)
           break
         case 'copy-relative-path':
-          void navigator.clipboard?.writeText(
+          void copyText(
             copyableRelativePath(path, trimmedRoot || path)
           )
           break

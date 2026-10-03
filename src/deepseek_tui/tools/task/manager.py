@@ -264,6 +264,8 @@ class TaskManager:
         limit: int | None = None,
         *,
         since: str | None = None,
+        active_only: bool = False,
+        task_ids: list[str] | None = None,
     ) -> list[TaskSummary]:
         """List durable tasks (newest first).
 
@@ -276,6 +278,11 @@ class TaskManager:
         """
         async with self._lock:
             items = [record.summary() for record in self._catalog().values()]
+        if active_only:
+            items = [s for s in items if s.status in (TaskStatus.QUEUED, TaskStatus.RUNNING)]
+        if task_ids is not None:
+            selected_ids = set(task_ids)
+            items = [s for s in items if s.id in selected_ids]
         if since is not None:
             items = [s for s in items if s.created_at >= since]
         items.sort(key=lambda s: s.created_at, reverse=True)

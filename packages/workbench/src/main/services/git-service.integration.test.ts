@@ -78,7 +78,7 @@ describe('git-service integration', () => {
       git('branch', 'separate-target')
       git('worktree', 'add', separateCheckout, 'separate-current')
       writeFileSync(join(repo, 'tracked.txt'), 'after\n')
-      process.env.ELECTRON_RENDERER_URL = 'http://127.0.0.1:5173'
+      Object.assign(process.env, { ELECTRON_RENDERER_URL: 'http://127.0.0.1:5173' })
       process.env.DEEPSEEK_REPO_ROOT = repo
 
       const switched = await switchGitBranch(repo, 'other')
@@ -96,8 +96,8 @@ describe('git-service integration', () => {
       expect(separateSwitch.ok).toBe(true)
       expect(separateGit('branch', '--show-current')).toBe('separate-target')
     } finally {
-      if (previousRendererUrl === undefined) delete process.env.ELECTRON_RENDERER_URL
-      else process.env.ELECTRON_RENDERER_URL = previousRendererUrl
+      if (previousRendererUrl === undefined) Reflect.deleteProperty(process.env, 'ELECTRON_RENDERER_URL')
+      else Object.assign(process.env, { ELECTRON_RENDERER_URL: previousRendererUrl })
       if (previousRepoRoot === undefined) delete process.env.DEEPSEEK_REPO_ROOT
       else process.env.DEEPSEEK_REPO_ROOT = previousRepoRoot
       rmSync(repo, { recursive: true, force: true })

@@ -35,7 +35,7 @@ declare module 'react' {
         src?: string
         webpreferences?: string
       }
-      'reasoning-effort-selector': DetailedHTMLProps<HTMLAttributes<HTMLElement>, HTMLElement>
+      'reasoning-effort-selector': DetailedHTMLProps<HTMLAttributes<HTMLElement>, HTMLElement> & { value?: string; model?: string }
     }
   }
 }

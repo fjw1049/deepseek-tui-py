@@ -1,3 +1,5 @@
+import { copyText } from '../../lib/copy-text'
+import { reportActionError } from '../../store/feedback-store'
 import { useEffect, useMemo, useState, type ReactElement, type MouseEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ArrowLeft, Plus } from 'lucide-react'
@@ -248,15 +250,14 @@ export function KanbanView({ onOpenThread, onOpenThreadTerminal }: Props): React
     workspacePath: string | null
   }): Promise<string | null> => {
     if (!runtimeReady) {
-      showNotice(t('runtimeActionNeedsConnection'))
+      reportActionError(t('runtimeActionNeedsConnection'))
       return null
     }
     if (project.projectId === CHATS_COLUMN_ID || !project.workspacePath) {
-      await createThread({ chats: true })
+      return createThread({ chats: true })
     } else {
-      await createThread({ workspaceRoot: project.workspacePath })
+      return createThread({ workspaceRoot: project.workspacePath })
     }
-    return useChatStore.getState().activeThreadId
   }
 
   const handleNewTaskSubmit = async (input: KanbanNewTaskSubmit): Promise<void> => {
@@ -279,6 +280,7 @@ export function KanbanView({ onOpenThread, onOpenThreadTerminal }: Props): React
       setOptimisticInProgress((prev) => new Set(prev).add(threadId))
       const flags = kanbanExecutionFlags(input.approvalPolicy)
       const sent = await sendMessage(input.prompt, undefined, {
+        expectedThreadId: threadId,
         autoApprove: flags.auto_approve,
         trustMode: flags.trust_mode
       })
@@ -288,7 +290,7 @@ export function KanbanView({ onOpenThread, onOpenThreadTerminal }: Props): React
           next.delete(threadId)
           return next
         })
-        showNotice(t('kanbanSendFailed'))
+        reportActionError(t('kanbanSendFailed'))
         return
       }
       setNewTaskDialog(null)
@@ -304,12 +306,16 @@ export function KanbanView({ onOpenThread, onOpenThreadTerminal }: Props): React
       return
     }
     if (!runtimeReady) {
-      showNotice(t('runtimeActionNeedsConnection'))
+      reportActionError(t('runtimeActionNeedsConnection'))
       return
     }
     const stored = loadKanbanDrafts()[card.threadId]
-    if (stored?.model?.trim()) setComposerModel(stored.model.trim())
     await selectThread(card.threadId)
+    if (useChatStore.getState().activeThreadId !== card.threadId) {
+      reportActionError(t('kanbanSendFailed'))
+      return
+    }
+    if (stored?.model?.trim()) setComposerModel(stored.model.trim())
     setOptimisticInProgress((prev) => new Set(prev).add(card.threadId))
     const prompt = card.draftPrompt
     const model = stored?.model
@@ -319,6 +325,7 @@ export function KanbanView({ onOpenThread, onOpenThreadTerminal }: Props): React
     setDraftPrompts(loadKanbanDraftPrompts())
     const flags = kanbanExecutionFlags(approvalPolicy)
     const sent = await sendMessage(prompt, undefined, {
+      expectedThreadId: card.threadId,
       autoApprove: flags.auto_approve,
       trustMode: flags.trust_mode
     })
@@ -330,7 +337,7 @@ export function KanbanView({ onOpenThread, onOpenThreadTerminal }: Props): React
         next.delete(card.threadId)
         return next
       })
-      showNotice(t('kanbanSendFailed'))
+      reportActionError(t('kanbanSendFailed'))
       return
     }
     showNotice(t('kanbanDraftSent'))
@@ -385,10 +392,10 @@ export function KanbanView({ onOpenThread, onOpenThreadTerminal }: Props): React
         markThreadUnread(threadId)
         break
       case 'copy-path':
-        if (path) void navigator.clipboard?.writeText(path)
+        if (path) void copyText(path)
         break
       case 'copy-relative-path':
-        if (path) void navigator.clipboard?.writeText(copyableRelativePath(path, path))
+        if (path) void copyText(copyableRelativePath(path, path))
         break
       case 'open-with-editor':
         if (path) void openWorkspacePathInEditor({ path }, path)
@@ -400,7 +407,7 @@ export function KanbanView({ onOpenThread, onOpenThreadTerminal }: Props): React
         void onOpenThreadTerminal(threadId)
         break
       case 'copy-thread-id':
-        void navigator.clipboard?.writeText(threadId)
+        void copyText(threadId)
         break
       case 'delete': {
         const title = thread?.title ?? menu.card.title

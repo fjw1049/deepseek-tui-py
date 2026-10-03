@@ -1,3 +1,4 @@
+import { copyText } from '../lib/copy-text'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type PointerEvent } from 'react'
 import { createPortal } from 'react-dom'
 import { Check, ChevronDown, Copy } from 'lucide-react'
@@ -81,7 +82,7 @@ export function SessionQueries({ children }: { children: ReactNode }): React.Rea
 
   const copy = async (text: string, id: string): Promise<void> => {
     try {
-      await navigator.clipboard.writeText(text)
+      if (!await copyText(text)) { setCopiedId(null); setNotice(''); return }
       setCopiedId(id)
       setNotice(t('copySuccess'))
     } catch {

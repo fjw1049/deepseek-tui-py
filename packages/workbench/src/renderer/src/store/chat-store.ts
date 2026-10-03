@@ -245,6 +245,7 @@ let drainingQueuedMessages = false
 /** In-flight approval decisions — prevents double-submit before status flips. */
 const approvalSubmitInFlight = new Set<string>()
 const decisionSubmitInFlight = new Set<string>()
+const pendingInputRefreshes = new Set<string>()
 let turnCompletionProbeTimer: ReturnType<typeof setTimeout> | null = null
 
 const watchCompletionNotificationKeys = new Map<string, string>()
@@ -2165,7 +2166,7 @@ const store = create<ChatState>((set, get) => ({
   createThread: async (options = {}) => {
     if (get().runtimeConnection !== 'ready') {
       set({ error: i18n.t('common:runtimeActionNeedsConnection') })
-      return
+      return null
     }
     try {
       const { providerId } = get()
@@ -2185,7 +2186,7 @@ const store = create<ChatState>((set, get) => ({
           normalizeWorkspaceRoot(settings.workspaceRoot)
       if (!workspaceRoot) {
         await get().chooseWorkspace({ createThreadAfter: true })
-        return
+        return null
       }
       const envMode = options.chats
         ? 'local'
@@ -2201,7 +2202,7 @@ const store = create<ChatState>((set, get) => ({
         } else {
           set({ error: null })
         }
-        return
+        return get().activeThreadId === reusableThreadId ? reusableThreadId : null
       }
       const composerModel = get().composerModel.trim()
       const selectedModel = decodeModelRef(composerModel)
@@ -2215,6 +2216,7 @@ const store = create<ChatState>((set, get) => ({
       })
       await get().refreshThreads()
       await get().selectThread(t.id)
+      return get().activeThreadId === t.id ? t.id : null
     } catch (e) {
       set({
         error: formatRuntimeError(e),
@@ -2222,6 +2224,7 @@ const store = create<ChatState>((set, get) => ({
           ? { route: 'settings' as const, settingsSection: settingsSectionForRuntimeError(e)! }
           : {})
       })
+      return null
     }
   },
 
@@ -3699,6 +3702,9 @@ const store = create<ChatState>((set, get) => ({
   refreshPendingUserInputs: async () => {
     const { activeThreadId, providerId, blocks, busy, runtimeConnection } = get()
     if (!activeThreadId || runtimeConnection !== 'ready') return
+    const requestKey = `${providerId}:${activeThreadId}`
+    if (pendingInputRefreshes.has(requestKey)) return
+    pendingInputRefreshes.add(requestKey)
     const p = getProvider(providerId)
     try {
       const synced = await syncRuntimePendingApprovals(
@@ -3715,6 +3721,8 @@ const store = create<ChatState>((set, get) => ({
       })
     } catch {
       /* ignore transient poll failures */
+    } finally {
+      pendingInputRefreshes.delete(requestKey)
     }
   },
 

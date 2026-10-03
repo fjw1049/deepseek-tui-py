@@ -63,7 +63,7 @@ export function filterComposerModelOptions(
     if (trimmed && trimmed !== 'auto') ordered.add(trimmed)
   }
   const preferred = DEFAULT_COMPOSER_MODEL_IDS.filter((id) => ordered.has(id))
-  const preferredSet = new Set(preferred)
+  const preferredSet = new Set<string>(preferred)
   const tail = [...ordered].filter((id) => !preferredSet.has(id)).sort((a, b) => a.localeCompare(b))
   return [...preferred, ...tail]
 }

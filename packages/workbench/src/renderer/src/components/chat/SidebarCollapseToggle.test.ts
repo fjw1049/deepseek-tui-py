@@ -21,7 +21,7 @@ vi.mock('../../hooks/use-thread-tasks', () => ({
 }))
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
 
-it('toggles both sections from persistent header buttons and removes the overflow actions', async () => {
+it('toggles both sections from persistent header buttons and preserves the overflow collapse action', async () => {
   const container = document.createElement('div')
   document.body.append(container)
   const root = createRoot(container)
@@ -41,7 +41,7 @@ it('toggles both sections from persistent header buttons and removes the overflo
           onRemoveWorkspace: noop, onDeleteWorkspace: noop, onCreateThreadInWorkspace: noop
         })
         : createElement(SidebarChatsSection, callbacks)))
-      const button = () => container.querySelector<HTMLButtonElement>(`button[aria-label="sidebar${section}CollapseAll"], button[aria-label="sidebar${section}ExpandAll"]`)!
+      const button = () => container.querySelector<HTMLButtonElement>('button[aria-expanded]:not([aria-label])')!
       expect(button().className).not.toContain('opacity-0')
       expect(button().getAttribute('aria-expanded')).toBe('true')
       await act(async () => button().click())
@@ -57,7 +57,7 @@ it('toggles both sections from persistent header buttons and removes the overflo
       await act(async () => container.querySelector<HTMLButtonElement>(`button[aria-label="sidebar${section}Menu"]`)!.click())
       const menu = document.querySelector('[role="menu"]')!
       expect(menu).not.toBeNull()
-      expect(menu.textContent).not.toMatch(/ExpandAll|CollapseAll/)
+      expect(menu.textContent).toMatch(/ExpandAll|CollapseAll/)
       await act(async () => container.querySelector<HTMLButtonElement>(`button[aria-label="sidebar${section}Menu"]`)!.click())
     }
   } finally {

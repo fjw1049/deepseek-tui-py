@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { terminalLayoutRects, terminalPaneIds } from '../lib/terminal-layout'
-import { createTerminalSessionForWorkspace, splitTerminalSession, useTerminalSessionStore } from './terminal-session-store'
+import { readTerminalOutput, subscribeTerminalEvents, createTerminalSessionForWorkspace, splitTerminalSession, useTerminalSessionStore } from './terminal-session-store'
 
 const state = () => useTerminalSessionStore.getState()
 const add = (id: string) => state().addSession({ id, cwd: '/workspace', status: 'running' })
@@ -59,4 +59,27 @@ describe('shared terminal splits', () => {
     expect(terminalPaneIds(state().layouts[1])).toEqual(['b'])
     expect(state().creatingSession).toBe(false)
   })
+})
+
+it('captures output and exit while no panel is subscribed and bounds replay memory', () => {
+  let data!: (event: { sessionId: string; data: string }) => void
+  let exit!: (event: { sessionId: string; exitCode: number }) => void
+  Object.assign(window, { dsGui: {
+    onTerminalData: (handler: typeof data) => { data = handler; return vi.fn() },
+    onTerminalExit: (handler: typeof exit) => { exit = handler; return vi.fn() }
+  } })
+  add('a')
+  const observer = vi.fn()
+  const unsubscribe = subscribeTerminalEvents(observer, vi.fn())
+  data({ sessionId: 'a', data: 'before\n' })
+  unsubscribe()
+  data({ sessionId: 'a', data: 'hidden\n' })
+  exit({ sessionId: 'a', exitCode: 7 })
+  expect(observer).toHaveBeenCalledTimes(1)
+  expect(readTerminalOutput('a')).toBe('before\nhidden\n')
+  expect(state().sessions[0]).toMatchObject({ status: 'exited', exitCode: 7 })
+  data({ sessionId: 'a', data: 'x'.repeat(2 * 1024 * 1024) })
+  expect(readTerminalOutput('a').length).toBe(1024 * 1024)
+  state().removeSession('a')
+  expect(readTerminalOutput('a')).toBe('')
 })

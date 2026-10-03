@@ -938,9 +938,11 @@ export function FloatingComposer({
     focusComposer()
   }
 
+  const connectorsInFlight = useRef(false)
   const loadComposerConnectors = useCallback(
     (opts?: { force?: boolean }): void => {
-      if (!opts?.force && (connectorsLoaded || connectorsLoading)) return
+      if (connectorsInFlight.current || (!opts?.force && connectorsLoaded)) return
+      connectorsInFlight.current = true
       setConnectorsLoading(true)
 
       const loadDisk = async () => {
@@ -971,11 +973,12 @@ export function FloatingComposer({
           )
         })
         .finally(() => {
+          connectorsInFlight.current = false
           setConnectorsLoaded(true)
           setConnectorsLoading(false)
         })
     },
-    [runtimeReady, connectorsLoaded, connectorsLoading]
+    [runtimeReady, connectorsLoaded]
   )
 
   useEffect(() => {
@@ -1338,31 +1341,30 @@ export function FloatingComposer({
       insertTextAtCursor(text)
       return
     }
-    const result = await window.dsGui.writePasteTextFile({
-      workspaceRoot: effectiveWorkspaceRoot,
-      content: text
-    })
-    if (!result.ok) {
-      showAttachNotice(result.message ?? t('composerPasteFailed'))
-      insertTextAtCursor(text)
-      return
-    }
-    const id = `att-${result.relativePath}`
-    if (attachments.some((item) => item.path === result.relativePath)) {
+    const target = imageTargetRef.current
+    setImageImports((count) => count + 1)
+    try {
+      const result = await window.dsGui.writePasteTextFile({
+        workspaceRoot: effectiveWorkspaceRoot,
+        content: text
+      })
+      if (target !== imageTargetRef.current) return
+      if (!result.ok) throw new Error(result.message ?? t('composerPasteFailed'))
+      setAttachments((previous) => previous.some((item) => item.path === result.relativePath)
+        ? previous
+        : [...previous, {
+          id: `att-${result.relativePath}`, path: result.relativePath,
+          name: result.name, size: result.size
+        }])
       showAttachNotice(t('composerPasteSaved', { name: result.name }), 'info')
-      return
+      focusComposer()
+    } catch (error) {
+      if (target !== imageTargetRef.current) return
+      showAttachNotice(error instanceof Error ? error.message : t('composerPasteFailed'))
+      insertTextAtCursor(text)
+    } finally {
+      setImageImports((count) => count - 1)
     }
-    setAttachments([
-      ...attachments,
-      {
-        id,
-        path: result.relativePath,
-        name: result.name,
-        size: result.size
-      }
-    ])
-    showAttachNotice(t('composerPasteSaved', { name: result.name }), 'info')
-    focusComposer()
   }
 
   const removeAttachment = (id: string): void => {

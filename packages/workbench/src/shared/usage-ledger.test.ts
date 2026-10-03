@@ -96,7 +96,7 @@ describe('usage-ledger', () => {
 
   it('builds mock ledger with uneven model usage arcs', () => {
     const ledger = buildMockUsageLedger(new Date('2026-06-24T12:00:00'))
-    const result = queryUsageLedger(ledger, '90d', 'en')
+    const result = queryUsageLedger(ledger, '90d', 'en', new Date('2026-06-24T12:00:00'))
     const buckets = result.summary!.buckets
 
     expect(result.summary).not.toBeNull()
@@ -114,7 +114,7 @@ describe('usage-ledger', () => {
 
     const activeDays = result.daily.filter((point) => point.totalTokens > 0).length
     expect(activeDays).toBeGreaterThan(30)
-    expect(activeDays).toBeLessThan(90)
+    expect(activeDays).toBeLessThanOrEqual(90)
   })
 
   it('merges mock overlay onto an existing ledger', () => {

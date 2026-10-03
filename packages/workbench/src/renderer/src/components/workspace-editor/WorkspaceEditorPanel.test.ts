@@ -34,7 +34,9 @@ it('switches tables between preview and source and keeps PDFs read-only', async 
     await act(async () => host.querySelector<HTMLButtonElement>('[aria-label="workspaceEditorPreview"]')!.click())
     expect(host.querySelector('table')).toBeTruthy()
     await act(async () => { await useWorkspaceEditorStore.getState().openFile('report.pdf', '/workspace') })
-    expect(host.querySelector('iframe')?.getAttribute('src')).toBe('about:blank')
+    expect(host.querySelector('iframe')?.getAttribute('src')).toBe('about:blank?_ds_revision=0')
+    await act(async () => useWorkspaceEditorStore.getState().reloadCleanTabs('/workspace'))
+    expect(host.querySelector('iframe')?.getAttribute('src')).toBe('about:blank?_ds_revision=1')
     expect(host.querySelector('[aria-label="workspaceEditorEdit"]')).toBeNull()
     expect(host.querySelector('[aria-label="workspaceEditorSource"]')).toBeNull()
   } finally {

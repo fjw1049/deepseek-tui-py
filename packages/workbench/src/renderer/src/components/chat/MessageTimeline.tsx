@@ -1,3 +1,4 @@
+import { copyText } from '../../lib/copy-text'
 import { ConversationScope, useConversationScope } from './conversation-scope'
 import { findPendingToolGate, hasPendingToolGate } from '../../lib/tool-gate'
 import type { PointerEvent as ReactPointerEvent, ReactElement, RefObject } from 'react'
@@ -441,8 +442,19 @@ export function MessageTimeline({
 
   useEffect(() => {
     if (!scrollToBlockId) return
-    const target = document.getElementById(`block-${scrollToBlockId}`)
     const container = containerRef.current
+    const target = container?.querySelector<HTMLElement>(`#${CSS.escape(`block-${scrollToBlockId}`)}`)
+    if (!target) {
+      const turnIndex = turns.findIndex((turn) =>
+        turn.user?.id === scrollToBlockId || turn.blocks.some((block) => block.id === scrollToBlockId)
+      )
+      if (turnIndex >= 0 && turnIndex < hiddenTurnCount) {
+        stickToBottomRef.current = false
+        tailAnchorHoldRef.current = false
+        setVisibleTurnCount(turns.length - turnIndex)
+        return
+      }
+    }
     if (target && container) {
       stickToBottomRef.current = false
       tailAnchorHoldRef.current = false
@@ -492,13 +504,14 @@ export function MessageTimeline({
       jumpAnimRef.current = requestAnimationFrame(step)
     }
     clearScrollTarget()
-  }, [clearScrollTarget, scrollToBlockId])
+  }, [clearScrollTarget, scrollToBlockId, turns, hiddenTurnCount, tailAnchorHoldRef])
 
   useEffect(
     () => () => {
       if (scrollFrameRef.current !== null) {
         window.cancelAnimationFrame(scrollFrameRef.current)
       }
+      if (jumpAnimRef.current !== null) cancelAnimationFrame(jumpAnimRef.current)
     },
     []
   )
@@ -506,11 +519,6 @@ export function MessageTimeline({
   useEffect(() => {
     setVisibleTurnCount(shouldCollapseHistory ? TURN_PAGE_SIZE : turns.length)
   }, [activeThreadId, shouldCollapseHistory, turns.length])
-
-  useEffect(() => {
-    if (!busy) return
-    setVisibleTurnCount((count) => Math.max(count, turns.length))
-  }, [busy, turns.length])
 
   useEffect(() => {
     const snapshot = pendingPrependRef.current
@@ -2592,8 +2600,7 @@ function CopyFeedbackButton({
 
   const handleCopy = async (): Promise<void> => {
     try {
-      if (!navigator?.clipboard?.writeText) throw new Error('Clipboard unavailable')
-      await navigator.clipboard.writeText(text)
+      if (!await copyText(text)) { setStatus('error'); scheduleReset(); return }
       setStatus('success')
     } catch {
       setStatus('error')

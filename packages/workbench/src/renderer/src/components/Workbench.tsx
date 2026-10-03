@@ -1,3 +1,5 @@
+import { GlobalFeedbackViewport } from './GlobalFeedback'
+import { useFeedbackStore } from '../store/feedback-store'
 import { createConversationInSplit } from '../lib/chat-split-navigation'
 import { ChatSplitToolbar } from './chat/ChatSplitToolbar'
 import type { ChatSplitPresentation } from '../lib/chat-split-presentation'
@@ -13,6 +15,8 @@ import type {
   RefObject
 } from 'react'
 import {
+  lazy,
+  Suspense,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -111,11 +115,11 @@ import {
 import { IdeWorkspaceLayout } from './ide/IdeWorkspaceLayout'
 import { createFrameQueue } from '../lib/frame-queue'
 
-import { MarketplaceView } from './extensions/MarketplaceView'
-import { AutomationCenter } from './automation/AutomationCenter'
-import { ChannelCenter } from './channels/ChannelCenter'
-import { KanbanView } from './kanban/KanbanView'
-import { SettingsView } from './SettingsView'
+const MarketplaceView = lazy(() => import('./extensions/MarketplaceView').then((module) => ({ default: module.MarketplaceView })))
+const AutomationCenter = lazy(() => import('./automation/AutomationCenter').then((module) => ({ default: module.AutomationCenter })))
+const ChannelCenter = lazy(() => import('./channels/ChannelCenter').then((module) => ({ default: module.ChannelCenter })))
+const KanbanView = lazy(() => import('./kanban/KanbanView').then((module) => ({ default: module.KanbanView })))
+const SettingsView = lazy(() => import('./SettingsView').then((module) => ({ default: module.SettingsView })))
 
 const LEFT_PANEL_WIDTH_KEY = 'deepseekgui.layout.leftSidebarWidth'
 const LEFT_PANEL_COLLAPSED_KEY = 'deepseekgui.layout.leftSidebarCollapsed'
@@ -253,6 +257,8 @@ function persistBoolean(key: string, value: boolean): void {
 }
 
 export function Workbench(): ReactElement {
+  const actionFailures = useFeedbackStore((s) => s.failures)
+  const dismissActionFailure = useFeedbackStore((s) => s.dismiss)
   const { t } = useTranslation('common')
   const {
     threads,
@@ -1633,6 +1639,31 @@ export function Workbench(): ReactElement {
     >
       <div className="ds-window-drag-strip" aria-hidden />
       <SharedLinkReceiver />
+      {/* Global feedback is centered on the window, independent of sidebar widths. */}
+      <GlobalFeedbackViewport>
+        {runtimeConnection !== 'ready' && connectionError ? (
+          <div className="pointer-events-auto min-h-0 shrink-0 rounded-xl shadow-lg">
+            <FeedbackNotice
+              tone={runtimeConnection === 'checking' ? 'info' : 'warning'}
+              title={t(runtimeConnection === 'checking' ? 'feedbackReconnecting' : 'feedbackConnectionLost')}
+              message={t('feedbackConnectionImpact')}
+              details={connectionError}
+              actions={<>
+                <button type="button" disabled={runtimeConnection === 'checking'} className="min-h-8 rounded-lg bg-ds-ink px-3 py-1 text-[12px] font-medium text-ds-card disabled:opacity-50" onClick={() => void probeRuntime('user')}>{t('retryConnection')}</button>
+                <button type="button" className="min-h-8 rounded-lg px-3 py-1 text-[12px] text-ds-muted hover:bg-ds-hover" onClick={() => setRuntimeDiagnosticsOpen(true)}>{t('runtimeDiagnosticsButton')}</button>
+              </>}
+            />
+          </div>
+        ) : null}
+        {error ? (
+          <div className="pointer-events-auto min-h-0 shrink-0 rounded-xl shadow-lg">
+            <FeedbackNotice tone="error" title={t('feedbackActionFailed')} message={error} onDismiss={() => setError(null)} />
+          </div>
+        ) : null}
+        {actionFailures.map((failure) => <div key={failure.id} className="pointer-events-auto min-h-0 shrink-0 rounded-xl shadow-lg">
+          <FeedbackNotice tone="error" message={failure.message} onDismiss={() => dismissActionFailure(failure.id)} />
+        </div>)}
+      </GlobalFeedbackViewport>
       {resizeShieldCursor !== null ? (
         <div
           aria-hidden
@@ -1694,28 +1725,7 @@ export function Workbench(): ReactElement {
           route === 'marketplace' ? 'px-0' : ''
         }`}
       >
-        {/* Global feedback floats above the stage without resizing its content. */}
-        <div className="ds-no-drag pointer-events-none absolute right-3 top-14 z-40 flex max-h-[calc(100%-4.25rem)] w-[calc(100%-1.5rem)] max-w-[480px] flex-col gap-2 overflow-y-auto overscroll-contain">
-          {runtimeConnection !== 'ready' && connectionError ? (
-            <div className="pointer-events-auto min-h-0 shrink-0 rounded-xl shadow-lg">
-              <FeedbackNotice
-                tone={runtimeConnection === 'checking' ? 'info' : 'warning'}
-                title={t(runtimeConnection === 'checking' ? 'feedbackReconnecting' : 'feedbackConnectionLost')}
-                message={t('feedbackConnectionImpact')}
-                details={connectionError}
-                actions={<>
-                  <button type="button" disabled={runtimeConnection === 'checking'} className="min-h-8 rounded-lg bg-ds-ink px-3 py-1 text-[12px] font-medium text-ds-card disabled:opacity-50" onClick={() => void probeRuntime('user')}>{t('retryConnection')}</button>
-                  <button type="button" className="min-h-8 rounded-lg px-3 py-1 text-[12px] text-ds-muted hover:bg-ds-hover" onClick={() => setRuntimeDiagnosticsOpen(true)}>{t('runtimeDiagnosticsButton')}</button>
-                </>}
-              />
-            </div>
-          ) : null}
-          {error ? (
-            <div className="pointer-events-auto min-h-0 shrink-0 rounded-xl shadow-lg">
-              <FeedbackNotice tone="error" title={t('feedbackActionFailed')} message={error} onDismiss={() => setError(null)} />
-            </div>
-          ) : null}
-        </div>
+        <Suspense fallback={<div role="status" className="flex flex-1 items-center justify-center text-ds-muted">{t('viewLoading')}</div>}>
         {route === 'settings' ? (
           <SettingsView />
         ) : route === 'marketplace' ? (
@@ -2044,6 +2054,7 @@ export function Workbench(): ReactElement {
         ) : null}
           </>
         )}
+        </Suspense>
       {sharedConversationVisible ? createPortal(
         <MessageTimeline
           scrollMemory={peekChatPaneSession(activeThreadId)?.scroll}

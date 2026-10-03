@@ -4,6 +4,7 @@ export function createChatSchedulers() {
 let startupRuntimeProbeTimer: ReturnType<typeof setTimeout> | null = null
 let busyWatchdogTimer: ReturnType<typeof setTimeout> | null = null
 let busyRecoveryAttempts = 0
+let turnCompletionInFlight = false
 let turnCompletionPollTimer: ReturnType<typeof setInterval> | null = null
 
 /** Avoid hammering GET /v1/threads/{id} (full detail) every few seconds. */
@@ -122,7 +123,9 @@ function syncTurnCompletionPoll(
   if (turnCompletionPollTimer != null) return
 
   const tick = (): void => {
-    void pollTurnCompletionWatch(set, get, options)
+    if (turnCompletionInFlight) return
+    turnCompletionInFlight = true
+    void pollTurnCompletionWatch(set, get, options).catch(() => { /* Retry on the next tick. */ }).finally(() => { turnCompletionInFlight = false })
   }
 
   turnCompletionPollTimer = setInterval(tick, TURN_COMPLETION_POLL_MS)

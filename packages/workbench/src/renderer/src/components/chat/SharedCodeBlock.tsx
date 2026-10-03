@@ -1,3 +1,4 @@
+import { copyText } from '../../lib/copy-text'
 import { useConversationScope } from './conversation-scope'
 import {
   Check,
@@ -316,8 +317,7 @@ export function SharedCodeBlock({
   const closeFullscreen = useCallback(() => setFullscreen(false), [])
 
   const handleCopy = async (): Promise<void> => {
-    if (!navigator?.clipboard?.writeText) return
-    await navigator.clipboard.writeText(trimmedCode)
+    if (!await copyText(trimmedCode)) { setIsCopied(false); return }
     setIsCopied(true)
     if (copyResetRef.current !== null) window.clearTimeout(copyResetRef.current)
     copyResetRef.current = window.setTimeout(() => setIsCopied(false), COPY_RESET_MS)

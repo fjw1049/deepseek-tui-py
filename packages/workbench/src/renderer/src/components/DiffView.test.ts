@@ -147,3 +147,19 @@ it('toggles full context beside expand/collapse and navigates changes in both la
     container.remove()
   }
 })
+
+it('falls back to changed hunks instead of rendering an oversized full file', async () => {
+  globalThis.IS_REACT_ACT_ENVIRONMENT = true
+  const host = document.createElement('div'); document.body.append(host)
+  const root = createRoot(host)
+  try {
+    await act(async () => root.render(createElement(DiffView, {
+      patch: '@@ -9000 +9000 @@\n-old-value\n+updated-value',
+      fullFilePatch: '@@ -1,10000 +1,10000 @@\n' + ' context\n'.repeat(9999) + '+updated-value',
+      showFullFile: true
+    })))
+    expect(host.textContent).toContain('updated-value')
+    expect(host.textContent).toContain('diffPreviewLimited')
+    expect(host.querySelectorAll('tbody tr').length).toBeLessThan(20)
+  } finally { await act(async () => root.unmount()); host.remove() }
+})

@@ -1,3 +1,4 @@
+import { copyText } from '../../../../lib/copy-text'
 import { useEffect, useRef, useState } from 'react'
 import { Check, Copy } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
@@ -32,8 +33,7 @@ export function ToolCopyButton({
   const handleCopy = async (e: React.MouseEvent): Promise<void> => {
     e.stopPropagation()
     try {
-      if (!navigator?.clipboard?.writeText) return
-      await navigator.clipboard.writeText(text)
+      if (!await copyText(text)) { setCopied(false); return }
       setCopied(true)
       if (resetRef.current !== null) window.clearTimeout(resetRef.current)
       resetRef.current = window.setTimeout(() => setCopied(false), COPY_RESET_MS)

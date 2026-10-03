@@ -74,7 +74,7 @@ export function ReasoningEffortSelector({
   dense = false,
 }: ReasoningEffortSelectorProps) {
   const { t } = useTranslation('common')
-  const ref = useRef<HTMLElement>(null)
+  const ref = useRef<HTMLElement & { models: ComposerModelOption[]; labels: ReasoningSelectorLabels }>(null)
   const onModelChangeRef = useRef(onModelChange)
   const onChangeRef = useRef(onChange)
   const onConfigureModelsRef = useRef(onConfigureModels)

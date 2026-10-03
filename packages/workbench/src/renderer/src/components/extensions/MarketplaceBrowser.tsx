@@ -1,3 +1,4 @@
+import { FeedbackNotice } from '../FeedbackNotice'
 import type { ReactElement } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -190,7 +191,7 @@ export function MarketplaceBrowser({ kind, onInstall, isInstalled, query, refres
           {t('marketplaceLoading')}
         </div>
       ) : error ? (
-        <NoticeView notice={{ tone: 'error', message: t('marketplaceLoadFailed', { error }) }} />
+        <FeedbackNotice tone="error" message={t('marketplaceLoadFailed', { error })} />
       ) : filtered.length === 0 ? null : (
         <div className="mt-4 grid gap-x-14 md:grid-cols-2">
           {filtered.map((item) => {

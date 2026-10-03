@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState, type ReactElement } from 'react'
+import { reportActionError } from '../../store/feedback-store'
+import { useEffect, useMemo, useRef, useState, type ReactElement } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   ArrowLeft,
@@ -47,10 +48,10 @@ const WEEKDAY_LABELS: Record<WeekdayToken, string> = {
   SUN: 'automationWeekdaySu'
 }
 
-function defaultOnceAt(): string {
-  const date = new Date(Date.now() + 60 * 60 * 1000)
+function defaultOnceAt(runAt?: string | null): string {
+  const date = runAt ? new Date(runAt) : new Date(Date.now() + 60 * 60 * 1000)
   const offsetMs = date.getTimezoneOffset() * 60_000
-  return new Date(date.getTime() - offsetMs).toISOString().slice(0, 16)
+  return new Date(date.getTime() - offsetMs).toISOString().slice(0, -1)
 }
 
 function errorKey(error: unknown): string {
@@ -82,8 +83,9 @@ export function AutomationTaskForm({
   const setRoute = useChatStore((s) => s.setRoute)
   const [name, setName] = useState(initialAutomation?.name ?? '')
   const [prompt, setPrompt] = useState(initialAutomation?.prompt ?? '')
-  const [scheduleKind, setScheduleKind] = useState<AutomationScheduleKind>(initialAutomation ? 'custom' : 'daily')
-  const [onceAt, setOnceAt] = useState(defaultOnceAt)
+  const [scheduleKind, setScheduleKind] = useState<AutomationScheduleKind>(initialAutomation ? (!initialAutomation.schedule ? 'once' : 'custom') : 'daily')
+  const [initialOnceAt] = useState(() => defaultOnceAt(initialAutomation?.next_run_at ?? initialAutomation?.last_run_at))
+  const [onceAt, setOnceAt] = useState(initialOnceAt)
   const [everyHours, setEveryHours] = useState('1')
   const [timeOfDay, setTimeOfDay] = useState('09:00')
   const [weekdays, setWeekdays] = useState<WeekdayToken[]>(['MON', 'TUE', 'WED', 'THU', 'FRI'])
@@ -96,6 +98,7 @@ export function AutomationTaskForm({
       ? initialAutomation.delivery.mode
       : 'none'
   const [deliveryMode, setDeliveryMode] = useState<AutomationDeliveryMode>(initialDeliveryMode)
+  const deliveryTouched = useRef(Boolean(initialAutomation))
   const [deliveryTarget, setDeliveryTarget] = useState(initialAutomation?.delivery?.to ?? '')
   const [feishuDefault, setFeishuDefault] = useState('')
   const [emailDefault, setEmailDefault] = useState('')
@@ -122,25 +125,23 @@ export function AutomationTaskForm({
       setFeishuChannelReady(state.feishuChannelReady)
       setWecomChannelReady(state.wecomChannelReady)
       setEmailChannelReady(state.emailChannelReady)
+      if (!deliveryTouched.current) {
+        deliveryTouched.current = true
+        if (state.feishuDefault) {
+          setDeliveryMode('feishu')
+          setDeliveryTarget(state.feishuDefault)
+        } else if (state.wecomChannelReady) {
+          setDeliveryMode('wecom')
+        } else if (state.emailDefault) {
+          setDeliveryMode('email')
+          setDeliveryTarget(state.emailDefault)
+        }
+      }
     })()
     return () => {
       cancelled = true
     }
   }, [])
-
-  useEffect(() => {
-    if (deliveryMode !== 'none' || deliveryTarget.trim()) return
-    if (feishuDefault) {
-      setDeliveryMode('feishu')
-      setDeliveryTarget(feishuDefault)
-    } else if (wecomChannelReady) {
-      setDeliveryMode('wecom')
-      setDeliveryTarget('')
-    } else if (emailDefault) {
-      setDeliveryMode('email')
-      setDeliveryTarget(emailDefault)
-    }
-  }, [deliveryMode, deliveryTarget, emailDefault, feishuDefault, wecomChannelReady])
 
   useEffect(() => {
     if (deliveryMode === 'feishu') setDeliveryTarget((current) => current || feishuDefault)
@@ -199,6 +200,10 @@ export function AutomationTaskForm({
       const record = initialAutomation
         ? await updateAutomation(initialAutomation.id, {
             ...input,
+            timezone: initialAutomation.timezone,
+            run_at: !initialAutomation.schedule && scheduleKind === 'once' && onceAt === initialOnceAt
+              ? undefined : input.run_at,
+            status: createPaused === (initialAutomation.status === 'paused') ? undefined : input.status,
             delivery: input.delivery ?? {}
           })
         : await createAutomation(input)
@@ -210,10 +215,8 @@ export function AutomationTaskForm({
       setNotice({ tone: 'success', message: t('automationCreateSuccess', { name: record.name }) })
     } catch (err) {
       const key = errorKey(err)
-      setNotice({
-        tone: 'error',
-        message: key.startsWith('common:') ? t(key.slice('common:'.length)) : key
-      })
+      if (key.startsWith('common:')) setNotice({ tone: 'error', message: t(key.slice('common:'.length)) })
+      else reportActionError(key)
     } finally {
       setSubmitting(false)
     }
@@ -230,7 +233,7 @@ export function AutomationTaskForm({
         message: t('automationRunStarted', { taskId: run.task_id ?? '-' })
       })
     } catch (err) {
-      setNotice({ tone: 'error', message: err instanceof Error ? err.message : String(err) })
+      reportActionError(err)
     } finally {
       setRunningNow(false)
     }
@@ -367,6 +370,7 @@ export function AutomationTaskForm({
                   {scheduleKind === 'once' ? (
                     <input
                       type="datetime-local"
+                      step="any"
                       value={onceAt}
                       onChange={(event) => setOnceAt(event.target.value)}
                       className="rounded-2xl border border-ds-border bg-ds-card px-4 py-3 text-[14px] text-ds-ink outline-none focus:border-accent/60"
@@ -427,6 +431,7 @@ export function AutomationTaskForm({
                   <SettingsSelect
                     value={deliveryMode}
                     onChange={(event) => {
+                      deliveryTouched.current = true
                       const next = event.target.value as AutomationDeliveryMode
                       setDeliveryMode(next)
                       if (next === 'feishu' && feishuChannelReady) setDeliveryTarget('')

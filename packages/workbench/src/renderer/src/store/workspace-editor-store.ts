@@ -7,6 +7,8 @@ import type { WorkspaceFileReadResult } from '@shared/workspace-file'
 
 // Serialize writes to the same file so older responses cannot overwrite newer saves.
 const fileSaves = new Map<string, Promise<boolean>>()
+let nextOpenRequestId = 0
+let latestReloadVersion = 0
 
 export type EditorTabKind = 'text' | 'image' | 'pdf'
 export type EditorPaneId = 'primary' | 'secondary'
@@ -19,6 +21,7 @@ export type EditorTab = {
   content: string
   savedContent: string
   loading: boolean
+  openRequestId?: number
   error: string | null
   /** True when the on-disk file was truncated for preview — never write this buffer back. */
   truncated?: boolean
@@ -46,6 +49,9 @@ type WorkspaceEditorStore = {
   focusedPane: EditorPaneId
   splitEnabled: boolean
   workspaceKey: string
+  workspaceVersion: number
+  previewVersion: number
+  workspaceDrafts: Record<string, EditorTab[]>
   openFile: (
     path: string,
     workspaceRoot: string,
@@ -209,20 +215,34 @@ export const useWorkspaceEditorStore = create<WorkspaceEditorStore>((set, get) =
   focusedPane: 'primary',
   splitEnabled: false,
   workspaceKey: '',
+  workspaceVersion: 0,
+  previewVersion: 0,
+  workspaceDrafts: {},
   resetForWorkspace: (workspaceKey) => {
     const next = normalizeWorkspaceKey(workspaceKey)
-    const prev = get().workspaceKey
-    if (prev === next) return
-    const shouldClearTabs = prev.length > 0 && next.length > 0 && prev !== next
+    const state = get()
+    const prev = state.workspaceKey
+    if (!next || prev === next) return
+    const workspaceDrafts = { ...state.workspaceDrafts }
+    if (prev) {
+      const dirtyTabs = state.tabs.filter((tab) => !tab.loading && isDirty(tab))
+      if (dirtyTabs.length) workspaceDrafts[prev] = dirtyTabs
+      else delete workspaceDrafts[prev]
+    }
+    // Keep only unsaved buffers across projects; clean files can be read fresh.
+    const tabs = prev ? (workspaceDrafts[next] ?? []) : state.tabs
+    delete workspaceDrafts[next]
     set({
-      tabs: shouldClearTabs ? [] : get().tabs,
-      activeTabId: shouldClearTabs ? null : get().activeTabId,
-      secondaryTabId: shouldClearTabs ? null : get().secondaryTabId,
-      primaryTabIds: shouldClearTabs ? [] : get().primaryTabIds,
-      secondaryTabIds: shouldClearTabs ? [] : get().secondaryTabIds,
-      splitEnabled: shouldClearTabs ? false : get().splitEnabled,
-      focusedPane: shouldClearTabs ? 'primary' : get().focusedPane,
-      workspaceKey: next.length > 0 ? next : prev
+      tabs,
+      activeTabId: prev ? (tabs[0]?.id ?? null) : state.activeTabId,
+      secondaryTabId: prev ? null : state.secondaryTabId,
+      primaryTabIds: prev ? tabs.map((tab) => tab.id) : state.primaryTabIds,
+      secondaryTabIds: prev ? [] : state.secondaryTabIds,
+      splitEnabled: prev ? false : state.splitEnabled,
+      focusedPane: prev ? 'primary' : state.focusedPane,
+      workspaceVersion: state.workspaceVersion + 1,
+      workspaceDrafts,
+      workspaceKey: next
     })
   },
   openFile: async (path, workspaceRoot, line, column, options) => {
@@ -234,6 +254,7 @@ export const useWorkspaceEditorStore = create<WorkspaceEditorStore>((set, get) =
 
     const id = normalizedPath
     get().resetForWorkspace(root)
+    const workspaceVersion = get().workspaceVersion
 
     const toSide = Boolean(options?.toSide)
     const targetPane = resolveTargetPane(get(), options)
@@ -265,6 +286,7 @@ export const useWorkspaceEditorStore = create<WorkspaceEditorStore>((set, get) =
       content: '',
       savedContent: '',
       loading: true,
+      openRequestId: ++nextOpenRequestId,
       error: null,
       line,
       column,
@@ -296,6 +318,10 @@ export const useWorkspaceEditorStore = create<WorkspaceEditorStore>((set, get) =
       return false
     }
 
+    const isCurrentRead = (): boolean =>
+      get().workspaceVersion === workspaceVersion &&
+      get().tabs.some((tab) => tab.id === id && tab.openRequestId === placeholder.openRequestId)
+
     try {
       const result = await window.dsGui.readWorkspaceFile({
         path: normalizedPath,
@@ -305,7 +331,7 @@ export const useWorkspaceEditorStore = create<WorkspaceEditorStore>((set, get) =
       })
 
       const currentKey = normalizeWorkspaceKey(get().workspaceKey)
-      if (currentKey !== root && currentKey !== '') return false
+      if ((currentKey !== root && currentKey !== '') || !isCurrentRead()) return false
 
       const nextTab: EditorTab =
         !result.ok
@@ -318,6 +344,7 @@ export const useWorkspaceEditorStore = create<WorkspaceEditorStore>((set, get) =
               id,
               path: normalizedPath,
               kind: 'text',
+              openRequestId: placeholder.openRequestId,
               content: result.content,
               savedContent: result.content,
               loading: false,
@@ -334,7 +361,7 @@ export const useWorkspaceEditorStore = create<WorkspaceEditorStore>((set, get) =
       return result.ok
     } catch (error) {
       const currentKey = normalizeWorkspaceKey(get().workspaceKey)
-      if (currentKey !== root && currentKey !== '') return false
+      if ((currentKey !== root && currentKey !== '') || !isCurrentRead()) return false
       set((state) => ({
         tabs: upsertTab(state.tabs, {
           ...placeholder,
@@ -440,18 +467,20 @@ export const useWorkspaceEditorStore = create<WorkspaceEditorStore>((set, get) =
     const root = normalizeWorkspaceKey(workspaceRoot)
     if (!tabId || !root) return false
     const workspaceKey = get().workspaceKey
+    if (workspaceKey && workspaceKey !== root) return false
+    const workspaceVersion = get().workspaceVersion
     const key = `${root}\0${tabId}`
     const previous = fileSaves.get(key)
     const save = async (): Promise<boolean> => {
-      if (get().workspaceKey !== workspaceKey) return false
+      if (get().workspaceKey !== workspaceKey || get().workspaceVersion !== workspaceVersion) return false
       const tab = get().tabs.find((entry) => entry.id === tabId)
       if (!tab || tab.loading || tab.kind !== 'text') return false
       if (tab.truncated) return false
       if (!isDirty(tab)) return true
       const update = (patch: Partial<EditorTab>): void => {
-        if (get().workspaceKey !== workspaceKey) return
+        if (get().workspaceKey !== workspaceKey || get().workspaceVersion !== workspaceVersion) return
         set((state) => ({ tabs: state.tabs.map((entry) =>
-          entry.id === tab.id ? { ...entry, ...patch } : entry
+          entry.id === tab.id && entry.openRequestId === tab.openRequestId ? { ...entry, ...patch } : entry
         ) }))
       }
       try {
@@ -463,6 +492,7 @@ export const useWorkspaceEditorStore = create<WorkspaceEditorStore>((set, get) =
         })
         if (!result.ok) throw new Error(result.message)
         update({ savedContent: tab.content, error: null })
+        set((state) => ({ previewVersion: state.previewVersion + 1 }))
         return true
       } catch (error) {
         update({ error: formatRuntimeError(error) })
@@ -487,6 +517,10 @@ export const useWorkspaceEditorStore = create<WorkspaceEditorStore>((set, get) =
   reloadCleanTabs: async (workspaceRoot) => {
     const root = normalizeWorkspaceKey(workspaceRoot)
     if (!root || typeof window.dsGui?.readWorkspaceFile !== 'function') return
+    if (get().workspaceKey && get().workspaceKey !== root) return
+    const workspaceVersion = get().workspaceVersion
+    const reloadVersion = ++latestReloadVersion
+    set((state) => ({ previewVersion: state.previewVersion + 1 }))
     // Dirty tabs are never touched: an external change (agent write, rewind
     // restore) must not clobber the user's unsaved edits.
     const targets = get().tabs.filter(
@@ -508,12 +542,12 @@ export const useWorkspaceEditorStore = create<WorkspaceEditorStore>((set, get) =
         }
         set((state) => {
           const currentKey = normalizeWorkspaceKey(state.workspaceKey)
-          if (currentKey !== root && currentKey !== '') return {}
+          if ((currentKey !== root && currentKey !== '') || state.workspaceVersion !== workspaceVersion || reloadVersion !== latestReloadVersion) return {}
           return {
             tabs: state.tabs.map((entry) => {
               // Re-check: the user may have started editing (or closed) the
               // tab while the read was in flight.
-              if (entry.id !== target.id || entry.loading || isDirty(entry)) return entry
+              if (entry !== target) return entry
               if (!result.ok) {
                 // A restore can delete the file — surface it through the
                 // tab's existing error banner instead of silently keeping

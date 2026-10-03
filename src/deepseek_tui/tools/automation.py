@@ -909,6 +909,7 @@ class UpdateAutomationRequest:
     prompt: str | None = None
     schedule: str | None = None
     timezone: str | None = None
+    run_at: str | None = None
     cwds: list[str] | None = None
     status: AutomationStatus | None = None
     delivery: dict[str, Any] | None = None
@@ -1163,6 +1164,11 @@ class AutomationManager:
         if req.schedule is not None:
             schedule = AutomationSchedule.parse(req.schedule, existing.timezone)
             existing.schedule = schedule.expr
+        if req.run_at is not None:
+            if req.schedule is not None:
+                raise ValueError("Provide schedule or run_at, not both")
+            existing.schedule = None
+            existing.next_run_at = _normalize_run_at(req.run_at, existing.timezone)
         if req.cwds is not None:
             existing.cwds = [str(Path(p).expanduser().resolve()) for p in (req.cwds or [str(Path.cwd())])]
         if req.status is not None:

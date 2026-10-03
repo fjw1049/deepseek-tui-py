@@ -5,6 +5,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import type { ComponentProps } from 'react'
 
+const renderCounts = vi.hoisted(() => ({ composer: 0 }))
 const provider = vi.hoisted(() => ({
   getThreadDetail: vi.fn(async () => ({ blocks: [], latestSeq: 0, threadStatus: 'completed' })),
   subscribeThreadEvents: vi.fn(async () => {}), fetchPendingApprovals: vi.fn(async () => []),
@@ -14,9 +15,10 @@ vi.mock('../../i18n', () => ({ default: { t: (key: string) => key } }))
 vi.mock('../../agent/registry', () => ({ getProvider: () => provider }))
 vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key }) }))
 vi.mock('./MessageTimeline', () => ({ MessageTimeline: () => null }))
-vi.mock('./ComposerStage', () => ({ ComposerStage: (props: { input: string; setInput: (text: string) => void }) =>
-  createElement('textarea', { value: props.input, onChange: (event: { target: { value: string } }) => props.setInput(event.target.value) })
-}))
+vi.mock('./ComposerStage', () => ({ ComposerStage: (props: { input: string; setInput: (text: string) => void }) => {
+  renderCounts.composer += 1
+  return createElement('textarea', { value: props.input, onChange: (event: { target: { value: string } }) => props.setInput(event.target.value) })
+}}))
 import { ChatSplitDropZone, ChatSplitWorkspace } from './ChatSplitWorkspace'
 import { ChatSplitToolbar } from './ChatSplitToolbar'
 import { OperationContextDock } from './OperationContextDock'
@@ -532,4 +534,40 @@ it('accepts a task dropped over conversation content whose portal owner is outsi
   await act(async () => content.dispatchEvent(drop))
   expect(drop.defaultPrevented).toBe(true)
   expect(useChatLayoutStore.getState().layouts['/repo'].panes.map(p => p.threadId)).toEqual(['a', 'g', 'c', 'd'])
+})
+
+it('evicts excess idle closed sessions without evicting running work', async () => {
+  const ids = Array.from({ length: 20 }, (_, index) => `idle-${index}`)
+  useChatStore.setState({ threads: ids.map(id => ({ id, title: id, workspace: '/repo', model: 'test', mode: 'agent', updatedAt: '' })) })
+  const running = getChatPaneSession(ids[0])
+  await running.loading
+  running.store.setState({ busy: true })
+  for (const id of ids.slice(1)) await getChatPaneSession(id).loading
+  await Promise.resolve()
+  expect(peekChatPaneSession(ids[0])).toBe(running)
+  expect(ids.filter(id => peekChatPaneSession(id))).toHaveLength(9)
+})
+
+it('does not rerender split composers for live assistant text deltas', async () => {
+  await act(async () => root.render(createElement(Harness)))
+  const before = renderCounts.composer
+  await act(async () => getChatPaneSession('b').store.setState({ liveAssistant: 'stream delta' }))
+  expect(renderCounts.composer).toBe(before)
+})
+
+it('shows split-session failures in the shared viewport and dismisses only the originating session', async () => {
+  await act(async () => root.render(createElement('div', null,
+    createElement('div', { id: 'global-feedback-viewport' }), createElement(Harness))))
+  const a = getChatPaneSession('a').store
+  const b = getChatPaneSession('b').store
+  await act(async () => { a.setState({ error: 'A failed' }); b.setState({ error: 'B failed' }) })
+  const viewport = container.querySelector('#global-feedback-viewport')!
+  expect(viewport.querySelectorAll('[role="alert"]')).toHaveLength(2)
+  expect(container.querySelector('[data-chat-pane] [role="alert"]')).toBeNull()
+  const alert = [...viewport.querySelectorAll('[role="alert"]')].find(node => node.textContent?.includes('A failed'))!
+  await act(async () => alert.querySelector<HTMLButtonElement>('button')!.click())
+  expect(a.getState().error).toBeNull()
+  expect(b.getState().error).toBe('B failed')
+  await act(async () => a.setState({ error: 'A failed' }))
+  expect(viewport.querySelectorAll('[role="alert"]')).toHaveLength(2)
 })

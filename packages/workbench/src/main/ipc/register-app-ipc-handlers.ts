@@ -171,7 +171,7 @@ type RegisterAppIpcHandlersOptions = {
     body?: string
   ) => Promise<RuntimeRequestResult>
   fetchUpstreamModels: () => Promise<UpstreamModelsResult>
-  fetchProviderModels: (providerId: string) => Promise<UpstreamModelsResult>
+  fetchProviderModels: (providerId: string, apiKey?: string) => Promise<UpstreamModelsResult>
   prepareDeepseekBinary: () => Promise<
     { ok: true; path: string } | { ok: false; message: string }
   >
@@ -558,8 +558,8 @@ export function registerAppIpcHandlers(options: RegisterAppIpcHandlersOptions): 
   ipcMain.handle('upstream:models', async () => fetchUpstreamModels())
 
   ipcMain.handle('upstream:provider-models', async (_, payload: unknown) => {
-    const request = z.object({ providerId: z.string().min(1) }).parse(payload)
-    return fetchProviderModels(request.providerId)
+    const request = z.object({ providerId: z.string().min(1), apiKey: z.string().optional() }).parse(payload)
+    return fetchProviderModels(request.providerId, request.apiKey)
   })
 
   ipcMain.handle('deepseek:prepare-binary', async () => prepareDeepseekBinary())
@@ -568,7 +568,7 @@ export function registerAppIpcHandlers(options: RegisterAppIpcHandlersOptions): 
     const request = parseIpcPayload('workspace:pick-files', workspacePickFilesPayloadSchema, payload)
     const workspaceRoot = request.workspaceRoot ? expandHomePath(request.workspaceRoot) : ''
     const dialogDefaultPath =
-      expandHomePath(request.defaultPath) || workspaceRoot || homedir()
+      expandHomePath(request.defaultPath ?? '') || workspaceRoot || homedir()
     const imageExtensions = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'heic']
     const options: Electron.OpenDialogOptions = {
       title: 'Select attachments',
@@ -941,16 +941,27 @@ export function registerAppIpcHandlers(options: RegisterAppIpcHandlersOptions): 
     }
   })
 
-  ipcMain.handle('deepseek:config:write', async (_, content: unknown) => {
-    const validatedContent = parseIpcPayload(
-      'deepseek:config:write',
-      deepseekConfigContentSchema,
-      content
-    )
-    const path = resolveDeepseekConfigPath()
-    await mkdir(dirname(path), { recursive: true })
-    await writeFile(path, validatedContent, 'utf8')
-    return { ok: true as const, path }
+  let configWriteQueue: Promise<unknown> = Promise.resolve()
+  ipcMain.handle('deepseek:config:write', (_, content: unknown, expectedContent?: unknown) => {
+    const validatedContent = parseIpcPayload('deepseek:config:write', deepseekConfigContentSchema, content)
+    const expected = expectedContent === undefined ? undefined
+      : parseIpcPayload('deepseek:config:write', deepseekConfigContentSchema, expectedContent)
+    const write = async () => {
+      const path = resolveDeepseekConfigPath()
+      await mkdir(dirname(path), { recursive: true })
+      if (expected !== undefined) {
+        const current = await readFile(path, 'utf8').catch((error: NodeJS.ErrnoException) => {
+          if (error.code === 'ENOENT') return ''
+          throw error
+        })
+        if (current !== expected) throw new Error('Configuration changed while editing. Reopen the settings and try again.')
+      }
+      await writeFile(path, validatedContent, 'utf8')
+      return { ok: true as const, path }
+    }
+    const pending = configWriteQueue.then(write, write)
+    configWriteQueue = pending.catch(() => {})
+    return pending
   })
 
   ipcMain.handle('deepseek:config:open-dir', async () => {
@@ -1149,7 +1160,7 @@ export function registerAppIpcHandlers(options: RegisterAppIpcHandlersOptions): 
     const { protocol, baseUrl, apiKey, model } = args
     const url = buildEndpointProbeUrl(protocol, baseUrl)
     const start = Date.now()
-    const headers = protocol === 'anthropic'
+    const headers: Record<string, string> = protocol === 'anthropic'
       ? {
           'x-api-key': apiKey,
           'anthropic-version': '2023-06-01',

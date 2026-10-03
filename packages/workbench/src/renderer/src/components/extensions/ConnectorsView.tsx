@@ -87,14 +87,19 @@ export function ConnectorsView({
 
   useEffect(() => {
     let cancelled = false
+    let inFlight = false
     const loadRuntime = async (): Promise<void> => {
       if (typeof window.dsGui?.runtimeRequest !== 'function') return
+      if (inFlight || cancelled) return
+      inFlight = true
       try {
         const result = await window.dsGui.runtimeRequest('/v1/mcp/servers', 'GET')
         if (!result.ok || cancelled) return
         setRuntimeServers(parseMcpRuntimeServers(result.body))
       } catch {
         if (!cancelled) setRuntimeServers([])
+      } finally {
+        inFlight = false
       }
     }
     void loadRuntime()

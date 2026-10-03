@@ -1154,11 +1154,7 @@ function BuiltinProviderDetailSheet({
       setFetching(true)
       setFetchNote(null)
       try {
-        await window.dsGui.setSettings({
-          llmProviders: { [providerId]: { apiKey: trimmed } },
-          ...(providerId === 'deepseek' ? { deepseek: { apiKey: trimmed } } : {})
-        })
-        const result = await window.dsGui.fetchProviderModels(providerId)
+        const result = await window.dsGui.fetchProviderModels(providerId, trimmed)
         if (result.ok) {
           const visibleFetched = withoutHidden(result.modelIds)
           setLastFetchedModels(result.modelIds)

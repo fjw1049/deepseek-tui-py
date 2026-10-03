@@ -1,3 +1,4 @@
+import { GlobalFeedback } from '../GlobalFeedback'
 import {
   useCallback,
   useEffect,
@@ -412,9 +413,9 @@ export function GitBranchPicker({
       {usePortal && typeof document !== 'undefined'
         ? createPortal(menu, document.body)
         : menu}
-      {typeof document !== 'undefined' && (error || notice)
-        ? createPortal(
-            <div className="pointer-events-none fixed left-1/2 top-1/2 z-[200] w-[min(480px,calc(100vw-24px))] -translate-x-1/2 -translate-y-1/2">
+      {(error || notice)
+        ? (
+            <GlobalFeedback>
               <div
                 role="alert"
                 aria-live="assertive"
@@ -456,8 +457,7 @@ export function GitBranchPicker({
                   </button>
                 ) : null}
               </div>
-            </div>,
-            document.body
+            </GlobalFeedback>
           )
         : null}
       <GitLogDialog

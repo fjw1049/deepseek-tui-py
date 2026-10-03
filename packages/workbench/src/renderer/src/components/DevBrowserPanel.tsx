@@ -1,3 +1,4 @@
+import { reportActionError } from '../store/feedback-store'
 import type { FormEvent, ReactElement } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -912,6 +913,12 @@ export function DevBrowserPanel({
 
   const showScreenshotNotice = useCallback(
     (message: string, tone: 'info' | 'success' | 'error' = 'info', timeoutMs = 2_000): void => {
+      if (tone === 'error') {
+        if (screenshotNoticeTimerRef.current !== null) window.clearTimeout(screenshotNoticeTimerRef.current)
+        setScreenshotNotice(null)
+        reportActionError(message)
+        return
+      }
       setScreenshotNotice(message)
       setScreenshotNoticeTone(tone)
       if (screenshotNoticeTimerRef.current !== null) {

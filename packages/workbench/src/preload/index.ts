@@ -31,8 +31,8 @@ const api = {
     return () => ipcRenderer.removeListener('sharing:link-available', wrapped)
   },
   fetchUpstreamModels: () => ipcRenderer.invoke('upstream:models'),
-  fetchProviderModels: (providerId) =>
-    ipcRenderer.invoke('upstream:provider-models', { providerId }),
+  fetchProviderModels: (providerId, apiKey) =>
+    ipcRenderer.invoke('upstream:provider-models', { providerId, apiKey }),
   deepseekSpawnIfNeeded: () =>
     ipcRenderer.invoke('deepseek:spawn-if-needed'),
   prepareDeepseekBinary: () => ipcRenderer.invoke('deepseek:prepare-binary'),
@@ -55,8 +55,8 @@ const api = {
     ipcRenderer.invoke('plugin:read-rules', { pluginPath }),
   getDeepseekConfigFile: () =>
     ipcRenderer.invoke('deepseek:config:read'),
-  setDeepseekConfigFile: (content) =>
-    ipcRenderer.invoke('deepseek:config:write', content),
+  setDeepseekConfigFile: (content, expectedContent) =>
+    ipcRenderer.invoke('deepseek:config:write', content, expectedContent),
   openDeepseekConfigDir: () =>
     ipcRenderer.invoke('deepseek:config:open-dir'),
   getMcpConfigFile: () => ipcRenderer.invoke('deepseek:mcp:read'),

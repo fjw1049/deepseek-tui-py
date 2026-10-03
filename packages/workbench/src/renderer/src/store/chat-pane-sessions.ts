@@ -1,13 +1,42 @@
 import { createChatSessionStore, registerChatSessionOwner, useChatStore } from './chat-store'
+import { hasPendingRuntimeWork } from './chat-store-runtime-helpers'
 import type { ChatState } from './chat-store-types'
 
 type Session = ReturnType<typeof createChatSessionStore> & { draft: string; scroll: { top: number; atBottom: boolean }; loading: Promise<void> }
 const sessions = new Map<string, Session>()
 
+const visibleSessions = new Map<string, number>()
+const loadingSessions = new Set<string>()
+const unsavedDrafts = new Set<string>()
+const MAX_IDLE_SESSIONS = 8
+
+function pruneIdleSessions(): void {
+  const candidates = [...sessions].filter(([id, session]) => {
+    const state = session.store.getState()
+    return !visibleSessions.has(id) && !loadingSessions.has(id) && !unsavedDrafts.has(id) &&
+      useChatStore.getState().activeThreadId !== id && !state.busy && !state.currentTurnId &&
+      state.queuedMessages.length === 0 && !state.blocks.some(hasPendingRuntimeWork)
+  })
+  for (const [id, session] of candidates.slice(0, Math.max(0, candidates.length - MAX_IDLE_SESSIONS))) {
+    sessions.delete(id)
+    session.dispose()
+  }
+}
+
+export function retainChatPaneSession(threadId: string): () => void {
+  visibleSessions.set(threadId, (visibleSessions.get(threadId) ?? 0) + 1)
+  return () => {
+    const remaining = (visibleSessions.get(threadId) ?? 1) - 1
+    if (remaining) visibleSessions.set(threadId, remaining)
+    else visibleSessions.delete(threadId)
+    queueMicrotask(pruneIdleSessions)
+  }
+}
+
 /** Sessions outlive their panes: closing a view must not interrupt a turn or its queue. */
 export function getChatPaneSession(threadId: string, initialDraft = ''): Session {
   const existing = sessions.get(threadId)
-  if (existing) return existing
+  if (existing) { sessions.delete(threadId); sessions.set(threadId, existing); return existing }
   const session = createChatSessionStore()
   const preferenceKey = `deepseek.chat-pane.${threadId}`
   let saved: { draft?: string; model?: string; mode?: ChatState['composerMode']; effort?: string } = {}
@@ -15,7 +44,10 @@ export function getChatPaneSession(threadId: string, initialDraft = ''): Session
   let draft = typeof saved.draft === 'string' ? saved.draft : initialDraft
   const persist = (): void => {
     const state = session.store.getState()
-    try { window.localStorage.setItem(preferenceKey, JSON.stringify({ draft, model: state.composerModel, mode: state.composerMode, effort: state.composerReasoningEffort })) } catch { /* keep in-memory draft */ }
+    try {
+      window.localStorage.setItem(preferenceKey, JSON.stringify({ draft, model: state.composerModel, mode: state.composerMode, effort: state.composerReasoningEffort }))
+      unsavedDrafts.delete(threadId)
+    } catch { if (draft) unsavedDrafts.add(threadId) }
   }
   const app = useChatStore.getState()
   const thread = app.threads.find(t => t.id === threadId)
@@ -48,6 +80,7 @@ export function getChatPaneSession(threadId: string, initialDraft = ''): Session
   const unsubscribe = session.store.subscribe((state, previous) => {
     if (state.composerModel !== previous.composerModel || state.composerMode !== previous.composerMode ||
         state.composerReasoningEffort !== previous.composerReasoningEffort) persist()
+    if (state.busy !== previous.busy || state.queuedMessages !== previous.queuedMessages) queueMicrotask(pruneIdleSessions)
     const main = useChatStore.getState()
     if (state.threads !== previous.threads && state.threads !== main.threads) useChatStore.setState({ threads: state.threads })
     if (state.workspaceDirtyTick !== previous.workspaceDirtyTick) useChatStore.setState(s => ({ workspaceDirtyTick: s.workspaceDirtyTick + 1 }))
@@ -66,7 +99,12 @@ export function getChatPaneSession(threadId: string, initialDraft = ''): Session
     unregisterOwner = registerChatSessionOwner(threadId, session.store)
     if (!session.store.getState().busy && session.store.getState().queuedMessages.length) void session.store.getState().drainQueuedMessages()
   }
-  entry.loading = session.store.getState().selectThread(threadId)
+  persist()
+  loadingSessions.add(threadId)
+  entry.loading = session.store.getState().selectThread(threadId).finally(() => {
+    loadingSessions.delete(threadId)
+    queueMicrotask(pruneIdleSessions)
+  })
   return entry
 }
 
@@ -87,6 +125,9 @@ export function syncChatPaneCatalog(state: ChatState): void {
 export function disposeChatPaneSessions(): void {
   for (const session of sessions.values()) session.dispose()
   sessions.clear()
+  visibleSessions.clear()
+  loadingSessions.clear()
+  unsavedDrafts.clear()
 }
 
 export function peekChatPaneSession(threadId: string | null): Session | undefined {

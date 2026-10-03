@@ -27,14 +27,14 @@ if (import.meta.hot) {
     './locales/zh/settings.json'
   ] as const
   import.meta.hot.accept(localeDeps as unknown as string[], (mods) => {
-    const bundles: Array<['en' | 'zh', 'common' | 'settings', { default?: object } | undefined]> = [
+    const bundles: Array<['en' | 'zh', 'common' | 'settings', Record<string, unknown> | undefined]> = [
       ['en', 'common', mods?.[0]],
       ['zh', 'common', mods?.[1]],
       ['en', 'settings', mods?.[2]],
       ['zh', 'settings', mods?.[3]]
     ]
     for (const [lng, ns, mod] of bundles) {
-      if (mod?.default) i18n.addResourceBundle(lng, ns, mod.default, true, true)
+      if (mod?.default && typeof mod.default === 'object') i18n.addResourceBundle(lng, ns, mod.default, true, true)
     }
   })
 }

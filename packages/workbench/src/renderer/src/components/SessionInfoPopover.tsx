@@ -1,3 +1,4 @@
+import { copyText } from '../lib/copy-text'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { ScrollText, MessageSquare, FolderGit2, Copy, Pin, PinOff, Archive, FolderOpen } from 'lucide-react'
@@ -102,7 +103,7 @@ export function SessionInfoPopover({ children, className = '' }: Props) {
             className={itemClass}
             disabled={!thread.workspace}
             onClick={() => {
-              if (thread.workspace) void navigator.clipboard?.writeText(thread.workspace)
+              if (thread.workspace) void copyText(thread.workspace)
               setOpen(false)
             }}
           >

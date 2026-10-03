@@ -15,8 +15,8 @@ vi.mock('../../hooks/use-thread-tasks', () => ({
   useLiveTasks: (tasks: unknown) => tasks,
   fetchTaskDetail: vi.fn(), resumeTask: vi.fn(), resumeThreadAgent: vi.fn()
 }))
-vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key }) }))
-vi.mock('../chat/tool/primitives', () => ({ ToolCopyButton: () => null }))
+vi.mock('react-i18next', async (importOriginal) => ({ ...await importOriginal<typeof import('react-i18next')>(), useTranslation: () => ({ t: (key: string) => key }) }))
+vi.mock('../chat/tool/primitives', async (importOriginal) => ({ ...await importOriginal<typeof import('../chat/tool/primitives')>(), ToolCopyButton: () => null }))
 vi.mock('../chat/StreamdownAssistant', () => ({
   StreamdownAssistant: ({ text }: { text: string }) => createElement('p', null, text)
 }))
@@ -84,12 +84,13 @@ it('keeps long histories compact, while old progress remains expandable', async 
   block.steps = Array.from({ length: 10 }, (_, index) => ({ id: `update-${index}`, kind: 'progress', label: `Progress message ${index}` }))
   useChatStore.setState({ blocks: [block] })
   await act(async () => root.render(createElement(RunPanel)))
-  expect(container.querySelectorAll('.ds-run-phase-body')).toHaveLength(1)
-  const first = container.querySelector<HTMLButtonElement>('.ds-run-phase-toggle')!
-  expect(first.getAttribute('aria-expanded')).toBe('false')
-  await act(async () => first.click())
-  expect(first.getAttribute('aria-expanded')).toBe('true')
-  expect(container.querySelector('.ds-run-phase-body')?.textContent).toContain('Progress message 0')
+  expect(container.querySelector('[data-run-conversation]')).not.toBeNull()
+  expect(container.querySelector('.ds-user-message-bubble')?.textContent).toBe('Assignment a')
+  const process = container.querySelector<HTMLElement>('.ds-work-meta-row')!
+  expect(process).not.toBeNull()
+  await act(async () => process.click())
+  expect(container.textContent).toContain('Progress message 0')
+  expect(container.textContent).toContain('Progress message 9')
 })
 
 
@@ -101,17 +102,17 @@ it('folds completed progress, including failed actions, and allows deliberate ex
   ]
   useChatStore.setState({ blocks: [block] })
   await act(async () => root.render(createElement(RunPanel)))
-  expect(container.querySelectorAll('.ds-run-phase-body')).toHaveLength(1)
   await act(async () => useChatStore.setState({ blocks: [{ ...block, status: 'completed', summary: 'Analysis complete' }] }))
-  expect(container.querySelectorAll('.ds-run-phase-body')).toHaveLength(0)
-  expect(container.querySelector('.ds-run-phase-preview')?.textContent).toContain('Assignment a')
-  expect(container.querySelector('.ds-run-process-toggle')?.getAttribute('aria-expanded')).toBe('false')
-  expect(container.querySelector('.ds-run-phase')).toBeNull()
-  await act(async () => container.querySelector<HTMLButtonElement>('.ds-run-process-toggle')!.click())
-  expect(container.querySelector('.ds-run-phase .is-error')).not.toBeNull()
-  await act(async () => container.querySelector<HTMLButtonElement>('.ds-run-phase-toggle')!.click())
-  expect(container.querySelectorAll('.ds-run-phase-body')).toHaveLength(1)
-  expect(container.textContent).toContain('Analysis complete')
+  expect(container.querySelector('.ds-chat-answer')?.textContent).toBe('Analysis complete')
+  expect(container.textContent).not.toContain('Access denied')
+  await act(async () => container.querySelector<HTMLElement>('.ds-work-meta-row')!.click())
+  for (const button of container.querySelectorAll<HTMLButtonElement>('.ds-tool-batch__header')) {
+    await act(async () => button.click())
+  }
+  const tool = container.querySelector<HTMLElement>('[id="block-run:a:failed-read"] [role="button"]')!
+  expect(tool).not.toBeNull()
+  await act(async () => tool.click())
+  expect(container.textContent).toContain('Access denied')
 })
 
 

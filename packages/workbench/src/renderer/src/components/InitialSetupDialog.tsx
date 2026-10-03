@@ -324,7 +324,7 @@ export function InitialSetupPanel(): ReactElement {
                 className="w-full"
                 segmentClassName="px-2.5 py-1.5"
                 value={
-                  approvalValue === 'never' || approvalValue === 'suggest'
+                  approvalValue === 'never'
                     ? 'on-request'
                     : approvalValue
                 }

@@ -112,7 +112,8 @@ export async function fetchUpstreamModelIds(
 
 export async function fetchBuiltinProviderModelIds(
   settings: AppSettingsV1,
-  providerId: string
+  providerId: string,
+  apiKey?: string
 ): Promise<FetchUpstreamModelsResult> {
   if (!isBuiltinLlmProviderId(providerId)) {
     return {
@@ -123,7 +124,7 @@ export async function fetchBuiltinProviderModelIds(
   }
   const id = providerId as BuiltinLlmProviderId
   const def = BUILTIN_LLM_PROVIDERS[id]
-  const key = settings.llmProviders[id]?.apiKey?.trim() ?? ''
+  const key = (apiKey ?? settings.llmProviders[id]?.apiKey)?.trim() ?? ''
   const result = await fetchOpenAiCompatibleModelIds(def.baseUrl, key)
   if (!result.ok) {
     return {

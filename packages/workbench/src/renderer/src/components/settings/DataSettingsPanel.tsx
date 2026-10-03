@@ -1,3 +1,4 @@
+import { GlobalErrorNotice } from '../GlobalFeedback'
 import { ConfirmDialog } from '../workspace-editor/ConfirmDialog'
 import { formatRuntimeError } from '../../lib/format-runtime-error'
 import { useCallback, useEffect, useMemo, useState, type ReactElement, type ReactNode } from 'react'
@@ -165,12 +166,11 @@ function ActionButton({
 }
 
 function InlineNoticeView({ notice }: { notice: InlineNotice }): ReactElement {
+  if (notice.tone === 'error') return <GlobalErrorNotice occurrence={notice} message={notice.message} />
   const className =
-    notice.tone === 'error'
-      ? 'border-red-300/80 bg-red-50 text-red-800 dark:border-red-800/70 dark:bg-red-950/25 dark:text-red-200'
-      : notice.tone === 'success'
-        ? 'border-emerald-300/80 bg-emerald-50 text-emerald-800 dark:border-emerald-800/70 dark:bg-emerald-950/25 dark:text-emerald-200'
-        : 'border-ds-border bg-ds-main/50 text-ds-muted'
+    notice.tone === 'success'
+      ? 'border-emerald-300/80 bg-emerald-50 text-emerald-800 dark:border-emerald-800/70 dark:bg-emerald-950/25 dark:text-emerald-200'
+      : 'border-ds-border bg-ds-main/50 text-ds-muted'
   return (
     <div className={`rounded-xl border px-3 py-2 text-[12.5px] leading-5 ${className}`}>
       {notice.message}

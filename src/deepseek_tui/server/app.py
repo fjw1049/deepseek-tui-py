@@ -375,7 +375,11 @@ def build_router() -> APIRouter:
         runtime = _get_runtime(request)
         limit_str = request.query_params.get("limit")
         limit = int(limit_str) if limit_str else None
-        return await runtime.list_tasks(limit=limit)
+        return await runtime.list_tasks(
+            limit=limit,
+            active_only=request.query_params.get("active_only") == "true",
+            task_ids=request.query_params["ids"].split(",") if "ids" in request.query_params else None,
+        )
 
     @router.get("/tasks/{task_id}")
     async def get_task(request: Request, task_id: str) -> dict[str, Any]:

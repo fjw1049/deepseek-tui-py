@@ -1,3 +1,4 @@
+import { copyText } from '../lib/copy-text'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactElement } from 'react'
 import { ArrowDown, ArrowUp, Check, ArrowDownToLine, ArrowUpToLine, Minimize2, Columns2, Copy, FileDiff, Loader2, Rows3, WrapText } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
@@ -334,8 +335,11 @@ export function DiffView({
   follow = false
 }: Props): ReactElement {
   const { t } = useTranslation('common')
-  const fullContext = showFullFile && fullFilePatch !== undefined
-  const visiblePatch = fullContext ? fullFilePatch : patch
+  const requestedFullContext = showFullFile && fullFilePatch !== undefined
+  const fullContext = requestedFullContext && fullFilePatch.length <= 200_000 && fullFilePatch.split('\n').length <= 2000
+  const sourcePatch = fullContext ? fullFilePatch : patch
+  const visiblePatch = useMemo(() => sourcePatch.slice(0, 200_000).split('\n').slice(0, 2000).join('\n'), [sourcePatch])
+  const previewLimited = (requestedFullContext && !fullContext) || visiblePatch.length < sourcePatch.length
   const looksLikePatch = useMemo(
     () => visiblePatch.split('\n').some((l) => /^[+-]/.test(l) || l.startsWith('@@')),
     [visiblePatch]
@@ -436,7 +440,7 @@ export function DiffView({
 
   const onCopy = async (): Promise<void> => {
     try {
-      await navigator.clipboard.writeText(patch)
+      if (!await copyText(patch)) { setCopied(false); return }
       setCopied(true)
       window.setTimeout(() => setCopied(false), 1400)
     } catch {
@@ -486,6 +490,7 @@ export function DiffView({
   if (fullFilePending) {
     return <div className={shellClass}>
       {header}
+      {previewLimited ? <div role="status" className="px-3 py-2 text-xs text-ds-muted">{t('diffPreviewLimited')}</div> : null}
       <div role="status" className="flex min-h-0 flex-1 items-center justify-center gap-2 text-[13.5px] text-ds-faint">
         <Loader2 className="h-4 w-4 animate-spin" aria-hidden />{t('diffLoadingFullFile')}
       </div>
@@ -496,6 +501,7 @@ export function DiffView({
     return (
       <div className={shellClass} data-wrap={wrapLines ? '' : undefined}>
         {header}
+      {previewLimited ? <div role="status" className="px-3 py-2 text-xs text-ds-muted">{t('diffPreviewLimited')}</div> : null}
         <pre
           ref={(node) => { bodyRef.current = node }}
           className={`${bodyClass} whitespace-pre text-ds-ink ${flush ? 'px-2 py-1' : 'p-3'}`}
@@ -510,6 +516,7 @@ export function DiffView({
   return (
     <div className={shellClass} data-wrap={wrapLines ? '' : undefined}>
       {header}
+      {previewLimited ? <div role="status" className="px-3 py-2 text-xs text-ds-muted">{t('diffPreviewLimited')}</div> : null}
       {fullFileUnavailable ? <div role="status" className="shrink-0 px-2 py-1 text-[12.5px] text-ds-muted">
         {t('diffFullFileUnavailable')}
       </div> : null}

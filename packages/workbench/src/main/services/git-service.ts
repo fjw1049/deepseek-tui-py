@@ -514,7 +514,8 @@ async function untrackedPatch(cwd: string, path: string): Promise<string> {
 async function buildLayerFiles(
   cwd: string,
   entries: ParsedPorcelainEntry[],
-  layer: 'staged' | 'unstaged'
+  layer: 'staged' | 'unstaged',
+  readUntracked = untrackedPatch
 ): Promise<GitWorkingChangeFile[]> {
   const selected = entries.filter((entry) =>
     layer === 'staged'
@@ -536,7 +537,7 @@ async function buildLayerFiles(
     let patch = ''
     try {
       if (layer === 'unstaged' && entry.status === 'untracked') {
-        patch = await untrackedPatch(cwd, entry.path)
+        patch = await readUntracked(cwd, entry.path)
       } else {
         patch =
           patchByPath.get(entry.path) ??
@@ -562,7 +563,8 @@ async function buildLayerFiles(
 
 async function buildCombinedFiles(
   cwd: string,
-  entries: ParsedPorcelainEntry[]
+  entries: ParsedPorcelainEntry[],
+  readUntracked = untrackedPatch
 ): Promise<GitWorkingChangeFile[]> {
   if (entries.length === 0) return []
   const trackedDiff = await runGitStdout(cwd, ['diff', 'HEAD', '--no-color'], {
@@ -577,7 +579,7 @@ async function buildCombinedFiles(
     try {
       patch =
         entry.status === 'untracked'
-          ? await untrackedPatch(cwd, entry.path)
+          ? await readUntracked(cwd, entry.path)
           : patchByPath.get(entry.path) ??
             (await runGitStdout(cwd, ['diff', 'HEAD', '--no-color', '--', entry.path], {
               timeout: 20_000,
@@ -740,6 +742,25 @@ export async function getGitWorkingChanges(
       return cached.result
     }
 
+    const untrackedReads = new Map<string, Promise<string>>()
+    const readUntracked = (root: string, path: string): Promise<string> => {
+      let pending = untrackedReads.get(path)
+      if (!pending) {
+        pending = untrackedPatch(root, path)
+        untrackedReads.set(path, pending)
+      }
+      return pending
+    }
+    if (scope === 'working-tree') {
+      const paths = entries.filter((entry) => entry.status === 'untracked').map((entry) => entry.path)
+      let nextPath = 0
+      await Promise.all(Array.from({ length: Math.min(4, paths.length) }, async () => {
+        while (nextPath < paths.length) {
+          const path = paths[nextPath++]
+          try { await readUntracked(cwd, path) } catch { /* File remains visible without a patch. */ }
+        }
+      }))
+    }
     let result: GitWorkingChangesResult
     if (scope === 'branch' && branchBase) {
       result = {
@@ -755,9 +776,9 @@ export async function getGitWorkingChanges(
       result = { ok: true, repositoryRoot, scope, files: await buildLayerFiles(cwd, entries, 'unstaged') }
     } else {
       const [files, stagedFiles, unstagedFiles] = await Promise.all([
-        buildCombinedFiles(cwd, entries),
+        buildCombinedFiles(cwd, entries, readUntracked),
         buildLayerFiles(cwd, entries, 'staged'),
-        buildLayerFiles(cwd, entries, 'unstaged')
+        buildLayerFiles(cwd, entries, 'unstaged', readUntracked)
       ])
       result = { ok: true, repositoryRoot, scope, files, stagedFiles, unstagedFiles }
     }

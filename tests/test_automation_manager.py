@@ -549,3 +549,17 @@ async def test_reconcile_delivers_http_trigger_runs(tmp_path: Path) -> None:
     assert run.delivery_done is True
     # The shadow automation must stay invisible to user listings.
     assert all(a.id != HTTP_TRIGGER_RUNS_KEY for a in mgr.list_automations())
+
+
+def test_edit_one_shot_preserves_or_explicitly_changes_target(tmp_path: Path) -> None:
+    mgr = AutomationManager.open(tmp_path / "auto")
+    original = (datetime.now(timezone.utc) + timedelta(days=2)).isoformat()
+    updated_time = (datetime.now(timezone.utc) + timedelta(days=3)).isoformat()
+    job = mgr.create_automation(CreateAutomationRequest(name="once", prompt="test", run_at=original))
+    renamed = mgr.update_automation(job.id, UpdateAutomationRequest(name="renamed"))
+    assert renamed.next_run_at == original
+    rescheduled = mgr.update_automation(job.id, UpdateAutomationRequest(run_at=updated_time))
+    assert rescheduled.schedule is None
+    assert rescheduled.next_run_at == updated_time
+    with pytest.raises(ValueError, match="not both"):
+        mgr.update_automation(job.id, UpdateAutomationRequest(schedule="0 * * * *", run_at=updated_time))

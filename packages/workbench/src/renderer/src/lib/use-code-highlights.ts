@@ -5,7 +5,7 @@ export function useCodeHighlights(code: string, language: string): string[] | nu
   const [result, setResult] = useState<{ code: string; language: string; lines: string[] } | null>(null)
   useEffect(() => {
     let cancelled = false
-    if (!code || language === 'plaintext') return
+    if (!code || language === 'plaintext' || code.length > 100_000 || code.split('\n').some((line) => line.length > 4000)) return
     void import('../components/chat/SharedCodeBlock')
       .then(({ highlightCodeHtml }) => highlightCodeHtml(code, language))
       .then((html) => {

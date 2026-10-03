@@ -310,7 +310,7 @@ export type DsGuiApi = {
   onSharedLinkAvailable?: (handler: () => void) => () => void
   fetchUpstreamModels: () => Promise<UpstreamModelsResult>
   /** List models for a built-in vendor (DeepSeek / Kimi / GLM / 火山). */
-  fetchProviderModels: (providerId: string) => Promise<UpstreamModelsResult>
+  fetchProviderModels: (providerId: string, apiKey?: string) => Promise<UpstreamModelsResult>
   deepseekSpawnIfNeeded: () => Promise<DeepseekSpawnResult>
   prepareDeepseekBinary: () => Promise<{ ok: true; path: string } | { ok: false; message: string }>
   pickWorkspaceDirectory: (defaultPath?: string) => Promise<WorkspacePickResult>
@@ -349,7 +349,7 @@ export type DsGuiApi = {
     | { ok: false; message?: string; files: [] }
   >
   getDeepseekConfigFile: () => Promise<DeepseekConfigFileResult>
-  setDeepseekConfigFile: (content: string) => Promise<DeepseekConfigSaveResult>
+  setDeepseekConfigFile: (content: string, expectedContent?: string) => Promise<DeepseekConfigSaveResult>
   openDeepseekConfigDir: () => Promise<PathOpenResult>
   getMcpConfigFile: () => Promise<DeepseekConfigFileResult>
   setMcpConfigFile: (content: string) => Promise<DeepseekConfigSaveResult>

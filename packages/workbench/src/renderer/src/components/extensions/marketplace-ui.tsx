@@ -1,3 +1,4 @@
+import { GlobalErrorNotice } from '../GlobalFeedback'
 import { type ReactElement, type ReactNode } from 'react'
 import { Plus, Search } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
@@ -156,5 +157,6 @@ export function MarketplaceDocMarkdown({ content }: { content: string }): ReactE
 }
 
 export function NoticeView({ notice, onDismiss }: { notice: Notice; onDismiss?: () => void }): ReactElement {
+  if (notice.tone === 'error') return <GlobalErrorNotice occurrence={notice} message={notice.message} onDismiss={onDismiss} />
   return <div className="mt-4"><FeedbackNotice {...notice} onDismiss={onDismiss} /></div>
 }

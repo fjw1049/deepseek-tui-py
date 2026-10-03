@@ -1,3 +1,4 @@
+import { GlobalErrorNotice } from '../GlobalFeedback'
 import { formatRuntimeError } from '../../lib/format-runtime-error'
 import { useCallback, useEffect, useState, type ReactElement } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -34,7 +35,7 @@ type Props = {
   onConfigured: () => void
 }
 
-type Notice = { tone: 'success' | 'error' | 'info'; message: string }
+type Notice = { tone: 'success' | 'error' | 'info'; message: string; inline?: boolean }
 
 const SIMPLE_PROVIDER_IDS = EMAIL_PROVIDER_IDS.filter((id) => id !== 'custom')
 
@@ -120,13 +121,13 @@ export function EmailChannelSetup({ runtimeReady, onConfigured }: Props): ReactE
         setPasswordConfigured(true)
         setAuthCode('')
       } else if (!passwordConfigured) {
-        setNotice({ tone: 'error', message: t('channelEmailAuthCodeRequired') })
+        setNotice({ tone: 'error', message: t('channelEmailAuthCodeRequired'), inline: true })
         return
       }
 
       const normalized = normalizePresetEmailConfig(emailConfig)
       const updated = upsertTomlSections(configContent, buildTomlPatch(normalized))
-      await window.dsGui.setDeepseekConfigFile(updated)
+      await window.dsGui.setDeepseekConfigFile(updated, configContent)
       setConfigContent(updated)
       const secretStatus = await window.dsGui.getEmailSecretStatus()
       setPasswordConfigured(secretStatus.passwordConfigured)
@@ -189,7 +190,7 @@ export function EmailChannelSetup({ runtimeReady, onConfigured }: Props): ReactE
 
   return (
     <div className="flex flex-col gap-4">
-      {notice ? <div role={notice.tone === 'error' ? 'alert' : 'status'} className={channelNoticeClass(notice.tone)}>{notice.message}</div> : null}
+      {notice?.tone === 'error' && !notice.inline ? <GlobalErrorNotice occurrence={notice} message={notice.message} onDismiss={() => setNotice(null)} /> : notice ? <div role={notice.tone === 'error' ? 'alert' : 'status'} className={channelNoticeClass(notice.tone)}>{notice.message}</div> : null}
 
       <div className="grid gap-3">
         <label className={CHANNEL_FIELD}>

@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useState, type ReactElement } from 'react'
+import { GlobalErrorNotice } from '../GlobalFeedback'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from 'react'
 import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
 import {
@@ -140,6 +141,11 @@ export function AutomationCenter({
   const [allRunsError, setAllRunsError] = useState<string | null>(null)
   const [channelDelivery, setChannelDelivery] = useState<ChannelDeliveryState | null>(null)
 
+  const runsRequest = useRef(0)
+  const allRunsRequest = useRef(0)
+  const selectedIdRef = useRef(selectedId)
+  selectedIdRef.current = selectedId
+
   const selected = rows.find((row) => row.id === selectedId) ?? null
   const automationById = useMemo(() => new Map(rows.map((row) => [row.id, row])), [rows])
 
@@ -226,23 +232,30 @@ export function AutomationCenter({
   )
 
   const refreshRuns = useCallback(async (id: string) => {
+    const request = ++runsRequest.current
     setRunsLoading(true)
+    setRuns([])
+    const current = (): boolean => request === runsRequest.current && selectedIdRef.current === id
     try {
-      setRuns(await listAutomationRuns(id))
+      const result = await listAutomationRuns(id)
+      if (current()) setRuns(result)
     } catch (error) {
+      if (!current()) return
       setNotice({
         tone: 'error',
         message: error instanceof Error ? error.message : String(error)
       })
       setRuns([])
     } finally {
-      setRunsLoading(false)
+      if (current()) setRunsLoading(false)
     }
   }, [])
 
   const fetchAllRuns = useCallback(
     async (opts?: { notify?: boolean }) => {
+      const request = ++allRunsRequest.current
       if (!rows.length) {
+        setAllRunsLoading(false)
         setAllRuns([])
         setAllRunsError(null)
         return
@@ -250,7 +263,12 @@ export function AutomationCenter({
       setAllRunsLoading(true)
       try {
         const nameMap = new Map(rows.map((r) => [r.id, r.name]))
-        const results = await Promise.allSettled(rows.map((row) => listAutomationRuns(row.id, 10)))
+        const results: PromiseSettledResult<Awaited<ReturnType<typeof listAutomationRuns>>>[] = []
+        for (let start = 0; start < rows.length; start += 4) {
+          if (request !== allRunsRequest.current) return
+          results.push(...await Promise.allSettled(rows.slice(start, start + 4).map((row) => listAutomationRuns(row.id, 10))))
+        }
+        if (request !== allRunsRequest.current) return
         const failedIds = new Set<string>()
         const collected: AnnotatedRun[] = []
         results.forEach((result, index) => {
@@ -270,10 +288,10 @@ export function AutomationCenter({
         if (failedIds.size > 0) setNotice(null)
         else if (opts?.notify) setNotice({ tone: 'success', message: t('listReloaded') })
       } catch (error) {
-        setAllRunsError(error instanceof Error ? error.message : String(error))
+        if (request === allRunsRequest.current) setAllRunsError(error instanceof Error ? error.message : String(error))
 
       } finally {
-        setAllRunsLoading(false)
+        if (request === allRunsRequest.current) setAllRunsLoading(false)
       }
     },
     [rows, t]
@@ -299,11 +317,13 @@ export function AutomationCenter({
 
   useEffect(() => {
     if (selectedId) void refreshRuns(selectedId)
-    else setRuns([])
+    else { setRuns([]); setRunsLoading(false) }
+    return () => { runsRequest.current += 1 }
   }, [refreshRuns, selectedId])
 
   useEffect(() => {
     if (tab === 'runs') void fetchAllRuns()
+    return () => { allRunsRequest.current += 1 }
   }, [tab, fetchAllRuns])
 
   useEffect(() => {
@@ -435,16 +455,15 @@ export function AutomationCenter({
         </div>
       </header>
 
+      {notice?.tone === 'error' ? <GlobalErrorNotice occurrence={notice} message={notice.message} onDismiss={() => setNotice(null)} /> : null}
       {/* Wake hint — same px-8 → max-w-6xl shell as header/tabs/content so left edges align.
           Transient notices reuse this strip for 10s, then the wake hint returns. */}
-      <div className="mt-4 shrink-0 px-8">
+      {notice?.tone !== 'error' ? <div className="mt-4 shrink-0 px-8">
         <div className="mx-auto max-w-6xl">
           <div
-            role={notice?.tone === 'error' ? 'alert' : notice ? 'status' : undefined}
+            role={notice ? 'status' : undefined}
             className={`flex items-center gap-2 rounded-lg px-3 py-2.5 text-[12px] ${
-              notice?.tone === 'error'
-                ? 'bg-red-500/10 text-red-700 dark:text-red-200'
-                : notice
+              notice
                   ? 'bg-emerald-500/10 text-emerald-800 dark:text-emerald-200'
                   : 'bg-amber-50/80 text-amber-800 dark:bg-amber-950/20 dark:text-amber-200'
             }`}
@@ -453,7 +472,7 @@ export function AutomationCenter({
             <span>{notice ? notice.message : t('automationWakeHint')}</span>
           </div>
         </div>
-      </div>
+      </div> : null}
 
       {/* Tabs */}
       <div className="mt-4 shrink-0 px-8">

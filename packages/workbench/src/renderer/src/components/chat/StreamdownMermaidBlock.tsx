@@ -1,3 +1,4 @@
+import { copyText } from '../../lib/copy-text'
 import {
   Check,
   Copy,
@@ -87,8 +88,7 @@ function MermaidToolbar({
   )
 
   const handleCopy = async (): Promise<void> => {
-    if (!navigator?.clipboard?.writeText) return
-    await navigator.clipboard.writeText(chart)
+    if (!await copyText(chart)) { setIsCopied(false); return }
     setIsCopied(true)
     if (copyResetRef.current !== null) window.clearTimeout(copyResetRef.current)
     copyResetRef.current = window.setTimeout(() => setIsCopied(false), COPY_RESET_MS)

@@ -1026,7 +1026,7 @@ class ChatGPTModelSelector extends HTMLElement {
       this.#activePointer = e.pointerId;
       e.preventDefault();
       this.$slider.focus({ preventScroll: true });
-      try { this.$slider.setPointerCapture(e.pointerId); } catch {}
+      try { this.$slider.setPointerCapture(e.pointerId); } catch { /* Pointer capture may be unavailable after the pointer ends. */ }
       this.#dragging = true;
       this.#burstFiredThisGesture = false;
       this.#dragGeom = { rect: this.$track.getBoundingClientRect(), ...this.#metrics() };

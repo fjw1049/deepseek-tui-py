@@ -66,6 +66,9 @@ export function useLightDismiss({
     }
 
     const onPointerDown = (event: PointerEvent): void => {
+      // Portalled feedback is independent of the source popover; its controls
+      // must run before any outside-click handler can unmount that source.
+      if (event.target instanceof Element && event.target.closest('#global-feedback-viewport')) return
       if (isInside(event.target)) return
       onDismissRef.current()
     }

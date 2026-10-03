@@ -132,7 +132,7 @@ function componentKeys(components: PluginRow['components']): string[] {
       components.hooks ? 'hooks' : null,
       components.mcp_servers ? 'mcp' : null
     ] as const
-  ).filter((v): v is string => v != null)
+  ).filter((v) => v != null)
 }
 
 function componentLabel(key: string, t: (key: string) => string): string {

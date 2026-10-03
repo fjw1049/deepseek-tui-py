@@ -1,12 +1,14 @@
-import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactElement, type ReactNode } from 'react'
+import { memo, useCallback, useEffect, useRef, useState, type CSSProperties, type ReactElement, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
+import { GlobalErrorNotice } from '../GlobalFeedback'
+import { useShallow } from 'zustand/react/shallow'
 import { ChatSplitDragContext, ChatSplitDragHandle } from './ChatSplitDrag'
 import { usePaneSwapMotion } from '../../hooks/use-pane-swap-motion'
 import { Bookmark, GalleryVerticalEnd, PanelRightDashed, X } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { ChatStoreContext, clearChatSelection, useChatStore } from '../../store/chat-store'
 import { CHAT_THREAD_DRAG_MIME, useChatLayoutStore, type ChatLayout } from '../../store/chat-layout-store'
-import { getChatPaneSession } from '../../store/chat-pane-sessions'
+import { getChatPaneSession, retainChatPaneSession } from '../../store/chat-pane-sessions'
 import { CHAT_SPLIT_DRAG_EVENT, chatSplitDropTarget, finishChatSplitDrag, type ChatSplitDrag } from '../../lib/chat-split-navigation'
 import { ChatPaneFocusContext } from './chat-pane-focus'
 import { resolveChatSplitPresentation, type ChatSplitPresentation } from '../../lib/chat-split-presentation'
@@ -42,23 +44,30 @@ function ChatTabTools(): ReactElement {
   </>
 }
 
-function ChatPaneContent({ threadId, onOpenFile, onOpenDiff }: PaneProps): ReactElement {
-  const { t } = useTranslation('common')
-  const state = useChatStore(s => s)
+const PaneTimeline = memo(function PaneTimeline({ threadId, onOpenFile, setInput }: Pick<PaneProps, 'threadId' | 'onOpenFile'> & { setInput: (value: string) => void }): ReactElement {
+  const state = useChatStore(useShallow(s => ({ blocks: s.blocks, liveAssistant: s.liveAssistant, liveReasoning: s.liveReasoning, openSettings: s.openSettings, probeRuntime: s.probeRuntime, runtimeConnection: s.runtimeConnection })))
   const session = getChatPaneSession(threadId)
-  const [input, setInputState] = useState(session.draft)
-  const setInput = (value: string): void => { session.draft = value; setInputState(value) }
-  const ready = state.activeThreadId === threadId
-  return <>
-    {state.error ? <div role="alert" className="px-3 py-2 text-sm text-red-500">{state.error}</div> : null}
-    {!ready ? <div role="status" className="flex-1 p-4 text-ds-muted">{state.error
-      ? <button onClick={() => void state.selectThread(threadId)}>{t('retry')}</button> : t('splitLoading')}</div> : <>
-      <MessageTimeline blocks={state.blocks} liveReasoning={state.liveReasoning} live={state.liveAssistant}
+  return (<MessageTimeline blocks={state.blocks} liveReasoning={state.liveReasoning} live={state.liveAssistant}
         activeThreadId={threadId} runtimeConnection={state.runtimeConnection} stageCentered={false}
         useChatStageWidth={false} forceSimpleEmptyHome scrollMemory={session.scroll}
         onRetryConnection={() => void state.probeRuntime('user')} onOpenSettings={() => state.openSettings('general')}
         onOpenDiagnostics={() => state.openSettings('general')} onSelectSuggestion={setInput}
-        onOpenWorkspaceFile={(path, line) => onOpenFile(threadId, path, line)} />
+        onOpenWorkspaceFile={(path, line) => onOpenFile(threadId, path, line)} />)
+})
+
+function ChatPaneContent({ threadId, onOpenFile, onOpenDiff }: PaneProps): ReactElement {
+  const { t } = useTranslation('common')
+  const state = useChatStore(useShallow(s => ({ activeThreadId: s.activeThreadId, busy: s.busy, compactActiveThread: s.compactActiveThread, composerMode: s.composerMode, composerModel: s.composerModel, composerPickList: s.composerPickList, error: s.error, interrupt: s.interrupt, queuedMessages: s.queuedMessages, removeQueuedMessage: s.removeQueuedMessage, runtimeConnection: s.runtimeConnection, selectThread: s.selectThread, sendMessage: s.sendMessage, sendQueuedMessageNow: s.sendQueuedMessageNow, setComposerMode: s.setComposerMode, setComposerModel: s.setComposerModel, withdrawQueuedMessage: s.withdrawQueuedMessage })))
+  const session = getChatPaneSession(threadId)
+  useEffect(() => retainChatPaneSession(threadId), [threadId])
+  const [input, setInputState] = useState(session.draft)
+  const setInput = useCallback((value: string): void => { session.draft = value; setInputState(value) }, [session])
+  const ready = state.activeThreadId === threadId
+  return <>
+    {state.error ? <GlobalErrorNotice message={state.error} onDismiss={() => session.store.getState().setError(null)} /> : null}
+    {!ready ? <div role="status" className="flex-1 p-4 text-ds-muted">{state.error
+      ? <button onClick={() => void state.selectThread(threadId)}>{t('retry')}</button> : t('splitLoading')}</div> : <>
+      <PaneTimeline threadId={threadId} onOpenFile={onOpenFile} setInput={setInput} />
       <div className="ds-chat-split-composer">
         <ComposerStage input={input} setInput={setInput} mode={state.composerMode} setMode={state.setComposerMode}
           busy={state.busy} runtimeReady={state.runtimeConnection === 'ready'} hasActiveThread

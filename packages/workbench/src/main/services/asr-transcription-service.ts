@@ -67,7 +67,7 @@ export async function transcribeAudio(input: TranscribeAudioInput): Promise<Tran
   const form = new FormData()
   form.append('model', input.model.trim() || 'glm-asr-2512')
   form.append('stream', 'false')
-  form.append('file', new Blob([input.audio], { type: input.mimeType }), input.fileName)
+  form.append('file', new Blob([new Uint8Array(input.audio)], { type: input.mimeType }), input.fileName)
 
   let response: Response
   try {

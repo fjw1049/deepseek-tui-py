@@ -1107,9 +1107,9 @@ app.whenReady().then(async () => {
     return fetchUpstreamModelIds(settings, key)
   }
 
-  const fetchProviderModels = async (providerId: string) => {
+  const fetchProviderModels = async (providerId: string, apiKey?: string) => {
     const settings = await store.load()
-    return fetchBuiltinProviderModelIds(settings, providerId)
+    return fetchBuiltinProviderModelIds(settings, providerId, apiKey)
   }
 
   const prepareDeepseekBinary = async () => {

@@ -738,12 +738,12 @@ class AppRuntime:
             "warnings": registry.warnings,
         }
 
-    async def list_tasks(self, limit: int | None = None) -> dict[str, Any]:
+    async def list_tasks(self, limit: int | None = None, *, active_only: bool = False, task_ids: list[str] | None = None) -> dict[str, Any]:
         """List tasks."""
         if self._tool_runtime is None or self._tool_runtime.task_manager is None:
             return {"ok": False, "error": "task manager not configured"}
         manager = self._tool_runtime.task_manager
-        summaries = await manager.list_tasks(limit=limit)
+        summaries = await manager.list_tasks(limit=limit, active_only=active_only, task_ids=task_ids)
         return {
             "ok": True,
             "tasks": [_task_summary_to_dict(s) for s in summaries],
@@ -914,6 +914,7 @@ class AppRuntime:
             prompt=_pick_str(body, "prompt"),
             schedule=_pick_str(body, "schedule"),
             timezone=_pick_str(body, "timezone"),
+            run_at=_pick_str(body, "run_at"),
             cwds=[str(p) for p in body["cwds"]] if isinstance(body.get("cwds"), list) else None,
             status=status,
             delivery=body.get("delivery") if isinstance(body.get("delivery"), dict) else None,

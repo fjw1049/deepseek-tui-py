@@ -140,7 +140,7 @@ const EMPTY_ACTIVE_TASK_INDEX: ActiveTaskIndex = { threadIds: new Set(), taskIds
 
 async function fetchActiveTaskIndex(): Promise<ActiveTaskIndex> {
   if (typeof window.dsGui?.runtimeRequest !== 'function') return EMPTY_ACTIVE_TASK_INDEX
-  const r = await window.dsGui.runtimeRequest('/v1/tasks?limit=100', 'GET')
+  const r = await window.dsGui.runtimeRequest('/v1/tasks?active_only=true', 'GET')
   if (!r.ok || !r.body.trim()) return EMPTY_ACTIVE_TASK_INDEX
   let parsed: { tasks?: Array<Record<string, unknown>> }
   try {
@@ -197,6 +197,7 @@ function refreshSharedIndex(): void {
       sharedIndex = next
       emitSharedIndex()
     })
+    .catch(() => { /* Retain the last known index until the next poll. */ })
     .finally(() => {
       sharedInFlight = false
     })
@@ -235,9 +236,9 @@ export function useThreadsWithActiveTasks(): ActiveTaskIndex {
   return useSyncExternalStore(subscribeSharedIndex, getSharedIndexSnapshot, getSharedIndexSnapshot)
 }
 
-async function fetchTaskStatuses(): Promise<Record<string, TaskStatus>> {
+async function fetchTaskStatuses(ids: string[]): Promise<Record<string, TaskStatus>> {
   if (typeof window.dsGui?.runtimeRequest !== 'function') return {}
-  const r = await window.dsGui.runtimeRequest('/v1/tasks?limit=100', 'GET')
+  const r = await window.dsGui.runtimeRequest(`/v1/tasks?ids=${encodeURIComponent(ids.join(','))}`, 'GET')
   if (!r.ok || !r.body.trim()) return {}
   let parsed: { tasks?: Array<Record<string, unknown>> }
   try {
@@ -280,8 +281,11 @@ export function useLiveTasks(baseTasks: TaskItemView[]): TaskItemView[] {
       return
     }
     let cancelled = false
+    let inFlight = false
     const refresh = (): void => {
-      void fetchTaskStatuses().then((all) => {
+      if (inFlight) return
+      inFlight = true
+      void fetchTaskStatuses(ids).then((all) => {
         if (cancelled) return
         const next: Record<string, TaskStatus> = {}
         for (const id of ids) {
@@ -292,7 +296,8 @@ export function useLiveTasks(baseTasks: TaskItemView[]): TaskItemView[] {
           if (sameSize && ids.every((id) => prev[id] === next[id])) return prev
           return next
         })
-      })
+      }).catch(() => { /* Keep prior statuses on transient failures. */ })
+        .finally(() => { inFlight = false })
       // Background tasks bridge plan consent onto this thread; poll while any
       // task is active so a missed SSE / turn-complete reload cannot hide it.
       if (anyActive) {

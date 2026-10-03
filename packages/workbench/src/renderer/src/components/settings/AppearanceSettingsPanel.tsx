@@ -1,3 +1,4 @@
+import { copyText } from '../../lib/copy-text'
 import type { ReactElement, ReactNode } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -360,7 +361,7 @@ function ThemePackCard({
 
   const copyShareString = async (): Promise<void> => {
     try {
-      await navigator.clipboard.writeText(createThemeShareString(variant, theme))
+      if (!await copyText(createThemeShareString(variant, theme))) { setCopyStatus('failed'); return }
       setCopyStatus('copied')
       if (copyTimer.current) window.clearTimeout(copyTimer.current)
       copyTimer.current = window.setTimeout(() => setCopyStatus('idle'), 1500)

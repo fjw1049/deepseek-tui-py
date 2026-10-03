@@ -159,8 +159,8 @@ export default defineConfig({
       }
     },
     // Pre-bundle deps that are only reachable through the lazily-loaded
-    // StreamdownAssistant chunk. Without this, Vite discovers streamdown's
-    // runtime imports (shiki/mermaid) on demand, re-runs the optimizer, and
+    // chat, workspace editor, and channel setup chunks. Without this, Vite
+    // discovers their runtime imports on demand, re-runs the optimizer, and
     // invalidates the in-flight chunk hash -> "Failed to fetch dynamically
     // imported module" -> white screen when opening a chat.
     optimizeDeps: {
@@ -170,6 +170,10 @@ export default defineConfig({
         'mermaid',
         'remark-gfm',
         'rehype-harden',
+        'd3-dsv',
+        'qrcode',
+        '@monaco-editor/react',
+        'monaco-editor',
         'vscode-material-icons'
       ]
     },

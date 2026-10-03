@@ -1,3 +1,4 @@
+import { GlobalErrorNotice } from '../GlobalFeedback'
 import { useEffect, useMemo, useRef, useState, type ReactElement } from 'react'
 import { useLightDismiss } from '../../hooks/use-light-dismiss'
 import {
@@ -82,10 +83,9 @@ function PanelHeader({
 
 function NoticeView({ notice }: { notice: Notice | null }): ReactElement | null {
   if (!notice) return null
+  if (notice.tone === 'error') return <GlobalErrorNotice occurrence={notice} message={notice.text} />
   const tone =
-    notice.tone === 'error'
-      ? 'border-red-300/70 bg-red-50 text-red-800 dark:border-red-800/70 dark:bg-red-950/25 dark:text-red-200'
-      : notice.tone === 'success'
+    notice.tone === 'success'
         ? 'border-emerald-300/70 bg-emerald-50 text-emerald-800 dark:border-emerald-800/70 dark:bg-emerald-950/25 dark:text-emerald-200'
         : 'border-ds-border bg-ds-main/60 text-ds-muted'
   return <div className={`rounded-xl border px-3 py-2 text-[11px] ${tone}`}>{notice.text}</div>

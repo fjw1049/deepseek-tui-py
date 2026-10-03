@@ -1,6 +1,7 @@
 import type { ReactElement } from 'react'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { useWorkspaceEditorStore } from '../../store/workspace-editor-store'
 import { EditorListSkeleton } from './EditorListSkeleton'
 
 type Props = {
@@ -11,6 +12,7 @@ type Props = {
 /** Read-only image preview for workspace editor tabs. */
 export function ImageDocumentPreview({ path, workspaceRoot }: Props): ReactElement {
   const { t } = useTranslation('common')
+  const revision = useWorkspaceEditorStore((state) => state.previewVersion)
   const [url, setUrl] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
@@ -35,7 +37,9 @@ export function ImageDocumentPreview({ path, workspaceRoot }: Props): ReactEleme
           setError(result.message)
           return
         }
-        setUrl(result.url)
+        const nextUrl = new URL(result.url)
+        nextUrl.searchParams.set('_ds_revision', String(revision))
+        setUrl(nextUrl.toString())
       })
       .catch((err: unknown) => {
         if (cancelled) return
@@ -48,7 +52,7 @@ export function ImageDocumentPreview({ path, workspaceRoot }: Props): ReactEleme
     return () => {
       cancelled = true
     }
-  }, [path, workspaceRoot])
+  }, [path, workspaceRoot, revision])
 
   if (loading) {
     return (

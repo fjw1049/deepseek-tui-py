@@ -1,3 +1,4 @@
+import { GlobalErrorNotice } from './GlobalFeedback'
 import {
   useCallback,
   useEffect,
@@ -167,10 +168,10 @@ function InspectorGitActions({
   }, [closeCommit, closeMenu, commitOpen, menuOpen])
 
   useEffect(() => {
-    if (!feedback) return
+    if (!feedback || feedback.kind === 'error') return
     const timer = window.setTimeout(
       () => setFeedback(null),
-      feedback.kind === 'success' ? 3_500 : 8_000
+      3_500
     )
     return () => window.clearTimeout(timer)
   }, [feedback])
@@ -531,7 +532,7 @@ function InspectorGitActions({
         </div>
       ) : null}
 
-      {feedback ? (
+      {feedback?.kind === 'error' ? <GlobalErrorNotice occurrence={feedback} message={feedback.text} onDismiss={() => setFeedback(null)} /> : feedback ? (
         <div role="status" className={`ds-pop origin-top-right absolute right-0 top-[calc(100%+6px)] z-[80] flex w-max max-w-72 items-start gap-1.5 rounded-lg border border-ds-border bg-ds-elevated px-2.5 py-2 text-[13.5px] leading-4 shadow-lg ${feedback.kind === 'success' ? 'text-emerald-600 dark:text-emerald-300' : 'text-amber-700 dark:text-amber-200'}`}>
           {feedback.kind === 'success' ? <CheckCircle2 className="mt-0.5 h-3 w-3 shrink-0" /> : <TriangleAlert className="mt-0.5 h-3 w-3 shrink-0" />}
           <span>{feedback.text}</span>

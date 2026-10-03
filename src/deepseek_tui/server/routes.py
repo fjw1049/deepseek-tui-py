@@ -1166,7 +1166,11 @@ router_tasks = APIRouter(prefix="/v1")
 async def list_tasks(request: Request) -> dict[str, Any]:
     runtime = runtime_from_request(request)
     limit = int_query(request, "limit")
-    payload = unwrap_runtime_result(await runtime.list_tasks(limit=limit))
+    payload = unwrap_runtime_result(await runtime.list_tasks(
+        limit=limit,
+        active_only=request.query_params.get("active_only") == "true",
+        task_ids=request.query_params["ids"].split(",") if "ids" in request.query_params else None,
+    ))
     return {"tasks": payload.get("tasks", [])}
 
 

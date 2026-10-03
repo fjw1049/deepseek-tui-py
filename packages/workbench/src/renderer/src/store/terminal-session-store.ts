@@ -1,6 +1,58 @@
 import { create } from 'zustand'
 import { terminalPaneIds, removeTerminalPane, replaceTerminalPane, resizeTerminalSplit, type TerminalLayout, type TerminalSplitDirection } from '../lib/terminal-layout'
 
+const terminalOutput = new Map<string, { chunks: string[]; length: number }>()
+const terminalExits = new Map<string, number>()
+const OUTPUT_LIMIT = 1024 * 1024
+const outputListeners = new Set<(event: { sessionId: string; data: string }) => void>()
+const exitListeners = new Set<(event: { sessionId: string; exitCode: number }) => void>()
+let stopTerminalEvents: (() => void) | undefined
+
+function ensureTerminalEvents(): void {
+  if (stopTerminalEvents || typeof window.dsGui?.onTerminalData !== 'function' ||
+      typeof window.dsGui?.onTerminalExit !== 'function') return
+  const offData = window.dsGui.onTerminalData((event) => {
+    const state = useTerminalSessionStore.getState()
+    if (!state.creatingSession && !state.sessions.some((session) => session.id === event.sessionId)) return
+    const buffer = terminalOutput.get(event.sessionId) ?? { chunks: [], length: 0 }
+    const data = event.data.slice(-OUTPUT_LIMIT)
+    const last = buffer.chunks.length - 1
+    if (last >= 0 && buffer.chunks[last].length < 4096) buffer.chunks[last] += data
+    else buffer.chunks.push(data)
+    buffer.length += data.length
+    while (buffer.length > OUTPUT_LIMIT) {
+      const excess = buffer.length - OUTPUT_LIMIT
+      const first = buffer.chunks[0]
+      if (first.length <= excess) { buffer.chunks.shift(); buffer.length -= first.length }
+      else { buffer.chunks[0] = first.slice(excess); buffer.length -= excess }
+    }
+    terminalOutput.set(event.sessionId, buffer)
+    for (const listener of outputListeners) listener(event)
+  })
+  const offExit = window.dsGui.onTerminalExit((event) => {
+    const state = useTerminalSessionStore.getState()
+    if (!state.creatingSession && !state.sessions.some((session) => session.id === event.sessionId)) return
+    terminalExits.set(event.sessionId, event.exitCode)
+    useTerminalSessionStore.getState().updateSession(event.sessionId, { status: 'exited', exitCode: event.exitCode })
+    for (const listener of exitListeners) listener(event)
+  })
+  stopTerminalEvents = () => { offData(); offExit(); stopTerminalEvents = undefined }
+}
+
+export function readTerminalOutput(sessionId: string): string {
+  return terminalOutput.get(sessionId)?.chunks.join('') ?? ''
+}
+
+export function subscribeTerminalEvents(
+  onData: (event: { sessionId: string; data: string }) => void,
+  onExit: (event: { sessionId: string; exitCode: number }) => void
+): () => void {
+  ensureTerminalEvents()
+  outputListeners.add(onData)
+  exitListeners.add(onExit)
+  return () => { outputListeners.delete(onData); exitListeners.delete(onExit) }
+}
+
 export type TerminalSessionInfo = {
   id: string
   cwd: string
@@ -45,6 +97,9 @@ export const useTerminalSessionStore = create<TerminalSessionStore>((set) => ({
   setCreateError: (message) => set({ createError: message }),
   addSession: (session, split) =>
     set((state) => {
+      ensureTerminalEvents()
+      const exitCode = terminalExits.get(session.id)
+      if (exitCode !== undefined) session = { ...session, status: 'exited', exitCode }
       const pane: TerminalLayout = { type: 'pane', id: session.id }
       const targetExists = split && state.layouts.some((node) => terminalPaneIds(node).includes(split.targetId))
       return {
@@ -64,7 +119,10 @@ export const useTerminalSessionStore = create<TerminalSessionStore>((set) => ({
     })),
   removeSession: (sessionId) =>
     set((state) => {
+      terminalOutput.delete(sessionId)
+      terminalExits.delete(sessionId)
       const next = state.sessions.filter((session) => session.id !== sessionId)
+      if (next.length === 0) stopTerminalEvents?.()
       const group = state.layouts.find((node) => terminalPaneIds(node).includes(sessionId))
       const neighbor = group && terminalPaneIds(group).find((id) => id !== sessionId)
       return {
@@ -73,7 +131,10 @@ export const useTerminalSessionStore = create<TerminalSessionStore>((set) => ({
         layouts: state.layouts.map((node) => removeTerminalPane(node, sessionId)).filter((node): node is TerminalLayout => node !== null)
       }
     }),
-  resetSessions: () =>
+  resetSessions: () => {
+    terminalOutput.clear()
+    terminalExits.clear()
+    stopTerminalEvents?.()
     set({
       sessions: [],
       activeSessionId: null,
@@ -81,7 +142,8 @@ export const useTerminalSessionStore = create<TerminalSessionStore>((set) => ({
       creatingSession: false,
       createError: null,
       hasStartedInitialSession: false
-    }),
+    })
+  },
   markInitialSessionStarted: () => set({ hasStartedInitialSession: true })
 }))
 
@@ -104,6 +166,7 @@ export async function createTerminalSessionForWorkspace(
   const cols = Math.max(20, Math.floor(dimensions?.cols ?? 120))
   const rows = Math.max(8, Math.floor(dimensions?.rows ?? 32))
 
+  ensureTerminalEvents()
   store.setCreatingSession(true)
   store.setCreateError(null)
   try {

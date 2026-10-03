@@ -1,4 +1,5 @@
 {
+  "viewLoading": "Loading…",
   "workspaceEditorHideFiles": "Hide files",
   "workspaceEditorBrowseFiles": "Browse files",
   "changeScopeLabel": "Scope",
@@ -2128,5 +2129,9 @@
     "connectionFailed": "Could not connect to the share service. Check your connection and try again.",
     "projectNeedsSync": "Your project does not have the shared version yet. Sync it first, or turn off file restoration to continue the conversation only.",
     "invalidLink": "This is not a valid share link. Copy the full link and try again."
-  }
+  },
+  "workspaceTablePrevious": "Previous",
+  "workspaceTableNext": "Next",
+  "workspaceTablePage": "Page {{page}} of {{pages}}",
+  "diffPreviewLimited": "Large diff: preview limited to 2,000 lines or 200,000 characters. Copy the complete diff or open the file in the editor."
 }

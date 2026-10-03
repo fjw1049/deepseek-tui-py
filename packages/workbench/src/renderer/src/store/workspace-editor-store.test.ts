@@ -295,3 +295,70 @@ describe('save feedback and concurrent edits', () => {
     expect(useWorkspaceEditorStore.getState().tabs[0].savedContent).toBe('old')
   })
 })
+
+describe('late file responses', () => {
+  const initial = useWorkspaceEditorStore.getState()
+  beforeEach(() => useWorkspaceEditorStore.setState(initial, true))
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('restores unsaved buffers only in their own workspace', async () => {
+    vi.stubGlobal('window', { dsGui: {
+      readWorkspaceFile: vi.fn().mockResolvedValue({ ok: true, content: 'original' })
+    } })
+    const store = useWorkspaceEditorStore.getState()
+    await store.openFile('a.ts', '/a')
+    store.updateTabContent('a.ts', 'draft A')
+    await store.openFile('a.ts', '/b')
+    expect(useWorkspaceEditorStore.getState().tabs[0].content).toBe('original')
+    store.updateTabContent('a.ts', 'draft B')
+    store.resetForWorkspace('/a')
+    expect(useWorkspaceEditorStore.getState().tabs[0].content).toBe('draft A')
+    store.resetForWorkspace('/b')
+    expect(useWorkspaceEditorStore.getState().tabs[0].content).toBe('draft B')
+  })
+
+  it('does not resurrect a tab closed while loading', async () => {
+    let resolve!: (value: { ok: true; content: string }) => void
+    const read = { promise: new Promise<{ ok: true; content: string }>((done) => { resolve = done }), resolve: (value: { ok: true; content: string }) => resolve(value) }
+    vi.stubGlobal('window', { dsGui: { readWorkspaceFile: () => read.promise } })
+    const loading = useWorkspaceEditorStore.getState().openFile('a.ts', '/a')
+    useWorkspaceEditorStore.getState().closeTab('a.ts')
+    read.resolve({ ok: true, content: 'late' })
+    expect(await loading).toBe(false)
+    expect(useWorkspaceEditorStore.getState().tabs).toEqual([])
+  })
+
+  it('lets the latest reload win regardless of response order', async () => {
+    const resolves: Array<(value: { ok: true; content: string }) => void> = []
+    const read = vi.fn().mockResolvedValueOnce({ ok: true, content: 'initial' })
+      .mockImplementation(() => new Promise(resolve => resolves.push(resolve)))
+    vi.stubGlobal('window', { dsGui: { readWorkspaceFile: read } })
+    const store = useWorkspaceEditorStore.getState()
+    await store.openFile('a.ts', '/a')
+    const older = store.reloadCleanTabs('/a')
+    const newer = store.reloadCleanTabs('/a')
+    resolves[0]({ ok: true, content: 'older' })
+    await older
+    resolves[1]({ ok: true, content: 'newest' })
+    await newer
+    expect(useWorkspaceEditorStore.getState().tabs[0].content).toBe('newest')
+  })
+
+  it('does not overwrite a newer saved buffer with a pending reload', async () => {
+    let resolve!: (value: { ok: true; content: string }) => void
+    const read = { promise: new Promise<{ ok: true; content: string }>((done) => { resolve = done }), resolve: (value: { ok: true; content: string }) => resolve(value) }
+    vi.stubGlobal('window', { dsGui: {
+      readWorkspaceFile: vi.fn().mockResolvedValueOnce({ ok: true, content: 'old' })
+        .mockReturnValueOnce(read.promise),
+      writeWorkspaceFile: vi.fn().mockResolvedValue({ ok: true })
+    } })
+    const store = useWorkspaceEditorStore.getState()
+    await store.openFile('a.ts', '/a')
+    const reload = store.reloadCleanTabs('/a')
+    store.updateTabContent('a.ts', 'new')
+    await store.saveTab('a.ts', '/a')
+    read.resolve({ ok: true, content: 'old' })
+    await reload
+    expect(useWorkspaceEditorStore.getState().tabs[0]).toMatchObject({ content: 'new', savedContent: 'new' })
+  })
+})
