@@ -223,11 +223,11 @@ export function GitBranchPicker({
         setNotice(t('gitDirtySwitchBlocked', { branch }))
         return
       }
-      setResult(next)
       if (!next.ok) {
         setError(gitErrorMessage(next))
         return
       }
+      setResult(next)
       setOpen(false)
       setQuery('')
     } catch (e) {
@@ -249,13 +249,13 @@ export function GitBranchPicker({
         void reload()
         return
       }
-      setResult(next)
       if (!next.ok) {
         setNotice(null)
         setDirtyConflictBranch(null)
         setError(gitErrorMessage(next))
         return
       }
+      setResult(next)
       setOpen(false)
       setQuery('')
       setNotice(null)
