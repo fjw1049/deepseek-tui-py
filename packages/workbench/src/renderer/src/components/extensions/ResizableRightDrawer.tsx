@@ -14,8 +14,13 @@ const MIN_WIDTH = 320
 const MAX_FRACTION = 0.7
 const INITIAL_FRACTION = 1 / 3
 
-function clampDrawerWidth(width: number, viewport = window.innerWidth): number {
-  const max = Math.max(MIN_WIDTH, Math.round(viewport * MAX_FRACTION))
+function uiScale(): number {
+  const value = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--ds-ui-scale'))
+  return Number.isFinite(value) && value > 0 ? value : 1
+}
+
+function clampDrawerWidth(width: number, viewport = window.innerWidth / uiScale()): number {
+  const max = Math.min(viewport, Math.max(MIN_WIDTH, Math.round(viewport * MAX_FRACTION)))
   return Math.min(max, Math.max(MIN_WIDTH, Math.round(width)))
 }
 
@@ -27,7 +32,7 @@ function loadDrawerWidth(storageKey: string, initialWidth?: number): number {
   } catch {
     /* localStorage may be unavailable */
   }
-  return clampDrawerWidth(initialWidth ?? window.innerWidth * INITIAL_FRACTION)
+  return clampDrawerWidth(initialWidth ?? window.innerWidth / uiScale() * INITIAL_FRACTION)
 }
 
 function saveDrawerWidth(storageKey: string, width: number): void {
@@ -85,7 +90,7 @@ export function ResizableRightDrawer({ onClose, children, storageKey = WIDTH_KEY
     document.body.style.userSelect = 'none'
 
     const onMove = (moveEvent: PointerEvent): void => {
-      const next = clampDrawerWidth(startWidth + (startX - moveEvent.clientX))
+      const next = clampDrawerWidth(startWidth + (startX - moveEvent.clientX) / uiScale())
       setWidth(next)
     }
     const onUp = (): void => {

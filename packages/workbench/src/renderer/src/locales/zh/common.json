@@ -1,4 +1,7 @@
 {
+  "workspacePreviewUnavailable": "预览暂时不可用，请稍后重试。",
+  "workspacePreviewRetry": "重新加载预览",
+  "workspaceImagePreviewFailed": "图片加载失败，请重试。",
   "codeDownload": "下载代码",
   "codeCopy": "复制代码",
   "codeFullscreen": "全屏查看代码",

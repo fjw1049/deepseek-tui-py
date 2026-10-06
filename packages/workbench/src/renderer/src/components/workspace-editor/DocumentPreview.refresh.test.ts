@@ -6,7 +6,8 @@ import { ImageDocumentPreview } from './ImageDocumentPreview'
 import { HtmlDocumentPreview } from './HtmlDocumentPreview'
 import { useWorkspaceEditorStore } from '../../store/workspace-editor-store'
 
-vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key }) }))
+const { t } = vi.hoisted(() => ({ t: (key: string) => key }))
+vi.mock('react-i18next', () => ({ useTranslation: () => ({ t }) }))
 vi.mock('../../i18n', () => ({ default: { t: (key: string) => key } }))
 let host: HTMLDivElement
 let root: Root
@@ -57,5 +58,19 @@ for (const [extension, Component, selector] of [
     expect(host.textContent).not.toContain('Old file failed')
     expect(host.querySelector(selector)).not.toBeNull()
     expect(preview).toHaveBeenLastCalledWith({ path: `b.${extension}`, workspaceRoot: '/repo' })
+  })
+}
+
+
+for (const Component of [ImageDocumentPreview, HtmlDocumentPreview]) {
+  it(`retries a failed ${Component.name} without reopening the file`, async () => {
+    preview.mockResolvedValueOnce({ ok: false, message: 'Temporarily unavailable' })
+      .mockResolvedValue({ ok: true, url: 'about:blank?file=retry' })
+    await act(async () => root.render(createElement(Component, { path: 'file', workspaceRoot: '/repo' })))
+    expect(host.querySelector('[role="alert"]')?.textContent).toBe('Temporarily unavailable')
+    await act(async () => host.querySelector<HTMLButtonElement>('button')!.click())
+    expect(preview).toHaveBeenCalledTimes(2)
+    expect(host.querySelector('[role="alert"]')).toBeNull()
+    expect(host.querySelector('img, iframe')?.getAttribute('src')).toContain('_ds_attempt=1')
   })
 }

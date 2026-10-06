@@ -1,4 +1,5 @@
-import { useEffect, useState, type ReactElement } from 'react'
+import { useModalFocus } from '../../hooks/use-modal-focus'
+import { useEffect, useRef, useState, type ReactElement } from 'react'
 import { createPortal } from 'react-dom'
 import { Loader2, Plus, Trash2, X } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
@@ -40,17 +41,8 @@ export function AddMcpServerDialog({ open, onClose, isDuplicate, onSubmit }: Pro
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
-  useEffect(() => {
-    if (!open) return
-    const handleKey = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') {
-        event.preventDefault()
-        onClose()
-      }
-    }
-    window.addEventListener('keydown', handleKey)
-    return () => window.removeEventListener('keydown', handleKey)
-  }, [open, onClose])
+  const panelRef = useRef<HTMLDivElement>(null)
+  useModalFocus(open, panelRef, () => { if (!busy) onClose() })
 
   // Reset the form whenever the dialog opens.
   useEffect(() => {
@@ -137,15 +129,16 @@ export function AddMcpServerDialog({ open, onClose, isDuplicate, onSubmit }: Pro
     <div
       className="ds-modal-backdrop ds-no-drag fixed inset-0 z-[80] flex items-center justify-center p-4"
       onClick={(event) => {
-        if (event.target === event.currentTarget) onClose()
+        if (event.target === event.currentTarget && !busy) onClose()
       }}
     >
-      <div className="ds-content-card flex max-h-[88vh] w-full max-w-lg flex-col overflow-hidden rounded-2xl shadow-xl">
+      <div ref={panelRef} tabIndex={-1} role="dialog" aria-modal="true" aria-label={t('mcpDialogAddTitle')} className="ds-content-card flex max-h-[88vh] w-full max-w-lg flex-col overflow-hidden rounded-2xl shadow-xl">
         <div className="flex shrink-0 items-center justify-between gap-3 border-b border-ds-border-muted px-5 py-3.5">
           <h2 className="min-w-0 truncate text-[16px] font-semibold text-ds-ink">{t('mcpDialogAddTitle')}</h2>
           <button
             type="button"
             onClick={onClose}
+            disabled={busy}
             aria-label={t('close')}
             className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-ds-muted transition hover:bg-ds-hover hover:text-ds-ink"
           >

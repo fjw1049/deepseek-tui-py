@@ -27,18 +27,21 @@ const EDGES: Edge[] = ['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw']
 
 /** Open expand dialogs, bottom → top. Escape closes only the topmost. */
 const openStack: string[] = []
+let bodyOverflowBeforeDialogs = ''
+
+function uiScale(): number {
+  const value = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--ds-ui-scale'))
+  return Number.isFinite(value) && value > 0 ? value : 1
+}
 
 function defaultSize(): Size {
   if (typeof window === 'undefined') return { width: 1120, height: 760 }
-  return {
-    width: Math.min(1120, Math.max(MIN_WIDTH, window.innerWidth - VIEW_PAD * 2)),
-    height: Math.min(760, Math.max(MIN_HEIGHT, Math.round(window.innerHeight * 0.86)))
-  }
+  return clampSize({ width: 1120, height: Math.min(760, Math.round(window.innerHeight / uiScale() * 0.86)) })
 }
 
 function clampSize(next: Size): Size {
-  const maxW = Math.max(MIN_WIDTH, window.innerWidth - VIEW_PAD * 2)
-  const maxH = Math.max(MIN_HEIGHT, window.innerHeight - VIEW_PAD * 2)
+  const maxW = Math.max(0, window.innerWidth / uiScale() - VIEW_PAD * 2)
+  const maxH = Math.max(0, window.innerHeight / uiScale() - VIEW_PAD * 2)
   return {
     width: Math.min(maxW, Math.max(MIN_WIDTH, Math.round(next.width))),
     height: Math.min(maxH, Math.max(MIN_HEIGHT, Math.round(next.height)))
@@ -81,6 +84,8 @@ export function ResizableFullscreenDialog({
     startY: number
     startW: number
     startH: number
+    cursor: string
+    userSelect: string
   } | null>(null)
 
   useLayoutEffect(() => {
@@ -96,6 +101,7 @@ export function ResizableFullscreenDialog({
     const armTimer = window.setTimeout(() => {
       armedRef.current = true
     }, BACKDROP_ARM_MS)
+    if (openStack.length === 0) bodyOverflowBeforeDialogs = document.body.style.overflow
     openStack.push(dialogId)
     setStackDepth(openStack.length)
 
@@ -123,17 +129,17 @@ export function ResizableFullscreenDialog({
       }
     }
     window.addEventListener('keydown', onKey, true)
-    const prevOverflow = document.body.style.overflow
     document.body.style.overflow = 'hidden'
 
     return () => {
       window.clearTimeout(armTimer)
       window.removeEventListener('keydown', onKey, true)
+      const wasTop = openStack[openStack.length - 1] === dialogId
       const index = openStack.lastIndexOf(dialogId)
       if (index >= 0) openStack.splice(index, 1)
-      if (openStack.length === 0) document.body.style.overflow = prevOverflow
+      if (openStack.length === 0) document.body.style.overflow = bodyOverflowBeforeDialogs
       armedRef.current = false
-      if (previousFocus?.isConnected) previousFocus.focus()
+      if (wasTop && previousFocus?.isConnected) previousFocus.focus()
     }
   }, [dialogId, open, onClose])
 
@@ -149,8 +155,9 @@ export function ResizableFullscreenDialog({
   const onPointerMove = useCallback((event: PointerEvent) => {
     const drag = dragRef.current
     if (!drag) return
-    const dx = event.clientX - drag.startX
-    const dy = event.clientY - drag.startY
+    // The panel stays centered, so each edge moves by half the size change.
+    const dx = (event.clientX - drag.startX) * 2 / uiScale()
+    const dy = (event.clientY - drag.startY) * 2 / uiScale()
     let width = drag.startW
     let height = drag.startH
     if (drag.edge.includes('e')) width = drag.startW + dx
@@ -162,16 +169,20 @@ export function ResizableFullscreenDialog({
 
   const endDrag = useCallback(() => {
     if (!dragRef.current) return
+    const drag = dragRef.current
     dragRef.current = null
-    document.body.style.cursor = ''
-    document.body.style.userSelect = ''
+    document.body.style.cursor = drag.cursor
+    document.body.style.userSelect = drag.userSelect
     window.removeEventListener('pointermove', onPointerMove)
     window.removeEventListener('pointerup', endDrag)
     window.removeEventListener('pointercancel', endDrag)
+    window.removeEventListener('blur', endDrag)
   }, [onPointerMove])
 
   const startDrag = useCallback(
     (edge: Edge, event: ReactPointerEvent<HTMLSpanElement>) => {
+      if (event.button !== 0) return
+      endDrag()
       event.preventDefault()
       event.stopPropagation()
       dragRef.current = {
@@ -179,7 +190,9 @@ export function ResizableFullscreenDialog({
         startX: event.clientX,
         startY: event.clientY,
         startW: size.width,
-        startH: size.height
+        startH: size.height,
+        cursor: document.body.style.cursor,
+        userSelect: document.body.style.userSelect
       }
       document.body.style.userSelect = 'none'
       document.body.style.cursor =
@@ -193,18 +206,15 @@ export function ResizableFullscreenDialog({
       window.addEventListener('pointermove', onPointerMove)
       window.addEventListener('pointerup', endDrag)
       window.addEventListener('pointercancel', endDrag)
+      window.addEventListener('blur', endDrag)
     },
     [endDrag, onPointerMove, size.height, size.width]
   )
 
-  useEffect(
-    () => () => {
-      window.removeEventListener('pointermove', onPointerMove)
-      window.removeEventListener('pointerup', endDrag)
-      window.removeEventListener('pointercancel', endDrag)
-    },
-    [endDrag, onPointerMove]
-  )
+  useEffect(() => {
+    if (!open) endDrag()
+    return endDrag
+  }, [endDrag, open])
 
   const onBackdropMouseDown = (event: ReactMouseEvent<HTMLDivElement>): void => {
     // Only dismiss when pressing the dimmed backdrop itself — not children.

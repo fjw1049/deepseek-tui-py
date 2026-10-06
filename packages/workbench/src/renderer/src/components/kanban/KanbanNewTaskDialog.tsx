@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState, type ReactElement } from 'react'
+import { useModalFocus } from '../../hooks/use-modal-focus'
+import { useEffect, useMemo, useRef, useState, type ReactElement } from 'react'
 import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
 import { X } from 'lucide-react'
@@ -98,8 +99,14 @@ export function KanbanNewTaskDialog({
   )
   const [sendAsDraft, setSendAsDraft] = useState(initialSendAsDraft)
 
+  const panelRef = useRef<HTMLDivElement>(null)
+  const initializedRef = useRef(false)
+  useModalFocus(open, panelRef, () => { if (!submitting) onClose() })
+
   useEffect(() => {
-    if (!open) return
+    if (!open) { initializedRef.current = false; return }
+    if (initializedRef.current) return
+    initializedRef.current = true
     setProjectId(initialProjectId ?? options[0]?.projectId ?? '')
     setPrompt('')
     setModel(composerModel.trim() || modelOptions[0] || '')
@@ -128,10 +135,12 @@ export function KanbanNewTaskDialog({
   return createPortal(
     <div className="ds-no-drag fixed inset-0 z-[200] flex items-center justify-center bg-black/45 p-4">
       <div
+        ref={panelRef}
+        tabIndex={-1}
         role="dialog"
         aria-modal="true"
         aria-label={t('common:kanbanNewTask')}
-        className="w-full max-w-lg rounded-2xl border border-ds-border bg-ds-elevated shadow-panel"
+        className="max-h-[calc(100dvh-2rem)] w-full max-w-lg overflow-y-auto rounded-2xl border border-ds-border bg-ds-elevated shadow-panel"
       >
         <div className="flex items-center justify-between gap-3 border-b border-ds-border px-4 py-3">
           <h2 className="text-[14px] font-semibold text-ds-ink">{t('common:kanbanNewTask')}</h2>
@@ -140,6 +149,7 @@ export function KanbanNewTaskDialog({
             className="inline-flex h-7 w-7 items-center justify-center rounded-md text-ds-faint hover:bg-ds-hover hover:text-ds-ink"
             onClick={onClose}
             aria-label={t('common:kanbanDialogClose')}
+            disabled={submitting}
           >
             <X className="h-4 w-4" strokeWidth={1.9} />
           </button>

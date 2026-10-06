@@ -1,4 +1,7 @@
 {
+  "workspacePreviewUnavailable": "Preview is unavailable. Please try again.",
+  "workspacePreviewRetry": "Reload preview",
+  "workspaceImagePreviewFailed": "Image preview failed to load. Please try again.",
   "codeDownload": "Download code",
   "codeCopy": "Copy code",
   "codeFullscreen": "View code fullscreen",

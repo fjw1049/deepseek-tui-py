@@ -1,3 +1,4 @@
+import { useModalFocus } from '../../hooks/use-modal-focus'
 import { formatRuntimeError } from '../../lib/format-runtime-error'
 import { useEffect, useRef, useState, type ReactElement } from 'react'
 import { createPortal } from 'react-dom'
@@ -24,17 +25,8 @@ export function ImportMcpJsonDialog({ open, onClose, isDuplicate, onSubmit }: Pr
   const [busy, setBusy] = useState(false)
   const submitting = useRef(false)
 
-  useEffect(() => {
-    if (!open) return
-    const handleKey = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape' && !busy) {
-        event.preventDefault()
-        onClose()
-      }
-    }
-    window.addEventListener('keydown', handleKey)
-    return () => window.removeEventListener('keydown', handleKey)
-  }, [open, onClose, busy])
+  const panelRef = useRef<HTMLDivElement>(null)
+  useModalFocus(open, panelRef, () => { if (!busy) onClose() })
 
   useEffect(() => {
     if (!open) return
@@ -90,7 +82,7 @@ export function ImportMcpJsonDialog({ open, onClose, isDuplicate, onSubmit }: Pr
         if (event.target === event.currentTarget && !busy) onClose()
       }}
     >
-      <div className="ds-content-card flex max-h-[88vh] w-full max-w-lg flex-col overflow-hidden rounded-2xl shadow-xl">
+      <div ref={panelRef} tabIndex={-1} role="dialog" aria-modal="true" aria-label={t('mcpImportTitle')} className="ds-content-card flex max-h-[88vh] w-full max-w-lg flex-col overflow-hidden rounded-2xl shadow-xl">
         <div className="flex shrink-0 items-center justify-between gap-3 border-b border-ds-border-muted px-5 py-3.5">
           <h2 className="min-w-0 truncate text-[16px] font-semibold text-ds-ink">{t('mcpImportTitle')}</h2>
           <button

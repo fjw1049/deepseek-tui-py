@@ -39,3 +39,30 @@ it('contains keyboard focus and returns it to the opener on close', async () => 
     host.remove()
   }
 })
+
+it('tracks zoomed edge drags and restores pointer styles when closed mid-drag', async () => {
+  const host = document.createElement('div'); document.body.append(host)
+  const root = createRoot(host)
+  document.documentElement.style.setProperty('--ds-ui-scale', '0.88')
+  document.body.style.cursor = 'crosshair'
+  document.body.style.userSelect = 'text'
+  const render = (open: boolean) => root.render(createElement(ResizableFullscreenDialog, {
+    open, onClose: () => {}, ariaLabel: 'Code', header: 'Code', children: 'Content',
+    overlayClassName: '', panelClassName: '', bodyClassName: ''
+  }))
+  try {
+    await act(async () => render(true))
+    const panel = document.querySelector<HTMLElement>('.ds-expand-panel')!
+    const width = Number.parseFloat(panel.style.width)
+    await act(async () => panel.querySelector('[data-edge="e"]')!.dispatchEvent(new PointerEvent('pointerdown', { clientX: 500, button: 0, bubbles: true })))
+    await act(async () => window.dispatchEvent(new PointerEvent('pointermove', { clientX: 456 })))
+    expect(Number.parseFloat(panel.style.width)).toBe(Math.round(width - 100))
+    await act(async () => render(false))
+    expect(document.body.style.cursor).toBe('crosshair')
+    expect(document.body.style.userSelect).toBe('text')
+  } finally {
+    await act(async () => root.unmount()); host.remove()
+    document.documentElement.style.removeProperty('--ds-ui-scale')
+    document.body.style.cursor = ''; document.body.style.userSelect = ''
+  }
+})

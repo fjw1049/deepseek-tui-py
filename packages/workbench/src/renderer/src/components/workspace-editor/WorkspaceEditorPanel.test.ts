@@ -5,7 +5,8 @@ import { expect, it, vi } from 'vitest'
 import { WorkspaceEditorPanel } from './WorkspaceEditorPanel'
 import { useWorkspaceEditorStore } from '../../store/workspace-editor-store'
 
-vi.mock('react-i18next', async (importOriginal) => ({ ...await importOriginal<typeof import('react-i18next')>(), useTranslation: () => ({ t: (key: string) => key }) }))
+const { t } = vi.hoisted(() => ({ t: (key: string) => key }))
+vi.mock('react-i18next', async (importOriginal) => ({ ...await importOriginal<typeof import('react-i18next')>(), useTranslation: () => ({ t }) }))
 vi.mock('../../store/chat-store', () => ({ useChatStore: (select: (state: unknown) => unknown) => select({ workspaceDirtyTick: 0 }) }))
 vi.mock('../../hooks/use-git-working-changes', () => ({ useGitWorkingChanges: () => ({ result: null, reload: vi.fn() }) }))
 vi.mock('./WorkspaceEditorSurface', () => ({ WorkspaceEditorSurface: () => createElement('div', null, 'file contents') }))
