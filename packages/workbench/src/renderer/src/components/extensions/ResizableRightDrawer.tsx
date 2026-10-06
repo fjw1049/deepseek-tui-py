@@ -19,20 +19,20 @@ function clampDrawerWidth(width: number, viewport = window.innerWidth): number {
   return Math.min(max, Math.max(MIN_WIDTH, Math.round(width)))
 }
 
-function loadDrawerWidth(): number {
+function loadDrawerWidth(storageKey: string, initialWidth?: number): number {
   try {
-    const raw = window.localStorage.getItem(WIDTH_KEY)
+    const raw = window.localStorage.getItem(storageKey)
     const parsed = raw ? Number(raw) : NaN
     if (Number.isFinite(parsed) && parsed > 0) return clampDrawerWidth(parsed)
   } catch {
     /* localStorage may be unavailable */
   }
-  return clampDrawerWidth(window.innerWidth * INITIAL_FRACTION)
+  return clampDrawerWidth(initialWidth ?? window.innerWidth * INITIAL_FRACTION)
 }
 
-function saveDrawerWidth(width: number): void {
+function saveDrawerWidth(storageKey: string, width: number): void {
   try {
-    window.localStorage.setItem(WIDTH_KEY, String(width))
+    window.localStorage.setItem(storageKey, String(width))
   } catch {
     /* localStorage may be unavailable */
   }
@@ -41,11 +41,13 @@ function saveDrawerWidth(width: number): void {
 type Props = {
   onClose: () => void
   children: ReactNode
+  storageKey?: string
+  initialWidth?: number
 }
 
-export function ResizableRightDrawer({ onClose, children }: Props): ReactElement {
+export function ResizableRightDrawer({ onClose, children, storageKey = WIDTH_KEY, initialWidth }: Props): ReactElement {
   const { t } = useTranslation('common')
-  const [width, setWidth] = useState(() => loadDrawerWidth())
+  const [width, setWidth] = useState(() => loadDrawerWidth(storageKey, initialWidth))
   const endResizeRef = useRef<(() => void) | null>(null)
   useEffect(() => () => endResizeRef.current?.(), [])
 
@@ -101,7 +103,7 @@ export function ResizableRightDrawer({ onClose, children }: Props): ReactElement
       }
       setWidth((current) => {
         const clamped = clampDrawerWidth(current)
-        saveDrawerWidth(clamped)
+        saveDrawerWidth(storageKey, clamped)
         return clamped
       })
     }
@@ -110,7 +112,7 @@ export function ResizableRightDrawer({ onClose, children }: Props): ReactElement
     window.addEventListener('pointerup', onUp)
     window.addEventListener('pointercancel', onUp)
     window.addEventListener('blur', onUp)
-  }, [width])
+  }, [storageKey, width])
 
   return (
     <>
@@ -128,7 +130,7 @@ export function ResizableRightDrawer({ onClose, children }: Props): ReactElement
           role="separator"
           aria-orientation="vertical"
           aria-label={t('marketplaceDrawerResize')}
-          className="absolute inset-y-0 left-0 z-10 w-2 cursor-col-resize hover:bg-accent/20"
+          className="absolute inset-y-0 left-0 z-10 w-2 cursor-col-resize touch-none hover:bg-accent/20"
           onPointerDown={beginResize}
         />
         {children}

@@ -43,6 +43,7 @@ import {
   type ChannelDeliveryState
 } from '../../lib/resolve-channel-delivery'
 import { SettingsSelect } from '../settings/SettingsSelect'
+import { ResizableRightDrawer } from '../extensions/ResizableRightDrawer'
 import { AutomationListCard } from './AutomationListCard'
 import { AutomationTaskForm } from './AutomationTaskForm'
 
@@ -749,15 +750,12 @@ export function AutomationCenter({
           index.css). */}
       {selected
         ? createPortal(
-        <>
-          <button
-            type="button"
-            aria-label={t('automationCloseDetail')}
-            className="fixed inset-0 z-[80] bg-black/20 dark:bg-black/40"
-            onClick={() => setSelectedId(null)}
-          />
-          <div className="ds-automation-drawer fixed inset-y-0 right-0 z-[90] flex w-full max-w-[440px] flex-col">
-            <div className="flex items-start justify-between border-b border-ds-border-muted px-5 py-4">
+        <ResizableRightDrawer
+          onClose={() => setSelectedId(null)}
+          storageKey="deepseekgui.automation.drawerWidth"
+          initialWidth={440}
+        >
+            <div className="flex items-start justify-between gap-3 border-b border-ds-border-muted px-5 py-4">
               <div className="min-w-0">
                 <h2 className="truncate text-[16px] font-semibold text-ds-ink">{selected.name}</h2>
                 <p className="mt-1 text-[12px] text-ds-muted">
@@ -772,11 +770,11 @@ export function AutomationCenter({
               <button
                 type="button"
                 title={t('automationCloseDetail')}
+                aria-label={t('automationCloseDetail')}
                 onClick={() => setSelectedId(null)}
-                className="inline-flex shrink-0 items-center gap-1 rounded-md border border-ds-border px-2.5 py-1.5 text-[12px] text-ds-muted hover:bg-ds-hover"
+                className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-ds-border text-ds-muted hover:bg-ds-hover"
               >
                 <X className="h-3.5 w-3.5" />
-                {t('automationCloseDetail')}
               </button>
             </div>
           <div className="min-h-0 flex-1 overflow-auto p-5">
@@ -883,8 +881,7 @@ export function AutomationCenter({
               )}
             </div>
           </div>
-          </div>
-        </>,
+        </ResizableRightDrawer>,
         document.body
       )
         : null}
