@@ -240,7 +240,7 @@ function StepRow({
                     : [
                         'truncate text-ds-ink',
                         compact
-                          ? 'text-[11.5px] leading-4'
+                          ? 'text-[12px] leading-4'
                           : 'text-[12.5px] leading-5'
                       ].join(' ')
               ].join(' ')}
@@ -252,7 +252,7 @@ function StepRow({
               <span
                 className={[
                   'mt-0.5 block truncate text-ds-faint',
-                  compact ? 'text-[10.5px] leading-4' : 'text-[11px] leading-4'
+                  compact ? 'text-[12px] leading-4' : 'text-[12px] leading-4'
                 ].join(' ')}
                 title={batchPreview}
               >
@@ -263,7 +263,7 @@ function StepRow({
               <span
                 className={[
                   'mt-0.5 block truncate text-ds-muted',
-                  compact ? 'text-[10.5px] leading-4' : 'text-[11px] leading-4'
+                  compact ? 'text-[12px] leading-4' : 'text-[12px] leading-4'
                 ].join(' ')}
                 title={item.detail}
               >
@@ -271,7 +271,7 @@ function StepRow({
               </span>
             ) : null}
             {item.meta && !compact && !isNarration && !isBatch ? (
-              <span className="mt-0.5 block truncate text-[10.5px] tabular-nums text-ds-faint">
+              <span className="mt-0.5 block truncate text-[12px] tabular-nums text-ds-faint">
                 {formatMeta(item.meta)}
               </span>
             ) : null}
@@ -301,7 +301,7 @@ function StepRow({
                   {batchEntries!.map((entry, idx) => (
                     <li
                       key={`${entry.toolName}-${idx}-${entry.target}`}
-                      className="flex gap-2 py-0.5 text-[11.5px] leading-[1.45]"
+                      className="flex gap-2 py-0.5 text-[12px] leading-[1.45]"
                     >
                       <span className="shrink-0 font-medium text-ds-faint">
                         {t(probeKindLabelKey(entry.kind))}
@@ -316,15 +316,15 @@ function StepRow({
             ) : null}
             {!hasTypedBatch && hasBody && body ? (
               <div className="mx-1 mb-1.5 overflow-hidden rounded-[12px] bg-black/[0.03] dark:bg-white/[0.04]">
-                <div className="px-3 pb-1 pt-2 text-[10.5px] font-semibold tracking-[0.02em] text-ds-muted">
+                <div className="px-3 pb-1 pt-2 text-[12px] font-semibold tracking-[0.02em] text-ds-muted">
                   {t('stepFlowSummary')}
                 </div>
-                <pre className="max-h-44 overflow-auto px-3 pb-2.5 font-mono text-[11.5px] leading-[1.45] text-ds-ink/90 whitespace-pre-wrap break-words">
+                <pre className="max-h-44 overflow-auto px-3 pb-2.5 font-mono text-[12px] leading-[1.45] text-ds-ink/90 whitespace-pre-wrap break-words">
                   {body}
                 </pre>
                 {item.input?.trim() && item.output?.trim() ? (
                   <details className="border-t border-ds-border/40 px-3 py-2">
-                    <summary className="cursor-pointer text-[11px] font-medium text-ds-faint hover:text-ds-muted">
+                    <summary className="cursor-pointer text-[12px] font-medium text-ds-faint hover:text-ds-muted">
                       {t('stepFlowMoreDetail')}
                     </summary>
                     <div className="mt-2 space-y-2">
@@ -372,7 +372,7 @@ function DetailBlock({
   return (
     <div>
       <div className="mb-0.5 text-[10px] font-semibold text-ds-faint">{label}</div>
-      <pre className="max-h-36 overflow-auto font-mono text-[11px] leading-[1.45] text-ds-ink/85 whitespace-pre-wrap break-words">
+      <pre className="max-h-36 overflow-auto font-mono text-[12px] leading-[1.45] text-ds-ink/85 whitespace-pre-wrap break-words">
         {children}
       </pre>
     </div>

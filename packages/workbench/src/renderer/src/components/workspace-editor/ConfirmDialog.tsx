@@ -96,8 +96,8 @@ export function ConfirmDialog({
           <button
             type="button"
             onClick={onConfirm}
-            className={`inline-flex h-8 items-center justify-center rounded-lg px-3 text-[13.5px] font-medium text-white transition active:scale-[0.98] ${
-              destructive ? 'bg-red-600 hover:bg-red-500' : 'bg-accent hover:bg-accent/85'
+            className={`inline-flex h-8 items-center justify-center rounded-lg px-3 text-[13.5px] font-medium transition active:scale-[0.98] ${
+              destructive ? 'bg-red-600 text-white hover:bg-red-500' : 'bg-accent text-accent-foreground hover:bg-accent/85'
             }`}
           >
             {confirmLabel}

@@ -2369,7 +2369,7 @@ function UserMessageBubble({
               onClick={() => void requestResend()}
               disabled={actionsDisabled}
               title={t('rewindResendHint')}
-              className="inline-flex items-center gap-1.5 rounded-md bg-accent px-3 py-1 text-[13px] font-medium text-white shadow-sm transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 rounded-md bg-accent px-3 py-1 text-[13px] font-medium text-accent-foreground shadow-sm transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {previewing ? (
                 <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={2} aria-hidden />
@@ -2501,7 +2501,7 @@ function UserMessageBubble({
                         autoFocus
                         onClick={() => void commitResend(true, forceConflicts)}
                         disabled={submitting}
-                        className="rounded-md bg-accent px-3 py-1.5 text-[13px] font-medium text-white shadow-sm transition hover:brightness-110 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50"
+                        className="rounded-md bg-accent px-3 py-1.5 text-[13px] font-medium text-accent-foreground shadow-sm transition hover:brightness-110 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50"
                       >
                         {hasSkipped || hasMissingRoots || hasNoCheckpoint
                           ? t('rewindResendConfirmRestoreAvailable')
@@ -2823,7 +2823,7 @@ function MessageBubble({
           <div className="ds-assistant-message-receipt mt-4">{afterContent}</div>
         ) : null}
         {!streaming ? (
-          <div className="ds-assistant-message-meta mt-1 flex min-h-5 min-w-0 items-center justify-between gap-3 text-[11.5px] text-ds-faint opacity-0 transition duration-150 group-hover/message:opacity-100">
+          <div className="ds-assistant-message-meta mt-1 flex min-h-5 min-w-0 items-center justify-between gap-3 text-[11.5px] text-ds-faint opacity-0 transition duration-150 group-hover/message:opacity-100 group-focus-within/message:opacity-100">
             <span className="min-w-0 truncate">{createdAtLabel ?? ''}</span>
             <div className="flex items-center gap-1.5">
               {!scope ? <ForkFromHereButton itemId={block.id} /> : null}

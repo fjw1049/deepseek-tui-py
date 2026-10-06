@@ -55,7 +55,7 @@ export function ElevationBubble({ block }: { block: ElevationBlock }): ReactElem
           <button
             type="button"
             disabled={block.submitting}
-            className="rounded-[10px] bg-accent px-3.5 py-1.5 text-[13px] font-medium text-white shadow-sm transition hover:brightness-[1.06] active:brightness-95"
+            className="rounded-[10px] bg-accent px-3.5 py-1.5 text-[13px] font-medium text-accent-foreground shadow-sm transition hover:brightness-[1.06] active:brightness-95"
             onClick={onAllow}
           >
             {t(block.submitting ? 'approvalApproving' : 'elevationAllowOnce')}

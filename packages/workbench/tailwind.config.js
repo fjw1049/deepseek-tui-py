@@ -11,7 +11,7 @@ export default {
       colors: {
         accent: {
           DEFAULT: 'var(--ds-accent)',
-          foreground: '#ffffff',
+          foreground: 'var(--ds-accent-foreground)',
           soft: 'var(--ds-accent-soft)'
         },
         background: 'var(--ds-bg-canvas)',
@@ -24,7 +24,7 @@ export default {
         sidebar: 'var(--ds-surface-subtle)',
         primary: {
           DEFAULT: 'var(--ds-accent)',
-          foreground: '#ffffff'
+          foreground: 'var(--ds-accent-foreground)'
         },
         ds: {
           main: 'var(--ds-bg-main)',

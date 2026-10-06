@@ -521,10 +521,10 @@ function InspectorGitActions({
             </button>
           </div>
           <div className="mt-2 grid grid-cols-2 gap-1.5">
-            <button type="button" disabled={busyAction !== null || !message.trim()} onClick={() => void submit(false)} className={`inline-flex h-8 items-center justify-center rounded-lg text-[13.5px] font-medium active:scale-[0.98] disabled:opacity-40 ${commitPushPreferred ? 'bg-ds-hover text-ds-ink' : 'bg-accent text-white'}`}>
+            <button type="button" disabled={busyAction !== null || !message.trim()} onClick={() => void submit(false)} className={`inline-flex h-8 items-center justify-center rounded-lg text-[13.5px] font-medium active:scale-[0.98] disabled:opacity-40 ${commitPushPreferred ? 'bg-ds-hover text-ds-ink' : 'bg-accent text-accent-foreground'}`}>
               {t('gitCommitLocal')}
             </button>
-            <button type="button" disabled={busyAction !== null || !message.trim() || !hasRemote} onClick={() => void submit(true)} className={`inline-flex h-8 items-center justify-center gap-1 rounded-lg px-2 text-[13.5px] font-medium active:scale-[0.98] disabled:opacity-40 ${commitPushPreferred ? 'bg-accent text-white' : 'bg-ds-hover text-ds-ink'}`}>
+            <button type="button" disabled={busyAction !== null || !message.trim() || !hasRemote} onClick={() => void submit(true)} className={`inline-flex h-8 items-center justify-center gap-1 rounded-lg px-2 text-[13.5px] font-medium active:scale-[0.98] disabled:opacity-40 ${commitPushPreferred ? 'bg-accent text-accent-foreground' : 'bg-ds-hover text-ds-ink'}`}>
               <CloudUpload className="h-3.5 w-3.5" />
               {t('gitCommitAndPush')}
             </button>

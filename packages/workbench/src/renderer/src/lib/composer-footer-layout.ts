@@ -12,7 +12,7 @@
  *   6. entire model picker
  *   7. voice
  *   8. plus menu
- *   9. send (last)
+ * Send remains available at every width.
  */
 
 export type ComposerFooterTier = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8
@@ -142,7 +142,7 @@ export function composerFooterPlanForWidth(
     showModel: tier < 5,
     showVoice: tier < 6,
     showPlus: tier < 7,
-    showSend: tier < 8
+    showSend: true
   }
 }
 

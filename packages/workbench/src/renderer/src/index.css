@@ -55,6 +55,7 @@
   --ds-bubble-user: rgba(0, 0, 0, 0.06);
   --ds-bubble-user-fg: #1a1a1a;
   --ds-accent: #0088ff;
+  --ds-accent-foreground: #111111;
   --ds-accent-soft: rgba(0, 136, 255, 0.14);
   /*
    * Contribution greens — light mode darkens with activity.
@@ -11715,19 +11716,16 @@ html[data-theme='dark'] .ds-syntax-line span { color: var(--shiki-dark) !importa
 }
 
 /*
- * IDE rail typography — 15px prose and 14px code; proportional headings.
- * Scoped to .ds-ide-chat-rail only; main chat follows the appearance setting.
+ * IDE rail inherits reading sizes; compact chrome retains its local scale.
  *
  * Compact titles and metadata retain the local 13px scale.
  */
 .ds-ide-chat-rail {
-  --ds-answer-font-size: 15px;
-  --ds-chat-font-size: 15px;
-  --ds-chat-code-font-size: 14px;
+  /* Reading sizes inherit the appearance settings in every workspace mode. */
   --ds-ide-font-base: 14px;
   --ds-ide-font-title: 13px;
   --ds-ide-font-meta: 13px;
-  --ds-ide-font-code: 14px;
+  --ds-ide-font-code: var(--ds-chat-code-font-size, 14px);
   --ds-ide-space-block: 0.55rem;
   --ds-ide-card-pad-y: 0.5rem;
   --ds-ide-card-pad-x: 0.65rem;
@@ -12427,3 +12425,25 @@ body:has(.ds-workbench-shell[data-ide-mode]) .ds-project-context-menu :is(input,
   font-size: 12px;
 }
 .ds-diff-fold button:hover { color: var(--ds-text); background: var(--ds-surface-hover); }
+
+/* Settings respond to their available panel width, including a widened sidebar. */
+.ds-settings-page {
+  container-type: inline-size;
+  container-name: settings;
+}
+
+@container settings (max-width: 620px) {
+  .ds-setting-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.75rem;
+  }
+
+  .ds-setting-row > div {
+    width: 100%;
+    min-width: 0;
+    max-width: none;
+    margin-left: 0;
+    padding-right: 0;
+  }
+}

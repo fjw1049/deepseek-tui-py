@@ -220,7 +220,7 @@ export function PublishConflictBanner(): ReactElement | null {
                 onClick={() =>
                   void run(recoveryDecision.choice, recoveryDecision.recoveryToken)
                 }
-                className="rounded-md bg-accent px-2.5 py-1 text-[12px] font-medium text-white transition hover:brightness-110 active:scale-[0.98] disabled:opacity-50"
+                className="rounded-md bg-accent px-2.5 py-1 text-[12px] font-medium text-accent-foreground transition hover:brightness-110 active:scale-[0.98] disabled:opacity-50"
               >
                 {submitting
                   ? t('publishDraftApplying')
@@ -246,7 +246,7 @@ export function PublishConflictBanner(): ReactElement | null {
               data-publish-recovery-choice="use_agent"
               disabled={submitting || busy || waiting}
               onClick={() => chooseRecovery('use_agent')}
-              className="rounded-md bg-accent px-2.5 py-1 text-[12px] font-medium text-white transition hover:brightness-110 active:scale-[0.98] disabled:opacity-50"
+              className="rounded-md bg-accent px-2.5 py-1 text-[12px] font-medium text-accent-foreground transition hover:brightness-110 active:scale-[0.98] disabled:opacity-50"
             >
               {t('publishRecoveryUseAgent')}
             </button>
@@ -258,7 +258,7 @@ export function PublishConflictBanner(): ReactElement | null {
               data-publish-recovery-choice="keep_project"
               disabled={submitting || busy || waiting}
               onClick={() => chooseRecovery('keep_project')}
-              className="rounded-md bg-accent px-2.5 py-1 text-[12px] font-medium text-white transition hover:brightness-110 active:scale-[0.98] disabled:opacity-50"
+              className="rounded-md bg-accent px-2.5 py-1 text-[12px] font-medium text-accent-foreground transition hover:brightness-110 active:scale-[0.98] disabled:opacity-50"
             >
               {t('publishRecoveryKeepProject')}
             </button>
@@ -293,7 +293,7 @@ export function PublishConflictBanner(): ReactElement | null {
             data-publish-missing-retry="true"
             disabled={submitting || busy}
             onClick={() => void retryMissingWorkspace()}
-            className="rounded-md bg-accent px-2.5 py-1 text-[12px] font-medium text-white transition hover:brightness-110 active:scale-[0.98] disabled:opacity-50"
+            className="rounded-md bg-accent px-2.5 py-1 text-[12px] font-medium text-accent-foreground transition hover:brightness-110 active:scale-[0.98] disabled:opacity-50"
           >
             {submitting ? t('publishMissingRetrying') : t('publishMissingRetry')}
           </button>
@@ -321,7 +321,7 @@ export function PublishConflictBanner(): ReactElement | null {
             type="button"
             disabled={submitting || busy}
             onClick={() => void run('apply')}
-            className="rounded-md bg-accent px-2.5 py-1 text-[12px] font-medium text-white transition hover:brightness-110 active:scale-[0.98] disabled:opacity-50"
+            className="rounded-md bg-accent px-2.5 py-1 text-[12px] font-medium text-accent-foreground transition hover:brightness-110 active:scale-[0.98] disabled:opacity-50"
           >
             {submitting ? t('publishDraftApplying') : t('publishSyncRetry')}
           </button>
@@ -386,7 +386,7 @@ export function PublishConflictBanner(): ReactElement | null {
           type="button"
           disabled={submitting || busy || waiting}
           onClick={() => void run('use_agent')}
-          className="rounded-md bg-accent px-2.5 py-1 text-[12px] font-medium text-white transition hover:brightness-110 active:scale-[0.98] disabled:opacity-50"
+          className="rounded-md bg-accent px-2.5 py-1 text-[12px] font-medium text-accent-foreground transition hover:brightness-110 active:scale-[0.98] disabled:opacity-50"
         >
           {submitting ? t('publishDraftApplying') : t('publishConflictUseAgent')}
         </button>

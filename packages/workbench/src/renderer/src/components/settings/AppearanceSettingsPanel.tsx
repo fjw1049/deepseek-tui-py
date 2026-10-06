@@ -195,23 +195,6 @@ export function AppearanceSettingsPanel({ form, onPatch }: Props): ReactElement 
         />
       </Card>
 
-      {variantOrder.map((variant) => (
-        <ThemePackCard
-          key={variant}
-          variant={variant}
-          theme={appearance.themes[variant]}
-          translucency={appearance.translucency[variant]}
-          isActive={resolvedVariant === variant}
-          mode={form.theme}
-          onThemePatch={(patch) => onAppearancePatch({ themes: { [variant]: patch } })}
-          onThemeReplace={(theme) => onAppearancePatch({ themes: { [variant]: theme } })}
-          onTranslucencyPatch={(patch) => onAppearancePatch({ translucency: { [variant]: patch } })}
-          onReset={() => onAppearancePatch({
-            themes: { [variant]: { ...DEFAULT_CHROME_THEMES[variant] } },
-            translucency: { [variant]: { ...DEFAULT_WINDOW_TRANSLUCENCY } }
-          })}
-        />
-      ))}
 
       <Card>
         <Row
@@ -301,6 +284,24 @@ export function AppearanceSettingsPanel({ form, onPatch }: Props): ReactElement 
           />
         ) : null}
       </Card>
+
+      {variantOrder.map((variant) => (
+        <ThemePackCard
+          key={variant}
+          variant={variant}
+          theme={appearance.themes[variant]}
+          translucency={appearance.translucency[variant]}
+          isActive={resolvedVariant === variant}
+          mode={form.theme}
+          onThemePatch={(patch) => onAppearancePatch({ themes: { [variant]: patch } })}
+          onThemeReplace={(theme) => onAppearancePatch({ themes: { [variant]: theme } })}
+          onTranslucencyPatch={(patch) => onAppearancePatch({ translucency: { [variant]: patch } })}
+          onReset={() => onAppearancePatch({
+            themes: { [variant]: { ...DEFAULT_CHROME_THEMES[variant] } },
+            translucency: { [variant]: { ...DEFAULT_WINDOW_TRANSLUCENCY } }
+          })}
+        />
+      ))}
 
       <SectionLabel>{t('appearanceSectionTime')}</SectionLabel>
 
@@ -920,7 +921,7 @@ function Row({
   controlMaxWidth?: string
 }): ReactElement {
   return (
-    <div className="ds-density-row flex flex-col gap-3 px-3 py-4 sm:flex-row sm:items-center sm:justify-between sm:gap-8">
+    <div className="ds-setting-row ds-density-row flex flex-col gap-3 px-3 py-4 sm:flex-row sm:items-center sm:justify-between sm:gap-8">
       <div className="min-w-0 flex-1">
         <div className="text-[14px] font-semibold leading-none text-ds-ink">{title}</div>
         {description ? (

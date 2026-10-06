@@ -77,6 +77,6 @@ describe('composerFooterPlanForWidth', () => {
     expect(composerFooterPlanForWidth(160).showPlus).toBe(false)
     expect(composerFooterPlanForWidth(160).showSend).toBe(true)
 
-    expect(composerFooterPlanForWidth(120).showSend).toBe(false)
+    expect(composerFooterPlanForWidth(120).showSend).toBe(true)
   })
 })

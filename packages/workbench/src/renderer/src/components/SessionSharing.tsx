@@ -30,7 +30,7 @@ export function SessionSharing({ incomingUrl, onDismiss }: { incomingUrl?: strin
   const trigger = useRef<HTMLButtonElement>(null)
   const field = 'w-full rounded-lg border border-ds-border bg-ds-elevated px-3 py-2 text-sm text-ds-ink'
   const button = 'rounded-lg border border-ds-border px-3 py-2 text-sm text-ds-ink hover:bg-ds-subtle disabled:opacity-40'
-  const primary = `${button} bg-accent text-white hover:bg-accent/90`
+  const primary = `${button} bg-accent text-accent-foreground hover:bg-accent/90`
   const errorMessage = useCallback((e: unknown): string => {
     if (e instanceof SharingError) {
       if ([404, 410].includes(e.status)) return t('sharing.linkUnavailable')

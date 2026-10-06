@@ -1,3 +1,4 @@
+import { CHAT_READING_MIN_WIDTH, RIGHT_PANEL_MIN, resolveRightPanelLayout } from '../lib/workbench-pane-layout'
 import { GlobalFeedbackViewport } from './GlobalFeedback'
 import { useFeedbackStore } from '../store/feedback-store'
 import { createConversationInSplit } from '../lib/chat-split-navigation'
@@ -134,10 +135,8 @@ const RIGHT_PANEL_DEFAULT = RIGHT_CONTEXT_DEFAULT
 const RIGHT_PANEL_HALF_RATIO = 0.5
 const LEFT_PANEL_MIN = 236
 const LEFT_PANEL_MAX = 500
-const RIGHT_PANEL_MIN = 260
 const MAIN_MIN_WIDTH = 560
 const SHELL_ITEM_GAP = 8
-const CHAT_HIDE_THRESHOLD = 48
 
 function clampWidth(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value))
@@ -164,18 +163,6 @@ function measureMainWidth(
   return Math.max(0, shellWidth - (leftVisible ? leftWidth : 0) - sideGap)
 }
 
-function resolveRightPanelLayout(
-  mainWidth: number,
-  requestedRight: number
-): { rightWidth: number; chatHidden: boolean } {
-  const maxRight = Math.max(RIGHT_PANEL_MIN, mainWidth)
-  const clamped = clampWidth(requestedRight, RIGHT_PANEL_MIN, maxRight)
-  const remainingChat = mainWidth - clamped
-  if (remainingChat <= CHAT_HIDE_THRESHOLD) {
-    return { rightWidth: mainWidth, chatHidden: true }
-  }
-  return { rightWidth: clamped, chatHidden: false }
-}
 
 function resolveLeftPanelWidth(
   shellWidth: number,
@@ -213,7 +200,7 @@ function fitWorkbenchWidths(
 }
 
 function resolveHalfRightWidth(mainWidth: number): number {
-  const maxSplit = Math.max(RIGHT_PANEL_MIN, mainWidth - CHAT_HIDE_THRESHOLD - 1)
+  const maxSplit = Math.max(RIGHT_PANEL_MIN, mainWidth - CHAT_READING_MIN_WIDTH)
   return clampWidth(Math.round(mainWidth * RIGHT_PANEL_HALF_RATIO), RIGHT_PANEL_MIN, maxSplit)
 }
 
@@ -382,6 +369,7 @@ export function Workbench(): ReactElement {
   )
   const [runtimeDiagnosticsOpen, setRuntimeDiagnosticsOpen] = useState(false)
   const [chatColumnHidden, setChatColumnHidden] = useState(false)
+  const autoHiddenRightWidthRef = useRef<number | null>(null)
   const [layoutMode, setLayoutMode] = useState<WorkbenchLayoutMode>('chat')
   const [ideVisited, setIdeVisited] = useState(false)
   const layoutAnimationRef = useRef<Animation | null>(null)
@@ -805,6 +793,7 @@ export function Workbench(): ReactElement {
   }, [activeWorkspaceRoot, bottomTerminalOpen, closeRightSidebar, terminalSidebarOpen])
 
   const toggleRightSidebarMaximize = useCallback((): void => {
+    autoHiddenRightWidthRef.current = null
     const mainWidth = readMainRowWidth(
       shellRef,
       mainRowRef,
@@ -1238,10 +1227,13 @@ export function Workbench(): ReactElement {
     const sync = (): void => {
       const containerWidth = shellRef.current?.clientWidth ?? window.innerWidth
       const measuredMain = mainRowRef.current?.clientWidth ?? null
+      const tooNarrow = (measuredMain ?? measureMainWidth(containerWidth, !leftSidebarHidden, leftSidebarWidth)) < RIGHT_PANEL_MIN + CHAT_READING_MIN_WIDTH
+      const requestedRight = !tooNarrow && autoHiddenRightWidthRef.current !== null
+        ? autoHiddenRightWidthRef.current : rightSidebarWidth
       const next = fitWorkbenchWidths(
         containerWidth,
         leftSidebarWidth,
-        rightSidebarWidth,
+        requestedRight,
         {
           leftPanelVisible: !leftSidebarHidden,
           rightPanelVisible
@@ -1254,11 +1246,16 @@ export function Workbench(): ReactElement {
       // the stored right width — that would un-hide a white chat sliver
       // beside the editor. Keep fill-width while the right panel is still
       // filling; if it closes or collapses, fall through so chat returns.
-      if (chatColumnHidden && rightPanelVisible) {
+      if (chatColumnHidden && rightPanelVisible && autoHiddenRightWidthRef.current === null) {
         if (measuredMain != null && measuredMain !== rightSidebarWidth) {
           setRightSidebarWidth(measuredMain)
         }
         return
+      }
+      if (rightPanelVisible && tooNarrow && autoHiddenRightWidthRef.current === null) {
+        autoHiddenRightWidthRef.current = rightSidebarWidth
+      } else if (!rightPanelVisible || !tooNarrow) {
+        autoHiddenRightWidthRef.current = null
       }
       if (rightPanelVisible && next.right !== rightSidebarWidth) {
         setRightSidebarWidth(next.right)

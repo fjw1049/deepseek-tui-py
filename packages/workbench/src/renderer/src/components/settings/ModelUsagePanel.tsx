@@ -72,7 +72,7 @@ export function ModelUsagePanel({
                 className={[
                   'rounded-full px-2.5 py-1 text-[11.5px] font-medium transition',
                   range === item.value
-                    ? 'bg-accent text-white shadow-sm'
+                    ? 'bg-accent text-accent-foreground shadow-sm'
                     : 'text-ds-muted hover:text-ds-ink'
                 ].join(' ')}
               >

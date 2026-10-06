@@ -433,7 +433,7 @@ function InstallPluginPopover({
         type="button"
         onClick={() => void submit()}
         disabled={!spec.trim() || submitting}
-        className="ds-ext-primary-action mt-4 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-accent px-3 py-2 text-[13px] font-semibold leading-none text-white shadow-sm transition hover:brightness-110 disabled:opacity-60"
+        className="ds-ext-primary-action mt-4 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-accent px-3 py-2 text-[13px] font-semibold leading-none text-accent-foreground shadow-sm transition hover:brightness-110 disabled:opacity-60"
       >
         {submitting ? <Loader2 className="h-4 w-4 animate-spin" strokeWidth={2} /> : null}
         {t('pluginSysInstall')}

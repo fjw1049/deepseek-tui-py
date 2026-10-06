@@ -1243,7 +1243,7 @@ function SettingRow({
 
   return (
     <div
-      className={`ds-density-row flex ${
+      className={`ds-setting-row ds-density-row flex ${
         wideControl
           ? 'flex-col gap-3.5 px-3 py-4 sm:px-4'
           : relaxed

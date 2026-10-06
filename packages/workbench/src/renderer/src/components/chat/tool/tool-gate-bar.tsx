@@ -84,7 +84,7 @@ function ElevationActions({ block }: { block: ElevationGate }): ReactElement {
         <button
           type="button"
           disabled={submitting || block.submitting}
-          className="rounded-xl bg-accent px-3 py-1.5 text-[12px] font-medium text-white transition hover:brightness-[1.06] disabled:pointer-events-none disabled:opacity-50"
+          className="rounded-xl bg-accent px-3 py-1.5 text-[12px] font-medium text-accent-foreground transition hover:brightness-[1.06] disabled:pointer-events-none disabled:opacity-50"
           onClick={() => {
             if (submitting) return
             setSubmitting(true)

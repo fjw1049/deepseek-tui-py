@@ -71,6 +71,7 @@ export function ResizableFullscreenDialog({
 }: Props): ReactElement | null {
   const dialogId = useId()
   const bodyRef = useRef<HTMLDivElement>(null)
+  const panelRef = useRef<HTMLDivElement>(null)
   const [size, setSize] = useState<Size>(() => defaultSize())
   const [stackDepth, setStackDepth] = useState(0)
   const armedRef = useRef(false)
@@ -98,11 +99,28 @@ export function ResizableFullscreenDialog({
     openStack.push(dialogId)
     setStackDepth(openStack.length)
 
+    const previousFocus = document.activeElement as HTMLElement | null
+    panelRef.current?.focus()
     const onKey = (event: KeyboardEvent): void => {
-      if (event.key !== 'Escape') return
       if (openStack[openStack.length - 1] !== dialogId) return
-      event.stopPropagation()
-      onClose()
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        event.stopPropagation()
+        onClose()
+      }
+      if (event.key === 'Tab') {
+        const panel = panelRef.current
+        const controls = Array.from(panel?.querySelectorAll<HTMLElement>(
+          'button:not(:disabled), a[href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])'
+        ) ?? []).filter((node) => !node.closest('[hidden], [inert]') && getComputedStyle(node).display !== 'none')
+        const first = controls[0]
+        const last = controls[controls.length - 1]
+        if (!first || document.activeElement === panel || !panel?.contains(document.activeElement) ||
+          (event.shiftKey ? document.activeElement === first : document.activeElement === last)) {
+          event.preventDefault()
+          ;((event.shiftKey ? last : first) ?? panel)?.focus()
+        }
+      }
     }
     window.addEventListener('keydown', onKey, true)
     const prevOverflow = document.body.style.overflow
@@ -115,6 +133,7 @@ export function ResizableFullscreenDialog({
       if (index >= 0) openStack.splice(index, 1)
       if (openStack.length === 0) document.body.style.overflow = prevOverflow
       armedRef.current = false
+      if (previousFocus?.isConnected) previousFocus.focus()
     }
   }, [dialogId, open, onClose])
 
@@ -215,6 +234,8 @@ export function ResizableFullscreenDialog({
       onMouseDown={onBackdropMouseDown}
     >
       <div
+        ref={panelRef}
+        tabIndex={-1}
         className={`${panelClassName} ds-expand-panel`}
         style={panelStyle}
         onMouseDown={(event) => event.stopPropagation()}

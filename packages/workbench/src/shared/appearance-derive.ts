@@ -13,6 +13,7 @@
 import {
   CONTRAST_BASELINE,
   DEFAULT_WINDOW_TRANSLUCENCY,
+  pickReadableTextColor,
   type AppearanceSettingsV1,
   type ChromeThemeV1,
   type ThemeVariant,
@@ -128,7 +129,7 @@ export function buildChromeThemeCssVars(
 
   // Text tiers.
   const textSecondary = rgba(ink, 0.65 + c * 0.1)
-  const textTertiary = rgba(ink, 0.45 + c * 0.1)
+  const textTertiary = rgba(ink, 0.60 + c * 0.1)
 
   // Borders. Dark runs noticeably softer than Synara's base derivation: white
   // hairlines glare on near-black grounds, so hairlines carry less alpha and
@@ -175,7 +176,7 @@ export function buildChromeThemeCssVars(
     '--text-primary': theme.ink,
     '--text-secondary': textSecondary,
     '--text-tertiary': textTertiary,
-    '--text-placeholder': rgba(ink, 0.42 + c * 0.08),
+    '--text-placeholder': rgba(ink, 0.60 + c * 0.08),
 
     '--ds-surface-subtle': hex(mixRgb(canvasBg, anchor, light ? 0.09 : 0.04 + c * 0.04)),
     '--ds-surface-hover': rgba(ink, light ? 0.05 : 0.1),
@@ -184,6 +185,7 @@ export function buildChromeThemeCssVars(
     '--ds-bubble-user-fg': theme.ink,
 
     '--ds-accent': hex(accentDisplay),
+    '--ds-accent-foreground': pickReadableTextColor(hex(accentDisplay)),
     '--ds-accent-soft': rgba(accentDisplay, light ? 0.14 : 0.18),
     '--ds-selection': rgba(accentDisplay, light ? 0.18 : 0.24),
 

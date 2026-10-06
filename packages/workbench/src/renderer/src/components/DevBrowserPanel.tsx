@@ -1326,7 +1326,7 @@ export function DevBrowserPanel({
             <button
               type="button"
               onClick={() => loadUrl(DEFAULT_DEV_PREVIEW_URL)}
-              className="mt-1 rounded-full bg-accent px-4 py-2 text-[12.5px] font-semibold text-white"
+              className="mt-1 rounded-full bg-accent px-4 py-2 text-[12.5px] font-semibold text-accent-foreground"
             >
               {t('browserOpenDefault')}
             </button>
@@ -1358,7 +1358,7 @@ export function DevBrowserPanel({
             <button
               type="button"
               onClick={() => openExternalUrl(activeUrl)}
-              className="mt-1 inline-flex items-center gap-1.5 rounded-full bg-accent px-4 py-2 text-[12.5px] font-semibold text-white"
+              className="mt-1 inline-flex items-center gap-1.5 rounded-full bg-accent px-4 py-2 text-[12.5px] font-semibold text-accent-foreground"
             >
               <ExternalLink className="h-3.5 w-3.5" strokeWidth={1.85} />
               {t('browserOpenExternal')}

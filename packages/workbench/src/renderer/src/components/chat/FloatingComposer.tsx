@@ -2630,7 +2630,7 @@ export function FloatingComposer({
                     type="button"
                     disabled={primaryActionDisabled}
                     onClick={handleSendClick}
-                    className={`ds-no-drag flex shrink-0 items-center justify-center rounded-full border border-accent/15 bg-accent text-white shadow-[0_10px_24px_rgba(79,124,255,0.28)] transition hover:brightness-110 disabled:cursor-not-allowed disabled:border-transparent disabled:bg-transparent disabled:text-ds-faint disabled:shadow-none ${
+                    className={`ds-no-drag flex shrink-0 items-center justify-center rounded-full border border-accent/15 bg-accent text-accent-foreground shadow-[0_10px_24px_rgba(79,124,255,0.28)] transition hover:brightness-110 disabled:cursor-not-allowed disabled:border-transparent disabled:bg-transparent disabled:text-ds-faint disabled:shadow-none ${
                       compactChrome ? 'h-7 w-7' : 'h-9 w-9'
                     }`}
                     aria-label={primaryActionLabel}
