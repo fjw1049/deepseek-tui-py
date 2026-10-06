@@ -42,10 +42,10 @@ export function applyUiFontScale(scale: UiFontScale): void {
   const root = document.documentElement
   const factor =
     scale === 'small'
-      ? '0.92'
+      ? '0.83'
       : scale === 'large'
-        ? '1.1'
-        : '1'
+        ? '0.95'
+        : '0.88'
   root.style.setProperty('--ds-ui-scale', factor)
 }
 
