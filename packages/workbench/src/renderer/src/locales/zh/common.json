@@ -1,4 +1,10 @@
 {
+  "codeDownload": "下载代码",
+  "codeCopy": "复制代码",
+  "codeFullscreen": "全屏查看代码",
+  "codeExpand": "展开代码",
+  "codeCollapse": "收起代码",
+  "interruptPending": "正在停止…",
   "viewLoading": "加载中…",
   "workspaceEditorHideFiles": "收起文件",
   "workspaceEditorBrowseFiles": "浏览文件",

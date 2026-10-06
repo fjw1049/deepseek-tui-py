@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next'
 import { copyText } from '../../lib/copy-text'
 import { useConversationScope } from './conversation-scope'
 import {
@@ -237,6 +238,7 @@ export function SharedCodeBlock({
   actionsDisabled = false,
   className
 }: SharedCodeBlockProps): ReactElement {
+  const { t } = useTranslation('common')
   const scope = useConversationScope()
   const mainBusy = useChatStore((s) => s.busy)
   const busy = scope?.active ?? mainBusy
@@ -328,8 +330,8 @@ export function SharedCodeBlock({
       <button
         type="button"
         className="ds-code-block-action"
-        title="Download code"
-        aria-label="Download code"
+        title={t('codeDownload')}
+        aria-label={t('codeDownload')}
         onClick={() => downloadCode(trimmedCode, language, resolvedDownloadName)}
         disabled={actionsDisabled}
       >
@@ -338,8 +340,8 @@ export function SharedCodeBlock({
       <button
         type="button"
         className="ds-code-block-action"
-        title="Copy code"
-        aria-label="Copy code"
+        title={isCopied ? t('copySuccess') : t('codeCopy')}
+        aria-label={isCopied ? t('copySuccess') : t('codeCopy')}
         onClick={() => void handleCopy()}
         disabled={actionsDisabled}
       >
@@ -352,8 +354,8 @@ export function SharedCodeBlock({
       <button
         type="button"
         className="ds-code-block-action"
-        title="Expand code"
-        aria-label="Expand code"
+        title={t('codeFullscreen')}
+        aria-label={t('codeFullscreen')}
         onClick={(event) => {
           event.stopPropagation()
           setFullscreen(true)
@@ -366,8 +368,8 @@ export function SharedCodeBlock({
         <button
           type="button"
           className="ds-code-block-action"
-          title={expanded ? 'Collapse code' : 'Expand code'}
-          aria-label={expanded ? 'Collapse code' : 'Expand code'}
+          title={expanded ? t('codeCollapse') : t('codeExpand')}
+          aria-label={expanded ? t('codeCollapse') : t('codeExpand')}
           onClick={() => setExpanded((value) => !value)}
         >
           {expanded ? (
@@ -392,6 +394,7 @@ export function SharedCodeBlock({
 
   return (
     <>
+      <span className="sr-only" role="status">{isCopied ? t('copySuccess') : ''}</span>
       <div
         className={['ds-code-block', className].filter(Boolean).join(' ')}
         data-language={language}
@@ -451,8 +454,8 @@ export function SharedCodeBlock({
               <button
                 type="button"
                 className="ds-code-block-action"
-                title="Download code"
-                aria-label="Download code"
+                title={t('codeDownload')}
+                aria-label={t('codeDownload')}
                 onClick={() => downloadCode(trimmedCode, language, resolvedDownloadName)}
               >
                 <Download className="h-3.5 w-3.5" strokeWidth={1.9} />
@@ -460,8 +463,8 @@ export function SharedCodeBlock({
               <button
                 type="button"
                 className="ds-code-block-action"
-                title="Copy code"
-                aria-label="Copy code"
+                title={isCopied ? t('copySuccess') : t('codeCopy')}
+                aria-label={isCopied ? t('copySuccess') : t('codeCopy')}
                 onClick={() => void handleCopy()}
               >
                 {isCopied ? (
@@ -473,8 +476,8 @@ export function SharedCodeBlock({
               <button
                 type="button"
                 className="ds-code-block-action"
-                title="Close"
-                aria-label="Close"
+                title={t('close')}
+                aria-label={t('close')}
                 onClick={closeFullscreen}
               >
                 <X className="h-3.5 w-3.5" strokeWidth={1.9} />

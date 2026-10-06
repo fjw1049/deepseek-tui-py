@@ -2097,7 +2097,7 @@ export function Workbench(): ReactElement {
           onRemoveQueuedMessage={removeQueuedMessage}
           onWithdrawQueuedMessage={withdrawQueuedMessage}
           onSendQueuedMessageNow={(id) => void sendQueuedMessageNow(id)}
-          onInterrupt={() => void interrupt()}
+          onInterrupt={() => interrupt()}
           focusRequestId={composerFocusRequestId}
           previewPicks={pendingPreviewPicks}
           onRemovePreviewPick={removePendingPreviewPick}

@@ -196,7 +196,7 @@ type Props = {
   onWithdrawQueuedMessage: (id: string) => QueuedComposerMessage | null
   onSendQueuedMessageNow: (id: string) => void
   onSend: (text: string) => Promise<boolean>
-  onInterrupt: () => void
+  onInterrupt: () => void | Promise<void>
   onCompact: () => Promise<void>
   onFork: () => Promise<void>
   onOpenDiff: () => void
@@ -323,6 +323,12 @@ export function FloatingComposer({
   const [footerWidth, setFooterWidth] = useState<number | null>(null)
   const composingRef = useRef(false)
   const lastSendClickAtRef = useRef(0)
+  const interruptRequestRef = useRef<symbol | null>(null)
+  const [interruptPending, setInterruptPending] = useState(false)
+  useEffect(() => {
+    interruptRequestRef.current = null
+    setInterruptPending(false)
+  }, [activeThreadId, busy])
   const speechBaseRef = useRef('')
   const voiceRequestId = useRef(0)
   const [voicePhase, setVoicePhase] = useState<ComposerVoicePhase>('idle')
@@ -1494,8 +1500,20 @@ export function FloatingComposer({
   }
 
   const handleInterruptClick = (): void => {
-    if (Date.now() - lastSendClickAtRef.current < 400) return
-    onInterrupt()
+    if (interruptRequestRef.current || Date.now() - lastSendClickAtRef.current < 400) return
+    const request = Symbol()
+    interruptRequestRef.current = request
+    setInterruptPending(true)
+    void Promise.resolve().then(() => onInterrupt()).catch((error) => {
+      if (interruptRequestRef.current === request) {
+        chatStore.getState().setError(error instanceof Error ? error.message : String(error))
+      }
+    }).finally(() => {
+      if (mountedRef.current && interruptRequestRef.current === request) {
+        interruptRequestRef.current = null
+        setInterruptPending(false)
+      }
+    })
   }
 
   return (
@@ -2617,13 +2635,17 @@ export function FloatingComposer({
                   <button
                     type="button"
                     onClick={handleInterruptClick}
+                    disabled={interruptPending}
+                    aria-busy={interruptPending}
                     className={`ds-no-drag flex shrink-0 items-center justify-center rounded-full border border-red-500/45 bg-red-500/15 text-red-600 shadow-sm transition hover:bg-red-500/25 hover:text-red-700 dark:text-red-300 dark:hover:text-red-200 ${
                       compactChrome ? 'h-7 w-7' : 'h-9 w-9'
                     }`}
-                    aria-label={t('interrupt')}
-                    title={t('interrupt')}
+                    aria-label={t(interruptPending ? 'interruptPending' : 'interrupt')}
+                    title={t(interruptPending ? 'interruptPending' : 'interrupt')}
                   >
-                    <Square className="h-3 w-3 fill-current" strokeWidth={2.4} />
+                    {interruptPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : (
+                      <Square className="h-3 w-3 fill-current" strokeWidth={2.4} />
+                    )}
                   </button>
                 ) : (
                   <button

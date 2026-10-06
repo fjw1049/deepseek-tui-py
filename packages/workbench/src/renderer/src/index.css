@@ -5071,6 +5071,7 @@ samp {
 }
 
 .ds-markdown {
+  overflow-wrap: anywhere;
   color: var(--ds-text);
   font-family: var(--font-ui);
   font-size: 15px;
@@ -6013,12 +6014,14 @@ samp {
 
 .ds-markdown .ds-code-block-actions {
   display: flex;
+  flex-shrink: 0;
   align-items: center;
   gap: 0.18rem;
 }
 
 .ds-markdown .ds-code-block-action {
   display: inline-flex;
+  flex-shrink: 0;
   height: 1.35rem;
   width: 1.35rem;
   align-items: center;
@@ -6060,6 +6063,7 @@ samp {
 }
 
 .ds-markdown .ds-code-block-html > pre {
+  overflow-wrap: normal;
   margin: 0;
   width: 100%;
   max-width: 100%;

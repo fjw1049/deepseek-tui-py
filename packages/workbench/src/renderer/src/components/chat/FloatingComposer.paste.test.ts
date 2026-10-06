@@ -46,3 +46,38 @@ it('does not add the previous conversation attachment after switching', async ()
   await act(async () => resolves[0](result('old-chat.txt')))
   expect(host.textContent).not.toContain('old-chat.txt')
 })
+
+it('shows a pending stop and prevents duplicate requests until it settles', async () => {
+  let finish!: () => void
+  const onInterrupt = vi.fn(() => new Promise<void>((resolve) => { finish = resolve }))
+  await act(async () => root.render(createElement(FloatingComposer, { ...props, busy: true, onInterrupt })))
+  const stop = host.querySelector<HTMLButtonElement>('button[aria-busy]')!
+  await act(async () => { stop.click(); stop.click() })
+  expect(onInterrupt).toHaveBeenCalledOnce()
+  expect(stop.disabled).toBe(true)
+  expect(stop.getAttribute('aria-busy')).toBe('true')
+  await act(async () => finish())
+  expect(stop.disabled).toBe(false)
+  expect(stop.getAttribute('aria-busy')).toBe('false')
+})
+
+it('does not leave the next conversation waiting for a previous stop request', async () => {
+  let finish!: () => void
+  const onInterrupt = vi.fn(() => new Promise<void>((resolve) => { finish = resolve }))
+  await act(async () => root.render(createElement(FloatingComposer, { ...props, busy: true, onInterrupt })))
+  await act(async () => host.querySelector<HTMLButtonElement>('button[aria-busy]')!.click())
+  await act(async () => useChatStore.setState({ activeThreadId: 'paste-b' }))
+  expect(host.querySelector<HTMLButtonElement>('button[aria-busy]')!.disabled).toBe(false)
+  await act(async () => finish())
+})
+
+it('allows retrying stop after a request fails', async () => {
+  const onInterrupt = vi.fn().mockRejectedValueOnce(new Error('Stop failed')).mockResolvedValue(undefined)
+  await act(async () => root.render(createElement(FloatingComposer, { ...props, busy: true, onInterrupt })))
+  const stop = host.querySelector<HTMLButtonElement>('button[aria-busy]')!
+  await act(async () => stop.click())
+  expect(stop.disabled).toBe(false)
+  expect(useChatStore.getState().error).toBe('Stop failed')
+  await act(async () => stop.click())
+  expect(onInterrupt).toHaveBeenCalledTimes(2)
+})

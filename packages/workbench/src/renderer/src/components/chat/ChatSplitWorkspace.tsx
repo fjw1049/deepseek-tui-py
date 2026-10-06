@@ -75,7 +75,7 @@ function ChatPaneContent({ threadId, onOpenFile, onOpenDiff }: PaneProps): React
           composerModel={state.composerModel} composerPickList={state.composerPickList}
           onComposerModelChange={state.setComposerModel}
           onSend={text => state.sendMessage(text, state.composerMode)}
-          onInterrupt={() => void state.interrupt()} onCompact={state.compactActiveThread}
+          onInterrupt={() => state.interrupt()} onCompact={state.compactActiveThread}
           onFork={async () => { await useChatStore.getState().forkThread(threadId) }} onOpenDiff={() => onOpenDiff(threadId)}
           queuedMessages={state.queuedMessages} onRemoveQueuedMessage={state.removeQueuedMessage}
           onWithdrawQueuedMessage={state.withdrawQueuedMessage}

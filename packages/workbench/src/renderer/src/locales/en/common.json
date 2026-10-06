@@ -1,4 +1,10 @@
 {
+  "codeDownload": "Download code",
+  "codeCopy": "Copy code",
+  "codeFullscreen": "View code fullscreen",
+  "codeExpand": "Expand code",
+  "codeCollapse": "Collapse code",
+  "interruptPending": "Stopping…",
   "viewLoading": "Loading…",
   "workspaceEditorHideFiles": "Hide files",
   "workspaceEditorBrowseFiles": "Browse files",
