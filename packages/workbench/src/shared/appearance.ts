@@ -10,6 +10,26 @@
  */
 
 export type ThemeVariant = 'light' | 'dark'
+export const MIN_WINDOW_BLUR_RADIUS = 1
+export const MAX_WINDOW_BLUR_RADIUS = 64
+export const MIN_WINDOW_OPACITY = 15
+export const AUTO_WINDOW_BLUR_RADIUS = 30
+
+/** Kept outside shareable theme packs, matching Synara's window preferences. */
+export type WindowTranslucency = {
+  opacity: number
+  /** null uses the system vibrancy material. Numbers adjust the desktop blur in points. */
+  blur: number | null
+}
+
+export type WindowMaterial = {
+  material: 'opaque' | 'translucent'
+  blurRadius: number
+}
+
+// Preserve the existing sidebar tint and system material for older settings.
+export const DEFAULT_WINDOW_TRANSLUCENCY: WindowTranslucency = { opacity: 74, blur: null }
+
 export type UiDensity = 'compact' | 'comfortable' | 'spacious'
 export type TimestampFormat = 'locale' | '12-hour' | '24-hour'
 /** Empty-home landing: dashboard hero vs composer-only. */
@@ -42,6 +62,7 @@ export type ChromeThemeV1 = {
 
 export type AppearanceSettingsV1 = {
   themes: Record<ThemeVariant, ChromeThemeV1>
+  translucency: Record<ThemeVariant, WindowTranslucency>
   uiDensity: UiDensity
   /** Empty chat home: full hero dashboard or centered composer only. */
   emptyHomeLayout: EmptyHomeLayout
@@ -55,8 +76,9 @@ export type AppearanceSettingsV1 = {
 }
 
 export type ChromeThemePatchV1 = Partial<ChromeThemeV1>
-export type AppearancePatchV1 = Partial<Omit<AppearanceSettingsV1, 'themes'>> & {
+export type AppearancePatchV1 = Partial<Omit<AppearanceSettingsV1, 'themes' | 'translucency'>> & {
   themes?: Partial<Record<ThemeVariant, ChromeThemePatchV1>>
+  translucency?: Partial<Record<ThemeVariant, Partial<WindowTranslucency>>>
 }
 
 export const CONTRAST_BASELINE: Record<ThemeVariant, number> = {
@@ -542,6 +564,10 @@ export function defaultAppearanceSettings(): AppearanceSettingsV1 {
       light: { ...DEFAULT_CHROME_THEMES.light, semanticColors: { ...DEFAULT_CHROME_THEMES.light.semanticColors } },
       dark: { ...DEFAULT_CHROME_THEMES.dark, semanticColors: { ...DEFAULT_CHROME_THEMES.dark.semanticColors } }
     },
+    translucency: {
+      light: { ...DEFAULT_WINDOW_TRANSLUCENCY },
+      dark: { ...DEFAULT_WINDOW_TRANSLUCENCY }
+    },
     uiDensity: 'compact',
     emptyHomeLayout: 'normal',
     chatFontSizePx: DEFAULT_CHAT_FONT_SIZE_PX,
@@ -658,15 +684,36 @@ function normalizeTimestampFormat(value: unknown): TimestampFormat {
   return value === '12-hour' || value === '24-hour' ? value : 'locale'
 }
 
+export function normalizeWindowTranslucency(input: unknown): WindowTranslucency {
+  const raw = typeof input === 'object' && input !== null
+    ? input as Partial<WindowTranslucency>
+    : {}
+  return {
+    opacity: normalizeIntInRange(raw.opacity, DEFAULT_WINDOW_TRANSLUCENCY.opacity, MIN_WINDOW_OPACITY, 100),
+    blur: typeof raw.blur === 'number' && Number.isFinite(raw.blur)
+      ? normalizeIntInRange(raw.blur, MIN_WINDOW_BLUR_RADIUS, MIN_WINDOW_BLUR_RADIUS, MAX_WINDOW_BLUR_RADIUS)
+      : null
+  }
+}
+
+export function isDefaultWindowTranslucency(value: WindowTranslucency): boolean {
+  return value.opacity === DEFAULT_WINDOW_TRANSLUCENCY.opacity && value.blur === null
+}
+
 export function normalizeAppearanceSettings(input: AppearancePatchV1 | undefined): AppearanceSettingsV1 {
   const defaults = defaultAppearanceSettings()
   const source = input ?? {}
   const themes =
     typeof source.themes === 'object' && source.themes !== null ? source.themes : {}
+  const translucency = source.translucency ?? {}
   return {
     themes: {
       light: normalizeChromeTheme(themes.light, 'light'),
       dark: normalizeChromeTheme(themes.dark, 'dark')
+    },
+    translucency: {
+      light: normalizeWindowTranslucency(translucency.light),
+      dark: normalizeWindowTranslucency(translucency.dark)
     },
     uiDensity: normalizeUiDensity(source.uiDensity, defaults.uiDensity),
     emptyHomeLayout: normalizeEmptyHomeLayout(source.emptyHomeLayout, defaults.emptyHomeLayout),
@@ -701,6 +748,10 @@ export function mergeAppearanceSettings(
     themes: {
       light: { ...base.themes.light, ...(patch.themes?.light ?? {}) },
       dark: { ...base.themes.dark, ...(patch.themes?.dark ?? {}) }
+    },
+    translucency: {
+      light: { ...base.translucency?.light, ...(patch.translucency?.light ?? {}) },
+      dark: { ...base.translucency?.dark, ...(patch.translucency?.dark ?? {}) }
     }
   })
 }

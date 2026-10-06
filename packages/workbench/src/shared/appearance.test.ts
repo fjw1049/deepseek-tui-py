@@ -16,6 +16,41 @@ import {
 import { buildAppearanceOverrideCss, buildChromeThemeCssVars } from './appearance-derive'
 
 describe('normalizeAppearanceSettings', () => {
+  it('preserves the old sidebar tint and Auto blur when loading legacy themes', () => {
+    const settings = normalizeAppearanceSettings({ themes: { dark: { translucent: true } } })
+    expect(settings.translucency).toEqual({
+      light: { opacity: 74, blur: null }, dark: { opacity: 74, blur: null }
+    })
+  })
+
+  it('clamps glass preferences and merges partial edits independently per variant', () => {
+    const base = normalizeAppearanceSettings({ translucency: {
+      light: { opacity: 60, blur: 10 }, dark: { opacity: 0, blur: 200 }
+    } })
+    expect(base.translucency.dark).toEqual({ opacity: 15, blur: 64 })
+    const edited = mergeAppearanceSettings(base, { translucency: { dark: { blur: 0 } } })
+    expect(edited.translucency.dark).toEqual({ opacity: 15, blur: 1 })
+    expect(edited.translucency.light).toEqual(base.translucency.light)
+    expect(mergeAppearanceSettings(edited, { translucency: { dark: { blur: null } } }).translucency.dark)
+      .toEqual({ opacity: 15, blur: null })
+    expect(normalizeAppearanceSettings({ translucency: { light: { opacity: Infinity, blur: NaN } } })
+      .translucency.light).toEqual({ opacity: 74, blur: null })
+  })
+
+  it('changes only the glass tint when opacity is adjusted', () => {
+    const theme = { ...DEFAULT_CHROME_THEMES.dark, translucent: true }
+    const thin = buildChromeThemeCssVars(theme, 'dark', { opacity: 25, blur: 10 })
+    const dense = buildChromeThemeCssVars(theme, 'dark', { opacity: 90, blur: 64 })
+    expect(thin['--app-shell-background']).toMatch(/, 0\.25\)$/)
+    expect(dense['--app-shell-background']).toMatch(/, 0\.9\)$/)
+    expect(thin['--ds-material-panel']).toBe(dense['--ds-material-panel'])
+    const solid = buildChromeThemeCssVars({ ...theme, translucent: false }, 'dark', { opacity: 25, blur: 10 })
+    expect(solid['--app-shell-background']).not.toMatch(/^rgba/)
+    const shared = createThemeShareString('dark', theme)
+    expect(shared).not.toContain('blur')
+    expect(parseThemeShareString(shared, 'dark')).toMatchObject({ ok: true, theme })
+  })
+
   it('produces safe defaults from undefined input', () => {
     const settings = normalizeAppearanceSettings(undefined)
     expect(settings).toEqual(defaultAppearanceSettings())

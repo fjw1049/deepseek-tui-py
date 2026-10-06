@@ -12,6 +12,7 @@ import {
 } from 'electron'
 import { installAppMenu } from './app-menu'
 import { registerStartupWindowDrag } from './startup-window-drag'
+import { createWindowMaterialApplier, parseWindowMaterial, type WindowMaterialAddon } from './window-material'
 import { parseSharedConversationLink } from '../shared/share-link'
 import { existsSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
@@ -75,6 +76,22 @@ import { resolveWorkbenchLogsDir } from '../shared/workbench-home'
 import { migrateLegacyDirContents } from './migrate-legacy-dir'
 
 const mainDir = import.meta.dirname
+const applyWindowMaterial = createWindowMaterialApplier(() => {
+  const addonPath = app.isPackaged
+    ? join(process.resourcesPath, '..', 'Frameworks', 'deepseek-window-material.node')
+    : join(mainDir, '..', 'native', 'deepseek-window-material.node')
+  try {
+    const addon = { exports: {} as Partial<WindowMaterialAddon> }
+    process.dlopen(addon, addonPath)
+    if (typeof addon.exports.setBackgroundBlurRadius !== 'function') throw new Error('Missing window blur export')
+    return { setBackgroundBlurRadius: addon.exports.setBackgroundBlurRadius }
+  } catch (error) {
+    logWarn('window-material', 'Custom window blur unavailable; using the system material', {
+      message: error instanceof Error ? error.message : String(error)
+    })
+    return null
+  }
+})
 const APP_USER_MODEL_ID = 'com.deepseek.workbench'
 const MANAGED_RUNTIME_STARTUP_TIMEOUT_MS = 180_000
 
@@ -1045,6 +1062,12 @@ app.whenReady().then(async () => {
   traceStartup('logger configured')
 
   traceStartup('ipc registration:start')
+  ipcMain.handle('window:set-material', (event, rawInput: unknown) => {
+    const input = parseWindowMaterial(rawInput)
+    if (process.platform !== 'darwin' || !input || !mainWindow || mainWindow.isDestroyed()) return false
+    if (event.sender !== mainWindow.webContents || event.senderFrame !== mainWindow.webContents.mainFrame) return false
+    return applyWindowMaterial(mainWindow, input)
+  })
   const applySettingsPatch = async (partial: AppSettingsPatch): Promise<AppSettingsV1> => {
     const prev = await store.load()
     const next = normalizeAppSettings({

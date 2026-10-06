@@ -3,6 +3,7 @@ export type UiFontScale = 'small' | 'medium' | 'large'
 export type UiFontFamily = 'inter-noto' | 'system-native'
 
 let removeSystemListener: (() => void) | null = null
+export const THEME_CHANGED_EVENT = 'deepseekgui:theme-changed'
 
 function resolvedMode(pref: ThemePreference): 'light' | 'dark' {
   if (pref === 'dark') return 'dark'
@@ -20,6 +21,7 @@ export function applyTheme(pref: ThemePreference): void {
   const root = document.documentElement
   const apply = (): void => {
     root.setAttribute('data-theme', resolvedMode(pref))
+    window.dispatchEvent(new Event(THEME_CHANGED_EVENT))
   }
 
   if (pref === 'system') {

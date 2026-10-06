@@ -77,7 +77,7 @@ module.exports = {
   directories: {
     output: process.env.DEEPSEEK_GUI_DIST_DIR || 'dist'
   },
-  files: ['out/**/*', 'package.json'],
+  files: ['out/**/*', '!out/native/**/*', 'package.json'],
   artifactName: `DeepSeek-GUI-${artifactVersion}-\${os}-\${arch}.\${ext}`,
   publish: [
     {
@@ -88,6 +88,7 @@ module.exports = {
   afterPack: './scripts/after-pack.cjs',
   afterSign: './scripts/mac-notarize.cjs',
   mac: {
+    binaries: ['Contents/Frameworks/deepseek-window-material.node'],
     category: 'public.app-category.developer-tools',
     identity: hasExplicitMacSigningIdentity ? undefined : null,
     // We notarize in scripts/mac-notarize.cjs so APPLE_API_KEY_BASE64 can be supported.

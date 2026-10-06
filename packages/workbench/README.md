@@ -45,6 +45,26 @@ ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/
 | `uv run pytest tests/contract -q` | Runtime API 契约测试（仓库根执行） |
 | `npm run typecheck && npm test` | 本目录 GUI 类型检查 + Vitest |
 
+## 外观：侧边栏背景模糊
+
+macOS 桌面端在「设置 → 外观」中打开对应主题的「半透明侧边栏」，即可调整：
+
+- **不透明度**：15–100%，数值越低，桌面背景越明显。
+- **背景模糊（Blur）**：1–64；「自动」使用 macOS 系统毛玻璃。
+
+明暗主题分别保存参数，支持实时预览和跟随系统主题切换。旧配置保留原来的
+74% 不透明度与自动模糊；主内容区域仍不透明。自定义模糊不可用时会恢复系统材质
+并提示。Windows、Linux 和浏览器预览不显示这些调节项。
+
+自定义 Blur 使用从 Synara 适配的原生 Node-API 插件，开发构建会自动编译；
+macOS 打包时按目标架构编译并纳入签名。编译需要可用的 Xcode 或 Command Line Tools。
+如果默认 Xcode 尚未完成许可设置，也可使用已安装的 Command Line Tools：
+
+```bash
+cd packages/workbench
+DEVELOPER_DIR=/Library/Developer/CommandLineTools npm run build
+```
+
 ## 排错
 
 **Electron 一启动就崩（`exports` undefined）**  

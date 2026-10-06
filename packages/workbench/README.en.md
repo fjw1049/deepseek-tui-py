@@ -127,6 +127,13 @@ Settings manages:
 - Skill creation, Skill folders, and MCP config editing.
 - Claw background automation, Feishu / Lark connections, webhook / relay settings, and scheduled tasks.
 
+In the macOS desktop app, enable **Translucent sidebar** under Settings → Appearance
+to reveal **Opacity** (15–100%) and **Background blur** (1–64). **Auto** uses the system
+material. Light and dark variants save these preferences separately and follow system
+theme changes. Existing settings retain 74% opacity and Auto blur. If custom blur is
+unavailable, the app uses the system material and displays a notice. The content area
+stays opaque, and these controls are hidden on Windows, Linux, and browser previews.
+
 Keyboard shortcuts:
 
 | Key | Action |

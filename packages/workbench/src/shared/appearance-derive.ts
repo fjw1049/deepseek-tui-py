@@ -12,9 +12,11 @@
 
 import {
   CONTRAST_BASELINE,
+  DEFAULT_WINDOW_TRANSLUCENCY,
   type AppearanceSettingsV1,
   type ChromeThemeV1,
-  type ThemeVariant
+  type ThemeVariant,
+  type WindowTranslucency
 } from './appearance'
 
 type Rgb = { r: number; g: number; b: number }
@@ -75,7 +77,8 @@ function normalizeContrastStrength(value: number, variant: ThemeVariant): number
  */
 export function buildChromeThemeCssVars(
   theme: ChromeThemeV1,
-  variant: ThemeVariant
+  variant: ThemeVariant,
+  translucency: WindowTranslucency = DEFAULT_WINDOW_TRANSLUCENCY
 ): Record<string, string> {
   const light = variant === 'light'
   const c = normalizeContrastStrength(theme.contrast, variant)
@@ -149,7 +152,7 @@ export function buildChromeThemeCssVars(
   const glass = theme.translucent
   // Keep enough theme color to preserve dark preset hues, while transmitting
   // wallpaper color in both modes. Contrast changes tint, never this opacity.
-  const glassBg = glass ? rgba(sidebarBg, 0.74) : hex(sidebarBg)
+  const glassBg = glass ? rgba(sidebarBg, translucency.opacity / 100) : hex(sidebarBg)
   const glassBgStrong = glass ? rgba(sidebarBg, light ? 0.86 : 0.84) : hex(elevated1)
   const glassBorder = rgba(ink, light ? 0.07 : 0.05)
   const glassHighlight = 'transparent'
@@ -294,7 +297,7 @@ export function buildAppearanceOverrideCss(appearance: AppearanceSettingsV1): st
   const blocks: string[] = []
   for (const variant of ['light', 'dark'] as const) {
     const theme = appearance.themes[variant]
-    const vars = buildChromeThemeCssVars(theme, variant)
+    const vars = buildChromeThemeCssVars(theme, variant, appearance.translucency[variant])
     // The second selector out-specifies `[data-theme='dark'] .ds-workbench-shell`,
     // which re-declares many tokens on the workbench shell element.
     blocks.push(

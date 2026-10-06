@@ -1,8 +1,9 @@
 const { createHash } = require('node:crypto')
 const { execFileSync } = require('node:child_process')
-const { existsSync } = require('node:fs')
+const { copyFileSync, existsSync, unlinkSync } = require('node:fs')
 const { chmod, copyFile, mkdir, readFile, rename, unlink, writeFile } = require('node:fs/promises')
 const { join, dirname } = require('node:path')
+const { buildWindowMaterialAddon } = require('./build-window-material.cjs')
 
 const deepseekTuiPkg = require('../node_modules/deepseek-tui/package.json')
 const artifacts = require('../node_modules/deepseek-tui/scripts/artifacts.js')
@@ -346,6 +347,15 @@ function maybeAdhocSignMacApp(context) {
 exports.ensureBundledRuntime = ensureBundledRuntime
 
 exports.default = async function afterPack(context) {
+  if (normalizePlatform(context.electronPlatformName) === 'darwin') {
+    const resources = resolveResourcesRoot(context)
+    const addon = buildWindowMaterialAddon({
+      arch: resolveTargetArch(context),
+      outputPath: join(resources, '..', 'Frameworks', 'deepseek-window-material.node')
+    })
+    unlinkSync(`${addon}.build.json`)
+    copyFileSync(join(__dirname, '../native/window-material/LICENSE'), join(resources, 'window-material-LICENSE.txt'))
+  }
   await ensureBundledRuntime(context)
   maybeAdhocSignMacApp(context)
 }

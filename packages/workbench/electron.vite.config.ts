@@ -1,9 +1,27 @@
 import { createHash } from 'node:crypto'
+import { createRequire } from 'node:module'
 import { readdirSync, readFileSync, writeFileSync, existsSync, statSync } from 'node:fs'
 import { join, resolve } from 'path'
 import type { Plugin } from 'vite'
 import { defineConfig, externalizeDepsPlugin } from 'electron-vite'
 import react from '@vitejs/plugin-react'
+
+function windowMaterialAddonPlugin(): Plugin {
+  return {
+    name: 'workbench:window-material',
+    buildStart() {
+      if (process.platform !== 'darwin') return
+      try {
+        const { buildWindowMaterialAddon } = createRequire(import.meta.url)('./scripts/build-window-material.cjs')
+        buildWindowMaterialAddon()
+      } catch (error) {
+        // Source development still works with the existing Auto material.
+        // Packaging builds the target addon strictly in after-pack.cjs.
+        this.warn(`Custom window blur could not be built: ${String(error)}`)
+      }
+    }
+  }
+}
 
 /**
  * Desktop is an iCloud File Provider folder on this machine. fileproviderd
@@ -133,6 +151,7 @@ export default defineConfig({
   main: {
     plugins: [
       externalizeDepsPlugin(),
+      windowMaterialAddonPlugin(),
       fixEsmShimPlugin(),
       ignoreUnchangedContentPlugin(['src/main', 'src/shared'])
     ]

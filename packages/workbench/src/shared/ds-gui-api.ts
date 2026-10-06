@@ -290,6 +290,8 @@ export type DsGuiApi = {
   onStartupPhase: (handler: (payload: StartupPhasePayload) => void) => () => void
   /** Reveal the still-hidden window once the persisted theme is on the DOM. */
   notifyAppearanceApplied: () => Promise<void>
+  /** macOS only. false means custom blur fell back to the system material. */
+  setWindowMaterial: (input: import('./appearance').WindowMaterial) => Promise<boolean>
   startupWindowDrag: (action: 'start' | 'move' | 'end') => void
   setSettings: (partial: AppSettingsPatch) => Promise<AppSettingsV1>
   transcribeAudio: (payload: {

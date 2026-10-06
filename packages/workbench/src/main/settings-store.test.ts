@@ -10,6 +10,16 @@ import {
 } from '../shared/workbench-home'
 
 describe('JsonSettingsStore', () => {
+  it('persists glass preferences across reloads and keeps the other variant on partial writes', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'ds-gui-glass-'))
+    const store = new JsonSettingsStore({ home })
+    await store.patch({ appearance: { translucency: { dark: { opacity: 55, blur: 20 } } } })
+    await store.patch({ appearance: { translucency: { dark: { blur: 40 } } } })
+    const restored = await new JsonSettingsStore({ home }).load()
+    expect(restored.appearance.translucency.dark).toEqual({ opacity: 55, blur: 40 })
+    expect(restored.appearance.translucency.light).toEqual({ opacity: 74, blur: null })
+  })
+
   it('preserves deepseek.autoStart=false when loading saved settings', async () => {
     const home = await mkdtemp(join(tmpdir(), 'ds-gui-settings-'))
     const workspaceRoot = join(home, 'workspace')

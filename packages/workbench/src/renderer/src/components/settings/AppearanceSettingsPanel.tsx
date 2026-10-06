@@ -1,12 +1,17 @@
 import { copyText } from '../../lib/copy-text'
 import type { ReactElement, ReactNode } from 'react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Check, ClipboardPaste, Copy, RotateCcw } from 'lucide-react'
 import type { AppSettingsV1, AppearancePatchV1 } from '@shared/app-settings'
 import {
   CUSTOM_THEME_PRESET_ID,
   DEFAULT_CHROME_THEMES,
+  DEFAULT_WINDOW_TRANSLUCENCY,
+  AUTO_WINDOW_BLUR_RADIUS,
+  MIN_WINDOW_BLUR_RADIUS,
+  MAX_WINDOW_BLUR_RADIUS,
+  MIN_WINDOW_OPACITY,
   MAX_CHAT_FONT_SIZE_PX,
   MAX_TERMINAL_FONT_SIZE_PX,
   MIN_CHAT_FONT_SIZE_PX,
@@ -17,6 +22,7 @@ import {
   defaultAppearanceSettings,
   getThemePresetSeed,
   isDefaultChromeTheme,
+  isDefaultWindowTranslucency,
   listThemePresetsForVariant,
   normalizeHexColor,
   parseThemeShareString,
@@ -24,8 +30,10 @@ import {
   type ChromeThemeV1,
   type EmptyHomeLayout,
   type ThemeVariant,
-  type UiDensity
+  type UiDensity,
+  type WindowTranslucency
 } from '@shared/appearance'
+import { getWindowBlurUnavailable, subscribeAppearance } from '../../lib/apply-appearance'
 import { useLightDismiss } from '../../hooks/use-light-dismiss'
 import { GlassSegmentedControl } from './GlassSegmentedControl'
 import { SettingsSelect } from './SettingsSelect'
@@ -42,9 +50,6 @@ type Props = {
   /** Single patch callback so combined updates (e.g. restore defaults) stay atomic. */
   onPatch: (patch: AppearanceViewPatch) => void
 }
-
-// -webkit-font-smoothing only has an effect on macOS; hide the toggle elsewhere.
-const IS_MAC = window.dsGui?.platform === 'darwin'
 
 const TERMINAL_FONT_SUGGESTIONS = [
   'JetBrains Mono',
@@ -74,6 +79,7 @@ function useResolvedVariant(theme: AppSettingsV1['theme']): ThemeVariant {
 
 export function AppearanceSettingsPanel({ form, onPatch }: Props): ReactElement {
   const { t } = useTranslation('settings')
+  const isMac = window.dsGui?.platform === 'darwin'
   const appearance = form.appearance
   const defaults = useMemo(() => defaultAppearanceSettings(), [])
   const resolvedVariant = useResolvedVariant(form.theme)
@@ -89,6 +95,8 @@ export function AppearanceSettingsPanel({ form, onPatch }: Props): ReactElement 
     form.uiFontFamily === 'system-native' &&
     isDefaultChromeTheme(appearance.themes.light, 'light') &&
     isDefaultChromeTheme(appearance.themes.dark, 'dark') &&
+    isDefaultWindowTranslucency(appearance.translucency.light) &&
+    isDefaultWindowTranslucency(appearance.translucency.dark) &&
     appearance.uiDensity === defaults.uiDensity &&
     appearance.emptyHomeLayout === defaults.emptyHomeLayout &&
     appearance.chatFontSizePx === defaults.chatFontSizePx &&
@@ -192,10 +200,16 @@ export function AppearanceSettingsPanel({ form, onPatch }: Props): ReactElement 
           key={variant}
           variant={variant}
           theme={appearance.themes[variant]}
+          translucency={appearance.translucency[variant]}
           isActive={resolvedVariant === variant}
           mode={form.theme}
           onThemePatch={(patch) => onAppearancePatch({ themes: { [variant]: patch } })}
           onThemeReplace={(theme) => onAppearancePatch({ themes: { [variant]: theme } })}
+          onTranslucencyPatch={(patch) => onAppearancePatch({ translucency: { [variant]: patch } })}
+          onReset={() => onAppearancePatch({
+            themes: { [variant]: { ...DEFAULT_CHROME_THEMES[variant] } },
+            translucency: { [variant]: { ...DEFAULT_WINDOW_TRANSLUCENCY } }
+          })}
         />
       ))}
 
@@ -273,7 +287,7 @@ export function AppearanceSettingsPanel({ form, onPatch }: Props): ReactElement 
             />
           }
         />
-        {IS_MAC ? (
+        {isMac ? (
           <Row
             title={t('fontSmoothing')}
             description={t('fontSmoothingDesc')}
@@ -319,22 +333,30 @@ export function AppearanceSettingsPanel({ form, onPatch }: Props): ReactElement 
 function ThemePackCard({
   variant,
   theme,
+  translucency,
   isActive,
   mode,
   onThemePatch,
-  onThemeReplace
+  onThemeReplace,
+  onTranslucencyPatch,
+  onReset
 }: {
   variant: ThemeVariant
   theme: ChromeThemeV1
+  translucency: WindowTranslucency
   isActive: boolean
   mode: AppSettingsV1['theme']
   onThemePatch: (patch: Partial<ChromeThemeV1>) => void
   onThemeReplace: (theme: ChromeThemeV1) => void
+  onTranslucencyPatch: (patch: Partial<WindowTranslucency>) => void
+  onReset: () => void
 }): ReactElement {
   const { t } = useTranslation('settings')
+  const isMac = window.dsGui?.platform === 'darwin'
   const presets = useMemo(() => listThemePresetsForVariant(variant), [variant])
   const presetKnown = presets.some((preset) => preset.id === theme.presetId)
-  const isPristine = isDefaultChromeTheme(theme, variant)
+  const isPristine = isDefaultChromeTheme(theme, variant) && isDefaultWindowTranslucency(translucency)
+  const blurUnavailable = useSyncExternalStore(subscribeAppearance, getWindowBlurUnavailable)
   const presetSeed = getThemePresetSeed(theme.presetId, variant)
   const isCustomized = !isPristine && (!presetSeed || !chromeThemeEquals(theme, presetSeed))
   const preset = presets.find((entry) => entry.id === theme.presetId)
@@ -404,7 +426,7 @@ function ThemePackCard({
               type="button"
               title={t('themePackReset')}
               aria-label={controlLabel(t('themePackReset'))}
-              onClick={() => onThemeReplace({ ...DEFAULT_CHROME_THEMES[variant] })}
+              onClick={onReset}
               className="inline-flex h-6 w-6 items-center justify-center rounded-md text-ds-faint transition hover:bg-ds-hover hover:text-ds-ink"
             >
               <RotateCcw className="h-3.5 w-3.5" strokeWidth={1.75} />
@@ -560,16 +582,50 @@ function ThemePackCard({
         />
         <Row
           title={t('themeTranslucent')}
-          description={t(IS_MAC ? 'themeTranslucentDesc' : 'themeTranslucentUnsupported')}
+          description={t(isMac ? 'themeTranslucentDesc' : 'themeTranslucentUnsupported')}
           control={
             <Toggle
               checked={theme.translucent}
               ariaLabel={controlLabel(t('themeTranslucent'))}
               onChange={(value) => onThemePatch({ translucent: value })}
-              disabled={!IS_MAC}
+              disabled={!isMac}
             />
           }
         />
+        {isMac && theme.translucent ? (
+          <>
+            <Row
+              title={t('themeOpacity')}
+              description={t('themeOpacityDesc')}
+              control={
+                <WindowSlider value={translucency.opacity} min={MIN_WINDOW_OPACITY} max={100}
+                  valueLabel={`${translucency.opacity}%`} ariaLabel={controlLabel(t('themeOpacity'))}
+                  onChange={(opacity) => onTranslucencyPatch({ opacity })} />
+              }
+            />
+            <Row
+              title={t('themeBlur')}
+              description={isActive && blurUnavailable && translucency.blur !== null
+                ? t('themeBlurUnavailable') : t('themeBlurDesc')}
+              control={
+                <div className="flex w-full items-center gap-2">
+                  {translucency.blur !== null ? (
+                    <button type="button" onClick={() => onTranslucencyPatch({ blur: null })}
+                      aria-label={controlLabel(t('themeBlurAuto'))}
+                      className="ds-no-drag shrink-0 rounded-lg border border-ds-border px-2 py-1 text-[12px] text-ds-muted transition hover:bg-ds-hover hover:text-ds-ink">
+                      {t('themeBlurAuto')}
+                    </button>
+                  ) : null}
+                  <WindowSlider value={translucency.blur ?? AUTO_WINDOW_BLUR_RADIUS}
+                    min={MIN_WINDOW_BLUR_RADIUS} max={MAX_WINDOW_BLUR_RADIUS}
+                    valueLabel={translucency.blur === null ? t('themeBlurAuto') : String(translucency.blur)}
+                    ariaLabel={controlLabel(t('themeBlur'))}
+                    onChange={(blur) => onTranslucencyPatch({ blur })} />
+                </div>
+              }
+            />
+          </>
+        ) : null}
         <Row
           title={t('themeContrast')}
           control={
@@ -591,6 +647,25 @@ function ThemePackCard({
         />
       </div>
     </section>
+  )
+}
+
+function WindowSlider({ value, min, max, valueLabel, ariaLabel, onChange }: {
+  value: number
+  min: number
+  max: number
+  valueLabel: string
+  ariaLabel: string
+  onChange: (value: number) => void
+}): ReactElement {
+  return (
+    <div className="flex h-10 min-w-0 w-full items-center gap-3">
+      <input type="range" min={min} max={max} step={1} value={value}
+        onChange={(e) => onChange(Number(e.target.value))} aria-label={ariaLabel}
+        aria-valuetext={valueLabel}
+        className="ds-no-drag h-1.5 min-w-0 w-full cursor-pointer appearance-none rounded-full bg-ds-border accent-[var(--ds-accent)]" />
+      <span className="w-10 shrink-0 text-center font-mono text-[13px] leading-none text-ds-muted">{valueLabel}</span>
+    </div>
   )
 }
 
