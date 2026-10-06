@@ -75,11 +75,11 @@ export function ConfirmDialog({
         aria-describedby={body ? bodyId : undefined}
         aria-modal="true"
         aria-label={title}
-        className="ds-pop w-full max-w-[340px] rounded-xl border border-ds-border bg-ds-elevated p-4 shadow-[0_24px_70px_rgba(44,55,78,0.18)] backdrop-blur-xl dark:shadow-[0_30px_80px_rgba(0,0,0,0.42)]"
+        className="ds-pop max-h-[calc(100dvh-2rem)] w-full max-w-[340px] overflow-y-auto [overflow-wrap:anywhere] rounded-xl border border-ds-border bg-ds-elevated p-4 shadow-[0_24px_70px_rgba(44,55,78,0.18)] backdrop-blur-xl dark:shadow-[0_30px_80px_rgba(0,0,0,0.42)]"
       >
         <div className="text-[13.5px] font-medium text-ds-ink">{title}</div>
         {body ? <div id={bodyId} className="mt-1.5 text-[13.5px] leading-5 text-ds-muted">{body}</div> : null}
-        <div className="mt-4 flex justify-end gap-2">
+        <div className="mt-4 flex flex-wrap justify-end gap-2">
           <button
             type="button"
             ref={cancelRef}

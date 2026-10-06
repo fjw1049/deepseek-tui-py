@@ -104,6 +104,7 @@ export function SettingsSelect({
   renderIcon?: (value: string) => ReactNode
 }): ReactElement {
   const options = useMemo(() => collectOptions(children), [children])
+  const enabledOptions = useMemo(() => options.filter((option) => !option.disabled), [options])
   const selectedValue = value == null || value === '' ? '' : String(value)
   const label =
     options.find((item) => item.value === selectedValue)?.label ?? selectedValue
@@ -115,11 +116,12 @@ export function SettingsSelect({
   const triggerRef = useRef<HTMLButtonElement | null>(null)
   const menuRef = useRef<HTMLDivElement | null>(null)
   const menuId = useId()
-  const optionsRef = useRef(options)
+  const optionsRef = useRef(enabledOptions)
   const selectedRef = useRef(selectedValue)
-  optionsRef.current = options
+  optionsRef.current = enabledOptions
   selectedRef.current = selectedValue
-  const { highlighted, setHighlighted, onKeyDown } = useComboboxNav(options.length, open)
+  const { highlighted, setHighlighted, onKeyDown } = useComboboxNav(enabledOptions.length, open)
+  const highlightedOptionIndex = options.indexOf(enabledOptions[highlighted])
 
   const updateMenuPosition = useCallback((): void => {
     const trigger = wrapRef.current ?? triggerRef.current
@@ -130,16 +132,16 @@ export function SettingsSelect({
     const gutter = 12
     // getBoundingClientRect / innerWidth are post-zoom. fixed left/top/width
     // on a body-portaled node are pre-zoom — same rule as ThreadHoverCard.
-    const left = rect.left / scale
-    const width = rect.width / scale
+    const viewW = window.innerWidth / scale
+    const width = Math.min(rect.width / scale, Math.max(0, viewW - gutter * 2))
+    const left = Math.max(gutter, Math.min(rect.left / scale, viewW - gutter - width))
     const top = rect.bottom / scale
     const viewH = window.innerHeight / scale
-    const spaceBelow = viewH - top - gutter
-    const nextPlacement = spaceBelow < 96 ? 'above' : 'below'
-    const maxHeight =
-      nextPlacement === 'below'
-        ? Math.max(96, spaceBelow - gap)
-        : Math.max(96, rect.top / scale - gutter - gap)
+    const spaceBelow = Math.max(0, viewH - top - gutter - gap)
+    const spaceAbove = Math.max(0, rect.top / scale - gutter - gap)
+    const desiredHeight = Math.min(320, options.length * 36 + 8)
+    const nextPlacement = spaceBelow >= desiredHeight || spaceBelow >= spaceAbove ? 'below' : 'above'
+    const maxHeight = Math.min(320, nextPlacement === 'below' ? spaceBelow : spaceAbove)
     setPlacement(nextPlacement)
     setMenuStyle({
       position: 'fixed',
@@ -151,7 +153,11 @@ export function SettingsSelect({
         ? { top: top + gap }
         : { bottom: viewH - rect.top / scale + gap })
     })
-  }, [])
+  }, [options.length])
+
+  useEffect(() => {
+    if (disabled) setOpen(false)
+  }, [disabled])
 
   useLayoutEffect(() => {
     if (!open) {
@@ -213,14 +219,14 @@ export function SettingsSelect({
         return
       }
       onKeyDown(event, (index) => {
-        const option = options[index]
+        const option = enabledOptions[index]
         if (!option || option.disabled) return
         commit(option.value)
       })
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [commit, disabled, onKeyDown, open, options])
+  }, [commit, disabled, onKeyDown, open, enabledOptions])
 
   const menu =
     open && menuStyle && typeof document !== 'undefined'
@@ -238,13 +244,14 @@ export function SettingsSelect({
           >
               {options.map((option, index) => {
                 const selected = option.value === selectedValue
-                const active = index === highlighted
+                const active = index === highlightedOptionIndex
                 return (
                   <button
                     key={`${option.value}:${index}`}
                     id={`${menuId}-option-${index}`}
                     type="button"
                     role="option"
+                    title={option.label}
                     tabIndex={-1}
                     aria-selected={selected}
                     disabled={option.disabled}
@@ -252,7 +259,9 @@ export function SettingsSelect({
                     className={`ds-project-context-menu__row ${
                       selected ? 'ds-project-context-menu__row--active' : ''
                     } ${active ? 'ds-project-context-menu__row--highlight' : ''}`}
-                    onMouseEnter={() => setHighlighted(index)}
+                    onMouseEnter={() => {
+                      if (!option.disabled) setHighlighted(enabledOptions.indexOf(option))
+                    }}
                     onClick={() => {
                       if (option.disabled) return
                       commit(option.value)
@@ -285,13 +294,13 @@ export function SettingsSelect({
         id={id}
         type="button"
         disabled={disabled}
-        title={title}
+        title={title || label}
         role="combobox"
         aria-label={ariaLabel}
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-controls={open ? menuId : undefined}
-        aria-activedescendant={open ? `${menuId}-option-${highlighted}` : undefined}
+        aria-activedescendant={open && highlightedOptionIndex >= 0 ? `${menuId}-option-${highlightedOptionIndex}` : undefined}
         className="relative flex h-full w-full cursor-pointer items-center justify-center px-2.5 pr-7 text-center disabled:cursor-not-allowed"
         onClick={() => {
           if (disabled) return

@@ -19,6 +19,8 @@ beforeEach(() => {
 afterEach(async () => {
   await act(async () => root.unmount())
   container.remove()
+  vi.restoreAllMocks()
+  vi.unstubAllGlobals()
 })
 
 function renderSelect(onChange: ReturnType<typeof vi.fn>, allowReselect = false): void {
@@ -64,4 +66,46 @@ describe('SettingsSelect', () => {
 
     expect(document.body.querySelector('[role="listbox"]')).toBeNull()
   })
+})
+
+
+it('skips disabled options with arrow keys and commits the highlighted enabled option', async () => {
+  const onChange = vi.fn()
+  await act(async () => root.render(createElement(SettingsSelect, { value: 'a', onChange },
+    createElement('option', { value: 'a' }, 'A'),
+    createElement('option', { value: 'b', disabled: true }, 'Unavailable'),
+    createElement('option', { value: 'c' }, 'C')
+  )))
+  const trigger = container.querySelector<HTMLButtonElement>('[role="combobox"]')!
+  await act(async () => trigger.click())
+  await act(async () => trigger.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true })))
+  expect(document.getElementById(trigger.getAttribute('aria-activedescendant')!)?.textContent).toBe('C')
+  await act(async () => trigger.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })))
+  expect(onChange.mock.calls[0][0].target.value).toBe('c')
+})
+
+it('closes the menu when the control becomes disabled', async () => {
+  const render = (disabled: boolean) => root.render(createElement(SettingsSelect, { value: 'a', disabled },
+    createElement('option', { value: 'a' }, 'A')))
+  await act(async () => render(false))
+  await act(async () => container.querySelector<HTMLButtonElement>('button')!.click())
+  expect(document.querySelector('[role="listbox"]')).not.toBeNull()
+  await act(async () => render(true))
+  expect(document.querySelector('[role="listbox"]')).toBeNull()
+})
+
+it('keeps the popup within a narrow viewport and chooses the roomier side', async () => {
+  vi.stubGlobal('innerWidth', 300)
+  vi.stubGlobal('innerHeight', 240)
+  vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+    x: 180, y: 150, left: 180, top: 150, right: 380, bottom: 182, width: 200, height: 32,
+    toJSON: () => ({})
+  })
+  await act(async () => renderSelect(vi.fn()))
+  await act(async () => container.querySelector<HTMLButtonElement>('button')!.click())
+  const menu = document.querySelector<HTMLElement>('[role="listbox"]')!
+  expect(menu.style.left).toBe('88px')
+  expect(menu.style.width).toBe('200px')
+  expect(menu.style.bottom).toBe('96px')
+  expect(menu.style.maxHeight).toBe('132px')
 })
