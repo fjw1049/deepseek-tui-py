@@ -290,6 +290,9 @@ class RuntimeThreadManager:
         self.workspace = workspace.resolve()
         self.manager_cfg = manager_cfg
         self.store = RuntimeThreadStore(manager_cfg.data_dir)
+        from deepseek_tui.browser import BrowserService
+
+        self.browser_service = BrowserService(manager_cfg.data_dir / "browser-artifacts")
         from deepseek_tui.workspace.turn_checkpoints import TurnCheckpointStore
 
         self.checkpoints = TurnCheckpointStore(manager_cfg.data_dir / "checkpoints")
@@ -554,6 +557,7 @@ class RuntimeThreadManager:
     async def aclose(self) -> None:
         self.shutdown()
         await complete_before_cancel(self._close_task)
+        await self.browser_service.close_all()
 
     async def _complete_mutation(self, operation):
         if self.is_shutdown:
@@ -4441,6 +4445,7 @@ class RuntimeThreadManager:
         self._sync_engine_session(engine, thread)
         self._restore_active_plugin(engine, thread)
         engine.tool_context.metadata["runtime_thread_id"] = thread.id
+        engine.tool_context.metadata["browser_service"] = self.browser_service
         engine.tool_context.metadata["approved_plan"] = bool(thread.approved_plan)
         goal_service = getattr(engine, "goal_service", None)
         if goal_service is not None:

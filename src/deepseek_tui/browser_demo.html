@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="zh-CN"><meta charset="utf-8"><title>Workbench 浏览器验收演示</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#f3f5f9;color:#18243b;font:17px system-ui}
+main{max-width:860px;margin:65px auto;padding:40px;background:white;border-radius:24px;box-shadow:0 18px 70px #18345512}
+small{color:#547194;letter-spacing:2px}h1{font-size:34px;margin:16px 0}p{color:#64748b;line-height:1.8}
+label{display:block;margin:24px 0 10px}input[type=text]{width:100%;padding:15px;border:1px solid #ced7e3;border-radius:10px;font:inherit}
+button{padding:13px 22px;border:0;border-radius:10px;font:inherit;cursor:pointer;background:#2761e7;color:white;margin-right:10px}
+#details{background:#eef3ff;color:#275ac3}#status{color:#147b58;font-weight:600;margin-top:24px}#result{padding:20px;background:#f0faf6;border-radius:12px;margin-top:20px}
+</style><main><small>OCTOP × DEEPSEEK WORKBENCH</small><h1>让操作有结果，让验证有证据。</h1>
+<p>这是一张本地演示表单。自动流程将填写名称、开启通知、保存，并检查页面实际结果。不会访问外部服务。</p>
+<label for="name">项目名称</label><input id="name" type="text" placeholder="输入项目名称">
+<label><input id="notifications" type="checkbox"> 开启项目通知</label>
+<button id="save">保存设置</button><button id="details">查看已保存结果</button>
+<div id="status" role="status">等待操作</div><div id="result" hidden></div>
+<script>
+let saved=null;
+document.querySelector('#save').onclick=()=>{saved={name:document.querySelector('#name').value,notifications:document.querySelector('#notifications').checked};document.querySelector('#status').textContent='已保存：'+saved.name};
+document.querySelector('#details').onclick=()=>{const el=document.querySelector('#result');el.hidden=false;el.textContent=saved?saved.name+' · '+(saved.notifications?'通知已开启':'通知已关闭'):'尚未保存'};
+</script></main></html>

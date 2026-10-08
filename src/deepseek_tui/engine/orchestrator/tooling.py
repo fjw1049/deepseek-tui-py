@@ -884,6 +884,13 @@ class ToolExecutionMixin:
         fp_args = (
             fingerprint_arguments if fingerprint_arguments is not None else tool_call.arguments
         )
+        if fp_name == "browser_use":
+            browser = self.tool_context.metadata.get("browser_service")
+            thread_id = str(self.tool_context.metadata.get("runtime_thread_id", ""))
+            fp_args = {
+                "arguments": fp_args,
+                "scope": browser.approval_scope(thread_id) if browser else "unavailable",
+            }
         cache_key = build_approval_key(
             fp_name, fp_args, working_directory=self.tool_context.working_directory
         )

@@ -38,7 +38,7 @@ const ChangeInspector = lazy(() =>
   import('../ChangeInspector').then((module) => ({ default: module.ChangeInspector }))
 )
 const DevBrowserPanel = lazy(() =>
-  import('../DevBrowserPanel').then((module) => ({ default: module.DevBrowserPanel }))
+  import('../BrowserWorkspace').then((module) => ({ default: module.BrowserWorkspace }))
 )
 const WorkspaceEditorPanel = lazy(() =>
   import('../workspace-editor/WorkspaceEditorPanel').then((module) => ({

@@ -675,6 +675,10 @@ def build_default_registry(config: Config | None = None, *, mode: str = "agent")
 
     cfg = config or Config()
     registry = ToolRegistry()
+    if mode not in {"plan", "ask"}:
+        from deepseek_tui.tools.browser import BrowserUseTool
+
+        registry.register(BrowserUseTool())
 
     for tool in [
         ReadFileTool(),

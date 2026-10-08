@@ -457,6 +457,7 @@ export function getRuntimeBaseUrl(port: number): string {
 }
 
 export function devServerHintUrl(isPackaged = false): string | undefined {
+  if (process.env.DEEPSEEK_GUI_BUILT_RENDERER === '1') return undefined
   const fromElectron = process.env.ELECTRON_RENDERER_URL?.trim()
   if (fromElectron) return fromElectron
   const fromVite = process.env.VITE_DEV_SERVER_URL?.trim()

@@ -182,6 +182,12 @@ def build_approval_key(
     still recognizes a few retired names so direct fingerprint checks stay
     consistent during the deprecation window.
     """
+    if tool_name == "browser_use":
+        # Do not let a session grant for one page/action unlock another target.
+        payload = json.dumps(
+            [tool_input, str(working_directory)], sort_keys=True, ensure_ascii=True
+        )
+        return ApprovalKey("browser:" + hashlib.sha256(payload.encode()).hexdigest())
     if tool_name in _SHELL_TOOLS:
         # Interact branch writes stdin to an existing process — scope by
         # process_id so one grant cannot unlock writes to every process
