@@ -24,6 +24,7 @@ def fake_session():
         navigate=AsyncMock(return_value=result),
         click=AsyncMock(return_value=result),
         fill=AsyncMock(return_value=result),
+        select=AsyncMock(return_value=result),
         press=AsyncMock(return_value=result),
         scroll=AsyncMock(return_value=result),
         dom_tree=AsyncMock(return_value=result),
@@ -142,6 +143,22 @@ async def test_stop_at_frame_limit_returns_the_saved_animation(browser):
     assert result["artifact"]["id"].endswith(".gif")
     assert len(run.artifacts) == 1
     assert not run.recording
+
+
+@pytest.mark.asyncio
+async def test_skill_form_actions_are_idempotent_and_use_the_owned_session(browser):
+    session = browser.runs["one"].session
+    session.eval_js.return_value = SimpleNamespace(success=True, content="true")
+    await browser.action(
+        "one", BrowserAction(action="set_checked", selector="#notify", checked=True)
+    )
+    session.click.assert_not_called()
+    await browser.action(
+        "one", BrowserAction(action="set_checked", selector="#notify", checked=False)
+    )
+    session.click.assert_awaited_once_with(selector="#notify")
+    await browser.action("one", BrowserAction(action="select", selector="#plan", text="pro"))
+    session.select.assert_awaited_once_with(value="pro", selector="#plan", ref=None)
 
 
 @pytest.mark.asyncio

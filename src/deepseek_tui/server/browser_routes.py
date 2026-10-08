@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
+from pathlib import Path
 from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from deepseek_tui.browser import BrowserAction, BrowserService
 
@@ -59,6 +61,49 @@ class PreferencesBody(BaseModel):
 @router.get("/environment")
 async def environment(request: Request, thread_id: str) -> dict[str, Any]:
     return service(request, thread_id).environment()
+
+
+@router.get("/installation")
+async def installation_status(request: Request, thread_id: str) -> dict[str, Any]:
+    return service(request, thread_id).installer.state
+
+
+class InstallationBody(BaseModel):
+    action: Literal["start", "stop"] = "start"
+
+
+@router.post("/installation")
+async def install_browser(
+    request: Request, thread_id: str, body: InstallationBody
+) -> dict[str, Any]:
+    installer = service(request, thread_id).installer
+    if body.action == "stop":
+        await installer.close()
+        return installer.state
+    return installer.start()
+
+
+class SkillBody(BaseModel):
+    action: Literal["preview", "install"]
+    recording_id: str = Field(max_length=100)
+    name: str = Field(min_length=1, max_length=63)
+    description: str = Field(min_length=1, max_length=500)
+    digest: str = Field(default="", max_length=64)
+
+
+@router.post("/skills")
+async def workflow_skill(request: Request, thread_id: str, body: SkillBody) -> dict[str, Any]:
+    from deepseek_tui.browser_skills import install_skill, preview_skill
+
+    browser = service(request, thread_id)
+    args = (browser, thread_id, body.recording_id, body.name, body.description)
+    try:
+        if body.action == "preview":
+            return await asyncio.to_thread(preview_skill, *args)
+        thread = request.app.state.thread_manager.store.load_thread(thread_id)
+        return await asyncio.to_thread(install_skill, *args, body.digest, Path(thread.workspace))
+    except (ValueError, OSError, ImportError) as exc:
+        raise HTTPException(409, str(exc)) from exc
 
 
 @router.get("/preferences")

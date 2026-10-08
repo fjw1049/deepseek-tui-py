@@ -27,3 +27,16 @@ async def test_browser_routes_require_auth_and_existing_thread(authed_client):
     )
     assert invalid_flow.status_code == 409
     assert (await client.post(base + "/clear-profile", json={})).status_code == 200
+    assert (await client.get(base + "/installation")).json()["status"] == "idle"
+    assert (await client.post(base + "/installation", json={"action": "stop"})).status_code == 200
+    assert (
+        await client.post(
+            base + "/skills",
+            json={
+                "action": "preview",
+                "recording_id": "rec_test",
+                "name": "../escape",
+                "description": "test",
+            },
+        )
+    ).status_code == 409

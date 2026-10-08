@@ -31,6 +31,8 @@ class BrowserAction(BaseModel):
         "observe",
         "click",
         "fill",
+        "select",
+        "set_checked",
         "press",
         "scroll",
         "screenshot",
@@ -42,6 +44,7 @@ class BrowserAction(BaseModel):
     ref: str | None = Field(default=None, max_length=200)
     selector: str | None = Field(default=None, max_length=1000)
     text: str = Field(default="", max_length=8000)
+    checked: bool | None = None
     key: str = Field(default="Enter", max_length=50)
     x: int | None = Field(default=None, ge=0, lt=1200)
     y: int | None = Field(default=None, ge=0, lt=760)
@@ -61,8 +64,10 @@ class BrowserAction(BaseModel):
             self.ref or self.selector or (self.x is not None and self.y is not None)
         ):
             raise ValueError("click requires ref, selector, or x and y")
-        if self.action == "fill" and not (self.ref or self.selector):
+        if self.action in {"fill", "select"} and not (self.ref or self.selector):
             raise ValueError("fill requires ref or selector")
+        if self.action == "set_checked" and (not self.selector or self.checked is None):
+            raise ValueError("set_checked requires selector and checked")
         if self.action == "check_text" and not self.text.strip():
             raise ValueError("check_text requires non-empty text")
         return self
@@ -94,7 +99,10 @@ class BrowserRun:
 
 class BrowserService:
     def __init__(self, artifact_root: Path):
+        from deepseek_tui.browser_install import BrowserInstaller
+
         self.artifact_root = artifact_root
+        self.installer = BrowserInstaller()
         self.runs: dict[str, BrowserRun] = {}
 
     def preferences(self, thread_id: str) -> dict[str, bool]:
@@ -371,6 +379,19 @@ class BrowserService:
             result = await s.click(ref=a.ref, selector=a.selector, x=a.x, y=a.y)
         elif a.action == "fill":
             result = await s.fill(text=a.text, ref=a.ref, selector=a.selector)
+        elif a.action == "select":
+            result = await s.select(value=a.text, ref=a.ref, selector=a.selector)
+        elif a.action == "set_checked":
+            result = await s.eval_js(
+                "(() => { const els = document.querySelectorAll("
+                + json.dumps(a.selector)
+                + "); return els.length === 1 ? els[0].checked ?? null : null; })()"
+            )
+            checked = json.loads(result.content) if result.success else None
+            if not isinstance(checked, bool):
+                raise ValueError("Checkbox selector must match one checkable element")
+            if checked != a.checked:
+                result = await s.click(selector=a.selector)
         elif a.action == "press":
             result = await s.press(a.key)
         elif a.action == "scroll":
@@ -526,4 +547,5 @@ class BrowserService:
                 self.runs.pop(thread_id, None)
 
     async def close_all(self) -> None:
+        await self.installer.close()
         await asyncio.gather(*(self.close(key) for key in list(self.runs)))
