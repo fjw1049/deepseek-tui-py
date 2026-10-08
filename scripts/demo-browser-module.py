@@ -21,12 +21,14 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=7894)
     parser.add_argument("--state-dir", type=Path)
     parser.add_argument("--no-gui", action="store_true")
+    parser.add_argument("--electron-executable", type=Path)
+    parser.add_argument("--workspace", type=Path)
     args = parser.parse_args()
     home = args.state_dir or Path(tempfile.mkdtemp(prefix="workbench-browser-demo-"))
     home.mkdir(parents=True, exist_ok=True)
     if (home / "settings.json").exists() and not (home / "demo-thread.txt").exists():
         raise RuntimeError("Use an empty directory or a previous browser-demo directory")
-    workspace = home / "workspace"
+    workspace = args.workspace.resolve() if args.workspace else home / "workspace"
     workspace.mkdir(exist_ok=True)
     os.environ["DEEPSEEK_HOME"] = str(home)
     os.environ["DEEPSEEK_PYTHON"] = sys.executable
@@ -80,13 +82,27 @@ def main() -> None:
     async def lifespan(app):
         nonlocal gui
         async with original_lifespan(app):
-            thread = await app.state.thread_manager.create_thread(
-                CreateThreadRequest(title="浏览器模块演示 · build_1004", workspace=str(workspace))
-            )
+            thread = None
+            marker = home / "demo-thread.txt"
+            if marker.exists():
+                try:
+                    saved = app.state.thread_manager.store.load_thread(marker.read_text().strip())
+                    if Path(saved.workspace) == workspace:
+                        thread = saved
+                except (FileNotFoundError, ValueError, KeyError):
+                    pass
+            if thread is None:
+                thread = await app.state.thread_manager.create_thread(
+                    CreateThreadRequest(
+                        title="浏览器模块演示 · build_1004", workspace=str(workspace)
+                    )
+                )
             (home / "demo-thread.txt").write_text(thread.id, encoding="utf-8")
             if not args.no_gui:
                 main_js = ROOT / "packages/workbench/out/main/index.js"
-                electron = ROOT / "packages/workbench/node_modules/.bin/electron"
+                electron = args.electron_executable or (
+                    ROOT / "packages/workbench/node_modules/.bin/electron"
+                )
                 if not main_js.exists():
                     raise RuntimeError(
                         "Build the GUI first: cd packages/workbench && npm run build"
