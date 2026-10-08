@@ -1,4 +1,5 @@
 {
+  "modelSelectionSyncFailed": "模型选择未能同步，请重试。",
   "workspacePreviewUnavailable": "预览暂时不可用，请稍后重试。",
   "workspacePreviewRetry": "重新加载预览",
   "workspaceImagePreviewFailed": "图片加载失败，请重试。",
@@ -842,6 +843,8 @@
   "automationEditTask": "编辑任务",
   "automationPromptSection": "任务内容",
   "automationLastRun": "上次执行",
+  "automationDiscussResult": "继续讨论",
+  "automationOpeningDiscussion": "正在打开…",
   "automationRunHistory": "执行记录",
   "automationRefreshRuns": "刷新执行记录",
   "automationNoRuns": "还没有执行记录",

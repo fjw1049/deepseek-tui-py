@@ -595,6 +595,17 @@ async def list_automation_runs(
     return payload.get("runs", [])
 
 
+@automations_router.post("/{automation_id}/runs/{run_id}/discussion")
+async def open_automation_discussion(
+    request: Request,
+    automation_id: str,
+    run_id: str,
+) -> dict[str, Any]:
+    runtime = runtime_from_request(request)
+    payload = _unwrap_or_raise(await runtime.open_automation_discussion(automation_id, run_id))
+    return {"thread_id": payload["thread_id"]}
+
+
 # POST /v1/elevations/{id} — resolve a pending sandbox elevation (L3).
 
 

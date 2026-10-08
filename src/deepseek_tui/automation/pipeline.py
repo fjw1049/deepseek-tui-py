@@ -11,7 +11,9 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Protocol
 
 from deepseek_tui.automation.delivery import (
+    classify_task_error_for_user,
     format_delivery_body,
+    sanitize_delivery_text,
     should_skip_delivery_for_error,
 )
 from deepseek_tui.automation.inbox import (
@@ -22,6 +24,7 @@ from deepseek_tui.automation.inbox import (
     wecom_webhook_send_text,
 )
 from deepseek_tui.automation.delivery import (
+    CRON_EXECUTION_PLAYBOOK,
     DeliveryConfig,
     DigestConfig,
     cron_execution_prefix,
@@ -194,8 +197,11 @@ async def enqueue_automation_task(
     automation: AutomationRecord,
     run: AutomationRunRecord,
     task_manager: TaskManager,
+    *,
+    provider: str | None = None,
+    model: str | None = None,
 ) -> None:
-    """Enqueue task — same defaults as legacy ``_enqueue_run_task``."""
+    """Read the current route at dispatch; only the resulting Task freezes it."""
     from deepseek_tui.tools.automation import AutomationRunStatus
     from deepseek_tui.tools.task import NewTaskRequest, TaskStatus
 
@@ -210,17 +216,27 @@ async def enqueue_automation_task(
     from deepseek_tui.utils import utc_now_iso as _utc_now_iso
 
     workspace = automation.cwds[0] if automation.cwds else None
-    new_task = NewTaskRequest(
-        idempotency_key=f"automation:{automation.id}:{run.id}",
-        prompt=await build_final_prompt(automation),
-        model=None,
-        workspace=str(workspace) if workspace else None,
-        mode="agent",
-        allow_shell=True,
-        trust_mode=False,
-        auto_approve=True,
-    )
     try:
+        from pathlib import Path
+
+        from deepseek_tui.config.loader import ConfigLoader
+        from deepseek_tui.config.routing import config_for_model
+
+        loaded = await asyncio.to_thread(
+            ConfigLoader().load, workspace=Path(workspace) if workspace else None,
+        )
+        config = config_for_model(loaded, model, provider=provider)
+        new_task = NewTaskRequest(
+            idempotency_key=f"automation:{automation.id}:{run.id}",
+            prompt=await build_final_prompt(automation),
+            model=config.effective_provider_config().model,
+            config=config,
+            workspace=str(workspace) if workspace else None,
+            mode="agent",
+            allow_shell=True,
+            trust_mode=False,
+            auto_approve=True,
+        )
         task = await task_manager.add_task(new_task)
         run.status = AutomationRunStatus.QUEUED
         run.started_at = getattr(task, "started_at", None)
@@ -231,7 +247,66 @@ async def enqueue_automation_task(
     except Exception as exc:  # noqa: BLE001
         run.status = AutomationRunStatus.FAILED
         run.ended_at = _utc_now_iso()
-        run.error = f"Failed to enqueue task: {exc}"
+        run.error = f"Failed to enqueue task: {str(exc) or type(exc).__name__}"
+
+
+async def try_write_run_result(
+    automation: AutomationRecord,
+    run: AutomationRunRecord,
+    task_manager: TaskManager,
+    *,
+    thread_manager: RuntimeThreadManager | None = None,
+) -> bool:
+    """Persist a terminal result independently of external delivery."""
+    from deepseek_tui.tools.automation import AutomationRunStatus
+    from deepseek_tui.tools.task import TaskStatus
+
+    if run.conversation_written or not run.conversation_thread_id or thread_manager is None:
+        return False
+    terminal_tasks = {
+        AutomationRunStatus.COMPLETED: (TaskStatus.COMPLETED,),
+        AutomationRunStatus.FAILED: (TaskStatus.FAILED, TaskStatus.TIMED_OUT),
+        AutomationRunStatus.CANCELED: (TaskStatus.CANCELED,),
+    }
+    if run.status not in terminal_tasks:
+        return False
+    try:
+        task = await task_manager.get_task(run.task_id) if run.task_id else None
+        if task is not None and task.status not in terminal_tasks[run.status]:
+            return False
+        if task is None and run.status is AutomationRunStatus.COMPLETED:
+            return False
+        error = (task.error if task is not None else None) or run.error
+        summary = format_delivery_body(
+            succeeded=run.status is AutomationRunStatus.COMPLETED,
+            raw_summary=task.result_summary if task is not None else None,
+            automation_name=automation.name,
+            error=error or ("任务已取消。" if run.status is AutomationRunStatus.CANCELED else None),
+        )
+        if run.status is AutomationRunStatus.CANCELED:
+            summary = "⏹ 任务已取消。"
+        elif run.status is AutomationRunStatus.FAILED:
+            summary = f"❌ {classify_task_error_for_user(error or '')}"
+        prompt = getattr(task, "prompt", None) if task is not None else None
+        if isinstance(prompt, str):
+            prompt = sanitize_delivery_text(prompt.replace(CRON_EXECUTION_PLAYBOOK, "", 1))
+        await thread_manager.append_automation_result(
+            run.conversation_thread_id,
+            automation_id=automation.id,
+            automation_name=automation.name,
+            prompt=prompt if isinstance(prompt, str) else automation.prompt,
+            run_id=run.id,
+            task_id=run.task_id,
+            ended_at=run.ended_at,
+            status=run.status.value,
+            summary=summary,
+        )
+    except Exception:
+        # A busy chat or failed write is retried on the next reconcile tick.
+        logger.debug("automation_result_write_pending run=%s", run.id, exc_info=True)
+        return False
+    run.conversation_written = True
+    return True
 
 
 async def try_deliver_completed_run(
@@ -461,10 +536,18 @@ async def fire_http_trigger(
         digest=digest,
         trigger_id=trigger_id,
     )
+    from pathlib import Path
+
+    from deepseek_tui.config.loader import ConfigLoader
+
+    config = await asyncio.to_thread(
+        ConfigLoader().load, workspace=Path(workspace) if workspace else None,
+    )
     task = await task_manager.add_task(
         NewTaskRequest(
             prompt=final_prompt,
-            model=None,
+            model=config.effective_provider_config().model,
+            config=config,
             workspace=workspace,
             mode="agent",
             allow_shell=False,

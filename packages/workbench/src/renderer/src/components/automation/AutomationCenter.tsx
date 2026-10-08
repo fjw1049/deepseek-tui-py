@@ -22,6 +22,7 @@ import {
   formatAutomationWhen,
   listAutomationRuns,
   listAutomations,
+  openAutomationDiscussion,
   pauseAutomation,
   resumeAutomation,
   runAutomationNow,
@@ -51,6 +52,7 @@ type Props = {
   runtimeReady: boolean
   workspaceRoot: string
   onOpenRuntimeSettings: () => void
+  onOpenThread?: (threadId: string) => void
 }
 
 type Notice = { tone: 'success' | 'error'; message: string }
@@ -118,7 +120,8 @@ function runTone(status: string): string {
 export function AutomationCenter({
   runtimeReady,
   workspaceRoot,
-  onOpenRuntimeSettings
+  onOpenRuntimeSettings,
+  onOpenThread
 }: Props): ReactElement {
   const { t } = useTranslation('common')
   const [creating, setCreating] = useState(false)
@@ -132,6 +135,7 @@ export function AutomationCenter({
   const [hasLoaded, setHasLoaded] = useState(false)
   const [runsLoading, setRunsLoading] = useState(false)
   const [busyId, setBusyId] = useState<string | null>(null)
+  const [discussionRunId, setDiscussionRunId] = useState<string | null>(null)
   const [notice, setNotice] = useState<Notice | null>(null)
   const [tab, setTab] = useState<TabId>('tasks')
   const [sort, setSort] = useState<SortMode>('active-first')
@@ -148,6 +152,19 @@ export function AutomationCenter({
   selectedIdRef.current = selectedId
 
   const selected = rows.find((row) => row.id === selectedId) ?? null
+
+  const discussRun = async (run: AutomationRunRecord): Promise<void> => {
+    if (discussionRunId || !onOpenThread) return
+    setDiscussionRunId(run.id)
+    try {
+      const { thread_id } = await openAutomationDiscussion(run.automation_id, run.id)
+      onOpenThread(thread_id)
+    } catch (error) {
+      setNotice({ tone: 'error', message: error instanceof Error ? error.message : String(error) })
+    } finally {
+      setDiscussionRunId(null)
+    }
+  }
   const automationById = useMemo(() => new Map(rows.map((row) => [row.id, row])), [rows])
 
   const templateTaskMap = useMemo(() => {
@@ -870,6 +887,16 @@ export function AutomationCenter({
                         {run.thread_id ? ` · Thread ${run.thread_id}` : ''}
                         {run.turn_id ? ` · Turn ${run.turn_id}` : ''}
                       </div>
+                    )}
+                    {onOpenThread && ['completed', 'failed', 'canceled'].includes(run.status) && (
+                      <button
+                        type="button"
+                        disabled={discussionRunId !== null}
+                        onClick={() => void discussRun(run)}
+                        className="mt-2 rounded-md border border-ds-border px-3 py-1.5 text-ds-ink hover:bg-ds-hover disabled:opacity-50"
+                      >
+                        {discussionRunId === run.id ? t('automationOpeningDiscussion') : t('automationDiscussResult')}
+                      </button>
                     )}
                     {run.error && (
                       <div className="mt-2 rounded bg-red-500/10 px-2 py-1.5 text-red-700 dark:text-red-200">

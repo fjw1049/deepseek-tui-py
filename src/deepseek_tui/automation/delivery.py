@@ -81,6 +81,15 @@ def classify_task_error_for_user(error: str) -> str:
             "或 config.toml 中的 anysearch_api_key / tavily_api_key 后重启服务。"
         )
 
+    if any(
+        marker in lower
+        for marker in (
+            "http 401", "http 403", "authentication_error", "authentication fails",
+            "api key invalid", "invalid api key", "missing_api_key", "unauthorized",
+        )
+    ):
+        return "模型服务认证失败。请检查该自动化所用服务商的 API 密钥和访问权限，再重新运行。"
+
     if "canceled" in lower or "cancelled" in lower:
         return "任务已取消。"
 

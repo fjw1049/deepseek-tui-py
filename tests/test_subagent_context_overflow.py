@@ -38,9 +38,10 @@ class _RecordingTurnLoop:
 
     instances: list[_RecordingTurnLoop] = []
 
-    def __init__(self, client: Any, compact_fn: Any = None) -> None:
+    def __init__(self, client: Any, compact_fn: Any = None, model_config: Any = None) -> None:
         self.client = client
         self.compact_fn = compact_fn
+        self.model_config = model_config
         self.runs = 0
         _RecordingTurnLoop.instances.append(self)
 
@@ -102,6 +103,7 @@ async def test_subagent_turn_loop_is_given_a_compact_fn(tmp_path: Path) -> None:
     await _run_overflowing_subagent(tmp_path)
 
     assert _RecordingTurnLoop.instances, "the loop never built a TurnLoop"
+    assert isinstance(_RecordingTurnLoop.instances[-1].model_config, Config)
     assert _RecordingTurnLoop.instances[0].compact_fn is not None
 
 

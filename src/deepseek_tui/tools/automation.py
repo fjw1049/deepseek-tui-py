@@ -230,6 +230,8 @@ class CronCreateTool(ToolSpec):
             "the job in the Workbench sidebar Automations page. "
             "To change an existing job, delete it with cron_delete and "
             "recreate it (deleting wipes the job's run history). "
+            "When created from a chat, each run's final summary is written "
+            "back to that chat for follow-up discussion. "
             "Creation requires approval."
         )
 
@@ -365,6 +367,9 @@ class CronCreateTool(ToolSpec):
                     cwds=cwds,
                     status=status,
                     delivery=delivery,
+                    conversation_thread_id=_opt_str_value(
+                        context.metadata.get("runtime_thread_id")
+                    ),
                 )
             )
         except ValueError as exc:
@@ -757,6 +762,7 @@ class AutomationRecord:
     last_run_at: str | None = None
     delivery: dict[str, Any] | None = None
     digest: dict[str, Any] | None = None
+    conversation_thread_id: str | None = None
     schema_version: int = CURRENT_AUTOMATION_SCHEMA_VERSION
 
     @property
@@ -777,6 +783,7 @@ class AutomationRecord:
             "updated_at": self.updated_at,
             "next_run_at": self.next_run_at,
             "last_run_at": self.last_run_at,
+            "conversation_thread_id": self.conversation_thread_id,
         }
         if self.delivery is not None:
             out["delivery"] = dict(self.delivery)
@@ -805,6 +812,7 @@ class AutomationRecord:
             updated_at=str(raw["updated_at"]),
             next_run_at=raw.get("next_run_at"),
             last_run_at=raw.get("last_run_at"),
+            conversation_thread_id=_opt_str_value(raw.get("conversation_thread_id")),
             delivery=(
                 dict(raw["delivery"])
                 if isinstance(raw.get("delivery"), dict)
@@ -833,6 +841,8 @@ class AutomationRunRecord:
     error: str | None = None
     delivery_done: bool = False
     delivery_attempts: int = 0
+    conversation_thread_id: str | None = None
+    conversation_written: bool = False
     # Per-run delivery config (HTTP-trigger runs carry their request's
     # delivery here — they have no AutomationRecord to read it from).
     delivery: dict[str, Any] | None = None
@@ -854,6 +864,8 @@ class AutomationRunRecord:
             "error": self.error,
             "delivery_done": self.delivery_done,
             "delivery_attempts": self.delivery_attempts,
+            "conversation_thread_id": self.conversation_thread_id,
+            "conversation_written": self.conversation_written,
             "delivery": self.delivery,
         }
 
@@ -880,6 +892,8 @@ class AutomationRunRecord:
             error=raw.get("error"),
             delivery_done=bool(raw.get("delivery_done", False)),
             delivery_attempts=int(raw.get("delivery_attempts", 0)),
+            conversation_thread_id=_opt_str_value(raw.get("conversation_thread_id")),
+            conversation_written=bool(raw.get("conversation_written", False)),
             delivery=raw.get("delivery") or None,
         )
 
@@ -901,6 +915,7 @@ class CreateAutomationRequest:
     status: AutomationStatus | None = None
     delivery: dict[str, Any] | None = None
     digest: dict[str, Any] | None = None
+    conversation_thread_id: str | None = None
 
 
 @dataclass(slots=True)
@@ -1105,6 +1120,7 @@ class AutomationManager:
             last_run_at=None,
             delivery=dict(req.delivery) if req.delivery else None,
             digest=dict(req.digest) if req.digest else None,
+            conversation_thread_id=_opt_str_value(req.conversation_thread_id),
         )
         self.save_automation(record)
         return record
@@ -1261,7 +1277,26 @@ class AutomationManager:
     ) -> None:
         from deepseek_tui.automation.pipeline import enqueue_automation_task
 
-        await enqueue_automation_task(automation, run, task_manager)
+        provider = model = None
+        if automation.conversation_thread_id:
+            if self.thread_manager is None:
+                run.status = AutomationRunStatus.FAILED
+                run.ended_at = _utc_now_iso()
+                run.error = "Cannot resolve current model route: thread manager unavailable"
+                return
+            try:
+                thread = self.thread_manager.store.load_thread(automation.conversation_thread_id)
+            except FileNotFoundError:
+                run.status = AutomationRunStatus.FAILED
+                run.ended_at = _utc_now_iso()
+                run.error = (
+                    "Cannot resolve current model route: original conversation no longer exists"
+                )
+                return
+            provider, model = thread.provider, thread.model
+        await enqueue_automation_task(
+            automation, run, task_manager, provider=provider, model=model,
+        )
 
     async def run_now(
         self, automation_id: str, task_manager: TaskManager
@@ -1274,6 +1309,7 @@ class AutomationManager:
             scheduled_for=now,
             status=AutomationRunStatus.QUEUED,
             created_at=now,
+            conversation_thread_id=automation.conversation_thread_id,
         )
         await self._enqueue_run_task(automation, run, task_manager)
         try:
@@ -1380,6 +1416,7 @@ class AutomationManager:
                     scheduled_for=automation.next_run_at,
                     status=AutomationRunStatus.QUEUED,
                     created_at=now.isoformat(),
+                    conversation_thread_id=automation.conversation_thread_id,
                 )
                 self.save_run(run)  # durable dispatch intent before task enqueue
                 await self._enqueue_run_task(automation, run, task_manager)
@@ -1424,21 +1461,44 @@ class AutomationManager:
         return targets
 
     async def reconcile_run_statuses(self, task_manager: TaskManager) -> None:
-        """Walk every Queued/Running run, looks up its linked Task, and
-        propagates the Task status back into the Run.
-        """
+        """Sync linked tasks, including resumed failures, and retry pending delivery."""
+        async with self._scheduler_lock:
+            await self._reconcile_run_statuses(task_manager)
+
+    async def _reconcile_run_statuses(self, task_manager: TaskManager) -> None:
+        from deepseek_tui.automation.pipeline import try_write_run_result
         from deepseek_tui.tools.task import TaskStatus
+
         for automation in self._reconcile_targets():
             for run in self.list_runs(automation.id):
+                task = None
+                if run.task_id is not None and run.status is not AutomationRunStatus.COMPLETED:
+                    try:
+                        task = await task_manager.get_task(run.task_id)
+                    except Exception:  # noqa: BLE001
+                        pass
+                # Resume can settle between ticks, even into the same failed
+                # state. A new end timestamp distinguishes that new attempt.
+                resumed = (
+                    run.status in (AutomationRunStatus.FAILED, AutomationRunStatus.CANCELED)
+                    and task is not None
+                    and (
+                        task.status in (TaskStatus.QUEUED, TaskStatus.RUNNING, TaskStatus.COMPLETED)
+                        or (
+                            getattr(task, "ended_at", None) is not None
+                            and task.ended_at != run.ended_at
+                        )
+                    )
+                )
                 if run.status not in (
                     AutomationRunStatus.QUEUED,
                     AutomationRunStatus.RUNNING,
-                ):
-                    # Terminal run with a pending non-best-effort delivery:
-                    # its status already settled, but a failed delivery is
-                    # waiting for a later-tick retry (delivery_attempts > 0).
-                    # Without this branch that retry never fires — the run is
-                    # invisible to reconcile once terminal.
+                ) and not resumed:
+                    if await try_write_run_result(
+                        automation, run, task_manager, thread_manager=self.thread_manager,
+                    ):
+                        self.save_run(run)
+                    # An unchanged terminal run may still need a delivery retry.
                     if (
                         not run.delivery_done
                         and run.status in (
@@ -1456,16 +1516,19 @@ class AutomationManager:
                         ):
                             self.save_run(run)
                     continue
-                if run.task_id is None:
+                if task is None:
                     continue
-                try:
-                    task = await task_manager.get_task(run.task_id)
-                except Exception:  # noqa: BLE001
-                    continue
+                if resumed:
+                    run.started_at = None
+                    run.ended_at = None
+                    run.error = None
+                    run.delivery_done = False
+                    run.delivery_attempts = 0
+                    run.conversation_written = False
 
                 run.thread_id = getattr(task, "thread_id", None)
                 run.turn_id = getattr(task, "turn_id", None)
-                changed = False
+                changed = resumed
 
                 if task.status is TaskStatus.QUEUED:
                     if run.status is not AutomationRunStatus.QUEUED:
@@ -1514,6 +1577,10 @@ class AutomationManager:
 
                 if changed:
                     self.save_run(run)
+                    if await try_write_run_result(
+                        automation, run, task_manager, thread_manager=self.thread_manager,
+                    ):
+                        self.save_run(run)
                     if run.status in (
                         AutomationRunStatus.COMPLETED,
                         AutomationRunStatus.FAILED,

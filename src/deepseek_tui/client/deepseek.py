@@ -97,16 +97,17 @@ class DeepSeekClient(LLMClient):
         Prefer ``build_llm_client()`` from ``client.factory`` for new code;
         this class method is kept for backwards compatibility.
         """
-        import os
-
+        from deepseek_tui.client.factory import MissingApiKeyError
         from deepseek_tui.state.secrets import SecretsManager
 
         mgr = SecretsManager()
         api_key = mgr.resolve_api_key(config)
         if not api_key:
-            api_key = os.environ.get("DEEPSEEK_API_KEY", "")
+            raise MissingApiKeyError("missing_api_key: no API key configured for selected provider")
         pc = config.effective_provider_config()  # type: ignore[union-attr]
-        base_url = pc.base_url or "https://api.deepseek.com"
+        if not pc.base_url or not pc.base_url.strip():
+            raise ValueError("No base URL configured for selected provider")
+        base_url = pc.base_url
         # Infer thinking_supported from base_url for legacy callers.
         thinking = "deepseek" in base_url.lower()
         return cls(

@@ -867,6 +867,14 @@ class AppRuntime:
         status = None
         if isinstance(status_raw, str) and status_raw.strip():
             status = AutomationStatus(status_raw.strip().lower())
+        conversation_thread_id = _pick_str(body, "conversation_thread_id")
+        if conversation_thread_id:
+            if manager.thread_manager is None:
+                return {"ok": False, "error": "thread manager not configured"}
+            try:
+                manager.thread_manager.store.load_thread(conversation_thread_id)
+            except FileNotFoundError:
+                return {"ok": False, "error": "conversation thread not found"}
         req = CreateAutomationRequest(
             name=name,
             prompt=prompt,
@@ -874,6 +882,7 @@ class AppRuntime:
             timezone=_pick_str(body, "timezone"),
             run_at=_pick_str(body, "run_at"),
             cwds=cwds or [str(self.working_directory)],
+            conversation_thread_id=conversation_thread_id,
             status=status,
             delivery=body.get("delivery") if isinstance(body.get("delivery"), dict) else None,
             digest=body.get("digest") if isinstance(body.get("digest"), dict) else None,
@@ -947,6 +956,65 @@ class AppRuntime:
         except KeyError as exc:
             return {"ok": False, "error": str(exc)}
         return {"ok": True, "run": _automation_run_to_dict(run)}
+
+    async def open_automation_discussion(
+        self,
+        automation_id: str,
+        run_id: str,
+    ) -> dict[str, Any]:
+        from deepseek_tui.automation.pipeline import try_write_run_result
+        from deepseek_tui.server.threads import CreateThreadRequest
+        from deepseek_tui.tools.automation import AutomationRunStatus
+
+        manager = self._automation_manager()
+        if manager is None or manager.thread_manager is None:
+            return {"ok": False, "error": "automation thread manager not configured"}
+        if self._tool_runtime is None or self._tool_runtime.task_manager is None:
+            return {"ok": False, "error": "task manager not configured"}
+        # Concurrent clicks must reuse one conversation.
+        async with manager._scheduler_lock:
+            try:
+                automation = manager.get_automation(automation_id)
+                run = next(r for r in manager.list_runs(automation_id) if r.id == run_id)
+            except (KeyError, StopIteration):
+                return {"ok": False, "error": "automation run not found"}
+            if run.status not in (
+                AutomationRunStatus.COMPLETED,
+                AutomationRunStatus.FAILED,
+                AutomationRunStatus.CANCELED,
+            ):
+                return {"ok": False, "error": "wait for the run to finish before discussing it"}
+            thread_manager = manager.thread_manager
+            target = run.conversation_thread_id or automation.conversation_thread_id
+            thread = None
+            if target:
+                try:
+                    thread = thread_manager.store.load_thread(target)
+                except FileNotFoundError:
+                    pass
+            if thread is None:
+                thread = await thread_manager.create_thread(
+                    CreateThreadRequest(
+                        title=automation.name,
+                        workspace=automation.cwds[0]
+                        if automation.cwds
+                        else str(self.working_directory),
+                    )
+                )
+                automation.conversation_thread_id = thread.id
+                manager.save_automation(automation)
+            if run.conversation_thread_id != thread.id:
+                run.conversation_thread_id = thread.id
+                run.conversation_written = False
+                manager.save_run(run)
+            if await try_write_run_result(
+                automation,
+                run,
+                self._tool_runtime.task_manager,
+                thread_manager=thread_manager,
+            ):
+                manager.save_run(run)
+            return {"ok": True, "thread_id": thread.id}
 
     async def pause_automation(self, automation_id: str) -> dict[str, Any]:
         manager = self._automation_manager()

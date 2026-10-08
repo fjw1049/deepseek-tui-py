@@ -202,6 +202,8 @@ class CreateThreadRequest(BaseModel):
 
 
 class UpdateThreadRequest(BaseModel):
+    provider: str | None = None
+    model: str | None = None
     archived: bool | None = None
     title: str | None = None
     memory_mode: str | None = None

@@ -1084,22 +1084,26 @@ async def real_subagent_executor(agent: SubAgent, cancel: asyncio.Event) -> Agen
             "Sub-agent loop runtime is missing; Engine.create must call "
             "SubAgentManager.attach_loop_runtime"
         )
+    from dataclasses import replace
+
+    from deepseek_tui.client.base import MeteredLLMClient
+    from deepseek_tui.client.factory import build_llm_client
+    from deepseek_tui.config.routing import config_for_model
+
+    cfg = config_for_model(runtime.config, agent.model, provider=agent.provider)
+    agent.provider = cfg.provider
+    effective_model = cfg.effective_provider_config().model
+    assert effective_model is not None
     owned_client = None
-    if "::" in agent.model:
-        from dataclasses import replace
-
-        from deepseek_tui.client.base import MeteredLLMClient
-        from deepseek_tui.client.factory import build_llm_client
-        from deepseek_tui.config.routing import config_for_model
-
-        cfg = config_for_model(runtime.config, agent.model)
+    client = runtime.client
+    if cfg.provider != runtime.config.provider:
         owned_client = build_llm_client(cfg)
         client = owned_client
         if isinstance(runtime.client, MeteredLLMClient):
             client = MeteredLLMClient(client, runtime.client._ledger)
-        runtime = replace(
-            runtime, client=client, config=cfg, model=cfg.effective_provider_config().model
-        )
+    runtime = replace(
+        runtime, client=client, config=cfg, model=effective_model
+    )
     try:
         out = await run_subagent_loop(agent, runtime, cancel)
     except BaseException as exc:

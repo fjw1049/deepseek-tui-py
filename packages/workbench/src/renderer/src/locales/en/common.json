@@ -1,4 +1,5 @@
 {
+  "modelSelectionSyncFailed": "Could not save the model selection. Please retry.",
   "workspacePreviewUnavailable": "Preview is unavailable. Please try again.",
   "workspacePreviewRetry": "Reload preview",
   "workspaceImagePreviewFailed": "Image preview failed to load. Please try again.",
@@ -842,6 +843,8 @@
   "automationEditTask": "Edit task",
   "automationPromptSection": "Task prompt",
   "automationLastRun": "Last run",
+  "automationDiscussResult": "Discuss result",
+  "automationOpeningDiscussion": "Opening…",
   "automationRunHistory": "Run history",
   "automationRefreshRuns": "Refresh runs",
   "automationNoRuns": "No runs yet",

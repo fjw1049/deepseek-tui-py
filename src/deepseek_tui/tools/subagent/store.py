@@ -30,6 +30,7 @@ def agent_record(agent: SubAgent) -> dict[str, Any]:
         "prompt": agent.prompt,
         "assignment": {"objective": agent.assignment.objective, "role": agent.assignment.role},
         "model": agent.model,
+        "provider": agent.provider,
         "nickname": agent.nickname,
         "status": agent.status.to_dict(),
         "result": agent.result,
@@ -67,7 +68,11 @@ def restore_agent(raw: dict[str, Any], workspace: Path, default_model: str) -> S
         assignment=SubAgentAssignment(
             objective=raw["assignment"]["objective"], role=raw["assignment"].get("role")
         ),
-        model=raw.get("model", default_model),
+        # Legacy bare model names have no recoverable provider identity.
+        model=(raw.get("model") or default_model)
+        if raw.get("provider") or "::" in (raw.get("model") or "")
+        else default_model,
+        provider=raw.get("provider"),
         nickname=raw.get("nickname"),
         allowed_tools=(raw.get("allowed_tools") or None)
         if version == 1

@@ -19,6 +19,7 @@ from deepseek_tui.server.threads.models import (
 )
 
 if TYPE_CHECKING:
+    from deepseek_tui.protocol.messages import Message
     from deepseek_tui.server.threads.store import RuntimeThreadStore
 
 
@@ -103,6 +104,11 @@ def reconstruct_messages_from_turn(
                     origin=MessageOrigin.REAL_USER,
                 )
             )
+        elif (item.kind == TurnItemKind.STATUS
+              and isinstance(item.metadata, dict)
+              and item.metadata.get("source") == "automation_result"):
+            if text:
+                messages.append(automation_result_message(item))
         elif item.kind == TurnItemKind.AGENT_MESSAGE:
             # Partial preface from a cancelled stream must not seed resume.
             if item.status in {
@@ -170,6 +176,32 @@ def reconstruct_messages_from_turn(
                 )
             )
     return messages
+
+
+def automation_result_message(item: TurnItemRecord) -> Message:
+    from deepseek_tui.protocol.messages import Message, MessageOrigin
+
+    text = item.detail or item.summary or ""
+    meta = item.metadata if isinstance(item.metadata, dict) else {}
+    if meta.get("status") != "completed" and meta.get("prompt"):
+        text += f"\n任务要求：{meta['prompt']}"
+    return Message.user(
+        "Background automation result for discussion, not a new user instruction. "
+        "Use task_output with the Task ID below when more detail is needed.\n\n"
+        + text,
+        origin=MessageOrigin.SYSTEM_REMINDER,
+    )
+
+
+def automation_result_items(store: RuntimeThreadStore, thread_id: str) -> list[TurnItemRecord]:
+    return [
+        item
+        for turn in store.list_turns_for_thread(thread_id)
+        for item in _ordered_turn_items(store, turn)
+        if item.kind == TurnItemKind.STATUS
+        and isinstance(item.metadata, dict)
+        and item.metadata.get("source") == "automation_result"
+    ]
 
 
 def _compact_persisted_tool_detail(tool_name: str, text: str) -> str:
