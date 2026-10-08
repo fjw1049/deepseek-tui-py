@@ -49,6 +49,32 @@ app.whenReady().then(async () => {
     assert.equal(result.nestedScroll, false)
   }
   console.log('Sidebar layout passed:', results)
+  await win.webContents.insertCSS(source)
+  const collapseResults = await win.webContents.executeJavaScript(`(() => {
+    const shell = document.querySelector('#shell')
+    shell.className = 'ds-workbench-shell'
+    const wrap = document.createElement('div')
+    wrap.className = 'ds-workbench-sidebar-wrap'
+    shell.firstElementChild.replaceWith(wrap)
+    wrap.innerHTML = '<div class="ds-sidebar-middle" style="height:200px"><div style="height:1200px;flex-shrink:0">Threads</div></div>'
+    const scroll = wrap.firstElementChild
+    scroll.scrollTop = 150
+    return [false, true].map(ideMode => {
+      shell.toggleAttribute('data-ide-mode', ideMode)
+      wrap.setAttribute('data-collapsed', '')
+      wrap.style.width = '0px'
+      const overflow = getComputedStyle(wrap).overflow
+      wrap.removeAttribute('data-collapsed')
+      wrap.style.width = '280px'
+      return { ideMode, overflow, expandedOverflow: getComputedStyle(wrap).overflow, scrollTop: scroll.scrollTop }
+    })
+  })()`)
+  for (const result of collapseResults) {
+    assert.equal(result.overflow, 'clip')
+    assert.equal(result.expandedOverflow, 'visible')
+    assert.equal(result.scrollTop, 150)
+  }
+  console.log('Sidebar collapse passed:', collapseResults)
   app.quit()
 }).catch(error => {
   console.error(error)

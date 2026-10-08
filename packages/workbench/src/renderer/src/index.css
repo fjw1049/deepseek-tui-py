@@ -7448,6 +7448,7 @@ select:focus-visible,
 /* Collapsed: wedge fades; the floating card keeps uniform radius + elevation. */
 .ds-workbench-sidebar-wrap[data-collapsed] {
   pointer-events: none;
+  overflow: clip;
 }
 
 .ds-workbench-sidebar-wrap[data-collapsed]::after {
