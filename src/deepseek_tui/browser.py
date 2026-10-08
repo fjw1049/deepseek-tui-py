@@ -13,6 +13,7 @@ import json
 import os
 import shutil
 import socket
+import sys
 import tempfile
 import uuid
 from dataclasses import dataclass, field
@@ -72,6 +73,10 @@ class BrowserRun:
     thread_id: str
     directory: Path
     session: Any = None
+    settings: Any = None
+    profiles: Any = None
+    recorder: Any = None
+    activity: str = "demo"
     owner: str = "agent"
     generation: int = 0
     revision: int = 0
@@ -91,6 +96,48 @@ class BrowserService:
     def __init__(self, artifact_root: Path):
         self.artifact_root = artifact_root
         self.runs: dict[str, BrowserRun] = {}
+
+    def preferences(self, thread_id: str) -> dict[str, bool]:
+        path = self.artifact_root / thread_id / "preferences.json"
+        return json.loads(path.read_text()) if path.exists() else {"persistent": False}
+
+    def configure(self, thread_id: str, persistent: bool) -> dict[str, bool]:
+        from deepseek_tui.utils import write_text_atomic
+
+        if thread_id in self.runs:
+            raise ValueError("End the browser session before changing storage settings")
+        path = self.artifact_root / thread_id / "preferences.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        write_text_atomic(path, json.dumps({"persistent": persistent}))
+        return self.preferences(thread_id)
+
+    def environment(self) -> dict[str, Any]:
+        import importlib.metadata
+
+        result: dict[str, Any] = {"python": sys.version.split()[0], "ready": False}
+        try:
+            from octop_browser.cdp.launcher import find_chrome
+
+            result["octop"] = importlib.metadata.version("octop-browser")
+            result["browser"] = find_chrome()
+            result["ready"] = bool(result["browser"])
+            result["message"] = "Ready" if result["ready"] else "Install Chrome or Chromium"
+        except ImportError:
+            result["message"] = "Use Python 3.11+ and uv sync --extra browser"
+        return result
+
+    async def recover(self, thread_id: str) -> dict[str, Any]:
+        try:
+            await self.close(thread_id)
+        except (RuntimeError, TimeoutError, ConnectionError):
+            pass
+        await self.ensure(thread_id)
+        return await self.control(thread_id, "user")
+
+    def clear_profile(self, thread_id: str) -> None:
+        if thread_id in self.runs:
+            raise ValueError("End the browser session before clearing saved login data")
+        shutil.rmtree(self.artifact_root / thread_id / "profile", ignore_errors=True)
 
     async def ensure(self, thread_id: str) -> BrowserRun:
         if thread_id not in self.runs:
@@ -118,8 +165,12 @@ class BrowserService:
                 with socket.socket() as sock:
                     sock.bind(("127.0.0.1", 0))
                     port = sock.getsockname()[1]
+                profile_dir = run.directory
+                if self.preferences(thread_id)["persistent"]:
+                    profile_dir = self.artifact_root / thread_id / "profile"
+                    profile_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
                 cfg = OctopSettings(
-                    profiles_dir=run.directory,
+                    profiles_dir=profile_dir,
                     cdp_port_start=port,
                     cdp_ws_url=None,
                     cdp_host="localhost",
@@ -128,17 +179,22 @@ class BrowserService:
                 )
                 # websockets >= 15 inherits OS proxy settings. CDP must stay local.
                 bypass = ",".join(
-                    filter(
-                        None,
-                        [
-                            os.environ.get("no_proxy"),
-                            os.environ.get("NO_PROXY"),
-                            "localhost,127.0.0.1,::1",
-                        ],
+                    dict.fromkeys(
+                        filter(
+                            None,
+                            (
+                                os.environ.get("no_proxy", "")
+                                + ","
+                                + os.environ.get("NO_PROXY", "")
+                                + ",localhost,127.0.0.1,::1"
+                            ).split(","),
+                        )
                     )
                 )
                 os.environ["no_proxy"] = os.environ["NO_PROXY"] = bypass
-                profiles = ProfileManager(base_dir=run.directory, settings=cfg)
+                profiles = ProfileManager(base_dir=profile_dir, settings=cfg)
+                profiles.get_or_create("workbench").cdp_port = port
+                run.settings, run.profiles = cfg, profiles
                 try:
                     run.session = await asyncio.wait_for(
                         BrowserSession.create(
@@ -180,6 +236,8 @@ class BrowserService:
             "log": run.log[-80:],
             "artifacts": run.artifacts[-12:],
             "demo_status": run.demo_status,
+            "activity": run.activity,
+            "workflow_recording": run.recorder is not None,
             "demo_step": run.demo_step,
             "demo_total": run.demo_total,
             "error": run.error,
@@ -207,6 +265,7 @@ class BrowserService:
                     "log": run.log[-80:],
                     "artifacts": run.artifacts[-12:],
                     "demo_status": run.demo_status,
+                    "activity": run.activity,
                     "demo_step": run.demo_step,
                     "demo_total": run.demo_total,
                     "error": run.error,
@@ -384,6 +443,10 @@ class BrowserService:
             raise ValueError("Return control to the agent before running the demo")
         if run.demo_task and not run.demo_task.done():
             raise ValueError("Demo is already running")
+        if run.recorder:
+            raise ValueError("Finish recording the workflow before running a demo")
+        run.activity = "demo"
+        run.demo_total = 9
         run.demo_status, run.error = "running", None
         run.demo_step = 0
         run.log.clear()
@@ -440,11 +503,24 @@ class BrowserService:
             await asyncio.gather(run.demo_task, return_exceptions=True)
         async with run.lock:
             try:
-                if run.recording:
-                    self._finish_recording(run)
-                self._persist(run)
-                if run.session:
-                    await run.session.close(kill=True)
+                try:
+                    if run.recorder:
+                        from deepseek_tui.browser_workflows import finish_recording
+
+                        await finish_recording(run)
+                    if run.recording:
+                        self._finish_recording(run)
+                    self._persist(run)
+                finally:
+                    if run.session:
+                        try:
+                            await asyncio.wait_for(run.session.close(kill=True), timeout=10)
+                        except Exception:
+                            if run.profiles:
+                                from octop_browser.cdp.launcher import terminate_browser
+
+                                await terminate_browser(run.profiles.get_or_create("workbench"))
+                            raise
             finally:
                 shutil.rmtree(run.directory, ignore_errors=True)
                 self.runs.pop(thread_id, None)

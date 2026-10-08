@@ -52,6 +52,94 @@ class ControlBody(BaseModel):
     owner: Literal["agent", "user", "stopped"]
 
 
+class PreferencesBody(BaseModel):
+    persistent: bool
+
+
+@router.get("/environment")
+async def environment(request: Request, thread_id: str) -> dict[str, Any]:
+    return service(request, thread_id).environment()
+
+
+@router.get("/preferences")
+async def preferences(request: Request, thread_id: str) -> dict[str, Any]:
+    return service(request, thread_id).preferences(thread_id)
+
+
+@router.post("/preferences")
+async def configure(request: Request, thread_id: str, body: PreferencesBody) -> dict[str, Any]:
+    try:
+        return service(request, thread_id).configure(thread_id, body.persistent)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+@router.post("/recover")
+async def recover(request: Request, thread_id: str) -> dict[str, Any]:
+    try:
+        return await service(request, thread_id).recover(thread_id)
+    except (ValueError, RuntimeError, TimeoutError) as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+@router.post("/clear-profile")
+async def clear_profile(request: Request, thread_id: str) -> dict[str, bool]:
+    try:
+        service(request, thread_id).clear_profile(thread_id)
+        return {"success": True}
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+@router.get("/workflows")
+async def workflows(request: Request, thread_id: str) -> dict[str, Any]:
+    from deepseek_tui.browser_workflows import recording_store
+
+    browser = service(request, thread_id)
+    try:
+        manifests = recording_store(browser, thread_id).list_recordings()
+        return {
+            "items": [
+                {"id": item.recording_id, "steps": item.stats.steps, "status": item.status}
+                for item in manifests[-20:][::-1]
+            ]
+        }
+    except ImportError:
+        return {"items": []}
+
+
+class WorkflowBody(BaseModel):
+    action: Literal["start", "stop", "preview", "replay"]
+    recording_id: str = ""
+    inputs: dict[str, str] = {}
+
+
+@router.post("/workflows")
+async def workflow(request: Request, thread_id: str, body: WorkflowBody) -> dict[str, Any]:
+    from deepseek_tui.browser_workflows import (
+        finish_recording,
+        read_workflow,
+        start_recording,
+        start_replay,
+    )
+
+    browser = service(request, thread_id)
+    try:
+        if body.action == "start":
+            return await start_recording(browser, thread_id)
+        if body.action == "stop":
+            run = browser.runs.get(thread_id)
+            if not run:
+                raise ValueError("No browser session")
+            async with run.lock:
+                return await finish_recording(run)
+        if body.action == "preview":
+            return read_workflow(browser, thread_id, body.recording_id).model_dump(by_alias=True)
+        return await start_replay(browser, thread_id, body.recording_id, body.inputs)
+    except (ValueError, RuntimeError, TimeoutError, FileNotFoundError, ImportError) as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
 @router.post("/control")
 async def control(request: Request, thread_id: str, body: ControlBody) -> dict[str, Any]:
     try:

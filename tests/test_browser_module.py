@@ -144,6 +144,59 @@ async def test_stop_at_frame_limit_returns_the_saved_animation(browser):
     assert not run.recording
 
 
+@pytest.mark.asyncio
+async def test_workflow_preflight_and_takeover(browser, monkeypatch):
+    from deepseek_tui import browser_workflows as flows
+
+    models = pytest.importorskip("octop_browser.record.models")
+    doc = models.StepsDocument(
+        recordingId="rec_test",
+        steps=[models.SemanticStep(id="1", kind="new_tab", url="https://example.com")],
+    )
+    monkeypatch.setattr(flows, "read_workflow", lambda *args: doc)
+    await browser.control("one", "user")
+    with pytest.raises(ValueError, match="Unsupported"):
+        await flows.start_replay(browser, "one", "rec_test", {})
+    browser.runs["one"].session.navigate.assert_not_called()
+    doc.steps = [models.SemanticStep(id="1", kind="fill", value="{{password}}")]
+    with pytest.raises(ValueError, match="Missing"):
+        await flows.start_replay(browser, "one", "rec_test", {})
+    doc.steps = [models.SemanticStep(id=str(i), kind="press", key="Enter") for i in range(4)]
+    await flows.start_replay(browser, "one", "rec_test", {})
+    await asyncio.sleep(0.05)
+    await browser.control("one", "user")
+    assert browser.state("one")["demo_status"] == "stopped"
+    assert browser.runs["one"].session.press.await_count < 4
+    assert browser.state("two")["log"] == []
+
+
+def test_profile_preferences_require_closed_session_and_survive_restart(browser):
+    with pytest.raises(ValueError, match="End"):
+        browser.configure("one", True)
+    with pytest.raises(ValueError, match="End"):
+        browser.clear_profile("one")
+    browser.configure("saved", True)
+    restarted = BrowserService(browser.artifact_root)
+    assert restarted.preferences("saved") == {"persistent": True}
+    assert restarted.preferences("other") == {"persistent": False}
+
+
+@pytest.mark.asyncio
+async def test_recover_restarts_after_disconnect(browser, monkeypatch):
+    run = browser.runs["one"]
+    run.session.close.side_effect = ConnectionError("disconnected")
+    replacement = BrowserRun("one", run.directory, session=fake_session())
+
+    async def ensure(thread_id):
+        browser.runs[thread_id] = replacement
+        return replacement
+
+    monkeypatch.setattr(browser, "ensure", ensure)
+    state = await browser.recover("one")
+    assert state["active"] and state["owner"] == "user"
+    assert browser.runs["two"].owner == "agent"
+
+
 @pytest.mark.parametrize(
     "value",
     [
@@ -201,5 +254,73 @@ async def test_real_octop_demo(tmp_path):
             "demo", BrowserAction(action="fill", selector="#name", text="人工接管"), actor="user"
         )
         assert result["success"]
+    finally:
+        await service.close_all()
+
+
+@pytest.mark.asyncio
+@pytest.mark.e2e
+async def test_real_record_replay_and_persistent_profile(tmp_path):
+    import json
+    import os
+    from pathlib import Path
+
+    from deepseek_tui import browser as browser_module
+    from deepseek_tui.browser_workflows import (
+        finish_recording,
+        read_workflow,
+        start_recording,
+        start_replay,
+    )
+
+    if os.environ.get("DEEPSEEK_BROWSER_E2E") != "1":
+        pytest.skip("Set DEEPSEEK_BROWSER_E2E=1 to run real Chromium")
+    service = BrowserService(tmp_path / "artifacts")
+    url = (Path(browser_module.__file__).parent / "browser_demo.html").as_uri()
+    service.configure("flow", True)
+    assert service.environment()["ready"]
+    try:
+        run = await service.ensure("flow")
+        await run.session.navigate(url)
+        await service.control("flow", "user")
+        await start_recording(service, "flow")
+        await run.session.navigate(url)
+        await service.action(
+            "flow", BrowserAction(action="fill", selector="#name", text="first"), actor="user"
+        )
+        await service.action(
+            "flow", BrowserAction(action="click", selector="#notifications"), actor="user"
+        )
+        await service.action("flow", BrowserAction(action="click", selector="#save"), actor="user")
+        await asyncio.sleep(0.5)
+        result = await finish_recording(run)
+        doc = read_workflow(service, "flow", result["recordingId"])
+        assert any(step.kind == "fill" for step in doc.steps)
+        assert all("example" not in item for item in doc.inputs)
+        await start_replay(
+            service,
+            "flow",
+            result["recordingId"],
+            {item["name"]: "replayed" for item in doc.inputs},
+        )
+        await asyncio.wait_for(run.demo_task, timeout=60)
+        assert service.state("flow")["demo_status"] == "passed", service.state("flow")
+        check = await service.action(
+            "flow", BrowserAction(action="check_text", text="已保存：replayed")
+        )
+        assert check["success"]
+        await run.session.eval_js("localStorage.setItem('workbench-profile-test','retained')")
+        await service.close("flow")
+        service = BrowserService(tmp_path / "artifacts")
+        run = await service.ensure("flow")
+        await run.session.navigate(url)
+        stored = await run.session.eval_js("localStorage.getItem('workbench-profile-test')")
+        assert json.loads(stored.content) == "retained"
+        await service.close("flow")
+        service.clear_profile("flow")
+        run = await service.ensure("flow")
+        await run.session.navigate(url)
+        cleared = await run.session.eval_js("localStorage.getItem('workbench-profile-test')")
+        assert json.loads(cleared.content) is None
     finally:
         await service.close_all()

@@ -17,3 +17,13 @@ async def test_browser_routes_require_auth_and_existing_thread(authed_client):
     assert invalid.status_code == 422
     no_session = await client.post(base + "/control", json={"owner": "user"}, headers=headers)
     assert no_session.status_code == 409
+    assert (await client.get(base + "/preferences")).json() == {"persistent": False}
+    assert (await client.post(base + "/preferences", json={"persistent": True})).json() == {
+        "persistent": True
+    }
+    assert (await client.get(base + "/environment")).status_code == 200
+    invalid_flow = await client.post(
+        base + "/workflows", json={"action": "preview", "recording_id": "../escape"}
+    )
+    assert invalid_flow.status_code == 409
+    assert (await client.post(base + "/clear-profile", json={})).status_code == 200

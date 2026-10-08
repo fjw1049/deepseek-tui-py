@@ -2,6 +2,7 @@ import { useEffect, useState, type ComponentProps, type ReactElement } from 'rea
 import { useTranslation } from 'react-i18next'
 import { Camera, CircleStop, Globe2, Play, Hand, Bot, RefreshCw } from 'lucide-react'
 import { DevBrowserPanel } from './DevBrowserPanel'
+import { BrowserSessionSettings } from './BrowserSessionSettings'
 import { useChatStore } from '../store/chat-store'
 import { formatAutomationApiError } from '../lib/automation-runtime-client'
 
@@ -10,6 +11,8 @@ type BrowserState = {
   owner: 'agent' | 'user' | 'stopped'
   recording: boolean
   demo_status: string
+  activity?: string
+  workflow_recording?: boolean
   demo_step?: number
   demo_total?: number
   error: string | null
@@ -102,7 +105,7 @@ export function AgentBrowserPanel({ threadId }: { threadId: string }): ReactElem
       </span>
     </div>
     <div className="mb-2 flex flex-wrap gap-2">
-      <button className={button} disabled={pending || state?.demo_status === 'running' || userControls}
+      <button className={button} disabled={pending || state?.demo_status === 'running' || state?.workflow_recording || userControls}
         onClick={() => { setArtifactImage(null); void perform('/demo', {}) }}><Play size={13} />{t('browserRunDemo')}</button>
       <button className={button} disabled={!state?.active}
         onClick={() => void perform('/control', { owner: userControls ? 'agent' : 'user' })}>
@@ -116,10 +119,10 @@ export function AgentBrowserPanel({ threadId }: { threadId: string }): ReactElem
       <button className={button} disabled={pending || (!!state?.active && !userControls)}><Globe2 size={13} />{t('browserOpen')}</button>
     </form>
     {error || state?.error ? <p role="alert" className="mb-2 rounded-md bg-red-500/10 p-2 text-xs text-red-600">{error || state?.error}</p> : null}
-    {state?.demo_status === 'passed' ? <p className="mb-2 rounded-md bg-emerald-500/10 p-2 text-xs text-emerald-700">{t('browserDemoPassed')}</p> : null}
+    {state?.demo_status === 'passed' ? <p className="mb-2 rounded-md bg-emerald-500/10 p-2 text-xs text-emerald-700">{t(state.activity === 'replay' ? 'browserReplayPassed' : 'browserDemoPassed')}</p> : null}
     {state?.demo_status === 'running' ? <div role="status" className="mb-2 text-xs text-ds-muted">
-      <p>{t('browserDemoRunning')} {state.demo_step ?? 0} / {state.demo_total ?? 9}</p>
-      <progress className="mt-1 w-full" aria-label={t('browserDemoRunning')} value={state.demo_step ?? 0} max={state.demo_total ?? 9} />
+      <p>{t(state.activity === 'replay' ? 'browserReplayRunning' : 'browserDemoRunning')} {state.demo_step ?? 0} / {state.demo_total ?? 9}</p>
+      <progress className="mt-1 w-full" aria-label={t(state.activity === 'replay' ? 'browserReplayRunning' : 'browserDemoRunning')} value={state.demo_step ?? 0} max={state.demo_total ?? 9} />
     </div> : null}
     {state?.demo_status === 'stopped' || state?.demo_status === 'interrupted' ? <p role="status" className="mb-2 text-xs text-ds-muted">{t('browserDemoStopped')}</p> : null}
     <div className="overflow-hidden rounded-lg border border-ds-border bg-white">
@@ -157,6 +160,7 @@ export function AgentBrowserPanel({ threadId }: { threadId: string }): ReactElem
         {dom ? <pre className="max-h-48 overflow-auto whitespace-pre-wrap rounded bg-ds-surface p-2">{dom}</pre> : null}
       </div>
     </details>
+    <BrowserSessionSettings threadId={threadId} active={!!state?.active} userControls={!!userControls} recording={!!state?.workflow_recording} />
     <div className="text-xs font-semibold">{t('browserEvidence')}</div>
     <div className="my-2 flex flex-wrap gap-2">{state?.artifacts.map((artifact, index) =>
       <button key={artifact.id} className={button} onClick={() => {
