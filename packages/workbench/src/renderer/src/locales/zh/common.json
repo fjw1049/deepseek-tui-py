@@ -12,6 +12,8 @@
   "browserEndSession": "结束会话",
   "browserDemoPassed": "验证通过：填写、通知开关、保存和结果检查已完成。",
   "browserDemoRunning": "正在运行本地演示，可随时接管或结束。",
+  "browserDemoStopped": "演示已中断，已有记录已保留。交还控制权后可重新运行。",
+  "browserFailureEvidence": "失败现场",
   "browserLiveView": "浏览器实时画面",
   "browserDemoIntro": "运行演示，查看 Octop 实际操作本地表单。",
   "browserReadElements": "读取元素",

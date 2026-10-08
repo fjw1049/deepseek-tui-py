@@ -10,6 +10,8 @@ type BrowserState = {
   owner: 'agent' | 'user' | 'stopped'
   recording: boolean
   demo_status: string
+  demo_step?: number
+  demo_total?: number
   error: string | null
   log: { action: string; success: boolean }[]
   artifacts: { id: string; label: string; path: string }[]
@@ -115,7 +117,11 @@ export function AgentBrowserPanel({ threadId }: { threadId: string }): ReactElem
     </form>
     {error || state?.error ? <p role="alert" className="mb-2 rounded-md bg-red-500/10 p-2 text-xs text-red-600">{error || state?.error}</p> : null}
     {state?.demo_status === 'passed' ? <p className="mb-2 rounded-md bg-emerald-500/10 p-2 text-xs text-emerald-700">{t('browserDemoPassed')}</p> : null}
-    {state?.demo_status === 'running' ? <p className="mb-2 text-xs text-ds-muted">{t('browserDemoRunning')}</p> : null}
+    {state?.demo_status === 'running' ? <div role="status" className="mb-2 text-xs text-ds-muted">
+      <p>{t('browserDemoRunning')} {state.demo_step ?? 0} / {state.demo_total ?? 9}</p>
+      <progress className="mt-1 w-full" aria-label={t('browserDemoRunning')} value={state.demo_step ?? 0} max={state.demo_total ?? 9} />
+    </div> : null}
+    {state?.demo_status === 'stopped' || state?.demo_status === 'interrupted' ? <p role="status" className="mb-2 text-xs text-ds-muted">{t('browserDemoStopped')}</p> : null}
     <div className="overflow-hidden rounded-lg border border-ds-border bg-white">
       {image ? <img src={image} alt={t('browserLiveView')} tabIndex={userControls ? 0 : -1}
         className={userControls ? 'block w-full cursor-crosshair' : 'block w-full'}
@@ -146,17 +152,17 @@ export function AgentBrowserPanel({ threadId }: { threadId: string }): ReactElem
         <input className="rounded border border-ds-border bg-transparent p-2" placeholder={t('browserElementValue')} value={text} onChange={(e) => setText(e.target.value)} />
         <div className="flex gap-2">
           <button className={button} disabled={!userControls || pending || !selector} onClick={() => action({ action: 'fill', selector, text })}>{t('browserFill')}</button>
-          <button className={button} disabled={!userControls || pending || !text.trim()} onClick={() => action({ action: 'check_text', text })}>{t('browserCheckText')}</button>
+          <button className={button} disabled={!userControls || pending || !text.trim()} onClick={() => action({ action: 'check_text', text, timeout_ms: 3000 })}>{t('browserCheckText')}</button>
         </div>
         {dom ? <pre className="max-h-48 overflow-auto whitespace-pre-wrap rounded bg-ds-surface p-2">{dom}</pre> : null}
       </div>
     </details>
     <div className="text-xs font-semibold">{t('browserEvidence')}</div>
-    <div className="my-2 flex flex-wrap gap-2">{state?.artifacts.map((artifact) =>
+    <div className="my-2 flex flex-wrap gap-2">{state?.artifacts.map((artifact, index) =>
       <button key={artifact.id} className={button} onClick={() => {
         void browserRequest<{ image: string }>(threadId, '/artifacts/' + artifact.id)
           .then((result) => setArtifactImage(result.image)).catch((e: Error) => setError(e.message))
-      }}>{artifact.id.endsWith('.gif') ? t('browserStepAnimation') : t('browserSaveEvidence')}</button>
+      }}>{index + 1}. {artifact.id.endsWith('.gif') ? t('browserStepAnimation') : artifact.label === '失败现场' ? t('browserFailureEvidence') : t('browserSaveEvidence')}</button>
     )}</div>
     {artifactImage ? <img className="mb-3 w-full rounded-lg border border-ds-border" src={artifactImage} alt={t('browserEvidence')} /> : null}
     <ol className="space-y-1 text-xs text-ds-muted">{state?.log.map((entry, i) =>

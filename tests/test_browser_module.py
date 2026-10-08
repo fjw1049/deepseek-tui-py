@@ -65,7 +65,7 @@ async def test_action_evidence_and_recording_module(browser):
     assert "private" not in str(browser.state("one")["log"])
     assert browser.state("two")["log"] == []
     await browser.close("one")
-    assert len(browser.state("one")["artifacts"]) == 2
+    assert len(browser.state("one")["artifacts"]) == 3
     assert browser.approval_scope("one") != scope
     with pytest.raises(ValueError):
         browser.artifact("two", shot["artifact"]["id"])
@@ -95,6 +95,53 @@ async def test_takeover_discards_waiting_agent_action_and_stop_cleans_up(browser
     assert not run.directory.exists()
     assert not browser.state("one")["active"]
     assert browser.state("two")["active"]
+
+
+@pytest.mark.asyncio
+async def test_failed_actions_and_recording_preserve_evidence(browser):
+    run = browser.runs["one"]
+    await browser.action("one", BrowserAction(action="record_start"))
+    frames = list(run.frames)
+    with pytest.raises(ValueError, match="already running"):
+        await browser.action("one", BrowserAction(action="record_start"))
+    assert run.frames == frames
+    run.session.click.side_effect = RuntimeError("page disconnected")
+    with pytest.raises(RuntimeError):
+        await browser.action("one", BrowserAction(action="click", selector="#save"))
+    assert run.log[-1] == {"action": "click", "success": False}
+    await browser.close("one")
+    saved = browser.state("one")
+    assert saved["error"] == "page disconnected"
+    assert saved["artifacts"][-1]["id"].endswith(".gif")
+
+
+@pytest.mark.asyncio
+async def test_text_check_waits_for_dynamic_content_and_captures_failure(browser):
+    run = browser.runs["one"]
+    run.session.eval_js.side_effect = [
+        SimpleNamespace(success=True, content='"Loading"'),
+        SimpleNamespace(success=True, content='"Saved"'),
+        SimpleNamespace(success=False, content="", error="page unavailable"),
+    ]
+    result = await browser.action(
+        "one", BrowserAction(action="check_text", text="Saved", timeout_ms=1000)
+    )
+    assert result["success"]
+    failed = await browser.action("one", BrowserAction(action="check_text", text="Saved"))
+    assert not failed["success"]
+    assert failed["artifact"]["label"] == "失败现场"
+    assert browser.state("one")["error"] == "FAIL: Saved"
+
+
+@pytest.mark.asyncio
+async def test_stop_at_frame_limit_returns_the_saved_animation(browser):
+    run = browser.runs["one"]
+    await browser.action("one", BrowserAction(action="record_start"))
+    run.frames *= 39
+    result = await browser.action("one", BrowserAction(action="record_stop"))
+    assert result["artifact"]["id"].endswith(".gif")
+    assert len(run.artifacts) == 1
+    assert not run.recording
 
 
 @pytest.mark.parametrize(
@@ -146,6 +193,7 @@ async def test_real_octop_demo(tmp_path):
         await asyncio.wait_for(service.runs["demo"].demo_task, timeout=60)
         state = service.state("demo")
         assert state["demo_status"] == "passed", state
+        assert state["demo_step"] == state["demo_total"] == 9
         assert len(state["artifacts"]) == 2
         assert (await service.frame("demo")).startswith("data:image/jpeg;base64,")
         await service.control("demo", "user")

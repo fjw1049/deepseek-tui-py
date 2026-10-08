@@ -46,6 +46,7 @@ class BrowserAction(BaseModel):
     y: int | None = Field(default=None, ge=0, lt=760)
     direction: Literal["up", "down", "left", "right"] = "down"
     amount: int = Field(default=300, ge=1, le=1200)
+    timeout_ms: int = Field(default=0, ge=0, le=10000)
 
     @model_validator(mode="after")
     def validate_action(self) -> BrowserAction:
@@ -81,6 +82,8 @@ class BrowserRun:
     artifacts: list[dict[str, str]] = field(default_factory=list)
     demo_task: asyncio.Task[Any] | None = None
     demo_status: str = "idle"
+    demo_step: int = 0
+    demo_total: int = 9
     error: str | None = None
 
 
@@ -177,6 +180,8 @@ class BrowserService:
             "log": run.log[-80:],
             "artifacts": run.artifacts[-12:],
             "demo_status": run.demo_status,
+            "demo_step": run.demo_step,
+            "demo_total": run.demo_total,
             "error": run.error,
         }
 
@@ -202,6 +207,8 @@ class BrowserService:
                     "log": run.log[-80:],
                     "artifacts": run.artifacts[-12:],
                     "demo_status": run.demo_status,
+                    "demo_step": run.demo_step,
+                    "demo_total": run.demo_total,
                     "error": run.error,
                 },
                 ensure_ascii=False,
@@ -277,9 +284,22 @@ class BrowserService:
                 raise ValueError("Browser control changed; queued action was discarded")
             if not run.session:
                 raise ValueError("Browser session has closed")
-            return await asyncio.wait_for(self._action(run, action), timeout=35)
+            try:
+                return await asyncio.wait_for(self._action(run, action), timeout=35)
+            except (Exception, asyncio.CancelledError) as exc:
+                run.log.append({"action": action.action, "success": False})
+                run.log[:] = run.log[-80:]
+                run.error = (
+                    "Action interrupted"
+                    if isinstance(exc, asyncio.CancelledError)
+                    else str(exc) or type(exc).__name__
+                )
+                self._persist(run)
+                raise
 
     async def _action(self, run: BrowserRun, a: BrowserAction) -> dict[str, Any]:
+        if a.action == "record_start" and run.recording:
+            raise ValueError("Recording is already running; finish it before starting again")
         run.revision += 1
         s = run.session
         artifact = None
@@ -297,9 +317,15 @@ class BrowserService:
         elif a.action == "scroll":
             result = await s.scroll(direction=a.direction, amount=a.amount)
         elif a.action == "check_text":
-            result = await s.eval_js("document.body.innerText")
-            body = json.loads(result.content) if isinstance(result.content, str) else ""
-            success = result.success and a.text in body
+            deadline = asyncio.get_running_loop().time() + a.timeout_ms / 1000
+            while True:
+                result = await s.eval_js("document.body.innerText")
+                body = json.loads(result.content) if result.success else ""
+                success = isinstance(body, str) and a.text in body
+                remaining = deadline - asyncio.get_running_loop().time()
+                if success or remaining <= 0 or not result.success:
+                    break
+                await asyncio.sleep(min(0.2, remaining))
             result = None
         else:
             result = None
@@ -320,7 +346,13 @@ class BrowserService:
             if len(run.frames) >= 40:
                 artifact = self._finish_recording(run)
         if a.action == "record_stop":
-            artifact = self._finish_recording(run)
+            artifact = self._finish_recording(run) or artifact
+        if not success:
+            try:
+                artifact = self._save(run, await self._capture(run), ".jpg", "失败现场")
+            except Exception:
+                pass  # Preserve the action failure even when the page cannot be captured.
+        run.error = None if success else str(content)
         # Never log typed values or full DOM text; only action outcomes.
         run.log.append({"action": a.action, "success": success})
         run.log[:] = run.log[-80:]
@@ -353,6 +385,9 @@ class BrowserService:
         if run.demo_task and not run.demo_task.done():
             raise ValueError("Demo is already running")
         run.demo_status, run.error = "running", None
+        run.demo_step = 0
+        run.log.clear()
+        self._persist(run)
         run.demo_task = asyncio.create_task(self._demo(run))
         return self.state(thread_id)
 
@@ -375,8 +410,11 @@ class BrowserService:
                 {"action": "screenshot"},
                 {"action": "record_stop"},
             ]
-            for step in steps:
+            for index, step in enumerate(steps, 1):
+                run.demo_step = index
                 await asyncio.sleep(0.65)
+                if step["action"] == "check_text":
+                    step["timeout_ms"] = 3000
                 result = await self.action(run.thread_id, BrowserAction(**step))
                 if not result["success"]:
                     raise ValueError(str(result["content"]))

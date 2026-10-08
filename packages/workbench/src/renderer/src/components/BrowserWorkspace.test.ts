@@ -11,7 +11,7 @@ vi.mock('../store/chat-store', () => ({ useChatStore: () => null }))
 
 it('runs a demo, takes control, ends the session and exposes evidence through the runtime bridge', async () => {
   let state = { active: false, owner: 'agent', recording: false, demo_status: 'idle',
-    log: [], artifacts: [], error: null }
+    demo_step: 3, demo_total: 9, log: [], artifacts: [], error: null }
   const request = vi.fn(async (path: string, _method: string, raw?: string) => {
     if (path.endsWith('/demo')) state = { ...state, active: true, demo_status: 'running' }
     if (path.endsWith('/control')) {
@@ -33,8 +33,11 @@ it('runs a demo, takes control, ends the session and exposes evidence through th
     await click('browserRunDemo')
     expect(request).toHaveBeenCalledWith('/v1/threads/thr_demo/browser/demo', 'POST', '{}')
     expect(container.textContent).toContain('browserDemoRunning')
+    expect(container.querySelector('progress')?.value).toBe(3)
+    expect(container.querySelector('progress')?.max).toBe(9)
     await click('browserTakeControl')
     expect(container.textContent).toContain('browserUserControl')
+    expect(container.textContent).toContain('browserDemoStopped')
     await click('browserEndSession')
     expect(container.textContent).toContain('browserIdle')
   } finally {

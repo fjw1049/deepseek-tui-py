@@ -12,6 +12,8 @@
   "browserEndSession": "End session",
   "browserDemoPassed": "Verified: input, notifications, save and result checks passed.",
   "browserDemoRunning": "Running local demo. Take over or end at any time.",
+  "browserDemoStopped": "Demo interrupted; existing evidence is retained. Return control to run again.",
+  "browserFailureEvidence": "Failure screenshot",
   "browserLiveView": "Live browser view",
   "browserDemoIntro": "Run the demo to watch Octop operate a local form.",
   "browserReadElements": "Read elements",
