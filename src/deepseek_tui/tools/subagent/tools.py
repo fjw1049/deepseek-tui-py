@@ -304,14 +304,13 @@ async def _execute_spawn(input_data: dict[str, Any], context: ToolContext) -> To
         raw = context.metadata.get("parent_session_messages")
         if isinstance(raw, list):
             fork_messages = [m for m in raw if isinstance(m, dict)]
-    # Persona ``model`` is only applied when it looks like a DeepSeek id;
-    # foreign labels (opus/sonnet/…) stay advisory and are ignored.
+    # Plugin model references use the same routing rules as explicit overrides.
     persona_model = ""
     if plugin_persona is not None:
         persona_model = (getattr(plugin_persona, "model", None) or "").strip()
     user_model = _pick_str(input_data, "model")
     chosen_model = user_model
-    if not chosen_model and persona_model.lower().startswith("deepseek"):
+    if not chosen_model and persona_model:
         chosen_model = persona_model
     if not chosen_model:
         cfg = _spawn_config(context)
@@ -346,7 +345,10 @@ async def _execute_spawn(input_data: dict[str, Any], context: ToolContext) -> To
             f"{runtime_raw.max_spawn_depth})"
         )
     try:
-        snapshot = await manager.spawn(request)
+        if context.metadata.get("subagent_runtime") is not None:
+            snapshot = await manager.spawn(request, parent_runtime=runtime_raw)
+        else:
+            snapshot = await manager.spawn(request)
     except RuntimeError as exc:
         raise ToolError(str(exc)) from exc
     content = f"spawned {snapshot.agent_id} [{snapshot.agent_type.value}]"

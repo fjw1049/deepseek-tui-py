@@ -3,7 +3,8 @@ import {
   BUILTIN_LLM_PROVIDER_IDS,
   type AppSettingsV1
 } from '@shared/app-settings'
-import { encodeModelRef } from '@shared/model-ref'
+import { decodeModelRef, encodeModelRef } from '@shared/model-ref'
+import { getProvider } from '../agent/registry'
 import type { ComposerModelMeta } from '../lib/composer-model-label'
 import {
   syncGitCommitSelection as mergeGitCommitSelection,
@@ -81,12 +82,42 @@ export function createAppActions(options: CreateAppActionsOptions): Pick<
     normalizeWorkspaceRoot
   } = options
 
+  let modelSelectionSync: Promise<void> = Promise.resolve()
+
   return {
     setError: (message) => set({ error: message }),
 
     setComposerModel: (modelId) => {
+      const { activeThreadId, providerId, composerModel: previousModel } = get()
       persistComposerModel(modelId)
       set({ composerModel: modelId })
+      if (!activeThreadId) return
+      const selected = decodeModelRef(modelId)
+      if (!selected.modelId) return
+      const provider = getProvider(providerId)
+      // Serialize rapid changes so an older response cannot restore an older route.
+      modelSelectionSync = modelSelectionSync.then(async () => {
+        try {
+          const updated = await provider.updateThread(activeThreadId, {
+            provider: selected.providerId || undefined,
+            model: selected.modelId
+          })
+          set((state) => ({
+            threads: state.threads.map((thread) => thread.id === updated.id ? updated : thread)
+          }))
+        } catch (error) {
+          if (get().activeThreadId !== activeThreadId || get().composerModel !== modelId) return
+          const thread = get().threads.find((item) => item.id === activeThreadId)
+          const restored = thread?.provider
+            ? encodeModelRef(thread.provider, thread.model)
+            : previousModel
+          persistComposerModel(restored)
+          set({
+            composerModel: restored,
+            error: error instanceof Error ? error.message : i18n.t('common:modelSelectionSyncFailed')
+          })
+        }
+      })
     },
 
     setComposerMode: (mode) => {

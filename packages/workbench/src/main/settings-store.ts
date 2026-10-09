@@ -1,3 +1,4 @@
+import { migrateNetworkSettings } from '../shared/network-settings'
 import {
   access,
   copyFile,
@@ -285,6 +286,10 @@ function buildMergedSettings(parsed: Partial<AppSettingsV1>): AppSettingsV1 {
   return {
     ...defaults,
     ...parsed,
+    network: parsed.network ?? migrateNetworkSettings([
+      parsed.deepseek?.baseUrl ?? '',
+      ...(parsed.customEndpoints ?? []).map((endpoint) => endpoint.baseUrl)
+    ]),
     deepseek: { ...defaults.deepseek, ...parsed.deepseek },
     defaultLlmProviderId: parsed.defaultLlmProviderId ?? defaults.defaultLlmProviderId,
     llmProviders: mergeLlmProviders(defaults.llmProviders, parsed.llmProviders),

@@ -192,18 +192,24 @@ class SubAgentManager:
         return self.list_filtered(include_archived=False)
 
     def _loop_runtime_for_spawn(
-        self, request: SpawnRequest, child_depth: int
+        self,
+        request: SpawnRequest,
+        child_depth: int,
+        parent_runtime: SubAgentRuntime | None = None,
     ) -> SubAgentRuntime | None:
-        if self._loop_runtime is None:
+        source = parent_runtime or self._loop_runtime
+        if source is None:
             return None
         from dataclasses import replace
 
-        rt = self._loop_runtime.with_spawn_depth(child_depth)
+        rt = source.with_spawn_depth(child_depth)
         if request.auto_approve is not None:
             rt = replace(rt, auto_approve=request.auto_approve)
         return rt
 
-    async def spawn(self, request: SpawnRequest) -> SubAgentResult:
+    async def spawn(
+        self, request: SpawnRequest, *, parent_runtime: SubAgentRuntime | None = None
+    ) -> SubAgentResult:
         async with self._lock:
             self._check_admission()
             child_depth = request.parent_depth + 1
@@ -213,11 +219,24 @@ class SubAgentManager:
                     f"({DEFAULT_MAX_SPAWN_DEPTH}); refusing nested spawn at "
                     f"depth {child_depth}"
                 )
+            runtime = self._loop_runtime_for_spawn(request, child_depth, parent_runtime)
+            model = request.model or (
+                parent_runtime.config.subagents.default_model or parent_runtime.model
+                if parent_runtime is not None
+                else self.default_model
+            )
+            provider = None
+            if runtime is not None:
+                from deepseek_tui.config.routing import config_for_model
+
+                route = config_for_model(runtime.config, model)
+                provider = route.provider
             agent = SubAgent(
                 agent_type=request.agent_type,
                 prompt=request.prompt,
                 assignment=request.assignment,
-                model=request.model or self.default_model,
+                model=model,
+                provider=provider,
                 nickname=request.nickname
                 or whale_nickname_for_index(len(self._agents)),
                 allowed_tools=request.allowed_tools,
@@ -227,7 +246,7 @@ class SubAgentManager:
                 fork_messages=request.fork_messages if request.fork_context else None,
                 parent_cancel=self._parent_cancel,
                 mailbox=self._mailbox,
-                loop_runtime=self._loop_runtime_for_spawn(request, child_depth),
+                loop_runtime=runtime,
                 output_schema=request.output_schema,
                 system_prompt=request.system_prompt,
                 background=request.background,

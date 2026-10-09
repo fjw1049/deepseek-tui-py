@@ -117,11 +117,14 @@ def default_runtime_model(cfg: Config, *, override: str | None = None) -> str:
     """Model for tasks / subagents when none is explicitly set.
 
     Prefer an explicit *override*, else the active provider's model
-    (``effective_provider_config``), else a last-resort DeepSeek id.
+    (``effective_provider_config``). Missing model configuration is an error.
     """
     if override is not None and str(override).strip():
         return str(override).strip()
-    return cfg.effective_provider_config().model or "deepseek-chat"
+    model = cfg.effective_provider_config().model
+    if not model:
+        raise ValueError(f"No model configured for provider '{cfg.provider}'")
+    return model
 
 
 def build_subagent_manager(
@@ -212,7 +215,7 @@ async def create_tool_runtime(
             owns_task_manager = False
         elif cfg.features.tasks:
             data_dir = task_data_dir if task_data_dir is not None else default_tasks_dir()
-            # Automations enqueue with model=None and inherit this default.
+            # Jobs without a saved model route inherit this default.
             task_cfg = TaskManagerConfig(
                 data_dir=data_dir,
                 default_workspace=workspace,
@@ -394,59 +397,18 @@ async def create_tool_runtime(
         return runtime
 
 
-def _has_api_key(cfg: Config | None = None) -> bool:
-    """Check if an API key is available for real executors.
-
-    Uses the same resolution chain as ``build_llm_client`` (env ->
-    ``[providers.<provider>]`` -> top-level) so a session provider switch
-    (e.g. ``provider = "endpoint"`` with its own key) keeps real
-    sub-agent/task executors instead of silently degrading to stubs.
-    """
-    import os
-
-    from deepseek_tui.state.secrets import SecretsManager
-
-    if os.environ.get("DEEPSEEK_API_KEY"):
-        return True
-    try:
-        from deepseek_tui.config.loader import ConfigLoader
-
-        config = cfg or ConfigLoader().load()
-        return bool(SecretsManager().resolve_api_key(config))
-    except Exception:  # noqa: BLE001
-        return False
-
-
 def _safe_task_executor(cfg: Config | None = None) -> Any:
-    """Return real executor if API key available, else stub."""
-    if _has_api_key(cfg):
-        from deepseek_tui.tools.task import get_real_task_executor
+    """Use the real executor so missing credentials fail the task explicitly."""
+    from deepseek_tui.tools.task import get_real_task_executor
 
-        return get_real_task_executor()
-    logger.warning(
-        "Task executor degraded to stub: no API key resolvable for "
-        "provider '%s'; durable tasks will return synthetic results.",
-        getattr(cfg, "provider", "<unset>"),
-    )
-    from deepseek_tui.tools.task import _stub_executor
-
-    return _stub_executor
+    return get_real_task_executor()
 
 
 def _safe_subagent_executor(cfg: Config | None = None) -> Any:
-    """Return real executor if API key available, else stub."""
-    if _has_api_key(cfg):
-        from deepseek_tui.tools.subagent import get_real_subagent_executor
+    """Missing credentials must fail instead of returning synthetic success."""
+    from deepseek_tui.tools.subagent import get_real_subagent_executor
 
-        return get_real_subagent_executor()
-    logger.warning(
-        "Sub-agent executor degraded to stub: no API key resolvable for "
-        "provider '%s'; spawned agents will return synthetic results.",
-        getattr(cfg, "provider", "<unset>"),
-    )
-    from deepseek_tui.tools.subagent import _stub_executor
-
-    return _stub_executor
+    return get_real_subagent_executor()
 
 
 async def _build_mcp_manager(

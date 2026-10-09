@@ -155,6 +155,7 @@ type ThreadRecordJson = {
   created_at: string
   updated_at: string
   model: string
+  provider?: string
   workspace: string
   env_mode?: string
   worktree_path?: string | null
@@ -247,6 +248,7 @@ function threadFromJson(t: ThreadRecordJson, title?: string): NormalizedThread {
     updatedAt: t.updated_at,
     createdAt: t.created_at,
     model: t.model,
+    provider: t.provider,
     mode: t.mode,
     workspace: t.workspace,
     envMode: t.env_mode === 'worktree' ? 'worktree' : 'local',
@@ -1026,12 +1028,12 @@ export class DeepseekRuntimeProvider implements AgentProvider {
 
   async updateThread(
     threadId: string,
-    input: { envMode?: 'local' | 'worktree' }
+    input: { envMode?: 'local' | 'worktree'; provider?: string; model?: string }
   ): Promise<NormalizedThread> {
     const r = await window.dsGui.runtimeRequest(
       `/v1/threads/${encodeURIComponent(threadId)}`,
       'PATCH',
-      JSON.stringify({ env_mode: input.envMode })
+      JSON.stringify({ env_mode: input.envMode, provider: input.provider, model: input.model })
     )
     if (!r.ok) throw toRuntimeError(readRuntimeError(r.body, 'failed to update thread'))
     const t = JSON.parse(r.body) as ThreadRecordJson

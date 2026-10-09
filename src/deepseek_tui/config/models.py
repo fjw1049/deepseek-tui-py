@@ -413,10 +413,9 @@ class Config(BaseModel):
                 merged.base_url = defaults.base_url
             if merged.model is None:
                 merged.model = defaults.model
-        # Final fallback: if still no model after provider defaults, use
-        # the global default_text_model (preserves existing DeepSeek behavior).
-        if merged.model is None:
-            merged.model = self.default_text_model
+        if not merged.model or not merged.model.strip():
+            raise ValueError(f"No model configured for provider '{self.provider}'")
+        merged.model = merged.model.strip()
         if merged.protocol is None:
             merged.protocol = "openai"
         return merged

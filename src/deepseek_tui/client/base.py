@@ -10,6 +10,8 @@ from typing import TYPE_CHECKING
 
 import httpx
 
+from deepseek_tui.client.network import NetworkSettings, read_network_settings
+
 if TYPE_CHECKING:
     from deepseek_tui.engine.usage_ledger import TurnUsageLedger
 
@@ -70,6 +72,7 @@ class LLMClient(ABC):
         self.transport = transport
         self.extra_headers = dict(extra_headers or {})
         self._http_client: httpx.AsyncClient | None = None
+        self._network_clients: dict[NetworkSettings, httpx.AsyncClient] = {}
         self.media_config = None
         self._vision_cache: dict[str, str] = {}
 
@@ -92,6 +95,8 @@ class LLMClient(ABC):
         accounting. Connect/write timeouts stay bounded so DNS or TLS
         stalls still surface promptly.
         """
+        network = read_network_settings()
+        self._http_client = self._network_clients.get(network)
         if self._http_client is None or self._http_client.is_closed:
             self._http_client = httpx.AsyncClient(
                 timeout=httpx.Timeout(
@@ -101,15 +106,18 @@ class LLMClient(ABC):
                     pool=self.timeout_seconds,
                 ),
                 transport=self.transport,
+                **network.http_options(),
             )
+            # Keep previous clients alive until close so in-flight streams finish.
+            self._network_clients[network] = self._http_client
         return self._http_client
 
     async def close(self) -> None:
         """Close the persistent HTTP client."""
-        if self._http_client is not None and not self._http_client.is_closed:
-            logger.debug("http_client_close base_url=%s", self.base_url)
-            await self._http_client.aclose()
-            self._http_client = None
+        for client in self._network_clients.values():
+            await client.aclose()
+        self._network_clients.clear()
+        self._http_client = None
 
     @abstractmethod
     def stream_chat_completion(self, request: MessageRequest) -> AsyncIterator[StreamEvent]:

@@ -83,6 +83,8 @@ if TYPE_CHECKING:
 
 from deepseek_tui.server.threads.broadcast import AsyncBroadcast
 from deepseek_tui.server.threads.items import (
+    automation_result_items,
+    automation_result_message,
     duration_ms,
     file_change_completion_detail,
     reconstruct_messages_from_turn,
@@ -232,7 +234,9 @@ class _ActiveTurnState:
 
 
 class _ActiveThreadState:
-    __slots__ = ("handle", "engine", "engine_task", "active_turn", "provider")
+    __slots__ = (
+        "handle", "engine", "engine_task", "active_turn", "provider", "automation_result_ids",
+    )
 
     def __init__(
         self,
@@ -246,6 +250,7 @@ class _ActiveThreadState:
         self.engine_task: asyncio.Task[None] = engine_task
         self.active_turn: _ActiveTurnState | None = None
         self.provider = provider
+        self.automation_result_ids: set[str] = set()
 
 
 class _ApprovalDecision:
@@ -641,9 +646,10 @@ class RuntimeThreadManager:
             )
 
         now = datetime.now(timezone.utc)
-        model = default_runtime_model(
-            self.config, override=(req.model or "").strip() or None
-        )
+        from deepseek_tui.config.routing import config_for_model
+
+        route_config = config_for_model(self.config, req.model, provider=req.provider)
+        model = default_runtime_model(route_config)
         workspace = (req.workspace or "").strip() or str(self.workspace)
         mode = (req.mode or "").strip() or "agent"
         allow_shell = req.allow_shell if req.allow_shell is not None else self.config.allow_shell
@@ -655,7 +661,7 @@ class RuntimeThreadManager:
             created_at=now,
             updated_at=now,
             model=model,
-            provider=(req.provider or self.config.provider).strip() or self.config.provider,
+            provider=route_config.provider,
             workspace=workspace,
             env_mode=env_mode,
             mode=mode,
@@ -771,12 +777,72 @@ class RuntimeThreadManager:
             RuntimeTurnStatus.IN_PROGRESS,
         )
 
+    async def append_automation_result(
+        self,
+        thread_id: str,
+        *,
+        automation_id: str,
+        automation_name: str,
+        prompt: str,
+        run_id: str,
+        task_id: str | None,
+        ended_at: str | None,
+        status: str,
+        summary: str,
+    ) -> None:
+        # Lease prevents a late result from mutating an active turn or a rewind.
+        async with self._hold_thread_operation(thread_id):
+            thread = self.store.load_thread(thread_id)
+            item_id = (
+                "item_"
+                + uuid.uuid5(uuid.NAMESPACE_URL, f"{thread_id}:{run_id}:{ended_at}:{status}").hex
+            )
+            try:
+                existing = self.store.load_item(item_id)
+            except FileNotFoundError:
+                existing = None
+            if existing is not None:
+                turn = self.store.load_turn(existing.turn_id)
+                if item_id not in turn.item_ids:
+                    turn.item_ids.append(item_id)
+                    self.store.save_turn(turn)
+                if thread.latest_turn_id is None:
+                    thread.latest_turn_id = turn.id
+                    self._touch(thread)
+                await self._emit_event(
+                    thread_id, turn.id, item_id, "item.completed",
+                    {"item": existing.model_dump(mode="json")},
+                )
+                return
+            prompt_hint = summarize_text(prompt, 600)
+            body = summary
+            if status == "completed":
+                body += f"\n\n任务要求：{prompt_hint}"
+            body += f"\nTask ID: {task_id or '—'}\nRun ID: {run_id}"
+            await self.append_automation_notice(
+                thread_id,
+                automation_name=automation_name,
+                summary=body,
+                item_id=item_id,
+                metadata={
+                    "source": "automation_result",
+                    "prompt": prompt_hint,
+                    "automation_id": automation_id,
+                    "run_id": run_id,
+                    "task_id": task_id,
+                    "status": status,
+                    "ended_at": ended_at,
+                },
+            )
+
     async def append_automation_notice(
         self,
         thread_id: str,
         *,
         automation_name: str,
         summary: str,
+        item_id: str | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> None:
         """Push a read-only STATUS item + SSE for automation delivery (no LLM)."""
 
@@ -797,7 +863,7 @@ class RuntimeThreadManager:
             self.store.save_turn(turn)
             thread.latest_turn_id = turn_id
 
-        item_id = f"item_{uuid.uuid4().hex[:8]}"
+        item_id = item_id or f"item_{uuid.uuid4().hex[:8]}"
         header = f"[{automation_name}] "
         body = header + summary
         item = TurnItemRecord(
@@ -809,7 +875,7 @@ class RuntimeThreadManager:
             detail=body,
             started_at=now,
             ended_at=now,
-            metadata={"source": "automation_delivery"},
+            metadata=metadata or {"source": "automation_delivery"},
         )
         turn = self.store.load_turn(turn_id)
         if item_id not in turn.item_ids:
@@ -821,8 +887,10 @@ class RuntimeThreadManager:
             thread_id,
             turn_id,
             item_id,
-            "automation.delivered",
-            {"automation_name": automation_name, "summary": summary},
+            "item.completed" if metadata else "automation.delivered",
+            {"item": item.model_dump(mode="json")} if metadata else {
+                "automation_name": automation_name, "summary": summary,
+            },
         )
 
     async def update_thread(self, thread_id: str, req: UpdateThreadRequest) -> ThreadRecord:
@@ -832,11 +900,25 @@ class RuntimeThreadManager:
     async def _update_thread_claimed(
         self, thread_id: str, req: UpdateThreadRequest
     ) -> ThreadRecord:
-        if req.archived is None and req.title is None and req.env_mode is None:
+        if all(value is None for value in (
+            req.archived, req.title, req.env_mode, req.provider, req.model,
+        )):
             raise ValueError("At least one thread field is required")
         thread = self.store.load_thread(thread_id)
         changed = False
         changes: dict[str, Any] = {}
+        if req.provider is not None or req.model is not None:
+            from deepseek_tui.config.routing import config_for_model
+            from deepseek_tui.tools.runtime import default_runtime_model
+
+            provider = req.provider or thread.provider
+            model = req.model or (thread.model if provider == thread.provider else None)
+            route = config_for_model(self.config, model, provider=provider)
+            selected_model = default_runtime_model(route)
+            if (thread.provider, thread.model) != (route.provider, selected_model):
+                thread.provider, thread.model = route.provider, selected_model
+                changes.update(provider=thread.provider, model=thread.model)
+                changed = True
         if req.env_mode is not None:
             normalized = normalize_env_mode(req.env_mode)
             current = normalize_env_mode(thread.env_mode)
@@ -3659,6 +3741,7 @@ class RuntimeThreadManager:
                     )
                 )
                 state.engine.sync_session(resume_msgs, model=model)
+            self._sync_pending_automation_results(state, thread)
             state.active_turn = _ActiveTurnState(
                 turn_id=turn_id, auto_approve=auto_approve, trust_mode=trust_mode
             )
@@ -4189,6 +4272,7 @@ class RuntimeThreadManager:
             state = self._active.get(thread_id)
             if state is None:
                 raise RuntimeError("Thread engine not loaded")
+            self._sync_pending_automation_results(state, thread)
             state.active_turn = _ActiveTurnState(
                 turn_id=turn_id,
                 auto_approve=thread.auto_approve,
@@ -4443,6 +4527,7 @@ class RuntimeThreadManager:
         engine = await Engine.create(**create_kwargs)
         self._sync_trust_mode(engine, thread.trust_mode)
         self._sync_engine_session(engine, thread)
+        result_ids = {item.id for item in automation_result_items(self.store, thread.id)}
         self._restore_active_plugin(engine, thread)
         engine.tool_context.metadata["runtime_thread_id"] = thread.id
         engine.tool_context.metadata["browser_service"] = self.browser_service
@@ -4481,6 +4566,7 @@ class RuntimeThreadManager:
                 engine_task=engine_task,
                 provider=thread.provider,
             )
+            self._active[thread.id].automation_result_ids = result_ids
             self._touch_lru(thread.id)
 
         for evicted_tid, evicted_state in evicted:
@@ -4492,6 +4578,23 @@ class RuntimeThreadManager:
             await evicted_state.engine.shutdown_session()
 
         return handle, engine_task
+
+    def _sync_pending_automation_results(
+        self,
+        state: _ActiveThreadState,
+        thread: ThreadRecord,
+    ) -> None:
+        items = automation_result_items(self.store, thread.id)
+        pending = [item for item in items if item.id not in state.automation_result_ids]
+        if pending:
+            state.engine.sync_session(
+                [
+                    *state.engine.session_messages,
+                    *(automation_result_message(item) for item in pending),
+                ],
+                model=thread.model,
+            )
+        state.automation_result_ids = {item.id for item in items}
 
     def _sync_engine_session(self, engine: Engine, thread: ThreadRecord) -> None:
         """Hydrate Engine.session_messages from durable turn items."""
@@ -4607,9 +4710,17 @@ class RuntimeThreadManager:
                 state.engine.sync_session(
                     [*engine_msgs, *tail], model=thread.model
                 )
+                state.automation_result_ids.update(
+                    item.id for item in self.store.list_items_for_turn(incomplete[-1].id)
+                    if isinstance(item.metadata, dict)
+                    and item.metadata.get("source") == "automation_result"
+                )
                 return
 
         state.engine.sync_session(reconstructed, model=thread.model)
+        state.automation_result_ids = {
+            item.id for item in automation_result_items(self.store, thread_id)
+        }
 
     def _restore_active_plugin(self, engine: Engine, thread: ThreadRecord) -> None:
         """Re-apply the session's mounted plugin after engine reconstruction.
@@ -6592,8 +6703,9 @@ class RuntimeThreadManager:
         from deepseek_tui.engine.usage_ledger import usage_source
         from deepseek_tui.protocol.responses import ToolCall
 
-        client = self._get_llm_client()
-        narration_config = self.config
+        thread = self.store.load_thread(thread_id)
+        client = self._get_llm_client(thread.provider)
+        narration_config = self._config_for_provider(thread.provider, thread.model)
         async with self._active_lock:
             active = self._active.get(thread_id)
             if active is not None:
@@ -6696,7 +6808,7 @@ class RuntimeThreadManager:
         from deepseek_tui.protocol.responses import StreamTextDelta
 
         thread = self.store.load_thread(thread_id)
-        client = self._get_llm_client()
+        client = self._get_llm_client(thread.provider)
         async with self._active_lock:
             active = self._active.get(thread_id)
             engine_client = getattr(active.engine, "client", None) if active else None
@@ -6712,7 +6824,7 @@ class RuntimeThreadManager:
             + "\n".join(f"- {line}" for line in evidence[-12:])
         )
         request = MessageRequest(
-            model=thread.model or "deepseek-chat",
+            model=thread.model,
             messages=[Message.user(prompt)],
             system_prompt=(
                 "Return only the final user-facing answer. Be concise, factual, "

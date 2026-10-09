@@ -714,5 +714,14 @@
       "other_branches_skipped": "Other branches were skipped",
       "unpaired_tool_results": "Some tool results have no matching call"
     }
-  }
+  },
+  "networkTitle": "Network settings",
+  "networkDescription": "Choose how model services connect.",
+  "networkProxy": "Model API proxy",
+  "networkSystem": "Use system proxy",
+  "networkDirect": "Connect directly",
+  "networkBypass": "Bypass proxy for these addresses",
+  "networkBypassHint": "One domain or IP per line. These addresses connect directly.",
+  "networkInvalidHost": "Enter valid domains or IPs without schemes, ports, paths or wildcards (up to 100).",
+  "networkScope": "Saved changes apply to new requests without interrupting replies. Affects model APIs only; cannot bypass VPN TUN or global routing."
 }

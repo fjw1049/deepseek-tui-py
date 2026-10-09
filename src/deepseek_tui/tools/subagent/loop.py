@@ -496,6 +496,8 @@ async def run_subagent_loop(
         "subagent_id": agent.id,
         "subagent_depth": agent.spawn_depth,
         "subagent_runtime": runtime,
+        "task_config": runtime.config,
+        "task_model": effective_model,
         "auto_approve": runtime.auto_approve,
         "approval_policy": approval_policy,
     }
@@ -569,7 +571,9 @@ async def run_subagent_loop(
         for img in [*msg.image_references, *message_images(msg)]
     }
 
-    turn_loop = TurnLoop(runtime.client, compact_fn=_compact_subagent_messages)
+    turn_loop = TurnLoop(
+        runtime.client, compact_fn=_compact_subagent_messages, model_config=runtime.config
+    )
     final_text = ""
     last_thinking = ""
     structured_value: Any | None = None

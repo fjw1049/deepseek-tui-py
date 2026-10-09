@@ -16,6 +16,7 @@ export type AutomationRecord = {
   cwds?: string[]
   next_run_at?: string | null
   last_run_at?: string | null
+  conversation_thread_id?: string | null
   delivery?: { mode?: string; to?: string; best_effort?: boolean }
   digest?: Record<string, unknown>
 }
@@ -29,6 +30,7 @@ export type CreateAutomationInput = {
   run_at?: string | null
   cwds?: string[]
   status?: AutomationStatus
+  conversation_thread_id?: string
   delivery?: { mode: string; to?: string; best_effort?: boolean }
 }
 
@@ -49,6 +51,8 @@ export type AutomationRunRecord = {
   turn_id?: string | null
   error?: string | null
   delivery_done?: boolean
+  conversation_thread_id?: string | null
+  conversation_written?: boolean
 }
 
 /** Extract a human-readable message from Runtime / FastAPI error JSON. */
@@ -195,6 +199,17 @@ export async function deleteAutomation(id: string): Promise<AutomationRecord> {
 
 export async function runAutomationNow(id: string): Promise<{ id: string; status: string; task_id?: string }> {
   return runtimeJson(`/v1/automations/${encodeURIComponent(id)}/run`, 'POST', {})
+}
+
+export async function openAutomationDiscussion(
+  automationId: string,
+  runId: string
+): Promise<{ thread_id: string }> {
+  return runtimeJson(
+    `/v1/automations/${encodeURIComponent(automationId)}/runs/${encodeURIComponent(runId)}/discussion`,
+    'POST',
+    {}
+  )
 }
 
 export async function listAutomationRuns(

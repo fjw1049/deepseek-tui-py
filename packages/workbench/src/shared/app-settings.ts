@@ -1,3 +1,4 @@
+import { normalizeNetworkSettings, type NetworkSettings } from './network-settings'
 import {
   mergeAppearanceSettings,
   normalizeAppearanceSettings,
@@ -484,6 +485,7 @@ export type AppSettingsV1 = {
   asrProviders: AsrProviderV1[]
   /** Web search backends (AnySearch / Tavily); syncs to config.toml. */
   webSearch: WebSearchSettingsV1
+  network?: NetworkSettings
   workspaceRoot: string
   log: LogConfigV1
   notifications: NotificationConfigV1
@@ -1447,6 +1449,7 @@ export function normalizeAppSettings(settings: AppSettingsV1): AppSettingsV1 {
     defaultLlmProviderId: llm.defaultLlmProviderId,
     visionModel: typeof settings.visionModel === 'string' ? settings.visionModel.trim() : undefined,
     llmProviders: llm.llmProviders,
+    network: normalizeNetworkSettings(settings.network),
     customEndpoints: normalizeCustomEndpoints(maybeSettings.customEndpoints),
     asrProviders: normalizeAsrProviders(
       (maybeSettings as { asrProviders?: unknown }).asrProviders

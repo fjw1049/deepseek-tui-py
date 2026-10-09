@@ -1736,6 +1736,7 @@ export function Workbench(): ReactElement {
           <AutomationCenter
             runtimeReady={runtimeConnection === 'ready'}
             workspaceRoot={activeWorkspaceRoot}
+            onOpenThread={(id) => { void useChatStore.getState().refreshThreads().then(() => openThread(id)) }}
             onOpenRuntimeSettings={() => openSettings('general')}
           />
         ) : route === 'channels' ? (

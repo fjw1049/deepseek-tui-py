@@ -11,7 +11,6 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
-from deepseek_tui.config.providers import PROVIDER_DEFAULTS
 from deepseek_tui.presentation.semantics import (
     BatchKind,
     Phase,
@@ -238,10 +237,7 @@ def resolve_narration_model(config: Config) -> str | None:
     cfg = config.ui.process_narration
     if cfg.model and cfg.model.strip():
         return cfg.model.strip()
-    defaults = PROVIDER_DEFAULTS.get(config.provider)
-    if defaults is None or not defaults.flash_model:
-        return None
-    return defaults.flash_model
+    return config.effective_provider_config().model
 
 
 def _normalize_fingerprint(text: str) -> str:
@@ -590,12 +586,31 @@ async def compute_narration_display(
         recent_tool_results=recent_tool_results,
         locale=locale,
     )
-    plan = await compute_narration_plan(
-        client,
-        model=model,
-        bundle=bundle,
-        timeout_s=cfg.flash_timeout_s,
-    )
+    from deepseek_tui.config.routing import config_for_model
+
+    route = config_for_model(config, model)
+    effective_model = route.effective_provider_config().model
+    assert effective_model is not None
+    owned_client = None
+    if route.provider != config.provider:
+        from deepseek_tui.client.base import MeteredLLMClient
+        from deepseek_tui.client.factory import build_llm_client
+
+        owned_client = build_llm_client(route)
+        if isinstance(client, MeteredLLMClient):
+            client = MeteredLLMClient(owned_client, client._ledger)
+        else:
+            client = owned_client
+    try:
+        plan = await compute_narration_plan(
+            client,
+            model=effective_model,
+            bundle=bundle,
+            timeout_s=cfg.flash_timeout_s,
+        )
+    finally:
+        if owned_client is not None:
+            await owned_client.close()
     if plan is None:
         logger.info("phase_bridge compute_narration_plan returned None")
         return None

@@ -1,3 +1,4 @@
+import { writeNetworkSettings } from './network-settings'
 import {
   app,
   BrowserWindow,
@@ -612,6 +613,7 @@ async function ensureRuntimeOnce(settings: AppSettingsV1): Promise<void> {
     throw runtimeJsonError('runtime_offline', await runtimeOfflineMessage(settings))
   }
   emitStartupPhase('runtime-config-sync')
+  await writeNetworkSettings(settings.network)
   await syncDeepseekTuiConfig(settings)
   try {
     emitStartupPhase(
@@ -986,6 +988,7 @@ app.whenReady().then(async () => {
   traceStartup('settings load:start')
   emitStartupPhase('settings')
   let initial = await store.load()
+  await writeNetworkSettings(initial.network)
   traceStartup('settings load:done')
 
   // macOS Dock frame animation — opt-in via Settings → General (default off).
@@ -1095,6 +1098,7 @@ app.whenReady().then(async () => {
     const saved = await store.patch(
       partial.webSearch !== undefined ? { ...partial, webSearch: next.webSearch } : partial
     )
+    await writeNetworkSettings(saved.network)
     if (saved.theme !== nativeTheme.themeSource) {
       nativeTheme.themeSource = saved.theme
     }

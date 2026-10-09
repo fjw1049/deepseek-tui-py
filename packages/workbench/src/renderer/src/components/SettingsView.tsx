@@ -61,6 +61,7 @@ import { DefaultEditorPicker } from './DefaultEditorPicker'
 import { InitialSetupPanel } from './InitialSetupDialog'
 import { AppearanceSettingsPanel } from './settings/AppearanceSettingsPanel'
 import { ArchiveSettingsPanel } from './settings/ArchiveSettingsPanel'
+import { NetworkSettingsPanel } from './settings/NetworkSettingsPanel'
 import { WebSearchSettingsPanel } from './settings/WebSearchSettingsPanel'
 import { SessionImportPanel } from './settings/SessionImportPanel'
 import { DataSettingsPanel } from './settings/DataSettingsPanel'
@@ -961,52 +962,55 @@ export function SettingsView(): ReactElement {
           )}
 
           {category === 'permissions' && (
-            <SettingsCard title={t('permissions')}>
-              <SettingRow
-                title={t('approvalPolicy')}
-                help={
-                  <FieldHelpPopover title={t('approvalPolicy')} intro={t('approvalPolicyHelp')} />
-                }
-                description={t('approvalPolicyDesc')}
-                control={
-                  <SettingsSelect
-                    value={
-                      form.deepseek.approvalPolicy === 'suggest'
-                        ? 'on-request'
-                        : form.deepseek.approvalPolicy
-                    }
-                    onChange={(e) => {
-                      const approvalPolicy = e.target.value as ApprovalPolicy
-                      update({
-                        deepseek: {
-                          approvalPolicy,
-                          sandboxMode: sandboxModeForApprovalPolicy(approvalPolicy)
-                        }
-                      })
-                    }}
-                  >
-                    <option value="on-request">{t('approvalOnRequest')}</option>
-                    <option value="untrusted">{t('approvalUntrusted')}</option>
-                    <option value="auto">{t('approvalAuto')}</option>
-                    <option value="never">{t('approvalNever')}</option>
-                  </SettingsSelect>
-                }
-              />
-              <SettingRow
-                title={t('sandboxMode')}
-                help={
-                  <FieldHelpPopover title={t('sandboxMode')} intro={t('sandboxModeDerivedHelp')} />
-                }
-                description={t('sandboxModeDerivedDesc')}
-                control={
-                  <div className="flex h-10 w-full min-w-0 items-center justify-center rounded-xl border border-ds-border bg-ds-card/70 px-3 text-center text-[14px] font-medium leading-none text-ds-muted shadow-sm">
-                    {form.deepseek.approvalPolicy === 'auto'
-                      ? t('sandboxFullAccess')
-                      : t('sandboxWorkspaceWrite')}
-                  </div>
-                }
-              />
-            </SettingsCard>
+            <>
+              <SettingsCard title={t('permissions')}>
+                <SettingRow
+                  title={t('approvalPolicy')}
+                  help={
+                    <FieldHelpPopover title={t('approvalPolicy')} intro={t('approvalPolicyHelp')} />
+                  }
+                  description={t('approvalPolicyDesc')}
+                  control={
+                    <SettingsSelect
+                      value={
+                        form.deepseek.approvalPolicy === 'suggest'
+                          ? 'on-request'
+                          : form.deepseek.approvalPolicy
+                      }
+                      onChange={(e) => {
+                        const approvalPolicy = e.target.value as ApprovalPolicy
+                        update({
+                          deepseek: {
+                            approvalPolicy,
+                            sandboxMode: sandboxModeForApprovalPolicy(approvalPolicy)
+                          }
+                        })
+                      }}
+                    >
+                      <option value="on-request">{t('approvalOnRequest')}</option>
+                      <option value="untrusted">{t('approvalUntrusted')}</option>
+                      <option value="auto">{t('approvalAuto')}</option>
+                      <option value="never">{t('approvalNever')}</option>
+                    </SettingsSelect>
+                  }
+                />
+                <SettingRow
+                  title={t('sandboxMode')}
+                  help={
+                    <FieldHelpPopover title={t('sandboxMode')} intro={t('sandboxModeDerivedHelp')} />
+                  }
+                  description={t('sandboxModeDerivedDesc')}
+                  control={
+                    <div className="flex h-10 w-full min-w-0 items-center justify-center rounded-xl border border-ds-border bg-ds-card/70 px-3 text-center text-[14px] font-medium leading-none text-ds-muted shadow-sm">
+                      {form.deepseek.approvalPolicy === 'auto'
+                        ? t('sandboxFullAccess')
+                        : t('sandboxWorkspaceWrite')}
+                    </div>
+                  }
+                />
+              </SettingsCard>
+              <NetworkSettingsPanel form={form} onUpdate={update} />
+            </>
           )}
 
           {category === 'hooks' && (

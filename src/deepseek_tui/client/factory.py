@@ -59,8 +59,12 @@ def build_llm_client(config: Config) -> LLMClient:
     api_key = mgr.resolve_api_key(config) or ""
 
     pc = config.effective_provider_config()
-    base_url = pc.base_url or "https://api.deepseek.com"
-    model = pc.model or config.default_text_model
+    if not pc.base_url or not pc.base_url.strip():
+        raise ValueError(f"No base URL configured for provider '{config.provider}'")
+    base_url = pc.base_url
+    model = pc.model
+    if not model:
+        raise ValueError(f"No model configured for provider '{config.provider}'")
 
     # Refuse to build a client that would send `Authorization: Bearer `
     # (httpx rejects it as an illegal header). Surface a clear missing-key

@@ -714,5 +714,14 @@
       "other_branches_skipped": "其他分支未导入",
       "unpaired_tool_results": "部分工具结果缺少对应调用"
     }
-  }
+  },
+  "networkTitle": "网络设置",
+  "networkDescription": "选择模型服务的连接方式。",
+  "networkProxy": "模型 API 代理",
+  "networkSystem": "跟随系统代理",
+  "networkDirect": "全部直连",
+  "networkBypass": "绕过代理的地址",
+  "networkBypassHint": "每行一个域名或 IP，这些地址将直接连接。",
+  "networkInvalidHost": "请输入有效的域名或 IP，不要包含协议、端口、路径或通配符（最多 100 个）。",
+  "networkScope": "保存后对新请求生效，不中断正在生成的回复。仅影响模型 API，无法绕过 VPN 的 TUN 或全局路由。"
 }

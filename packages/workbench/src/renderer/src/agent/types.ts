@@ -56,6 +56,7 @@ export type NormalizedThread = {
   /** Thread creation time from the runtime (ISO). Used for project sidebar sort. */
   createdAt?: string
   model: string
+  provider?: string
   mode: string
   workspace?: string
   envMode?: 'local' | 'worktree'
@@ -473,8 +474,8 @@ export interface AgentProvider {
   warmThread?(threadId: string): Promise<void>
   listThreads(options?: { includeArchived?: boolean }): Promise<NormalizedThread[]>
   createThread(input: { workspace?: string; title?: string; mode?: string; provider?: string; model?: string; envMode?: 'local' | 'worktree' }): Promise<NormalizedThread>
-  /** Patch thread metadata. Only env mode for now; runtime rejects changes after the first turn. */
-  updateThread(threadId: string, input: { envMode?: 'local' | 'worktree' }): Promise<NormalizedThread>
+  /** Patch thread preferences; env mode is only mutable before the first turn. */
+  updateThread(threadId: string, input: { envMode?: 'local' | 'worktree'; provider?: string; model?: string }): Promise<NormalizedThread>
   getThreadDetail(threadId: string): Promise<{
     blocks: ChatBlock[]
     latestSeq: number
