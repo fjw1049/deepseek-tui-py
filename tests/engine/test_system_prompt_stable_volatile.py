@@ -151,3 +151,17 @@ def test_hard_cap_message_count_removed_from_trigger_logic() -> None:
     src = inspect.getsource(core_mod.Engine._run_conversation)
     assert "len(messages) > 500" not in src
     assert "hard_cap" not in src
+
+
+def test_browser_guidance_is_capability_and_mode_scoped():
+    from deepseek_tui.engine.prompts import AppMode
+
+    assert "## Browser Tasks" not in build_system_prompt(project_context_enabled=False)
+    enabled = build_system_prompt(
+        override="Custom base", browser_guidelines=True, project_context_enabled=False
+    )
+    assert "## Browser Tasks" in enabled
+    assert enabled.index("## Browser Tasks") < enabled.index("## Runtime Authority Boundary")
+    assert "## Browser Tasks" not in build_system_prompt(
+        mode=AppMode.PLAN, browser_guidelines=True, project_context_enabled=False
+    )

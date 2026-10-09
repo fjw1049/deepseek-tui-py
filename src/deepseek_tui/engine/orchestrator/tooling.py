@@ -282,7 +282,11 @@ class ToolExecutionMixin:
                     continue
 
                 with bind_tool(tool_call.id):
-                    args_preview = repr(tool_call.arguments)[:200]
+                    args_preview = (
+                        "[browser arguments redacted]"
+                        if tool_call.name == "browser_use"
+                        else repr(tool_call.arguments)[:200]
+                    )
                     logger.info(
                         "tool_call_start name=%s args=%s",
                         tool_call.name,
@@ -551,7 +555,11 @@ class ToolExecutionMixin:
         ) -> tuple[ToolCall, ToolResult | None, str | None]:
             """Execute a single tool, returning (call, result, error_msg)."""
             with bind_tool(tool_call.id):
-                args_preview = repr(tool_call.arguments)[:200]
+                args_preview = (
+                    "[browser arguments redacted]"
+                    if tool_call.name == "browser_use"
+                    else repr(tool_call.arguments)[:200]
+                )
                 logger.info(
                     "tool_call_start name=%s args=%s (parallel)",
                     tool_call.name,

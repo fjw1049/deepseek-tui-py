@@ -2304,6 +2304,10 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                 workspace=self.tool_context.working_directory,
                 locale_tag=self.reply_locale,
                 automations_guidelines=self.tool_registry.contains("cron_create"),
+                browser_guidelines=(
+                    self.tool_registry.contains("browser_use")
+                    and self.tool_context.metadata.get("browser_service") is not None
+                ),
                 auto_approve=bool(self.tool_context.metadata.get("session_auto_approve")),
             )
             # Compaction bridges live in session_messages (leading user

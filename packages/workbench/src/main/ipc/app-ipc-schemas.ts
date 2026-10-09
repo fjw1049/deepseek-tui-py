@@ -308,12 +308,6 @@ export const logErrorPayloadSchema = z
   })
   .strict()
 
-export const devBrowserScreenshotPayloadSchema = z
-  .object({
-    webContentsId: z.number().int().positive().max(Number.MAX_SAFE_INTEGER)
-  })
-  .strict()
-
 export const petResolveSpritesheetPayloadSchema = z
   .object({
     slug: optionalTrimmedString(80)

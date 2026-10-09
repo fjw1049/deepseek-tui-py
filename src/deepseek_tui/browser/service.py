@@ -24,14 +24,27 @@ from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from deepseek_tui.browser.input import BrowserInput
+
 
 class BrowserAction(BaseModel):
     model_config = ConfigDict(extra="forbid")
     action: Literal[
+        "status",
+        "tabs",
+        "new_tab",
+        "switch_tab",
+        "close_tab",
+        "back",
+        "forward",
+        "reload",
+        "hover",
+        "wait",
         "open",
         "observe",
         "click",
         "fill",
+        "type",
         "select",
         "set_checked",
         "press",
@@ -43,21 +56,24 @@ class BrowserAction(BaseModel):
         "video_start",
         "video_stop",
     ]
+    tab_id: str = Field(default="", max_length=200)
+    level: Literal["interactive", "full"] = "interactive"
+    url_contains: str = Field(default="", max_length=4096)
     url: str = Field(default="", max_length=4096)
     ref: str | None = Field(default=None, max_length=200)
     selector: str | None = Field(default=None, max_length=1000)
     text: str = Field(default="", max_length=8000)
     checked: bool | None = None
     key: str = Field(default="Enter", max_length=50)
-    x: int | None = Field(default=None, ge=0, lt=1200)
-    y: int | None = Field(default=None, ge=0, lt=760)
+    x: int | None = Field(default=None, ge=0, lt=2400)
+    y: int | None = Field(default=None, ge=0, lt=1600)
     direction: Literal["up", "down", "left", "right"] = "down"
     amount: int = Field(default=300, ge=1, le=1200)
     timeout_ms: int = Field(default=0, ge=0, le=10000)
 
     @model_validator(mode="after")
     def validate_action(self) -> BrowserAction:
-        if self.action == "open":
+        if self.action == "open" or (self.action == "new_tab" and self.url):
             parsed = urlsplit(self.url)
             if parsed.scheme not in {"http", "https"} or not parsed.hostname:
                 raise ValueError("Only http/https pages can be opened")
@@ -73,6 +89,12 @@ class BrowserAction(BaseModel):
             raise ValueError("set_checked requires selector and checked")
         if self.action == "check_text" and not self.text.strip():
             raise ValueError("check_text requires non-empty text")
+        if self.action in {"switch_tab", "close_tab"} and not self.tab_id.strip():
+            raise ValueError("switch_tab requires tab_id from tabs")
+        if self.action == "hover" and not self.ref:
+            raise ValueError("hover requires ref from observe")
+        if self.action == "wait" and not (self.text.strip() or self.selector or self.url_contains):
+            raise ValueError("wait requires text, selector, or url_contains")
         return self
 
 
@@ -101,6 +123,10 @@ class BrowserRun:
     url: str = ""
     video: Any = None
     video_error: str | None = None
+    width: int = 1200
+    height: int = 760
+    transferring: bool = False
+    tabs: list[dict[str, Any]] = field(default_factory=list)
 
 
 class BrowserService:
@@ -253,6 +279,10 @@ class BrowserService:
             "video_recording": run.video is not None,
             "video_error": run.video_error,
             "owner": run.owner,
+            "generation": run.generation,
+            "transferring": run.transferring,
+            "viewport": {"width": run.width, "height": run.height},
+            "tabs": run.tabs,
             "recording": run.recording,
             "log": run.log[-80:],
             "artifacts": run.artifacts[-12:],
@@ -319,6 +349,40 @@ class BrowserService:
             tree = await run.session._internal.client.send("Page.getFrameTree")
             run.url = tree.get("frameTree", {}).get("frame", {}).get("url", run.url)
             return "data:image/jpeg;base64," + base64.b64encode(await self._capture(run)).decode()
+
+    async def view(self, thread_id: str) -> dict[str, Any]:
+        """A coherent frame and tab snapshot; observing never takes control."""
+        run = self.runs.get(thread_id)
+        image = None
+        if run and run.session and not run.lock.locked() and not run.transferring:
+            async with run.lock:
+                await self.page_state(run)
+                tabs = await asyncio.wait_for(run.session.list_tabs(), timeout=4)
+                if tabs.success:
+                    run.tabs = (tabs.metadata or {}).get("tabs", [])
+                image = (
+                    "data:image/jpeg;base64," + base64.b64encode(await self._capture(run)).decode()
+                )
+        return {**self.state(thread_id), "image": image}
+
+    async def input(self, thread_id: str, body: BrowserInput) -> dict[str, Any]:
+        from deepseek_tui.browser.input import dispatch_input
+
+        run = self.runs.get(thread_id)
+        if not run or not run.session:
+            raise ValueError("Open a browser page first")
+        async with run.lock:
+            if run.owner != "user" or run.transferring or run.generation != body.generation:
+                raise ValueError("Browser control changed; queued input was discarded")
+            run.revision += 1
+            result = await asyncio.wait_for(dispatch_input(run, body), timeout=5)
+            if body.kind == "text" or (body.kind == "mouse" and body.event == "mouseReleased"):
+                if run.recording:
+                    run.frames.append(await self._capture(run))
+                    if len(run.frames) >= 40:
+                        self._finish_recording(run)
+                self._persist(run)
+            return result
 
     def _save(self, run: BrowserRun, data: bytes, suffix: str, label: str) -> dict[str, str]:
         directory = self.artifact_root / run.thread_id
@@ -447,17 +511,37 @@ class BrowserService:
         )
         return self._save(run, output.getvalue(), ".gif", "步骤动图")
 
+    async def page_state(self, run: BrowserRun) -> dict[str, Any]:
+        # Read from the controlled page, even when the preview panel is closed.
+        tree = await asyncio.wait_for(
+            run.session._internal.client.send("Page.getFrameTree"), timeout=4
+        )
+        run.url = tree.get("frameTree", {}).get("frame", {}).get("url", run.url)
+        return {
+            "active": True,
+            "url": run.url,
+            "owner": run.owner,
+            "viewport": {"width": run.width, "height": run.height},
+        }
+
     async def action(
         self, thread_id: str, action: BrowserAction, *, actor: str = "agent"
     ) -> dict[str, Any]:
         run = self.runs.get(thread_id)
+        if action.action == "status":
+            if run is None or run.session is None:
+                state = {"active": False, "owner": "agent"}
+            else:
+                async with run.lock:
+                    state = await self.page_state(run)
+            return {"success": True, "content": state, "artifact": None}
         if run is None or run.session is None:
-            if action.action != "open":
+            if action.action not in {"open", "new_tab"}:
                 raise ValueError("Open a browser page first")
             run = await self.ensure(thread_id)
         generation = run.generation
         async with run.lock:
-            if run.owner != actor or run.generation != generation:
+            if run.owner != actor or run.transferring or run.generation != generation:
                 raise ValueError("Browser control changed; queued action was discarded")
             if not run.session:
                 raise ValueError("Browser session has closed")
@@ -484,11 +568,82 @@ class BrowserService:
         if a.action == "open":
             result = await s.navigate(a.url)
         elif a.action == "observe":
-            result = await s.dom_tree(level="full")
+            result = await s.dom_tree(level=a.level)
+        elif a.action == "tabs":
+            result = await s.list_tabs()
+        elif a.action == "new_tab":
+            result = await s.new_tab(url=a.url or None, force_new=True)
+        elif a.action == "switch_tab":
+            result = await s.switch_tab(a.tab_id)
+        elif a.action == "close_tab":
+            tabs = await s.list_tabs()
+            items = (tabs.metadata or {}).get("tabs", []) if tabs.success else []
+            if not any(tab["tab_id"] == a.tab_id for tab in items):
+                raise ValueError("Tab no longer exists")
+            if any(tab["tab_id"] == a.tab_id and tab.get("active") for tab in items):
+                other = next((tab for tab in items if tab["tab_id"] != a.tab_id), None)
+                switched = (
+                    await s.switch_tab(other["tab_id"])
+                    if other
+                    else await s.new_tab(force_new=True)
+                )
+                if not switched.success:
+                    raise ValueError(switched.error or "Unable to switch tabs")
+            result = await s.close_tab(a.tab_id)
+        elif a.action == "back":
+            result = await s.go_back()
+        elif a.action == "forward":
+            result = await s.go_forward()
+        elif a.action == "reload":
+            result = await s.reload()
+        elif a.action == "hover":
+            result = await s.hover(ref=a.ref)
+        elif a.action == "wait":
+            result = await s.wait(
+                text=a.text or None,
+                selector=a.selector,
+                url_contains=a.url_contains or None,
+                timeout_ms=a.timeout_ms or 10000,
+            )
         elif a.action == "click":
+            if a.x is not None and a.y is not None and (a.x >= run.width or a.y >= run.height):
+                raise ValueError("Pointer is outside the current viewport")
             result = await s.click(ref=a.ref, selector=a.selector, x=a.x, y=a.y)
+        elif a.action == "type":
+            result = await s.type(text=a.text, ref=a.ref, selector=a.selector)
         elif a.action == "fill":
-            result = await s.fill(text=a.text, ref=a.ref, selector=a.selector)
+            result = await s.click(ref=a.ref, selector=a.selector)
+            if result.success:
+                # Octop 1.0 sends Ctrl+A/Meta+A without editing commands, which can
+                # leave existing text selected incorrectly on macOS after takeover.
+                await s._internal.client.send(
+                    "Input.dispatchKeyEvent",
+                    {
+                        "type": "rawKeyDown",
+                        "key": "a",
+                        "code": "KeyA",
+                        "windowsVirtualKeyCode": 65,
+                        "commands": ["selectAll"],
+                    },
+                )
+                await s._internal.client.send(
+                    "Input.dispatchKeyEvent",
+                    {
+                        "type": "rawKeyDown",
+                        "key": "Backspace",
+                        "windowsVirtualKeyCode": 8,
+                    },
+                )
+                await s._internal.client.send(
+                    "Input.dispatchKeyEvent",
+                    {
+                        "type": "keyUp",
+                        "key": "Backspace",
+                        "windowsVirtualKeyCode": 8,
+                    },
+                )
+                await s._internal.client.send("Input.insertText", {"text": a.text})
+                result.content = "Filled field"
         elif a.action == "select":
             result = await s.select(value=a.text, ref=a.ref, selector=a.selector)
         elif a.action == "set_checked":
@@ -509,7 +664,14 @@ class BrowserService:
         elif a.action == "check_text":
             deadline = asyncio.get_running_loop().time() + a.timeout_ms / 1000
             while True:
-                result = await s.eval_js("document.body.innerText")
+                expression = "document.body.innerText"
+                if a.selector:
+                    expression = (
+                        "(() => { const els = document.querySelectorAll("
+                        + json.dumps(a.selector)
+                        + "); return els.length === 1 ? els[0].innerText : null; })()"
+                    )
+                result = await s.eval_js(expression)
                 body = json.loads(result.content) if result.success else ""
                 success = isinstance(body, str) and a.text in body
                 remaining = deadline - asyncio.get_running_loop().time()
@@ -519,6 +681,19 @@ class BrowserService:
             result = None
         else:
             result = None
+        if (
+            a.action in {"new_tab", "switch_tab", "close_tab"}
+            and result is not None
+            and result.success
+        ):
+            from deepseek_tui.browser.input import dispatch_input
+
+            await dispatch_input(
+                run,
+                BrowserInput(
+                    kind="resize", generation=run.generation, width=run.width, height=run.height
+                ),
+            )
         if result is not None:
             success = result.success
             content = result.content if success else result.error
@@ -550,13 +725,23 @@ class BrowserService:
                 pass  # Preserve the action failure even when the page cannot be captured.
         run.error = None if success else str(content)
         # Keep explicit assertions for review, but never log fill values or full DOM text.
-        entry = {"action": a.action, "success": success}
+        entry: dict[str, Any] = {"action": a.action, "success": success}
         if a.action == "check_text":
             entry["expected"] = a.text
+            if a.selector:
+                entry["selector"] = a.selector
         run.log.append(entry)
         run.log[:] = run.log[-80:]
+        page = {"active": True, "owner": run.owner, "url": run.url, "stale": True}
+        try:
+            page = await self.page_state(run)
+        except Exception:
+            pass  # A failed observation must not turn a completed submit into a retry.
         self._persist(run)
-        return {"success": success, "content": content, "artifact": artifact}
+        response = {"success": success, "content": content, "artifact": artifact, "page": page}
+        if a.action == "tabs" and result is not None and result.success:
+            response["tabs"] = (result.metadata or {}).get("tabs", [])
+        return response
 
     async def control(self, thread_id: str, owner: str) -> dict[str, Any]:
         if owner not in {"agent", "user", "stopped"}:
@@ -564,15 +749,21 @@ class BrowserService:
         run = self.runs.get(thread_id)
         if not run:
             raise ValueError("Open a browser page first")
+        if run.transferring:
+            raise ValueError("Browser control is already changing")
+        run.transferring = True
         run.owner = owner
         run.generation += 1
-        if run.demo_task and not run.demo_task.done():
-            run.demo_task.cancel()
-            await asyncio.gather(run.demo_task, return_exceptions=True)
-            run.demo_status = "stopped"
-        # Wait for the current atomic action; pending actions fail the generation check.
-        async with run.lock:
-            pass
+        try:
+            if run.demo_task and not run.demo_task.done():
+                run.demo_task.cancel()
+                await asyncio.gather(run.demo_task, return_exceptions=True)
+                run.demo_status = "stopped"
+            # Wait for the current atomic action; queued actions fail the generation check.
+            async with run.lock:
+                pass
+        finally:
+            run.transferring = False
         if owner == "stopped":
             await self.close(thread_id)
         return self.state(thread_id)

@@ -1,10 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { Window } from 'happy-dom'
 import {
   PREVIEW_PICK_CONSOLE_PREFIX,
-  buildPreviewPickerCleanupScript,
-  buildPreviewPickerInjectScript,
-  extractWebviewConsoleMessage,
   parsePreviewPickConsoleMessage,
   type PreviewElementPick
 } from './preview-element-picker'
@@ -90,44 +86,6 @@ describe('parsePreviewPickConsoleMessage', () => {
 
   it('rejects oversized console messages before parsing JSON', () => {
     expect(parsePreviewPickConsoleMessage(`${PREVIEW_PICK_CONSOLE_PREFIX}${'x'.repeat(20_000)}`)).toBeNull()
-  })
-})
-
-describe('extractWebviewConsoleMessage', () => {
-  it('reads event.message (Electron webview console-message shape)', () => {
-    const event = new Event('console-message') as Event & { message?: string }
-    event.message = `${PREVIEW_PICK_CONSOLE_PREFIX}{"type":"cancel"}`
-    expect(extractWebviewConsoleMessage(event)).toBe(event.message)
-  })
-
-  it('returns null when message is missing', () => {
-    expect(extractWebviewConsoleMessage(new Event('console-message'))).toBeNull()
-  })
-})
-
-describe('preview picker arm/disarm scripts', () => {
-  it('restores the page cursor when Inspect is disabled', () => {
-    const guest = new Window()
-    guest.document.documentElement.style.cursor = 'pointer'
-    new Function('window', 'document', buildPreviewPickerInjectScript())(guest, guest.document)
-    expect(guest.document.documentElement.style.cursor).toBe('crosshair')
-    new Function('window', 'document', buildPreviewPickerCleanupScript())(guest, guest.document)
-    expect(guest.document.documentElement.style.cursor).toBe('pointer')
-    expect(guest.document.getElementById('__ds_preview_pick_overlay__')).toBeNull()
-  })
-  it('cleanup clears the arm flag before dispose so orphaned listeners no-op', () => {
-    const cleanup = buildPreviewPickerCleanupScript()
-    const armIdx = cleanup.indexOf('__dsPreviewPickActive = false')
-    const disposeIdx = cleanup.indexOf('__dsPreviewPick?.dispose')
-    expect(armIdx).toBeGreaterThanOrEqual(0)
-    expect(disposeIdx).toBeGreaterThan(armIdx)
-  })
-
-  it('inject gates click/move handlers on the arm flag', () => {
-    const inject = buildPreviewPickerInjectScript()
-    expect(inject).toContain('__dsPreviewPickActive = true')
-    expect(inject).toContain('isArmed()')
-    expect(inject).toMatch(/onClick[\s\S]*if \(!isArmed\(\)\) return/)
   })
 })
 

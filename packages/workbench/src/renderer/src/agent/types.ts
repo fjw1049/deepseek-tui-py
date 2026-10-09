@@ -295,6 +295,7 @@ export type ElevationRequestPayload = {
 }
 
 export type ToolEventPayload = {
+  toolName?: string
   itemId: string
   summary: string
   status: 'running' | 'success' | 'error'

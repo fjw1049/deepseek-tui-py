@@ -37,7 +37,7 @@ const RunPanel = lazy(() => import('./RunPanel').then((module) => ({ default: mo
 const ChangeInspector = lazy(() =>
   import('../ChangeInspector').then((module) => ({ default: module.ChangeInspector }))
 )
-const DevBrowserPanel = lazy(() =>
+const BrowserWorkspace = lazy(() =>
   import('../BrowserWorkspace').then((module) => ({ default: module.BrowserWorkspace }))
 )
 const WorkspaceEditorPanel = lazy(() =>
@@ -151,17 +151,13 @@ export function WorkbenchRightSidebar({
   }
   const launcherItems = TAB_ITEMS.filter((item) => item.id !== 'runs' || hasRunSelection)
 
-  if (open && collapsed) {
-    return (
-      <aside
-        className="ds-workbench-right-panel ds-no-drag relative h-full min-h-0 shrink-0"
-        data-open=""
-        style={{ width: 52 }}
-      >
-        <RightSidebarCollapsedStrip workspaceRoot={workspaceRoot} onExpand={onToggleCollapsed} activeTab={tab} />
-      </aside>
-    )
-  }
+  const panelVisible = open && !collapsed
+  const browserVisible = panelVisible && tab === 'preview'
+  const [browserOpened, setBrowserOpened] = useState(browserVisible)
+  useEffect(() => {
+    if (browserVisible) setBrowserOpened(true)
+    else if (!tabs.includes('preview')) setBrowserOpened(false)
+  }, [browserVisible, tabs])
 
   let otherPanel: ReactNode = null
   if (tab === 'runs') {
@@ -187,37 +183,22 @@ export function WorkbenchRightSidebar({
         />
       </Suspense>
     )
-  } else if (tab === 'preview') {
-    otherPanel = (
-      <Suspense fallback={<PanelFallback />}>
-        <DevBrowserPanel
-          threadId={threadId}
-          blocks={devPreviewBlocks}
-          preferredUrl={latestDevPreviewUrl}
-          preferredFilePath={preferredPreviewFilePath}
-          externalError={previewError}
-          onPreferredUrlConsumed={onPreferredUrlConsumed}
-          onExternalErrorConsumed={onPreviewErrorConsumed}
-          onPreviewPick={onPreviewPick}
-          className="h-full max-h-full w-full flex-col"
-        />
-      </Suspense>
-    )
   }
 
-  const terminalVisible = open && tab === 'terminal'
+  const terminalVisible = panelVisible && tab === 'terminal'
   const visibleTabItems = tabs.flatMap((id) => TAB_ITEMS.filter((item) => item.id === id))
 
   return (
     <aside
       className="ds-workbench-right-panel ds-no-drag relative h-full min-h-0 shrink-0"
-      data-fill-width={open && fillWidth ? '' : undefined}
+      data-fill-width={panelVisible && fillWidth ? '' : undefined}
       data-open={open ? '' : undefined}
       aria-hidden={!open}
       inert={!open}
-      style={{ width: open ? (fillWidth ? '100%' : width) : 0 }}
+      style={{ width: open ? (collapsed ? 52 : fillWidth ? '100%' : width) : 0 }}
     >
-      {open ? <div
+      {open && collapsed ? <RightSidebarCollapsedStrip workspaceRoot={workspaceRoot} onExpand={onToggleCollapsed} activeTab={tab} /> : null}
+      {panelVisible ? <div
         role="separator"
         aria-orientation="vertical"
         aria-label={t('rightPanelResize')}
@@ -230,10 +211,13 @@ export function WorkbenchRightSidebar({
       {open || hasOpened ? (
       <div
         className="ds-tool-panel ds-right-panel-surface absolute inset-y-0 right-0 flex h-full min-h-0 flex-col overflow-hidden bg-ds-sidebar"
+        aria-hidden={!panelVisible}
+        inert={!panelVisible}
         style={{
           width,
-          minWidth: open && fillWidth ? '100%' : undefined,
-          maxWidth: open && fillWidth ? '100%' : undefined
+          display: panelVisible ? undefined : 'none',
+          minWidth: panelVisible && fillWidth ? '100%' : undefined,
+          maxWidth: panelVisible && fillWidth ? '100%' : undefined
         }}
       >
         {/* Same height + divider treatment as the workbench topbar so the two
@@ -353,6 +337,26 @@ export function WorkbenchRightSidebar({
               className="h-full max-h-full w-full"
             />
           </div>
+          {tabs.includes('preview') && (browserOpened || browserVisible) ? (
+            <div className={browserVisible ? 'absolute inset-0 h-full w-full' : 'hidden h-full w-full'} aria-hidden={!browserVisible} inert={!browserVisible}>
+              <Suspense fallback={<PanelFallback />}>
+                <BrowserWorkspace
+                  key={threadId ?? 'no-thread'}
+                  threadId={threadId}
+                  visible={browserVisible}
+                  blocks={devPreviewBlocks}
+                  preferredUrl={latestDevPreviewUrl}
+                  preferredFilePath={preferredPreviewFilePath}
+                  externalError={previewError}
+                  onPreferredUrlConsumed={onPreferredUrlConsumed}
+                  onExternalErrorConsumed={onPreviewErrorConsumed}
+                  onPreviewPick={onPreviewPick}
+                  onOpenFileInEditor={onOpenFileInEditor}
+                  className="h-full max-h-full w-full flex-col"
+                />
+              </Suspense>
+            </div>
+          ) : null}
           {otherPanel ? (
             <div className="absolute inset-0 h-full w-full">{otherPanel}</div>
           ) : null}

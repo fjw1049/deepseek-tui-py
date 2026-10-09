@@ -1,3 +1,4 @@
+import { BROWSER_ACTIVITY_EVENT } from '../lib/browser-activity'
 import { CHAT_READING_MIN_WIDTH, RIGHT_PANEL_MIN, resolveRightPanelLayout } from '../lib/workbench-pane-layout'
 import { GlobalFeedbackViewport } from './GlobalFeedback'
 import { useFeedbackStore } from '../store/feedback-store'
@@ -993,6 +994,18 @@ export function Workbench(): ReactElement {
     window.addEventListener(OPEN_CHANGES_PANEL_EVENT, onOpenChanges)
     return () => window.removeEventListener(OPEN_CHANGES_PANEL_EVENT, onOpenChanges)
   }, [layoutMode, openRightSidebar])
+
+  useEffect(() => {
+    const onBrowserActivity = (event: Event): void => {
+      if ((event as CustomEvent<{ threadId: string }>).detail?.threadId !== activeThreadId) return
+      setWorkspacePreviewUrl(null)
+      setWorkspacePreviewPath(null)
+      setBrowsePreviewUrl(null)
+      openRightSidebar('preview')
+    }
+    window.addEventListener(BROWSER_ACTIVITY_EVENT, onBrowserActivity)
+    return () => window.removeEventListener(BROWSER_ACTIVITY_EVENT, onBrowserActivity)
+  }, [activeThreadId, openRightSidebar])
 
   useEffect(() => {
     const onOpenPreviewUrl = (event: Event): void => {

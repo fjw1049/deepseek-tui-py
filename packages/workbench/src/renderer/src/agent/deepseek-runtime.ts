@@ -1794,6 +1794,7 @@ export class DeepseekRuntimeProvider implements AgentProvider {
                     itemId: it.id,
                     summary: label,
                     status: 'running',
+                    toolName: tool?.name,
                     toolKind: toToolKind(it.kind),
                     filePath: deriveFilePath(it),
                     meta: metaWithToolInput(

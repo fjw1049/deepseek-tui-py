@@ -407,6 +407,7 @@ def build_system_prompt(
     locale_tag: str = "zh",
     project_context_enabled: bool = True,
     automations_guidelines: bool = False,
+    browser_guidelines: bool = False,
     auto_approve: bool | None = None,
 ) -> str:
     """Build the full system prompt for the engine.
@@ -499,6 +500,9 @@ def build_system_prompt(
             "working until the task is complete or you are blocked on input "
             "only the user can provide."
         )
+
+    if browser_guidelines and mode in (AppMode.AGENT, AppMode.YOLO):
+        full_prompt += "\n\n" + _get("browser.md").strip()
 
     # Short lane hint only (peer style: details stay in cron_* tool
     # descriptions). Injected when cron tools are registered — never a

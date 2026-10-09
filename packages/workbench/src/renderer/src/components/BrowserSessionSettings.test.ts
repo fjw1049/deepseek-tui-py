@@ -6,7 +6,6 @@ import { BrowserSessionSettings } from './BrowserSessionSettings'
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
 vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key }) }))
-vi.mock('./DevBrowserPanel', () => ({ DevBrowserPanel: () => null }))
 vi.mock('../store/chat-store', () => ({ useChatStore: () => null }))
 
 it('checks the environment, saves profile preferences, previews and executes a workflow', async () => {

@@ -43,3 +43,20 @@ async def test_browser_routes_require_auth_and_existing_thread(authed_client):
             },
         )
     ).status_code == 409
+
+
+async def test_shared_viewport_routes_validate_auth_and_input(authed_client):
+    client, token = authed_client
+    headers = {"Authorization": f"Bearer {token}"}
+    created = await client.post("/v1/threads", json={"title": "Shared browser"}, headers=headers)
+    base = f"/v1/threads/{created.json()['id']}/browser"
+    assert (await client.get(base + "/view", headers={"Authorization": ""})).status_code == 401
+    view = await client.get(base + "/view", headers=headers)
+    assert view.json()["active"] is False and view.json()["image"] is None
+    body = {"kind": "text", "text": "private", "generation": 0}
+    assert (
+        await client.post(base + "/input", json=body, headers={"Authorization": ""})
+    ).status_code == 401
+    assert (await client.post(base + "/input", json=body, headers=headers)).status_code == 409
+    body["generation"] = -1
+    assert (await client.post(base + "/input", json=body, headers=headers)).status_code == 422

@@ -29,7 +29,6 @@ import {
   wecomConfigPayloadSchema,
   feishuRegisterStartPayloadSchema,
   defaultPathSchema,
-  devBrowserScreenshotPayloadSchema,
   gitBranchPayloadSchema,
   gitBranchesPayloadSchema,
   gitCommitPayloadSchema,
@@ -74,7 +73,6 @@ import {
   workspaceRootSchema
 } from './app-ipc-schemas'
 import { getWorkspacePreviewUrl } from '../services/workspace-preview-server'
-import { copyDevBrowserScreenshotToClipboard } from '../services/dev-browser-screenshot'
 import type { JsonSettingsStore } from '../settings-store'
 import { getRuntimeBaseUrl } from '../settings-store'
 import {
@@ -1492,18 +1490,6 @@ export function registerAppIpcHandlers(options: RegisterAppIpcHandlersOptions): 
   ipcMain.handle('shell:open-external', async (_, url: unknown) => {
     const validatedUrl = parseIpcPayload('shell:open-external', shellOpenExternalUrlSchema, url)
     await shell.openExternal(validatedUrl)
-  })
-  ipcMain.handle('dev-browser:copy-screenshot', async (event, payload: unknown) => {
-    const request = parseIpcPayload(
-      'dev-browser:copy-screenshot',
-      devBrowserScreenshotPayloadSchema,
-      payload
-    )
-    return copyDevBrowserScreenshotToClipboard(
-      getMainWindow(),
-      request.webContentsId,
-      event.sender.id
-    )
   })
   ipcMain.handle('shell:open-terminal', async (_, path: unknown) => {
     const target = parseIpcPayload('shell:open-terminal', shellOpenTerminalPathSchema, path)

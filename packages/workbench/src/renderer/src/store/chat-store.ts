@@ -1,3 +1,4 @@
+import { revealBrowserForTool } from '../lib/browser-activity'
 import { create, useStore, type StoreApi } from 'zustand'
 import { createContext, useContext } from 'react'
 import type {
@@ -966,6 +967,9 @@ function buildThreadEventSink(
       })
     },
     onTool: (ev) => {
+      if (get().activeThreadId === threadId) {
+        revealBrowserForTool(threadId, get().currentTurnId, ev.toolName, ev.status)
+      }
       emitPetEvent(threadId,
         ev.status === 'running'
           ? {

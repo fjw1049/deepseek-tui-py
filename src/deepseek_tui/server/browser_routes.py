@@ -10,6 +10,7 @@ from typing import Any, Literal
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from deepseek_tui.browser.input import BrowserInput
 from deepseek_tui.browser.service import BrowserAction, BrowserService
 
 router = APIRouter(prefix="/v1/threads/{thread_id}/browser", tags=["browser"])
@@ -37,12 +38,28 @@ async def frame(request: Request, thread_id: str) -> dict[str, Any]:
         raise HTTPException(503, str(exc)) from exc
 
 
+@router.get("/view")
+async def view(request: Request, thread_id: str) -> dict[str, Any]:
+    try:
+        return await service(request, thread_id).view(thread_id)
+    except (TimeoutError, RuntimeError, ConnectionError) as exc:
+        raise HTTPException(503, str(exc) or "Browser is not responding") from exc
+
+
+@router.post("/input")
+async def browser_input(request: Request, thread_id: str, body: BrowserInput) -> dict[str, Any]:
+    try:
+        return await service(request, thread_id).input(thread_id, body)
+    except (ValueError, TimeoutError, RuntimeError, ConnectionError) as exc:
+        raise HTTPException(409, str(exc) or "Browser input failed") from exc
+
+
 @router.post("/action")
 async def action(request: Request, thread_id: str, body: BrowserAction) -> dict[str, Any]:
     browser = service(request, thread_id)
     try:
         # Opening from the UI starts a user-controlled session.
-        if body.action == "open" and not browser.state(thread_id)["active"]:
+        if body.action in {"open", "new_tab"} and not browser.state(thread_id)["active"]:
             await browser.ensure(thread_id)
             await browser.control(thread_id, "user")
         return await browser.action(thread_id, body, actor="user")

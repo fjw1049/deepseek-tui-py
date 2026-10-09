@@ -100,3 +100,39 @@ it('loads on first open and preserves the panel across closing and reopening', a
     host.remove()
   }
 })
+
+vi.mock('../BrowserWorkspace', () => ({ BrowserWorkspace: ({ visible, threadId }: { visible: boolean; threadId: string }) =>
+  createElement('input', { 'data-browser': threadId, 'data-visible': visible, defaultValue: 'draft' }) }))
+
+it('preserves browser and terminal across dock switching and collapse, but resets browser on thread change', async () => {
+  const host = document.createElement('div'); const root = createRoot(host)
+  const noop = vi.fn()
+  const render = (tab: 'preview' | 'terminal', open = true, collapsed = false, threadId = 'first') => act(async () => root.render(createElement(WorkbenchRightSidebar, {
+    threadId, open, collapsed, tab, tabs: ['preview', 'terminal'], width: 420,
+    workspaceRoot: '', blocks: [], changesContext: 'branch', devPreviewBlocks: [],
+    latestDevPreviewUrl: null, onCloseTab: noop, onTabChange: noop,
+    onChangesContextChange: noop, onToggleCollapsed: noop, onClose: noop,
+    onToggleMaximize: noop, onBeginResize: noop, onOpenFileInEditor: noop
+  })))
+  try {
+    await render('preview')
+    const browser = host.querySelector<HTMLInputElement>('[data-browser]')!
+    const terminal = host.querySelector('[data-terminal]')
+    browser.value = 'unsaved address'
+    await render('terminal')
+    expect(host.querySelector('[data-browser]')).toBe(browser)
+    expect(browser.dataset.visible).toBe('false')
+    await render('preview', true, true)
+    expect(host.querySelector('[data-browser]')).toBe(browser)
+    expect(host.querySelector('[data-terminal]')).toBe(terminal)
+    expect(host.querySelector('aside')?.style.width).toBe('52px')
+    await render('preview', false)
+    expect(host.querySelector('[data-browser]')).toBe(browser)
+    await render('preview')
+    expect(browser.value).toBe('unsaved address')
+    expect(browser.dataset.visible).toBe('true')
+    await render('preview', true, false, 'second')
+    expect(host.querySelector('[data-browser]')).not.toBe(browser)
+    expect(host.querySelector<HTMLInputElement>('[data-browser]')?.value).toBe('draft')
+  } finally { await act(async () => root.unmount()) }
+})

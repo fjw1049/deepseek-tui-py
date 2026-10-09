@@ -304,7 +304,7 @@ async def test_recover_restarts_after_disconnect(browser, monkeypatch):
         {"action": "open", "url": "javascript:alert(1)"},
         {"action": "open", "url": "https://user:password@example.com"},
         {"action": "check_text", "text": ""},
-        {"action": "click", "x": 1300, "y": 1},
+        {"action": "click", "x": 2400, "y": 1},
         {"action": "fill", "text": "no target"},
         {"action": "eval_js", "text": "alert(1)"},
     ],
@@ -438,3 +438,191 @@ async def test_real_record_replay_and_persistent_profile(tmp_path):
         assert json.loads(cleared.content) is None
     finally:
         await service.close_all()
+
+
+async def test_status_without_start_and_during_takeover(browser):
+    result = await browser.action("new", BrowserAction(action="status"))
+    assert result["content"]["active"] is False
+    assert "new" not in browser.runs
+    await browser.control("one", "user")
+    browser.runs["one"].session._internal.client.send.return_value = {
+        "frameTree": {"frame": {"url": "https://example.test/after-login"}}
+    }
+    result = await browser.action("one", BrowserAction(action="status"))
+    assert result["content"] == {
+        "active": True,
+        "owner": "user",
+        "url": "https://example.test/after-login",
+        "viewport": {"width": 1200, "height": 760},
+    }
+    with pytest.raises(ValueError, match="control changed"):
+        await browser.action("one", BrowserAction(action="reload"))
+
+
+@pytest.mark.parametrize("action", ["switch_tab", "hover", "wait"])
+def test_browser_requires_grounded_targets(action):
+    with pytest.raises(ValidationError):
+        BrowserAction(action=action)
+
+
+async def test_navigation_wait_and_tabs_use_owned_session(browser):
+    session = browser.runs["one"].session
+    result = SimpleNamespace(success=True, content="ok", error=None)
+    session.list_tabs = AsyncMock(
+        return_value=SimpleNamespace(
+            success=True,
+            content="[popup] Login",
+            error=None,
+            metadata={
+                "tabs": [{"tab_id": "popup", "url": "https://example.test", "title": "Login"}]
+            },
+        )
+    )
+    session.switch_tab = AsyncMock(return_value=result)
+    session.wait = AsyncMock(return_value=result)
+    session.hover = AsyncMock(return_value=result)
+    session.reload = AsyncMock(return_value=result)
+    session.type = AsyncMock(return_value=result)
+    tabs = await browser.action("one", BrowserAction(action="tabs"))
+    assert tabs["tabs"][0]["tab_id"] == "popup"
+    await browser.action("one", BrowserAction(action="switch_tab", tab_id="popup"))
+    session.switch_tab.assert_awaited_once_with("popup")
+    await browser.action("one", BrowserAction(action="wait", selector="#ready"))
+    session.wait.assert_awaited_once_with(
+        text=None, selector="#ready", url_contains=None, timeout_ms=10000
+    )
+    await browser.action("one", BrowserAction(action="hover", ref="ref_1"))
+    session.hover.assert_awaited_once_with(ref="ref_1")
+    await browser.action("one", BrowserAction(action="type", text="中文"))
+    session.type.assert_awaited_once_with(text="中文", ref=None, selector=None)
+    await browser.action("one", BrowserAction(action="observe"))
+    session.dom_tree.assert_awaited_once_with(level="interactive")
+    await browser.action("one", BrowserAction(action="observe", level="full"))
+    session.dom_tree.assert_awaited_with(level="full")
+    session._internal.client.send.side_effect = ConnectionError("disconnected after reload")
+    completed = await browser.action("one", BrowserAction(action="reload"))
+    assert completed["success"] and completed["page"]["stale"]
+    session.reload.assert_awaited_once()
+
+
+@pytest.mark.parametrize("vision", [False, True])
+async def test_screenshot_and_failure_evidence_respect_model_capability(
+    browser, tmp_path, vision, monkeypatch
+):
+    import json
+
+    from deepseek_tui.config.models import Config, ProviderConfig
+
+    monkeypatch.setattr("deepseek_tui.media.user_media_dir", lambda: tmp_path / "media")
+    config = Config(providers={"deepseek": ProviderConfig(image_input=vision)})
+    context = ToolContext(
+        working_directory=tmp_path,
+        metadata={
+            "browser_service": browser,
+            "runtime_thread_id": "one",
+            "task_config": config,
+            "task_model": "deepseek-chat",
+        },
+    )
+    for action in ({"action": "screenshot"}, {"action": "check_text", "text": "missing"}):
+        result = await BrowserUseTool().execute(action, context)
+        payload = json.loads(result.content)
+        assert Path(payload["artifact"]["path"]).exists()
+        assert bool(result.images) is vision
+        assert payload["vision_available"] is vision
+
+
+async def test_unknown_model_keeps_evidence_without_injecting_images(browser, tmp_path):
+    context = ToolContext(
+        working_directory=tmp_path,
+        metadata={
+            "browser_service": browser,
+            "runtime_thread_id": "one",
+        },
+    )
+    result = await BrowserUseTool().execute({"action": "screenshot"}, context)
+    assert result.success and not result.images
+
+
+async def test_scoped_assertion_does_not_accept_missing_region(browser):
+    session = browser.runs["one"].session
+    session.eval_js.return_value = SimpleNamespace(success=True, content="null")
+    result = await browser.action(
+        "one", BrowserAction(action="check_text", selector="#current-record", text="Saved")
+    )
+    assert not result["success"]
+    assert "els.length === 1" in session.eval_js.call_args.args[0]
+    assert "#current-record" in session.eval_js.call_args.args[0]
+
+
+@pytest.mark.e2e
+async def test_real_browser_tabs_wait_and_focused_unicode_input(tmp_path):
+    import json
+    import os
+
+    if os.environ.get("DEEPSEEK_BROWSER_E2E") != "1":
+        pytest.skip("Set DEEPSEEK_BROWSER_E2E=1 to run real Chromium")
+    page = (b'<title>Browser task</title><input id="name">'
+            b'<div id="old">Saved</div><div id="current">Pending</div>')
+
+    async def serve(reader, writer):
+        await reader.readuntil(b"\r\n\r\n")
+        writer.write(
+            b"HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: "
+            + str(len(page)).encode()
+            + b"\r\nConnection: close\r\n\r\n"
+            + page
+        )
+        await writer.drain()
+        writer.close()
+        await writer.wait_closed()
+
+    server = await asyncio.start_server(serve, "127.0.0.1", 0)
+    url = f"http://127.0.0.1:{server.sockets[0].getsockname()[1]}"
+    service = BrowserService(tmp_path / "browser")
+    try:
+        result = await service.action("task", BrowserAction(action="open", url=url))
+        assert result["success"] and result["page"]["url"].rstrip("/") == url
+        tabs = await service.action("task", BrowserAction(action="tabs"))
+        first = next(tab["tab_id"] for tab in tabs["tabs"] if tab["active"])
+        await service.action("task", BrowserAction(action="new_tab", url=url + "/second"))
+        await service.action("task", BrowserAction(action="switch_tab", tab_id=first))
+        wait = await service.action("task", BrowserAction(action="wait", selector="#name"))
+        assert wait["success"]
+        await service.control("task", "user")
+        await service.action("task", BrowserAction(action="click", selector="#name"), actor="user")
+        await service.action(
+            "task", BrowserAction(action="fill", selector=":focus", text="中文粘贴"), actor="user"
+        )
+        await service.action("task", BrowserAction(action="type", text="输入"), actor="user")
+        value = await service.runs["task"].session.eval_js('document.querySelector("#name").value')
+        assert json.loads(value.content) == "中文粘贴输入"
+        await service.control("task", "agent")
+        check = await service.action(
+            "task", BrowserAction(action="check_text", selector="#current", text="Saved")
+        )
+        assert not check["success"]
+        state = await service.action("task", BrowserAction(action="status"))
+        assert state["content"]["owner"] == "agent"
+    finally:
+        await service.close_all()
+        server.close()
+        await server.wait_closed()
+
+
+async def test_image_attachment_error_does_not_reverse_success(browser, tmp_path, monkeypatch):
+    import json
+
+    from deepseek_tui.config.models import Config, ProviderConfig
+
+    def fail_import(data):
+        raise OSError("media unavailable")
+
+    monkeypatch.setattr("deepseek_tui.media.import_image", fail_import)
+    context = ToolContext(working_directory=tmp_path, metadata={
+        "browser_service": browser, "runtime_thread_id": "one",
+        "task_config": Config(providers={"deepseek": ProviderConfig(image_input=True)}),
+    })
+    result = await BrowserUseTool().execute({"action": "screenshot"}, context)
+    assert result.success and not result.images
+    assert "image_warning" in json.loads(result.content)
