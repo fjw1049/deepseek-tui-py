@@ -3,15 +3,16 @@
 import asyncio
 import json
 import os
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from deepseek_tui.browser import BrowserService
-from deepseek_tui.browser_install import BrowserInstaller
-from deepseek_tui.browser_skills import install_skill, preview_skill
+from browser.install import BrowserInstaller
+from browser.service import BrowserService
+from browser.skills import install_skill, preview_skill
 from deepseek_tui.integrations.skills import discover_in_workspace
 
 
@@ -26,7 +27,7 @@ async def test_cancel_before_installer_starts_updates_status():
 @pytest.mark.asyncio
 @pytest.mark.parametrize("success", [True, False])
 async def test_installer_reports_terminal_status_and_bounds_log(monkeypatch, success):
-    from deepseek_tui import browser_install
+    from browser import install as browser_install
 
     reader = asyncio.StreamReader()
     for index in range(60):
@@ -51,7 +52,7 @@ async def test_installer_reports_terminal_status_and_bounds_log(monkeypatch, suc
 @pytest.mark.asyncio
 @pytest.mark.skipif(os.name == "nt", reason="POSIX process group cleanup")
 async def test_cancel_install_kills_owned_process_group(monkeypatch):
-    from deepseek_tui import browser_install
+    from browser import install as browser_install
 
     process = SimpleNamespace(
         stdout=asyncio.StreamReader(), wait=AsyncMock(return_value=0), pid=123
@@ -66,11 +67,12 @@ async def test_cancel_install_kills_owned_process_group(monkeypatch):
     await installer.close()
     assert installer.state["status"] == "stopped"
     assert launch.call_args.kwargs["start_new_session"]
+    assert launch.call_args.args[:3] == (sys.executable, "-m", "browser.install")
     kill.assert_called_once()
 
 
 def test_skill_preview_install_discovery_and_no_overwrite(tmp_path, monkeypatch):
-    from deepseek_tui import browser_skills
+    from browser import skills as browser_skills
 
     models = pytest.importorskip("octop_browser.record.models")
     doc = models.StepsDocument(

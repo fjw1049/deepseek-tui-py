@@ -9,7 +9,7 @@ import shutil
 from pathlib import Path
 from typing import Any
 
-from deepseek_tui.browser import BrowserAction, BrowserRun, BrowserService
+from browser.service import BrowserAction, BrowserRun, BrowserService
 
 
 def recording_store(service: BrowserService, thread_id: str):
@@ -66,7 +66,14 @@ async def finish_recording(run: BrowserRun) -> dict[str, Any]:
         await recorder.close()
 
 
+def _demo_url(url: str) -> str:
+    directory = Path(__file__).parent
+    legacy = directory.parent / "deepseek_tui" / "browser_demo.html"
+    return (directory / "browser_demo.html").as_uri() if url == legacy.as_uri() else url
+
+
 def _url(url: str) -> str:
+    url = _demo_url(url)
     if url != (Path(__file__).parent / "browser_demo.html").as_uri():
         BrowserAction(action="open", url=url)
     return url
@@ -160,7 +167,7 @@ async def _replay(service: BrowserService, run: BrowserRun, doc: Any, inputs: di
                     await service.start_video(run)
                 if step.expect and step.expect.get("urlContains"):
                     result = await run.session.wait(
-                        url_contains=step.expect["urlContains"], timeout_ms=10000
+                        url_contains=_demo_url(step.expect["urlContains"]), timeout_ms=10000
                     )
                     if not result.success:
                         raise ValueError(result.error or "Navigation check failed")
@@ -173,7 +180,9 @@ async def _replay(service: BrowserService, run: BrowserRun, doc: Any, inputs: di
             await asyncio.sleep(0.2)
         async with run.lock:
             for rule in doc.verification:
-                result = await run.session.wait(url_contains=rule["value"], timeout_ms=10000)
+                result = await run.session.wait(
+                    url_contains=_demo_url(rule["value"]), timeout_ms=10000
+                )
                 if not result.success:
                     raise ValueError(result.error or "Final URL verification failed")
             service._save(run, await service._capture(run), ".jpg", "页面截图")

@@ -2,7 +2,7 @@
 
 The browser integration depends on octop-browser 1.0.0 (MIT, Copyright
 (c) 2026 OrcaKit). Session capture and control in
-src/deepseek_tui/browser.py are adapted from Octop's
+src/browser/service.py are adapted from Octop's
 src/octop/api/routers/browser/{harness,stream}.py.
 
 Octop source: https://github.com/TencentCloud/Octop

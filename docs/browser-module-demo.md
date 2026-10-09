@@ -3,6 +3,12 @@
 第一版接入 octop-browser 1.0.0，保留现有 Python Agent 和 Workbench。
 普通网页预览不变，右侧「预览」中增加「Agent 浏览器」。
 
+浏览器实现集中在 `src/browser/`：`service.py` 管理会话，`install.py` 安装浏览器，
+`workflows.py` 录制回放，`skills.py` 生成 Skill，`video.py` 保存连续视频，
+`browser_demo.html` 提供本地演示页面。工具入口保留在
+`src/deepseek_tui/tools/browser.py`，HTTP 接口保留在
+`src/deepseek_tui/server/browser_routes.py`。
+
 ## 本次可一起验收的功能
 
 - 每个对话独立的 Chromium 会话，页面操作与实时画面来自同一会话。
@@ -72,7 +78,7 @@ Agent 浏览器 → 运行整组演示。可添加 --port 指定其他端口。
 
 Electron 被测实例、跨任务共享登录，
 尚未接入本版。底层的私有 CDP 截图接口集中在
-browser.py，依赖固定为 1.0.0，升级时需重跑真实浏览器测试。
+`src/browser/service.py`，依赖固定为 1.0.0，升级时需重跑真实浏览器测试。
 
 来源与许可证见 THIRD_PARTY_NOTICES.md。
 
