@@ -3,11 +3,13 @@ import { useTranslation } from 'react-i18next'
 import { Camera, CircleStop, Globe2, Play, Hand, Bot, RefreshCw } from 'lucide-react'
 import { DevBrowserPanel } from './DevBrowserPanel'
 import { BrowserSessionSettings } from './BrowserSessionSettings'
-import { useChatStore } from '../store/chat-store'
 import { formatAutomationApiError } from '../lib/automation-runtime-client'
 
 type BrowserState = {
   active: boolean
+  url?: string
+  video_recording?: boolean
+  video_error?: string | null
   owner: 'agent' | 'user' | 'stopped'
   recording: boolean
   demo_status: string
@@ -30,9 +32,8 @@ export async function browserRequest<T>(threadId: string, suffix = '', body?: un
   return JSON.parse(response.body) as T
 }
 
-export function BrowserWorkspace(props: ComponentProps<typeof DevBrowserPanel>): ReactElement {
+export function BrowserWorkspace({ threadId, ...props }: ComponentProps<typeof DevBrowserPanel> & { threadId: string | null }): ReactElement {
   const [mode, setMode] = useState<'preview' | 'agent'>('preview')
-  const threadId = useChatStore((state) => state.activeThreadId)
   const { t } = useTranslation('common')
   return <div className="flex h-full min-h-0 flex-col">
     <div className="flex gap-2 border-b border-ds-border p-2 text-xs">
@@ -57,6 +58,10 @@ export function AgentBrowserPanel({ threadId }: { threadId: string }): ReactElem
   const [error, setError] = useState('')
   const [pending, setPending] = useState(false)
   const userControls = state?.owner === 'user'
+
+  useEffect(() => {
+    if (state?.url) setUrl(state.url)
+  }, [state?.url])
 
   useEffect(() => {
     let disposed = false
@@ -146,6 +151,7 @@ export function AgentBrowserPanel({ threadId }: { threadId: string }): ReactElem
       <button className={button} disabled={!userControls || pending} onClick={() => action({ action: 'observe' })}><RefreshCw size={13} />{t('browserReadElements')}</button>
       <button className={button} disabled={!userControls || pending} onClick={() => action({ action: 'screenshot' })}><Camera size={13} />{t('browserSaveEvidence')}</button>
       <button className={button} disabled={!userControls || pending} onClick={() => action({ action: state?.recording ? 'record_stop' : 'record_start' })}>{state?.recording ? t('browserFinishRecording') : t('browserRecordSteps')}</button>
+      <button className={button} disabled={!userControls || pending} onClick={() => action({ action: state?.video_recording ? 'video_stop' : 'video_start' })}>{t(state?.video_recording ? 'browserVideoStop' : 'browserVideoStart')}</button>
       <button className={button} disabled={!userControls || pending} onClick={() => action({ action: 'scroll', direction: 'down' })}>{t('browserScrollDown')}</button>
     </div>
     <details className="mb-3 text-xs">
@@ -155,6 +161,7 @@ export function AgentBrowserPanel({ threadId }: { threadId: string }): ReactElem
         <input className="rounded border border-ds-border bg-transparent p-2" placeholder={t('browserElementValue')} value={text} onChange={(e) => setText(e.target.value)} />
         <div className="flex gap-2">
           <button className={button} disabled={!userControls || pending || !selector} onClick={() => action({ action: 'fill', selector, text })}>{t('browserFill')}</button>
+          <button className={button} disabled={!userControls || pending || !selector} onClick={() => action({ action: 'click', selector })}>{t('browserClick')}</button>
           <button className={button} disabled={!userControls || pending || !text.trim()} onClick={() => action({ action: 'check_text', text, timeout_ms: 3000 })}>{t('browserCheckText')}</button>
         </div>
         {dom ? <pre className="max-h-48 overflow-auto whitespace-pre-wrap rounded bg-ds-surface p-2">{dom}</pre> : null}
@@ -162,13 +169,22 @@ export function AgentBrowserPanel({ threadId }: { threadId: string }): ReactElem
     </details>
     <BrowserSessionSettings threadId={threadId} active={!!state?.active} userControls={!!userControls} recording={!!state?.workflow_recording} />
     <div className="text-xs font-semibold">{t('browserEvidence')}</div>
+    <p className="my-2 text-xs text-ds-muted">{t('browserVideoHint')}</p>
+    {state?.video_error ? <p role="alert" className="text-xs text-red-500">{state.video_error}</p> : null}
+    <button className={button} disabled={pending || state?.video_recording || state?.demo_status === 'running' || (!state?.artifacts.length && !state?.log.length)} onClick={() => {
+      setPending(true)
+      setError('')
+      void browserRequest<{ path: string }>(threadId, '/export', {})
+        .then((result) => window.dsGui.showItemInFolder(result.path))
+        .catch((e: Error) => setError(e.message)).finally(() => setPending(false))
+    }}>{t('browserExportEvidence')}</button>
     <div className="my-2 flex flex-wrap gap-2">{state?.artifacts.map((artifact, index) =>
       <button key={artifact.id} className={button} onClick={() => {
         void browserRequest<{ image: string }>(threadId, '/artifacts/' + artifact.id)
           .then((result) => setArtifactImage(result.image)).catch((e: Error) => setError(e.message))
-      }}>{index + 1}. {artifact.id.endsWith('.gif') ? t('browserStepAnimation') : artifact.label === '失败现场' ? t('browserFailureEvidence') : t('browserSaveEvidence')}</button>
+      }}>{index + 1}. {artifact.id.endsWith('.webm') ? t('browserVideo') : artifact.id.endsWith('.gif') ? t('browserStepAnimation') : artifact.label === '失败现场' ? t('browserFailureEvidence') : t('browserSaveEvidence')}</button>
     )}</div>
-    {artifactImage ? <img className="mb-3 w-full rounded-lg border border-ds-border" src={artifactImage} alt={t('browserEvidence')} /> : null}
+    {artifactImage?.startsWith('data:video/') ? <video className="mb-3 w-full rounded-lg border border-ds-border" controls src={artifactImage} aria-label={t('browserVideo')} /> : artifactImage ? <img className="mb-3 w-full rounded-lg border border-ds-border" src={artifactImage} alt={t('browserEvidence')} /> : null}
     <ol className="space-y-1 text-xs text-ds-muted">{state?.log.map((entry, i) =>
       <li key={i}>{entry.success ? '✓' : '✕'} {entry.action}</li>
     )}</ol>

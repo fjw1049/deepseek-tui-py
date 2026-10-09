@@ -2003,6 +2003,7 @@ export function Workbench(): ReactElement {
               tab header shares one continuous divider line with the topbar and
               its left border runs the card's full height. */}
           <WorkbenchRightSidebar
+            threadId={activeThreadId}
             open={rightSidebarOpen}
             collapsed={rightSidebarCollapsed}
             tab={rightSidebarTab}

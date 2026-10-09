@@ -18,6 +18,7 @@ it('opens from launcher, adds and reselects via menu, keeps terminal mounted, an
   function Harness() {
     const [state, setState] = useState<RightSidebarPanels>({ tabs: [], activeTab: null })
     return createElement(WorkbenchRightSidebar, {
+      threadId: null,
       open: true, collapsed: false, tab: state.activeTab, tabs: state.tabs,
       onTabChange: (tab) => setState((s) => addRightSidebarTab(s, tab)),
       onCloseTab: (tab) => setState((s) => removeRightSidebarTab(s, tab)),
@@ -70,6 +71,7 @@ it('loads on first open and preserves the panel across closing and reopening', a
   const root = createRoot(host)
   const noop = vi.fn()
   const render = (open: boolean) => act(async () => root.render(createElement(WorkbenchRightSidebar, {
+    threadId: null,
     open, collapsed: false, tab: 'terminal', tabs: ['terminal'], width: 420,
     workspaceRoot: '', blocks: [], changesContext: 'branch', devPreviewBlocks: [],
     latestDevPreviewUrl: null, onCloseTab: noop, onTabChange: noop,

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -155,6 +156,8 @@ async def _replay(service: BrowserService, run: BrowserRun, doc: Any, inputs: di
                 result = await asyncio.wait_for(_step(run, step, inputs), timeout=30)
                 if not result.success:
                     raise ValueError(result.error or "Replay action failed")
+                if index == 1 and shutil.which("ffmpeg") and run.video is None:
+                    await service.start_video(run)
                 if step.expect and step.expect.get("urlContains"):
                     result = await run.session.wait(
                         url_contains=step.expect["urlContains"], timeout_ms=10000
@@ -187,6 +190,7 @@ async def _replay(service: BrowserService, run: BrowserRun, doc: Any, inputs: di
         except Exception:
             pass
     finally:
+        await service.stop_video(run)
         if run.recording:
             service._finish_recording(run)
         service._persist(run)

@@ -11,6 +11,9 @@ async def test_browser_routes_require_auth_and_existing_thread(authed_client):
     response = await client.get(base, headers=headers)
     assert response.status_code == 200
     assert response.json()["active"] is False
+    assert (await client.post(base + "/export", json={}, headers=headers)).status_code == 409
+    unauthenticated = await client.post(base + "/export", json={}, headers={"Authorization": ""})
+    assert unauthenticated.status_code == 401
     invalid = await client.post(
         base + "/action", json={"action": "open", "url": "file:///etc/passwd"}, headers=headers
     )

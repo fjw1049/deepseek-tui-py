@@ -16,6 +16,7 @@ import socket
 import sys
 import tempfile
 import uuid
+import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
@@ -39,6 +40,8 @@ class BrowserAction(BaseModel):
         "check_text",
         "record_start",
         "record_stop",
+        "video_start",
+        "video_stop",
     ]
     url: str = Field(default="", max_length=4096)
     ref: str | None = Field(default=None, max_length=200)
@@ -95,6 +98,9 @@ class BrowserRun:
     demo_step: int = 0
     demo_total: int = 9
     error: str | None = None
+    url: str = ""
+    video: Any = None
+    video_error: str | None = None
 
 
 class BrowserService:
@@ -122,7 +128,11 @@ class BrowserService:
     def environment(self) -> dict[str, Any]:
         import importlib.metadata
 
-        result: dict[str, Any] = {"python": sys.version.split()[0], "ready": False}
+        result: dict[str, Any] = {
+            "python": sys.version.split()[0],
+            "ready": False,
+            "video_ready": bool(shutil.which("ffmpeg")),
+        }
         try:
             from octop_browser.cdp.launcher import find_chrome
 
@@ -239,6 +249,9 @@ class BrowserService:
             }
         return {
             "active": run.session is not None,
+            "url": run.url,
+            "video_recording": run.video is not None,
+            "video_error": run.video_error,
             "owner": run.owner,
             "recording": run.recording,
             "log": run.log[-80:],
@@ -277,6 +290,8 @@ class BrowserService:
                     "demo_step": run.demo_step,
                     "demo_total": run.demo_total,
                     "error": run.error,
+                    "url": run.url,
+                    "video_error": run.video_error,
                 },
                 ensure_ascii=False,
             ),
@@ -301,6 +316,8 @@ class BrowserService:
         if not run or not run.session or run.lock.locked():
             return None
         async with run.lock:
+            tree = await run.session._internal.client.send("Page.getFrameTree")
+            run.url = tree.get("frameTree", {}).get("frame", {}).get("url", run.url)
             return "data:image/jpeg;base64," + base64.b64encode(await self._capture(run)).decode()
 
     def _save(self, run: BrowserRun, data: bytes, suffix: str, label: str) -> dict[str, str]:
@@ -315,8 +332,101 @@ class BrowserService:
 
     def artifact(self, thread_id: str, name: str) -> Path:
         path = self.artifact_root / thread_id / name
-        if Path(name).name != name or path.suffix not in {".jpg", ".gif"} or not path.is_file():
+        if (
+            Path(name).name != name
+            or path.suffix not in {".jpg", ".gif", ".webm"}
+            or path.is_symlink()
+            or not path.is_file()
+        ):
             raise ValueError("Artifact not found")
+        return path
+
+    async def start_video(self, run: BrowserRun) -> None:
+        from deepseek_tui.browser_video import BrowserVideo
+
+        if run.video:
+            raise ValueError("Video is already recording")
+        directory = self.artifact_root / run.thread_id
+        directory.mkdir(parents=True, exist_ok=True)
+        video = BrowserVideo(directory / (uuid.uuid4().hex + ".webm"), lambda: self._capture(run))
+        await video.start()
+        run.video, run.video_error = video, None
+
+    async def stop_video(self, run: BrowserRun) -> dict[str, str] | None:
+        video = run.video
+        if not video:
+            return None
+        await video.stop()
+        run.video = None
+        run.video_error = video.error
+        if (
+            video.frames
+            and video.process.returncode == 0
+            and video.path.is_file()
+            and video.path.stat().st_size
+        ):
+            artifact = {"id": video.path.name, "path": str(video.path), "label": "连续视频"}
+            run.artifacts.append(artifact)
+            self._persist(run)
+            return artifact
+        video.path.unlink(missing_ok=True)
+        self._persist(run)
+        return None
+
+    def export_evidence(self, thread_id: str) -> Path:
+        state = self.state(thread_id)
+        if state.get("video_recording") or state.get("demo_status") == "running":
+            raise ValueError("Stop recording and finish the current run before exporting")
+        if not state["artifacts"] and not state["log"]:
+            raise ValueError("No browser evidence to export")
+        directory = self.artifact_root / thread_id
+        directory.mkdir(parents=True, exist_ok=True)
+        path = directory / ("evidence-" + uuid.uuid4().hex + ".zip")
+        report = {
+            key: state.get(key)
+            for key in (
+                "url",
+                "activity",
+                "demo_status",
+                "demo_step",
+                "demo_total",
+                "error",
+                "video_error",
+            )
+        }
+        checks = [entry for entry in state["log"] if entry["action"] == "check_text"]
+        report["assertions"] = checks
+        report["verification"] = (
+            "failed"
+            if any(not check["success"] for check in checks)
+            else "passed"
+            if checks
+            else "not_checked"
+        )
+        report["steps"] = state["log"]
+        report["artifacts"] = [
+            {"id": item["id"], "label": item["label"]} for item in state["artifacts"]
+        ]
+        try:
+            with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+                archive.writestr("report.json", json.dumps(report, ensure_ascii=False, indent=2))
+                archive.writestr(
+                    "README.txt",
+                    (
+                        "Browser acceptance evidence\n"
+                        "report.json: execution outcomes and explicit text assertions.\n"
+                        "verification=not_checked means no business text assertion was executed.\n"
+                        "Includes the latest 80 steps and 12 artifacts retained by this session.\n"
+                        "Video: 5 fps, maximum 180 seconds; GIF: post-action snapshots.\n"
+                        "Pages, assertions and images may contain private data.\n"
+                        "Review before sharing.\n"
+                    ),
+                )
+                for item in state["artifacts"]:
+                    archive.write(self.artifact(thread_id, item["id"]), item["id"])
+        except BaseException:
+            path.unlink(missing_ok=True)
+            raise
         return path
 
     def _finish_recording(self, run: BrowserRun) -> dict[str, str] | None:
@@ -419,6 +529,12 @@ class BrowserService:
         if a.action == "record_start":
             run.frames.clear()
             run.recording = True
+        if a.action == "video_start":
+            await self.start_video(run)
+        if a.action == "video_stop":
+            artifact = await self.stop_video(run)
+            if run.video_error:
+                success, content = False, run.video_error
         if a.action == "screenshot":
             artifact = self._save(run, await self._capture(run), ".jpg", "页面截图")
         if run.recording:
@@ -433,8 +549,11 @@ class BrowserService:
             except Exception:
                 pass  # Preserve the action failure even when the page cannot be captured.
         run.error = None if success else str(content)
-        # Never log typed values or full DOM text; only action outcomes.
-        run.log.append({"action": a.action, "success": success})
+        # Keep explicit assertions for review, but never log fill values or full DOM text.
+        entry = {"action": a.action, "success": success}
+        if a.action == "check_text":
+            entry["expected"] = a.text
+        run.log.append(entry)
         run.log[:] = run.log[-80:]
         self._persist(run)
         return {"success": success, "content": content, "artifact": artifact}
@@ -483,6 +602,8 @@ class BrowserService:
                 )
                 if not result.success:
                     raise ValueError(result.error)
+                if shutil.which("ffmpeg") and run.video is None:
+                    await self.start_video(run)
             steps = [
                 {"action": "record_start"},
                 {"action": "fill", "selector": "#name", "text": "Octop × Workbench"},
@@ -509,6 +630,7 @@ class BrowserService:
         except Exception as exc:
             run.demo_status, run.error = "failed", str(exc)
         finally:
+            await self.stop_video(run)
             if run.recording:
                 self._finish_recording(run)
             self._persist(run)
@@ -525,6 +647,7 @@ class BrowserService:
         async with run.lock:
             try:
                 try:
+                    await self.stop_video(run)
                     if run.recorder:
                         from deepseek_tui.browser_workflows import finish_recording
 

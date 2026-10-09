@@ -205,7 +205,16 @@ async def demo(request: Request, thread_id: str) -> dict[str, Any]:
 async def artifact(request: Request, thread_id: str, name: str) -> dict[str, str]:
     try:
         path = service(request, thread_id).artifact(thread_id, name)
-        mime = "image/gif" if path.suffix == ".gif" else "image/jpeg"
+        mime = {".gif": "image/gif", ".jpg": "image/jpeg", ".webm": "video/webm"}[path.suffix]
         return {"image": f"data:{mime};base64," + base64.b64encode(path.read_bytes()).decode()}
     except ValueError as exc:
         raise HTTPException(404, str(exc)) from exc
+
+
+@router.post("/export")
+async def export_evidence(request: Request, thread_id: str) -> dict[str, str]:
+    try:
+        path = service(request, thread_id).export_evidence(thread_id)
+        return {"path": str(path)}
+    except (ValueError, OSError) as exc:
+        raise HTTPException(409, str(exc)) from exc

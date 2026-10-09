@@ -47,6 +47,7 @@ const WorkspaceEditorPanel = lazy(() =>
 )
 
 type Props = {
+  threadId: string | null
   open: boolean
   collapsed: boolean
   tab: RightSidebarTab | null
@@ -93,6 +94,7 @@ function PanelFallback(): ReactElement {
 }
 
 export function WorkbenchRightSidebar({
+  threadId,
   open,
   collapsed,
   tab,
@@ -189,6 +191,7 @@ export function WorkbenchRightSidebar({
     otherPanel = (
       <Suspense fallback={<PanelFallback />}>
         <DevBrowserPanel
+          threadId={threadId}
           blocks={devPreviewBlocks}
           preferredUrl={latestDevPreviewUrl}
           preferredFilePath={preferredPreviewFilePath}

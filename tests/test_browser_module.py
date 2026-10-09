@@ -3,6 +3,7 @@
 import asyncio
 import base64
 import io
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -72,6 +73,71 @@ async def test_action_evidence_and_recording_module(browser):
         browser.artifact("two", shot["artifact"]["id"])
     with pytest.raises(ValueError):
         browser.artifact("one", "../escape.jpg")
+
+
+@pytest.mark.asyncio
+async def test_frame_reports_current_page_and_export_preserves_assertions(browser):
+    import json
+    import zipfile
+
+    run = browser.runs["one"]
+    original = run.session._internal.client.send.return_value
+    run.session._internal.client.send.side_effect = [
+        {"frameTree": {"frame": {"url": "http://localhost/redirected#section"}}}, original
+    ]
+    await browser.frame("one")
+    assert browser.state("one")["url"] == "http://localhost/redirected#section"
+    run.session._internal.client.send.side_effect = None
+    await browser.action("one", BrowserAction(action="check_text", text="Missing"))
+    await browser.close("one")
+    with zipfile.ZipFile(browser.export_evidence("one")) as archive:
+        report = json.loads(archive.read("report.json"))
+        assert report["verification"] == "failed"
+        assert report["assertions"][-1]["expected"] == "Missing"
+        assert report["artifacts"][0]["id"] in archive.namelist()
+        assert "path" not in report["artifacts"][0]
+    with pytest.raises(ValueError, match="No browser evidence"):
+        browser.export_evidence("two")
+
+
+@pytest.mark.asyncio
+async def test_export_does_not_claim_business_success_for_actions_only(browser):
+    import json
+    import zipfile
+
+    await browser.action("one", BrowserAction(action="click", selector="#save"))
+    with zipfile.ZipFile(browser.export_evidence("one")) as archive:
+        assert json.loads(archive.read("report.json"))["verification"] == "not_checked"
+    browser.runs["one"].demo_status = "running"
+    with pytest.raises(ValueError, match="finish"):
+        browser.export_evidence("one")
+
+
+@pytest.mark.asyncio
+async def test_video_records_between_actions_and_close_finalizes(browser, monkeypatch):
+    import shutil
+
+    from deepseek_tui.browser_video import BrowserVideo
+
+    if not shutil.which("ffmpeg"):
+        pytest.skip("FFmpeg is required for video encoding")
+    run = browser.runs["one"]
+    await browser.action("one", BrowserAction(action="video_start"))
+    with pytest.raises(ValueError, match="already recording"):
+        await browser.action("one", BrowserAction(action="video_start"))
+    with pytest.raises(ValueError, match="Stop recording"):
+        browser.export_evidence("one")
+    async with run.lock:
+        await asyncio.sleep(0.7)
+        assert run.video.frames >= 2
+    video = run.video
+    await browser.close("one")
+    assert video.task.done() and video.process.returncode == 0
+    artifact = browser.state("one")["artifacts"][-1]
+    assert browser.artifact("one", artifact["id"]).read_bytes().startswith(b"\x1aE\xdf\xa3")
+    monkeypatch.setattr("deepseek_tui.browser_video.shutil.which", lambda _: None)
+    with pytest.raises(ValueError, match="FFmpeg"):
+        await BrowserVideo(run.directory / "missing.webm", lambda: browser._capture(run)).start()
 
 
 @pytest.mark.asyncio
@@ -264,8 +330,12 @@ async def test_real_octop_demo(tmp_path):
         state = service.state("demo")
         assert state["demo_status"] == "passed", state
         assert state["demo_step"] == state["demo_total"] == 9
-        assert len(state["artifacts"]) == 2
+        assert {".jpg", ".gif"} <= {Path(a["id"]).suffix for a in state["artifacts"]}
+        if service.environment()["video_ready"]:
+            assert any(a["id"].endswith(".webm") for a in state["artifacts"])
+            assert not state["video_error"]
         assert (await service.frame("demo")).startswith("data:image/jpeg;base64,")
+        assert service.state("demo")["url"].endswith("browser_demo.html")
         await service.control("demo", "user")
         result = await service.action(
             "demo", BrowserAction(action="fill", selector="#name", text="人工接管"), actor="user"
