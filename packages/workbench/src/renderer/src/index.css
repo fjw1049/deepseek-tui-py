@@ -42,6 +42,7 @@
   --ds-bg-main: var(--bg-app);
   --ds-bg-sidebar: var(--bg-sidebar);
   --ds-bg-canvas: var(--bg-canvas);
+  --ds-workbench-chrome: color-mix(in srgb, var(--ds-text) 2%, var(--ds-bg-canvas));
   --ds-surface-card: var(--surface-1);
   --ds-surface-elevated: var(--surface-2);
   --ds-surface-subtle: rgba(0, 0, 0, 0.04);
@@ -2850,6 +2851,12 @@ samp {
   min-height: var(--ds-header-height);
 }
 
+[data-theme='light'] .ds-workbench-topbar,
+[data-theme='light'] .ds-right-panel-tabbar,
+[data-theme='light'] .ds-dev-browser__chrome {
+  background: var(--ds-workbench-chrome);
+}
+
 .ds-workbench-topbar__inner {
   min-height: var(--ds-header-height);
   padding-inline: 1rem;
@@ -4264,6 +4271,17 @@ samp {
 
 .ds-dev-browser__omnibox:hover {
   background: color-mix(in srgb, var(--ds-text) 6%, transparent);
+}
+
+[data-theme='light'] .ds-dev-browser__tab--active,
+[data-theme='light'] .ds-dev-browser__omnibox,
+[data-theme='light'] .ds-dev-browser__omnibox:focus,
+[data-theme='light'] .ds-dev-browser__omnibox:focus-visible {
+  background: var(--ds-bg-canvas);
+}
+
+[data-theme='light'] .ds-dev-browser__omnibox:hover:not(:focus) {
+  background: var(--ds-workbench-chrome);
 }
 
 .ds-dev-browser__omnibox:focus,
@@ -7886,9 +7904,9 @@ select:focus-visible,
   background: var(--ds-bg-sidebar);
 }
 
-/* Diff reading surfaces must not inherit the light sidebar's contrast tint.
-   Keep the alias local so file lists, headers, and expanded diffs share the
-   opaque canvas without changing navigation chrome or dark themes. */
+/* Right-panel content shares the chat canvas, independent of the left
+   navigation's contrast tint. Keep the alias local to preserve dark themes. */
+[data-theme='light'] .ds-workbench-right-panel,
 [data-theme='light'] .ds-change-inspector,
 [data-theme='light'] .ds-workspace-editor-pane,
 [data-theme='light'] .ds-diff-view--flush {
