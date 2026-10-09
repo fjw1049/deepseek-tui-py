@@ -11,7 +11,7 @@ import pytest
 from PIL import Image
 from pydantic import ValidationError
 
-from browser.service import BrowserAction, BrowserRun, BrowserService
+from deepseek_tui.browser.service import BrowserAction, BrowserRun, BrowserService
 from deepseek_tui.tools.approval import build_approval_key
 from deepseek_tui.tools.browser import BrowserUseTool
 from deepseek_tui.tools.registry import ApprovalRequirement, ToolContext
@@ -117,7 +117,7 @@ async def test_export_does_not_claim_business_success_for_actions_only(browser):
 async def test_video_records_between_actions_and_close_finalizes(browser, monkeypatch):
     import shutil
 
-    from browser.video import BrowserVideo
+    from deepseek_tui.browser.video import BrowserVideo
 
     if not shutil.which("ffmpeg"):
         pytest.skip("FFmpeg is required for video encoding")
@@ -135,7 +135,7 @@ async def test_video_records_between_actions_and_close_finalizes(browser, monkey
     assert video.task.done() and video.process.returncode == 0
     artifact = browser.state("one")["artifacts"][-1]
     assert browser.artifact("one", artifact["id"]).read_bytes().startswith(b"\x1aE\xdf\xa3")
-    monkeypatch.setattr("browser.video.shutil.which", lambda _: None)
+    monkeypatch.setattr("deepseek_tui.browser.video.shutil.which", lambda _: None)
     with pytest.raises(ValueError, match="FFmpeg"):
         await BrowserVideo(run.directory / "missing.webm", lambda: browser._capture(run)).start()
 
@@ -228,14 +228,17 @@ async def test_skill_form_actions_are_idempotent_and_use_the_owned_session(brows
 
 
 def test_replay_resolves_moved_demo_and_rejects_other_local_files():
-    from browser import workflows
+    from deepseek_tui.browser import workflows
 
     directory = Path(workflows.__file__).parent
     url = (directory / "browser_demo.html").as_uri()
-    legacy = (directory.parent / "deepseek_tui" / "browser_demo.html").as_uri()
     assert workflows._url(url) == url
-    assert workflows._url(legacy) == url
-    assert workflows._demo_url(legacy) == url
+    for legacy in (
+        directory.parent / "browser_demo.html",
+        directory.parent.parent / "browser" / "browser_demo.html",
+    ):
+        assert workflows._url(legacy.as_uri()) == url
+        assert workflows._demo_url(legacy.as_uri()) == url
     assert workflows._url("https://example.com") == "https://example.com"
     with pytest.raises(ValidationError):
         workflows._url((directory / "other.html").as_uri())
@@ -243,7 +246,7 @@ def test_replay_resolves_moved_demo_and_rejects_other_local_files():
 
 @pytest.mark.asyncio
 async def test_workflow_preflight_and_takeover(browser, monkeypatch):
-    from browser import workflows as flows
+    from deepseek_tui.browser import workflows as flows
 
     models = pytest.importorskip("octop_browser.record.models")
     doc = models.StepsDocument(
@@ -366,8 +369,8 @@ async def test_real_record_replay_and_persistent_profile(tmp_path):
     import os
     from pathlib import Path
 
-    import browser as browser_module
-    from browser.workflows import (
+    from deepseek_tui import browser as browser_module
+    from deepseek_tui.browser.workflows import (
         finish_recording,
         read_workflow,
         recording_store,
@@ -400,7 +403,7 @@ async def test_real_record_replay_and_persistent_profile(tmp_path):
         assert any(step.kind == "fill" for step in doc.steps)
         assert all("example" not in item for item in doc.inputs)
         legacy_url = (
-            Path(browser_module.__file__).parent.parent / "deepseek_tui" / "browser_demo.html"
+            Path(browser_module.__file__).parent.parent / "browser_demo.html"
         ).as_uri()
         for step in doc.steps:
             if step.url == url:

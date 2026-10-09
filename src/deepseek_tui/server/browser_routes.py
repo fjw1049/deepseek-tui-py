@@ -10,7 +10,7 @@ from typing import Any, Literal
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from browser.service import BrowserAction, BrowserService
+from deepseek_tui.browser.service import BrowserAction, BrowserService
 
 router = APIRouter(prefix="/v1/threads/{thread_id}/browser", tags=["browser"])
 
@@ -93,7 +93,7 @@ class SkillBody(BaseModel):
 
 @router.post("/skills")
 async def workflow_skill(request: Request, thread_id: str, body: SkillBody) -> dict[str, Any]:
-    from browser.skills import install_skill, preview_skill
+    from deepseek_tui.browser.skills import install_skill, preview_skill
 
     browser = service(request, thread_id)
     args = (browser, thread_id, body.recording_id, body.name, body.description)
@@ -138,7 +138,7 @@ async def clear_profile(request: Request, thread_id: str) -> dict[str, bool]:
 
 @router.get("/workflows")
 async def workflows(request: Request, thread_id: str) -> dict[str, Any]:
-    from browser.workflows import recording_store
+    from deepseek_tui.browser.workflows import recording_store
 
     browser = service(request, thread_id)
     try:
@@ -161,7 +161,7 @@ class WorkflowBody(BaseModel):
 
 @router.post("/workflows")
 async def workflow(request: Request, thread_id: str, body: WorkflowBody) -> dict[str, Any]:
-    from browser.workflows import (
+    from deepseek_tui.browser.workflows import (
         finish_recording,
         read_workflow,
         start_recording,

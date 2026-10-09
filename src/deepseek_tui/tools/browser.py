@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from browser.service import BrowserAction
+from deepseek_tui.browser.service import BrowserAction
 from deepseek_tui.tools.registry import (
     ApprovalRequirement,
     ToolCapability,

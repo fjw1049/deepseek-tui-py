@@ -10,8 +10,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
-from browser.service import BrowserService
-from browser.workflows import read_workflow
+from deepseek_tui.browser.service import BrowserService
+from deepseek_tui.browser.workflows import read_workflow
 
 
 def preview_skill(

@@ -105,7 +105,7 @@ class BrowserRun:
 
 class BrowserService:
     def __init__(self, artifact_root: Path):
-        from browser.install import BrowserInstaller
+        from deepseek_tui.browser.install import BrowserInstaller
 
         self.artifact_root = artifact_root
         self.installer = BrowserInstaller()
@@ -342,7 +342,7 @@ class BrowserService:
         return path
 
     async def start_video(self, run: BrowserRun) -> None:
-        from browser.video import BrowserVideo
+        from deepseek_tui.browser.video import BrowserVideo
 
         if run.video:
             raise ValueError("Video is already recording")
@@ -649,7 +649,7 @@ class BrowserService:
                 try:
                     await self.stop_video(run)
                     if run.recorder:
-                        from browser.workflows import finish_recording
+                        from deepseek_tui.browser.workflows import finish_recording
 
                         await finish_recording(run)
                     if run.recording:

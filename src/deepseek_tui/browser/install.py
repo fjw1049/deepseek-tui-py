@@ -35,7 +35,7 @@ class BrowserInstaller:
             process = await asyncio.create_subprocess_exec(
                 sys.executable,
                 "-m",
-                "browser.install",
+                "deepseek_tui.browser.install",
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
                 start_new_session=os.name != "nt",

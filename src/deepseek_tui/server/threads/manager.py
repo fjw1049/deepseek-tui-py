@@ -295,7 +295,7 @@ class RuntimeThreadManager:
         self.workspace = workspace.resolve()
         self.manager_cfg = manager_cfg
         self.store = RuntimeThreadStore(manager_cfg.data_dir)
-        from browser.service import BrowserService
+        from deepseek_tui.browser.service import BrowserService
 
         self.browser_service = BrowserService(manager_cfg.data_dir / "browser-artifacts")
         from deepseek_tui.workspace.turn_checkpoints import TurnCheckpointStore

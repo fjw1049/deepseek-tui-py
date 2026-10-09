@@ -3,13 +3,13 @@
 ## 2026-10-09 目录整理
 
 浏览器服务、安装器、流程录制回放、Skill 生成、视频录制和演示页面已集中到
-独立的 `src/browser/`，不再散落于 `src/deepseek_tui/` 顶层。工具和 HTTP 入口
+`src/deepseek_tui/browser/` 子目录，不再散落于 `src/deepseek_tui/` 顶层。工具和 HTTP 入口
 仍分别位于 `src/deepseek_tui/tools/browser.py`、`src/deepseek_tui/server/browser_routes.py`。
-安装器子进程入口改为 `browser.install`，安装包与类型检查配置同步更新。
+安装器子进程入口改为 `deepseek_tui.browser.install`，安装包与类型检查配置同步更新。
 同一项目路径下旧演示页面地址会映射到新地址，覆盖回放步骤及 URL 验证。
 
 相关后端测试 29 项通过，包含真实 Chromium 九步演示、旧地址录制回放、视频和
-登录状态保存。源码包与 wheel 构建通过，wheel 中的模块、演示资源及接口导入
+登录状态保存。wheel 构建通过，其中的模块、演示资源及接口导入
 已验证。本轮未重跑原生 Workbench 界面，使用新代码前需重启 Runtime。
 
 ## 2026-10-09 本轮接续

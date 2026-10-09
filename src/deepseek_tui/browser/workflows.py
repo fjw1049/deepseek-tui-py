@@ -9,7 +9,7 @@ import shutil
 from pathlib import Path
 from typing import Any
 
-from browser.service import BrowserAction, BrowserRun, BrowserService
+from deepseek_tui.browser.service import BrowserAction, BrowserRun, BrowserService
 
 
 def recording_store(service: BrowserService, thread_id: str):
@@ -68,8 +68,11 @@ async def finish_recording(run: BrowserRun) -> dict[str, Any]:
 
 def _demo_url(url: str) -> str:
     directory = Path(__file__).parent
-    legacy = directory.parent / "deepseek_tui" / "browser_demo.html"
-    return (directory / "browser_demo.html").as_uri() if url == legacy.as_uri() else url
+    legacy = {
+        (directory.parent / "browser_demo.html").as_uri(),
+        (directory.parent.parent / "browser" / "browser_demo.html").as_uri(),
+    }
+    return (directory / "browser_demo.html").as_uri() if url in legacy else url
 
 
 def _url(url: str) -> str:
