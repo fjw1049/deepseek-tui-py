@@ -27,6 +27,19 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from deepseek_tui.browser.input import BrowserInput
 
 
+def browser_dependency_error(exc: ImportError) -> str:
+    if sys.version_info < (3, 11):
+        return (
+            "Browser automation requires Python 3.11+; "
+            f"runtime is Python {sys.version.split()[0]} ({sys.executable})"
+        )
+    return (
+        f"Browser automation dependency could not be imported ({exc}). "
+        f"Runtime: {sys.executable}. Run uv sync in the project, or install "
+        "octop-browser==1.0.0 into this runtime's Python environment."
+    )
+
+
 class BrowserAction(BaseModel):
     model_config = ConfigDict(extra="forbid")
     action: Literal[
@@ -111,6 +124,7 @@ class BrowserRun:
     generation: int = 0
     revision: int = 0
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    control_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     log: list[dict[str, Any]] = field(default_factory=list)
     recording: bool = False
     frames: list[bytes] = field(default_factory=list)
@@ -166,8 +180,8 @@ class BrowserService:
             result["browser"] = find_chrome()
             result["ready"] = bool(result["browser"])
             result["message"] = "Ready" if result["ready"] else "Install Chrome or Chromium"
-        except ImportError:
-            result["message"] = "Use Python 3.11+ and uv sync --extra browser"
+        except ImportError as exc:
+            result["message"] = browser_dependency_error(exc)
         return result
 
     async def recover(self, thread_id: str) -> dict[str, Any]:
@@ -202,9 +216,7 @@ class BrowserService:
                 except ImportError as exc:
                     shutil.rmtree(run.directory, ignore_errors=True)
                     self.runs.pop(thread_id, None)
-                    raise ValueError(
-                        "Browser requires Python 3.11+ and: uv sync --extra browser"
-                    ) from exc
+                    raise ValueError(browser_dependency_error(exc)) from exc
                 # Each run owns a new profile and port; never attach to the user's 9222.
                 with socket.socket() as sock:
                     sock.bind(("127.0.0.1", 0))
@@ -761,7 +773,13 @@ class BrowserService:
                 run.demo_status = "stopped"
             # Wait for the current atomic action; queued actions fail the generation check.
             async with run.lock:
-                pass
+                if owner == "user":
+                    # The live viewport remains available to the human, but an
+                    # agent-started recording must not capture manual credentials.
+                    if run.recording:
+                        self._finish_recording(run)
+                    if run.video:
+                        await self.stop_video(run)
         finally:
             run.transferring = False
         if owner == "stopped":

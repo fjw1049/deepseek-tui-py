@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -248,3 +249,108 @@ async def test_thread_usage_endpoint(client: AsyncClient) -> None:
         f"/v1/usage?group_by=day&thread_id={thread_id}",
     )
     assert bad_group.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_warmup_skips_busy_thread_without_mutating_it(client, runtime_app, monkeypatch):
+    created = await client.post("/v1/threads", json={})
+    thread_id = created.json()["id"]
+    mgr = runtime_app.state.thread_manager
+    prepare = AsyncMock(wraps=mgr._prepare_isolated_workspace_claimed)
+    load = AsyncMock()
+    monkeypatch.setattr(mgr, "_prepare_isolated_workspace_claimed", prepare)
+    monkeypatch.setattr(mgr, "_ensure_engine_loaded", load)
+    async with mgr._hold_thread_operation(thread_id):
+        response = await asyncio.create_task(client.post(f"/v1/threads/{thread_id}/warmup"))
+        assert response.status_code == 200
+        assert response.json()["status"] == "skipped"
+        assert response.json()["reason"] == "thread_busy"
+        prepare.assert_not_awaited()
+        load.assert_not_awaited()
+        assert mgr._thread_lease_depth[thread_id] == 1
+    response = await client.post(f"/v1/threads/{thread_id}/warmup")
+    assert response.status_code == 200
+    assert response.json()["status"] == "ready"
+    load.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_concurrent_warmups_skip_and_release_lease(client, runtime_app, monkeypatch):
+    thread_id = (await client.post("/v1/threads", json={})).json()["id"]
+    mgr = runtime_app.state.thread_manager
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    async def load(thread):
+        entered.set()
+        await release.wait()
+
+    loader = AsyncMock(side_effect=load)
+    monkeypatch.setattr(mgr, "_ensure_engine_loaded", loader)
+    first = asyncio.create_task(client.post(f"/v1/threads/{thread_id}/warmup"))
+    try:
+        await asyncio.wait_for(entered.wait(), 2)
+        second = await client.post(f"/v1/threads/{thread_id}/warmup")
+        assert second.status_code == 200
+        assert second.json()["reason"] == "thread_busy"
+        assert mgr._thread_lease_depth[thread_id] == 1
+    finally:
+        release.set()
+        response = await first
+    assert response.json()["status"] == "ready"
+    loader.assert_awaited_once()
+    assert thread_id not in mgr._thread_leases
+    async with mgr._hold_thread_operation(thread_id):
+        pass
+
+
+@pytest.mark.asyncio
+async def test_warmup_skips_cross_runtime_owner(client, runtime_app):
+    from deepseek_tui.workspace.project_lease import ThreadLease
+
+    thread_id = (await client.post("/v1/threads", json={})).json()["id"]
+    lease = ThreadLease(thread_id)
+    assert await lease.acquire(nonblocking=True)
+    try:
+        response = await client.post(f"/v1/threads/{thread_id}/warmup")
+        assert response.status_code == 200
+        assert response.json()["reason"] == "thread_busy"
+        assert thread_id not in runtime_app.state.thread_manager._thread_leases
+    finally:
+        lease.release()
+
+
+@pytest.mark.asyncio
+async def test_cancelled_warmup_releases_thread_lease(client, runtime_app, monkeypatch):
+    thread_id = (await client.post("/v1/threads", json={})).json()["id"]
+    mgr = runtime_app.state.thread_manager
+    entered = asyncio.Event()
+
+    async def load(thread):
+        entered.set()
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(mgr, "_ensure_engine_loaded", load)
+    warmup = asyncio.create_task(mgr.warmup_thread(thread_id))
+    try:
+        await asyncio.wait_for(entered.wait(), 2)
+    finally:
+        warmup.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await warmup
+    assert thread_id not in mgr._thread_leases
+    async with mgr._hold_thread_operation(thread_id):
+        pass
+
+
+@pytest.mark.asyncio
+async def test_warmup_does_not_swallow_engine_errors(client, runtime_app, monkeypatch):
+    thread_id = (await client.post("/v1/threads", json={})).json()["id"]
+    mgr = runtime_app.state.thread_manager
+    monkeypatch.setattr(
+        mgr, "_ensure_engine_loaded", AsyncMock(side_effect=ValueError("bad config"))
+    )
+    with pytest.raises(ValueError, match="bad config"):
+        await mgr.warmup_thread(thread_id)
+    assert thread_id not in mgr._thread_leases
+    response = await client.post("/v1/threads/does-not-exist/warmup")
+    assert response.status_code == 404

@@ -20,3 +20,5 @@ uvicorn>=0.27.0
 python-jose[cryptography]>=3.3.0
 passlib[bcrypt]>=1.7.4
 croniter>=2.0.0
+
+octop-browser==1.0.0; python_version >= "3.11"

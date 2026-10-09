@@ -132,6 +132,7 @@ async def _execute_subagent_tool(
     runtime: SubAgentRuntime | None = None,
     model: str = "",
     interrupt: asyncio.Event | None = None,
+    pause_generation: int | None = None,
 ) -> str:
     from deepseek_tui.tools.approval import (
         ApprovalDecision,
@@ -242,8 +243,14 @@ async def _execute_subagent_tool(
             ApprovalDecision.APPROVED_SESSION,
         ):
             return f"Error: Tool {tool_name} denied by approval policy"
+    pause = getattr(getattr(runtime, "manager", None), "parent_pause", None)
+    if pause is not None and (pause.paused or (
+        pause_generation is not None and pause.generation != pause_generation
+    )):
+        return "Error: Not executed: human intervention invalidated this operation."
     try:
-        result = await registry.execute(tool_name, tool_input, context)  # type: ignore[arg-type]
+        with pause.tool_execution() if pause is not None else nullcontext():
+            result = await registry.execute(tool_name, tool_input, context)  # type: ignore[arg-type]
         if hook_executor:
             from dataclasses import replace
 
@@ -760,7 +767,19 @@ async def run_subagent_loop(
         )
 
     try:
+        pause_generation_seen = 0
         while steps - attempt_start_steps < DEFAULT_MAX_STEPS:
+            pause = getattr(runtime.manager, "parent_pause", None)
+            if pause is not None:
+                await pause.wait(agent.parent_cancel or cancel)
+                if pause.generation != pause_generation_seen:
+                    messages.append(reminders.reminder_message(
+                        reminders.HUMAN_RESUME,
+                        "Human intervention ended. Recheck relevant current state before "
+                        "continuing the original assignment; old pending actions are invalid.",
+                    ))
+                    pause_generation_seen = pause.generation
+            pause_generation = pause.generation if pause is not None else None
             if _subagent_cancelled(cancel, agent):
                 _save_cancel_checkpoint()
                 raise asyncio.CancelledError
@@ -824,8 +843,15 @@ async def run_subagent_loop(
                         return await turn_loop.run(request, _round_emit, cancel, tools=round_tools)
                 return await turn_loop.run(request, _round_emit, cancel, tools=round_tools)
 
-            result = await _await_input_interrupt(run_round(), agent.interrupt_event)
+            async def pausable_round(pause=pause, run_round=run_round):
+                if pause is not None:
+                    return await pause.model_request(run_round, agent.parent_cancel or cancel)
+                return await run_round()
+
+            result = await _await_input_interrupt(pausable_round(), agent.interrupt_event)
             if result is None:
+                if pause is not None and pause.generation != pause_generation:
+                    steps -= 1
                 # No tools from a discarded generation have run. The next
                 # iteration consumes the queued input at the normal boundary.
                 continue
@@ -910,6 +936,10 @@ async def run_subagent_loop(
                         _save_complete_checkpoint("round")
                         continue
                     if await _subagent_stop_allowed():
+                        if pause is not None and (
+                            pause.paused or pause.generation != pause_generation
+                        ):
+                            continue
                         if not agent.input_queue.empty():
                             _save_complete_checkpoint("round")
                             continue
@@ -956,6 +986,8 @@ async def run_subagent_loop(
                     _save_complete_checkpoint("round")
                     continue
                 if await _subagent_stop_allowed():
+                    if pause is not None and (pause.paused or pause.generation != pause_generation):
+                        continue
                     if not agent.input_queue.empty():
                         _save_complete_checkpoint("round")
                         continue
@@ -983,10 +1015,13 @@ async def run_subagent_loop(
                 if _subagent_cancelled(cancel, agent):
                     _save_cancel_checkpoint()
                     raise asyncio.CancelledError
-                if agent.interrupt_event.is_set():
+                if agent.interrupt_event.is_set() or (pause is not None and (
+                    pause.paused or pause.generation != pause_generation
+                )):
                     messages.append(
                         Message.tool_result(
-                            tc.id, "Not executed: superseded by new user input.", is_error=True
+                            tc.id, "Not executed: superseded by user input or human intervention.",
+                            is_error=True,
                         )
                     )
                     continue
@@ -1024,6 +1059,7 @@ async def run_subagent_loop(
                         runtime=runtime,
                         model=effective_model,
                         interrupt=agent.interrupt_event,
+                        pause_generation=pause_generation,
                     )
                     ok = not output.startswith("Error:")
                 if runtime.mailbox is not None:

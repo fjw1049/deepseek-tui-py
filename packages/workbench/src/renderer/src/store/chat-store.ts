@@ -2332,7 +2332,9 @@ const store = create<ChatState>((set, get) => ({
     const targetId = threadId ?? get().activeThreadId
     if (!targetId || get().runtimeConnection !== 'ready') return
     if (threadWarmupTask?.threadId === targetId) {
-      await threadWarmupTask.promise
+      // The originating caller records the failure. Warmup is best-effort for
+      // every waiter, including a send that joins a selection's warmup.
+      await threadWarmupTask.promise.catch(() => {})
       return
     }
     const p = getProvider(get().providerId)
@@ -2557,6 +2559,30 @@ const store = create<ChatState>((set, get) => ({
     }
     const p = getProvider(providerId)
     const hasPendingActiveTurn = get().blocks.some(hasPendingRuntimeWork)
+    // During explicit human takeover, composer input belongs to the suspended
+    // task. Persist it as a steer, without releasing control or starting a turn.
+    const pausedThreadId = get().activeThreadId
+    if ((get().busy || hasPendingActiveTurn) && pausedThreadId && !hidden &&
+        p.getThreadPauseState && p.steerUserMessage) {
+      try {
+        const pause = await p.getThreadPauseState(pausedThreadId)
+        if (get().activeThreadId !== pausedThreadId) return false
+        if (pause?.paused && pause.turnId) {
+          await p.steerUserMessage(pausedThreadId, pause.turnId, trimmedText)
+          if (get().activeThreadId === pausedThreadId) {
+            set(s => ({
+              blocks: [...s.blocks, { kind: 'user' as const, id: `steer-${crypto.randomUUID()}`,
+                createdAt: new Date().toISOString(), text: displayText, turnId: pause.turnId! }],
+              error: null
+            }))
+          }
+          return true
+        }
+      } catch (e) {
+        if (get().activeThreadId === pausedThreadId) set({ error: e instanceof Error ? e.message : String(e) })
+        return false
+      }
+    }
     // While a turn is in flight, park composer input in the queue chip UI
     // (send-now / withdraw / delete). Do not auto-steer into the live turn —
     // that injects a timeline bubble without chip actions.

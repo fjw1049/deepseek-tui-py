@@ -1351,6 +1351,13 @@ export class DeepseekRuntimeProvider implements AgentProvider {
     return { turnId: body.turn.id, threadId: body.thread.id, userMessageItemId: userItemId }
   }
 
+  async getThreadPauseState(threadId: string): Promise<{ paused: boolean; turnId: string | null }> {
+    const r = await window.dsGui.runtimeRequest(`/v1/threads/${encodeURIComponent(threadId)}/browser`, 'GET')
+    if (!r.ok) throw toRuntimeError(readRuntimeError(r.body, 'failed to read task state'))
+    const state = JSON.parse(r.body) as { task_paused?: boolean; task_turn_id?: string }
+    return { paused: state.task_paused === true, turnId: state.task_turn_id ?? null }
+  }
+
   async steerUserMessage(threadId: string, turnId: string, text: string): Promise<void> {
     const r = await window.dsGui.runtimeRequest(
       `/v1/threads/${encodeURIComponent(threadId)}/turns/${encodeURIComponent(turnId)}/steer`,

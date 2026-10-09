@@ -31,12 +31,12 @@ dependencies = [
   "passlib[bcrypt]>=1.7.4",
   "croniter>=2.0.0",
   "pillow>=10.4",
+  "octop-browser==1.0.0; python_version >= '3.11'",
 ]
 
 [project.optional-dependencies]
-browser = [
-  "octop-browser==1.0.0; python_version >= '3.11'",
-]
+# Keep the old extra name compatible with existing install commands.
+browser = []
 dev = [
   "pytest>=7.4.0",
   "pytest-asyncio>=0.21.0",

@@ -6,7 +6,7 @@ const provider = vi.hoisted(() => ({
   getThreadDetail: vi.fn(), subscribeThreadEvents: vi.fn(), interruptTurn: vi.fn(),
   fetchPendingApprovals: vi.fn(), fetchPendingUserInputs: vi.fn(), fetchPendingElevations: vi.fn(),
   warmThread: vi.fn(), submitApprovalDecision: vi.fn(), listThreads: vi.fn(),
-  sendUserMessage: vi.fn(), renameThread: vi.fn()
+  sendUserMessage: vi.fn(), renameThread: vi.fn(), getThreadPauseState: vi.fn(), steerUserMessage: vi.fn()
 }))
 vi.mock('../agent/registry', () => ({ getProvider: () => provider }))
 import { createChatSessionStore } from './chat-store'
@@ -200,4 +200,53 @@ it('routes simultaneous approvals to their own requests even when block IDs matc
   expect(provider.submitApprovalDecision).toHaveBeenCalledWith('approval-b', 'deny', false)
   expect(a.store.getState().blocks[0]).toMatchObject({ status: 'allowed' })
   expect(b.store.getState().blocks[0]).toMatchObject({ status: 'denied' })
+})
+
+it('shares a failed warmup without rejecting the second caller', async () => {
+  const pane = createChatSessionStore()
+  sessions.push(pane)
+  pane.store.setState({ runtimeConnection: 'ready', activeThreadId: 'a' })
+  let rejectWarmup!: (reason: Error) => void
+  provider.warmThread.mockImplementation(() => new Promise<void>((_resolve, reject) => {
+    rejectWarmup = reject
+  }))
+  const first = pane.store.getState().warmActiveThread('a')
+  const second = pane.store.getState().warmActiveThread('a')
+  const results = Promise.allSettled([first, second])
+  rejectWarmup(new Error('warmup unavailable'))
+  expect((await results).map(result => result.status)).toEqual(['fulfilled', 'fulfilled'])
+  expect(provider.warmThread).toHaveBeenCalledTimes(1)
+  expect(pane.store.getState().activeThreadWarmup.status).toBe('failed')
+  expect(window.dsGui.logError).toHaveBeenCalledTimes(1)
+  provider.warmThread.mockResolvedValue(undefined)
+  await pane.store.getState().warmActiveThread('a')
+  expect(pane.store.getState().activeThreadWarmup.status).toBe('ready')
+})
+
+
+it('keeps a human-paused task paused when composer input supplements its original turn', async () => {
+  const pane = session()
+  await pane.store.getState().selectThread('a')
+  provider.getThreadPauseState.mockResolvedValue({ paused: true, turnId: 'turn-a' })
+  provider.steerUserMessage.mockResolvedValue(undefined)
+  expect(await pane.store.getState().sendMessage('Keep the US region')).toBe(true)
+  expect(provider.steerUserMessage).toHaveBeenCalledWith('a', 'turn-a', 'Keep the US region')
+  expect(provider.sendUserMessage).not.toHaveBeenCalled()
+  expect(provider.interruptTurn).not.toHaveBeenCalled()
+  expect(pane.store.getState().queuedMessages).toEqual([])
+  expect(pane.store.getState().busy).toBe(true)
+  expect(pane.store.getState().blocks.some(b => b.kind === 'user' && b.text === 'Keep the US region')).toBe(true)
+})
+
+it('does not steer another chat after a slow pause-state response', async () => {
+  const pane = session()
+  await pane.store.getState().selectThread('a')
+  let resolve!: (value: { paused: boolean; turnId: string }) => void
+  provider.getThreadPauseState.mockReturnValue(new Promise(r => { resolve = r }))
+  const sending = pane.store.getState().sendMessage('A-only supplement')
+  await pane.store.getState().selectThread('b')
+  resolve({ paused: true, turnId: 'turn-a' })
+  expect(await sending).toBe(false)
+  expect(provider.steerUserMessage).not.toHaveBeenCalled()
+  expect(pane.store.getState().queuedMessages).toEqual([])
 })

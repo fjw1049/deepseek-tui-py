@@ -472,6 +472,7 @@ export interface AgentProvider {
   }
   connect(options?: { light?: boolean }): Promise<void>
   isThreadTurnActive?(threadId: string): Promise<boolean>
+  getThreadPauseState?(threadId: string): Promise<{ paused: boolean; turnId: string | null }>
   warmThread?(threadId: string): Promise<void>
   listThreads(options?: { includeArchived?: boolean }): Promise<NormalizedThread[]>
   createThread(input: { workspace?: string; title?: string; mode?: string; provider?: string; model?: string; envMode?: 'local' | 'worktree' }): Promise<NormalizedThread>

@@ -6,8 +6,8 @@ import { extractDetectedDevPreviewUrls, formatDevPreviewUrlLabel } from '../lib/
 import { parsePreviewPickConsoleMessage, PREVIEW_PICK_CONSOLE_PREFIX, type PreviewElementPick } from '../lib/preview-element-picker'
 import { isHtmlPreviewPath } from '@shared/html-preview'
 import { BrowserSessionSettings } from './BrowserSessionSettings'
+import { DevBrowserPanel } from './DevBrowserPanel'
 import { BrowserViewport } from './BrowserViewport'
-import { useChatStore } from '../store/chat-store'
 import { formatAutomationApiError } from '../lib/automation-runtime-client'
 import { normalizeBrowseUrlInput } from '@shared/dev-preview-url'
 import { useLightDismiss } from '../hooks/use-light-dismiss'
@@ -15,6 +15,7 @@ import './browser-workspace.css'
 
 type BrowserState = {
   active: boolean; url?: string; generation?: number; transferring?: boolean
+  task_paused?: boolean; task_running?: boolean; task_pausing?: boolean
   viewport?: { width: number; height: number }
   tabs?: { tab_id: string; title: string; url: string; active: boolean }[]
   image?: string | null; video_recording?: boolean; video_error?: string | null
@@ -32,6 +33,7 @@ export async function browserRequest<T>(threadId: string, suffix = '', body?: un
 }
 
 type BrowserWorkspaceProps = {
+  agentRequest?: number
   threadId: string | null; visible?: boolean; blocks?: ChatBlock[]; className?: string
   preferredUrl?: string | null; preferredFilePath?: string | null; externalError?: string | null
   onPreferredUrlConsumed?: () => void; onExternalErrorConsumed?: () => void
@@ -39,14 +41,39 @@ type BrowserWorkspaceProps = {
   onOpenFileInEditor?: (path: string) => void
 }
 
-export function BrowserWorkspace(props: BrowserWorkspaceProps): ReactElement {
+export function BrowserWorkspace({ agentRequest = 0, ...props }: BrowserWorkspaceProps): ReactElement {
   const { t } = useTranslation('common')
-  return props.threadId ? <AgentBrowserPanel key={props.threadId} {...props} threadId={props.threadId} /> :
-    <p className="p-5 text-sm text-ds-muted">{t('browserNeedThread')}</p>
+  const [mode, setMode] = useState<'preview' | 'agent'>(agentRequest ? 'agent' : 'preview')
+  const [agentOpened, setAgentOpened] = useState(!!agentRequest)
+  const [detailsRequest, setDetailsRequest] = useState(0)
+  useEffect(() => {
+    if (props.preferredUrl || props.externalError) setMode('preview')
+  }, [props.preferredUrl, props.externalError])
+  useEffect(() => {
+    if (agentRequest) { setMode('agent'); setAgentOpened(true) }
+  }, [agentRequest])
+  return <div className="flex h-full min-h-0 flex-col">
+    <div className={mode === 'preview' ? 'min-h-0 flex-1' : 'hidden'} inert={mode !== 'preview'}>
+      <DevBrowserPanel {...props} blocks={props.blocks ?? []} className="h-full w-full"
+        visible={props.visible !== false && mode === 'preview'}
+        onOpenAutomation={props.threadId ? () => {
+          setDetailsRequest(value => value + 1); setAgentOpened(true); setMode('agent')
+        } : undefined} />
+    </div>
+    {agentOpened ? <div className={mode === 'agent' ? 'min-h-0 flex-1' : 'hidden'} inert={mode !== 'agent'}>
+      {props.threadId ? <AgentBrowserPanel key={props.threadId} {...props} threadId={props.threadId}
+        visible={props.visible !== false && mode === 'agent'} preferredUrl={null} externalError={null}
+        detailsRequest={detailsRequest} onReturnToPages={() => setMode('preview')} /> :
+        <p className="p-5 text-sm text-ds-muted">{t('browserNeedThread')}</p>}
+    </div> : null}
+  </div>
 }
 
 export function AgentBrowserPanel({ threadId, visible = true, blocks = [], preferredUrl, preferredFilePath,
-  onPreferredUrlConsumed, externalError, onExternalErrorConsumed, onPreviewPick, onOpenFileInEditor }: BrowserWorkspaceProps & { threadId: string }): ReactElement {
+  onPreferredUrlConsumed, externalError, onExternalErrorConsumed, onPreviewPick, onOpenFileInEditor,
+  detailsRequest = 0, onReturnToPages }: BrowserWorkspaceProps & {
+    threadId: string; detailsRequest?: number; onReturnToPages?: () => void
+  }): ReactElement {
   const { t } = useTranslation('common')
   const [state, setState] = useState<BrowserState | null>(null)
   const [image, setImage] = useState<string | null>(null)
@@ -58,14 +85,16 @@ export function AgentBrowserPanel({ threadId, visible = true, blocks = [], prefe
   const [error, setError] = useState('')
   const [connectionError, setConnectionError] = useState('')
   const [pending, setPending] = useState(false)
+  const [controlTarget, setControlTarget] = useState<'agent' | 'user' | 'stopped' | null>(null)
   const [more, setMore] = useState(false)
-  const [details, setDetails] = useState(false)
+  const [details, setDetails] = useState(!!detailsRequest)
+  useEffect(() => { if (detailsRequest) setDetails(true) }, [detailsRequest])
   const menuRoot = useRef<HTMLDivElement>(null)
   const menuButton = useRef<HTMLButtonElement>(null)
   const detailsButton = useRef<HTMLButtonElement>(null)
   const [fresh, setFresh] = useState(false)
   useLightDismiss({ open: more, refs: [menuRoot], onDismiss: () => setMore(false) })
-  useEffect(() => { if (!visible) { setMore(false); setFresh(false) } }, [visible])
+  useEffect(() => { if (!visible) { setMore(false); setDetails(false); setFresh(false) } }, [visible])
   useEffect(() => {
     if (more) menuRoot.current?.querySelector<HTMLButtonElement>('[role="menuitem"]:not(:disabled)')?.focus()
   }, [more])
@@ -124,18 +153,16 @@ export function AgentBrowserPanel({ threadId, visible = true, blocks = [], prefe
   }, [threadId, apply])
   const action = useCallback((body: unknown): void => { void perform('/action', body) }, [perform])
   async function control(owner: 'agent' | 'user' | 'stopped'): Promise<void> {
-    setPending(true); setError(''); transferring.current = true
+    setPending(true); setControlTarget(owner); setError(''); transferring.current = true
     try {
-      const next = await browserRequest<BrowserState>(threadId, '/control', { owner })
+      const next = await browserRequest<BrowserState>(threadId, '/control', { owner, generation: state?.generation })
       transferring.current = false
       if (!alive.current) return
       apply(next)
-      if (owner === 'agent') {
-        const sent = await useChatStore.getState().sendMessage(t('browserResumeMessage'), undefined, { expectedThreadId: threadId })
-        if (!sent) throw new Error(t('browserResumeFailed'))
-      }
+      if (owner === 'stopped') onReturnToPages?.()
+
     } catch (e) { if (alive.current) setError(e instanceof Error ? e.message : String(e)) }
-    finally { transferring.current = false; if (alive.current) setPending(false) }
+    finally { transferring.current = false; if (alive.current) { setPending(false); setControlTarget(null) } }
   }
   const openPreview = useCallback(async (target: string, source?: string | null): Promise<void> => {
     const normalized = normalizeBrowseUrlInput(target)
@@ -218,6 +245,7 @@ export function AgentBrowserPanel({ threadId, visible = true, blocks = [], prefe
                 items[next]?.focus()
               } else if (e.key === 'Tab') setMore(false)
             }}>
+            {onReturnToPages ? <button type="button" role="menuitem" className="ds-dock-menu-item" onClick={onReturnToPages}><ArrowLeft size={15} />{t('browserReturnToPages')}</button> : null}
             <button type="button" role="menuitem" className="ds-dock-menu-item" disabled={!userControls} onClick={() => action({ action: 'screenshot' })}><Camera size={15} />{t('browserSaveEvidence')}</button>
             <button type="button" role="menuitem" className="ds-dock-menu-item" disabled={!userControls} onClick={() => action({ action: state?.video_recording ? 'video_stop' : 'video_start' })}><Video size={15} />{t(state?.video_recording ? 'browserVideoStop' : 'browserVideoStart')}</button>
             <button type="button" role="menuitem" className="ds-dock-menu-item" disabled={!userControls} onClick={() => action({ action: state?.recording ? 'record_stop' : 'record_start' })}><Film size={15} />{t(state?.recording ? 'browserFinishRecording' : 'browserRecordSteps')}</button>
@@ -228,7 +256,7 @@ export function AgentBrowserPanel({ threadId, visible = true, blocks = [], prefe
             <button type="button" role="menuitem" className="ds-dock-menu-item" disabled={!image} onClick={() => void copyScreenshot()}><Copy size={15} />{t('browserCopyScreenshot')}</button>
             <button type="button" role="menuitem" className="ds-dock-menu-item" disabled={!state?.url || !normalizeBrowseUrlInput(state.url)} onClick={() => { if (state?.url) void window.dsGui.openExternal(state.url).catch(e => setError(String(e))) }}><ExternalLink size={15} />{t('browserOpenExternal')}</button>
             <div className="ds-browser-menu-divider" role="separator" />
-            <button type="button" role="menuitem" className="ds-dock-menu-item" disabled={!state?.active || pending} onClick={() => void control('stopped')}><Square size={15} />{t('browserEndSession')}</button>
+            <button type="button" role="menuitem" className="ds-dock-menu-item" disabled={!state?.active || pending} onClick={() => void control('stopped')}><Square size={15} />{t(state?.task_running ? 'browserEndTaskAndSession' : 'browserEndSession')}</button>
           </div> : null}
         </div>
       </form>
@@ -259,7 +287,7 @@ export function AgentBrowserPanel({ threadId, visible = true, blocks = [], prefe
         }} onError={setError} /> :
         <div className="ds-browser-empty"><Globe2 size={28} strokeWidth={1.3} /><h3>{t(pending ? 'browserStarting' : 'browserStartTitle')}</h3><p>{t('browserStartHint')}</p><button className={button} onClick={() => setDetails(true)}>{t('browserSessionSettings')}</button></div>}
       {details ? <section className="ds-browser-details" aria-label={t('browserSettingsAndHistory')}>
-        <header className="ds-dock-header"><button ref={detailsButton} className="ds-dock-action" aria-label={t('browserCloseDetails')} onClick={() => { setDetails(false); menuButton.current?.focus() }}><ArrowLeft size={15} /></button><strong>{t('browserSettingsAndHistory')}</strong></header>
+        <header className="ds-dock-header"><button ref={detailsButton} className="ds-dock-action" aria-label={t('browserCloseDetails')} onClick={() => { setDetails(false); if (!state?.active) onReturnToPages?.(); else menuButton.current?.focus() }}><ArrowLeft size={15} /></button><strong>{t('browserSettingsAndHistory')}</strong></header>
         <div className="ds-browser-details-body">
         {state?.demo_status && state.demo_status !== 'idle' ? <p role="status" className="mb-3 text-xs text-ds-muted">{t(state.demo_status === 'passed' ? 'browserDemoPassed' : state.demo_status === 'running' ? 'browserDemoRunning' : 'browserDemoStopped')}</p> : null}
         <button className={button} disabled={pending || state?.demo_status === 'running' || state?.workflow_recording || userControls}
@@ -304,11 +332,11 @@ export function AgentBrowserPanel({ threadId, visible = true, blocks = [], prefe
     </div>
     <footer className={`ds-browser-status ${state?.active && !userControls ? 'is-agent' : ''}`} aria-live="polite">
       {state?.active && state.owner === 'agent' ? <Bot size={16} /> : <Hand size={16} />}
-      <div title={t(state?.active && state.owner === 'agent' ? 'browserAgentHint' : 'browserDirectInputHint')}><strong>{t(pending || state?.transferring ? 'browserWorking' : !state?.active ? 'browserIdle' : userControls ? 'browserUserControl' : 'browserAgentControl')}</strong>
+      <div title={t(state?.active && state.owner === 'agent' ? 'browserAgentHint' : 'browserDirectInputHint')}><strong>{t(controlTarget === 'user' ? 'browserPausing' : controlTarget === 'agent' ? 'browserResuming' : pending || state?.transferring ? 'browserWorking' : !state?.active ? 'browserIdle' : state.task_pausing ? 'browserTaskPausing' : state.task_paused ? 'browserTaskPaused' : state.owner === 'user' ? 'browserUserControl' : state.task_running === false ? 'browserAgentReady' : 'browserAgentControl')}</strong>
         {state?.demo_status === 'running' ? <progress aria-label={t('browserDemoRunning')} value={state.demo_step ?? 0} max={state.demo_total ?? 9} /> : null}
       </div>
       {state?.active ? <button className="ds-browser-control" disabled={!visible || !fresh || pending || state.transferring} onClick={() => void control(state.owner === 'user' ? 'agent' : 'user')}>
-        {t(state.owner === 'user' ? 'browserReturnControl' : 'browserTakeControl')}</button> : null}
+        {t(state.owner === 'user' ? state.task_running === false ? 'browserGiveControl' : 'browserReturnControl' : 'browserTakeControl')}</button> : null}
     </footer>
   </div>
 }

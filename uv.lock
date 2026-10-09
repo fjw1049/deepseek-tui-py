@@ -805,6 +805,7 @@ dependencies = [
     { name = "httpx" },
     { name = "httpx-sse" },
     { name = "jsonschema" },
+    { name = "octop-browser", marker = "python_full_version >= '3.11'" },
     { name = "passlib", extra = ["bcrypt"] },
     { name = "pillow" },
     { name = "pydantic" },
@@ -820,9 +821,6 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
-browser = [
-    { name = "octop-browser", marker = "python_full_version >= '3.11'" },
-]
 dev = [
     { name = "mypy" },
     { name = "pre-commit" },
@@ -844,7 +842,7 @@ requires-dist = [
     { name = "httpx-sse", specifier = ">=0.4.0" },
     { name = "jsonschema", specifier = ">=4.20.0" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.8.0" },
-    { name = "octop-browser", marker = "python_full_version >= '3.11' and extra == 'browser'", specifier = "==1.0.0" },
+    { name = "octop-browser", marker = "python_full_version >= '3.11'", specifier = "==1.0.0" },
     { name = "passlib", extras = ["bcrypt"], specifier = ">=1.7.4" },
     { name = "pillow", specifier = ">=10.4" },
     { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=3.6.0" },

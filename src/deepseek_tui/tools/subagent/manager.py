@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from deepseek_tui.config.models import Config
+from deepseek_tui.engine.pause import RunPause
 from deepseek_tui.tools.subagent.agent import SubAgent, SubAgentExecutor, _stub_executor
 from deepseek_tui.tools.subagent.completion import (
     AgentRunOutput,
@@ -89,6 +90,7 @@ class SubAgentManager:
         self._lock = asyncio.Lock()
         self._session_boot_id: str = f"boot_{uuid.uuid4().hex[:12]}"
         self._parent_cancel: asyncio.Event | None = None
+        self.parent_pause: RunPause | None = None
         self._parent_completion_sink: Callable[[SubAgentCompletion], None] | None = (
             None
         )
@@ -150,6 +152,10 @@ class SubAgentManager:
     def attach_parent_cancel(self, token: asyncio.Event) -> None:
         """Link parent engine cancellation to all descendant agents."""
         self._parent_cancel = token
+
+    def attach_parent_pause(self, pause: RunPause) -> None:
+        """Share the parent turn's dispatch fence with all descendants."""
+        self.parent_pause = pause
 
     def running_count(self) -> int:
         return sum(

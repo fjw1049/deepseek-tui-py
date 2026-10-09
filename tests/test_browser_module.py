@@ -626,3 +626,35 @@ async def test_image_attachment_error_does_not_reverse_success(browser, tmp_path
     result = await BrowserUseTool().execute({"action": "screenshot"}, context)
     assert result.success and not result.images
     assert "image_warning" in json.loads(result.content)
+
+
+@pytest.mark.asyncio
+async def test_missing_browser_dependency_reports_actual_runtime(tmp_path, monkeypatch):
+    import sys
+
+    monkeypatch.setitem(sys.modules, "octop_browser", None)
+    service = BrowserService(tmp_path / "artifacts")
+    with pytest.raises(ValueError) as error:
+        await service.ensure("missing")
+    assert sys.executable in str(error.value)
+    if sys.version_info >= (3, 11):
+        assert "dependency could not be imported" in str(error.value)
+        assert "requires Python 3.11+" not in str(error.value)
+    assert "missing" not in service.runs
+
+
+@pytest.mark.asyncio
+@pytest.mark.e2e
+async def test_real_new_tab_cold_start(tmp_path):
+    import os
+
+    if os.environ.get("DEEPSEEK_BROWSER_E2E") != "1":
+        pytest.skip("Set DEEPSEEK_BROWSER_E2E=1 to run real Chromium")
+    service = BrowserService(tmp_path / "artifacts")
+    try:
+        result = await service.action("cold-start", BrowserAction(action="new_tab"))
+        assert result["success"], result
+        assert service.state("cold-start")["active"]
+        assert (await service.frame("cold-start")).startswith("data:image/jpeg;base64,")
+    finally:
+        await service.close_all()

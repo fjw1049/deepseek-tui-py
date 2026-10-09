@@ -447,6 +447,7 @@ export function Workbench(): ReactElement {
     [devPreviewBlocks]
   )
   const latestHtmlPreviewPath = detectedHtmlPreviewPaths[0] ?? null
+  const [agentBrowserRequest, setAgentBrowserRequest] = useState(0)
   const [workspacePreviewUrl, setWorkspacePreviewUrl] = useState<string | null>(null)
   const [workspacePreviewPath, setWorkspacePreviewPath] = useState<string | null>(null)
   const [browsePreviewUrl, setBrowsePreviewUrl] = useState<string | null>(null)
@@ -998,6 +999,7 @@ export function Workbench(): ReactElement {
   useEffect(() => {
     const onBrowserActivity = (event: Event): void => {
       if ((event as CustomEvent<{ threadId: string }>).detail?.threadId !== activeThreadId) return
+      setAgentBrowserRequest(value => value + 1)
       setWorkspacePreviewUrl(null)
       setWorkspacePreviewPath(null)
       setBrowsePreviewUrl(null)
@@ -1028,6 +1030,7 @@ export function Workbench(): ReactElement {
     setWorkspacePreviewUrl(null)
     setWorkspacePreviewPath(null)
     setBrowsePreviewUrl(null)
+    setAgentBrowserRequest(0)
     setPendingPreviewPicks([])
     setHtmlPreviewError(null)
     if (rightSidebarOpen && rightSidebarTab === 'preview') {
@@ -2038,6 +2041,7 @@ export function Workbench(): ReactElement {
               setChangesProjectRoot(null)
             }}
             onChangesFocusPathConsumed={() => setChangesFocusPath(null)}
+            agentBrowserRequest={agentBrowserRequest}
             devPreviewBlocks={devPreviewBlocks}
             latestDevPreviewUrl={preferredPreviewUrl}
             preferredPreviewFilePath={preferredPreviewFilePath}

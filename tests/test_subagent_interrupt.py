@@ -180,3 +180,29 @@ async def test_interrupt_while_awaiting_approval_discards_request_and_never_exec
         assert len([m for m in client.requests[1].messages if m.role.value == "tool"]) == 2
     finally:
         await manager.shutdown()
+
+
+async def test_parent_takeover_suspends_child_and_resumes_its_existing_assignment(tmp_path, monkeypatch):
+    from deepseek_tui.engine.pause import RunPause
+
+    monkeypatch.setenv("DEEPSEEK_HOME", str(tmp_path / "home"))
+    client = Client()
+    manager = manager_for(tmp_path, client)
+    pause = RunPause()
+    manager.attach_parent_pause(pause)
+    try:
+        agent = await spawn(manager)
+        await asyncio.wait_for(client.started.wait(), 1)
+        pause.pause()
+        await asyncio.wait_for(client.closed.wait(), 1)
+        await asyncio.sleep(0.01)
+        assert len(client.requests) == 1
+        assert manager.running_count() == 1
+        pause.resume()
+        await manager.wait([agent.agent_id], mode="all", timeout_ms=1000)
+        assert len(client.requests) == 2
+        assert "Human intervention ended" in client.requests[1].model_dump_json()
+        assert (await manager.get_result(agent.agent_id)).status.kind.value == "completed"
+    finally:
+        pause.resume()
+        await manager.shutdown()

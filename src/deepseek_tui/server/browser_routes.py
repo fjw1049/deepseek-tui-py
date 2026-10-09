@@ -27,7 +27,8 @@ def service(request: Request, thread_id: str) -> BrowserService:
 
 @router.get("")
 async def state(request: Request, thread_id: str) -> dict[str, Any]:
-    return service(request, thread_id).state(thread_id)
+    return {**service(request, thread_id).state(thread_id),
+            **request.app.state.thread_manager.browser_task_state(thread_id)}
 
 
 @router.get("/frame")
@@ -41,7 +42,8 @@ async def frame(request: Request, thread_id: str) -> dict[str, Any]:
 @router.get("/view")
 async def view(request: Request, thread_id: str) -> dict[str, Any]:
     try:
-        return await service(request, thread_id).view(thread_id)
+        result = await service(request, thread_id).view(thread_id)
+        return {**result, **request.app.state.thread_manager.browser_task_state(thread_id)}
     except (TimeoutError, RuntimeError, ConnectionError) as exc:
         raise HTTPException(503, str(exc) or "Browser is not responding") from exc
 
@@ -69,6 +71,7 @@ async def action(request: Request, thread_id: str, body: BrowserAction) -> dict[
 
 class ControlBody(BaseModel):
     owner: Literal["agent", "user", "stopped"]
+    generation: int | None = Field(default=None, ge=0)
 
 
 class PreferencesBody(BaseModel):
@@ -205,8 +208,11 @@ async def workflow(request: Request, thread_id: str, body: WorkflowBody) -> dict
 @router.post("/control")
 async def control(request: Request, thread_id: str, body: ControlBody) -> dict[str, Any]:
     try:
-        return await service(request, thread_id).control(thread_id, body.owner)
-    except ValueError as exc:
+        service(request, thread_id)
+        return await request.app.state.thread_manager.control_browser(
+            thread_id, body.owner, body.generation,
+        )
+    except (ValueError, RuntimeError, TimeoutError, ConnectionError) as exc:
         raise HTTPException(409, str(exc)) from exc
 
 

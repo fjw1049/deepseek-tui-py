@@ -91,6 +91,10 @@ class EngineHandle:
         self._op_queue: asyncio.Queue[EngineOp] = asyncio.Queue()
         self._event_queue: asyncio.Queue[EngineEvent] = asyncio.Queue(maxsize=4096)
         self.cancel_event = asyncio.Event()
+        from deepseek_tui.engine.pause import RunPause
+
+        self.pause = RunPause()
+        self.resume_context: str | None = None
         self._cancel_reason: str | None = None
         self.pending_user_inputs: dict[str, asyncio.Future[dict[str, Any]]] = {}
         self._steer_queue: asyncio.Queue[str] = asyncio.Queue()
@@ -306,6 +310,8 @@ class EngineHandle:
 
     def _mark_turn_idle(self) -> None:
         self._turn_active.clear()
+        self.resume_context = None
+        self.pause.resume()
 
     def has_pending_steers(self) -> bool:
         """True while queued steer text has not been drained into a round yet.

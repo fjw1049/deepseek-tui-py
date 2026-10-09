@@ -14,30 +14,78 @@ function mount(state = { active: true, owner: 'user', generation: 2, url: 'https
     if (path.endsWith('/control')) { const owner = JSON.parse(raw!).owner; state = { ...state, owner, active: owner !== 'stopped', generation: Number(state.generation) + 1 } }
     return { ok: true, status: 200, body: JSON.stringify(path.endsWith('/workflows') ? { items: [] } : path.endsWith('/input') ? { success: true } : state) }
   })
-  Object.defineProperty(window, 'dsGui', { configurable: true, value: { runtimeRequest: request } })
+  Object.defineProperty(window, 'dsGui', { configurable: true, value: { openExternal: vi.fn(async () => {}), runtimeRequest: request, onDevBrowserOpenUrl: vi.fn(() => () => {}) } })
   const container = document.createElement('div'); document.body.append(container)
   const root = createRoot(container)
-  const click = async (label: string): Promise<void> => { await act(async () => { const button = [...container.querySelectorAll('button')].find(b => b.textContent === label || b.getAttribute('aria-label') === label); expect(button).toBeTruthy(); button!.click() }) }
+  const click = async (label: string): Promise<void> => { await act(async () => { const button = [...container.querySelectorAll('button')].find(b => !b.closest('.hidden') && (b.textContent === label || b.getAttribute('aria-label') === label)); expect(button).toBeTruthy(); button!.click() }) }
   return { root, container, request, click, close: async () => { await act(async () => root.unmount()); container.remove() } }
 }
 
-it('opens the shared browser by default and scopes it to the displayed conversation', async () => {
+it('opens HTML in the lightweight browser without a Python runtime or conversation', async () => {
   const h = mount()
+  h.request.mockRejectedValue(new Error('Browser requires Python 3.11+ and: uv sync --extra browser'))
+  const consumed = vi.fn()
+  const edit = vi.fn()
   try {
-    await act(async () => h.root.render(createElement(BrowserWorkspace, { blocks: [], threadId: 'first' })))
-    expect(h.request).toHaveBeenCalledWith('/v1/threads/first/browser/view', 'GET', undefined)
+    await act(async () => h.root.render(createElement(BrowserWorkspace, {
+      threadId: null, preferredUrl: 'http://localhost:5173/design.html',
+      preferredFilePath: '/project/design.html', onPreferredUrlConsumed: consumed, onOpenFileInEditor: edit
+    })))
+    expect(h.container.querySelector('webview')?.getAttribute('src')).toBe('http://localhost:5173/design.html')
+    expect(consumed).toHaveBeenCalledTimes(1)
+    await h.click('browserMore')
+    await h.click('browserEditSource')
+    expect(edit).toHaveBeenCalledExactlyOnceWith('/project/design.html')
+    expect(h.request).not.toHaveBeenCalled()
+    expect(h.container.textContent).not.toContain('browserNeedThread')
     expect(h.container.textContent).not.toContain('browserNormalPreview')
-    await act(async () => h.root.render(createElement(BrowserWorkspace, { blocks: [], threadId: 'second' })))
-    expect(h.request).toHaveBeenCalledWith('/v1/threads/second/browser/view', 'GET', undefined)
-    await act(async () => h.root.render(createElement(BrowserWorkspace, { blocks: [], threadId: null })))
-    expect(h.container.textContent).toContain('browserNeedThread')
+    expect(h.container.textContent).not.toContain('browserAgentWorkspace')
   } finally { await h.close() }
 })
 
-it('keeps settings secondary without a separate development browser', async () => {
+it('reveals the agent on a live request and returns to lightweight HTML while keeping its guest', async () => {
   const h = mount()
   try {
-    await act(async () => h.root.render(createElement(BrowserWorkspace, { blocks: [], threadId: 'one' })))
+    await act(async () => h.root.render(createElement(BrowserWorkspace, { threadId: 'first', agentRequest: 1 })))
+    expect(h.request).toHaveBeenCalledWith('/v1/threads/first/browser/view', 'GET', undefined)
+    expect(h.container.querySelector('.ds-browser-status')?.closest('.hidden')).toBeNull()
+    await act(async () => h.root.render(createElement(BrowserWorkspace, {
+      threadId: 'first', agentRequest: 1, preferredUrl: 'http://localhost:5173/design.html'
+    })))
+    expect(h.container.querySelector('.ds-browser-status')?.closest('.hidden')).not.toBeNull()
+    const guest = h.container.querySelector('webview')
+    expect(guest?.getAttribute('src')).toBe('http://localhost:5173/design.html')
+    await h.click('browserMore')
+    await h.click('browserSettingsAndHistory')
+    expect(h.container.querySelector('.ds-browser-details')).not.toBeNull()
+    await h.click('browserMore')
+    await h.click('browserReturnToPages')
+    expect(h.container.querySelector('webview')).toBe(guest)
+  } finally { await h.close() }
+})
+
+it('returns to the preserved page after ending automation', async () => {
+  const h = mount()
+  try {
+    await act(async () => h.root.render(createElement(BrowserWorkspace, {
+      threadId: 'one', preferredUrl: 'http://localhost:5173/design.html'
+    })))
+    const guest = h.container.querySelector('webview')
+    await h.click('browserMore')
+    await h.click('browserSettingsAndHistory')
+    await h.click('browserCloseDetails')
+    await h.click('browserMore')
+    await h.click('browserEndSession')
+    expect(h.container.querySelector('webview')).toBe(guest)
+    expect(guest?.closest('.hidden')).toBeNull()
+    expect(h.request).toHaveBeenCalledWith('/v1/threads/one/browser/control', 'POST', '{"owner":"stopped","generation":2}')
+  } finally { await h.close() }
+})
+
+it('keeps agent settings secondary', async () => {
+  const h = mount()
+  try {
+    await act(async () => h.root.render(createElement(AgentBrowserPanel, { blocks: [], threadId: 'one' })))
     expect(h.container.querySelector('[aria-label="browserSettingsAndHistory"]')).toBeNull()
     await h.click('browserMore'); await h.click('browserSettingsAndHistory')
     expect(h.container.querySelector('[aria-label="browserSettingsAndHistory"]')).not.toBeNull()
@@ -46,12 +94,13 @@ it('keeps settings secondary without a separate development browser', async () =
   } finally { await h.close() }
 })
 
-it('hands control back and explicitly resumes the correct chat', async () => {
+it('returns control through the runtime without sending another user query', async () => {
   const h = mount()
   try {
     await act(async () => h.root.render(createElement(AgentBrowserPanel, { threadId: 'one' })))
     await h.click('browserReturnControl')
-    expect(resume).toHaveBeenCalledWith('browserResumeMessage', undefined, { expectedThreadId: 'one' })
+    expect(resume).not.toHaveBeenCalled()
+    expect(h.request).toHaveBeenCalledWith('/v1/threads/one/browser/control', 'POST', '{"owner":"agent","generation":2}')
     expect(h.container.querySelector('textarea')?.disabled).toBe(true)
     await h.click('browserTakeControl')
     expect(h.container.querySelector('textarea')?.disabled).toBe(false)
@@ -111,12 +160,12 @@ it('opens HTML in a shared tab and reuses the same URL without replacing another
   const h = mount()
   const consumed = vi.fn()
   try {
-    await act(async () => h.root.render(createElement(BrowserWorkspace, { threadId: 'one', preferredUrl: 'http://localhost:5173/design.html', preferredFilePath: '/project/design.html', onPreferredUrlConsumed: consumed })))
+    await act(async () => h.root.render(createElement(AgentBrowserPanel, { threadId: 'one', preferredUrl: 'http://localhost:5173/design.html', preferredFilePath: '/project/design.html', onPreferredUrlConsumed: consumed })))
     expect(h.request).toHaveBeenCalledWith('/v1/threads/one/browser/action', 'POST', JSON.stringify({ action: 'new_tab', url: 'http://localhost:5173/design.html' }))
     expect(consumed).toHaveBeenCalledTimes(1)
     expect(h.container.textContent).not.toContain('browserDocumentPreview')
-    await act(async () => h.root.render(createElement(BrowserWorkspace, { threadId: 'one', preferredUrl: null })))
-    await act(async () => h.root.render(createElement(BrowserWorkspace, { threadId: 'one', preferredUrl: 'https://example.test' })))
+    await act(async () => h.root.render(createElement(AgentBrowserPanel, { threadId: 'one', preferredUrl: null })))
+    await act(async () => h.root.render(createElement(AgentBrowserPanel, { threadId: 'one', preferredUrl: 'https://example.test' })))
     expect(h.request).toHaveBeenCalledWith('/v1/threads/one/browser/action', 'POST', JSON.stringify({ action: 'switch_tab', tab_id: 'first' }))
   } finally { await h.close() }
 })
@@ -124,7 +173,7 @@ it('opens HTML in a shared tab and reuses the same URL without replacing another
 it('defers previews while the agent is operating and opens them after explicit handoff', async () => {
   const h = mount({ active: true, owner: 'agent', generation: 1, tabs: [], log: [], artifacts: [] })
   try {
-    await act(async () => h.root.render(createElement(BrowserWorkspace, { threadId: 'one', preferredUrl: 'http://localhost:5173/' })))
+    await act(async () => h.root.render(createElement(AgentBrowserPanel, { threadId: 'one', preferredUrl: 'http://localhost:5173/' })))
     expect(h.container.textContent).toContain('browserPreviewWaiting')
     expect(h.request.mock.calls.some(([path]) => path.endsWith('/action'))).toBe(false)
     await h.click('browserTakeControl')
@@ -139,15 +188,48 @@ it('opens the current local HTML source from More without exposing an editor act
   const h = mount({ active: true, owner: 'user', generation: 2, url: 'http://localhost:5173/page.html', tabs: [{ tab_id: 'html', title: 'Page', url: 'http://localhost:5173/page.html', active: true }], log: [], artifacts: [] })
   const edit = vi.fn()
   try {
-    await act(async () => h.root.render(createElement(BrowserWorkspace, {
+    await act(async () => h.root.render(createElement(AgentBrowserPanel, {
       threadId: 'one', preferredUrl: 'http://localhost:5173/page.html', preferredFilePath: '/project/page.html', onOpenFileInEditor: edit
     })))
     await h.click('browserMore')
     await h.click('browserEditSource')
     expect(edit).toHaveBeenCalledExactlyOnceWith('/project/page.html')
     expect(h.container.querySelector('[role="menu"]')).toBeNull()
-    await act(async () => h.root.render(createElement(BrowserWorkspace, { threadId: 'two', onOpenFileInEditor: edit })))
+    await act(async () => h.root.render(createElement(AgentBrowserPanel, { key: 'two', threadId: 'two', onOpenFileInEditor: edit })))
     await h.click('browserMore')
     expect(h.container.textContent).not.toContain('browserEditSource')
+  } finally { await h.close() }
+})
+
+it('keeps manual control and shows a retryable error when resume observation fails', async () => {
+  const h = mount({ active: true, owner: 'user', generation: 2, task_paused: true, url: 'https://example.test', image: 'data:image/jpeg;base64,AA==', log: [], artifacts: [] })
+  try {
+    await act(async () => h.root.render(createElement(AgentBrowserPanel, { threadId: 'one' })))
+    expect(h.container.textContent).toContain('browserTaskPaused')
+    h.request.mockImplementation(async (path: string) => path.endsWith('/control')
+      ? { ok: false, status: 409, body: JSON.stringify({ detail: 'Page disconnected; retry' }) }
+      : { ok: true, status: 200, body: '{}' })
+    await h.click('browserReturnControl')
+    expect(h.container.textContent).toContain('Page disconnected; retry')
+    expect(h.container.textContent).toContain('browserTaskPaused')
+    expect(h.container.querySelector('textarea')?.disabled).toBe(false)
+    expect(resume).not.toHaveBeenCalled()
+  } finally { await h.close() }
+})
+
+it('disables repeated handoff clicks and shows the page-read status during resume', async () => {
+  const h = mount()
+  try {
+    await act(async () => h.root.render(createElement(AgentBrowserPanel, { threadId: 'one' })))
+    let finish!: (value: { ok: boolean; status: number; body: string }) => void
+    h.request.mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+    await h.click('browserReturnControl')
+    expect(h.container.textContent).toContain('browserResuming')
+    const button = [...h.container.querySelectorAll('button')].find(b => b.textContent === 'browserReturnControl')!
+    expect(button.disabled).toBe(true)
+    await act(async () => button.click())
+    expect(h.request.mock.calls.filter(([path]) => path.endsWith('/control'))).toHaveLength(1)
+    await act(async () => finish({ ok: true, status: 200, body: JSON.stringify({ active: true, owner: 'agent', generation: 3, log: [], artifacts: [] }) }))
+    expect(h.container.textContent).not.toContain('browserResuming')
   } finally { await h.close() }
 })

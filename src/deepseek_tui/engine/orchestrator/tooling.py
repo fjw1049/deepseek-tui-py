@@ -668,6 +668,19 @@ class ToolExecutionMixin:
 
         return results
 
+    def _human_intervention_blocks_tool(self) -> bool:
+        return self.handle.pause.paused or (
+            getattr(self, "_tool_batch_generation", self.handle.pause.generation)
+            != self.handle.pause.generation
+        )
+
+    def _check_human_intervention(self) -> None:
+        if self._human_intervention_blocks_tool():
+            raise ToolError(
+                "Not executed: human intervention invalidated this pending operation. "
+                "Reassess the current state after control is returned."
+            )
+
     async def _execute_single_tool(
         self,
         tool_call: ToolCall,
@@ -675,6 +688,7 @@ class ToolExecutionMixin:
         model: str,
     ) -> ToolResult | None:
         """Execute a single tool call, handling special tools and approval."""
+        self._check_human_intervention()
         goal = self.goal_service.snapshot()
         goal_control = tool_call.name in {"CreateGoal", "GetGoal", "SetGoalBudget", "checklist"} or (
             tool_call.name == "UpdateGoal"
@@ -745,6 +759,7 @@ class ToolExecutionMixin:
                         success=False,
                         content="Tool call denied by the user (hook escalation)",
                     )
+        self._check_human_intervention()
         # Expose parent transcript for fork_context spawns.
         self.tool_context.metadata["parent_session_messages"] = [
             m.model_dump(mode="json") for m in self.session_messages
@@ -836,11 +851,13 @@ class ToolExecutionMixin:
                 denied = await self._handle_approval_flow(tool_call, approval_request)
                 if denied:
                     return None
-            return await execute_external_mcp_tool(
-                self.mcp_manager,
-                tool_name,
-                tool_call.arguments,
-            )
+            self._check_human_intervention()
+            with self.handle.pause.tool_execution():
+                return await execute_external_mcp_tool(
+                    self.mcp_manager,
+                    tool_name,
+                    tool_call.arguments,
+                )
 
         # --- Normal registry tools ---
         if not self.tool_registry.contains(tool_name):
@@ -868,7 +885,9 @@ class ToolExecutionMixin:
             if denied:
                 return None
 
-        return await self.tool_registry.execute(tool_name, arguments, self.tool_context)
+        self._check_human_intervention()
+        with self.handle.pause.tool_execution():
+            return await self.tool_registry.execute(tool_name, arguments, self.tool_context)
 
     async def _handle_approval_flow(
         self,

@@ -43,6 +43,11 @@ class ToolCallEvent:
 
 
 @dataclass(frozen=True, slots=True)
+class ModelRequestInterruptedEvent:
+    """Close streamed fragments when takeover discards a model request."""
+
+
+@dataclass(frozen=True, slots=True)
 class AgentRoundCompleteEvent:
     """One LLM round finished.
 
@@ -229,6 +234,7 @@ EngineEvent = (
     | ThinkingDeltaEvent
     | ToolCallEvent
     | AgentRoundCompleteEvent
+    | ModelRequestInterruptedEvent
     | ToolResultEvent
     | ApprovalRequiredEvent
     | ApprovalResolvedEvent

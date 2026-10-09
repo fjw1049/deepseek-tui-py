@@ -257,7 +257,17 @@ CYCLE_SEED = ReminderSpec(
 )
 
 
+HUMAN_RESUME = ReminderSpec(
+    name="human_resume",
+    envelope=Envelope.ALERT,
+    placement=Placement.TAIL,
+    origin=MessageOrigin.SYSTEM_REMINDER,
+    max_chars=16000,
+)
+
+
 REGISTRY: tuple[ReminderSpec, ...] = (
+    HUMAN_RESUME,
     GIT_SNAPSHOT,
     HANDOFF,
     PROMPT_SUBMIT_HOOK_CONTEXT,

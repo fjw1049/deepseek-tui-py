@@ -12,6 +12,7 @@ import uuid
 from collections import deque
 from contextlib import AsyncExitStack, suppress
 from copy import deepcopy
+from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -30,7 +31,9 @@ from deepseek_tui.engine.dispatch import (
 )
 from deepseek_tui.engine.events import (
     AgentRoundCompleteEvent,
+    EngineEvent,
     ErrorEvent,
+    ModelRequestInterruptedEvent,
     PluginMountEvent,
     SessionEndedEvent,
     SessionStartedEvent,
@@ -1760,6 +1763,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             self.handle.reset_cancel()
             if self.tool_context.subagent_manager is not None:
                 self.tool_context.subagent_manager.attach_parent_cancel(self.handle.cancel_event)
+                self.tool_context.subagent_manager.attach_parent_pause(self.handle.pause)
             self.handle._mark_turn_active()
             try:
                 await self._handle_send_message_inner(op, turn_id)
@@ -2313,13 +2317,22 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             # Compaction bridges live in session_messages (leading user
             # message), not in the system prompt — mutating system every
             # compact would destroy the stable KV prefix cache.
-            result = await self._run_conversation(
-                messages=working_messages,
-                model=op.model or self.default_model,
-                system_prompt=sys_prompt,
-                max_tokens=op.max_tokens,
-                reasoning_effort=op.reasoning_effort,
-            )
+            while True:
+                result = await self._run_conversation(
+                    messages=working_messages,
+                    model=op.model or self.default_model,
+                    system_prompt=sys_prompt,
+                    max_tokens=op.max_tokens,
+                    reasoning_effort=op.reasoning_effort,
+                )
+                if result.cancelled:
+                    break
+                await self._emit_checklist_turn_end_reconcile()
+                # Reconciliation can yield to takeover or a final user steer.
+                # Commit completion only after those have been consumed.
+                if (not self.handle.pause.paused and self.handle.resume_context is None
+                        and not self.handle.has_pending_steers()):
+                    break
 
             duration_ms = int((time.monotonic() - start) * 1000)
             if result.cancelled:
@@ -2426,7 +2439,6 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                 running_subagents = self.tool_context.subagent_manager.running_count()
             if self.tool_context.task_manager is not None:
                 running_tasks = self.tool_context.task_manager.running_count()
-            await self._emit_checklist_turn_end_reconcile()
             await self.handle.emit(
                 TurnCompleteEvent(
                     assistant_message=result.assistant_message,
@@ -3138,7 +3150,18 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
         checklist_gate_last_open: str | None = None
         held_stop_result: TurnResult | None = None
         result = TurnResult(assistant_message=None)
-        for round_idx in range(self.max_tool_round_trips + 1):
+        round_idx = -1
+        while round_idx < self.max_tool_round_trips:
+            round_idx += 1
+            await self.handle.pause.wait(self.handle.cancel_event)
+            if self.handle.resume_context is not None:
+                from deepseek_tui.engine import reminders
+
+                messages.append(reminders.reminder_message(
+                    reminders.HUMAN_RESUME, self.handle.resume_context,
+                ))
+                self.handle.resume_context = None
+            model_generation = self.handle.pause.generation
             trace = get_turn_latency(latency_turn_id) if latency_turn_id else None
             round_trace = trace.start_round(round_idx) if trace is not None else None
             logger.info(
@@ -3204,10 +3227,15 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                     len(messages),
                     self._compact_cooldown_rounds,
                 )
-                compact_result = await self._run_compaction(
-                    messages, model=model, system_prompt=system_prompt, tools=tools,
-                    output_reserve=max_tokens or max_output_tokens_for_model(model),
+                compact_result = await self.handle.pause.model_request(
+                    lambda: self._run_compaction(
+                        messages, model=model, system_prompt=system_prompt, tools=tools,
+                        output_reserve=max_tokens or max_output_tokens_for_model(model),
+                    ), self.handle.cancel_event,
                 )
+                if compact_result is None:
+                    round_idx -= 1
+                    continue
                 messages[:] = compact_result.messages
                 logger.info(
                     "compact_done after_count=%d bridge_attached=%s success=%s",
@@ -3264,18 +3292,47 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             self._log_prefix_break(round_idx, request)
             from deepseek_tui.engine.usage_ledger import usage_source
 
+            if self.handle.pause.paused or model_generation != self.handle.pause.generation:
+                round_idx -= 1
+                continue
+            streamed_calls: list[ToolCall] = []
+
+            async def emit_model_event(
+                event: EngineEvent, calls: list[ToolCall] = streamed_calls,
+            ) -> None:
+                if isinstance(event, ToolCallEvent):
+                    calls.append(event.tool_call)
+                await self.handle.emit(event)
+
             with usage_source("agent_round"):
                 # 跑一轮 LLM 流式调用，result(TurnResult) 含本轮产出与状态：
                 # assistant_message=回复 / tool_calls=待调工具(空=结束) / usage=token用量
                 # cancelled=是否取消 / outcome=成功或失败类型 / error_message=错误描述
-                result = await self.turn_loop.run(
-                    request,
-                    self.handle.emit,
+                result = await self.handle.pause.model_request(
+                    partial(
+                        self.turn_loop.run,
+                        request,
+                        emit_model_event,
+                        self.handle.cancel_event,
+                        tools=tools,
+                        latency_turn_id=latency_turn_id,
+                        round_idx=round_idx,
+                    ),
                     self.handle.cancel_event,
-                    tools=tools,
-                    latency_turn_id=latency_turn_id,
-                    round_idx=round_idx,
                 )
+            if result is None or model_generation != self.handle.pause.generation:
+                # Settle UI fragments/tool cards without completing the logical turn.
+                await self.handle.emit(ModelRequestInterruptedEvent())
+                for call in streamed_calls:
+                    await self.handle.emit(ToolResultEvent(
+                        tool_call_id=call.id, tool_name=call.name, success=False,
+                        content="Not executed: model request interrupted by human takeover.",
+                        metadata={"not_executed": True},
+                    ))
+                # Never execute a plan or accept a final answer from before takeover.
+                round_idx -= 1
+                result = TurnResult(assistant_message=None)
+                continue
             # Refresh the real pressure signal *within* the turn, not just at
             # turn end: every round's StreamDone carries the provider's
             # input_tokens and messages only grow between rounds, so this is
@@ -3336,6 +3393,9 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                     tool_round_count=tool_round_count,
                 )
             if not result.tool_calls:
+                if self.handle.pause.paused or model_generation != self.handle.pause.generation:
+                    round_idx -= 1
+                    continue
                 if await self._handle_subagent_turn_handoff(messages):
                     continue
                 # Same gate for background shells the timeout re-homed: the
@@ -3424,6 +3484,9 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                         continue
                 from dataclasses import replace
 
+                if self.handle.pause.paused or model_generation != self.handle.pause.generation:
+                    round_idx -= 1
+                    continue
                 return replace(result, tool_round_count=tool_round_count)
 
             tool_round_count += 1
@@ -3432,6 +3495,7 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
             from deepseek_tui.server.metrics import now_ms as latency_now_ms
 
             tool_exec_start = latency_now_ms()
+            self._tool_batch_generation = model_generation
             tool_results = await self._execute_tool_calls(result.tool_calls, model)
             if round_trace is not None:
                 round_trace.tool_exec_ms = latency_now_ms() - tool_exec_start
@@ -3441,6 +3505,10 @@ class Engine(ToolExecutionMixin, SessionMaintenanceMixin, LifecycleLspMixin):
                 if any(getattr(b, "is_error", False) for b in m.content if hasattr(b, "is_error"))
             )
             messages.extend(tool_results)
+
+            if self.handle.pause.paused or model_generation != self.handle.pause.generation:
+                round_idx -= 1
+                continue
 
             # Optional durable transcript hook (Task true-resume).
             on_ckpt = self.tool_context.metadata.get("on_turn_checkpoint")

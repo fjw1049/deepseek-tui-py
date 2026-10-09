@@ -63,6 +63,7 @@ type Props = {
   changesProjectRoot?: string | null
   onChangesContextChange: (context: ChangeReviewContext) => void
   onChangesFocusPathConsumed?: () => void
+  agentBrowserRequest?: number
   devPreviewBlocks: ChatBlock[]
   latestDevPreviewUrl: string | null
   preferredPreviewFilePath?: string | null
@@ -109,6 +110,7 @@ export function WorkbenchRightSidebar({
   changesProjectRoot = null,
   onChangesContextChange,
   onChangesFocusPathConsumed,
+  agentBrowserRequest,
   devPreviewBlocks,
   latestDevPreviewUrl,
   preferredPreviewFilePath = null,
@@ -343,6 +345,7 @@ export function WorkbenchRightSidebar({
                 <BrowserWorkspace
                   key={threadId ?? 'no-thread'}
                   threadId={threadId}
+                  agentRequest={agentBrowserRequest}
                   visible={browserVisible}
                   blocks={devPreviewBlocks}
                   preferredUrl={latestDevPreviewUrl}
