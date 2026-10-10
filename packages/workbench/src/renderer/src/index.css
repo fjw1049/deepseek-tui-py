@@ -4988,7 +4988,9 @@ samp {
 
 .ds-search-modal--palette .ds-search-modal__body {
   max-height: min(54vh, 468px);
-  padding: 6px 8px 8px;
+  padding: 6px 8px 12px;
+  scroll-padding-block: 8px 12px;
+  mask-image: linear-gradient(to bottom, black calc(100% - 8px), transparent);
 }
 
 .ds-search-modal--palette .ds-search-modal__body--empty {
@@ -5079,22 +5081,50 @@ samp {
 
 .ds-search-modal--palette .ds-search-modal__footer {
   justify-content: space-between;
-  gap: 16px;
-  padding: 8px 14px 10px;
-  font-size: 13px;
+  gap: 12px;
+  padding: 10px 18px;
+  border-top-color: color-mix(in srgb, var(--ds-border-muted) 55%, transparent);
+  background: color-mix(in srgb, var(--ds-surface-hover) 25%, transparent);
+  font-size: 11px;
+  line-height: 1.4;
 }
 
 .ds-search-modal--palette .ds-search-modal__footer-hint {
   min-width: 0;
-  overflow: hidden;
+  gap: 4px;
   color: var(--ds-text-faint);
-  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ds-search-modal--palette .ds-search-modal__footer-actions {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-left: auto;
+}
+
+.ds-search-modal--palette .ds-search-modal__footer-actions > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   white-space: nowrap;
 }
 
 .ds-search-modal--palette .ds-search-modal__footer-open {
-  flex-shrink: 0;
   color: var(--ds-text-muted);
+}
+
+.ds-search-modal--palette .ds-search-modal__footer .ds-keycap {
+  min-width: 20px;
+  height: 20px;
+  padding: 0 5px;
+  border-radius: 4px;
+  border-color: color-mix(in srgb, var(--ds-border-muted) 80%, transparent);
+  background: var(--ds-kbd-bg);
+  box-shadow: 0 1px 0 color-mix(in srgb, var(--ds-border-muted) 35%, transparent);
+  color: var(--ds-text-muted);
+  font-size: 10px;
+  font-weight: 400;
 }
 
 .ds-markdown {

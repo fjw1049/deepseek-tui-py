@@ -106,3 +106,12 @@ it('matches the split shortcut on both platforms and supports disabling it', () 
   expect(isShortcutEnabled(settings, 'newSplitConversation')).toBe(false)
   expect(normalizeShortcutsSettings({}).newSplitConversation.enabled).toBe(true)
 })
+
+it('matches activity toggling on both platforms without intercepting Select All, and can disable it', () => {
+  expect(findMatchedShortcut(keyEvent({ key: 'A', metaKey: true, shiftKey: true }))?.id).toBe('toggleSessionActivity')
+  expect(findMatchedShortcut(keyEvent({ key: 'A', ctrlKey: true, shiftKey: true }))?.id).toBe('toggleSessionActivity')
+  expect(findMatchedShortcut(keyEvent({ key: 'a', metaKey: true }))).toBeNull()
+  const settings = mergeShortcutsSettings(defaultShortcutsSettings(), { toggleSessionActivity: { enabled: false } })
+  expect(isShortcutEnabled(settings, 'toggleSessionActivity')).toBe(false)
+  expect(normalizeShortcutsSettings({}).toggleSessionActivity.enabled).toBe(true)
+})

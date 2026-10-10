@@ -1,7 +1,8 @@
-import { useEffect, useState, type ReactElement } from 'react'
+import { useCallback, useEffect, useState, type ReactElement } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   CalendarClock,
+  NotebookText,
   ChevronRight,
   Blocks,
   SquareKanban,
@@ -14,7 +15,8 @@ import {
   Store
 } from 'lucide-react'
 import type { NormalizedThread } from '../../agent/types'
-import { OPEN_SIDEBAR_SEARCH_EVENT } from '../../lib/shortcuts-runtime'
+import { formatShortcutLabel, shortcutDefinition } from '@shared/shortcuts'
+import { OPEN_SIDEBAR_SEARCH_EVENT, TOGGLE_SESSION_ACTIVITY_EVENT } from '../../lib/shortcuts-runtime'
 import { useChatStore, type SettingsRouteSection } from '../../store/chat-store'
 import { ConversationSearchModal } from './ConversationSearchModal'
 import { SidebarProjectsColumn } from './SidebarProjectsSection'
@@ -23,6 +25,9 @@ import { SidebarChatsSection } from './SidebarChatsSection'
 import { SettingsSidebarNav } from '../settings/SettingsSidebarNav'
 import { isWorkspaceHidden } from '../../lib/sidebar-chrome'
 import { normalizeWorkspaceRoot } from '../../lib/workspace-path'
+import { SidebarActivity } from './SidebarActivity'
+import { buildSidebarActivity } from '../../lib/sidebar-activity'
+import { useThreadsWithActiveTasks } from '../../hooks/use-thread-tasks'
 import { EmptyHomeLayoutToggle } from './EmptyHomeLayoutToggle'
 
 type Props = {
@@ -73,12 +78,49 @@ export function Sidebar({
   const storedThreads = useChatStore((s) => s.threads)
   const hasVisiblePinned = storedThreads.some((thread) => pinnedThreadIds.includes(thread.id) && !isWorkspaceHidden(normalizeWorkspaceRoot(thread.workspace), hiddenWorkspacePaths))
   const [searchModalOpen, setSearchModalOpen] = useState(false)
+  const [activityOpen, setActivityOpen] = useState(false)
+  const blocks = useChatStore((s) => s.blocks)
+  const refreshThreads = useChatStore((s) => s.refreshThreads)
+  const { threadIds: taskThreadIds } = useThreadsWithActiveTasks()
+  const runningIds = new Set(taskThreadIds)
+  for (const [id, watching] of Object.entries(watchTurnCompletion)) {
+    if (watching) runningIds.add(id)
+  }
+  if (busy && activeThreadId) runningIds.add(activeThreadId)
+  const activityGroups = buildSidebarActivity({
+    threads: storedThreads, hiddenWorkspacePaths, runningIds, unreadThreadIds, activeThreadId,
+    activeWaiting: blocks.some((block) =>
+      (block.kind === 'approval' || block.kind === 'user_input') && block.status === 'pending')
+  })
+  const hasActivity = Object.values(activityGroups).some((rows) => rows.length > 0)
+
+  useEffect(() => {
+    if (!runtimeReady) return
+    let cancelled = false
+    let timer: ReturnType<typeof setTimeout>
+    const refresh = async (): Promise<void> => {
+      if (document.visibilityState !== 'hidden') await refreshThreads()
+      if (!cancelled) timer = setTimeout(() => void refresh(), 5000)
+    }
+    void refresh()
+    return () => { cancelled = true; clearTimeout(timer) }
+  }, [runtimeReady, refreshThreads])
   const [toolsExpanded, setToolsExpanded] = useState<boolean | null>(null)
   const settingsActive = route === 'settings'
   const kanbanActive = route === 'kanban'
   const automationActive = route === 'automation'
   const channelsActive = route === 'channels'
   const marketplaceActive = route === 'marketplace'
+  const activityShortcutLabel = formatShortcutLabel(shortcutDefinition('toggleSessionActivity').chord)
+  const toggleActivity = useCallback(() => {
+    setActivityOpen((open) => !open)
+    if (settingsActive) setRoute('chat')
+  }, [settingsActive, setRoute])
+
+  useEffect(() => {
+    window.addEventListener(TOGGLE_SESSION_ACTIVITY_EVENT, toggleActivity)
+    return () => window.removeEventListener(TOGGLE_SESSION_ACTIVITY_EVENT, toggleActivity)
+  }, [toggleActivity])
 
   useEffect(() => {
     const onOpenSearch = (): void => {
@@ -102,6 +144,21 @@ export function Sidebar({
             >
               <PanelLeftClose className="h-4 w-4" strokeWidth={1.85} />
             </button>
+            <div className="ds-sidebar-header-actions ds-no-drag">
+              <button type="button" className="ds-sidebar-toggle-button"
+                aria-label={t('conversationSearchNav')} title={`${t('conversationSearchNav')} (⌘K)`}
+                onClick={() => setSearchModalOpen(true)}>
+                <Search className="h-4 w-4" strokeWidth={1.8} />
+              </button>
+              <button type="button" className="ds-sidebar-toggle-button"
+                aria-label={t(activityOpen ? 'activityShowProjects' : 'activityShowActivity')}
+                title={`${t(activityOpen ? 'activityShowProjects' : 'activityShowActivity')} (${activityShortcutLabel})`}
+                aria-pressed={activityOpen} aria-controls="sidebar-activity"
+                onClick={toggleActivity}>
+                <NotebookText className="h-4 w-4" strokeWidth={1.8} />
+                {hasActivity && <span className="ds-activity-indicator" aria-hidden="true" />}
+              </button>
+            </div>
           </div>
         </div>
 
@@ -115,13 +172,6 @@ export function Sidebar({
               disabledHint={t('runtimeActionNeedsConnection')}
               shortcut="⌘N"
               variant="action"
-            />
-            <SidebarLink
-              icon={<Search className="h-4 w-4" strokeWidth={1.9} />}
-              label={t('conversationSearchNav')}
-              onClick={() => setSearchModalOpen(true)}
-              shortcut="⌘K"
-              variant="flat"
             />
             <SidebarLink
               icon={<SquareKanban className="h-4 w-4" strokeWidth={1.75} />}
@@ -183,7 +233,7 @@ export function Sidebar({
         <SettingsSidebarNav />
       ) : (
         <>
-          <div className="ds-sidebar-middle ds-no-drag min-h-0 flex-1">
+          <div className="ds-sidebar-middle ds-no-drag min-h-0 flex-1" style={activityOpen ? { display: 'none' } : undefined}>
             <div ref={setSectionHeaderHost} className="ds-sidebar-section-heading ds-no-drag shrink-0" />
             <SidebarProjectsColumn
               headerHost={hasVisiblePinned ? null : sectionHeaderHost}
@@ -231,6 +281,9 @@ export function Sidebar({
               />
             </div>
           </div>
+
+          {activityOpen && <SidebarActivity groups={activityGroups} activeThreadId={activeThreadId}
+            runtimeReady={runtimeReady} onSelectThread={onSelectThread} />}
 
           <div className="ds-sidebar-footer ds-no-drag flex shrink-0 items-center gap-1 px-1 pt-1">
             <div className="min-w-0 flex-1">

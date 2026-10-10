@@ -6,6 +6,7 @@ import {
   type ShortcutsSettingsV1
 } from '@shared/shortcuts'
 
+export const TOGGLE_SESSION_ACTIVITY_EVENT = 'deepseekgui:toggle-session-activity'
 export const OPEN_SIDEBAR_SEARCH_EVENT = 'deepseekgui:open-sidebar-search'
 export const OPEN_APPROVAL_POLICY_EVENT = 'deepseekgui:open-approval-policy'
 
@@ -39,4 +40,8 @@ export function requestOpenSidebarSearch(): void {
 
 export function requestOpenApprovalPolicyMenu(): void {
   window.dispatchEvent(new CustomEvent(OPEN_APPROVAL_POLICY_EVENT))
+}
+
+export function requestToggleSessionActivity(): void {
+  window.dispatchEvent(new CustomEvent(TOGGLE_SESSION_ACTIVITY_EVENT))
 }

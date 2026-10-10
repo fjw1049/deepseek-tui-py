@@ -1303,7 +1303,30 @@ async def list_threads(request: Request) -> list[dict[str, Any]]:
     include_archived = request.query_params.get("include_archived", "false") == "true"
     limit = int_query(request, "limit")
     threads = await mgr.list_threads(include_archived=include_archived, limit=limit)
-    return [t.model_dump(mode="json") for t in threads]
+    waiting_ids = {
+        item["thread_id"]
+        for item in [
+            *approval_bridge(request).list_pending(),
+            *await mgr.list_pending_user_inputs(),
+        ]
+    }
+    rows = []
+    for thread in threads:
+        row = thread.model_dump(mode="json")
+        row["activity_waiting"] = thread.id in waiting_ids
+        if thread.latest_turn_id:
+            try:
+                turn = mgr.store.load_turn(thread.latest_turn_id)
+            except (OSError, ValueError):
+                # Keep listings available if a turn was deleted or is unreadable,
+                # just as the thread store does for other listing records.
+                pass
+            else:
+                row["latest_turn_status"] = turn.status.value
+                row["latest_turn_failed"] = bool(turn.error)
+                row["activity_at"] = turn.created_at.isoformat()
+        rows.append(row)
+    return rows
 
 
 @router_threads.post("/threads", status_code=201)

@@ -72,6 +72,10 @@ export type NormalizedThread = {
   archived?: boolean
   /** Set once the thread has run a turn — env mode is locked from then on. */
   latestTurnId?: string | null
+  latestTurnStatus?: string
+  latestTurnFailed?: boolean
+  activityWaiting?: boolean
+  activityAt?: string
   goal?: GoalSnapshotJson | null
 }
 

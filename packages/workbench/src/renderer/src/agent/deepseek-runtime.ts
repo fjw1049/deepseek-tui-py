@@ -172,6 +172,10 @@ type ThreadRecordJson = {
   archived?: boolean
   title?: string | null
   latest_turn_id?: string | null
+  latest_turn_status?: string
+  latest_turn_failed?: boolean
+  activity_waiting?: boolean
+  activity_at?: string
   goal?: import('./types').GoalSnapshotJson | null
 }
 
@@ -272,6 +276,10 @@ function threadFromJson(t: ThreadRecordJson, title?: string): NormalizedThread {
     status: t.status,
     archived: t.archived === true,
     latestTurnId: t.latest_turn_id ?? null,
+    latestTurnStatus: t.latest_turn_status,
+    latestTurnFailed: t.latest_turn_failed,
+    activityWaiting: t.activity_waiting,
+    activityAt: t.activity_at,
     goal: t.goal ?? null
   }
 }
@@ -981,8 +989,9 @@ export class DeepseekRuntimeProvider implements AgentProvider {
 
   async listThreads(options?: { includeArchived?: boolean }): Promise<NormalizedThread[]> {
     const includeArchived = options?.includeArchived === true
-    const qs = includeArchived ? 'include_archived=true' : 'limit=50'
-    const r = await window.dsGui.runtimeRequest(`/v1/threads?${qs}`, 'GET')
+    // Activity must include older running / failed threads across every project.
+    const qs = includeArchived ? '?include_archived=true' : ''
+    const r = await window.dsGui.runtimeRequest(`/v1/threads${qs}`, 'GET')
     if (!r.ok) throw toRuntimeError(readRuntimeError(r.body, 'failed to list threads'))
     const rows = JSON.parse(r.body) as ThreadRecordJson[]
     return rows

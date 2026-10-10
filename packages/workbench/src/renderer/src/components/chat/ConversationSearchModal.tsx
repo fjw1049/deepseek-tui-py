@@ -354,8 +354,27 @@ export function ConversationSearchModal({
         </div>
 
         <div className="ds-search-modal__footer">
-          <span className="ds-search-modal__footer-hint">{t('conversationSearchFooterHint')}</span>
-          <span className="ds-search-modal__footer-open">{t('conversationSearchFooterOpen')}</span>
+          <span className="ds-search-modal__footer-hint">
+            {!isEmpty && (
+              <>
+                <kbd className="ds-keycap">↑</kbd>
+                <kbd className="ds-keycap">↓</kbd>
+                <span className="ds-search-modal__footer-label">{t('conversationSearchFooterSelect')}</span>
+              </>
+            )}
+          </span>
+          <div className="ds-search-modal__footer-actions">
+            {!isEmpty && (
+              <span className="ds-search-modal__footer-open">
+                <kbd className="ds-keycap">Enter</kbd>
+                <span>{t('conversationSearchFooterOpen')}</span>
+              </span>
+            )}
+            <span>
+              <kbd className="ds-keycap">Esc</kbd>
+              <span>{t('close')}</span>
+            </span>
+          </div>
         </div>
       </div>
     </div>,

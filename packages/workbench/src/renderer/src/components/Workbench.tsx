@@ -91,7 +91,8 @@ import { EDITOR_CLOSE_ACTIVE_TAB_EVENT, IDE_QUICK_OPEN_EVENT } from '../lib/work
 import {
   isShortcutEnabled,
   requestOpenApprovalPolicyMenu,
-  requestOpenSidebarSearch
+  requestOpenSidebarSearch,
+  requestToggleSessionActivity
 } from '../lib/shortcuts-runtime'
 import {
   findMatchedShortcut,
@@ -1174,6 +1175,14 @@ export function Workbench(): ReactElement {
         e.preventDefault()
         setLeftSidebarCollapsed(false)
         requestOpenSidebarSearch()
+        return
+      }
+
+      if (matched.id === 'toggleSessionActivity') {
+        if (e.repeat || e.isComposing || ideModeActive) return
+        e.preventDefault()
+        setLeftSidebarCollapsed(false)
+        requestToggleSessionActivity()
         return
       }
 

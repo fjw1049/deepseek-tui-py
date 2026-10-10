@@ -247,6 +247,24 @@ const EDITOR_CANDIDATES: EditorCandidate[] = [
     platforms: ['darwin']
   },
   {
+    id: 'chrome',
+    label: 'Google Chrome',
+    kind: 'viewer',
+    commands: ['google-chrome', 'google-chrome-stable', 'chrome'],
+    macAppName: 'Google Chrome',
+    macAppPaths: [
+      '/Applications/Google Chrome.app',
+      join(homedir(), 'Applications/Google Chrome.app'),
+      join(homedir(), 'Downloads/Google Chrome.app')
+    ],
+    macBundleIds: ['com.google.Chrome'],
+    winAppPaths: [
+      join(process.env.LOCALAPPDATA ?? '', 'Google', 'Chrome', 'Application', 'chrome.exe'),
+      join(process.env.PROGRAMFILES ?? '', 'Google', 'Chrome', 'Application', 'chrome.exe'),
+      join(process.env['PROGRAMFILES(X86)'] ?? '', 'Google', 'Chrome', 'Application', 'chrome.exe')
+    ]
+  },
+  {
     id: 'finder',
     label: 'Finder',
     kind: 'viewer',
