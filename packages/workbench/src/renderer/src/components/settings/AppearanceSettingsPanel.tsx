@@ -92,7 +92,7 @@ export function AppearanceSettingsPanel({ form, onPatch }: Props): ReactElement 
   const isAtDefaults =
     form.theme === 'dark' &&
     form.uiFontScale === 'medium' &&
-    form.uiFontFamily === 'system-native' &&
+    form.uiFontFamily === 'inter-noto' &&
     isDefaultChromeTheme(appearance.themes.light, 'light') &&
     isDefaultChromeTheme(appearance.themes.dark, 'dark') &&
     isDefaultWindowTranslucency(appearance.translucency.light) &&
@@ -115,7 +115,7 @@ export function AppearanceSettingsPanel({ form, onPatch }: Props): ReactElement 
     onPatch({
       theme: 'dark',
       uiFontScale: 'medium',
-      uiFontFamily: 'system-native',
+      uiFontFamily: 'inter-noto',
       appearance: defaultAppearanceSettings()
     })
     setRestoreArmed(false)

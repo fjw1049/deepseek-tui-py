@@ -225,11 +225,28 @@ it('disables repeated handoff clicks and shows the page-read status during resum
     h.request.mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
     await h.click('browserReturnControl')
     expect(h.container.textContent).toContain('browserResuming')
-    const button = [...h.container.querySelectorAll('button')].find(b => b.textContent === 'browserReturnControl')!
+    const button = h.container.querySelector<HTMLButtonElement>('.ds-browser-control')!
     expect(button.disabled).toBe(true)
     await act(async () => button.click())
     expect(h.request.mock.calls.filter(([path]) => path.endsWith('/control'))).toHaveLength(1)
     await act(async () => finish({ ok: true, status: 200, body: JSON.stringify({ active: true, owner: 'agent', generation: 3, log: [], artifacts: [] }) }))
     expect(h.container.textContent).not.toContain('browserResuming')
+  } finally { await h.close() }
+})
+
+
+it.each([
+  { owner: 'agent', task_running: true, title: 'browserAgentControl', tone: 'is-agent' },
+  { owner: 'agent', task_running: false, title: 'browserAgentReady', tone: 'is-idle' },
+  { owner: 'agent', task_running: true, assistance: { id: 'help', status: 'pending' }, title: 'browserControlNeedsHelp', tone: 'is-attention' },
+])('keeps $title above page navigation with the correct control state', async ({ title, tone, ...state }) => {
+  const h = mount({ active: true, generation: 2, log: [], artifacts: [], ...state })
+  try {
+    await act(async () => h.root.render(createElement(AgentBrowserPanel, { threadId: 'one' })))
+    const bar = h.container.querySelector('.ds-browser-status')!
+    expect(h.container.querySelector('.ds-shared-browser')?.firstElementChild).toBe(bar)
+    expect(bar.classList.contains(tone)).toBe(true)
+    expect(bar.querySelector('[role="status"]')?.textContent).toContain(title)
+    expect(bar.querySelector('button')?.textContent).toContain('browserTakeControl')
   } finally { await h.close() }
 })

@@ -1,9 +1,9 @@
 .ds-task-activity {
   --task-activity-row-height: 2.25rem;
-  --task-activity-running: light-dark(#27735f, #84c7b0);
-  --task-activity-done: light-dark(#1f9d57, #4ade80);
-  --task-activity-failed: light-dark(#d6453d, #f87171);
-  --task-activity-attention: light-dark(#976124, #dfb87c);
+  --task-activity-running: var(--ds-accent);
+  --task-activity-done: var(--ds-success);
+  --task-activity-failed: var(--ds-danger);
+  --task-activity-attention: var(--ds-warning);
   --task-activity-line: color-mix(in srgb, var(--text-primary) 13%, transparent);
 }
 

@@ -294,6 +294,7 @@ export const shellOpenTerminalPathSchema = trimmedString(MAX_PATH_LENGTH)
 
 export const notificationPayloadSchema = z
   .object({
+    kind: z.literal('browser-assistance').optional(),
     threadId: optionalTrimmedString(MAX_ID_LENGTH),
     title: trimmedString(MAX_NOTIFICATION_TITLE_LENGTH),
     body: trimmedString(MAX_NOTIFICATION_BODY_LENGTH)

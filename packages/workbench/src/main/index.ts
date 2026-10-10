@@ -201,6 +201,7 @@ type SseControllerState = {
 }
 
 type TurnCompleteNotificationPayload = {
+  kind?: 'browser-assistance'
   threadId?: string
   title?: string
   body?: string
@@ -271,7 +272,7 @@ async function showTurnCompleteNotification(
   payload: TurnCompleteNotificationPayload
 ): Promise<{ ok: true; shown: boolean; reason?: string } | { ok: false; message: string }> {
   const settings = await store.load()
-  if (!settings.notifications.turnComplete) {
+  if (!settings.notifications.turnComplete && payload.kind !== 'browser-assistance') {
     return { ok: true, shown: false, reason: 'disabled' }
   }
   if (!Notification.isSupported()) {
@@ -289,6 +290,7 @@ async function showTurnCompleteNotification(
     })
     notification.on('click', () => {
       revealMainWindow()
+      if (payload.kind === 'browser-assistance' && payload.threadId) mainWindow?.webContents.send('notification:browser-assistance-click', payload.threadId)
     })
     notification.show()
     return { ok: true, shown: true }

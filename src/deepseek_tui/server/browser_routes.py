@@ -241,3 +241,30 @@ async def export_evidence(request: Request, thread_id: str) -> dict[str, str]:
         return {"path": str(path)}
     except (ValueError, OSError) as exc:
         raise HTTPException(409, str(exc)) from exc
+
+
+assistance_router = APIRouter(prefix="/v1/browser-assistance", tags=["browser"])
+
+
+@assistance_router.get("")
+async def pending_assistance(request: Request) -> dict[str, Any]:
+    return {"items": request.app.state.thread_manager.pending_browser_assistance()}
+
+
+class AssistanceResponse(BaseModel):
+    request_id: str = Field(min_length=1, max_length=100)
+    choice: Literal["takeover", "continue", "ignore", "information"]
+    text: str = Field(default="", max_length=8000)
+
+
+@router.post("/assistance")
+async def respond_assistance(
+    request: Request, thread_id: str, body: AssistanceResponse,
+) -> dict[str, Any]:
+    service(request, thread_id)
+    try:
+        return await request.app.state.thread_manager.respond_browser_assistance(
+            thread_id, body.request_id, body.choice, body.text,
+        )
+    except (ValueError, RuntimeError, TimeoutError, ConnectionError) as exc:
+        raise HTTPException(409, str(exc)) from exc

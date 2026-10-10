@@ -1,3 +1,5 @@
+import { DEFAULT_MONO_FONT_STACK, DEFAULT_UI_FONT_STACK } from '@shared/appearance'
+
 export type ThemePreference = 'system' | 'light' | 'dark'
 export type UiFontScale = 'small' | 'medium' | 'large'
 export type UiFontFamily = 'inter-noto' | 'system-native'
@@ -53,19 +55,13 @@ export const UI_FONT_CHANGED_EVENT = 'deepseekgui:ui-font-changed'
 
 export function readUiFontFamily(): string {
   const family = getComputedStyle(document.documentElement).getPropertyValue('--font-ui').trim()
-  return (
-    family ||
-    "-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', 'Noto Sans SC', sans-serif"
-  )
+  return family || DEFAULT_UI_FONT_STACK
 }
 
 /** Terminal/xterm must stay monospace — proportional UI fonts break column layout and FitAddon. */
 export function readTerminalFontFamily(): string {
   const family = getComputedStyle(document.documentElement).getPropertyValue('--font-terminal').trim()
-  return (
-    family ||
-    "'SF Mono', SFMono-Regular, ui-monospace, Menlo, Monaco, Consolas, 'Liberation Mono', monospace"
-  )
+  return family || DEFAULT_MONO_FONT_STACK
 }
 
 export function applyUiFontFamily(family: UiFontFamily): void {

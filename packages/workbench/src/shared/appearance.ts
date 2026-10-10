@@ -92,6 +92,8 @@ export const DEFAULT_CHAT_FONT_SIZE_PX = 15
 export const MIN_TERMINAL_FONT_SIZE_PX = 10
 export const MAX_TERMINAL_FONT_SIZE_PX = 22
 export const DEFAULT_TERMINAL_FONT_SIZE_PX = 13
+export const DEFAULT_UI_FONT_STACK = "'Inter', 'Noto Sans SC', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif"
+export const DEFAULT_MONO_FONT_STACK = "'JetBrains Mono', 'Noto Sans SC', ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace"
 
 export const DEFAULT_THEME_PRESET_ID = 'default'
 export const CUSTOM_THEME_PRESET_ID = 'custom'
@@ -186,7 +188,7 @@ function seed(
 
 /**
  * Preset catalog ported from Synara's theme seed catalog (MIT). Values are the
- * normalized Codex theme seeds; a few presets carry font / opacity opinions.
+ * normalized Codex theme seeds; a few presets carry translucency opinions.
  */
 export const APPEARANCE_THEME_PRESETS: readonly AppearanceThemePreset[] = [
   {
@@ -195,6 +197,126 @@ export const APPEARANCE_THEME_PRESETS: readonly AppearanceThemePreset[] = [
     seeds: {
       light: { ...WORKBENCH_CHROME_SEEDS.light },
       dark: { ...WORKBENCH_CHROME_SEEDS.dark }
+    }
+  },
+  {
+    id: 'absolutely',
+    label: 'Absolutely',
+    seeds: {
+      light: seed('light', '#cc7d5e', '#f9f9f7', '#2d2d2b', {
+        diffAdded: '#00c853',
+        diffRemoved: '#ff5f38',
+        skill: '#cc7d5e'
+      }),
+      dark: seed('dark', '#cc7d5e', '#2d2d2b', '#f9f9f7', {
+        diffAdded: '#00c853',
+        diffRemoved: '#ff5f38',
+        skill: '#cc7d5e'
+      })
+    }
+  },
+  {
+    id: 'ayu',
+    label: 'Ayu',
+    seeds: {
+      dark: seed('dark', '#e6b450', '#0b0e14', '#bfbdb6', {
+        diffAdded: '#7fd962',
+        diffRemoved: '#ea6c73',
+        skill: '#cda1fa'
+      })
+    }
+  },
+  {
+    id: 'synara',
+    label: 'Synara',
+    seeds: {
+      light: seed('light', '#526fff', '#fcfcfc', '#262626', {
+        diffAdded: '#00a240',
+        diffRemoved: '#ba2623',
+        skill: '#924ff7'
+      }),
+      dark: seed('dark', '#6073cc', '#0e0e0e', '#f5f5f5', {
+        diffAdded: '#40c977',
+        diffRemoved: '#fa423e',
+        skill: '#ad7bf9'
+      })
+    }
+  },
+  {
+    id: 'lobster',
+    label: 'Lobster',
+    seeds: {
+      dark: seed('dark', '#ff5c5c', '#111827', '#e4e4e7', {
+        diffAdded: '#22c55e',
+        diffRemoved: '#ff5c5c',
+        skill: '#3b82f6'
+      })
+    }
+  },
+  {
+    id: 'material',
+    label: 'Material',
+    seeds: {
+      dark: seed('dark', '#80cbc4', '#212121', '#eeffff', {
+        diffAdded: '#c3e88d',
+        diffRemoved: '#f07178',
+        skill: '#c792ea'
+      })
+    }
+  },
+  {
+    id: 'night-owl',
+    label: 'Night Owl',
+    seeds: {
+      dark: seed('dark', '#44596b', '#011627', '#d6deeb', {
+        diffAdded: '#c5e478',
+        diffRemoved: '#ef5350',
+        skill: '#c792ea'
+      })
+    }
+  },
+  {
+    id: 'oscurange',
+    label: 'Oscurange',
+    seeds: {
+      dark: seed('dark', '#f9b98c', '#0b0b0f', '#e6e6e6', {
+        diffAdded: '#40c977',
+        diffRemoved: '#fa423e',
+        skill: '#479ffa'
+      })
+    }
+  },
+  {
+    id: 'proof',
+    label: 'Proof',
+    seeds: {
+      light: seed('light', '#3d755d', '#f5f3ed', '#2f312d', {
+        diffAdded: '#3d755d',
+        diffRemoved: '#ba2623',
+        skill: '#5f6ac2'
+      })
+    }
+  },
+  {
+    id: 'sentry',
+    label: 'Sentry',
+    seeds: {
+      dark: seed('dark', '#7055f6', '#2d2935', '#e6dff9', {
+        diffAdded: '#8ee6d7',
+        diffRemoved: '#fa423e',
+        skill: '#7055f6'
+      })
+    }
+  },
+  {
+    id: 'temple',
+    label: 'Temple',
+    seeds: {
+      dark: seed('dark', '#e4f222', '#02120c', '#c7e6da', {
+        diffAdded: '#40c977',
+        diffRemoved: '#fa423e',
+        skill: '#e4f222'
+      })
     }
   },
   {
@@ -298,7 +420,7 @@ export const APPEARANCE_THEME_PRESETS: readonly AppearanceThemePreset[] = [
         '#fcfcfd',
         '#1b1b1b',
         { diffAdded: '#52a450', diffRemoved: '#c94446', skill: '#8160d8' },
-        { uiFont: 'Inter', translucent: false }
+        { translucent: false }
       ),
       dark: seed(
         'dark',
@@ -306,7 +428,7 @@ export const APPEARANCE_THEME_PRESETS: readonly AppearanceThemePreset[] = [
         '#0f0f11',
         '#e3e4e6',
         { diffAdded: '#69c967', diffRemoved: '#ff7e78', skill: '#c2a1ff' },
-        { uiFont: 'Inter', translucent: false }
+        { translucent: false }
       )
     }
   },
@@ -321,7 +443,6 @@ export const APPEARANCE_THEME_PRESETS: readonly AppearanceThemePreset[] = [
         '#b8ffca',
         { diffAdded: '#1eff5a', diffRemoved: '#fa423e', skill: '#1eff5a' },
         {
-          uiFont: 'ui-monospace, "SFMono-Regular", "SF Mono", Menlo, Consolas, "Liberation Mono", monospace',
           translucent: false
         }
       )
@@ -397,7 +518,7 @@ export const APPEARANCE_THEME_PRESETS: readonly AppearanceThemePreset[] = [
         '#ffffff',
         '#030303',
         { diffAdded: '#006b4f', diffRemoved: '#b12424', skill: '#9a1b6e' },
-        { uiFont: 'Inter', codeFont: '"JetBrains Mono"', translucent: false }
+        { translucent: false }
       ),
       dark: seed(
         'dark',
@@ -405,7 +526,7 @@ export const APPEARANCE_THEME_PRESETS: readonly AppearanceThemePreset[] = [
         '#101010',
         '#fefefe',
         { diffAdded: '#59d499', diffRemoved: '#ff6363', skill: '#cf2f98' },
-        { uiFont: 'Inter', codeFont: '"JetBrains Mono"', translucent: false }
+        { translucent: false }
       )
     }
   },
@@ -464,8 +585,6 @@ export const APPEARANCE_THEME_PRESETS: readonly AppearanceThemePreset[] = [
         { diffAdded: '#28a948', diffRemoved: '#eb001d', skill: '#a100f8' },
         {
           contrast: 40,
-          uiFont: 'Geist, Inter',
-          codeFont: '"Geist Mono", ui-monospace, "SFMono-Regular"',
           translucent: false
         }
       ),
@@ -477,8 +596,6 @@ export const APPEARANCE_THEME_PRESETS: readonly AppearanceThemePreset[] = [
         { diffAdded: '#00ad3a', diffRemoved: '#f13342', skill: '#9540d5' },
         {
           contrast: 50,
-          uiFont: 'Geist, Inter',
-          codeFont: '"Geist Mono", ui-monospace, "SFMono-Regular"',
           translucent: false
         }
       )
@@ -511,22 +628,21 @@ export function getThemePresetSeed(presetId: string, variant: ThemeVariant): Chr
 
 type ThemePresetApplyMetadata = {
   translucent?: true
-  uiFont?: true
-  codeFont?: true
 }
 
 /**
  * The catalog picker is a theme seed, not a full reset: core colors AND
  * contrast always follow the selected seed (contrast is calibrated per preset
  * — keeping a stale value applied an invisible "filter" over every preset);
- * translucency/fonts only change for presets that explicitly carry an opinion.
+ * translucency only changes for presets that explicitly carry an opinion.
+ * Font choices are independent of color presets.
  */
 const THEME_PRESET_APPLY_METADATA: Partial<Record<string, ThemePresetApplyMetadata>> = {
-  linear: { uiFont: true, translucent: true },
-  matrix: { uiFont: true, codeFont: true, translucent: true },
-  notion: { uiFont: true, codeFont: true, translucent: true },
-  raycast: { uiFont: true, codeFont: true, translucent: true },
-  vercel: { uiFont: true, codeFont: true, translucent: true }
+  linear: { translucent: true },
+  matrix: { translucent: true },
+  notion: { translucent: true },
+  raycast: { translucent: true },
+  vercel: { translucent: true }
 }
 
 export function applyThemePreset(
@@ -546,9 +662,7 @@ export function applyThemePreset(
       ink: preset.ink,
       semanticColors: { ...preset.semanticColors },
       contrast: preset.contrast,
-      ...(metadata?.translucent ? { translucent: preset.translucent } : {}),
-      ...(metadata?.uiFont ? { uiFont: preset.uiFont } : {}),
-      ...(metadata?.codeFont ? { codeFont: preset.codeFont } : {})
+      ...(metadata?.translucent ? { translucent: preset.translucent } : {})
     },
     variant
   )

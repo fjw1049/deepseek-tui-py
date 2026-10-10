@@ -12,6 +12,8 @@
 
 import {
   CONTRAST_BASELINE,
+  DEFAULT_MONO_FONT_STACK,
+  DEFAULT_UI_FONT_STACK,
   DEFAULT_WINDOW_TRANSLUCENCY,
   pickReadableTextColor,
   type AppearanceSettingsV1,
@@ -83,6 +85,7 @@ export function buildChromeThemeCssVars(
 ): Record<string, string> {
   const light = variant === 'light'
   const c = normalizeContrastStrength(theme.contrast, variant)
+  const controlContrast = theme.contrast / 100
   const surface = parseHex(theme.surface)
   const ink = parseHex(theme.ink)
   const accent = parseHex(theme.accent)
@@ -99,6 +102,11 @@ export function buildChromeThemeCssVars(
   const panel = mixRgb(surface, anchor, PANEL_BASE_ALPHA[variant] + c * PANEL_CONTRAST_STEP[variant])
   const elevated1 = mixRgb(surface, anchor, light ? 0.08 + c * 0.08 : 0.022 + c * 0.04)
   const elevated2 = mixRgb(surface, anchor, light ? 0.16 + c * 0.12 : 0.042 + c * 0.06)
+  // Controls need their own ink tint: mixing a white light surface toward
+  // white collapsed every level, and fixed white dark overlays ignored presets.
+  const control = mixRgb(surface, ink, light ? 0.018 + controlContrast * 0.042 : 0.04 + controlContrast * 0.06)
+  const card = mixRgb(surface, ink, light ? 0.008 + controlContrast * 0.022 : 0.025 + controlContrast * 0.055)
+  const hover = rgba(ink, light ? 0.03 + controlContrast * 0.05 : 0.04 + controlContrast * 0.08)
 
   // Light glass starts near the theme surface, not the ink-darkened opaque
   // board. A curved 0–10% tint keeps the default bright but gives high contrast
@@ -155,7 +163,6 @@ export function buildChromeThemeCssVars(
   // wallpaper color in both modes. Contrast changes tint, never this opacity.
   const glassBg = glass ? rgba(sidebarBg, translucency.opacity / 100) : hex(sidebarBg)
   const glassBgStrong = glass ? rgba(sidebarBg, light ? 0.86 : 0.84) : hex(elevated1)
-  const glassBorder = rgba(ink, light ? 0.07 : 0.05)
   const glassHighlight = 'transparent'
 
   const vars: Record<string, string> = {
@@ -168,18 +175,21 @@ export function buildChromeThemeCssVars(
     // Dark inputs/selects read as raised controls (Synara controlBackground);
     // the old rgba(surface, .92) fill rendered them darker than everything
     // around them ("input boxes so black").
-    '--surface-1': light ? rgba(surface, 0.92) : hex(elevated1),
+    '--surface-1': hex(control),
     '--surface-2': hex(elevated1),
     '--surface-3': hex(elevated2),
     '--border-soft': borderSoft,
     '--border-strong': borderStrong,
+    '--ds-border-seam': rgba(ink, light ? 0.1 + controlContrast * 0.08 : 0.1 + controlContrast * 0.1),
     '--text-primary': theme.ink,
     '--text-secondary': textSecondary,
     '--text-tertiary': textTertiary,
     '--text-placeholder': rgba(ink, 0.60 + c * 0.08),
+    '--ds-icon-muted': rgba(ink, 0.5 + controlContrast * 0.15),
+    '--ds-process-meta': rgba(ink, 0.58 + controlContrast * 0.08),
 
-    '--ds-surface-subtle': hex(mixRgb(canvasBg, anchor, light ? 0.09 : 0.04 + c * 0.04)),
-    '--ds-surface-hover': rgba(ink, light ? 0.05 : 0.1),
+    '--ds-surface-subtle': hex(control),
+    '--ds-surface-hover': hover,
     '--ds-border-muted': borderMuted,
     '--ds-bubble-user': rgba(ink, light ? 0.06 : 0.08),
     '--ds-bubble-user-fg': theme.ink,
@@ -195,12 +205,20 @@ export function buildChromeThemeCssVars(
     '--ds-diff-added-soft': rgba(diffAdded, light ? 0.1 : 0.16),
     '--ds-diff-removed': theme.semanticColors.diffRemoved,
     '--ds-diff-removed-soft': rgba(diffRemoved, light ? 0.1 : 0.16),
+    '--ds-diff-hunk': hex(accentDisplay),
     '--ds-skill': theme.semanticColors.skill,
     '--ds-skill-soft': rgba(skill, light ? 0.12 : 0.16),
     '--ds-success-soft': rgba(diffAdded, light ? 0.14 : 0.18),
+    '--ds-warning': light ? '#9a6700' : '#f5b44a',
+    '--ds-warning-soft': light ? 'rgba(154, 103, 0, 0.12)' : 'rgba(245, 180, 74, 0.18)',
     '--ds-danger-soft': rgba(diffRemoved, light ? 0.12 : 0.18),
+    '--ds-terminal-red-bright': hex(mixRgb(diffRemoved, light ? ink : WHITE, 0.2)),
+    '--ds-terminal-green-bright': hex(mixRgb(diffAdded, light ? ink : WHITE, 0.2)),
+    '--ds-terminal-blue-bright': hex(mixRgb(accentDisplay, light ? ink : WHITE, 0.2)),
+    '--ds-terminal-magenta-bright': hex(mixRgb(skill, light ? ink : WHITE, 0.2)),
 
     '--ds-stage-gradient': hex(canvasBg),
+    '--ds-workbench-chrome': hex(mixRgb(canvasBg, ink, 0.015 + controlContrast * 0.025)),
     '--ds-topbar-bg': 'transparent',
     '--ds-sidebar-gradient': `linear-gradient(180deg, ${hex(sidebarBg)} 0%, ${hex(sidebarBg)} 100%)`,
     '--ds-sidebar-border': rgba(ink, light ? 0.06 : 0.05),
@@ -230,10 +248,10 @@ export function buildChromeThemeCssVars(
 
     '--glass-bg': glassBg,
     '--glass-bg-strong': glassBgStrong,
-    '--glass-border': glassBorder,
+    '--glass-border': borderSoft,
     '--glass-highlight': glassHighlight,
-    '--glass-card': glass ? rgba(light ? panel : WHITE, light ? 0.6 : 0.05) : hex(elevated1),
-    '--glass-card-hover': glass ? rgba(light ? panel : WHITE, light ? 0.9 : 0.08) : hex(elevated2),
+    '--glass-card': glass ? rgba(card, light ? 0.6 : 0.8) : hex(card),
+    '--glass-card-hover': glass ? rgba(control, 0.9) : hex(control),
     '--glass-blur': glass ? '8px' : '0px',
 
     // The native window material is macOS-only; CSS keeps Windows/Linux on
@@ -249,10 +267,10 @@ export function buildChromeThemeCssVars(
 
     '--ds-material-page': hex(canvasBg),
     '--ds-material-panel': hex(canvasBg),
-    '--ds-material-card': light ? hex(surface) : rgba(WHITE, 0.04),
-    '--ds-material-card-hover': light ? rgba(ink, 0.02) : rgba(WHITE, 0.07),
-    '--ds-material-control': light ? hex(surface) : rgba(WHITE, 0.05),
-    '--ds-material-stroke': rgba(ink, light ? 0.05 : 0.045),
+    '--ds-material-card': hex(card),
+    '--ds-material-card-hover': hover,
+    '--ds-material-control': hex(control),
+    '--ds-material-stroke': borderMuted,
 
     '--app-wallpaper': hex(surfaceUnder)
   }
@@ -275,12 +293,12 @@ export function buildChromeThemeCssVars(
 
 function withUiFallback(family: string): string {
   const generic = /(sans-serif|serif|monospace|system-ui)\s*$/i.test(family)
-  return generic ? family : `${family}, 'PingFang SC', 'Microsoft YaHei', 'Inter', 'Noto Sans SC', sans-serif`
+  return generic ? family : `${family}, ${DEFAULT_UI_FONT_STACK}`
 }
 
 function withMonoFallback(family: string): string {
   const generic = /monospace\s*$/i.test(family)
-  return generic ? family : `${family}, 'SF Mono', 'JetBrains Mono', monospace`
+  return generic ? family : `${family}, ${DEFAULT_MONO_FONT_STACK}`
 }
 
 function cssBlock(selector: string, vars: Record<string, string>): string {

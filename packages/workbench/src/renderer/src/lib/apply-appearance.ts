@@ -11,6 +11,7 @@
  */
 
 import {
+  DEFAULT_MONO_FONT_STACK,
   defaultAppearanceSettings,
   type AppearanceSettingsV1,
   type EmptyHomeLayout,
@@ -121,7 +122,7 @@ export function applyAppearance(appearance: AppearanceSettingsV1): void {
   if (terminalFamily) {
     const stack = /monospace\s*$/i.test(terminalFamily)
       ? terminalFamily
-      : `${terminalFamily}, 'SF Mono', SFMono-Regular, ui-monospace, Menlo, Monaco, Consolas, 'Liberation Mono', monospace`
+      : `${terminalFamily}, ${DEFAULT_MONO_FONT_STACK}`
     root.style.setProperty('--font-terminal', stack)
   } else {
     root.style.removeProperty('--font-terminal')

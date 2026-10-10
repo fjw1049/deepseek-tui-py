@@ -268,3 +268,119 @@ async def test_real_browser_takeover_observes_manual_change_before_resuming(
         await engine.shutdown_session()
         server.close()
         await server.wait_closed()
+
+
+async def test_browser_assistance_routes_pause_and_resume_original_task(
+    authed_client,
+    authed_runtime_app,
+    tmp_path,
+):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from deepseek_tui.browser.service import BrowserRun
+    from deepseek_tui.engine.handle import EngineHandle
+
+    client, _ = authed_client
+    app, _ = authed_runtime_app
+    manager = app.state.thread_manager
+    thread_id = (await client.post("/v1/threads", json={"title": "Assistance"})).json()["id"]
+    handle = EngineHandle()
+    handle._mark_turn_active()
+    manager._active[thread_id] = SimpleNamespace(
+        handle=handle, active_turn=SimpleNamespace(turn_id="original")
+    )
+    run = BrowserRun(
+        thread_id,
+        tmp_path / "page",
+        session=SimpleNamespace(
+            dom_tree=AsyncMock(
+                return_value=SimpleNamespace(success=True, content="Public manual", error=None)
+            ),
+            _internal=SimpleNamespace(client=SimpleNamespace(send=AsyncMock(return_value={}))),
+        ),
+    )
+    manager.browser_service.runs[thread_id] = run
+    base = f"/v1/threads/{thread_id}/browser/assistance"
+    try:
+        assert (
+            await client.get("/v1/browser-assistance", headers={"Authorization": ""})
+        ).status_code == 401
+        await manager.request_browser_assistance(thread_id, "Login needed")
+        pending = (await client.get("/v1/browser-assistance")).json()["items"]
+        request_id = pending[0]["id"]
+        assert pending[0]["thread_id"] == thread_id and handle.pause.paused
+        body = {"request_id": request_id, "choice": "takeover"}
+        assert (
+            await client.post(base, json=body, headers={"Authorization": ""})
+        ).status_code == 401
+        response = await client.post(base, json=body)
+        assert response.json()["assistance"]["status"] == "human"
+        assert response.json()["owner"] == "user"
+        body["choice"] = "information"
+        body["text"] = "Use the public manual"
+        response = await client.post(base, json=body)
+        assert response.status_code == 200 and not response.json()["task_paused"]
+        assert "Use the public manual" in handle.resume_context
+        assert (await client.get("/v1/browser-assistance")).json()["items"] == []
+        assert (await client.post(base, json=body)).status_code == 409
+    finally:
+        manager._active.pop(thread_id, None)
+        manager.browser_service.runs.pop(thread_id, None)
+
+
+async def test_model_assistance_call_reaches_ui_and_returns_evidence(
+    authed_client, authed_runtime_app, tmp_path,
+):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from deepseek_tui.browser.service import BrowserAction, BrowserRun
+    from deepseek_tui.engine.handle import EngineHandle
+
+    client, _ = authed_client
+    app, _ = authed_runtime_app
+    manager = app.state.thread_manager
+    thread_id = (await client.post("/v1/threads", json={"title": "Automatic help"})).json()["id"]
+    handle = EngineHandle()
+    handle._mark_turn_active()
+    manager._active[thread_id] = SimpleNamespace(
+        handle=handle, active_turn=SimpleNamespace(turn_id="original"),
+    )
+    run = BrowserRun(thread_id, tmp_path / "page", session=SimpleNamespace(
+        dom_tree=AsyncMock(return_value=SimpleNamespace(success=True, content="Verify", error=None)),
+        _internal=SimpleNamespace(client=SimpleNamespace(send=AsyncMock())),
+    ), url="https://www.google.com/sorry/index")
+    run.session._internal.client.send.side_effect = lambda *args, **kwargs: {
+        "frameTree": {"frame": {"url": run.url}},
+    }
+    manager.browser_service.runs[thread_id] = run
+    try:
+        await manager.browser_service.action(thread_id, BrowserAction(action="status"))
+        assert (await client.get("/v1/browser-assistance")).json()["items"] == []
+        from deepseek_tui.tools.browser import BrowserUseTool
+
+        result = await BrowserUseTool().execute(
+            {"action": "request_assistance", "reason": "Google requires human verification"},
+            SimpleNamespace(metadata={
+                "browser_service": manager.browser_service,
+                "runtime_thread_id": thread_id,
+                "request_browser_assistance": manager.request_browser_assistance,
+            }),
+        )
+        assert result.success
+        items = (await client.get("/v1/browser-assistance")).json()["items"]
+        assert len(items) == 1 and handle.pause.paused
+        assert "Google" in items[0]["reason"]
+        base = f"/v1/threads/{thread_id}/browser/assistance"
+        body = {"request_id": items[0]["id"], "choice": "takeover"}
+        assert (await client.post(base, json=body)).status_code == 200
+        body["choice"] = "continue"
+        assert (await client.post(base, json=body)).status_code == 200
+        assert not handle.pause.paused
+        assert "NOT guaranteed" in handle.resume_context
+        assert "Verify" in handle.resume_context
+        assert (await client.get("/v1/browser-assistance")).json()["items"] == []
+    finally:
+        manager._active.pop(thread_id, None)
+        manager.browser_service.runs.pop(thread_id, None)

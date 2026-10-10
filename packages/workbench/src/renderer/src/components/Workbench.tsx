@@ -31,6 +31,7 @@ import { createPortal, flushSync } from 'react-dom'
 import { useTranslation } from 'react-i18next'
 import { useShallow } from 'zustand/react/shallow'
 import type { ChatBlock } from '../agent/types'
+import { BrowserAssistance } from './BrowserAssistance'
 import { useChatStore } from '../store/chat-store'
 import { extractLatestTurnDevPreviewUrls } from '../lib/dev-preview-detection'
 import {
@@ -1652,6 +1653,7 @@ export function Workbench(): ReactElement {
     >
       <div className="ds-window-drag-strip" aria-hidden />
       <SharedLinkReceiver />
+      <BrowserAssistance visible={sharedConversationVisible} enabled={runtimeConnection === 'ready'} />
       {/* Global feedback is centered on the window, independent of sidebar widths. */}
       <GlobalFeedbackViewport>
         {runtimeConnection !== 'ready' && connectionError ? (

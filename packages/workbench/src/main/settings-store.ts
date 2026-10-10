@@ -240,7 +240,7 @@ const defaultSettings = (): AppSettingsV1 => ({
   locale: 'zh',
   theme: 'dark',
   uiFontScale: 'medium',
-  uiFontFamily: 'system-native',
+  uiFontFamily: 'inter-noto',
   iconAnimation: false,
   agentProvider: 'deepseek-runtime',
   deepseek: {

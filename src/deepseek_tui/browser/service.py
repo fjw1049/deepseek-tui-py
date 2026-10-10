@@ -44,6 +44,7 @@ class BrowserAction(BaseModel):
     model_config = ConfigDict(extra="forbid")
     action: Literal[
         "status",
+        "request_assistance",
         "tabs",
         "new_tab",
         "switch_tab",
@@ -69,6 +70,15 @@ class BrowserAction(BaseModel):
         "video_start",
         "video_stop",
     ]
+    reason: str = Field(
+        default="",
+        max_length=1000,
+        description=(
+            "Required for request_assistance: explain in the user's language what currently "
+            "blocks their task and the specific action, information or decision needed. "
+            "Use observed evidence; never include passwords or one-time codes."
+        ),
+    )
     tab_id: str = Field(default="", max_length=200)
     level: Literal["interactive", "full"] = "interactive"
     url_contains: str = Field(default="", max_length=4096)
@@ -86,6 +96,8 @@ class BrowserAction(BaseModel):
 
     @model_validator(mode="after")
     def validate_action(self) -> BrowserAction:
+        if self.action == "request_assistance" and not self.reason.strip():
+            raise ValueError("request_assistance requires a reason explaining the task blocker")
         if self.action == "open" or (self.action == "new_tab" and self.url):
             parsed = urlsplit(self.url)
             if parsed.scheme not in {"http", "https"} or not parsed.hostname:
@@ -141,6 +153,7 @@ class BrowserRun:
     height: int = 760
     transferring: bool = False
     tabs: list[dict[str, Any]] = field(default_factory=list)
+    assistance: dict[str, Any] | None = None
 
 
 class BrowserService:
@@ -293,6 +306,7 @@ class BrowserService:
             "owner": run.owner,
             "generation": run.generation,
             "transferring": run.transferring,
+            "assistance": run.assistance,
             "viewport": {"width": run.width, "height": run.height},
             "tabs": run.tabs,
             "recording": run.recording,
@@ -537,8 +551,15 @@ class BrowserService:
         }
 
     async def action(
-        self, thread_id: str, action: BrowserAction, *, actor: str = "agent"
+        self,
+        thread_id: str,
+        action: BrowserAction,
+        *,
+        actor: str = "agent",
+        check_assistance: bool = True,
     ) -> dict[str, Any]:
+        if action.action == "request_assistance":
+            raise ValueError("Request assistance through the active agent task")
         run = self.runs.get(thread_id)
         if action.action == "status":
             if run is None or run.session is None:
@@ -546,19 +567,25 @@ class BrowserService:
             else:
                 async with run.lock:
                     state = await self.page_state(run)
+                if run.assistance:
+                    state["assistance"] = run.assistance
             return {"success": True, "content": state, "artifact": None}
         if run is None or run.session is None:
             if action.action not in {"open", "new_tab"}:
                 raise ValueError("Open a browser page first")
             run = await self.ensure(thread_id)
+        if actor == "agent" and check_assistance and run.assistance is not None:
+            raise ValueError("Waiting for browser assistance; do not repeat actions")
         generation = run.generation
         async with run.lock:
             if run.owner != actor or run.transferring or run.generation != generation:
                 raise ValueError("Browser control changed; queued action was discarded")
+            if actor == "agent" and check_assistance and run.assistance is not None:
+                raise ValueError("Waiting for browser assistance; do not repeat actions")
             if not run.session:
                 raise ValueError("Browser session has closed")
             try:
-                return await asyncio.wait_for(self._action(run, action), timeout=35)
+                result = await asyncio.wait_for(self._action(run, action), timeout=35)
             except (Exception, asyncio.CancelledError) as exc:
                 run.log.append({"action": action.action, "success": False})
                 run.log[:] = run.log[-80:]
@@ -569,6 +596,7 @@ class BrowserService:
                 )
                 self._persist(run)
                 raise
+        return result
 
     async def _action(self, run: BrowserRun, a: BrowserAction) -> dict[str, Any]:
         if a.action == "record_start" and run.recording:

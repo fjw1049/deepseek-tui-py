@@ -171,7 +171,7 @@ describe('theme presets', () => {
       // Contrast follows the seed (calibrated per preset), not the stale value.
       contrast: 60,
       translucent: false,
-      uiFont: 'Inter',
+      uiFont: 'Current UI',
       codeFont: '"Current Mono"'
     })
 
@@ -180,9 +180,20 @@ describe('theme presets', () => {
       presetId: 'github',
       contrast: 60,
       translucent: false,
-      uiFont: 'Inter',
+      uiFont: 'Current UI',
       codeFont: '"Current Mono"'
     })
+  })
+
+  it('keeps default and custom typography when switching any color preset', () => {
+    for (const variant of ['light', 'dark'] as const) {
+      for (const preset of listThemePresetsForVariant(variant)) {
+        for (const fonts of [{ uiFont: '', codeFont: '' }, { uiFont: 'Custom UI', codeFont: 'Custom Mono' }]) {
+          const current = { ...DEFAULT_CHROME_THEMES[variant], ...fonts }
+          expect(applyThemePreset(current, preset.id, variant), preset.id).toMatchObject(fonts)
+        }
+      }
+    }
   })
 })
 
@@ -332,7 +343,7 @@ describe('appearance-derive', () => {
   })
 
   it('maps theme pack fonts to UI, mono, and chat-code tokens', () => {
-    const theme = { ...getThemePresetSeed('raycast', 'dark')! }
+    const theme = { ...getThemePresetSeed('raycast', 'dark')!, uiFont: 'Inter', codeFont: '"JetBrains Mono"' }
     const vars = buildChromeThemeCssVars(theme, 'dark')
     expect(vars['--font-ui']).toContain('Inter')
     expect(vars['--font-mono']).toContain('JetBrains Mono')
@@ -341,6 +352,15 @@ describe('appearance-derive', () => {
     const bare = buildChromeThemeCssVars(getThemePresetSeed('dracula', 'dark')!, 'dark')
     expect(bare['--font-ui']).toBeUndefined()
     expect(bare['--ds-chat-code-font']).toBeUndefined()
+  })
+
+  it('falls back to bundled UI and code fonts before platform fonts', () => {
+    const theme = { ...DEFAULT_CHROME_THEMES.dark, uiFont: 'Unavailable UI', codeFont: 'Unavailable Mono' }
+    const vars = buildChromeThemeCssVars(theme, 'dark')
+    expect(vars['--font-ui'].indexOf("'Inter'")).toBeLessThan(vars['--font-ui'].indexOf('-apple-system'))
+    expect(vars['--font-ui'].indexOf("'Noto Sans SC'")).toBeLessThan(vars['--font-ui'].indexOf("'PingFang SC'"))
+    expect(vars['--font-mono'].indexOf("'JetBrains Mono'")).toBeLessThan(vars['--font-mono'].indexOf('ui-monospace'))
+    expect(vars['--ds-chat-code-font']).toBe(vars['--font-mono'])
   })
 
   it('opaque themes disable the glass blur', () => {

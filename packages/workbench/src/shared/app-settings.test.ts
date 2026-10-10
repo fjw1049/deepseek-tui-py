@@ -259,11 +259,11 @@ describe('unwrapAutomationComposerPromptForDisplay', () => {
 })
 
 describe('normalizeUiFontFamily', () => {
-  it('always resolves to system-native (selector removed)', () => {
-    expect(normalizeUiFontFamily(undefined)).toBe('system-native')
-    expect(normalizeUiFontFamily('invalid')).toBe('system-native')
-    expect(normalizeUiFontFamily('inter-noto')).toBe('system-native')
-    expect(normalizeUiFontFamily('system-native')).toBe('system-native')
+  it('uses bundled Inter/Noto and migrates the retired system-native choice', () => {
+    expect(normalizeUiFontFamily(undefined)).toBe('inter-noto')
+    expect(normalizeUiFontFamily('invalid')).toBe('inter-noto')
+    expect(normalizeUiFontFamily('inter-noto')).toBe('inter-noto')
+    expect(normalizeUiFontFamily('system-native')).toBe('inter-noto')
   })
 })
 

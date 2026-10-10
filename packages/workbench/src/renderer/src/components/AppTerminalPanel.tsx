@@ -44,6 +44,7 @@ function readTerminalTheme(): ITheme {
   const success = styles.getPropertyValue('--ds-success').trim() || (dark ? '#40c977' : '#128a4a')
   const danger = styles.getPropertyValue('--ds-danger').trim() || (dark ? '#fa423e' : '#c92a2a')
   const skill = styles.getPropertyValue('--ds-skill').trim() || (dark ? '#ad7bf9' : '#7c3aed')
+  const warning = styles.getPropertyValue('--ds-warning').trim() || (dark ? '#f5b44a' : '#9a6700')
   const canvasBg =
     styles.getPropertyValue('--ds-bg-canvas').trim() || (dark ? '#181818' : '#ffffff')
   const foreground = styles.getPropertyValue('--ds-text').trim() || (dark ? '#ffffff' : '#222222')
@@ -51,21 +52,21 @@ function readTerminalTheme(): ITheme {
     background: canvasBg,
     foreground,
     cursor: foreground,
-    selectionBackground: dark ? 'rgba(51,156,255,0.28)' : 'rgba(0,136,255,0.2)',
+    selectionBackground: styles.getPropertyValue('--ds-selection').trim() || (dark ? 'rgba(51,156,255,0.28)' : 'rgba(0,136,255,0.2)'),
     black: dark ? '#242424' : '#374151',
     red: danger,
     green: success,
-    yellow: '#f59e0b',
+    yellow: warning,
     blue: accent,
     magenta: skill,
     cyan: '#06b6d4',
     white: dark ? '#f4f4f4' : '#111827',
     brightBlack: dark ? '#7a7a7a' : '#6b7280',
-    brightRed: dark ? '#ff7d79' : '#f87171',
-    brightGreen: dark ? '#72df9b' : '#4ade80',
-    brightYellow: '#fbbf24',
-    brightBlue: dark ? '#7bbcff' : '#60a5fa',
-    brightMagenta: dark ? '#c49bff' : '#e879f9',
+    brightRed: styles.getPropertyValue('--ds-terminal-red-bright').trim() || danger,
+    brightGreen: styles.getPropertyValue('--ds-terminal-green-bright').trim() || success,
+    brightYellow: warning,
+    brightBlue: styles.getPropertyValue('--ds-terminal-blue-bright').trim() || accent,
+    brightMagenta: styles.getPropertyValue('--ds-terminal-magenta-bright').trim() || skill,
     brightCyan: '#22d3ee',
     brightWhite: dark ? '#ffffff' : '#030712'
   }

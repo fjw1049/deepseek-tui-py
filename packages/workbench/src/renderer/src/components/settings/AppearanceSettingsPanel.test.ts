@@ -87,7 +87,7 @@ describe('AppearanceSettingsPanel', () => {
     const form = {
       theme: 'light',
       uiFontScale: 'medium',
-      uiFontFamily: 'system-native',
+      uiFontFamily: 'inter-noto',
       appearance: defaultAppearanceSettings()
     } as AppSettingsV1
 
@@ -107,7 +107,7 @@ describe('AppearanceSettingsPanel', () => {
     expect(onPatch).toHaveBeenCalledWith({
       theme: 'dark',
       uiFontScale: 'medium',
-      uiFontFamily: 'system-native',
+      uiFontFamily: 'inter-noto',
       appearance: defaultAppearanceSettings()
     })
   })

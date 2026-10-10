@@ -7,9 +7,11 @@ import htmlWorker from 'monaco-editor/esm/vs/language/html/html.worker?worker'
 import tsWorker from 'monaco-editor/esm/vs/language/typescript/ts.worker?worker'
 import { CODE_CHROME, CODE_PALETTE, MONACO_SCOPE_SLOTS, type CodeAppearance } from './code-palette'
 import { registerLexicalSemanticTokens } from './monaco-lexical-semantic-tokens'
+import { buildChromeThemeCssVars } from '@shared/appearance-derive'
+import { getAppearanceSettings } from './apply-appearance'
 
 let configured = false
-let themesReady = false
+let lastThemeKey = ''
 
 export type WorkspaceMonacoThemeName =
   | 'ds-workspace-dark'
@@ -34,78 +36,51 @@ export function themeRules(appearance: CodeAppearance): monaco.editor.ITokenThem
     return rule
   })
 }
-// Monaco-only chrome: line numbers and the hairline under the current line.
-// Everything else comes from the shared palette (selection, gutter, diff tints).
-const lightChrome = {
-  ...CODE_CHROME.light,
-  'editorLineNumber.foreground': '#6e7781',
-  'editorLineNumber.activeForeground': '#24292f',
-  'editor.lineHighlightBorder': '#00000000'
-}
-const darkChrome = {
-  ...CODE_CHROME.dark,
-  'editorLineNumber.foreground': '#858585',
-  'editorLineNumber.activeForeground': '#ffffff',
-  'editor.lineHighlightBorder': '#00000000'
-}
-const lightRules = themeRules('light')
-const darkRules = themeRules('dark')
-
-/**
- * Monaco theme ids for workspace editors.
- * Live colors are pinned by CSS to Appearance tokens
- * (`--ds-bg-sidebar` in chat, `--ds-bg-canvas` in IDE) — these hex values are
- * only fallbacks before the stylesheet override applies.
- */
+/** Refresh Monaco's own selection, gutter, minimap and diff colors on palette edits. */
 export function ensureWorkspaceMonacoThemes(): void {
-  if (themesReady) return
-  themesReady = true
-  // Chat-mode right panel / tool editor — overridden to `--ds-bg-sidebar`.
-  monaco.editor.defineTheme('ds-workspace-dark', {
-    base: 'vs-dark',
-    inherit: true,
-    rules: darkRules,
-    colors: {
-      ...darkChrome,
-      'editor.background': '#171717',
-      'editorGutter.background': '#171717',
-      'minimap.background': '#171717'
+  const { themes } = getAppearanceSettings()
+  const key = JSON.stringify(themes)
+  if (key === lastThemeKey) return
+  lastThemeKey = key
+
+  for (const variant of ['light', 'dark'] as const) {
+    const theme = themes[variant]
+    const vars = buildChromeThemeCssVars(theme, variant)
+    const accent = vars['--ds-accent']
+    const chrome = {
+      ...CODE_CHROME[variant],
+      'editor.foreground': theme.ink,
+      'editorCursor.foreground': theme.ink,
+      'editor.selectionBackground': `${accent}${variant === 'light' ? '2e' : '3d'}`,
+      'editor.inactiveSelectionBackground': `${accent}20`,
+      'editor.lineHighlightBackground': `${theme.ink}08`,
+      'editor.lineHighlightBorder': '#00000000',
+      'editorLineNumber.foreground': `${theme.ink}99`,
+      'editorLineNumber.activeForeground': theme.ink,
+      'editorGutter.addedBackground': theme.semanticColors.diffAdded,
+      'editorGutter.deletedBackground': theme.semanticColors.diffRemoved,
+      'editorGutter.modifiedBackground': accent,
+      'diffEditor.insertedTextBackground': `${theme.semanticColors.diffAdded}24`,
+      'diffEditor.removedTextBackground': `${theme.semanticColors.diffRemoved}24`
     }
-  })
-  monaco.editor.defineTheme('ds-workspace-light', {
-    base: 'vs',
-    inherit: true,
-    rules: lightRules,
-    colors: {
-      ...lightChrome,
-      'editor.background': '#f0f0f0',
-      'editorGutter.background': '#f0f0f0',
-      'minimap.background': '#f0f0f0'
+    const rules = themeRules(variant).map((rule) =>
+      rule.token === '' ? { ...rule, foreground: theme.ink.slice(1) } : rule
+    )
+    for (const ideCanvas of [false, true]) {
+      const background = vars[ideCanvas ? '--bg-canvas' : '--bg-sidebar']
+      monaco.editor.defineTheme(`ds-${ideCanvas ? 'ide-' : ''}workspace-${variant}`, {
+        base: variant === 'dark' ? 'vs-dark' : 'vs',
+        inherit: true,
+        rules,
+        colors: {
+          ...chrome,
+          'editor.background': background,
+          'editorGutter.background': background,
+          'minimap.background': background
+        }
+      })
     }
-  })
-  // IDE work surface — overridden to `--ds-bg-canvas` (appearance surface).
-  monaco.editor.defineTheme('ds-ide-workspace-dark', {
-    base: 'vs-dark',
-    inherit: true,
-    rules: darkRules,
-    colors: {
-      ...darkChrome,
-      'editor.background': '#111111',
-      'editorGutter.background': '#111111',
-      'minimap.background': '#111111'
-    }
-  })
-  monaco.editor.defineTheme('ds-ide-workspace-light', {
-    base: 'vs',
-    inherit: true,
-    rules: lightRules,
-    colors: {
-      ...lightChrome,
-      'editor.background': '#ffffff',
-      'editorGutter.background': '#ffffff',
-      'minimap.background': '#ffffff'
-    }
-  })
+  }
 }
 
 export function workspaceMonacoTheme(ideCanvas = false): WorkspaceMonacoThemeName {

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ArrowLeft, ArrowRight, RotateCw, Globe2, Plus, X, MoreHorizontal, Camera, Bot, Hand, Play, Settings2, Video, Film, Square, MousePointer2, Copy, ExternalLink, Bug, FileCode2 } from 'lucide-react'
+import { ArrowLeft, ArrowRight, RotateCw, Globe2, Plus, X, MoreHorizontal, Camera, Bot, Hand, Play, Settings2, Video, Film, Square, MousePointer2, Copy, ExternalLink, Bug, FileCode2, LoaderCircle } from 'lucide-react'
 import type { ChatBlock } from '../agent/types'
 import { extractDetectedDevPreviewUrls, formatDevPreviewUrlLabel } from '../lib/dev-preview-detection'
 import { parsePreviewPickConsoleMessage, PREVIEW_PICK_CONSOLE_PREFIX, type PreviewElementPick } from '../lib/preview-element-picker'
@@ -12,8 +12,11 @@ import { formatAutomationApiError } from '../lib/automation-runtime-client'
 import { normalizeBrowseUrlInput } from '@shared/dev-preview-url'
 import { useLightDismiss } from '../hooks/use-light-dismiss'
 import './browser-workspace.css'
+import { respondToAssistance } from './BrowserAssistance'
+import type { Assistance } from './BrowserAssistanceCard'
 
 type BrowserState = {
+  assistance?: Assistance | null
   active: boolean; url?: string; generation?: number; transferring?: boolean
   task_paused?: boolean; task_running?: boolean; task_pausing?: boolean
   viewport?: { width: number; height: number }
@@ -155,6 +158,12 @@ export function AgentBrowserPanel({ threadId, visible = true, blocks = [], prefe
   async function control(owner: 'agent' | 'user' | 'stopped'): Promise<void> {
     setPending(true); setControlTarget(owner); setError(''); transferring.current = true
     try {
+      if (state?.assistance && owner !== 'stopped') {
+        await respondToAssistance(threadId, state.assistance.id, owner === 'user' ? 'takeover' : 'continue')
+        transferring.current = false
+        apply(await browserRequest<BrowserState>(threadId, '/view'))
+        return
+      }
       const next = await browserRequest<BrowserState>(threadId, '/control', { owner, generation: state?.generation })
       transferring.current = false
       if (!alive.current) return
@@ -206,7 +215,33 @@ export function AgentBrowserPanel({ threadId, visible = true, blocks = [], prefe
     if (!target) { setError(t('browserInvalidUrl')); return }
     action({ action: 'open', url: target })
   }
-  return <div className="ds-shared-browser">
+  const controlBusy = controlTarget !== null || !!state?.transferring || !!state?.task_pausing
+  const needsHelp = state?.assistance?.status === 'pending'
+  const controlTone = needsHelp ? 'attention' : state?.owner === 'user' ? 'human' : state?.active && state.task_running ? 'agent' : 'idle'
+  const controlTitle = controlTarget === 'user' ? 'browserPausing' : controlTarget === 'agent' ? 'browserResuming'
+    : controlTarget === 'stopped' ? 'browserWorking' : state?.task_pausing ? 'browserTaskPausing'
+    : state?.transferring ? 'browserWorking' : !state?.active ? 'browserIdle' : needsHelp ? 'browserControlNeedsHelp'
+    : state.owner === 'user' ? state.task_paused ? 'browserTaskPaused' : 'browserUserControl' : state.task_paused ? 'browserControlPaused'
+    : state.task_running === false ? 'browserAgentReady' : 'browserAgentControl'
+  const controlHint = controlBusy ? 'browserControlSwitchHint' : needsHelp ? 'browserControlHelpHint'
+    : state?.owner === 'user' ? state.task_running || state.task_paused ? 'browserControlHumanHint' : 'browserControlHumanIdleHint'
+    : state?.active && state.task_running ? 'browserAgentHint' : 'browserControlReadyHint'
+  return <div className={`ds-shared-browser${state?.assistance?.status === 'human' ? ' is-human-assistance' : ''}`}>
+    <header className={`ds-browser-status is-${controlTone}`} aria-label={t('browserControlLabel')}>
+      <span className="ds-browser-status-icon" aria-hidden="true">
+        {controlBusy ? <LoaderCircle className="ds-browser-control-spinner" size={18} /> : state?.owner === 'user' || needsHelp ? <Hand size={18} /> : <Bot size={18} />}
+      </span>
+      <div className="ds-browser-status-copy" role="status" aria-live="polite" aria-atomic="true">
+        <strong><span className="ds-browser-status-dot" aria-hidden="true" />{t(controlTitle)}</strong>
+        <span className="ds-browser-status-hint">{t(controlHint)}</span>
+        {state?.demo_status === 'running' ? <progress aria-label={t('browserDemoRunning')} value={state.demo_step ?? 0} max={state.demo_total ?? 9} /> : null}
+      </div>
+      {state?.active ? <button type="button" className="ds-browser-control" disabled={!visible || !fresh || pending || controlBusy}
+        aria-busy={controlBusy} onClick={() => void control(state.owner === 'user' ? 'agent' : 'user')}>
+        {controlBusy ? <LoaderCircle className="ds-browser-control-spinner" size={14} /> : state.owner === 'user' ? <Play size={14} /> : <Hand size={14} />}
+        {t(controlBusy ? 'browserControlSwitching' : state.assistance && state.owner === 'user' ? 'browserAssistContinue' : state.owner === 'user' ? state.task_running === false ? 'browserGiveControl' : 'browserReturnControl' : 'browserTakeControl')}
+      </button> : null}
+    </header>
     <div className="ds-dev-browser__chrome ds-browser-chrome">
       <div className="ds-dev-browser__tabs">
         <div className="ds-dev-browser__tab-scroll" aria-label={t('browserTabs')}>
@@ -330,13 +365,5 @@ export function AgentBrowserPanel({ threadId, visible = true, blocks = [], prefe
         </div>
       </section> : null}
     </div>
-    <footer className={`ds-browser-status ${state?.active && !userControls ? 'is-agent' : ''}`} aria-live="polite">
-      {state?.active && state.owner === 'agent' ? <Bot size={16} /> : <Hand size={16} />}
-      <div title={t(state?.active && state.owner === 'agent' ? 'browserAgentHint' : 'browserDirectInputHint')}><strong>{t(controlTarget === 'user' ? 'browserPausing' : controlTarget === 'agent' ? 'browserResuming' : pending || state?.transferring ? 'browserWorking' : !state?.active ? 'browserIdle' : state.task_pausing ? 'browserTaskPausing' : state.task_paused ? 'browserTaskPaused' : state.owner === 'user' ? 'browserUserControl' : state.task_running === false ? 'browserAgentReady' : 'browserAgentControl')}</strong>
-        {state?.demo_status === 'running' ? <progress aria-label={t('browserDemoRunning')} value={state.demo_step ?? 0} max={state.demo_total ?? 9} /> : null}
-      </div>
-      {state?.active ? <button className="ds-browser-control" disabled={!visible || !fresh || pending || state.transferring} onClick={() => void control(state.owner === 'user' ? 'agent' : 'user')}>
-        {t(state.owner === 'user' ? state.task_running === false ? 'browserGiveControl' : 'browserReturnControl' : 'browserTakeControl')}</button> : null}
-    </footer>
   </div>
 }

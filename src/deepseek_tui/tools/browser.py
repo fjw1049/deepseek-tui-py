@@ -23,6 +23,13 @@ class BrowserUseTool(ToolSpec):
 
     def description(self) -> str:
         return (
+            "You decide from the task and observed evidence whether progress requires a "
+            "user action, information or decision. If so, call action=request_assistance "
+            "with reason in the user's language as the only call in that response. "
+            "It pauses the task and notifies the user; merely mentioning a blocker does not. "
+            "For required human verification, request help before switching sites unless "
+            "the user already authorized an alternative. Optional prompts do not need help. "
+            "Honor the user's response; do not repeat ignored requests without new evidence. "
             "Start with status to inspect control ownership without opening a browser. "
             "Use tabs and switch_tab with fresh tab IDs for popups; "
             "new_tab opens an http(s) URL or a blank tab; close_tab closes a discovered tab. "
@@ -50,12 +57,16 @@ class BrowserUseTool(ToolSpec):
     def approval_requirement_for_input(self, input_data: dict[str, Any]) -> ApprovalRequirement:
         return (
             ApprovalRequirement.AUTO
-            if input_data.get("action") in {"status", "tabs", "observe", "check_text", "wait"}
+            if input_data.get("action") in {
+                "status", "tabs", "observe", "check_text", "wait", "request_assistance",
+            }
             else ApprovalRequirement.REQUIRED
         )
 
     def is_read_only_for_input(self, input_data: dict[str, Any]) -> bool:
-        return input_data.get("action") in {"status", "tabs", "observe", "check_text", "wait"}
+        return input_data.get("action") in {
+            "status", "tabs", "observe", "check_text", "wait", "request_assistance",
+        }
 
     def supports_parallel(self) -> bool:
         return False
@@ -66,7 +77,14 @@ class BrowserUseTool(ToolSpec):
         if browser is None or not thread_id:
             return ToolResult(False, "Browser operation requires a Workbench runtime thread.")
         try:
-            result = await browser.action(str(thread_id), BrowserAction.model_validate(input_data))
+            action = BrowserAction.model_validate(input_data)
+            if action.action == "request_assistance":
+                request = context.metadata.get("request_browser_assistance")
+                if request is None:
+                    return ToolResult(False, "Browser assistance is unavailable in this runtime.")
+                result = await request(str(thread_id), action.reason)
+            else:
+                result = await browser.action(str(thread_id), action)
             if input_data.get("action") == "status":
                 result["environment"] = browser.environment()
                 result["actions"] = BrowserAction.model_json_schema()["properties"]["action"][

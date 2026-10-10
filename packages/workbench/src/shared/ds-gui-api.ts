@@ -167,6 +167,7 @@ export type DeepseekRuntimeDiagnosticsResult = {
   issues: DeepseekRuntimeDiagnosticIssue[]
 }
 export type TurnCompleteNotificationPayload = {
+  kind?: 'browser-assistance'
   threadId?: string
   title: string
   body: string
@@ -464,6 +465,7 @@ export type DsGuiApi = {
   openExternal: (url: string) => Promise<void>
   openTerminal: (path: string) => Promise<void>
   showItemInFolder: (path: string) => Promise<void>
+  onAssistanceNotificationClick?: (handler: (threadId: string) => void) => () => void
   showTurnCompleteNotification: (
     payload: TurnCompleteNotificationPayload
   ) => Promise<SystemNotificationResult>

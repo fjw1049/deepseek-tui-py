@@ -13,18 +13,19 @@
   --bg-canvas: #ffffff;
   --ds-canvas-dot: rgba(0, 0, 0, 0.04);
   --ds-canvas-dot-size: 22px;
-  --font-native: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
-    'Microsoft YaHei', 'Noto Sans SC', sans-serif;
-  --font-ui: var(--font-native);
+  --font-default-ui: 'Inter', 'Noto Sans SC', -apple-system, BlinkMacSystemFont,
+    'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  --font-ui: var(--font-default-ui);
   --font-chat: var(--font-ui);
   --font-display: var(--font-ui);
   /* Real monospace for code-like UI strings (URLs, model/task ids, tool
      output). Static stack — user's terminal font choice only affects
      --font-terminal, which is overridden inline by apply-appearance.ts. */
-  --font-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono',
-    'PingFang SC', 'Microsoft YaHei', monospace;
-  --font-terminal: 'SF Mono', SFMono-Regular, ui-monospace, Menlo, Monaco, Consolas, 'Liberation Mono',
-    'Courier New', monospace;
+  --font-default-mono: 'JetBrains Mono', 'Noto Sans SC', ui-monospace, SFMono-Regular,
+    'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
+  --font-mono: var(--font-default-mono);
+  --font-terminal: var(--font-default-mono);
+  --ds-chat-code-font: var(--font-mono);
   /* Appearance: density scale (spacing only) and chat reading size. */
   --ds-density: 1;
   --ds-chat-font-size: 15px;
@@ -45,11 +46,16 @@
   --ds-workbench-chrome: color-mix(in srgb, var(--ds-text) 2%, var(--ds-bg-canvas));
   --ds-surface-card: var(--surface-1);
   --ds-surface-elevated: var(--surface-2);
+  --ds-card: var(--ds-surface-card);
+  --ds-fg: var(--text-primary);
+  --ds-fg-muted: var(--text-secondary);
+  --ds-icon-muted: var(--text-secondary);
   --ds-surface-subtle: rgba(0, 0, 0, 0.04);
   --ds-surface-hover: rgba(0, 0, 0, 0.04);
   --ds-border: var(--border-soft);
   --ds-border-muted: rgba(0, 0, 0, 0.05);
   --ds-border-strong: var(--border-strong);
+  --ds-border-seam: color-mix(in srgb, var(--ds-text) 14%, transparent);
   --ds-text: var(--text-primary);
   --ds-text-muted: var(--text-secondary);
   --ds-text-faint: var(--text-tertiary);
@@ -68,12 +74,13 @@
   --ds-heat-3: #15803d;
   --ds-heat-4: #14532d;
   --ds-success: #128a4a;
+  --ds-warning: #9a6700;
   --ds-danger: #c92a2a;
   --ds-diff-added: #128a4a;
   --ds-diff-added-soft: rgba(18, 138, 74, 0.22);
   --ds-diff-removed: #c92a2a;
   --ds-diff-removed-soft: rgba(201, 42, 42, 0.18);
-  /* Mirrors the `changed` slot in lib/code-palette.ts so hunk headers match chat code blocks. */
+  /* Fallback; appearance overrides keep hunk titles aligned with the accent. */
   --ds-diff-hunk: #0969da;
   --ds-skill: #7c3aed;
   --ds-skill-soft: rgba(124, 58, 237, 0.12);
@@ -192,6 +199,7 @@
   --ds-heat-3: #22c55e;
   --ds-heat-4: #86efac;
   --ds-success: #40c977;
+  --ds-warning: #f5b44a;
   --ds-danger: #fa423e;
   --ds-diff-added: #40c977;
   --ds-diff-added-soft: rgba(64, 201, 119, 0.28);
@@ -307,8 +315,9 @@ html {
 /* Workbench dark tuning removed: the shell inherits the flat Synara-style
    dark tokens from the [data-theme='dark'] root block above. */
 
+:root[data-ui-font='inter-noto'],
 :root[data-ui-font='system-native'] {
-  --font-ui: var(--font-native);
+  --font-ui: var(--font-default-ui);
   --font-display: var(--font-ui);
 }
 
@@ -1036,7 +1045,7 @@ samp {
 }
 
 .ds-goal-strip[data-status='blocked'] .ds-goal-strip__status {
-  color: #d97706;
+  color: var(--ds-warning);
 }
 
 .ds-goal-strip__objective {
@@ -1091,7 +1100,7 @@ samp {
 }
 
 .ds-goal-strip__btn--danger:hover {
-  color: #dc2626;
+  color: var(--ds-danger);
 }
 
 /* Raise z-index while the model picker is open so the upward popover stacks
@@ -1356,28 +1365,28 @@ samp {
 
 @media (prefers-reduced-transparency: reduce) {
   .ds-workspace-context-bar {
-    background: #f2f2f2;
+    background: var(--ds-surface-elevated);
     backdrop-filter: none;
     -webkit-backdrop-filter: none;
   }
 
   [data-theme='dark'] .ds-workspace-context-bar {
-    background: #1d1d1d;
+    background: var(--ds-surface-elevated);
   }
 }
 
 /* Workspace file tree — Synara-like explorer density: h-7 rows, soft selection. */
 .ds-workspace-file-tree {
-  border-right: 1px solid color-mix(in srgb, var(--ds-text) 14%, transparent);
+  border-right: 1px solid var(--ds-border-seam);
 }
 
 .ds-ide-changes-list {
-  border-right: 1.5px solid color-mix(in srgb, var(--ds-text) 14%, transparent);
+  border-right: 1.5px solid var(--ds-border-seam);
 }
 
 /* Match .ds-editor-tree-rail: seams read as module boundaries in dark too. */
 [data-theme='dark'] .ds-ide-changes-list {
-  border-right-color: rgba(255, 255, 255, 0.18);
+  border-right-color: var(--ds-border-seam);
 }
 
 .ds-workspace-file-tree__header {
@@ -1803,7 +1812,7 @@ samp {
 }
 
 [data-theme='dark'] .ds-project-context-menu {
-  background: color-mix(in srgb, #fff 3%, var(--ds-card-strong));
+  background: var(--ds-card-strong);
 }
 
 .ds-project-context-menu__header {
@@ -2244,7 +2253,7 @@ samp {
   }
 
   [data-theme='dark'] .ds-project-context-menu {
-    background: #1c1c1e;
+    background: var(--ds-surface-elevated);
   }
 }
 
@@ -2522,10 +2531,10 @@ samp {
 
 /* Execution metadata deliberately recedes behind the conversation in both themes. */
 :root {
-  --ds-process-meta: #969696;
+  --ds-process-meta: var(--text-secondary);
 }
 [data-theme='dark'] {
-  --ds-process-meta: #686868;
+  --ds-process-meta: var(--text-secondary);
 }
 .ds-process-rail :is(.ds-tool-batch__header, .ds-tool-header-row, .ds-process-reasoning__toggle, .ds-work-summary > button) {
   color: var(--ds-process-meta);
@@ -2854,7 +2863,7 @@ samp {
 [data-theme='light'] .ds-workbench-topbar,
 [data-theme='light'] .ds-right-panel-tabbar,
 [data-theme='light'] .ds-dev-browser__chrome {
-  background: var(--ds-workbench-chrome);
+  background-color: var(--ds-workbench-chrome);
 }
 
 .ds-workbench-topbar__inner {
@@ -4141,8 +4150,8 @@ samp {
 }
 
 [data-theme='dark'] .ds-dev-browser__follow.is-on {
-  background: color-mix(in srgb, #56b0ff 16%, transparent);
-  color: #7cbcff;
+  background: var(--ds-accent-soft);
+  color: var(--ds-accent);
 }
 
 /* Element pick: idle matches left chrome icons; active uses accent fill. */
@@ -4200,21 +4209,21 @@ samp {
 }
 
 .ds-dev-browser__screenshot-notice--success {
-  background: color-mix(in srgb, #16a34a 12%, transparent);
-  color: #15803d;
+  background: color-mix(in srgb, var(--ds-success) 12%, transparent);
+  color: var(--ds-success);
 }
 
 [data-theme='dark'] .ds-dev-browser__screenshot-notice--success {
-  color: #86efac;
+  color: var(--ds-success);
 }
 
 .ds-dev-browser__screenshot-notice--error {
-  background: color-mix(in srgb, #dc2626 12%, transparent);
-  color: #b91c1c;
+  background: color-mix(in srgb, var(--ds-danger) 12%, transparent);
+  color: var(--ds-danger);
 }
 
 [data-theme='dark'] .ds-dev-browser__screenshot-notice--error {
-  color: #fca5a5;
+  color: var(--ds-danger);
 }
 
 .ds-dev-browser__icon-btn.is-busy {
@@ -4295,20 +4304,20 @@ samp {
 }
 
 [data-theme='dark'] .ds-dev-browser__omnibox {
-  border-color: color-mix(in srgb, #fff 8%, transparent);
-  background: color-mix(in srgb, #fff 6%, transparent);
+  border-color: var(--ds-border);
+  background: var(--ds-material-control);
   box-shadow: inset 0 0.5px 0 rgba(255, 255, 255, 0.04);
 }
 
 [data-theme='dark'] .ds-dev-browser__omnibox:hover {
-  background: color-mix(in srgb, #fff 8%, transparent);
+  background: var(--ds-surface-hover);
 }
 
 [data-theme='dark'] .ds-dev-browser__omnibox:focus,
 [data-theme='dark'] .ds-dev-browser__omnibox:focus-visible {
-  border-color: color-mix(in srgb, #56b0ff 50%, transparent);
-  background: color-mix(in srgb, #fff 8%, transparent);
-  box-shadow: 0 0 0 2.5px color-mix(in srgb, #56b0ff 18%, transparent);
+  border-color: var(--ds-accent);
+  background: var(--ds-material-control);
+  box-shadow: 0 0 0 2.5px var(--ds-accent-soft);
 }
 
 /* Beat shared modal/form field chrome if any ancestor styles leak through. */
@@ -9327,8 +9336,8 @@ html[data-theme='dark'] .ds-syntax-line span { color: var(--shiki-dark) !importa
 }
 
 .ds-media-catalog__badge--on {
-  color: color-mix(in srgb, #34c759 85%, var(--ds-text));
-  background: color-mix(in srgb, #34c759 16%, transparent);
+  color: color-mix(in srgb, var(--ds-success) 85%, var(--ds-text));
+  background: color-mix(in srgb, var(--ds-success) 16%, transparent);
 }
 
 .ds-media-sheet-backdrop {
@@ -9533,7 +9542,7 @@ html[data-theme='dark'] .ds-syntax-line span { color: var(--shiki-dark) !importa
 }
 
 .ds-media-sheet__btn--primary {
-  color: #fff;
+  color: var(--ds-accent-foreground);
   background: var(--ds-accent, #007aff);
 }
 
@@ -9559,8 +9568,8 @@ html[data-theme='dark'] .ds-syntax-line span { color: var(--shiki-dark) !importa
   border: none;
   border-radius: 999px;
   padding: 0 14px;
-  background: color-mix(in srgb, #ff3b30 10%, transparent);
-  color: #ff3b30;
+  background: color-mix(in srgb, var(--ds-danger) 10%, transparent);
+  color: var(--ds-danger);
   font-size: 13px;
   font-weight: 560;
   letter-spacing: -0.01em;
@@ -9572,7 +9581,7 @@ html[data-theme='dark'] .ds-syntax-line span { color: var(--shiki-dark) !importa
 }
 
 .ds-archive-panel__delete-all:hover:not(:disabled) {
-  background: color-mix(in srgb, #ff3b30 16%, transparent);
+  background: color-mix(in srgb, var(--ds-danger) 16%, transparent);
 }
 
 .ds-archive-panel__delete-all:active:not(:disabled) {
@@ -9585,12 +9594,12 @@ html[data-theme='dark'] .ds-syntax-line span { color: var(--shiki-dark) !importa
 }
 
 [data-theme='dark'] .ds-archive-panel__delete-all {
-  background: color-mix(in srgb, #ff453a 18%, transparent);
-  color: #ff453a;
+  background: color-mix(in srgb, var(--ds-danger) 18%, transparent);
+  color: var(--ds-danger);
 }
 
 [data-theme='dark'] .ds-archive-panel__delete-all:hover:not(:disabled) {
-  background: color-mix(in srgb, #ff453a 26%, transparent);
+  background: color-mix(in srgb, var(--ds-danger) 26%, transparent);
 }
 
 .ds-archive-panel__toolbar {
@@ -9775,15 +9784,15 @@ html[data-theme='dark'] .ds-syntax-line span { color: var(--shiki-dark) !importa
   margin-top: 16px;
   border: 1px solid color-mix(in srgb, #ff3b30 28%, transparent);
   border-radius: 12px;
-  background: color-mix(in srgb, #ff3b30 8%, transparent);
+  background: color-mix(in srgb, var(--ds-danger) 8%, transparent);
   padding: 10px 12px;
-  color: #d70015;
+  color: var(--ds-danger);
   font-size: 12.5px;
   line-height: 1.45;
 }
 
 [data-theme='dark'] .ds-archive-panel__error {
-  color: #ff8a80;
+  color: var(--ds-danger);
 }
 
 .ds-archive-panel__body {
@@ -9983,7 +9992,7 @@ html[data-theme='dark'] .ds-syntax-line span { color: var(--shiki-dark) !importa
 
 .ds-archive-row__icon-btn:hover:not(:disabled) {
   background: color-mix(in srgb, var(--ds-text) 6%, transparent);
-  color: #ff3b30;
+  color: var(--ds-danger);
 }
 
 .ds-archive-row__text-btn:hover:not(:disabled) {
@@ -10389,13 +10398,13 @@ html[data-theme='dark'] .ds-syntax-line span { color: var(--shiki-dark) !importa
 }
 
 .ds-llm-card__status--on {
-  color: #15803d;
-  background: color-mix(in srgb, #22c55e 14%, transparent);
+  color: var(--ds-success);
+  background: color-mix(in srgb, var(--ds-success) 14%, transparent);
 }
 
 [data-theme='dark'] .ds-llm-card__status--on {
-  color: #86efac;
-  background: color-mix(in srgb, #22c55e 18%, transparent);
+  color: var(--ds-success);
+  background: color-mix(in srgb, var(--ds-success) 18%, transparent);
 }
 
 .ds-llm-card__meta {
@@ -10726,11 +10735,11 @@ html[data-theme='dark'] .ds-syntax-line span { color: var(--shiki-dark) !importa
 }
 
 .ds-llm-sheet__note--ok {
-  color: #16a34a;
+  color: var(--ds-success);
 }
 
 .ds-llm-sheet__note--err {
-  color: #dc2626;
+  color: var(--ds-danger);
 }
 
 .ds-llm-sheet__asr-test {
@@ -10751,11 +10760,11 @@ html[data-theme='dark'] .ds-syntax-line span { color: var(--shiki-dark) !importa
 }
 
 .ds-llm-sheet__asr-test-status.is-passed {
-  color: #22c55e;
+  color: var(--ds-success);
 }
 
 .ds-llm-sheet__asr-test-status.is-failed {
-  color: #ef4444;
+  color: var(--ds-danger);
 }
 
 .ds-llm-sheet__refresh {
@@ -10881,11 +10890,11 @@ html[data-theme='dark'] .ds-syntax-line span { color: var(--shiki-dark) !importa
 }
 
 .ds-llm-model-row__dot.is-passed {
-  background: #34c759;
+  background: var(--ds-success);
 }
 
 .ds-llm-model-row__dot.is-failed {
-  background: #ff3b30;
+  background: var(--ds-danger);
 }
 
 .ds-llm-model-row__name {
@@ -10980,8 +10989,8 @@ html[data-theme='dark'] .ds-syntax-line span { color: var(--shiki-dark) !importa
 }
 
 .ds-llm-model-row__remove:hover {
-  color: #ff3b30;
-  background: color-mix(in srgb, #ff3b30 10%, transparent);
+  color: var(--ds-danger);
+  background: color-mix(in srgb, var(--ds-danger) 10%, transparent);
 }
 
 .ds-llm-model-row__remove:active {
@@ -11128,11 +11137,11 @@ html[data-theme='dark'] .ds-syntax-line span { color: var(--shiki-dark) !importa
 }
 
 .ds-llm-inset__pick-test.is-passed {
-  color: #22c55e;
+  color: var(--ds-success);
 }
 
 .ds-llm-inset__pick-test.is-failed {
-  color: #ef4444;
+  color: var(--ds-danger);
 }
 
 .ds-llm-sheet__footer {
@@ -11177,22 +11186,23 @@ html[data-theme='dark'] .ds-syntax-line span { color: var(--shiki-dark) !importa
 .ds-llm-sheet__btn--danger {
   margin-right: auto;
   background: transparent;
-  color: #ff3b30;
+  color: var(--ds-danger);
 }
 
 .ds-llm-sheet__btn--danger:hover {
-  background: color-mix(in srgb, #ff3b30 10%, transparent);
+  background: color-mix(in srgb, var(--ds-danger) 10%, transparent);
 }
 
 .ds-llm-sheet__btn--primary {
   background: var(--ds-accent, #007aff);
-  color: #fff;
+  color: var(--ds-accent-foreground);
   box-shadow: none;
 }
 
 .ds-llm-sheet__btn--primary:hover {
-  background: color-mix(in srgb, var(--ds-accent, #007aff) 90%, #000);
-  color: #fff;
+  background: var(--ds-accent);
+  color: var(--ds-accent-foreground);
+  filter: brightness(0.96);
 }
 
 .ds-llm-sheet__btn--primary:disabled {
@@ -11310,8 +11320,7 @@ html[data-theme='dark'] .ds-syntax-line span { color: var(--shiki-dark) !importa
   /* Never fill with --ds-bg-canvas — in light theme that reads as stark white chips. */
   background: transparent;
   padding-inline: 0.4rem;
-  /* Neutral chrome grey — Notion warm ink (#37352f) reads yellow on icons. */
-  color: rgba(0, 0, 0, 0.48);
+  color: var(--ds-icon-muted);
   transition:
     background-color 140ms ease,
     color 140ms ease;
@@ -11325,27 +11334,27 @@ html[data-theme='dark'] .ds-syntax-line span { color: var(--shiki-dark) !importa
 }
 
 .ds-ide-topbar__action:hover {
-  background: rgba(0, 0, 0, 0.06);
-  color: rgba(0, 0, 0, 0.78);
+  background: var(--ds-surface-hover);
+  color: var(--ds-text);
 }
 
 .ds-ide-topbar__action[aria-pressed='true'] {
-  background: rgba(0, 0, 0, 0.08);
-  color: rgba(0, 0, 0, 0.82);
+  background: var(--ds-accent-soft);
+  color: var(--ds-accent);
 }
 
 [data-theme='dark'] .ds-ide-topbar__action {
-  color: rgba(255, 255, 255, 0.48);
+  color: var(--ds-icon-muted);
 }
 
 [data-theme='dark'] .ds-ide-topbar__action:hover {
-  background: rgba(255, 255, 255, 0.08);
-  color: rgba(255, 255, 255, 0.86);
+  background: var(--ds-surface-hover);
+  color: var(--ds-text);
 }
 
 [data-theme='dark'] .ds-ide-topbar__action[aria-pressed='true'] {
-  background: rgba(255, 255, 255, 0.1);
-  color: rgba(255, 255, 255, 0.9);
+  background: var(--ds-accent-soft);
+  color: var(--ds-accent);
 }
 
 .ds-ide-project-picker {
@@ -11537,10 +11546,10 @@ html[data-theme='dark'] .ds-syntax-line span { color: var(--shiki-dark) !importa
   background-color: var(--ds-bg-canvas) !important;
 }
 
-/* Editor↔file-tree seam: --ds-border-strong is near-invisible in dark (9% white). */
+/* Editor/file-tree seams retain separation while following theme contrast. */
 [data-theme='dark'] .ds-editor-tree-rail {
-  border-left-color: rgba(255, 255, 255, 0.18);
-  border-right-color: rgba(255, 255, 255, 0.18);
+  border-left-color: var(--ds-border-seam);
+  border-right-color: var(--ds-border-seam);
 }
 
 .ds-ide-workspace .ds-workspace-editor-pane .monaco-editor,
@@ -11550,42 +11559,40 @@ html[data-theme='dark'] .ds-syntax-line span { color: var(--shiki-dark) !importa
   background-color: var(--ds-bg-canvas) !important;
 }
 
-/* Chrome glyphs: neutralize Appearance warm ink so chevrons / activity icons
-   stay cool grey on the white canvas (Notion #37352f otherwise reads yellow).
-   !important beats Tailwind text-ds-* utilities on the same nodes. */
+/* Chrome glyphs follow the palette; !important beats Tailwind utilities. */
 .ds-ide-workspace .ds-workspace-file-tree__row > svg:first-child,
 .ds-ide-workspace .ds-ide-activity-bar button:not([aria-pressed='true']),
 .ds-ide-workspace .ds-ide-topbar__action {
-  color: rgba(0, 0, 0, 0.45) !important;
+  color: var(--ds-icon-muted) !important;
   opacity: 1;
 }
 
 .ds-ide-workspace .ds-ide-activity-bar button[aria-pressed='true'],
 .ds-ide-workspace .ds-ide-topbar__action:hover,
 .ds-ide-workspace .ds-ide-topbar__action[aria-pressed='true'] {
-  color: rgba(0, 0, 0, 0.8) !important;
+  color: var(--ds-accent) !important;
 }
 
 [data-theme='dark'] .ds-ide-workspace .ds-workspace-file-tree__row > svg:first-child,
 [data-theme='dark'] .ds-ide-workspace .ds-ide-activity-bar button:not([aria-pressed='true']),
 [data-theme='dark'] .ds-ide-workspace .ds-ide-topbar__action {
-  color: rgba(255, 255, 255, 0.45) !important;
+  color: var(--ds-icon-muted) !important;
 }
 
 [data-theme='dark'] .ds-ide-workspace .ds-ide-activity-bar button[aria-pressed='true'],
 [data-theme='dark'] .ds-ide-workspace .ds-ide-topbar__action:hover,
 [data-theme='dark'] .ds-ide-workspace .ds-ide-topbar__action[aria-pressed='true'] {
-  color: rgba(255, 255, 255, 0.88) !important;
+  color: var(--ds-accent) !important;
 }
 
 /* IDE mode seams — one shared rule weight/color so header/activity/chat
    junctions read as a single continuous grid (not doubled/offset hairlines). */
 .ds-ide-activity-bar {
-  border-right: 1px solid color-mix(in srgb, var(--ds-text) 14%, transparent);
+  border-right: 1px solid var(--ds-border-seam);
 }
 
 .ds-ide-search-sidebar {
-  border-right: 1px solid color-mix(in srgb, var(--ds-text) 14%, transparent);
+  border-right: 1px solid var(--ds-border-seam);
 }
 
 .ds-ide-changes-stage {
@@ -11643,7 +11650,7 @@ html[data-theme='dark'] .ds-syntax-line span { color: var(--shiki-dark) !importa
 }
 
 [data-theme='dark'] .ds-ide-chat-rail__surface {
-  border-left-color: rgba(255, 255, 255, 0.18);
+  border-left-color: var(--ds-border-seam);
 }
 
 .ds-ide-chat-rail .ds-terminal-panel {
