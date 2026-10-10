@@ -12,7 +12,7 @@ export function TerminalSplitActions({ workspaceRoot }: { workspaceRoot: string 
       const label = t(direction === 'right' ? 'terminalSplitRight' : 'terminalSplitDown')
       return <button key={direction} type="button" title={label} aria-label={label}
         disabled={creating || !activeId}
-        className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-ds-muted transition hover:bg-ds-hover/60 hover:text-ds-ink disabled:opacity-40"
+        className="ds-dock-action disabled:opacity-40"
         onClick={() => void splitTerminalSession(workspaceRoot, direction)}>
         <Icon className="h-3.5 w-3.5" strokeWidth={1.85} />
       </button>

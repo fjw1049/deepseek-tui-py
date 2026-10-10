@@ -410,26 +410,24 @@ export function AppTerminalPanel({
   return (
     <section className={`ds-tool-panel ds-no-drag ds-terminal-panel flex min-h-0 flex-col overflow-hidden ${className ?? ''}`}>
       {hideTabs ? null : (
-      <div className="ds-terminal-panel__tabs flex shrink-0 items-center justify-between gap-1.5 border-b border-ds-border-muted px-2 py-0.5">
-        <div className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto">
+      <div className="ds-terminal-panel__tabs ds-dock-header border-b border-ds-border-muted">
+        <div className="ds-dock-tabs">
           {sessions.map((session, index) => {
             const active = session.id === activeSessionId
             return (
               <span
                 key={session.id}
-                className={`inline-flex shrink-0 items-center gap-0.5 rounded-md border transition ${
-                  active
-                    ? 'border-ds-border-muted bg-white/90 text-ds-ink shadow-[inset_0_1px_0_rgba(255,255,255,0.72)] dark:border-white/10 dark:bg-white/10 dark:shadow-none'
-                    : 'border-transparent text-ds-faint hover:border-ds-border-muted/60 hover:bg-ds-hover/50 hover:text-ds-ink'
-                }`}
+                className="ds-dock-tab"
+                data-active={active ? '' : undefined}
               >
                 <button
                   type="button"
+                  aria-pressed={active}
                   onClick={() => setActiveSessionId(session.id)}
-                  className="max-w-[200px] truncate px-2 py-0.5 text-[12px] font-medium leading-5"
+                  className="ds-dock-tab-label max-w-[200px]"
                   title={session.cwd}
                 >
-                  {`${baseLabel} ${index + 1}`}
+                  <span className="truncate">{`${baseLabel} ${index + 1}`}</span>
                   {session.status === 'exited' ? (
                     <span className="ml-1 rounded bg-ds-hover px-1 py-px text-[10px] font-medium text-ds-faint">
                       {session.exitCode ?? 0}
@@ -442,11 +440,11 @@ export function AppTerminalPanel({
                     event.stopPropagation()
                     closeSession(session.id)
                   }}
-                  className="mr-0.5 inline-flex h-3.5 w-3.5 items-center justify-center rounded text-ds-faint hover:bg-ds-hover/80 hover:text-ds-ink"
+                  className="ds-dock-tab-close"
                   aria-label={t('terminalCloseTab')}
                   title={t('terminalCloseTab')}
                 >
-                  <X className="h-2.5 w-2.5" strokeWidth={2} />
+                  <X className="h-3 w-3" strokeWidth={2} />
                 </button>
               </span>
             )
@@ -455,7 +453,7 @@ export function AppTerminalPanel({
             type="button"
             onClick={() => void createSession()}
             disabled={creatingSession || !trimmedWorkspaceRoot}
-            className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-ds-faint transition hover:bg-ds-hover/70 hover:text-ds-ink disabled:cursor-not-allowed disabled:opacity-45"
+            className="ds-dock-action disabled:cursor-not-allowed disabled:opacity-45"
             aria-label={t('terminalNewTab')}
             title={t('terminalNewTab')}
           >
@@ -472,7 +470,7 @@ export function AppTerminalPanel({
           <button
             type="button"
             onClick={onClose}
-            className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-ds-faint transition hover:bg-ds-hover/70 hover:text-ds-ink"
+            className="ds-dock-action"
             aria-label={t('terminalClose')}
             title={t('terminalClose')}
           >
