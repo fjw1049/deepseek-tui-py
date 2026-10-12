@@ -358,6 +358,18 @@ export function Workbench(): ReactElement {
     readStoredWidth(LEFT_PANEL_WIDTH_KEY, LEFT_PANEL_DEFAULT)
   )
   const [leftSidebarCollapsed, setLeftSidebarCollapsed] = useState(false)
+  const [sidebarRevealRequest, setSidebarRevealRequest] = useState<{ threadId: string | null } | null>(null)
+  const sidebarNavigationVersion = useRef(0)
+  const createSidebarThread = useCallback(async (options: Parameters<typeof createThread>[0]) => {
+    const version = ++sidebarNavigationVersion.current
+    setRoute('chat')
+    setSidebarRevealRequest({ threadId: null })
+    const threadId = await createThread(options)
+    const state = useChatStore.getState()
+    if (threadId && version === sidebarNavigationVersion.current && state.route === 'chat' && state.activeThreadId === threadId) {
+      setSidebarRevealRequest({ threadId })
+    }
+  }, [createThread, setRoute])
   const [rightSidebarWidth, setRightSidebarWidth] = useState(() =>
     readStoredWidth(RIGHT_PANEL_WIDTH_KEY, RIGHT_CONTEXT_DEFAULT)
   )
@@ -1163,10 +1175,10 @@ export function Workbench(): ReactElement {
           state.workspaceRoot
         )
         if (root.trim().length > 0 && !isChatsWorkspace(activeThread?.workspace)) {
-          void createThread({ workspaceRoot: root })
+          void createSidebarThread({ workspaceRoot: root })
         } else {
           state.setChatsCollapsed(false)
-          void createThread({ chats: true })
+          void createSidebarThread({ chats: true })
         }
         return
       }
@@ -1242,7 +1254,7 @@ export function Workbench(): ReactElement {
     return () => window.removeEventListener('keydown', onKey)
   }, [
     chooseWorkspace,
-    createThread,
+    createSidebarThread,
     ideModeActive,
     setRoute,
     toggleRightSidebar,
@@ -1307,6 +1319,8 @@ export function Workbench(): ReactElement {
   ])
 
   const openThread = (id: string): void => {
+    sidebarNavigationVersion.current += 1
+    setSidebarRevealRequest({ threadId: id })
     setRoute('chat')
     void selectThread(id)
   }
@@ -1331,10 +1345,10 @@ export function Workbench(): ReactElement {
     const inProject =
       activeWorkspaceRoot.trim().length > 0 && !isChatsWorkspace(activeThread?.workspace)
     if (inProject) {
-      void createThread({ workspaceRoot: activeWorkspaceRoot })
+      void createSidebarThread({ workspaceRoot: activeWorkspaceRoot })
     } else {
       useChatStore.getState().setChatsCollapsed(false)
-      void createThread({ chats: true })
+      void createSidebarThread({ chats: true })
     }
   }
 
@@ -1344,12 +1358,12 @@ export function Workbench(): ReactElement {
   const startNewChatsThread = (): void => {
     setRoute('chat')
     useChatStore.getState().setChatsCollapsed(false)
-    void createThread({ chats: true })
+    void createSidebarThread({ chats: true })
   }
 
   const startNewChatInWorkspace = (workspaceRoot: string): void => {
     setRoute('chat')
-    void createThread({ workspaceRoot })
+    void createSidebarThread({ workspaceRoot })
   }
 
   const closeRightSidebarPanel = (): void => {
@@ -1722,6 +1736,7 @@ export function Workbench(): ReactElement {
             threads={threads}
             activeThreadId={activeThreadId}
             runtimeReady={runtimeConnection === 'ready'}
+            revealRequest={sidebarRevealRequest}
             onSelectThread={openThread}
             onOpenThreadTerminal={openThreadTerminal}
             onDeleteThread={deleteThread}

@@ -1,13 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import type { NormalizedThread } from '../agent/types'
-import { buildSidebarActivity } from './sidebar-activity'
+import { activityDismissalKey, buildSidebarActivity, filterDismissedActivity } from './sidebar-activity'
 
 const thread = (id: string, extra: Partial<NormalizedThread> = {}): NormalizedThread => ({
   id, title: id, model: 'deepseek', mode: 'agent', workspace: '/projects/app',
   createdAt: '2026-10-10T00:00:00Z', updatedAt: '2026-10-10T00:00:00Z', ...extra
 })
-const build = (threads: NormalizedThread[], extra: Partial<Parameters<typeof buildSidebarActivity>[0]> = {}) =>
-  buildSidebarActivity({ threads, hiddenWorkspacePaths: [], runningIds: new Set(), unreadThreadIds: {}, activeThreadId: null, activeWaiting: false, ...extra })
+const build = (threads: NormalizedThread[], extra: Partial<Parameters<typeof buildSidebarActivity>[0]> & { dismissed?: Record<string, string> } = {}) =>
+  filterDismissedActivity(buildSidebarActivity({ threads, hiddenWorkspacePaths: [], runningIds: new Set(), unreadThreadIds: {}, activeThreadId: null, activeWaiting: false, ...extra }), extra.dismissed ?? {})
 
 describe('sidebar activity', () => {
   it('lists waiting, failed, running and unread across projects without duplicates', () => {
@@ -45,4 +45,17 @@ describe('sidebar activity', () => {
     rows[1].updatedAt = '2026-10-11T00:00:00Z'
     expect(build(rows.reverse(), { runningIds: new Set(['a', 'b']) }).running.map((r) => r.thread.id)).toEqual(before)
   })
+})
+
+it('remembers only the dismissed turn/status, without changing the conversation or unread state', () => {
+  const original = thread('failed', { latestTurnId: 'turn-1', latestTurnStatus: 'failed' })
+  const row = build([original]).attention[0]
+  const dismissed = { failed: activityDismissalKey(row) }
+  const unreadThreadIds = { failed: true }
+  expect(build([original], { dismissed, unreadThreadIds }).attention).toHaveLength(0)
+  expect(build([{ ...original, updatedAt: '2026-10-12' }], { dismissed }).attention).toHaveLength(0)
+  expect(build([{ ...original, latestTurnId: 'turn-2' }], { dismissed }).attention).toHaveLength(1)
+  expect(build([original], { dismissed, runningIds: new Set(['failed']) }).running).toHaveLength(1)
+  expect(original.archived).toBeUndefined()
+  expect(unreadThreadIds.failed).toBe(true)
 })

@@ -2,6 +2,7 @@ import type { ReactElement } from 'react'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import {
+  Check,
   CheckSquare,
   ChevronDown,
   ChevronRight,
@@ -20,10 +21,23 @@ import {
   loadChatsOrder,
   persistChatsOrder
 } from '../../lib/sidebar-manual-order'
+import {
+  CHATS_SORT_MODES,
+  loadChatsSortMode,
+  persistChatsSortMode,
+  sortChats,
+  type ChatsSortMode
+} from '../../lib/sidebar-chats-sort'
 import { useChatStore } from '../../store/chat-store'
 import { isChatsWorkspace, isClawWorkspacePath } from '../../lib/workspace-path'
 import { SidebarSortableList, SidebarSortableRow } from './SidebarSortable'
 import { ThreadRow } from './SidebarProjectsSection'
+
+const CHATS_SORT_LABEL_KEYS: Record<ChatsSortMode, string> = {
+  recent: 'sidebarProjectsSortRecent',
+  name_asc: 'sidebarChatsSortNameAsc',
+  created: 'sidebarProjectsSortCreated'
+}
 
 type SidebarChatsSectionProps = {
   onNewChat: () => void
@@ -61,6 +75,7 @@ export function SidebarChatsSection({
   const [selectMode, setSelectMode] = useState(false)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set())
   const [batchBusy, setBatchBusy] = useState(false)
+  const [chatsSortMode, setChatsSortMode] = useState<ChatsSortMode>(() => loadChatsSortMode())
   const [chatsOrder, setChatsOrder] = useState<string[]>(() => loadChatsOrder())
   const menuRef = useRef<HTMLDivElement>(null)
   const menuButtonRef = useRef<HTMLButtonElement>(null)
@@ -76,14 +91,15 @@ export function SidebarChatsSection({
   // Chats bucket: temp/default-workspace threads not belonging to a user-added
   // project and not pinned. Claw threads stay excluded as elsewhere.
   const chatsThreads = useMemo(() => {
-    const recent = threads
-      .filter(
+    const recent = sortChats(
+      threads.filter(
         (th) =>
           !isClawWorkspacePath(th.workspace) &&
           isChatsWorkspace(th.workspace) &&
           !pinnedSet.has(th.id)
-      )
-      .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
+      ),
+      chatsSortMode
+    )
     const byId = new Map(recent.map((thread) => [thread.id, thread]))
     return applyManualOrder(
       recent.map((thread) => thread.id),
@@ -91,7 +107,7 @@ export function SidebarChatsSection({
     )
       .map((id) => byId.get(id))
       .filter((thread): thread is NormalizedThread => Boolean(thread))
-  }, [threads, pinnedSet, chatsOrder])
+  }, [threads, pinnedSet, chatsOrder, chatsSortMode])
 
   const handleChatsReorder = (nextIds: string[]): void => {
     setChatsOrder(nextIds)
@@ -319,7 +335,7 @@ export function SidebarChatsSection({
                 ? createPortal(
                     <div
                       ref={menuPanelRef}
-                      className="ds-no-drag fixed z-[130] w-44 overflow-hidden rounded-xl border border-ds-border bg-ds-elevated p-1 shadow-[0_24px_70px_rgba(44,55,78,0.18)] backdrop-blur-xl dark:shadow-[0_30px_80px_rgba(0,0,0,0.42)]"
+                      className="ds-no-drag fixed z-[130] w-48 overflow-hidden rounded-xl border border-ds-border bg-ds-elevated p-1 shadow-[0_24px_70px_rgba(44,55,78,0.18)] backdrop-blur-xl dark:shadow-[0_30px_80px_rgba(0,0,0,0.42)]"
                       role="menu"
                       style={{ top: menuPos.top, left: menuPos.left }}
                       onMouseDown={(event) => event.stopPropagation()}
@@ -349,7 +365,54 @@ export function SidebarChatsSection({
                         <CheckSquare className="h-3.5 w-3.5 shrink-0" strokeWidth={1.85} />
                         {t('sidebarChatsBatchSelect')}
                       </button>
-                      {/* 3. Clear all */}
+                      <div className="my-1 border-t border-ds-border-muted/70" />
+                      <div className="px-2 pt-0.5 pb-0.5 text-[10px] font-semibold uppercase tracking-wider text-ds-faint">
+                        {t('sidebarProjectsSort')}
+                      </div>
+                      {CHATS_SORT_MODES.map((mode) => {
+                        const active = chatsOrder.length === 0 && chatsSortMode === mode
+                        return (
+                          <button
+                            key={mode}
+                            type="button"
+                            role="menuitemradio"
+                            aria-checked={active}
+                            disabled={chatsThreads.length === 0}
+                            onClick={() => {
+                              setChatsSortMode(mode)
+                              persistChatsSortMode(mode)
+                              handleChatsReorder([])
+                              closeMenu()
+                            }}
+                            className={[
+                              'flex w-full items-center gap-2.5 rounded-md px-2.5 py-1.5 text-left text-[13px] text-ds-ink transition-colors duration-150 hover:bg-ds-hover disabled:opacity-40',
+                              active ? 'bg-ds-hover/80' : ''
+                            ].join(' ')}
+                          >
+                            <span className="min-w-0 flex-1 truncate tracking-[-0.01em]">
+                              {t(CHATS_SORT_LABEL_KEYS[mode])}
+                            </span>
+                            <span className="flex h-3.5 w-3.5 shrink-0 items-center justify-center" style={{ color: 'var(--ds-accent)' }}>
+                              {active ? <Check className="h-3.5 w-3.5" strokeWidth={2.4} /> : null}
+                            </span>
+                          </button>
+                        )
+                      })}
+                      {chatsOrder.length > 0 ? (
+                        <button
+                          type="button"
+                          role="menuitem"
+                          onClick={() => {
+                            handleChatsReorder([])
+                            closeMenu()
+                          }}
+                          className="mt-0.5 flex w-full items-center gap-2.5 rounded-md border-t border-ds-border-muted/70 px-2.5 py-1.5 text-left text-[13px] text-ds-ink transition-colors duration-150 hover:bg-ds-hover"
+                        >
+                          {t('sidebarProjectsSortRestoreAuto')}
+                        </button>
+                      ) : null}
+                      <div className="my-1 border-t border-ds-border-muted/70" />
+                      {/* 4. Clear all */}
                       <button
                         type="button"
                         disabled={chatsThreads.length === 0 || batchBusy}

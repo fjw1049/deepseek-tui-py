@@ -22,7 +22,7 @@ it('opens exactly the selected conversation and keeps unread state untouched whi
     hiddenWorkspacePaths: [], runningIds: new Set(), unreadThreadIds: unread, activeThreadId: null, activeWaiting: false
   })
   try {
-    await act(async () => root.render(createElement(SidebarActivity, { groups, activeThreadId: null, runtimeReady: true, onSelectThread: select })))
+    await act(async () => root.render(createElement(SidebarActivity, { groups, activeThreadId: null, runtimeReady: true, onSelectThread: select, onDismiss: vi.fn() })))
     expect(select).not.toHaveBeenCalled()
     expect(container.textContent).toContain('demo')
     expect(container.querySelectorAll('.ds-activity-row')).toHaveLength(1)

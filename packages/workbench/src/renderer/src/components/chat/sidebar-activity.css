@@ -26,3 +26,16 @@
 .ds-activity-empty strong { color: var(--ds-text-muted); font-size: 13px; font-weight: 500; }
 .ds-activity-empty p, .ds-activity-offline { font-size: 12px; line-height: 1.7; margin: 0; }
 .ds-activity-offline { padding: 0 12px 12px; color: var(--ds-text-muted); }
+.ds-activity-swipe { position: relative; overflow: hidden; border-radius: 9px; }
+.ds-activity-swipe .ds-activity-row { position: relative; z-index: 1; touch-action: pan-y; user-select: none; transition: transform 200ms cubic-bezier(.2,.8,.2,1), background-color 120ms ease; }
+.ds-activity-swipe .ds-activity-row--dragging { transition: none; cursor: grabbing; }
+.ds-activity-swipe .ds-activity-row:active { background: var(--ds-surface-hover); }
+.ds-activity-dismiss { position: absolute; inset: 0 0 0 auto; width: 76px; border: 0; border-radius: 9px; color: var(--ds-text); background: color-mix(in srgb, var(--ds-text) 10%, transparent); font-size: 13px; font-weight: 500; cursor: pointer; transition: clip-path 200ms cubic-bezier(.2,.8,.2,1), background-color 120ms ease; }
+.ds-activity-dismiss:hover { background: color-mix(in srgb, var(--ds-text) 15%, transparent); }
+.ds-activity-dismiss:active { background: color-mix(in srgb, var(--ds-text) 19%, transparent); }
+.ds-activity-swipe--dragging .ds-activity-dismiss { transition: none; }
+.ds-activity-dismiss:focus-visible { outline: 2px solid var(--ds-accent); outline-offset: -3px; }
+.ds-activity-swipe--dismissing { pointer-events: none; }
+@media (prefers-reduced-motion: reduce) {
+  .ds-activity-swipe .ds-activity-row, .ds-activity-dismiss { transition: none; }
+}

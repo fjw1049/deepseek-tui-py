@@ -122,6 +122,7 @@ type SidebarProjectsColumnProps = Omit<
   | 'onProjectThreadReorder'
 > & {
   locale: string
+  revealRequest?: { threadId: string | null } | null
   /** Rendered above the projects header (pinned threads). */
   pinnedSlot?: ReactElement | null
   headerHost?: HTMLElement | null
@@ -430,6 +431,7 @@ function SidebarProjectsToolbar({
 
 /** Projects column: toolbar (with batch menu) + scrollable project list. */
 export function SidebarProjectsColumn({
+  revealRequest,
   threads,
   activeThreadId,
   runtimeReady,
@@ -459,6 +461,13 @@ export function SidebarProjectsColumn({
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set())
   const [batchBusy, setBatchBusy] = useState(false)
   const [collapsedWorkspaces, setCollapsedWorkspaces] = useState<Record<string, boolean>>({})
+  useLayoutEffect(() => {
+    const state = useChatStore.getState()
+    const thread = state.threads.find((item) => item.id === revealRequest?.threadId)
+    if (!thread || state.pinnedThreadIds.includes(thread.id) || isChatsWorkspace(thread.workspace)) return
+    const path = normalizeWorkspaceRoot(thread.workspace)
+    setCollapsedWorkspaces((current) => current[path] === false ? current : { ...current, [path]: false })
+  }, [revealRequest])
   const [projectSortMode, setProjectSortMode] = useState<ProjectSortMode>(() => loadProjectSortMode())
   const [projectOrder, setProjectOrder] = useState<string[]>(() => loadProjectOrder())
   const [projectThreadOrders, setProjectThreadOrders] = useState<Record<string, string[]>>(() =>
@@ -1427,6 +1436,7 @@ export function ThreadRow({
 
   return (
     <div
+      data-thread-id={thread.id}
       onContextMenu={selectionMode ? undefined : handleContextMenu}
       onMouseEnter={selectionMode ? undefined : handleRowMouseEnter}
       onMouseMove={selectionMode ? undefined : handleRowMouseMove}
@@ -1460,6 +1470,7 @@ export function ThreadRow({
         }
         className="ds-density-list-row relative flex min-w-0 flex-1 items-center gap-2.5 pl-2.5 pr-2 text-left"
         disabled={deleting}
+        aria-current={!selectionMode && active ? 'page' : undefined}
         aria-pressed={selectionMode ? selected : undefined}
         aria-label={
           selectionMode

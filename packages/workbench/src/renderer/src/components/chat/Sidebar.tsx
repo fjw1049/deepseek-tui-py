@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type ReactElement } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactElement } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   CalendarClock,
@@ -24,13 +24,14 @@ import { SidebarPinnedSection } from './SidebarPinnedSection'
 import { SidebarChatsSection } from './SidebarChatsSection'
 import { SettingsSidebarNav } from '../settings/SettingsSidebarNav'
 import { isWorkspaceHidden } from '../../lib/sidebar-chrome'
-import { normalizeWorkspaceRoot } from '../../lib/workspace-path'
+import { isChatsWorkspace, normalizeWorkspaceRoot } from '../../lib/workspace-path'
 import { SidebarActivity } from './SidebarActivity'
-import { buildSidebarActivity } from '../../lib/sidebar-activity'
+import { activityDismissalKey, buildSidebarActivity, filterDismissedActivity, loadDismissedActivity, persistDismissedActivity, type ActivityRow } from '../../lib/sidebar-activity'
 import { useThreadsWithActiveTasks } from '../../hooks/use-thread-tasks'
 import { EmptyHomeLayoutToggle } from './EmptyHomeLayoutToggle'
 
 type Props = {
+  revealRequest?: { threadId: string | null } | null
   threads: NormalizedThread[]
   activeThreadId: string | null
   runtimeReady: boolean
@@ -47,6 +48,7 @@ type Props = {
 }
 
 export function Sidebar({
+  revealRequest,
   threads,
   activeThreadId,
   runtimeReady,
@@ -79,6 +81,44 @@ export function Sidebar({
   const hasVisiblePinned = storedThreads.some((thread) => pinnedThreadIds.includes(thread.id) && !isWorkspaceHidden(normalizeWorkspaceRoot(thread.workspace), hiddenWorkspacePaths))
   const [searchModalOpen, setSearchModalOpen] = useState(false)
   const [activityOpen, setActivityOpen] = useState(false)
+  const [dismissedActivity, setDismissedActivity] = useState(loadDismissedActivity)
+  const dismissActivity = (row: ActivityRow): void => {
+    setDismissedActivity((current) => {
+      const next = { ...current, [row.thread.id]: activityDismissalKey(row) }
+      persistDismissedActivity(next)
+      return next
+    })
+  }
+  const middleRef = useRef<HTMLDivElement>(null)
+
+  useLayoutEffect(() => {
+    if (!revealRequest) return
+    setActivityOpen(false)
+    const state = useChatStore.getState()
+    const thread = state.threads.find((item) => item.id === revealRequest.threadId)
+    if (!thread) return
+    if (state.pinnedThreadIds.includes(thread.id)) state.setPinnedCollapsed(false)
+    else if (isChatsWorkspace(thread.workspace)) state.setChatsCollapsed(false)
+    else state.setProjectsCollapsed(false)
+  }, [revealRequest])
+
+  useEffect(() => {
+    const threadId = revealRequest?.threadId
+    if (!threadId) return
+    const frame = requestAnimationFrame(() => {
+      const list = middleRef.current
+      const row = list?.querySelector<HTMLElement>(`[data-thread-id="${CSS.escape(threadId)}"]`)
+      if (!list || !row) return
+      const bounds = list.getBoundingClientRect()
+      const target = row.getBoundingClientRect()
+      // Only move the sidebar, and only far enough to reveal an offscreen row.
+      const delta = target.top < bounds.top ? target.top - bounds.top
+        : target.bottom > bounds.bottom ? target.bottom - bounds.bottom : 0
+      if (delta) list.scrollBy({ top: delta / (bounds.height / list.clientHeight || 1),
+        behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' })
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [revealRequest])
   const blocks = useChatStore((s) => s.blocks)
   const refreshThreads = useChatStore((s) => s.refreshThreads)
   const { threadIds: taskThreadIds } = useThreadsWithActiveTasks()
@@ -87,11 +127,24 @@ export function Sidebar({
     if (watching) runningIds.add(id)
   }
   if (busy && activeThreadId) runningIds.add(activeThreadId)
-  const activityGroups = buildSidebarActivity({
+  const currentActivityGroups = buildSidebarActivity({
     threads: storedThreads, hiddenWorkspacePaths, runningIds, unreadThreadIds, activeThreadId,
     activeWaiting: blocks.some((block) =>
       (block.kind === 'approval' || block.kind === 'user_input') && block.status === 'pending')
   })
+  const activityGroups = filterDismissedActivity(currentActivityGroups, dismissedActivity)
+  useEffect(() => {
+    if (!runtimeReady) return
+    const currentKeys = new Map(Object.values(currentActivityGroups).flat().map((row) =>
+      [row.thread.id, activityDismissalKey(row)]))
+    const stale = storedThreads.filter((thread) => dismissedActivity[thread.id] &&
+      dismissedActivity[thread.id] !== currentKeys.get(thread.id))
+    if (!stale.length) return
+    const next = { ...dismissedActivity }
+    for (const thread of stale) delete next[thread.id]
+    persistDismissedActivity(next)
+    setDismissedActivity(next)
+  }, [currentActivityGroups, dismissedActivity, runtimeReady, storedThreads])
   const hasActivity = Object.values(activityGroups).some((rows) => rows.length > 0)
 
   useEffect(() => {
@@ -233,9 +286,10 @@ export function Sidebar({
         <SettingsSidebarNav />
       ) : (
         <>
-          <div className="ds-sidebar-middle ds-no-drag min-h-0 flex-1" style={activityOpen ? { display: 'none' } : undefined}>
+          <div ref={middleRef} className="ds-sidebar-middle ds-no-drag min-h-0 flex-1" style={activityOpen ? { display: 'none' } : undefined}>
             <div ref={setSectionHeaderHost} className="ds-sidebar-section-heading ds-no-drag shrink-0" />
             <SidebarProjectsColumn
+              revealRequest={revealRequest}
               headerHost={hasVisiblePinned ? null : sectionHeaderHost}
               threads={threads}
               activeThreadId={activeThreadId}
@@ -283,7 +337,7 @@ export function Sidebar({
           </div>
 
           {activityOpen && <SidebarActivity groups={activityGroups} activeThreadId={activeThreadId}
-            runtimeReady={runtimeReady} onSelectThread={onSelectThread} />}
+            runtimeReady={runtimeReady} onSelectThread={onSelectThread} onDismiss={dismissActivity} />}
 
           <div className="ds-sidebar-footer ds-no-drag flex shrink-0 items-center gap-1 px-1 pt-1">
             <div className="min-w-0 flex-1">

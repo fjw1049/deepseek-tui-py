@@ -38,3 +38,32 @@ export function buildSidebarActivity(input: {
   }
   return groups
 }
+
+const DISMISSED_ACTIVITY_KEY = 'deepseekgui.sidebar.dismissedActivity'
+
+export function activityDismissalKey({ thread, status }: ActivityRow): string {
+  // updatedAt changes during background refreshes; a turn and its status identify the reminder.
+  return JSON.stringify([thread.latestTurnId ?? thread.activityAt ?? thread.createdAt ?? '', status,
+    thread.publishBlocked ?? false, thread.publishConflicts ?? []])
+}
+
+export function loadDismissedActivity(): Record<string, string> {
+  try {
+    const value: unknown = JSON.parse(window.localStorage.getItem(DISMISSED_ACTIVITY_KEY) ?? '{}')
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
+    return Object.fromEntries(Object.entries(value).filter(([, key]) => typeof key === 'string'))
+  } catch { return {} }
+}
+
+export function persistDismissedActivity(value: Record<string, string>): void {
+  try { window.localStorage.setItem(DISMISSED_ACTIVITY_KEY, JSON.stringify(value)) }
+  catch { /* Dismissal still works for this session when storage is unavailable. */ }
+}
+
+export function filterDismissedActivity(groups: ActivityGroups, dismissed: Readonly<Record<string, string>>): ActivityGroups {
+  const visible = { ...groups }
+  for (const group of ['attention', 'running', 'unread'] as const) {
+    visible[group] = groups[group].filter((row) => dismissed[row.thread.id] !== activityDismissalKey(row))
+  }
+  return visible
+}
