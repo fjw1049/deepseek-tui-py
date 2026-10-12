@@ -807,9 +807,9 @@ function BranchComparisonPicker({
   }
   return (
     <div ref={menuRef} className="ds-change-branch relative min-w-0 flex-1 text-[13px]">
-      <div className="flex h-7 w-fit min-w-0 max-w-full items-center gap-1 rounded-full border border-ds-border bg-ds-hover/60 pl-2 font-medium text-ds-muted">
+      <div className="flex h-7 w-fit min-w-0 max-w-[min(320px,100%)] items-center gap-1 rounded-full border border-ds-border bg-ds-hover/60 pl-2 font-medium text-ds-muted">
         <span
-          className="min-w-0 flex-1 truncate"
+          className="min-w-0 flex-initial truncate"
           title={t('changeBranchCurrentTitle', { branch: currentLabel })}
           aria-label={t('changeBranchCurrentTitle', { branch: currentLabel })}
         >
@@ -824,7 +824,7 @@ function BranchComparisonPicker({
           aria-label={t('changeBranchBaseTitle', { branch: baseLabel })}
           title={t('changeBranchBaseTitle', { branch: baseLabel })}
           onClick={() => (open ? closeMenu() : setOpen(true))}
-          className="flex h-7 min-w-0 flex-1 items-center gap-1 rounded-full px-2 font-medium text-ds-muted transition hover:bg-ds-hover hover:text-ds-ink active:scale-[0.98] disabled:opacity-45"
+          className="flex h-7 min-w-0 flex-initial items-center gap-1 rounded-full px-2 font-medium text-ds-muted transition hover:bg-ds-hover hover:text-ds-ink active:scale-[0.98] disabled:opacity-45"
         >
           <span className="truncate">{baseLabel}</span>
           {loading ? (
