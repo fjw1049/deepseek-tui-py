@@ -155,6 +155,8 @@ class AnthropicCompatClient(LLMClient):
         if request.top_p is not None:
             payload["top_p"] = request.top_p
         payload.update(sanitize_extra_body(request.extra_body))
+        if request.reasoning_effort == "off":
+            payload["thinking"] = {"type": "disabled"}
         return payload
 
     def cache_fingerprint_units(

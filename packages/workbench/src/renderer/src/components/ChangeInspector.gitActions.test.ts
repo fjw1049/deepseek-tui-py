@@ -13,7 +13,9 @@ import { ChangeInspector } from './ChangeInspector'
 const state = vi.hoisted(() => ({
   branches: null as unknown,
   changes: null as unknown,
-  remote: null as unknown
+  remote: null as unknown,
+  base: 'main' as string | undefined,
+  setBase: vi.fn()
 }))
 
 vi.mock('./chat/FileChip', () => ({ FileChip: () => null, FileTypeIcon: () => null }))
@@ -23,7 +25,7 @@ vi.mock('react-i18next', async (importOriginal) => ({
 }))
 vi.mock('../hooks/use-git-working-changes', () => ({
   useGitWorkingChanges: () => ({ result: state.changes, loading: false, reload: vi.fn() }),
-  useGitBranchCompareBase: () => ['main', vi.fn()]
+  useGitBranchCompareBase: () => [state.base, state.setBase]
 }))
 vi.mock('../hooks/use-git-branches', () => ({
   useGitBranches: () => ({ result: state.branches, loading: false, reload: vi.fn() })
@@ -83,6 +85,8 @@ const mount = async (branchState: Partial<BranchState>, staged: number): Promise
 }
 
 beforeEach(() => {
+  state.base = 'main'
+  state.setBase.mockClear()
   globalThis.IS_REACT_ACT_ENVIRONMENT = true
   state.remote = {
     ok: true,
@@ -106,6 +110,36 @@ it('commits when something is staged', async () => {
   await mount({}, 2)
   expect(chip().getAttribute('aria-label')).toBe('gitCommitStagedCount')
   expect(chip().disabled).toBe(false)
+})
+
+it('shows the current branch beside the selectable comparison base', async () => {
+  await mount({}, 0)
+  const picker = container.querySelector('.ds-change-branch')!
+  expect(picker.querySelector('[aria-label="changeBranchCurrentTitle"]')?.textContent).toBe('feature/x')
+  const baseButton = picker.querySelector<HTMLButtonElement>('button[aria-label="changeBranchBaseTitle"]')!
+  expect(baseButton.textContent).toBe('main')
+  expect(picker.querySelector('.lucide-arrow-right')).not.toBeNull()
+  expect(baseButton.querySelector('.lucide-chevron-down')).not.toBeNull()
+  act(() => baseButton.click())
+  const option = Array.from(picker.querySelectorAll<HTMLButtonElement>('[role="option"]'))
+    .find((item) => item.textContent === 'feature/x')!
+  act(() => option.click())
+  expect(state.setBase).toHaveBeenCalledWith('feature/x')
+  expect(picker.querySelector('[aria-label="changeBranchCurrentTitle"]')?.textContent).toBe('feature/x')
+})
+
+it('labels detached HEAD instead of displaying an inferred branch as current', async () => {
+  await mount({ currentBranch: null, detached: true, inferredBranch: 'feature/x' }, 0)
+  expect(container.querySelector('[aria-label="changeBranchCurrentTitle"]')?.textContent).toBe('gitDetached')
+})
+
+it('shows only one placeholder with no comparison controls when no branches exist', async () => {
+  state.base = undefined
+  await mount({ currentBranch: null, defaultBranch: null }, 0)
+  const picker = container.querySelector('.ds-change-branch')!
+  expect(picker.textContent).toBe('gitNoBranch')
+  expect(picker.querySelector('button')).toBeNull()
+  expect(picker.querySelector('.lucide-arrow-right')).toBeNull()
 })
 
 it('offers a greyed push — not a PR — when the branch is in sync', async () => {

@@ -85,6 +85,20 @@ def test_anthropic_prompt_cache_is_explicitly_opt_in() -> None:
     assert payload["cache_control"] == {"type": "ephemeral"}
 
 
+@pytest.mark.parametrize("effort", [None, "off"])
+def test_anthropic_explicit_thinking_off_overrides_extra_body(effort) -> None:
+    client = AnthropicCompatClient(api_key="k", base_url="https://api.example")
+    thinking = {"type": "enabled", "budget_tokens": 1024}
+    request = _request(
+        reasoning_effort=effort,
+        tool_choice={"type": "tool", "name": "narration"},
+        extra_body={"thinking": thinking},
+    )
+    payload = client._build_payload(request)
+    assert payload["thinking"] == ({"type": "disabled"} if effort == "off" else thinking)
+    assert payload["tool_choice"] == {"type": "tool", "name": "narration"}
+
+
 # --- extra_headers ------------------------------------------------------------
 
 _EVIL_HEADERS = {

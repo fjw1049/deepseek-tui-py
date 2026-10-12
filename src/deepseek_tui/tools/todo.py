@@ -391,6 +391,12 @@ class ChecklistTool(ToolSpec):
             result = self._update(input_data, context)
             await _forward_to_task_manager(context, result.metadata)
             return result
+        if any(key in input_data for key in ("id", "status", "content")):
+            raise ToolError(
+                "Single-item fields require op='update'. "
+                "Call checklist(op='update', id=<id>, status=<status>); "
+                "use todos for a full-list write or no arguments to read."
+            )
         todos = input_data.get("todos")
         if todos is None:
             items = input_data.get("items")

@@ -11,6 +11,7 @@ import {
 import { useTranslation } from 'react-i18next'
 import { useShallow } from 'zustand/react/shallow'
 import {
+  ArrowRight,
   Check,
   CheckCircle2,
   ChevronDown,
@@ -718,6 +719,7 @@ function ChangeSourcePicker({
 
 function BranchComparisonPicker({
   currentBranch,
+  detached,
   branches,
   defaultBranch,
   selectedBase,
@@ -725,6 +727,7 @@ function BranchComparisonPicker({
   onChange
 }: {
   currentBranch: string | null
+  detached: boolean
   branches: Array<{ name: string }>
   defaultBranch: string | null
   selectedBase?: string
@@ -791,23 +794,46 @@ function BranchComparisonPicker({
   )
 
   const baseLabel = selectedBase ?? (loading ? t('gitBranchLoading') : t('gitNoBranch'))
+  const currentLabel =
+    currentBranch ?? (detached ? t('gitDetached') : loading ? t('gitBranchLoading') : t('gitNoBranch'))
+  if (!currentBranch && !detached && !selectedBase && !defaultBranch && branches.length === 0) {
+    return (
+      <div className="ds-change-branch min-w-0 flex-1 text-[13px]">
+        <span className="inline-flex h-7 items-center rounded-full border border-ds-border bg-ds-hover/60 px-2 font-medium text-ds-muted">
+          {baseLabel}
+        </span>
+      </div>
+    )
+  }
   return (
     <div ref={menuRef} className="ds-change-branch relative min-w-0 flex-1 text-[13px]">
-      <button
-        type="button"
-        disabled={loading && !selectedBase}
-        aria-haspopup="dialog"
-        aria-expanded={open}
-        aria-label={t('changeBranchBaseTitle', { branch: baseLabel })}
-        title={t('changeBranchBaseTitle', { branch: baseLabel })}
-        onClick={() => (open ? closeMenu() : setOpen(true))}
-        className="flex h-7 min-w-0 max-w-full items-center gap-1 rounded-md px-2 font-medium text-ds-muted transition hover:bg-ds-hover hover:text-ds-ink active:scale-[0.98] disabled:opacity-45"
-      >
-        <span className="truncate">{baseLabel}</span>
-        {loading ? (
-          <Loader2 className="h-3 w-3 shrink-0 animate-spin text-ds-faint" />
-        ) : null}
-      </button>
+      <div className="flex h-7 w-fit min-w-0 max-w-full items-center gap-1 rounded-full border border-ds-border bg-ds-hover/60 pl-2 font-medium text-ds-muted">
+        <span
+          className="min-w-0 flex-1 truncate"
+          title={t('changeBranchCurrentTitle', { branch: currentLabel })}
+          aria-label={t('changeBranchCurrentTitle', { branch: currentLabel })}
+        >
+          {currentLabel}
+        </span>
+        <ArrowRight className="h-3.5 w-3.5 shrink-0 text-ds-faint" aria-hidden="true" />
+        <button
+          type="button"
+          disabled={loading && !selectedBase}
+          aria-haspopup="dialog"
+          aria-expanded={open}
+          aria-label={t('changeBranchBaseTitle', { branch: baseLabel })}
+          title={t('changeBranchBaseTitle', { branch: baseLabel })}
+          onClick={() => (open ? closeMenu() : setOpen(true))}
+          className="flex h-7 min-w-0 flex-1 items-center gap-1 rounded-full px-2 font-medium text-ds-muted transition hover:bg-ds-hover hover:text-ds-ink active:scale-[0.98] disabled:opacity-45"
+        >
+          <span className="truncate">{baseLabel}</span>
+          {loading ? (
+            <Loader2 className="h-3 w-3 shrink-0 animate-spin text-ds-faint" />
+          ) : (
+            <ChevronDown className="h-3 w-3 shrink-0" aria-hidden="true" />
+          )}
+        </button>
+      </div>
       {open || closing ? (
         <div
           role="dialog"
@@ -1656,6 +1682,7 @@ export function ChangeInspector({
             {context === 'branch' ? (
               <BranchComparisonPicker
                 currentBranch={gitBranches?.ok ? gitBranches.currentBranch : null}
+                detached={gitBranches?.ok ? gitBranches.detached : false}
                 branches={gitBranches?.ok ? gitBranches.branches : []}
                 defaultBranch={gitBranches?.ok ? gitBranches.defaultBranch : null}
                 selectedBase={selectedBranchBase}

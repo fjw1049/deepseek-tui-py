@@ -2,10 +2,8 @@ import type { NormalizedThread } from '../agent/types'
 import { isWorkspaceHidden } from './sidebar-chrome'
 import { isClawWorkspacePath, normalizeWorkspaceRoot } from './workspace-path'
 
-export type ActivityStatus = 'waiting' | 'failed' | 'running' | 'unread'
-export type ActivityGroup = 'attention' | 'running' | 'unread'
+export type ActivityStatus = 'waiting' | 'failed' | 'running' | 'unread' | 'completed' | 'idle' | 'stopped'
 export type ActivityRow = { thread: NormalizedThread; status: ActivityStatus; unread: boolean }
-export type ActivityGroups = Record<ActivityGroup, ActivityRow[]>
 
 export function buildSidebarActivity(input: {
   threads: readonly NormalizedThread[]
@@ -14,8 +12,8 @@ export function buildSidebarActivity(input: {
   unreadThreadIds: Readonly<Record<string, boolean>>
   activeThreadId: string | null
   activeWaiting: boolean
-}): ActivityGroups {
-  const groups: ActivityGroups = { attention: [], running: [], unread: [] }
+}): ActivityRow[] {
+  const rows: ActivityRow[] = []
   for (const thread of input.threads) {
     if (thread.archived || isClawWorkspacePath(thread.workspace) ||
       isWorkspaceHidden(normalizeWorkspaceRoot(thread.workspace), input.hiddenWorkspacePaths)) continue
@@ -26,17 +24,16 @@ export function buildSidebarActivity(input: {
     const blocked = thread.publishBlocked || (thread.publishConflicts?.length ?? 0) > 0
     const failed = turnStatus === 'failed' || thread.latestTurnFailed
     // A new live turn supersedes a previous failure; unread is an independent badge.
-    const status: ActivityStatus | null = waiting ? 'waiting' : running ? 'running' : blocked || failed ? 'failed' : unread ? 'unread' : null
-    if (!status) continue
-    groups[status === 'waiting' || status === 'failed' ? 'attention' : status].push({ thread, status, unread })
+    const stopped = turnStatus === 'interrupted' || turnStatus === 'canceled'
+    const status: ActivityStatus = waiting ? 'waiting' : running ? 'running' : blocked || failed ? 'failed'
+      : stopped ? 'stopped' : unread ? 'unread' : turnStatus === 'completed' ? 'completed' : 'idle'
+    rows.push({ thread, status, unread })
   }
-  for (const rows of Object.values(groups)) {
-    rows.sort((a, b) => {
-      const time = (thread: NormalizedThread): number => Date.parse(thread.activityAt ?? thread.createdAt ?? thread.updatedAt) || 0
-      return time(b.thread) - time(a.thread) || a.thread.id.localeCompare(b.thread.id)
-    })
-  }
-  return groups
+  rows.sort((a, b) => {
+    const time = (thread: NormalizedThread): number => Date.parse(thread.activityAt ?? thread.createdAt ?? thread.updatedAt) || 0
+    return time(b.thread) - time(a.thread) || a.thread.id.localeCompare(b.thread.id)
+  })
+  return rows
 }
 
 const DISMISSED_ACTIVITY_KEY = 'deepseekgui.sidebar.dismissedActivity'
@@ -60,10 +57,6 @@ export function persistDismissedActivity(value: Record<string, string>): void {
   catch { /* Dismissal still works for this session when storage is unavailable. */ }
 }
 
-export function filterDismissedActivity(groups: ActivityGroups, dismissed: Readonly<Record<string, string>>): ActivityGroups {
-  const visible = { ...groups }
-  for (const group of ['attention', 'running', 'unread'] as const) {
-    visible[group] = groups[group].filter((row) => dismissed[row.thread.id] !== activityDismissalKey(row))
-  }
-  return visible
+export function filterDismissedActivity(rows: ActivityRow[], dismissed: Readonly<Record<string, string>>): ActivityRow[] {
+  return rows.filter((row) => dismissed[row.thread.id] !== activityDismissalKey(row))
 }

@@ -25,6 +25,7 @@ vi.mock('../../hooks/use-thread-tasks', () => ({
 }))
 vi.mock('./ConversationSearchModal', () => ({ ConversationSearchModal: () => null }))
 vi.mock('./EmptyHomeLayoutToggle', () => ({ EmptyHomeLayoutToggle: () => null }))
+vi.mock('./ThemeToggle', () => ({ ThemeToggle: () => null }))
 vi.mock('../settings/SettingsSidebarNav', () => ({ SettingsSidebarNav: () => null }))
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
 
@@ -117,5 +118,43 @@ it.each(['project', 'chats', 'pinned'])('reveals a %s conversation from activity
   } finally {
     await act(async () => root.unmount())
     container.remove()
+  }
+})
+
+
+it.each([
+  ['completed', false, false, null],
+  ['failed', false, false, null],
+  ['in_progress', true, false, 'waiting'],
+  ['in_progress', true, true, 'waiting'],
+  ['completed', false, true, 'unread'],
+  ['failed', false, true, 'unread'],
+  ['in_progress', false, false, 'running'],
+  ['in_progress', false, true, 'running']
+] as const)('shows the appropriate activity indicator for %s, waiting=%s, unread=%s', async (status, waiting, unread, indicator) => {
+  localStorage.removeItem('deepseekgui.sidebar.dismissedActivity')
+  const thread: NormalizedThread = { id: 'indicator-target', title: 'Conversation', workspace: '/project',
+    updatedAt: '', model: '', mode: '', latestTurnStatus: status, activityWaiting: waiting }
+  useChatStore.setState({ route: 'chat', threads: [thread], activeThreadId: null, pinnedThreadIds: [],
+    blocks: [], busy: false, watchTurnCompletion: {}, unreadThreadIds: { [thread.id]: unread } })
+  const container = document.createElement('div')
+  const root = createRoot(container)
+  const noop = vi.fn()
+  try {
+    await act(async () => root.render(createElement(Sidebar, {
+      threads: [thread], activeThreadId: null, runtimeReady: true,
+      onSelectThread: noop, onNewChat: noop, onNewChatsThread: noop, onNewChatInWorkspace: noop,
+      onOpenThreadTerminal: noop, onDeleteThread: noop, onArchiveThread: noop,
+      onOpenSettings: noop, onCollapseSidebar: noop
+    })))
+    const dot = container.querySelector('.ds-activity-indicator')
+    if (indicator) {
+      expect(dot?.classList.contains(`ds-activity-indicator--${indicator === 'waiting' ? 'running' : indicator}`)).toBe(true)
+      expect(dot?.getAttribute('aria-label')).toBe(indicator === 'unread' ? 'activityUnreadBadge' : `activityStatus_${indicator}`)
+    } else {
+      expect(dot).toBeNull()
+    }
+  } finally {
+    await act(async () => root.unmount())
   }
 })

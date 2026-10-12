@@ -811,9 +811,13 @@ async def _http_get(
                         truncated = True
                         break
                     body.extend(chunk)
+                # aiter_bytes already decoded the body; do not decode it again.
+                decoded_headers = response.headers.copy()
+                decoded_headers.pop("content-encoding", None)
+                decoded_headers.pop("content-length", None)
                 return httpx.Response(
                     response.status_code,
-                    headers=response.headers,
+                    headers=decoded_headers,
                     content=bytes(body),
                     request=response.request,
                     extensions={**response.extensions, "body_truncated": truncated},

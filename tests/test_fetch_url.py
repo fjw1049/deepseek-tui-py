@@ -81,6 +81,39 @@ async def test_http_get_follows_safe_redirect() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("max_bytes", [1000, 5])
+async def test_http_get_does_not_decode_compressed_body_twice(max_bytes) -> None:
+    import gzip
+
+    import httpx
+
+    from deepseek_tui.tools.web import _http_get
+
+    body = b"repository contents"
+    compressed = gzip.compress(body)
+
+    class Body(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            yield compressed
+
+    def handler(request):
+        return httpx.Response(
+            200,
+            headers={"content-encoding": "gzip", "content-length": str(len(compressed)),
+                     "content-type": "text/plain; charset=utf-8"},
+            stream=Body(),
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        response = await _http_get(client, "https://8.8.8.8/doc", max_bytes=max_bytes)
+    assert response.content == body[:max_bytes]
+    assert "content-encoding" not in response.headers
+    assert int(response.headers["content-length"]) == len(response.content)
+    assert response.headers["content-type"] == "text/plain; charset=utf-8"
+    assert response.extensions["body_truncated"] == (max_bytes < len(body))
+
+
+@pytest.mark.asyncio
 async def test_http_get_checks_hosts_off_event_loop(monkeypatch: pytest.MonkeyPatch) -> None:
     import threading
 

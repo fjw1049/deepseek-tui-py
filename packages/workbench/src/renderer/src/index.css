@@ -3389,8 +3389,9 @@ samp {
   margin-top: 0;
 }
 
-/* Projects and conversations share one continuous scrolling region. */
-.ds-sidebar-middle {
+/* Projects, conversations and recent activity share the same scrollport geometry. */
+.ds-sidebar-middle,
+.ds-activity {
   margin-top: 0.75rem;
   margin-right: -0.75rem;
   padding-right: 0.75rem;
@@ -3402,7 +3403,8 @@ samp {
   flex-direction: column;
 }
 
-.ds-sidebar-middle::-webkit-scrollbar-thumb {
+.ds-sidebar-middle::-webkit-scrollbar-thumb,
+.ds-activity::-webkit-scrollbar-thumb {
   border: 0;
 }
 
@@ -7705,7 +7707,6 @@ select:focus-visible,
   gap: 0.5rem;
   min-height: 2.85rem;
   padding: 0.55rem 0.65rem 0.5rem 0.85rem;
-  border-bottom: 1px solid color-mix(in srgb, var(--text-primary) 7%, transparent);
 }
 
 .ds-operation-dock-topbar__title {
@@ -7747,9 +7748,10 @@ select:focus-visible,
 }
 
 .ds-operation-dock-body {
-  /* Kept just above the concentric limit: card radius 18px − panel radius
+  /* Side and bottom padding stay above the concentric limit: card radius 18px − panel radius
      12.8px = 5.2px, so a smaller pad starts colliding with the card corner. */
-  padding: 0.4rem;
+  padding: 0 0.4rem 0.4rem;
+  margin-top: calc(-0.25rem + 3px);
   background: transparent;
 }
 

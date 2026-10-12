@@ -28,6 +28,7 @@ import { isChatsWorkspace, normalizeWorkspaceRoot } from '../../lib/workspace-pa
 import { SidebarActivity } from './SidebarActivity'
 import { activityDismissalKey, buildSidebarActivity, filterDismissedActivity, loadDismissedActivity, persistDismissedActivity, type ActivityRow } from '../../lib/sidebar-activity'
 import { useThreadsWithActiveTasks } from '../../hooks/use-thread-tasks'
+import { ThemeToggle } from './ThemeToggle'
 import { EmptyHomeLayoutToggle } from './EmptyHomeLayoutToggle'
 
 type Props = {
@@ -127,15 +128,15 @@ export function Sidebar({
     if (watching) runningIds.add(id)
   }
   if (busy && activeThreadId) runningIds.add(activeThreadId)
-  const currentActivityGroups = buildSidebarActivity({
+  const currentActivityRows = buildSidebarActivity({
     threads: storedThreads, hiddenWorkspacePaths, runningIds, unreadThreadIds, activeThreadId,
     activeWaiting: blocks.some((block) =>
       (block.kind === 'approval' || block.kind === 'user_input') && block.status === 'pending')
   })
-  const activityGroups = filterDismissedActivity(currentActivityGroups, dismissedActivity)
+  const activityRows = filterDismissedActivity(currentActivityRows, dismissedActivity)
   useEffect(() => {
     if (!runtimeReady) return
-    const currentKeys = new Map(Object.values(currentActivityGroups).flat().map((row) =>
+    const currentKeys = new Map(currentActivityRows.map((row) =>
       [row.thread.id, activityDismissalKey(row)]))
     const stale = storedThreads.filter((thread) => dismissedActivity[thread.id] &&
       dismissedActivity[thread.id] !== currentKeys.get(thread.id))
@@ -144,8 +145,10 @@ export function Sidebar({
     for (const thread of stale) delete next[thread.id]
     persistDismissedActivity(next)
     setDismissedActivity(next)
-  }, [currentActivityGroups, dismissedActivity, runtimeReady, storedThreads])
-  const hasActivity = Object.values(activityGroups).some((rows) => rows.length > 0)
+  }, [currentActivityRows, dismissedActivity, runtimeReady, storedThreads])
+  const activityIndicator = activityRows.some((row) => row.status === 'waiting') ? 'waiting'
+    : activityRows.some((row) => row.status === 'running') ? 'running'
+    : activityRows.some((row) => row.unread) ? 'unread' : null
 
   useEffect(() => {
     if (!runtimeReady) return
@@ -209,7 +212,8 @@ export function Sidebar({
                 aria-pressed={activityOpen} aria-controls="sidebar-activity"
                 onClick={toggleActivity}>
                 <NotebookText className="h-4 w-4" strokeWidth={1.8} />
-                {hasActivity && <span className="ds-activity-indicator" aria-hidden="true" />}
+                {activityIndicator && <span className={`ds-activity-indicator ds-activity-indicator--${activityIndicator === 'waiting' ? 'running' : activityIndicator}`}
+                  role="img" aria-label={t(activityIndicator === 'unread' ? 'activityUnreadBadge' : `activityStatus_${activityIndicator}`)} />}
               </button>
             </div>
           </div>
@@ -336,7 +340,7 @@ export function Sidebar({
             </div>
           </div>
 
-          {activityOpen && <SidebarActivity groups={activityGroups} activeThreadId={activeThreadId}
+          {activityOpen && <SidebarActivity rows={activityRows} activeThreadId={activeThreadId}
             runtimeReady={runtimeReady} onSelectThread={onSelectThread} onDismiss={dismissActivity} />}
 
           <div className="ds-sidebar-footer ds-no-drag flex shrink-0 items-center gap-1 px-1 pt-1">
@@ -349,6 +353,7 @@ export function Sidebar({
               />
             </div>
             <EmptyHomeLayoutToggle />
+            <ThemeToggle />
           </div>
         </>
       )}

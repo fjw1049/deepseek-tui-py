@@ -1,17 +1,16 @@
 import { useState, type ReactElement } from 'react'
-import { ChevronDown, ChevronRight, CircleAlert, CircleCheck, Loader2, MessageCircleQuestion } from 'lucide-react'
+import { ChevronDown, ChevronRight, Circle, CircleAlert, CircleCheck, CirclePause, Loader2, MessageCircleQuestion } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
-import { activityDismissalKey, type ActivityGroup, type ActivityGroups, type ActivityRow } from '../../lib/sidebar-activity'
+import { activityDismissalKey, type ActivityRow } from '../../lib/sidebar-activity'
 import { isChatsWorkspace } from '../../lib/workspace-path'
 import { workspaceLabelFromPath } from '../../lib/workspace-label'
 import './sidebar-activity.css'
 import { ActivitySwipeRow } from './ActivitySwipeRow'
 
-const groupOrder: ActivityGroup[] = ['attention', 'running', 'unread']
-const statusIcons = { waiting: MessageCircleQuestion, failed: CircleAlert, running: Loader2, unread: CircleCheck }
+const statusIcons = { waiting: MessageCircleQuestion, failed: CircleAlert, running: Loader2, unread: CircleCheck, completed: CircleCheck, idle: Circle, stopped: CirclePause }
 
-export function SidebarActivity({ groups, activeThreadId, runtimeReady, onSelectThread, onDismiss }: {
-  groups: ActivityGroups
+export function SidebarActivity({ rows, activeThreadId, runtimeReady, onSelectThread, onDismiss }: {
+  rows: ActivityRow[]
   activeThreadId: string | null
   runtimeReady: boolean
   onSelectThread: (id: string) => void
@@ -20,7 +19,7 @@ export function SidebarActivity({ groups, activeThreadId, runtimeReady, onSelect
   const { t } = useTranslation('common')
   const [collapsed, setCollapsed] = useState(false)
   const [openId, setOpenId] = useState<string | null>(null)
-  const total = groupOrder.reduce((count, group) => count + groups[group].length, 0)
+  const total = rows.length
   return (
     <section id="sidebar-activity" className="ds-activity ds-no-drag min-h-0 flex-1" aria-label={t('activityTitle')}>
       <div className="ds-sidebar-section-heading shrink-0">
@@ -41,29 +40,24 @@ export function SidebarActivity({ groups, activeThreadId, runtimeReady, onSelect
         {total === 0 ? <div className="ds-activity-empty">
           <CircleCheck size={25} strokeWidth={1.35} />
           <strong>{t('activityEmpty')}</strong><p>{t('activityEmptyHint')}</p>
-        </div> : groupOrder.map((group) => groups[group].length > 0 && (
-          <section key={group} className="ds-activity-group" aria-label={t(`activityGroup_${group}`)}>
-            <h3>{t(`activityGroup_${group}`)}<span>{groups[group].length}</span></h3>
-            {groups[group].map((activity) => {
-              const { thread, status, unread } = activity
-              const Icon = statusIcons[status]
-              const project = !thread.workspace || isChatsWorkspace(thread.workspace) ? t('sidebarChatBadge') : workspaceLabelFromPath(thread.workspace)
-              return <ActivitySwipeRow key={`${thread.id}:${activityDismissalKey(activity)}`}
-                selected={thread.id === activeThreadId}
-                open={openId === thread.id}
-                onOpenChange={(open) => setOpenId(open ? thread.id : null)}
-                title={`${thread.title} · ${project} · ${t(`activityStatus_${status}`)}`}
-                onSelect={() => onSelectThread(thread.id)}
-                onDismiss={() => { setOpenId(null); onDismiss(activity) }}>
-                <Icon size={15} strokeWidth={1.8} className={`ds-activity-icon ds-activity-icon--${status} ${status === 'running' ? 'animate-spin motion-reduce:animate-none' : ''}`} />
-                <span className="ds-activity-copy"><span className="ds-activity-title">{thread.title || thread.id.slice(0, 8)}</span>
-                  <span className="ds-activity-meta"><span>{project}</span><span>·</span><span>{t(`activityStatus_${status}`)}</span></span>
-                </span>
-                {unread && <span className="ds-activity-unread" aria-label={t('activityUnreadBadge')} />}
-              </ActivitySwipeRow>
-            })}
-          </section>
-        ))}
+        </div> : rows.map((activity) => {
+          const { thread, status, unread } = activity
+          const Icon = statusIcons[status]
+          const project = !thread.workspace || isChatsWorkspace(thread.workspace) ? t('sidebarChatBadge') : workspaceLabelFromPath(thread.workspace)
+          return <ActivitySwipeRow key={`${thread.id}:${activityDismissalKey(activity)}`}
+            selected={thread.id === activeThreadId}
+            open={openId === thread.id}
+            onOpenChange={(open) => setOpenId(open ? thread.id : null)}
+            title={`${thread.title} · ${project} · ${t(`activityStatus_${status}`)}`}
+            onSelect={() => onSelectThread(thread.id)}
+            onDismiss={() => { setOpenId(null); onDismiss(activity) }}>
+            <Icon size={15} strokeWidth={1.8} className={`ds-activity-icon ds-activity-icon--${status} ${status === 'running' ? 'animate-spin motion-reduce:animate-none' : ''}`} />
+            <span className="ds-activity-copy"><span className="ds-activity-title">{thread.title || thread.id.slice(0, 8)}</span>
+              <span className="ds-activity-meta"><span>{project}</span><span>·</span><span>{t(`activityStatus_${status}`)}</span></span>
+            </span>
+            {unread && <span className="ds-activity-unread" aria-label={t('activityUnreadBadge')} />}
+          </ActivitySwipeRow>
+        })}
       </div>
     </section>
   )

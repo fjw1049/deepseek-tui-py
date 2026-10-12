@@ -167,6 +167,27 @@ async def test_update_unknown_id_errors(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("op", [None, "read"])
+async def test_update_fields_without_update_op_error(tmp_path, op) -> None:
+    registry = build_default_registry(mode="agent")
+    context = ToolContext(working_directory=tmp_path)
+    await registry.execute(
+        _CANONICAL_NAME, {"todos": [{"content": "Report", "status": "in_progress"}]}, context
+    )
+    arguments = {"id": "1", "status": "completed"}
+    if op is not None:
+        arguments["op"] = op
+    with pytest.raises(ToolError, match="op='update'"):
+        await registry.execute(_CANONICAL_NAME, arguments, context)
+    listed = await registry.execute(_CANONICAL_NAME, {}, context)
+    assert listed.metadata["items"][0]["status"] == "in_progress"
+    updated = await registry.execute(
+        _CANONICAL_NAME, {**arguments, "op": "update"}, context
+    )
+    assert updated.metadata["items"][0]["status"] == "completed"
+
+
+@pytest.mark.asyncio
 async def test_update_can_cancel(tmp_path) -> None:
     """The new ``cancelled`` status is accepted on update."""
     registry = build_default_registry(mode="agent")
