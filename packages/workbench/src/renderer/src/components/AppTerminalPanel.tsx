@@ -368,7 +368,8 @@ export function AppTerminalPanel({
         handle.terminal.dispose()
       }
       terminalHandlesRef.current.clear()
-      sessionNodeRefs.current = {}
+      // React owns host refs; Fast Refresh replays effects without unmounting the hosts.
+      // Clearing them here prevents the next setup from recreating the terminal.
     }
   }, [])
 

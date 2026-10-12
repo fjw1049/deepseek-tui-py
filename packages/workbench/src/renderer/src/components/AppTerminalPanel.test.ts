@@ -5,7 +5,16 @@ import { beforeEach, expect, it, vi } from 'vitest'
 import { AppTerminalPanel } from './AppTerminalPanel'
 import { useTerminalSessionStore } from '../store/terminal-session-store'
 
-const mocks = vi.hoisted(() => ({ terminals: [] as Array<{ dispose: ReturnType<typeof vi.fn>; focus: ReturnType<typeof vi.fn> }> }))
+const mocks = vi.hoisted(() => ({
+  terminals: [] as Array<{ dispose: ReturnType<typeof vi.fn>; focus: ReturnType<typeof vi.fn>; write: ReturnType<typeof vi.fn> }>,
+  onData: (_event: { sessionId: string; data: string }) => {},
+  effectVersion: 0
+}))
+vi.mock('react', async (importOriginal) => {
+  const react = await importOriginal<typeof import('react')>()
+  return { ...react, useEffect: (effect: Parameters<typeof react.useEffect>[0], deps?: Parameters<typeof react.useEffect>[1]) =>
+    react.useEffect(effect, deps ? [...deps, mocks.effectVersion] : deps) }
+})
 vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key }) }))
 vi.mock('../lib/workspace-label', () => ({ terminalLabelFromPath: () => 'workspace' }))
 vi.mock('../lib/apply-theme', () => ({ readTerminalFontFamily: () => 'monospace' }))
@@ -21,7 +30,7 @@ vi.mock('@xterm/xterm', () => ({ Terminal: class {
   open(host: HTMLElement) { host.setAttribute('data-xterm', 'mounted') }
   loadAddon() {}
   onData() { return { dispose: vi.fn() } }
-  write() {}
+  write = vi.fn()
 } }))
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
 const state = () => useTerminalSessionStore.getState()
@@ -30,10 +39,11 @@ beforeEach(() => {
   state().resetSessions()
   state().markInitialSessionStarted()
   mocks.terminals.length = 0
+  mocks.effectVersion = 0
   Object.assign(window, { dsGui: {
     createTerminalSession: vi.fn(async () => ({ ok: true, session: { id: `pane-${mocks.terminals.length}`, cwd: '/workspace' } })),
     resizeTerminalSession: vi.fn(), closeTerminalSession: vi.fn(),
-    onTerminalData: () => () => {}, onTerminalExit: () => () => {}
+    onTerminalData: (callback: typeof mocks.onData) => { mocks.onData = callback; return () => {} }, onTerminalExit: () => () => {}
   } })
 })
 
@@ -99,6 +109,29 @@ it('coalesces split pointer moves and applies the final position on release', as
     } finally {
       requestFrame.mockRestore()
     }
+  } finally {
+    await act(async () => root.unmount())
+    host.remove()
+  }
+})
+
+it('recreates the terminal after effect cleanup while its host remains mounted', async () => {
+  state().addSession({ id: 'a', cwd: '/workspace', status: 'running' })
+  const host = document.createElement('div')
+  document.body.appendChild(host)
+  const root = createRoot(host)
+  try {
+    const render = () => root.render(createElement(AppTerminalPanel, { workspaceRoot: '/workspace', mountActive: true, mountSurface: 'bottom' }))
+    await act(async () => render())
+    mocks.onData({ sessionId: 'a', data: 'existing terminal output\r\n' })
+    expect(mocks.terminals[0].write).toHaveBeenCalledWith('existing terminal output\r\n')
+    // Fast Refresh replays effects while preserving the mounted host and refs.
+    mocks.effectVersion++
+    await act(async () => render())
+    expect(mocks.terminals).toHaveLength(2)
+    expect(mocks.terminals[0].dispose).toHaveBeenCalledOnce()
+    expect(mocks.terminals[1].write).toHaveBeenCalledWith('existing terminal output\r\n')
+    expect(mocks.terminals.at(-1)!.dispose).not.toHaveBeenCalled()
   } finally {
     await act(async () => root.unmount())
     host.remove()
