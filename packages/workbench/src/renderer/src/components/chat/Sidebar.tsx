@@ -341,7 +341,8 @@ export function Sidebar({
           </div>
 
           {activityOpen && <SidebarActivity rows={activityRows} activeThreadId={activeThreadId}
-            runtimeReady={runtimeReady} onSelectThread={onSelectThread} onDismiss={dismissActivity} />}
+            runtimeReady={runtimeReady} onSelectThread={onSelectThread} onDismiss={dismissActivity}
+            onArchiveThread={onArchiveThread} onDeleteThread={onDeleteThread} />}
 
           <div className="ds-sidebar-footer ds-no-drag flex shrink-0 items-center gap-1 px-1 pt-1">
             <div className="min-w-0 flex-1">

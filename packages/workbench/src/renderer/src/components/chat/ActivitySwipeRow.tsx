@@ -3,7 +3,8 @@ import { useTranslation } from 'react-i18next'
 
 const ACTION_WIDTH = 76
 
-export function ActivitySwipeRow({ children, selected, title, open, onOpenChange, onSelect, onDismiss }: {
+export function ActivitySwipeRow({ children, selected, title, open, onOpenChange, onSelect, onDismiss, actions }: {
+  actions?: ReactNode
   children: ReactNode
   selected: boolean
   title: string
@@ -67,7 +68,7 @@ export function ActivitySwipeRow({ children, selected, title, open, onOpenChange
     onDismiss()
   }
 
-  return <div ref={shell} className={`ds-activity-swipe ${dismissing ? 'ds-activity-swipe--dismissing' : ''} ${dragOffset !== null ? 'ds-activity-swipe--dragging' : ''}`}>
+  return <div ref={shell} className={`ds-activity-swipe ${open ? 'ds-activity-swipe--open' : ''} ${dismissing ? 'ds-activity-swipe--dismissing' : ''} ${dragOffset !== null ? 'ds-activity-swipe--dragging' : ''}`}>
     <button type="button" className="ds-activity-dismiss" disabled={dismissing}
       style={{ clipPath: `inset(0 0 0 ${ACTION_WIDTH + offset}px)`, pointerEvents: open ? 'auto' : 'none' }}
       aria-label={`${t('activityDismiss')} · ${title}`}
@@ -125,5 +126,6 @@ export function ActivitySwipeRow({ children, selected, title, open, onOpenChange
         if (open) onOpenChange(false)
         else onSelect()
       }}>{children}</button>
+    {actions}
   </div>
 }

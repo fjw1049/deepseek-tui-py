@@ -10,8 +10,8 @@
 }
 .ds-activity-total { color: var(--ds-text-muted); font-size: 11px; font-variant-numeric: tabular-nums; }
 .ds-activity-scroll { flex: 0 0 auto; min-width: 0; padding-bottom: 0.5rem; }
-.ds-activity-row { display: flex; align-items: flex-start; gap: 0.3rem; width: 100%; min-width: 0; padding: calc(0.5rem * var(--ds-density, 1)) 0.5rem; text-align: left; border: 0; border-radius: 8px; color: var(--ds-text); background: transparent; cursor: pointer; }
-.ds-activity-row:hover { background: var(--ds-surface-hover); }
+.ds-activity-row { display: flex; align-items: flex-start; gap: 0.3rem; width: 100%; min-width: 0; padding: calc(0.4rem * var(--ds-density, 1)) 0.5rem; text-align: left; border: 0; border-radius: 8px; color: var(--ds-text); background: transparent; cursor: pointer; }
+.ds-activity-item:hover .ds-activity-row { background: var(--ds-surface-hover); }
 .ds-activity-row--selected { background: var(--ds-surface-hover); }
 .ds-activity-row:focus-visible, .ds-sidebar-header-actions button:focus-visible { outline: 2px solid var(--ds-accent); outline-offset: -2px; }
 .ds-activity-icon { flex-shrink: 0; width: 1rem; height: 1rem; margin-top: 2px; }
@@ -21,10 +21,12 @@
 .ds-activity-icon--completed { color: var(--ds-success); }
 .ds-activity-icon--idle, .ds-activity-icon--stopped { color: var(--ds-text-faint); }
 .ds-activity-copy { min-width: 0; flex: 1; }
-.ds-activity-title { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-sidebar); font-size: var(--sidebar-text); font-weight: var(--sidebar-weight); line-height: 1.5; }
-.ds-activity-meta { display: flex; min-width: 0; gap: 5px; margin-top: 2px; color: var(--ds-text-faint); font-size: var(--sidebar-text-xs); line-height: 1.4; }
-.ds-activity-meta span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ds-activity-meta span:last-child { flex-shrink: 0; }
+.ds-activity-title { display: block; overflow: hidden; white-space: nowrap; font-family: var(--font-sidebar); font-size: var(--sidebar-text-sm); font-weight: var(--sidebar-weight); line-height: 1.4; }
+.ds-activity-meta { display: flex; align-items: center; min-width: 0; gap: 5px; margin-top: 2px; color: var(--ds-text-faint); font-size: 0.75rem; line-height: 1.4; }
+.ds-activity-meta-item { display: inline-flex; align-items: center; gap: 3px; min-width: 0; }
+.ds-activity-meta-item svg { flex-shrink: 0; }
+.ds-activity-meta-item > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ds-activity-meta-status { flex-shrink: 0; }
 .ds-activity-unread { flex-shrink: 0; width: 5px; height: 5px; border-radius: 50%; background: var(--ds-accent); margin-top: 8px; }
 .ds-activity-empty { padding: 38px 18px; display: flex; flex-direction: column; align-items: center; text-align: center; color: var(--ds-text-faint); gap: 12px; }
 .ds-activity-empty strong { color: var(--ds-text-muted); font-size: 13px; font-weight: 500; }
@@ -44,3 +46,15 @@
   .ds-activity-indicator--running { animation: none; }
   .ds-activity-swipe .ds-activity-row, .ds-activity-dismiss { transition: none; }
 }
+
+.ds-activity-actions { position: absolute; z-index: 2; top: 50%; transform: translateY(-50%); right: 4px; display: flex; gap: 2px; visibility: hidden; }
+.ds-activity-actions button { display: flex; align-items: center; justify-content: center; width: 24px; height: 24px; padding: 0; border: 0; border-radius: 6px; color: var(--ds-text-faint); background: transparent; cursor: pointer; }
+.ds-activity-actions button:hover { color: var(--ds-text); background: var(--ds-surface-hover); }
+.ds-activity-actions .ds-activity-delete:hover { color: var(--ds-danger); }
+.ds-activity-actions button:focus-visible { outline: 2px solid var(--ds-accent); outline-offset: -2px; }
+.ds-activity-actions button:disabled { opacity: 0.4; cursor: default; }
+.ds-activity-item:is(:hover, :focus-within) .ds-activity-actions { visibility: visible; }
+.ds-activity-item:is(:hover, :focus-within) .ds-activity-row { padding-right: 60px; }
+.ds-activity-swipe--open .ds-activity-actions,
+.ds-activity-swipe--dragging .ds-activity-actions,
+.ds-activity-swipe--dismissing .ds-activity-actions { visibility: hidden !important; }

@@ -1,15 +1,23 @@
-import { useState, type ReactElement } from 'react'
-import { ChevronDown, ChevronRight, Circle, CircleAlert, CircleCheck, CirclePause, Loader2, MessageCircleQuestion } from 'lucide-react'
+import { useEffect, useState, type ReactElement } from 'react'
+import { Archive, Trash2, FolderClosed, GitBranch, ChevronDown, ChevronRight, Circle, CircleAlert, CircleCheck, CirclePause, Loader2, MessageCircleQuestion } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { activityDismissalKey, type ActivityRow } from '../../lib/sidebar-activity'
-import { isChatsWorkspace } from '../../lib/workspace-path'
+import { isChatsWorkspace, normalizeWorkspaceRoot } from '../../lib/workspace-path'
 import { workspaceLabelFromPath } from '../../lib/workspace-label'
 import './sidebar-activity.css'
+import { HoverMarqueeText } from '../HoverMarqueeText'
 import { ActivitySwipeRow } from './ActivitySwipeRow'
 
 const statusIcons = { waiting: MessageCircleQuestion, failed: CircleAlert, running: Loader2, unread: CircleCheck, completed: CircleCheck, idle: Circle, stopped: CirclePause }
 
-export function SidebarActivity({ rows, activeThreadId, runtimeReady, onSelectThread, onDismiss }: {
+const branchPath = (thread: ActivityRow['thread']): string => {
+  const path = normalizeWorkspaceRoot(thread.worktreePath || thread.workspace)
+  return isChatsWorkspace(path) ? '' : path
+}
+
+export function SidebarActivity({ rows, activeThreadId, runtimeReady, onSelectThread, onDismiss, onArchiveThread, onDeleteThread }: {
+  onArchiveThread: (id: string) => Promise<void>
+  onDeleteThread: (id: string) => Promise<void>
   rows: ActivityRow[]
   activeThreadId: string | null
   runtimeReady: boolean
@@ -19,6 +27,36 @@ export function SidebarActivity({ rows, activeThreadId, runtimeReady, onSelectTh
   const { t } = useTranslation('common')
   const [collapsed, setCollapsed] = useState(false)
   const [openId, setOpenId] = useState<string | null>(null)
+  const [hoveredId, setHoveredId] = useState<string | null>(null)
+  const [pendingId, setPendingId] = useState<string | null>(null)
+  const handleAction = async (activity: ActivityRow, action: 'archive' | 'delete'): Promise<void> => {
+    if (pendingId || !runtimeReady) return
+    if (action === 'delete' && !window.confirm(t('sidebarThreadDeleteConfirm', { title: activity.thread.title }))) return
+    setPendingId(activity.thread.id)
+    try {
+      await (action === 'archive' ? onArchiveThread : onDeleteThread)(activity.thread.id)
+    } finally {
+      setPendingId(null)
+    }
+  }
+  const [branches, setBranches] = useState<Record<string, string | null>>({})
+  const pathsKey = [...new Set(rows.map(({ thread }) => branchPath(thread)).filter(Boolean))].sort().join('\0')
+  useEffect(() => {
+    if (!pathsKey || typeof window.dsGui?.getGitBranches !== 'function') {
+      setBranches({})
+      return
+    }
+    let cancelled = false
+    void Promise.all(pathsKey.split('\0').map(async (path): Promise<[string, string | null]> => {
+      try {
+        const result = await window.dsGui.getGitBranches(path)
+        return [path, result.ok ? result.currentBranch : null]
+      } catch {
+        return [path, null]
+      }
+    })).then((entries) => { if (!cancelled) setBranches(Object.fromEntries(entries)) })
+    return () => { cancelled = true }
+  }, [pathsKey])
   const total = rows.length
   return (
     <section id="sidebar-activity" className="ds-activity ds-no-drag min-h-0 flex-1" aria-label={t('activityTitle')}>
@@ -43,20 +81,46 @@ export function SidebarActivity({ rows, activeThreadId, runtimeReady, onSelectTh
         </div> : rows.map((activity) => {
           const { thread, status, unread } = activity
           const Icon = statusIcons[status]
+          const branch = branches[branchPath(thread)]
           const project = !thread.workspace || isChatsWorkspace(thread.workspace) ? t('sidebarChatBadge') : workspaceLabelFromPath(thread.workspace)
-          return <ActivitySwipeRow key={`${thread.id}:${activityDismissalKey(activity)}`}
-            selected={thread.id === activeThreadId}
-            open={openId === thread.id}
-            onOpenChange={(open) => setOpenId(open ? thread.id : null)}
-            title={`${thread.title} · ${project} · ${t(`activityStatus_${status}`)}`}
-            onSelect={() => onSelectThread(thread.id)}
-            onDismiss={() => { setOpenId(null); onDismiss(activity) }}>
-            <Icon size={15} strokeWidth={1.8} className={`ds-activity-icon ds-activity-icon--${status} ${status === 'running' ? 'animate-spin motion-reduce:animate-none' : ''}`} />
-            <span className="ds-activity-copy"><span className="ds-activity-title">{thread.title || thread.id.slice(0, 8)}</span>
-              <span className="ds-activity-meta"><span>{project}</span><span>·</span><span>{t(`activityStatus_${status}`)}</span></span>
-            </span>
-            {unread && <span className="ds-activity-unread" aria-label={t('activityUnreadBadge')} />}
-          </ActivitySwipeRow>
+          return <div key={`${thread.id}:${activityDismissalKey(activity)}`} className="ds-activity-item"
+            onMouseEnter={() => setHoveredId(thread.id)} onMouseLeave={() => setHoveredId(null)}
+            onFocusCapture={() => setHoveredId(thread.id)}
+            onBlurCapture={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) setHoveredId(null) }}>
+            <ActivitySwipeRow
+              selected={thread.id === activeThreadId}
+              open={openId === thread.id}
+              onOpenChange={(open) => setOpenId(open ? thread.id : null)}
+              title={`${thread.title} · ${project} · ${t(`activityStatus_${status}`)}`}
+              onSelect={() => onSelectThread(thread.id)}
+              onDismiss={() => { setOpenId(null); onDismiss(activity) }}
+              actions={<div className="ds-activity-actions">
+                <button type="button" disabled={!runtimeReady || pendingId !== null}
+                  title={t('sidebarThreadArchive')} aria-label={t('sidebarThreadArchive')}
+                  onClick={() => void handleAction(activity, 'archive')}><Archive size={14} strokeWidth={1.9} /></button>
+                <button type="button" disabled={!runtimeReady || pendingId !== null}
+                  title={t('sidebarThreadDelete')} aria-label={t('sidebarThreadDelete')} className="ds-activity-delete"
+                  onClick={() => void handleAction(activity, 'delete')}><Trash2 size={14} strokeWidth={1.9} /></button>
+              </div>}>
+              <Icon size={15} strokeWidth={1.8} className={`ds-activity-icon ds-activity-icon--${status} ${status === 'running' ? 'animate-spin motion-reduce:animate-none' : ''}`} />
+              <span className="ds-activity-copy"><HoverMarqueeText className="ds-activity-title"
+                active={hoveredId === thread.id && openId !== thread.id}
+                text={thread.title || thread.id.slice(0, 8)} title={thread.title} />
+                <span className="ds-activity-meta">
+                  <span className="ds-activity-meta-item" title={thread.workspace}>
+                    <FolderClosed size={12} strokeWidth={1.75} aria-hidden="true" /><span>{project}</span>
+                  </span>
+                  {branch && <><span aria-hidden="true">·</span><span className="ds-activity-meta-item" title={branch}>
+                    <GitBranch size={12} strokeWidth={1.75} aria-hidden="true" /><span>{branch}</span>
+                  </span></>}
+                  {!['completed', 'idle', 'unread'].includes(status) && <><span aria-hidden="true">·</span><span className="ds-activity-meta-item ds-activity-meta-status">
+                    <Icon size={12} strokeWidth={1.75} aria-hidden="true" /><span>{t(`activityStatus_${status}`)}</span>
+                  </span></>}
+                </span>
+              </span>
+              {unread && <span className="ds-activity-unread" aria-label={t('activityUnreadBadge')} />}
+            </ActivitySwipeRow>
+          </div>
         })}
       </div>
     </section>
