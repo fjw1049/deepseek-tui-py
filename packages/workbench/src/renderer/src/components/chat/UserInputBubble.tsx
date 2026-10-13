@@ -204,7 +204,7 @@ function PendingUserInputCard({ block }: { block: UserInputBlock }): ReactElemen
   }
 
   const answer = question ? answers[question.id] : undefined
-  const otherSelected = answer?.label === USER_INPUT_OTHER_LABEL
+  const otherSelected = answer?.label === USER_INPUT_OTHER_LABEL || question?.options.length === 0
   const currentAnswered = question ? isAnswered(question) : false
 
   return (
@@ -296,7 +296,7 @@ function PendingUserInputCard({ block }: { block: UserInputBlock }): ReactElemen
                     </button>
                   )
                 })}
-                <button
+                {question.options.length > 0 ? <button
                   type="button"
                   disabled={submitting}
                   onClick={() =>
@@ -327,7 +327,7 @@ function PendingUserInputCard({ block }: { block: UserInputBlock }): ReactElemen
                       {t('userInputOtherDescription')}
                     </span>
                   </span>
-                </button>
+                </button> : null}
                 {otherSelected ? (
                   <input
                     value={answer?.value ?? ''}

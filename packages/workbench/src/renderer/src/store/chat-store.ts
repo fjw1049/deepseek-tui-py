@@ -189,7 +189,7 @@ const completionNotificationKeySet = new Set<string>()
 
 const sessionOwners = new Map<string, StoreApi<ChatState>>()
 const SESSION_FIELDS = [
-  'blocks', 'liveReasoning', 'liveAssistant', 'lastSeq', 'busy', 'error', 'runtimeErrorDetail',
+  'blocks', 'liveReasoning', 'liveAssistant', 'liveActivity', 'lastSeq', 'busy', 'error', 'runtimeErrorDetail',
   'currentTurnId', 'lastCompletedTurnId', 'currentTurnUserId', 'turnStartedAtByUserId',
   'turnDurationByUserId', 'turnReasoningFirstAtByUserId', 'turnReasoningLastAtByUserId',
   'composerModel', 'composerMode', 'composerReasoningEffort', 'queuedMessages', 'activePlugin',
@@ -365,6 +365,7 @@ function truncateStateAtUserBlock(state: ChatState, userBlockId: string): Partia
   return {
     blocks: trimmedBlocks,
     liveReasoning: '',
+    liveActivity: null,
     liveAssistant: '',
     currentTurnId: null,
     currentTurnUserId: null,
@@ -463,6 +464,7 @@ function scheduleTurnCompletionProbe(
 }
 
 function flushLiveBlocks(state: ChatState, base: Partial<ChatState> = {}): Partial<ChatState> {
+  base = { ...base, liveActivity: null }
   const nextBlocks = [...state.blocks]
   const now = Date.now()
   const createdAt = new Date(now).toISOString()
@@ -912,12 +914,14 @@ function buildThreadEventSink(
         }
         let blocks = s.blocks
         let liveReasoning = s.liveReasoning
+        let liveActivity = s.liveActivity
         let liveAssistant = s.liveAssistant
         let nextReasoningFirstAtByUserId = s.turnReasoningFirstAtByUserId
         let nextReasoningLastAtByUserId = s.turnReasoningLastAtByUserId
         const userId = s.currentTurnUserId
         for (const delta of deltas) {
           if (delta.kind === 'agent_reasoning') {
+            liveActivity = 'thinking'
             liveReasoning += delta.text
             if (userId) {
               const now = Date.now()
@@ -935,6 +939,7 @@ function buildThreadEventSink(
             continue
           }
           if (delta.kind === 'agent_message') {
+            liveActivity = 'responding'
             // Stream agent_message deltas into liveAssistant so the user
             // sees text flowing in real-time. If this turns out to be a
             // mid-turn preface (tool event arrives next), onLiveSegmentComplete
@@ -954,6 +959,7 @@ function buildThreadEventSink(
         }
         return {
           ...base,
+          liveActivity,
           ...(blocks !== s.blocks ? { blocks } : {}),
           ...(liveReasoning !== s.liveReasoning ? { liveReasoning } : {}),
           ...(liveAssistant !== s.liveAssistant ? { liveAssistant } : {}),
@@ -989,7 +995,7 @@ function buildThreadEventSink(
       set((s) => {
         resetBusyRecoveryAttempts()
         // Restore busy state on tool events (same reasoning as onDelta).
-        const base: Partial<ChatState> = {}
+        const base: Partial<ChatState> = ev.status === 'running' ? { liveActivity: null } : {}
         const modeFromTool = composerModeFromPlanToolEvent(ev)
         if (modeFromTool && modeFromTool !== s.composerMode) {
           base.composerMode = modeFromTool
@@ -1416,7 +1422,8 @@ function buildThreadEventSink(
         if (kind === 'agent_reasoning' && s.liveReasoning.trim()) {
           return {
             blocks: appendLiveReasoningBlock(s.blocks, s.liveReasoning, itemId, createdAt),
-            liveReasoning: ''
+            liveReasoning: '',
+            liveActivity: s.liveActivity === 'thinking' ? null : s.liveActivity
           }
         }
         if (kind === 'agent_message' && (text?.trim() || s.liveAssistant.trim() || processIntent)) {
@@ -1425,7 +1432,10 @@ function buildThreadEventSink(
           // its tool batch in real time. Use the real itemId so the server-side
           // copy replaces it cleanly on reload, and so the narration service's
           // later wording upserts the same block.
-          return completeAssistantProgress(s, itemId, createdAt, text, processIntent)
+          return {
+            ...completeAssistantProgress(s, itemId, createdAt, text, processIntent),
+            liveActivity: s.liveActivity === 'responding' ? null : s.liveActivity
+          }
         }
         return {}
       })
@@ -1436,6 +1446,7 @@ function buildThreadEventSink(
       set((s) => ({
         blocks: upsertFinalAnswerBlock(s.blocks, itemId, text, createdAt),
         liveReasoning: '',
+        liveActivity: null,
         liveAssistant: ''
       }))
       scheduleTurnCompletionProbe(get, sink)
@@ -1597,6 +1608,7 @@ const store = create<ChatState>((set, get) => ({
   activeThreadId: null,
   blocks: [],
   liveReasoning: '',
+  liveActivity: null,
   liveAssistant: '',
   lastSeq: 0,
   busy: false,
@@ -2278,6 +2290,7 @@ const store = create<ChatState>((set, get) => ({
         blocks: synced.blocks,
         lastSeq: latestSeq,
         liveReasoning: '',
+        liveActivity: null,
         liveAssistant: '',
         error: busy ? i18n.t('common:runtimeStreamRecovering') : null,
         busy,
@@ -2441,6 +2454,7 @@ const store = create<ChatState>((set, get) => ({
         blocks: synced.blocks,
         lastSeq: latestSeq,
         liveReasoning: '',
+        liveActivity: null,
         liveAssistant: '',
         error: null,
         busy,
@@ -2669,6 +2683,7 @@ const store = create<ChatState>((set, get) => ({
             }
           ],
       liveReasoning: '',
+      liveActivity: null,
       liveAssistant: '',
       error: null,
       currentTurnUserId: hidden ? s.currentTurnUserId : userBlockId,

@@ -1,3 +1,5 @@
+import { TurnActivity, resolveTurnActivity, type TurnActivityKind } from './TurnActivity'
+import { useBrowserAssistanceStore } from '../../store/browser-assistance-store'
 import { copyText } from '../../lib/copy-text'
 import { ConversationScope, useConversationScope } from './conversation-scope'
 import { findPendingToolGate, hasPendingToolGate } from '../../lib/tool-gate'
@@ -279,6 +281,10 @@ export function MessageTimeline({
   const workspaceRoot = useChatStore((s) => s.workspaceRoot)
   const chooseWorkspace = useChatStore((s) => s.chooseWorkspace)
   const busy = useChatStore((s) => s.busy)
+  const liveActivity = useChatStore((s) => s.liveActivity)
+  const selectedThreadId = useChatStore((s) => s.activeThreadId)
+  const awaitingBrowserUser = useBrowserAssistanceStore((s) =>
+    s.items.some((item) => item.thread_id === activeThreadId))
   const currentTurnId = useChatStore((s) => s.currentTurnId)
   const lastCompletedTurnId = useChatStore((s) => s.lastCompletedTurnId)
   const turnDiffByTurnId = useChatStore((s) => s.turnDiffByTurnId)
@@ -730,13 +736,16 @@ export function MessageTimeline({
             currentTurnId,
             lastCompletedTurnId
           )
-          const hasLiveStream = isLatestTurn && !!(liveReasoning.trim() || live.trim())
-          const processing = (busy && isLatestTurn) || hasLiveStream
+          const processing = busy && isLatestTurn && selectedThreadId === activeThreadId
           return (
             <MemoMessageTurn
               key={userId ?? `turn-${index}`}
               turn={turn}
               isProcessing={processing}
+              activity={isLatestTurn ? resolveTurnActivity({
+                active: processing, blocks: turn.blocks,
+                stream: liveActivity, awaitingBrowserUser
+              }) : null}
               liveReasoning={isLatestTurn ? liveReasoning : ''}
               live={isLatestTurn ? live : ''}
               liveStartedAt={liveStartedAt}
@@ -776,6 +785,8 @@ export function MessageTimeline({
           <MemoMessageTurn
             turn={{ blocks: [] }}
             isProcessing={busy}
+            activity={resolveTurnActivity({ active: busy && selectedThreadId === activeThreadId,
+              blocks: [], stream: liveActivity, awaitingBrowserUser })}
             liveReasoning={liveReasoning}
             live={live}
             htmlPreviewAction={htmlPreviewAction}
@@ -980,6 +991,7 @@ export function RunMessageTimeline({ blocks, liveId, active, workspace }: {
 function MessageTurn({
   turn,
   isProcessing,
+  activity = null,
   liveReasoning,
   live,
   liveStartedAt,
@@ -994,6 +1006,7 @@ function MessageTurn({
 }: {
   turn: Turn
   isProcessing: boolean
+  activity?: TurnActivityKind | null
   liveReasoning: string
   live: string
   liveStartedAt?: number
@@ -1136,6 +1149,7 @@ function MessageTurn({
             <div className="flex flex-col gap-1 pb-2">
               <WorkMetaRow
                 processing={isProcessing}
+                showActivityIndicator={!activity}
                 stepCount={processBlocks.length}
                 liveStartedAt={liveStartedAt}
                 durationMs={durationMs}
@@ -1193,6 +1207,7 @@ function MessageTurn({
           {/* Turns without an assistant answer still need to expose their
               completed write receipt. */}
           {!hasAssistantAnswer ? turnChangeSummary : null}
+          <TurnActivity activity={activity} />
 
         </>
       )}
@@ -1204,6 +1219,7 @@ function MessageTurn({
 const MemoMessageTurn = memo(MessageTurn, (prev, next) => (
   prev.turn === next.turn &&
   prev.isProcessing === next.isProcessing &&
+  prev.activity === next.activity &&
   prev.liveReasoning === next.liveReasoning &&
   prev.live === next.live &&
   prev.liveStartedAt === next.liveStartedAt &&
@@ -1455,6 +1471,7 @@ function TurnChangeSummary({
 /** Toggle execution details; user-facing progress remains visible. */
 function WorkMetaRow({
   processing,
+  showActivityIndicator = true,
   stepCount,
   liveStartedAt,
   durationMs,
@@ -1464,6 +1481,7 @@ function WorkMetaRow({
   onToggle
 }: {
   processing: boolean
+  showActivityIndicator?: boolean
   stepCount: number
   liveStartedAt?: number
   durationMs?: number
@@ -1512,12 +1530,12 @@ function WorkMetaRow({
         disabled={!collapsible}
         className={`ds-work-meta-row group flex w-fit max-w-full items-center gap-1.5 rounded-md py-1 text-left text-[13px] font-medium text-ds-muted transition ${collapsible ? 'hover:opacity-85' : ''}`}
       >
-        {processing ? (
+        {processing && showActivityIndicator ? (
           <span className="mr-0.5 flex h-5 w-5 shrink-0 items-center justify-center">
             <SquareGrid size="md" className="text-ds-faint" />
           </span>
         ) : null}
-        <span className={`min-w-0 truncate tabular-nums ${processing ? 'ds-shiny-text' : ''}`}>
+        <span className={`min-w-0 truncate tabular-nums ${processing && showActivityIndicator ? 'ds-shiny-text' : ''}`}>
           {mainLabel}
         </span>
         {showThoughtSuffix ? (
@@ -1785,7 +1803,7 @@ function ProcessStream({
   )
   const rows = groupProcessRows(visible, standaloneIds)
   const chunks = planProcessRenderChunks(rows, standaloneIds)
-  const thinkingIndicatorId = trailingThinkingIndicatorId(rows, processing)
+  const thinkingIndicatorId = trailingThinkingIndicatorId(rows, processing && !!scope)
 
   const renderRow = (row: RenderRow): ReactElement =>
     row.type === 'tool_batch' ? (

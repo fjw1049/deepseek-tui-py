@@ -1,6 +1,6 @@
 import { copyText } from '../lib/copy-text'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactElement } from 'react'
-import { ArrowDown, ArrowUp, Check, ArrowDownToLine, ArrowUpToLine, Minimize2, Columns2, Copy, FileDiff, Loader2, Rows3, WrapText } from 'lucide-react'
+import { ArrowDown, ArrowUp, Check, ArrowDownToLine, ArrowUpToLine, Minimize2, Copy, FileDiff, Loader2, WrapText } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { countDiffStats, extractDiffFilePath } from '../lib/diff-stats'
 import { FileChip } from './chat/FileChip'
@@ -409,7 +409,6 @@ export function DiffView({
     viewport.scrollTo({ top: viewport.scrollHeight, behavior: 'smooth' })
   }, [follow, patch])
 
-  const [activeHunk, setActiveHunk] = useState(0)
   const unifiedHunks = new Set(unifiedRows.filter((row, index) => fullContext
     ? (row.kind === 'add' || row.kind === 'del') && !['add', 'del'].includes(unifiedRows[index - 1]?.kind ?? '')
     : row.kind === 'meta').map((row) => row.key))
@@ -417,18 +416,24 @@ export function DiffView({
     ? (row.leftKind === 'del' || row.rightKind === 'add') &&
       splitRows[index - 1]?.leftKind !== 'del' && splitRows[index - 1]?.rightKind !== 'add'
     : row.kind === 'meta').map((row) => row.key))
-  const hunkCount = fullFilePending ? 0 : diffStyle === 'split' ? splitHunks.size : unifiedHunks.size
-  useEffect(() => {
-    setActiveHunk(0)
+  const hunkCount = diffStyle === 'split' ? splitHunks.size : unifiedHunks.size
+  useLayoutEffect(() => {
     if (!follow) bodyRef.current?.scrollTo?.({ top: 0, left: 0 })
-  }, [visiblePatch, diffStyle, follow])
+  }, [patch, fileLabel, diffStyle, showFullFile, follow])
   const navigateHunk = (direction: number): void => {
-    const hunks = bodyRef.current?.querySelectorAll<HTMLElement>('[data-diff-hunk]')
-    if (!hunks?.length) return
-    const next = (activeHunk + direction + hunks.length) % hunks.length
-    hunks[next]?.scrollIntoView({ block: 'start' })
-    setActiveHunk(next)
+    const viewport = bodyRef.current
+    if (!viewport) return
+    const hunks = Array.from(viewport.querySelectorAll<HTMLElement>('[data-diff-hunk]'))
+    if (!hunks.length) return
+    const bounds = viewport.getBoundingClientRect()
+    const scale = bounds.height / viewport.offsetHeight || 1
+    const positions = hunks.map((hunk) => (hunk.getBoundingClientRect().top - bounds.top) / scale)
+    const index = direction > 0 ? positions.findIndex((top) => top > 1)
+      : positions.reduce((last, top, i) => top < -1 ? i : last, -1)
+    const target = index >= 0 ? index : direction > 0 ? 0 : hunks.length - 1
+    viewport.scrollTo({ top: viewport.scrollTop + positions[target]! })
   }
+
   const expandContext = (key: number): void => {
     setUnfoldedContext((previous) => new Set([...previous, key]))
   }
@@ -450,8 +455,8 @@ export function DiffView({
 
   const flush = chrome === 'flush'
   const shellClass = flush
-    ? `ds-diff-view ds-diff-view--flush flex h-full min-h-0 min-w-0 flex-col overflow-hidden ${className}`
-    : `ds-diff-view ds-card-strong flex min-h-0 min-w-0 flex-col overflow-hidden rounded-[14px] ${className}`
+    ? `ds-diff-view ds-diff-view--flush relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden ${className}`
+    : `ds-diff-view ds-card-strong relative flex min-h-0 min-w-0 flex-col overflow-hidden rounded-[14px] ${className}`
   const bodyClass = `ds-change-inspector__code min-w-0 ${
     fillParent || flush ? 'min-h-0 flex-1 overflow-auto' : 'overflow-auto'
   }`
@@ -487,20 +492,17 @@ export function DiffView({
     />
   ) : null
 
-  if (fullFilePending) {
-    return <div className={shellClass}>
-      {header}
-      {previewLimited ? <div role="status" className="px-3 py-2 text-xs text-ds-muted">{t('diffPreviewLimited')}</div> : null}
-      <div role="status" className="flex min-h-0 flex-1 items-center justify-center gap-2 text-[13.5px] text-ds-faint">
-        <Loader2 className="h-4 w-4 animate-spin" aria-hidden />{t('diffLoadingFullFile')}
-      </div>
+  const loadingStatus = fullFilePending ? (
+    <div role="status" className="pointer-events-none absolute bottom-3 right-3 z-10 flex items-center gap-2 rounded bg-ds-card px-2 py-1 text-[12.5px] text-ds-muted shadow-sm">
+      <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />{t('diffLoadingFullFile')}
     </div>
-  }
+  ) : null
 
   if (!looksLikePatch) {
     return (
       <div className={shellClass} data-wrap={wrapLines ? '' : undefined}>
         {header}
+        {loadingStatus}
       {previewLimited ? <div role="status" className="px-3 py-2 text-xs text-ds-muted">{t('diffPreviewLimited')}</div> : null}
         <pre
           ref={(node) => { bodyRef.current = node }}
@@ -516,6 +518,7 @@ export function DiffView({
   return (
     <div className={shellClass} data-wrap={wrapLines ? '' : undefined}>
       {header}
+      {loadingStatus}
       {previewLimited ? <div role="status" className="px-3 py-2 text-xs text-ds-muted">{t('diffPreviewLimited')}</div> : null}
       {fullFileUnavailable ? <div role="status" className="shrink-0 px-2 py-1 text-[12.5px] text-ds-muted">
         {t('diffFullFileUnavailable')}
@@ -758,34 +761,26 @@ function DiffHeader({
         </Tooltip>
       ) : null}
       {showStyleToggle ? (
-        <div className="flex shrink-0 items-center rounded border border-ds-border-muted/70 p-0.5">
-          <Tooltip label="Unified">
-            <button
-              type="button"
-              onClick={() => onDiffStyleChange('unified')}
-              className={`rounded px-1 py-0.5 transition ${
-                diffStyle === 'unified' ? 'bg-ds-hover text-ds-ink' : 'text-ds-faint hover:text-ds-muted'
-              }`}
-              aria-label="Unified diff"
-              aria-pressed={diffStyle === 'unified'}
-            >
-              <Rows3 className="h-3.5 w-3.5" strokeWidth={1.85} />
-            </button>
-          </Tooltip>
-          <Tooltip label="Split">
-            <button
-              type="button"
-              onClick={() => onDiffStyleChange('split')}
-              className={`rounded px-1 py-0.5 transition ${
-                diffStyle === 'split' ? 'bg-ds-hover text-ds-ink' : 'text-ds-faint hover:text-ds-muted'
-              }`}
-              aria-label="Split diff"
-              aria-pressed={diffStyle === 'split'}
-            >
-              <Columns2 className="h-3.5 w-3.5" strokeWidth={1.85} />
-            </button>
-          </Tooltip>
-        </div>
+        <Tooltip label={t(diffStyle === 'unified' ? 'diffSwitchToSplit' : 'diffSwitchToUnified')}>
+          <button
+            type="button"
+            onClick={() => onDiffStyleChange(diffStyle === 'unified' ? 'split' : 'unified')}
+            aria-label={t(diffStyle === 'unified' ? 'diffSwitchToSplit' : 'diffSwitchToUnified')}
+            className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded text-ds-ink transition hover:bg-ds-hover"
+          >
+            <svg viewBox="0 0 24 24" className="h-[17px] w-[17px]" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+              {diffStyle === 'unified' ? <>
+                <rect x="4" y="2" width="16" height="8" rx="1.5" />
+                <rect x="4" y="14" width="16" height="8" rx="1.5" />
+                <path d="M9 6h6M9 18h6M12 15v6" />
+              </> : <>
+                <rect x="2" y="4" width="8" height="16" rx="1.5" />
+                <rect x="14" y="4" width="8" height="16" rx="1.5" />
+                <path d="M4 12h4M16 12h4M18 10v4" />
+              </>}
+            </svg>
+          </button>
+        </Tooltip>
       ) : null}
       {navigation}
       {onToggleFullFile ? (

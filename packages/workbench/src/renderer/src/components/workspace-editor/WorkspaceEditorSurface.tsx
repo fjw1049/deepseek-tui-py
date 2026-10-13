@@ -4,6 +4,7 @@ import {
   useEffect,
   useImperativeHandle,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   type ReactElement
@@ -16,13 +17,14 @@ import { subscribeAppearance } from '../../lib/apply-appearance'
 import type { editor as MonacoEditor } from 'monaco-editor'
 import { applyEditorDiffHighlights } from '../../lib/apply-editor-diff-highlights'
 import {
+  prepareWorkspaceLanguage,
   ensureMonacoConfigured,
   ensureWorkspaceMonacoThemes,
   workspaceMonacoTheme,
   type WorkspaceMonacoThemeName
 } from '../../lib/monaco-editor-setup'
 import { languageForPath } from '../../lib/monaco-language-for-path'
-import { workspaceModelPath, pruneClosedWorkspaceModels } from '../../lib/workspace-monaco-models'
+import { workspaceModelPath, prepareWorkspaceModel, pruneClosedWorkspaceModels } from '../../lib/workspace-monaco-models'
 import type { EditorPaneId, EditorTab } from '../../store/workspace-editor-store'
 import { EditorListSkeleton } from './EditorListSkeleton'
 
@@ -46,10 +48,56 @@ type Props = {
 }
 
 export const WorkspaceEditorSurface = forwardRef<WorkspaceEditorSurfaceHandle, Props>(
+  function WorkspaceEditorSurface(props, ref): ReactElement {
+    const { tab, patch } = props
+    const { t } = useTranslation('common')
+    const language = languageForPath(tab.path)
+    const modelKey = `${props.paneId}\u0000${tab.id}`
+    const [preparedModel, setPreparedModel] = useState<string | null>(null)
+    const innerRef = useRef<WorkspaceEditorSurfaceHandle>(null)
+    useEffect(() => {
+      let cancelled = false
+      // A failed grammar must not prevent reading or editing the file.
+      void prepareWorkspaceLanguage(language).catch(() => {}).then(() => {
+        if (!cancelled && !tab.loading) {
+          prepareWorkspaceModel(tab, props.paneId)
+          setPreparedModel(modelKey)
+        }
+      })
+      return () => { cancelled = true }
+    }, [language, modelKey, tab, props.paneId])
+    const busy = tab.loading || preparedModel !== modelKey
+    const ready = useMemo(() => busy ? null : { tab, patch }, [busy, tab, patch])
+    const [previous, setPrevious] = useState(ready)
+    useLayoutEffect(() => { if (ready) setPrevious(ready) }, [ready])
+    const displayed = ready ?? previous
+    useImperativeHandle(ref, () => ({
+      openFind: () => { if (!busy) innerRef.current?.openFind() },
+      getSelectionRange: () => busy ? null : innerRef.current?.getSelectionRange() ?? null
+    }), [busy])
+    return <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden" aria-busy={busy}>
+      <div className="flex min-h-0 flex-1 flex-col" inert={busy}>
+        {displayed ? <PreparedWorkspaceEditorSurface
+          {...props} ref={innerRef} tab={displayed.tab} patch={displayed.patch}
+          readOnly={busy || props.readOnly}
+          onChange={busy ? () => {} : props.onChange}
+          onQuoteSelection={busy ? undefined : props.onQuoteSelection}
+          openFindOnReady={!busy && props.openFindOnReady}
+        /> : <EditorListSkeleton />}
+      </div>
+      {busy ? <div role="status" className="pointer-events-none absolute bottom-3 right-3 z-20 max-w-full truncate rounded bg-ds-card px-2 py-1 text-xs text-ds-muted">
+        {displayed ? `${displayed.tab.path} → ` : ''}{t('viewLoading')} {tab.path}
+      </div> : null}
+    </div>
+  }
+)
+
+const PreparedWorkspaceEditorSurface = forwardRef<WorkspaceEditorSurfaceHandle, Props>(
   function WorkspaceEditorSurface(
     { paneId, tab, patch, readOnly, onChange, openFindOnReady = false, onQuoteSelection },
     ref
   ): ReactElement {
+    const [fontFamily, setFontFamily] = useState(() => getComputedStyle(document.documentElement).getPropertyValue('--font-mono').trim())
     const wrapLines = useWorkspaceViewPreferences((s) => s.wrapLines)
     const hostRef = useRef<HTMLDivElement>(null)
     const editorRef = useRef<MonacoEditor.IStandaloneCodeEditor | null>(null)
@@ -163,7 +211,7 @@ export const WorkspaceEditorSurface = forwardRef<WorkspaceEditorSurfaceHandle, P
         const fontFamily = getComputedStyle(document.documentElement)
           .getPropertyValue('--font-mono')
           .trim()
-        editorRef.current?.updateOptions({ fontFamily })
+        setFontFamily(fontFamily)
       }
       syncAppearance()
       const unsubscribe = subscribeAppearance(syncAppearance)
@@ -287,6 +335,7 @@ export const WorkspaceEditorSurface = forwardRef<WorkspaceEditorSurfaceHandle, P
           }}
           loading={<EditorListSkeleton />}
           options={{
+            fontFamily,
             readOnly,
             domReadOnly: readOnly,
             hover: { enabled: !readOnly, delay: 500 },

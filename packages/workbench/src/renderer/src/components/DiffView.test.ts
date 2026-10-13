@@ -7,6 +7,21 @@ vi.mock('./chat/FileChip', () => ({ FileChip: () => null }))
 vi.mock('../lib/use-code-highlights', () => ({ useCodeHighlights: () => null }))
 vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string, values?: { count: number }) => values ? `${key}:${values.count}` : key }) }))
 
+it.each(['unified', 'split'] as const)('keeps changes visible while full context loads in %s view', async (diffStyle) => {
+  globalThis.IS_REACT_ACT_ENVIRONMENT = true
+  const host = document.createElement('div'); document.body.append(host)
+  const root = createRoot(host)
+  try {
+    await act(async () => root.render(createElement(DiffView, {
+      patch: '@@ -1 +1 @@\n-old-value\n+current-value',
+      showFullFile: true, fullFilePending: true, diffStyle
+    })))
+    expect(host.textContent).toContain('diffLoadingFullFile')
+    expect(host.querySelector('tbody')?.textContent).toContain('current-value')
+    expect(host.querySelector<HTMLButtonElement>('[aria-label="diffNextChange"]')?.disabled).toBe(false)
+  } finally { await act(async () => root.unmount()); host.remove() }
+})
+
 it('wraps by default when switching into split view and preserves an explicit no-wrap choice', async () => {
   globalThis.IS_REACT_ACT_ENVIRONMENT = true
   const container = document.createElement('div')
@@ -16,12 +31,16 @@ it('wraps by default when switching into split view and preserves an explicit no
   try {
     await act(async () => root.render(createElement(DiffView, { patch, showStyleToggle: true })))
     expect(container.querySelector('[data-wrap]')).not.toBeNull()
-    act(() => container.querySelector<HTMLButtonElement>('[aria-label="Split diff"]')!.click())
+    expect(container.querySelectorAll('[aria-label^="diffSwitchTo"]')).toHaveLength(1)
+    const layoutIcon = container.querySelector('[aria-label="diffSwitchToSplit"] svg')!.innerHTML
+    act(() => container.querySelector<HTMLButtonElement>('[aria-label="diffSwitchToSplit"]')!.click())
+    expect(container.querySelectorAll('[aria-label^="diffSwitchTo"]')).toHaveLength(1)
+    expect(container.querySelector('[aria-label="diffSwitchToUnified"] svg')!.innerHTML).not.toBe(layoutIcon)
     expect(container.querySelector('[data-wrap]')).not.toBeNull()
     expect(container.querySelectorAll('col')).toHaveLength(4)
     act(() => container.querySelector<HTMLButtonElement>('[aria-label="diffWrapLines"]')!.click())
     expect(container.querySelector('[data-wrap]')).toBeNull()
-    act(() => container.querySelector<HTMLButtonElement>('[aria-label="Unified diff"]')!.click())
+    act(() => container.querySelector<HTMLButtonElement>('[aria-label="diffSwitchToUnified"]')!.click())
     expect(container.querySelector('[data-wrap]')).toBeNull()
     act(() => container.querySelector<HTMLButtonElement>('[aria-label="diffWrapLines"]')!.click())
     expect(container.querySelector('[data-wrap]')).not.toBeNull()
@@ -70,29 +89,41 @@ it('preserves source prefixes, ignores metadata, folds both views, and resets fo
 })
 
 
-it('navigates between hunks and keeps bare patches readable', async () => {
+it.each(['unified', 'split'] as const)('navigates from the visible position in %s view and confines scrolling to the diff', async (diffStyle) => {
   globalThis.IS_REACT_ACT_ENVIRONMENT = true
-  const container = document.createElement('div')
-  document.body.append(container)
-  const root = createRoot(container)
+  const host = document.createElement('div'); document.body.append(host)
+  const root = createRoot(host)
   try {
-    await act(async () => root.render(createElement(DiffView, { patch: '@@ -1 +1 @@\n-a\n+b\n@@ -9 +9 @@\n-c\n+d', diffStyle: 'split' })))
-    expect(container.querySelector('[data-wrap]')).not.toBeNull()
-    const hunks = container.querySelectorAll<HTMLElement>('[data-diff-hunk]')
-    const first = hunks[0]!.scrollIntoView = vi.fn()
-    const second = hunks[1]!.scrollIntoView = vi.fn()
-    act(() => container.querySelector<HTMLButtonElement>('[aria-label="diffNextChange"]')!.click())
-    expect(second).toHaveBeenCalledWith({ block: 'start' })
-    act(() => container.querySelector<HTMLButtonElement>('[aria-label="diffNextChange"]')!.click())
-    expect(first).toHaveBeenCalled()
-    await act(async () => root.render(createElement(DiffView, { patch: '-old\n+new\n', diffStyle: 'split' })))
-    expect(container.textContent).toContain('old')
-    expect(container.textContent).toContain('new')
-    expect(container.querySelector<HTMLButtonElement>('[aria-label="diffNextChange"]')!.disabled).toBe(true)
-  } finally {
-    act(() => root.unmount())
-    container.remove()
-  }
+    await act(async () => root.render(createElement(DiffView, {
+      patch: '@@ -20 +20 @@\n-a\n+b\n@@ -60 +60 @@\n-c\n+d', diffStyle
+    })))
+    const viewport = host.querySelector<HTMLElement>('.ds-change-inspector__code')!
+    Object.defineProperty(viewport, 'offsetHeight', { value: 500 })
+    viewport.getBoundingClientRect = () => ({ top: 40, height: 750 }) as DOMRect
+    const scrollTo = viewport.scrollTo = vi.fn((options?: ScrollToOptions | number, y?: number) => { viewport.scrollTop = typeof options === 'number' ? y ?? 0 : options?.top ?? 0 })
+    const hunks = host.querySelectorAll<HTMLElement>('[data-diff-hunk]')
+    hunks.forEach((row, i) => {
+      row.getBoundingClientRect = () => ({ top: 40 + ([200, 600][i]! - viewport.scrollTop) * 1.5 }) as DOMRect
+      row.scrollIntoView = vi.fn()
+    })
+    const click = (label: string) => act(() => host.querySelector<HTMLButtonElement>(`[aria-label="${label}"]`)!.click())
+    click('diffNextChange')
+    expect(viewport.scrollTop).toBe(200)
+    click('diffNextChange')
+    expect(viewport.scrollTop).toBe(600)
+    click('diffNextChange')
+    expect(viewport.scrollTop).toBe(200)
+    viewport.scrollTop = 500
+    click('diffPreviousChange')
+    expect(viewport.scrollTop).toBe(200)
+    viewport.scrollTop = 100
+    click('diffNextChange')
+    expect(viewport.scrollTop).toBe(200)
+    click('diffPreviousChange')
+    expect(viewport.scrollTop).toBe(600)
+    expect(scrollTo).toHaveBeenCalled()
+    hunks.forEach(row => expect(row.scrollIntoView).not.toHaveBeenCalled())
+  } finally { await act(async () => root.unmount()); host.remove() }
 })
 
 it('toggles full context beside expand/collapse and navigates changes in both layouts', async () => {
@@ -115,8 +146,8 @@ it('toggles full context beside expand/collapse and navigates changes in both la
   const click = async (label: string) => act(async () => container.querySelector<HTMLButtonElement>(`[aria-label="${label}"]`)!.click())
   try {
     await act(async () => root.render(createElement(Harness)))
-    for (const style of ['Unified diff', 'Split diff']) {
-      await click(style)
+    for (const style of ['unified', 'split']) {
+      if (style === 'split') await click('diffSwitchToSplit')
       expect(container.textContent).toContain('leading0')
       expect(container.textContent).toContain('middle8')
       expect(container.textContent).toContain('trailing10')
@@ -127,9 +158,14 @@ it('toggles full context beside expand/collapse and navigates changes in both la
       expect(container.querySelectorAll('mark').length).toBeGreaterThan(0)
       const hunks = container.querySelectorAll<HTMLElement>('[data-diff-hunk]')
       expect(hunks).toHaveLength(2)
-      const second = hunks[1]!.scrollIntoView = vi.fn()
+      const viewport = container.querySelector<HTMLElement>('.ds-change-inspector__code')!
+      viewport.getBoundingClientRect = () => ({ top: 0, height: 500 }) as DOMRect
+      Object.defineProperty(viewport, 'offsetHeight', { value: 500, configurable: true })
+      hunks[0]!.getBoundingClientRect = () => ({ top: 200 }) as DOMRect
+      hunks[1]!.getBoundingClientRect = () => ({ top: 600 }) as DOMRect
+      const scrollTo = viewport.scrollTo = vi.fn()
       await click('diffNextChange')
-      expect(second).toHaveBeenCalledWith({ block: 'start' })
+      expect(scrollTo).toHaveBeenCalledWith({ top: 200 })
       const toggle = container.querySelector('[aria-label="diffShowChangesOnly"]')!
       expect(toggle.getAttribute('aria-pressed')).toBe('false')
       expect(toggle.parentElement?.nextElementSibling?.querySelector('button')?.getAttribute('aria-label')).toBe('inspectorExpandDiff')
@@ -161,5 +197,33 @@ it('falls back to changed hunks instead of rendering an oversized full file', as
     expect(host.textContent).toContain('updated-value')
     expect(host.textContent).toContain('diffPreviewLimited')
     expect(host.querySelectorAll('tbody tr').length).toBeLessThan(20)
+  } finally { await act(async () => root.unmount()); host.remove() }
+})
+
+
+it('does not reset scrolling when full context arrives, but resets for another file', async () => {
+  globalThis.IS_REACT_ACT_ENVIRONMENT = true
+  const host = document.createElement('div'); document.body.append(host)
+  const root = createRoot(host)
+  const patch = '@@ -40 +40 @@\n-old-value\n+current-value'
+  try {
+    await act(async () => root.render(createElement(DiffView, {
+      patch, filePath: 'a.ts', showFullFile: true, fullFilePending: true
+    })))
+    const viewport = host.querySelector<HTMLElement>('.ds-change-inspector__code')!
+    const scrollTo = vi.fn()
+    viewport.scrollTo = scrollTo
+    viewport.scrollTop = 180
+    await act(async () => root.render(createElement(DiffView, {
+      patch, filePath: 'a.ts', showFullFile: true,
+      fullFilePatch: '@@ -1,40 +1,40 @@\n' + ' context\n'.repeat(39) + '-old-value\n+current-value'
+    })))
+    expect(host.querySelector('.ds-change-inspector__code')).toBe(viewport)
+    expect(scrollTo).not.toHaveBeenCalled()
+    expect(viewport.scrollTop).toBe(180)
+    await act(async () => root.render(createElement(DiffView, {
+      patch, filePath: 'b.ts', showFullFile: true, fullFilePending: true
+    })))
+    expect(scrollTo).toHaveBeenCalledWith({ top: 0, left: 0 })
   } finally { await act(async () => root.unmount()); host.remove() }
 })

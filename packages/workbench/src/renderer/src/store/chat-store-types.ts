@@ -98,6 +98,7 @@ export type ChatState = {
   activeThreadId: string | null
   blocks: ChatBlock[]
   liveReasoning: string
+  liveActivity: 'thinking' | 'responding' | null
   liveAssistant: string
   lastSeq: number
   busy: boolean

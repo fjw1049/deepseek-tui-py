@@ -196,3 +196,32 @@ it('shows a persistent right tree with no files open, supports selection, toggli
     window.dsGui = previousGui
   }
 })
+
+it('keeps the code surface mounted while reading another code file', async () => {
+  const initial = useWorkspaceEditorStore.getState()
+  const previousGui = window.dsGui
+  vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} })
+  let finish!: (result: { ok: true; content: string; truncated: boolean }) => void
+  window.dsGui = {
+    listWorkspaceDirectory: vi.fn(async () => ({ ok: true, entries: [] })),
+    readWorkspaceFile: vi.fn().mockResolvedValueOnce({ ok: true, content: 'first', truncated: false })
+      .mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+  } as unknown as typeof window.dsGui
+  const host = document.createElement('div'); document.body.append(host)
+  const root = createRoot(host)
+  try {
+    await act(async () => root.render(createElement(WorkspaceEditorPanel, { workspaceRoot: '/workspace', blocks: [], hideTree: true })))
+    await act(async () => { await useWorkspaceEditorStore.getState().openFile('first.py', '/workspace') })
+    const surface = Array.from(host.querySelectorAll('div')).find(node => node.textContent === 'file contents' && node.children.length === 0)!
+    expect(surface).toBeTruthy()
+    let opening!: Promise<boolean>
+    await act(async () => { opening = useWorkspaceEditorStore.getState().openFile('next.ts', '/workspace') })
+    expect(surface.isConnected).toBe(true)
+    await act(async () => { finish({ ok: true, content: 'second', truncated: false }); await opening })
+    expect(surface.isConnected).toBe(true)
+  } finally {
+    await act(async () => root.unmount()); host.remove()
+    useWorkspaceEditorStore.setState(initial, true)
+    vi.unstubAllGlobals(); window.dsGui = previousGui
+  }
+})

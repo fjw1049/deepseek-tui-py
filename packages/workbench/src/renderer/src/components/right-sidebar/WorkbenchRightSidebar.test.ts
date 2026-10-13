@@ -2,6 +2,7 @@
 import { act, createElement, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { expect, it, vi } from 'vitest'
+import { useThreadRightSidebar } from '../../hooks/use-thread-right-sidebar'
 import { WorkbenchRightSidebar } from './WorkbenchRightSidebar'
 import { addRightSidebarTab, removeRightSidebarTab, type RightSidebarPanels } from '../../lib/right-sidebar-state'
 
@@ -104,7 +105,7 @@ it('loads on first open and preserves the panel across closing and reopening', a
 vi.mock('../BrowserWorkspace', () => ({ BrowserWorkspace: ({ visible, threadId }: { visible: boolean; threadId: string }) =>
   createElement('input', { 'data-browser': threadId, 'data-visible': visible, defaultValue: 'draft' }) }))
 
-it('preserves browser and terminal across dock switching and collapse, but resets browser on thread change', async () => {
+it('preserves browser and terminal across dock switching and collapse, and restores each browser on thread change', async () => {
   const host = document.createElement('div'); const root = createRoot(host)
   const noop = vi.fn()
   const render = (tab: 'preview' | 'terminal', open = true, collapsed = false, threadId = 'first') => act(async () => root.render(createElement(WorkbenchRightSidebar, {
@@ -132,7 +133,66 @@ it('preserves browser and terminal across dock switching and collapse, but reset
     expect(browser.value).toBe('unsaved address')
     expect(browser.dataset.visible).toBe('true')
     await render('preview', true, false, 'second')
-    expect(host.querySelector('[data-browser]')).not.toBe(browser)
-    expect(host.querySelector<HTMLInputElement>('[data-browser]')?.value).toBe('draft')
+    const second = host.querySelector<HTMLInputElement>('[data-browser="second"]')!
+    expect(second).not.toBe(browser)
+    expect(second.value).toBe('draft')
+    expect(browser.dataset.visible).toBe('false')
+    second.value = 'second address'
+    await render('terminal', false, false, 'new-chat')
+    expect(host.querySelector('[data-browser="first"]')).toBe(browser)
+    await render('preview', true, false, 'first')
+    expect(host.querySelector('[data-browser="first"]')).toBe(browser)
+    expect(browser.value).toBe('unsaved address')
+    expect(browser.dataset.visible).toBe('true')
+    expect(second.dataset.visible).toBe('false')
+    await render('preview', true, false, 'second')
+    expect(second.value).toBe('second address')
+    expect(second.dataset.visible).toBe('true')
+  } finally { await act(async () => root.unmount()) }
+})
+
+
+it('keeps the original browser through a new conversation and disposes only explicitly closed panels', async () => {
+  let dock!: ReturnType<typeof useThreadRightSidebar>
+  function Harness({ threadId }: { threadId: string | null }) {
+    dock = useThreadRightSidebar(threadId)
+    return createElement(WorkbenchRightSidebar, {
+      threadId, open: dock.open, collapsed: dock.collapsed,
+      tab: dock.panels.activeTab, tabs: dock.panels.tabs, width: 420,
+      workspaceRoot: '', blocks: [], changesContext: 'branch', devPreviewBlocks: [],
+      latestDevPreviewUrl: null, onCloseTab: vi.fn(), onTabChange: vi.fn(),
+      onChangesContextChange: vi.fn(), onToggleCollapsed: vi.fn(), onClose: vi.fn(),
+      onToggleMaximize: vi.fn(), onBeginResize: vi.fn(), onOpenFileInEditor: vi.fn()
+    })
+  }
+  const host = document.createElement('div'); const root = createRoot(host)
+  const render = (threadId: string | null) => act(async () => root.render(createElement(Harness, { threadId })))
+  const open = () => act(async () => {
+    dock.setOpen(true)
+    dock.setPanels({ tabs: ['preview'], activeTab: 'preview' })
+  })
+  try {
+    await render('first')
+    await open()
+    const first = host.querySelector<HTMLInputElement>('[data-browser="first"]')!
+    first.value = 'original page'
+    await render(null)
+    expect(host.querySelector('aside')?.getAttribute('aria-hidden')).toBe('true')
+    expect(first.dataset.visible).toBe('false')
+    await render('second')
+    await open()
+    const second = host.querySelector('[data-browser="second"]')
+    await render('first')
+    expect(host.querySelector('aside')?.getAttribute('aria-hidden')).toBe('false')
+    expect(host.querySelector('[data-browser="first"]')).toBe(first)
+    expect(first.value).toBe('original page')
+    expect(first.dataset.visible).toBe('true')
+    await act(async () => dock.setPanels({ tabs: [], activeTab: null }))
+    expect(host.querySelector('[data-browser="first"]')).toBeNull()
+    expect(host.querySelector('[data-browser="second"]')).toBe(second)
+    await open()
+    expect(host.querySelector('[data-browser="first"]')).not.toBe(first)
+    await render('second')
+    expect(host.querySelector('[data-browser="second"]')).toBe(second)
   } finally { await act(async () => root.unmount()) }
 })

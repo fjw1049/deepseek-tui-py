@@ -155,11 +155,12 @@ export function WorkbenchRightSidebar({
 
   const panelVisible = open && !collapsed
   const browserVisible = panelVisible && tab === 'preview'
-  const [browserOpened, setBrowserOpened] = useState(browserVisible)
-  useEffect(() => {
-    if (browserVisible) setBrowserOpened(true)
-    else if (!tabs.includes('preview')) setBrowserOpened(false)
-  }, [browserVisible, tabs])
+  const [browserThreads, setBrowserThreads] = useState<Array<string | null>>([])
+  if (browserVisible && !browserThreads.includes(threadId)) {
+    setBrowserThreads([...browserThreads, threadId])
+  } else if (!tabs.includes('preview') && browserThreads.includes(threadId)) {
+    setBrowserThreads(browserThreads.filter((id) => id !== threadId))
+  }
 
   let otherPanel: ReactNode = null
   if (tab === 'runs') {
@@ -339,27 +340,30 @@ export function WorkbenchRightSidebar({
               className="h-full max-h-full w-full"
             />
           </div>
-          {tabs.includes('preview') && (browserOpened || browserVisible) ? (
-            <div className={browserVisible ? 'absolute inset-0 h-full w-full' : 'hidden h-full w-full'} aria-hidden={!browserVisible} inert={!browserVisible}>
-              <Suspense fallback={<PanelFallback />}>
-                <BrowserWorkspace
-                  key={threadId ?? 'no-thread'}
-                  threadId={threadId}
-                  agentRequest={agentBrowserRequest}
-                  visible={browserVisible}
-                  blocks={devPreviewBlocks}
-                  preferredUrl={latestDevPreviewUrl}
-                  preferredFilePath={preferredPreviewFilePath}
-                  externalError={previewError}
-                  onPreferredUrlConsumed={onPreferredUrlConsumed}
-                  onExternalErrorConsumed={onPreviewErrorConsumed}
-                  onPreviewPick={onPreviewPick}
-                  onOpenFileInEditor={onOpenFileInEditor}
-                  className="h-full max-h-full w-full flex-col"
-                />
-              </Suspense>
-            </div>
-          ) : null}
+          {browserThreads.map((browserThreadId) => {
+            const active = browserThreadId === threadId
+            const visible = active && browserVisible
+            return (
+              <div key={browserThreadId ?? 'no-thread'} className={visible ? 'absolute inset-0 h-full w-full' : 'hidden h-full w-full'} aria-hidden={!visible} inert={!visible}>
+                <Suspense fallback={<PanelFallback />}>
+                  <BrowserWorkspace
+                    threadId={browserThreadId}
+                    agentRequest={active ? agentBrowserRequest : 0}
+                    visible={visible}
+                    blocks={active ? devPreviewBlocks : []}
+                    preferredUrl={active ? latestDevPreviewUrl : null}
+                    preferredFilePath={active ? preferredPreviewFilePath : null}
+                    externalError={active ? previewError : null}
+                    onPreferredUrlConsumed={active ? onPreferredUrlConsumed : undefined}
+                    onExternalErrorConsumed={active ? onPreviewErrorConsumed : undefined}
+                    onPreviewPick={active ? onPreviewPick : undefined}
+                    onOpenFileInEditor={active ? onOpenFileInEditor : undefined}
+                    className="h-full max-h-full w-full flex-col"
+                  />
+                </Suspense>
+              </div>
+            )
+          })}
           {otherPanel ? (
             <div className="absolute inset-0 h-full w-full">{otherPanel}</div>
           ) : null}

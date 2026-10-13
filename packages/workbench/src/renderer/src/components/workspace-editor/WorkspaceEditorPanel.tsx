@@ -596,7 +596,7 @@ const EditorPaneView = forwardRef<
           {t('workspaceEditorTruncated')}
         </div>
       ) : null}
-      {tab.loading ? (
+      {tab.loading && !showMonaco ? (
         <EditorSurfaceFallback />
       ) : isImageTab ? (
         <ImageDocumentPreview path={tab.path} workspaceRoot={workspaceRoot} />

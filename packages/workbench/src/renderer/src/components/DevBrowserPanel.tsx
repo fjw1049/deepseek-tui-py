@@ -696,7 +696,7 @@ export function DevBrowserPanel({
   // geometry via absolute stacking, mute + pause media on background tabs.
   useEffect(() => {
     for (const [tabId, webview] of webviewRefs.current.entries()) {
-      const active = tabId === activeTabId
+      const active = visible && tabId === activeTabId
       const ready = webviewDomReadyRef.current.has(tabId)
       try {
         webview.setAudioMuted(!active)
@@ -707,7 +707,7 @@ export function DevBrowserPanel({
       // (switching to a freshly opened preview tab used to crash here).
       if (!active && ready) pauseGuestMedia(webview)
     }
-  }, [activeTabId, tabs])
+  }, [activeTabId, tabs, visible])
 
   useEffect(() => {
     if (!externalError) return

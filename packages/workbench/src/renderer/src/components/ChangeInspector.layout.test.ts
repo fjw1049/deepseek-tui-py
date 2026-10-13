@@ -81,6 +81,7 @@ it('defaults to full files, ignores stale responses, resets on selection and kee
       root.render(createElement(ChangeInspector, { key: 'full-context' }))
     })
     expect(container.textContent).toContain('diffLoadingFullFile')
+    expect(container.querySelector('tbody')).toBeNull()
     expect(getGitFileDiff).toHaveBeenCalledWith(expect.objectContaining({
       workspaceRoot: '/repo', path: 'src/a.ts', scope: 'branch', baseRef: 'main'
     }))
@@ -94,6 +95,7 @@ it('defaults to full files, ignores stale responses, resets on selection and kee
     await act(async () => container.querySelector<HTMLButtonElement>('ul button[title]:not([aria-current="true"])')!.click())
     expect(button('diffShowChangesOnly').getAttribute('aria-pressed')).toBe('false')
     expect(container.textContent).toContain('first-tail')
+    await act(async () => useChatStore.setState(s => ({ workspaceDirtyTick: s.workspaceDirtyTick + 1 })))
     getGitFileDiff.mockRejectedValueOnce(new Error('unavailable'))
     await act(async () => container.querySelector<HTMLButtonElement>('ul button[title]:not([aria-current="true"])')!.click())
     expect(container.textContent).toContain('diffFullFileUnavailable')
@@ -389,4 +391,94 @@ it('preserves the selected file when refresh inserts a file earlier in the list'
   } finally {
     hook.mockReturnValue(snapshot)
   }
+})
+
+it('reuses full files on return and keeps the current file visible during invalidation', async () => {
+  const getGitFileDiff = vi.fn(async (target: GitFileDiffTarget): Promise<GitFileDiffResult> => ({
+    ok: true, patch: `@@ -1,2 +1,2 @@\n-old\n+${target.path === 'src/a.ts' ? 'new' : 'next'}\n ${target.path}-tail`
+  }))
+  vi.stubGlobal('dsGui', { getGitFileDiff })
+  try {
+    await act(async () => {
+      useChatStore.getState().selectInspectorItem('git:branch:unstaged:src/a.ts')
+      root.render(createElement(ChangeInspector, { key: 'cache-context' }))
+    })
+    const select = async (path: string) => act(async () => {
+      useChatStore.getState().selectInspectorItem(`git:branch:unstaged:src/${path}.ts`)
+    })
+    await select('b')
+    await select('a')
+    expect(getGitFileDiff).toHaveBeenCalledTimes(2)
+    expect(container.textContent).toContain('src/a.ts-tail')
+    expect(container.textContent).not.toContain('src/b.ts-tail')
+    let resolve!: (result: GitFileDiffResult) => void
+    getGitFileDiff.mockImplementationOnce(() => new Promise(result => { resolve = result }))
+    await act(async () => useChatStore.setState(s => ({ workspaceDirtyTick: s.workspaceDirtyTick + 1 })))
+    expect(getGitFileDiff).toHaveBeenCalledTimes(3)
+    expect(container.textContent).toContain('diffLoadingFullFile')
+    expect(container.textContent).toContain('src/a.ts-tail')
+    await act(async () => resolve({ ok: true, patch: '@@ -1,2 +1,2 @@\n-old\n+new\n refreshed-tail' }))
+    expect(container.textContent).toContain('refreshed-tail')
+    expect(container.textContent).not.toContain('src/a.ts-tail')
+    expect(container.textContent).not.toContain('diffLoadingFullFile')
+    await select('b')
+    expect(getGitFileDiff).toHaveBeenCalledTimes(4)
+  } finally { vi.unstubAllGlobals() }
+})
+
+
+it.each([false, true])('switches complete views together, including after changes-only mode: %s', async (changesOnly) => {
+  let finishB!: (result: GitFileDiffResult) => void
+  const getGitFileDiff = vi.fn((target: GitFileDiffTarget): Promise<GitFileDiffResult> => target.path === 'src/a.ts'
+    ? Promise.resolve({ ok: true, patch: '@@ -1,2 +1,2 @@\n-old\n+new\n a-complete-tail' })
+    : new Promise(resolve => { finishB = resolve }))
+  vi.stubGlobal('dsGui', { getGitFileDiff })
+  try {
+    await act(async () => {
+      useChatStore.getState().selectInspectorItem('git:branch:unstaged:src/a.ts')
+      root.render(createElement(ChangeInspector, { key: 'atomic-switch' }))
+    })
+    if (changesOnly) await act(async () => button('diffShowChangesOnly').click())
+    const viewport = container.querySelector<HTMLElement>('.ds-change-inspector__code')!
+    const previousContent = viewport.textContent
+    const previousHeader = container.querySelector('.ds-diff-view__header')!.textContent
+    viewport.scrollTop = 100
+    await act(async () => useChatStore.getState().selectInspectorItem('git:branch:unstaged:src/b.ts'))
+    expect(container.textContent).toContain('diffLoadingFullFile')
+    expect(container.querySelector('.ds-change-inspector__code')).toBe(viewport)
+    expect(viewport.textContent).toBe(previousContent)
+    expect(viewport.scrollTop).toBe(100)
+    expect(container.querySelector('.ds-diff-view__header')!.textContent).toBe(previousHeader)
+    await act(async () => finishB({ ok: true, patch: '@@ -1,2 +1,2 @@\n-old\n+next\n b-complete-tail' }))
+    expect(container.querySelector('.ds-change-inspector__code')).toBe(viewport)
+    expect(viewport.textContent).toContain('b-complete-tail')
+    expect(viewport.textContent).not.toContain('a-complete-tail')
+    expect(container.textContent).not.toContain('diffLoadingFullFile')
+  } finally { vi.unstubAllGlobals() }
+})
+
+
+it('toggles the displayed file while another file loads without changing the pending selection', async () => {
+  let finishB!: (result: GitFileDiffResult) => void
+  vi.stubGlobal('dsGui', { getGitFileDiff: vi.fn((target: GitFileDiffTarget) => target.path === 'src/a.ts'
+    ? Promise.resolve({ ok: true, patch: '@@ -1,2 +1,2 @@\n-old\n+new\n a-tail' })
+    : new Promise<GitFileDiffResult>(resolve => { finishB = resolve })) })
+  try {
+    await act(async () => {
+      useChatStore.getState().selectInspectorItem('git:branch:unstaged:src/a.ts')
+      root.render(createElement(ChangeInspector, { key: 'toggle-during-load' }))
+    })
+    await act(async () => button('diffShowChangesOnly').click())
+    await act(async () => useChatStore.getState().selectInspectorItem('git:branch:unstaged:src/b.ts'))
+    await act(async () => button('diffShowFullFile').click())
+    expect(container.textContent).toContain('a-tail')
+    expect(container.textContent).toContain('diffLoadingFullFile')
+    expect(useChatStore.getState().inspectorSelectedId).toBe('git:branch:unstaged:src/b.ts')
+    await act(async () => button('diffShowChangesOnly').click())
+    expect(container.textContent).not.toContain('a-tail')
+    expect(container.textContent).toContain('diffLoadingFullFile')
+    await act(async () => finishB({ ok: true, patch: '@@ -1,2 +1,2 @@\n-old\n+next\n b-tail' }))
+    expect(container.textContent).toContain('b-tail')
+    expect(button('diffShowChangesOnly')).not.toBeNull()
+  } finally { vi.unstubAllGlobals() }
 })

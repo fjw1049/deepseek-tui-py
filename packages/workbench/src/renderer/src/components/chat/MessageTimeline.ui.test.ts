@@ -256,3 +256,39 @@ it('folds long user messages and keeps the full text when editing', async () => 
     else Reflect.deleteProperty(HTMLElement.prototype, 'scrollHeight')
   }
 })
+
+it('keeps current activity outside folded history and clears it when the turn ends', async () => {
+  const blocks: ChatBlock[] = [
+    { kind: 'user', id: 'question', text: '找附近的店' },
+    { kind: 'assistant', id: 'preface', text: '第三家店——', agentSegment: 'mid_turn_preface' }
+  ]
+  act(() => useChatStore.setState({
+    busy: true, blocks, liveActivity: 'thinking', workspaceRoot: '', activeThreadId: 'thinking-review'
+  }))
+  const render = async (): Promise<void> => {
+    await act(async () => root.render(createElement(MessageTimeline, {
+      blocks, live: '', liveReasoning: 'INTERNAL_TRACE_SENTINEL', activeThreadId: 'thinking-review',
+      runtimeConnection: 'ready', onRetryConnection: () => {},
+      onOpenSettings: () => {}, onOpenDiagnostics: () => {}
+    })))
+  }
+  await render()
+  expect(container.textContent).toContain('第三家店——')
+  expect(container.querySelector('.ds-work-meta-row')?.getAttribute('aria-expanded')).toBe('false')
+  expect(container.querySelector('[data-turn-activity]')?.getAttribute('data-turn-activity')).toBe('Thinking')
+  expect(container.querySelector('.ds-process-reasoning__toggle')).toBeNull()
+  expect(container.textContent).not.toContain('INTERNAL_TRACE_SENTINEL')
+  await act(async () => (container.querySelector('.ds-work-meta-row') as HTMLButtonElement).click())
+  expect(container.querySelectorAll('[data-turn-activity]')).toHaveLength(1)
+  expect(container.querySelector('[data-turn-activity]')?.closest('.ds-process-rail')).toBeNull()
+  act(() => useChatStore.setState({ liveActivity: 'responding' }))
+  await render()
+  expect(container.querySelector('[data-turn-activity]')?.getAttribute('data-turn-activity')).toBe('Responding')
+  act(() => useChatStore.setState({ busy: false }))
+  await render()
+  expect(container.querySelector('[data-turn-activity]')).toBeNull()
+  // Old buffers must not keep a stopped turn or a different selected thread active.
+  act(() => useChatStore.setState({ busy: true, activeThreadId: 'another-thread' }))
+  await render()
+  expect(container.querySelector('[data-turn-activity]')).toBeNull()
+})

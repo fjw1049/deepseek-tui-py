@@ -109,3 +109,21 @@ export function ensureMonacoConfigured(): void {
   loader.config({ monaco })
   registerLexicalSemanticTokens()
 }
+
+
+const languagePreparations = new Map<string, Promise<void>>()
+const preparedLanguages = new Set<string>(['plaintext'])
+
+/** Load the token provider before attaching a file; do not tokenize the whole file twice. */
+export function prepareWorkspaceLanguage(language: string): Promise<void> {
+  if (preparedLanguages.has(language)) return Promise.resolve()
+  const existing = languagePreparations.get(language)
+  if (existing) return existing
+  const pending = monaco.editor.colorize('', language, {}).then(() => {
+    preparedLanguages.add(language)
+  }).finally(() => {
+    languagePreparations.delete(language)
+  })
+  languagePreparations.set(language, pending)
+  return pending
+}

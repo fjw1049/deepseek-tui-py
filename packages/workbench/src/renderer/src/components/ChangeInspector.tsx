@@ -2,6 +2,7 @@ import { GlobalErrorNotice } from './GlobalFeedback'
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -1294,23 +1295,25 @@ export function ChangeInspector({
     [fileChanges, selectedId]
   )
 
-  const [showFullFile, setShowFullFile] = useState(true)
-  useEffect(() => { setShowFullFile(true) }, [selectedId, changeRoot, context])
+  const fileViewKey = `${changeRoot}\u0000${context}\u0000${selectedId}`
+  const [fullFileMode, setFullFileMode] = useState<{ key: string; enabled: boolean } | null>(null)
+  if (fullFileMode && fullFileMode.key !== fileViewKey) setFullFileMode(null)
+  const showFullFile = fullFileMode?.key === fileViewKey ? fullFileMode.enabled : true
   const selectedPatch = selectedItem?.detail ?? ''
   const selectedPath = selectedItem?.filePath
   const selectedStage = selectedItem?.gitStage
   const selectedStatus = selectedItem?.gitStatus
-  const fullFileKey = `${changeRoot}\u0000${context}\u0000${selectedId}\u0000${branchBase}\u0000${workspaceDirtyTick}`
-  const [fullFileResult, setFullFileResult] = useState<{
-    key: string; detail: string; patch?: string; error?: boolean
-  } | null>(null)
-  const currentFullFile = fullFileResult?.key === fullFileKey && fullFileResult.detail === selectedPatch
-    ? fullFileResult : null
+  const fullFileKey = `${changeRoot}\u0000${context}\u0000${selectedId}\u0000${branchBase}`
+  const [fullFileResults, setFullFileResults] = useState(() => new Map<string, {
+    detail: string; tick: number; patch?: string; error?: boolean
+  }>())
+  const cachedFullFile = fullFileResults.get(fullFileKey)
+  const currentFullFile = cachedFullFile?.detail === selectedPatch ? cachedFullFile : undefined
+  const fullFileFresh = currentFullFile?.tick === workspaceDirtyTick
 
   useEffect(() => {
-    if (isList || !showFullFile || !selectedPatch.trim()) return
+    if (isList || !showFullFile || !selectedPatch.trim() || fullFileFresh) return
     let cancelled = false
-    setFullFileResult({ key: fullFileKey, detail: selectedPatch })
     const load = async (): Promise<string | null> => {
       if (!selectedPath) return null
       if (isGitContext || context === 'conflicts') {
@@ -1333,13 +1336,31 @@ export function ChangeInspector({
       return result.ok && !result.truncated ? expandDiffContext(selectedPatch, result.content) : null
     }
     void load().catch(() => null).then((patch) => {
-      if (!cancelled) setFullFileResult({
-        key: fullFileKey, detail: selectedPatch,
-        ...(patch === null ? { error: true } : { patch })
+      if (!cancelled) setFullFileResults((previous) => {
+        const next = new Map(previous)
+        next.delete(fullFileKey)
+        next.set(fullFileKey, {
+          detail: selectedPatch, tick: workspaceDirtyTick,
+          ...(patch === null ? { error: true } : { patch })
+        })
+        // Bound retained full-file text when reviewing many files.
+        if (next.size > 12) next.delete(next.keys().next().value!)
+        return next
       })
     })
     return () => { cancelled = true }
-  }, [isList, showFullFile, selectedPatch, selectedPath, selectedStage, selectedStatus, fullFileKey, isGitContext, context, gitScope, changeRoot, branchBase])
+  }, [isList, showFullFile, selectedPatch, selectedPath, selectedStage, selectedStatus, fullFileKey, fullFileFresh, workspaceDirtyTick, isGitContext, context, gitScope, changeRoot, branchBase])
+
+  const diffScope = `${changeRoot}\u0000${context}\u0000${branchBase}`
+  const readyDiff = useMemo(() => selectedItem && (!showFullFile || currentFullFile?.patch || fullFileFresh)
+    ? { scope: diffScope, item: selectedItem, fullFile: currentFullFile, showFullFile }
+    : null, [selectedItem, showFullFile, currentFullFile, fullFileFresh, diffScope])
+  const [previousDiff, setPreviousDiff] = useState(readyDiff)
+  useLayoutEffect(() => {
+    if (readyDiff) setPreviousDiff(readyDiff)
+  }, [readyDiff])
+  // Keep the complete viewport until its replacement is ready; never shrink to compact hunks in between.
+  const displayedDiff = readyDiff ?? (previousDiff?.scope === diffScope ? previousDiff : null)
 
   const gitStageLabel = (stage: GitWorkingChangeStage): string => {
     if (stage === 'staged') return t('gitStageStaged')
@@ -1627,14 +1648,20 @@ export function ChangeInspector({
       ) : null}
       {selectedItem ? (
         (selectedItem.detail ?? '').trim() ? (
-          <DiffView
-            patch={selectedItem.detail}
-            fullFilePatch={currentFullFile?.patch}
-            showFullFile={showFullFile}
-            onToggleFullFile={() => setShowFullFile((value) => !value)}
-            fullFilePending={showFullFile && !currentFullFile?.patch && !currentFullFile?.error}
-            fullFileUnavailable={showFullFile && currentFullFile?.error}
-            filePath={selectedItem.filePath}
+          displayedDiff ? <DiffView
+            patch={displayedDiff.item.detail}
+            fullFilePatch={displayedDiff.fullFile?.patch}
+            showFullFile={displayedDiff.showFullFile}
+            onToggleFullFile={() => {
+              if (displayedDiff.item.id !== selectedItem.id) {
+                setPreviousDiff({ ...displayedDiff, showFullFile: !displayedDiff.showFullFile })
+              } else {
+                setFullFileMode({ key: fileViewKey, enabled: !displayedDiff.showFullFile })
+              }
+            }}
+            fullFilePending={showFullFile && !fullFileFresh}
+            fullFileUnavailable={displayedDiff.showFullFile && displayedDiff.fullFile?.error}
+            filePath={displayedDiff.item.filePath}
             maxHeight={9000}
             diffStyle={diffStyle}
             showStyleToggle
@@ -1647,7 +1674,11 @@ export function ChangeInspector({
               setDiffExpanded(false)
               setDiffCollapsed(true)
             } : onCollapse}
-          />
+          /> : (
+            <div role="status" className="flex flex-1 items-center justify-center gap-2 text-[13.5px] text-ds-faint">
+              <Loader2 className="h-4 w-4 animate-spin" aria-hidden />{t('diffLoadingFullFile')}
+            </div>
+          )
         ) : (
           <div className="flex flex-1 items-center justify-center text-[13.5px] text-ds-faint">
             {t('inspectorDiffEmpty')}

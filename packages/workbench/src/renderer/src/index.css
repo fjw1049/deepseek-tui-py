@@ -8248,6 +8248,8 @@ html[data-theme='dark'] .ds-syntax-line span { color: var(--shiki-dark) !importa
 }
 
 .ds-change-inspector__code {
+  scrollbar-gutter: stable;
+  overflow-anchor: none;
   font-family: var(--font-terminal);
   font-size: 0.8125rem;
   line-height: 1.55;
@@ -11358,6 +11360,16 @@ html[data-theme='dark'] .ds-syntax-line span { color: var(--shiki-dark) !importa
     color 140ms ease;
 }
 
+.ds-ide-topbar__action:not(.ds-ide-topbar__action--labeled) {
+  width: 1.75rem;
+  padding-inline: 0;
+}
+
+.ds-ide-workspace .ds-workspace-editor-tabstrip {
+  padding-right: 0.75rem;
+  column-gap: 0.75rem;
+}
+
 .ds-ide-topbar__action--labeled {
   padding-inline: 0.5rem 0.6rem;
   font-size: 13px;
@@ -11637,6 +11649,12 @@ html[data-theme='dark'] .ds-syntax-line span { color: var(--shiki-dark) !importa
   /* Narrow rail: keep the thumb thin so it doesn't eat a whole character column. */
   scrollbar-width: thin;
   scrollbar-color: var(--ds-scrollbar-thumb) transparent;
+}
+
+/* Clipping and inert do not clear Electron's native drag hit regions. */
+.ds-ide-workspace .ds-ide-chat-rail[aria-hidden='true'],
+.ds-ide-workspace .ds-ide-chat-rail[aria-hidden='true'] * {
+  -webkit-app-region: no-drag !important;
 }
 
 .ds-ide-chat-rail *::-webkit-scrollbar {
@@ -12470,12 +12488,12 @@ body:has(.ds-workbench-shell[data-ide-mode]) .ds-project-context-menu :is(input,
   justify-content: center;
   width: 28px;
   height: 28px;
-  border: 1px solid var(--ds-border);
+  border: 0;
   border-radius: 6px;
-  background: var(--ds-surface-subtle);
+  background: transparent;
   color: var(--ds-text);
 }
-.ds-diff-navigation button:hover { border-color: var(--ds-border-strong); background: var(--ds-surface-hover); }
+.ds-diff-navigation button:active:not(:disabled) { background: var(--ds-surface-hover); }
 .ds-diff-navigation button:disabled { opacity: 0.35; }
 .ds-diff-fold { background: color-mix(in srgb, var(--ds-text) 3%, transparent); }
 .ds-diff-fold button {

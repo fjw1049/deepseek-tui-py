@@ -1,3 +1,4 @@
+import { useThreadRightSidebar } from '../hooks/use-thread-right-sidebar'
 import { BROWSER_ACTIVITY_EVENT } from '../lib/browser-activity'
 import { CHAT_READING_MIN_WIDTH, RIGHT_PANEL_MIN, resolveRightPanelLayout } from '../lib/workbench-pane-layout'
 import { GlobalFeedbackViewport } from './GlobalFeedback'
@@ -61,7 +62,6 @@ import {
   persistRightSidebarCollapsed,
   persistRightSidebarOpen,
   persistRightSidebarPanels,
-  readStoredRightSidebarPanels,
   addRightSidebarTab,
   removeRightSidebarTab,
   type RightSidebarTab
@@ -344,15 +344,17 @@ export function Workbench(): ReactElement {
   // and the last right-sidebar tab still persist for when the user opens them.
   const runTarget = useRunPanelStore((state) => state.target)
   const runRequest = useRunPanelStore((state) => state.request)
-  const [rightSidebarOpen, setRightSidebarOpen] = useState(false)
+  const {
+    open: rightSidebarOpen, setOpen: setRightSidebarOpen,
+    collapsed: rightSidebarCollapsed, setCollapsed: setRightSidebarCollapsed,
+    panels: rightSidebarPanels, setPanels: setRightSidebarPanels
+  } = useThreadRightSidebar(activeThreadId)
   const rightSidebarOpenRef = useRef(false)
   useEffect(() => { rightSidebarOpenRef.current = rightSidebarOpen }, [rightSidebarOpen])
-  const [rightSidebarCollapsed, setRightSidebarCollapsed] = useState(false)
-  const [rightSidebarPanels, setRightSidebarPanels] = useState(readStoredRightSidebarPanels)
   const rightSidebarTab = rightSidebarPanels.activeTab
   const setRightSidebarTab = useCallback((tab: RightSidebarTab): void => {
     setRightSidebarPanels((state) => addRightSidebarTab(state, tab))
-  }, [])
+  }, [setRightSidebarPanels])
   const openEditorFile = useWorkspaceEditorStore((s) => s.openFile)
   const [leftSidebarWidth, setLeftSidebarWidth] = useState(() =>
     readStoredWidth(LEFT_PANEL_WIDTH_KEY, LEFT_PANEL_DEFAULT)
@@ -644,7 +646,7 @@ export function Workbench(): ReactElement {
     setRightSidebarOpen(true)
     setRightSidebarCollapsed(false)
     if (tab) setRightSidebarTab(tab)
-  }, [setRightSidebarTab])
+  }, [setRightSidebarTab, setRightSidebarOpen, setRightSidebarCollapsed])
 
   const handleComposerOpenDiff = useCallback((): void => {
     setChangesContext('last-turn')
@@ -774,7 +776,7 @@ export function Workbench(): ReactElement {
     if (runTarget?.threadId !== activeThreadId) {
       setRightSidebarPanels((state) => removeRightSidebarTab(state, 'runs'))
     }
-  }, [activeThreadId, rightSidebarTab, runTarget])
+  }, [activeThreadId, rightSidebarTab, runTarget, setRightSidebarPanels])
 
   const closeRightSidebar = useCallback((): void => {
     const chatColumn = chatColumnRef.current
@@ -784,7 +786,7 @@ export function Workbench(): ReactElement {
     setRightSidebarOpen(false)
     setRightSidebarCollapsed(false)
     setChatColumnHidden(false)
-  }, [])
+  }, [setRightSidebarOpen, setRightSidebarCollapsed])
 
   const toggleRightSidebar = useCallback((): void => {
     if (!rightSidebarOpen || rightSidebarCollapsed) {
@@ -1047,10 +1049,7 @@ export function Workbench(): ReactElement {
     setAgentBrowserRequest(0)
     setPendingPreviewPicks([])
     setHtmlPreviewError(null)
-    if (rightSidebarOpen && rightSidebarTab === 'preview') {
-      closeRightSidebar()
-    }
-  }, [activeThreadId, closeRightSidebar, rightSidebarOpen, rightSidebarTab])
+  }, [activeThreadId])
 
   useEffect(() => {
     if (!latestDevPreviewUrl || route !== 'chat') return
@@ -2067,11 +2066,11 @@ export function Workbench(): ReactElement {
               setChangesProjectRoot(null)
             }}
             onChangesFocusPathConsumed={() => setChangesFocusPath(null)}
-            agentBrowserRequest={agentBrowserRequest}
+            agentBrowserRequest={previewThreadId.current === activeThreadId ? agentBrowserRequest : 0}
             devPreviewBlocks={devPreviewBlocks}
-            latestDevPreviewUrl={preferredPreviewUrl}
+            latestDevPreviewUrl={previewThreadId.current === activeThreadId ? preferredPreviewUrl : null}
             preferredPreviewFilePath={preferredPreviewFilePath}
-            previewError={htmlPreviewError}
+            previewError={previewThreadId.current === activeThreadId ? htmlPreviewError : null}
             onPreferredUrlConsumed={clearWorkspacePreviewUrl}
             onPreviewErrorConsumed={clearHtmlPreviewError}
             onPreviewPick={handlePreviewPick}
