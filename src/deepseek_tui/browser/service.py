@@ -1,7 +1,7 @@
 """Workbench browser sessions backed by octop-browser 1.0.0.
 
 Session capture/control adapted from Octop's browser/harness.py and stream.py.
-See THIRD_PARTY_NOTICES.md. The private CDP bridge is contained in this module.
+The private CDP bridge is contained in this module.
 """
 
 from __future__ import annotations
